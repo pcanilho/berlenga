@@ -37,6 +37,7 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 
+class Camera3D;
 class Mesh;
 class MeshInstance3D;
 class Material;
@@ -642,6 +643,9 @@ private:
 	bool underwater_enabled = true;
 	float underwater_meniscus = 0.35f;
 	bool underwater_shown = false;
+	Vector3 water_light_sun_dir = Vector3(0, -1, 0);
+	Vector3 water_light_sun_irradiance;
+	Vector3 water_light_sky;
 	bool underwater_camera_below = false;
 	MeshInstance3D *underwater_fog_instance = nullptr;
 	Ref<ShaderMaterial> underwater_fog_material;
@@ -650,6 +654,7 @@ private:
 	RID underwater_sky_baked;
 	int underwater_sky_rebake = 0;
 	Color underwater_sky_radiance;
+	void _update_water_light(const Camera3D *p_camera);
 	void _update_underwater();
 	void _set_underwater_shown(bool p_shown);
 	// Raster reflections from above (sky panorama + sun glitter), see water_raster_reflections.h.
