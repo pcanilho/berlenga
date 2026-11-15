@@ -38,6 +38,12 @@ for p in sorted(FEAT.glob('*.md'), key=weight):
     for line in text.split('\n'):
         if line.startswith('## '):
             topic = line[3:].strip()
+        sub = re.match(r'\s+- (.+)', line)
+        if sub and features and features[-1]['page'] == p.stem:
+            for k in re.findall(r'`([A-Za-z_][\w.]*)`', sub.group(1)):
+                if k not in features[-1]['settings']:
+                    features[-1]['settings'].append(k)
+            continue
         m = re.match(r'- \*\*(.+?)\*\*\s*', line)
         if not m:
             continue
