@@ -3084,6 +3084,13 @@ static void pack_uniform(const ShaderLanguage::ShaderNode::Uniform &u, const Var
 				fv[0] = _def_real(u, 0);
 				fv[1] = _def_real(u, 1);
 				fv[2] = _def_real(u, 2);
+				if (u.hint == SL::ShaderNode::Uniform::HINT_SOURCE_COLOR) {
+					// A source_color default is sRGB, as raster converts it (material_storage.cpp).
+					const Color c = Color(fv[0], fv[1], fv[2]).srgb_to_linear();
+					fv[0] = c.r;
+					fv[1] = c.g;
+					fv[2] = c.b;
+				}
 			}
 			memcpy(dst, fv, 12);
 		} break;
@@ -3107,6 +3114,12 @@ static void pack_uniform(const ShaderLanguage::ShaderNode::Uniform &u, const Var
 			} else {
 				for (int i = 0; i < 4; i++) {
 					fv[i] = _def_real(u, i);
+				}
+				if (u.hint == SL::ShaderNode::Uniform::HINT_SOURCE_COLOR) {
+					const Color c = Color(fv[0], fv[1], fv[2], fv[3]).srgb_to_linear();
+					fv[0] = c.r;
+					fv[1] = c.g;
+					fv[2] = c.b;
 				}
 			}
 			memcpy(dst, fv, 16);

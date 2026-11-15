@@ -2724,6 +2724,188 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
 
+// Epiphytic lichens, by species (trees.md 2h): how readily the bark carries them, the share of
+// leafy (foliose) rosettes against crusts, and of orange Xanthoria. Smooth bark (beech, hazel,
+// holly, rowan, red maple) carries mostly crustose script and wart lichens (Graphis, Pertusaria,
+// Lecanora); acid, rough bark (oaks, birch, conifers) leafy Parmelia and Hypogymnia; nutrient-rich
+// bark (ash, sycamore, elder, willow) Physcia, Flavoparmelia and orange Xanthoria. Flaking and
+// shedding bark (yew, plane-like flakes, box) keeps few (Barkman 1958; Gilbert, Lichens, 2000).
+struct LichenAffinity {
+	float amount, leafy, orange;
+};
+static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
+	{ 0.8f, 0.6f, 0.03f }, // Oak.
+	{ 0.85f, 0.15f, 0.0f }, // Beech.
+	{ 0.5f, 0.6f, 0.0f }, // Birch.
+	{ 0.45f, 0.7f, 0.0f }, // Scots pine.
+	{ 0.6f, 0.7f, 0.0f }, // Norway spruce.
+	{ 0.9f, 0.2f, 0.03f }, // Hazel.
+	{ 0.8f, 0.5f, 0.12f }, // Hawthorn.
+	{ 0.6f, 0.4f, 0.08f }, // Lime.
+	{ 0.75f, 0.35f, 0.18f }, // Sycamore maple.
+	{ 0.85f, 0.35f, 0.22f }, // Ash.
+	{ 0.5f, 0.3f, 0.08f }, // Horse chestnut.
+	{ 0.7f, 0.4f, 0.08f }, // Black alder.
+	{ 0.6f, 0.4f, 0.28f }, // White willow.
+	{ 0.6f, 0.6f, 0.0f }, // Larch.
+	{ 0.7f, 0.45f, 0.0f }, // Silver fir.
+	{ 0.8f, 0.3f, 0.04f }, // Rowan.
+	{ 0.8f, 0.3f, 0.4f }, // Elder.
+	{ 0.8f, 0.1f, 0.0f }, // Holly.
+	{ 0.2f, 0.3f, 0.0f }, // Yew.
+	{ 0.3f, 0.2f, 0.0f }, // Box.
+	{ 0.7f, 0.5f, 0.05f }, // Sugar maple.
+	{ 0.8f, 0.3f, 0.0f }, // Red maple.
+	{ 0.6f, 0.5f, 0.0f }, // Red oak.
+	{ 0.7f, 0.6f, 0.0f }, // White oak.
+	{ 0.5f, 0.6f, 0.0f }, // White pine.
+	{ 0.5f, 0.6f, 0.0f }, // Hemlock.
+	{ 0.9f, 0.15f, 0.0f }, // American beech.
+	{ 0.4f, 0.6f, 0.0f }, // Paper birch.
+	{ 0.5f, 0.5f, 0.0f }, // Yellow birch.
+	{ 0.8f, 0.3f, 0.0f }, // Witch hazel.
+	{ 0.5f, 0.4f, 0.0f }, // Mountain laurel.
+};
+
+float TreeGenerator::_lichen_amount() const {
+	if (lichen_cover <= 0.0f) {
+		return 0.0f;
+	}
+	// Standing dead wood keeps its lichens for a while and gains more in the light; once it
+	// softens and falls, mosses and fungi take over (Soderstrom 1988; Peytavie et al., DeadWood,
+	// 2024).
+	static const float DECAY[6] = { 1.0f, 1.15f, 1.0f, 0.6f, 0.3f, 0.1f };
+	float k = lichen_cover * LICHEN_AFFINITY[preset].amount * DECAY[CLAMP(decay_class, 0, 5)];
+	if (fallen || fallen_branch) {
+		k *= 0.5f; // In the litter's damp and shade.
+	}
+	return k;
+}
+
+// Lichen weight 0..1 at a bark point. Lichens need light and dry spells, so they grow where the
+// moss does not: up the bole above the splash zone and out on the limbs in the crown, and in a
+// stand mostly in its lit upper part (Desbenoit, Galin and Akkouche, Simulating and modeling
+// lichen growth, 2004, place them by light and moisture; Barkman 1958). Twigs under a few years
+// old have not been colonised yet. Broken into colonies a metre or so apart.
+float TreeGenerator::_lichen_at(const Vector3 &p_pos, float p_radius, float p_moss) const {
+	const float a = _lichen_amount();
+	if (a <= 0.0f) {
+		return 0.0f;
+	}
+	const float ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
+	const float h = p_pos.y - ground;
+	const float rise = (fallen || fallen_branch) ? 1.0f : Math::smoothstep(0.15f, 1.4f, h);
+	const float crown = Math::smoothstep(0.15f, 0.75f, h / MAX(height, 1.0f));
+	const float light = Math::lerp(1.0f, 0.3f + 0.7f * crown, CLAMP(forest_shade / 0.6f, 0.0f, 1.0f));
+	const float young = Math::smoothstep(0.004f, 0.02f, p_radius);
+	const float patch = 1.7f * moss_noise(p_pos * 1.3f, 0x6c696368u + uint32_t(seed)) - 0.35f;
+	return CLAMP(a * light * rise * young * patch * (1.0f - CLAMP(p_moss * 1.3f, 0.0f, 1.0f)), 0.0f, 1.0f);
+}
+
+// The lichen layer, LICHEN_TILE metres square, as growth orders: a colony covers the texels whose
+// order is under its weight, so a heavier weight grows each colony out from its centre (as in
+// Desbenoit et al.'s open DLA growth; here a distance field with ragged edges, which is what that
+// growth looks like from a few metres). R: crusts (round colonies, centre 0, edge 1), G: leafy
+// rosettes (lobed edges), B: the crust colony's id (picks the orange ones), A: dark marks, the
+// black prothallus lines where two crusts meet and the fruiting discs (apothecia).
+Ref<Texture2D> TreeGenerator::_lichen_texture() {
+	if (lichen_texture.is_valid()) {
+		return lichen_texture;
+	}
+	const int N = 512;
+	const float texel = LICHEN_TILE / N;
+	struct Colony {
+		Vector2 c;
+		float r;
+		float id;
+		int lobes;
+		float phase;
+		float stretch; // Along v (a colony spreads a little further along the grain).
+	};
+	RandomPCG rng;
+	rng.seed(0x6c696368u);
+	LocalVector<Colony> crusts, rosettes;
+	for (int i = 0; i < 22; i++) {
+		const float r = Math::lerp(0.035f, 0.13f, rng.randf() * rng.randf());
+		// Ids under 0.5 can be drawn orange (Xanthoria): only small colonies, as its rosettes are.
+		const float id = r < 0.06f ? rng.randf() : 0.5f + 0.5f * rng.randf();
+		crusts.push_back({ Vector2(rng.randf(), rng.randf()), r / LICHEN_TILE, id, 0, 0.0f, Math::lerp(1.0f, 1.5f, rng.randf()) });
+	}
+	for (int i = 0; i < 16; i++) {
+		rosettes.push_back({ Vector2(rng.randf(), rng.randf()), Math::lerp(0.02f, 0.06f, rng.randf()) / LICHEN_TILE, rng.randf(), 7 + int(rng.rand() % 6), rng.randf() * float(Math::TAU), 1.0f });
+	}
+	auto wrap = [](Vector2 d) {
+		d.x -= Math::round(d.x);
+		d.y -= Math::round(d.y);
+		return d;
+	};
+	Vector<uint8_t> data;
+	data.resize(N * N * 4);
+	uint8_t *w = data.ptrw();
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const Vector2 p((x + 0.5f) / N, (y + 0.5f) / N);
+			// Ragged, map-like edges: the position is warped at two scales (a third of a colony and
+			// a centimetre), and the order itself is roughened, so no colony stays a disc.
+			const Vector2 warp(bark_fbm(p.x, p.y, 16, 16, 3, 0x77617270u), bark_fbm(p.x, p.y, 16, 16, 3, 0x77617271u));
+			const Vector2 fine(bark_fbm(p.x, p.y, 64, 64, 2, 0x77617272u), bark_fbm(p.x, p.y, 64, 64, 2, 0x77617273u));
+			const Vector2 q = p + warp * (0.035f / LICHEN_TILE) + fine * (0.008f / LICHEN_TILE);
+			const float rough = 0.4f * bark_fbm(p.x, p.y, 32, 32, 3, 0x726f7567u);
+			float o1 = 9.0f, o2 = 9.0f, id = 0.0f;
+			for (const Colony &c : crusts) {
+				Vector2 d = wrap(q - c.c);
+				d.y /= c.stretch;
+				const float o = d.length() / c.r + rough;
+				if (o < o1) {
+					o2 = o1;
+					o1 = o;
+					id = c.id;
+				} else if (o < o2) {
+					o2 = o;
+				}
+			}
+			float of = 9.0f;
+			for (const Colony &c : rosettes) {
+				const Vector2 d = wrap(q - c.c);
+				const float ang = Math::atan2(d.y, d.x) + c.phase + 0.6f * bark_fbm(p.x, p.y, 16, 16, 2, 0x6c6f6265u);
+				// Lobes radiate with rounded tips and narrow sinuses between them.
+				const float lobe = Math::pow(Math::abs(Math::cos(ang * c.lobes * 0.5f)), 0.35f);
+				of = MIN(of, d.length() / (c.r * (0.6f + 0.4f * lobe)) + 0.5f * rough);
+			}
+			// The thallus is cracked into areolae of a few millimetres (crusts) and wrinkled
+			// (rosettes): a fine tone that also darkens the cracks.
+			const float areola = 0.5f + bark_fbm(p.x, p.y, 128, 128, 2, 0x6172656fu);
+			float mark = 0.8f + 0.25f * areola;
+			if (o1 < 1.0f && o2 - o1 < 0.06f) {
+				mark = 0.25f; // Black prothallus line between two crusts.
+			}
+			w[(y * N + x) * 4 + 0] = uint8_t(CLAMP(o1, 0.0f, 1.0f) * 255.0f);
+			w[(y * N + x) * 4 + 1] = uint8_t(CLAMP(of, 0.0f, 1.0f) * 255.0f);
+			w[(y * N + x) * 4 + 2] = uint8_t(id * 255.0f);
+			w[(y * N + x) * 4 + 3] = uint8_t(CLAMP(mark, 0.0f, 1.0f) * 255.0f);
+		}
+	}
+	// Apothecia: discs of a millimetre or two, darker brown-black, mostly in the colonies' older
+	// middles.
+	for (int i = 0; i < 700; i++) {
+		const float cx = rng.randf() * N, cy = rng.randf() * N;
+		const float r = (0.4f + 0.8f * rng.randf()) * 0.001f / texel;
+		for (int dy = -2; dy <= 2; dy++) {
+			for (int dx = -2; dx <= 2; dx++) {
+				const int x = (int(cx) + dx + N) % N, y = (int(cy) + dy + N) % N;
+				if (Vector2(x + 0.5f - cx, y + 0.5f - cy).length() <= r + 0.5f && w[(y * N + x) * 4] < 150) {
+					uint8_t &m = w[(y * N + x) * 4 + 3];
+					m = MIN(m, uint8_t(0.45f * 255.0f));
+				}
+			}
+		}
+	}
+	Ref<Image> img = Image::create_from_data(N, N, false, Image::FORMAT_RGBA8, data);
+	img->generate_mipmaps();
+	lichen_texture = ImageTexture::create_from_image(img);
+	return lichen_texture;
+}
+
 // Moss texture over one bark tile: a turf of tiny shoots (2-4 mm) gathered into cushions a few
 // centimetres across, dark in the gaps. Albedo multiplies the vertex colour, which carries the
 // green; the height also lifts the shell into cushions.
@@ -4060,6 +4242,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// Moss greens the bark under it at every LOD (the shell's footprint, and all the moss there
 	// is at coarser levels): the tint follows the same weight as the shell.
 	const Color moss_green(0.085f, 0.13f, 0.025f);
+	// Lichen (trees.md 2h): its weight goes in the vertex colour's alpha as 1 - weight (bark
+	// built elsewhere keeps 1, no lichen), and the part gets its lichen UV2 mapping: a whole
+	// number of LICHEN_TILE repeats round the stem (no seam) and an offset per stem, so the layer
+	// neither repeats with the bark's tile nor lines up between stems.
+	const float lichen_k = _lichen_amount();
+	auto lichen_tint = [&](Builder &r_b, const Vector4i &p_part, float p_radius, float p_girth, uint32_t p_salt) {
+		if (lichen_k <= 0.0f || r_b.parts.is_empty() || r_b.parts[r_b.parts.size() - 1] != p_part) {
+			return;
+		}
+		bool any = false;
+		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
+			const float mw = moss_k > 0.0f ? _moss_at(r_b.verts[v], r_b.normals[v], moss_ground, moss_k) : 0.0f;
+			const float lw = _lichen_at(r_b.verts[v], p_radius, mw);
+			Color c = r_b.colors[v];
+			c.a = 1.0f - lw;
+			r_b.colors.write[v] = c;
+			any = any || lw > 0.0f;
+		}
+		if (!any) {
+			return;
+		}
+		const float girth = MAX(p_girth, 0.001f);
+		const float repeats = MAX(1.0f, Math::round(girth / BARK_TILE));
+		const float n2 = MAX(1.0f, Math::round(girth / LICHEN_TILE));
+		const uint32_t h = (p_salt * 2654435761u) ^ uint32_t(seed) * 2246822519u;
+		r_b.part_uv2[r_b.part_uv2.size() - 1] = Vector4(n2 / repeats, girth / (repeats * LICHEN_TILE), float(h & 0xffff) / 65535.0f, float((h >> 16) & 0xffff) / 65535.0f * 7.0f);
+	};
 	auto moss_tint = [&](Builder &r_b, const Vector4i &p_part) {
 		if (moss_k <= 0.0f) {
 			return;
@@ -5476,6 +5685,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				root_collar(bark, part, sides, pts, rad, false);
 			}
 			moss_tint(bark, part);
+			lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : rad[0]), uint32_t(s));
 			end_grain(bark, part, pts, sides, girth_r, col);
 			if (collar) {
 				soil_tint(bark, part, 1.0f);
@@ -5537,6 +5747,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					root_collar(bark, part, bsides, bp, br, false);
 				}
 				moss_tint(bark, part);
+				lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : br[0]), uint32_t(s));
 				end_grain(bark, part, bp, bsides, girth_r, col);
 				if (collar) {
 					soil_tint(bark, part, 1.0f);
@@ -6305,6 +6516,31 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				b.indices = full;
 			}
 		}
+		bool lichen_uv2 = false;
+		if (s == 0 && _lichen_amount() > 0.0f) {
+			for (uint32_t i = 0; i < b.part_uv2.size() && !lichen_uv2; i++) {
+				lichen_uv2 = b.part_uv2[i].x > 0.0f;
+			}
+		}
+		if (lichen_uv2) {
+			PackedVector2Array uv2;
+			uv2.resize(b.verts.size());
+			Vector2 *u2 = uv2.ptrw();
+			for (int v = 0; v < uv2.size(); v++) {
+				u2[v] = Vector2();
+			}
+			for (uint32_t i = 0; i < b.parts.size(); i++) {
+				const Vector4 &m = b.part_uv2[i];
+				if (m.x <= 0.0f) {
+					continue;
+				}
+				const Vector4i &pt = b.parts[i];
+				for (int v = pt.z; v < pt.z + pt.w; v++) {
+					u2[v] = Vector2(b.uvs[v].x * m.x + m.z, b.uvs[v].y * m.y + m.w);
+				}
+			}
+			arrays[Mesh::ARRAY_TEX_UV2] = uv2;
+		}
 		arrays[Mesh::ARRAY_VERTEX] = b.verts;
 		arrays[Mesh::ARRAY_NORMAL] = b.normals;
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
@@ -6358,6 +6594,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, bs.normal);
 			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "bark");
+			if (lichen_uv2) {
+				mesh->surface_set_material(mesh->get_surface_count() - 1, _lichen_material(m));
+				continue;
+			}
 		} else if (s == 3) {
 			// The climber's own leaf textures from the plant material; vertex colour is a tone.
 			const Ref<ArrayMesh> pmesh = _plant_climber_leaves(climber)[0];
@@ -6454,6 +6694,91 @@ Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 // weather-map wind). Twisting about the stalk is what SpeedTree's leaf ripple and Unreal's Pivot
 // Painter show; bending and twist are a few millimetres to a centimetre, which raster and the
 // path tracer's captured vertex shader both see.
+// The bark material with the lichen layer (trees.md 2h): BaseMaterial3D's own shader with the
+// lichen laid over the bark's albedo and roughness, before wetness and snow, which then lie on
+// the lichen as on the bark. Raster and path tracer run the same lines.
+Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_base) {
+	if (p_base.is_null() || RenderingServer::get_singleton() == nullptr) {
+		return p_base;
+	}
+	BaseMaterial3D::flush_changes();
+	String code = RenderingServer::get_singleton()->shader_get_code(p_base->get_shader_rid());
+	const int vx = code.find("void vertex() {");
+	const String anchor = "	ROUGHNESS = roughness_tex * roughness;\n";
+	const int ra = code.find(anchor);
+	if (code.is_empty() || vx < 0 || ra < 0) {
+		return p_base;
+	}
+	const String body = R"(
+	{
+		// Lichen (TreeGenerator::_lichen_material): the weight is 1 - COLOR.a; a colony covers
+		// the texels whose growth order is under it.
+		float lw = 1.0 - COLOR.a;
+		if (lw > 0.004) {
+			vec4 lm = texture(lichen_map, UV2);
+			float tc = lw * 1.3 * (1.0 - 0.6 * lichen_leafy_share);
+			float tf = lw * 1.3 * (0.25 + 0.75 * lichen_leafy_share);
+			float crust = 1.0 - smoothstep(tc - 0.08, tc, lm.r);
+			float leafy = 1.0 - smoothstep(tf - 0.06, tf, lm.g);
+			// A crust is a skin a fraction of a millimetre thick: the bark's own tone shows through
+			// it (darker in the bark's cracks), as do its relief and normal map.
+			float bark_tone = clamp(dot(albedo_tex.rgb, vec3(0.3, 0.5, 0.2)) / max(dot(COLOR.rgb, vec3(0.3, 0.5, 0.2)), 1e-3), 0.4, 1.4);
+			// Each crust its own species' tone, from whitish to grey-green; paler at the growing
+			// rim than in the older middle.
+			vec3 crust_col = lichen_crust_color * mix(vec3(1.0), vec3(0.9, 1.0, 0.82), fract(lm.b * 5.3)) * mix(0.82, 1.1, fract(lm.b * 13.7));
+			vec3 cc = (lm.b < lichen_orange_share ? lichen_orange_color : crust_col) * mix(0.78, 1.05, lm.r) * mix(1.0, bark_tone, 0.45);
+			vec3 lc = lichen_leafy_color * mix(0.8, 1.04, smoothstep(0.2, 1.0, lm.g)) * mix(1.0, bark_tone, 0.25);
+			ALBEDO = mix(ALBEDO, cc * lm.a, crust * 0.92);
+			ALBEDO = mix(ALBEDO, lc * mix(1.0, lm.a, 0.6), leafy);
+			ROUGHNESS = mix(ROUGHNESS, 0.9, max(crust, leafy));
+		}
+	}
+)";
+	code = code.insert(ra + anchor.length(), body);
+	const String uniforms = R"(uniform sampler2D lichen_map : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform vec3 lichen_crust_color : source_color = vec3(0.6, 0.62, 0.57);
+uniform vec3 lichen_leafy_color : source_color = vec3(0.6, 0.64, 0.55);
+uniform vec3 lichen_orange_color : source_color = vec3(0.74, 0.58, 0.28);
+uniform float lichen_leafy_share = 0.5;
+uniform float lichen_orange_share = 0.0;
+)";
+	code = code.insert(vx, uniforms + "\n");
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(code);
+	Ref<ShaderMaterial> m;
+	m.instantiate();
+	m->set_shader(sh);
+	// The base material's parameters, as BaseMaterial3D set them on its own RID.
+	List<PropertyInfo> uniforms_list;
+	sh->get_shader_uniform_list(&uniforms_list);
+	const RID base_rid = p_base->get_rid();
+	for (const PropertyInfo &pi : uniforms_list) {
+		Variant v = RenderingServer::get_singleton()->material_get_param(base_rid, pi.name);
+		if (v.get_type() == Variant::RID) {
+			// Textures go back as the Texture resources (the path tracer reads those).
+			for (int t = 0; t < BaseMaterial3D::TEXTURE_MAX; t++) {
+				const Ref<Texture2D> tex = p_base->get_texture(BaseMaterial3D::TextureParam(t));
+				if (tex.is_valid() && tex->get_rid() == RID(v)) {
+					v = tex;
+					break;
+				}
+			}
+		}
+		if (v.get_type() != Variant::NIL) {
+			m->set_shader_parameter(pi.name, v);
+		}
+	}
+	const LichenAffinity &la = LICHEN_AFFINITY[preset];
+	m->set_shader_parameter("lichen_map", _lichen_texture());
+	m->set_shader_parameter("lichen_leafy_share", la.leafy);
+	m->set_shader_parameter("lichen_orange_share", la.orange);
+	// Leafy lichens of acid bark are grey-green (Parmelia, Hypogymnia); of nutrient-rich bark
+	// yellower (Flavoparmelia, Physcia with Xanthoria about).
+	m->set_shader_parameter("lichen_leafy_color", Color(0.55f, 0.6f, 0.5f).lerp(Color(0.6f, 0.63f, 0.4f), CLAMP(la.orange * 3.0f, 0.0f, 1.0f)));
+	return m;
+}
+
 Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const {
 	if (leaf_flutter <= 0.0f || p_base.is_null() || RenderingServer::get_singleton() == nullptr) {
 		return p_base;
@@ -6763,6 +7088,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	climber_plant_leaves = p_from.climber_plant_leaves;
 	leaf_flutter = p_from.leaf_flutter;
 	moss_cover = p_from.moss_cover;
+	lichen_cover = p_from.lichen_cover;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -7538,6 +7864,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_fallen"), &TreeGenerator::is_fallen);
 	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
+	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &TreeGenerator::set_lichen_cover);
+	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
@@ -7619,6 +7947,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen"), "set_fallen", "is_fallen");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen_branch"), "set_fallen_branch", "is_fallen_branch");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "compress_vertices"), "set_compress_vertices", "is_compress_vertices");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "climber_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_climber_cover", "get_climber_cover");

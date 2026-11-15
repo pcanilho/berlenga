@@ -447,8 +447,14 @@ func _build_scene() -> void:
 func _render_later() -> void:
 	if OS.has_environment("WIRE"):
 		get_viewport().debug_draw = Viewport.DEBUG_DRAW_WIREFRAME
-	for i in (8 if raster else 12):
+	var frames := 8 if raster else 12
+	var t0 := 0
+	for i in frames:
+		if i == frames - 4:
+			t0 = Time.get_ticks_usec()
 		await RenderingServer.frame_post_draw
+	# The last four frames' mean, after shaders and acceleration structures settled.
+	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(1 if fails > 0 else 0)
