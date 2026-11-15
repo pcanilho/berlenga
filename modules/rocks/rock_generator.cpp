@@ -75,7 +75,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -88,7 +88,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -104,7 +104,7 @@ int RockGenerator::get_effective_resolution() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -134,7 +134,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f };
 	return w[family];
 }
 
@@ -595,6 +595,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	if (family == FAMILY_CLIFF_BLOCK) {
 		a *= 1.15f; // blocks in a wall run along the beds
 	}
+	if (family == FAMILY_CORESTONE) {
+		// Tor blocks lie between sheeting joints, which run near the ground surface and close up towards it:
+		// pillow-shaped, wider than thick (Twidale 1982).
+		a = MAX(a, 1.15f);
+		c *= 0.8f;
+	}
 	if (family == FAMILY_PEBBLE) {
 		c *= 0.8f; // shingle starts platy as well as wearing so
 	}
@@ -687,7 +693,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f, true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -697,6 +703,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float r = (0.3f + 0.5f * rng.randf()) * c;
 		const float depth = (0.06f + 0.1f * rng.randf()) * c;
 		scoops.push_back({ sp * 0.9f + out * (r - depth), r });
+	}
+	// Weathering pans (gnammas, rock basins): water standing on the flat top of a tor block rots a round,
+	// flat-floored pan into it, a few centimetres to decimetres deep (Twidale and Corbin 1963). One on most tops.
+	if (family == FAMILY_CORESTONE && rng.randf() < 0.6f) {
+		const float r = (0.25f + 0.25f * rng.randf()) * MIN(a, 1.0f);
+		const float depth = (0.08f + 0.1f * rng.randf()) * c;
+		const float big = r * 2.2f; // a large, shallow sphere: a pan with a flat floor and a sloping rim
+		const Vector3 at((rng.randf() - 0.5f) * a * 0.6f, c * 0.95f - depth + big, (rng.randf() - 0.5f) * 0.6f);
+		scoops.push_back({ at, big });
 	}
 	// Partial cracks along the joint directions, open only near the surface (fresh rockfall and cliff blocks).
 	LocalVector<RockCrack> cracks;
@@ -783,9 +798,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f };
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f };
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
-	const float round_eff = MIN(1.0f, roundness + spheroidal * (1.0f - roundness));
+	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
+	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
 	// Corners round to at most 0.7 of the half thickness: a curvature flow run longer would shrink a thin stone to
 	// nothing (a sphere of radius r vanishes at t = r^2 / 4).
 	const float corner = round_eff * 0.7f * c;
@@ -1639,7 +1655,7 @@ void RockGenerator::_bind_methods() {
 	ClassDB::bind_static_method("RockGenerator", D_METHOD("get_material", "rock_type"), &RockGenerator::get_material);
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rock_type", PROPERTY_HINT_ENUM, "Granite,Limestone,Sandstone,Basalt,Slate"), "set_rock_type", "get_rock_type");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "family", PROPERTY_HINT_ENUM, "Rockfall,Scree,Glacial,Cobble,Pebble,Cliff Block"), "set_family", "get_family");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "family", PROPERTY_HINT_ENUM, "Rockfall,Scree,Glacial,Cobble,Pebble,Cliff Block,Corestone"), "set_family", "get_family");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "0,160,1"), "set_resolution", "get_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transport_distance", PROPERTY_HINT_RANGE, "-1,200000,1,or_greater,suffix:m"), "set_transport_distance", "get_transport_distance");
@@ -1661,5 +1677,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_COBBLE);
 	BIND_ENUM_CONSTANT(FAMILY_PEBBLE);
 	BIND_ENUM_CONSTANT(FAMILY_CLIFF_BLOCK);
+	BIND_ENUM_CONSTANT(FAMILY_CORESTONE);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }

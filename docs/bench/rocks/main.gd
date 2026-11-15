@@ -7,7 +7,7 @@ extends Node3D
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1)
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
-#                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff puts the camera at the
+#                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast puts the camera at the
 #                         densest place of that layer (default scree)
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
@@ -20,8 +20,8 @@ extends Node3D
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block"]
-const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone"]
+const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast"]
 const WORLD := 2048.0
 
 var args := {}
@@ -265,7 +265,7 @@ func _world() -> void:
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
-	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0}.get(view, 10.0) as float
+	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0, "tor": 22.0, "coast": 60.0}.get(view, 10.0) as float
 	if args.has("dist"):
 		dist = float(args["dist"])
 	cam.position = _view_from(spot, dist)
@@ -517,9 +517,10 @@ func _test() -> void:
 		for s in st:
 			var p: Vector3 = s["position"]
 			var sc: float = s["scale"]
-			if l != RockField3D.LAYER_CLIFF and p.y - float(s["ground"]) > sc * 3.0:
+			# Tor and coast blocks stand in stacks: their upper tiers are meant to be off the ground.
+			if l < RockField3D.LAYER_CLIFF and p.y - float(s["ground"]) > sc * 3.0:
 				floating += 1
-			if l != RockField3D.LAYER_CLIFF and p.y - float(s["ground"]) < -sc * 1.2:
+			if l < RockField3D.LAYER_CLIFF and p.y - float(s["ground"]) < -sc * 1.2:
 				buried += 1
 			# A cliff block's centre lies inside the wall: under the terrain at its own plan position.
 			if l == RockField3D.LAYER_CLIFF and p.y > gen.get_height(p) + 0.1:

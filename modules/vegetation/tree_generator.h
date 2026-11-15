@@ -394,6 +394,8 @@ private:
 	LocalVector<int> cut_heads; // Stubs and knuckles the head is made of.
 	int last_cut_year = -1000;
 	HashSet<int> bolling; // The head's nodes, swollen (mesher: no taper at their ends).
+	HashMap<int, int> cut_stubs; // Sawn pole stubs on the head or stool, by the year they were cut.
+	HashMap<int, int> seat_cuts; // Knuckles and stool tops: how many times poles were cut from them.
 	bool uprooted = false; // A fallen tree thrown with its root plate (section 5k); else snapped at the butt.
 	// The root plate of an uprooted tree (section 5k): built upright about base0, then turned
 	// with the stem about the hinge.
@@ -440,7 +442,8 @@ private:
 	void _break_limbs();
 	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
 	void _root_plate(Builder &r_bark);
-	void _cut_back(bool p_first);
+	void _cut_back(bool p_first, int p_year);
+	void _saw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_age, uint32_t p_seed);
 	float _stem_top() const;
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);

@@ -15,6 +15,8 @@ extends Node3D
 #   --view=storm    a gale over deep open sea (22 m/s, 4 cascades, depth 80 m, no floor) from 7 m up; storm_sun looks
 #                   toward the sun from 9 m up, through the crests; storm_low looks downwind from 3.5 m at 20 m/s
 #                   (the windrows run away from the viewer)
+#   --view=storm_foam  13 m/s deep sea from 8 m up, 25 degrees down, sun to the side (--sun-pitch=20): whitecaps ageing to lace
+#   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -168,6 +170,7 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
+		elif a == "--taa": get_viewport().use_taa = true # resolves the jittered ray marches (wave shadows), as in a game
 		elif a == "--wader": wader_on = true
 		elif a == "--contact": contact = true
 		elif a == "--wader-nopush": wader_on = true; wader_push = false
@@ -253,7 +256,7 @@ func _ready() -> void:
 	# Sand: a 200 m slab sloping down away from the camera, from dry beach out to about 9 m of water, with a few rocks.
 	var sand_mat := StandardMaterial3D.new()
 	sand_mat.albedo_texture = _checker(Color(0.78, 0.7, 0.55), Color(0.62, 0.55, 0.42))
-	sand_mat.uv1_scale = Vector3(100, 100, 1)
+	sand_mat.uv1_scale = Vector3(500, 500, 1)
 	if plain_sand:
 		# Sand without the checker (for shots): soft noise between two sand tones.
 		var nt := NoiseTexture2D.new()
@@ -265,7 +268,7 @@ func _ready() -> void:
 		ramp.set_color(1, Color(0.8, 0.73, 0.58))
 		nt.color_ramp = ramp
 		sand_mat.albedo_texture = nt
-		sand_mat.uv1_scale = Vector3(40, 40, 1)
+		sand_mat.uv1_scale = Vector3(200, 200, 1)
 	sand_mat.roughness = 0.95
 	if contact and ClassDB.class_exists("WeatherMap3D"):
 		sand_mat.set("wetness_enabled", true)
@@ -281,7 +284,8 @@ func _ready() -> void:
 	if boat_speed > 0.0 or view.begins_with("storm"):
 		pass # open sea: no floor
 	else:
-		_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
+		# Wide enough that its far edge (a straight colour line through clear water) stays out of every view.
+		_slab(Vector3(1000, 1, 1000), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
@@ -321,6 +325,11 @@ func _ready() -> void:
 		water.set("render_extent", 3000.0)
 		if view == "storm_low":
 			water.set("wind_speed", 20.0)
+		elif view == "storm_foam":
+			water.set("wind_speed", 13.0) # Beaufort 6: whitecaps everywhere, no gale streaks yet
+		elif view == "storm_glitter":
+			water.set("wind_speed", 8.0)
+			water.set("wave_cascades", 3)
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
@@ -414,6 +423,15 @@ func _ready() -> void:
 			# Into the light, low: the thin crests between camera and sun.
 			var to_sun := sun.transform.basis.z
 			cam.look_at_from_position(Vector3(0, 9.0, 0.0), Vector3(to_sun.x, 0.0, to_sun.z).normalized() * 80.0 + Vector3(0, 3.0, 0))
+		"storm_foam":
+			# 8 m up, 25 degrees down, the sun to the side: whitecaps and the lace they leave.
+			var to_sun_f := sun.transform.basis.z
+			var side := Vector3(to_sun_f.z, 0.0, -to_sun_f.x).normalized()
+			cam.look_at_from_position(Vector3(0, 8.0, 0.0), side * 17.0)
+		"storm_glitter":
+			# 2 m up, into the sun's glitter path.
+			var to_sun_g := sun.transform.basis.z
+			cam.look_at_from_position(Vector3(0, 2.0, 0.0), Vector3(to_sun_g.x, 0.0, to_sun_g.z).normalized() * 40.0)
 		"sea_top":
 			cam.look_at_from_position(Vector3(0, 90.0, -110.0), Vector3(0, 0.0, -110.01))
 		_:

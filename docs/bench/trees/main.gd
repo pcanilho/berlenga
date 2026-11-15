@@ -22,6 +22,8 @@ extends Node3D
 #   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
 #   --litter          leaf litter on the ground round the first tree (roots sink into it)
 #   --sun=EL,AZ       sun elevation and azimuth in degrees (default 35,35)
+#   --pollards        a working willow pollard, a lapsed beech pollard and a hazel coppice stool
+#                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
@@ -55,6 +57,7 @@ var view := "side"
 var overrides := {}
 var decays := false
 var litter := false
+var pollards := false
 var sun_dir := Vector2(-35, 35) # Elevation, azimuth (degrees).
 var sun_energy := 1.4
 var day := -1
@@ -103,6 +106,8 @@ func _ready() -> void:
 			view = a.substr(7)
 		elif a == "--decays":
 			decays = true
+		elif a == "--pollards":
+			pollards = true
 		elif a == "--litter":
 			litter = true
 		elif a.begins_with("--sun-energy="):
@@ -285,6 +290,25 @@ func _build_scene() -> void:
 	var xs: Array[float] = []
 	if decays:
 		rows = [0, 1, 2, 3, 4, 5, 6]
+	if pollards:
+		presets = []
+		# Willow pollard cut 3 years ago; beech last cut 60 years ago, its poles grown on into
+		# limbs; hazel stool cut on an 8-year cycle, 3 years since the last.
+		var trio := [[12, 2.2, 8, 4, 60], [1, 2.5, 14, 60, 160, 0.7], [5, 0.15, 8, 5, 60]]
+		for i in trio.size():
+			var t: Array = trio[i]
+			overrides["cut_height"] = t[1]
+			overrides["cut_cycle"] = t[2]
+			overrides["cut_since"] = t[3]
+			overrides["years"] = t[4]
+			# A lapsed beech pollard of 160 years is a veteran (burls, hollows, epicormic shoots).
+			overrides["veteran"] = t[5] if t.size() > 5 else 0.0
+			var d := _gen(t[0], false, seed)
+			xs.append(5.0 * i)
+			_place(d.mesh, Vector3(5.0 * i - (0.8 if i == 2 else 0.0), 0, 3.0 if i == 2 else 0.0))
+			print("%s cut %.2f m: %.1f m tall, %d tris, %.0f ms" % [NAMES[t[0]], t[1], d.height, d.tris, d.ms])
+		overrides.clear()
+		_add_winter_grass()
 	for p in presets:
 		var w := 0.0
 		var infos := []
@@ -340,7 +364,9 @@ func _build_scene() -> void:
 	sun.light_energy = sun_energy
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
-	if view in ["bole", "junction", "fork", "leaf", "veteran", "base"]:
+	if pollards:
+		sun.directional_shadow_max_distance = 40.0
+	elif view in ["bole", "junction", "fork", "leaf", "veteran", "base"]:
 		# Close-ups: the cascades over 300 m blur the leaves' shadow flecks into blocky speckle.
 		sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
@@ -367,7 +393,16 @@ func _build_scene() -> void:
 	cam.fov = 40.0
 	add_child(cam)
 	var cx := x * 0.5
-	if view == "trunk":
+	if pollards:
+		cam.position = Vector3(5.0, 1.7, 11.0)
+		cam.look_at(Vector3(5.0, 1.5, 0))
+		cam.fov = 42.0
+		if OS.has_environment("CAM"):
+			var cv := OS.get_environment("CAM").split_floats(",")
+			cam.position = Vector3(cv[0], cv[1], cv[2])
+			cam.look_at(Vector3(cv[3], cv[4], cv[5]))
+			cam.fov = cv[6]
+	elif view == "trunk":
 		# Bark at arm's length: 2.2 m from the first tree's trunk, at chest height.
 		cam.position = Vector3(xs[0] + 0.3, 1.4, 2.2)
 		cam.look_at(Vector3(xs[0], 1.2, 0))
@@ -517,6 +552,36 @@ func _render_later() -> void:
 	print("saved ", out)
 	get_tree().quit(1 if fails > 0 else 0)
 
+
+# Winter pasture under the pollards: GrassField3D grazed short, its blades upright (leaning tiles
+# band under a low sun), on its own ground shader so gaps show the sward's base, not a bare plane.
+func _add_winter_grass() -> void:
+	var g := GrassField3D.new()
+	g.blade_height = Vector2(0.05, 0.16)
+	g.blade_width = 0.03
+	g.density = 220.0
+	g.lean = 0.12
+	g.dryness = 0.75
+	g.radius = 40.0
+	add_child(g)
+	var gs := Shader.new()
+	gs.code = "shader_type spatial;\n" + GrassField3D.get_ground_shader_code() + """
+varying vec3 wp;
+void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	ALBEDO = grass_ground(wp, vec3(0.11, 0.1, 0.06));
+	ROUGHNESS = 0.95;
+}
+"""
+	var gm := ShaderMaterial.new()
+	gm.shader = gs
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(200, 200)
+	ground.mesh = pm
+	ground.material_override = gm
+	ground.position.y = 0.002
+	add_child(ground)
 
 # Leaf litter round a tree's foot: fallen oak leaves (about 8 x 5 cm, curled, browns from fresh
 # to rotted), lying near flat, dense enough that the roots sink into a covered floor rather than

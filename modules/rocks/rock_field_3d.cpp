@@ -186,7 +186,7 @@ Vector3 RockField3D::_target_position() const {
 }
 
 real_t RockField3D::_cell_size(Layer p_layer) const {
-	return (p_layer == LAYER_SCREE || p_layer == LAYER_RIVER || p_layer == LAYER_SHORE) ? 32.0 : 128.0;
+	return (p_layer == LAYER_SCREE || p_layer == LAYER_RIVER || p_layer == LAYER_SHORE) ? 32.0 : 128.0; // tors and coast 128 m too
 }
 
 uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator::Family p_family, int p_bin) const {
@@ -817,6 +817,279 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						}
 					}
 				}
+			}
+		} break;
+		case LAYER_TOR: {
+			// Tors and outcrops (Linton 1955; Twidale 1982): bedrock rotted along its joints under the soil, the grus
+			// stripped off the crests, and the sounder joint blocks left standing in stacks, rounded in place, on the
+			// highest convex ground. Granite most of all, gritstone and basalt less. One tor at most per cell, at the
+			// most convex point of thin soil, plus a few low outcrops on the other crests.
+			static const float tor_rate[RockGenerator::ROCK_MAX] = { 0.8f, 0.1f, 0.5f, 0.3f, 0.15f };
+			const real_t sub = 16.0;
+			struct Crest {
+				Vector3 p;
+				float score;
+			};
+			LocalVector<Crest> crests;
+			for (real_t z = p_rect.position.y + sub * 0.5; z < p_rect.get_end().y; z += sub) {
+				for (real_t x = p_rect.position.x + sub * 0.5; x < p_rect.get_end().x; x += sub) {
+					const Vector3 c(x + (rng.randf() - 0.5f) * sub * 0.6f, 0, z + (rng.randf() - 0.5f) * sub * 0.6f);
+					if (gen->get_water_depth(c) > 0.0) {
+						continue;
+					}
+					const real_t h = gen->get_height(c);
+					real_t ring = 0.0;
+					for (int k = 0; k < 6; k++) {
+						const real_t a = real_t(k) * Math::TAU / 6.0;
+						ring += gen->get_height(c + Vector3(Math::cos(a) * 15.0, 0, Math::sin(a) * 15.0));
+					}
+					const float convex = float(h - ring / 6.0);
+					const Vector3 n = ground_normal(gen, c.x, c.z, 3.0);
+					if (convex < 0.6f || n.y < 0.85f) {
+						continue; // not a crest, or too steep (the grus would not be stripped evenly)
+					}
+					const float exposure = float(gen->get_rock_exposure(c));
+					const float thin = 1.0f - Math::smoothstep(0.3f, 1.5f, float(gen->get_soil_depth(c)));
+					crests.push_back({ c, convex * (0.4f + 0.6f * MAX(exposure, thin)) });
+				}
+			}
+			if (crests.is_empty()) {
+				break;
+			}
+			struct ByScore {
+				_FORCE_INLINE_ bool operator()(const Crest &p_a, const Crest &p_b) const { return p_a.score > p_b.score; }
+			};
+			crests.sort_custom<ByScore>();
+			// A stack of corestones: two to five tiers between sheeting joints, the blocks of a tier side by side,
+			// tiers thinner and narrower upwards, each shifted a little on the one below.
+			auto build_stack = [&](const Vector3 &p_at, RockGenerator::RockType p_type, uint32_t p_family_key, float p_width, int p_tiers, float p_shrink, real_t p_base, bool p_sea) {
+				Library *lib = _ensure_library(p_family_key);
+				if (!lib) {
+					return real_t(0.0);
+				}
+				const real_t yaw = rng.randf() * Math::TAU;
+				const Vector3 along(Math::cos(yaw), 0, Math::sin(yaw));
+				real_t y = p_base;
+				Vector3 centre = p_at;
+				for (int t = 0; t < p_tiers; t++) {
+					const float w = p_width * Math::pow(p_shrink, float(t));
+					const int count = t == 0 ? 1 + int(rng.randf() * 2.4f) : (t < p_tiers - 1 && rng.randf() < 0.35f ? 2 : 1);
+					real_t tier_top = y;
+					for (int k = 0; k < count; k++) {
+						Stone st;
+						st.layer = p_layer;
+						st.library = p_family_key;
+						st.variant = pick_variant(lib);
+						const Vector3 ax = lib->axes[st.variant];
+						st.scale = w / float(count) * (0.85f + 0.3f * rng.randf()) * 0.5f;
+						const real_t offset = (real_t(k) - (count - 1) * 0.5) * ax.x * st.scale * 1.9;
+						const Vector3 xz = centre + along * offset;
+						Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.25f);
+						b = Basis(Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f).normalized(), Math::deg_to_rad(4.0f) * (rng.randf() - 0.5f)) * b;
+						st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+						const real_t bottom = -lib->bottom[st.variant] * st.scale;
+						st.position = Vector3(xz.x, y + bottom, xz.z);
+						st.ground = p_sea ? y - 50.0 : gen->get_height(xz);
+						st.footprint = t == 0 && !p_sea ? MAX(ax.x, ax.z) * st.scale * 0.85f : 0.0f;
+						tier_top = MAX(tier_top, st.position.y + ax.y * st.scale);
+						r_stones.push_back(st);
+					}
+					// The next tier sits on this one, settled into its rounded top (the rounded edges leave the
+					// joint open as a groove, not a gap).
+					y = tier_top - 0.16 * (tier_top - y);
+					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.3f;
+				}
+				return y;
+			};
+			int outcrops = 0;
+			for (uint32_t i = 0; i < crests.size() && outcrops < 4; i++) {
+				const Crest &cr = crests[i];
+				if (!p_rect.has_point(Vector2(cr.p.x, cr.p.z))) {
+					continue;
+				}
+				const RockGenerator::RockType type = _type_at(gen, cr.p);
+				const uint32_t key = _library_key(type, RockGenerator::FAMILY_CORESTONE, 0);
+				const real_t ground = gen->get_height(cr.p);
+				if (i == 0 && rng.randf() < tor_rate[type] * float(density) * Math::smoothstep(0.6f, 3.0f, cr.score)) {
+					// The tor: base blocks 3 to 7 m, set a quarter of their thickness into the bedrock below.
+					const float width = 3.0f + 4.0f * rng.randf();
+					const uint32_t first = r_stones.size();
+					build_stack(cr.p, type, key, width, 2 + int(rng.randf() * 3.99f), 0.82f, ground - width * 0.12f, false);
+					if (first < r_stones.size()) {
+						const Stone base = r_stones[first]; // a copy: the skirt adds to r_stones
+						skirt(base, type, 1.0f);
+					}
+				} else if (rng.randf() < 0.5f * tor_rate[type] * float(density)) {
+					// A low outcrop: one tier of rounded joint blocks breaking the turf.
+					const float width = 1.5f + 2.5f * rng.randf();
+					build_stack(cr.p, type, key, width, 1, 1.0f, ground - width * 0.2f, false);
+					outcrops++;
+				}
+			}
+		} break;
+		case LAYER_COAST: {
+			// A cliffed coast retreats by undercutting at the waterline: the notch, then the cliff falls, and harder
+			// joint-bounded remnants stand off it as sea stacks, arches where a headland's cave cut right through,
+			// and the wave-cut platform the cliff stood on, a rock shelf near low water (Trenhaile 1987; Sunamura
+			// 1992). Stacks and arches here are built of large wall blocks stacked tier on tier from the bed; the
+			// platform of flat-topped blocks just above the water line at the cliff foot.
+			const real_t sub = 16.0;
+			const real_t level_any = gen->get_sea_level();
+			struct Spot {
+				Vector3 p;
+				Vector3 to_land;
+				float score;
+			};
+			LocalVector<Spot> spots;
+			for (real_t z = p_rect.position.y + sub * 0.5; z < p_rect.get_end().y; z += sub) {
+				for (real_t x = p_rect.position.x + sub * 0.5; x < p_rect.get_end().x; x += sub) {
+					const Vector3 c(x, 0, z);
+					const real_t depth = gen->get_water_depth(c);
+					if (depth < 0.8 || depth > 12.0) {
+						continue;
+					}
+					const real_t level = gen->get_water_level(c);
+					if (Math::is_nan(level) || Math::abs(level - level_any) > 0.5) {
+						continue; // the sea only, not lakes and rivers
+					}
+					// A cliff within 50 m: land rising 8 m or more above the water.
+					Vector3 best_dir;
+					float best_rise = 0.0f;
+					for (int k = 0; k < 8; k++) {
+						const real_t a = real_t(k) * Math::TAU / 8.0;
+						const Vector3 d(Math::cos(a), 0, Math::sin(a));
+						for (real_t r = 15.0; r <= 50.0; r += 17.5) {
+							const float rise = float(gen->get_height(c + d * r) - level);
+							if (rise > best_rise) {
+								best_rise = rise;
+								best_dir = d;
+							}
+						}
+					}
+					if (best_rise < 8.0f) {
+						continue;
+					}
+					const float rock = float(gen->get_rock_exposure(c + best_dir * 30.0));
+					spots.push_back({ c, best_dir, MIN(best_rise, 40.0f) * (0.3f + 0.7f * rock) / float(1.0 + depth * 0.1) });
+				}
+			}
+			if (spots.is_empty()) {
+				break;
+			}
+			struct ByScore {
+				_FORCE_INLINE_ bool operator()(const Spot &p_a, const Spot &p_b) const { return p_a.score > p_b.score; }
+			};
+			spots.sort_custom<ByScore>();
+			const Spot &sp = spots[0];
+			const RockGenerator::RockType type = _type_at(gen, sp.p + sp.to_land * 30.0);
+			const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
+			Library *lib = _ensure_library(key);
+			if (!lib) {
+				break;
+			}
+			const real_t level = gen->get_water_level(sp.p);
+			auto pillar = [&](const Vector3 &p_at, float p_width, real_t p_top, real_t p_yaw) {
+				// Tier on tier of wall blocks from the bed up to p_top, narrowing a little upwards; the bed under it.
+				real_t y = gen->get_height(p_at) - p_width * 0.15f;
+				Vector3 centre = p_at;
+				int tiers = 0;
+				while (y < p_top - 0.5 && tiers < 12) {
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = pick_variant(lib);
+					const Vector3 ax = lib->axes[st.variant];
+					const float w = p_width * Math::pow(0.92f, float(tiers)) * (0.85f + 0.3f * rng.randf());
+					// Stood on end: the block's long axis up, so a stack is a few tall joint-bounded columns, each
+					// sunk a fifth into the one below so the joints read as grooves in one mass, not a pile.
+					st.scale = w * 0.5f;
+					Basis b = Basis(Vector3(0, 1, 0), p_yaw + (rng.randf() - 0.5f) * 0.3f) * Basis(Vector3(0, 0, 1), Math::PI * 0.5 + (rng.randf() - 0.5f) * 0.1);
+					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+					const real_t half_up = ax.x * st.scale;
+					st.position = Vector3(centre.x, y + half_up, centre.z);
+					st.ground = y - 50.0;
+					st.footprint = 0.0f;
+					r_stones.push_back(st);
+					if (tiers < 2) {
+						// The foot is broader: a second column beside the first, a little lower.
+						Stone st2 = st;
+						st2.variant = pick_variant(lib);
+						const Vector3 side = Vector3(Math::cos(p_yaw + 1.5708f), 0, Math::sin(p_yaw + 1.5708f)) * w * (0.35f + 0.2f * rng.randf());
+						st2.position += side - Vector3(0, half_up * (0.15f + 0.2f * rng.randf()), 0);
+						r_stones.push_back(st2);
+					}
+					y = st.position.y + half_up * 0.4;
+					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.12f;
+					tiers++;
+				}
+				return y;
+			};
+			if (!p_rect.has_point(Vector2(sp.p.x, sp.p.z)) || rng.randf() > 0.6f * float(density)) {
+				break;
+			}
+			const real_t yaw = Math::atan2(sp.to_land.z, sp.to_land.x);
+			const Vector3 strike(-sp.to_land.z, 0, sp.to_land.x);
+			if (rng.randf() < 0.3f) {
+				// An arch: two piers along the coast and a lintel block over the gap between them.
+				const float w = 4.0f + 3.0f * rng.randf();
+				const float gap = w * (0.7f + 0.5f * rng.randf());
+				const real_t top = level + 6.0 + 10.0 * rng.randf();
+				const real_t t1 = pillar(sp.p - strike * (gap * 0.5f + w * 0.5f), w, top, yaw);
+				const real_t t2 = pillar(sp.p + strike * (gap * 0.5f + w * 0.5f), w, top, yaw);
+				Stone st;
+				st.layer = p_layer;
+				st.library = key;
+				st.variant = pick_variant(lib);
+				const Vector3 ax = lib->axes[st.variant];
+				// The lintel's long axis spans both piers.
+				st.scale = (gap + 1.6f * w) / MAX(2.0f * ax.x, 0.5f);
+				Basis b(Vector3(0, 1, 0), Math::atan2(-strike.z, strike.x));
+				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+				st.position = Vector3(sp.p.x, MIN(t1, t2) - lib->bottom[st.variant] * st.scale - 0.1 * ax.y * st.scale, sp.p.z);
+				st.ground = st.position.y - 50.0;
+				st.footprint = 0.0f;
+				r_stones.push_back(st);
+			} else {
+				// A stack: 5 to 12 m across, standing 8 to 30 m above the water.
+				const float w = 5.0f + 7.0f * rng.randf();
+				pillar(sp.p, w, level + 8.0 + 22.0 * rng.randf() * rng.randf(), yaw);
+				// Fallen blocks at its foot.
+				for (int k = 0; k < 3; k++) {
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = pick_variant(lib);
+					st.scale = w * (0.12f + 0.12f * rng.randf());
+					const Vector3 at = sp.p + Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f).normalized() * w * (0.8f + 0.5f * rng.randf());
+					_rest(gen, st, *lib, at, rng.randf() * Math::TAU, 0.2, Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(20.0f) * rng.randf(), 0.6);
+					r_stones.push_back(st);
+				}
+			}
+			// The platform: a jointed rock pavement at the cliff foot, blocks on a grid along the joint sets with
+			// narrow open joints between them, tops a little above the water line, set deep into the bed.
+			const Vector3 shore_dir = sp.to_land;
+			const float joint = 2.2f + 1.2f * rng.randf();
+			for (int k = 0; k < 64; k++) {
+				const int gi = k % 8 - 4, gj = k / 8;
+				const Vector3 at = sp.p + shore_dir * (6.0f + float(gj) * joint * 1.05f) + strike * (float(gi) * joint * 1.05f + (gj & 1) * joint * 0.3f);
+				const real_t h = gen->get_height(at);
+				if (h > level + 0.8 || h < level - 1.5 || rng.randf() < 0.2f) {
+					continue;
+				}
+				Stone st;
+				st.layer = p_layer;
+				st.library = key;
+				st.variant = pick_variant(lib);
+				const Vector3 ax = lib->axes[st.variant];
+				st.scale = joint * 0.5f / MAX(ax.x, 1.0f);
+				Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.06f);
+				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+				const real_t top = level + 0.1 + 0.35 * rng.randf();
+				st.position = Vector3(at.x, top - ax.y * st.scale, at.z);
+				st.ground = h;
+				st.footprint = MAX(ax.x, ax.z) * st.scale * 0.85f;
+				st.film = 0.6f;
+				r_stones.push_back(st);
 			}
 		} break;
 		default:
@@ -1773,7 +2046,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_stones_per_cell", PROPERTY_HINT_RANGE, "1,100000,1"), "set_max_stones_per_cell", "get_max_stones_per_cell");
-	static const char *layer_names[LAYER_MAX] = { "rockfall", "scree", "glacial", "river", "shore", "cliff" };
+	static const char *layer_names[LAYER_MAX] = { "rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast" };
 	for (int l = 0; l < LAYER_MAX; l++) {
 		ADD_GROUP(String(layer_names[l]).capitalize(), String(layer_names[l]) + "_");
 		ADD_PROPERTYI(PropertyInfo(Variant::BOOL, String(layer_names[l]) + "_enabled"), "set_layer_enabled", "is_layer_enabled", l);
@@ -1799,5 +2072,7 @@ void RockField3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LAYER_RIVER);
 	BIND_ENUM_CONSTANT(LAYER_SHORE);
 	BIND_ENUM_CONSTANT(LAYER_CLIFF);
+	BIND_ENUM_CONSTANT(LAYER_TOR);
+	BIND_ENUM_CONSTANT(LAYER_COAST);
 	BIND_ENUM_CONSTANT(LAYER_MAX);
 }
