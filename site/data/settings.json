@@ -927,18 +927,6 @@
    "topic": "Currents and rivers"
   },
   {
-   "name": "River hydraulics",
-   "settings": [
-    "gradually_varied_flow",
-    "bend_superelevation"
-   ],
-   "note": "",
-   "what": "rivers pool behind bumps, draw down before steps and end fast reaches in a hydraulic jump; the surface banks up round bends.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
    "name": "Contact waterfalls",
    "settings": [
     "PhysXWaterfalls3D",
