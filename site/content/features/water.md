@@ -129,6 +129,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *River live flow: the wake swings behind the rock.*
 
+- **Live water** (`PhysXLiveWater3D`): water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
 
   ![Foam lines trailing a rock in a current](media/white-water.gif)
