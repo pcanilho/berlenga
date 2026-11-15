@@ -1136,8 +1136,10 @@ void fragment() {
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
+	vec3 unlit_rgb = base_rgb;
 #if !defined(RT)
-	base_rgb *= water_raster_body_light(); // lit by the sun and sky, as the foam beside it is
+	// Lit by the sky here and by the sun through light() (shadowed), as the foam beside it is.
+	base_rgb *= water_raster_body_light();
 #endif
 	float base_a = mix(water_color.a, shallow_color.a, shallow);
 	// Thin water is clear: the swash film and the last few cm at the edge let
@@ -1199,12 +1201,20 @@ void fragment() {
 	float a0 = water_a + wet_a;
 	float inv_a0 = 1.0 / max(a0, 1e-4);
 	vec3 open_rgb = base_rgb * (1.0 - foam) * water_a * inv_a0;
+	vec3 open_unlit = unlit_rgb * (1.0 - foam) * water_a * inv_a0;
 	vec3 lit_rgb = (foam_color.rgb * foam * water_a + wet_sand_color.rgb * wet_a) * inv_a0;
 	vec4 refl = vec4(open_rgb, a0);
+	// The sun's share (body light and glitter) goes through light(), so the water takes the scene's shadows.
+	vec3 sun_body = water_raster_lit() ? open_unlit / PI : vec3(0.0);
+	vec4 sun_glint = vec4(0.0, 1.0, 0.0, 0.0);
+	float sun_a2 = 1.0;
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness);
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness, open_unlit, sun_body, sun_glint, sun_a2);
 	}
+	wr_sun_body = sun_body;
+	wr_sun_glint = sun_glint;
+	wr_sun_a2 = sun_a2;
 	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
 	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
 	float lit_w = clamp((foam * water_a + wet_a) * inv_a0, 0.0, 1.0);
@@ -1219,6 +1229,15 @@ void fragment() {
 #endif // UNDERWATER_SURFACE
 }
 #endif // UNDERWATER_FOG
+
+#if !defined(RT) && !defined(UNDERWATER_SURFACE) && !defined(UNDERWATER_FOG)
+// The lights on the water: foam and wet sand (ALBEDO) as a Lambert surface, and the open water's sun share
+// (water_raster_reflections.h), all under each light's shadow and cloud projector.
+void light() {
+	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * max(dot(NORMAL, LIGHT), 0.0) / PI;
+	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body, wr_sun_glint, wr_sun_a2);
+}
+#endif
 )";
 
 // The whole shader: head, the raster reflections (water_raster_reflections.h), tail.

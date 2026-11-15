@@ -1,0 +1,1 @@
+- Water: rivers, lakes and the sea take shadows in raster (terrain, cliffs, objects and cloud shadows darken the sun's glitter and sunlit colour); the sky reflection stays.

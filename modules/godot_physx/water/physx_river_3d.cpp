@@ -284,14 +284,22 @@ void fragment() {
 	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float deep = smoothstep(0.0, 1.2, depth);
-	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl) * water_raster_body_light();
+	vec3 unlit_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
+	vec3 base_rgb = unlit_rgb * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	float a0 = mix(base_a, foam_color.a, foam) * edge;
 	// The reflection term is linear in the colour, so the water's part and the
 	// foam's part split exactly: what was one unshaded colour is now emission
 	// plus a lit albedo, the same where the light is the old fixed one.
-	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness);
+	// The sun's share (body light and glitter) goes through light(), so the water takes the scene's shadows.
+	vec3 sun_body;
+	vec4 sun_glint;
+	float sun_a2;
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
+	wr_sun_body = sun_body;
+	wr_sun_glint = sun_glint;
+	wr_sun_a2 = sun_a2;
 	float a_new = max(refl.a, 1e-4);
 	// Light the surface let through (1 - F), recovered from the alpha it returned.
 	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
@@ -305,6 +313,15 @@ void fragment() {
 	ALPHA = refl.a;
 #endif
 }
+
+#if !defined(RT)
+// The lights on the river: the white water (ALBEDO) as a Lambert surface, and the open water's sun share
+// (water_raster_reflections.h), all under each light's shadow and cloud projector.
+void light() {
+	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * max(dot(NORMAL, LIGHT), 0.0) / PI;
+	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body, wr_sun_glint, wr_sun_a2);
+}
+#endif
 )";
 
 // The whole shader: head, the raster reflections (water_raster_reflections.h), tail.

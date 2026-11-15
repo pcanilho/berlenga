@@ -2221,3 +2221,24 @@ and path tracing fade the bed alike), `d` the still-water depth and `mu` the cos
 Alpha goes from the water's own value over the shallows to opaque where the bed is gone. The swash film and the
 waterline's cut-out are unchanged. Same technique as depth-based water opacity in UE's single-layer water and
 HDRP's water (absorption distance).
+
+## Every water body takes shadows (15 Nov, bug)
+
+Paulo saw the river under the big fall stay bright in the cliff's shadow. In raster the open water of PhysXRiver3D
+and PhysXWaterSurface3D (lakes, the sea) is drawn as emission, its own bounded look: lit as a whole PBR surface
+and blended over the lit floor it had blown out. But the sun's share of that emission (the glitter's GGX lobe and
+the sun's light on the body colour) came from uniforms, so no shadow map, terrain shadow or cloud projector ever
+reached it. Foam, wet sand, the contact sheets, the plunge columns and spray were already lit as surfaces and took
+shadows; the path tracer traces its own shadows for all of them.
+
+- How engines do it: water shaders take the main light's shadow attenuation for the sun specular and the
+  sunlit part of the scattering, and keep the sky reflection unshadowed (Unity HDRP water samples the directional
+  shadow for its specular and its scattering; UE's single-layer water applies the directional light's shadow to
+  its direct lighting while reflections come from captures and SSR).
+- Built: the sun's two terms move to light(). The fragment hands the body colour's weight, the glitter's normal,
+  weight and roughness (widened by the screen derivatives there, since light() has none) to light() through
+  varyings; light() adds them for the directional light under `ATTENUATION` and `LIGHT_COLOR`, which carry the
+  shadow maps, the light's exposure normalisation and the cloud projector. The sky's share of the body light and
+  the mirrored sky stay in the emission, since water in shadow still mirrors the sky. Foam keeps a Lambert term in
+  the same light().
+- Under 0.6 cloud cover the sea now darkens under the cloud shadows like the beach beside it.
