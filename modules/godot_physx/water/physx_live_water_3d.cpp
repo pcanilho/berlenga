@@ -80,6 +80,8 @@ void PhysXLiveWater3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sources"), &PhysXLiveWater3D::get_sources);
 	ClassDB::bind_method(D_METHOD("set_source_radius", "radius"), &PhysXLiveWater3D::set_source_radius);
 	ClassDB::bind_method(D_METHOD("get_source_radius"), &PhysXLiveWater3D::get_source_radius);
+	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_position", "radius"), &PhysXLiveWater3D::submit_sphere);
+	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXLiveWater3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("set_streaming", "enabled"), &PhysXLiveWater3D::set_streaming);
 	ClassDB::bind_method(D_METHOD("is_streaming"), &PhysXLiveWater3D::is_streaming);
 	ClassDB::bind_method(D_METHOD("set_stream_follow", "path"), &PhysXLiveWater3D::set_stream_follow);
@@ -337,7 +339,7 @@ void PhysXLiveWater3D::_step(float p_dt) {
 				f[0] = f[1] = f[2] = f[3] = 0.0f;
 				continue;
 			}
-			const float h = ground[i] + depth[i];
+			const float h = ground[i] + depth[i] + occupied[i];
 			float total = 0.0f;
 			for (int k = 0; k < 4; k++) {
 				const int x2 = x + dx[k];
@@ -357,7 +359,7 @@ void PhysXLiveWater3D::_step(float p_dt) {
 				} else {
 					const int j = z2 * nx + x2;
 					// Into a hole in the ground (nothing under it): drains as over an open edge.
-					h2 = ground[j] > NO_GROUND ? ground[j] + depth[j] : ground[i];
+					h2 = ground[j] > NO_GROUND ? ground[j] + depth[j] + occupied[j] : ground[i];
 				}
 				f[k] = MAX(0.0f, f[k] * keep + accel * (h - h2));
 				total += f[k];
@@ -461,6 +463,87 @@ void PhysXLiveWater3D::_step(float p_dt) {
 	}
 }
 
+void PhysXLiveWater3D::submit_sphere(int64_t p_owner, const Vector3 &p_world_pos, float p_radius) {
+	bodies[p_owner] = Vector4(p_world_pos.x, p_world_pos.y, p_world_pos.z, MAX(p_radius, 0.01f));
+}
+
+void PhysXLiveWater3D::clear_sphere(int64_t p_owner) {
+	bodies.erase(p_owner);
+}
+
+// Per cell, the height of the bodies' spheres below the water's surface (the chord of each sphere through the
+// cell's centre, from its bottom up to the surface, or above the ground where it rests on it).
+void PhysXLiveWater3D::_update_occupied() {
+	const int n = nx * nz;
+	if ((int)occupied.size() != n) {
+		occupied.resize(n);
+	}
+	for (int i = 0; i < n; i++) {
+		occupied[i] = 0.0f;
+	}
+	if (bodies.is_empty()) {
+		return;
+	}
+	const Transform3D inv = get_global_transform().affine_inverse();
+	for (const KeyValue<int64_t, Vector4> &E : bodies) {
+		const Vector3 c = inv.xform(Vector3(E.value.x, E.value.y, E.value.z));
+		const float r = E.value.w;
+		const float cx = (c.x + 0.5f * nx * cell_size) / cell_size - 0.5f;
+		const float cz = (c.z + 0.5f * nz * cell_size) / cell_size - 0.5f;
+		const float rc = r / cell_size;
+		if (r < cell_size) {
+			// Smaller than a cell (a leg, an arm): its volume under the surface, spread over the four nearest
+			// cells as a height, so thin limbs still push water however they sit against the cell centres.
+			const int bx = (int)Math::floor(cx);
+			const int bz = (int)Math::floor(cz);
+			const float fx = cx - bx;
+			const float fz = cz - bz;
+			const float area = cell_size * cell_size;
+			for (int k = 0; k < 4; k++) {
+				const int x = bx + (k & 1);
+				const int z = bz + (k >> 1);
+				if (x < 0 || z < 0 || x >= nx || z >= nz) {
+					continue;
+				}
+				const int i = z * nx + x;
+				if (ground[i] <= NO_GROUND || depth[i] <= 0.0f) {
+					continue;
+				}
+				const float w = ((k & 1) ? fx : 1.0f - fx) * ((k >> 1) ? fz : 1.0f - fz);
+				// The slice of the sphere between the ground and the surface (relative to its centre).
+				const float lo = CLAMP(ground[i] - c.y, -r, r);
+				const float hi = CLAMP(ground[i] + depth[i] + occupied[i] - c.y, -r, r);
+				if (hi <= lo) {
+					continue;
+				}
+				const float vol = Math::PI * (r * r * (hi - lo) - (hi * hi * hi - lo * lo * lo) / 3.0f);
+				occupied[i] += w * vol / area;
+			}
+			continue;
+		}
+		const int x0 = MAX(0, (int)Math::floor(cx - rc));
+		const int x1 = MIN(nx - 1, (int)Math::ceil(cx + rc));
+		const int z0 = MAX(0, (int)Math::floor(cz - rc));
+		const int z1 = MIN(nz - 1, (int)Math::ceil(cz + rc));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const int i = z * nx + x;
+				if (ground[i] <= NO_GROUND) {
+					continue;
+				}
+				const float q2 = ((x - cx) * (x - cx) + (z - cz) * (z - cz)) * cell_size * cell_size;
+				if (q2 >= r * r) {
+					continue;
+				}
+				const float half = Math::sqrt(r * r - q2);
+				const float bottom = MAX(c.y - half, ground[i]);
+				const float top = MIN(c.y + half, ground[i] + depth[i] + occupied[i]);
+				occupied[i] += MAX(top - bottom, 0.0f);
+			}
+		}
+	}
+}
+
 bool PhysXLiveWater3D::_cell_of(const Vector3 &p_global, int &r_x, int &r_z, float &r_fx, float &r_fz) const {
 	if (!built) {
 		return false;
@@ -530,7 +613,8 @@ float PhysXLiveWater3D::sample_height(const Vector3 &p_global) const {
 	const int idx[4] = { z * nx + x, z * nx + x + 1, (z + 1) * nx + x, (z + 1) * nx + x + 1 };
 	float h[4];
 	for (int k = 0; k < 4; k++) {
-		h[k] = ground[idx[k]] > NO_GROUND ? ground[idx[k]] + depth[idx[k]] : 0.0f;
+		// With the bodies' displacement: the level the water stands at around a wading leg.
+		h[k] = ground[idx[k]] > NO_GROUND ? ground[idx[k]] + depth[idx[k]] + (occupied.size() == depth.size() ? occupied[idx[k]] : 0.0f) : 0.0f;
 	}
 	const float local_y = Math::lerp(Math::lerp(h[0], h[1], fx), Math::lerp(h[2], h[3], fx), fz);
 	return get_global_transform().xform(Vector3(0, local_y, 0)).y;
@@ -563,8 +647,10 @@ float PhysXLiveWater3D::get_total_volume() const {
 // The surface as the river draws it: a vertex per cell centre (the water's top where wet, just under the ground
 // where dry, so the waterline falls between them), triangles only where water is. Per vertex: UV2 = flow, COLOR.r
 // = (depth + 1) / 4, COLOR.g = white water, COLOR.b = 1. p_corner: the local position of cell (0, 0)'s centre.
-// p_foam and p_vel may be null (sleeping water: still, clear). Returns false when nothing is wet.
-static bool build_live_surface(const float *p_ground, const float *p_depth, const float *p_foam, const float *p_vel, int p_w, int p_h, float p_cell, Vector3 p_corner, const Ref<ArrayMesh> &p_mesh, const Ref<Material> &p_material, AABB &r_aabb) {
+// p_foam and p_vel may be null (sleeping water: still, clear). p_occupied (may be null): the height bodies take up
+// in a cell, drawn as water so the level stands around a wading leg instead of dipping into it. Returns false
+// when nothing is wet.
+static bool build_live_surface(const float *p_ground, const float *p_depth, const float *p_foam, const float *p_vel, const float *p_occupied, int p_w, int p_h, float p_cell, Vector3 p_corner, const Ref<ArrayMesh> &p_mesh, const Ref<Material> &p_material, AABB &r_aabb) {
 	const int n = p_w * p_h;
 	PackedVector3Array verts;
 	PackedVector3Array normals;
@@ -582,7 +668,7 @@ static bool build_live_surface(const float *p_ground, const float *p_depth, cons
 		x = CLAMP(x, 0, p_w - 1);
 		z = CLAMP(z, 0, p_h - 1);
 		const int i = z * p_w + x;
-		return p_ground[i] > NO_GROUND ? p_ground[i] + p_depth[i] : 0.0f;
+		return p_ground[i] > NO_GROUND ? p_ground[i] + p_depth[i] + (p_occupied ? p_occupied[i] : 0.0f) : 0.0f;
 	};
 	float y_min = 1e30f;
 	float y_max = -1e30f;
@@ -592,7 +678,7 @@ static bool build_live_surface(const float *p_ground, const float *p_depth, cons
 			const bool has_ground = p_ground[i] > NO_GROUND;
 			const float d = has_ground ? p_depth[i] : 0.0f;
 			const float g = has_ground ? p_ground[i] : 0.0f;
-			const float y = d > WET ? g + d : g - 0.03f;
+			const float y = d > WET ? g + d + (p_occupied ? p_occupied[i] : 0.0f) : g - 0.03f;
 			vw[i] = p_corner + Vector3(x * p_cell, y, z * p_cell);
 			const float hx = top(x + 1, z) - top(x - 1, z);
 			const float hz = top(x, z + 1) - top(x, z - 1);
@@ -657,11 +743,10 @@ void PhysXLiveWater3D::_update_mesh() {
 	}
 	const Vector3 corner(0.5f * cell_size - 0.5f * nx * cell_size, 0.0f, 0.5f * cell_size - 0.5f * nz * cell_size);
 	AABB aabb;
-	if (build_live_surface(ground.ptr(), depth.ptr(), foam.ptr(), vel.ptr(), nx, nz, cell_size, corner, mesh, water_material, aabb)) {
+	if (build_live_surface(ground.ptr(), depth.ptr(), foam.ptr(), vel.ptr(), occupied.size() == depth.size() ? occupied.ptr() : nullptr, nx, nz, cell_size, corner, mesh, water_material, aabb)) {
 		mesh_instance->set_custom_aabb(aabb);
 	}
 }
-
 
 // ---------------------------------------------------------------------------------------------------------
 // Streaming (docs/ideas/water.md, "Live water over the whole world"). The area is a window of world-aligned
@@ -669,7 +754,6 @@ void PhysXLiveWater3D::_update_mesh() {
 // tiles of SLEEP_TILE cells: ground and depth only, drawn with the same surface, not stepped (still water). When
 // the window comes back over them they wake with their water at rest. Water that flows out over the window's
 // edge is added to the sleeping cell it flows into, so streaming loses nothing.
-
 
 Vector3 PhysXLiveWater3D::_stream_center() const {
 	if (!stream_follow.is_empty()) {
@@ -935,7 +1019,7 @@ void PhysXLiveWater3D::_update_sleep_meshes(int p_budget) {
 		}
 		AABB aabb;
 		const Vector3 corner((E.key.x * SLEEP_TILE + 0.5f) * cell_size, 0.0f, (E.key.y * SLEEP_TILE + 0.5f) * cell_size);
-		const bool any = build_live_surface(g, dd, nullptr, nullptr, W, W, cell_size, corner, t->mesh, water_material, aabb);
+		const bool any = build_live_surface(g, dd, nullptr, nullptr, nullptr, W, W, cell_size, corner, t->mesh, water_material, aabb);
 		if (any && t->mesh_instance == nullptr) {
 			t->mesh_instance = memnew(MeshInstance3D);
 			t->mesh_instance->set_mesh(t->mesh);
@@ -1038,6 +1122,7 @@ void PhysXLiveWater3D::_notification(int p_what) {
 			for (uint32_t i = 0; i < depth.size(); i++) {
 				d_max = MAX(d_max, depth[i]);
 			}
+			_update_occupied();
 			const float dt_frame = (float)get_physics_process_delta_time();
 			const float dt_max = 0.25f * cell_size / Math::sqrt(GRAVITY * d_max);
 			const int steps = CLAMP((int)Math::ceil(dt_frame / dt_max), 1, MAX_SUBSTEPS);

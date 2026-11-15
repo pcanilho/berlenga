@@ -44,8 +44,15 @@ var seq_step := 1
 var n := 0
 var water: Node3D
 var dam: StaticBody3D
+var legs: AnimatableBody3D
+var fill_depth := 0.6
+var no_pusher := false
 
 func ground_h(x: float, z: float) -> float:
+	if scene_name == "wade":
+		# A flat-bottomed pond 24 m across with a rim, so no water leaves it.
+		var r := Vector2(x - 2.0, z + 22.0).length()
+		return 0.05 * sin(x * 0.7) * sin(z * 0.6) + 2.0 * smoothstep(11.0, 14.0, r)
 	# A hillside falling toward -z, a gully winding down it and a hollow at its foot.
 	var h := 0.18 * (z + 40.0)
 	var gully_x := 6.0 * sin(z * 0.09)
@@ -66,6 +73,8 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a == "--raster": raster = true
+		elif a.begins_with("--depth="): fill_depth = float(a.substr(8))
+		elif a == "--no-pusher": no_pusher = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--rain="): rain = float(a.substr(7))
 		elif a.begins_with("--break="): break_frame = int(a.substr(8))
@@ -199,14 +208,56 @@ func _ready() -> void:
 			water.set("fill_rect", Rect2(-40.0, 5.5, 80.0, 35.0))
 		"rain":
 			water.set("rain_rate", rain)
+		"wade":
+			# The hollow filled into a pond about a metre deep.
+			water.set("fill_enabled", true)
+			water.set("fill_height", ground_h(2.0, -22.0) + fill_depth)
+			water.set("fill_rect", Rect2(-12.0, -32.0, 28.0, 20.0))
 	add_child(water)
 	if tracker != null:
 		water.set("stream_follow", water.get_path_to(tracker))
+	if scene_name == "wade":
+		# Two legs (capsules) that walk across the pond, with a pusher reading their shapes.
+		legs = AnimatableBody3D.new()
+		legs.sync_to_physics = false
+		var lm := StandardMaterial3D.new()
+		lm.albedo_color = Color(0.25, 0.22, 0.2)
+		for sx in [-0.15, 0.15]:
+			var lcs := CollisionShape3D.new()
+			var cap := CapsuleShape3D.new()
+			cap.radius = 0.12
+			cap.height = 1.4
+			lcs.shape = cap
+			lcs.position = Vector3(sx, 0.7, 0.0)
+			legs.add_child(lcs)
+			var lmi := MeshInstance3D.new()
+			var cm := CapsuleMesh.new()
+			cm.radius = 0.12
+			cm.height = 1.4
+			lmi.mesh = cm
+			lmi.material_override = lm
+			lmi.position = lcs.position
+			legs.add_child(lmi)
+		legs.position = Vector3(-6.0, ground_h(-6.0, -22.0), -22.0)
+		add_child(legs)
+		if no_pusher:
+			pass
+		elif ClassDB.class_exists("PhysXWaterPusher3D"):
+			var pusher: Node3D = ClassDB.instantiate("PhysXWaterPusher3D")
+			legs.add_child(pusher)
+		else:
+			push_error("This build has no PhysXWaterPusher3D.")
 
 	var cam := Camera3D.new()
 	cam.fov = 55
 	add_child(cam)
 	match view:
+		"wade_close":
+			var gc := ground_h(2.0, -22.0)
+			cam.look_at_from_position(Vector3(6.5, gc + 1.6, -25.0), Vector3(4.0, gc + 0.4, -22.0))
+		"wade":
+			var gh := ground_h(2.0, -22.0)
+			cam.look_at_from_position(Vector3(2.0, gh + 4.0, -31.0), Vector3(2.0, gh, -21.0))
 		"low":
 			cam.look_at_from_position(Vector3(10.0, ground_h(10.0, -26.0) + 2.5, -26.0), Vector3(0.0, ground_h(0.0, 0.0), 0.0))
 		_:
@@ -217,7 +268,11 @@ func _ready() -> void:
 
 var stream_total0 := -1.0
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	if legs != null and n > 30:
+		var lx := legs.position.x + 1.5 * delta
+		if lx < 10.0:
+			legs.position = Vector3(lx, ground_h(lx, -22.0), -22.0)
 	if tracker != null:
 		# 0-600 at the spring's valley (the spring stops at 600), 600-900 out 100 m along +x, back by 1500.
 		var t := float(n)
@@ -251,6 +306,10 @@ func _process(_delta: float) -> void:
 			if n == 630:
 				stream_total0 = awake + asleep + lost
 			print("frame %d: awake %.1f m3, asleep %.1f m3 in %d tiles, lost %.1f m3, total %.2f (after the spring %.2f), %.2f ms a tick" % [n, awake, asleep, water.call("get_sleeping_tile_count"), lost, awake + asleep + lost, stream_total0, water.call("get_cost_ms")])
+		elif legs != null:
+			var lp := legs.global_position
+			var still: float = ground_h(2.0, -22.0) + fill_depth
+			print("frame %d: volume %.2f m3, legs at x %.1f, surface 0.4 m ahead %+.3f m, 0.4 m behind %+.3f m, beside %+.3f m, %.2f ms a tick" % [n, water.call("get_total_volume"), lp.x, float(water.call("sample_height", lp + Vector3(0.4, 0, 0))) - still, float(water.call("sample_height", lp - Vector3(0.4, 0, 0))) - still, float(water.call("sample_height", lp + Vector3(0, 0, 0.5))) - still, water.call("get_cost_ms")])
 		else:
 			print("frame %d: volume %.1f m3, lost over the edges %.1f m3, %.2f ms a tick" % [n, water.call("get_total_volume"), water.call("get_volume_out"), water.call("get_cost_ms")])
 	if out != "":
