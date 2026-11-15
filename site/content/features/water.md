@@ -111,6 +111,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Plunging breakers: the sheet thrown off the crest, with spray along its thin edge.*
 
+- **Shore wetness** (`contact_wetness` on PhysXWaterSurface3D and PhysXRiver3D): sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.
 ## Currents and rivers
 
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
