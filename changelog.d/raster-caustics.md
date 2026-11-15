@@ -1,1 +1,0 @@
-- Water: raster caustics. With `caustics_enabled`, clear water shows the sun focused into a moving web of light on the bed below, following the scene's sun. The caustics texture now holds the physical irradiance ratio in half floats (was a tone-mapped 8-bit value).

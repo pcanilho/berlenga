@@ -1,1 +1,0 @@
-- Water: waves shade their own lee sides at a low sun (foam dimmed through the crest, no glitter behind it; `wave_shadows`, on). Fixed the water surface climbing the sides of rocks standing out of it.

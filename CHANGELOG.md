@@ -6,6 +6,71 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-f0d8c981 (2026-11-15)
+
+### Added
+- PhysXFlow3D.ambient_scattering (off by default): in raster, the environment's ambient color and sky light the smoke as they light Godot's volumetric fog, dimmed by the gas above each point, with a multiple-scattering approximation so dense smoke is not black inside.
+- PhysXFlow3D.cast_shadows (off by default): in raster, smoke shadows the scene from the sun through a Beer shadow map over the grid (Forward+).
+- PhysXFlow3D.sun_scattering (off by default): in raster, directional lights light the smoke through the scattering pass with their shadow cascades, so walls shade it as they shade Godot's volumetric fog.
+- Grass thins out under bracken and bramble stands: `PlantSpecies.sward_shade`, read by `GrassField3D.undergrowth_field` through `VegetationField3D.get_sward_shade_at()`.
+- Bracken and bramble lay their own litter on the ground under their stands: `PlantSpecies.litter_color`, `VegetationField3D.get_sward_litter_at()`.
+- Spatial shaders can set `OPAQUE_PREPASS_THRESHOLD` in fragment(): the alpha from which a `depth_prepass_alpha` fragment writes depth (0.99 by default)
+- Hair colour variation: `grey_ratio` for single grey strands, `sun_bleaching` for lengths lightened and warmed toward the tips
+- Far hair draws each clump as one thick strand, shaded as the clump, so its colour matches the strands, and hands over per segment once a clump is 2 pixels across or less, so there is no whole-head switch
+- PlantGenerator `CLIMBER_IVY_ADULT`: the unlobed ovate leaves of old flowering ivy, for leaves high on mature climbing stems.
+- Woodland-floor mushrooms as real geometry (stalk, cap, gills or tubes, ring, warts): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus presets in `PlantGenerator`, placed by `make_floor` under their host trees, honey fungus beside deadwood, and fruiting from late summer to the first frost after rain.
+- `PlantSpecies.patch_ring`: a species fruits along the edge of its patches, as fairy rings and arcs.
+- Ferns, mosses, wood sorrel and seedlings gather at the foot of rocks, also in the gaps between their patches: `PlantSpecies.rock_foot`.
+- Bracken and bramble stands have a graded margin: shorter plants over their outer metres, leaning out to the open. `PlantSpecies.margin_width`, `margin_scale`, `margin_lean`, `get_patch_depth()`.
+- Plants between stones: PlantGenerator presets `PRESET_PARSLEY_FERN`, `PRESET_SPLEENWORT`, `PRESET_STONECROP`, `PRESET_SAXIFRAGE` and `PRESET_THRIFT`, `PlantSpecies.stone_gap` (grow only in the gaps between obstacles), and `PlantGenerator.make_stones()` for scree, river gravel and shingle.
+- Moss on stone tops: `PlantSpecies.stone_top`, `VegetationField3D.stone_tops` and `stone_top_normals`; the scree and river sets carry top moss.
+- Rocks: `RockGenerator` makes rocks and stones as real geometry, broken along the joints of five rock types (granite, limestone, sandstone, basalt, slate), rounded by transport (Bloore abrasion) and weathered by rock type, with LODs and collision hulls. `RockField3D` places them over a `TerrainGenerator3D` in six layers (rockfall, scree, glacial till, river beds, shores, cliff blocks) by the processes that put them there, streamed round the camera.
+- Landscape3D `get_cliff_point()`: where the drawn surface lies over a point once `cliff_relief` has moved it (for water laid on faces); joint blocks stand out more and ledge steps are rounded over 1.5 m.
+- TerrainGenerator3D: with `outwash_age` above 0, the basins the last glaciation wore are filled from the bottom up by the sediment their catchments yielded since the ice left, so a main trough gets a flat floor while small cirques keep their lakes.
+- TerrainGuide3D: hand-drawn guides the terrain generator reads before erosion: raise (a ridge or peak), lower (a valley or bowl) and bar (hard rock at the curve's heights with a lip and an optional rock-slope apron), so drawn features still drain and look eroded; coast (sea inside or beside a drawn shore, which wanders naturally) and beach (beach width, or none, along a stretch of coast).
+- TerrainGenerator3D `guide_preview`: a coarse run (`guide_preview_scale` times the cell size) a moment after a guide is moved or changed, so drawing guides in the editor shows their effect without a full run.
+- TerrainGenerator3D touch-ups: a TerrainBrush3D under the generator is applied to the generated ground and the water solved again (`apply_touch_ups()`), so a raised dam backs up a lake and a dug hollow holds a pond; moving a brush re-applies it a moment later.
+- TerrainMaterial3D `far_start_from_vegetation`: the far blend ends where a streaming VegetationField3D's placed plants end.
+- TerrainMaterial3D `cliff_self_shadow`: ledges of Landscape3D `cliff_relief` shadow each other per pixel in raster (a short march toward the sun through the same relief); spatial shaders gain `sun_direction()` and the fragment output `SUN_SHADOW`.
+- TerrainGenerator3D `glacial_converged`: the last glaciation solves its steady ice to near balance (multigrid, mass-conserving face thickness over steep beds) instead of fixed pseudo steps; off by default.
+- TerrainGenerator3D glacial erosion: the supercooling stop measures the ice surface slope along the flow, so glaciers no longer cut one-cell slots hundreds of metres deep at the foot of cliffs.
+- Trees: snapped ends get a splintered fracture face and torn bark; `TreeGenerator.limb_breakage` breaks limbs on living trees in storms, some left hanging.
+- Trees: `TreeGenerator.uprooted` lays a fallen tree with its root plate (soil, stones, torn roots) and gives the mesh meta `tree_root_pit`; stands lay their freshest log uprooted.
+- Trees: old ivy carries the unlobed adult leaves high on its stems.
+- Streaming vegetation publishes where its placed plants end as the global shader parameter `vegetation_near_radius`; with several streaming fields the nearest end counts.
+- Plants and grass keep out of rocks: `VegetationField3D.obstacles` and `GrassField3D.obstacles` (x, ground y, z, radius), e.g. from `TerrainGenerator3D.get_boulders()`.
+
+### Changed
+- PhysXFlow3D path tracing: heat glows in proportion to the smoke (the gas emits as much as it absorbs), as it does in raster, instead of by temperature alone; warm smoke no longer glows far brighter in path tracing than in raster.
+- GrassField3D: a settings change no longer empties the field or stalls a frame: the old tiles stay drawn until their successors are built (nearest first), the compiled blade shader is kept when its code is unchanged, and the ground tint map is re-baked over several frames (1.5 ms each).
+- Grass keeps growing at the thin margin of a bracken or bramble stand; it goes only where the fronds close.
+- Hair cards default to 1024 per head (was 256), which hides the strips at mid distance; the bake runs on the worker threads
+- Release downloads are named `berlenga-<os>-<arch>-<build>` (export templates `berlenga-export-templates-<build>.tpz`), and the macOS app is `Berlenga.app`.
+- Trees: mesh meta `tree_deadwood_axis` carries the lying stem's measured reach along its axis (12 samples after the widest reach and the count).
+
+### Fixed
+- PhysXFlow3D light scattering: lights now scatter with a normalized phase and Godot's light energy units, as the path tracer and volumetric fog do, and light reaching through dense smoke includes a multiple-scattering approximation, so raster smoke brightness follows the path-traced one.
+- The ground past the grass no longer reads brighter than the blades under a high sun: the far colour is baked at four sun elevations and follows the sun (`grass_ground_far_scale` carries the same change to a terrain's far cover).
+- A patchy tall sward over an undercoat no longer leaves a lighter band past its blades: the ground between the tall patches takes the undercoat's far colour past the undercoat's own radius, and the far ground mixes the two by the tall sward's patch cover.
+- Hair cards no longer show bright specks, stepped edges or over-lit crowns seen up close
+- Hair cards seen up close no longer show a faint outline of the head through the hair
+- Hair cards no longer show the head's outline through the hair: their dense cores draw depth first
+- Hair cards hold snow as the strands do (far hair showed none)
+- Strand hair casts shadows in raster again: on the face, neck, shoulders and ground (`cast_hair_shadows`, on by default)
+- Dead bracken stands russet for some weeks before it lodges, instead of collapsing as soon as it browns.
+- Moss cushions faced down (their outer surface was the back face) and their texture was about three times darker than measured moss; plants on fallen logs stand on the logs' moss instead of sinking into it.
+- Ground plants beside a rock no longer push their leaves through it: they grow smaller and lean away.
+- Ground plants of a field under another field's forest (`canopy_field`) no longer grow through its trunks: they keep out of each stem's foot (flare and root ridges), measured from the tree mesh at the soil line.
+- Plants on and beside fallen logs follow the log's reach profile from the trees module instead of its widest reach.
+- Reprojected sky clouds no longer show a checker or a 4x4 lattice: the march start is interleaved gradient noise shifted every frame, each pixel keeps a running mean clamped to this frame's samples, and the history follows exposure changes.
+- Landscape3D cliff relief: vertices gather along the ledge lips and joints (split where the relief strays from the triangle edge), so path-traced ledge shadows are clean lines instead of beads; about 18% more triangles on cliff views.
+- Landscape3D cliff relief: ledges are now lit per pixel by TerrainMaterial3D from the same relief the vertices follow, so their shadow edges are clean lines instead of a saw-tooth under a low sun.
+- Tall falls: the notch now opens just below the brink instead of cutting through it, so the lake and river stay graded to the lip and no water is left hanging above the rock.
+- A streaming vegetation field keeps its near radius published while its data map re-bakes, so the terrain's far blend no longer jumps back for the frames the tiles take.
+
+### Removed
+- Textured hair cards and their atlas bake: far hair is always thick strands now. `card_distance` is gone; `cards_enabled` and `card_count` turn on and size the thick strands
+
 ## build-6b31f67b (2026-11-12)
 
 ### Changed
