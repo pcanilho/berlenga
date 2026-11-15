@@ -689,6 +689,17 @@
    "topic": "Light in water"
   },
   {
+   "name": "Clear water",
+   "settings": [
+    "clear_water"
+   ],
+   "note": "",
+   "what": "in raster, as under path tracing, the bed shows through the shallows of sea and lakes, refracted, and fades with depth.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Path-traced ocean",
    "settings": [
     "PhysXWaterSurface3D",
