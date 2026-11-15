@@ -1494,6 +1494,15 @@ What else is out there, and what is worth taking:
   1000 cycles the run takes 248 s, leaves 5.6 m/yr and gives 7.4 km2 of ice, so the 300-cycle result (29 m/yr) is
   close to, not at, the steady state. Next if wanted: keep the erosion from cutting single-cell trenches, or treat
   such nodes as fixed in the solve.
+- One-cell trenches under cliffs (15 Nov, a bug the converged solver showed): the erosion cut a slot one ice cell
+  wide and up to 700 m deep along the foot of the trough wall below the hanging valley (beds of -314 m between walls
+  at -186 and 444 m). The supercooling stop (Alley et al. 2003; Cook and Swift 2012: no quarrying where the bed rises
+  along the flow faster than 1.5 times the ice surface slope) measured the surface slope with a centred difference,
+  and at a cliff's foot that difference spans the cliff top: the slot's ice, whose surface is flat, was taken to
+  slope at 3.3 (73 degrees) away from the cliff, so a 72 m rise of the bed ahead never stopped the quarrying and the
+  slot deepened with every step (an overdeepening that the threshold exists to end). Fix: the test now follows the
+  ice's own flux direction and compares the bed's rise with the surface's drop over the cell ahead (one-sided, as
+  the threshold is defined along the flow). Elsewhere, on smooth ice, the two measures agree.
 - Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
   droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
   simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;

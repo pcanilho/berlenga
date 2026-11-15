@@ -11,3 +11,4 @@
 - TerrainMaterial3D `far_start_from_vegetation`: the far blend ends where a streaming VegetationField3D's placed plants end.
 - TerrainMaterial3D `cliff_self_shadow`: ledges of Landscape3D `cliff_relief` shadow each other per pixel in raster (a short march toward the sun through the same relief); spatial shaders gain `sun_direction()` and the fragment output `SUN_SHADOW`.
 - TerrainGenerator3D `glacial_converged`: the last glaciation solves its steady ice to near balance (multigrid, mass-conserving face thickness over steep beds) instead of fixed pseudo steps; off by default.
+- TerrainGenerator3D glacial erosion: the supercooling stop measures the ice surface slope along the flow, so glaciers no longer cut one-cell slots hundreds of metres deep at the foot of cliffs.

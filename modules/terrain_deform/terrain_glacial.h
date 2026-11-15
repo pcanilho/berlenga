@@ -800,15 +800,25 @@ private:
 					continue;
 				}
 				auto s_at = [&](int c) { return bed[c] + ice[c]; };
-				const double sgx = (s_at(i + 1) - s_at(i - 1)) / (2.0 * d);
-				const double sgz = (s_at(i + gx) - s_at(i - gx)) / (2.0 * d);
-				const double slope = std::sqrt(sgx * sgx + sgz * sgz);
-				// The bed one ice cell along the flow (down the surface), bilinear.
-				const double fx = x - sgx / std::max(slope, 1e-6), fz = z - sgz / std::max(slope, 1e-6);
-				const double cx = std::clamp(fx, 0.0, double(gx - 1)), cz = std::clamp(fz, 0.0, double(gz - 1));
+				// The flow's direction: the node's ice flux (the mean of its faces), else down the surface. A centred
+				// surface gradient would not do at a cliff's foot, where the ice falling from the cliff top dominates it.
+				double ux = 0.5 * (qx[i - 1] + qx[i]), uz = 0.5 * (qz[i - gx] + qz[i]);
+				double ul = std::sqrt(ux * ux + uz * uz);
+				if (ul < 1e-9) {
+					ux = -(s_at(i + 1) - s_at(i - 1));
+					uz = -(s_at(i + gx) - s_at(i - gx));
+					ul = std::sqrt(ux * ux + uz * uz);
+				}
+				ux /= std::max(ul, 1e-12);
+				uz /= std::max(ul, 1e-12);
+				// The bed and the ice surface one ice cell downstream, bilinear; the surface slope the supercooling test
+				// compares with is the drop over that cell (one-sided: what the ice ahead of the node does).
+				const double cx = std::clamp(x + ux, 0.0, double(gx - 1)), cz = std::clamp(z + uz, 0.0, double(gz - 1));
 				const int x0 = std::min((int)cx, gx - 2), z0 = std::min((int)cz, gz - 2);
 				const double tx = cx - x0, tz = cz - z0;
-				const double bd = (bed[z0 * gx + x0] * (1.0 - tx) + bed[z0 * gx + x0 + 1] * tx) * (1.0 - tz) + (bed[(z0 + 1) * gx + x0] * (1.0 - tx) + bed[(z0 + 1) * gx + x0 + 1] * tx) * tz;
+				auto bil = [&](auto f) { return (f(z0 * gx + x0) * (1.0 - tx) + f(z0 * gx + x0 + 1) * tx) * (1.0 - tz) + (f((z0 + 1) * gx + x0) * (1.0 - tx) + f((z0 + 1) * gx + x0 + 1) * tx) * tz; };
+				const double bd = bil([&](int c) { return bed[c]; });
+				const double slope = std::max(0.0, s_at(i) - bil(s_at)) / d;
 				if ((bd - bed[i]) / d >= p.adverse * slope) {
 					continue; // supercooling: the water freezes on the adverse slope and the bed is not quarried
 				}
