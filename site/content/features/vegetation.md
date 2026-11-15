@@ -74,7 +74,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Plants
 
-- **Plant generator** (`PlantGenerator`, 39 presets): meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
+- **Plant generator** (`PlantGenerator`, 45 presets): meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
 
   ![Generated dandelions and plantains, three seeds each](media/plant-generator.jpg)
 
@@ -94,6 +94,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
 - **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
+- **Woodland mushrooms** (`PlantGenerator`, `PlantSpecies.patch_ring`): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows beside deadwood, clouded agaric in fairy-ring arcs.
 - **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 
