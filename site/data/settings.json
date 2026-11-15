@@ -751,6 +751,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Storm seas",
+   "settings": [
+    "crest_spray"
+   ],
+   "note": "",
+   "what": "above 9 m/s of wind, spray tears off breaking crests; above 14 m/s, foam is drawn into streaks along the wind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Lake ripples",
    "settings": [
     "fetch"
@@ -2210,10 +2221,11 @@
    "name": "Deadwood",
    "settings": [
     "decay_class",
-    "fallen"
+    "fallen",
+    "bark_peel"
    ],
    "note": "",
-   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes.",
+   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"

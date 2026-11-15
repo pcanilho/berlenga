@@ -35,6 +35,11 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
 - **Bark lichen** (`lichen_cover`): lichen on bark, placed by height, crown light, stem age and moss; 0 turns it off.
+
+  ![An oak's bole without and with lichen, raster](media/trees-lichen.jpg)
+
+  *Bark lichen: pale colonies gather on the upper bole and thin out toward the mossy foot.*
+
 - **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree.
 - **Leaf shapes** (`TreeGenerator.get_leaf_form()`): simple, lobed, palmate and compound leaves per species, with the true outline as geometry.
 - **Needles** (`needle_sprays`, `near_needle_range`): real needles near the camera, crossed needle sprays beyond.
@@ -55,7 +60,12 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Old trees: a basal hollow with a rounded lip, a rot hole, a brush of epicormic shoots and the edge of a burl.*
 
-- **Deadwood** (`decay_class`, `fallen`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes.
+- **Deadwood** (`decay_class`, `fallen`, `bark_peel`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood.
+
+  ![An oak snag without and with bark peel, raster](media/trees-bark-peel.jpg)
+
+  *Bark peel: on a class 2 snag the bark has come away in plates from the upper stem, baring grey wood.*
+
 - **Fallen branches** (`fallen_branch`): shed limbs and sticks on the forest floor, from the stand's own trees.
 
 ## Wind and touch

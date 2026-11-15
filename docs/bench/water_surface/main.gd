@@ -12,6 +12,8 @@ extends Node3D
 #   --view=surf     low along the beach, the shore waves rolling in and breaking (--node=shore_waves:true)
 #   --view=lip      low in the shallows, looking back at the plunging lips (--node=shore_waves:true)
 #   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
+#   --view=storm    a gale over deep open sea (22 m/s, 4 cascades, depth 80 m, no floor) from 7 m up; storm_sun looks
+#                   toward the sun from 9 m up, through the crests
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -104,6 +106,7 @@ var perf_proc := 0.0
 var perf_phys := 0.0
 var perf_n := 0
 var boat_speed := 0.0
+var debug_storm := OS.get_environment("STORM_DEBUG") != ""
 var boat: RigidBody3D
 var wake: Node3D
 var wake_params := {}
@@ -228,14 +231,15 @@ func _ready() -> void:
 		# Under water the floor needs to fall away faster, for depth to look through.
 		slope_deg = 12.0 if view in ["submerged", "waterline", "up"] else 5.0
 	var slope := deg_to_rad(slope_deg)
-	if boat_speed > 0.0:
+	if boat_speed > 0.0 or view.begins_with("storm"):
 		pass # open sea: no floor
 	else:
 		_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
-	for p in [Vector3(-2.5, -1.4, -4.0), Vector3(1.5, -1.9, -7.0), Vector3(3.0, -0.9, -1.5)]:
+	var storm := view.begins_with("storm")
+	for p in [] if storm else [Vector3(-2.5, -1.4, -4.0), Vector3(1.5, -1.9, -7.0), Vector3(3.0, -0.9, -1.5)]:
 		_slab(Vector3(1.2, 1.2, 1.2), p, Vector3(0.3, 0.7, 0.2), rock_mat)
 	if shade.x != INF:
 		# Under the sun at the shade point, 12 m up the light's ray.
@@ -243,7 +247,8 @@ func _ready() -> void:
 		var top := Vector3(shade.x, 0.0, shade.y) - d * (12.0 / -d.y)
 		_slab(Vector3(60, 0.4, 5), top, Vector3.ZERO, rock_mat)
 	# A rock standing out of the water, for a current to go round.
-	_slab(Vector3(2.0, 4.0, 3.0), Vector3(-6.0, -1.0, -9.0), Vector3(0.0, 0.4, 0.0), rock_mat)
+	if not storm:
+		_slab(Vector3(2.0, 4.0, 3.0), Vector3(-6.0, -1.0, -9.0), Vector3(0.0, 0.4, 0.0), rock_mat)
 
 	if not ClassDB.class_exists("PhysXWaterSurface3D"):
 		push_error("This build has no PhysX module.")
@@ -259,6 +264,14 @@ func _ready() -> void:
 	water.set("choppiness", 1.0)
 	water.set("render_extent", 600.0)
 	water.set("current", current)
+	if view.begins_with("storm"):
+		# Deep open sea in a gale (Beaufort 9): the spectrum's depth must be real, or TMA holds the swell down.
+		water.set("depth", 80.0)
+		water.set("wind_speed", 22.0)
+		water.set("wave_cascades", 4)
+		water.set("fetch", 500000.0)
+		water.set("swell", 0.4)
+		water.set("render_extent", 3000.0)
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
@@ -278,7 +291,7 @@ func _ready() -> void:
 			wm.shader = sh
 
 	# Floating boxes.
-	for i in 3:
+	for i in 0 if storm else 3:
 		var body := RigidBody3D.new()
 		body.mass = 40.0
 		var cs := CollisionShape3D.new()
@@ -333,6 +346,12 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		"boat", "boat_low", "boat_sun":
 			pass # follows the boat (_process)
+		"storm":
+			cam.look_at_from_position(Vector3(0, 7.0, 0.0), Vector3(-15.0, 2.0, -80.0))
+		"storm_sun":
+			# Into the light, low: the thin crests between camera and sun.
+			var to_sun := sun.transform.basis.z
+			cam.look_at_from_position(Vector3(0, 9.0, 0.0), Vector3(to_sun.x, 0.0, to_sun.z).normalized() * 80.0 + Vector3(0, 3.0, 0))
 		"sea_top":
 			cam.look_at_from_position(Vector3(0, 90.0, -110.0), Vector3(0, 0.0, -110.01))
 		_:
@@ -604,6 +623,8 @@ func _process(_delta: float) -> void:
 		_save_heights()
 	if not whitecap_winds.is_empty():
 		_whitecap_step()
+	if view.begins_with("storm") and (n == frames - 1 or (debug_storm and n % 5 == 0)):
+		print("storm: crest spray %.0f droplets/s, whitecap cover %.3f (target %.3f)" % [water.call("get_crest_spray_rate"), water.call("get_whitecap_cover"), water.call("get_whitecap_target_cover")])
 	if view == "sea" and n > 30:
 		# Significant wave height, 4 sigma of the height at one point over time (a line through the square is
 		# shorter than the swell).

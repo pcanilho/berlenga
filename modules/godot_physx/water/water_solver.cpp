@@ -458,11 +458,27 @@ void WaterSolverGPU::_rt_build_buffers() {
 	RD::TextureFormat ocean_tf = ripple_tf;
 	ocean_tf.width = on;
 	ocean_tf.height = on;
-	tex_ocean_height = rd->texture_create(ocean_tf, RD::TextureView());
+	// Cleared, not left undefined: the materials sample these from the frame they're bound, and a cascade's
+	// first step comes a few frames later (undefined derivatives read as folded crests, a white flash).
+	{
+		Vector<uint8_t> zeros;
+		zeros.resize(ocells * sizeof(float));
+		memset(zeros.ptrw(), 0, zeros.size());
+		Vector<Vector<uint8_t>> data;
+		data.push_back(zeros);
+		tex_ocean_height = rd->texture_create(ocean_tf, RD::TextureView(), data);
+	}
 	RD::TextureFormat disp_tf = ocean_tf;
 	disp_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
-	tex_ocean_disp = rd->texture_create(disp_tf, RD::TextureView());
-	tex_ocean_deriv = rd->texture_create(disp_tf, RD::TextureView());
+	{
+		Vector<uint8_t> zeros;
+		zeros.resize(ocells * 4 * sizeof(float));
+		memset(zeros.ptrw(), 0, zeros.size());
+		Vector<Vector<uint8_t>> data;
+		data.push_back(zeros);
+		tex_ocean_disp = rd->texture_create(disp_tf, RD::TextureView(), data);
+		tex_ocean_deriv = rd->texture_create(disp_tf, RD::TextureView(), data);
+	}
 	{
 		RD::TextureFormat foam_tf = ocean_tf;
 		foam_tf.format = RD::DATA_FORMAT_R32_SFLOAT;

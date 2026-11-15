@@ -2345,3 +2345,62 @@ Found on the way (bug): the surface lies on the ground as a swash film wherever 
 it, so over a block standing out of the water the mesh's triangles were drawn up its faces from the
 waterline to its top (dark teeth, raster and path traced). The film now lies only on ground less steep
 than about 35-50 degrees (the slope of the seabed texture over 0.7 m).
+
+## Storm seas (15 Nov, research for Paulo)
+
+Paulo asked for bigger open-ocean waves, as in Sea of Thieves and Black Flag, and then for parity with
+FluidNinja LIVE 2's beach and landscape water. Order picked: storm seas, raster caustics, live shallow water
+on terrain, then a world wet map and bodies pushing water by their shape.
+
+**What those games do.**
+- Sea of Thieves (Ang et al., "The Technical Art of Sea of Thieves", SIGGRAPH 2018 talks): a Tessendorf FFT
+  ocean. Crest colour from a wave peak mask taken from the choppy displacement (thin peaks have shorter
+  light paths), mixed by view angle and sun direction. Foam at peaks and around objects (depth buffer),
+  blurred over frames with feedback; more foam in storms. Shallow-water splashes from a GPU shallow-water
+  solver (Mei et al. 2007).
+- Assassin's Creed III and IV (fxguide 2012 and 2013; Ricour, Game Developer 2013): Tessendorf FFT tiles
+  projected from the camera. Sea states follow the Beaufort scale 0-12: each level sets the waves' surface
+  scale, height scale, choppiness and foam decay (foam keyed at 0, 3, 7 and 12). Crests lit by a cheap test
+  of view, sun and slope so back-lit crests look thinner and brighter. Spray from depth probes along the hull.
+  No separate rogue-wave model: storms are the higher Beaufort levels.
+- FluidNinja LIVE 2 (manual 2.06): a 2D fluid solver painted by moving objects (bones, mesh distance fields)
+  that drives the water mesh, a wet map with fade-out, and caustics. Water follows the landscape's height
+  gradient, fills pits and follows river splines. No breaking surf, foam particles or open-ocean storms.
+
+**What we have.** Four FFT cascades of a fetch-limited JONSWAP/TMA spectrum, directional spreading with
+swell, choppiness, whitecap cover steered to Monahan's fit, shore breakers, spray off lips, the weather's
+wind (`follow_weather`).
+
+**Finding: storm height.** At 22 m/s over 500 km of fetch the bench sea measured Hs 2.8 m, against about
+8 m from JONSWAP. The cause is `depth`, 3 m by default: the spectrum's TMA factor treats the whole sea as
+3 m deep and holds the long waves down. With `depth` 80 the same storm measures Hs 7.8 m. Open sea needs
+its real depth; the bench's new `--view=storm` (and `storm_sun`) sets a deep gale with no floor.
+
+**Built (15 Nov).**
+- Foam streaks: from Beaufort 7 to 9 (14 to 22 m/s) fading foam breaks up along the wind (lace stretched
+  ten to one) and trails downwind of its patches, each third-of-a-metre lane by its own distance so the
+  trails read as lines (the finest cascade's foam only: the long cascades' metre-wide cells smear).
+  Shader uniforms `foam_streaks` and `foam_streak_dir`, set from the wind.
+- Crest spray (spume): `crest_spray` (on), `crest_spray_amount` (6000). Every fourth physics tick, 384
+  resting points within 40 m of the camera (none nearer than 8 m) are tested with the summed cascades'
+  Jacobian on the CPU readback, as the shader's whitecaps; folding ones become emission points for droplets
+  thrown downwind at a quarter to half the wind speed, rising 0 to 1 at Monahan et al.'s (1986) and Andreas's
+  (1998) spume onset, 9 m/s, full by 20 m/s. Drawn with the surf spray's droplet. Cost on the cloud CPU:
+  0.14 ms a physics frame.
+- Whitecap steering: the threshold starts from a fit of the bench's converged thresholds against the wind
+  (6 m/s 0.729, 9 0.747, 12 0.761, 15 0.779, 18 0.797, 22 0.824: 0.694 + 0.0059 U) and follows wind changes
+  by it; the measured cover (persistent foam, filling as 1 - exp(-t / persistence) after a start) is divided
+  by that fill before steering. Before, a storm's cover overshot to 21% against a 14.5% target for seconds.
+- Ocean height, displacement and derivative textures are created cleared (were undefined until a cascade's
+  first step).
+
+**Tried and dropped.** The sun's path in the water traced to the real surface toward the sun (a crest with
+the sun behind it lit through its thin top, the effect Sea of Thieves and Black Flag fake with a peak
+mask): no visible change on the clear open sea in raster (mean difference 0.05/255) and none to match in
+the path tracer either; the water is too clear for a few metres of path to show. Not worth four extra
+height lookups a pixel.
+
+**Known.** In a storm's first second the longest cascades show wide white patches that clear within about
+two seconds (the persistent foam of the 1.4 km tile); not the steering and not undefined textures. Open.
+Bigger, steeper storm waves than the spectrum gives are an art choice: `wave_amplitude` 1.6 and `choppiness`
+1.4 give the Black Flag look on the bench.
