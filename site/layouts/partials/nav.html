@@ -14,7 +14,10 @@
 </details>
 {{ end }}
 {{ end }}
-<p class="group">More</p>
+{{ $here := false }}{{ range slice "/settings" "/comparisons" "/references" }}{{ if eq $cur (site.GetPage .) }}{{ $here = true }}{{ end }}{{ end }}
+<details class="navgroup" data-group="More" open{{ if $here }} data-here{{ end }}>
+<summary class="group">More<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <ul>
   {{ range slice "/settings" "/comparisons" "/references" }}{{ with site.GetPage . }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}{{ end }}
 </ul>
+</details>
