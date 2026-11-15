@@ -2508,12 +2508,14 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float lx = u * cu, ly = v * cv;
 				const int ix = int(lx), iy = int(ly);
 				const float on = bark_hash(ix, iy, salt + 61u);
-				if (on > (p_kind == BARK_PAPERY ? 0.62f : 0.6f)) {
+				if (on > (p_kind == BARK_PAPERY ? 0.62f : 0.74f)) {
 					const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
 					const float len = p_kind == BARK_PAPERY ? 0.1f + 0.4f * bark_hash(ix, iy, salt + 65u) : 0.1f + 0.08f * on;
-					const float dx = (lx - ix - cx) / len, dy = (ly - iy - 0.5f) / 0.18f;
+					// Off the cell's middle both ways, so they do not line up in rows.
+					const float cy = 0.5f + 0.5f * (bark_hash(ix, iy, salt + 67u) - 0.5f);
+					const float dx = (lx - ix - cx) / len, dy = (ly - iy - cy) / (p_kind == BARK_PAPERY ? 0.18f : 0.1f);
 					const float m = 1.0f - Math::smoothstep(0.6f, 1.0f, dx * dx + dy * dy);
-					const float lent = p_kind == BARK_PAPERY ? 0.18f : 0.7f;
+					const float lent = p_kind == BARK_PAPERY ? 0.18f : 0.84f;
 					a = a * Math::lerp(1.0f, lent, m);
 					height += m * 0.0004f;
 					r = Math::lerp(r, 0.97f, m);
@@ -2927,7 +2929,7 @@ Ref<Texture2D> TreeGenerator::_fungus_texture() {
 void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 	r_fungi = Builder();
 	fungi_points.clear();
-	if (fungi_cover <= 0.0f || nodes.is_empty() || p_bark.verts.is_empty()) {
+	if ((fungi_cover <= 0.0f && lichen_cover <= 0.0f) || nodes.is_empty() || p_bark.verts.is_empty()) {
 		return;
 	}
 	RandomPCG fr;
@@ -3010,9 +3012,6 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 		if (!fallen && decay_class >= 2 && decay_class <= 4 && chance(0.4f)) {
 			want.push_back({ FUNGUS_TUFT, true });
 		}
-	}
-	if (want.is_empty()) {
-		return;
 	}
 	const Vector3 up(0, 1, 0);
 	const int nv = p_bark.verts.size();
@@ -3178,8 +3177,8 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 		const FungusLook &lk = FUNGUS_LOOKS[agaric ? 0 : wt.kind];
 		const float width = agaric ? Math::lerp(0.08f, 0.16f, fr.randf()) : Math::lerp(lk.w0, lk.w1, fr.randf());
 		const float min_r = MAX(width * 0.55f, 0.035f);
-		// A node of the main wood thick enough to carry it, at the wanted height, picked in
-		// proportion to its bark area.
+		// A node of the main wood thick enough to carry it, at the wanted height, picked by its
+		// volume of wood.
 		int pick = -1;
 		float pick_t = 0.0f;
 		{
@@ -3197,7 +3196,9 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 						continue;
 					}
 				}
-				total += c.radius * c.length;
+				// Area times radius: fruit bodies come from the thick wood, where the mycelium has the
+				// most to rot.
+				total += c.radius * c.radius * c.length;
 				cand.push_back(i);
 				acc.push_back(total);
 			}
@@ -3449,17 +3450,21 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 			bare = _bare_at(vw[v], nr[v], axis, ground);
 			if (bare > 0.0f && moss_k > 0.0f) {
 				// Moss holds the bark under it (and its shell is built on the bark).
-				bare *= 1.0f - Math::smoothstep(0.25f, 0.6f, _moss_at(vw[v], nr[v], ground, moss_k));
+				// From where the moss tint starts (0.15): the shell's edge is cut by its grid and only
+				// the green-tinted bark under it hides that; bare wood there showed the cut as stairs.
+				bare *= 1.0f - Math::smoothstep(0.05f, 0.15f, _moss_at(vw[v], nr[v], ground, moss_k));
 			}
 		}
 		if (bare > 0.0f) {
 			const float r = radius[v];
-			float depth = MIN(0.25f * r, 0.003f + 0.03f * r);
+			// Thin bark on smooth tubes (beech, birch, young stems): a few millimetres. A deeper
+			// step stood the moss shell, built on the bark, out of the sunk wood as a ledge.
+			float depth = MIN(0.25f * r, 0.002f + 0.008f * r);
 			if (v < int(r_bark.relief_off.size()) && r_bark.relief_off[v].y > 0.0f) {
 				// Displaced bark: the wood lies at the furrow floor (what was bark above it is gone).
 				depth = MAX(0.0f, r_bark.relief_off[v].x - 0.9f * floor_k * r_bark.relief_off[v].y) + 0.002f;
 			}
-			vw[v] -= nr[v] * (depth * Math::smoothstep(0.3f, 0.7f, bare));
+			vw[v] -= nr[v] * (depth * Math::smoothstep(0.1f, 0.9f, bare));
 			cw[v].a = 0.5f - 0.5f * bare;
 		} else {
 			cw[v].a = 0.5f + 0.5f * lw;
@@ -6420,7 +6425,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				LocalVector<Vector3> bp;
 				LocalVector<float> br;
 				int bsides = rsides;
-				if (relief && moss_shell) {
+				if (moss_shell) {
+					// Smooth bark too: on a coarser bark grid the shell's edge, where it meets the
+					// bark, ran straight along the bark's long triangles.
 					bp = rp;
 					br = rr;
 				} else if (relief) {
@@ -7424,6 +7431,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 	}
 	const String body = R"(
 	float bark_bare = 0.0;
+	vec3 bark_wood_n = vec3(0.5, 0.5, 1.0);
 	{
 		// Vertex alpha (TreeGenerator::_peel_bark): 0.5 + 0.5 x lichen weight on bark, 0.5 - 0.5 x
 		// bare where the bark is lost. The bark breaks along its furrows, so the edge follows the
@@ -7477,6 +7485,14 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			ALBEDO *= 1.0 - 0.45 * rim;
 			ALBEDO = mix(ALBEDO, wood, bark_bare);
 			ROUGHNESS = mix(ROUGHNESS, 0.8, bark_bare);
+			// The wood's own relief: fibre ridges across u and the checks as grooves, as a tangent
+			// space normal from the pattern's slope (finite differences of the same samples).
+			float du = 0.004;
+			float g1 = texture(lichen_map, vec2((base_uv.x + du) * 1.7, base_uv.y * 0.08)).r;
+			float split1 = abs(fract((base_uv.x + du) * 3.0 + 1.2 * wander) - 0.5);
+			float c1 = mix(1.0, smoothstep(0.01, 0.07, split1), run);
+			float h0 = 0.4 * grain + checks, h1 = 0.4 * g1 + c1;
+			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 2.5, 0.0, 1.0), 0.5, 1.0);
 		}
 	}
 )";
@@ -7485,7 +7501,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 	const String nanchor = "	NORMAL_MAP_DEPTH = normal_scale;\n";
 	const int na = code.find(nanchor);
 	if (na > ra) {
-		code = code.insert(na + nanchor.length(), "	NORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), bark_bare * 0.6);\n");
+		code = code.insert(na + nanchor.length(), "	NORMAL_MAP = mix(NORMAL_MAP, bark_wood_n, bark_bare * 0.85);\n");
 	}
 	code = code.insert(ra + anchor.length(), body);
 	const String uniforms = R"(uniform sampler2D lichen_map : hint_default_white, filter_linear_mipmap, repeat_enable;

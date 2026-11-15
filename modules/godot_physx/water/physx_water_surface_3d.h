@@ -500,6 +500,9 @@ private:
 	GPUParticles3D *crest_spray_node = nullptr;
 	Ref<ParticleProcessMaterial> crest_spray_material;
 	Ref<ImageTexture> crest_spray_points_tex;
+	GPUParticles3D *crest_spume_node = nullptr;
+	Ref<ParticleProcessMaterial> crest_spume_material;
+	void _make_crest_spume();
 	RandomPCG crest_rng;
 	void _update_crest_spray();
 	void _update_foam_streaks();
@@ -670,6 +673,7 @@ private:
 	bool underwater_shown = false;
 	Vector3 water_light_sun_dir = Vector3(0, -1, 0);
 	Vector3 water_light_sun_irradiance;
+	Vector3 water_light_sun_travel; // the scene sun's direction of travel while it is up, else zero
 	Vector3 water_light_sky;
 	bool underwater_camera_below = false;
 	MeshInstance3D *underwater_fog_instance = nullptr;

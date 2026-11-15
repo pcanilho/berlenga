@@ -1,0 +1,1 @@
+- Water: storm seas read at a glance. Breaking crests throw soft spume that blows downwind as white smoke, and gale foam streaks are thin broken filaments along the wind across the whole sea, not only behind whitecaps.

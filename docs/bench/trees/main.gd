@@ -383,14 +383,32 @@ func _build_scene() -> void:
 		var fp: PackedFloat32Array = first_info.mesh.get_meta("tree_fungi", PackedFloat32Array())
 		var k := int(OS.get_environment("FUNGI")) if OS.has_environment("FUNGI") else 0
 		var dist := float(OS.get_environment("FDIST")) if OS.has_environment("FDIST") else 0.7
-		if fp.size() >= (k + 1) * 8:
+		if OS.has_environment("FALL") and fp.size() >= 8:
+			# All clusters: from DIST out along their mean normal at knee-to-hip height (0.6 m),
+			# looking at their centroid, a little along the log.
+			var c := Vector3.ZERO
+			var nn := Vector3.ZERO
+			var kinds := []
+			for j in fp.size() / 8:
+				c += Vector3(fp[j * 8], fp[j * 8 + 1], fp[j * 8 + 2])
+				nn += Vector3(fp[j * 8 + 3], 0, fp[j * 8 + 5])
+				kinds.append(int(fp[j * 8 + 7]))
+			c = c / (fp.size() / 8) + Vector3(xs[0], 0, 0)
+			var fl := nn.normalized() if nn.length() > 0.01 else Vector3(0, 0, 1)
+			var along := fl.cross(Vector3.UP).normalized()
+			cam.position = c + fl * dist + along * float(OS.get_environment("FALONG") if OS.has_environment("FALONG") else "0.6")
+			cam.position.y = 0.6
+			cam.look_at(c)
+			print("fungi kinds ", kinds, " pts ", fp)
+			cam.fov = 55.0
+		elif fp.size() >= (k + 1) * 8:
 			var at := Vector3(fp[k * 8], fp[k * 8 + 1], fp[k * 8 + 2]) + Vector3(xs[0], 0, 0)
 			var nrm := Vector3(fp[k * 8 + 3], fp[k * 8 + 4], fp[k * 8 + 5])
 			var flat := Vector3(nrm.x, 0, nrm.z).normalized() if Vector2(nrm.x, nrm.z).length() > 0.2 else Vector3(0, 0, 1)
 			cam.position = at + flat * dist + Vector3(0, 0.25 * dist, 0) + flat.cross(Vector3.UP) * 0.3 * dist
 			cam.look_at(at + Vector3(0, 0.04, 0))
 			print("fungi clusters ", fp.size() / 8, " kind ", fp[k * 8 + 7])
-		cam.fov = 40.0
+			cam.fov = 40.0
 	elif view == "log":
 		# The last plant in the row (the log with --decays) from 3.5 m, slightly above.
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)

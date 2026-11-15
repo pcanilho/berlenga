@@ -13,7 +13,8 @@ extends Node3D
 #   --view=lip      low in the shallows, looking back at the plunging lips (--node=shore_waves:true)
 #   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
 #   --view=storm    a gale over deep open sea (22 m/s, 4 cascades, depth 80 m, no floor) from 7 m up; storm_sun looks
-#                   toward the sun from 9 m up, through the crests
+#                   toward the sun from 9 m up, through the crests; storm_low looks downwind from 3.5 m at 20 m/s
+#                   (the windrows run away from the viewer)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -54,6 +55,9 @@ extends Node3D
 #   --lip-debug     draw the breaking lips opaque red (to see their shape)
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
+#   --plain-sand    noise-toned sand instead of the checker (for shots)
+#   --no-props      no slabs, standing rock or floating boxes (for shots)
+#   --view=shallows lower and closer over the shallow sand (caustics shots)
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #   --sun-pitch=DEG the sun's height above the horizon (default 50)
 #   --shade=X,Z     a slab 12 m up whose shadow (a 5 m band along x) falls on the water at X,Z (an overhang's shade)
@@ -68,6 +72,8 @@ var frames := 12
 var out := ""
 var debug_mode := 0
 var slope_deg := -1.0
+var plain_sand := false
+var no_props := false
 var cam_dy := 0.0
 var sun_energy := 1.0
 var dive := 0.0
@@ -169,6 +175,8 @@ func _ready() -> void:
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
+		elif a == "--plain-sand": plain_sand = true
+		elif a == "--no-props": no_props = true
 		elif a.begins_with("--boat="): boat_speed = float(a.substr(7))
 		elif a.begins_with("--wake-out="): wake_out = a.substr(11)
 		elif a.begins_with("--wake="):
@@ -226,6 +234,18 @@ func _ready() -> void:
 	var sand_mat := StandardMaterial3D.new()
 	sand_mat.albedo_texture = _checker(Color(0.78, 0.7, 0.55), Color(0.62, 0.55, 0.42))
 	sand_mat.uv1_scale = Vector3(100, 100, 1)
+	if plain_sand:
+		# Sand without the checker (for shots): soft noise between two sand tones.
+		var nt := NoiseTexture2D.new()
+		nt.noise = FastNoiseLite.new()
+		nt.noise.frequency = 0.05
+		nt.seamless = true
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(0.66, 0.59, 0.46))
+		ramp.set_color(1, Color(0.8, 0.73, 0.58))
+		nt.color_ramp = ramp
+		sand_mat.albedo_texture = nt
+		sand_mat.uv1_scale = Vector3(40, 40, 1)
 	sand_mat.roughness = 0.95
 	if slope_deg < 0.0:
 		# Under water the floor needs to fall away faster, for depth to look through.
@@ -238,7 +258,7 @@ func _ready() -> void:
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
-	var storm := view.begins_with("storm")
+	var storm := view.begins_with("storm") or no_props
 	for p in [] if storm else [Vector3(-2.5, -1.4, -4.0), Vector3(1.5, -1.9, -7.0), Vector3(3.0, -0.9, -1.5)]:
 		_slab(Vector3(1.2, 1.2, 1.2), p, Vector3(0.3, 0.7, 0.2), rock_mat)
 	if shade.x != INF:
@@ -272,6 +292,8 @@ func _ready() -> void:
 		water.set("fetch", 500000.0)
 		water.set("swell", 0.4)
 		water.set("render_extent", 3000.0)
+		if view == "storm_low":
+			water.set("wind_speed", 20.0)
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
@@ -320,6 +342,8 @@ func _ready() -> void:
 	cam.fov = 45
 	add_child(cam)
 	match view:
+		"shallows":
+			cam.look_at_from_position(Vector3(0, 3.0, 8.0), Vector3(0.0, -1.0, -4.0))
 		"under":
 			cam.look_at_from_position(Vector3(0, 3.5, 5.0), Vector3(0, -1.0, -1.5))
 		"submerged":
@@ -348,6 +372,10 @@ func _ready() -> void:
 			pass # follows the boat (_process)
 		"storm":
 			cam.look_at_from_position(Vector3(0, 7.0, 0.0), Vector3(-15.0, 2.0, -80.0))
+		"storm_low":
+			# Low, looking downwind: the streaks run off toward the horizon, the crests' spume blows away from us.
+			var wd := Vector2(-0.3, 1.0).normalized()
+			cam.look_at_from_position(Vector3(0, 3.5, 0.0), Vector3(wd.x * 80.0, 1.0, wd.y * 80.0))
 		"storm_sun":
 			# Into the light, low: the thin crests between camera and sun.
 			var to_sun := sun.transform.basis.z

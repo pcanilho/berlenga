@@ -50,6 +50,8 @@
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/curve_texture.h"
+#include "scene/resources/gradient_texture.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/sky.h"
 
@@ -300,6 +302,16 @@ uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_
 // (pathtraced_absorption, pathtraced_scattering) as the underwater pass does, instead of blending a tint
 // over it. Off: the older tint (water_color, shallow_color).
 uniform bool clear_water = true;
+// Caustics on what clear water shows (raster): the light-space caustics map (water_caustics_map.glsl), the
+// sun's irradiance at caustics_ref_depth under the waves over a flat surface's, scales the sun's share of the
+// bed's light. Set from PhysXWaterSurface3D (caustics_enabled); the path tracer finds its own.
+uniform bool caustics_on = false;
+uniform sampler2D caustics_tex : filter_linear, repeat_disable;
+uniform vec3 caustics_origin = vec3(0.0);
+uniform vec3 caustics_right = vec3(1.0, 0.0, 0.0);
+uniform vec3 caustics_up = vec3(0.0, 0.0, 1.0);
+uniform float caustics_half_extent = 1.0;
+uniform float caustics_ref_depth = 2.5;
 // Waves shadowing themselves (raster; the path tracer traces it): the sun's ray from each point toward the sun,
 // marched over the surface's heights, is inside the water wherever it crosses a crest in front. Glitter needs
 // the sun in the open, so it goes where the ray is inside; foam and wet sand are lit through the crest's water
@@ -760,6 +772,23 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		// The finest cascade's foam only: the long ones' cells are metres wide and trail as blurred smears.
 		float trail = max(ocean_tex(ocean_foam_tex, world_xz - sd * d1).r * (1.0 - d1 / 14.0), ocean_tex(ocean_foam_tex, world_xz - sd * d2).r * (1.0 - d2 / 14.0));
 		amount = max(amount, 0.8 * trail * fade * foam_streaks);
+		// The windrows themselves (Beaufort 8 and up: "foam blown in well-marked streaks along the wind"): narrow
+		// lines along the wind a few metres apart, wandering a little and broken into lengths of tens of metres.
+		// They are what reads as a gale from a low view, converging on the horizon downwind.
+		float along = dot(world_xz, sd);
+		float across = dot(world_xz, vec2(-sd.y, sd.x)) + 1.5 * foam_value_noise(vec2(along * 0.02, 3.1)) + 0.4 * foam_value_noise(vec2(along * 0.1, 8.3));
+		// Value noise stretched about thirty to one along the wind in three octaves, cut at a high level: many
+		// thin marbled filaments rather than painted lines.
+		vec2 sq = vec2(along * 0.08, across * 4.0);
+		float v = 0.55 * foam_value_noise(sq) + 0.3 * foam_value_noise(sq * vec2(3.0, 2.1) + 5.0) + 0.15 * foam_value_noise(sq * vec2(9.0, 1.3) + 11.0);
+		// Broken along their length every few metres, and only gently denser in places (no bands that end).
+		float broken = smoothstep(0.3, 0.6, foam_value_noise(vec2(along * 0.25, across * 2.0) + 3.0));
+		float streak = smoothstep(0.55, 0.78, v) * broken * (0.6 + 0.4 * foam_value_noise(vec2(along * 0.01, across * 0.03)));
+		// A pixel's rough footprint (about 2 mrad, from the grid's centre, which follows the camera; no
+		// derivatives, as the vertex stage calls this too): past where the filaments are thinner than a pixel
+		// they fade toward their mean cover rather than shimmering.
+		streak = mix(streak, 0.06, clamp(0.002 * length(rel) * 4.0 - 0.2, 0.0, 1.0));
+		amount = max(amount, 0.6 * streak * fade * foam_streaks);
 	}
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
 	if (flow_foam_live) {
@@ -784,13 +813,7 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		vec2 q = (world_xz - o_b) * foam_detail_scale;
 		n = n * w + (0.5 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.7 + 17.0) + 0.2 * foam_value_noise(q * 7.3 - 5.0)) * (1.0 - w);
 	}
-	if (foam_streaks > 0.0) {
-		// Lace stretched ten to one along the wind.
-		vec2 sd = foam_streak_dir;
-		vec2 sp = vec2(dot(p, sd) * 0.1, dot(p, vec2(-sd.y, sd.x)) * 1.2);
-		float ns = 0.6 * foam_value_noise(sp) + 0.4 * foam_value_noise(sp * 2.3 + 7.0);
-		n = mix(n, ns, foam_streaks);
-	}
+	// (The streaks carry their own structure; the whitecaps' lace stays as it is in any wind.)
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
@@ -1262,7 +1285,30 @@ void fragment() {
 		vec3 p_s = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float bed_d = depth_r(v_rest_xz, cuv_fade);
 		float z_bed = bed_d < 999.0 ? max(bed_d + p_s.y - (MODEL_MATRIX[3].y + water_level), 0.0) : -1.0;
-		base_rgb = water_clear_through(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
+		vec3 seen;
+		vec3 bed_p;
+		float sun_share;
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, seen, bed_p, sun_share);
+		if (caustics_on && sun_share > 0.0) {
+			// The bed point back up its refracted sun ray to the surface, then down it to the map's reference
+			// depth: where the map holds that ray's light (a bed at the reference depth reads its own point).
+			vec3 r = underwater_sun_direction;
+			float z = max(MODEL_MATRIX[3].y + water_level - bed_p.y, 0.0);
+			vec3 l = bed_p + r * (caustics_ref_depth - z / max(-r.y, 0.05)) - caustics_origin;
+			vec2 cuv = vec2(dot(l, caustics_right), dot(l, caustics_up)) / caustics_half_extent * 0.5 + 0.5;
+			if (all(greaterThan(cuv, vec2(0.0))) && all(lessThan(cuv, vec2(1.0)))) {
+				vec2 c = texture(caustics_tex, cuv).rg;
+				float e = c.r + (1.0 - clamp(c.g, 0.0, 1.0)); // the dry share of the texel lit evenly
+				// Faded out at the map's edge and on beds far below the reference depth, where the sun's
+				// half-degree disc blurs the real pattern away (the map holds one depth's sharpness).
+				vec2 edge = min(cuv, 1.0 - cuv);
+				float zr = caustics_ref_depth * max(-r.y, 0.05);
+				e = mix(1.0, e, smoothstep(0.0, 0.08, min(edge.x, edge.y)) * (1.0 - smoothstep(3.0 * zr, 8.0 * zr, z)));
+				// Only the sun that reached the bed (its shadow is already in the bed's colour).
+				float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
+				base_rgb += seen * sun_share * vis * (e - 1.0);
+			}
+		}
 		unlit_rgb = vec3(0.0); // its sun is already in it, shadowed
 		base_a = 1.0;
 	}
@@ -2946,6 +2992,7 @@ void PhysXWaterSurface3D::set_crest_spray(bool p_enabled) {
 	crest_spray = p_enabled;
 	if (!crest_spray && crest_spray_node != nullptr) {
 		crest_spray_node->set_emitting(false);
+		crest_spume_node->set_emitting(false);
 	}
 }
 
@@ -3006,6 +3053,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_rate = 0.0f;
 		if (crest_spray_node != nullptr) {
 			crest_spray_node->set_emitting(false);
+			crest_spume_node->set_emitting(false);
 		}
 		return;
 	}
@@ -3026,6 +3074,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_rate = 0.0f;
 		if (crest_spray_node != nullptr) {
 			crest_spray_node->set_emitting(false);
+			crest_spume_node->set_emitting(false);
 		}
 		return;
 	}
@@ -3056,6 +3105,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_rate = 0.0f;
 		if (crest_spray_node != nullptr) {
 			crest_spray_node->set_emitting(false);
+			crest_spume_node->set_emitting(false);
 		}
 		return;
 	}
@@ -3074,6 +3124,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_node->set_process_material(crest_spray_material);
 		crest_spray_node->set_draw_pass_mesh(0, _spray_droplet_mesh());
 		add_child(crest_spray_node, false, INTERNAL_MODE_BACK);
+		_make_crest_spume();
 	}
 	if (crest_spray_node->get_amount() != crest_spray_amount) {
 		crest_spray_node->set_amount(crest_spray_amount);
@@ -3115,6 +3166,102 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 	crest_spray_node->set_amount_ratio(CLAMP(crest_spray_rate * lifetime / crest_spray_amount, 0.0f, 1.0f));
 	crest_spray_node->set_visibility_aabb(box.grow(0.6f * wind_speed * lifetime + 4.0f));
 	crest_spray_node->set_emitting(true);
+	// The spume: the same crests, the same share, an eighth as many puffs, kept low (sheets blown along the crests, not plumes) (each a cloud of the droplets).
+	crest_spume_material->set_emission_point_texture(crest_spray_points_tex);
+	crest_spume_material->set_emission_point_count(used);
+	crest_spume_material->set_direction(Vector3(wd.x, 0.06f, wd.y).normalized());
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.2f * wind_speed);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.4f * wind_speed);
+	crest_spume_material->set_gravity(Vector3(wd.x * 0.2f * wind_speed, -2.5f, wd.y * 0.2f * wind_speed));
+	const int spume_amount = MAX(16, crest_spray_amount / 8);
+	if (crest_spume_node->get_amount() != spume_amount) {
+		crest_spume_node->set_amount(spume_amount);
+	}
+	crest_spume_node->set_amount_ratio(crest_spray_node->get_amount_ratio());
+	crest_spume_node->set_visibility_aabb(box.grow(0.6f * wind_speed * 2.0f + 6.0f));
+	crest_spume_node->set_emitting(true);
+}
+
+// Spume (Monahan et al. 1986; Andreas 1998): past about 9 m/s the wind tears the crests into sheets of fine
+// spray that read as white smoke blowing off each breaking wave, far bigger and softer than the droplets. Soft
+// round blots facing the camera that grow and thin out as they spread, lit from behind (thin spray glows
+// against the sun), as the falls' spray puffs.
+void PhysXWaterSurface3D::_make_crest_spume() {
+	crest_spume_node = memnew(GPUParticles3D);
+	crest_spume_node->set_name("CrestSpume");
+	crest_spume_node->set_use_local_coordinates(false);
+	crest_spume_node->set_lifetime(2.0);
+	crest_spume_material.instantiate();
+	crest_spume_material->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_POINTS);
+	crest_spume_material->set_spread(15.0f);
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 1.0f);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 2.0f);
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 1.2f);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 3.5f);
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_ANGLE, -180.0f);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_ANGLE, 180.0f);
+	Ref<Curve> grow;
+	grow.instantiate();
+	grow->add_point(Vector2(0.0f, 0.3f));
+	grow->add_point(Vector2(1.0f, 1.0f));
+	Ref<CurveTexture> grow_tex;
+	grow_tex.instantiate();
+	grow_tex->set_curve(grow);
+	crest_spume_material->set_param_texture(ParticleProcessMaterial::PARAM_SCALE, grow_tex);
+	Ref<Gradient> fade;
+	fade.instantiate();
+	fade->set_offset(0, 0.0f);
+	fade->set_color(0, Color(1, 1, 1, 0.0f));
+	fade->set_offset(1, 1.0f);
+	fade->set_color(1, Color(1, 1, 1, 0.0f));
+	fade->add_point(0.1f, Color(1, 1, 1, 0.6f));
+	fade->add_point(0.5f, Color(1, 1, 1, 0.3f));
+	Ref<GradientTexture1D> fade_tex;
+	fade_tex.instantiate();
+	fade_tex->set_gradient(fade);
+	crest_spume_material->set_color_ramp(fade_tex);
+	crest_spume_node->set_process_material(crest_spume_material);
+	Ref<QuadMesh> quad;
+	quad.instantiate();
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(R"(
+shader_type spatial;
+render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled, billboard_particles;
+uniform vec3 spray_color : source_color = vec3(0.93, 0.95, 0.97);
+varying float seed;
+void vertex() {
+	seed = INSTANCE_CUSTOM.x;
+}
+float h(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h(i), h(i + vec2(1.0, 0.0)), u.x), mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+void fragment() {
+	// A ragged blot: the edge eaten by noise fixed to the puff (seeded by its random spin angle).
+	vec2 q = UV * 2.0 - 1.0;
+	float r = length(q);
+	float n = 0.6 * vn(q * 2.5 + seed * 91.0) + 0.4 * vn(q * 6.0 - seed * 37.0);
+	float blot = 1.0 - smoothstep(0.0, 1.0, r + 0.6 * (n - 0.5));
+	ALBEDO = spray_color;
+	BACKLIGHT = spray_color * 0.6;
+	ROUGHNESS = 1.0;
+	ALPHA = clamp(blot, 0.0, 1.0) * COLOR.a;
+}
+)");
+	Ref<ShaderMaterial> qm;
+	qm.instantiate();
+	qm->set_shader(sh);
+	quad->set_material(qm);
+	crest_spume_node->set_draw_pass_mesh(0, quad);
+	add_child(crest_spume_node, false, INTERNAL_MODE_BACK);
 }
 
 Dictionary PhysXWaterSurface3D::get_breaker_stats() const {
@@ -4319,12 +4466,14 @@ void PhysXWaterSurface3D::_update_water_light(const Camera3D *cam) {
 	DirectionalLight3D *sun = raster_reflection_state.find_sun(this);
 	Vector3 sun_dir(0, -1, 0);
 	Vector3 sun_irradiance;
+	water_light_sun_travel = Vector3();
 	if (sun != nullptr && sun->is_visible_in_tree()) {
 		// Light travels along the light's -Z; refracted down into the water (Snell, IOR 1.33) and
 		// thinned by the surface's Fresnel reflection. Raster lights are pi x energy in irradiance.
 		const Vector3 travel = -sun->get_global_transform().basis.get_column(2).normalized();
 		const float cos_i = -travel.y;
 		if (cos_i > 0.0f) {
+			water_light_sun_travel = travel;
 			const float sin_i = Math::sqrt(MAX(1.0f - cos_i * cos_i, 0.0f));
 			const float sin_t = sin_i / 1.33f;
 			const float cos_t = Math::sqrt(MAX(1.0f - sin_t * sin_t, 0.0f));
@@ -4802,7 +4951,22 @@ void PhysXWaterSurface3D::_after_step() {
 		}
 	}
 	if (solver.is_available() && caustics_enabled) {
-		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, _open_beyond());
+		// The scene's sun when there is one up (the light the water is drawn with), else caustics_sun_direction.
+		const Vector3 sun_travel = water_light_sun_travel.is_zero_approx() ? caustics_sun_direction : water_light_sun_travel;
+		const Vector3 origin(grid_center.x, get_global_position().y, grid_center.y);
+		solver.render_caustics(origin, sun_travel, caustics_reference_depth, 1.333f, _open_beyond());
+		if (water_material.is_valid() && caustics_texture.is_valid()) {
+			water_material->set_shader_parameter("caustics_on", true);
+			water_material->set_shader_parameter("caustics_tex", caustics_texture);
+			// The map's heights are about the node's origin, the drawn surface's about water_level above it.
+			water_material->set_shader_parameter("caustics_origin", origin + Vector3(0.0f, water_level, 0.0f));
+			water_material->set_shader_parameter("caustics_right", solver.get_caustics_light_right());
+			water_material->set_shader_parameter("caustics_up", solver.get_caustics_light_up());
+			water_material->set_shader_parameter("caustics_half_extent", solver.get_caustics_half_extent());
+			water_material->set_shader_parameter("caustics_ref_depth", caustics_reference_depth);
+		}
+	} else if (water_material.is_valid()) {
+		water_material->set_shader_parameter("caustics_on", false);
 	}
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {

@@ -1474,7 +1474,14 @@ What else is out there, and what is worth taking:
   half an hour; converging the last glaciation only takes the valley from 9 to 50 s, and its solves, cold and on a
   bed moving up to 25 m a step, still stop at the cycle cap. Not shipped: it needs a better coarse-grid treatment of
   steep beds (or Newton with a banded direct solve, 4225 unknowns) to be fast enough, and Paulo's look at the
-  changed terrain.
+  changed terrain. Newton tried next (semismooth Newton on min(H, F) = 0, a primal-dual active set method,
+  Hintermüller, Ito and Kunisch 2002; finite-difference Jacobian in nine colours, banded LU): it does not converge,
+  even started from a nearly settled state, because the few nodes over cliffs in the bed have no balanced value in
+  the upwind scheme and dominate any merit, and the steps that chase them thin the rest of the ice. The root fix is
+  the discretisation: Jarosch, Schoof and Anslow 2013's MUSCL scheme with a superbee limiter conserves mass over
+  steep beds, after which the obstacle problem is well posed there and Newton or multigrid can converge. That is the
+  next step for the solver (Paulo picked: other fixes first, the solver last). Work in progress, harness and dumped
+  states: /mnt/project-files/fork/terrain/ice-solver/.
 - Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
   droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
   simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;

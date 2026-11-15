@@ -19,11 +19,15 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Murky water: a green glow fills the deep end.*
 
-- **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
+- **Caustics** (`rendering/pathtracing/caustics`; raster `caustics_enabled`, off by default): sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.
 
   ![A rippled pool, caustics off and on](media/caustics.jpg)
 
   *Caustics: bright lines on the pool floor.*
+
+  ![Clear shallows over sand, raster, caustics_enabled off and on](media/water-raster-caustics.jpg)
+
+  *Raster caustics: sunlight focused by the waves lies in a web over the sand of the shallows.*
 
 - **Caustic cascades** (`rendering/pathtracing/caustics_cascades`): sun caustics out to 256 m, near lines unchanged.
 
@@ -55,7 +59,12 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Whitecaps: with a fixed threshold the cover barely changes with the wind; now it grows from none at 6 m/s to many at 20 m/s.*
 
-- **Storm seas** (`crest_spray`): above 9 m/s of wind, spray tears off breaking crests; above 14 m/s, foam is drawn into streaks along the wind.
+- **Storm seas** (`crest_spray`, `crest_spray_amount`): above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.
+
+  ![Storm sea at 20 m/s looking downwind, without and with storm spray, raster](media/water-storm-seas.jpg)
+
+  *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
+
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 
   ![A lake looking into the sun, raster, with wind ripples and glitter](media/lake-ripples.jpg)

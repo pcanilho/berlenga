@@ -2393,6 +2393,25 @@ its real depth; the bench's new `--view=storm` (and `storm_sun`) sets a deep gal
   by that fill before steering. Before, a storm's cover overshot to 21% against a 14.5% target for seconds.
 - Ocean height, displacement and derivative textures are created cleared (were undefined until a cascade's
   first step).
+- Second pass (docs declined the first pair: at slider size the two halves looked the same; the streaks
+  were only the fading whitecap foam drawn out, and 2 to 4 cm droplets vanish past a few metres).
+  Spume puffs: the crest emitters also feed soft camera-facing blots 1.2 to 3.5 m across with ragged
+  noise edges, an eighth as many as the droplets, thrown nearly flat downwind at 0.2 to 0.4 U, held low
+  (gravity 2.5 m/s^2, damping 1 to 2), growing and thinning over 2 s, lit from behind; the falls' spray
+  puffs' technique. Windrows: value noise stretched about fifty to one along the wind (filaments a
+  third of a metre across, tens of metres long, wandering by a slow noise), cut high and gathered into
+  bands, over the whole sea at foam_streaks; past where a filament is under a pixel (2 mrad footprint
+  from the grid centre, since the vertex stage calls foam_at_with and has no derivatives) it fades to
+  its mean cover. Bench `--view=storm_low`: 3.5 m up looking downwind at 20 m/s. The puffs face the
+  camera by `render_mode billboard_particles`, which the path tracer also honours (a vertex() billboard is
+  not run for traced particles: they showed as flat bright rectangles; the falls' puffs had the same bug).
+- Third pass (docs: the windrows ran as smooth unbroken ribbons in one half of the frame, cut off along a
+  hard line by the banding noise, and the whitecaps looked smaller with streaks on). Windrows now: three
+  octaves stretched about thirty to one (filaments about a quarter metre across), broken along their
+  length every few metres by a second noise, and only gently denser in places (0.6 to 1, no band that
+  ends). The whitecaps' lace is no longer stretched along the wind (that thinned them in a gale); the
+  streaks carry their own structure. `foam_streaks` is a material uniform the node sets from
+  `wind_speed` (smoothstep 14 to 22 m/s), not a property.
 
 **Tried and dropped.** The sun's path in the water traced to the real surface toward the sun (a crest with
 the sun behind it lit through its thin top, the effect Sea of Thieves and Black Flag fake with a peak
@@ -2404,3 +2423,65 @@ height lookups a pixel.
 two seconds (the persistent foam of the 1.4 km tile); not the steering and not undefined textures. Open.
 Bigger, steeper storm waves than the spectrum gives are an art choice: `wave_amplitude` 1.6 and `choppiness`
 1.4 give the Black Flag look on the bench.
+
+## Raster caustics (15 Nov, FluidNinja parity step 2)
+
+The light-space caustics map (water_caustics_map.glsl) has been drawn since the first water pass but stored
+a tone-mapped "excess light" in 8 bits and had no reader; the bed under clear raster water was lit evenly.
+
+**Established technique.** Wallace's WebGL Water (2011) and Unity HDRP's water system (2022.2) both rasterise
+the surface's grid refracted onto a plane a fixed distance under it (HDRP's "virtual plane distance") and
+read the ratio of a triangle's area before and after as the light's concentration there, summed with
+additive blending; HDRP then scales the lit underwater scene by it. Caustics mapping (Shah, Konttinen and
+Pattanaik 2007) is the same splat taken from the light's view onto real receivers. Crest scrolls a
+painted caustic texture by a focal depth (not physical). Our map is already the first kind, with an
+orthographic light-space projection like a shadow map, so any receiver can look it up.
+
+**Built.**
+- The map stores the physical ratio: R = irradiance at the reference depth over a flat surface's (1 even,
+  0 none, up to 64 at a focus) in RGBA16F, G the water mask. Receivers read R + (1 - G), so dry texels
+  read 1.
+- The ocean's heights in the map are read at world positions (they were read relative to the map's centre,
+  so the pattern was out of phase with the drawn waves wherever the centre was not a whole tile away).
+- The map follows the scene's sun (the light the water is drawn with); `caustics_sun_direction` only
+  when no sun is up.
+- Clear water reads it: the bed point seen through the surface goes back up its refracted sun ray and down
+  to the reference depth, and the map's ratio scales only the sun's share of that bed's light (the sun
+  over sun plus sky after both have crossed the water down to it), times sun_visibility there, so shaded
+  beds and the sky's light stay as they were. `caustics_reference_depth` sets where the pattern is sharpest.
+- The map's ocean heights are read with a cubic B-spline (Sigg and Hadwiger, GPU Gems 2 ch. 20, four
+  bilinear taps): bilinear heights have one slope per texel and focused the light onto the texel edges as
+  a square grid.
+- Only the first ocean cascade and the ripples shape the map (longer cascades barely focus at a few metres).
+
+## Live water on terrain (15 Nov, FluidNinja parity step 3, research)
+
+Paulo's ask: water that flows, fills and floods over the ground as FluidNinja LIVE 2 and Fluid Flux
+show it (a stream finding its way down a slope, a hollow filling into a pond, rain running off and
+pooling, a dam breaking). What exists: the live window (step 3c, Chentanez and Müller 2010 on the
+ripple grid) solves shallow water inside a water body's square, but has no moving wet/dry fronts and
+never leaves its body. "The full live version" above is the plan this starts.
+
+**How others do it.**
+- Fluid Flux (Unreal): a 2D shallow-water simulation on render targets over the landscape, with
+  sources, slopes and falls, drawn as mesh tiles; its coastline and waterfall showcases are the
+  reference look (80.lv articles, ImaginaryBlend forum thread).
+- Virtual pipes (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007 on the GPU; Štava et al. 2008
+  for interactive terrain): per cell a water height and four outflow fluxes, accelerated by the
+  height difference to each neighbour and scaled down when they would drain the cell below zero. It
+  conserves volume exactly, never goes negative, wets and dries without special cases, and stays
+  stable on cliffs, which is why city and terrain games use it for floods. Its weakness is inertia:
+  waves are damped and eddies do not form.
+- Chentanez and Müller 2010 (our live window): semi-Lagrangian velocities, better waves and eddies,
+  needs extra care at wet/dry fronts and steep slopes (their overshoot fix, depth clamps).
+
+**Proposal.** A new node, a hand-placed live area over any ground (`PhysXLiveWater3D`): a square of
+up to about 256 m at 0.25 to 1 m cells. It reads the ground's heights once (physics ray casts, so
+terrain, rocks and buildings all count) and keeps them as a texture. Water comes from sources (point
+inflows in m^3/s, area springs), from rain (the weather's rain rate) and from the edges of water
+bodies it touches, and leaves by sinks and soaking in. The solver is the pipe model, with velocity
+from the fluxes for flow-aligned foam and drag. The surface is a displaced grid using the shared
+water shader (clear water, shadows, caustics, foam where it runs fast or falls), traced by the path
+tracer through vertex capture. A CPU readback gives `sample_height()` and `sample_flow()` for
+buoyancy. Later, the same tiles stream over a whole world (tile manager, LOD, sleeping tiles) as
+"The full live version" lays out.

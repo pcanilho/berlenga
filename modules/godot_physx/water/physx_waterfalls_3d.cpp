@@ -200,14 +200,8 @@ GPUParticles3D *make_spray_puffs(const Transform3D &p_xf, float p_speed, float p
 	sh.instantiate();
 	sh->set_code(R"(
 shader_type spatial;
-render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled;
+render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled, billboard_particles;
 uniform vec3 spray_color : source_color = vec3(0.93, 0.95, 0.97);
-void vertex() {
-	mat4 mat_world = mat4(normalize(INV_VIEW_MATRIX[0]), normalize(INV_VIEW_MATRIX[1]), normalize(INV_VIEW_MATRIX[2]), MODEL_MATRIX[3]);
-	mat_world = mat_world * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));
-	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
-	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
-}
 void fragment() {
 	float r = length(UV * 2.0 - 1.0);
 	float blot = 1.0 - smoothstep(0.15, 1.0, r);
