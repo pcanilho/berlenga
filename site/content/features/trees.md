@@ -40,7 +40,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Bark lichen: pale colonies gather on the upper bole and thin out toward the mossy foot.*
 
-- **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree.
+- **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree. Old ivy has woody stems that thicken with the host's age and lie on the bark ridges, with unlobed adult leaves high on old stems.
 - **Leaf shapes** (`TreeGenerator.get_leaf_form()`): simple, lobed, palmate and compound leaves per species, with the true outline as geometry.
 - **Needles** (`needle_sprays`, `near_needle_range`): real needles near the camera, crossed needle sprays beyond.
 - **Near leaf detail** (`near_leaf_range`): lobed and compound leaves are built only for trees near the camera; further out each leaf is a simple leaf of the same area.
@@ -67,6 +67,11 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
   *Bark peel: on a class 2 snag the bark has come away in plates from the upper stem, baring grey wood.*
 
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
+
+  ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)
+
+  *Broken limbs: the limb ends in a splintered break of pale wood with torn bark.*
+
 - **Fungi** (`fungi_cover`): bracket fungi and mushroom tufts with stalks, caps and gills grow as geometry on old and dead wood, by host and decay class.
 - **Fallen branches** (`fallen_branch`): shed limbs and sticks on the forest floor, from the stand's own trees.
 
