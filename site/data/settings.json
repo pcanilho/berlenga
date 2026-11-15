@@ -2824,6 +2824,19 @@
    "topic": ""
   },
   {
+   "name": "Lit smoke in raster",
+   "settings": [
+    "ambient_scattering",
+    "sun_scattering",
+    "cast_shadows"
+   ],
+   "note": "",
+   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Cloth tearing",
    "settings": [
     "PhysXCloth3D.tear_factor",
