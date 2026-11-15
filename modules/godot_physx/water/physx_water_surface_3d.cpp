@@ -50,9 +50,9 @@
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/3d/world_3d.h"
 #include "scene/resources/curve_texture.h"
 #include "scene/resources/gradient_texture.h"
-#include "scene/resources/3d/world_3d.h"
 #include "scene/resources/sky.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
@@ -826,7 +826,7 @@ float foam_at(vec2 world_xz) {
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
 )"
-							   R"(
+									R"(
 // Ripple-grid UV for the shore's moving patterns (swash, wet sand, shore
 // foam), mirror-repeated past the simulated square: they carry on down the
 // beach without a seam instead of stretching the edge row into straight
@@ -1613,6 +1613,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_swash_drain_speed"), &PhysXWaterSurface3D::get_swash_drain_speed);
 	ClassDB::bind_method(D_METHOD("set_wet_sand_dry_time", "seconds"), &PhysXWaterSurface3D::set_wet_sand_dry_time);
 	ClassDB::bind_method(D_METHOD("get_wet_sand_dry_time"), &PhysXWaterSurface3D::get_wet_sand_dry_time);
+	ClassDB::bind_method(D_METHOD("set_contact_wetness", "enabled"), &PhysXWaterSurface3D::set_contact_wetness);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness"), &PhysXWaterSurface3D::get_contact_wetness);
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
@@ -1726,6 +1728,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_run_up", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater,suffix:m"), "set_swash_run_up", "get_swash_run_up");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_drain_speed", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m/s"), "set_swash_drain_speed", "get_swash_drain_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_sand_dry_time", PROPERTY_HINT_RANGE, "0.1,60,0.1,or_greater,suffix:s"), "set_wet_sand_dry_time", "get_wet_sand_dry_time");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_wetness"), "set_contact_wetness", "get_contact_wetness");
 
 	ADD_GROUP("Flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "current", PROPERTY_HINT_NONE, "suffix:m/s"), "set_current", "get_current");
@@ -4106,6 +4109,50 @@ void PhysXWaterSurface3D::set_swash_drain_speed(float p_speed) {
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 }
 
+void PhysXWaterSurface3D::set_contact_wetness(bool p_enabled) {
+	contact_wetness = p_enabled;
+	if (!p_enabled) {
+		solver.set_wetness_readback(false);
+	}
+}
+
+// Where the sea reached, into the weather's contact wetness (WeatherMap3D): the swash's wet sand on the ripple
+// grid, read back from the GPU every few steps, over land and still water shallower than half a metre (deeper
+// cells are skipped, so piers and hulls over open water are not wetted from below).
+void PhysXWaterSurface3D::_wet_ground() {
+#ifdef MODULE_WEATHER_ENABLED
+	WeatherMap3D *weather = WeatherMap3D::get_active();
+	const bool want = contact_wetness && weather != nullptr && weather->is_contact_wetness_enabled() && !Engine::get_singleton()->is_editor_hint();
+	solver.set_wetness_readback(want);
+	if (!want || cell_depth.is_empty()) {
+		return; // (constant depth everywhere: no shore)
+	}
+	Vector<float> wet;
+	int n = 0;
+	uint64_t serial = 0;
+	if (!solver.get_wetness_grid(wet, n, serial) || serial == contact_wet_serial || cell_depth.size() != n * n) {
+		return;
+	}
+	contact_wet_serial = serial;
+	contact_wet_cells.resize(n * n);
+	float *cw = contact_wet_cells.ptrw();
+	const float *w = wet.ptr();
+	const float *d = cell_depth.ptr();
+	bool any = false;
+	for (int i = 0; i < n * n; i++) {
+		// Faded over the grid's outer eighth, so the wet band does not end in a straight line at its edge.
+		const int x = i % n;
+		const int z = i / n;
+		const float edge = MIN(MIN(x, n - 1 - x), MIN(z, n - 1 - z)) / MAX(0.125f * n, 1.0f);
+		cw[i] = d[i] <= 0.5f ? CLAMP(w[i], 0.0f, 1.0f) * MIN(edge, 1.0f) : 0.0f;
+		any = any || cw[i] > 0.0f;
+	}
+	if (any) {
+		weather->add_contact_wetness_cells(cw, n, n, Rect2(grid_center - 0.5f * active_domain_size, active_domain_size));
+	}
+#endif
+}
+
 void PhysXWaterSurface3D::set_wet_sand_dry_time(float p_seconds) {
 	wet_sand_dry_time = MAX(p_seconds, 0.1f);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
@@ -4571,6 +4618,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 			_update_breakers();
 			_update_crest_spray();
+			_wet_ground();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {

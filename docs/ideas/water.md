@@ -2639,3 +2639,22 @@ hollow and a wake behind, the level standing up against a leg. How others do it:
   inside it (no mask yet); speed comes from the body's motion between frames, not its rotation.
 - Benches: live_water `--scene=wade [--no-pusher] [--view=wade_close]`; water_surface `--wader
   [--wader-nopush] --view=wader`.
+
+## Seas and rivers wet the ground (15 Nov, FluidNinja parity step 4a, the rest)
+
+The contact wet map (above) took only live water. The sea already kept its own wet sand behind the swash
+(water_swash.glsl, `wet_sand_dry_time` 12 s, drawn by the sea's material over the floor), but nothing else
+on the shore knew: rocks, plants and props stayed dry, and the sand dried in seconds. Same approach as for
+live water (the wet map is fed by whatever the water covered), here from the swash pass's wetness channel.
+
+**Built.** `PhysXWaterSurface3D.contact_wetness` and `PhysXRiver3D.contact_wetness` (on; the river with
+`live_flow`): the swash texture's wetness (RGBA32F on the ripple grid) is read back every eighth step
+(async, as the other readbacks; about 1 MB for 256^2 cells) while a WeatherMap3D with contact wetness is
+active, and written with `add_contact_wetness_cells()` over land and still water shallower than 0.5 m
+(deeper cells skipped, so a pier or hull over open water is not wetted from below), faded over the grid's
+outer eighth. The river drops the two reads after its window moves. Result (water_surface `--contact
+--view=runup --node=shore_waves:true`): the sand reads wet from the water up to 2.5 m past the still
+waterline (where the run-up reached) and dry beyond; river `--live --contact`: the banks and shallows
+round the rocks.
+Known limit: the wet map is 2D, so anything at that spot is wetted whatever its height (a bridge over a
+shallow river bank).

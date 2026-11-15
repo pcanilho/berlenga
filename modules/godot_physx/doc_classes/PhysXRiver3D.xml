@@ -138,6 +138,9 @@
 		<member name="carve_falloff" type="float" setter="set_carve_falloff" getter="get_carve_falloff" default="2.0">
 			How far (m) past the banks the brush fades out, so the cut blends into the ground.
 		</member>
+		<member name="contact_wetness" type="bool" setter="set_contact_wetness" getter="get_contact_wetness" default="true">
+			With [member live_flow], banks and rocks the live window's water reached stay wet in the weather's contact wetness ([code]WeatherMap3D.contact_wetness_enabled[/code]) and dry with the weather. Read back from the GPU every eighth step, over the banks and water shallower than half a metre.
+		</member>
 		<member name="cross_segments" type="int" setter="set_cross_segments" getter="get_cross_segments" default="12">
 			Samples across the river, for the ground, the depth and the flow.
 		</member>

@@ -35,6 +35,11 @@
 #include "physx_water_mist_3d.h"
 #include "physx_water_surface_3d.h"
 
+#include "modules/modules_enabled.gen.h" // For weather.
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
@@ -493,6 +498,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_raster_reflections", "enabled"), &PhysXRiver3D::set_raster_reflections);
 	ClassDB::bind_method(D_METHOD("get_raster_reflections"), &PhysXRiver3D::get_raster_reflections);
 	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXRiver3D::set_live_flow);
+	ClassDB::bind_method(D_METHOD("set_contact_wetness", "enabled"), &PhysXRiver3D::set_contact_wetness);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness"), &PhysXRiver3D::get_contact_wetness);
 	ClassDB::bind_method(D_METHOD("get_live_flow"), &PhysXRiver3D::get_live_flow);
 	ClassDB::bind_method(D_METHOD("set_live_domain_size", "size"), &PhysXRiver3D::set_live_domain_size);
 	ClassDB::bind_method(D_METHOD("get_live_domain_size"), &PhysXRiver3D::get_live_domain_size);
@@ -561,6 +568,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_wetness"), "set_contact_wetness", "get_contact_wetness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_reflections"), "set_raster_reflections", "get_raster_reflections");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_domain_size", PROPERTY_HINT_RANGE, "8,256,1,or_greater,suffix:m"), "set_live_domain_size", "get_live_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_grid_resolution", PROPERTY_HINT_RANGE, "32,512,1"), "set_live_grid_resolution", "get_live_grid_resolution");
@@ -1016,6 +1024,7 @@ void PhysXRiver3D::_live_update(double p_delta) {
 	} else if (MAX(Math::abs(want.x - live_center.x), Math::abs(want.y - live_center.y)) > 0.25f * live_domain_size || live_fields_dirty) {
 		live_center = want;
 		live_solver.recenter(live_center);
+		contact_wet_skip = 2;
 		PackedFloat32Array depth;
 		PackedFloat32Array flux;
 		_live_fields(depth, flux);
@@ -1049,6 +1058,55 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_solver.get_velocity_grid(live_velocity_cache);
 		_live_fit_tilt();
 	}
+	_live_wet_ground();
+}
+
+void PhysXRiver3D::set_contact_wetness(bool p_enabled) {
+	contact_wetness = p_enabled;
+	if (!p_enabled) {
+		live_solver.set_wetness_readback(false);
+	}
+}
+
+// Where the live water reached (the swash pass's wetness on the window, read back every few steps), over the
+// banks and water shallower than half a metre, into the weather's contact wetness.
+void PhysXRiver3D::_live_wet_ground() {
+#ifdef MODULE_WEATHER_ENABLED
+	WeatherMap3D *weather = WeatherMap3D::get_active();
+	const bool want = contact_wetness && weather != nullptr && weather->is_contact_wetness_enabled();
+	live_solver.set_wetness_readback(want);
+	if (!want) {
+		return;
+	}
+	Vector<float> wet;
+	int n = 0;
+	uint64_t serial = 0;
+	if (!live_solver.get_wetness_grid(wet, n, serial) || serial == contact_wet_serial || live_depth.size() != n * n) {
+		return;
+	}
+	contact_wet_serial = serial;
+	if (contact_wet_skip > 0) {
+		contact_wet_skip--;
+		return;
+	}
+	contact_wet_cells.resize(n * n);
+	float *cw = contact_wet_cells.ptrw();
+	const float *w = wet.ptr();
+	const float *d = live_depth.ptr();
+	bool any = false;
+	for (int i = 0; i < n * n; i++) {
+		// Faded over the grid's outer eighth, so the wet band does not end in a straight line at its edge.
+		const int x = i % n;
+		const int z = i / n;
+		const float edge = MIN(MIN(x, n - 1 - x), MIN(z, n - 1 - z)) / MAX(0.125f * n, 1.0f);
+		cw[i] = d[i] <= 0.5f ? CLAMP(w[i], 0.0f, 1.0f) * MIN(edge, 1.0f) : 0.0f;
+		any = any || cw[i] > 0.0f;
+	}
+	if (any) {
+		const Vector2 size(live_domain_size, live_domain_size);
+		weather->add_contact_wetness_cells(cw, n, n, Rect2(live_center - 0.5f * size, size));
+	}
+#endif
 }
 
 // The live water settles into a gentle tilt across the window: the velocity
