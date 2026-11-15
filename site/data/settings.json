@@ -1030,12 +1030,10 @@
    "name": "Far hair for crowds",
    "settings": [
     "cards_enabled",
-    "thick_strands",
-    "card_screen_size",
-    "card_transition"
+    "card_count"
    ],
    "note": "",
-   "what": "far strand hair hands over to one thick strand per clump, shaded as that clump, a clump at a time once it is 2 pixels across, simulating only the guides once the whole head has handed over, so close-ups and zoomed cameras keep the full strands. With `thick_strands` off, the whole head cross-fades to textured cards baked from its own groom once it gets small on screen. Raster only; path tracing keeps the strands.",
+   "what": "far strand hair hands over to one thick strand per clump, a clump at a time once it is 2 pixels across, simulating only the guides once the whole head has handed over. Raster only; path tracing keeps the strands.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
