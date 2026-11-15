@@ -323,6 +323,7 @@ private:
 	void _grow_fungi(const Builder &p_bark, Builder &r_fungi);
 	Ref<Texture2D> fungus_texture;
 	PackedFloat32Array fungi_points; // Mesh meta tree_fungi: 8 floats per cluster.
+	int64_t fungi_index_end = 0; // Fungi surface indices before the lichen strands (LOD 1 keeps these).
 	Ref<Texture2D> _fungus_texture();
 	float _lichen_amount() const;
 	float _lichen_at(const Vector3 &p_pos, float p_radius, float p_moss) const;

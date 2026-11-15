@@ -3370,6 +3370,206 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 			y_off -= hgt * Math::lerp(0.9f, 1.4f, fr.randf());
 		}
 	}
+	// The fruit bodies end here: the strands below are LOD 0 only.
+	fungi_index_end = r_fungi.indices.size();
+	// Fruticose lichens on twigs (trees.md 5h): beard lichens (Usnea) hanging in tufts from thin
+	// branches, mostly on conifers and old oaks in clean humid air, and oakmoss (Evernia prunastri),
+	// forked grey-green straps with a white underside standing off the twigs of oak, ash and hazel.
+	// Real strands and straps, placed by the same light and moisture weight as the crust lichens.
+	{
+		const float k = _lichen_amount();
+		const bool usnea_host = conifer || oak || preset == PRESET_BIRCH || preset == PRESET_BLACK_ALDER;
+		const bool evernia_host = !conifer;
+		const float clumps = k * (fallen || fallen_branch ? 0.0f : 1.0f) * (110.0f * CLAMP(height / 20.0f, 0.25f, 1.0f) * (0.4f + 0.6f * CLAMP(forest_shade / 0.6f, 0.0f, 1.0f)));
+		if (clumps > 0.0f && (usnea_host || evernia_host)) {
+			LocalVector<int> cand;
+			LocalVector<float> acc;
+			float total = 0.0f;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &c = nodes[i];
+				if (c.removed || c.order == 0 || c.radius < 0.004f || c.radius > 0.035f || c.length <= 0.0f || c.start.y - ground < crown_base * 0.7f) {
+					continue;
+				}
+				total += c.length;
+				cand.push_back(i);
+				acc.push_back(total);
+			}
+			const int n_clumps = cand.is_empty() ? 0 : int(clumps);
+			const Color usnea = Color(0.64f, 0.69f, 0.55f).srgb_to_linear();
+			const Color usnea_tip = Color(0.72f, 0.75f, 0.62f).srgb_to_linear();
+			const Color evernia_top = Color(0.58f, 0.64f, 0.5f).srgb_to_linear();
+			const Color evernia_under = Color(0.82f, 0.84f, 0.78f).srgb_to_linear();
+			auto push_raw = [&](const Vector3 &p_pos, const Color &p_col, int p_bone, float p_v) {
+				r_fungi.verts.push_back(p_pos);
+				r_fungi.uvs.push_back(Vector2(0.5f, p_v));
+				r_fungi.colors.push_back(p_col);
+				r_fungi.normals.push_back(Vector3());
+				if (skin) {
+					for (int q = 0; q < 4; q++) {
+						r_fungi.bones.push_back(q == 0 ? p_bone : 0);
+						r_fungi.weights.push_back(q == 0 ? 1.0f : 0.0f);
+					}
+				}
+			};
+			// A strand: a thin tube (3 sides) along a polyline.
+			auto strand = [&](const LocalVector<Vector3> &p_pts, float p_r0, float p_r1, int p_bone) {
+				const int m = p_pts.size();
+				if (m < 2) {
+					return;
+				}
+				const int b0 = r_fungi.verts.size();
+				for (int i = 0; i < m; i++) {
+					const Vector3 t = (p_pts[MIN(i + 1, m - 1)] - p_pts[MAX(i - 1, 0)]).normalized();
+					Vector3 bx = t.cross(Math::abs(t.y) < 0.9f ? up : Vector3(1, 0, 0)).normalized();
+					const Vector3 by = t.cross(bx);
+					const float f = float(i) / (m - 1);
+					const float r = Math::lerp(p_r0, p_r1, f);
+					for (int q = 0; q <= 3; q++) {
+						const float a = float(Math::TAU) * q / 3;
+						push_raw(p_pts[i] + (bx * Math::cos(a) + by * Math::sin(a)) * r, usnea.lerp(usnea_tip, f), p_bone, 0.2f);
+					}
+				}
+				for (int i = 0; i < m - 1; i++) {
+					for (int q = 0; q < 3; q++) {
+						const int i0 = b0 + i * 4 + q;
+						quad(i0, i0 + 4, i0 + 1, i0 + 5);
+					}
+				}
+			};
+			for (int c = 0; c < n_clumps; c++) {
+				const float x = fr.randf() * total;
+				uint32_t ki = 0;
+				while (ki + 1 < acc.size() && acc[ki] < x) {
+					ki++;
+				}
+				const int ni = cand[ki];
+				const Node &nd = nodes[ni];
+				const Vector3 at_axis = nd.start + nd.dir * (nd.length * fr.randf());
+				// The crusts' light and patch weight; fruticose lichens take to young twigs, so
+				// without the crusts' preference for older bark.
+				const float w = _lichen_at(at_axis, 0.02f, 0.0f);
+				if (fr.randf() > w) {
+					continue;
+				}
+				const int bone = rigged && ni < int(node_bone.size()) ? node_bone[ni] : 0;
+				Vector3 side = nd.dir.cross(up);
+				if (side.length_squared() < 1e-4f) {
+					side = Vector3(1, 0, 0);
+				}
+				side.normalize();
+				const bool beard = usnea_host && (!evernia_host || fr.randf() < 0.45f);
+				Vector4i part;
+				r_fungi.begin(part);
+				if (beard) {
+					// A tuft of 6-14 strands from the twig's underside, hanging and branching.
+					const Vector3 base = at_axis - up * (nd.radius * 0.8f);
+					const int strands = 6 + int(fr.rand() % 9);
+					const float len = Math::lerp(0.05f, 0.16f, fr.randf());
+					for (int sidx = 0; sidx < strands; sidx++) {
+						LocalVector<Vector3> pts;
+						Vector3 p = base + side * ((fr.randf() - 0.5f) * 0.02f) + nd.dir * ((fr.randf() - 0.5f) * 0.03f);
+						Vector3 d = (side * (fr.randf() - 0.5f) * 1.6f + nd.dir * (fr.randf() - 0.5f) * 1.0f - up * 0.6f).normalized();
+						const float sl = len * Math::lerp(0.5f, 1.0f, fr.randf());
+						const int segs = 8;
+						pts.push_back(p);
+						for (int q = 0; q < segs; q++) {
+							d = (d - up * 0.3f + Vector3(fr.randf() - 0.5f, 0.0f, fr.randf() - 0.5f) * 0.25f).normalized();
+							p += d * (sl / segs);
+							pts.push_back(p);
+							if (q == 2 || q == 4) {
+								// A side strand.
+								LocalVector<Vector3> br;
+								Vector3 bp = p, bd = (d + side * (fr.randf() - 0.5f) * 1.5f).normalized();
+								br.push_back(bp);
+								for (int e = 0; e < 4; e++) {
+									bd = (bd - up * 0.35f).normalized();
+									bp += bd * (sl * 0.3f / 4);
+									br.push_back(bp);
+								}
+								strand(br, 0.0006f, 0.00035f, bone);
+							}
+						}
+						strand(pts, 0.0009f, 0.0004f, bone);
+						// Short fibrils standing out from the main strands (the beard lichens' spinules).
+						for (uint32_t q = 1; q + 1 < pts.size(); q++) {
+							if (fr.randf() < 0.35f) {
+								const Vector3 t = (pts[q + 1] - pts[q - 1]).normalized();
+								Vector3 o = t.cross(Vector3(fr.randf() - 0.5f, fr.randf() - 0.5f, fr.randf() - 0.5f));
+								if (o.length_squared() < 1e-6f) {
+									continue;
+								}
+								LocalVector<Vector3> fb;
+								fb.push_back(pts[q]);
+								fb.push_back(pts[q] + (o.normalized() + t * 0.4f).normalized() * Math::lerp(0.003f, 0.007f, fr.randf()));
+								strand(fb, 0.0003f, 0.00015f, bone);
+							}
+						}
+					}
+				} else {
+					// Oakmoss: 5-9 lobes from one holdfast, each forking dichotomously two or three
+					// times (Evernia prunastri: soft, flattened, 2-4 mm wide below, 3-8 cm long),
+					// standing off the twig and drooping as they lengthen; grey-green above, white
+					// beneath.
+					struct Lobe {
+						Vector3 p, d;
+						float len, width;
+						int depth;
+					};
+					LocalVector<Lobe> stack;
+					const Vector3 base = at_axis + up * (nd.radius * 0.6f);
+					const int lobes = 5 + int(fr.rand() % 5);
+					const int max_depth = 2 + int(fr.rand() % 2);
+					for (int sidx = 0; sidx < lobes; sidx++) {
+						const Vector3 d = (up * 0.7f + side * (fr.randf() - 0.5f) * 1.8f + nd.dir * (fr.randf() - 0.5f) * 1.0f).normalized();
+						stack.push_back({ base + nd.dir * ((fr.randf() - 0.5f) * 0.02f), d, Math::lerp(0.009f, 0.018f, fr.randf()), Math::lerp(0.004f, 0.006f, fr.randf()), 0 });
+					}
+					while (!stack.is_empty()) {
+						const Lobe lb = stack[stack.size() - 1];
+						stack.resize(stack.size() - 1);
+						const int segs = 4;
+						const int b0 = r_fungi.verts.size();
+						Vector3 fp = lb.p, fd = lb.d;
+						const float curl = (fr.randf() - 0.5f) * 0.6f;
+						Vector3 nrm_end = up;
+						for (int q = 0; q <= segs; q++) {
+							const float f = float(q) / segs;
+							Vector3 wdir = fd.cross(up);
+							if (wdir.length_squared() < 1e-4f) {
+								wdir = side;
+							}
+							wdir.normalize();
+							const float half = lb.width * 0.5f * (1.0f - 0.15f * f);
+							const Vector3 nrm = wdir.cross(fd).normalized();
+							nrm_end = nrm;
+							const Vector3 off = nrm * 0.00025f;
+							// Upper face then lower face (two sides, each wound to face out).
+							push_raw(fp - wdir * half + off, evernia_top, bone, 0.15f);
+							push_raw(fp + wdir * half + off, evernia_top, bone, 0.15f);
+							push_raw(fp - wdir * half - off, evernia_under, bone, 0.15f);
+							push_raw(fp + wdir * half - off, evernia_under, bone, 0.15f);
+							fp += fd * (lb.len / segs);
+							// The thallus is soft: it droops more the further out it is.
+							fd = (fd + nrm * curl * 0.2f - up * (0.06f + 0.05f * lb.depth)).normalized();
+						}
+						for (int q = 0; q < segs; q++) {
+							const int i0 = b0 + q * 4;
+							quad(i0, i0 + 4, i0 + 1, i0 + 5);
+							quad(i0 + 2, i0 + 3, i0 + 6, i0 + 7);
+						}
+						if (lb.depth < max_depth) {
+							// Two daughter lobes, splayed in the lobe's own plane.
+							const float spread = Math::lerp(0.3f, 0.55f, fr.randf());
+							for (int c2 = 0; c2 < 2; c2++) {
+								const Vector3 cd = fd.rotated(nrm_end, c2 == 0 ? spread : -spread);
+								stack.push_back({ fp - fd * 0.0005f, cd, lb.len * Math::lerp(0.75f, 1.05f, fr.randf()), lb.width * 0.8f, lb.depth + 1 });
+							}
+						}
+					}
+				}
+				r_fungi.end(part, 0.01f);
+			}
+		}
+	}
 	// Smooth normals from the faces; the winding is checked against the top facing up.
 	Vector3 *nw = r_fungi.normals.ptrw();
 	const Vector3 *vw = r_fungi.verts.ptr();
@@ -7198,6 +7398,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _leaf_lods(b, false);
 			} else if (s == 4) {
 				// Fungi are a few thousand triangles at most: one level, seen from every distance.
+				// The lichen strands after them (millimetre threads, sub-pixel past a few metres)
+				// are LOD 0 only, as the moss shell.
+				if (fungi_index_end < b.indices.size()) {
+					PackedInt32Array keep;
+					if (fungi_index_end > 0) {
+						keep = b.indices.slice(0, fungi_index_end);
+					} else {
+						keep.push_back(0);
+						keep.push_back(0);
+						keep.push_back(0);
+					}
+					lods[TREE_LODS[0].error] = keep;
+				}
 			} else {
 				// The moss shell is LOD 0 only (and the path tracer's); coarser levels keep the tint.
 				PackedInt32Array none;

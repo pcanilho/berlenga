@@ -725,6 +725,29 @@ wood it grows on:
   class 3 log with a Fomes and a sulphur tuft in the stand; `VEG_DW_FUNGI=0` and the printed
   `VEG_DW_CAM` give the same view without fungi. About 24 minutes a frame on the cloud.
 
+### 5h. Lichen strands on twigs (15 Nov)
+
+The crust lichens (2h) are a texture; the fruticose lichens that hang from or stand off twigs
+are what reads as "old, damp wood" at arm's length, and no texture can give their silhouette.
+Two forms, as geometry in the fungi surface:
+
+- **Beard lichens (Usnea).** Tufts of 6-14 hanging strands 5-16 cm long, under 1 mm thick,
+  branching twice and set with short fibrils (spinules), from the underside of twigs 4-35 mm
+  thick in the crown. Hosts: conifers, oak, birch, black alder (clean, humid air; Hawksworth and
+  Rose 1970 on Usnea as an air-quality indicator).
+- **Oakmoss (Evernia prunastri).** Tufts of 5-9 flat lobes from one holdfast, each forking two or
+  three times (4-6 mm wide below, 1-2 cm per fork), standing off the twig and drooping as they
+  lengthen; grey-green above, white beneath (two faces). On broadleaf twigs.
+- **Where.** Clumps are placed by the crust lichens' light and patch weight (without their
+  preference for older bark: fruticose lichens take to young twigs), more in a stand's lit crown
+  (`forest_shade`), scaled by the tree's height, `lichen_cover` scales them; none on logs.
+- **Cost.** LOD 0 only (the surface's coarser levels keep the fruit bodies and drop the strands,
+  as the moss shell does): stand-grown oak +31k triangles on 1.68M (+1.8%), Scots pine +8.8k on
+  110k, beech +52k on 544k. Generation time unchanged within noise. Millimetre threads alias in
+  raster beyond a few metres; that is where LOD 1 takes over.
+- **Bench.** `--view=lichen` (env LV = a vertex of the fungi surface, LDIST), with `--day=20` for
+  bare winter twigs. Path tracing keeps every strand.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
