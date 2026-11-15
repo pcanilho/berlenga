@@ -293,9 +293,41 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		const int fm = r_job.mask | (r_job.mask >> 5);
 		return ((fm & 1) && Math::abs(a.z - z0) < e && Math::abs(b.z - z0) < e) || ((fm & 2) && Math::abs(a.x - x1) < e && Math::abs(b.x - x1) < e) || ((fm & 4) && Math::abs(a.z - z1) < e && Math::abs(b.z - z1) < e) || ((fm & 8) && Math::abs(a.x - x0) < e && Math::abs(b.x - x0) < e);
 	};
+	// Displacement of each vertex (from its position only, so both chunks on an edge agree), read once.
+	LocalVector<Vector3> disp;
+	LocalVector<uint8_t> has_disp;
+	disp.resize(base.size());
+	has_disp.resize(base.size());
+	memset(has_disp.ptr(), 0, has_disp.size());
+	auto disp_of = [&](int a) -> Vector3 {
+		if (!has_disp[a]) {
+			disp[a] = _cliff_point(base[a], 1.0) - base[a];
+			has_disp[a] = 1;
+		}
+		return disp[a];
+	};
+	// Along a face the relief steps at each ledge's lip and each joint: an edge is split too where the relief at its
+	// middle strays from the straight line between its ends (error-driven tessellation of a displacement, as adaptive
+	// displacement mapping does, Moreton 2001; Nießner et al. 2016), so a lip and the shadow it casts follow vertices
+	// placed along it instead of zig-zagging across the triangles.
 	auto split = [&](int a, int b) -> bool {
+		if (on_fixed_side(base[a], base[b])) {
+			return false;
+		}
 		const real_t dy = Math::abs(base[a].y - base[b].y);
-		return dy > 1.0f * spacing && !on_fixed_side(base[a], base[b]);
+		if (dy > 1.0f * spacing) {
+			return true;
+		}
+		if (Vector2(base[a].x - base[b].x, base[a].z - base[b].z).length() < 0.3f * spacing && dy < 0.3f * spacing) {
+			return false;
+		}
+		const Vector3 da = disp_of(a), db = disp_of(b);
+		if (da.is_zero_approx() && db.is_zero_approx()) {
+			return false;
+		}
+		const Vector3 pm = (base[a] + base[b]) * 0.5f;
+		const Vector3 dm = _cliff_point(pm, 1.0) - pm;
+		return (dm - (da + db) * 0.5f).length() > 0.08f;
 	};
 	HashMap<uint64_t, int> mids;
 	auto mid = [&](int a, int b) -> int {
@@ -306,6 +338,8 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		const int id = int(base.size());
 		base.push_back((base[a] + base[b]) * 0.5f);
 		keep.push_back(MIN(keep[a], keep[b]) < 1.0 ? (keep[a] + keep[b]) * 0.5f : 1.0f);
+		disp.push_back(Vector3());
+		has_disp.push_back(0);
 		mids.insert(k, id);
 		return id;
 	};

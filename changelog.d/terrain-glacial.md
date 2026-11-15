@@ -1,4 +1,5 @@
 ### Fixed
+- Landscape3D cliff relief: vertices gather along the ledge lips and joints (split where the relief strays from the triangle edge), so path-traced ledge shadows are clean lines instead of beads; about 18% more triangles on cliff views.
 - Landscape3D cliff relief: ledges are now lit per pixel by TerrainMaterial3D from the same relief the vertices follow, so their shadow edges are clean lines instead of a saw-tooth under a low sun.
 - Tall falls: the notch now opens just below the brink instead of cutting through it, so the lake and river stay graded to the lip and no water is left hanging above the rock.
 ### Added

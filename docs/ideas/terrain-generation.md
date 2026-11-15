@@ -1452,6 +1452,50 @@ generated map exactly. Left for later: a channel that crossed a raised dam rides
 sea mask does not move with the brushes.
 
 
+## Research pass, 15 Nov (Paulo: "papers, engines, and even itch.io for hidden gems")
+
+What else is out there, and what is worth taking:
+
+- Converged steady ice. Cordonnier et al. 2023 do not solve the SIA at all (a CNN emulator of Blatter's higher-order
+  model, explicit upwind transport at CFL 0.1, a multi-scale Gaussian stack to speed it up), so they give no SIA
+  solver to copy. Bueler (SIAM GS 2021) frames the steady ice as an obstacle problem (a variational inequality on
+  s >= b) and notes pointwise smoothers do work for the SIA (they fail only for Stokes), and that explicit stepping
+  with truncation at the bed is the common practice. Räss et al.'s accelerated pseudo-transient (FastIceFlo, GMD 17,
+  2024) is for SSA velocities and already diverged on our H^5 diffusivity. Tried, in order (a stand-alone harness on
+  ice states dumped from the hanging valley's run): backward Euler with lagged diffusivity and projected SOR (Picard,
+  Mahaffy 1976) blew up (the lag on H^5 overshoots); nonlinear projected Gauss-Seidel (each node solves its own four
+  face fluxes and mass balance for its thickness, a safeguarded root, clamped at zero) is stable but needs hundreds
+  of sweeps; adding FAS multigrid V-cycles (Brandt 1977) with a damped correction, a fallback to over-relaxed fine
+  sweeps when the cycles stall, and a reset to the best state when a cycle runs away settles every captured state to
+  0.5 m/yr (over all but the worst 0.2% of ice nodes: a node or two over a cliff in the bed cannot balance, Jarosch
+  et al. 2013) in 0.2 to 2 s. Findings: the current solver's ice is far from steady (in captured states the steady
+  ice has up to 50% more volume; the last glaciation covers 12.8 km2 converged against 5.7 km2), so converging
+  changes the glacial terrain markedly. Cost: hundreds of solves per run make a converged run of every ice age take
+  half an hour; converging the last glaciation only takes the valley from 9 to 50 s, and its solves, cold and on a
+  bed moving up to 25 m a step, still stop at the cycle cap. Not shipped: it needs a better coarse-grid treatment of
+  steep beds (or Newton with a banded direct solve, 4225 unknowns) to be fast enough, and Paulo's look at the
+  changed terrain.
+- Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
+  droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
+  simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;
+  FD8 or D-infinity for the drainage area on hillslopes (keeping D8 for channels, as Esurf 13, 239, 2025 compares) is
+  a candidate.
+- Gaea 2.2 (QuadSpinner, July 2025): Glacier, Snowfield and IceFloe nodes, and Erosion_2 with selective and
+  orographic (rain-shadow) precipitation by mask, slope or altitude. Our runoff already comes from a climate model with
+  orographic rain; ice floes on lakes are an idea for the water thread.
+- Johansen's erosion filter (2026) is what our detail filter follows; its ridge map (branching drainage lines) is not
+  built yet and could drive gully materials.
+- Acerola's Dirt Jam entries (Godot compute erosion with clipmaps, topographic shaders) hold nothing beyond what we
+  have.
+
+Cliff ledges, PT shadows beaded at every vertex: the relief's ledge lips ran across the refined triangles, so a lip
+was a zig-zag of facets and its shadow a row of beads. Now an edge on a face is also split where the relief at its
+middle strays more than 8 cm from the straight line between its ends (error-driven tessellation of a displacement:
+Moreton 2001; Nießner et al. 2016), so vertices gather along the lips and the joints and nowhere else. The decision
+reads the edge's two ends only, so neighbouring chunks agree and nothing cracks. Cost on the cliff view: 11.3 to 13.3
+million primitives (+18%). Making every face edge half a metre long instead (the first try) quadrupled the faces and
+ran the cloud PT out of memory.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
