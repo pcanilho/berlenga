@@ -42,6 +42,9 @@ a:hover{text-decoration:underline;text-underline-offset:3px}
 .links{margin-left:auto;display:flex;align-items:center;gap:20px;font-size:14.5px;font-weight:500}
 .links a{color:var(--muted)}
 .links a:hover{color:var(--text);text-decoration:none}
+.links a.gh{display:inline-grid;place-items:center;width:36px;height:36px;margin:0 -8px;border-radius:10px}
+.links a.gh svg{display:block}
+.links a.gh:hover{background:var(--bg2)}
 .iconbtn{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:10px;border:1px solid transparent;background:none;color:var(--muted);cursor:pointer;font:inherit}
 .iconbtn:hover{color:var(--text);background:var(--bg2);border-color:var(--line)}
 .menu{display:none}
