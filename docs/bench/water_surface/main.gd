@@ -53,6 +53,7 @@ extends Node3D
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
+#   --sun-pitch=DEG the sun's height above the horizon (default 50)
 #   --shade=X,Z     a slab 12 m up whose shadow (a 5 m band along x) falls on the water at X,Z (an overhang's shade)
 #
 # Run with --fixed-fps 30 so raster and path traced frames show the same waves.
@@ -69,6 +70,7 @@ var cam_dy := 0.0
 var sun_energy := 1.0
 var dive := 0.0
 var shade := Vector2(INF, INF)
+var sun_pitch := 50.0
 var bench_cam: Camera3D
 var water_params := {}
 var node_params := {}
@@ -177,6 +179,7 @@ func _ready() -> void:
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
+		elif a.begins_with("--sun-pitch="): sun_pitch = float(a.substr(12))
 		elif a.begins_with("--shade="):
 			var v := a.substr(8).split_floats(",")
 			shade = Vector2(v[0], v[1])
@@ -208,7 +211,7 @@ func _ready() -> void:
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50, -140, 0)
+	sun.rotation_degrees = Vector3(-sun_pitch, -140, 0)
 	sun.shadow_enabled = true
 	sun.light_energy = sun_energy
 	if view == "boat_sun":

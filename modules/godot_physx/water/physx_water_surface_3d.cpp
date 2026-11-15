@@ -295,6 +295,13 @@ uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_
 // (pathtraced_absorption, pathtraced_scattering) as the underwater pass does, instead of blending a tint
 // over it. Off: the older tint (water_color, shallow_color).
 uniform bool clear_water = true;
+// Waves shadowing themselves (raster; the path tracer traces it): the sun's ray from each point toward the sun,
+// marched over the surface's heights, is inside the water wherever it crosses a crest in front. Glitter needs
+// the sun in the open, so it goes where the ray is inside; foam and wet sand are lit through the crest's water
+// (Beer-Lambert over the length inside). Heightfield self-shadowing, as relief mapping's (Policarpo and
+// Oliveira 2006; Tatarchuk 2006).
+uniform bool wave_shadows = true;
+varying float v_wave_through;
 #if !defined(RT) && !defined(UNDERWATER_FOG) && !defined(UNDERWATER_SURFACE) && !defined(BREAKER_LIP)
 uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -647,7 +654,17 @@ vec3 surface_offset(vec2 world_xz) {
 	// shallows) the surface lies on the sand as a thin film, which is where
 	// the swash shows.
 	float ground = water_level - depth_r(world_xz, cuv_r);
-	h = max(h, ground + swash_film_thickness);
+	if (ground + swash_film_thickness > h) {
+		// Only on ground a film can lie on: a rock's or a wall's steep side is no beach, and lifting the surface
+		// onto whatever stands there drew the mesh's triangles up its faces as dark teeth from the waterline to
+		// its top. There the surface stays where the water is, hidden inside the rock, cut out by the shore.
+		const float e = 0.35;
+		vec2 du = vec2(e) / ripple_domain_size;
+		float gx = depth_r(world_xz - vec2(e, 0.0), clamp(cuv_r - vec2(du.x, 0.0), vec2(0.0), vec2(1.0))) - depth_r(world_xz + vec2(e, 0.0), clamp(cuv_r + vec2(du.x, 0.0), vec2(0.0), vec2(1.0)));
+		float gz = depth_r(world_xz - vec2(0.0, e), clamp(cuv_r - vec2(0.0, du.y), vec2(0.0), vec2(1.0))) - depth_r(world_xz + vec2(0.0, e), clamp(cuv_r + vec2(0.0, du.y), vec2(0.0), vec2(1.0)));
+		float steep = length(vec2(gx, gz)) / (2.0 * e);
+		h = mix(max(h, ground + swash_film_thickness), h, smoothstep(0.6, 1.2, steep));
+	}
 	return vec3(d.x, h, d.y);
 }
 
@@ -1281,6 +1298,29 @@ void fragment() {
 		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness, open_unlit, sun_body, sun_glint, sun_a2);
 	}
 	wr_sun_body = sun_body;
+	v_wave_through = 1.0;
+	if (wave_shadows && raster_reflections && v_lip < 0.5) {
+		vec3 to_sun = -normalize(raster_sun_travel);
+		if (to_sun.y > 0.01) {
+			vec3 p0 = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			float base_y = MODEL_MATRIX[3].y;
+			// Far enough for the ray to climb 2.5 m (a high crest's reach above a trough), at most 25 m.
+			float reach = min(2.5 / to_sun.y, 25.0);
+			const int WS = 6;
+			float dt = reach / float(WS);
+			float jit = water_jitter(FRAGCOORD.xy, TIME);
+			float inside = 0.0;
+			for (int i = 0; i < WS; i++) {
+				vec3 q = p0 + to_sun * ((float(i) + jit) * dt + 0.05);
+				// The height resting at q (the crest's sideways sway left out: one lookup per step, not four).
+				float h = base_y + surface_offset(q.xz).y;
+				inside += clamp((h - q.y) / max(to_sun.y * dt, 1e-3), 0.0, 1.0) * dt;
+			}
+			float sig = dot(uw_sigma_t(), vec3(1.0 / 3.0));
+			v_wave_through = exp(-sig * inside);
+			sun_glint.w *= exp(-6.0 * inside);
+		}
+	}
 	wr_sun_glint = sun_glint;
 	wr_sun_a2 = sun_a2;
 	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
@@ -1302,8 +1342,10 @@ void fragment() {
 // The lights on the water: foam and wet sand (ALBEDO) as a Lambert surface, and the open water's sun share
 // (water_raster_reflections.h), all under each light's shadow and cloud projector.
 void light() {
-	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * max(dot(NORMAL, LIGHT), 0.0) / PI;
-	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body, wr_sun_glint, wr_sun_a2);
+	// The sun through the waves' own crests (v_wave_through, fragment()); other lights as they come.
+	float through = LIGHT_IS_DIRECTIONAL ? v_wave_through : 1.0;
+	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * through * max(dot(NORMAL, LIGHT), 0.0) / PI;
+	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body * through, wr_sun_glint, wr_sun_a2);
 }
 #endif
 )";
