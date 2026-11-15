@@ -2551,6 +2551,19 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			memcpy(hbytes.ptrw() + k * 4, &hw[k], 4);
 		}
 	}
+	{
+		// The roughness map's free blue channel carries the relief, 0 in the deepest furrow and
+		// 1 on the highest ridge, for layers that keep to ridges or furrows (lichen, trees.md 2h).
+		float lo = 1e9f, hi = -1e9f;
+		for (int k = 0; k < N * N; k++) {
+			lo = MIN(lo, hw[k]);
+			hi = MAX(hi, hw[k]);
+		}
+		const float span = MAX(hi - lo, 1e-6f);
+		for (int k = 0; k < N * N; k++) {
+			rbytes.write[k * 3 + 2] = uint8_t(CLAMP((hw[k] - lo) / span, 0.0f, 1.0f) * 255.0f);
+		}
+	}
 	Ref<Image> ai = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, abytes);
 	ai->generate_mipmaps();
 	Ref<Image> ni = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, nbytes);
@@ -2825,14 +2838,14 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 	RandomPCG rng;
 	rng.seed(0x6c696368u);
 	LocalVector<Colony> crusts, rosettes;
-	for (int i = 0; i < 22; i++) {
-		const float r = Math::lerp(0.035f, 0.13f, rng.randf() * rng.randf());
+	for (int i = 0; i < 9; i++) {
+		const float r = Math::lerp(0.08f, 0.24f, rng.randf() * rng.randf());
 		// Ids under 0.5 can be drawn orange (Xanthoria): only small colonies, as its rosettes are.
-		const float id = r < 0.06f ? rng.randf() : 0.5f + 0.5f * rng.randf();
+		const float id = r < 0.11f ? rng.randf() : 0.5f + 0.5f * rng.randf();
 		crusts.push_back({ Vector2(rng.randf(), rng.randf()), r / LICHEN_TILE, id, 0, 0.0f, Math::lerp(1.0f, 1.5f, rng.randf()) });
 	}
-	for (int i = 0; i < 16; i++) {
-		rosettes.push_back({ Vector2(rng.randf(), rng.randf()), Math::lerp(0.02f, 0.06f, rng.randf()) / LICHEN_TILE, rng.randf(), 7 + int(rng.rand() % 6), rng.randf() * float(Math::TAU), 1.0f });
+	for (int i = 0; i < 7; i++) {
+		rosettes.push_back({ Vector2(rng.randf(), rng.randf()), Math::lerp(0.035f, 0.08f, rng.randf()) / LICHEN_TILE, rng.randf(), 7 + int(rng.rand() % 6), rng.randf() * float(Math::TAU), 1.0f });
 	}
 	auto wrap = [](Vector2 d) {
 		d.x -= Math::round(d.x);
@@ -2842,11 +2855,15 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 	Vector<uint8_t> data;
 	data.resize(N * N * 4);
 	uint8_t *w = data.ptrw();
+	Vector<float> order;
+	order.resize(N * N);
+	float *ow = order.ptrw();
 	for (int y = 0; y < N; y++) {
 		for (int x = 0; x < N; x++) {
 			const Vector2 p((x + 0.5f) / N, (y + 0.5f) / N);
 			// Ragged, map-like edges: the position is warped at two scales (a third of a colony and
-			// a centimetre), and the order itself is roughened, so no colony stays a disc.
+			// a centimetre), and the order is roughened in proportion to it, so no colony stays a
+			// disc but a young one is still one piece rather than a scatter of specks.
 			const Vector2 warp(bark_fbm(p.x, p.y, 16, 16, 3, 0x77617270u), bark_fbm(p.x, p.y, 16, 16, 3, 0x77617271u));
 			const Vector2 fine(bark_fbm(p.x, p.y, 64, 64, 2, 0x77617272u), bark_fbm(p.x, p.y, 64, 64, 2, 0x77617273u));
 			const Vector2 q = p + warp * (0.035f / LICHEN_TILE) + fine * (0.008f / LICHEN_TILE);
@@ -2855,7 +2872,7 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 			for (const Colony &c : crusts) {
 				Vector2 d = wrap(q - c.c);
 				d.y /= c.stretch;
-				const float o = d.length() / c.r + rough;
+				const float o = d.length() / c.r * (1.0f + rough);
 				if (o < o1) {
 					o2 = o1;
 					o1 = o;
@@ -2870,7 +2887,8 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 				const float ang = Math::atan2(d.y, d.x) + c.phase + 0.6f * bark_fbm(p.x, p.y, 16, 16, 2, 0x6c6f6265u);
 				// Lobes radiate with rounded tips and narrow sinuses between them.
 				const float lobe = Math::pow(Math::abs(Math::cos(ang * c.lobes * 0.5f)), 0.35f);
-				of = MIN(of, d.length() / (c.r * (0.6f + 0.4f * lobe)) + 0.5f * rough);
+				// A rosette's age (its id) scales how soon it shows: at a thin cover only the old ones.
+				of = MIN(of, d.length() / (c.r * (0.6f + 0.4f * lobe)) * (1.0f + 0.5f * rough) / Math::lerp(0.15f, 1.5f, c.id * c.id));
 			}
 			// The thallus is cracked into areolae of a few millimetres (crusts) and wrinkled
 			// (rosettes): a fine tone that also darkens the cracks.
@@ -2879,10 +2897,29 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 			if (o1 < 1.0f && o2 - o1 < 0.06f) {
 				mark = 0.25f; // Black prothallus line between two crusts.
 			}
-			w[(y * N + x) * 4 + 0] = uint8_t(CLAMP(o1, 0.0f, 1.0f) * 255.0f);
+			ow[y * N + x] = o1;
 			w[(y * N + x) * 4 + 1] = uint8_t(CLAMP(of, 0.0f, 1.0f) * 255.0f);
 			w[(y * N + x) * 4 + 2] = uint8_t(id * 255.0f);
 			w[(y * N + x) * 4 + 3] = uint8_t(CLAMP(mark, 0.0f, 1.0f) * 255.0f);
+		}
+	}
+	// The crust order as its rank over the tile, so a weight w covers the share w of it (before
+	// the shader's per-colony start): the raw distance kept a thin cover to every colony's core.
+	{
+		Vector<float> sorted = order;
+		sorted.sort();
+		const float *sp = sorted.ptr();
+		for (int i = 0; i < N * N; i++) {
+			int lo = 0, hi = N * N;
+			while (lo < hi) {
+				const int mid = (lo + hi) / 2;
+				if (sp[mid] < ow[i]) {
+					lo = mid + 1;
+				} else {
+					hi = mid;
+				}
+			}
+			w[i * 4 + 0] = uint8_t(CLAMP(float(lo) / float(N * N), 0.0f, 1.0f) * 255.0f);
 		}
 	}
 	// Apothecia: discs of a millimetre or two, darker brown-black, mostly in the colonies' older
@@ -2893,7 +2930,7 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 		for (int dy = -2; dy <= 2; dy++) {
 			for (int dx = -2; dx <= 2; dx++) {
 				const int x = (int(cx) + dx + N) % N, y = (int(cy) + dy + N) % N;
-				if (Vector2(x + 0.5f - cx, y + 0.5f - cy).length() <= r + 0.5f && w[(y * N + x) * 4] < 150) {
+				if (Vector2(x + 0.5f - cx, y + 0.5f - cy).length() <= r + 0.5f && w[(y * N + x) * 4] < 90) {
 					uint8_t &m = w[(y * N + x) * 4 + 3];
 					m = MIN(m, uint8_t(0.45f * 255.0f));
 				}
@@ -6716,19 +6753,27 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		float lw = 1.0 - COLOR.a;
 		if (lw > 0.004) {
 			vec4 lm = texture(lichen_map, UV2);
-			float tc = lw * 1.3 * (1.0 - 0.6 * lichen_leafy_share);
-			float tf = lw * 1.3 * (0.25 + 0.75 * lichen_leafy_share);
-			float crust = 1.0 - smoothstep(tc - 0.08, tc, lm.r);
-			float leafy = 1.0 - smoothstep(tf - 0.06, tf, lm.g);
 			// A crust is a skin a fraction of a millimetre thick: the bark's own tone shows through
 			// it (darker in the bark's cracks), as do its relief and normal map.
 			float bark_tone = clamp(dot(albedo_tex.rgb, vec3(0.3, 0.5, 0.2)) / max(dot(COLOR.rgb, vec3(0.3, 0.5, 0.2)), 1e-3), 0.4, 1.4);
+			// Crusts take the exposed ridges and plates first and reach into the furrows last
+			// (the furrows hold water and dirt, where moss and powdery Lepraria win).
+			float ridge = mix(0.2, 1.3, smoothstep(0.35, 0.75, texture(texture_roughness, base_uv).b));
+			// Each colony starts at its own weight and then soon spreads, so a thin cover is a few
+			// grown patches and many bare spaces, not every colony's first speck.
+			float start = 0.6 * fract(lm.b * 7.13);
+			float grown = smoothstep(start, start + 0.2, lw);
+			float tc = grown * lw * 1.2 * (1.0 - 0.4 * lichen_leafy_share) * ridge;
+			float tf = lw * (0.15 + 0.5 * lichen_leafy_share);
+			float crust = 1.0 - smoothstep(tc - 0.08, tc, lm.r);
+			float leafy = 1.0 - smoothstep(tf - 0.06, tf, lm.g);
 			// Each crust its own species' tone, from whitish to grey-green; paler at the growing
 			// rim than in the older middle.
 			vec3 crust_col = lichen_crust_color * mix(vec3(1.0), vec3(0.9, 1.0, 0.82), fract(lm.b * 5.3)) * mix(0.82, 1.1, fract(lm.b * 13.7));
 			vec3 cc = (lm.b < lichen_orange_share ? lichen_orange_color : crust_col) * mix(0.78, 1.05, lm.r) * mix(1.0, bark_tone, 0.45);
-			vec3 lc = lichen_leafy_color * mix(0.8, 1.04, smoothstep(0.2, 1.0, lm.g)) * mix(1.0, bark_tone, 0.25);
-			ALBEDO = mix(ALBEDO, cc * lm.a, crust * 0.92);
+			// Rosettes: darker and wrinkled in the old middle, paler at the growing lobe tips.
+			vec3 lc = lichen_leafy_color * mix(0.62, 1.04, smoothstep(0.1, 0.9, lm.g / max(tf, 1e-3))) * mix(1.0, bark_tone, 0.25);
+			ALBEDO = mix(ALBEDO, cc * lm.a, crust * 0.85);
 			ALBEDO = mix(ALBEDO, lc * mix(1.0, lm.a, 0.6), leafy);
 			ROUGHNESS = mix(ROUGHNESS, 0.9, max(crust, leafy));
 		}
@@ -6736,7 +6781,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 )";
 	code = code.insert(ra + anchor.length(), body);
 	const String uniforms = R"(uniform sampler2D lichen_map : hint_default_white, filter_linear_mipmap, repeat_enable;
-uniform vec3 lichen_crust_color : source_color = vec3(0.6, 0.62, 0.57);
+uniform vec3 lichen_crust_color : source_color = vec3(0.5, 0.53, 0.47);
 uniform vec3 lichen_leafy_color : source_color = vec3(0.6, 0.64, 0.55);
 uniform vec3 lichen_orange_color : source_color = vec3(0.74, 0.58, 0.28);
 uniform float lichen_leafy_share = 0.5;

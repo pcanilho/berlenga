@@ -926,9 +926,15 @@ As built:
 - **What.** One 512 px texture tiled every 0.6 m on its own UV set (a whole number of repeats
   round the stem, an offset per stem): growth order of grey-green crusts with domain-warped,
   rough edges, leafy rosettes, a colony id (only small colonies may be orange) and marks for the
-  dark prothallus line, fruit discs and cracked areolae. The weight sets how far each colony has
-  grown, so it spreads outwards rather than fading in. Each colony gets its own tone; bark shows
-  through thin crust; roughness goes towards 0.9.
+  dark prothallus line, fruit discs and cracked areolae. The crust order is stored as its rank
+  over the tile, so a weight covers that share of it. Each colony starts at its own weight and
+  then spreads outwards, so a thin cover is a few grown patches, not every colony's first speck.
+  Crusts keep to the bark's ridges and stop at the furrows (the relief rides in the roughness
+  map's free blue channel). Each colony gets its own tone; bark shows through thin crust;
+  roughness goes towards 0.9.
+- **First look at an oak close-up** (bench bole view, 1.5 m) showed the lichen as even pale
+  specks: 22 small colonies per tile at a thin cover were all their cores. Fixed as above (9
+  larger crusts and 7 rosettes per tile, ages per colony, ridge keeping).
 - **Cost.** No extra geometry. A second UV set on bark and one texture fetch. Frame time on the
   bench with and without it is within the software renderer's noise.
 - Raster and path-traced crops of ash and beech match. Making them match found a fork-wide bug:
