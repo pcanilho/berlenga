@@ -208,9 +208,11 @@ float water_jitter(vec2 p_frag, float p_time) {
 // dimmed again along the refracted path (Beer-Lambert, per channel); the water adds its own scattered sun
 // (Henyey-Greenstein, as far as sun_visibility lets the sun reach the surface) and sky along the path. The
 // medium is the path tracer's: absorption p_ab and scattering p_sc per metre, anisotropy p_g.
-vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
+// r_seen is the bed's share of the result, r_bed the point seen there and r_sun_share the part of the bed's light
+// that came from the sun (the rest from the sky), for caustics.
+vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
 		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
-		mat4 view, mat4 inv_proj, mat4 inv_view) {
+		mat4 view, mat4 inv_proj, mat4 inv_view, out vec3 r_seen, out vec3 r_bed, out float r_sun_share) {
 	vec3 t = refract(v, n, 1.0 / 1.33);
 	if (dot(t, t) < 1e-6) {
 		t = v;
@@ -260,6 +262,13 @@ vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v
 	float w_sky = dot(p_sky, vec3(1.0 / 3.0));
 	vec3 down = w_sun + w_sky > 0.0 ? (w_sun * exp(-st * z_b / mu) + w_sky * exp(-st * 1.2 * z_b)) / (w_sun + w_sky) : exp(-st * z_b);
 	vec3 seen = texture(p_screen, uv_r).rgb * down * exp(-st * len);
+	r_seen = seen;
+	r_bed = p_s + t * min(len, 1e3);
+	{
+		vec3 s_sun = w_sun * exp(-st * z_b / mu);
+		vec3 s_sky = w_sky * exp(-st * 1.2 * z_b);
+		r_sun_share = dot(s_sun, vec3(1.0)) / max(dot(s_sun + s_sky, vec3(1.0)), 1e-6);
+	}
 	// Scattered along the path (closed form, as the underwater pass): depth grows as -t.y per metre.
 	vec3 a = st / mu;
 	vec3 ka = st - a * t.y;
@@ -293,6 +302,16 @@ vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v
 	vec3 sun = p_sun_irr * hg * seg_sun;
 	vec3 sky = p_sky * 0.5 * seg_sky;
 	return seen + max(p_sc, vec3(0.0)) * (sun + sky);
+}
+
+vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
+		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
+		mat4 view, mat4 inv_proj, mat4 inv_view) {
+	vec3 seen;
+	vec3 bed;
+	float share;
+	return water_clear_through_ex(p_screen, p_depth, p_s, v, n, uv, z_bed, p_ab, p_sc, p_g, p_sun_dir, p_sun_irr, p_sky,
+			p_jitter, proj, view, inv_proj, inv_view, seen, bed, share);
 }
 #endif
 )";
