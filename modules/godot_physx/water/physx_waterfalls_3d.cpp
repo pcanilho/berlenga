@@ -545,6 +545,8 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			arriving_air = equilibrium_air(rise / Vector2(8.0f, rise).length());
 		}
 	}
+	// Each column's offset out of the heightfield per row; averaged across the sheet after the columns are built.
+	LocalVector<LocalVector<float>> col_env;
 	for (int c = 0; c < vcols; c++) {
 		Column col;
 		// The speed and air of the thin margins follow the water a little way in (a margin column has no flow).
@@ -560,6 +562,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		float travel = 0.0f;
 		float prev_v = v0;
 		float relief_env = 0.0f; // m out of the heightfield the sheet stands where the drawn rock is relieved
+		LocalVector<float> env_rows;
 		Vector2 prev_p;
 		for (int r = 0; r < rows; r++) {
 			const float fr = float(r) / (rows - 1);
@@ -603,21 +606,16 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
 			// Clear of the ground mesh, whose triangles cut the chords of a steep face.
 			Vector3 pt = base + nrm * (depth + 0.05f + 0.15f * sin_a);
-			// Where the drawn rock stands off the heightfield (Landscape3D's cliff_relief ledges), the sheet goes
-			// with it, over the ledges' tops and down their fronts.
 			// Where the drawn rock stands off the heightfield (Landscape3D's cliff_relief ledges), the sheet goes out
 			// with it, but over the ledges' outer envelope: water leaving a ledge's lip runs on out past the recess
 			// under it and comes back to the rock slowly (half a metre in per metre of travel), instead of tracing
-			// every step and undercut. Only the part out of the face: the relief's own sideways wander across
-			// neighbouring columns had folded the sheet into hatching.
-			Vector3 moved;
+			// every step and undercut. Only the part out of the face, and applied once per row below.
 			if (surface_obj != nullptr) {
 				const float out = (Vector3(surface_obj->call("get_cliff_point", base)) - base).dot(dir);
 				relief_env = r > 0 ? MAX(out, relief_env - 0.5f * ds) : out;
-				moved = dir * relief_env;
 			}
-			pt += moved;
-			if (ask && moved.length_squared() < 1e-6f) {
+			env_rows.push_back(relief_env);
+			if (ask && surface_obj == nullptr) {
 				// Over a convex edge (a ledge's brink) the line's chords cut the corner: keep the sheet on top of
 				// the rock right under it.
 				const float g = p_source->call("get_height", pt);
@@ -628,6 +626,9 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			col.air.push_back(air);
 			col.travel.push_back(travel);
 			col.dist.push_back(s_from_lip);
+			// The drawn bed's slope (not the relieved points', whose ledge tops would read as flat steps and
+			// open the nappe-flow gaps across them).
+			col.bed_slope.push_back(sin_a / MAX(Math::abs(t.x), 0.05f));
 			prev_v = v;
 			prev_p = p;
 		}
@@ -641,6 +642,32 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			face.air_peak = peak;
 		}
 		face.columns.push_back(col);
+		col_env.push_back(std::move(env_rows));
+	}
+	// One relief offset per row for the whole sheet, so neighbouring columns do not stand out by different
+	// amounts and fold the sheet into hatching. The outermost of the wet columns' (the mean let the ledges that
+	// stand further out than it poke through as holes): the sheet spans across a ledge's front like a curtain.
+	if (surface_obj != nullptr) {
+		for (int r = 0; r < rows; r++) {
+			float env = -1e30f;
+			for (int c = 0; c < vcols; c++) {
+				if (face.columns[c].edge > -0.5f) {
+					env = MAX(env, col_env[c][r]);
+				}
+			}
+			env = env > -1e29f ? env + (Math::abs(env) > 1e-3f ? 0.1f : 0.0f) : 0.0f;
+			for (int c = 0; c < vcols; c++) {
+				Column &col = face.columns[c];
+				Vector3 pt = col.points[r] + dir * env;
+				if (ask && Math::abs(env) < 1e-3f) {
+					// Over a convex edge (a ledge's brink) the chords cut the corner: keep the sheet on the rock.
+					const float g = p_source->call("get_height", pt);
+					const float depth = MAX(col.q / MAX(col.speed[r], 0.1f), 0.003f);
+					pt.y = MAX(pt.y, g + 0.05f + depth);
+				}
+				col.points.set(r, pt);
+			}
+		}
 	}
 	// The sheet stops where its middle column meets standing water (a fall into a lake or the sea).
 	{
@@ -1436,7 +1463,7 @@ void PhysXWaterfalls3D::_build_mesh() {
 					cover_a = 0.5f * col.cover[r];
 				} else {
 					const Vector3 d = col.points[MIN(r + 1, rows - 1)] - col.points[MAX(r - 1, 0)];
-					const float tan_slope = Math::abs(d.y) / MAX(Vector2(d.x, d.z).length(), 0.05f);
+					const float tan_slope = col.bed_slope.size() > r ? col.bed_slope[r] : Math::abs(d.y) / MAX(Vector2(d.x, d.z).length(), 0.05f);
 					cover_a = 0.75f + 0.25f * flow_cover(col.q, rock_step, tan_slope);
 				}
 				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), CLAMP(0.125f * face.width, 0.0f, 1.0f), cover_a));

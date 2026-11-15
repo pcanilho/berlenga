@@ -53,6 +53,7 @@ public:
 		PackedFloat32Array travel; // s since the lip
 		PackedFloat32Array dist; // m down the face from the lip
 		PackedFloat32Array cover; // a free jet's unbroken share, 1..0 past the break-up length (empty on the rock)
+		PackedFloat32Array bed_slope; // tan of the drawn bed's slope under each row (empty off the rock)
 		float q = 0.0f; // m^2/s
 		float edge = 0.0f; // m inside the water's margin (< 0 on the wet rock beyond it)
 	};
