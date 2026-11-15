@@ -54,6 +54,7 @@ extends Node3D
 #   --perf          print the mean process and physics time per frame (after frame 60) and the cost of sample_height()
 #   --lip-debug     draw the breaking lips opaque red (to see their shape)
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
+#   --splash=Z[,S]  drop a mound of water at (-4..4, Z) every 2 s, to watch it run up the sand (--view=runup --splash=6)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --plain-sand    noise-toned sand instead of the checker (for shots)
 #   --no-props      no slabs, standing rock or floating boxes (for shots)
@@ -112,6 +113,8 @@ var perf_proc := 0.0
 var perf_phys := 0.0
 var perf_n := 0
 var boat_speed := 0.0
+var splash_strength := 1.0
+var splash_z := 1e9 # --splash=Z: a mound of water dropped at (0, Z) every 2 s (run-up onto the sand)
 var debug_storm := OS.get_environment("STORM_DEBUG") != ""
 var boat: RigidBody3D
 var wake: Node3D
@@ -178,6 +181,11 @@ func _ready() -> void:
 		elif a == "--plain-sand": plain_sand = true
 		elif a == "--no-props": no_props = true
 		elif a.begins_with("--boat="): boat_speed = float(a.substr(7))
+		elif a.begins_with("--splash="):
+			var sp := a.substr(9).split(",")
+			splash_z = float(sp[0])
+			if sp.size() > 1:
+				splash_strength = float(sp[1])
 		elif a.begins_with("--wake-out="): wake_out = a.substr(11)
 		elif a.begins_with("--wake="):
 			var wkv2 := a.substr(7).split(":", true, 1)
@@ -366,6 +374,9 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(-10.0, 1.8, -1.0), Vector3(2.0, -0.2, -2.0))
 		"top":
 			cam.look_at_from_position(Vector3(0.0, 40.0, -6.0), Vector3(0.0, 0.0, -6.01))
+		"runup":
+			# The waterline from the dry sand (it lies near z = 8 at the default slope), for --splash=6.
+			cam.look_at_from_position(Vector3(7.0, 2.5, 15.0), Vector3(0.0, -0.3, 6.5))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		"boat", "boat_low", "boat_sun":
@@ -639,6 +650,9 @@ func _process(_delta: float) -> void:
 			water.call("sample_height", Vector3(-10.0 + 0.01 * i, 0.0, -5.0 + 0.005 * i))
 		var per_call := float(Time.get_ticks_usec() - t0) / 2000.0
 		print("PERF process %.3f ms, physics %.3f ms per frame, sample_height %.2f us per call" % [1000.0 * perf_proc / maxi(perf_n, 1), 1000.0 * perf_phys / maxi(perf_n, 1), per_call])
+	if splash_z < 1e8 and n % 60 == 10:
+		for sx in [-4.0, 0.0, 4.0]:
+			water.call("submit_impulse", Vector3(sx, 0.0, splash_z), 2.0, splash_strength)
 	if profile and n == frames - 1:
 		# Depth and surface along x = 0 toward the beach (sample_height includes the shore waves).
 		var line := ""

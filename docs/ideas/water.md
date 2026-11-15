@@ -2506,3 +2506,20 @@ buoyancy. Later, the same tiles stream over a whole world (tile manager, LOD, sl
 - Bench: `docs/bench/live_water` with `--scene=spring|dam|rain`, `--view=overview|low`, `--break=s`.
 - Not yet: GPU solver, depth over 3 m shading (the river depth encoding), muddy water colour,
   streaming over a whole world (step c, only if wanted).
+
+### Built (15 Nov): wet and dry fronts in the live window (step b)
+
+The live window (rivers, lakes and sea round the camera) now lets its water run up onto dry ground
+and drain back, after Chentanez and Müller 2010 section 5:
+- Ground up to 1 m above the still water (`RUNUP_BAND` in water_ripple.glsl) is simulated too; a dry
+  cell's height is its ground. Before, only cells under still water were simulated and a cell never
+  emptied below 2 cm, so a wake or splash stopped dead at the still waterline.
+- A face carries water only out of a cell that holds some (upwind depth), at most a quarter of it
+  per tick, so no cell goes below its ground; a face between a dry cell and water lower than its
+  ground carries no velocity.
+- Dry cells render as before (the neighbouring water continued under the ground), so static
+  shorelines look the same. River bank vertices now take the live height (the ribbon's margin), and
+  the river hands the window its signed depth (banks and rocks keep their real height; zero made
+  them flood as flat white blocks).
+- Bench: water_surface `--view=runup --splash=6,4 --node=wind_speed:1` (mounds dropped near the
+  shore every 2 s run up the sand and drain back within about 2 s).
