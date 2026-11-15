@@ -1270,6 +1270,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Ocean detail",
+   "settings": [
+    "detail_waves"
+   ],
+   "note": "",
+   "what": "short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Lake ripples",
    "settings": [
     "fetch"
