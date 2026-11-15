@@ -2331,3 +2331,17 @@ step lit as far as its refracted sun ray entered the water (`sun_visibility`), a
 A shadow across deep water now darkens the water body itself; on the bench's open sea the raster colour
 now matches the path tracer's (median 58/109/107 against 45/112/116). Shallow water shows little change:
 there the bed's own light, already shadowed, dominates.
+
+Step 3 (15 Nov): waves shadowing themselves. `wave_shadows` (on): from each surface point the sun's ray is
+marched over the resting heights (6 jittered steps, far enough to climb 2.5 m); the length it spends inside
+crests in front dims the sun on foam and wet sand (Beer-Lambert) and removes the glitter on the lee sides
+(heightfield self-shadowing, as relief mapping's: Policarpo and Oliveira 2006, Tatarchuk 2006). Subtle on
+the bench's chop; it matters with swell at a low sun. Cost: six height lookups per pixel of water.
+Raster caustics are not part of this: the caustic map (water_caustics_map.glsl) stores a tone-mapped
+focusing excess, not an energy-conserving ratio, and nothing draws it in raster today; making it physical
+first is its own piece of work.
+
+Found on the way (bug): the surface lies on the ground as a swash film wherever the ground stands above
+it, so over a block standing out of the water the mesh's triangles were drawn up its faces from the
+waterline to its top (dark teeth, raster and path traced). The film now lies only on ground less steep
+than about 35-50 degrees (the slope of the seabed texture over 0.7 m).
