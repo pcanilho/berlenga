@@ -804,7 +804,7 @@ void PhysXFlow3D::_fill_render_settings(FlowBackend::Settings &r_settings) {
 		traced_smoke_color = smoke_color.srgb_to_linear();
 		traced_extinction = smoke_density;
 		traced_anisotropy = scattering_anisotropy;
-		traced_emission = emission_strength > 0.0f ? smoke_density : 0.0f;
+		traced_emission = emission_strength > 0.0f ? 1.0f : 0.0f; // the path tracer weighs the ramp by the smoke's extinction
 		traced_temperature_range = temperature_range;
 	}
 	r_settings.light_direction[0] = dir.x;

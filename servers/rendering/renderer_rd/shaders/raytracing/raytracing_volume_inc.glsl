@@ -24,7 +24,7 @@ struct RTVolumeParams {
 	vec4 world_max; // xyz: simulation units; w: 1 when a volume is present
 	vec4 block_size; // xyz: block size (simulation units); w: layer index
 	vec4 medium; // x: extinction per meter at density 1; y: albedo; z: HG g; w: density majorant
-	vec4 emission; // x: emission scale; y: 1 / temperature range; z: 1 when emissive; w: dense box count (0: the sparse atlas)
+	vec4 emission; // x: emission scale (radiance per heat ramp unit); y: 1 / temperature range; z: 1 when emissive; w: dense box count (0: the sparse atlas)
 	vec4 heat_ramp[8]; // rgb: emitted color along the temperature range
 	vec4 smoke_color; // rgb: scattering color
 };
@@ -163,7 +163,7 @@ float rt_volume_sigma_t(float p_smoke) {
 	return rt_volume.medium.x * clamp(p_smoke, 0.0, rt_volume.medium.w);
 }
 
-// The emission coefficient (radiance per meter) at a temperature.
+// The radiance the gas glows with at a temperature (times its extinction: the emission coefficient).
 vec3 rt_volume_emitted(float p_temperature) {
 	if (rt_volume.emission.z < 0.5 || p_temperature <= 0.0) {
 		return vec3(0.0);
@@ -206,9 +206,10 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 		}
 		float sigma_t = rt_volume_sigma_t(ts.y);
 		// Emission at every collision, real or null: the emission coefficient / majorant
-		// estimates its integral along the ray up to the collision. Fire emits by temperature,
-		// whatever smoke it carries.
-		r_emitted += rt_volume_emitted(ts.x) / majorant;
+		// estimates its integral along the ray up to the collision. The gas emits as much as it
+		// absorbs (Kirchhoff): the heat ramp's radiance times its extinction, so a thick hot cloud
+		// glows at the ramp's color and clear hot air does not glow.
+		r_emitted += rt_volume_emitted(ts.x) * (sigma_t / majorant);
 		if (rand(rng_state) * majorant < sigma_t) {
 			return t;
 		}

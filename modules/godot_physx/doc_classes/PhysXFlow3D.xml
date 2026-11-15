@@ -72,7 +72,7 @@
 			Copy temperature and smoke back to the CPU every few steps, for [method sample_smoke], [method sample_temperature] and the [code]bounds[/code] in [method get_stats]. Off by default: it costs a full field copy each time and isn't needed for rendering.
 		</member>
 		<member name="emission_strength" type="float" setter="set_emission_strength" getter="get_emission_strength" default="4.0">
-			How bright the [member heat_ramp] glow is. [code]0[/code] turns glowing off.
+			How bright the [member heat_ramp] glow is. [code]0[/code] turns glowing off. The gas glows where it has smoke, as much as it absorbs (in raster through its opacity, in the path tracer through its extinction), so clear hot air does not glow.
 		</member>
 		<member name="floor_enabled" type="bool" setter="set_floor_enabled" getter="is_floor_enabled" default="false">
 			When enabled, gas never goes below [member floor_height]: a wide solid lies under it (it reserves no blocks and holds no gas). Colliders can't describe terrain heightmaps or trimeshes, so without a floor gas sinks into the ground and spends the grid's blocks there.
