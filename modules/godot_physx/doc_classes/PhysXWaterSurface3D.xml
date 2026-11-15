@@ -36,6 +36,12 @@
 				The plunging lips of the last tick: [code]crest_points[/code], [code]vertices[/code], [code]triangles[/code], [code]spray_rate[/code] (droplets per second) and [code]cpu_ms[/code] (time to build them).
 			</description>
 		</method>
+		<method name="get_crest_spray_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Droplets a second leaving the open sea's crests at the last update of [member crest_spray] (0 when off, calm or out of reach).
+			</description>
+		</method>
 		<method name="get_caustics_half_extent" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -214,6 +220,12 @@
 		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
 			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
 		</member>
+		<member name="crest_spray" type="bool" setter="set_crest_spray" getter="get_crest_spray" default="true">
+			Spray torn off breaking crests by the wind (spume): droplets leave the open sea where the surface folds (the same test as the whitecaps) once [member wind_speed] passes about 9 m/s, rising to full by 20 m/s, and fly downwind. Emitted within 40 m of the camera, not nearer than 8 m, and drawn like the surf's spray. The emitters are found on the CPU from the ocean's readback every fourth physics tick.
+		</member>
+		<member name="crest_spray_amount" type="int" setter="set_crest_spray_amount" getter="get_crest_spray_amount" default="6000">
+			Most [member crest_spray] droplets alive at once.
+		</member>
 		<member name="cull_margin" type="float" setter="set_cull_margin" getter="get_cull_margin" default="0.0">
 			Extra room (m) added around the surface before it is culled. The surface's bounds already allow for 4 times [member wave_amplitude], or 2 m if that is larger. Raise this for a material that displaces the surface further, such as a whirlpool or a tsunami wall, if the water disappears at grazing angles. A larger margin draws the water more often when it is off-screen.
 		</member>
@@ -354,7 +366,7 @@
 			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].
 		</member>
 		<member name="whitecap_auto" type="bool" setter="set_whitecap_auto" getter="get_whitecap_auto" default="true">
-			If [code]true[/code], the foam threshold is steered each step so the share of sea under whitecaps follows the wind speed as measured at sea (Monahan and O'Muircheartaigh 1980): about 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s and 8% at 20 m/s, and none in a light breeze. It holds whatever the choppiness, cascades, fetch or spreading. [member foam_threshold] is then only where the steering starts. If [code]false[/code], [member foam_threshold] is used as set.
+			If [code]true[/code], the foam threshold is steered each step so the share of sea under whitecaps follows the wind speed as measured at sea (Monahan and O'Muircheartaigh 1980): about 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s and 8% at 20 m/s, and none in a light breeze. It holds whatever the choppiness, cascades, fetch or spreading. The steering starts from a threshold fitted to the wind (not [member foam_threshold]) and follows the wind as it changes; while new foam is still building up after a start, its reading is scaled up by how far it has filled, so the cover does not overshoot. If [code]false[/code], [member foam_threshold] is used as set.
 		</member>
 		<member name="whitecap_cover_scale" type="float" setter="set_whitecap_cover_scale" getter="get_whitecap_cover_scale" default="1.0">
 			Multiplies the whitecap cover [member whitecap_auto] aims for. Measured covers at one wind speed spread by about a factor of 3 either way (warmer water and a rising sea foam more), so values between [code]0.3[/code] and [code]3[/code] stay realistic.
@@ -363,7 +375,7 @@
 			Direction (X, Z) the wind blows toward; the FFT ocean waves are aligned with it and travel downwind. Need not be normalized.
 		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="8.0">
-			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] allows.
+			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] and [member depth] allow (a storm needs the sea's real depth: at the default 3 m the long waves are held down). From about 14 m/s (Beaufort 7) fading foam is drawn out into streaks along the wind, fully by 22 m/s; from 9 m/s the crests throw spray (see [member crest_spray]).
 		</member>
 	</members>
 	<constants>
