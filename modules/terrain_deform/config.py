@@ -14,6 +14,7 @@ def get_doc_classes():
         "TerrainDataMap3D",
         "TerrainDeformer3D",
         "TerrainGenerator3D",
+        "TerrainGuide3D",
     ]
 
 

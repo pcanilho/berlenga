@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainGuide3D" inherits="Path3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A hand-drawn guide that [TerrainGenerator3D] reads before erosion: a ridge, a valley or bowl, or a bar of hard rock.
+	</brief_description>
+	<description>
+		Place it under a [TerrainGenerator3D] (at any depth) and draw its curve; one curve point is a circle round that point. The generator still makes the relief, so a guided feature drains and looks eroded. Guides are read in tree order, raise guides before lower guides, after the uplift map, [member TerrainGenerator3D.ranges] and basin paths.
+		[b]Raise[/b] lifts the uplift to [member strength] along the line, a raised cosine over [member width]. [b]Lower[/b] scales the uplift down to [member strength] there. [b]Bar[/b] lays rock that rivers and ice wear down only to each curve point's height: the lowest point is the lip where water spills; with [member apron_slope] the right side of the line (looking along it) falls away as a rock slope instead of a sheer wall.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_bar_points" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<description>
+				Bar mode: the rock discs the generator holds, as x, level and z, every 32 m along the line (the apron falls away from them on the right).
+			</description>
+		</method>
+		<method name="get_global_points" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<description>
+				The guide's line in global space (one point: the centre).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="apron_slope" type="float" setter="set_apron_slope" getter="get_apron_slope" default="0.0">
+			Bar mode: rise over run of the rock slope on the line's right side (1.0 is 45 degrees). 0 leaves a sheer wall wherever the land outside wears down below the bar.
+		</member>
+		<member name="bar_width" type="float" setter="set_bar_width" getter="get_bar_width" default="40.0">
+			Bar mode: radius of hard rock round each point of the line, in metres.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Whether the generator reads this guide.
+		</member>
+		<member name="lip_clear" type="float" setter="set_lip_clear" getter="get_lip_clear" default="160.0">
+			Bar mode: distance from the lip, in metres, kept free of the apron so the water falls clear of the face.
+		</member>
+		<member name="mode" type="int" setter="set_mode" getter="get_mode" enum="TerrainGuide3D.Mode" default="0">
+			What the guide does: raise, lower or bar.
+		</member>
+		<member name="strength" type="float" setter="set_strength" getter="get_strength" default="1.0">
+			Raise: the uplift along the line (0 to 1, as the uplift map). Lower: the share of the uplift left along the line.
+		</member>
+		<member name="width" type="float" setter="set_width" getter="get_width" default="300.0">
+			Raise and lower: half width of the band round the line, in metres.
+		</member>
+	</members>
+	<constants>
+		<constant name="MODE_RAISE" value="0" enum="Mode">
+			Lifts the uplift along the line: a ridge, range or peak.
+		</constant>
+		<constant name="MODE_LOWER" value="1" enum="Mode">
+			Scales the uplift down along the line: a valley, bowl or pass.
+		</constant>
+		<constant name="MODE_BAR" value="2" enum="Mode">
+			Hard rock held at the curve points' heights: a riegel, rock step or lake lip.
+		</constant>
+	</constants>
+</class>

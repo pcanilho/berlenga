@@ -1411,6 +1411,17 @@ Plan, in two steps:
 Cost: guides add one pass over the uplift field per guide (milliseconds); the touch-up water solve is the same as
 the generator's final water stage (about 0.3 s at 16 m here).
 
+Built, step 1a (15 Nov): `TerrainGuide3D` (a Path3D, so the editor's curve tools draw it) under the generator, at any
+depth. Raise and lower act as ranges and basins (each cell takes the line's nearest point, so a curve's segments do
+not compound). Bar holds rock at each curve point's height every 32 m, the lowest point being the lip; its
+`apron_slope` makes the right-hand side a rock slope: each point's rock falls away in a strip straight out to that
+side (`InflowPoint` slope and side, levels combined by maximum), so the strips join into one smooth slope and the lip's
+`lip_clear` stretch stays a sheer face the water falls from. The first apron, discs stepping down every 32 m, left
+regular terraces; a cone per point spread along the line and buried the lip in a gorge. The bench's `--hanging` is
+now three guides (bowl, bar, plus the inflow): lake at 422 m, a 316 m free fall at 3.5 m3/s. Next: the coast guide,
+then the coarse preview.
+
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

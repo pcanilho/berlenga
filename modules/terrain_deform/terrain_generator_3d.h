@@ -317,8 +317,11 @@ private:
 		double sill = 0.0; // m radius of resistant rock round the entry (0: none)
 		double level = NAN; // height (eroded metres) the sill is not worn below
 		double erosion = 1.0; // share of the area that erodes (1: all; 0: water only)
+		double slope = 0.0; // > 0: an apron of rock falling away past the sill radius at this rise over run
+		Vector2 side; // the apron's half plane (zero: all round)
 	};
 	LocalVector<InflowPoint> _inflow_points() const;
+	void _guides(LocalVector<class TerrainGuide3D *> &r_out, Node *p_node = nullptr) const;
 	void _inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area, LocalVector<double> &r_sill, LocalVector<double> &r_level, LocalVector<double> *r_water) const;
 	void _route_rivers();
 	float _water_fade(real_t p_x, real_t p_z) const;

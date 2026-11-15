@@ -29,6 +29,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "terrain_guide_3d.h"
 #include "terrain_generator_3d.h"
 
 #include "terrain_coast.h"
@@ -236,6 +237,70 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 				if (d < 1.0) {
 					const real_t c = 0.5 + 0.5 * Math::cos(Math::PI * d);
 					field[z * nx + x] *= float(Math::lerp(real_t(1.0), share, c));
+				}
+			}
+		}
+	}
+
+	// Sculpting guides (TerrainGuide3D under the generator): raise guides as ranges, then lower guides as basins (each
+	// cell takes its nearest point of the line, so a curve's overlapping segments do not compound).
+	LocalVector<TerrainGuide3D *> guides;
+	_guides(guides);
+	LocalVector<float> near;
+	for (int pass = 0; pass < 2; pass++) {
+		for (TerrainGuide3D *g : guides) {
+			if (!g->is_enabled() || int(g->get_mode()) != (pass == 0 ? TerrainGuide3D::MODE_RAISE : TerrainGuide3D::MODE_LOWER)) {
+				continue;
+			}
+			PackedVector3Array pts = g->get_global_points();
+			if (pts.is_empty()) {
+				continue;
+			}
+			if (pts.size() == 1) {
+				pts.push_back(pts[0]);
+			}
+			const real_t w = g->get_width();
+			const real_t strength = g->get_strength();
+			near.resize(n);
+			for (int i = 0; i < n; i++) {
+				near[i] = 0.0f;
+			}
+			int bx0 = nx, bx1 = -1, bz0 = ny, bz1 = -1;
+			for (int sgi = 0; sgi + 1 < pts.size(); sgi++) {
+				const Vector2 a(pts[sgi].x, pts[sgi].z);
+				const Vector2 b(pts[sgi + 1].x, pts[sgi + 1].z);
+				const Vector2 ab = b - a;
+				const real_t len2 = ab.length_squared();
+				const int x0 = MAX(0, int(Math::floor((MIN(a.x, b.x) - w - rect.position.x) / cell_size)));
+				const int x1 = MIN(nx - 1, int(Math::ceil((MAX(a.x, b.x) + w - rect.position.x) / cell_size)));
+				const int z0 = MAX(0, int(Math::floor((MIN(a.y, b.y) - w - rect.position.y) / cell_size)));
+				const int z1 = MIN(ny - 1, int(Math::ceil((MAX(a.y, b.y) + w - rect.position.y) / cell_size)));
+				bx0 = MIN(bx0, x0);
+				bx1 = MAX(bx1, x1);
+				bz0 = MIN(bz0, z0);
+				bz1 = MAX(bz1, z1);
+				for (int z = z0; z <= z1; z++) {
+					for (int x = x0; x <= x1; x++) {
+						const Vector2 q(rect.position.x + x * cell_size, rect.position.y + z * cell_size);
+						const real_t t = len2 > 0.0 ? CLAMP((q - a).dot(ab) / len2, real_t(0.0), real_t(1.0)) : real_t(0.0);
+						const real_t d = q.distance_to(a + ab * t) / w;
+						if (d < 1.0) {
+							near[z * nx + x] = MAX(near[z * nx + x], float(0.5 + 0.5 * Math::cos(Math::PI * d)));
+						}
+					}
+				}
+			}
+			for (int z = bz0; z <= bz1; z++) {
+				for (int x = bx0; x <= bx1; x++) {
+					const float c = near[z * nx + x];
+					if (c <= 0.0f) {
+						continue;
+					}
+					if (pass == 0) {
+						field[z * nx + x] = MAX(field[z * nx + x], float(strength) * c);
+					} else {
+						field[z * nx + x] *= Math::lerp(1.0f, float(strength), c);
+					}
 				}
 			}
 		}
@@ -5093,7 +5158,35 @@ LocalVector<TerrainGenerator3D::InflowPoint> TerrainGenerator3D::_inflow_points(
 			pts.push_back(ip);
 		}
 	}
+	// Bar guides: resistant rock held at the line's heights (and down its apron), as sill markers are.
+	LocalVector<TerrainGuide3D *> guides;
+	_guides(guides);
+	for (TerrainGuide3D *g : guides) {
+		if (!g->is_enabled() || g->get_mode() != TerrainGuide3D::MODE_BAR) {
+			continue;
+		}
+		for (const TerrainGuide3D::BarPoint &b : g->get_bar_points()) {
+			InflowPoint ip;
+			ip.position = b.position;
+			ip.sill = MAX(double(b.radius), 1.0);
+			ip.level = double(b.level) - double(height_offset);
+			ip.slope = double(b.slope);
+			ip.side = b.side;
+			pts.push_back(ip);
+		}
+	}
 	return pts;
+}
+
+void TerrainGenerator3D::_guides(LocalVector<TerrainGuide3D *> &r_out, Node *p_node) const {
+	const Node *node = p_node ? p_node : this;
+	for (int i = 0; i < node->get_child_count(); i++) {
+		Node *c = node->get_child(i);
+		if (TerrainGuide3D *g = Object::cast_to<TerrainGuide3D>(c)) {
+			r_out.push_back(g);
+		}
+		_guides(r_out, c);
+	}
 }
 
 // The node each inflow enters at on a p_nx x p_ny grid of p_dx spacing: the one under the marker, or, when that is
@@ -5135,21 +5228,39 @@ void TerrainGenerator3D::_inflow_grid(const LocalVector<InflowPoint> &p_points, 
 					memset(r_sill.ptr(), 0, sizeof(double) * p_nx * p_ny);
 				}
 				const int bx = best % p_nx, bz = best / p_nx;
-				const int rc = int(Math::ceil(ip.sill / p_dx));
+				// An apron (slope > 0): past the core the rock falls away at that rise over run, straight out to the side
+				// (or all round), out to where it reaches the floor: a rock slope, not a wall or terraces.
+				const bool apron = ip.slope > 0.0 && !Math::is_nan(ip.level);
+				const double reach = apron ? ip.sill + MIN(MAX(ip.level, 0.0) / ip.slope, 1024.0) : ip.sill;
+				const int rc = int(Math::ceil(reach / p_dx));
 				for (int z = MAX(bz - rc, 0); z <= MIN(bz + rc, p_ny - 1); z++) {
 					for (int x = MAX(bx - rc, 0); x <= MIN(bx + rc, p_nx - 1); x++) {
 						const double dd = Math::sqrt(double((x - bx) * (x - bx) + (z - bz) * (z - bz))) * p_dx;
-						if (dd <= MAX(ip.sill, 0.5 * p_dx)) {
-							r_sill[z * p_nx + x] = 1.0;
-							if (!Math::is_nan(ip.level)) {
-								if (r_level.is_empty()) {
-									r_level.resize(p_nx * p_ny);
-									for (uint32_t k = 0; k < r_level.size(); k++) {
-										r_level[k] = NAN;
-									}
-								}
-								r_level[z * p_nx + x] = ip.level;
+						double lv = ip.level;
+						if (dd > MAX(ip.sill, 0.5 * p_dx)) {
+							if (!apron || dd > reach) {
+								continue;
 							}
+							if (ip.side != Vector2()) {
+								// A strip straight out to the side, as wide as the points' spacing (no spread along the line,
+								// so a lip left clear stays clear).
+								const double vx = double(x - bx) * p_dx, vz = double(z - bz) * p_dx;
+								if (double(ip.side.x) * vx + double(ip.side.y) * vz <= 0.0 || Math::abs(double(ip.side.y) * vx - double(ip.side.x) * vz) > MAX(ip.sill, 24.0)) {
+									continue;
+								}
+							}
+							lv = ip.level - ip.slope * (dd - ip.sill);
+						}
+						r_sill[z * p_nx + x] = 1.0;
+						if (!Math::is_nan(lv)) {
+							if (r_level.is_empty()) {
+								r_level.resize(p_nx * p_ny);
+								for (uint32_t k = 0; k < r_level.size(); k++) {
+									r_level[k] = NAN;
+								}
+							}
+							double &cur = r_level[z * p_nx + x];
+							cur = apron && !Math::is_nan(cur) ? MAX(cur, lv) : lv;
 						}
 					}
 				}
