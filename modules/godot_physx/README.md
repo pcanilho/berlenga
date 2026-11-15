@@ -188,7 +188,7 @@ nodes show a configuration warning and stay inert.
 
 ## Exporting a game
 
-Each release of this fork ships `godot-fork-export-templates-<build>.tpz`:
+Each release of this fork ships `berlenga-export-templates-<build>.tpz`:
 Windows x86_64 and Linux x86_64/arm64 templates, debug and release, built
 with the same modules as that release's editors and with the module's
 libraries included (Linux ones in `linux_x86_64/` and `linux_arm64/`). Install

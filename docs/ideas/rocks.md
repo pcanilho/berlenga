@@ -153,15 +153,22 @@ TLAS and trace ms on the open-world bench at 10k and 100k stones.
   grain size from beach slope (Bascom), blended between 2 m sub-cell corners so the cover fades with the
   slope, boulders under rock. Cliffs: blocks in 1.4 m courses along the
   beds, staggered joints, set 60 to 80% of their depth into the face (Paris et al. 2020).
-  `use_strata` swaps in `soft_rock_type` on soft beds.
+  `use_strata` swaps in `soft_rock_type` on soft beds. Cliff blocks only go where the heightfield holds the
+  face (50 to 76 degrees, near planar across a terrain cell, centre inside the rock): steeper heightfield
+  steps are stretched in the mesh and blocks set by the bilinear height floated in front of them.
 - **Ties.** `get_obstacles(rect)` gives `(x, ground y, z, footprint)`, the format
   `VegetationField3D.obstacles` and `GrassField3D.obstacles` take; `get_stones` adds basis, scale,
   water film, family, layer and `top` for crevice plants and moss. Shader: lichen and moss covers,
   ground contact band, the shared weather wetness and snow code. Optional convex hull collision per cell
   near the target.
 - **Numbers on the 2 km bench world.** Stones over 4 km2: rockfall 4.6k, glacial 178, river 14.9k,
-  shore 8.5k, cliff 240k; scree 7.2k in the fullest 200 m square. A 320 m square round scree: 399 cells,
+  shore 8.5k, cliff 28.7k; scree 7.2k in the fullest 200 m square. A 320 m square round scree: 399 cells,
   123k stones, 54 shapes (26.4 MB), 7.6 MB of instances, 11.9k collision hulls, built in 1.8 s.
+
+Review fixes (15 Nov evening): fresh rockfall and scree no longer get spheroidal rounding and are cut by
+two to four through-fractures at any angle; glacial boulders get one or two ground facets; periodic marks
+(laminae, cleavage, striae) have a period of at least five grid cells, as finer ones aliased into combs and
+notches; cracks are at least 1.6 cells wide, wander, and taper shut at their tips.
 
 Open: GPU frame and trace cost on the open-world bench (PC queue); river stones here never pass the first
 roundness bin because the bench rivers are short; vegetation reading the stone list is the vegetation

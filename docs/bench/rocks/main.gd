@@ -54,6 +54,8 @@ func _ready() -> void:
 		_world()
 	elif args.has("rock"):
 		_one_rock()
+	elif args.has("families"):
+		_families()
 	else:
 		_gallery()
 	if args.has("cam"):
@@ -138,6 +140,30 @@ func _gallery() -> void:
 	print("gallery: 30 rocks in %d ms" % (Time.get_ticks_msec() - t0))
 	cam.position = Vector3(0, 7.5, 9.5)
 	cam.look_at(Vector3(0, 0, 0.6))
+
+
+# The six families on one ground at their real relative sizes (b axis): the big three behind, the small three in
+# front where the camera can read them, sun low from the left so edges and facets show.
+func _families() -> void:
+	_plain_ground(60.0)
+	for n in get_children():
+		if n is DirectionalLight3D:
+			(n as DirectionalLight3D).rotation_degrees = Vector3(-24, -72, 0)
+			(n as DirectionalLight3D).directional_shadow_max_distance = 20.0
+	var sd := int(args.get("seed", "3"))
+	var rows := [
+		["granite", "rockfall", 1.3, Vector3(-2.5, 0, 0), 0.5],
+		["granite", "glacial", 1.7, Vector3(0.1, 0, -0.2), 2.4],
+		["sandstone", "cliff_block", 1.3, Vector3(2.8, 0, 0), 0.25],
+		["limestone", "scree", 0.32, Vector3(-1.1, 0, 2.3), 0.9],
+		["basalt", "cobble", 0.22, Vector3(-0.1, 0, 2.5), 2.0],
+		["slate", "pebble", 0.07, Vector3(0.65, 0, 2.7), 0.4],
+	]
+	for r in rows:
+		var m := _rock(TYPES.find(r[0]), FAMILIES.find(r[1]), sd)
+		_place_mesh(m, r[2], r[3], r[4])
+	cam.position = Vector3(0.1, 1.25, 6.2)
+	cam.look_at(Vector3(0.1, 0.45, 0.9))
 
 
 func _one_rock() -> void:
@@ -423,6 +449,9 @@ func _test() -> void:
 				floating += 1
 			if l != RockField3D.LAYER_CLIFF and p.y - float(s["ground"]) < -sc * 1.2:
 				buried += 1
+			# A cliff block's centre lies inside the wall: under the terrain at its own plan position.
+			if l == RockField3D.LAYER_CLIFF and p.y > gen.get_height(p) + 0.1:
+				floating += 1
 		var want_some := true
 		check(not want_some or st.size() > 0, "%s: %d stones over the world in %d ms" % [LAYERS[l], st.size(), Time.get_ticks_msec() - t0])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])

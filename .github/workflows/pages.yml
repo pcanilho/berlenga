@@ -11,6 +11,9 @@ on:
       - "doc/classes/Environment.xml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Release (editor builds)"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -33,10 +36,25 @@ jobs:
         run: pip install hugo==0.169.0 "pagefind[bin]==1.6.0"
       - id: pages
         uses: actions/configure-pages@v5
+      - name: Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/releases/latest" \
+            | jq '{tag_name, published_at, html_url, assets: [.assets[] | {name, size, browser_download_url}]}' > site/data/release.json \
+            || echo '{}' > site/data/release.json
       - name: Settings table
         run: python site/tools/settings.py
       - name: Build
         run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
+      - name: GIF clips to video
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          for f in docs/media/*.gif; do
+            ffmpeg -loglevel error -y -i "$f" -movflags +faststart -pix_fmt yuv420p \
+              -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -crf 18 -preset slow \
+              "public/media/$(basename "${f%.gif}").mp4"
+          done
       - name: Search index
         run: python -m pagefind --site public
       - uses: actions/upload-pages-artifact@v3

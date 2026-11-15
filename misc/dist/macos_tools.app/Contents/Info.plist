@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>Godot</string>
 	<key>CFBundleName</key>
-	<string>Godot</string>
+	<string>Berlenga</string>
 	<key>CFBundleIconFile</key>
 	<string>Berlenga.icns</string>
 	<key>CFBundleIdentifier</key>
