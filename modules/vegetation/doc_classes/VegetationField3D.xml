@@ -9,6 +9,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_near_radius" qualifiers="static">
+			<return type="float" />
+			<description>
+				The radius last published as the global shader parameter [code]vegetation_near_radius[/code] by a streaming field (see [member stream_radius]), 0 when none streams.
+			</description>
+		</method>
 		<method name="get_stream_stats">
 			<return type="Dictionary" />
 			<description>
@@ -181,7 +187,7 @@
 			While [member streaming], the canopy map, the stand shade and the forest floor map cover this far around the centre (half-metre cells); the far colour map covers [member stream_radius].
 		</member>
 		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="200.0">
-			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed.
+			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed. The field publishes the radius as the global shader parameter [code]vegetation_near_radius[/code] (0 when it stops streaming; the last streaming field to publish owns it), so a terrain's far blend can start before the placed plants end.
 		</member>
 		<member name="stream_target" type="NodePath" setter="set_stream_target" getter="get_stream_target" default="NodePath(&quot;&quot;)">
 			The [Node3D] streaming follows. Empty: the viewport's camera.

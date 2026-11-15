@@ -176,7 +176,28 @@ const VegetationField3D::Pattern &VegetationField3D::_get_pattern(float p_spacin
 	return patterns[key];
 }
 
+// Where this streaming field's placed plants end (vegetation_near_radius): past it only the ground
+// shows them, through the terrain's far blend of the cover map, which a TerrainMaterial3D with
+// far_start_from_vegetation starts before it. The last streaming field to publish owns it; it
+// clears it to 0 when it stops.
+ObjectID VegetationField3D::near_radius_owner;
+float VegetationField3D::near_radius_published = 0.0f;
+
+void VegetationField3D::_publish_near_radius(float p_radius) {
+	if (p_radius <= 0.0f && near_radius_owner != get_instance_id()) {
+		return;
+	}
+	if (p_radius > 0.0f && near_radius_owner == get_instance_id() && published_near_radius == p_radius) {
+		return;
+	}
+	near_radius_owner = p_radius > 0.0f ? get_instance_id() : ObjectID();
+	published_near_radius = p_radius;
+	near_radius_published = p_radius;
+	RenderingServer::get_singleton()->global_shader_parameter_set("vegetation_near_radius", p_radius);
+}
+
 void VegetationField3D::_clear_generated() {
+	_publish_near_radius(0.0f);
 	_stream_clear();
 	{
 		RWLockWrite guard(crown_lock);
@@ -2372,6 +2393,7 @@ void VegetationField3D::_stream_maps_finish() {
 	if (stream_setup_valid) {
 		const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 		_apply_maps(stream_maps_job->maps);
+		_publish_near_radius(stream_radius);
 		stream_publish_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	}
 	memdelete(stream_maps_job);
@@ -2571,6 +2593,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_sward_shade_at", "global_position"), &VegetationField3D::get_sward_shade_at);
 	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);
+	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_near_radius"), &VegetationField3D::get_near_radius);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);

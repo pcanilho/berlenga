@@ -913,6 +913,11 @@ func _stream_checks() -> void:
 		counts.append([sf.get_placements(s).size(), want.size()])
 		ok = ok and _same(sf.get_placements(s), want, Vector2(80, 70), 60.0, sf.tile_size)
 	_check("streaming: moved centre, tiles past the radius freed, new ones match", ok and old_left == 0, [frames, sf.get_stream_tile_count(), counts, old_left])
+	# Where the placed plants end, for the terrain's far blend (vegetation_near_radius).
+	var near_on := VegetationField3D.get_near_radius()
+	sf.streaming = false
+	var near_off := VegetationField3D.get_near_radius()
+	_check("streaming: publishes vegetation_near_radius, clears it when it stops", near_on == 60.0 and near_off == 0.0, [near_on, near_off])
 	sf.queue_free()
 	target.queue_free()
 

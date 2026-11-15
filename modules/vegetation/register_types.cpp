@@ -77,6 +77,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "vegetation_far_map", "sampler2D" },
 		{ "vegetation_far_rect", "vec4" },
 		{ "vegetation_far_range", "float" },
+		{ "vegetation_near_radius", "float" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;

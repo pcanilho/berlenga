@@ -37,6 +37,9 @@ extends Node3D
 #   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
 #   --rocks=N        N boulders (stand-in rounded rocks) 3 to 10 m in front of the camera; the fields keep
 #                    out of them (obstacles) unless --rocks-through
+#   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
+#   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
+#   --no-rock-foot   with --rocks: the floor species without PlantSpecies.rock_foot
 #   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
 #                    thins under it (GrassField3D.undergrowth_field), unless --sward-shade=0
 #   --far=0          without the plants' colour on the ground beyond their range (before/after)
@@ -85,6 +88,9 @@ var stand_set := false
 var no_floor := false
 var no_sward := false
 var undergrowth := ""
+var grazed := false # --grazed: the tall grass grazed short (upland pasture).
+var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
+var no_rock_foot := false # --no-rock-foot: the floor species without their rock_foot.
 var no_margin := false # --no-margin: undergrowth stands without their margin.
 var rocks := 0 # --rocks=N: boulders in front of the camera.
 var rocks_through := false # --rocks-through: the fields not told of them (blades and plants grow through).
@@ -148,6 +154,9 @@ func _ready() -> void:
 		elif a.begins_with("--rocks="): rocks = int(a.substr(8))
 		elif a == "--rocks-through": rocks_through = true
 		elif a == "--no-margin": no_margin = true
+		elif a == "--undergrowth-edge": ug_edge = true
+		elif a == "--grazed": grazed = true
+		elif a == "--no-rock-foot": no_rock_foot = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
@@ -229,6 +238,8 @@ func _ready() -> void:
 	grass.fallback_wind = wind
 	if OS.get_environment("GRASS_RADIUS") != "":
 		grass.radius = float(OS.get_environment("GRASS_RADIUS")) # Which level of detail the far-match region sees.
+	if grazed:
+		grass.blade_height = Vector2(0.05, 0.14) # Grazed pasture: bracken stands over a short sward.
 	if grass_density > 0.0:
 		grass.density = grass_density
 	if OS.get_environment("GRASS_DIAG").contains("vf1"):
@@ -556,6 +567,31 @@ func _frame_undergrowth() -> void:
 	cam.position = Vector3(eye.x, height(eye.x, eye.z) + _env_f("UG_EYE", 3.0), eye.z)
 	cam.look_at(Vector3(best.x, height(best.x, best.z) + _env_f("UG_AT", 0.2), best.z))
 	print("GRASS_UNDERGROWTH stand=%s score=%.1f eye=%s sward=%.2f" % [str(best), best_score, str(cam.position), ug_field.get_sward_shade_at(best)])
+	if ug_edge:
+		_frame_undergrowth_edge(best)
+
+# The stand's edge, looked along: walk from the stand's centre towards the light side to where the
+# patch ends, then stand 3.5 m along the edge at 1 m eye height, looking back along it, so the
+# fronds' drop towards the grass shows against what is behind.
+func _frame_undergrowth_edge(c: Vector3) -> void:
+	var usp: PlantSpecies = ug_field.biome.species[0]
+	var sun_dir := -sun_node.global_transform.basis.z
+	var side := Vector3(-sun_dir.z, 0, sun_dir.x).normalized()
+	var e := c
+	for k in 80:
+		if usp.get_patch_depth(e) <= 0.0:
+			break
+		e += side * 0.1
+	# Way out of the patch: the depth's falling gradient.
+	var h := 0.3
+	var g := Vector3(usp.get_patch_depth(e + Vector3(h, 0, 0)) - usp.get_patch_depth(e - Vector3(h, 0, 0)), 0, usp.get_patch_depth(e + Vector3(0, 0, h)) - usp.get_patch_depth(e - Vector3(0, 0, h)))
+	var out := (-g).normalized() if g.length() > 1e-6 else side
+	var along := Vector3(-out.z, 0, out.x)
+	var eye := e + along * 3.5 + out * 0.6
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 1.0, eye.z)
+	var at := e - along * 1.0
+	cam.look_at(Vector3(at.x, height(at.x, at.z) + 0.45, at.z))
+	print("GRASS_UNDERGROWTH_EDGE edge=%s out=%s eye=%s" % [str(e), str(out), str(cam.position)])
 
 # Boulders for --rocks: rounded stand-ins, a little sunk, in front of the camera. Each is a disc
 # on the ground for the fields' obstacles, its radius where the rock meets the soil.
@@ -591,6 +627,9 @@ func _place_rocks() -> void:
 		for f in [grass, under, turf, cover, ug_field]:
 			if f:
 				f.obstacles = list
+	if no_rock_foot and cover:
+		for sp in cover.biome.species:
+			sp.rock_foot = 0.0
 	print("GRASS_ROCKS %d through=%s" % [list.size(), str(rocks_through)])
 
 func _env_f(k: String, d: float) -> float:
