@@ -308,6 +308,18 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].stage_functions["report_intersection"] = report_func;
 	}
 
+	{
+		// The first directional light's visibility at a world position: its shadow maps times its projector
+		// (the fork's cloud shadow), for media a shader marches through itself (underwater light). 1 where
+		// the point is past the shadow range or the renderer has no shadow maps to read.
+		ShaderLanguage::StageFunctionInfo func;
+		func.skip_function = "vertex";
+		func.arguments.push_back(ShaderLanguage::StageFunctionInfo::Argument("world_position", ShaderLanguage::TYPE_VEC3));
+		func.return_type = ShaderLanguage::TYPE_VEC3;
+		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["sun_visibility"] = func;
+		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["sun_visibility"] = func;
+	}
+
 	// spatial render modes
 	{
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("blend"), "mix", "add", "sub", "mul", "premul_alpha", "oit" });

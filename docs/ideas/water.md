@@ -2242,3 +2242,29 @@ shadows; the path tracer traces its own shadows for all of them.
   the mirrored sky stay in the emission, since water in shadow still mirrors the sky. Foam keeps a Lambert term in
   the same light().
 - Under 0.6 cloud cover the sea now darkens under the cloud shadows like the beach beside it.
+
+## Shadows in the water (15 Nov, bug)
+
+With the camera under the water, the raster light scattered in the water toward the eye was the sun's
+everywhere: a bay under a cliff, or under a cloud shadow, glowed as if lit. The surface and the bed took their
+shadows (#286 and the scene's own lights); the medium between them did not, while the path tracer lit it only
+where the sun reached.
+
+How others do it: Crest reads the shadow maps into its own data before the transparent pass and uses a soft
+term for the scattering in the volume; Unreal's Single Layer Water leaves its medium unshadowed (its docs say
+moving under the water projects no shadowing) and relies on Volumetric Fog for shafts; froxel fog (Wronski
+2014, Hillaire 2015) is the general answer, but Godot's fog density and absorption are grey, and water's
+absorption is strongly per channel, so the medium stays in our own pass.
+
+What we build: a spatial stage function, `sun_visibility(world_position)` (vec3), the first directional
+light's shadow (one hardware PCF tap from the cascade over the point) times its projector (the cloud shadow),
+at any point; Forward+ and Mobile read the shadow atlas, Compatibility returns 1. The underwater pass marches
+the sun's share over the near water (24 steps, about five mean free paths), each step lit as far as the
+light reached where its refracted ray entered the water (the shadow map holds the shadow above the surface;
+beneath it the refracted ray bends away from the map's), integrated in closed form within the step, and
+jittered per pixel and frame (interleaved gradient noise, Jimenez 2014). The camera-to-surface stretch seen
+from below and the foam's sun from below take the same light.
+
+Left for later: the sky's share is still unoccluded (a cliff hides part of the sky too; the terrain's sky
+map could be read here), and an underwater rock's own shadow in the medium (the march reads the light at
+the surface only).
