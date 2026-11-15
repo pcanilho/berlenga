@@ -34,7 +34,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
-- **Bark lichen** (`lichen_cover`): lichen on bark, placed by height, crown light, stem age and moss; 0 turns it off.
+- **Bark lichen** (`lichen_cover`): lichen on bark, placed by height, crown light, stem age and moss; beard lichens and oakmoss hang from and stand off crown twigs on near trees. 0 turns it off.
 
   ![An oak's bole without and with lichen, raster](media/trees-lichen.jpg)
 
