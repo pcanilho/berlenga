@@ -6,6 +6,7 @@ extends Node3D
 #   --view=cascade   closer, on the step and the white water below it
 #   --view=top       straight down on the cascade, for the foam
 #   --view=bend      looking up a bend (with --carve: deep on the outside)
+#   --view=jump      side-on below the step: the fast water and the hydraulic jump that ends it
 #   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -272,7 +273,17 @@ func _ready() -> void:
 	if report:
 		for i in range(0, river.call("get_section_count"), 8):
 			var s: Dictionary = river.call("get_section", i)
-			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s q=%.1f" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade, river.call("get_discharge_at", s.s)])
+			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s q=%.1f Fr=%.2f crit=%6.2f super=%.3f" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade, river.call("get_discharge_at", s.s), s.froude, s.critical_height, s.superelevation])
+		if OS.get_environment("RIVER_ALL") != "":
+			for i in river.call("get_section_count"):
+				var sa: Dictionary = river.call("get_section", i)
+				var dmax := 0.0
+				for dv in sa.depths: dmax = maxf(dmax, dv)
+				print("  i=%d s=%.1f surf=%.3f crit=%.3f Fr=%.2f dmax=%.2f width=%.1f" % [i, sa.s, sa.surface, sa.critical_height, sa.froude, dmax, sa.width])
+		for i in river.call("get_section_count"):
+			var sj: Dictionary = river.call("get_section", i)
+			if sj.jump > 0.0:
+				print("jump at s=%.1f: Fr1 %.2f, surface %.2f" % [sj.s, sj.jump, sj.surface])
 		_print_cross()
 		if falls:
 			for i in range(92, 112):
@@ -313,6 +324,8 @@ func _ready() -> void:
 	match view:
 		"cascade":
 			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
+		"jump":
+			cam.look_at_from_position(Vector3(_valley_x(8.0) + 11.0, 3.5, 6.0), Vector3(_valley_x(8.0), -2.4, 9.0))
 		"bend":
 			cam.look_at_from_position(Vector3(_valley_x(-23.6) + 2.0, 6.0, -14.0), Vector3(_valley_x(-23.6), -1.5, -23.6))
 		"joins":

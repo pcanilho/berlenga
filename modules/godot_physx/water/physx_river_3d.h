@@ -84,6 +84,11 @@ public:
 		float mouth_fade = 1.0f; // 1 on the river, fading to 0 past its mouth into the water it joins
 		bool fall_drop = false; // the ribbon from here to the next section is under a waterfall's jet (hidden)
 		float plunge = 0.0f; // 0..1 white water where a waterfall's jet lands
+		float froude = 0.0f; // section Froude number Q / (A sqrt(g A / T))
+		float critical = 0.0f; // local y of the critical-depth surface (-INF: none)
+		float jump = 0.0f; // > 0 at a hydraulic jump's toe: the upstream Froude number Fr1
+		float jump_foam = 0.0f; // 0..1 white water in a jump's roller
+		float tilt = 0.0f; // surface rise per m towards the left bank (bend superelevation)
 	};
 	// A free overfall: the water leaves the lip and falls clear of the ground.
 	struct Fall {
@@ -110,6 +115,8 @@ private:
 	float discharge = 2.0f; // m^3/s
 	float roughness = 0.035f; // Manning n
 	float max_slope = 0.08f; // steeper drops are cascades
+	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
+	bool bend_superelevation = true; // the surface banks up against the outside of bends
 	bool snap_to_ground = true;
 	uint32_t ground_collision_mask = 1;
 	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
@@ -232,6 +239,10 @@ public:
 	float get_roughness() const { return roughness; }
 	void set_max_slope(float p_slope);
 	float get_max_slope() const { return max_slope; }
+	void set_gradually_varied_flow(bool p_enabled);
+	bool get_gradually_varied_flow() const { return gradually_varied_flow; }
+	void set_bend_superelevation(bool p_enabled);
+	bool get_bend_superelevation() const { return bend_superelevation; }
 	void set_snap_to_ground(bool p_snap);
 	bool get_snap_to_ground() const { return snap_to_ground; }
 	void set_ground_collision_mask(uint32_t p_mask);
