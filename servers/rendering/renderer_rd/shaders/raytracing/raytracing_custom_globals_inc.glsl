@@ -87,6 +87,11 @@ float opaque_prepass_threshold_out = 0.99; // OPAQUE_PREPASS_THRESHOLD: raster o
 vec3 light_vertex = vec3(0.0);
 float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET: raster shadow maps only
 float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET: raster shadow maps only
+float sun_shadow = 1.0; // SUN_SHADOW: raster only (the path tracer traces the surface's own shadows)
+// sun_direction(): zero under the path tracer, which traces real shadows, so a per-pixel shadow march is skipped.
+vec3 sun_direction() {
+	return vec3(0.0);
+}
 vec2 rt_point_coord = vec2(0.0);
 float rt_depth = 0.0;
 float premul_alpha = 1.0;

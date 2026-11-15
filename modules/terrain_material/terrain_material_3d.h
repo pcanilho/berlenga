@@ -110,6 +110,7 @@ private:
 	bool far_blend_enabled = false;
 	float far_start = 300.0;
 	bool far_start_from_vegetation = false;
+	bool cliff_self_shadow = false;
 	float far_fade = 150.0;
 	bool ground_deform_enabled = true;
 	bool sky_occlusion_enabled = true;
@@ -167,6 +168,8 @@ public:
 	float get_far_start() const { return far_start; }
 	void set_far_start_from_vegetation(bool p_value);
 	bool is_far_start_from_vegetation() const { return far_start_from_vegetation; }
+	void set_cliff_self_shadow(bool p_value);
+	bool is_cliff_self_shadow() const { return cliff_self_shadow; }
 	void set_far_fade(float p_value);
 	float get_far_fade() const { return far_fade; }
 	void set_wetness_enabled(bool p_enabled);

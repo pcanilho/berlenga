@@ -78,6 +78,9 @@
 		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="false">
 			If [code]true[/code], the far blend ends where a streaming [VegetationField3D]'s placed plants end (the global shader parameter [code]vegetation_near_radius[/code]): it starts at that radius less [member far_fade]. With no field streaming it uses [member far_start].
 		</member>
+		<member name="cliff_self_shadow" type="bool" setter="set_cliff_self_shadow" getter="is_cliff_self_shadow" default="false">
+			If [code]true[/code], ledges of a [Landscape3D]'s [member Landscape3D.cliff_relief] shadow each other per pixel under the first directional light: a short march toward the sun through the same relief that bends the faces' normals. The shadow map holds the ledges only near the camera and too coarsely for half-metre steps; the march keeps their shadow lines sharp at any distance where the relief is wider than a pixel. Forward+ and Mobile; the path tracer traces the real shadows instead.
+		</member>
 		<member name="geology_enabled" type="bool" setter="set_geology_enabled" getter="is_geology_enabled" default="true">
 			Follow the generator's geology maps when they are set.
 		</member>

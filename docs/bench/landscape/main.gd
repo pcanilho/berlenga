@@ -1303,6 +1303,7 @@ func _build_ground() -> void:
 		tm.use_generator(gen)
 		tm.detail_octaves = int(args.get("mdetail", "4"))
 		tm.rock_detail_enabled = args.has("rock-detail")
+		tm.cliff_self_shadow = args.has("ledge-shadow") # --ledge-shadow: ledges of --cliff-relief shadow each other per pixel (raster)
 		if args.has("far-cover"):
 			# Far ground blend against the plant cover map the world field builds (cover_map_enabled below).
 			tm.far_blend_enabled = true

@@ -1503,6 +1503,26 @@ reads the edge's two ends only, so neighbouring chunks agree and nothing cracks.
 million primitives (+18%). Making every face edge half a metre long instead (the first try) quadrupled the faces and
 ran the cloud PT out of memory.
 
+Raster ledge self-shadows (Paulo picked "Yes, off by default", 15 Nov): the shadow map holds the ledges only where the
+finest level displaces them, and at cascade texels of 0.3 to 1 m with their bias a half-metre ledge casts a blur or
+nothing past a few tens of metres, while the per-pixel normal still draws the ledge, lit as if nothing stood above it.
+Established ways: a screen-space contact shadow march (Unreal's contact shadows, HDRP's, Bend Studio's screen-space
+shadows, Aldridge 2023) reads the depth buffer, which holds the vertices, not the per-pixel relief; horizon mapping (Max
+1988; Sloan and Cohen 2000) bakes each texel's horizon from a tiled height map; relief mapping's shadow ray (Policarpo,
+Oliveira and Comba 2005; Tatarchuk 2006, parallax occlusion mapping with soft shadows) marches the light's ray
+through the height field per pixel. Our relief is an analytic function of the undisplaced point, so the third fits
+without a texture: TerrainMaterial3D `cliff_self_shadow` (off by default) marches twelve jittered steps toward the sun
+(denser near the pixel, as far as the relief's full range needs at the sun's rise over the face, at most 16 m),
+finds each sample's foot on the face's base plane and compares its distance out of the face with the relief there,
+and softens over the sun's disc or the pixel, whichever is wider. The engine gained two spatial built-ins for it:
+`sun_direction()` (the first directional light's direction in world space; zero under the path tracer, which traces
+the displaced faces' own shadows, and in Compatibility) and the fragment output `SUN_SHADOW` (multiplies that
+light's shadow; Forward+ and Mobile). The march leaves out the relief's finest noise (its shadows are smaller than
+the steps) and runs only on cliff pixels that face the sun where the relief is wider than a pixel. Measured on the
+bench's cliff views: the gain is small (near the camera the shadow map already draws most ledge shadows; the march
+adds thin lines under small ledges; farther faces carry no relief yet), so it stays off by default (Paulo: ship it,
+off). It grows in value once far faces get shader relief.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
