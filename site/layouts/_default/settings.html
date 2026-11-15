@@ -24,8 +24,9 @@
       <tbody>
       {{ range $d.features }}
         {{ $href := (site.GetPage (printf "/features/%s" .page)).RelPermalink }}{{ with .topic }}{{ $href = printf "%s#%s" $href (anchorize .) }}{{ end }}
-        <tr>
-          <td data-label="Feature"><a href="{{ $href }}"><strong>{{ .name }}</strong></a>{{ with .what }}<span class="set-what">{{ . | markdownify }}</span>{{ end }}</td>
+        {{ $id := anchorize (printf "%s-%s" .page .name) }}
+        <tr id="{{ $id }}">
+          <td data-label="Feature"><a href="{{ $href }}"><strong>{{ .name }}</strong></a><a class="anchor" href="#{{ $id }}" aria-label="Link to this setting">#</a>{{ with .what }}<span class="set-what">{{ . | markdownify }}</span>{{ end }}</td>
           <td data-label="Setting">{{ range .settings }}<code>{{ . }}</code> {{ else }}<span class="set-muted">{{ or .note "no setting" }}</span>{{ end }}</td>
           <td data-label="Page"><a class="set-page" href="{{ $href }}">{{ .title }}</a></td>
         </tr>
@@ -43,8 +44,9 @@
       <tbody>
       {{ range .rows }}
         {{ $parts := split .name "/" }}{{ $t := .title }}
-        <tr>
-          <td data-label="Setting"><code class="set-name">{{ if gt (len $parts) 2 }}<span>{{ delimit (first (sub (len $parts) 1) $parts) "/" }}/</span>{{ end }}{{ index $parts (sub (len $parts) 1) }}</code></td>
+        {{ $id := anchorize .name }}
+        <tr id="{{ $id }}">
+          <td data-label="Setting"><a class="anchor" href="#{{ $id }}" aria-label="Link to this setting">#</a><code class="set-name">{{ if gt (len $parts) 2 }}<span>{{ delimit (first (sub (len $parts) 1) $parts) "/" }}/</span>{{ end }}{{ index $parts (sub (len $parts) 1) }}</code></td>
           <td data-label="Default"><code>{{ replace .default `"` "" }}</code></td>
           <td data-label="What it does">{{ .about | markdownify }}{{ with .page }} <a class="set-page" href="{{ (site.GetPage (printf "/features/%s" .)).RelPermalink }}">{{ $t }}</a>{{ end }}</td>
         </tr>

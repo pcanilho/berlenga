@@ -284,3 +284,63 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
   if (q) box.value = q;
   run();
 })();
+
+// Feature pages: link setting names to their row on the settings page.
+(() => {
+  const el = document.getElementById('setmap');
+  if (!el) return;
+  let pairs; try { pairs = JSON.parse(el.textContent); } catch (e) { return; }
+  const page = location.pathname.split('/').filter(Boolean).pop();
+  const map = new Map();
+  for (let i = 0; i + 2 < pairs.length; i += 3) {
+    const name = pairs[i], id = pairs[i + 1], pg = pairs[i + 2];
+    const k = name.trim();
+    if (!k || (map.has(k) && !(pg && pg === page))) continue;
+    map.set(k, id);
+  }
+  const base = el.dataset.url;
+  document.querySelectorAll('.prose code').forEach((c) => {
+    if (c.closest('a, pre')) return;
+    const id = map.get(c.textContent.trim());
+    if (!id) return;
+    const a = document.createElement('a');
+    a.className = 'setlink'; a.href = base + '#' + id; a.title = 'In the settings table';
+    c.replaceWith(a); a.appendChild(c);
+  });
+})();
+
+// Copy buttons on code blocks.
+(() => {
+  document.querySelectorAll('.prose pre').forEach((pre) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'pre-wrap';
+    pre.replaceWith(wrap); wrap.appendChild(pre);
+    const b = document.createElement('button');
+    b.className = 'iconbtn copy'; b.type = 'button'; b.setAttribute('aria-label', 'Copy');
+    const icon = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+    const tick = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m5 12 5 5 9-10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    b.innerHTML = icon;
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(pre.innerText.replace(/\n$/, '')); } catch (e) { return; }
+      b.innerHTML = tick; b.classList.add('done'); b.setAttribute('aria-label', 'Copied');
+      setTimeout(() => { b.innerHTML = icon; b.classList.remove('done'); b.setAttribute('aria-label', 'Copy'); }, 1500);
+    });
+    wrap.appendChild(b);
+  });
+})();
+
+// Settings page: show a linked row even if a filter would hide it.
+(() => {
+  const go = () => {
+    const id = decodeURIComponent(location.hash.slice(1));
+    const row = id && document.getElementById(id);
+    if (!row || row.tagName !== 'TR') return;
+    const box = document.querySelector('[data-set-filter]');
+    if (row.hidden && box) { box.value = ''; box.dispatchEvent(new Event('input')); }
+    const all = document.querySelector('[data-set-tab="all"]');
+    if (row.closest('[hidden]') && all) all.click();
+    row.scrollIntoView({ block: 'start' });
+  };
+  window.addEventListener('hashchange', go);
+  if (location.hash) requestAnimationFrame(go);
+})();

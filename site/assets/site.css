@@ -84,7 +84,19 @@ pre code{padding:0;background:none;font-size:13.5px}
 .prose h2+p:has(img),.prose h2+p:has(img) img{margin-top:8px}
 
 /* Images */
-.content img{max-width:100%;height:auto;display:block;border-radius:10px;margin:20px 0 8px;box-shadow:var(--shadow);border:1px solid var(--line)}
+.content img,.content video.clip{max-width:100%;height:auto;display:block;border-radius:10px;margin:20px 0 8px;box-shadow:var(--shadow);border:1px solid var(--line)}
+.content video.clip{width:100%;background:var(--bg2)}
+.set-table tr{scroll-margin-top:140px}
+.set-table tr:target td{background:var(--accent-soft)}
+.set-table .anchor{float:right;margin-left:6px}
+.set-table tr:hover .anchor,.set-table tr:target .anchor{opacity:1}
+a.setlink code{color:var(--accent);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent) 35%,transparent);text-underline-offset:2px}
+a.setlink:hover{text-decoration:none}
+.pre-wrap{position:relative}
+.pre-wrap pre{padding-right:52px}
+.pre-wrap .copy{position:absolute;top:8px;right:8px;width:32px;height:32px;background:var(--panel);border-color:var(--line)}
+.pre-wrap .copy:hover{color:var(--text)}
+.pre-wrap .copy.done{color:var(--accent)}
 .content img.zoomable{cursor:zoom-in;transition:transform .2s}
 .content img.zoomable:hover{transform:translateY(-1px)}
 p:has(> em:only-child){margin-top:0;color:var(--muted);font-size:14.5px}

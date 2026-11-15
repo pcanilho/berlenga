@@ -1,4 +1,9 @@
 {{- $src := .Destination -}}
 {{- if not (strings.HasPrefix $src "http") -}}{{- $src = relURL $src -}}{{- end -}}
+{{- if strings.HasSuffix (lower .Destination) ".gif" -}}
+{{- $mp4 := replaceRE `(?i)\.gif$` ".mp4" $src -}}
+<video class="clip" autoplay muted loop playsinline preload="metadata" aria-label="{{ .Text }}"><source src="{{ $mp4 }}" type="video/mp4"><a href="{{ $src }}">{{ .Text }}</a></video>
+{{- else -}}
 <img src="{{ $src }}" alt="{{ .Text }}" loading="lazy" decoding="async">
+{{- end -}}
 {{- /**/ -}}

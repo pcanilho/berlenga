@@ -37,6 +37,14 @@ jobs:
         run: python site/tools/settings.py
       - name: Build
         run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
+      - name: GIF clips to video
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          for f in docs/media/*.gif; do
+            ffmpeg -loglevel error -y -i "$f" -movflags +faststart -pix_fmt yuv420p \
+              -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -crf 18 -preset slow \
+              "public/media/$(basename "${f%.gif}").mp4"
+          done
       - name: Search index
         run: python -m pagefind --site public
       - uses: actions/upload-pages-artifact@v3
