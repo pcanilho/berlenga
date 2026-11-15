@@ -2575,6 +2575,9 @@ void VegetationField3D::_update_impostors(bool p_traced) {
 void VegetationField3D::_on_map_baked() {
 	if (streaming) {
 		_clear_generated(); // Placed again from the new map, around the centre.
+		// Out to the same radius again in a moment: keep it published meanwhile, so the terrain's
+		// far blend does not jump back to its own far_start for the frames the tiles take.
+		_publish_near_radius(stream_radius);
 		set_process_internal(true);
 	} else if (populate_on_ready) {
 		queue_populate();
