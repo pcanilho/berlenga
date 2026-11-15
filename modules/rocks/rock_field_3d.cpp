@@ -1,0 +1,1267 @@
+/**************************************************************************/
+/*  rock_field_3d.cpp                                                     */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+
+#include "rock_field_3d.h"
+
+#include "modules/terrain_deform/terrain_generator_3d.h"
+
+#include "core/config/engine.h"
+#include "core/math/random_pcg.h"
+#include "core/object/class_db.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/os/os.h"
+#include "scene/3d/camera_3d.h"
+#include "scene/3d/multimesh_instance_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+
+#include <cmath>
+#include "scene/3d/physics/static_body_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/3d/convex_polygon_shape_3d.h"
+#include "scene/resources/3d/importer_mesh.h"
+#include "scene/resources/multimesh.h"
+
+namespace {
+
+inline uint32_t rf_hash(uint32_t p_x) {
+	p_x ^= p_x >> 16;
+	p_x *= 0x7FEB352Du;
+	p_x ^= p_x >> 15;
+	p_x *= 0x846CA68Bu;
+	p_x ^= p_x >> 16;
+	return p_x;
+}
+
+inline uint32_t rf_hash3(int p_a, int p_b, int p_c, uint32_t p_seed) {
+	return rf_hash(uint32_t(p_a) * 73856093u ^ rf_hash(uint32_t(p_b) * 19349663u ^ rf_hash(uint32_t(p_c) * 83492791u ^ p_seed)));
+}
+
+// Library keys: rock type, family, roundness bin.
+inline RockGenerator::RockType key_type(uint32_t p_key) {
+	return RockGenerator::RockType(p_key & 0xF);
+}
+inline RockGenerator::Family key_family(uint32_t p_key) {
+	return RockGenerator::Family((p_key >> 4) & 0xF);
+}
+inline int key_bin(uint32_t p_key) {
+	return int((p_key >> 8) & 0xF);
+}
+
+// River transport distances of the cobble roundness bins, in abrasion lengths.
+const float cobble_bins[3] = { 0.25f, 1.0f, 3.0f };
+
+struct LibraryJob {
+	RockGenerator::RockType type;
+	RockGenerator::Family family;
+	float transport = -1.0f;
+	int seed = 0;
+	float detail = 1.0f;
+	Ref<ImporterMesh> mesh;
+	Dictionary meta;
+};
+
+void library_job(void *p_userdata, uint32_t p_index) {
+	LibraryJob &job = static_cast<LibraryJob *>(p_userdata)[p_index];
+	Ref<RockGenerator> g;
+	g.instantiate();
+	g->set_rock_type(job.type);
+	g->set_family(job.family);
+	g->set_seed(job.seed);
+	g->set_transport_distance(job.transport);
+	g->set_detail(job.detail);
+	job.mesh = g->build_importer_mesh(job.meta);
+}
+
+// Ground normal from the generator's height, by central differences.
+Vector3 ground_normal(const TerrainGenerator3D *p_gen, real_t p_x, real_t p_z, real_t p_e) {
+	const real_t hx = p_gen->get_height(Vector3(p_x + p_e, 0, p_z)) - p_gen->get_height(Vector3(p_x - p_e, 0, p_z));
+	const real_t hz = p_gen->get_height(Vector3(p_x, 0, p_z + p_e)) - p_gen->get_height(Vector3(p_x, 0, p_z - p_e));
+	const Vector3 n(-hx / (2.0f * p_e), 1.0f, -hz / (2.0f * p_e));
+	return Math::is_finite(n.x) && Math::is_finite(n.z) ? n.normalized() : Vector3(0, 1, 0);
+}
+
+// Sequential deposition (Visscher and Bolsterli 1972): stones dropped one at a time, largest first, each coming to
+// rest on the ground or on the stones already down (as spheres for the contact), so a cover packs without overlaps.
+struct Deposit {
+	static constexpr float CELL = 0.75f;
+	struct Item {
+		Vector2 xz;
+		float top_centre; // height of the sphere's centre
+		float r;
+	};
+	LocalVector<Item> items;
+	HashMap<Vector2i, LocalVector<uint32_t>> grid;
+	float max_r = 0.0f;
+
+	// The rise above p_ground_centre (the centre's height resting on the ground) where a sphere of radius p_r at
+	// p_xz rests; -1 if it would stand more than p_max_rise above the ground.
+	float rest(const Vector2 &p_xz, float p_r, float p_ground_centre, float p_max_rise) const {
+		float best = p_ground_centre;
+		const int reach = int(Math::ceil((p_r + max_r) / CELL));
+		const Vector2i c(int(Math::floor(p_xz.x / CELL)), int(Math::floor(p_xz.y / CELL)));
+		for (int dz = -reach; dz <= reach; dz++) {
+			for (int dx = -reach; dx <= reach; dx++) {
+				const LocalVector<uint32_t> *b = grid.getptr(c + Vector2i(dx, dz));
+				if (!b) {
+					continue;
+				}
+				for (uint32_t i : *b) {
+					const Item &it = items[i];
+					const float rr = p_r + it.r;
+					const float d2 = (it.xz - p_xz).length_squared();
+					if (d2 >= rr * rr) {
+						continue;
+					}
+					best = MAX(best, it.top_centre + Math::sqrt(rr * rr - d2));
+				}
+			}
+		}
+		const float rise = best - p_ground_centre;
+		return rise > p_max_rise ? -1.0f : rise;
+	}
+	void add(const Vector2 &p_xz, float p_centre, float p_r) {
+		items.push_back({ p_xz, p_centre, p_r });
+		max_r = MAX(max_r, p_r);
+		grid[Vector2i(int(Math::floor(p_xz.x / CELL)), int(Math::floor(p_xz.y / CELL)))].push_back(items.size() - 1);
+	}
+};
+
+} // namespace
+
+/* Setup */
+
+TerrainGenerator3D *RockField3D::_get_generator() const {
+	if (!is_inside_tree() || generator_path.is_empty()) {
+		return nullptr;
+	}
+	return Object::cast_to<TerrainGenerator3D>(get_node_or_null(generator_path));
+}
+
+Vector3 RockField3D::_target_position() const {
+	if (!follow_target_path.is_empty()) {
+		if (const Node3D *n = Object::cast_to<Node3D>(get_node_or_null(follow_target_path))) {
+			return n->get_global_position();
+		}
+	}
+	if (is_inside_tree() && get_viewport()) {
+		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
+			return cam->get_global_position();
+		}
+	}
+	return get_global_position();
+}
+
+real_t RockField3D::_cell_size(Layer p_layer) const {
+	return (p_layer == LAYER_SCREE || p_layer == LAYER_RIVER || p_layer == LAYER_SHORE) ? 32.0 : 128.0;
+}
+
+uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator::Family p_family, int p_bin) const {
+	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 8);
+}
+
+void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
+	LocalVector<uint32_t> missing;
+	for (uint32_t k : p_keys) {
+		if (!libraries.has(k) && missing.find(k) < 0) {
+			missing.push_back(k);
+		}
+	}
+	if (missing.is_empty()) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	LocalVector<LibraryJob> jobs;
+	for (uint32_t k : missing) {
+		RockGenerator::get_material(key_type(k)); // made here, read by the workers
+		for (int v = 0; v < variants; v++) {
+			LibraryJob j;
+			j.type = key_type(k);
+			j.family = key_family(k);
+			j.seed = seed * 1000 + v;
+			j.detail = float(detail);
+			if (j.family == RockGenerator::FAMILY_COBBLE) {
+				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * cobble_bins[CLAMP(key_bin(k), 0, 2)];
+			}
+			jobs.push_back(j);
+		}
+	}
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&library_job, jobs.ptr(), int(jobs.size()), -1, true, "RockField3D libraries");
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	for (uint32_t m = 0; m < missing.size(); m++) {
+		Library lib;
+		for (int v = 0; v < variants; v++) {
+			LibraryJob &j = jobs[m * variants + v];
+			if (j.mesh.is_null()) {
+				continue;
+			}
+			Ref<ArrayMesh> mesh = j.mesh->get_mesh();
+			lib.meshes.push_back(mesh);
+			lib.axes.push_back(j.meta.get("rock_axes", Vector3(1, 0.5, 1)));
+			lib.bottom.push_back(j.meta.get("rock_bottom", -0.5));
+			lib.hulls.push_back(j.meta.get("rock_hull", PackedVector3Array()));
+		}
+		libraries.insert(missing[m], lib);
+	}
+	last_library_msec += double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+RockField3D::Library *RockField3D::_ensure_library(uint32_t p_key) {
+	if (!libraries.has(p_key)) {
+		LocalVector<uint32_t> k;
+		k.push_back(p_key);
+		_ensure_libraries(k);
+	}
+	Library *lib = libraries.getptr(p_key);
+	return (lib && !lib->meshes.is_empty()) ? lib : nullptr;
+}
+
+RockGenerator::RockType RockField3D::_type_at(const TerrainGenerator3D *p_gen, const Vector3 &p_pos) const {
+	if (use_strata && p_gen && p_gen->is_strata_enabled() && p_gen->get_rock_hardness(p_pos) < 0.5) {
+		return soft_rock_type;
+	}
+	return rock_type;
+}
+
+void RockField3D::_prepare_rivers() {
+	if (rivers_ready) {
+		return;
+	}
+	rivers.clear();
+	rivers_ready = true;
+	const TerrainGenerator3D *gen = _get_generator();
+	if (!gen) {
+		return;
+	}
+	const Array rs = gen->get_rivers(river_min_area);
+	for (int r = 0; r < rs.size(); r++) {
+		const Dictionary d = rs[r];
+		const PackedVector3Array pts = d.get("points", PackedVector3Array());
+		const PackedFloat32Array widths = d.get("widths", PackedFloat32Array());
+		const PackedFloat32Array areas = d.get("areas", PackedFloat32Array());
+		if (pts.size() < 2) {
+			continue;
+		}
+		River rv;
+		float dist = 0.0f;
+		rv.bounds = Rect2(pts[0].x, pts[0].z, 0, 0);
+		for (int i = 0; i < pts.size(); i++) {
+			if (i > 0) {
+				dist += Vector2(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z).length();
+			}
+			rv.points.push_back(pts[i]);
+			rv.widths.push_back(i < widths.size() ? widths[i] : 2.0f);
+			rv.distance.push_back(dist);
+			rv.discharge.push_back(i < areas.size() ? float(gen->get_discharge(areas[i])) : 0.1f);
+			rv.bounds.expand_to(Vector2(pts[i].x, pts[i].z));
+		}
+		rv.head_type = _type_at(gen, pts[0]);
+		rivers.push_back(rv);
+	}
+}
+
+/* Placement */
+
+// A stone at rest: yawed, its up partly following the ground (p_follow_ground 0 level, 1 on the slope), tilted, sunk
+// by a share of its height (and more on a slope, so the uphill side does not float).
+void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const {
+	const int v = r_stone.variant;
+	const Vector3 axes = p_lib.axes[v];
+	const float s = r_stone.scale;
+	const real_t ground = p_gen->get_height(Vector3(p_xz.x, 0, p_xz.z));
+	const Vector3 n = ground_normal(p_gen, p_xz.x, p_xz.z, MAX(real_t(0.5), real_t(axes.x * s)));
+	const Vector3 up = Vector3(0, 1, 0).lerp(n, p_follow_ground).normalized();
+	Basis b(Vector3(0, 1, 0), p_yaw);
+	const Vector3 axis = Vector3(0, 1, 0).cross(up);
+	if (axis.length_squared() > 1e-8f) {
+		b = Basis(axis.normalized(), Math::acos(CLAMP(up.y, real_t(-1.0), real_t(1.0)))) * b;
+	}
+	if (p_tilt != 0.0 && p_tilt_axis.length_squared() > 1e-8f) {
+		b = Basis(p_tilt_axis.normalized(), p_tilt) * b;
+	}
+	const real_t slope = MIN(Math::sqrt(MAX(real_t(1.0) / (n.y * n.y) - real_t(1.0), real_t(0.0))), real_t(1.0));
+	const real_t height = 2.0f * axes.y * s;
+	const real_t sink = p_sink * height + slope * MAX(axes.x, axes.z) * s * (1.0f - p_follow_ground) * 0.6f;
+	r_stone.basis = b.scaled(Vector3(s, s, s));
+	r_stone.position = Vector3(p_xz.x, ground - p_lib.bottom[v] * s - sink, p_xz.z);
+	r_stone.ground = ground;
+	r_stone.footprint = MAX(axes.x, axes.z) * s * 0.85f;
+}
+
+void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones) {
+	TerrainGenerator3D *gen = _get_generator();
+	if (!gen || !layer_enabled[p_layer] || layer_density[p_layer] <= 0.0) {
+		return;
+	}
+	RandomPCG rng(p_seed);
+	const real_t density = layer_density[p_layer];
+	const real_t water_skip = 0.05;
+	auto pick_variant = [&](const Library *p_lib) { return uint16_t(rng.rand() % p_lib->meshes.size()); };
+	// Stones of a packed cover (scree, river beds, shore): placed by sequential deposition, largest first.
+	struct Pending {
+		Vector3 xz;
+		float size; // b axis, m
+		uint32_t key;
+		float yaw, tilt, sink, follow, film;
+		Vector3 tilt_axis;
+	};
+	LocalVector<Pending> pending;
+
+	switch (p_layer) {
+		case LAYER_ROCKFALL: {
+			const PackedVector4Array bl = gen->get_boulders(p_rect, density);
+			Library *lib = _ensure_library(_library_key(rock_type, RockGenerator::FAMILY_ROCKFALL, 0));
+			if (!lib) {
+				return;
+			}
+			for (int i = 0; i < bl.size(); i++) {
+				const Vector4 b = bl[i];
+				Stone st;
+				st.layer = p_layer;
+				st.library = _library_key(rock_type, RockGenerator::FAMILY_ROCKFALL, 0);
+				st.variant = pick_variant(lib);
+				st.scale = float(b.w) * 0.9f;
+				if (2.0f * st.scale < min_size) {
+					continue;
+				}
+				_rest(gen, st, *lib, Vector3(b.x, 0, b.z), rng.randf() * Math::TAU, 0.15 + 0.15 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(12.0f) * rng.randf(), 0.5);
+				r_stones.push_back(st);
+			}
+		} break;
+		case LAYER_GLACIAL: {
+			// Boulders in the till: about one per 250 m2 of full till, sizes a power law (exponent 2.2) from 0.5 to 3 m;
+			// a few erratics of the far rock, larger and rounder (carried furthest).
+			const real_t sub = 8.0;
+			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
+				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
+					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
+					const Color geo = gen->get_geology_at(c);
+					// Till (moraines) holds the most; ground the last glaciation's ice covered keeps a scatter of the
+					// blocks it dropped as it melted back (boulder fields, erratics on scoured rock).
+					const float till = geo.b < 0.0f ? -geo.b : 0.0f;
+					const float scoured = 0.35f * Math::smoothstep(5.0f, 30.0f, float(gen->get_glacier_depth(c)));
+					const float cover = MAX(till, scoured);
+					if (cover < 0.05f) {
+						continue;
+					}
+					const float want = cover * float(sub * sub) / 250.0f * float(density);
+					int count = int(want);
+					if (rng.randf() < want - count) {
+						count++;
+					}
+					for (int k = 0; k < count; k++) {
+						const Vector3 p(x + rng.randf() * sub, 0, z + rng.randf() * sub);
+						if (gen->get_water_depth(p) > water_skip || ground_normal(gen, p.x, p.z, 2.0).y < 0.82f) {
+							continue; // in water, or too steep to hold a boulder (about 35 degrees)
+						}
+						const bool erratic = rng.randf() < 0.08f;
+						const RockGenerator::RockType t = erratic ? erratic_rock_type : rock_type;
+						const uint32_t key = _library_key(t, RockGenerator::FAMILY_GLACIAL, 0);
+						Library *lib = _ensure_library(key);
+						if (!lib) {
+							continue;
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const float d = MIN(0.5f * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.2f), 3.0f) * (erratic ? 1.6f : 1.0f);
+						st.scale = d * 0.5f;
+						if (d < min_size) {
+							continue;
+						}
+						_rest(gen, st, *lib, p, rng.randf() * Math::TAU, 0.25 + 0.25 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(15.0f) * rng.randf(), 0.6);
+						r_stones.push_back(st);
+					}
+				}
+			}
+		} break;
+		case LAYER_SCREE: {
+			// The talus cover: stones a power law (exponent 2.5) in size from the smallest kept, coarser where the
+			// apron thins at its toe (fall sorting: the big blocks run furthest).
+			const real_t sub = 2.0;
+			const float dmin = MAX(float(min_size), 0.15f);
+			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
+				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
+					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
+					// Talus under a fifth is soil with a few stones (the ground material shows it); full scree from there.
+					const float t = (float(gen->get_talus(c)) - 0.2f) / 0.8f;
+					if (t < 0.05f) {
+						continue;
+					}
+					const float want = 0.3f * t * float(sub * sub) * float(density) / (float(Math::PI) * 1.25f * dmin * dmin);
+					int count = int(want);
+					if (rng.randf() < want - count) {
+						count++;
+					}
+					const RockGenerator::RockType type = rock_type;
+					for (int k = 0; k < count; k++) {
+						Pending pd;
+						pd.xz = Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub);
+						pd.size = MIN(dmin * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.5f), 0.9f) * (1.0f + 1.2f * (1.0f - t));
+						pd.key = _library_key(type, RockGenerator::FAMILY_SCREE, 0);
+						pd.yaw = rng.randf() * Math::TAU;
+						pd.tilt = Math::deg_to_rad(20.0f) * rng.randf();
+						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
+						pd.sink = 0.15f + 0.15f * rng.randf();
+						pd.follow = 0.8f;
+						pd.film = 0.0f;
+						pending.push_back(pd);
+					}
+				}
+			}
+		} break;
+		case LAYER_RIVER: {
+			_prepare_rivers();
+			for (const River &rv : rivers) {
+				if (!rv.bounds.grow(20.0).intersects(p_rect)) {
+					continue;
+				}
+				const float labr = RockGenerator::get_lithology(rv.head_type).abrasion_length;
+				for (uint32_t i = 0; i + 1 < rv.points.size(); i++) {
+					const Vector3 a = rv.points[i], b = rv.points[i + 1];
+					const float w = 0.5f * (rv.widths[i] + rv.widths[i + 1]);
+					const Rect2 seg_rect = Rect2(Vector2(a.x, a.z), Vector2()).expand(Vector2(b.x, b.z)).grow(w);
+					if (!seg_rect.intersects(p_rect)) {
+						continue;
+					}
+					const Vector2 dir2 = Vector2(b.x - a.x, b.z - a.z);
+					const float len = dir2.length();
+					if (len < 1e-3f) {
+						continue;
+					}
+					const Vector2 f = dir2 / len;
+					const Vector2 side(-f.y, f.x);
+					// Bed size: what the flow can move (Shields: tau* = 0.045 at threshold, so D = h S / (1.65 0.045);
+					// depth from hydraulic geometry d = 0.27 Q^0.4, Leopold and Maddock 1953) and what still arrives
+					// from upstream (Sternberg: D = D0 exp(-x / 20 km)).
+					const float q = 0.5f * (rv.discharge[i] + rv.discharge[i + 1]);
+					const float depth = 0.27f * Math::pow(MAX(q, 1e-3f), 0.4f);
+					const float slope = CLAMP((a.y - b.y) / len, 1e-4f, 0.3f);
+					const float dist = 0.5f * (rv.distance[i] + rv.distance[i + 1]);
+					const float competent = depth * slope / (1.65f * 0.045f);
+					const float supplied = 0.5f * Math::exp(-dist / 20000.0f);
+					const float d50 = CLAMP(MIN(competent, supplied), 0.005f, 1.2f);
+					if (d50 * 2.2f < min_size) {
+						continue; // gravel and sand: the bed material shows it
+					}
+					const float round = 1.0f - Math::exp(-(dist + 300.0f) / labr);
+					const int bin = round < 0.4f ? 0 : (round < 0.8f ? 1 : 2);
+					const float area = len * w * 1.2f;
+					const float want = 0.45f * area * float(density) / (float(Math::PI) * 0.25f * d50 * d50 * 1.4f);
+					const int count = MIN(int(want), max_stones_per_cell);
+					for (int k = 0; k < count; k++) {
+						const float t = rng.randf();
+						const float u = (rng.randf() - 0.5f) * 1.2f;
+						const Vector2 p = Vector2(a.x, a.z).lerp(Vector2(b.x, b.z), t) + side * (u * w);
+						if (!p_rect.has_point(p)) {
+							continue;
+						}
+						const float d = d50 * Math::exp(rng.randfn(0.0f, 0.45f));
+						if (d < min_size) {
+							continue;
+						}
+						if (gen->get_water_depth(Vector3(p.x, 0, p.y)) > 0.3) {
+							continue; // into a lake or the sea
+						}
+						Pending pd;
+						pd.xz = Vector3(p.x, 0, p.y);
+						pd.size = MIN(d, 1.5f);
+						const RockGenerator::RockType type = rng.randf() < 0.7f ? rv.head_type : _type_at(gen, pd.xz);
+						pd.key = _library_key(type, RockGenerator::FAMILY_COBBLE, bin);
+						// Imbrication: long axis across the flow, the stone dipping upstream (15 to 30 degrees).
+						pd.yaw = Math::atan2(-f.x, -f.y) + (rng.randf() - 0.5f) * 0.6f;
+						pd.tilt_axis = Vector3(side.x, 0, side.y);
+						pd.tilt = Math::deg_to_rad(15.0f + 15.0f * rng.randf());
+						pd.sink = 0.25f + 0.1f * rng.randf();
+						pd.follow = 0.6f;
+						pd.film = Math::abs(u) < 0.5f ? 1.0f : 0.5f;
+						pending.push_back(pd);
+					}
+				}
+			}
+		} break;
+		case LAYER_SHORE: {
+			// Shingle and boulders between the low water line and the storm ridge: coarser on steeper beaches (beach
+			// slope rises with grain size: Bascom 1951, Bujan et al. 2019) and boulders under rock.
+			// Grain size and band are taken at the corners of 2 m sub-cells and blended to each stone, so the
+			// cover fades with the beach slope instead of stepping from sub-cell to sub-cell.
+			const real_t sub = 2.0;
+			static const Vector2 probes[9] = { Vector2(0, 0), Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4), Vector2(10, 0), Vector2(-10, 0), Vector2(0, 10), Vector2(0, -10) };
+			const int nx = int(Math::ceil(p_rect.size.x / sub)), nz = int(Math::ceil(p_rect.size.y / sub));
+			struct ShoreCorner {
+				float d50 = 0.0f; // m
+				float band = 0.0f; // 0..1, how far inside the shingle band
+				float e = 0.0f; // height above the water line
+				float rate = 0.0f; // stones above min_size per unit, before the packing factor
+			};
+			LocalVector<ShoreCorner> corners;
+			corners.resize((nx + 1) * (nz + 1));
+			for (int j = 0; j <= nz; j++) {
+				for (int i = 0; i <= nx; i++) {
+					ShoreCorner &sc = corners[j * (nx + 1) + i];
+					const Vector3 c(p_rect.position.x + i * sub, 0, p_rect.position.y + j * sub);
+					real_t level = -1e30;
+					for (const Vector2 &o : probes) {
+						const real_t l = gen->get_water_level(c + Vector3(o.x, 0, o.y));
+						if (!Math::is_nan(l)) {
+							level = MAX(level, l);
+						}
+					}
+					if (level < -1e29) {
+						continue;
+					}
+					sc.e = float(gen->get_height(c) - level);
+					if (sc.e < -0.6f || sc.e > 2.5f) {
+						continue;
+					}
+					const Vector3 n = ground_normal(gen, c.x, c.z, 1.0);
+					const float tanb = Math::sqrt(MAX(1.0f / (n.y * n.y) - 1.0f, 0.0f));
+					const float rock = float(gen->get_rock_exposure(c));
+					float d50 = 0.002f * Math::exp(tanb / 0.045f);
+					d50 = MAX(d50, 0.5f * Math::smoothstep(0.2f, 0.7f, rock));
+					sc.d50 = MIN(d50, 1.2f);
+					sc.band = Math::smoothstep(-0.6f, 0.0f, sc.e) * (1.0f - Math::smoothstep(1.6f, 2.5f, sc.e));
+					// Stones per square metre big enough to be geometry: the packed count of grains this size,
+					// times the share of the log-normal sizes (sigma 0.35) above min_size.
+					const float visible = 0.5f * std::erfc(Math::log(float(min_size) / sc.d50) / (0.35f * float(Math::SQRT2)));
+					sc.rate = sc.band * visible / MAX(sc.d50 * sc.d50, 1e-4f);
+				}
+			}
+			for (int j = 0; j < nz; j++) {
+				for (int i = 0; i < nx; i++) {
+					const ShoreCorner *cc[4] = { &corners[j * (nx + 1) + i], &corners[j * (nx + 1) + i + 1], &corners[(j + 1) * (nx + 1) + i], &corners[(j + 1) * (nx + 1) + i + 1] };
+					float rate_max = 0.0f;
+					for (const ShoreCorner *k : cc) {
+						rate_max = MAX(rate_max, k->rate);
+					}
+					if (rate_max <= 0.0f) {
+						continue; // sand, or off the shore
+					}
+					// Candidates at the densest corner's rate; each kept by its own blended rate.
+					const float want = 0.5f * rate_max * float(sub * sub) * float(density) / (float(Math::PI) * 0.25f * 1.2f);
+					const int count = MIN(int(want + rng.randf()), 400);
+					const real_t x = p_rect.position.x + i * sub, z = p_rect.position.y + j * sub;
+					const RockGenerator::RockType type = _type_at(gen, Vector3(x + sub * 0.5f, 0, z + sub * 0.5f));
+					for (int k = 0; k < count; k++) {
+						const float fx = rng.randf(), fz = rng.randf();
+						const float w[4] = { (1 - fx) * (1 - fz), fx * (1 - fz), (1 - fx) * fz, fx * fz };
+						float d50 = 0.0f, rate = 0.0f, e = 0.0f;
+						for (int q = 0; q < 4; q++) {
+							d50 += w[q] * cc[q]->d50;
+							rate += w[q] * cc[q]->rate;
+							e += w[q] * cc[q]->e;
+						}
+						if (rate <= 0.0f || d50 <= 0.0f || rng.randf() * rate_max > rate) {
+							continue;
+						}
+						Pending pd;
+						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
+						// A size from the log-normal above min_size (the smaller ones are left to the terrain's own detail).
+						pd.size = 0.0f;
+						for (int tries = 0; tries < 8 && pd.size < min_size; tries++) {
+							pd.size = d50 * Math::exp(rng.randfn(0.0f, 0.35f));
+						}
+						pd.size = CLAMP(pd.size, float(min_size), 1.5f);
+						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, 0) : _library_key(type, RockGenerator::FAMILY_COBBLE, 2);
+						pd.yaw = rng.randf() * Math::TAU;
+						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
+						pd.tilt = Math::deg_to_rad(8.0f) * rng.randf();
+						pd.sink = 0.2f + 0.1f * rng.randf();
+						pd.follow = 0.85f;
+						pd.film = e < 0.8f ? 1.0f : CLAMP((2.5f - e) / 1.7f, 0.0f, 1.0f) * 0.5f;
+						pending.push_back(pd);
+					}
+				}
+			}
+		} break;
+		case LAYER_CLIFF: {
+			// The wall built of blocks in courses along the beds (Paris et al. 2020: blocks tiling the rock, set by its
+			// fractures): every course a bed's thickness, stacked up the face, blocks end to end along it with staggered
+			// joints, each standing a fifth to two fifths of its depth out of the face. A heightfield wall rises many
+			// courses within one plan cell, so each cell walks the courses its face spans and finds where each one
+			// crosses it along the fall line.
+			const real_t sub = 3.0;
+			Vector3 bed_normal(0, 1, 0);
+			if (gen->is_strata_enabled()) {
+				const real_t dip = Math::deg_to_rad(gen->get_strata_dip());
+				const real_t dd = Math::deg_to_rad(gen->get_strata_dip_direction());
+				// Dip direction clockwise from north (-z): the beds go down that way, so their normal leans the other.
+				const Vector3 down_dip(Math::sin(dd), 0, -Math::cos(dd));
+				bed_normal = (Vector3(0, 1, 0) * Math::cos(dip) - down_dip * Math::sin(dip)).normalized();
+			}
+			const float course = 1.4f; // m, course thickness
+			const float min_tan = Math::tan(Math::deg_to_rad(50.0f));
+			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
+				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
+					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
+					const float rock = float(gen->get_rock_exposure(c));
+					if (rock < 0.5f) {
+						continue;
+					}
+					const real_t hc = gen->get_height(c);
+					const real_t e = 1.0;
+					const Vector2 grad((gen->get_height(c + Vector3(e, 0, 0)) - gen->get_height(c - Vector3(e, 0, 0))) / (2.0 * e), (gen->get_height(c + Vector3(0, 0, e)) - gen->get_height(c - Vector3(0, 0, e))) / (2.0 * e));
+					const float gl = grad.length();
+					if (gl < min_tan) {
+						continue;
+					}
+					const Vector2 up_dir = grad / gl; // uphill, in plan
+					// The span of heights the face covers inside this cell, along the fall line.
+					const float half = float(sub) * 0.5f;
+					const float y0 = float(hc) - gl * half, y1 = float(hc) + gl * half;
+					const int k0 = int(Math::floor(y0 / course)), k1 = int(Math::floor(y1 / course));
+					for (int k = k0; k <= k1; k++) {
+						// The course's middle height, wobbling a little along the wall; where it crosses the face.
+						const float yk = (k + 0.5f) * course;
+						const float along = (yk - float(hc)) / gl;
+						if (Math::abs(along) > half) {
+							continue;
+						}
+						if (rng.randf() > (0.75f * rock - 0.1f) * float(density)) {
+							continue; // a gap: the wall shows between blocks
+						}
+						const Vector2 pxz = Vector2(c.x, c.z) + up_dir * along;
+						// Blocks of a course stagger against the course below: shift along the strike by half a block.
+						const Vector2 strike(-up_dir.y, up_dir.x);
+						const Vector2 bp = pxz + strike * ((k & 1) ? 0.9f : 0.0f) * float(sub) * 0.5f * (rng.randf() * 0.4f + 0.8f);
+						if (!p_rect.has_point(bp)) {
+							continue;
+						}
+						const Vector3 pos3(bp.x, 0, bp.y);
+						const RockGenerator::RockType type = _type_at(gen, pos3 + Vector3(0, yk, 0));
+						const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
+						Library *lib = _ensure_library(key);
+						if (!lib) {
+							continue;
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const Vector3 axes = lib->axes[st.variant];
+						st.scale = course * (0.85f + 0.2f * rng.randf()) / MAX(2.0f * axes.y, 0.05f);
+						// Long axis along the strike, short axis on the bed normal, b axis into the wall.
+						const Vector3 y_axis = bed_normal;
+						Vector3 x_axis = Vector3(strike.x, 0, strike.y);
+						x_axis = (x_axis - y_axis * y_axis.dot(x_axis)).normalized();
+						const Vector3 z_axis = x_axis.cross(y_axis).normalized();
+						Basis b;
+						b.set_column(0, x_axis);
+						b.set_column(1, y_axis);
+						b.set_column(2, z_axis);
+						b = Basis(y_axis, (rng.randf() - 0.5f) * 0.25f) * b;
+						// The face's outward normal at the crossing; the block's centre that far into the rock.
+						const Vector3 n = Vector3(-grad.x, 1.0f, -grad.y).normalized();
+						const Vector3 surface(bp.x, yk, bp.y);
+						const Vector3 centre = surface - n * (axes.z * st.scale * (0.6f + 0.2f * rng.randf()));
+						st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
+						st.position = centre;
+						st.ground = yk - 50.0f; // no contact band on a wall
+						st.footprint = 0.0f;
+						r_stones.push_back(st);
+						if (int(r_stones.size()) >= max_stones_per_cell) {
+							return;
+						}
+					}
+				}
+			}
+		} break;
+		default:
+			break;
+	}
+
+	if (pending.is_empty()) {
+		return;
+	}
+	// Largest first, then dropped where they land.
+	struct BySize {
+		_FORCE_INLINE_ bool operator()(const Pending &p_a, const Pending &p_b) const { return p_a.size > p_b.size; }
+	};
+	pending.sort_custom<BySize>();
+	// Over the cap, thin evenly over the cell rather than dropping the finest: where the grain size changes
+	// between sub-cells, a size cut-off left bare rectangles in a shingle beach.
+	const float keep = int(pending.size()) > max_stones_per_cell ? float(max_stones_per_cell) / float(pending.size()) : 1.0f;
+	Deposit dep;
+	for (const Pending &pd : pending) {
+		if (int(r_stones.size()) >= max_stones_per_cell) {
+			break;
+		}
+		if (keep < 1.0f && rng.randf() > keep) {
+			continue;
+		}
+		if (!p_rect.has_point(Vector2(pd.xz.x, pd.xz.z))) {
+			continue;
+		}
+		if (p_layer != LAYER_RIVER && p_layer != LAYER_SHORE && gen->get_water_depth(pd.xz) > water_skip) {
+			continue;
+		}
+		Library *lib = _ensure_library(pd.key);
+		if (!lib) {
+			continue;
+		}
+		Stone st;
+		st.layer = p_layer;
+		st.library = pd.key;
+		st.variant = pick_variant(lib);
+		st.scale = pd.size * 0.5f;
+		st.film = pd.film;
+		_rest(gen, st, *lib, pd.xz, pd.yaw, pd.sink, pd.tilt_axis, pd.tilt, pd.follow);
+		const Vector3 axes = lib->axes[st.variant];
+		const float r = st.scale * (axes.x + axes.y + axes.z) / 3.0f * 0.85f;
+		const float ground_centre = float(st.position.y);
+		const float rise = dep.rest(Vector2(pd.xz.x, pd.xz.z), r, ground_centre, 1.3f * r);
+		if (rise < 0.0f) {
+			continue;
+		}
+		st.position.y += rise;
+		dep.add(Vector2(pd.xz.x, pd.xz.z), float(st.position.y), r);
+		r_stones.push_back(st);
+	}
+}
+
+/* Cells */
+
+void RockField3D::_free_cell(Cell &r_cell) {
+	for (MultiMeshInstance3D *mmi : r_cell.instances) {
+		if (mmi) {
+			mmi->queue_free();
+		}
+	}
+	r_cell.instances.clear();
+	if (r_cell.body) {
+		r_cell.body->queue_free();
+		r_cell.body = nullptr;
+	}
+	stone_count -= r_cell.stones;
+	r_cell.stones = 0;
+}
+
+Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type) {
+	if (Ref<ShaderMaterial> *m = materials.getptr(int(p_type))) {
+		return *m;
+	}
+	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
+	m->set_shader_parameter("lichen_cover", lichen_cover);
+	m->set_shader_parameter("moss_cover", moss_cover);
+	materials.insert(int(p_type), m);
+	return m;
+}
+
+void RockField3D::_build_cell(const Vector3i &p_key) {
+	const Layer layer = Layer(p_key.x);
+	const real_t cs = _cell_size(layer);
+	const Rect2 rect(p_key.y * cs, p_key.z * cs, cs, cs);
+	LocalVector<Stone> stones;
+	_place(layer, rect, rf_hash3(p_key.x, p_key.y, p_key.z, uint32_t(seed) * 2654435761u), stones);
+	Cell cell;
+	cell.stones = int(stones.size());
+	stone_count += cell.stones;
+	// One MultiMesh per shape.
+	HashMap<uint64_t, LocalVector<uint32_t>> groups;
+	for (uint32_t i = 0; i < stones.size(); i++) {
+		groups[(uint64_t(stones[i].library) << 16) | stones[i].variant].push_back(i);
+	}
+	RandomPCG rng(rf_hash3(p_key.y, p_key.z, p_key.x, 991u));
+	const real_t vis = layer_radius[layer] + cs;
+	for (const KeyValue<uint64_t, LocalVector<uint32_t>> &g : groups) {
+		const uint32_t lk = uint32_t(g.key >> 16);
+		const int v = int(g.key & 0xFFFF);
+		const Library *lib = libraries.getptr(lk);
+		if (!lib || v >= int(lib->meshes.size())) {
+			continue;
+		}
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_use_custom_data(true);
+		mm->set_mesh(lib->meshes[v]);
+		mm->set_instance_count(int(g.value.size()));
+		for (uint32_t k = 0; k < g.value.size(); k++) {
+			const Stone &st = stones[g.value[k]];
+			mm->set_instance_transform(int(k), Transform3D(st.basis, st.position));
+			mm->set_instance_custom_data(int(k), Color(st.ground, st.film, st.scale, rng.randf()));
+		}
+		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+		mmi->set_multimesh(mm);
+		mmi->set_material_override(_material(key_type(lk)));
+		mmi->set_visibility_range_end(vis);
+		mmi->set_visibility_range_end_margin(cs * 0.5);
+		add_child(mmi, false, INTERNAL_MODE_BACK);
+		mmi->set_as_top_level(true);
+		mmi->set_global_transform(Transform3D());
+		cell.instances.push_back(mmi);
+	}
+	// Collision for the stones big enough to stand on or trip over, near the target.
+	const Vector3 tp = _target_position();
+	const Vector2 cc = rect.get_center();
+	if (collision_enabled && Vector2(tp.x, tp.z).distance_to(cc) < collision_radius + cs * 0.71) {
+		StaticBody3D *body = nullptr;
+		for (const Stone &st : stones) {
+			if (2.0f * st.scale < collision_min_size) {
+				continue;
+			}
+			const Library *lib = libraries.getptr(st.library);
+			if (!lib || st.variant >= lib->hulls.size() || lib->hulls[st.variant].is_empty()) {
+				continue;
+			}
+			if (!body) {
+				body = memnew(StaticBody3D);
+				body->set_collision_layer(collision_layer);
+				body->set_collision_mask(0);
+				add_child(body, false, INTERNAL_MODE_BACK);
+				body->set_as_top_level(true);
+				body->set_global_transform(Transform3D());
+			}
+			const PackedVector3Array &hull = lib->hulls[st.variant];
+			Vector<Vector3> pts;
+			pts.resize(hull.size());
+			const Transform3D xf(st.basis, st.position);
+			for (int k = 0; k < hull.size(); k++) {
+				pts.write[k] = xf.xform(hull[k]);
+			}
+			Ref<ConvexPolygonShape3D> shape;
+			shape.instantiate();
+			shape->set_points(pts);
+			CollisionShape3D *cs3 = memnew(CollisionShape3D);
+			cs3->set_shape(shape);
+			body->add_child(cs3);
+		}
+		cell.body = body;
+	}
+	cells.insert(p_key, cell);
+}
+
+void RockField3D::_update_streaming(bool p_all) {
+	TerrainGenerator3D *gen = _get_generator();
+	const Vector3 tp = _target_position();
+	if (!gen || !Math::is_finite(gen->get_height(tp))) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	// Drop cells out of reach (with a cell of slack, so a target on a border does not churn).
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		const Layer layer = Layer(kv.key.x);
+		const real_t cs = _cell_size(layer);
+		const Vector2 c((kv.key.y + 0.5f) * cs, (kv.key.z + 0.5f) * cs);
+		if (!layer_enabled[layer] || c.distance_to(Vector2(tp.x, tp.z)) > layer_radius[layer] + cs * 1.5f) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
+	// Wanted cells, nearest first.
+	struct Want {
+		Vector3i key;
+		real_t dist;
+	};
+	LocalVector<Want> want;
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l]) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const real_t r = layer_radius[l];
+		const int x0 = int(Math::floor((tp.x - r) / cs)), x1 = int(Math::floor((tp.x + r) / cs));
+		const int z0 = int(Math::floor((tp.z - r) / cs)), z1 = int(Math::floor((tp.z + r) / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector3i key(l, x, z);
+				if (cells.has(key)) {
+					continue;
+				}
+				const Rect2 rect(x * cs, z * cs, cs, cs);
+				const Vector2 nearest(CLAMP(tp.x, rect.position.x, rect.get_end().x), CLAMP(tp.z, rect.position.y, rect.get_end().y));
+				const real_t d = nearest.distance_to(Vector2(tp.x, tp.z));
+				if (d <= r) {
+					want.push_back({ key, d });
+				}
+			}
+		}
+	}
+	struct ByDist {
+		_FORCE_INLINE_ bool operator()(const Want &p_a, const Want &p_b) const { return p_a.dist < p_b.dist; }
+	};
+	want.sort_custom<ByDist>();
+	for (const Want &w : want) {
+		if (!p_all && double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0 > build_budget_msec) {
+			break;
+		}
+		_build_cell(w.key);
+	}
+	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+void RockField3D::rebuild() {
+	clear();
+	rivers_ready = false;
+	if (is_inside_tree() && streaming) {
+		set_process_internal(true);
+	}
+}
+
+void RockField3D::clear() {
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		_free_cell(kv.value);
+	}
+	cells.clear();
+	stone_count = 0;
+}
+
+int RockField3D::build_area(const Rect2 &p_rect) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	int built = 0;
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l]) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector3i key(l, x, z);
+				if (!cells.has(key)) {
+					_build_cell(key);
+					built++;
+				}
+			}
+		}
+	}
+	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	return built;
+}
+
+PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_size) {
+	PackedVector4Array out;
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l] || l == LAYER_CLIFF) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				LocalVector<Stone> stones;
+				_place(Layer(l), Rect2(x * cs, z * cs, cs, cs), rf_hash3(l, x, z, uint32_t(seed) * 2654435761u), stones);
+				for (const Stone &st : stones) {
+					if (2.0f * st.scale >= p_min_size && st.footprint > 0.0f && p_rect.has_point(Vector2(st.position.x, st.position.z))) {
+						out.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
+					}
+				}
+			}
+		}
+	}
+	return out;
+}
+
+Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
+	Array out;
+	ERR_FAIL_INDEX_V(p_layer, LAYER_MAX, out);
+	const real_t cs = _cell_size(Layer(p_layer));
+	const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+	const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			LocalVector<Stone> stones;
+			_place(Layer(p_layer), Rect2(x * cs, z * cs, cs, cs), rf_hash3(p_layer, x, z, uint32_t(seed) * 2654435761u), stones);
+			for (const Stone &st : stones) {
+				if (!p_rect.has_point(Vector2(st.position.x, st.position.z))) {
+					continue;
+				}
+				Dictionary d;
+				d["position"] = st.position;
+				d["basis"] = st.basis;
+				d["scale"] = st.scale;
+				d["ground"] = st.ground;
+				d["footprint"] = st.footprint;
+				d["film"] = st.film;
+				d["rock_type"] = int(key_type(st.library));
+				d["family"] = int(key_family(st.library));
+				d["bin"] = key_bin(st.library);
+				d["variant"] = int(st.variant);
+				d["layer"] = p_layer;
+				// Highest point, for what grows or lies on the stone (moss tops, snow): the box of its axes turned by its basis.
+				real_t top = st.position.y + st.scale;
+				const Library *lib = libraries.getptr(st.library);
+				if (lib && st.variant < lib->axes.size()) {
+					const Vector3 ax = lib->axes[st.variant];
+					top = st.position.y + Math::abs(st.basis.rows[1].x) * ax.x + Math::abs(st.basis.rows[1].y) * ax.y + Math::abs(st.basis.rows[1].z) * ax.z;
+				}
+				d["top"] = top;
+				out.push_back(d);
+			}
+		}
+	}
+	return out;
+}
+
+int RockField3D::get_library_triangle_count() const {
+	int t = 0;
+	for (const KeyValue<uint32_t, Library> &kv : libraries) {
+		for (const Ref<ArrayMesh> &m : kv.value.meshes) {
+			if (m.is_valid() && m->get_surface_count() > 0) {
+				t += m->surface_get_array_index_len(0) / 3;
+			}
+		}
+	}
+	return t;
+}
+
+/* Properties */
+
+void RockField3D::set_generator(const NodePath &p_path) {
+	generator_path = p_path;
+	rebuild();
+}
+
+void RockField3D::set_seed(int p_seed) {
+	seed = p_seed;
+	libraries.clear();
+	rebuild();
+}
+
+void RockField3D::set_rock_type(RockGenerator::RockType p_type) {
+	rock_type = RockGenerator::RockType(CLAMP(int(p_type), 0, int(RockGenerator::ROCK_MAX) - 1));
+	rebuild();
+}
+
+void RockField3D::set_soft_rock_type(RockGenerator::RockType p_type) {
+	soft_rock_type = RockGenerator::RockType(CLAMP(int(p_type), 0, int(RockGenerator::ROCK_MAX) - 1));
+	rebuild();
+}
+
+void RockField3D::set_erratic_rock_type(RockGenerator::RockType p_type) {
+	erratic_rock_type = RockGenerator::RockType(CLAMP(int(p_type), 0, int(RockGenerator::ROCK_MAX) - 1));
+	rebuild();
+}
+
+void RockField3D::set_use_strata(bool p_use) {
+	use_strata = p_use;
+	rebuild();
+}
+
+void RockField3D::set_variants(int p_variants) {
+	variants = CLAMP(p_variants, 1, 32);
+	libraries.clear();
+	rebuild();
+}
+
+void RockField3D::set_detail(real_t p_detail) {
+	detail = CLAMP(p_detail, real_t(0.0), real_t(2.0));
+	libraries.clear();
+	rebuild();
+}
+
+void RockField3D::set_lichen_cover(real_t p_cover) {
+	lichen_cover = CLAMP(p_cover, real_t(0.0), real_t(1.0));
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		kv.value->set_shader_parameter("lichen_cover", lichen_cover);
+	}
+}
+
+void RockField3D::set_moss_cover(real_t p_cover) {
+	moss_cover = CLAMP(p_cover, real_t(0.0), real_t(1.0));
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		kv.value->set_shader_parameter("moss_cover", moss_cover);
+	}
+}
+
+void RockField3D::set_layer_enabled(int p_layer, bool p_enabled) {
+	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
+	layer_enabled[p_layer] = p_enabled;
+	rebuild();
+}
+
+bool RockField3D::is_layer_enabled(int p_layer) const {
+	ERR_FAIL_INDEX_V(p_layer, LAYER_MAX, false);
+	return layer_enabled[p_layer];
+}
+
+void RockField3D::set_layer_density(int p_layer, real_t p_density) {
+	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
+	layer_density[p_layer] = MAX(p_density, real_t(0.0));
+	rebuild();
+}
+
+real_t RockField3D::get_layer_density(int p_layer) const {
+	ERR_FAIL_INDEX_V(p_layer, LAYER_MAX, 0.0);
+	return layer_density[p_layer];
+}
+
+void RockField3D::set_layer_radius(int p_layer, real_t p_radius) {
+	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
+	layer_radius[p_layer] = MAX(p_radius, real_t(0.0));
+}
+
+real_t RockField3D::get_layer_radius(int p_layer) const {
+	ERR_FAIL_INDEX_V(p_layer, LAYER_MAX, 0.0);
+	return layer_radius[p_layer];
+}
+
+void RockField3D::set_min_size(real_t p_size) {
+	min_size = MAX(p_size, real_t(0.01));
+	rebuild();
+}
+
+void RockField3D::set_river_min_area(real_t p_area) {
+	river_min_area = MAX(p_area, real_t(1.0));
+	rebuild();
+}
+
+void RockField3D::set_collision_enabled(bool p_enabled) {
+	collision_enabled = p_enabled;
+	rebuild();
+}
+
+void RockField3D::set_streaming(bool p_streaming) {
+	streaming = p_streaming;
+	if (is_inside_tree()) {
+		set_process_internal(streaming && !Engine::get_singleton()->is_editor_hint());
+	}
+}
+
+void RockField3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_READY: {
+			set_process_internal(streaming);
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (streaming) {
+				_update_streaming(false);
+			}
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			clear();
+		} break;
+	}
+}
+
+void RockField3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_generator", "path"), &RockField3D::set_generator);
+	ClassDB::bind_method(D_METHOD("get_generator"), &RockField3D::get_generator);
+	ClassDB::bind_method(D_METHOD("set_follow_target", "path"), &RockField3D::set_follow_target);
+	ClassDB::bind_method(D_METHOD("get_follow_target"), &RockField3D::get_follow_target);
+	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &RockField3D::set_seed);
+	ClassDB::bind_method(D_METHOD("get_seed"), &RockField3D::get_seed);
+	ClassDB::bind_method(D_METHOD("set_rock_type", "rock_type"), &RockField3D::set_rock_type);
+	ClassDB::bind_method(D_METHOD("get_rock_type"), &RockField3D::get_rock_type);
+	ClassDB::bind_method(D_METHOD("set_soft_rock_type", "rock_type"), &RockField3D::set_soft_rock_type);
+	ClassDB::bind_method(D_METHOD("get_soft_rock_type"), &RockField3D::get_soft_rock_type);
+	ClassDB::bind_method(D_METHOD("set_erratic_rock_type", "rock_type"), &RockField3D::set_erratic_rock_type);
+	ClassDB::bind_method(D_METHOD("get_erratic_rock_type"), &RockField3D::get_erratic_rock_type);
+	ClassDB::bind_method(D_METHOD("set_use_strata", "use"), &RockField3D::set_use_strata);
+	ClassDB::bind_method(D_METHOD("get_use_strata"), &RockField3D::get_use_strata);
+	ClassDB::bind_method(D_METHOD("set_variants", "variants"), &RockField3D::set_variants);
+	ClassDB::bind_method(D_METHOD("get_variants"), &RockField3D::get_variants);
+	ClassDB::bind_method(D_METHOD("set_detail", "detail"), &RockField3D::set_detail);
+	ClassDB::bind_method(D_METHOD("get_detail"), &RockField3D::get_detail);
+	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &RockField3D::set_lichen_cover);
+	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &RockField3D::get_lichen_cover);
+	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &RockField3D::set_moss_cover);
+	ClassDB::bind_method(D_METHOD("get_moss_cover"), &RockField3D::get_moss_cover);
+	ClassDB::bind_method(D_METHOD("set_layer_enabled", "layer", "enabled"), &RockField3D::set_layer_enabled);
+	ClassDB::bind_method(D_METHOD("is_layer_enabled", "layer"), &RockField3D::is_layer_enabled);
+	ClassDB::bind_method(D_METHOD("set_layer_density", "layer", "density"), &RockField3D::set_layer_density);
+	ClassDB::bind_method(D_METHOD("get_layer_density", "layer"), &RockField3D::get_layer_density);
+	ClassDB::bind_method(D_METHOD("set_layer_radius", "layer", "radius"), &RockField3D::set_layer_radius);
+	ClassDB::bind_method(D_METHOD("get_layer_radius", "layer"), &RockField3D::get_layer_radius);
+	ClassDB::bind_method(D_METHOD("set_min_size", "metres"), &RockField3D::set_min_size);
+	ClassDB::bind_method(D_METHOD("get_min_size"), &RockField3D::get_min_size);
+	ClassDB::bind_method(D_METHOD("set_river_min_area", "area"), &RockField3D::set_river_min_area);
+	ClassDB::bind_method(D_METHOD("get_river_min_area"), &RockField3D::get_river_min_area);
+	ClassDB::bind_method(D_METHOD("set_max_stones_per_cell", "count"), &RockField3D::set_max_stones_per_cell);
+	ClassDB::bind_method(D_METHOD("get_max_stones_per_cell"), &RockField3D::get_max_stones_per_cell);
+	ClassDB::bind_method(D_METHOD("set_collision_enabled", "enabled"), &RockField3D::set_collision_enabled);
+	ClassDB::bind_method(D_METHOD("is_collision_enabled"), &RockField3D::is_collision_enabled);
+	ClassDB::bind_method(D_METHOD("set_collision_min_size", "metres"), &RockField3D::set_collision_min_size);
+	ClassDB::bind_method(D_METHOD("get_collision_min_size"), &RockField3D::get_collision_min_size);
+	ClassDB::bind_method(D_METHOD("set_collision_radius", "radius"), &RockField3D::set_collision_radius);
+	ClassDB::bind_method(D_METHOD("get_collision_radius"), &RockField3D::get_collision_radius);
+	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &RockField3D::set_collision_layer);
+	ClassDB::bind_method(D_METHOD("get_collision_layer"), &RockField3D::get_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_build_budget_msec", "msec"), &RockField3D::set_build_budget_msec);
+	ClassDB::bind_method(D_METHOD("get_build_budget_msec"), &RockField3D::get_build_budget_msec);
+	ClassDB::bind_method(D_METHOD("set_streaming", "streaming"), &RockField3D::set_streaming);
+	ClassDB::bind_method(D_METHOD("is_streaming"), &RockField3D::is_streaming);
+	ClassDB::bind_method(D_METHOD("rebuild"), &RockField3D::rebuild);
+	ClassDB::bind_method(D_METHOD("build_area", "rect"), &RockField3D::build_area);
+	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
+	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
+	ClassDB::bind_method(D_METHOD("get_stones", "layer", "rect"), &RockField3D::get_stones);
+	ClassDB::bind_method(D_METHOD("get_stone_count"), &RockField3D::get_stone_count);
+	ClassDB::bind_method(D_METHOD("get_cell_count"), &RockField3D::get_cell_count);
+	ClassDB::bind_method(D_METHOD("get_last_build_msec"), &RockField3D::get_last_build_msec);
+	ClassDB::bind_method(D_METHOD("get_last_library_msec"), &RockField3D::get_last_library_msec);
+	ClassDB::bind_method(D_METHOD("get_library_triangle_count"), &RockField3D::get_library_triangle_count);
+
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "generator", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainGenerator3D"), "set_generator", "get_generator");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_target", "get_follow_target");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
+	ADD_GROUP("Geology", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "rock_type", PROPERTY_HINT_ENUM, "Granite,Limestone,Sandstone,Basalt,Slate"), "set_rock_type", "get_rock_type");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "soft_rock_type", PROPERTY_HINT_ENUM, "Granite,Limestone,Sandstone,Basalt,Slate"), "set_soft_rock_type", "get_soft_rock_type");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "erratic_rock_type", PROPERTY_HINT_ENUM, "Granite,Limestone,Sandstone,Basalt,Slate"), "set_erratic_rock_type", "get_erratic_rock_type");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_strata"), "set_use_strata", "get_use_strata");
+	ADD_GROUP("Shapes", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "variants", PROPERTY_HINT_RANGE, "1,32,1"), "set_variants", "get_variants");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_detail", "get_detail");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_lichen_cover", "get_lichen_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_moss_cover", "get_moss_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_stones_per_cell", PROPERTY_HINT_RANGE, "1,100000,1"), "set_max_stones_per_cell", "get_max_stones_per_cell");
+	static const char *layer_names[LAYER_MAX] = { "rockfall", "scree", "glacial", "river", "shore", "cliff" };
+	for (int l = 0; l < LAYER_MAX; l++) {
+		ADD_GROUP(String(layer_names[l]).capitalize(), String(layer_names[l]) + "_");
+		ADD_PROPERTYI(PropertyInfo(Variant::BOOL, String(layer_names[l]) + "_enabled"), "set_layer_enabled", "is_layer_enabled", l);
+		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, String(layer_names[l]) + "_density", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_layer_density", "get_layer_density", l);
+		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, String(layer_names[l]) + "_radius", PROPERTY_HINT_RANGE, "0,4000,1,suffix:m"), "set_layer_radius", "get_layer_radius", l);
+	}
+	ADD_GROUP("Collision", "collision_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_min_size", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_collision_min_size", "get_collision_min_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_collision_radius", "get_collision_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
+	ADD_GROUP("Streaming", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "build_budget_msec", PROPERTY_HINT_RANGE, "0.1,50,0.1,suffix:ms"), "set_build_budget_msec", "get_build_budget_msec");
+
+	BIND_ENUM_CONSTANT(LAYER_ROCKFALL);
+	BIND_ENUM_CONSTANT(LAYER_SCREE);
+	BIND_ENUM_CONSTANT(LAYER_GLACIAL);
+	BIND_ENUM_CONSTANT(LAYER_RIVER);
+	BIND_ENUM_CONSTANT(LAYER_SHORE);
+	BIND_ENUM_CONSTANT(LAYER_CLIFF);
+	BIND_ENUM_CONSTANT(LAYER_MAX);
+}

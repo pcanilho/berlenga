@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RockGenerator" inherits="RefCounted" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Makes rocks and stones as real geometry: broken along the joints of a rock type, rounded by transport, weathered.
+	</brief_description>
+	<description>
+		Each rock is a block cut by the joint planes of its rock type (near-cuboid, as natural fragments are: Domokos et al. 2020), with secondary fractures, impact chips and partial cracks, held as a signed distance field. Transport rounds it by Bloore's abrasion flow (the surface moves in at [code]1 + c * curvature[/code]: corners first, then slow shrinking; Domokos et al. 2014), for [member transport_distance] metres of river against the rock type's abrasion length. Weathering by rock type is carved in: spheroidal rounding of granite and basalt, solution pits on limestone tops, sandstone laminae and tafoni, basalt vesicles, slate cleavage steps, glacial striations. Surface nets make the mesh, meshoptimizer its LODs. The mesh rests on its flattest side (local Y the short axis, X the long one) and its b axis is 2 units long. See docs/ideas/rocks.md.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="generate">
+			<return type="ArrayMesh" />
+			<description>
+				Makes one rock for the current [member seed]. Its metadata: [code]rock_axes[/code] (half lengths along x, y, z: long, short and intermediate axis), [code]rock_bottom[/code] (lowest y), [code]rock_hull[/code] (up to 48 points for a convex collision shape), [code]rock_faces[/code] (the planes it broke along), [code]rock_roundness[/code], [code skip-lint]rock_type[/code] and [code]rock_family[/code]. The mesh rests on its flattest side and its b axis is 2 units long, so an instance scaled by [code]s[/code] is a stone of b-axis diameter [code]2 s[/code].
+			</description>
+		</method>
+		<method name="generate_library">
+			<return type="Array" />
+			<param index="0" name="count" type="int" />
+			<description>
+				Makes [param count] rocks from seeds [member seed] to [code]seed + count - 1[/code] on worker threads.
+			</description>
+		</method>
+		<method name="get_last_build_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last [method generate] or [method generate_library] took.
+			</description>
+		</method>
+		<method name="get_last_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Triangles in the most detailed level of the last rock, or of all rocks of the last library.
+			</description>
+		</method>
+		<method name="get_material" qualifiers="static">
+			<return type="ShaderMaterial" />
+			<param index="0" name="rock_type" type="int" enum="RockGenerator.RockType" />
+			<description>
+				The shared material of a rock type: mineral colour and specks, bands, weathered rind, lichen and moss, a ground contact band, the water film and the weather wetness and snow.
+			</description>
+		</method>
+		<method name="get_roundness" qualifiers="const">
+			<return type="float" />
+			<description>
+				Roundness reached by [member transport_distance] for this rock type, from 0 (fresh) to 1 (fully rounded), from the rock type's abrasion length.
+			</description>
+		</method>
+		<method name="get_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				The source of the rock shader used by [method get_material].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="detail" type="float" setter="set_detail" getter="get_detail" default="1.0">
+			Scales the grid resolution of the shape. Lower is faster and coarser.
+		</member>
+		<member name="family" type="int" setter="set_family" getter="get_family" enum="RockGenerator.Family" default="0">
+			What made the rock: fresh rockfall, scree, glacial boulder, river cobble, beach pebble or cliff block. Sets the size of the block, how much it is chipped, rounded and flattened, and the default resolution.
+		</member>
+		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
+			Builds distance levels of detail for the mesh.
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="0">
+			Grid cells across the rock. [code]0[/code] uses the family's own resolution.
+		</member>
+		<member name="rock_type" type="int" setter="set_rock_type" getter="get_rock_type" enum="RockGenerator.RockType" default="0">
+			The rock: how it is jointed and breaks, how fast it abrades, how it weathers and its colour.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed of the rock. Each seed gives a different rock of the same type and family.
+		</member>
+		<member name="simplify" type="bool" setter="set_simplify" getter="get_simplify" default="true">
+			Collapses edges of the most detailed level only where neither the surface nor its normal moves visibly, which keeps every chip, pit and groove with fewer triangles.
+		</member>
+		<member name="transport_distance" type="float" setter="set_transport_distance" getter="get_transport_distance" default="-1.0">
+			Metres the rock travelled before it came to rest, which rounds it by Bloore abrasion: corners first, then slow shrinking. Below 0 uses the family's own distance.
+		</member>
+		<member name="weathering" type="float" setter="set_weathering" getter="get_weathering" default="-1.0">
+			Strength of weathering in place, from 0 to 1: spheroidal rounding, solution pits, laminae, tafoni. Below 0 uses the family's own.
+		</member>
+	</members>
+	<constants>
+		<constant name="ROCK_GRANITE" value="0" enum="RockType">
+			Massive crystalline rock: few joints, spheroidal weathering, grey with dark and light specks.
+		</constant>
+		<constant name="ROCK_LIMESTONE" value="1" enum="RockType">
+			Bedded, pale, with solution pits.
+		</constant>
+		<constant name="ROCK_SANDSTONE" value="2" enum="RockType">
+			Bedded and laminated, warm, wears fastest, with tafoni hollows.
+		</constant>
+		<constant name="ROCK_BASALT" value="3" enum="RockType">
+			Dark, in five to seven-sided columns, with vesicles.
+		</constant>
+		<constant name="ROCK_SLATE" value="4" enum="RockType">
+			Dark grey, splits in thin cleavage plates.
+		</constant>
+		<constant name="ROCK_MAX" value="5" enum="RockType">
+			Number of rock types.
+		</constant>
+		<constant name="FAMILY_ROCKFALL" value="0" enum="Family">
+			Fresh blocks fallen from a cliff.
+		</constant>
+		<constant name="FAMILY_SCREE" value="1" enum="Family">
+			Smaller fresh stones on talus, chipped on the way down.
+		</constant>
+		<constant name="FAMILY_GLACIAL" value="2" enum="Family">
+			Subrounded boulders out of till, with a striated facet.
+		</constant>
+		<constant name="FAMILY_COBBLE" value="3" enum="Family">
+			River stones rounded by [member transport_distance].
+		</constant>
+		<constant name="FAMILY_PEBBLE" value="4" enum="Family">
+			Beach stones, rounded and flattened by the swash.
+		</constant>
+		<constant name="FAMILY_CLIFF_BLOCK" value="5" enum="Family">
+			Large jointed blocks set into cliff faces.
+		</constant>
+		<constant name="FAMILY_MAX" value="6" enum="Family">
+			Number of families.
+		</constant>
+	</constants>
+</class>

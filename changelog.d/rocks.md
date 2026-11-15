@@ -1,0 +1,2 @@
+### Added
+- Rocks: `RockGenerator` makes rocks and stones as real geometry, broken along the joints of five rock types (granite, limestone, sandstone, basalt, slate), rounded by transport (Bloore abrasion) and weathered by rock type, with LODs and collision hulls. `RockField3D` places them over a `TerrainGenerator3D` in six layers (rockfall, scree, glacial till, river beds, shores, cliff blocks) by the processes that put them there, streamed round the camera.

@@ -130,6 +130,43 @@ are. Not one unique mesh per rock.
 Library build time on load, memory per family, instance counts per km2 for scree and river beds,
 TLAS and trace ms on the open-world bench at 10k and 100k stones.
 
+## Built (15 Nov)
+
+`modules/rocks`: `RockGenerator` (shapes) and `RockField3D` (placement), bench in `docs/bench/rocks`.
+
+- **Shapes.** Five rock types (granite, limestone, sandstone, basalt, slate) by six families (rockfall,
+  scree, glacial, cobble, pebble, cliff block). Joint planes with jitter per lithology (basalt as 5 to
+  7-sided prisms), corner cuts, chip scoops and part cracks into an SDF; Bloore flow (1 + c·kappa) on a
+  coarse grid for the transport distance, with flattening for beach pebbles; then grain, lumps, karst
+  pits or vesicles, laminae, cleavage, tafoni and striations at grid scale; surface nets; cavity and
+  fresh-break masks in COLOR; meshoptimizer LODs; 48-point convex hull. Rest pose: long axis x, short
+  y, b axis 2 units on z. 12 to 245 ms a rock on one cloud core.
+- **Top LOD collapse** (`simplify`, on): meshoptimizer with normals as attributes at 3% of a grid cell.
+  Close-ups at 100% crop match the full mesh (mean pixel difference 0.3 to 0.5 of 255); shape memory
+  52.6 MB to 26.4 MB. A 20%-of-a-cell collapse cut it to 6.6 MB but softened granite relief and
+  sandstone grooves, so it was not kept.
+- **Placement, one layer each.** Rockfall from `get_boulders`. Scree packed on talus by sequential
+  deposition (largest first, fall sorted), no deep overlaps. Glacial on till or old ice ground, 8%
+  erratics of `erratic_rock_type`. River beds sized by Shields competence on the channel slope with
+  Leopold-Maddock depth, rounded by distance from the head (three roundness bins per lithology),
+  imbricated against the flow, with a water film. Shores: band from 0.6 m below to 2.5 m above water,
+  grain size from beach slope (Bascom), blended between 2 m sub-cell corners so the cover fades with the
+  slope, boulders under rock. Cliffs: blocks in 1.4 m courses along the
+  beds, staggered joints, set 60 to 80% of their depth into the face (Paris et al. 2020).
+  `use_strata` swaps in `soft_rock_type` on soft beds.
+- **Ties.** `get_obstacles(rect)` gives `(x, ground y, z, footprint)`, the format
+  `VegetationField3D.obstacles` and `GrassField3D.obstacles` take; `get_stones` adds basis, scale,
+  water film, family, layer and `top` for crevice plants and moss. Shader: lichen and moss covers,
+  ground contact band, the shared weather wetness and snow code. Optional convex hull collision per cell
+  near the target.
+- **Numbers on the 2 km bench world.** Stones over 4 km2: rockfall 4.6k, glacial 178, river 14.9k,
+  shore 8.5k, cliff 240k; scree 7.2k in the fullest 200 m square. A 320 m square round scree: 399 cells,
+  123k stones, 54 shapes (26.4 MB), 7.6 MB of instances, 11.9k collision hulls, built in 1.8 s.
+
+Open: GPU frame and trace cost on the open-world bench (PC queue); river stones here never pass the first
+roundness bin because the bench rivers are short; vegetation reading the stone list is the vegetation
+thread's pick.
+
 ## Sources
 
 Domokos et al. PNAS 2020 (arXiv 1912.04628); Paris et al. Visual Computer 2020 (hal-02926218);

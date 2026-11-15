@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RockField3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Places rocks and stones over a [TerrainGenerator3D] by the processes that put them there, in the rock type of each place.
+	</brief_description>
+	<description>
+		Six layers, each streamed in square cells round [member follow_target] (or the camera) out to its radius: rockfall blocks from [code skip-lint]TerrainGenerator3D.get_boulders()[/code], scree packed on the talus aprons, glacial boulders and erratics in the till, river cobbles sized by what the flow can move and rounded by the distance travelled, shingle and boulders on lake and sea shores, and jointed blocks set into cliffs in courses along the beds. Stones of a cover are dropped one at a time and rest on those already down (sequential deposition). Shapes come from [RockGenerator], a few variants per rock type and family, shared by every stone as MultiMesh instances. See docs/ideas/rocks.md.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="build_area">
+			<return type="int" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Builds every layer in [param rect] (x and z) now, ignoring [member build_budget_msec]. Returns the number of cells built.
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes every stone.
+			</description>
+		</method>
+		<method name="get_cell_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Cells built.
+			</description>
+		</method>
+		<method name="get_last_build_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last build step took.
+			</description>
+		</method>
+		<method name="get_last_library_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds spent building shape libraries in the last build step.
+			</description>
+		</method>
+		<method name="get_layer_density" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="layer" type="int" />
+			<description>
+				Density of a layer.
+			</description>
+		</method>
+		<method name="get_layer_radius" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="layer" type="int" />
+			<description>
+				Radius round the follow target out to which a layer is built.
+			</description>
+		</method>
+		<method name="get_library_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Triangles in the most detailed level of every shape built so far.
+			</description>
+		</method>
+		<method name="get_obstacles">
+			<return type="PackedVector4Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<param index="1" name="min_size" type="float" default="0.25" />
+			<description>
+				Stones in [param rect] of b-axis diameter at least [param min_size], as [code](x, ground y, z, footprint radius)[/code], for vegetation obstacles and water flow. Placement is deterministic, so this works for cells not built yet. Cliff blocks are left out.
+			</description>
+		</method>
+		<method name="get_stone_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Stones built.
+			</description>
+		</method>
+		<method name="get_stones">
+			<return type="Array" />
+			<param index="0" name="layer" type="int" />
+			<param index="1" name="rect" type="Rect2" />
+			<description>
+				Stones of a layer in [param rect], placed whether or not they are built, as dictionaries with [code]position[/code], [code]basis[/code], [code]scale[/code], [code]ground[/code], [code]footprint[/code], [code]film[/code], [code skip-lint]rock_type[/code], [code]family[/code], [code]bin[/code], [code]variant[/code], [code]layer[/code] and [code]top[/code] (height of its highest point).
+			</description>
+		</method>
+		<method name="is_layer_enabled" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="layer" type="int" />
+			<description>
+				Whether a layer is placed.
+			</description>
+		</method>
+		<method name="rebuild">
+			<return type="void" />
+			<description>
+				Removes every stone and builds again round the follow target.
+			</description>
+		</method>
+		<method name="set_layer_density">
+			<return type="void" />
+			<param index="0" name="layer" type="int" />
+			<param index="1" name="density" type="float" />
+			<description>
+				Scales how many stones a layer places.
+			</description>
+		</method>
+		<method name="set_layer_enabled">
+			<return type="void" />
+			<param index="0" name="layer" type="int" />
+			<param index="1" name="enabled" type="bool" />
+			<description>
+				Turns a layer on or off.
+			</description>
+		</method>
+		<method name="set_layer_radius">
+			<return type="void" />
+			<param index="0" name="layer" type="int" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				Sets how far round the follow target a layer is built.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="build_budget_msec" type="float" setter="set_build_budget_msec" getter="get_build_budget_msec" default="4.0">
+			Milliseconds per frame spent building cells while streaming.
+		</member>
+		<member name="cliff_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many blocks are set into cliff faces.
+		</member>
+		<member name="cliff_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Jointed blocks set into steep bare faces in courses along the beds.
+		</member>
+		<member name="cliff_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="500.0">
+			How far round the follow target cliff blocks are built.
+		</member>
+		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
+			Gives stones near the follow target convex hull collision shapes, one static body per cell.
+		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			Physics layers of the stone collision bodies.
+		</member>
+		<member name="collision_min_size" type="float" setter="set_collision_min_size" getter="get_collision_min_size" default="0.35">
+			Smallest b-axis diameter that gets collision.
+		</member>
+		<member name="collision_radius" type="float" setter="set_collision_radius" getter="get_collision_radius" default="80.0">
+			How far round the follow target stones get collision.
+		</member>
+		<member name="detail" type="float" setter="set_detail" getter="get_detail" default="1.0">
+			Scales the grid resolution of every shape. Lower builds faster and coarser.
+		</member>
+		<member name="erratic_rock_type" type="int" setter="set_erratic_rock_type" getter="get_erratic_rock_type" enum="RockGenerator.RockType" default="0">
+			Rock type of glacial erratics, carried from elsewhere.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			Node the layers stream round. Empty uses the current camera.
+		</member>
+		<member name="generator" type="NodePath" setter="set_generator" getter="get_generator" default="NodePath(&quot;&quot;)">
+			The [TerrainGenerator3D] whose height, slope, talus, till, rivers, cliffs and water levels place the stones.
+		</member>
+		<member name="glacial_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many glacial boulders are placed.
+		</member>
+		<member name="glacial_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Subrounded boulders and erratics on the till and the ground a glacier left.
+		</member>
+		<member name="glacial_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="300.0">
+			How far round the follow target glacial boulders are built.
+		</member>
+		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="0.5">
+			Lichen crust on upper faces, from 0 to 1.
+		</member>
+		<member name="max_stones_per_cell" type="int" setter="set_max_stones_per_cell" getter="get_max_stones_per_cell" default="12000">
+			Caps the stones of one cell of one layer.
+		</member>
+		<member name="min_size" type="float" setter="set_min_size" getter="get_min_size" default="0.08">
+			Smallest b-axis diameter placed in metres. Smaller stones stay in the terrain material.
+		</member>
+		<member name="moss_cover" type="float" setter="set_moss_cover" getter="get_moss_cover" default="0.4">
+			Moss on upper, shaded and wet faces, from 0 to 1.
+		</member>
+		<member name="river_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many river stones are placed.
+		</member>
+		<member name="river_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Cobbles in river beds, sized by what the flow can move and fining downstream, rounded by the distance travelled and imbricated against the current.
+		</member>
+		<member name="river_min_area" type="float" setter="set_river_min_area" getter="get_river_min_area" default="200000.0">
+			Smallest drainage area in square metres whose river gets stones.
+		</member>
+		<member name="river_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="120.0">
+			How far round the follow target river stones are built.
+		</member>
+		<member name="rock_type" type="int" setter="set_rock_type" getter="get_rock_type" enum="RockGenerator.RockType" default="0">
+			The main rock of the terrain.
+		</member>
+		<member name="rockfall_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many rockfall blocks are placed.
+		</member>
+		<member name="rockfall_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Blocks fallen from cliffs where [code skip-lint]TerrainGenerator3D.get_boulders()[/code] puts them.
+		</member>
+		<member name="rockfall_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="600.0">
+			How far round the follow target rockfall blocks are built.
+		</member>
+		<member name="scree_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many scree stones are placed.
+		</member>
+		<member name="scree_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Stones packed on talus aprons, sorted by size down the slope.
+		</member>
+		<member name="scree_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="60.0">
+			How far round the follow target scree is built.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed of the placement and the shapes.
+		</member>
+		<member name="shore_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many shore stones are placed.
+		</member>
+		<member name="shore_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Shingle and boulders on lake and sea shores, sized by beach slope.
+		</member>
+		<member name="shore_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="100.0">
+			How far round the follow target shore stones are built.
+		</member>
+		<member name="soft_rock_type" type="int" setter="set_soft_rock_type" getter="get_soft_rock_type" enum="RockGenerator.RockType" default="1">
+			Rock type of the soft beds when [member use_strata] is on.
+		</member>
+		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="true">
+			Builds and frees cells round the follow target as it moves, within [member build_budget_msec] a frame.
+		</member>
+		<member name="use_strata" type="bool" setter="set_use_strata" getter="get_use_strata" default="true">
+			Uses [member soft_rock_type] where the terrain strata are soft.
+		</member>
+		<member name="variants" type="int" setter="set_variants" getter="get_variants" default="6">
+			Shapes per rock type and family. Every stone uses one of them as a MultiMesh instance.
+		</member>
+	</members>
+	<constants>
+		<constant name="LAYER_ROCKFALL" value="0" enum="Layer">
+			Rockfall blocks.
+		</constant>
+		<constant name="LAYER_SCREE" value="1" enum="Layer">
+			Scree on talus.
+		</constant>
+		<constant name="LAYER_GLACIAL" value="2" enum="Layer">
+			Glacial boulders and erratics.
+		</constant>
+		<constant name="LAYER_RIVER" value="3" enum="Layer">
+			River bed stones.
+		</constant>
+		<constant name="LAYER_SHORE" value="4" enum="Layer">
+			Shore shingle and boulders.
+		</constant>
+		<constant name="LAYER_CLIFF" value="5" enum="Layer">
+			Blocks set into cliff faces.
+		</constant>
+		<constant name="LAYER_MAX" value="6" enum="Layer">
+			Number of layers.
+		</constant>
+	</constants>
+</class>
