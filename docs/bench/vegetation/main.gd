@@ -952,6 +952,13 @@ func _stream_checks() -> void:
 	sf2.streaming = true
 	await _stream_wait(sf2)
 	var near_two := VegetationField3D.get_near_radius()
+	# The cover map switched on after streaming started: built at once, the field keeps streaming.
+	var had_map := sf2.get_cover_texture() != null
+	sf2.cover_map_enabled = true
+	var map_now := sf2.get_cover_texture() != null
+	target.global_position += Vector3(30, 0, 0)
+	var moved := await _stream_wait(sf2)
+	_check("streaming: cover map switched on later is built at once, streaming goes on", not had_map and map_now and moved >= 0 and sf2.get_stream_tile_count() > 0 and VegetationField3D.get_near_radius() == 60.0, [had_map, map_now, moved, sf2.get_stream_tile_count()])
 	sf.streaming = false
 	var near_wide := VegetationField3D.get_near_radius()
 	sf2.streaming = false

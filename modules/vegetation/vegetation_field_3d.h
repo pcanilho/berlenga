@@ -372,11 +372,11 @@ public:
 	void set_populate_on_ready(bool p_enable);
 	bool is_populate_on_ready() const { return populate_on_ready; }
 
-	void set_cover_map_enabled(bool p_enable) { cover_map_enabled = p_enable; }
+	void set_cover_map_enabled(bool p_enable);
 	bool is_cover_map_enabled() const { return cover_map_enabled; }
-	void set_cover_grass(const NodePath &p_path) { cover_grass = p_path; }
+	void set_cover_grass(const NodePath &p_path);
 	NodePath get_cover_grass() const { return cover_grass; }
-	void set_cover_grass_layers(const TypedArray<NodePath> &p_paths) { cover_grass_layers = p_paths; }
+	void set_cover_grass_layers(const TypedArray<NodePath> &p_paths);
 	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
 	float get_cover_cell() const { return cover_cell; }

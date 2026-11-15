@@ -1725,6 +1725,32 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	print_verbose(vformat("VegetationField3D: cover map %dx%d in %.1f ms.", job.w, job.h, (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0));
 }
 
+// A streaming field builds its cover map when it starts streaming; changed after that, the map is
+// built again at once (no populate(), which would place the whole world and stop the streaming).
+void VegetationField3D::set_cover_map_enabled(bool p_enable) {
+	if (cover_map_enabled == p_enable) {
+		return;
+	}
+	cover_map_enabled = p_enable;
+	if (stream_setup_valid) {
+		_build_cover(stream_setup);
+	}
+}
+
+void VegetationField3D::set_cover_grass(const NodePath &p_path) {
+	cover_grass = p_path;
+	if (stream_setup_valid) {
+		_build_cover(stream_setup);
+	}
+}
+
+void VegetationField3D::set_cover_grass_layers(const TypedArray<NodePath> &p_paths) {
+	cover_grass_layers = p_paths;
+	if (stream_setup_valid) {
+		_build_cover(stream_setup);
+	}
+}
+
 void VegetationField3D::_on_grass_far_color() {
 	if (stream_setup_valid) {
 		_build_cover(stream_setup);
