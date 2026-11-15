@@ -940,9 +940,24 @@ func _stream_checks() -> void:
 	_check("streaming: moved centre, tiles past the radius freed, new ones match", ok and old_left == 0, [frames, sf.get_stream_tile_count(), counts, old_left])
 	# Where the placed plants end, for the terrain's far blend (vegetation_near_radius).
 	var near_on := VegetationField3D.get_near_radius()
+	# A second streaming field out to 150 m (a forest): the nearest end still counts.
+	var sf2 := VegetationField3D.new()
+	sf2.name = "StreamedWide"
+	sf2.populate_on_ready = false
+	sf2.biome = field.biome
+	add_child(sf2)
+	sf2.data_map = sf2.get_path_to(dm)
+	sf2.stream_target = sf2.get_path_to(target)
+	sf2.stream_radius = 150.0
+	sf2.streaming = true
+	await _stream_wait(sf2)
+	var near_two := VegetationField3D.get_near_radius()
 	sf.streaming = false
+	var near_wide := VegetationField3D.get_near_radius()
+	sf2.streaming = false
+	sf2.queue_free()
 	var near_off := VegetationField3D.get_near_radius()
-	_check("streaming: publishes vegetation_near_radius, clears it when it stops", near_on == 60.0 and near_off == 0.0, [near_on, near_off])
+	_check("streaming: publishes vegetation_near_radius (nearest of several fields), clears it when they stop", near_on == 60.0 and near_two == 60.0 and near_wide == 150.0 and near_off == 0.0, [near_on, near_two, near_wide, near_off])
 	sf.queue_free()
 	target.queue_free()
 

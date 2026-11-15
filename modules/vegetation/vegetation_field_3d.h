@@ -124,9 +124,7 @@ class VegetationField3D : public Node3D {
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
 	float max_crown_radius = 0.0f;
 	bool _in_stem(const Vector2 &p_xz, float p_margin) const;
-	static ObjectID near_radius_owner;
 	static float near_radius_published;
-	float published_near_radius = 0.0f;
 	void _publish_near_radius(float p_radius);
 	static float _foot_radius(const Ref<Mesh> &p_mesh, float p_cap);
 	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const; // No lock: main thread, or under crown_lock.
@@ -412,7 +410,7 @@ public:
 	float get_sward_shade_at(const Vector3 &p_global_position) const;
 	// The undergrowth's own litter under its stands (PlantSpecies.litter_color): rgb colour, a cover.
 	Color get_sward_litter_at(const Vector3 &p_global_position) const;
-	// The published vegetation_near_radius (0: none).
+	// The published vegetation_near_radius: the smallest stream radius of the streaming fields (0: none).
 	static float get_near_radius() { return near_radius_published; }
 	// Both at once (the shade returned, the litter in r_litter when given).
 	float sward_at(const Vector3 &p_global_position, Color *r_litter) const;

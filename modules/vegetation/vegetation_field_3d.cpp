@@ -176,24 +176,35 @@ const VegetationField3D::Pattern &VegetationField3D::_get_pattern(float p_spacin
 	return patterns[key];
 }
 
-// Where this streaming field's placed plants end (vegetation_near_radius): past it only the ground
+// Where streaming fields' placed plants end (vegetation_near_radius): past it only the ground
 // shows them, through the terrain's far blend of the cover map, which a TerrainMaterial3D with
-// far_start_from_vegetation starts before it. The last streaming field to publish owns it; it
-// clears it to 0 when it stops.
-ObjectID VegetationField3D::near_radius_owner;
+// far_start_from_vegetation starts before it. With several streaming fields (a forest out to
+// 150 m, the floor and meadow plants to 80 m) the nearest end counts, so the blend has taken over
+// before the first plants run out. A field takes its radius back (0) when it stops.
 float VegetationField3D::near_radius_published = 0.0f;
 
+static HashMap<ObjectID, float> &_near_radii() {
+	static HashMap<ObjectID, float> radii;
+	return radii;
+}
+
 void VegetationField3D::_publish_near_radius(float p_radius) {
-	if (p_radius <= 0.0f && near_radius_owner != get_instance_id()) {
+	HashMap<ObjectID, float> &radii = _near_radii();
+	const ObjectID id = get_instance_id();
+	if (p_radius > 0.0f) {
+		radii[id] = p_radius;
+	} else if (!radii.erase(id)) {
 		return;
 	}
-	if (p_radius > 0.0f && near_radius_owner == get_instance_id() && published_near_radius == p_radius) {
+	float r = 0.0f;
+	for (const KeyValue<ObjectID, float> &kv : radii) {
+		r = r > 0.0f ? MIN(r, kv.value) : kv.value;
+	}
+	if (r == near_radius_published) {
 		return;
 	}
-	near_radius_owner = p_radius > 0.0f ? get_instance_id() : ObjectID();
-	published_near_radius = p_radius;
-	near_radius_published = p_radius;
-	RenderingServer::get_singleton()->global_shader_parameter_set("vegetation_near_radius", p_radius);
+	near_radius_published = r;
+	RenderingServer::get_singleton()->global_shader_parameter_set("vegetation_near_radius", r);
 }
 
 void VegetationField3D::_clear_generated() {

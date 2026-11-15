@@ -12,7 +12,7 @@
 		<method name="get_near_radius" qualifiers="static">
 			<return type="float" />
 			<description>
-				The radius last published as the global shader parameter [code]vegetation_near_radius[/code] by a streaming field (see [member stream_radius]), 0 when none streams.
+				The global shader parameter [code]vegetation_near_radius[/code]: the smallest [member stream_radius] of the fields streaming now, so a terrain far blend has taken over before the first plants run out; 0 when none streams.
 			</description>
 		</method>
 		<method name="get_stream_stats">
