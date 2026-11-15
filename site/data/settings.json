@@ -870,10 +870,11 @@
   {
    "name": "Live water",
    "settings": [
-    "PhysXLiveWater3D"
+    "PhysXLiveWater3D",
+    "streaming"
    ],
    "note": "",
-   "what": "water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods.",
+   "what": "water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
