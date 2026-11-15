@@ -13,6 +13,12 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Rock generator: one rock type per row and one family per column, from sharp fresh fragments to rounded cobbles and pebbles.*
 
+- **Close-up detail** (`RockField3D`: `close_up_enabled`, `close_up_radius`): stones near the camera get real geometry for their grain: crystals, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.
+
+  ![A granite block's face at about 1 m in low sun, base shape and close-up shape, raster](media/rocks-closeup.jpg)
+
+  *Close-up detail: the same granite face gains pits, hairline cracks and a broken top edge.*
+
 ## Placement
 
 - **Rock fields** (`RockField3D`: `rockfall_`, `scree_`, `glacial_`, `river_`, `shore_`, `cliff_` layers): rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.

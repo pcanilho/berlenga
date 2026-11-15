@@ -1122,6 +1122,19 @@
    "topic": "Shapes"
   },
   {
+   "name": "Close-up detail",
+   "settings": [
+    "RockField3D",
+    "close_up_enabled",
+    "close_up_radius"
+   ],
+   "note": "",
+   "what": "stones near the camera get real geometry for their grain: crystals, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Rock fields",
    "settings": [
     "RockField3D",
