@@ -92,4 +92,8 @@ struct DirectionalLightData {
 	vec4 projector_rect; // In the sRGB decal atlas; zero without a projector.
 	vec4 projector_u; // dot(vec4(view-space vertex, 1.0), projector_u) is the projector's u.
 	vec4 projector_v;
+	// The volume shadow (a Beer shadow map, see LightStorage::VolumeShadow): view space -> its u, v, depth.
+	vec4 volume_shadow_u; // all zero without one
+	vec4 volume_shadow_v;
+	vec4 volume_shadow_w;
 };

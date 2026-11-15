@@ -30,8 +30,6 @@
 
 #include "physx_flow_3d.h"
 
-#include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
-
 #include "flow_backend.h"
 #include "physx_flow_emitter_3d.h"
 #include "physx_flow_render_effect.h"
@@ -45,14 +43,15 @@
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
-#include "scene/main/window.h"
-#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
-#include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/environment.h"
 #include "servers/physics_3d/physics_server_3d.h"
+#include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
+#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
+#include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_default.h"
@@ -392,13 +391,13 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		_fill_scatter_shadows(lights, p_lights, p_shadow_atlas, receive);
 	}
 	FlowBackend::ScatterSource source;
-	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering) ? nullptr : &source, p_first_view);
+	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering && !cast_shadows) ? nullptr : &source, p_first_view);
 	stat_render_calls++;
 	stat_render_outputs += out != 0 ? 1 : 0;
 	if (out != 0 && out != p_color.get_id()) {
 		p_effect->copy_texture(p_rd, RID::from_uint64(out), p_color, p_size);
 	}
-	if ((!lights.is_empty() || ambient_scattering || sun_scattering) && !source.valid) {
+	if ((!lights.is_empty() || ambient_scattering || sun_scattering || cast_shadows) && !source.valid) {
 		stat_scatter_no_source++;
 	}
 	if (out != 0 && source.valid) {
@@ -432,7 +431,19 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		if (receive != 0 && p_shadow_atlas.is_valid() && RendererRD::LightStorage::get_singleton()->owns_shadow_atlas(p_shadow_atlas)) {
 			atlas = RendererRD::LightStorage::get_singleton()->shadow_atlas_get_texture(p_shadow_atlas);
 		}
-		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, atlas, p_size);
+		FlowScatterRD::ShadowMap shadow;
+		RID shadow_rid;
+		if (cast_shadows && p_first_view) {
+			MutexLock lock(scatter_mutex);
+			shadow_rid = shadow_light;
+			shadow.to_light = shadow_to_light;
+		}
+		shadow.enabled = shadow_rid.is_valid();
+		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, atlas, p_size, &shadow);
+		if (shadow.enabled && shadow.texture.is_valid()) {
+			// The opaque pass reads it from the next frame on (Forward+ only).
+			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow);
+		}
 	}
 	if (p_last_view) {
 		FlowBackend::grid_render_rd_finish(grid);
@@ -655,6 +666,12 @@ void PhysXFlow3D::_gather_light(Vector3 &r_direction, Color &r_color, Color &r_a
 		// A directional light shines along its -Z: toward it is +Z.
 		r_direction = light->get_global_transform().basis.get_column(2).normalized();
 		r_color = light->get_color().srgb_to_linear() * light->get_param(Light3D::PARAM_ENERGY);
+	}
+	{
+		MutexLock lock(scatter_mutex);
+		const bool lit = light != nullptr && light->is_visible_in_tree() && light->has_shadow();
+		shadow_light = lit ? light->get_light_rid() : RID();
+		shadow_to_light = r_direction;
 	}
 	r_ambient = Color(0.25, 0.27, 0.3);
 	if (get_world_3d().is_valid() && get_world_3d()->get_environment().is_valid()) {
@@ -1093,6 +1110,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_ambient_scattering"), &PhysXFlow3D::is_ambient_scattering);
 	ClassDB::bind_method(D_METHOD("set_sun_scattering", "enabled"), &PhysXFlow3D::set_sun_scattering);
 	ClassDB::bind_method(D_METHOD("is_sun_scattering"), &PhysXFlow3D::is_sun_scattering);
+	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enabled"), &PhysXFlow3D::set_cast_shadows);
+	ClassDB::bind_method(D_METHOD("is_cast_shadows"), &PhysXFlow3D::is_cast_shadows);
 	ClassDB::bind_method(D_METHOD("set_scattering_max_lights", "count"), &PhysXFlow3D::set_scattering_max_lights);
 	ClassDB::bind_method(D_METHOD("get_scattering_max_lights"), &PhysXFlow3D::get_scattering_max_lights);
 	ClassDB::bind_method(D_METHOD("set_scattering_strength", "strength"), &PhysXFlow3D::set_scattering_strength);
@@ -1143,6 +1162,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_scattering"), "set_light_scattering", "is_light_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ambient_scattering"), "set_ambient_scattering", "is_ambient_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_scattering"), "set_sun_scattering", "is_sun_scattering");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_cast_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_max_lights", PROPERTY_HINT_RANGE, vformat("1,%d,1", FlowScatterRD::MAX_LIGHTS)), "set_scattering_max_lights", "get_scattering_max_lights");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_strength", PROPERTY_HINT_RANGE, "0,8,0.01,or_greater"), "set_scattering_strength", "get_scattering_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), "set_scattering_anisotropy", "get_scattering_anisotropy");

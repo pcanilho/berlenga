@@ -1294,6 +1294,26 @@ vec3 encode24(vec3 v) {
 }
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
+// Directional light p_index through the participating media in its volume shadow (a Beer shadow map), at
+// view-space p_vertex: no shadow in front of the medium, all of it behind, linear in depth between.
+float directional_volume_shadow(uint p_index, vec3 p_vertex) {
+	vec4 u = directional_lights.data[p_index].volume_shadow_u;
+	if (u == vec4(0.0)) {
+		return 1.0;
+	}
+	vec4 v4 = vec4(p_vertex, 1.0);
+	vec3 uvw = vec3(dot(v4, u), dot(v4, directional_lights.data[p_index].volume_shadow_v), dot(v4, directional_lights.data[p_index].volume_shadow_w));
+	if (any(lessThan(uvw.xy, vec2(0.0))) || any(greaterThan(uvw.xy, vec2(1.0)))) {
+		return 1.0;
+	}
+	vec4 m = textureLod(sampler2D(volume_shadow_texture, SAMPLER_LINEAR_CLAMP), uvw.xy, 0.0);
+	if (m.r >= 0.999) {
+		return 1.0;
+	}
+	float through = clamp((uvw.z - m.g) / max(m.b - m.g, 1e-4), 0.0, 1.0);
+	return mix(1.0, m.r, through);
+}
+
 void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
 
@@ -2826,9 +2846,9 @@ void fragment_shader(in SceneData scene_data) {
 
 			light_compute(normal, directional_lights.data[i].direction, normalize(view), size_A,
 #ifndef DEBUG_DRAW_PSSM_SPLITS
-					directional_lights.data[i].color * directional_lights.data[i].energy * directional_projector_color(i, vertex),
+					directional_lights.data[i].color * directional_lights.data[i].energy * directional_projector_color(i, vertex) * directional_volume_shadow(i, vertex),
 #else
-					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vertex),
+					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vertex) * directional_volume_shadow(i, vertex),
 #endif
 					true, shadow, f0, roughness, metallic, directional_lights.data[i].specular, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED

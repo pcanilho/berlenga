@@ -47,6 +47,9 @@
 		<member name="buoyancy" type="float" setter="set_buoyancy" getter="get_buoyancy" default="2.0">
 			Upward acceleration per unit of temperature: hot gas rises, cool gas hangs. "Up" is opposite the project's default gravity.
 		</member>
+		<member name="cast_shadows" type="bool" setter="set_cast_shadows" getter="is_cast_shadows" default="false">
+			When enabled, the gas shadows the scene in raster from the first shadow-casting [DirectionalLight3D]: a Beer shadow map over the grid, seen from the light, holds the gas's transmittance with its front and back depth, and opaque surfaces behind it are darkened by that transmittance. It is built once a frame and read by the next frame's opaque pass, and only the Forward+ renderer reads it. The path tracer shadows through the gas on its own, so this only affects raster.
+		</member>
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.05">
 			Simulation cell size in meters. Smaller is finer detail and more GPU cost.
 		</member>

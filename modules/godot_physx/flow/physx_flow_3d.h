@@ -33,9 +33,8 @@
 #include "flow_scatter_rd.h"
 
 #include "core/os/mutex.h"
-#include "core/templates/paged_array.h"
-
 #include "core/templates/local_vector.h"
+#include "core/templates/paged_array.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/gradient.h"
 
@@ -160,11 +159,15 @@ private:
 	// The directional lights through the same pass, with their shadow cascades (see
 	// FlowScatterRD::Params::directional_count). Off: Flow's colormap carries the first one.
 	bool sun_scattering = false;
+	// The gas shadows the scene from the first directional light: a Beer shadow map over the grid
+	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
+	bool cast_shadows = false;
 	int scattering_max_lights = 4;
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
 	int scattering_shadow_steps = 4;
 	float scattering_shadow_reach = 4.0f;
+
 public:
 	// Which lights' shadows the glow receives (a checkbox list). Directional
 	// will be a third flag (4) when the sun's shadow reaches the gas.
@@ -195,6 +198,9 @@ private:
 	float traced_emission = 0.0f;
 	float traced_temperature_range = 2.0f;
 	bool traced_this_frame = false; // render thread only
+	// The sun the gas shadows the scene from (its light RID and the world direction toward it).
+	RID shadow_light;
+	Vector3 shadow_to_light;
 	LocalVector<FlowScatterRD::Light> scatter_lights;
 	void _gather_scatter_lights();
 	void _fill_scatter_ambient(FlowScatterRD::Params &r_params, const RID &p_environment) const;
@@ -269,6 +275,8 @@ public:
 	bool is_ambient_scattering() const { return ambient_scattering; }
 	void set_sun_scattering(bool p_v) { sun_scattering = p_v; }
 	bool is_sun_scattering() const { return sun_scattering; }
+	void set_cast_shadows(bool p_v) { cast_shadows = p_v; }
+	bool is_cast_shadows() const { return cast_shadows; }
 	void set_scattering_max_lights(int p_v) { scattering_max_lights = CLAMP(p_v, 1, FlowScatterRD::MAX_LIGHTS); }
 	int get_scattering_max_lights() const { return scattering_max_lights; }
 	void set_scattering_strength(float p_v) { scattering_strength = MAX(p_v, 0.0f); }
