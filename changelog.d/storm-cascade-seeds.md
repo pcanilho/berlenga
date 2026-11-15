@@ -1,0 +1,1 @@
+- Water: storms no longer start with wide white patches for their first seconds (the larger wave cascades draw their own random waves).

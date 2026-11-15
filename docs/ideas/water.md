@@ -2419,8 +2419,16 @@ mask): no visible change on the clear open sea in raster (mean difference 0.05/2
 the path tracer either; the water is too clear for a few metres of path to show. Not worth four extra
 height lookups a pixel.
 
-**Known.** In a storm's first second the longest cascades show wide white patches that clear within about
-two seconds (the persistent foam of the 1.4 km tile); not the steering and not undefined textures. Open.
+**Fixed (15 Nov).** In a storm's first second wide white patches showed and cleared within about two
+seconds. Not the persistent foam (each cascade's cover stayed under 1% from the start) but the material's
+crest foam, the Jacobian of the summed cascades: the cascades' Gaussian draws were seeded by mode index
+alone, and every extra cascade carries the same index band (4 to 24) on a tile `wave_cascade_ratio` times
+larger, so the cascades were scaled copies of one field. At the start their slopes added in phase and the
+sum read as folded; the long waves drifted apart over a couple of seconds. The banded cascades now salt the
+seed with their tile size (independent draws, as the random-phase model asks; Tessendorf 2001). Bench
+storm view, mean brightness of the sea at frame 8: 120 before, 36 after (90 frames: 88 either way). The
+first cascade keeps its draws, so a one-cascade sea is unchanged; multi-cascade seas show different (equally
+likely) waves.
 Bigger, steeper storm waves than the spectrum gives are an art choice: `wave_amplitude` 1.6 and `choppiness`
 1.4 give the Black Flag look on the bench.
 
