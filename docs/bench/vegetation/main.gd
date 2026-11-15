@@ -1192,49 +1192,66 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 			honey = i
 	var tuft := at
 	var best := 1e9
-	# The tuft nearest a log (by the log's centre), and that log.
+	# The tuft closest to a log's side.
+	var wood := ground.get_node(ground.canopy_field) as VegetationField3D
+	var hit := {}
 	if honey >= 0:
 		for p in ground.get_placements(honey):
-			for l in logs:
-				var d := p.distance_to(l)
-				if d < best:
-					best = d
-					tuft = p
-					at = l
-	print("VEG_MUSHROOMS honey tufts %d, nearest %.2f m from the log at %s" % [ground.get_placements(honey).size() if honey >= 0 else 0, best, str(tuft)])
-	# Looking along the log past the tuft: the log runs away on one side, the birch behind.
-	var wood := ground.get_node(ground.canopy_field) as VegetationField3D
-	var hit: Dictionary = wood.get_deadwood_at(tuft, 1.0)
-	var away := Vector3(tuft.x - at.x, 0, tuft.z - at.z)
+			var h: Dictionary = wood.get_deadwood_at(p, 1.0)
+			# Clear of the bark (a log's moss and flare reach past its radius), still at its edge.
+			var sd: float = h["side"] if not h.is_empty() else 1e9
+			if not h.is_empty() and h["radius"] >= 0.12 and absf(sd - 0.22) < best:
+				best = absf(sd - 0.22)
+				tuft = p
+				hit = h
+	print("VEG_MUSHROOMS honey tufts %d, nearest %.2f m from a log's side at %s" % [ground.get_placements(honey).size() if honey >= 0 else 0, best, str(tuft)])
+	# Half a metre from the tuft, a little lower than the knee, looking slightly down along the log:
+	# the tuft in the lower middle at the wood's edge, the birch and its fly agarics behind.
+	# Away from the log: the gradient of the distance to its side (its normal is only set over it).
+	var away := Vector3(1, 0, 0)
 	if not hit.is_empty():
-		var n: Vector3 = hit["normal"]
-		away = Vector3(n.x, 0, n.z)
-	if away.length() < 0.05:
+		var sx: Dictionary = wood.get_deadwood_at(tuft + Vector3(0.05, 0, 0), 1.2)
+		var sz: Dictionary = wood.get_deadwood_at(tuft + Vector3(0, 0, 0.05), 1.2)
+		if not sx.is_empty() and not sz.is_empty():
+			away = Vector3(float(sx["side"]) - float(hit["side"]), 0, float(sz["side"]) - float(hit["side"]))
+	if away.length() < 0.005:
 		away = Vector3(1, 0, 0)
 	away = away.normalized()
+	print("VEG_MUSHROOMS away from the log %s" % str(away))
 	var side := Vector3(-away.z, 0, away.x)
-	var eye := tuft - side * 0.95 + away * 0.3
-	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.5, eye.z)
+	# Along the log from its open side: the tuft at the wood's edge, the log running off on one side.
+	var dir := (side - away * 0.6).normalized()
+	var eye := tuft - dir * 0.5 + away * 0.2
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.36, eye.z)
 	var look := side
 	cam.fov = 50.0
-	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.15, tuft.z) + look * 0.5)
+	cam.near = 0.15 # Keeps a frond right at the lens out of the frame.
+	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.2, tuft.z) + dir * 0.35)
+	# Light: the sun from behind the camera and a little to the open side, 35 degrees up, so the tuft
+	# is lit; the floor lifted a stop. Both halves of the pair.
+	for ch in get_children():
+		if ch is DirectionalLight3D:
+			var ld := (dir - away * 0.3).normalized() * cos(deg_to_rad(35.0)) + Vector3(0, -sin(deg_to_rad(35.0)), 0)
+			(ch as DirectionalLight3D).global_transform = Transform3D(Basis.looking_at(ld, Vector3.UP), Vector3())
+		elif ch is WorldEnvironment:
+			(ch as WorldEnvironment).environment.tonemap_exposure = 1.6
 	var extra: Array[Node3D] = []
 	var tg := TreeGenerator.new()
 	tg.preset = TreeGenerator.PRESET_BIRCH
 	tg.seed = 3
 	var birch := MeshInstance3D.new()
 	birch.mesh = tg.generate()
-	var bp := tuft + look * 3.5 + away * 0.9
+	var bp := tuft + look * 2.6 + away * 0.6
 	birch.position = Vector3(bp.x, height(bp.x, bp.z) - 0.05, bp.z)
 	add_child(birch)
 	var pg := PlantGenerator.new()
 	pg.preset = PlantGenerator.PRESET_FLY_AGARIC
 	pg.apply_preset_colors()
-	for k in 2:
+	for k in 3:
 		pg.seed = 7 + k
 		var fa := MeshInstance3D.new()
 		fa.mesh = pg.generate()
-		var fp := tuft + look * (2.4 + 0.5 * k) + away * (0.5 + 0.6 * k)
+		var fp := tuft + look * (1.6 + 0.2 * k) + away * (0.05 + 0.3 * k)
 		fa.position = Vector3(fp.x, height(fp.x, fp.z), fp.z)
 		fa.rotation.y = 1.3 * k
 		add_child(fa)
