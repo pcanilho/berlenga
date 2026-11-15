@@ -1979,6 +1979,19 @@
    "topic": "Growth"
   },
   {
+   "name": "Pollards and coppice",
+   "settings": [
+    "cut_height",
+    "cut_cycle",
+    "cut_since"
+   ],
+   "note": "",
+   "what": "trees cut back on a cycle regrow straight poles from a swollen head or a ground stool; lapsed pollards carry big limbs.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Shrubs and hedges",
    "settings": [
     "stems",
