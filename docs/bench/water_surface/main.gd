@@ -18,6 +18,8 @@ extends Node3D
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
+#   --wader         two legs (capsules) walking along the shallows at 1.5 m/s with a PhysXWaterPusher3D
+#                   (--wader-nopush: without it); --view=wader looks at them
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N      frames rendered before --out is saved (default 12)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/refraction:0
@@ -117,6 +119,9 @@ var splash_strength := 1.0
 var splash_z := 1e9 # --splash=Z: a mound of water dropped at (0, Z) every 2 s (run-up onto the sand)
 var debug_storm := OS.get_environment("STORM_DEBUG") != ""
 var boat: RigidBody3D
+var wader: AnimatableBody3D
+var wader_on := false
+var wader_push := true
 var wake: Node3D
 var wake_params := {}
 var wake_out := ""
@@ -159,6 +164,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
+		elif a == "--wader": wader_on = true
+		elif a == "--wader-nopush": wader_on = true; wader_push = false
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
@@ -345,6 +352,8 @@ func _ready() -> void:
 
 	if boat_speed > 0.0:
 		_add_boat()
+	if wader_on:
+		_add_wader()
 
 	var cam := Camera3D.new()
 	cam.fov = 45
@@ -377,6 +386,8 @@ func _ready() -> void:
 		"runup":
 			# The waterline from the dry sand (it lies near z = 8 at the default slope), for --splash=6.
 			cam.look_at_from_position(Vector3(7.0, 2.5, 15.0), Vector3(0.0, -0.3, 6.5))
+		"wader":
+			cam.look_at_from_position(Vector3(4.0, 1.4, 5.5), Vector3(1.5, -0.2, 2.0))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		"boat", "boat_low", "boat_sun":
@@ -440,7 +451,37 @@ func _add_boat() -> void:
 	boat.add_child(wake)
 
 
-func _physics_process(_delta: float) -> void:
+func _add_wader() -> void:
+	wader = AnimatableBody3D.new()
+	wader.sync_to_physics = false
+	var lm := StandardMaterial3D.new()
+	lm.albedo_color = Color(0.25, 0.22, 0.2)
+	for sx in [-0.15, 0.15]:
+		var lcs := CollisionShape3D.new()
+		var cap := CapsuleShape3D.new()
+		cap.radius = 0.12
+		cap.height = 1.4
+		lcs.shape = cap
+		lcs.position = Vector3(0.0, 0.7, sx)
+		wader.add_child(lcs)
+		var lmi := MeshInstance3D.new()
+		var cm := CapsuleMesh.new()
+		cm.radius = 0.12
+		cm.height = 1.4
+		lmi.mesh = cm
+		lmi.material_override = lm
+		lmi.position = lcs.position
+		wader.add_child(lmi)
+	# On the sand at z = 2 (its top is at -0.7 at z = 0 and rises to the waterline near z = 8): half a metre deep.
+	wader.position = Vector3(-6.0, -0.7 + 2.0 * tan(deg_to_rad(5.0)), 2.0)
+	add_child(wader)
+	if wader_push:
+		wader.add_child(ClassDB.instantiate("PhysXWaterPusher3D"))
+
+
+func _physics_process(delta: float) -> void:
+	if wader != null:
+		wader.position.x = minf(wader.position.x + 1.5 * delta, 4.0)
 	if boat != null:
 		boat.linear_velocity = Vector3(boat_speed, 0.0, 0.0)
 		boat.angular_velocity = Vector3.ZERO

@@ -107,6 +107,12 @@ class PhysXLiveWater3D : public Node3D {
 	LocalVector<float> flux; // 4 per cell: +x, -x, +z, -z outflow (m^3/s)
 	LocalVector<float> vel; // 2 per cell: x, z (m/s)
 	LocalVector<float> foam;
+	// Bodies in the water (submit_sphere()): per cell the height of body under the water's surface, which the
+	// pipes count as water (Chentanez and Müller 2010, 6.1): a body moving in lifts the water in front of it and
+	// leaves a hollow behind, and the water flows round it, volume kept.
+	HashMap<int64_t, Vector4> bodies; // world centre, radius
+	LocalVector<float> occupied;
+	void _update_occupied();
 	bool built = false;
 	double time_left = 0.0;
 	double water_time = 0.0;
@@ -170,6 +176,9 @@ public:
 	void reset();
 	// Measure the ground again at the next physics tick, keeping the water (a dam or a wall removed, a crater blown).
 	void update_ground() { ground_update_pending = true; }
+	// A body (a sphere of a limb, a hull) pushing the water: kept until clear_sphere() or moved by calling again.
+	void submit_sphere(int64_t p_owner, const Vector3 &p_world_pos, float p_radius);
+	void clear_sphere(int64_t p_owner);
 	// Pour p_volume m^3 over a disc of p_radius m round p_global (a burst pipe, a bucket, a wave over a wall).
 	void add_water(const Vector3 &p_global, float p_volume, float p_radius = 1.0f);
 	// Water depth (m) at a world point, 0 where dry or outside.

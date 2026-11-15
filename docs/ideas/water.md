@@ -2597,3 +2597,37 @@ follows the camera (or `stream_follow`) in steps of an eighth of its size; the n
   and a pond forms at the edge until the window comes); no level of detail yet (far water is drawn,
   not simulated); not saved with the game.
 - Bench: live_water `--scene=stream` (a 240 m hillside; the marker walks 100 m away and back).
+
+## Bodies pushing water (15 Nov, FluidNinja parity step 4b)
+
+Paulo's ask: legs, boats and props moving through any water push it aside: a heap at the front, a
+hollow and a wake behind, the level standing up against a leg. How others do it:
+- FluidNinja LIVE: "interaction" spheres placed on a character's bones (and on props) are written
+  into the fluid each frame as density and velocity sources.
+- Crest (Unity ocean): a `SphereWaterInteraction` component per limb or hull section, a set of
+  spheres that push the dynamic wave layer in proportion to their speed and how deep they sit.
+- Height-field solvers with bodies: Chentanez and Müller 2010 ("Real-time simulation of large
+  bodies of water with small scale details", section 6) and Thürey et al. 2007 put the body's
+  displaced height into the column's pressure head: water flows out of the space a body takes and
+  heaps round it, volume kept by construction.
+
+**Built.** `PhysXWaterPusher3D`, a node under the body (or `target`):
+- Its spheres come from a `Skeleton3D` (spheres of `bone_radius` along each bone) or from the
+  body's `CollisionShape3D` children (sphere; a row along a capsule or cylinder; a grid through a
+  box; others their bounds). `max_spheres` per water (16, at most 48) of those under the surface.
+- Every live water, sea and river in the tree gets them (rescanned every 2 s). Live water takes
+  them as displacement (`PhysXLiveWater3D.submit_sphere`): per cell, the sphere's height under the
+  surface is added to the pipe head, so water flows out of the body's space; a sphere thinner than a
+  cell spreads its submerged volume over the four nearest cells, so a leg 24 cm across still moves
+  water on 50 cm cells. The drawn surface and `sample_height` include it (the level stands round a
+  leg rather than dipping into it). Sea and rivers take the spheres in their ripple layer (as
+  buoyant bodies already do), pushed harder near the surface and when moving
+  (`rest_strength` at rest, full at `reference_speed`).
+- Result (live_water `--scene=wade`, legs walking 1.5 m/s through a 0.6 m pond): volume kept
+  exactly (227.11 m^3 all run); on 25 cm cells the surface 0.4 m ahead of the legs stands 10 cm above
+  the water beside them and 5 cm below behind, with a white wake; on 50 cm cells 1.5 cm and the wake
+  is too fine to draw. No measurable cost (a few spheres in a solver step of about 3 ms).
+- Known limits: the surface is drawn through the body's space, so an open hull would show water
+  inside it (no mask yet); speed comes from the body's motion between frames, not its rotation.
+- Benches: live_water `--scene=wade [--no-pusher] [--view=wade_close]`; water_surface `--wader
+  [--wader-nopush] --view=wader`.
