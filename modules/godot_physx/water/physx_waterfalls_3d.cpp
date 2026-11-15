@@ -648,6 +648,8 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	// amounts and fold the sheet into hatching. The outermost of the wet columns' (the mean let the ledges that
 	// stand further out than it poke through as holes): the sheet spans across a ledge's front like a curtain.
 	if (surface_obj != nullptr) {
+		LocalVector<float> row_env;
+		row_env.resize(rows);
 		for (int r = 0; r < rows; r++) {
 			float env = -1e30f;
 			for (int c = 0; c < vcols; c++) {
@@ -655,7 +657,29 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 					env = MAX(env, col_env[c][r]);
 				}
 			}
-			env = env > -1e29f ? env + (Math::abs(env) > 1e-3f ? 0.1f : 0.0f) : 0.0f;
+			row_env[r] = env > -1e29f ? env : 0.0f;
+		}
+		// Eased down the face over about a metre either way: first the most within the window (so the
+		// easing does not let a ledge back through), then its mean (no step from one row to the next).
+		const int k = MAX(1, (int)Math::round(1.0f / MAX(row_spacing, 0.25f)));
+		LocalVector<float> dilated;
+		dilated.resize(rows);
+		for (int r = 0; r < rows; r++) {
+			float m = -1e30f;
+			for (int j = MAX(r - k, 0); j <= MIN(r + k, rows - 1); j++) {
+				m = MAX(m, row_env[j]);
+			}
+			dilated[r] = m;
+		}
+		for (int r = 0; r < rows; r++) {
+			float sum = 0.0f;
+			int n = 0;
+			for (int j = MAX(r - k, 0); j <= MIN(r + k, rows - 1); j++) {
+				sum += dilated[j];
+				n++;
+			}
+			float env = sum / n;
+			env += Math::abs(env) > 1e-3f ? 0.1f : 0.0f;
 			for (int c = 0; c < vcols; c++) {
 				Column &col = face.columns[c];
 				Vector3 pt = col.points[r] + dir * env;
