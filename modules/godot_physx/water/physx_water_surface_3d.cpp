@@ -1220,7 +1220,7 @@ void fragment() {
 		vec3 p_s = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float bed_d = depth_r(v_rest_xz, cuv_fade);
 		float z_bed = bed_d < 999.0 ? max(bed_d + p_s.y - (MODEL_MATRIX[3].y + water_level), 0.0) : -1.0;
-		base_rgb = water_clear_through(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
+		base_rgb = water_clear_through(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
 		unlit_rgb = vec3(0.0); // its sun is already in it, shadowed
 		base_a = 1.0;
 	}

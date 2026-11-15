@@ -2324,3 +2324,10 @@ Step 1b (15 Nov): rivers too. The clear-water code moved into water_raster_refle
 raster reflection uniforms both shaders already share), and PhysXRiver3D's shader uses it with the ribbon's
 own depth for the bed (`clear_water`, on). The waterline's foam lace (edge_foam) now shows as the thin line it
 was meant to be; under the old tint's low alpha it was barely visible.
+
+Step 2 (15 Nov): shadows in the water from above. `water_clear_through` marches the sun's scattered light
+along the refracted path (12 steps over about four mean free paths, jittered per pixel and frame), each
+step lit as far as its refracted sun ray entered the water (`sun_visibility`), as the underwater pass does.
+A shadow across deep water now darkens the water body itself; on the bench's open sea the raster colour
+now matches the path tracer's (median 58/109/107 against 45/112/116). Shallow water shows little change:
+there the bed's own light, already shadowed, dominates.
