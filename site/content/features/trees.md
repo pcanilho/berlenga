@@ -1,6 +1,7 @@
 ---
 title: "Trees"
-weight: 65
+weight: 70
+group: "World"
 summary: "Trees and woody shrubs grown by light competition, 31 species in ten stand types; bark, moss, climbers, seasons, old trees and deadwood; weather wind out to 1 km, colliders and touch."
 ---
 

@@ -1,6 +1,7 @@
 ---
 title: "Physics (PhysX 5)"
-weight: 120
+weight: 90
+group: "Simulation"
 summary: "PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke."
 ---
 

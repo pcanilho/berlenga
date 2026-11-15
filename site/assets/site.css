@@ -283,3 +283,6 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .chroma .nv,.chroma .vi,.chroma .vg,.chroma .vc{color:var(--hl-var)}
 .chroma .c,.chroma .c1,.chroma .cm,.chroma .ch,.chroma .cs,.chroma .cp,.chroma .cpf{color:var(--hl-com);font-style:italic}
 .chroma .o,.chroma .p{color:var(--muted)}
+
+.cards-group{margin:28px 0 0;font-size:13px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.cards-group .anchor{display:none}

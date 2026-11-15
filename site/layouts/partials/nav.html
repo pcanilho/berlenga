@@ -3,11 +3,13 @@
   <li><a href="{{ "" | relURL }}" {{ if $cur.IsHome }}class="on"{{ end }}>Overview</a></li>
   {{ with site.GetPage "/getting-started" }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
 </ul>
-{{ with site.GetPage "/features" }}
-<p class="group">{{ .Title }}</p>
+{{ with site.GetPage "/features" }}{{ $pages := .Pages.ByWeight }}
+{{ range slice "Rendering" "World" "Simulation" "Engine" }}{{ $g := . }}
+<p class="group">{{ $g }}</p>
 <ul>
-  {{ range .Pages.ByWeight }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
+  {{ range where $pages "Params.group" $g }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
 </ul>
+{{ end }}
 {{ end }}
 <p class="group">More</p>
 <ul>

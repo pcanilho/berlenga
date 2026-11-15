@@ -1,6 +1,7 @@
 ---
 title: "Vegetation"
-weight: 60
+weight: 65
+group: "World"
 summary: "Biome plant placement from terrain maps; grass and generated meadow, forest floor and wetland plants in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones."
 ---
 

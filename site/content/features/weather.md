@@ -1,6 +1,7 @@
 ---
 title: "Weather"
-weight: 70
+weight: 80
+group: "World"
 summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair."
 ---
 
