@@ -892,6 +892,29 @@ management).
 - **Not yet.** Stands do not cut anything yet: coppice-with-standards (a hazel understory
   coppiced under oak) and pollard rows along rivers are the natural next step.
 
+### 5m. Next round (research, 15 Nov; not built)
+
+Sources checked: Li et al., Stressful Tree Modeling: Breaking Branches with Strands (SIGGRAPH
+2025; strand stress decides where limbs snap, matching what 5j fakes with load weights); Li et
+al., Interactive Invigoration (TOG 2024; strands, for junctions); Unreal 5.7's Procedural
+Vegetation Editor (experimental; growth graphs feeding Nanite assemblies: trees built of shared
+instanced parts, so twigs, cones and fruits cost little each). The gaps against KCD2 and Star
+Citizen's forests are now small visible stories, not the growth model:
+
+1. **Small geometry in the crown.** Mistletoe balls (Viscum on lime, poplar, apple; evergreen,
+   so it reads in winter), witches' brooms (birch, hornbeam), and the reproductive parts as real
+   geometry: cones (pine, spruce, larch), catkins (hazel, birch, alder: late winter), seed keys
+   (ash, maple, hornbeam) hanging in winter, alder cones. Shared instanced parts as UE's
+   assemblies do; the far meshes leave them out.
+2. **Wood pasture and coppice stands.** Stands from 5l: coppice-with-standards (hazel stools
+   under scattered oaks, cut in coupes of different ages), pollard rows along rivers and lanes
+   (willow, black poplar), lapsed beech and oak pollards in wood pasture.
+3. **Bark stories.** Lightning scars (a spiral strip down the stem), frost cracks with callus
+   ribs, deer and squirrel bark stripping (a pale band at browse height), resin runs on conifer
+   wounds, dead lower branches kept on shaded conifers.
+4. **Hard places.** Exposed roots over banks and rocks (roots draped over a stone or a cut bank),
+   wind-flagged and krummholz trees at the treeline and on coasts.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
