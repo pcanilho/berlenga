@@ -68,7 +68,7 @@ struct VegetationObstacles {
 	// The distance from a point on the ground to the nearest obstacle's edge (negative inside it),
 	// looked for out to p_reach past the edges; p_reach + 1 when none is that near. r_away, if
 	// given, gets the unit direction from that obstacle's centre to the point.
-	float clearance(const Vector2 &p_xz, float p_reach, Vector2 *r_away = nullptr) const {
+	float clearance(const Vector2 &p_xz, float p_reach, Vector2 *r_away = nullptr, int *r_index = nullptr) const {
 		float best = p_reach + 1.0f;
 		if (items.is_empty()) {
 			return best;
@@ -87,6 +87,9 @@ struct VegetationObstacles {
 					const float d = to.length() - float(o.w);
 					if (d < best) {
 						best = d;
+						if (r_index) {
+							*r_index = int(i);
+						}
 						if (r_away) {
 							*r_away = to.length_squared() > 1e-12f ? to.normalized() : Vector2(1.0f, 0.0f);
 						}

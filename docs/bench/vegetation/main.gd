@@ -842,6 +842,29 @@ func _deadwood_checks() -> void:
 	var bare := ground.get_placements(0).size()
 	_check("stone gap: crevice plants only between stones, none on open ground or without stones", scree.size() > 30 and in_gap >= 5 and open_ground == 0 and bare == 0, [scree.size(), in_gap, open_ground, bare])
 	cover.stone_gap = 0.0
+	# Stone tops (PlantSpecies.stone_top): only on the caps, set on them above the ground.
+	var caps := PackedVector4Array()
+	for sv in scree:
+		caps.append(Vector4(sv.x, sv.y + 0.15, sv.z, sv.w * 0.8))
+	ground.obstacles = scree
+	ground.stone_tops = caps
+	cover.stone_top = true
+	ground.populate()
+	var on_cap := 0
+	var off_cap := 0
+	for p in ground.get_placements(0):
+		var ok_cap := false
+		for cp in caps:
+			if Vector2(p.x - cp.x, p.z - cp.z).length() < cp.w and p.y > cp.y - cp.w and p.y < cp.y:
+				ok_cap = true
+		if ok_cap:
+			on_cap += 1
+		else:
+			off_cap += 1
+	_check("stone tops: plants only on the stones' caps, set down on them", on_cap > 3 and off_cap == 0, [on_cap, off_cap])
+	cover.stone_top = false
+	ground.stone_tops = PackedVector4Array()
+	ground.obstacles = PackedVector4Array()
 	ground.populate()
 	# Stand margins (PlantSpecies.margin_*): the patch depth is positive inside a patch, negative
 	# outside, and about zero where the patch weight crosses one half.
@@ -1155,6 +1178,7 @@ func _stones_view() -> void:
 		st2.generate_normals()
 		meshes.append(st2.commit())
 	var obstacles := PackedVector4Array()
+	var tops := PackedVector4Array()
 	for i in stones.size():
 		var o: Vector4 = stones[i]
 		var mi := MeshInstance3D.new()
@@ -1167,6 +1191,7 @@ func _stones_view() -> void:
 		mi.transform = Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(o.w, o.w, o.w)), Vector3(o.x, o.y + o.w * 0.62 * 0.3, o.z))
 		add_child(mi)
 		obstacles.append(Vector4(o.x, o.y, o.z, o.w * 0.95))
+		tops.append(Vector4(o.x, o.y + o.w * 0.62 * 1.25, o.z, o.w * 0.5))
 	var stand: int = {"scree": PlantGenerator.STONES_SCREE, "river": PlantGenerator.STONES_RIVER, "shore": PlantGenerator.STONES_SHORE}.get(stone_view, PlantGenerator.STONES_SCREE)
 	var veg := VegetationField3D.new()
 	veg.name = "Stones"
@@ -1178,6 +1203,7 @@ func _stones_view() -> void:
 	b.species = stone_set
 	veg.biome = b
 	veg.obstacles = obstacles
+	veg.stone_tops = tops
 	add_child(veg)
 	veg.data_map = veg.get_path_to(dm)
 	veg.populate()

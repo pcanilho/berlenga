@@ -259,6 +259,14 @@ river gravels by mossy saxifrage, stonecrop and, near water, sedges and rushes.
   the foot of a lone boulder (`rock_foot`) does not. At 1 the species grows nowhere else.
 - `PlantGenerator.make_stones(STONES_SCREE | STONES_RIVER | STONES_SHORE)`: the sets.
 - The rock generator's `RockField3D.get_obstacles(rect, min_size)` gives the same (x, ground y, z,
-  radius) list `VegetationField3D.obstacles` takes. Next, when its stones are on main: moss
-  cushions on stone tops from `get_stones()` (its "top" and basis), and the river sets reading the
-  stones' water film.
+  radius) list `VegetationField3D.obstacles` takes.
+- Moss on stone tops (built 15 Nov): `PlantSpecies.stone_top` species grow only inside
+  `VegetationField3D.stone_tops` caps (x, y, z, radius), skipping the obstacle and crevice rules.
+  `get_stones()` "top" is the box of the stone's axes, too high on a tilted stone (moss floated
+  past its edge), so a cap is measured on the stone itself: a ray down onto its collision hull at
+  its centre gives the point and normal, and the cap widens in 4 cm steps while 8 rays round it stay
+  within 1.2 cm of that plane (docs/bench/rocks `--plants`). `stone_top_normals` carries the
+  normals; a plant sits on the cap's plane, 3 mm in. Without normals a cap is a dome of its radius.
+  The scree and river sets add moss cushions on tops (spacing 9 cm, so they clump into patches).
+- Next: the river sets reading the stones' water film; a cap helper in the rocks module (from the
+  library mesh, no physics) so a scene need not raycast.
