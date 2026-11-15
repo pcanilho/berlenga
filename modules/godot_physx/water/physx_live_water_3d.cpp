@@ -541,12 +541,14 @@ void PhysXLiveWater3D::_update_mesh() {
 			const int c = a + nx;
 			const int e = c + 1;
 			if (depth[a] > WET || depth[b] > WET || depth[c] > WET || depth[e] > WET) {
+				// Clockwise seen from above (Godot's front face): the path tracer
+				// takes the top as entering the water.
 				indices.push_back(a);
-				indices.push_back(c);
-				indices.push_back(b);
 				indices.push_back(b);
 				indices.push_back(c);
+				indices.push_back(b);
 				indices.push_back(e);
+				indices.push_back(c);
 			}
 		}
 	}
