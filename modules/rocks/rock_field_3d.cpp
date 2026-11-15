@@ -618,6 +618,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			}
 			const float course = 1.4f; // m, course thickness
 			const float min_tan = Math::tan(Math::deg_to_rad(50.0f));
+			// Steeper than this a heightfield face is a stretched step, not a wall with courses in it.
+			const float max_tan = Math::tan(Math::deg_to_rad(76.0f));
+			const real_t gen_cell = gen->get_cell_size();
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
@@ -629,10 +632,21 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const real_t e = 1.0;
 					const Vector2 grad((gen->get_height(c + Vector3(e, 0, 0)) - gen->get_height(c - Vector3(e, 0, 0))) / (2.0 * e), (gen->get_height(c + Vector3(0, 0, e)) - gen->get_height(c - Vector3(0, 0, e))) / (2.0 * e));
 					const float gl = grad.length();
-					if (gl < min_tan) {
+					if (gl < min_tan || gl > max_tan) {
 						continue;
 					}
 					const Vector2 up_dir = grad / gl; // uphill, in plan
+					// Only where the terrain mesh really has this face: across one terrain cell up and down the fall
+					// line the face must stay near planar. Where the heightfield cannot hold the wall (a near-vertical
+					// step between two vertices) the mesh and the bilinear height part by metres, and blocks set into
+					// the one float in front of the other.
+					{
+						const Vector3 u(up_dir.x * gen_cell, 0, up_dir.y * gen_cell);
+						const real_t bend = gen->get_height(c + u) + gen->get_height(c - u) - 2.0 * hc;
+						if (Math::abs(bend) > course * 0.5f) {
+							continue;
+						}
+					}
 					// The span of heights the face covers inside this cell, along the fall line.
 					const float half = float(sub) * 0.5f;
 					const float y0 = float(hc) - gl * half, y1 = float(hc) + gl * half;
@@ -681,6 +695,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const Vector3 n = Vector3(-grad.x, 1.0f, -grad.y).normalized();
 						const Vector3 surface(bp.x, yk, bp.y);
 						const Vector3 centre = surface - n * (axes.z * st.scale * (0.6f + 0.2f * rng.randf()));
+						// The centre must lie inside the rock (under the terrain at its own plan position), or the block
+						// stands out of a bend in the face rather than being set into it.
+						if (gen->get_height(centre) < centre.y + 0.1f * course) {
+							continue;
+						}
 						st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
 						st.position = centre;
 						st.ground = yk - 50.0f; // no contact band on a wall

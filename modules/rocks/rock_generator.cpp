@@ -91,7 +91,7 @@ int RockGenerator::get_effective_resolution() const {
 	if (resolution > 0) {
 		return resolution;
 	}
-	static const int res[FAMILY_MAX] = { 104, 64, 96, 56, 48, 112 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112 };
 	return res[family];
 }
 
@@ -424,6 +424,19 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const Vector3 n = jitter_dir(corner.normalized(), 25.0f);
 		planes.push_back({ n, n.dot(corner) * (0.6f + 0.25f * rng.randf()), true });
 	}
+	// Fresh fragments are not trimmed boxes: a block that fell broke along new fractures right through it, at any
+	// angle to the joints (Domokos et al. 2020: fragments average about six faces and eight vertices, but each one
+	// is an irregular polyhedron). Two to four planes, each taking 15 to 45% off one side.
+	if (family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK) {
+		const int through = (family == FAMILY_CLIFF_BLOCK ? 1 : 2) + int(rng.randf() * 2.99f);
+		for (int k = 0; k < through; k++) {
+			Vector3 n(rng.randfn(0.0f, 1.0f), rng.randfn(0.0f, 1.0f) * 0.6f, rng.randfn(0.0f, 1.0f));
+			n = n.length_squared() > 1e-6f ? n.normalized() : Vector3(1, 0, 0);
+			// Support of the block along n, then cut back from it.
+			const float support = Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
+			planes.push_back({ n, support * (0.55f + 0.3f * rng.randf()), true });
+		}
+	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
 	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2 };
 	LocalVector<RockScoop> scoops;
@@ -456,8 +469,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		cr.d = (rng.randf() * 1.2f - 0.6f) * extent;
 		cr.t0 = (rng.randf() - 0.5f) * 0.8f;
 		cr.half_length = 0.35f + 0.5f * rng.randf();
-		cr.width = MAX(0.7f * h, 0.012f) * (0.7f + 0.6f * rng.randf());
-		cr.depth = (0.12f + 0.2f * rng.randf()) * c;
+		cr.width = MAX(1.6f * h, 0.012f) * (1.0f + 0.5f * rng.randf());
+		cr.depth = MIN((0.12f + 0.2f * rng.randf()) * c, 0.3f * c);
 		cracks.push_back(cr);
 	}
 	auto shape = [&](const Vector3 &p, bool *r_fresh) {
@@ -486,7 +499,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	const float spheroidal = lith.spheroidal * weather * ((family == FAMILY_ROCKFALL || family == FAMILY_GLACIAL || family == FAMILY_CLIFF_BLOCK) ? 0.5f : 0.15f);
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f };
+	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	const float round_eff = MIN(1.0f, roundness + spheroidal * (1.0f - roundness));
 	// Corners round to at most 0.7 of the half thickness: a curvature flow run longer would shrink a thin stone to
 	// nothing (a sphere of radius r vanishes at t = r^2 / 4).
@@ -536,6 +550,33 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 	}
+	// Glacial facets: a boulder dragged in the base of the ice is ground flat on the face against the bed (soled
+	// and faceted clasts, Benn and Evans 2010), so a rounded block keeps one or two planar facets.
+	if (family == FAMILY_GLACIAL) {
+		const int facets = 1 + int(rng.randf() * 1.99f);
+		for (int k = 0; k < facets; k++) {
+			Vector3 n = k == 0 ? jitter_dir(Vector3(0, -1, 0), 12.0f) : jitter_dir(Vector3(rng.randfn(0.0f, 1.0f), rng.randfn(0.0f, 0.4f), rng.randfn(0.0f, 1.0f)).normalized(), 5.0f);
+			float support = -1e9f;
+			for (int z = 0; z < fine.nz; z++) {
+				for (int y = 0; y < fine.ny; y++) {
+					for (int x = 0; x < fine.nx; x++) {
+						if (fine.v[fine.idx(x, y, z)] < 0.0f) {
+							support = MAX(support, n.dot(fine.pos(x, y, z)));
+						}
+					}
+				}
+			}
+			const float d = support - (0.1f + 0.1f * rng.randf()) * c;
+			for (int z = 0; z < fine.nz; z++) {
+				for (int y = 0; y < fine.ny; y++) {
+					for (int x = 0; x < fine.nx; x++) {
+						float &v = fine.v[fine.idx(x, y, z)];
+						v = MAX(v, n.dot(fine.pos(x, y, z)) - d);
+					}
+				}
+			}
+		}
+	}
 	// Where the surface is a fresh break (lighter, no rind, no lichen): from the fracture, worn away by the transport.
 	RockGrid fresh_grid;
 	fresh_grid.init(half_box, h * 2.0f);
@@ -553,6 +594,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	LocalVector<int> band;
 	rk_band(fine, 5.0f * h, band);
 	const float worn = 1.0f - 0.75f * roundness; // transport wears the marks away
+	const bool fresh_family = family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK;
+	// Periodic marks finer than about five grid cells alias into combs and notches: no period below that.
+	const float min_period = 5.0f * h;
 	const Vector3 striae_dir = Vector3(Math::cos(rng.randf() * float(Math::TAU)), 0.0f, Math::sin(rng.randf() * float(Math::TAU))).normalized();
 	const Vector3 striae_perp(-striae_dir.z, 0.0f, striae_dir.x);
 	const float bed_tilt = (rng.randf() - 0.5f) * 0.35f;
@@ -566,15 +610,20 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		float phi = fine.v[i];
 		// Cracks: a slab along a joint, open only near the surface and over part of the face.
 		for (const RockCrack &cr : cracks) {
-			const float slab = cr.width * 0.5f - Math::abs(cr.n.dot(p) - cr.d);
+			// A real crack wanders and closes towards its tips: the plane wobbles, the gap tapers to nothing at the
+			// ends (a machined slot with square ends is what this replaced).
+			const float u = (cr.t.dot(p) - cr.t0) / cr.half_length;
+			const float open = Math::sqrt(MAX(0.0f, 1.0f - u * u));
+			const float wobble = 1.5f * h * rk_fbm(p * 7.0f, nseed + 91u, 2);
+			const float slab = cr.width * 0.5f * open - Math::abs(cr.n.dot(p) - cr.d - wobble);
 			const float along = cr.half_length - Math::abs(cr.t.dot(p) - cr.t0);
-			const float removed = MIN(MIN(slab, along), phi + cr.depth);
+			const float removed = MIN(MIN(slab, along), phi + cr.depth * open);
 			phi = MAX(phi, removed);
 		}
 		// Grain-scale roughness (grus on granite, sand grains on sandstone).
 		phi += lith.grain * float(detail) * 0.45f * h * rk_fbm(p / (2.2f * h), nseed, 2) * worn;
 		// Lumps a few voxels wide: no rock face is a plane.
-		phi += float(detail) * 1.1f * h * rk_fbm(p * 2.6f, nseed + 5u, 3) * (0.5f + 0.5f * worn);
+		phi += float(detail) * (fresh_family ? 0.45f : 1.1f) * h * rk_fbm(p * 2.6f, nseed + 5u, 3) * (0.5f + 0.5f * worn);
 		// Solution pits on the upper faces (karren on limestone; Ford and Williams 2007) or gas vesicles (basalt).
 		if (lith.pits > 0.0f) {
 			const bool karst = !lith.columnar;
@@ -586,14 +635,17 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 		// Bedding laminae etched out by weathering (differential erosion of the softer laminae), slightly cross-bedded.
 		if (lith.laminae > 0.0f) {
-			const float lam = 0.07f;
+			const float lam = MAX(0.07f, min_period);
 			const float s = (p.y + bed_tilt * p.x + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
 			const float groove = Math::pow(0.5f + 0.5f * Math::cos(s * float(Math::TAU)), 6.0f);
-			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * 1.3f * h * (1.0f - Math::abs(n.y)) * worn;
+			// Laminae differ: most barely etched, a few soft ones weathered back deep.
+			const float lamina = rk_hash(uint32_t(int(Math::floor(s + 0.5f)) + 4096) ^ nseed) / 4294967295.0f;
+			const float strength = 0.25f + 0.75f * lamina * lamina;
+			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * h * (1.0f - Math::abs(n.y)) * worn;
 		}
 		// Slaty cleavage: plates stepping back at the edges.
 		if (lith.cleavage > 0.0f) {
-			const float lam = 0.05f;
+			const float lam = MAX(0.05f, min_period);
 			const float s = (p.y + 0.01f * rk_fbm(p * 4.0f, nseed + 41u, 2)) / lam;
 			const float f = s - Math::floor(s);
 			phi += lith.cleavage * float(detail) * f * 1.4f * h * (1.0f - Math::abs(n.y)) * worn;
@@ -606,7 +658,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 		// Glacial striations: fine grooves on the faces the ice dragged over the bed, all one way.
 		if (family == FAMILY_GLACIAL) {
-			const float s = (striae_perp.dot(p) + 0.01f * rk_fbm(p * 5.0f, nseed + 61u, 2)) / (2.6f * h);
+			const float s = (striae_perp.dot(p) + 0.01f * rk_fbm(p * 5.0f, nseed + 61u, 2)) / MAX(2.6f * h, 0.6f * min_period);
 			const float g = Math::pow(0.5f + 0.5f * Math::cos(s * float(Math::TAU)), 10.0f) * Math::smoothstep(0.55f, 0.9f, Math::abs(n.y));
 			phi += float(detail) * g * 0.9f * h * (0.5f + 0.5f * rk_noise(p * 6.0f, nseed + 71u));
 		}
