@@ -5,7 +5,7 @@ description: "A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstructio
 
 <section class="hero">
 <h1><img src="media/berlenga-512.png" alt="" width="72" height="72"><span>Berlenga</span></h1>
-<p class="lead">A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds. Based on <a href="https://github.com/NVIDIA-RTX/godot">NVIDIA-RTX/godot</a> (2 November 2026).</p>
+<p class="lead">A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds. Based on <a href="https://github.com/NVIDIA-RTX/godot">NVIDIA-RTX/godot</a>.</p>
 <div class="btns"><a class="btn primary" href="https://github.com/pcanilho/berlenga/releases/latest">Download</a><a class="btn" href="getting-started/">Getting started</a><a class="btn" href="https://github.com/pcanilho/berlenga">Source</a></div>
 </section>
 
