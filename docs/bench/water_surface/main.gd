@@ -13,7 +13,8 @@ extends Node3D
 #   --view=lip      low in the shallows, looking back at the plunging lips (--node=shore_waves:true)
 #   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
 #   --view=storm    a gale over deep open sea (22 m/s, 4 cascades, depth 80 m, no floor) from 7 m up; storm_sun looks
-#                   toward the sun from 9 m up, through the crests
+#                   toward the sun from 9 m up, through the crests; storm_low looks downwind from 3.5 m at 20 m/s
+#                   (the windrows run away from the viewer)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -272,6 +273,8 @@ func _ready() -> void:
 		water.set("fetch", 500000.0)
 		water.set("swell", 0.4)
 		water.set("render_extent", 3000.0)
+		if view == "storm_low":
+			water.set("wind_speed", 20.0)
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
@@ -348,6 +351,10 @@ func _ready() -> void:
 			pass # follows the boat (_process)
 		"storm":
 			cam.look_at_from_position(Vector3(0, 7.0, 0.0), Vector3(-15.0, 2.0, -80.0))
+		"storm_low":
+			# Low, looking downwind: the streaks run off toward the horizon, the crests' spume blows away from us.
+			var wd := Vector2(-0.3, 1.0).normalized()
+			cam.look_at_from_position(Vector3(0, 3.5, 0.0), Vector3(wd.x * 80.0, 1.0, wd.y * 80.0))
 		"storm_sun":
 			# Into the light, low: the thin crests between camera and sun.
 			var to_sun := sun.transform.basis.z

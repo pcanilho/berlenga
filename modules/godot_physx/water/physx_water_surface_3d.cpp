@@ -50,6 +50,8 @@
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/curve_texture.h"
+#include "scene/resources/gradient_texture.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/sky.h"
 
@@ -760,6 +762,21 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		// The finest cascade's foam only: the long ones' cells are metres wide and trail as blurred smears.
 		float trail = max(ocean_tex(ocean_foam_tex, world_xz - sd * d1).r * (1.0 - d1 / 14.0), ocean_tex(ocean_foam_tex, world_xz - sd * d2).r * (1.0 - d2 / 14.0));
 		amount = max(amount, 0.8 * trail * fade * foam_streaks);
+		// The windrows themselves (Beaufort 8 and up: "foam blown in well-marked streaks along the wind"): narrow
+		// lines along the wind a few metres apart, wandering a little and broken into lengths of tens of metres.
+		// They are what reads as a gale from a low view, converging on the horizon downwind.
+		float along = dot(world_xz, sd);
+		float across = dot(world_xz, vec2(-sd.y, sd.x)) + 1.5 * foam_value_noise(vec2(along * 0.02, 3.1)) + 0.4 * foam_value_noise(vec2(along * 0.1, 8.3));
+		// Value noise stretched about fifty to one along the wind, cut at a high level: many thin, broken,
+		// marbled filaments rather than painted lines, gathered into bands by a slower noise across the wind.
+		vec2 sq = vec2(along * 0.06, across * 3.0);
+		float v = 0.6 * foam_value_noise(sq) + 0.4 * foam_value_noise(sq * vec2(5.0, 2.7) + 5.0);
+		float streak = smoothstep(0.52, 0.8, v) * smoothstep(0.05, 0.45, foam_value_noise(vec2(along * 0.012, across * 0.1)));
+		// A pixel's rough footprint (about 2 mrad, from the grid's centre, which follows the camera; no
+		// derivatives, as the vertex stage calls this too): past where the filaments are thinner than a pixel
+		// they fade toward their mean cover rather than shimmering.
+		streak = mix(streak, 0.12, clamp(0.002 * length(rel) * 3.0 - 0.2, 0.0, 1.0));
+		amount = max(amount, 0.7 * streak * fade * foam_streaks);
 	}
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
 	if (flow_foam_live) {
@@ -2946,6 +2963,7 @@ void PhysXWaterSurface3D::set_crest_spray(bool p_enabled) {
 	crest_spray = p_enabled;
 	if (!crest_spray && crest_spray_node != nullptr) {
 		crest_spray_node->set_emitting(false);
+		crest_spume_node->set_emitting(false);
 	}
 }
 
@@ -3006,6 +3024,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_rate = 0.0f;
 		if (crest_spray_node != nullptr) {
 			crest_spray_node->set_emitting(false);
+			crest_spume_node->set_emitting(false);
 		}
 		return;
 	}
@@ -3026,6 +3045,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_rate = 0.0f;
 		if (crest_spray_node != nullptr) {
 			crest_spray_node->set_emitting(false);
+			crest_spume_node->set_emitting(false);
 		}
 		return;
 	}
@@ -3056,6 +3076,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_rate = 0.0f;
 		if (crest_spray_node != nullptr) {
 			crest_spray_node->set_emitting(false);
+			crest_spume_node->set_emitting(false);
 		}
 		return;
 	}
@@ -3074,6 +3095,7 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		crest_spray_node->set_process_material(crest_spray_material);
 		crest_spray_node->set_draw_pass_mesh(0, _spray_droplet_mesh());
 		add_child(crest_spray_node, false, INTERNAL_MODE_BACK);
+		_make_crest_spume();
 	}
 	if (crest_spray_node->get_amount() != crest_spray_amount) {
 		crest_spray_node->set_amount(crest_spray_amount);
@@ -3115,6 +3137,106 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 	crest_spray_node->set_amount_ratio(CLAMP(crest_spray_rate * lifetime / crest_spray_amount, 0.0f, 1.0f));
 	crest_spray_node->set_visibility_aabb(box.grow(0.6f * wind_speed * lifetime + 4.0f));
 	crest_spray_node->set_emitting(true);
+	// The spume: the same crests, the same share, an eighth as many puffs, kept low (sheets blown along the crests, not plumes) (each a cloud of the droplets).
+	crest_spume_material->set_emission_point_texture(crest_spray_points_tex);
+	crest_spume_material->set_emission_point_count(used);
+	crest_spume_material->set_direction(Vector3(wd.x, 0.06f, wd.y).normalized());
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.2f * wind_speed);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.4f * wind_speed);
+	crest_spume_material->set_gravity(Vector3(wd.x * 0.2f * wind_speed, -2.5f, wd.y * 0.2f * wind_speed));
+	const int spume_amount = MAX(16, crest_spray_amount / 8);
+	if (crest_spume_node->get_amount() != spume_amount) {
+		crest_spume_node->set_amount(spume_amount);
+	}
+	crest_spume_node->set_amount_ratio(crest_spray_node->get_amount_ratio());
+	crest_spume_node->set_visibility_aabb(box.grow(0.6f * wind_speed * 2.0f + 6.0f));
+	crest_spume_node->set_emitting(true);
+}
+
+// Spume (Monahan et al. 1986; Andreas 1998): past about 9 m/s the wind tears the crests into sheets of fine
+// spray that read as white smoke blowing off each breaking wave, far bigger and softer than the droplets. Soft
+// round blots facing the camera that grow and thin out as they spread, lit from behind (thin spray glows
+// against the sun), as the falls' spray puffs.
+void PhysXWaterSurface3D::_make_crest_spume() {
+	crest_spume_node = memnew(GPUParticles3D);
+	crest_spume_node->set_name("CrestSpume");
+	crest_spume_node->set_use_local_coordinates(false);
+	crest_spume_node->set_lifetime(2.0);
+	crest_spume_material.instantiate();
+	crest_spume_material->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_POINTS);
+	crest_spume_material->set_spread(15.0f);
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 1.0f);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 2.0f);
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 1.2f);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 3.5f);
+	crest_spume_material->set_param_min(ParticleProcessMaterial::PARAM_ANGLE, -180.0f);
+	crest_spume_material->set_param_max(ParticleProcessMaterial::PARAM_ANGLE, 180.0f);
+	Ref<Curve> grow;
+	grow.instantiate();
+	grow->add_point(Vector2(0.0f, 0.3f));
+	grow->add_point(Vector2(1.0f, 1.0f));
+	Ref<CurveTexture> grow_tex;
+	grow_tex.instantiate();
+	grow_tex->set_curve(grow);
+	crest_spume_material->set_param_texture(ParticleProcessMaterial::PARAM_SCALE, grow_tex);
+	Ref<Gradient> fade;
+	fade.instantiate();
+	fade->set_offset(0, 0.0f);
+	fade->set_color(0, Color(1, 1, 1, 0.0f));
+	fade->set_offset(1, 1.0f);
+	fade->set_color(1, Color(1, 1, 1, 0.0f));
+	fade->add_point(0.1f, Color(1, 1, 1, 0.6f));
+	fade->add_point(0.5f, Color(1, 1, 1, 0.3f));
+	Ref<GradientTexture1D> fade_tex;
+	fade_tex.instantiate();
+	fade_tex->set_gradient(fade);
+	crest_spume_material->set_color_ramp(fade_tex);
+	crest_spume_node->set_process_material(crest_spume_material);
+	Ref<QuadMesh> quad;
+	quad.instantiate();
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(R"(
+shader_type spatial;
+render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled;
+uniform vec3 spray_color : source_color = vec3(0.93, 0.95, 0.97);
+varying float seed;
+void vertex() {
+	seed = INSTANCE_CUSTOM.x;
+	mat4 mat_world = mat4(normalize(INV_VIEW_MATRIX[0]), normalize(INV_VIEW_MATRIX[1]), normalize(INV_VIEW_MATRIX[2]), MODEL_MATRIX[3]);
+	mat_world = mat_world * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));
+	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
+	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+}
+float h(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h(i), h(i + vec2(1.0, 0.0)), u.x), mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+void fragment() {
+	// A ragged blot: the edge eaten by noise fixed to the puff (seeded by its random spin angle).
+	vec2 q = UV * 2.0 - 1.0;
+	float r = length(q);
+	float n = 0.6 * vn(q * 2.5 + seed * 91.0) + 0.4 * vn(q * 6.0 - seed * 37.0);
+	float blot = 1.0 - smoothstep(0.0, 1.0, r + 0.6 * (n - 0.5));
+	ALBEDO = spray_color;
+	BACKLIGHT = spray_color * 0.6;
+	ROUGHNESS = 1.0;
+	ALPHA = clamp(blot, 0.0, 1.0) * COLOR.a;
+}
+)");
+	Ref<ShaderMaterial> qm;
+	qm.instantiate();
+	qm->set_shader(sh);
+	quad->set_material(qm);
+	crest_spume_node->set_draw_pass_mesh(0, quad);
+	add_child(crest_spume_node, false, INTERNAL_MODE_BACK);
 }
 
 Dictionary PhysXWaterSurface3D::get_breaker_stats() const {
