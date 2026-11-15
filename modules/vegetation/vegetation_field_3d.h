@@ -150,7 +150,7 @@ class VegetationField3D : public Node3D {
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
-		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, radius (mesh space); empty if not deadwood.
+		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, widest reach, then optionally the reach profile (mesh space); empty if not deadwood.
 		float deadwood_reach = 0.0f; // How far its logs reach from the plant's origin (times its largest scale); 0: not deadwood.
 	};
 	struct PlaceSetup {

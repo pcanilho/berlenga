@@ -273,6 +273,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_patch_depth", "position"), &PlantSpecies::get_patch_depth_at);
 	ClassDB::bind_method(D_METHOD("set_rock_foot", "amount"), &PlantSpecies::set_rock_foot);
 	ClassDB::bind_method(D_METHOD("get_rock_foot"), &PlantSpecies::get_rock_foot);
+	ClassDB::bind_method(D_METHOD("set_stone_gap", "amount"), &PlantSpecies::set_stone_gap);
+	ClassDB::bind_method(D_METHOD("get_stone_gap"), &PlantSpecies::get_stone_gap);
 	ClassDB::bind_method(D_METHOD("set_margin_width", "width"), &PlantSpecies::set_margin_width);
 	ClassDB::bind_method(D_METHOD("get_margin_width"), &PlantSpecies::get_margin_width);
 	ClassDB::bind_method(D_METHOD("set_margin_scale", "scale"), &PlantSpecies::set_margin_scale);
@@ -338,6 +340,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sward_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sward_shade", "get_sward_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "litter_color"), "set_litter_color", "get_litter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_foot", PROPERTY_HINT_RANGE, "0,8,0.1"), "set_rock_foot", "get_rock_foot");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stone_gap", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_stone_gap", "get_stone_gap");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "margin_width", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_margin_width", "get_margin_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "margin_scale", PROPERTY_HINT_RANGE, "0.05,1,0.01"), "set_margin_scale", "get_margin_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "margin_lean", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:°"), "set_margin_lean", "get_margin_lean");

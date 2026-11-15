@@ -261,11 +261,11 @@ Transform3D PlantGenerator::_add_stem(const Transform3D &p_base, float p_length,
 	return Transform3D(f, p);
 }
 
-void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint) {
-	// A dome along the base's z: flower centres, clover heads, plantain spikes.
+void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint, int p_rings, int p_sectors) {
+	// A dome along the base's z: flower centres, clover heads, plantain spikes, succulent leaves.
 	Builder &b = builders[p_surface];
-	const int rings = 4;
-	const int sectors = 10;
+	const int rings = MAX(p_rings, 1);
+	const int sectors = MAX(p_sectors, 3);
 	const int first = b.verts.size();
 	const Basis f = p_base.basis.orthonormalized();
 	for (int r = 0; r <= rings; r++) {
@@ -401,6 +401,15 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 			return true;
 		case PRESET_HEATHER:
 			r_phenology = { 1150.0f, 1700.0f, -1.0f, true }; // August and September; brown bells all winter.
+			return true;
+		case PRESET_SAXIFRAGE:
+			r_phenology = { 300.0f, 950.0f, 150.0f, true }; // May to July.
+			return true;
+		case PRESET_STONECROP:
+			r_phenology = { 700.0f, 1150.0f, 200.0f, true }; // June and July.
+			return true;
+		case PRESET_THRIFT:
+			r_phenology = { 250.0f, 1500.0f, -1.0f, false }; // April to September; papery heads stand.
 			return true;
 		default:
 			return false;
@@ -2975,6 +2984,310 @@ void PlantGenerator::_build_sorrel() {
 	}
 }
 
+// Plants between stones (docs/ideas/vegetation.md, "Plants between stones"): they root in the fine
+// soil caught in the gaps of scree, river gravel and shingle and in rock cracks, where the stones
+// shade the roots, hold water and keep grazing and trampling off.
+
+// Parsley fern (Cryptogramma crispa; Page 1997): a tuft 15 to 30 cm on acid scree and block litter,
+// many bright green fronds from one crown, two or three times divided like parsley; the sterile
+// fronds spread, the fertile ones stand taller with narrow segments rolled over the spores. It dies
+// back early in autumn and its rusty fronds stand into winter.
+void PlantGenerator::_build_parsley_fern() {
+	const int fronds = int(_rand(10.0f, 20.0f));
+	const float spin = _rand(0.0f, Math::TAU);
+	const float big = _rand(0.12f, 0.22f);
+	const FrondSeason fs = _frond_season(180.0f, 300.0f, 250.0f, 300.0f);
+	auto frond = [&](int p_i, float p_unfurl, float p_dead, float p_lodge) {
+		const Wither wither(this, p_dead);
+		const bool fertile = (p_i % 3) == 0;
+		const float grow = Math::lerp(0.15f, 1.0f, p_unfurl);
+		const float stipe = fertile ? 0.55f : 0.45f; // The bare stalk's share of the frond.
+		const float length = big * (fertile ? 1.25f : 1.0f) * _rand(0.8f, 1.1f) * grow;
+		const int segs = 10;
+		// Withered fronds sag before the winter flattens them.
+		const float slump = MAX(p_lodge, 0.3f * p_dead);
+		const float elevation = Math::lerp(fertile ? 1.3f : _rand(0.9f, 1.2f), 0.25f, slump);
+		Basis f = organ_frame(polar_dir(spin + p_i * GOLDEN_ANGLE, elevation), Vector3(0, 1, 0));
+		Vector3 p(0, 0.005f, 0);
+		const float arch = Math::lerp(6.0f, fertile ? 0.3f : _rand(0.5f, 0.9f), smoothstep_f(0.0f, 0.7f, p_unfurl)) + slump;
+		LocalVector<Transform3D> frames;
+		const Transform3D start(f, p);
+		for (int k = 0; k <= segs; k++) {
+			frames.push_back(Transform3D(f, p));
+			if (k < segs) {
+				f = Basis(f.get_column(0), arch / segs) * f;
+				f.orthonormalize();
+				p += f.get_column(2) * (length / segs);
+			}
+		}
+		_add_stem(start, length, 0.0014f, 0.0006f, arch, segs, 0.0f);
+		// The blade: a triangle of pinnae, longest at its base, each a deeply lobed segment.
+		const int pinnae = int(_rand(8.0f, 12.0f));
+		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
+		for (int k = 0; k < pinnae; k++) {
+			const float u = float(k) / float(pinnae - 1);
+			const float s = Math::lerp(stipe, 0.98f, u);
+			const float fi = s * segs;
+			const int fa = MIN(int(fi), segs - 1);
+			const Transform3D fr = frames[fa].interpolate_with(frames[fa + 1], fi - fa);
+			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
+			const float plen = length / grow * pinna_grow * 0.3f * (1.0f - 0.75f * u);
+			if (plen < 0.003f) {
+				continue;
+			}
+			const Vector3 fwd = (fr.basis.get_column(0) * side * 0.75f + fr.basis.get_column(2) * 0.65f).normalized();
+			Leaf l;
+			l.shape = LEAF_LANCEOLATE;
+			l.length = plen;
+			l.width = plen * (fertile ? 0.22f : 0.5f);
+			l.fold = (fertile ? 0.5f : 0.2f) + 0.4f * p_dead;
+			l.bend = 0.3f + 0.6f * p_lodge;
+			l.lobes = fertile ? 0 : 4;
+			l.lobe_depth = 0.6f;
+			l.segments = 6;
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, fr.basis.get_column(1)), fr.origin), l, s);
+		}
+	};
+	for (int i = 0; i < fronds; i++) {
+		if (fs.old_share > 0.0f && float(i) < fronds * fs.old_share + 0.5f) {
+			frond(i, 1.0f, 1.0f, fs.old_lodge);
+		}
+		if (fs.unfurl > 0.0f) {
+			frond(i, fs.unfurl, fs.dead, fs.lodge);
+		}
+	}
+}
+
+// Maidenhair spleenwort (Asplenium trichomanes; Page 1997): a flat rosette of narrow fronds 5 to
+// 20 cm from rock cracks and wall joints, each a shiny black-brown rachis with 15 to 30 pairs of
+// small, rounded-oblong pinnae. Evergreen: old fronds shed their pinnae and the bare black
+// rachises stay in the tuft.
+void PlantGenerator::_build_spleenwort() {
+	const int fronds = int(_rand(8.0f, 18.0f));
+	const float spin = _rand(0.0f, Math::TAU);
+	const float big = _rand(0.07f, 0.15f);
+	Leaf l;
+	l.shape = LEAF_OVATE;
+	l.fold = 0.15f;
+	l.bend = 0.15f;
+	l.segments = 3;
+	for (int i = 0; i < fronds; i++) {
+		const float u = float(i) / float(fronds);
+		const bool old = _rand(0.0f, 1.0f) < 0.2f;
+		const float length = big * _rand(0.75f, 1.1f) * (1.0f - 0.25f * u);
+		const float arch = _rand(0.4f, 1.0f);
+		const Transform3D base(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, _rand(0.5f, 1.0f)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0));
+		const int segs = 8;
+		const LocalVector<Transform3D> fr = _stem_frames(base, length, arch, segs);
+		_add_stem(base, length, 0.0009f, 0.0004f, arch, segs, 0.0f);
+		// Old fronds keep a few withered pinnae near the tip.
+		const float keep_from = old ? _rand(0.6f, 1.0f) : 0.08f;
+		const Wither wither(this, old ? 0.8f : 0.0f);
+		const int pairs = int(_rand(12.0f, 20.0f));
+		for (int k = 0; k < pairs; k++) {
+			const float s = Math::lerp(0.08f, 0.97f, (k + 0.5f) / float(pairs));
+			if (s < keep_from) {
+				continue;
+			}
+			const Transform3D at = _frame_at(fr, s);
+			const float plen = MAX(length * 0.06f * (0.5f + 0.5f * Math::sin(float(Math::PI) * s)), 0.002f);
+			for (int side = -1; side <= 1; side += 2) {
+				const Vector3 fwd = (at.basis.get_column(0) * float(side) + at.basis.get_column(2) * 0.25f).normalized();
+				l.length = plen;
+				l.width = plen * 0.7f;
+				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, at.basis.get_column(1)), at.origin), l, s);
+			}
+		}
+	}
+}
+
+// Biting stonecrop (Sedum acre; Stace 2019): a mat of short creeping and rising shoots 2 to 10 cm
+// on shingle, sand, scree and wall tops, packed with fat, egg-shaped succulent leaves 3 to 6 mm
+// (water stores for the drought between stones), and bright yellow stars of five pointed petals
+// in June and July. The leaves are solid beads, so they are geometry on the stem surface.
+void PlantGenerator::_build_stonecrop() {
+	const int shoots = int(_rand(12.0f, 24.0f));
+	const float mat = _rand(0.03f, 0.07f);
+	Leaf p;
+	p.shape = LEAF_LANCEOLATE;
+	p.fold = 0.2f;
+	p.bend = -0.1f;
+	p.segments = 3;
+	for (int i = 0; i < shoots; i++) {
+		const float a = _rand(0.0f, Math::TAU);
+		const float r = mat * Math::sqrt(_rand(0.0f, 1.0f));
+		const Vector3 at(Math::cos(a) * r, 0.0f, Math::sin(a) * r);
+		// Creeping from the base, then turning up (a negative bend curls towards the sky).
+		const float len = _rand(0.02f, 0.06f);
+		const float bend = _rand(-0.6f, -0.2f);
+		const Transform3D base(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(0.35f, 0.9f)), Vector3(0, 1, 0)), at);
+		const int segs = 4;
+		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, segs);
+		_add_stem(base, len, 0.0012f, 0.001f, bend, segs, 0.0f);
+		const int leaves = int(_rand(8.0f, 12.0f));
+		for (int k = 0; k < leaves; k++) {
+			const float s = Math::lerp(0.15f, 1.0f, float(k) / float(leaves - 1));
+			const Transform3D t = _frame_at(fr, s);
+			const float ang = k * GOLDEN_ANGLE;
+			const Vector3 radial = t.basis.get_column(0) * Math::cos(ang) + t.basis.get_column(1) * Math::sin(ang);
+			// Pressed against the shoot towards its tip (imbricate), spreading lower down.
+			const Vector3 d = (radial * Math::lerp(0.9f, 0.35f, s) + t.basis.get_column(2)).normalized();
+			const float sz = _rand(0.003f, 0.005f) * Math::lerp(1.0f, 0.75f, s);
+			_add_head(SURFACE_STEM, Transform3D(organ_frame(d, t.basis.get_column(2)), t.origin), sz * 0.42f, sz, Color(1, 1, 1), 2, 6);
+		}
+		if (_rand(0.0f, 1.0f) >= 0.6f) {
+			continue;
+		}
+		const Bloom bloom = _bloom();
+		const Transform3D top = _frame_at(fr, 1.0f);
+		const Vector3 face = (top.basis.get_column(2) + Vector3(0, 1, 0)).normalized();
+		const Basis fb = organ_frame(face, Vector3(1, 0, 0));
+		if (bloom == BLOOM_SEED) {
+			_add_head(SURFACE_STEM, Transform3D(fb, top.origin), 0.002f, 0.0025f, Color(0.75f, 0.6f, 0.45f), 2, 6);
+		} else if (bloom == BLOOM_FLOWER) {
+			const float sz = _rand(0.005f, 0.007f);
+			p.length = sz;
+			p.width = sz * 0.4f;
+			const float spin = _rand(0.0f, Math::TAU);
+			const Vector3 o = top.origin + face * 0.002f;
+			for (int k = 0; k < 5; k++) {
+				const float pa = spin + k * Math::TAU / 5.0f;
+				const Vector3 d = (fb.get_column(0) * Math::cos(pa) + fb.get_column(1) * Math::sin(pa) + face * 0.2f).normalized();
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), o), p, 1.0f);
+			}
+			_add_head(SURFACE_CENTRE, Transform3D(fb, o), 0.0015f, 0.0015f);
+		}
+	}
+}
+
+// Mossy saxifrage (Saxifraga hypnoides; Stace 2019): a loose green cushion of leafy rosettes on
+// rock ledges, scree and stream gravels of the uplands, the leaves cut into three to five narrow
+// pointed lobes, and from May to July white flowers of five petals 1 to 1.5 cm across, one to
+// three on slender stalks 5 to 20 cm.
+void PlantGenerator::_build_saxifrage() {
+	const int rosettes = int(_rand(8.0f, 16.0f));
+	const float cushion = _rand(0.04f, 0.08f);
+	Leaf l;
+	l.shape = LEAF_PALMATE;
+	l.lobes = 2;
+	l.lobe_depth = 0.7f;
+	l.petiole = 0.3f;
+	l.fold = 0.2f;
+	l.bend = 0.2f;
+	l.segments = 5;
+	for (int i = 0; i < rosettes; i++) {
+		const float a = _rand(0.0f, Math::TAU);
+		const float u = Math::sqrt(_rand(0.0f, 1.0f));
+		// On the cushion's dome: rosettes higher in the middle, tilted out at the rim.
+		const Vector3 at(Math::cos(a) * cushion * u, cushion * 0.45f * (1.0f - u * u), Math::sin(a) * cushion * u);
+		const Vector3 up = Vector3(Math::cos(a) * u * 0.8f, 1.0f, Math::sin(a) * u * 0.8f).normalized();
+		const Vector3 foot(at.x * 0.6f, 0.0f, at.z * 0.6f);
+		const Vector3 rise = at - foot;
+		if (rise.length() > 0.005f) {
+			_add_stem(Transform3D(organ_frame(rise, Vector3(1, 0, 0)), foot), rise.length(), 0.0012f, 0.001f, 0.0f, 2, 0.0f);
+		}
+		const Basis nb = organ_frame(up, Vector3(1, 0, 0));
+		const int leaves = int(_rand(6.0f, 10.0f));
+		const float spin = _rand(0.0f, Math::TAU);
+		for (int k = 0; k < leaves; k++) {
+			const float b = spin + k * GOLDEN_ANGLE;
+			const float inner = float(k) / float(leaves); // Later leaves inner: smaller and more upright.
+			const Vector3 radial = nb.get_column(0) * Math::cos(b) + nb.get_column(1) * Math::sin(b);
+			const Vector3 d = (radial * Math::lerp(1.0f, 0.5f, inner) + up * Math::lerp(0.35f, 1.0f, inner)).normalized();
+			l.length = _rand(0.008f, 0.014f) * Math::lerp(1.0f, 0.6f, inner);
+			l.width = l.length * 0.8f;
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, up), at), l, 0.3f);
+		}
+	}
+	plant_height = MAX(plant_height, cushion * 0.6f);
+	Leaf p;
+	p.shape = LEAF_SPATULATE;
+	p.fold = 0.1f;
+	p.bend = -0.2f;
+	p.segments = 3;
+	const int stalks = int(_rand(0.0f, 5.0f));
+	for (int i = 0; i < stalks; i++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		const float a = _rand(0.0f, Math::TAU);
+		const float r = cushion * _rand(0.0f, 0.6f);
+		const Transform3D base(organ_frame(polar_dir(a, _rand(1.25f, 1.5f)), Vector3(0, 1, 0)), Vector3(Math::cos(a) * r, cushion * 0.3f, Math::sin(a) * r));
+		const Transform3D top = _add_stem(base, _rand(0.05f, 0.14f), 0.0007f, 0.0005f, _rand(-0.2f, 0.3f), 6, 0.0f);
+		const int heads = int(_rand(1.0f, 3.99f));
+		for (int h = 0; h < heads; h++) {
+			const float ha = _rand(0.0f, Math::TAU);
+			const Vector3 lateral = top.basis.get_column(0) * Math::cos(ha) + top.basis.get_column(1) * Math::sin(ha);
+			const Vector3 dir = (top.basis.get_column(2) + lateral * 0.6f).normalized();
+			const Transform3D pt = _add_stem(Transform3D(organ_frame(dir, Vector3(0, 1, 0)), top.origin), _rand(0.008f, 0.015f), 0.0005f, 0.0004f, 0.4f, 3, 1.0f);
+			if (bloom == BLOOM_SEED) {
+				_add_head(SURFACE_STEM, pt, 0.002f, 0.004f);
+				continue;
+			}
+			const Vector3 face = (pt.basis.get_column(2) + Vector3(0, 0.8f, 0)).normalized();
+			const Basis fb = organ_frame(face, Vector3(1, 0, 0));
+			const float sz = _rand(0.005f, 0.007f);
+			p.length = sz;
+			p.width = sz * 0.75f;
+			const float spin = _rand(0.0f, Math::TAU);
+			for (int k = 0; k < 5; k++) {
+				const float pa = spin + k * Math::TAU / 5.0f;
+				const Vector3 d = (fb.get_column(0) * Math::cos(pa) + fb.get_column(1) * Math::sin(pa) + face * 0.3f).normalized();
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), pt.origin), p, 1.0f);
+			}
+			_add_head(SURFACE_CENTRE, Transform3D(fb, pt.origin), 0.0018f, 0.002f);
+		}
+	}
+}
+
+// Thrift (Armeria maritima; Stace 2019): a dense cushion of narrow, grass-like leaves 2 to 15 cm on
+// sea cliffs, shingle and salt marsh and on mountain scree and river gravels, with round pink heads
+// 1.5 to 2.5 cm across on leafless stalks 5 to 30 cm from April to September; spent heads stand
+// papery and pale brown.
+void PlantGenerator::_build_thrift() {
+	const int leaves = int(_rand(40.0f, 80.0f));
+	const float cushion = _rand(0.025f, 0.05f);
+	Leaf l;
+	l.shape = LEAF_LINEAR;
+	l.fold = 0.4f;
+	l.segments = 5;
+	for (int i = 0; i < leaves; i++) {
+		const float a = _rand(0.0f, Math::TAU);
+		const float u = Math::sqrt(_rand(0.0f, 1.0f));
+		const Vector3 at(Math::cos(a) * cushion * u, 0.0f, Math::sin(a) * cushion * u);
+		l.length = _rand(0.03f, 0.09f);
+		l.width = _rand(0.0015f, 0.0025f);
+		l.bend = _rand(0.6f, 1.4f);
+		l.twist = _rand(-0.5f, 0.5f);
+		const float elevation = Math::lerp(1.45f, 0.85f, u) + _rand(-0.15f, 0.15f);
+		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(a + _rand(-0.5f, 0.5f), elevation), Vector3(0, 1, 0)), at), l, 0.0f, 0.85f);
+	}
+	Leaf fl;
+	fl.shape = LEAF_SPATULATE;
+	fl.length = 0.0045f;
+	fl.width = 0.003f;
+	fl.fold = 0.3f;
+	fl.bend = -0.3f;
+	fl.segments = 2;
+	const int scapes = int(_rand(1.0f, 7.0f));
+	for (int i = 0; i < scapes; i++) {
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(false, nullptr, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		const float a = _rand(0.0f, Math::TAU);
+		const Vector3 at(Math::cos(a) * cushion * 0.5f, 0.0f, Math::sin(a) * cushion * 0.5f);
+		const Transform3D top = _add_stem(Transform3D(organ_frame(polar_dir(a, _rand(1.3f, 1.5f)), Vector3(0, 1, 0)), at), _rand(0.08f, 0.22f), 0.0009f, 0.0007f, _rand(-0.15f, 0.25f), 6, 0.0f);
+		const Basis hb = top.basis.orthonormalized();
+		const Wither wither(this, bloom == BLOOM_SEED ? MAX(dead, 0.8f) : 0.0f);
+		// The papery involucre cupping the head, then the florets packed over it.
+		_add_head(SURFACE_CENTRE, Transform3D(hb, top.origin), 0.0055f, 0.003f);
+		_add_vogel_head(Transform3D(hb, top.origin + hb.get_column(2) * 0.002f), 0.022f, 40, fl);
+	}
+}
+
 void PlantGenerator::_build_ivy() {
 	const int runners = int(_rand(3.0f, 6.0f));
 	Leaf l;
@@ -3314,6 +3627,12 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.base_tint = Color(0.9f, 0.92f, 0.75f, 0.3f);
 		} else if (preset == PRESET_SORREL) {
 			t.base_tint = Color(0.45f, 0.35f, 0.12f, 0.4f);
+		} else if (preset == PRESET_STONECROP) {
+			t.base_tint = Color(0.85f, 0.62f, 0.02f, 0.3f);
+		} else if (preset == PRESET_SAXIFRAGE) {
+			t.base_tint = Color(0.88f, 0.9f, 0.62f, 0.25f);
+		} else if (preset == PRESET_THRIFT) {
+			t.base_tint = Color(0.62f, 0.25f, 0.42f, 0.35f);
 		} else {
 			t.base_tint = Color(0.9f, 0.55f, 0.02f, 0.4f);
 		}
@@ -3588,6 +3907,38 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.3f;
 			t.spots = 0.5f;
 			break;
+		case PRESET_PARSLEY_FERN:
+			l.shape = LEAF_LANCEOLATE;
+			l.lobes = 4;
+			l.lobe_depth = 0.6f;
+			t.aspect = 0.32f;
+			t.yellowing = 0.15f;
+			t.spots = 0.1f;
+			break;
+		case PRESET_SPLEENWORT:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.7f;
+			t.vein = leaf_color.lerp(Color(0.3f, 0.4f, 0.2f), 0.2f); // Veins hidden in a thick pinna.
+			t.yellowing = 0.1f;
+			t.spots = 0.25f;
+			break;
+		case PRESET_SAXIFRAGE:
+			l.shape = LEAF_PALMATE;
+			l.lobes = 2;
+			l.lobe_depth = 0.7f;
+			t.aspect = 0.8f;
+			t.venation = VENATION_PALMATE;
+			t.yellowing = 0.15f;
+			break;
+		case PRESET_THRIFT:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.08f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.25f;
+			t.spots = 0.1f;
+			break;
+		case PRESET_STONECROP: // Succulent leaves are solid beads on the stem surface, untextured.
 		case PRESET_FLY_AGARIC:
 		case PRESET_CEP:
 		case PRESET_CHANTERELLE:
@@ -4783,6 +5134,32 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.9f, 0.85f, 0.72f);
 			stem_color = Color(0.72f, 0.6f, 0.38f);
 			break;
+		case PRESET_PARSLEY_FERN:
+			leaf_color = Color(0.19f, 0.4f, 0.08f); // Bright, fresh green against grey stone.
+			stem_color = Color(0.3f, 0.38f, 0.14f);
+			break;
+		case PRESET_SPLEENWORT:
+			leaf_color = Color(0.08f, 0.22f, 0.05f); // Dark, evergreen.
+			stem_color = Color(0.09f, 0.05f, 0.035f); // The shiny black-brown rachis.
+			break;
+		case PRESET_STONECROP:
+			leaf_color = Color(0.28f, 0.44f, 0.1f);
+			stem_color = Color(0.3f, 0.45f, 0.11f); // The fat, yellow-green leaves (on the stem surface).
+			petal_color = Color(0.95f, 0.78f, 0.06f);
+			centre_color = Color(0.88f, 0.7f, 0.1f);
+			break;
+		case PRESET_SAXIFRAGE:
+			leaf_color = Color(0.14f, 0.32f, 0.07f);
+			stem_color = Color(0.22f, 0.3f, 0.12f);
+			petal_color = Color(0.95f, 0.95f, 0.92f);
+			centre_color = Color(0.85f, 0.8f, 0.4f);
+			break;
+		case PRESET_THRIFT:
+			leaf_color = Color(0.15f, 0.3f, 0.13f); // Bluish, grass-like.
+			stem_color = Color(0.26f, 0.33f, 0.16f);
+			petal_color = Color(0.86f, 0.46f, 0.64f); // Pink.
+			centre_color = Color(0.62f, 0.48f, 0.34f); // The papery bracts under the head.
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -4925,6 +5302,21 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_SORREL:
 			_build_sorrel();
 			break;
+		case PRESET_PARSLEY_FERN:
+			_build_parsley_fern();
+			break;
+		case PRESET_SPLEENWORT:
+			_build_spleenwort();
+			break;
+		case PRESET_STONECROP:
+			_build_stonecrop();
+			break;
+		case PRESET_SAXIFRAGE:
+			_build_saxifrage();
+			break;
+		case PRESET_THRIFT:
+			_build_thrift();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -5034,7 +5426,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -5615,6 +6007,86 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	return out;
 }
 
+// Plants between stones (docs/ideas/vegetation.md, "Plants between stones"): the crevice flora of
+// scree, river gravel and shingle, kept to the gaps between the obstacles (PlantSpecies.stone_gap),
+// with mosses, sedges and rushes gathering at the stones' feet (rock_foot).
+TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season) {
+	using P = PlantGenerator;
+	struct StoneSpec {
+		Preset preset;
+		float spacing, footprint, density, scale_min, scale_max;
+		float gap, rock_foot, visibility;
+		float water_max = 0.0f; // > 0: within this distance of water.
+	};
+	LocalVector<StoneSpec> set;
+	switch (p_stand) {
+		case STONES_SCREE:
+			// Acid upland scree and block litter (Pigott 1956; Page 1997): parsley fern its mark,
+			// mossy saxifrage on damper ground, spleenwort and thrift scattered, moss at the feet.
+			set = LocalVector<StoneSpec>({ { P::PRESET_PARSLEY_FERN, 0.35f, 0.1f, 0.9f, 0.8f, 1.2f, 1.0f, 0.0f, 30.0f },
+					{ P::PRESET_SAXIFRAGE, 0.25f, 0.06f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
+					{ P::PRESET_SPLEENWORT, 0.25f, 0.05f, 0.4f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
+					{ P::PRESET_THRIFT, 0.3f, 0.05f, 0.3f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
+					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f } });
+			break;
+		case STONES_RIVER:
+			// River and stream gravels: saxifrage and stonecrop on the bars, sedges and rushes at the
+			// stones' feet near the water, moss on the damp side.
+			set = LocalVector<StoneSpec>({ { P::PRESET_SAXIFRAGE, 0.35f, 0.06f, 0.5f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
+					{ P::PRESET_STONECROP, 0.3f, 0.05f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
+					{ P::PRESET_THRIFT, 0.5f, 0.05f, 0.15f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
+					{ P::PRESET_SEDGE, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 0.5f, 2.0f, 25.0f, 6.0f },
+					{ P::PRESET_RUSH, 0.6f, 0.15f, 0.4f, 0.8f, 1.1f, 0.5f, 1.5f, 30.0f, 4.0f },
+					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f } });
+			break;
+		case STONES_SHORE:
+			// Shingle above the strandline (Scott 1963): thrift and stonecrop in the stable gaps,
+			// a little dry grass.
+			set = LocalVector<StoneSpec>({ { P::PRESET_THRIFT, 0.35f, 0.05f, 0.7f, 0.8f, 1.3f, 1.0f, 0.0f, 25.0f },
+					{ P::PRESET_STONECROP, 0.3f, 0.05f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
+					{ P::PRESET_DRY_GRASS, 0.4f, 0.08f, 0.4f, 0.7f, 1.1f, 0.7f, 0.0f, 25.0f } });
+			break;
+		case STONES_MAX:
+			break;
+	}
+	TypedArray<Resource> out;
+	int seed_base = 5000 + int(p_stand) * 100;
+	for (const StoneSpec &f : set) {
+		Ref<PlantGenerator> gen;
+		gen.instantiate();
+		gen->set_textures(p_textures);
+		gen->set_preset(f.preset);
+		gen->apply_preset_colors();
+		gen->set_seed(seed_base);
+		gen->set_season(p_season);
+		Ref<PlantSpecies> sp;
+		sp.instantiate();
+		TypedArray<Mesh> meshes;
+		const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
+		for (int i = 0; i < v.size(); i++) {
+			meshes.push_back(v[i]);
+		}
+		sp->set_meshes(meshes);
+		sp->set_spacing(f.spacing);
+		sp->set_footprint(f.footprint);
+		sp->set_density(f.density * get_presence(f.preset, p_season));
+		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
+		sp->set_stone_gap(f.gap);
+		sp->set_rock_foot(f.rock_foot);
+		sp->set_visibility_range(f.visibility);
+		if (f.water_max > 0.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, f.water_max));
+			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
+		}
+		// Too sparse and low to colour the far ground; the stones are what shows there.
+		sp->set_far_color(Color(0, 0, 0, 0));
+		sp->set_meta("stones", true);
+		out.push_back(sp);
+		seed_base += 11;
+	}
+	return out;
+}
+
 void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_preset", "preset"), &PlantGenerator::set_preset);
 	ClassDB::bind_method(D_METHOD("get_preset"), &PlantGenerator::get_preset);
@@ -5708,7 +6180,13 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_BRITTLEGILL);
 	BIND_ENUM_CONSTANT(PRESET_CLOUDED_AGARIC);
 	BIND_ENUM_CONSTANT(PRESET_HONEY_FUNGUS);
+	BIND_ENUM_CONSTANT(PRESET_PARSLEY_FERN);
+	BIND_ENUM_CONSTANT(PRESET_SPLEENWORT);
+	BIND_ENUM_CONSTANT(PRESET_STONECROP);
+	BIND_ENUM_CONSTANT(PRESET_SAXIFRAGE);
+	BIND_ENUM_CONSTANT(PRESET_THRIFT);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
 	BIND_ENUM_CONSTANT(CLIMBER_IVY);
@@ -5728,5 +6206,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLOOR_EASTERN_OAK);
 	BIND_ENUM_CONSTANT(FLOOR_PINE_HEMLOCK);
 	BIND_ENUM_CONSTANT(FLOOR_MAX);
+	BIND_ENUM_CONSTANT(STONES_SCREE);
+	BIND_ENUM_CONSTANT(STONES_RIVER);
+	BIND_ENUM_CONSTANT(STONES_SHORE);
+	BIND_ENUM_CONSTANT(STONES_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

@@ -245,6 +245,9 @@
 		<member name="litter_color" type="Color" setter="set_litter_color" getter="get_litter_color" default="Color(0, 0, 0, 0)">
 			The species' own litter on the ground under its stands, linear colour in rgb and how much of the ground it covers in alpha: bracken's mat of dead fronds and bramble's leaves (set by [method PlantGenerator.make_floor]). A [GrassField3D] with [member GrassField3D.undergrowth_field] lays it on the ground where the stands shade the sward out, so the ground there is litter instead of bare soil ([method VegetationField3D.get_sward_litter_at]).
 		</member>
+		<member name="stone_gap" type="float" setter="set_stone_gap" getter="get_stone_gap" default="0.0">
+			How strictly the species keeps to the gaps between stones ([member VegetationField3D.obstacles]): the fine soil caught between scree, river gravel and shingle, and rock cracks. Its suitability is multiplied by [code]lerp(1, g, stone_gap)[/code], g falling as [code]exp(-d / 0.15)[/code] and reaching 0 at [code]d = 0.6[/code], d the distance in metres to the edge of the second-nearest stone, so a point close to two stones counts as a gap and the foot of a lone boulder does not. At [code]1.0[/code] it grows nowhere else, and not at all where there are no obstacles; pressed between stones it is made smaller rather than left out. [method PlantGenerator.make_stones] uses 1 for its crevice plants.
+		</member>
 		<member name="sward_shade" type="float" setter="set_sward_shade" getter="get_sward_shade" default="0.0">
 			How much of the grass a stand of this species shades out under it, 0 to 1: bracken and bramble (0.85 and 0.7 in [method PlantGenerator.make_floor]) leave little sward beneath them. A [GrassField3D] reads it through [member GrassField3D.undergrowth_field] and [method VegetationField3D.get_sward_shade_at].
 		</member>

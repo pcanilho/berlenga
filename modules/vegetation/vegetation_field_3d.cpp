@@ -819,6 +819,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
 					suit *= rock_boost;
+					// Crevice plants: only in the fine soil caught between stones (PlantSpecies.stone_gap).
+					if (suit > 0.0f && sp->get_stone_gap() > 0.0f) {
+						const float gap_reach = 6.0f * PlantSpecies::STONE_GAP_REACH;
+						suit *= sp->stone_gap_weight(p_setup.obstacles.is_empty() ? 1e6f : p_setup.obstacles.second_clearance(xz, gap_reach));
+					}
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
 						continue;
@@ -874,7 +879,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (c + ROCK_OVERHANG < reach) {
 							rock_fit = (c + ROCK_OVERHANG) / reach;
 							if (rock_fit < ROCK_FIT_MIN) {
-								continue;
+								// Crevice plants live pressed between stones: the smallest fit, not none.
+								if (sp->get_stone_gap() <= 0.0f) {
+									continue;
+								}
+								rock_fit = ROCK_FIT_MIN;
 							}
 						}
 					}
@@ -931,11 +940,27 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
 						const PackedFloat32Array &ax = ps.deadwood_axes[variant];
-						const Deadwood log = { world.xform(Vector3(ax[0], ax[1], ax[2])), world.xform(Vector3(ax[3], ax[4], ax[5])), ax[6] * scale };
-						local_deadwood.push_back(log);
-						deadwood_insert(local_deadwood_grid, log, local_deadwood.size() - 1, DEADWOOD_CELL);
-						if (out) {
-							out->deadwood.push_back(log);
+						const Vector3 la = world.xform(Vector3(ax[0], ax[1], ax[2]));
+						const Vector3 lb = world.xform(Vector3(ax[3], ax[4], ax[5]));
+						// The reach profile (float 7 the count N, then N reaches evenly from a to b,
+						// measured to the outside of the moss): one piece per span, so plants beside
+						// and on the log follow its real width and bends instead of the widest reach.
+						// Older 7-float meshes are one piece of that radius.
+						const int n = ax.size() >= 8 ? int(ax[7]) : 0;
+						const bool profile = n >= 2 && ax.size() >= 8 + n;
+						const int pieces = profile ? n - 1 : 1;
+						for (int k = 0; k < pieces; k++) {
+							Deadwood log = { la, lb, ax[6] * scale };
+							if (profile) {
+								log.a = la.lerp(lb, float(k) / float(pieces));
+								log.b = la.lerp(lb, float(k + 1) / float(pieces));
+								log.radius = MAX(0.5f * (ax[8 + k] + ax[9 + k]) * scale - DEADWOOD_MOSS_LIFT, 0.01f);
+							}
+							local_deadwood.push_back(log);
+							deadwood_insert(local_deadwood_grid, log, local_deadwood.size() - 1, DEADWOOD_CELL);
+							if (out) {
+								out->deadwood.push_back(log);
+							}
 						}
 					}
 					if (!out) {

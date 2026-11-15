@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -343,8 +343,38 @@ func _checks() -> void:
 			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and ((sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_SHADE) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_LITTER) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_WATER_DISTANCE).y < 100.0 or (sp as PlantSpecies).deadwood_rule != PlantSpecies.DEADWOOD_AVOID)
 		_check("floor set %d" % st, ok, set.size())
 	_mushroom_checks()
+	_stone_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+
+# Plants between stones (docs/ideas/vegetation.md): sizes from the floras, and the stand sets keep
+# their crevice plants to the gaps.
+func _stone_checks() -> void:
+	var P := PlantGenerator
+	# Height range and the most width.
+	var sizes := {P.PRESET_PARSLEY_FERN: [0.06, 0.4, 0.6], P.PRESET_SPLEENWORT: [0.01, 0.15, 0.4], P.PRESET_STONECROP: [0.01, 0.1, 0.25], P.PRESET_SAXIFRAGE: [0.02, 0.25, 0.3], P.PRESET_THRIFT: [0.03, 0.35, 0.3]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for sd in 4:
+			g.seed = sd
+			var m := g.generate()
+			var bb := m.get_aabb()
+			ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 20000
+			info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.0f to %.0f cm tall, under %.0f cm across, under 20k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	for st in P.STONES_MAX:
+		var set := P.make_stones(st, 1, false)
+		var gaps := 0
+		var ok := set.size() >= 3
+		for sp in set:
+			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and (sp as PlantSpecies).has_meta("stones")
+			if (sp as PlantSpecies).stone_gap >= 1.0:
+				gaps += 1
+		_check("stone set %d: species with meshes, crevice plants kept to the gaps" % st, ok and gaps >= 2, [set.size(), gaps])
 
 # Woodland-floor mushrooms (docs/ideas/mushrooms.md): real undersides, plausible sizes, the
 # season, the floor sets.
@@ -405,7 +435,7 @@ func _bloom_checks() -> void:
 	_check("daisy in summer: flowering on, a quarter in seed", s.y > 0.6 and s.z > 0.15 and s.z < 0.3, s)
 	s = P.get_bloom_shares(P.PRESET_NETTLE, {"forcing": 100.0})
 	_check("no window: always as built", s == Vector3(0, 1, 0), s)
-	var presets := [P.PRESET_DANDELION, P.PRESET_CLOVER, P.PRESET_DAISY, P.PRESET_BUTTERCUP, P.PRESET_THISTLE, P.PRESET_YARROW, P.PRESET_FOXGLOVE, P.PRESET_WOOD_SORREL, P.PRESET_WOODRUFF, P.PRESET_WOOD_ANEMONE, P.PRESET_VIOLET, P.PRESET_HERB_ROBERT, P.PRESET_HEATHER, P.PRESET_KNAPWEED, P.PRESET_SCABIOUS, P.PRESET_WILD_CARROT, P.PRESET_SORREL]
+	var presets := [P.PRESET_DANDELION, P.PRESET_CLOVER, P.PRESET_DAISY, P.PRESET_BUTTERCUP, P.PRESET_THISTLE, P.PRESET_YARROW, P.PRESET_FOXGLOVE, P.PRESET_WOOD_SORREL, P.PRESET_WOODRUFF, P.PRESET_WOOD_ANEMONE, P.PRESET_VIOLET, P.PRESET_HERB_ROBERT, P.PRESET_HEATHER, P.PRESET_KNAPWEED, P.PRESET_SCABIOUS, P.PRESET_WILD_CARROT, P.PRESET_SORREL, P.PRESET_STONECROP, P.PRESET_SAXIFRAGE, P.PRESET_THRIFT]
 	var days := [[0.0, 20], [200.0, 110], [500.0, 150], [1000.0, 200], [1500.0, 240], [1900.0, 300]]
 	for p in presets:
 		var g := PlantGenerator.new()
@@ -450,7 +480,7 @@ func _bloom_checks() -> void:
 		wm.season_day = d
 		seasons[d] = wm.get_season()
 	wm.queue_free()
-	for p in [P.PRESET_BRACKEN, P.PRESET_FERN]:
+	for p in [P.PRESET_BRACKEN, P.PRESET_FERN, P.PRESET_PARSLEY_FERN]:
 		var g := PlantGenerator.new()
 		g.textures = false
 		g.preset = p
@@ -459,7 +489,7 @@ func _bloom_checks() -> void:
 		for d in seasons:
 			g.season = seasons[d]
 			hs[d] = g.generate().get_aabb().end.y
-		var tall := 0.4 if p == P.PRESET_BRACKEN else 0.15
+		var tall := 0.4 if p == P.PRESET_BRACKEN else (0.15 if p == P.PRESET_FERN else 0.08)
 		_check("%s: flat in winter, croziers in May, full in July, no taller in December" % NAMES[p], hs[45] < 0.25 and hs[125] < hs[200] and hs[200] > tall and hs[345] <= hs[200], hs)
 	var pres := [P.get_presence(P.PRESET_WOOD_ANEMONE, seasons[45]), P.get_presence(P.PRESET_WOOD_ANEMONE, {"forcing": 200.0}), P.get_presence(P.PRESET_WOOD_ANEMONE, seasons[200]), P.get_presence(P.PRESET_FERN, seasons[200])]
 	_check("anemone above ground in spring only", pres[0] == 0.0 and pres[1] == 1.0 and pres[2] == 0.0 and pres[3] == 1.0, pres)

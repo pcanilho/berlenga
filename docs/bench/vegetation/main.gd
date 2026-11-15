@@ -22,6 +22,8 @@ var raster := false
 var spp := 16
 var out := ""
 var deadwood_view := false
+var stone_view := "" # --stones=scree|river|shore: plants between stones (PlantGenerator.make_stones).
+var stone_plants := true # --stones-off: the same stones, no plants.
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
@@ -61,6 +63,11 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
+		elif a.begins_with("--stones="):
+			stone_view = a.substr(9)
+			size = 48.0
+		elif a == "--stones-off":
+			stone_plants = false
 		elif a.begins_with("--mushrooms"):
 			mushroom_view = 2 if a == "--mushrooms=off" else 1
 			deadwood_view = true
@@ -217,6 +224,10 @@ func _physics_process(_d: float) -> void:
 		return
 	if deadwood_view:
 		await _deadwood_view()
+		return
+	if stone_view != "":
+		_stones_view()
+		_render_later()
 		return
 	var err := field.populate()
 	var counts := []
@@ -627,7 +638,10 @@ func _deadwood_checks() -> void:
 	var st := SurfaceTool.new()
 	st.append_from(m, 0, Transform3D(Basis(Vector3(0, 0, 1), PI / 2), Vector3(0, r, 0)))
 	var lm := st.commit()
-	lm.set_meta("tree_deadwood_axis", PackedFloat32Array([-3.0, r, 0.0, 3.0, r, 0.0, r]))
+	# The trees module's layout: a, b, widest reach, then N reaches along the stem to the outside
+	# of its moss (2.2 cm over the bark, VegetationField3D's DEADWOOD_MOSS_LIFT).
+	var lr := r + 0.022
+	lm.set_meta("tree_deadwood_axis", PackedFloat32Array([-3.0, r, 0.0, 3.0, r, 0.0, lr, 4, lr, lr, lr, lr]))
 	var logs := PlantSpecies.new()
 	logs.meshes = [lm]
 	logs.spacing = 12.0
@@ -792,7 +806,42 @@ func _deadwood_checks() -> void:
 	_check("rock foot: a thin cover gathers at the rocks' feet (rock_foot 3)", ring_n > 10 and foot_d > ring_d * 2.0, "%.1f /m2 at the foot, %.1f /m2 2-3 m out" % [foot_d, ring_d])
 	cover.density = 1.0
 	cover.rock_foot = 0.0
+	# Plants between stones (PlantSpecies.stone_gap): a 2 m patch of packed scree laid by random
+	# sequential addition; with stone_gap 1 the cover grows only in its gaps, none on open ground,
+	# and none at all without stones.
+	var c0: Vector3 = covers[0]
+	var scree := PackedVector4Array()
+	var srng := RandomNumberGenerator.new()
+	srng.seed = 77
+	for attempt in 4000:
+		var rr := srng.randf_range(0.08, 0.22)
+		var pos := Vector2(c0.x, c0.z) + Vector2(srng.randf_range(-1.0, 1.0), srng.randf_range(-1.0, 1.0))
+		var free := true
+		for sv in scree:
+			if Vector2(pos.x - sv.x, pos.y - sv.z).length() < rr + sv.w + 0.03:
+				free = false
+				break
+		if free:
+			scree.append(Vector4(pos.x, c0.y, pos.y, rr))
+	ground.obstacles = scree
+	cover.stone_gap = 1.0
+	ground.populate()
+	var in_gap := 0
+	var open_ground := 0
+	for p in ground.get_placements(0):
+		var ds := []
+		for sv in scree:
+			ds.append(Vector2(p.x - sv.x, p.z - sv.z).length() - sv.w)
+		ds.sort()
+		if ds.size() > 1 and ds[1] < 0.3:
+			in_gap += 1
+		elif ds.size() > 1 and ds[1] > 0.6:
+			open_ground += 1
 	ground.obstacles = PackedVector4Array()
+	ground.populate()
+	var bare := ground.get_placements(0).size()
+	_check("stone gap: crevice plants only between stones, none on open ground or without stones", scree.size() > 30 and in_gap >= 5 and open_ground == 0 and bare == 0, [scree.size(), in_gap, open_ground, bare])
+	cover.stone_gap = 0.0
 	ground.populate()
 	# Stand margins (PlantSpecies.margin_*): the patch depth is positive inside a patch, negative
 	# outside, and about zero where the patch weight crosses one half.
@@ -1060,6 +1109,90 @@ func _ground_mesh() -> Mesh:
 				st.add_vertex(q[i])
 	st.generate_normals()
 	return st.commit()
+
+# --stones=scree|river|shore --out=path.png: a 3 m patch of packed stones (random sequential
+# addition, sunk a third into the ground) with the stand's plants between them, from 1.5 m.
+# Stand-in stones until the rock generator's are on main.
+func _stones_view() -> void:
+	field.queue_free()
+	var at := Vector3(20, height(20, 0), 0) # Dry ground on the valley side, clear of the river.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var stones := []
+	for attempt in 6000:
+		var r := rng.randf_range(0.05, 0.26)
+		var q := Vector2(at.x, at.z) + Vector2(rng.randf_range(-1.6, 1.6), rng.randf_range(-1.6, 1.6))
+		var free := true
+		for o in stones:
+			if Vector2(q.x - o.x, q.y - o.z).length() < r + o.w + rng.randf_range(0.02, 0.12):
+				free = false
+				break
+		if free:
+			stones.append(Vector4(q.x, height(q.x, q.y), q.y, r))
+	var noise := FastNoiseLite.new()
+	noise.frequency = 2.2
+	var meshes := []
+	for v in 4:
+		var sm := SphereMesh.new()
+		sm.radius = 1.0
+		sm.height = 2.0
+		sm.radial_segments = 20
+		sm.rings = 10
+		var st := SurfaceTool.new()
+		st.create_from(sm, 0)
+		var arr := st.commit_to_arrays()
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		for i in verts.size():
+			var d := verts[i]
+			var k := 1.0 + 0.22 * noise.get_noise_3dv(d * 1.3 + Vector3(v * 7.0, 0, 0)) + 0.08 * noise.get_noise_3dv(d * 4.0 + Vector3(0, v * 5.0, 0))
+			verts[i] = Vector3(d.x * k, d.y * k * 0.62, d.z * k)
+		arr[Mesh.ARRAY_VERTEX] = verts
+		arr[Mesh.ARRAY_NORMAL] = null
+		var am := ArrayMesh.new()
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		var st2 := SurfaceTool.new()
+		st2.create_from(am, 0)
+		st2.generate_normals()
+		meshes.append(st2.commit())
+	var obstacles := PackedVector4Array()
+	for i in stones.size():
+		var o: Vector4 = stones[i]
+		var mi := MeshInstance3D.new()
+		mi.mesh = meshes[i % 4]
+		var mat := StandardMaterial3D.new()
+		var g := rng.randf_range(0.36, 0.5)
+		mat.albedo_color = Color(g, g * 0.98, g * 0.93)
+		mat.roughness = 0.85
+		mi.material_override = mat
+		mi.transform = Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(o.w, o.w, o.w)), Vector3(o.x, o.y + o.w * 0.62 * 0.3, o.z))
+		add_child(mi)
+		obstacles.append(Vector4(o.x, o.y, o.z, o.w * 0.95))
+	var stand: int = {"scree": PlantGenerator.STONES_SCREE, "river": PlantGenerator.STONES_RIVER, "shore": PlantGenerator.STONES_SHORE}.get(stone_view, PlantGenerator.STONES_SCREE)
+	var veg := VegetationField3D.new()
+	veg.name = "Stones"
+	veg.populate_on_ready = false
+	var b := Biome.new()
+	var stone_set: Array[PlantSpecies] = []
+	for sp in PlantGenerator.make_stones(stand, 3, true, {"forcing": 900.0, "day_of_year": 175}):
+		stone_set.append(sp as PlantSpecies)
+	b.species = stone_set
+	veg.biome = b
+	veg.obstacles = obstacles
+	add_child(veg)
+	veg.data_map = veg.get_path_to(dm)
+	veg.populate()
+	var counts := []
+	for i in b.species.size():
+		counts.append(veg.get_placements(i).size())
+	print("VEG_STONES stand=%s stones=%d plants=%s" % [stone_view, stones.size(), str(counts)])
+	veg.visible = stone_plants
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = at + Vector3(1.2, 1.1, 1.5)
+	cam.fov = 50.0
+	cam.near = 0.05
+	cam.look_at(at + Vector3(0, 0.05, 0))
+	cam.current = true
 
 # --deadwood --out=path.png: a beech stand from TreeGenerator (trees, logs, fallen branches,
 # sticks) over the beech floor set, looking at a log: moss and wood sorrel on it, ferns and

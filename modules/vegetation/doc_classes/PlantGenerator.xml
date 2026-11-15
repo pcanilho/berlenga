@@ -44,6 +44,16 @@
 				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]).
 			</description>
 		</method>
+		<method name="make_stones" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants between stones for scree, river gravel or shingle as [PlantSpecies]. The crevice plants keep to the gaps between the field's obstacles ([member PlantSpecies.stone_gap] 1), so they grow only where a [VegetationField3D] has stones in [member VegetationField3D.obstacles]; mosses, sedges and rushes gather at the stones' feet ([member PlantSpecies.rock_foot]). They do not colour the far ground. Each species has the meta [code]stones[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the ferns' year.
+			</description>
+		</method>
 		<method name="stand_litter_leaves" qualifiers="static">
 			<return type="Array" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
@@ -289,7 +299,22 @@
 		<constant name="CLIMBER_IVY_ADULT" value="3" enum="Climber">
 			Ivy's adult shoots (Hedera helix), grown where an old stem reaches the light high on its support: ovate to rhombic, unlobed, tapering to a point, a little paler and glossier than [constant CLIMBER_IVY].
 		</constant>
-		<constant name="PRESET_MAX" value="45" enum="Preset">
+		<constant name="PRESET_PARSLEY_FERN" value="45" enum="Preset">
+			Parsley fern ([i]Cryptogramma crispa[/i]): a bright green tuft of finely cut fronds on acid scree, the fertile fronds taller and narrower; rusty after autumn.
+		</constant>
+		<constant name="PRESET_SPLEENWORT" value="46" enum="Preset">
+			Maidenhair spleenwort ([i]Asplenium trichomanes[/i]): a flat rosette of narrow fronds, small rounded pinnae in pairs along shiny black rachises; evergreen, old rachises bare. Rock cracks.
+		</constant>
+		<constant name="PRESET_STONECROP" value="47" enum="Preset">
+			Biting stonecrop ([i]Sedum acre[/i]): a mat of short shoots packed with fat succulent leaves, yellow star flowers in June and July. Shingle, gravel, wall tops.
+		</constant>
+		<constant name="PRESET_SAXIFRAGE" value="48" enum="Preset">
+			Mossy saxifrage ([i]Saxifraga hypnoides[/i]): a cushion of rosettes of narrow-lobed leaves, white five-petalled flowers on slender stalks from May to July. Upland ledges, scree, stream gravel.
+		</constant>
+		<constant name="PRESET_THRIFT" value="49" enum="Preset">
+			Thrift ([i]Armeria maritima[/i]): a dense cushion of grass-like leaves with round pink heads on leafless stalks from April to September; papery brown heads after. Shingle, sea cliffs, mountain scree.
+		</constant>
+		<constant name="PRESET_MAX" value="50" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -324,6 +349,18 @@
 		</constant>
 		<constant name="FLOOR_MAX" value="10" enum="FloorStand">
 			Number of floor stand types.
+		</constant>
+		<constant name="STONES_SCREE" value="0" enum="StoneStand">
+			Acid upland scree and block litter: parsley fern, mossy saxifrage, maidenhair spleenwort, a little thrift, moss at the blocks' feet.
+		</constant>
+		<constant name="STONES_RIVER" value="1" enum="StoneStand">
+			River and stream gravels: mossy saxifrage, stonecrop, a little thrift, sedges and rushes at the stones' feet near water, moss.
+		</constant>
+		<constant name="STONES_SHORE" value="2" enum="StoneStand">
+			Shingle above the strandline: thrift, stonecrop, a little dry grass.
+		</constant>
+		<constant name="STONES_MAX" value="3" enum="StoneStand">
+			Number of stone stand types.
 		</constant>
 	</constants>
 </class>

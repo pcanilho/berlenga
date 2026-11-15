@@ -106,6 +106,13 @@ public:
 		PRESET_BRITTLEGILL,
 		PRESET_CLOUDED_AGARIC,
 		PRESET_HONEY_FUNGUS,
+		// Plants between stones (docs/ideas/vegetation.md, "Plants between stones"): scree, river
+		// gravels, shingle and rock cracks.
+		PRESET_PARSLEY_FERN,
+		PRESET_SPLEENWORT,
+		PRESET_STONECROP,
+		PRESET_SAXIFRAGE,
+		PRESET_THRIFT,
 		PRESET_MAX,
 	};
 
@@ -212,7 +219,7 @@ private:
 	void _add_stem_along(const LocalVector<Transform3D> &p_frames, float p_r0, float p_r1, float p_wind_base, Surface p_surface = SURFACE_STEM);
 	void _add_grass_tuft(int p_blades, float p_length_min, float p_length_max, float p_width_min, float p_width_max, float p_spread);
 	Transform3D _add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface = SURFACE_STEM);
-	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint = Color(1, 1, 1));
+	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint = Color(1, 1, 1), int p_rings = 4, int p_sectors = 10);
 	void _add_ray_flower(const Transform3D &p_top, float p_radius, int p_rays, const Leaf &p_petal);
 	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
 	void _add_cup_flower(const Transform3D &p_top, float p_radius);
@@ -252,6 +259,11 @@ private:
 	void _build_scabious();
 	void _build_wild_carrot();
 	void _build_sorrel();
+	void _build_parsley_fern();
+	void _build_spleenwort();
+	void _build_stonecrop();
+	void _build_saxifrage();
+	void _build_thrift();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -404,8 +416,18 @@ public:
 	};
 	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f, const Dictionary &p_season = Dictionary());
+
+	// Plants between stones (docs/ideas/vegetation.md, "Plants between stones").
+	enum StoneStand {
+		STONES_SCREE,
+		STONES_RIVER,
+		STONES_SHORE,
+		STONES_MAX,
+	};
+	static TypedArray<Resource> make_stones(StoneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
 VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);
+VARIANT_ENUM_CAST(PlantGenerator::StoneStand);

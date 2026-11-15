@@ -102,6 +102,7 @@ private:
 	// down to margin_scale of their size at the very edge, and lean out towards the open by up to
 	// margin_lean degrees. Bracken's advancing front (Watt 1947).
 	float rock_foot = 0.0f; // How much more it grows at a rock's foot (obstacles): sheltered, moist ground.
+	float stone_gap = 0.0f; // 0..1: how strictly it keeps to the gaps between stones (obstacles); 1: nowhere else.
 	float margin_width = 0.0f;
 	float margin_scale = 1.0f;
 	float margin_lean = 0.0f;
@@ -158,6 +159,17 @@ public:
 	float get_patch_depth_at(const Vector3 &p_pos) const { return get_patch_depth(p_pos); }
 	void set_rock_foot(float p_amount) { rock_foot = CLAMP(p_amount, 0.0f, 8.0f); emit_changed(); }
 	float get_rock_foot() const { return rock_foot; }
+	void set_stone_gap(float p_amount) { stone_gap = CLAMP(p_amount, 0.0f, 1.0f); emit_changed(); }
+	float get_stone_gap() const { return stone_gap; }
+	static constexpr float STONE_GAP_REACH = 0.15f; // Metres: the e-folding distance to a second stone's edge.
+	// The gap's weight at a point whose second-nearest stone edge is p_second away: 1 deep in a gap
+	// between stones, falling off exponentially and reaching 0 at four reaches (open ground),
+	// scaled in by stone_gap.
+	float stone_gap_weight(float p_second) const {
+		const float tail = 0.018315639f; // exp(-4)
+		const float g = MAX(Math::exp(-MAX(p_second, 0.0f) / STONE_GAP_REACH) - tail, 0.0f) / (1.0f - tail);
+		return Math::lerp(1.0f, g, stone_gap);
+	}
 	static constexpr float ROCK_FOOT_REACH = 0.5f; // Metres: the e-folding distance of the rock foot's shelter.
 	// The rock foot's weight at a distance past a rock's edge (clearance, metres).
 	float rock_foot_weight(float p_clearance) const { return 1.0f + rock_foot * Math::exp(-MAX(p_clearance, 0.0f) / ROCK_FOOT_REACH); }

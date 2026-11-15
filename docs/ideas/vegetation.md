@@ -238,3 +238,27 @@ The cloud can build and run all of it on Lavapipe; GPU timings and PT/RR crops w
 - **Seasons shots.** The seasons code is on main; the before/after shots for the site are not taken.
 - **Plants that give way.** Grass tramples; ferns, bracken and nettles do not. Bend them from the
   same trample field.
+
+## Plants between stones (built 15 Nov)
+
+Crevice flora (chasmophytes) root in the fine soil caught between stones and in rock cracks: the
+stones shade the roots, hold water under them and keep trampling and grazing off (Pigott 1956 on
+limestone and scree flora; Rorison 1960). On open scree the plants are sparse and almost all in
+gaps; the fern of acid scree is parsley fern, and maidenhair spleenwort holds the cracks (Page
+1997, "The Ferns of Britain and Ireland"). Shingle above the strandline is colonised in its stable
+gaps by thrift and biting stonecrop (Scott 1963, "The ecology of shingle beach plants"); upland
+river gravels by mossy saxifrage, stonecrop and, near water, sedges and rushes.
+
+- Five presets, real geometry: `PRESET_PARSLEY_FERN` (fertile fronds taller, rusty in winter),
+  `PRESET_SPLEENWORT` (black rachis, paired pinnae, bare old rachises), `PRESET_STONECROP` (the
+  fat succulent leaves are solid beads, 20 triangles each, on the stem surface), `PRESET_SAXIFRAGE`
+  (a cushion of lobed rosettes, white flowers May to July), `PRESET_THRIFT` (a cushion of grass-like
+  leaves, pink heads April to September, papery after).
+- `PlantSpecies.stone_gap`: the suitability is multiplied by `lerp(1, g, stone_gap)`, g = exp(-d / 0.15) shifted to reach 0 at 0.6 m,
+  d the distance to the second-nearest obstacle's edge, so the gap between two stones counts and
+  the foot of a lone boulder (`rock_foot`) does not. At 1 the species grows nowhere else.
+- `PlantGenerator.make_stones(STONES_SCREE | STONES_RIVER | STONES_SHORE)`: the sets.
+- The rock generator's `RockField3D.get_obstacles(rect, min_size)` gives the same (x, ground y, z,
+  radius) list `VegetationField3D.obstacles` takes. Next, when its stones are on main: moss
+  cushions on stone tops from `get_stones()` (its "top" and basis), and the river sets reading the
+  stones' water film.

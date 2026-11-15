@@ -97,6 +97,38 @@ struct VegetationObstacles {
 		return best;
 	}
 
+	// The distance from a point to the second-nearest obstacle's edge (another obstacle than the
+	// nearest), looked for out to p_reach; p_reach + 1 when there is no second one that near. A
+	// point close to two stones lies in a gap between them (PlantSpecies.stone_gap).
+	float second_clearance(const Vector2 &p_xz, float p_reach) const {
+		float first = p_reach + 1.0f;
+		float second = p_reach + 1.0f;
+		if (items.is_empty()) {
+			return second;
+		}
+		const int r = int(Math::ceil((max_radius + p_reach) / CELL));
+		const Vector2i c(int(Math::floor(p_xz.x / CELL)), int(Math::floor(p_xz.y / CELL)));
+		for (int dz = -r; dz <= r; dz++) {
+			for (int dx = -r; dx <= r; dx++) {
+				const LocalVector<uint32_t> *bucket = grid.getptr(c + Vector2i(dx, dz));
+				if (!bucket) {
+					continue;
+				}
+				for (uint32_t i : *bucket) {
+					const Vector4 &o = items[i];
+					const float d = Vector2(p_xz.x - float(o.x), p_xz.y - float(o.z)).length() - float(o.w);
+					if (d < first) {
+						second = first;
+						first = d;
+					} else if (d < second) {
+						second = d;
+					}
+				}
+			}
+		}
+		return second;
+	}
+
 	// Whether a point lies within p_margin of an obstacle.
 	bool blocks(const Vector2 &p_xz, float p_margin) const {
 		return !items.is_empty() && clearance(p_xz, p_margin) < p_margin;
