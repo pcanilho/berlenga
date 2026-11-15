@@ -4388,7 +4388,7 @@ void PlantGenerator::free_shaders() {
 // Honeysuckle (Lonicera periclymenum): ovate to elliptic, entire, short-stalked, dull green.
 Array PlantGenerator::make_climber_leaves(int p_climber, int p_variants) {
 	Array out;
-	const int climber = p_climber == PRESET_IVY ? CLIMBER_IVY : CLAMP(p_climber, 0, int(CLIMBER_HONEYSUCKLE));
+	const int climber = p_climber == PRESET_IVY ? CLIMBER_IVY : CLAMP(p_climber, 0, int(CLIMBER_IVY_ADULT));
 	Ref<PlantGenerator> g;
 	g.instantiate();
 	g->preset = PRESET_IVY; // Ivy's texture spec, adjusted below for the others.
@@ -4407,6 +4407,18 @@ Array PlantGenerator::make_climber_leaves(int p_climber, int p_variants) {
 			l.width = 1.1f;
 			l.fold = 0.1f;
 			l.bend = 0.15f;
+			break;
+		case CLIMBER_IVY_ADULT:
+			// Ivy's adult shoots, which stand out from the stem where an old plant reaches the light
+			// (heteroblasty, Metcalfe 2005 Biol. Flora Br. Isles: Hedera helix): ovate to rhombic,
+			// entire, tapering to a point, a little paler and glossier than the lobed juvenile leaves.
+			g->leaf_color = Color(0.07f, 0.19f, 0.05f);
+			l.shape = LEAF_OVATE;
+			l.width = 0.62f;
+			l.fold = 0.12f;
+			l.bend = 0.12f;
+			l.petiole = 0.08f;
+			roughness = 0.5f;
 			break;
 		case CLIMBER_CLEMATIS:
 			g->leaf_color = Color(0.1f, 0.24f, 0.06f);
@@ -4429,7 +4441,7 @@ Array PlantGenerator::make_climber_leaves(int p_climber, int p_variants) {
 	t = g->_leaf_texture_spec(false);
 	t.leaf = l;
 	t.aspect = l.width;
-	if (climber == CLIMBER_IVY) {
+	if (climber == CLIMBER_IVY || climber == CLIMBER_IVY_ADULT) {
 		t.venation = VENATION_PALMATE;
 		t.vein = Color(0.38f, 0.45f, 0.3f);
 		t.yellowing = 0.1f;
@@ -5702,6 +5714,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(CLIMBER_IVY);
 	BIND_ENUM_CONSTANT(CLIMBER_CLEMATIS);
 	BIND_ENUM_CONSTANT(CLIMBER_HONEYSUCKLE);
+	BIND_ENUM_CONSTANT(CLIMBER_IVY_ADULT);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_impostor", "mesh", "frames", "frame_size"), &PlantGenerator::make_impostor, DEFVAL(8), DEFVAL(64));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("add_impostors", "species", "range", "frames", "frame_size"), &PlantGenerator::add_impostors, DEFVAL(8), DEFVAL(64));
 	BIND_ENUM_CONSTANT(FLOOR_BEECH);

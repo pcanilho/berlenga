@@ -289,7 +289,8 @@ func _tris(m: Mesh) -> int:
 
 func _checks() -> void:
 	# Climber leaves for the trees' vines: single leaves in XZ, base at the origin, +Z, 1 m long.
-	for c in [PlantGenerator.CLIMBER_IVY, PlantGenerator.CLIMBER_CLEMATIS, PlantGenerator.CLIMBER_HONEYSUCKLE]:
+	var widths := {}
+	for c in [PlantGenerator.CLIMBER_IVY, PlantGenerator.CLIMBER_CLEMATIS, PlantGenerator.CLIMBER_HONEYSUCKLE, PlantGenerator.CLIMBER_IVY_ADULT]:
 		var leaves := PlantGenerator.make_climber_leaves(c, 4)
 		var ok := leaves.size() == 4
 		var box := AABB()
@@ -299,6 +300,9 @@ func _checks() -> void:
 			ok = ok and lm.surface_get_material(0) is ShaderMaterial
 		ok = ok and box.position.z > -0.02 and box.end.z > 0.85 and box.end.z < 1.1 and absf(box.position.y) < 0.3 and box.end.y < 0.3
 		_check("climber leaves %d: four flat leaves along +Z, 1 m" % c, ok, box)
+		widths[c] = box.size.x
+	# Adult ivy: unlobed and narrower than the broad, lobed juvenile leaf.
+	_check("adult ivy leaves narrower than the juvenile ones", widths[PlantGenerator.CLIMBER_IVY_ADULT] < widths[PlantGenerator.CLIMBER_IVY] * 0.8, [widths[PlantGenerator.CLIMBER_IVY_ADULT], widths[PlantGenerator.CLIMBER_IVY]])
 	# Seedlings of a stand's trees: every leaf kind builds a small plant (oak lobed, sycamore palmate, ash pinnate).
 	for st in [PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_NORTHERN_HARDWOOD]:
 		var sg := PlantGenerator.new()

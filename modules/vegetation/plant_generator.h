@@ -56,6 +56,7 @@ public:
 		CLIMBER_IVY,
 		CLIMBER_CLEMATIS,
 		CLIMBER_HONEYSUCKLE,
+		CLIMBER_IVY_ADULT, // Ivy's adult, flowering shoots high on old stems: unlobed.
 	};
 	static Array make_climber_leaves(int p_climber, int p_variants = 4);
 	enum Preset {

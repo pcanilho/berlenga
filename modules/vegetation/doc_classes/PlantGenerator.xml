@@ -86,7 +86,7 @@
 			<param index="0" name="climber" type="int" />
 			<param index="1" name="variants" type="int" default="4" />
 			<description>
-				Returns [param variants] single-leaf [ArrayMesh]es of a climber ([constant CLIMBER_IVY], [constant CLIMBER_CLEMATIS] or [constant CLIMBER_HONEYSUCKLE]; [constant PRESET_IVY] reads as ivy), for vines grown by other generators. Each leaf lies in the local XZ plane with its base at the origin, points +Z and is 1 m long; scale it per instance. Each carries the plant material, so it sways, wears, wets and takes snow and light like the ground plants.
+				Returns [param variants] single-leaf [ArrayMesh]es of a climber ([constant CLIMBER_IVY], [constant CLIMBER_IVY_ADULT], [constant CLIMBER_CLEMATIS] or [constant CLIMBER_HONEYSUCKLE]; [constant PRESET_IVY] reads as ivy), for vines grown by other generators. Each leaf lies in the local XZ plane with its base at the origin, points +Z and is 1 m long; scale it per instance. Each carries the plant material, so it sways, wears, wets and takes snow and light like the ground plants.
 			</description>
 		</method>
 		<method name="make_impostor" qualifiers="static">
@@ -285,6 +285,9 @@
 		</constant>
 		<constant name="CLIMBER_HONEYSUCKLE" value="2" enum="Climber">
 			Honeysuckle (Lonicera periclymenum): ovate, short-stalked, dull green.
+		</constant>
+		<constant name="CLIMBER_IVY_ADULT" value="3" enum="Climber">
+			Ivy's adult shoots (Hedera helix), grown where an old stem reaches the light high on its support: ovate to rhombic, unlobed, tapering to a point, a little paler and glossier than [constant CLIMBER_IVY].
 		</constant>
 		<constant name="PRESET_MAX" value="45" enum="Preset">
 			Number of presets.
