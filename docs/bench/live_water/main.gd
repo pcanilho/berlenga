@@ -5,6 +5,8 @@ extends Node3D
 #
 #   --scene=spring  a spring high on the slope runs down the gully into the hollow, fills it and spills over (default)
 #   --scene=dam     a reservoir behind a wall across the gully; the wall goes at --break=FRAME (default 30)
+#   --scene=stream  240 m of hillside, a 48 m streamed area following a marker: the spring runs for 20 s, stops,
+#                   the marker goes 100 m away and comes back; prints the water awake, asleep and lost
 #   --scene=rain    heavy rain over the whole slope (--rain=MM_PER_HOUR, default 400)
 #   --view=overview high, looking down the slope (default); --view=low from the hollow's edge, looking up the gully
 #   --cell=M        cell size (default 0.5)
@@ -19,8 +21,9 @@ extends Node3D
 #   --seq=N --seq-step=K  also save N frames after --frames, every Kth, as <out>_0000.png ...
 # Prints volume, wet cells and the solver's cost every 30 frames.
 
-const SIZE := 80.0
-const RES := 161 # height samples per side, 0.5 m apart
+var SIZE := 80.0
+var RES := 161 # height samples per side, 0.5 m apart
+var tracker: Node3D
 
 var scene_name := "spring"
 var view := "overview"
@@ -54,6 +57,9 @@ func ground_h(x: float, z: float) -> float:
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
+		if a == "--scene=stream":
+			SIZE = 240.0
+			RES = 241
 		if a.begins_with("--scene="): scene_name = a.substr(8)
 		elif a.begins_with("--view="): view = a.substr(7)
 		elif a.begins_with("--cell="): cell = float(a.substr(7))
@@ -176,7 +182,14 @@ func _ready() -> void:
 	water.set("size", Vector2(SIZE - 1.0, SIZE - 1.0))
 	water.set("cell_size", cell)
 	water.set("rain_from_weather", false)
+	if scene_name == "stream":
+		tracker = Node3D.new()
+		add_child(tracker)
+		water.set("size", Vector2(48.0, 48.0))
+		water.set("streaming", true)
 	match scene_name:
+		"stream":
+			water.set("sources", PackedVector4Array([Vector4(6.0 * sin(20.0 * 0.09), ground_h(6.0 * sin(1.8), 20.0), 20.0, 1.5)]))
 		"spring":
 			water.set("sources", PackedVector4Array([Vector4(6.0 * sin(30.0 * 0.09), ground_h(6.0 * sin(2.7), 30.0), 30.0, 1.5)]))
 		"dam":
@@ -187,6 +200,8 @@ func _ready() -> void:
 		"rain":
 			water.set("rain_rate", rain)
 	add_child(water)
+	if tracker != null:
+		water.set("stream_follow", water.get_path_to(tracker))
 
 	var cam := Camera3D.new()
 	cam.fov = 55
@@ -195,9 +210,27 @@ func _ready() -> void:
 		"low":
 			cam.look_at_from_position(Vector3(10.0, ground_h(10.0, -26.0) + 2.5, -26.0), Vector3(0.0, ground_h(0.0, 0.0), 0.0))
 		_:
-			cam.look_at_from_position(Vector3(30.0, 22.0, -46.0), Vector3(0.0, 0.0, -5.0))
+			if scene_name == "stream":
+				cam.look_at_from_position(Vector3(70.0, 70.0, -90.0), Vector3(40.0, 0.0, 0.0))
+			else:
+				cam.look_at_from_position(Vector3(30.0, 22.0, -46.0), Vector3(0.0, 0.0, -5.0))
+
+var stream_total0 := -1.0
 
 func _physics_process(_delta: float) -> void:
+	if tracker != null:
+		# 0-600 at the spring's valley (the spring stops at 600), 600-900 out 100 m along +x, back by 1500.
+		var t := float(n)
+		var x := 0.0
+		if t > 600.0 and t <= 900.0:
+			x = (t - 600.0) / 300.0 * 100.0
+		elif t > 900.0 and t <= 1200.0:
+			x = 100.0
+		elif t > 1200.0 and t <= 1500.0:
+			x = 100.0 - (t - 1200.0) / 300.0 * 100.0
+		tracker.position = Vector3(x, 0.0, 0.0)
+		if n == 600:
+			water.set("sources", PackedVector4Array())
 	if n == stop_frame:
 		water.set("sources", PackedVector4Array())
 		water.set("infiltration_rate", 100000.0) # (about 3 cm a second)
@@ -211,7 +244,15 @@ func _process(_delta: float) -> void:
 	if pt_from >= 0 and n == pt_from:
 		env.pathtracing_enabled = true
 	if n % 30 == 0:
-		print("frame %d: volume %.1f m3, lost over the edges %.1f m3, %.2f ms a tick" % [n, water.call("get_total_volume"), water.call("get_volume_out"), water.call("get_cost_ms")])
+		if scene_name == "stream":
+			var awake: float = water.call("get_total_volume")
+			var asleep: float = water.call("get_sleeping_volume")
+			var lost: float = water.call("get_volume_out")
+			if n == 630:
+				stream_total0 = awake + asleep + lost
+			print("frame %d: awake %.1f m3, asleep %.1f m3 in %d tiles, lost %.1f m3, total %.2f (after the spring %.2f), %.2f ms a tick" % [n, awake, asleep, water.call("get_sleeping_tile_count"), lost, awake + asleep + lost, stream_total0, water.call("get_cost_ms")])
+		else:
+			print("frame %d: volume %.1f m3, lost over the edges %.1f m3, %.2f ms a tick" % [n, water.call("get_total_volume"), water.call("get_volume_out"), water.call("get_cost_ms")])
 	if out != "":
 		if n == frames:
 			get_viewport().get_texture().get_image().save_png(out)

@@ -2565,3 +2565,35 @@ humidity and wind (evaporation); sand dries in minutes, rock in tens of minutes.
 - Writer: `PhysXLiveWater3D` stamps its wet cells each tick. Sea, lake and river live windows not yet.
 - Bench: live_water `--wet --scene=spring --stop=300 --frames=720` (the gully stays dark after the
   spring stops and the water soaks away; `--dry=8` shows it dry). Raster and path traced match.
+
+## Live water over the whole world (15 Nov, FluidNinja parity step 3c)
+
+Paulo picked "both, streaming first". The plan in "The full live version" (sparse tiles, level of
+detail, streaming) asks for a tile manager round the solver. How others do it:
+- Fluid Flux (Unreal) runs its shallow-water simulation in a "simulation domain" that follows the
+  player, with the state outside it baked or frozen; its "coastline" and "river" setups keep a
+  static base state the live domain starts from.
+- Clipmaps for terrain and the toroidal update of snow and wetness maps (as our WeatherMap3D cells
+  and SnowCover3D do): a camera-centred grid shifted in whole cells, keeping what overlaps.
+- Sparse tiles with sleep/wake (Bridson and Müller-Fischer's sparse grids; Chentanez and Müller
+  2011 "Real-time Eulerian water simulation using a restricted tall cell grid" freezes inactive
+  regions): only tiles with water are kept; inactive ones are not stepped.
+
+**Built.** `PhysXLiveWater3D.streaming`: the area becomes a window of world-aligned cells that
+follows the camera (or `stream_follow`) in steps of an eighth of its size; the node moves itself.
+- Cells leaving the window fall asleep in tiles of 32 x 32 cells (ground and depth, NAN ground =
+  not measured): kept, drawn with the same surface (one mesh per tile, with a row and column from
+  the next tiles so they meet), not stepped. Cells coming in wake from their tile with their water at
+  rest, or have their ground measured (one ray each).
+- The edge is no wall: outside it the pipes see the sleeping water or dry ground just beyond, and
+  water that flows over it is added to that sleeping cell (so it piles only until level with the
+  water inside). Volume is kept: 30 m^3 in, 30.0 awake plus asleep after walking 100 m away and back.
+- Tiles with no water are dropped; `max_sleeping_tiles` (4096, about 32 MB) caps memory, past it
+  water leaving the window is counted lost. Sources are world positions while streaming and wait
+  while outside the window. Rain and soaking in only act inside it.
+- Cost: as a placed area of the same size (about 1.2 ms a tick for 96 x 96 cells on the cloud CPU),
+  plus one ray per new cell when the window steps (a strip of an eighth of the window).
+- Known limits: water outside the window is still (a stream cut by the window's edge stops there
+  and a pond forms at the edge until the window comes); no level of detail yet (far water is drawn,
+  not simulated); not saved with the game.
+- Bench: live_water `--scene=stream` (a 240 m hillside; the marker walks 100 m away and back).
