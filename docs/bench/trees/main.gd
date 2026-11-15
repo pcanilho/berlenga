@@ -17,7 +17,8 @@ extends Node3D
 #   --view=fork       where the first limbs leave the first tree's stem (junctions)
 #   --view=leaf       the crop view zoomed in to single leaves
 #   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
-#   --view=lichen     close on the first tree's lichen strands (env LV vertex, LDIST metres; trees.md 5h)
+#   --view=lichen     close on the first tree's lichen strands (env LV vertex, LDIST metres; trees.md 5h);
+#                     env LSURF=wood: on its broken wood instead (trees.md 5j)
 #   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
 #   --litter          leaf litter on the ground round the first tree (roots sink into it)
 #   --sun=EL,AZ       sun elevation and azimuth in degrees (default 35,35)
@@ -425,7 +426,7 @@ func _build_scene() -> void:
 		var lm: Mesh = first_info.mesh
 		var at := Vector3(xs[0], 3, 0)
 		for si in lm.get_surface_count():
-			if lm.surface_get_name(si) == "fungi":
+			if lm.surface_get_name(si) == (OS.get_environment("LSURF") if OS.has_environment("LSURF") else "fungi"):
 				var vv: PackedVector3Array = lm.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
 				var li := int(OS.get_environment("LV")) if OS.has_environment("LV") else vv.size() / 2
 				at = vv[clampi(li, 0, vv.size() - 1)] + Vector3(xs[0], 0, 0)
