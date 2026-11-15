@@ -770,6 +770,9 @@ void fragment() {
 				float c1 = dot(tm_to / tm_to_len, grass_ground_sun.xy);
 				cover_lin *= max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
 			}
+			// The cover map holds the far colour at a 30 degree sun; this scales it to the sun's elevation, as the
+			// grass fields' own far colour does.
+			cover_lin *= grass_ground_far_scale.rgb;
 )";
 		}
 		c += R"(
