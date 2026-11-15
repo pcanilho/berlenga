@@ -221,10 +221,10 @@
 			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
 		</member>
 		<member name="crest_spray" type="bool" setter="set_crest_spray" getter="get_crest_spray" default="true">
-			Spray torn off breaking crests by the wind (spume): droplets leave the open sea where the surface folds (the same test as the whitecaps) once [member wind_speed] passes about 9 m/s, rising to full by 20 m/s, and fly downwind. Emitted within 40 m of the camera, not nearer than 8 m, and drawn like the surf's spray. The emitters are found on the CPU from the ocean's readback every fourth physics tick.
+			Spray torn off breaking crests by the wind (spume): droplets leave the open sea where the surface folds (the same test as the whitecaps) once [member wind_speed] passes about 9 m/s, rising to full by 20 m/s, and fly downwind. Emitted within 40 m of the camera, not nearer than 8 m, and drawn like the surf's spray, with soft puffs of fine spume (an eighth as many, a few metres across, kept low and blown along) so the spray reads as white smoke off each crest. The emitters are found on the CPU from the ocean's readback every fourth physics tick.
 		</member>
 		<member name="crest_spray_amount" type="int" setter="set_crest_spray_amount" getter="get_crest_spray_amount" default="6000">
-			Most [member crest_spray] droplets alive at once.
+			Most [member crest_spray] droplets alive at once (the spume puffs are an eighth of this).
 		</member>
 		<member name="cull_margin" type="float" setter="set_cull_margin" getter="get_cull_margin" default="0.0">
 			Extra room (m) added around the surface before it is culled. The surface's bounds already allow for 4 times [member wave_amplitude], or 2 m if that is larger. Raise this for a material that displaces the surface further, such as a whirlpool or a tsunami wall, if the water disappears at grazing angles. A larger margin draws the water more often when it is off-screen.
