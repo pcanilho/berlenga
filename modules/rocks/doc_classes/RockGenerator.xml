@@ -64,6 +64,9 @@
 		<member name="family" type="int" setter="set_family" getter="get_family" enum="RockGenerator.Family" default="0">
 			What made the rock: fresh rockfall, scree, glacial boulder, river cobble, beach pebble or cliff block. Sets the size of the block, how much it is chipped, rounded and flattened, and the default resolution.
 		</member>
+		<member name="fracture_pieces" type="int" setter="set_fracture_pieces" getter="get_fracture_pieces" default="0">
+			When above 1, the stone is also split into about this many pieces for breaking, stored in the mesh metadata: [code]rock_chunks[/code] holds one [Mesh] arrays [Array] per piece in the stone's frame, [code]rock_bonds[/code] holds [Dictionary]s ([code]chunks[/code], [code]centroid[/code], [code]normal[/code], [code]area[/code]), and there are also [code]rock_chunk_volumes[/code] and [code]rock_volume[/code]. The cells are a Voronoi split taken in domain-warped space, stretched across the bedding of sandstone, limestone and slate, so the walls are rough breaks and layered rock splits into slabs. Each piece keeps the stone's own surface and marks; its new faces are fresh breaks. Slivers are merged into their neighbours. See [method RockField3D.break_stone].
+		</member>
 		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
 			Builds distance levels of detail for the mesh.
 		</member>

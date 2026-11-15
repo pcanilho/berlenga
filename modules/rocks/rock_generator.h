@@ -112,6 +112,7 @@ private:
 	bool lods = true;
 	bool simplify = true;
 	bool close_up = false;
+	int fracture_pieces = 0;
 
 	double last_build_msec = 0.0;
 	int last_triangles = 0;
@@ -144,6 +145,8 @@ public:
 	bool get_simplify() const { return simplify; }
 	void set_close_up(bool p_close_up) { close_up = p_close_up; }
 	bool get_close_up() const { return close_up; }
+	void set_fracture_pieces(int p_pieces) { fracture_pieces = CLAMP(p_pieces, 0, 64); }
+	int get_fracture_pieces() const { return fracture_pieces; }
 	// Metres per mesh unit of a typical rock of a family (half its b axis), for the millimetre relief.
 	static real_t get_family_metres_per_unit(Family p_family);
 

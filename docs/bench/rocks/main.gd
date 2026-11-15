@@ -35,6 +35,8 @@ var rocks: RockField3D
 var cam: Camera3D
 
 
+var breaking := false
+
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
@@ -285,6 +287,43 @@ func _world() -> void:
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
 		if args.has("plants"):
 			_crevice_plants(spot, view, land)
+		if args.has("break"):
+			_break_near(spot, land)
+
+
+# --break[=frames]: break the biggest stone near the spot (RockField3D.break_stone) and let the pieces fall for that
+# many physics ticks (default 120) before the shot; --break-cam=dist frames the pieces from that far.
+func _break_near(spot: Vector3, land: Landscape3D) -> void:
+	land.collision_enabled = true
+	land.rebuild()
+	land.load_all_heights()
+	rocks.collision_enabled = true
+	rocks.rebuild()
+	rocks.build_area(Rect2(spot.x - 40, spot.z - 40, 80, 80))
+	var near: Array = rocks.get_stones(LAYERS.find(args.get("view", "scree")), Rect2(spot.x - 8, spot.z - 8, 16, 16))
+	var big: Dictionary = {}
+	for st in near:
+		if big.is_empty() or float(st["scale"]) > float(big["scale"]):
+			big = st
+	if big.is_empty():
+		print("no stone to break near the spot")
+		return
+	var at: Vector3 = big["position"]
+	var sc: float = big["scale"]
+	var d := float(args.get("break-cam", "0"))
+	if d > 0.0:
+		cam.position = _view_from(at, d)
+		cam.look_at(at)
+	breaking = true
+	var hit := at + Vector3(0, sc * 0.6, 0)
+	var node: Node = rocks.break_stone(hit, float(args.get("damage", "100")), 3.0 * sc)
+	print("broke a %.2f m stone at %s into %d pieces" % [2.0 * sc, at, node.get_piece_count() if node else 0])
+	var ticks := int(args["break"]) if args["break"] != "1" else 120
+	RenderingServer.render_loop_enabled = false
+	for i in ticks:
+		await get_tree().physics_frame
+	RenderingServer.render_loop_enabled = true
+	breaking = false
 
 
 # --plants: the stand's crevice plants between the field's stones round the spot (docs/ideas/vegetation.md,
@@ -505,6 +544,31 @@ func _test() -> void:
 			sum += ax.y / ax.z
 		flat.append(sum / 4.0)
 	check(flat[1] < flat[0], "beach pebbles flatter than river cobbles: c/b %.2f against %.2f" % [flat[1], flat[0]])
+	# 2b. Breaking: the solid split into rough pieces (fracture_pieces) that fill it, bonded to their neighbours.
+	for ti in [RockGenerator.ROCK_GRANITE, RockGenerator.ROCK_SLATE]:
+		var g := RockGenerator.new()
+		g.rock_type = ti
+		g.family = RockGenerator.FAMILY_ROCKFALL
+		g.seed = 5
+		g.lods = false
+		g.fracture_pieces = 10
+		var tf := Time.get_ticks_msec()
+		var m := g.generate()
+		var chunks: Array = m.get_meta("rock_chunks", [])
+		var bonds: Array = m.get_meta("rock_bonds", [])
+		var vol: float = m.get_meta("rock_volume", 0.0)
+		var sum := 0.0
+		var good := 0
+		var tris := 0
+		for c in chunks:
+			if (c as Array).size() == Mesh.ARRAY_MAX:
+				good += 1
+				var am := ArrayMesh.new()
+				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, c)
+				sum += _volume(am)
+				tris += (c[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+		var whole := _volume(m)
+		check(good >= 6 and bonds.size() >= good - 1 and absf(sum / whole - 1.0) < 0.12, "%s fracture: %d pieces, %d bonds, pieces fill %.2f of the stone (field volume %.3f, mesh %.3f), %d triangles, %d ms" % [TYPES[ti], good, bonds.size(), sum / whole, vol, whole, tris, Time.get_ticks_msec() - tf])
 	# 3. The field on a generated world.
 	_world()
 	var wr := Rect2(-1000, -1000, 2000, 2000)
@@ -595,6 +659,20 @@ func _test() -> void:
 	check(shapes > 0, "collision hulls near the follow target: %d" % shapes)
 	# Close-up shapes for the stones within close_up_radius of the follow target.
 	check(rocks.get_close_up_shape_count() > 0, "close-up shapes near the follow target: %d shapes, %d triangles, %.1f MB" % [rocks.get_close_up_shape_count(), rocks.get_close_up_triangle_count(), close_bytes / 1048576.0])
+	# Breaking a stone near the target: it is swapped for its pieces (PhysX Blast) and stays broken.
+	check(rocks.is_breaking_supported(), "breaking supported (PhysX Blast in this build)")
+	if rocks.is_breaking_supported():
+		var near: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 6, scree_at.z - 6, 12, 12))
+		var big: Dictionary = {}
+		for st in near:
+			if big.is_empty() or float(st["scale"]) > float(big["scale"]):
+				big = st
+		check(not big.is_empty(), "a stone to break near the target: %d stones" % near.size())
+		if not big.is_empty():
+			var bt := Time.get_ticks_msec()
+			var node: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
+			var pieces: int = node.get_piece_count() if node else 0
+			check(node != null and pieces > 3 and rocks.get_broken_count() == 1, "break_stone: a %.2f m stone into %d pieces in %d ms (shape fractured on demand)" % [2.0 * float(big["scale"]), pieces, Time.get_ticks_msec() - bt])
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.
@@ -613,6 +691,9 @@ func _mesh_bytes(meshes: Dictionary) -> int:
 
 
 func _render_later() -> void:
+	await get_tree().process_frame
+	while breaking:
+		await get_tree().process_frame
 	while args.has("plants") and rocks and not plants_ready:
 		await get_tree().process_frame
 	var frames := 8 if raster else 12

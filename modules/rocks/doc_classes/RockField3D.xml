@@ -9,6 +9,16 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="break_stone">
+			<return type="Node" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="damage" type="float" default="10.0" />
+			<param index="2" name="radius" type="float" default="1.0" />
+			<description>
+				Breaks the stone whose surface lies nearest [param position], within [param radius]. The stone is hidden and its collision is turned off. In its place goes a [PhysXDestructible3D] of the shape's pieces (see [member RockGenerator.fracture_pieces]), drawn with a copy of the rock material that carries the stone's own instance data, and [param damage] is applied at [param position] over [param radius]. Loose stones fall apart; cliff blocks and tor blocks keep their bottom pieces. The stone stays broken when its cell is rebuilt, until [method restore_broken].
+				A shape is fractured once and shared by every stone of that shape. Shapes near the follow target are fractured ahead (see [member break_prepare_radius]); otherwise the first hit builds it. Returns the new node, or [code]null[/code] if no stone is in reach or the godot_physx module is missing (see [method is_breaking_supported]).
+			</description>
+		</method>
 		<method name="build_area">
 			<return type="int" />
 			<param index="0" name="rect" type="Rect2" />
@@ -20,6 +30,12 @@
 			<return type="void" />
 			<description>
 				Removes every stone.
+			</description>
+		</method>
+		<method name="get_broken_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many stones [method break_stone] has broken since the last [method restore_broken] or [method rebuild].
 			</description>
 		</method>
 		<method name="get_cell_count" qualifiers="const">
@@ -103,6 +119,12 @@
 				Stones of a layer in [param rect], placed whether or not they are built, as dictionaries with [code]position[/code], [code]basis[/code], [code]scale[/code], [code]ground[/code], [code]footprint[/code], [code]film[/code], [code skip-lint]rock_type[/code], [code]family[/code], [code]bin[/code], [code]variant[/code], [code skip-lint]layer[/code] and [code]top[/code] (height of its highest point, from its shape as placed).
 			</description>
 		</method>
+		<method name="is_breaking_supported" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether [method break_stone] can work: the engine has the godot_physx module, with [PhysXDestructible3D] and [PhysXBlastAuthoring].
+			</description>
+		</method>
 		<method name="is_layer_enabled" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="layer" type="int" />
@@ -114,6 +136,12 @@
 			<return type="void" />
 			<description>
 				Removes every stone and builds again round the follow target.
+			</description>
+		</method>
+		<method name="restore_broken">
+			<return type="void" />
+			<description>
+				Frees the broken stones' pieces and puts every broken stone back. The cells are built again.
 			</description>
 		</method>
 		<method name="set_layer_density">
@@ -142,6 +170,15 @@
 		</method>
 	</methods>
 	<members>
+		<member name="break_density" type="float" setter="set_break_density" getter="get_break_density" default="2650.0">
+			Density of the stone for the mass of a broken stone, in kg/m³. Quartz-feldspar rock is about 2650.
+		</member>
+		<member name="break_pieces" type="int" setter="set_break_pieces" getter="get_break_pieces" default="10">
+			How many pieces each shape breaks into. See [member RockGenerator.fracture_pieces].
+		</member>
+		<member name="break_prepare_radius" type="float" setter="set_break_prepare_radius" getter="get_break_prepare_radius" default="6.0">
+			Shapes of the stones with collision within this distance of the follow target are fractured ahead on a worker thread, one at a time, so that a hit breaks them at once. 0 turns this off, and each shape is then fractured at its first hit.
+		</member>
 		<member name="build_budget_msec" type="float" setter="set_build_budget_msec" getter="get_build_budget_msec" default="4.0">
 			Milliseconds per frame spent building cells while streaming.
 		</member>

@@ -84,6 +84,7 @@ struct LibraryJob {
 	int seed = 0;
 	float detail = 1.0f;
 	bool close_up = false;
+	int fracture = 0; // pieces to split it into (break_stone)
 	Ref<ImporterMesh> mesh;
 	Dictionary meta;
 };
@@ -98,7 +99,8 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_transport_distance(job.transport);
 	g->set_detail(job.detail);
 	g->set_close_up(job.close_up);
-	g->set_lods(!job.close_up); // a close-up shape only draws within close_up_radius
+	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
+	g->set_fracture_pieces(job.fracture);
 	job.mesh = g->build_importer_mesh(job.meta);
 }
 
@@ -1181,6 +1183,13 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	const Rect2 rect(p_key.y * cs, p_key.z * cs, cs, cs);
 	LocalVector<Stone> stones;
 	_place(layer, rect, rf_hash3(p_key.x, p_key.y, p_key.z, uint32_t(seed) * 2654435761u), stones);
+	if (!broken_stones.is_empty()) {
+		for (int i = int(stones.size()) - 1; i >= 0; i--) {
+			if (broken_stones.has(Vector3i((stones[i].position * 100.0f).round()))) {
+				stones.remove_at(i);
+			}
+		}
+	}
 	Cell cell;
 	cell.stones = int(stones.size());
 	stone_count += cell.stones;
@@ -1191,6 +1200,11 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	}
 	RandomPCG rng(rf_hash3(p_key.y, p_key.z, p_key.x, 991u));
 	const real_t vis = layer_radius[layer] + cs;
+	LocalVector<Vector2i> where; // stone -> (group, index in it)
+	where.resize(stones.size());
+	for (Vector2i &w : where) {
+		w = Vector2i(-1, -1);
+	}
 	for (const KeyValue<uint64_t, LocalVector<uint32_t>> &g : groups) {
 		const uint32_t lk = uint32_t(g.key >> 16);
 		const int v = int(g.key & 0xFFFF);
@@ -1219,6 +1233,9 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 			grp.custom.push_back(cd);
 			grp.reach.push_back(st.scale * MAX(ax.x, MAX(ax.y, ax.z)));
 			grp.near.push_back(false);
+			grp.broken.push_back(false);
+			grp.shapes.push_back(nullptr);
+			where[g.value[k]] = Vector2i(int(cell.groups.size()), int(k));
 		}
 		cell.groups.push_back(grp);
 		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
@@ -1236,7 +1253,8 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	const Vector2 cc = rect.get_center();
 	if (collision_enabled && Vector2(tp.x, tp.z).distance_to(cc) < collision_radius + cs * 0.71) {
 		StaticBody3D *body = nullptr;
-		for (const Stone &st : stones) {
+		for (uint32_t si = 0; si < stones.size(); si++) {
+			const Stone &st = stones[si];
 			if (2.0f * st.scale < collision_min_size) {
 				continue;
 			}
@@ -1265,6 +1283,9 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 			CollisionShape3D *cs3 = memnew(CollisionShape3D);
 			cs3->set_shape(shape);
 			body->add_child(cs3);
+			if (where[si].x >= 0) {
+				cell.groups[where[si].x].shapes[where[si].y] = cs3;
+			}
 		}
 		cell.body = body;
 	}
@@ -1334,6 +1355,7 @@ void RockField3D::_update_streaming(bool p_all) {
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	_update_close_up(p_all);
+	_update_breakable();
 }
 
 // Close-up detail: stones whose surface comes within close_up_radius of the target are drawn with a close-up
@@ -1396,7 +1418,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 			const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
 			bool changed = false;
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
-				bool want = cell_near && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < close_up_radius;
+				bool want = !grp.broken[k] && cell_near && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < close_up_radius;
 				if (want) {
 					lib->close_used[grp.variant] = now;
 					if (lib->close_state[grp.variant] == 0 && building < 2) {
@@ -1423,7 +1445,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 				}
 				if (want != grp.near[k]) {
 					grp.near[k] = want;
-					grp.multimesh->set_instance_transform(int(k), want ? Transform3D(Basis().scaled(Vector3(0, 0, 0)), grp.xforms[k].origin) : grp.xforms[k]);
+					grp.multimesh->set_instance_transform(int(k), (want || grp.broken[k]) ? Transform3D(Basis().scaled(Vector3(0, 0, 0)), grp.xforms[k].origin) : grp.xforms[k]);
 					changed = true;
 				}
 				if (want) {
@@ -1544,8 +1566,230 @@ void RockField3D::set_close_up_enabled(bool p_enabled) {
 	close_dirty = true;
 }
 
+/* Breaking */
+
+bool RockField3D::is_breaking_supported() const {
+	return ClassDB::class_exists("PhysXDestructible3D") && ClassDB::class_exists("PhysXBlastAuthoring");
+}
+
+void RockField3D::_start_fracture(uint64_t p_key) {
+	Fracture &f = fractures[p_key];
+	if (f.state != 0) {
+		return;
+	}
+	const uint32_t lk = uint32_t(p_key >> 16);
+	LibraryJob *job = memnew(LibraryJob);
+	job->type = key_type(lk);
+	job->family = key_family(lk);
+	job->seed = seed * 1000 + int(p_key & 0xFFFF);
+	job->detail = float(detail);
+	job->fracture = break_pieces;
+	if (job->family == RockGenerator::FAMILY_COBBLE) {
+		job->transport = RockGenerator::get_lithology(job->type).abrasion_length * cobble_bins[CLAMP(key_bin(lk), 0, 2)];
+	}
+	f.job = job;
+	f.task = WorkerThreadPool::get_singleton()->add_native_task(&close_job, job, false, "RockField3D fracture");
+	f.state = 1;
+}
+
+// The finished pieces as a PhysXBlastAsset (pieces that came out empty are dropped with their bonds).
+bool RockField3D::_finish_fracture(uint64_t p_key, bool p_wait) {
+	Fracture *f = fractures.getptr(p_key);
+	if (!f || f->state != 1) {
+		return f && f->state == 2;
+	}
+	if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(f->task)) {
+		return false;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_task_completion(f->task);
+	LibraryJob *job = static_cast<LibraryJob *>(f->job);
+	f->job = nullptr;
+	f->state = 3;
+	if (job->mesh.is_valid() && job->mesh->get_surface_count() > 0 && job->meta.has("rock_chunks")) {
+		const Array chunks = job->meta["rock_chunks"];
+		const Array bonds = job->meta["rock_bonds"];
+		Array pieces;
+		LocalVector<int> remap;
+		remap.resize(chunks.size());
+		for (int c = 0; c < chunks.size(); c++) {
+			const Array a = chunks[c];
+			remap[c] = a.size() == Mesh::ARRAY_MAX ? pieces.size() : -1;
+			if (remap[c] >= 0) {
+				pieces.push_back(a);
+			}
+		}
+		Array kept;
+		for (int b = 0; b < bonds.size(); b++) {
+			Dictionary d = Dictionary(bonds[b]).duplicate();
+			const Vector2i pair = d["chunks"];
+			if (pair.x < int(remap.size()) && pair.y < int(remap.size()) && remap[pair.x] >= 0 && remap[pair.y] >= 0) {
+				d["chunks"] = Vector2i(remap[pair.x], remap[pair.y]);
+				kept.push_back(d);
+			}
+		}
+		Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
+		if (authoring && pieces.size() >= 2) {
+			Ref<RefCounted> holder(Object::cast_to<RefCounted>(authoring));
+			const Ref<Resource> asset = authoring->call("build_prefractured", job->mesh->get_surface_arrays(0), pieces, kept);
+			if (asset.is_valid()) {
+				f->asset = asset;
+				f->volume = float(job->meta.get("rock_volume", 0.0));
+				f->state = 2;
+			}
+		} else if (authoring && !Object::cast_to<RefCounted>(authoring)) {
+			memdelete(authoring);
+		}
+	}
+	memdelete(job);
+	return f->state == 2;
+}
+
+// Shapes of the stones near the target are fractured ahead on a worker, so a hit breaks them at once.
+void RockField3D::_update_breakable() {
+	for (KeyValue<uint64_t, Fracture> &kv : fractures) {
+		if (kv.value.state == 1) {
+			_finish_fracture(kv.key, false);
+		}
+	}
+	if (break_prepare_radius <= 0.0f || !is_breaking_supported()) {
+		return;
+	}
+	const Vector3 tp = _target_position();
+	int building = 0;
+	for (const KeyValue<uint64_t, Fracture> &kv : fractures) {
+		building += kv.value.state == 1 ? 1 : 0;
+	}
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (building >= 1) {
+			return; // one at a time: it shares the workers with the close-up shapes
+		}
+		const real_t cs = _cell_size(Layer(kv.key.x));
+		const Rect2 rect(kv.key.y * cs, kv.key.z * cs, cs, cs);
+		const Vector2 nearest(CLAMP(tp.x, rect.position.x, rect.get_end().x), CLAMP(tp.z, rect.position.y, rect.get_end().y));
+		if (nearest.distance_to(Vector2(tp.x, tp.z)) > break_prepare_radius + 8.0f) {
+			continue;
+		}
+		for (const Group &grp : kv.value.groups) {
+			const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
+			const Fracture *f = fractures.getptr(key);
+			if (f && f->state != 0) {
+				continue;
+			}
+			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
+				if (!grp.broken[k] && grp.shapes[k] && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < break_prepare_radius) {
+					_start_fracture(key);
+					building++;
+					break;
+				}
+			}
+			if (building >= 1) {
+				break;
+			}
+		}
+	}
+}
+
+Node *RockField3D::break_stone(const Vector3 &p_position, real_t p_damage, real_t p_radius) {
+	ERR_FAIL_COND_V_MSG(!is_breaking_supported(), nullptr, "RockField3D: breaking stones needs the godot_physx module (PhysX Blast).");
+	ERR_FAIL_COND_V(!is_inside_tree(), nullptr);
+	// The stone whose surface comes nearest the point (reach as a sphere; inside it counts as zero).
+	Cell *best_cell = nullptr;
+	int best_group = -1, best_k = -1;
+	real_t best = 1e30f;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		const real_t cs = _cell_size(Layer(kv.key.x));
+		const Rect2 rect(kv.key.y * cs, kv.key.z * cs, cs, cs);
+		if (!rect.grow(cs).has_point(Vector2(p_position.x, p_position.z))) {
+			continue;
+		}
+		for (uint32_t g = 0; g < kv.value.groups.size(); g++) {
+			const Group &grp = kv.value.groups[g];
+			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
+				if (grp.broken[k]) {
+					continue;
+				}
+				const real_t d = MAX(grp.xforms[k].origin.distance_to(p_position) - grp.reach[k], real_t(0.0)) - grp.reach[k] * 0.001f;
+				if (d < best) {
+					best = d;
+					best_cell = &kv.value;
+					best_group = int(g);
+					best_k = int(k);
+				}
+			}
+		}
+	}
+	if (!best_cell || best > p_radius) {
+		return nullptr;
+	}
+	Group &grp = best_cell->groups[best_group];
+	const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
+	_start_fracture(key);
+	if (!_finish_fracture(key, true)) {
+		return nullptr;
+	}
+	const Fracture &f = fractures[key];
+	Object *obj = ClassDB::instantiate("PhysXDestructible3D");
+	Node3D *node = Object::cast_to<Node3D>(obj);
+	if (!node) {
+		if (obj) {
+			memdelete(obj);
+		}
+		return nullptr;
+	}
+	const Transform3D xf = grp.xforms[best_k];
+	const Color cd = grp.custom[best_k];
+	// Its own copy of the rock material, with the stone's instance data (ground, film, scale, seed), so the copy
+	// shades exactly like the stone it replaces.
+	Ref<ShaderMaterial> mat = _material(key_type(grp.library));
+	if (mat.is_valid()) {
+		mat = mat->duplicate();
+		mat->set_shader_parameter("rock_instance", Vector4(cd.r, cd.g, cd.b, cd.a));
+	}
+	const real_t s = xf.basis.get_scale().x;
+	node->set("blast_asset", f.asset);
+	node->set("material_override", mat);
+	node->set("auto_mass", false);
+	node->set("mass", MAX(real_t(f.volume) * s * s * s * break_density, real_t(0.01)));
+	// Loose stones fall apart; blocks still in a wall or a tor keep their bottom pieces.
+	const RockGenerator::Family fam = key_family(grp.library);
+	node->set("anchor", (fam == RockGenerator::FAMILY_CLIFF_BLOCK || fam == RockGenerator::FAMILY_CORESTONE) ? 1 : 2);
+	add_child(node, false, INTERNAL_MODE_BACK);
+	node->set_as_top_level(true);
+	node->set_global_transform(xf);
+	breakables.push_back(node->get_instance_id());
+	// Hide the stone and drop its collision.
+	grp.broken[best_k] = true;
+	grp.multimesh->set_instance_transform(best_k, Transform3D(Basis().scaled(Vector3(0, 0, 0)), xf.origin));
+	if (CollisionShape3D *shape = Object::cast_to<CollisionShape3D>(grp.shapes[best_k])) {
+		shape->set_disabled(true);
+	}
+	broken_stones.insert(Vector3i((xf.origin * 100.0f).round()));
+	close_dirty = true;
+	node->call("apply_radial_damage", p_position, p_damage, p_radius * 0.5f, p_radius);
+	return node;
+}
+
+void RockField3D::restore_broken() {
+	for (const ObjectID &id : breakables) {
+		if (Node *n = Object::cast_to<Node>(ObjectDB::get_instance(id))) {
+			n->queue_free();
+		}
+	}
+	breakables.clear();
+	if (!broken_stones.is_empty()) {
+		broken_stones.clear();
+		for (KeyValue<Vector3i, Cell> &kv : cells) {
+			_free_cell(kv.value);
+		}
+		cells.clear();
+		stone_count = 0;
+	}
+}
+
 void RockField3D::rebuild() {
 	clear();
+	restore_broken();
+	fractures.clear();
 	obstacle_cache.clear();
 	rivers_ready = false;
 	if (is_inside_tree() && streaming) {
@@ -1554,6 +1798,11 @@ void RockField3D::rebuild() {
 }
 
 void RockField3D::clear() {
+	for (KeyValue<uint64_t, Fracture> &kv : fractures) {
+		if (kv.value.state == 1) {
+			_finish_fracture(kv.key, true);
+		}
+	}
 	for (KeyValue<Vector3i, Cell> &kv : cells) {
 		_free_cell(kv.value);
 	}
@@ -1998,6 +2247,16 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_river_min_area"), &RockField3D::get_river_min_area);
 	ClassDB::bind_method(D_METHOD("set_max_stones_per_cell", "count"), &RockField3D::set_max_stones_per_cell);
 	ClassDB::bind_method(D_METHOD("get_max_stones_per_cell"), &RockField3D::get_max_stones_per_cell);
+	ClassDB::bind_method(D_METHOD("set_break_pieces", "pieces"), &RockField3D::set_break_pieces);
+	ClassDB::bind_method(D_METHOD("get_break_pieces"), &RockField3D::get_break_pieces);
+	ClassDB::bind_method(D_METHOD("set_break_prepare_radius", "radius"), &RockField3D::set_break_prepare_radius);
+	ClassDB::bind_method(D_METHOD("get_break_prepare_radius"), &RockField3D::get_break_prepare_radius);
+	ClassDB::bind_method(D_METHOD("set_break_density", "density"), &RockField3D::set_break_density);
+	ClassDB::bind_method(D_METHOD("get_break_density"), &RockField3D::get_break_density);
+	ClassDB::bind_method(D_METHOD("break_stone", "position", "damage", "radius"), &RockField3D::break_stone, DEFVAL(10.0), DEFVAL(1.0));
+	ClassDB::bind_method(D_METHOD("restore_broken"), &RockField3D::restore_broken);
+	ClassDB::bind_method(D_METHOD("get_broken_count"), &RockField3D::get_broken_count);
+	ClassDB::bind_method(D_METHOD("is_breaking_supported"), &RockField3D::is_breaking_supported);
 	ClassDB::bind_method(D_METHOD("set_collision_enabled", "enabled"), &RockField3D::set_collision_enabled);
 	ClassDB::bind_method(D_METHOD("is_collision_enabled"), &RockField3D::is_collision_enabled);
 	ClassDB::bind_method(D_METHOD("set_collision_min_size", "metres"), &RockField3D::set_collision_min_size);
@@ -2053,6 +2312,10 @@ void RockField3D::_bind_methods() {
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, String(layer_names[l]) + "_density", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_layer_density", "get_layer_density", l);
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, String(layer_names[l]) + "_radius", PROPERTY_HINT_RANGE, "0,4000,1,suffix:m"), "set_layer_radius", "get_layer_radius", l);
 	}
+	ADD_GROUP("Breaking", "break_");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "break_pieces", PROPERTY_HINT_RANGE, "2,48,1"), "set_break_pieces", "get_break_pieces");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_prepare_radius", PROPERTY_HINT_RANGE, "0,50,0.5,suffix:m"), "set_break_prepare_radius", "get_break_prepare_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_density", PROPERTY_HINT_RANGE, "500,4000,10,suffix:kg/m³"), "set_break_density", "get_break_density");
 	ADD_GROUP("Collision", "collision_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_min_size", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_collision_min_size", "get_collision_min_size");

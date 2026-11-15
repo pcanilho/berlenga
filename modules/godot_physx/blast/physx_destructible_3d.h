@@ -436,6 +436,10 @@ private:
 		int slot = 0;
 		PackedVector3Array vertices;
 		PackedVector3Array normals;
+		// From the asset's chunk_meshes, when it has them (empty otherwise).
+		PackedFloat32Array tangents;
+		PackedColorArray colors;
+		PackedVector2Array uv, uv2;
 	};
 	LocalVector<LocalVector<ChunkSurface>> chunk_surfaces;
 	void _compute_chunk_surfaces();

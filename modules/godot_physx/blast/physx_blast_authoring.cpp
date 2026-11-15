@@ -282,6 +282,7 @@ bool is_closed(const LocalVector<uint32_t> &p_indices) {
 void PhysXBlastAuthoring::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed", "pattern", "cutout_pattern"), &PhysXBlastAuthoring::fracture_mesh, DEFVAL(PATTERN_VORONOI), DEFVAL(Ref<Texture2D>()));
 
+	ClassDB::bind_method(D_METHOD("build_prefractured", "root", "pieces", "bonds"), &PhysXBlastAuthoring::build_prefractured);
 	ClassDB::bind_method(D_METHOD("get_last_error"), &PhysXBlastAuthoring::get_last_error);
 	ClassDB::bind_method(D_METHOD("get_last_warnings"), &PhysXBlastAuthoring::get_last_warnings);
 
@@ -617,5 +618,129 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	if (mesh_cleaner) {
 		mesh_cleaner->release();
 	}
+	return result;
+}
+
+namespace {
+
+// A Mesh arrays Array as a triangle soup (the chunk_points format), with its volume and centroid (divergence
+// theorem over the closed surface).
+bool blast_soup(const Array &p_arrays, PackedVector3Array &r_points, double &r_volume, Vector3 &r_centroid) {
+	if (p_arrays.size() != Mesh::ARRAY_MAX) {
+		return false;
+	}
+	const PackedVector3Array verts = p_arrays[Mesh::ARRAY_VERTEX];
+	const PackedInt32Array indices = p_arrays[Mesh::ARRAY_INDEX];
+	const int count = indices.is_empty() ? verts.size() : indices.size();
+	if (count < 12) {
+		return false;
+	}
+	r_points.resize(count);
+	Vector3 *w = r_points.ptrw();
+	for (int i = 0; i < count; i++) {
+		const int vi = indices.is_empty() ? i : indices[i];
+		ERR_FAIL_INDEX_V(vi, verts.size(), false);
+		w[i] = verts[vi];
+	}
+	double vol = 0.0;
+	Vector3 c;
+	for (int t = 0; t + 2 < count; t += 3) {
+		const Vector3 &a = w[t], &b = w[t + 1], &d = w[t + 2];
+		const double v = double(a.dot(b.cross(d))) / 6.0;
+		vol += v;
+		c += (a + b + d) * real_t(v / 4.0);
+	}
+	r_volume = Math::abs(vol);
+	r_centroid = Math::abs(vol) > 1e-12 ? c / real_t(vol) : Vector3();
+	return r_volume > 0.0;
+}
+
+} // namespace
+
+Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root, const Array &p_pieces, const Array &p_bonds) {
+	last_error = String();
+	last_warnings.clear();
+	const int leaves = p_pieces.size();
+	if (leaves < 2) {
+		return _fail("PhysXBlastAuthoring: build_prefractured needs at least two pieces.");
+	}
+	Array points;
+	points.resize(leaves + 1);
+	std::vector<NvBlastChunkDesc> chunks((size_t)leaves + 1);
+	for (int c = 0; c <= leaves; c++) {
+		PackedVector3Array soup;
+		double volume = 0.0;
+		Vector3 centroid;
+		if (!blast_soup(c == 0 ? p_root : Array(p_pieces[c - 1]), soup, volume, centroid)) {
+			return _fail(vformat("PhysXBlastAuthoring: build_prefractured: chunk %d is not a closed triangle mesh.", c));
+		}
+		points[c] = soup;
+		NvBlastChunkDesc &d = chunks[c];
+		d.centroid[0] = centroid.x;
+		d.centroid[1] = centroid.y;
+		d.centroid[2] = centroid.z;
+		d.volume = float(volume);
+		d.parentChunkDescIndex = c == 0 ? UINT32_MAX : 0;
+		d.flags = c == 0 ? NvBlastChunkDesc::NoFlags : NvBlastChunkDesc::SupportFlag;
+		d.userData = uint32_t(c);
+	}
+	std::vector<NvBlastBondDesc> bonds;
+	for (int b = 0; b < p_bonds.size(); b++) {
+		const Dictionary bd = p_bonds[b];
+		const Vector2i pair = bd.get("chunks", Vector2i(-1, -1));
+		if (pair.x < 0 || pair.y < 0 || pair.x >= leaves || pair.y >= leaves || pair.x == pair.y) {
+			_warn(vformat("PhysXBlastAuthoring: build_prefractured: bond %d names no two pieces, skipped.", b));
+			continue;
+		}
+		const Vector3 n = Vector3(bd.get("normal", Vector3(0, 1, 0))).normalized();
+		const Vector3 c = bd.get("centroid", Vector3());
+		NvBlastBondDesc desc;
+		desc.chunkIndices[0] = uint32_t(pair.x + 1);
+		desc.chunkIndices[1] = uint32_t(pair.y + 1);
+		desc.bond.normal[0] = n.x;
+		desc.bond.normal[1] = n.y;
+		desc.bond.normal[2] = n.z;
+		desc.bond.area = MAX(float(bd.get("area", 0.0)), 1e-6f);
+		desc.bond.centroid[0] = c.x;
+		desc.bond.centroid[1] = c.y;
+		desc.bond.centroid[2] = c.z;
+		desc.bond.userData = 0;
+		bonds.push_back(desc);
+	}
+	if (bonds.empty()) {
+		return _fail("PhysXBlastAuthoring: build_prefractured: no bonds, the pieces would never hold together.");
+	}
+	NvBlastAssetDesc desc;
+	desc.chunkCount = uint32_t(chunks.size());
+	desc.chunkDescs = chunks.data();
+	desc.bondCount = uint32_t(bonds.size());
+	desc.bondDescs = bonds.data();
+	std::vector<char> scratch(NvBlastGetRequiredScratchForCreateAsset(&desc, blast_authoring_log) + 16);
+	const size_t size = NvBlastGetAssetMemorySize(&desc, blast_authoring_log);
+	if (size == 0) {
+		return _fail("PhysXBlastAuthoring: build_prefractured: Blast rejected the chunk and bond descriptors.");
+	}
+	void *mem = Memory::alloc_aligned_static(size, 16);
+	NvBlastAsset *asset = NvBlastCreateAsset(mem, &desc, scratch.data(), blast_authoring_log);
+	if (!asset) {
+		Memory::free_aligned_static(mem);
+		return _fail("PhysXBlastAuthoring: build_prefractured: NvBlastCreateAsset failed.");
+	}
+	const uint32_t asset_size = NvBlastAssetGetSize(asset, blast_authoring_log);
+	PackedByteArray bytes;
+	bytes.resize(asset_size);
+	memcpy(bytes.ptrw(), asset, asset_size);
+	Memory::free_aligned_static(mem);
+
+	Array meshes;
+	meshes.push_back(p_root);
+	for (int c = 0; c < leaves; c++) {
+		meshes.push_back(p_pieces[c]);
+	}
+	Ref<PhysXBlastAsset> result;
+	result.instantiate();
+	result->set_asset_bytes(bytes);
+	result->set_chunk_points(points);
+	result->set_chunk_meshes(meshes);
 	return result;
 }

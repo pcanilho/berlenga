@@ -575,6 +575,159 @@ void rk_resample(const RockGrid &p_src, RockGrid &r_dst) {
 	}
 }
 
+// Surface nets (Gibson 1998) over a field: one vertex per cell the surface crosses, at the mean of its edge crossings;
+// one quad per crossed grid edge; area-weighted normals; optionally simplified (see below). False if it came out empty.
+bool rk_surface_nets(const RockGrid &fine, bool p_simplify, LocalVector<Vector3> &verts, LocalVector<Vector3> &normals, LocalVector<int> &indices) {
+	verts.clear();
+	normals.clear();
+	indices.clear();
+	const int cx = fine.nx - 1, cy = fine.ny - 1, cz = fine.nz - 1;
+	LocalVector<int> cell_vertex;
+	cell_vertex.resize(cx * cy * cz);
+	static const int corner_offsets[8][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 } };
+	static const int edges[12][2] = { { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 }, { 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
+	for (int z = 0; z < cz; z++) {
+		for (int y = 0; y < cy; y++) {
+			for (int x = 0; x < cx; x++) {
+				float vals[8];
+				int mask = 0;
+				for (int k = 0; k < 8; k++) {
+					vals[k] = fine.v[fine.idx(x + corner_offsets[k][0], y + corner_offsets[k][1], z + corner_offsets[k][2])];
+					if (vals[k] < 0.0f) {
+						mask |= 1 << k;
+					}
+				}
+				const int ci = (z * cy + y) * cx + x;
+				if (mask == 0 || mask == 255) {
+					cell_vertex[ci] = -1;
+					continue;
+				}
+				Vector3 sum;
+				int cnt = 0;
+				for (int e = 0; e < 12; e++) {
+					const float v0 = vals[edges[e][0]], v1 = vals[edges[e][1]];
+					if ((v0 < 0.0f) == (v1 < 0.0f)) {
+						continue;
+					}
+					const float t = v0 / (v0 - v1);
+					const Vector3 p0(corner_offsets[edges[e][0]][0], corner_offsets[edges[e][0]][1], corner_offsets[edges[e][0]][2]);
+					const Vector3 p1(corner_offsets[edges[e][1]][0], corner_offsets[edges[e][1]][1], corner_offsets[edges[e][1]][2]);
+					sum += p0.lerp(p1, t);
+					cnt++;
+				}
+				cell_vertex[ci] = int(verts.size());
+				verts.push_back(fine.pos(x, y, z) + sum / float(cnt) * fine.h);
+			}
+		}
+	}
+	auto quad = [&](int p_a, int p_b, int p_c, int p_d, bool p_flip) {
+		if (p_a < 0 || p_b < 0 || p_c < 0 || p_d < 0) {
+			return;
+		}
+		if (p_flip) {
+			SWAP(p_b, p_d);
+		}
+		indices.push_back(p_a);
+		indices.push_back(p_b);
+		indices.push_back(p_c);
+		indices.push_back(p_a);
+		indices.push_back(p_c);
+		indices.push_back(p_d);
+	};
+	auto cv = [&](int p_x, int p_y, int p_z) { return (p_x < 0 || p_y < 0 || p_z < 0 || p_x >= cx || p_y >= cy || p_z >= cz) ? -1 : cell_vertex[(p_z * cy + p_y) * cx + p_x]; };
+	for (int z = 1; z < fine.nz - 1; z++) {
+		for (int y = 1; y < fine.ny - 1; y++) {
+			for (int x = 1; x < fine.nx - 1; x++) {
+				const bool in0 = fine.v[fine.idx(x, y, z)] < 0.0f;
+				if (x < fine.nx - 1 && in0 != (fine.v[fine.idx(x + 1, y, z)] < 0.0f)) {
+					quad(cv(x, y - 1, z - 1), cv(x, y, z - 1), cv(x, y, z), cv(x, y - 1, z), !in0);
+				}
+				if (y < fine.ny - 1 && in0 != (fine.v[fine.idx(x, y + 1, z)] < 0.0f)) {
+					quad(cv(x - 1, y, z - 1), cv(x - 1, y, z), cv(x, y, z), cv(x, y, z - 1), !in0);
+				}
+				if (z < fine.nz - 1 && in0 != (fine.v[fine.idx(x, y, z + 1)] < 0.0f)) {
+					quad(cv(x - 1, y - 1, z), cv(x, y - 1, z), cv(x, y, z), cv(x - 1, y, z), !in0);
+				}
+			}
+		}
+	}
+	// Winding: Godot's front faces are clockwise seen from outside; check the first triangle against the field's
+	// outward gradient and flip all if needed (the quads above are wound consistently).
+	if (indices.size() >= 3) {
+		int votes = 0;
+		for (uint32_t t = 0; t < MIN(indices.size(), 3000u); t += 3) {
+			const Vector3 &v0 = verts[indices[t]], &v1 = verts[indices[t + 1]], &v2 = verts[indices[t + 2]];
+			const Vector3 fn = (v1 - v0).cross(v2 - v0);
+			votes += fn.dot(fine.gradient((v0 + v1 + v2) / 3.0f)) < 0.0f ? 1 : -1;
+		}
+		if (votes < 0) {
+			for (uint32_t t = 0; t < indices.size(); t += 3) {
+				SWAP(indices[t + 1], indices[t + 2]);
+			}
+		}
+	}
+	if (verts.size() < 4 || indices.size() < 12) {
+		return false;
+	}
+
+	// 5. Normals (area-weighted from the faces), cavity (how much the field closes in above a point: open faces 1,
+	// cracks and pits darker), freshness.
+	normals.resize(verts.size());
+	for (uint32_t t = 0; t < indices.size(); t += 3) {
+		const Vector3 &v0 = verts[indices[t]], &v1 = verts[indices[t + 1]], &v2 = verts[indices[t + 2]];
+		const Vector3 fn = (v2 - v0).cross(v1 - v0); // clockwise front: outward
+		normals[indices[t]] += fn;
+		normals[indices[t + 1]] += fn;
+		normals[indices[t + 2]] += fn;
+	}
+	// LOD0 without the flat-face excess: surface nets put a vertex in every grid cell, so a flat break carries as
+	// many triangles as a pitted one. Collapse edges only where neither the surface nor its normal moves visibly
+	// (meshoptimizer with normals as attributes, absolute error of 3% of a grid cell); the close-ups at 100% crop
+	// match the full mesh. Normals keep the full mesh's smoothing, taken above before the collapse.
+	if (p_simplify && indices.size() > 3000) {
+		LocalVector<uint32_t> simplified;
+		simplified.resize(indices.size());
+		// Normals as attributes, so a shallow groove or pit that turns the surface but barely moves it still holds
+		// its vertices: a normal turned by one radian costs as much as moving a cell.
+		LocalVector<float> attrib;
+		attrib.resize(verts.size() * 3);
+		for (uint32_t k = 0; k < verts.size(); k++) {
+			const Vector3 nn = normals[k].length_squared() > 1e-20f ? normals[k].normalized() : Vector3(0, 1, 0);
+			attrib[k * 3 + 0] = nn.x;
+			attrib[k * 3 + 1] = nn.y;
+			attrib[k * 3 + 2] = nn.z;
+		}
+		const float w = 1.0f * fine.h;
+		const float weights[3] = { w, w, w };
+		float err = 0.0f;
+		const size_t n = SurfaceTool::simplify_with_attrib_func ? SurfaceTool::simplify_with_attrib_func(simplified.ptr(), (const unsigned int *)indices.ptr(), indices.size(), (const float *)verts.ptr(), verts.size(), sizeof(Vector3), attrib.ptr(), sizeof(float) * 3, weights, 3, nullptr, 0, ROCK_SIMPLIFY_ERROR * fine.h, SurfaceTool::SIMPLIFY_ERROR_ABSOLUTE, &err) : 0;
+		if (n >= 12) {
+			// Keep only the vertices the triangles still use, in first-use order.
+			LocalVector<int> remap;
+			remap.resize(verts.size());
+			for (int &r : remap) {
+				r = -1;
+			}
+			LocalVector<Vector3> kv, kn;
+			LocalVector<int> ki;
+			ki.resize(n);
+			for (size_t k = 0; k < n; k++) {
+				const uint32_t v = simplified[k];
+				if (remap[v] < 0) {
+					remap[v] = int(kv.size());
+					kv.push_back(verts[v]);
+					kn.push_back(normals[v]);
+				}
+				ki[k] = remap[v];
+			}
+			verts = kv;
+			normals = kn;
+			indices = ki;
+		}
+	}
+	return true;
+}
+
 } // namespace
 
 /* Generation */
@@ -1052,202 +1205,70 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	}
 	rk_reinitialize(fine, band, 3);
 
-	// 4. Mesh: surface nets (Gibson 1998): one vertex per cell the surface crosses, at the mean of its edge
-	// crossings; one quad per crossed grid edge.
-	const int cx = fine.nx - 1, cy = fine.ny - 1, cz = fine.nz - 1;
-	LocalVector<int> cell_vertex;
-	cell_vertex.resize(cx * cy * cz);
-	LocalVector<Vector3> verts;
-	static const int corner_offsets[8][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 } };
-	static const int edges[12][2] = { { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 }, { 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
-	for (int z = 0; z < cz; z++) {
-		for (int y = 0; y < cy; y++) {
-			for (int x = 0; x < cx; x++) {
-				float vals[8];
-				int mask = 0;
-				for (int k = 0; k < 8; k++) {
-					vals[k] = fine.v[fine.idx(x + corner_offsets[k][0], y + corner_offsets[k][1], z + corner_offsets[k][2])];
-					if (vals[k] < 0.0f) {
-						mask |= 1 << k;
-					}
-				}
-				const int ci = (z * cy + y) * cx + x;
-				if (mask == 0 || mask == 255) {
-					cell_vertex[ci] = -1;
-					continue;
-				}
-				Vector3 sum;
-				int cnt = 0;
-				for (int e = 0; e < 12; e++) {
-					const float v0 = vals[edges[e][0]], v1 = vals[edges[e][1]];
-					if ((v0 < 0.0f) == (v1 < 0.0f)) {
-						continue;
-					}
-					const float t = v0 / (v0 - v1);
-					const Vector3 p0(corner_offsets[edges[e][0]][0], corner_offsets[edges[e][0]][1], corner_offsets[edges[e][0]][2]);
-					const Vector3 p1(corner_offsets[edges[e][1]][0], corner_offsets[edges[e][1]][1], corner_offsets[edges[e][1]][2]);
-					sum += p0.lerp(p1, t);
-					cnt++;
-				}
-				cell_vertex[ci] = int(verts.size());
-				verts.push_back(fine.pos(x, y, z) + sum / float(cnt) * fine.h);
-			}
-		}
-	}
+	// 4. Mesh: surface nets (rk_surface_nets). 5. Normals (area-weighted from the faces); cavity and freshness below.
+	LocalVector<Vector3> verts, normals;
 	LocalVector<int> indices;
-	auto quad = [&](int p_a, int p_b, int p_c, int p_d, bool p_flip) {
-		if (p_a < 0 || p_b < 0 || p_c < 0 || p_d < 0) {
-			return;
+	ERR_FAIL_COND_V_MSG(!rk_surface_nets(fine, simplify, verts, normals, indices), Ref<ImporterMesh>(), "RockGenerator: the rock came out empty.");
+	// Normalise the rock in the frame fixed above. p_solid: for a fracture piece, the whole stone's field; the faces
+	// inside it are fresh breaks.
+	auto make_arrays = [&](const RockGrid &p_field, const LocalVector<Vector3> &p_verts, const LocalVector<Vector3> &p_normals, const LocalVector<int> &p_indices, const RockGrid *p_solid) {
+		PackedVector3Array out_verts, out_normals;
+		PackedColorArray out_colors;
+		PackedVector2Array out_uv, out_uv2;
+		PackedFloat32Array out_tangents;
+		out_verts.resize(p_verts.size());
+		out_normals.resize(p_verts.size());
+		out_colors.resize(p_verts.size());
+		out_uv.resize(p_verts.size());
+		out_uv2.resize(p_verts.size());
+		out_tangents.resize(p_verts.size() * 4);
+		for (uint32_t k = 0; k < p_verts.size(); k++) {
+			const Vector3 p = p_verts[k];
+			Vector3 n = p_normals[k];
+			n = n.length_squared() > 1e-20f ? n.normalized() : p_field.gradient(p);
+			float occ = 0.0f;
+			for (int s = 1; s <= 3; s++) {
+				const float dist = p_field.h * float(1 << s);
+				occ += MAX(0.0f, dist - p_field.sample(p + n * dist)) / dist / float(1 << (s - 1));
+			}
+			const float cavity = CLAMP(1.0f - occ * 0.9f, 0.0f, 1.0f);
+			float fr = CLAMP(fresh_grid.sample(p), 0.0f, 1.0f);
+			if (p_solid) {
+				// A new break: fresh from a cell inside the old surface.
+				fr = MAX(fr, CLAMP(-p_solid->sample(p) / p_solid->h - 0.5f, 0.0f, 1.0f));
+			}
+			const Vector3 q = to_local(p);
+			n = dir_local(n);
+			out_verts.write[k] = q;
+			out_normals.write[k] = n;
+			out_colors.write[k] = Color(cavity, fr, 0.0f, 1.0f);
+			out_uv.write[k] = Vector2(q.x, q.z);
+			out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
+			const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
+			out_tangents.write[k * 4 + 0] = t.x;
+			out_tangents.write[k * 4 + 1] = t.y;
+			out_tangents.write[k * 4 + 2] = t.z;
+			out_tangents.write[k * 4 + 3] = 1.0f;
 		}
-		if (p_flip) {
-			SWAP(p_b, p_d);
+		PackedInt32Array out_indices;
+		out_indices.resize(p_indices.size());
+		for (uint32_t k = 0; k < p_indices.size(); k++) {
+			out_indices.write[k] = p_indices[k];
 		}
-		indices.push_back(p_a);
-		indices.push_back(p_b);
-		indices.push_back(p_c);
-		indices.push_back(p_a);
-		indices.push_back(p_c);
-		indices.push_back(p_d);
+		Array arrays;
+		arrays.resize(Mesh::ARRAY_MAX);
+		arrays[Mesh::ARRAY_VERTEX] = out_verts;
+		arrays[Mesh::ARRAY_NORMAL] = out_normals;
+		arrays[Mesh::ARRAY_TANGENT] = out_tangents;
+		arrays[Mesh::ARRAY_COLOR] = out_colors;
+		arrays[Mesh::ARRAY_TEX_UV] = out_uv;
+		arrays[Mesh::ARRAY_TEX_UV2] = out_uv2;
+		arrays[Mesh::ARRAY_INDEX] = out_indices;
+		return arrays;
 	};
-	auto cv = [&](int p_x, int p_y, int p_z) { return (p_x < 0 || p_y < 0 || p_z < 0 || p_x >= cx || p_y >= cy || p_z >= cz) ? -1 : cell_vertex[(p_z * cy + p_y) * cx + p_x]; };
-	for (int z = 1; z < fine.nz - 1; z++) {
-		for (int y = 1; y < fine.ny - 1; y++) {
-			for (int x = 1; x < fine.nx - 1; x++) {
-				const bool in0 = fine.v[fine.idx(x, y, z)] < 0.0f;
-				if (x < fine.nx - 1 && in0 != (fine.v[fine.idx(x + 1, y, z)] < 0.0f)) {
-					quad(cv(x, y - 1, z - 1), cv(x, y, z - 1), cv(x, y, z), cv(x, y - 1, z), !in0);
-				}
-				if (y < fine.ny - 1 && in0 != (fine.v[fine.idx(x, y + 1, z)] < 0.0f)) {
-					quad(cv(x - 1, y, z - 1), cv(x - 1, y, z), cv(x, y, z), cv(x, y, z - 1), !in0);
-				}
-				if (z < fine.nz - 1 && in0 != (fine.v[fine.idx(x, y, z + 1)] < 0.0f)) {
-					quad(cv(x - 1, y - 1, z), cv(x, y - 1, z), cv(x, y, z), cv(x - 1, y, z), !in0);
-				}
-			}
-		}
-	}
-	// Winding: Godot's front faces are clockwise seen from outside; check the first triangle against the field's
-	// outward gradient and flip all if needed (the quads above are wound consistently).
-	if (indices.size() >= 3) {
-		int votes = 0;
-		for (uint32_t t = 0; t < MIN(indices.size(), 3000u); t += 3) {
-			const Vector3 &v0 = verts[indices[t]], &v1 = verts[indices[t + 1]], &v2 = verts[indices[t + 2]];
-			const Vector3 fn = (v1 - v0).cross(v2 - v0);
-			votes += fn.dot(fine.gradient((v0 + v1 + v2) / 3.0f)) < 0.0f ? 1 : -1;
-		}
-		if (votes < 0) {
-			for (uint32_t t = 0; t < indices.size(); t += 3) {
-				SWAP(indices[t + 1], indices[t + 2]);
-			}
-		}
-	}
-	ERR_FAIL_COND_V_MSG(verts.size() < 4 || indices.size() < 12, Ref<ImporterMesh>(), "RockGenerator: the rock came out empty.");
-
-	// 5. Normals (area-weighted from the faces), cavity (how much the field closes in above a point: open faces 1,
-	// cracks and pits darker), freshness.
-	LocalVector<Vector3> normals;
-	normals.resize(verts.size());
-	for (uint32_t t = 0; t < indices.size(); t += 3) {
-		const Vector3 &v0 = verts[indices[t]], &v1 = verts[indices[t + 1]], &v2 = verts[indices[t + 2]];
-		const Vector3 fn = (v2 - v0).cross(v1 - v0); // clockwise front: outward
-		normals[indices[t]] += fn;
-		normals[indices[t + 1]] += fn;
-		normals[indices[t + 2]] += fn;
-	}
-	// LOD0 without the flat-face excess: surface nets put a vertex in every grid cell, so a flat break carries as
-	// many triangles as a pitted one. Collapse edges only where neither the surface nor its normal moves visibly
-	// (meshoptimizer with normals as attributes, absolute error of 3% of a grid cell); the close-ups at 100% crop
-	// match the full mesh. Normals keep the full mesh's smoothing, taken above before the collapse.
-	if (simplify && indices.size() > 3000) {
-		LocalVector<uint32_t> simplified;
-		simplified.resize(indices.size());
-		// Normals as attributes, so a shallow groove or pit that turns the surface but barely moves it still holds
-		// its vertices: a normal turned by one radian costs as much as moving a cell.
-		LocalVector<float> attrib;
-		attrib.resize(verts.size() * 3);
-		for (uint32_t k = 0; k < verts.size(); k++) {
-			const Vector3 nn = normals[k].length_squared() > 1e-20f ? normals[k].normalized() : Vector3(0, 1, 0);
-			attrib[k * 3 + 0] = nn.x;
-			attrib[k * 3 + 1] = nn.y;
-			attrib[k * 3 + 2] = nn.z;
-		}
-		const float w = 1.0f * fine.h;
-		const float weights[3] = { w, w, w };
-		float err = 0.0f;
-		const size_t n = SurfaceTool::simplify_with_attrib_func ? SurfaceTool::simplify_with_attrib_func(simplified.ptr(), (const unsigned int *)indices.ptr(), indices.size(), (const float *)verts.ptr(), verts.size(), sizeof(Vector3), attrib.ptr(), sizeof(float) * 3, weights, 3, nullptr, 0, ROCK_SIMPLIFY_ERROR * fine.h, SurfaceTool::SIMPLIFY_ERROR_ABSOLUTE, &err) : 0;
-		if (n >= 12) {
-			// Keep only the vertices the triangles still use, in first-use order.
-			LocalVector<int> remap;
-			remap.resize(verts.size());
-			for (int &r : remap) {
-				r = -1;
-			}
-			LocalVector<Vector3> kv, kn;
-			LocalVector<int> ki;
-			ki.resize(n);
-			for (size_t k = 0; k < n; k++) {
-				const uint32_t v = simplified[k];
-				if (remap[v] < 0) {
-					remap[v] = int(kv.size());
-					kv.push_back(verts[v]);
-					kn.push_back(normals[v]);
-				}
-				ki[k] = remap[v];
-			}
-			verts = kv;
-			normals = kn;
-			indices = ki;
-		}
-	}
-	// Normalise the rock in the frame fixed above.
-	PackedVector3Array out_verts, out_normals;
-	PackedColorArray out_colors;
-	PackedVector2Array out_uv, out_uv2;
-	PackedFloat32Array out_tangents;
-	out_verts.resize(verts.size());
-	out_normals.resize(verts.size());
-	out_colors.resize(verts.size());
-	out_uv.resize(verts.size());
-	out_uv2.resize(verts.size());
-	out_tangents.resize(verts.size() * 4);
-	for (uint32_t k = 0; k < verts.size(); k++) {
-		const Vector3 p = verts[k];
-		Vector3 n = normals[k];
-		n = n.length_squared() > 1e-20f ? n.normalized() : fine.gradient(p);
-		float occ = 0.0f;
-		for (int s = 1; s <= 3; s++) {
-			const float dist = fine.h * float(1 << s);
-			occ += MAX(0.0f, dist - fine.sample(p + n * dist)) / dist / float(1 << (s - 1));
-		}
-		const float cavity = CLAMP(1.0f - occ * 0.9f, 0.0f, 1.0f);
-		const float fr = CLAMP(fresh_grid.sample(p), 0.0f, 1.0f);
-		const Vector3 q = to_local(p);
-		n = dir_local(n);
-		out_verts.write[k] = q;
-		out_normals.write[k] = n;
-		out_colors.write[k] = Color(cavity, fr, 0.0f, 1.0f);
-		out_uv.write[k] = Vector2(q.x, q.z);
-		out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
-		const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
-		out_tangents.write[k * 4 + 0] = t.x;
-		out_tangents.write[k * 4 + 1] = t.y;
-		out_tangents.write[k * 4 + 2] = t.z;
-		out_tangents.write[k * 4 + 3] = 1.0f;
-	}
-	PackedInt32Array out_indices;
-	out_indices.resize(indices.size());
-	for (uint32_t k = 0; k < indices.size(); k++) {
-		out_indices.write[k] = indices[k];
-	}
-	Array arrays;
-	arrays.resize(Mesh::ARRAY_MAX);
-	arrays[Mesh::ARRAY_VERTEX] = out_verts;
-	arrays[Mesh::ARRAY_NORMAL] = out_normals;
-	arrays[Mesh::ARRAY_TANGENT] = out_tangents;
-	arrays[Mesh::ARRAY_COLOR] = out_colors;
-	arrays[Mesh::ARRAY_TEX_UV] = out_uv;
-	arrays[Mesh::ARRAY_TEX_UV2] = out_uv2;
-	arrays[Mesh::ARRAY_INDEX] = out_indices;
+	const Array arrays = make_arrays(fine, verts, normals, indices, nullptr);
+	const PackedVector3Array out_verts = arrays[Mesh::ARRAY_VERTEX];
+	const PackedInt32Array out_indices = arrays[Mesh::ARRAY_INDEX];
 
 	Ref<ImporterMesh> im;
 	im.instantiate();
@@ -1298,6 +1319,236 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	r_meta["rock_roundness"] = roundness;
 	r_meta["rock_type"] = int(rock_type);
 	r_meta["rock_family"] = int(family);
+	// 6. Fracture pieces for breaking the stone (Blast, through RockField3D.break_stone): the solid split into cells
+	// whose walls are rough rock breaks, not Voronoi planes. The partition is a Voronoi diagram of sites spread through
+	// the solid by best-candidate sampling (Mitchell 1991), taken in domain-warped space (the cell walls wander like a
+	// real fracture surface; the same noisy-interior idea as Houdini's RBD Material Fracture and Chaos' noise on cuts),
+	// stretched across the bedding of layered rock so they break into slabs along it. Each piece is the stone's field
+	// cut by its cell, meshed like the stone, so the old surface keeps its marks and the walls are fresh breaks.
+	if (fracture_pieces > 1) {
+		const float h = fine.h;
+		const bool bedded = rock_type == ROCK_SANDSTONE || rock_type == ROCK_SLATE || rock_type == ROCK_LIMESTONE;
+		const Vector3 metric = bedded ? Vector3(1.0f, rock_type == ROCK_SLATE ? 2.6f : 1.8f, 1.0f) : Vector3(1, 1, 1);
+		int solid_nodes = 0;
+		for (uint32_t i = 0; i < fine.v.size(); i++) {
+			solid_nodes += fine.v[i] < 0.0f ? 1 : 0;
+		}
+		const float spacing = Math::pow(float(solid_nodes) * h * h * h / float(fracture_pieces), 1.0f / 3.0f);
+		const float warp_amp = 0.22f * spacing, warp_freq = 1.6f / spacing;
+		const uint32_t fseed = rk_hash(uint32_t(seed) * 7919u + 0xF2AC);
+		auto warped = [&](const Vector3 &p_p) {
+			const Vector3 q = p_p * warp_freq;
+			const Vector3 w(rk_fbm(q, fseed + 1u, 4), rk_fbm(q, fseed + 2u, 4), rk_fbm(q, fseed + 3u, 4));
+			return (p_p + w * warp_amp) * metric;
+		};
+		// Sites inside the solid, at least two cells in.
+		RandomPCG frng(fseed);
+		LocalVector<Vector3> sites;
+		const Vector3 lo = fine.origin, span = Vector3(fine.nx - 1, fine.ny - 1, fine.nz - 1) * h;
+		for (int s_i = 0; s_i < fracture_pieces; s_i++) {
+			Vector3 best;
+			float best_d = -1.0f;
+			for (int c = 0, found = 0; c < 400 && found < 6; c++) {
+				const Vector3 p = lo + Vector3(frng.randf(), frng.randf(), frng.randf()) * span;
+				if (fine.sample(p) > -2.0f * h) {
+					continue;
+				}
+				found++;
+				const Vector3 wp = warped(p);
+				float d = 1e30f;
+				for (const Vector3 &o : sites) {
+					d = MIN(d, wp.distance_squared_to(o));
+				}
+				if (d > best_d) {
+					best_d = d;
+					best = wp;
+				}
+			}
+			if (best_d >= 0.0f) {
+				sites.push_back(best);
+			}
+		}
+		// Per node: nearest and second-nearest site, and the distance to their bisector (both cells read the same
+		// wall: the field of one is the negative of the other's there).
+		const uint32_t node_count = fine.v.size();
+		LocalVector<uint8_t> n1, n2;
+		LocalVector<float> wall;
+		n1.resize(node_count);
+		n2.resize(node_count);
+		wall.resize(node_count);
+		auto label = [&]() {
+			for (int z = 0; z < fine.nz; z++) {
+				for (int y = 0; y < fine.ny; y++) {
+					for (int x = 0; x < fine.nx; x++) {
+						const int i = fine.idx(x, y, z);
+						if (fine.v[i] > 2.0f * h || sites.size() < 2) {
+							n1[i] = n2[i] = 255;
+							wall[i] = 0.0f;
+							continue;
+						}
+						const Vector3 wp = warped(fine.pos(x, y, z));
+						float d1 = 1e30f, d2 = 1e30f;
+						int a = 0, b = 0;
+						for (uint32_t k = 0; k < sites.size(); k++) {
+							const float d = wp.distance_squared_to(sites[k]);
+							if (d < d1) {
+								d2 = d1;
+								b = a;
+								d1 = d;
+								a = int(k);
+							} else if (d < d2) {
+								d2 = d;
+								b = int(k);
+							}
+						}
+						n1[i] = uint8_t(a);
+						n2[i] = uint8_t(b);
+						// Back to grid units roughly: the metric stretches distances across the bedding.
+						wall[i] = (d2 - d1) / (2.0f * MAX(sites[a].distance_to(sites[b]), 1e-6f));
+					}
+				}
+			}
+		};
+		label();
+		// Pieces smaller than a fifth of the mean are merged into their neighbours (a sliver would fly off as dust).
+		for (int pass = 0; pass < 3 && sites.size() > 2; pass++) {
+			LocalVector<int> count;
+			count.resize(sites.size());
+			for (int &c : count) {
+				c = 0;
+			}
+			for (uint32_t i = 0; i < node_count; i++) {
+				if (fine.v[i] < 0.0f && n1[i] != 255) {
+					count[n1[i]]++;
+				}
+			}
+			const int min_nodes = solid_nodes / int(sites.size()) / 5;
+			bool removed = false;
+			for (int k = int(sites.size()) - 1; k >= 0; k--) {
+				if (count[k] < min_nodes) {
+					sites.remove_at(k);
+					removed = true;
+				}
+			}
+			if (!removed) {
+				break;
+			}
+			label();
+		}
+		const int pieces = int(sites.size());
+		const float to_m = scale; // field units to local units
+		Array chunks;
+		PackedFloat32Array volumes;
+		for (int c = 0; c < pieces && pieces > 1; c++) {
+			// The piece's nodes, with two nodes of margin.
+			Vector3i bmin(fine.nx, fine.ny, fine.nz), bmax(-1, -1, -1);
+			int inside = 0;
+			for (int z = 0; z < fine.nz; z++) {
+				for (int y = 0; y < fine.ny; y++) {
+					for (int x = 0; x < fine.nx; x++) {
+						const int i = fine.idx(x, y, z);
+						if (n1[i] == c && fine.v[i] < h) {
+							bmin = bmin.min(Vector3i(x, y, z));
+							bmax = bmax.max(Vector3i(x, y, z));
+							inside += fine.v[i] < 0.0f ? 1 : 0;
+						}
+					}
+				}
+			}
+			if (bmax.x < 0) {
+				volumes.push_back(0.0f);
+				chunks.push_back(Array());
+				continue;
+			}
+			bmin = (bmin - Vector3i(2, 2, 2)).max(Vector3i(0, 0, 0));
+			bmax = (bmax + Vector3i(2, 2, 2)).min(Vector3i(fine.nx - 1, fine.ny - 1, fine.nz - 1));
+			RockGrid piece;
+			piece.h = h;
+			piece.nx = bmax.x - bmin.x + 1;
+			piece.ny = bmax.y - bmin.y + 1;
+			piece.nz = bmax.z - bmin.z + 1;
+			piece.origin = fine.pos(bmin.x, bmin.y, bmin.z);
+			piece.v.resize(piece.nx * piece.ny * piece.nz);
+			for (int z = 0; z < piece.nz; z++) {
+				for (int y = 0; y < piece.ny; y++) {
+					for (int x = 0; x < piece.nx; x++) {
+						const int i = fine.idx(x + bmin.x, y + bmin.y, z + bmin.z);
+						float cell = 3.0f * h; // another piece's
+						if (n1[i] == c) {
+							cell = -wall[i];
+						} else if (n2[i] == c) {
+							cell = MAX(wall[i], 1e-4f * h);
+						}
+						float f = MAX(fine.v[i], cell);
+						// The margin closes the piece.
+						if (x == 0 || y == 0 || z == 0 || x == piece.nx - 1 || y == piece.ny - 1 || z == piece.nz - 1) {
+							f = MAX(f, 0.5f * h);
+						}
+						piece.v[piece.idx(x, y, z)] = f;
+					}
+				}
+			}
+			LocalVector<Vector3> pv, pn;
+			LocalVector<int> pi;
+			if (!rk_surface_nets(piece, simplify, pv, pn, pi)) {
+				volumes.push_back(0.0f);
+				chunks.push_back(Array());
+				continue;
+			}
+			chunks.push_back(make_arrays(piece, pv, pn, pi, &fine));
+			volumes.push_back(float(inside) * h * h * h * to_m * to_m * to_m);
+		}
+		// Bonds: the wall between two pieces inside the solid, from the grid edges that cross it (area, centroid,
+		// normal from the lower-numbered piece to the other, in the stone's frame).
+		struct BondAcc {
+			float area = 0.0f;
+			Vector3 centroid, normal;
+		};
+		HashMap<uint32_t, BondAcc> bonds;
+		for (int z = 0; z < fine.nz; z++) {
+			for (int y = 0; y < fine.ny; y++) {
+				for (int x = 0; x < fine.nx; x++) {
+					const int i = fine.idx(x, y, z);
+					if (fine.v[i] >= 0.0f || n1[i] == 255) {
+						continue;
+					}
+					const int nb[3] = { x + 1 < fine.nx ? fine.idx(x + 1, y, z) : -1, y + 1 < fine.ny ? fine.idx(x, y + 1, z) : -1, z + 1 < fine.nz ? fine.idx(x, y, z + 1) : -1 };
+					for (int a = 0; a < 3; a++) {
+						const int j = nb[a];
+						if (j < 0 || fine.v[j] >= 0.0f || n1[j] == 255 || n1[j] == n1[i] || n1[i] >= pieces || n1[j] >= pieces) {
+							continue;
+						}
+						const int lo_c = MIN(n1[i], n1[j]), hi_c = MAX(n1[i], n1[j]);
+						BondAcc &b = bonds[uint32_t(lo_c) << 8 | uint32_t(hi_c)];
+						Vector3 axis;
+						axis[a] = n1[i] == lo_c ? 1.0f : -1.0f;
+						b.area += h * h;
+						b.centroid += fine.pos(x, y, z) + Vector3(a == 0, a == 1, a == 2) * (0.5f * h);
+						b.normal += axis;
+					}
+				}
+			}
+		}
+		Array bond_list;
+		for (const KeyValue<uint32_t, BondAcc> &kv : bonds) {
+			const int ca = int(kv.key >> 8), cb = int(kv.key & 0xFF);
+			if (kv.value.area < 3.0f * h * h || volumes[ca] <= 0.0f || volumes[cb] <= 0.0f) {
+				continue;
+			}
+			const float faces = kv.value.area / (h * h);
+			Dictionary b;
+			b["chunks"] = Vector2i(ca, cb);
+			b["centroid"] = to_local(kv.value.centroid / faces);
+			b["normal"] = dir_local(kv.value.normal.normalized());
+			// Voxel faces overcount a slanted wall by about 1.5 (the mean of |nx| + |ny| + |nz| on a sphere).
+			b["area"] = kv.value.area / 1.5f * to_m * to_m;
+			bond_list.push_back(b);
+		}
+		r_meta["rock_chunks"] = chunks;
+		r_meta["rock_chunk_volumes"] = volumes;
+		r_meta["rock_bonds"] = bond_list;
+		r_meta["rock_volume"] = float(solid_nodes) * h * h * h * to_m * to_m * to_m;
+	}
 	last_triangles = int(out_indices.size() / 3);
 	last_faces = int(planes.size());
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -1370,6 +1621,8 @@ uniform float contact_height = 0.08;
 uniform float wetness = 1.0;
 uniform float snow = 1.0;
 uniform float snow_max_slope = 55.0;
+// Instance data for a stone drawn outside the MultiMesh (a breakable copy): as INSTANCE_CUSTOM.
+uniform vec4 rock_instance = vec4(0.0);
 
 varying vec3 v_world;
 varying vec4 v_custom;
@@ -1458,8 +1711,8 @@ vec2 rk_crystal(vec3 p, uint s) {
 
 void vertex() {
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	v_custom = INSTANCE_CUSTOM;
-	v_scale = INSTANCE_CUSTOM.z > 0.0 ? INSTANCE_CUSTOM.z : length(MODEL_MATRIX[0].xyz);
+	v_custom = INSTANCE_CUSTOM.z > 0.0 ? INSTANCE_CUSTOM : rock_instance;
+	v_scale = v_custom.z > 0.0 ? v_custom.z : length(MODEL_MATRIX[0].xyz);
 }
 
 void fragment() {
@@ -1646,6 +1899,8 @@ void RockGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_simplify"), &RockGenerator::get_simplify);
 	ClassDB::bind_method(D_METHOD("set_close_up", "enabled"), &RockGenerator::set_close_up);
 	ClassDB::bind_method(D_METHOD("get_close_up"), &RockGenerator::get_close_up);
+	ClassDB::bind_method(D_METHOD("set_fracture_pieces", "pieces"), &RockGenerator::set_fracture_pieces);
+	ClassDB::bind_method(D_METHOD("get_fracture_pieces"), &RockGenerator::get_fracture_pieces);
 	ClassDB::bind_method(D_METHOD("get_roundness"), &RockGenerator::get_roundness);
 	ClassDB::bind_method(D_METHOD("generate"), &RockGenerator::generate);
 	ClassDB::bind_method(D_METHOD("generate_library", "count"), &RockGenerator::generate_library);
@@ -1664,6 +1919,7 @@ void RockGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simplify"), "set_simplify", "get_simplify");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "close_up"), "set_close_up", "get_close_up");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "fracture_pieces", PROPERTY_HINT_RANGE, "0,64,1"), "set_fracture_pieces", "get_fracture_pieces");
 
 	BIND_ENUM_CONSTANT(ROCK_GRANITE);
 	BIND_ENUM_CONSTANT(ROCK_LIMESTONE);

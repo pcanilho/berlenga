@@ -10,12 +10,22 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="build_prefractured">
+			<return type="PhysXBlastAsset" />
+			<param index="0" name="root" type="Array" />
+			<param index="1" name="pieces" type="Array" />
+			<param index="2" name="bonds" type="Array" />
+			<description>
+				Builds an asset from pieces cut outside Blast, such as a procedural rock split along its own rough breaks. [param root] holds the whole object's [Mesh] arrays, and [param pieces] holds one [Mesh] arrays [Array] per leaf piece; every mesh must be closed. [param bonds] is a list of [Dictionary]s with [code]chunks[/code] ([Vector2i], two piece indices), [code]centroid[/code], [code]normal[/code] (pointing from the first piece to the second) and [code]area[/code], all in the meshes' space.
+				Chunk 0 is the root and chunk [code]i + 1[/code] is piece [code]i[/code]; every leaf is a support chunk. The arrays are kept as [member PhysXBlastAsset.chunk_meshes], so pieces keep their normals, tangents, colours and UVs. Returns a null reference on failure, and [method get_last_error] says why.
+			</description>
+		</method>
 		<method name="fracture_mesh">
 			<return type="PhysXBlastAsset" />
 			<param index="0" name="mesh" type="Mesh" />
 			<param index="1" name="site_count" type="int" />
 			<param index="2" name="seed" type="int" />
-			<param index="3" name="pattern" type="int" default="0" />
+			<param index="3" name="pattern" type="int" enum="PhysXBlastAuthoring.FracturePattern" default="0" />
 			<param index="4" name="cutout_pattern" type="Texture2D" default="null" />
 			<description>
 				Fractures [param mesh] and returns the finished [PhysXBlastAsset], or a null reference on failure: a null mesh; a first surface that isn't a valid triangle list (indices that aren't whole triangles or point past the vertices, a NaN or infinite vertex); a mesh with no volume (flat, or collapsed to a point); a mesh whose triangles don't form a closed watertight surface after the automatic cleanup pass; or [constant PATTERN_CUTOUT] without a usable [param cutout_pattern]. [method get_last_error] says which.
