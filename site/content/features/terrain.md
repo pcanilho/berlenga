@@ -36,6 +36,12 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Coast guide: a drawn bay with beaches along its shore.*
 
+- **Touch-ups** (`TerrainBrush3D` under `TerrainGenerator3D`): height brushes reshape the generated ground and lakes and rivers re-solve around them, so a raised dam backs up a lake and a dug hollow holds a pond.
+
+  ![A generated valley from above, then with a dam and a pond brushed in](media/terrain-touchup.jpg)
+
+  *Touch-ups: a dam across the valley backs up a lake, and a dug hollow holds a pond.*
+
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 
   ![The same range eroded directly and coarse to fine, 8 m cells](media/terrain-coarse-to-fine.jpg)

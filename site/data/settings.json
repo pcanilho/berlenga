@@ -1204,6 +1204,18 @@
    "topic": "Generation"
   },
   {
+   "name": "Touch-ups",
+   "settings": [
+    "TerrainBrush3D",
+    "TerrainGenerator3D"
+   ],
+   "note": "",
+   "what": "height brushes reshape the generated ground and lakes and rivers re-solve around them, so a raised dam backs up a lake and a dug hollow holds a pond.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "Coarse-to-fine erosion",
    "settings": [
     "coarse_levels",
