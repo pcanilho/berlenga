@@ -38,7 +38,7 @@ function openBox(img) {
   box.showModal();
 }
 document.querySelectorAll('.content img').forEach((img) => {
-  if (img.closest('a')) return;
+  if (img.closest('a') || img.closest('.hero h1')) return;
   img.classList.add('zoomable');
   img.tabIndex = 0;
   const open = () => openBox(img);

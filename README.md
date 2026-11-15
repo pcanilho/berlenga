@@ -1,4 +1,4 @@
-# <img src="misc/dist/linux/berlenga.svg" width="32" height="32" alt=""> Berlenga
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/berlenga-lockup-light-text.svg"><img src="docs/media/berlenga-lockup-dark-text.svg" height="48" alt="Berlenga"></picture>
 
 [![Release](https://github.com/pcanilho/berlenga/actions/workflows/release.yml/badge.svg)](https://github.com/pcanilho/berlenga/actions/workflows/release.yml) [![CodeQL](https://github.com/pcanilho/berlenga/actions/workflows/codeql.yml/badge.svg)](https://github.com/pcanilho/berlenga/actions/workflows/codeql.yml) [![Latest release](https://img.shields.io/github/v/release/pcanilho/berlenga?label=latest)](https://github.com/pcanilho/berlenga/releases/latest)
 
