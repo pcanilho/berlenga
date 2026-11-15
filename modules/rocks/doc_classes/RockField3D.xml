@@ -163,6 +163,15 @@
 		<member name="close_up_radius" type="float" setter="set_close_up_radius" getter="get_close_up_radius" default="8.0">
 			Distance in metres from the follow target to a stone's surface within which it is drawn with its close-up shape.
 		</member>
+		<member name="coast_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how often a cliffed coast gets a sea stack or arch (at most one per 128 m cell).
+		</member>
+		<member name="coast_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Sea stacks and arches of jointed wall blocks standing off cliffed coasts, with fallen blocks at their feet and a jointed rock platform at the cliff foot just above the water line.
+		</member>
+		<member name="coast_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="900.0">
+			How far round the follow target sea stacks, arches and platforms are built.
+		</member>
 		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
 			Gives stones near the follow target convex hull collision shapes, one static body per cell.
 		</member>
@@ -259,6 +268,15 @@
 		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="true">
 			Builds and frees cells round the follow target as it moves, within [member build_budget_msec] a frame.
 		</member>
+		<member name="tor_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how often a crest gets a tor or an outcrop.
+		</member>
+		<member name="tor_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Tors on the most convex crests of thin soil: stacks of corestones ([constant RockGenerator.FAMILY_CORESTONE]) two to five tiers high, most on granite, fewer on sandstone and basalt, plus low outcrops of one tier on other crests.
+		</member>
+		<member name="tor_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="900.0">
+			How far round the follow target tors and outcrops are built.
+		</member>
 		<member name="use_strata" type="bool" setter="set_use_strata" getter="get_use_strata" default="true">
 			Uses [member soft_rock_type] where the terrain strata are soft.
 		</member>
@@ -285,7 +303,13 @@
 		<constant name="LAYER_CLIFF" value="5" enum="Layer">
 			Blocks set into cliff faces.
 		</constant>
-		<constant name="LAYER_MAX" value="6" enum="Layer">
+		<constant name="LAYER_TOR" value="6" enum="Layer">
+			Tors and outcrops on crests.
+		</constant>
+		<constant name="LAYER_COAST" value="7" enum="Layer">
+			Sea stacks, arches and wave-cut platforms on cliffed coasts.
+		</constant>
+		<constant name="LAYER_MAX" value="8" enum="Layer">
 			Number of layers.
 		</constant>
 	</constants>

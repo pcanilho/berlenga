@@ -65,6 +65,7 @@ public:
 		FAMILY_COBBLE, // river stones rounded by transport_distance
 		FAMILY_PEBBLE, // beach stones, rounded and flattened by the swash
 		FAMILY_CLIFF_BLOCK, // large jointed blocks set into cliff faces
+		FAMILY_CORESTONE, // tor blocks: joint blocks rounded in place by deep weathering, flat sheeting faces
 		FAMILY_MAX,
 	};
 
