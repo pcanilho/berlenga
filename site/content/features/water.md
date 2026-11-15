@@ -119,7 +119,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Currents: the boxes drift past the rock.*
 
-- **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
+- **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.
 
   ![Flecks carried past a rock, baked flow vs live flow](media/live-flow.gif)
 
