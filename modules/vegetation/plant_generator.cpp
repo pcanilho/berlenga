@@ -6023,12 +6023,12 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 	switch (p_stand) {
 		case STONES_SCREE:
 			// Acid upland scree and block litter (Pigott 1956; Page 1997): parsley fern its mark,
-			// mossy saxifrage on damper ground, spleenwort and thrift scattered, moss at the feet.
+			// mossy saxifrage on damper ground, spleenwort and thrift scattered. Its mosses
+			// (Racomitrium, Andreaea) grow on the stones, not on the loose fines between them.
 			set = LocalVector<StoneSpec>({ { P::PRESET_PARSLEY_FERN, 0.35f, 0.1f, 0.9f, 0.8f, 1.2f, 1.0f, 0.0f, 30.0f },
 					{ P::PRESET_SAXIFRAGE, 0.25f, 0.06f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_SPLEENWORT, 0.25f, 0.05f, 0.4f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_THRIFT, 0.3f, 0.05f, 0.3f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
-					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f },
 					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.8f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true } });
 			break;
 		case STONES_RIVER:

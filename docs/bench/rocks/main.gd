@@ -254,11 +254,6 @@ func _world() -> void:
 		add_child(rocks)
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
-		if args.has("plants"):
-			# Hulls on every stone near the spot, for measuring their tops (_stone_caps).
-			rocks.collision_enabled = true
-			rocks.collision_min_size = 0.0
-			rocks.collision_radius = 40.0
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
@@ -308,10 +303,21 @@ func _crevice_plants(spot: Vector3, view: String, land: Landscape3D) -> void:
 	veg.populate_on_ready = false
 	veg.biome = biome
 	veg.obstacles = rocks.get_obstacles(Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0), 0.0)
-	# Moss cushions on the stones' tops, measured on the stones' hulls once physics has them.
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	_stone_caps(veg, Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0))
+	# Moss cushions on the stones' tops: each stone's flat cap from its shape (RockField3D.get_stone_caps).
+	var tops := PackedVector4Array()
+	var normals := PackedVector3Array()
+	for layer in LAYERS.size():
+		if LAYERS[layer] == "cliff":
+			continue
+		for cap in rocks.get_stone_caps(layer, Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0), float(args.get("cap-tol", "0.03"))):
+			var n: Vector3 = cap["cap_normal"]
+			var r := float(cap["cap_radius"])
+			if r >= 0.05 and n.y >= 0.6:
+				var cp: Vector3 = cap["cap_point"]
+				tops.append(Vector4(cp.x, cp.y, cp.z, r * 0.85))
+				normals.append(n)
+	veg.stone_tops = tops
+	veg.stone_top_normals = normals
 	add_child(veg)
 	veg.data_map = veg.get_path_to(dm)
 	veg.populate()
@@ -321,52 +327,6 @@ func _crevice_plants(spot: Vector3, view: String, land: Landscape3D) -> void:
 	veg.visible = args["plants"] != "off"
 	print("crevice plants (%s): %d obstacles, %d stone caps, per species %s, %d ms" % [view, veg.obstacles.size(), veg.stone_tops.size(), str(counts), Time.get_ticks_msec() - t0])
 	plants_ready = true
-
-
-# Each stone's cap: a ray down onto its hull at the stone's centre gives the point and normal; the cap
-# then widens while rays round it stay on that plane within a centimetre (VegetationField3D.stone_top_normals).
-func _stone_caps(veg: VegetationField3D, rect: Rect2) -> void:
-	var space := get_world_3d().direct_space_state
-	var tops := PackedVector4Array()
-	var normals := PackedVector3Array()
-	var ray := func(x: float, z: float, y0: float, y1: float) -> Dictionary:
-		return space.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(x, y0, z), Vector3(x, y1, z)))
-	for layer in LAYERS.size():
-		if LAYERS[layer] == "cliff":
-			continue
-		for st in rocks.get_stones(layer, rect):
-			var pos: Vector3 = st["position"]
-			var top := float(st["top"])
-			var hit: Dictionary = ray.call(pos.x, pos.z, top + 0.2, float(st["ground"]) - 0.05)
-			if hit.is_empty():
-				continue
-			var p: Vector3 = hit["position"]
-			var n: Vector3 = hit["normal"]
-			if n.y < 0.6:
-				continue
-			var reach := float(st["footprint"]) * 0.6
-			var r := 0.0
-			var step := 0.04
-			while r + step <= reach:
-				var rs := r + step
-				var flat := true
-				for k in 8:
-					var a := TAU * k / 8.0
-					var x := p.x + cos(a) * rs
-					var z := p.z + sin(a) * rs
-					var plane_y := p.y - (n.x * (x - p.x) + n.z * (z - p.z)) / n.y
-					var h: Dictionary = ray.call(x, z, plane_y + 0.2, plane_y - 0.2)
-					if h.is_empty() or absf((h["position"] as Vector3).y - plane_y) > 0.012 or (h["normal"] as Vector3).y < 0.5:
-						flat = false
-						break
-				if not flat:
-					break
-				r = rs
-			if r >= 0.06:
-				tops.append(Vector4(p.x, p.y, p.z, r * 0.85))
-				normals.append(n)
-	veg.stone_tops = tops
-	veg.stone_top_normals = normals
 
 
 func _sunlit(p: Vector3) -> bool:

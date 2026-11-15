@@ -51,7 +51,7 @@
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
-				Returns the plants between stones for scree, river gravel or shingle as [PlantSpecies]. The crevice plants keep to the gaps between the field's obstacles ([member PlantSpecies.stone_gap] 1), so they grow only where a [VegetationField3D] has stones in [member VegetationField3D.obstacles]; mosses, sedges and rushes gather at the stones' feet ([member PlantSpecies.rock_foot]), and on scree and river stones moss cushions grow on the stones' tops ([member PlantSpecies.stone_top], from [member VegetationField3D.stone_tops]). They do not colour the far ground. Each species has the meta [code]stones[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the ferns' year.
+				Returns the plants between stones for scree, river gravel or shingle as [PlantSpecies]. The crevice plants keep to the gaps between the field's obstacles ([member PlantSpecies.stone_gap] 1), so they grow only where a [VegetationField3D] has stones in [member VegetationField3D.obstacles]; on river gravel moss, sedges and rushes gather at the stones' feet ([member PlantSpecies.rock_foot]), and on scree and river stones moss cushions grow on the stones' tops ([member PlantSpecies.stone_top], from [member VegetationField3D.stone_tops]). They do not colour the far ground. Each species has the meta [code]stones[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the ferns' year.
 			</description>
 		</method>
 		<method name="stand_litter_leaves" qualifiers="static">
@@ -351,7 +351,7 @@
 			Number of floor stand types.
 		</constant>
 		<constant name="STONES_SCREE" value="0" enum="StoneStand">
-			Acid upland scree and block litter: parsley fern, mossy saxifrage, maidenhair spleenwort, a little thrift, moss at the blocks' feet.
+			Acid upland scree and block litter: parsley fern, mossy saxifrage, maidenhair spleenwort, a little thrift, moss cushions on the blocks' tops.
 		</constant>
 		<constant name="STONES_RIVER" value="1" enum="StoneStand">
 			River and stream gravels: mossy saxifrage, stonecrop, a little thrift, sedges and rushes at the stones' feet near water, moss.

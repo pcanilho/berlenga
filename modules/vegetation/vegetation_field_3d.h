@@ -365,10 +365,12 @@ public:
 	const VegetationObstacles &get_obstacle_grid() const { return obstacle_grid; }
 	// Obstacles keep plants this far past their edge: a ground plant's stem off the rock's foot.
 	static constexpr float OBSTACLE_MARGIN = 0.03f;
+	static constexpr float STONE_TOP_OVERHANG = 0.015f; // How far a plant on a stone top may reach past its cap.
 	static constexpr float STONE_TOP_SINK = 0.003f; // Metres a plant on a stone top sits into it (the cap is not a true dome).
 	// How far a ground plant's leaves may reach in over a rock's foot; a plant reaching farther is
 	// made smaller and leans away from the rock, down to ROCK_FIT_MIN of its size, or not placed.
 	static constexpr float ROCK_OVERHANG = 0.08f;
+	static constexpr float CREVICE_OVERHANG = 0.1f; // More for crevice plants (PlantSpecies.stone_gap 1), arching over the stones.
 	static constexpr float ROCK_FIT_MIN = 0.45f;
 	static constexpr float ROCK_LEAN_DEG = 25.0f;
 	void set_canopy_field(const NodePath &p_path) { canopy_field = p_path; }

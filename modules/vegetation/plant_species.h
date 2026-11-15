@@ -162,14 +162,18 @@ public:
 	float get_rock_foot() const { return rock_foot; }
 	void set_stone_gap(float p_amount) { stone_gap = CLAMP(p_amount, 0.0f, 1.0f); emit_changed(); }
 	float get_stone_gap() const { return stone_gap; }
-	static constexpr float STONE_GAP_REACH = 0.15f; // Metres: the e-folding distance to a second stone's edge.
-	// The gap's weight at a point whose second-nearest stone edge is p_second away: 1 deep in a gap
-	// between stones, falling off exponentially and reaching 0 at four reaches (open ground),
-	// scaled in by stone_gap.
-	float stone_gap_weight(float p_second) const {
+	static constexpr float STONE_GAP_REACH = 0.12f; // Metres: the e-folding distance to a second stone's edge.
+	static constexpr float STONE_EDGE_HUG = 0.08f; // Metres from the nearest stone's edge a crevice plant roots at most in full.
+	static constexpr float STONE_EDGE_REACH = 0.2f; // Metres from it where it no longer roots.
+	// The gap's weight at a point whose nearest stone edge is p_first away and second-nearest
+	// p_second: a crevice plant roots against a stone (full within STONE_EDGE_HUG, none past
+	// STONE_EDGE_REACH) in a gap with a second stone close by (falling off exponentially with that
+	// stone's distance, reaching 0 at four reaches), scaled in by stone_gap.
+	float stone_gap_weight(float p_first, float p_second) const {
 		const float tail = 0.018315639f; // exp(-4)
 		const float g = MAX(Math::exp(-MAX(p_second, 0.0f) / STONE_GAP_REACH) - tail, 0.0f) / (1.0f - tail);
-		return Math::lerp(1.0f, g, stone_gap);
+		const float hug = CLAMP((STONE_EDGE_REACH - p_first) / (STONE_EDGE_REACH - STONE_EDGE_HUG), 0.0f, 1.0f);
+		return Math::lerp(1.0f, g * hug, stone_gap);
 	}
 	static constexpr float ROCK_FOOT_REACH = 0.5f; // Metres: the e-folding distance of the rock foot's shelter.
 	// The rock foot's weight at a distance past a rock's edge (clearance, metres).

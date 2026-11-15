@@ -103,9 +103,12 @@ struct VegetationObstacles {
 	// The distance from a point to the second-nearest obstacle's edge (another obstacle than the
 	// nearest), looked for out to p_reach; p_reach + 1 when there is no second one that near. A
 	// point close to two stones lies in a gap between them (PlantSpecies.stone_gap).
-	float second_clearance(const Vector2 &p_xz, float p_reach) const {
+	float second_clearance(const Vector2 &p_xz, float p_reach, float *r_first = nullptr) const {
 		float first = p_reach + 1.0f;
 		float second = p_reach + 1.0f;
+		if (r_first) {
+			*r_first = first;
+		}
 		if (items.is_empty()) {
 			return second;
 		}
@@ -128,6 +131,9 @@ struct VegetationObstacles {
 					}
 				}
 			}
+		}
+		if (r_first) {
+			*r_first = first;
 		}
 		return second;
 	}
