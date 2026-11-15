@@ -239,6 +239,25 @@ void PhysXLiveWater3D::_measure_ground(PhysicsDirectSpaceState3D *p_space, bool 
 	}
 }
 
+// Wet where the water is (WeatherMap3D contact wetness): the ground stays dark after it drains. The square
+// is taken axis-aligned round the node (its rotation is ignored here).
+void PhysXLiveWater3D::_wet_ground() {
+#ifdef MODULE_WEATHER_ENABLED
+	WeatherMap3D *weather = WeatherMap3D::get_active();
+	if (weather == nullptr || !weather->is_contact_wetness_enabled()) {
+		return;
+	}
+	const int n = nx * nz;
+	wet_cells.resize(n);
+	for (int i = 0; i < n; i++) {
+		wet_cells[i] = CLAMP(depth[i] / 0.01f, 0.0f, 1.0f);
+	}
+	const Vector3 c = get_global_position();
+	const Vector2 sz(nx * cell_size, nz * cell_size);
+	weather->add_contact_wetness_cells(wet_cells.ptr(), nx, nz, Rect2(Vector2(c.x, c.z) - 0.5f * sz, sz));
+#endif
+}
+
 float PhysXLiveWater3D::_rain_mm_per_hour() const {
 	float r = rain_rate;
 #ifdef MODULE_WEATHER_ENABLED
@@ -619,6 +638,7 @@ void PhysXLiveWater3D::_notification(int p_what) {
 				_step(dt_frame / steps);
 			}
 			_update_mesh();
+			_wet_ground();
 			cost_ms = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0f;
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {

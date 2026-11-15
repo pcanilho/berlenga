@@ -319,7 +319,7 @@ void GrassField3D::_build_material() {
 	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
 	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
-	code += "global uniform sampler2D weather_state_map;\n";
+	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += WeatherMap3D::get_wind_shader_code();
 	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
@@ -509,6 +509,15 @@ void vertex() {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 		v_wet = textureLod(weather_state_map, uv, 0.0).g;
+	}
+	if (weather_contact_rect.z > 0.0) {
+		// Wet where water has been (WeatherMap3D contact wetness), easing out at its square's edge.
+		vec2 cuv = (base_w.xz - weather_contact_rect.xy) / weather_contact_rect.zw;
+		vec2 ce = min(cuv, 1.0 - cuv);
+		float edge = smoothstep(0.0, 0.1, min(ce.x, ce.y));
+		if (edge > 0.0) {
+			v_wet = max(v_wet, textureLod(weather_contact_map, cuv, 0.0).r * edge);
+		}
 	}
 }
 

@@ -2551,3 +2551,17 @@ humidity and wind (evaporation); sand dries in minutes, rock in tens of minutes.
 - Readers: the existing `weather_wetness()` helpers take max(weather, contact): BaseMaterial3D,
   TerrainMaterial3D, grass, plants; the path tracer the same through three new rt_params.
 - Cost: one more texture read where wetness is already read; a 512^2 R8 texture update a frame.
+
+### Built (15 Nov): contact wetness
+
+- `WeatherMap3D` `contact_wetness_*` (on by default; 512 texels over 64 m round the camera, R8),
+  globals `weather_contact_map` / `weather_contact_rect`, `add_contact_wetness()`,
+  `add_contact_wetness_grid()`, `get_contact_wetness_at()`, `get_contact_drying_time()`.
+- Drying: `contact_wetness_dry_time` (600 s) at 20 C, half humidity, 2 m/s, scaled by the vapour
+  deficit (Magnus) and Penman's wind function; none while it rains. Grids stamp bilinearly, so
+  0.5 m cells leave soft edges.
+- Readers: BaseMaterial3D and TerrainMaterial3D (shared `weather_wetness_at`), GrassField3D, the
+  path tracer (rt_params 64 to 67, RT_PARAM_COUNT 68). Plants and hair still read the rain only.
+- Writer: `PhysXLiveWater3D` stamps its wet cells each tick. Sea, lake and river live windows not yet.
+- Bench: live_water `--wet --scene=spring --stop=300 --frames=720` (the gully stays dark after the
+  spring stops and the water soaks away; `--dry=8` shows it dry). Raster and path traced match.

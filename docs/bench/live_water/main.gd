@@ -12,6 +12,10 @@ extends Node3D
 #   --out=path.png  save the last frame and quit
 #   --raster        raster only
 #   --spp=N         path tracing samples (default 8)
+#   --wet           a WeatherMap3D (dry weather) and wetness on the ground: where the water ran stays dark
+#                   after it has gone, then dries (--dry=S, contact_wetness_dry_time, default 60)
+#   --stop=FRAME    the spring stops and the water soaks away fast from this frame (to watch the ground dry)
+#   --pt-from=N     rasterize until frame N, path trace from then on
 #   --seq=N --seq-step=K  also save N frames after --frames, every Kth, as <out>_0000.png ...
 # Prints volume, wet cells and the solver's cost every 30 frames.
 
@@ -28,6 +32,11 @@ var spp := 8
 var rain := 400.0
 var break_frame := 30
 var seq := 0
+var wet := false
+var dry_time := 60.0
+var stop_frame := -1
+var pt_from := -1
+var env: Environment
 var seq_step := 1
 var n := 0
 var water: Node3D
@@ -55,16 +64,20 @@ func _ready() -> void:
 		elif a.begins_with("--rain="): rain = float(a.substr(7))
 		elif a.begins_with("--break="): break_frame = int(a.substr(8))
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
+		elif a == "--wet": wet = true
+		elif a.begins_with("--dry="): dry_time = float(a.substr(6))
+		elif a.begins_with("--stop="): stop_frame = int(a.substr(7))
+		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--seq-step="): seq_step = maxi(int(a.substr(11)), 1)
 
-	var env := Environment.new()
+	env = Environment.new()
 	var sky := Sky.new()
 	sky.sky_material = ProceduralSkyMaterial.new()
 	env.sky = sky
 	env.background_mode = Environment.BG_SKY
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
-	env.pathtracing_enabled = not raster
+	env.pathtracing_enabled = not raster and pt_from < 0
 	env.pathtracing_samples_per_pixel = spp
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -111,6 +124,18 @@ func _ready() -> void:
 	nt.color_ramp = ramp
 	mat.albedo_texture = nt
 	mat.roughness = 0.95
+	if wet:
+		mat.set("wetness_enabled", true)
+		mat.set("wetness_porosity", 0.9)
+		if ClassDB.class_exists("WeatherMap3D"):
+			var wm3: Node3D = ClassDB.instantiate("WeatherMap3D")
+			wm3.set("rain_rate", 0.0)
+			wm3.set("drive_environment_fog", false)
+			wm3.set("contact_wetness_dry_time", dry_time)
+			wm3.set("contact_wetness_size", 96.0) # (the whole slope, round its centre below)
+			wm3.set("contact_wetness_resolution", 768)
+			add_child(wm3)
+			(func(): wm3.set("follow_target", wm3.get_path_to(gm))).call_deferred() # (gm joins the tree below)
 	gm.material_override = mat
 	add_child(gm)
 	var body := StaticBody3D.new()
@@ -173,6 +198,9 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(30.0, 22.0, -46.0), Vector3(0.0, 0.0, -5.0))
 
 func _physics_process(_delta: float) -> void:
+	if n == stop_frame:
+		water.set("sources", PackedVector4Array())
+		water.set("infiltration_rate", 100000.0) # (about 3 cm a second)
 	if scene_name == "dam" and n == break_frame and dam != null:
 		dam.queue_free()
 		dam = null
@@ -180,6 +208,8 @@ func _physics_process(_delta: float) -> void:
 
 func _process(_delta: float) -> void:
 	n += 1
+	if pt_from >= 0 and n == pt_from:
+		env.pathtracing_enabled = true
 	if n % 30 == 0:
 		print("frame %d: volume %.1f m3, lost over the edges %.1f m3, %.2f ms a tick" % [n, water.call("get_total_volume"), water.call("get_volume_out"), water.call("get_cost_ms")])
 	if out != "":

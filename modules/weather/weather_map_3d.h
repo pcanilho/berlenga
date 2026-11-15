@@ -32,6 +32,7 @@
 #pragma once
 
 #include "weather_clouds.h"
+#include "weather_contact_wetness.h"
 #include "weather_season.h"
 #include "weather_shelter.h"
 
@@ -236,6 +237,16 @@ private:
 	Vector2 patch_drift; // m, how far the patches have travelled (wrapped to their period)
 	bool shelter_global_added = false;
 
+	// Wet where water has been (weather_contact_wetness.h).
+	bool contact_wetness_enabled = true;
+	int contact_wetness_resolution = 512;
+	float contact_wetness_size = 64.0f; // m
+	float contact_wetness_dry_time = 600.0f; // s, at 20 C, half humidity, light wind
+	WeatherContactWetness contact;
+	double contact_accum = 0.0;
+	bool contact_global_added = false;
+	void _update_contact(double p_weather_dt);
+
 	static WeatherMap3D *active;
 
 	// Haze from falling and blowing precipitation (docs/ideas/weather.md, "Precipitation haze").
@@ -383,6 +394,24 @@ public:
 	Rect2 get_painted_map_rect() const { return painted_map_rect; }
 	void set_publish_shader_globals(bool p_enabled);
 	bool get_publish_shader_globals() const { return publish_shader_globals; }
+
+	void set_contact_wetness_enabled(bool p_enabled);
+	bool is_contact_wetness_enabled() const { return contact_wetness_enabled; }
+	void set_contact_wetness_resolution(int p_resolution);
+	int get_contact_wetness_resolution() const { return contact_wetness_resolution; }
+	void set_contact_wetness_size(float p_size);
+	float get_contact_wetness_size() const { return contact_wetness_size; }
+	void set_contact_wetness_dry_time(float p_seconds);
+	float get_contact_wetness_dry_time() const { return contact_wetness_dry_time; }
+	// Wets a disc where water touched (a splash, a wading leg, a dripping body), 0..1.
+	void add_contact_wetness(Vector3 p_position, float p_radius, float p_amount = 1.0f);
+	// Wets from a grid of 0..1 values over p_rect (world XZ), e.g. a live water area's wet cells.
+	void add_contact_wetness_grid(const PackedFloat32Array &p_values, int p_width, int p_height, Rect2 p_rect);
+	void add_contact_wetness_cells(const float *p_values, int p_width, int p_height, Rect2 p_rect);
+	float get_contact_wetness_at(Vector3 p_position) const;
+	// How long contact wetness takes to fall to 1/e now (s, weather time); 0 = it is not drying (rain).
+	float get_contact_drying_time() const;
+	Rect2 get_contact_wetness_rect() const { return contact.rect(); }
 
 	void set_cloud_base_height(float p_height);
 	float get_cloud_base_height() const { return cloud_base_height; }
