@@ -199,9 +199,10 @@ void vertex() {
 	vec2 cuv;
 	float live = live_weight(v_world.xz, cuv);
 	if (live > 0.0) {
-		// The live water's rise and fall on the river's surface.
+		// The live water's rise and fall on the river's surface, onto the banks as far as the live
+		// water runs up them (1 m, the solver's run-up band; a dry bank reads below its ground).
 		vec2 off = v_world.xz - live_center;
-		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(0.0, v_info.r * 4.0 - 1.0);
+		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(-0.99, v_info.r * 4.0 - 1.0);
 		VERTEX.y += h;
 		v_world.y += h;
 	}
@@ -855,7 +856,7 @@ float PhysXRiver3D::_psi_at(const Vector3 &p_world, float &r_depth) const {
 	}
 	if (on) {
 		const float d = Math::lerp(value(sections[i], sections[i].depth), value(sections[i + 1], sections[i + 1].depth), t);
-		r_depth = d > 0.0f ? d : 0.0f;
+		r_depth = d; // (signed: ground above the water is negative, so the live window's water runs up banks only as far as they are low)
 	}
 	return Math::lerp(value(sections[i], sections[i].psi_at), value(sections[i + 1], sections[i + 1].psi_at), t);
 }
