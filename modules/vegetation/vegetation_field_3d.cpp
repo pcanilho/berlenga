@@ -314,6 +314,14 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		ps.footprint = ps.sp->get_footprint();
 		r_setup.max_footprint = MAX(r_setup.max_footprint, ps.footprint);
 		const float canopy_r = ps.sp->get_canopy_radius();
+		if (canopy_r <= 0.0f) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				if (m.is_valid()) {
+					const AABB bb = m->get_aabb();
+					ps.spread = MAX(ps.spread, MAX(MAX(Math::abs(bb.position.x), Math::abs(bb.get_end().x)), MAX(Math::abs(bb.position.z), Math::abs(bb.get_end().z))));
+				}
+			}
+		}
 		if (canopy_r > 0.0f && ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
 			ps.canopy_top = ps.meshes[0]->get_aabb().get_end().y;
 			ps.stem_foot = _foot_radius(ps.meshes[0], ps.footprint > 0.0f ? ps.footprint : 1.0f);
@@ -691,7 +699,29 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						continue;
 					}
 					const Vector3 p3(xz.x, 0.0f, xz.y);
-					float suit = sp->get_suitability(map, p3);
+					float suit = sp->get_suitability(map, p3, false);
+					// Patches (clonal stands), except that a rock's foot is a patch of its own
+					// for species that gather there: the patch weight is lifted towards 1 there.
+					float rock_boost = 1.0f;
+					if (suit > 0.0f && sp->get_patch_scale() > 0.0f) {
+						float pw = sp->get_patch_weight(p3);
+						if (pw < 1.0f && sp->get_rock_foot() > 0.0f && !p_setup.obstacles.is_empty()) {
+							const float reach = 4.0f * PlantSpecies::ROCK_FOOT_REACH;
+							const float c = p_setup.obstacles.clearance(xz, reach);
+							if (c < reach) {
+								const float fall = Math::exp(-MAX(c, 0.0f) / PlantSpecies::ROCK_FOOT_REACH);
+								pw = MAX(pw, 1.0f - Math::exp(-sp->get_rock_foot() * fall));
+								rock_boost = sp->rock_foot_weight(c);
+							}
+						}
+						suit *= pw;
+					} else if (suit > 0.0f && sp->get_rock_foot() > 0.0f && !p_setup.obstacles.is_empty()) {
+						const float reach = 4.0f * PlantSpecies::ROCK_FOOT_REACH;
+						const float c = p_setup.obstacles.clearance(xz, reach);
+						if (c < reach) {
+							rock_boost = sp->rock_foot_weight(c);
+						}
+					}
 					float shade = 0.0f;
 					if ((shade_rule || conifer_rule || range > 0.0f) && suit > 0.0f) {
 						float conifer = 0.0f;
@@ -764,13 +794,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
-					if (suit > 0.0f && sp->get_rock_foot() > 0.0f && !p_setup.obstacles.is_empty()) {
-						const float reach = 4.0f * PlantSpecies::ROCK_FOOT_REACH;
-						const float c = p_setup.obstacles.clearance(xz, reach);
-						if (c < reach) {
-							suit *= sp->rock_foot_weight(c);
-						}
-					}
+					suit *= rock_boost;
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
 						continue;
@@ -813,12 +837,26 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (blocked) {
 						continue;
 					}
-					placed.push_back({ xz, fp, s, is_log });
-					grid[gc].push_back(placed.size() - 1);
-
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
 					const float r = pat.randoms[i];
 					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f));
+					// At a rock's foot: leaves must not pass into the rock. A plant reaching in over it
+					// grows smaller and leans away, as plants pressed against a boulder do.
+					float rock_fit = 1.0f;
+					Vector2 rock_away;
+					if (canopy_r <= 0.0f && !is_log && !on_log && ps.spread > 0.0f && !p_setup.obstacles.is_empty()) {
+						const float reach = ps.spread * scale;
+						const float c = p_setup.obstacles.clearance(xz, reach, &rock_away);
+						if (c + ROCK_OVERHANG < reach) {
+							rock_fit = (c + ROCK_OVERHANG) / reach;
+							if (rock_fit < ROCK_FIT_MIN) {
+								continue;
+							}
+						}
+					}
+					placed.push_back({ xz, fp, s, is_log });
+					grid[gc].push_back(placed.size() - 1);
+					scale *= rock_fit;
 					// A stand's margin: smaller plants leaning out to the open (PlantSpecies.margin_*).
 					float margin = 0.0f;
 					Vector2 margin_out;
@@ -859,6 +897,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// Tip the plant's axis towards the open, about the horizontal axis across it.
 						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(margin_out.x, 0.0f, margin_out.y)).normalized();
 						b = Basis(lean_axis, Math::deg_to_rad(sp->get_margin_lean()) * margin) * b;
+					}
+					if (rock_fit < 1.0f) {
+						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(rock_away.x, 0.0f, rock_away.y)).normalized();
+						b = Basis(lean_axis, Math::deg_to_rad(ROCK_LEAN_DEG) * (1.0f - rock_fit) / (1.0f - ROCK_FIT_MIN)) * b;
 					}
 					b.scale(Vector3(scale, scale, scale));
 					const int variant = MIN(int(r * variants), variants - 1);

@@ -198,7 +198,7 @@
 			Soft edge of [member rock_range].
 		</member>
 		<member name="rock_foot" type="float" setter="set_rock_foot" getter="get_rock_foot" default="0.0">
-			How much more the species grows at the foot of a rock ([member VegetationField3D.obstacles]), where shelter and the rain running off the rock keep the ground moist: its suitability is multiplied by [code]1 + rock_foot * exp(-d / 0.5)[/code], d the distance past the rock's edge in metres. [method PlantGenerator.make_floor]: ferns 2.5, mosses 3, wood sorrel and seedlings 1.5.
+			How much more the species grows at the foot of a rock ([member VegetationField3D.obstacles]), where shelter and the rain running off the rock keep the ground moist: its suitability is multiplied by [code]1 + rock_foot * exp(-d / 0.5)[/code], d the distance past the rock's edge in metres. Near a rock the species also grows in the gaps between its patches ([member patch_scale]): the patch weight there is at least [code]1 - exp(-rock_foot * exp(-d / 0.5))[/code]. [method PlantGenerator.make_floor]: ferns 2.5, mosses 3, wood sorrel and seedlings 1.5.
 		</member>
 		<member name="rock_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Bare rock exposure (0 to 1) where the species grows, from the map's [member TerrainDataMap3D.geology_source]. Trees and most plants need little: for example [code]Vector2(0, 0.3)[/code]. Ignored when the map has no geology.

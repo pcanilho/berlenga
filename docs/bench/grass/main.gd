@@ -35,7 +35,7 @@ extends Node3D
 #   --turf=0         without the near turf layer
 #   --floor=0        without the litter on the ground under the crowns (cost comparison)
 #   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
-#   --rocks=N        N boulders (stand-in rounded rocks) 3 to 10 m in front of the camera; the fields keep
+#   --rocks=N        N boulders (lumpy weathered rocks) 3 to 10 m in front of the camera; the fields keep
 #                    out of them (obstacles) unless --rocks-through
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
@@ -593,7 +593,7 @@ func _frame_undergrowth_edge(c: Vector3) -> void:
 	cam.look_at(Vector3(at.x, height(at.x, at.z) + 0.45, at.z))
 	print("GRASS_UNDERGROWTH_EDGE edge=%s out=%s eye=%s" % [str(e), str(out), str(cam.position)])
 
-# Boulders for --rocks: rounded stand-ins, a little sunk, in front of the camera. Each is a disc
+# Boulders for --rocks: lumpy weathered rocks, a little sunk, in front of the camera. Each is a disc
 # on the ground for the fields' obstacles, its radius where the rock meets the soil.
 func _place_rocks() -> void:
 	var rng := RandomNumberGenerator.new()
@@ -606,23 +606,73 @@ func _place_rocks() -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.42, 0.40, 0.37)
 	mat.roughness = 0.9
+	# Weathered granite: lichen-mottled albedo and a fine grain normal map, triplanar.
+	var grain := FastNoiseLite.new()
+	grain.frequency = 0.02
+	grain.fractal_octaves = 5
+	var ramp := Gradient.new()
+	ramp.set_color(0, Color(0.30, 0.29, 0.27))
+	ramp.set_color(1, Color(0.62, 0.61, 0.56))
+	ramp.add_point(0.55, Color(0.45, 0.44, 0.40))
+	ramp.add_point(0.8, Color(0.50, 0.52, 0.44))
+	var alb := NoiseTexture2D.new()
+	alb.noise = grain
+	alb.color_ramp = ramp
+	alb.seamless = true
+	mat.albedo_color = Color(1, 1, 1)
+	mat.albedo_texture = alb
+	var nrm := NoiseTexture2D.new()
+	nrm.noise = grain
+	nrm.as_normal_map = true
+	nrm.bump_strength = 6.0
+	nrm.seamless = true
+	mat.normal_enabled = true
+	mat.normal_texture = nrm
+	mat.uv1_triplanar = true
+	mat.uv1_world_triplanar = true
+	mat.uv1_scale = Vector3(0.6, 0.6, 0.6)
+	var lumps := FastNoiseLite.new()
+	lumps.frequency = 1.1
+	lumps.fractal_octaves = 3
 	for k in rocks:
-		var d := rng.randf_range(3.0, 10.0)
+		var d := rng.randf_range(1.5, 5.0) if forest else rng.randf_range(3.0, 10.0)
 		var q := cam.global_position + fwd * d + right * rng.randf_range(-0.45, 0.45) * d
 		var r := rng.randf_range(0.3, 1.0)
+		if forest and k == 0:
+			d = 2.6 # The one in the middle of the frame.
+			q = cam.global_position + fwd * d
+			r = 0.75
 		var y := height(q.x, q.z)
+		# A unit sphere made lumpy by noise (+-15%): rounded, weathered, no two alike.
 		var sm := SphereMesh.new()
 		sm.radius = 1.0
 		sm.height = 2.0
-		sm.radial_segments = 16
-		sm.rings = 8
-		sm.material = mat
+		sm.radial_segments = 48
+		sm.rings = 24
+		var arr := sm.get_mesh_arrays()
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		lumps.seed = 100 + k
+		var widest := 0.0
+		for i in verts.size():
+			var v := verts[i]
+			verts[i] = v * (1.0 + 0.15 * lumps.get_noise_3dv(v))
+			widest = maxf(widest, Vector2(verts[i].x, verts[i].z).length())
+		arr[Mesh.ARRAY_VERTEX] = verts
+		arr[Mesh.ARRAY_NORMAL] = null
+		arr[Mesh.ARRAY_TANGENT] = null
+		var stl := SurfaceTool.new()
+		stl.create_from_arrays(arr)
+		stl.deindex()
+		stl.generate_normals()
+		stl.generate_tangents()
+		stl.set_material(mat)
 		var mi := MeshInstance3D.new()
-		mi.mesh = sm
+		mi.mesh = stl.commit()
 		# Semi-axes r, 0.55 r, r; centre 0.15 r up: the rock meets the ground at 0.96 r.
 		mi.transform = Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(r, 0.55 * r, r)), Vector3(q.x, y + 0.15 * r, q.z))
 		add_child(mi)
-		list.append(Vector4(q.x, y, q.z, 0.96 * r))
+		# Its keep-out: the widest the lumpy rock gets, so no stem stands under its bulge.
+		list.append(Vector4(q.x, y, q.z, widest * r))
 	if not rocks_through:
 		for f in [grass, under, turf, cover, ug_field]:
 			if f:
@@ -1558,7 +1608,7 @@ func _process(dt: float) -> void:
 	n += 1
 	if n == 2:
 		dm.bake()
-		if rocks > 0:
+		if rocks > 0 and not forest:
 			_place_rocks()
 		if cover:
 			cover.populate()
@@ -1581,6 +1631,42 @@ func _process(dt: float) -> void:
 					_frame_clearing()
 				else:
 					_frame_forest()
+					if rocks > 0:
+						# --forest --rocks: deep in the wood (the point within 40 m with the most
+						# trunks within 12 m), looking where the wood runs on longest, down at the
+						# floor 2.2 m ahead; rocks there (one big one in the middle), the floor placed
+						# again around them. The stand-in trunks only cast their shadows.
+						var tl := cover.get_placements(0)
+						var c0 := cam.global_position
+						var in_eye := c0
+						var most := -1
+						for gx in range(-10, 11):
+							for gz in range(-10, 11):
+								var cand := c0 + Vector3(gx * 4.0, 0, gz * 4.0)
+								var cnt := 0
+								for t in tl:
+									if Vector2(t.x - cand.x, t.z - cand.z).length() < 12.0:
+										cnt += 1
+								if cnt > most:
+									most = cnt
+									in_eye = cand
+						# Down-sun, so the rock's foot is lit from behind the camera.
+						var f := -sun_node.global_transform.basis.z
+						f.y = 0.0
+						f = f.normalized()
+						in_eye -= f * 4.0
+						print("GRASS_ROCK_FRAME eye=%s dir=%s" % [str(in_eye), str(f)])
+						cam.position = Vector3(in_eye.x, height(in_eye.x, in_eye.z) + 1.5, in_eye.z)
+						var at := in_eye + f * 2.6
+						cam.look_at(Vector3(at.x, height(at.x, at.z), at.z))
+						_place_rocks()
+						cover.populate()
+						for ch in cover.get_children(true):
+							if ch is MultiMeshInstance3D and ch.multimesh and ch.multimesh.mesh and ch.multimesh.mesh.get_aabb().size.y > 4.0:
+								ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+						grass.rebuild()
+						under.rebuild()
+						turf.rebuild()
 			if swamp:
 				var lilies := cover.get_placements(0)
 				var floating := 0

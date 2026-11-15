@@ -723,6 +723,31 @@ func _deadwood_checks() -> void:
 				elif d < 0.5:
 					by_rock += 1
 	_check("rocks: no ground plant inside a boulder, and they grow up to it", rocks.size() == 6 and in_rock == 0 and by_rock > 5, [rocks.size(), in_rock, by_rock])
+	# Leaves do not reach in over a rock past 8 cm (VegetationField3D.ROCK_OVERHANG): plants at a
+	# foot are made smaller and lean away instead. The ferns as wide plants (60 cm reach) for it.
+	var wide := BoxMesh.new()
+	wide.size = Vector3(1.2, 0.3, 1.2)
+	fern.meshes = [_mesh(wide, 0.15, Color(0.2, 0.4, 0.1))]
+	ground.populate()
+	var reach_in := 0
+	var fitted := 0
+	for ch in ground.get_children(true):
+		if not (ch is MultiMeshInstance3D) or ch.multimesh == null or ch.multimesh.mesh == null:
+			continue
+		var bb: AABB = ch.multimesh.mesh.get_aabb()
+		var spread := maxf(maxf(absf(bb.position.x), absf(bb.end.x)), maxf(absf(bb.position.z), absf(bb.end.z)))
+		for ii in ch.multimesh.instance_count:
+			var t: Transform3D = ch.global_transform * ch.multimesh.get_instance_transform(ii)
+			var c := 1e9
+			for rk in rocks:
+				c = minf(c, Vector2(t.origin.x - rk.x, t.origin.z - rk.z).length() - rk.w)
+			var reach := spread * t.basis.x.length()
+			if c < reach:
+				fitted += 1
+			if c + 0.08 < reach * 0.98:
+				reach_in += 1
+	_check("rocks: leaves reach no farther than 8 cm in over a rock", reach_in == 0 and fitted > 0, [reach_in, fitted])
+	fern.meshes = [sm]
 	# Rock foot (PlantSpecies.rock_foot): a thin cover gathers at the rocks' feet.
 	cover.density = 0.2
 	cover.rock_foot = 3.0

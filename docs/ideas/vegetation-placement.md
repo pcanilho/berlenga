@@ -172,7 +172,13 @@ Rock foot. `PlantSpecies.rock_foot` multiplies a species' suitability by 1 + roc
 exp(-d / 0.5 m), d the distance past a rock's edge: the shelter and runoff at a boulder's foot,
 where ferns, mosses and seedlings gather in a wood (nurse objects). make_floor: ferns 2.5, mosses
 3, wood sorrel and seedlings 1.5; plants on and beside logs keep their own rules. The rock
-lookup runs only for such species when the field has obstacles. Check: a thin cover (density
+lookup runs only for such species when the field has obstacles. A rock's foot also counts as a
+patch of its own: where a species' clonal patches (`patch_scale`) leave a gap, the patch weight is
+raised to 1 - exp(-rock_foot exp(-d / 0.5 m)) near the rock, so a fern clump can start at a boulder
+in the middle of a patchless stretch of floor. Leaves stop at the rock: a ground plant whose
+leaves (its meshes' widest reach) would pass more than 8 cm in over a rock grows smaller to fit and
+leans away from it, up to 25 degrees, as plants pressed against a boulder do; below 45% of its size
+it is not placed. Check: wide test ferns by six rocks, 8 fitted, none reaching in. Check: a thin cover (density
 0.2, rock_foot 3) stands 2.9 times as dense within 40 cm of the rocks as 2 to 3 m out (5.5 against 1.9 per m²).
 
 Checks: grass bench, no blade inside a 0.7 m rock and 111 blades within 20 cm of its foot;

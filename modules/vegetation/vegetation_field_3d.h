@@ -148,6 +148,7 @@ class VegetationField3D : public Node3D {
 		float footprint = 0.0f;
 		float canopy_top = 0.0f;
 		float stem_foot = 0.0f; // Crowned species: the foot radius of its first mesh (other plants keep out of it).
+		float spread = 0.0f; // Ground plants: the widest reach of its meshes' leaves from the stem (unit scale).
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
@@ -355,6 +356,11 @@ public:
 	const VegetationObstacles &get_obstacle_grid() const { return obstacle_grid; }
 	// Obstacles keep plants this far past their edge: a ground plant's stem off the rock's foot.
 	static constexpr float OBSTACLE_MARGIN = 0.03f;
+	// How far a ground plant's leaves may reach in over a rock's foot; a plant reaching farther is
+	// made smaller and leans away from the rock, down to ROCK_FIT_MIN of its size, or not placed.
+	static constexpr float ROCK_OVERHANG = 0.08f;
+	static constexpr float ROCK_FIT_MIN = 0.45f;
+	static constexpr float ROCK_LEAN_DEG = 25.0f;
 	void set_canopy_field(const NodePath &p_path) { canopy_field = p_path; }
 	NodePath get_canopy_field() const { return canopy_field; }
 	void set_litter_wind(const Vector2 &p_wind) { litter_wind = p_wind; }

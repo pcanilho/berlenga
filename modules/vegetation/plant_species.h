@@ -224,7 +224,7 @@ public:
 	// Weight of one value against one rule: 1 inside the range, smoothstep to 0 over the fade.
 	float rule_weight(Rule p_rule, float p_value) const;
 	// Product of every rule's weight at a point of the map.
-	float get_suitability(const TerrainDataMap3D *p_map, const Vector3 &p_global_position) const;
+	float get_suitability(const TerrainDataMap3D *p_map, const Vector3 &p_global_position, bool p_patches = true) const;
 	float get_suitability_at(Object *p_map, const Vector3 &p_global_position) const;
 
 	PlantSpecies();

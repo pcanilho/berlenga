@@ -148,7 +148,7 @@ float PlantSpecies::rule_weight(Rule p_rule, float p_value) const {
 	return Math::smoothstep(r.x - f, r.x, p_value) * (1.0f - Math::smoothstep(r.y, r.y + f, p_value));
 }
 
-float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3 &p_pos) const {
+float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3 &p_pos, bool p_patches) const {
 	float w = rule_weight(RULE_SLOPE, Math::rad_to_deg(p_map->get_slope_at(p_pos)));
 	if (w <= 0.0f) {
 		return 0.0f;
@@ -175,7 +175,7 @@ float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3
 		w *= rule_weight(RULE_ARIDITY, p_map->get_aridity_at(p_pos));
 		w *= rule_weight(RULE_SUNLIGHT, p_map->get_shortwave_at(p_pos));
 	}
-	if (patch_scale > 0.0f) {
+	if (p_patches && patch_scale > 0.0f && w > 0.0f) {
 		w *= get_patch_weight(p_pos);
 	}
 	return w;
