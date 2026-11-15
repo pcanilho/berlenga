@@ -1578,8 +1578,16 @@ func _checks() -> void:
 		_check("clover between the tall patches", clover.size() > 1000 and in_tall < clover.size() * 0.02, "%d of %d" % [in_tall, clover.size()])
 		_check("flowers placed", cover.get_placements(0).size() > 500, cover.get_placements(0).size())
 	_sward_shade_check(c, near_density)
-	# Same camera, same field.
+	# A setting changes (rebuild): the old tiles stay drawn until their successors are built,
+	# nearest first, so the field never empties; time the first frame's work.
+	var tiles_before := grass.get_tile_count()
 	grass.rebuild()
+	var tr0 := Time.get_ticks_usec()
+	grass.update_at(cam.global_position)
+	var first_ms := (Time.get_ticks_usec() - tr0) / 1000.0
+	print("GRASS_REBUILD tiles_before=%d tiles_after_first_frame=%d first_frame_ms=%.1f" % [tiles_before, grass.get_tile_count(), first_ms])
+	_check("rebuild keeps the field drawn", grass.get_tile_count() >= tiles_before, [tiles_before, grass.get_tile_count()])
+	# Same camera, same field.
 	for i in 20:
 		grass.update_at(cam.global_position)
 	_check("deterministic", grass.get_blade_count() == count, grass.get_blade_count())

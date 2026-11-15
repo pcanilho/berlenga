@@ -558,9 +558,13 @@ void fragment() {
 }
 
 )";
-	Ref<Shader> shader;
-	shader.instantiate();
-	shader->set_code(code);
+	// A rebuild keeps the compiled shader when its code is unchanged (most settings are uniforms):
+	// only the material is new, so no pipeline recompiles on a settings change.
+	if (blade_shader.is_null() || blade_shader->get_code() != code) {
+		blade_shader.instantiate();
+		blade_shader->set_code(code);
+	}
+	const Ref<Shader> shader = blade_shader;
 	material.instantiate();
 	material->set_shader(shader);
 	material->set_shader_parameter("base_color", base_color);
@@ -697,6 +701,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	}
 	Tile tile;
 	tile.lod = p_lod;
+	tile.generation = generation;
 	if (!xforms.is_empty()) {
 		Ref<MultiMesh> mm;
 		mm.instantiate();
@@ -763,6 +768,7 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 	const int count = int(cand.size() / 3);
 	Tile tile;
 	tile.lod = p_lod;
+	tile.generation = generation;
 	if (count == 0) {
 		tiles.insert(p_tile, tile);
 		return;
@@ -1384,6 +1390,8 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	}
 	if (!ground_baked) {
 		_bake_ground(map);
+	} else if (ground_job.active) {
+		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const Vector2 c(p_center.x, p_center.z);
@@ -1416,7 +1424,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 				continue;
 			}
 			const Tile *existing = tiles.getptr(t);
-			if (!existing || existing->lod != _lod_for(d)) {
+			if (!existing || existing->lod != _lod_for(d) || existing->generation != generation) {
 				want.push_back({ t, d });
 			}
 		}
@@ -1458,6 +1466,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 // terrain's shader (get_ground_shader_code()).
 void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_baked = true;
+	ground_job.active = false;
 	sun_mean = VegetationLight::sun_mean(p_map);
 	fade_band = Vector4(); // Send the band and the far colour again.
 	if (is_inside_tree()) {
@@ -1467,64 +1476,86 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	if (!ground_tint_enabled || !is_inside_tree()) {
 		return;
 	}
-	Vector4 rect;
-	Ref<Image> img;
-	Ref<Image> litter_img;
-	if (p_map) {
-		const int res = MIN(p_map->get_resolution(), 1024);
-		const float size = p_map->get_size();
-		const Vector3 c = p_map->get_global_position();
-		rect = Vector4(c.x - size * 0.5f, c.z - size * 0.5f, size, size);
-		Ref<PlantSpecies> r = rules;
-		if (r.is_null()) {
-			r.instantiate();
-		}
-		const VegetationField3D *canopy = _get_canopy(r.ptr());
-		const VegetationField3D *under = _get_undergrowth();
-		Vector<uint8_t> data;
-		data.resize(res * res);
-		uint8_t *w = data.ptrw();
-		// The undergrowth's litter where its stands have shaded the sward out (bracken's dead
-		// fronds), as premultiplied colour stored as its square root (the shader squares it back).
-		Vector<uint8_t> ldata;
-		uint8_t *lw = nullptr;
-		bool any_litter = false;
-		if (under) {
-			ldata.resize(res * res * 4);
-			lw = ldata.ptrw();
-		}
-		for (int z = 0; z < res; z++) {
-			for (int x = 0; x < res; x++) {
-				const Vector3 p(rect.x + (x + 0.5f) * size / res, 0.0f, rect.y + (z + 0.5f) * size / res);
-				float suit = r->get_suitability(p_map, p);
-				if (canopy && suit > 0.0f) {
-					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
-				}
-				if (under) {
-					Color lc;
-					const float sh = under->sward_at(p, &lc);
-					suit *= 1.0f - sh;
-					uint8_t *o = lw + (z * res + x) * 4;
-					o[0] = uint8_t(CLAMP(Math::sqrt(lc.r * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
-					o[1] = uint8_t(CLAMP(Math::sqrt(lc.g * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
-					o[2] = uint8_t(CLAMP(Math::sqrt(lc.b * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
-					o[3] = uint8_t(CLAMP(lc.a, 0.0f, 1.0f) * 255.0f + 0.5f);
-					any_litter = any_litter || o[3] > 0;
-				}
-				w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
-			}
-		}
-		img = Image::create_from_data(res, res, false, Image::FORMAT_L8, data);
-		if (any_litter) {
-			litter_img = Image::create_from_data(res, res, false, Image::FORMAT_RGBA8, ldata);
-		}
-	} else {
+	if (!p_map) {
 		// No map: grass everywhere.
-		rect = Vector4(-1e6f, -1e6f, 2e6f, 2e6f);
 		Vector<uint8_t> data;
 		data.push_back(255);
-		img = Image::create_from_data(1, 1, false, Image::FORMAT_L8, data);
+		_ground_bake_publish(Vector4(-1e6f, -1e6f, 2e6f, 2e6f), Image::create_from_data(1, 1, false, Image::FORMAT_L8, data), Ref<Image>());
+		return;
 	}
+	GroundJob &j = ground_job;
+	j.res = MIN(p_map->get_resolution(), 1024);
+	const float size = p_map->get_size();
+	const Vector3 c = p_map->get_global_position();
+	j.rect = Vector4(c.x - size * 0.5f, c.z - size * 0.5f, size, size);
+	j.row = 0;
+	j.any_litter = false;
+	j.data.resize(j.res * j.res);
+	j.ldata.resize(_get_undergrowth() ? j.res * j.res * 4 : 0);
+	if (j.ldata.size() > 0) {
+		memset(j.ldata.ptrw(), 0, j.ldata.size());
+	}
+	j.active = true;
+	// The first bake whole, so the ground is right from the first frame; later ones a few rows a
+	// frame (_update_tiles), the previous map shown meanwhile.
+	_ground_bake_rows(p_map, ground_published ? GROUND_BAKE_BUDGET_USEC : 0);
+}
+
+// Bakes rows of the ground tint's map until the time budget runs out (0: all of them), and
+// publishes the map when the last row is done.
+void GrassField3D::_ground_bake_rows(TerrainDataMap3D *p_map, uint64_t p_budget_usec) {
+	GroundJob &j = ground_job;
+	if (!j.active || !p_map) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	Ref<PlantSpecies> r = rules;
+	if (r.is_null()) {
+		r.instantiate();
+	}
+	const VegetationField3D *canopy = _get_canopy(r.ptr());
+	const VegetationField3D *under = _get_undergrowth();
+	const int res = j.res;
+	const float size = j.rect.z;
+	uint8_t *w = j.data.ptrw();
+	// The undergrowth's litter where its stands have shaded the sward out (bracken's dead
+	// fronds), as premultiplied colour stored as its square root (the shader squares it back).
+	uint8_t *lw = (under && j.ldata.size() == res * res * 4) ? j.ldata.ptrw() : nullptr;
+	while (j.row < res) {
+		const int z = j.row;
+		for (int x = 0; x < res; x++) {
+			const Vector3 p(j.rect.x + (x + 0.5f) * size / res, 0.0f, j.rect.y + (z + 0.5f) * size / res);
+			float suit = r->get_suitability(p_map, p);
+			if (canopy && suit > 0.0f) {
+				suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+			}
+			if (lw) {
+				Color lc;
+				const float sh = under->sward_at(p, &lc);
+				suit *= 1.0f - sh;
+				uint8_t *o = lw + (z * res + x) * 4;
+				o[0] = uint8_t(CLAMP(Math::sqrt(lc.r * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
+				o[1] = uint8_t(CLAMP(Math::sqrt(lc.g * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
+				o[2] = uint8_t(CLAMP(Math::sqrt(lc.b * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
+				o[3] = uint8_t(CLAMP(lc.a, 0.0f, 1.0f) * 255.0f + 0.5f);
+				j.any_litter = j.any_litter || o[3] > 0;
+			}
+			w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
+		}
+		j.row++;
+		if (p_budget_usec > 0 && OS::get_singleton()->get_ticks_usec() - t0 >= p_budget_usec) {
+			return;
+		}
+	}
+	j.active = false;
+	const Ref<Image> litter = j.any_litter ? Image::create_from_data(res, res, false, Image::FORMAT_RGBA8, j.ldata) : Ref<Image>();
+	_ground_bake_publish(j.rect, Image::create_from_data(res, res, false, Image::FORMAT_L8, j.data), litter);
+	j.data.clear();
+	j.ldata.clear();
+}
+
+void GrassField3D::_ground_bake_publish(const Vector4 &p_rect, const Ref<Image> &p_img, const Ref<Image> &p_litter) {
+	Ref<Image> litter_img = p_litter;
 	if (litter_img.is_null()) {
 		// No undergrowth litter: one clear texel.
 		Vector<uint8_t> none;
@@ -1532,12 +1563,12 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		memset(none.ptrw(), 0, 4);
 		litter_img = Image::create_from_data(1, 1, false, Image::FORMAT_RGBA8, none);
 	}
-	ground_texture = ImageTexture::create_from_image(img);
+	ground_texture = ImageTexture::create_from_image(p_img);
 	ground_litter_texture = ImageTexture::create_from_image(litter_img);
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_set("grass_ground_map", ground_texture->get_rid());
 	rs->global_shader_parameter_set("grass_ground_litter", ground_litter_texture->get_rid());
-	rs->global_shader_parameter_set("grass_ground_rect", rect);
+	rs->global_shader_parameter_set("grass_ground_rect", p_rect);
 	rs->global_shader_parameter_set("grass_ground_color", Vector4(ground_tint.r, ground_tint.g, ground_tint.b, ground_tint.a));
 	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, _dryness()));
 	ground_published = true;
@@ -1982,12 +2013,12 @@ void GrassField3D::update_at(const Vector3 &p_center) {
 	}
 }
 
+// A setting changed: new blades, material and ground tint. The old tiles stay drawn (they hold
+// the old mesh and material) and are replaced nearest first within max_tiles_per_frame, each
+// once its successor is built, so a change never empties the field or stalls a frame on a full
+// rebuild.
 void GrassField3D::rebuild() {
-	for (KeyValue<Vector2i, Tile> &kv : tiles) {
-		_free_tile(kv.value);
-	}
-	tiles.clear();
-	blade_count = 0;
+	generation++;
 	blade_mesh.unref();
 	material.unref();
 	ground_baked = false;
@@ -2236,12 +2267,9 @@ void GrassField3D::set_gpu_fill(bool p_enabled) {
 		return;
 	}
 	gpu_fill = p_enabled;
-	// The same blades either way: only the tiles are rebuilt, not the mesh or the material.
-	for (KeyValue<Vector2i, Tile> &kv : tiles) {
-		_free_tile(kv.value);
-	}
-	tiles.clear();
-	blade_count = 0;
+	// The same blades either way: only the tiles are rebuilt (nearest first, the old ones drawn
+	// until then), not the mesh or the material.
+	generation++;
 }
 
 void GrassField3D::_bind_methods() {

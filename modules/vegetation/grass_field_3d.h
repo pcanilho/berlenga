@@ -55,7 +55,9 @@ class GrassField3D : public Node3D {
 	struct Tile {
 		MultiMeshInstance3D *mmi = nullptr;
 		int lod = 0;
+		uint32_t generation = 0; // Built under this rebuild generation; older ones are replaced, nearest first.
 	};
+	uint32_t generation = 0; // Bumped by rebuild(): the tiles stay drawn until their successors are built.
 
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
@@ -110,6 +112,7 @@ class GrassField3D : public Node3D {
 	class VegetationField3D *_get_undergrowth() const;
 	bool _tile_has_obstacles(float p_x0, float p_z0) const;
 	Ref<ImageTexture> ground_texture;
+	Ref<Shader> blade_shader; // Kept across rebuilds while its code is the same.
 	Ref<ImageTexture> ground_litter_texture;
 
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
@@ -190,6 +193,20 @@ class GrassField3D : public Node3D {
 	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
 	void _bake_ground(TerrainDataMap3D *p_map);
+	// The ground tint's map is baked a few rows a frame after a change (a 1024 map is a million
+	// suitability samples), the old one shown until the new one is done; the first bake is whole.
+	struct GroundJob {
+		bool active = false;
+		int res = 0;
+		int row = 0;
+		Vector4 rect;
+		Vector<uint8_t> data;
+		Vector<uint8_t> ldata;
+		bool any_litter = false;
+	} ground_job;
+	static constexpr uint64_t GROUND_BAKE_BUDGET_USEC = 1500;
+	void _ground_bake_rows(TerrainDataMap3D *p_map, uint64_t p_budget_usec);
+	void _ground_bake_publish(const Vector4 &p_rect, const Ref<Image> &p_img, const Ref<Image> &p_litter);
 	void _trample_recenter(const Vector3 &p_center);
 	void _trample_step(double p_delta);
 	void _trample_upload();
