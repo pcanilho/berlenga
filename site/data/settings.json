@@ -1143,10 +1143,24 @@
     "glacial_",
     "river_",
     "shore_",
-    "cliff_"
+    "cliff_",
+    "layer_enabled"
    ],
    "note": "",
    "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Tors and coasts",
+   "settings": [
+    "layer_enabled",
+    "LAYER_TOR",
+    "LAYER_COAST"
+   ],
+   "note": "",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
