@@ -2561,6 +2561,48 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	set.normal = ImageTexture::create_from_image(ni);
 	set.roughness = ImageTexture::create_from_image(ri);
 	set.height = Image::create_from_data(N, N, false, Image::FORMAT_RF, hbytes);
+	// What the displaced near tube adds over a smooth one (trees.md 2g). The relief tube samples
+	// this map on a grid about 2.5 cm around and 5 cm along (32 x 64 texels); bilinear between
+	// its vertices, it differs from the map by its reconstruction error. A smooth tube differs by
+	// the relief itself. Where the two are about the same (smooth, papery, flaking and scaly bark:
+	// their features are under a millimetre deep or smaller than the grid), the displaced tube
+	// costs four to ten times the triangles and shows nothing the normal map does not. Errors are
+	// the 90th percentile over the tile, in metres.
+	{
+		const float *H = reinterpret_cast<const float *>(hbytes.ptr());
+		auto at = [&](int i, int j) { return H[((j % N + N) % N) * N + ((i % N + N) % N)]; };
+		auto grid_error = [&](int p_ku, int p_kv) {
+			LocalVector<float> errs;
+			for (int j = 0; j < N; j += 4) {
+				for (int i = 0; i < N; i += 4) {
+					float rec = 0.0f;
+					if (p_ku > 0) {
+						const int i0 = (i / p_ku) * p_ku, j0 = (j / p_kv) * p_kv;
+						const float fx = float(i - i0) / p_ku, fy = float(j - j0) / p_kv;
+						rec = Math::lerp(Math::lerp(at(i0, j0), at(i0 + p_ku, j0), fx), Math::lerp(at(i0, j0 + p_kv), at(i0 + p_ku, j0 + p_kv), fx), fy);
+					}
+					errs.push_back(Math::abs(rec - at(i, j)));
+				}
+			}
+			errs.sort();
+			return errs[int(errs.size() * 0.9f)];
+		};
+		// The smooth tube sits at the plate tops (height 0), so its error is the relief's depth.
+		const float flat = grid_error(0, 1);
+		const float grid = grid_error(32, 64);
+		set.relief_gain = MAX(0.0f, flat - grid);
+		// Rings can be further apart along a stem when the pattern runs along it (furrowed bark's
+		// long ridges): the longest spacing whose error stays within half a millimetre of 5 cm.
+		set.relief_along = 0.05f;
+		for (int kv : { 96, 128 }) {
+			if (grid_error(32, kv) <= grid + 0.0005f) {
+				set.relief_along = kv * texel;
+			}
+		}
+		if (OS::get_singleton()->has_environment("TREE_RELIEF_DEBUG")) {
+			print_line(vformat("bark kind %d: relief p90 %.1f mm, grid error %.1f mm, gain %.1f mm, rings every %.1f cm", p_kind, flat * 1000.0f, grid * 1000.0f, set.relief_gain * 1000.0f, set.relief_along * 100.0f));
+		}
+	}
 	return set;
 }
 
@@ -5350,6 +5392,53 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			supports.push_back(sup);
 		}
+		// Thin shoots keep a ring at every internode, though most run nearly straight: under a
+		// centimetre of radius the axis is simplified (Douglas and Peucker 1973, as hair strands
+		// are) where dropping a ring moves the axis and the radius by under a quarter of the radius.
+		// An open oak has some 200,000 shoots of three rings each; they were half its bark.
+		if (r0 < 0.01f && !collar && pts.size() > 2) {
+			LocalVector<uint8_t> keep;
+			keep.resize(pts.size());
+			for (uint32_t i = 0; i < pts.size(); i++) {
+				keep[i] = 0;
+			}
+			keep[0] = keep[pts.size() - 1] = 1;
+			LocalVector<Vector2i> todo;
+			todo.push_back(Vector2i(0, pts.size() - 1));
+			while (!todo.is_empty()) {
+				const Vector2i span = todo[todo.size() - 1];
+				todo.resize(todo.size() - 1);
+				const Vector3 a = pts[span.x], b = pts[span.y];
+				const float len = a.distance_to(b);
+				int worst = -1;
+				float worst_e = 0.0f;
+				for (int i = span.x + 1; i < span.y; i++) {
+					const float t = len > 1e-6f ? CLAMP((pts[i] - a).dot(b - a) / (len * len), 0.0f, 1.0f) : 0.0f;
+					const float d = pts[i].distance_to(a.lerp(b, t));
+					const float dr = Math::abs(rad[i] - Math::lerp(rad[span.x], rad[span.y], t));
+					const float e = MAX(d, dr) / MAX(0.25f * rad[i], 0.0003f);
+					if (e > worst_e) {
+						worst_e = e;
+						worst = i;
+					}
+				}
+				if (worst >= 0 && worst_e > 1.0f) {
+					keep[worst] = 1;
+					todo.push_back(Vector2i(span.x, worst));
+					todo.push_back(Vector2i(worst, span.y));
+				}
+			}
+			LocalVector<Vector3> kp;
+			LocalVector<float> kr;
+			for (uint32_t i = 0; i < pts.size(); i++) {
+				if (keep[i]) {
+					kp.push_back(pts[i]);
+					kr.push_back(rad[i]);
+				}
+			}
+			pts = kp;
+			rad = kr;
+		}
 		int sides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.03f)), 3, 24);
 		if (stem) {
 			sides = MAX(sides, 10);
@@ -5370,11 +5459,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const float tint = 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
 		col = Color(col.r * tint, col.g * tint, col.b * tint);
 		bark.bone = node_bone[s];
-		const bool relief = bark_relief > 0.0f && r0 >= RELIEF_MIN_RADIUS;
-		// A mesh without LODs (the near variants) carries the relief tube alone.
-		if (!(relief && skip_lods)) {
+		const BarkSet &bs = _bark_set(_bark_kind(preset));
+		const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
+		const bool near_tube = bark_relief > 0.0f && r0 >= RELIEF_MIN_RADIUS;
+		// Displaced only where that shows (a millimetre or more nearer the relief than a smooth
+		// tube); otherwise LOD 0 gets a smooth tube with sides for a millimetre of chord error.
+		const bool relief = near_tube && bs.relief_gain * scale >= 0.001f;
+		// A mesh without LODs (the near variants) carries the near tube alone.
+		if (!(near_tube && skip_lods)) {
 			Vector4i part;
-			bark.role = relief ? Builder::ROLE_PLAIN : Builder::ROLE_ALL;
+			bark.role = near_tube ? Builder::ROLE_PLAIN : Builder::ROLE_ALL;
 			bark.begin(part);
 			_tube(bark, pts, rad, sides, 0.0f, col, nullptr, 0.0f, girth_r);
 			bark.end(part, r0);
@@ -5397,47 +5491,64 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 		const bool moss_shell = moss_k > 0.05f && r0 >= MOSS_SHELL_MIN_RADIUS;
-		if (relief || moss_shell) {
+		if (near_tube || moss_shell) {
 			// LOD 0 and the path tracer: the same tube at about 2.5 cm around and 5 cm along,
 			// displaced by the bark's relief. Bark thickens with girth, so thin limbs carry a
 			// quarter of a mature trunk's furrow depth (Kratt et al. 2015, cambial growth).
+			auto make_rings = [&](float p_step, LocalVector<Vector3> &r_p, LocalVector<float> &r_r) {
+				for (int i = 0; i + 1 < int(pts.size()); i++) {
+					const int steps = MAX(1, int(Math::ceil(pts[i].distance_to(pts[i + 1]) / p_step)));
+					for (int k = 0; k < steps; k++) {
+						const float t = float(k) / steps;
+						r_p.push_back(pts[i].lerp(pts[i + 1], t));
+						r_r.push_back(Math::lerp(rad[i], rad[i + 1], t));
+					}
+				}
+				r_p.push_back(pts[pts.size() - 1]);
+				r_r.push_back(rad[rad.size() - 1]);
+			};
 			LocalVector<Vector3> rp;
 			LocalVector<float> rr;
-			for (int i = 0; i + 1 < int(pts.size()); i++) {
-				const int steps = MAX(1, int(Math::ceil(pts[i].distance_to(pts[i + 1]) / 0.05f)));
-				for (int k = 0; k < steps; k++) {
-					const float t = float(k) / steps;
-					rp.push_back(pts[i].lerp(pts[i + 1], t));
-					rr.push_back(Math::lerp(rad[i], rad[i + 1], t));
-				}
-			}
-			rp.push_back(pts[pts.size() - 1]);
-			rr.push_back(rad[rad.size() - 1]);
+			make_rings(0.05f, rp, rr);
 			const int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
-			const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
-			const BarkSet &bs = _bark_set(_bark_kind(preset));
-			if (relief) {
+			if (near_tube) {
+				// The bark's own grid. The moss shell reads the bark's displacement at its vertices,
+				// so under a shell the two share one grid; elsewhere a displaced tube takes rings as
+				// far apart as its pattern allows along the stem (bs.relief_along), and a smooth one
+				// sides for a millimetre of chord error and rings every 10 cm.
+				LocalVector<Vector3> bp;
+				LocalVector<float> br;
+				int bsides = rsides;
+				if (relief && moss_shell) {
+					bp = rp;
+					br = rr;
+				} else if (relief) {
+					make_rings(MAX(0.05f, bs.relief_along), bp, br);
+				} else {
+					make_rings(0.1f, bp, br);
+					bsides = CLAMP(int(Math::ceil(float(Math::PI) / Math::acos(1.0f - 0.001f / MAX(r0, 0.001f)))), 24, rsides);
+				}
 				Vector4i part;
 				bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
 				bark.begin(part);
-				_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale, girth_r, !(fallen || fallen_branch));
+				_tube(bark, bp, br, bsides, 0.0f, col, relief ? bs.height.ptr() : nullptr, relief ? scale : 0.0f, girth_r, !(fallen || fallen_branch));
 				bark.end(part, r0);
 				if (collar) {
-					root_collar(bark, part, rsides, rp, rr, false);
+					root_collar(bark, part, bsides, bp, br, false);
 				}
 				moss_tint(bark, part);
-				end_grain(bark, part, rp, rsides, girth_r, col);
+				end_grain(bark, part, bp, bsides, girth_r, col);
 				if (collar) {
 					soil_tint(bark, part, 1.0f);
 				}
 				if (rigged) {
-					_skin_stem(bark, part, s, rp, rsides);
+					_skin_stem(bark, part, s, bp, bsides);
 				}
 				if (s == veteran_stem || vet_share[s]) {
-					veteran_deform(bark, part, rp, rr, rsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
+					veteran_deform(bark, part, bp, br, bsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
 				if (!stem && junction_weld) {
-					weld(bark, part, s, rp, rr, rsides);
+					weld(bark, part, s, bp, br, bsides);
 				}
 			}
 			if (moss_shell) {

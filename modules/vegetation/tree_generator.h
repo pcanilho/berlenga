@@ -523,6 +523,8 @@ private:
 		Ref<Texture2D> normal;
 		Ref<Texture2D> roughness;
 		Ref<Image> height; // Metres of relief over the tile, for displaced near trunks.
+		float relief_gain = 0.0f; // Metres the displaced near tube is closer to the relief than a smooth one.
+		float relief_along = 0.05f; // Metres between the displaced tube's rings.
 	};
 	BarkSet bark_sets[BARK_MAX];
 	BarkSet moss_set;

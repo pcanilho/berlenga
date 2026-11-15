@@ -883,6 +883,29 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
     `--junction-side=-1` views the junction from the limb's other side. The junction view
     picks a true limb (under half the trunk's girth, spreading, starting inside the trunk).
 
+### 2g. Lighter near bark (15 Nov; Paulo: "all of them if they are worthwhile")
+
+Where an open oak's 4.4M LOD 0 bark triangles go: 2.35M are the leaf twigs (196,000 bent
+three-sided twigs of three rings, 12 triangles each, the least a bent tube can have), 0.84M the
+displaced relief tubes, the rest limbs. So the near bark was trimmed where it showed nothing:
+- **Relief only where it shows.** For each bark family the displaced tube's grid (2.5 cm by
+  5 cm) is checked against its own height map: the 90th percentile error of the grid against
+  that of a smooth tube. Smooth and papery bark (0.6 mm deep) and flaking bark (3.5 mm) gain
+  under a millimetre; scaly bark gains 1.6 mm (its scales are smaller than the grid), so only
+  its thickest stems keep relief. Where the gain times the stem's relief scale is under 1 mm,
+  LOD 0 gets a smooth tube instead, with sides for 1 mm of chord error and rings every 10 cm.
+  The normal map carries those barks' detail as before.
+- **Rings along furrowed bark** every 10 cm instead of 5 where no moss shell lies on the stem
+  (furrowed ridges run along the stem: the grid's error is the same). Under a moss shell the
+  bark and shell share one grid, so those keep 5 cm.
+- **Thin shoots** (under 1 cm radius) drop rings where the axis and radius stay within a quarter
+  of the radius of a straight run (Douglas and Peucker 1973, as hair strands are).
+Result over the 31 species, open and stand-grown: bark triangles 91.2M to about 85M (-7%);
+beech -10%, sycamore -17 to -21%, red maple -18 to -22%, silver fir in a stand -24%; oaks,
+limes and pines unchanged (their relief is real). Raster and path-traced crops of beech, spruce
+and a moss-free oak trunk match the old ones (mean pixel difference under 1.5 of 255).
+The leaf twigs are left as they are: thinner geometry would straighten them off their leaves.
+
 ### 2f. Clear trunks on open-grown oaks (12 Nov; Paulo picked "Mix of both")
 
 Open-grown oaks came out as a broom of stems forking about a metre up: grown alone in full light
