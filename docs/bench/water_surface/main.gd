@@ -239,7 +239,7 @@ func _ready() -> void:
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
-	var storm := view.begins_with("storm")
+	var storm := view.begins_with("storm") or no_props
 	for p in [] if storm else [Vector3(-2.5, -1.4, -4.0), Vector3(1.5, -1.9, -7.0), Vector3(3.0, -0.9, -1.5)]:
 		_slab(Vector3(1.2, 1.2, 1.2), p, Vector3(0.3, 0.7, 0.2), rock_mat)
 	if shade.x != INF:
@@ -323,6 +323,8 @@ func _ready() -> void:
 	cam.fov = 45
 	add_child(cam)
 	match view:
+		"shallows":
+			cam.look_at_from_position(Vector3(0, 1.6, 4.0), Vector3(-1.0, -1.0, -5.0))
 		"under":
 			cam.look_at_from_position(Vector3(0, 3.5, 5.0), Vector3(0, -1.0, -1.5))
 		"submerged":

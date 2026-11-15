@@ -2423,3 +2423,35 @@ height lookups a pixel.
 two seconds (the persistent foam of the 1.4 km tile); not the steering and not undefined textures. Open.
 Bigger, steeper storm waves than the spectrum gives are an art choice: `wave_amplitude` 1.6 and `choppiness`
 1.4 give the Black Flag look on the bench.
+
+## Live water on terrain (15 Nov, FluidNinja parity step 3, research)
+
+Paulo's ask: water that flows, fills and floods over the ground as FluidNinja LIVE 2 and Fluid Flux
+show it (a stream finding its way down a slope, a hollow filling into a pond, rain running off and
+pooling, a dam breaking). What exists: the live window (step 3c, Chentanez and Müller 2010 on the
+ripple grid) solves shallow water inside a water body's square, but has no moving wet/dry fronts and
+never leaves its body. "The full live version" above is the plan this starts.
+
+**How others do it.**
+- Fluid Flux (Unreal): a 2D shallow-water simulation on render targets over the landscape, with
+  sources, slopes and falls, drawn as mesh tiles; its coastline and waterfall showcases are the
+  reference look (80.lv articles, ImaginaryBlend forum thread).
+- Virtual pipes (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007 on the GPU; Štava et al. 2008
+  for interactive terrain): per cell a water height and four outflow fluxes, accelerated by the
+  height difference to each neighbour and scaled down when they would drain the cell below zero. It
+  conserves volume exactly, never goes negative, wets and dries without special cases, and stays
+  stable on cliffs, which is why city and terrain games use it for floods. Its weakness is inertia:
+  waves are damped and eddies do not form.
+- Chentanez and Müller 2010 (our live window): semi-Lagrangian velocities, better waves and eddies,
+  needs extra care at wet/dry fronts and steep slopes (their overshoot fix, depth clamps).
+
+**Proposal.** A new node, a hand-placed live area over any ground (`PhysXLiveWater3D`): a square of
+up to about 256 m at 0.25 to 1 m cells. It reads the ground's heights once (physics ray casts, so
+terrain, rocks and buildings all count) and keeps them as a texture. Water comes from sources (point
+inflows in m^3/s, area springs), from rain (the weather's rain rate) and from the edges of water
+bodies it touches, and leaves by sinks and soaking in. The solver is the pipe model, with velocity
+from the fluxes for flow-aligned foam and drag. The surface is a displaced grid using the shared
+water shader (clear water, shadows, caustics, foam where it runs fast or falls), traced by the path
+tracer through vertex capture. A CPU readback gives `sample_height()` and `sample_flow()` for
+buoyancy. Later, the same tiles stream over a whole world (tile manager, LOD, sleeping tiles) as
+"The full live version" lays out.
