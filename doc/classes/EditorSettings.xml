@@ -1244,7 +1244,7 @@
 			The border size to use for interface elements (in pixels).
 		</member>
 		<member name="interface/theme/color_preset" type="String" setter="" getter="">
-			The editor color preset to use.
+			The editor color preset to use. [code]Default[/code] is Berlenga's steel accent on graphite; [code]Godot[/code] is upstream Godot's default colors; [code]Silver[/code] is silver on near-black.
 		</member>
 		<member name="interface/theme/contrast" type="float" setter="" getter="">
 			The contrast factor to use when deriving the editor theme's base color (see [member interface/theme/base_color]). When using positive values, the derived colors will be [i]darker[/i] than the base color. This contrast factor can be set to a negative value, which will make the derived colors [i]brighter[/i] than the base color. Negative contrast rates often look better for light themes.

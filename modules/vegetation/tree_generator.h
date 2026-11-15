@@ -198,6 +198,7 @@ private:
 		bool dead = false; // Shed but kept as dead wood: no buds, no leaves, frozen radius.
 		bool removed = false;
 		bool leafy = false;
+		bool pole = false; // A resprout's axis after a cut (section 5l): vigorous and straight.
 		Vector3 end() const { return start + dir * length; }
 	};
 
@@ -209,6 +210,7 @@ private:
 		int idle = 0;
 		float light = 0.0f;
 		float vigor = 0.0f;
+		bool sprout = false; // A cut stem's resprout (section 5l): keeps its node's order.
 	};
 
 	struct Builder {
@@ -382,6 +384,16 @@ private:
 	bool rigged = false;
 	int decay_class = 0; // 0 living; 1-5 deadwood decay classes (Maser et al. 1979).
 	bool fallen = false; // Lying on the ground as a log.
+	// Pollards and coppice (section 5l): cut back at cut_height (m; 0 never; up to 0.5 m a coppice
+	// stool, above that a pollard head) every cut_cycle years, the last cut cut_since years ago
+	// (-1: some time within the last cycle).
+	float cut_height = 0.0f;
+	int cut_cycle = 12;
+	int cut_since = -1;
+	HashSet<int> sprout_roots; // First nodes of shoots grown since the last cut.
+	LocalVector<int> cut_heads; // Stubs and knuckles the head is made of.
+	int last_cut_year = -1000;
+	HashSet<int> bolling; // The head's nodes, swollen (mesher: no taper at their ends).
 	bool uprooted = false; // A fallen tree thrown with its root plate (section 5k); else snapped at the butt.
 	// The root plate of an uprooted tree (section 5k): built upright about base0, then turned
 	// with the stem about the hinge.
@@ -428,6 +440,8 @@ private:
 	void _break_limbs();
 	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
 	void _root_plate(Builder &r_bark);
+	void _cut_back(bool p_first);
+	float _stem_top() const;
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -679,6 +693,12 @@ public:
 	void set_fallen(bool p_fallen) { fallen = p_fallen; }
 	bool is_fallen() const { return fallen; }
 	void set_uprooted(bool p_uprooted) { uprooted = p_uprooted; }
+	void set_cut_height(float p_height) { cut_height = MAX(p_height, 0.0f); }
+	float get_cut_height() const { return cut_height; }
+	void set_cut_cycle(int p_years) { cut_cycle = MAX(p_years, 2); }
+	int get_cut_cycle() const { return cut_cycle; }
+	void set_cut_since(int p_years) { cut_since = p_years; }
+	int get_cut_since() const { return cut_since; }
 	bool is_uprooted() const { return uprooted; }
 	void set_climber(Climber p_climber) { climber = p_climber; }
 	Climber get_climber() const { return climber; }

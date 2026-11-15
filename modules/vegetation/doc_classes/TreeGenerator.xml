@@ -212,6 +212,15 @@
 		<member name="dead_branch_keep" type="float" setter="set_param" getter="get_param" default="0.15">
 			Share of shed branches kept on the tree as dead wood.
 		</member>
+		<member name="cut_cycle" type="int" setter="set_cut_cycle" getter="get_cut_cycle" default="12">
+			Years between cuts when [member cut_height] is above 0.
+		</member>
+		<member name="cut_height" type="float" setter="set_cut_height" getter="get_cut_height" default="0.0">
+			Grows the tree as woodmen keep it, cut back every [member cut_cycle] years: up to 0.5 m a coppice stool with poles from the ground, higher a pollard with a swollen head of poles on a clean bole. 0 never cuts.
+		</member>
+		<member name="cut_since" type="int" setter="set_cut_since" getter="get_cut_since" default="-1">
+			Years since the last cut: a few for a working pollard or coppice, decades for a lapsed one whose poles have grown into limbs. -1 picks a time within the last cycle.
+		</member>
 		<member name="decay_class" type="int" setter="set_decay_class" getter="get_decay_class" default="0">
 			0 for a living tree; 1 to 5 are the deadwood decay classes foresters use (Maser et al. 1979): 1 dead with twigs and bark, 2 twigs lost, 3 bark sloughing and the top snapped, 4 limb stubs on a stem broken lower, 5 a stump.
 		</member>

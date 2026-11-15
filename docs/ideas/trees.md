@@ -847,6 +847,36 @@ microtopography; Schaetzl et al. 1989, Norman, Schaetzl and Small 1995).
 - **Cost.** Beech log (stem radius 0.54 m): +34k bark (roots), 14k wood (fractures), 5.4k soil
   triangles, about 8% over the snapped log; generation time unchanged within noise.
 
+### 5l. Pollards and coppice (15 Nov; Paulo picked)
+
+For centuries woodmen cut trees back for poles, fodder and firewood: at the ground every 7-25
+years (coppice: hazel 7-10, ash and oak 20-25) or at 2-3 m, out of reach of browsing stock
+(pollards: willow every few years, oak, beech, hornbeam and lime every 10-20). Dormant and
+adventitious buds round the cut break into a ring of straight poles of one age; cut after cut,
+stubs and the callus over them build a swollen head (the bolling) or a widening stool. A lapsed
+pollard, uncut for decades, carries a few limbs as big as trunks from a short fat bole: the
+veterans of wood pasture (Rackham 2006, Woodlands; Read 2000, Veteran Trees: a guide to good
+management).
+
+- **As built (`cut_height`, `cut_cycle`, `cut_since`).** Cutting is grown, not drawn on: the
+  growth model cuts the tree back during its years. The first cut, once the stem stands 2 m over
+  `cut_height` (and from year 8), takes each stem (coppice, `cut_height` up to 0.5 m) or the
+  thickest (pollard) at that height, clears the bole below, and sets 3-6 (stool) or 6-12 (head)
+  short knuckles round the cut. Every `cut_cycle` years each pole grown since goes back to a
+  5 cm stub; one or two sprouts break from each stub, 15-40 degrees off vertical on a stool,
+  20-55 on a head. The last cut is `cut_since` years before the end (-1: within the last cycle).
+- **Poles.** A resprout's first four years get 1.6 times the vigor and twice the yearly length
+  cap (coppice shoots make 1-3 m a year): straight poles of one age; after that they grow on as
+  ordinary limbs, so a lapsed pollard's poles become a crown.
+- **Head.** At the end the head's nodes swell (the stem's top 1.6 times, knuckles and stubs 1.3,
+  the stem flaring over its last half metre), end full-girth in their callus knob, and the
+  knuckles reach out to the swollen head's surface carrying their stubs and poles.
+- **Cost.** A cut tree is smaller than an uncut one of the same age: willow pollard (cut every
+  10 years) 1.1M bark and 1.3M leaf triangles against 5.7M and 8.0M uncut; generation 1.3 s
+  against 5.3 s. Hazel coppice regrown 6 years: 91k bark.
+- **Not yet.** Stands do not cut anything yet: coppice-with-standards (a hazel understory
+  coppiced under oak) and pollard rows along rivers are the natural next step.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

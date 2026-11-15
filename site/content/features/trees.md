@@ -61,7 +61,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Old trees: a basal hollow with a rounded lip, a rot hole, a brush of epicormic shoots and the edge of a burl.*
 
-- **Deadwood** (`decay_class`, `fallen`, `bark_peel`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood.
+- **Deadwood** (`decay_class`, `fallen`, `bark_peel`, `uprooted`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Windthrown trees lie with their root plate on edge, holding soil, stones and torn roots, the butt held off the ground.
 
   ![An oak snag without and with bark peel, raster](media/trees-bark-peel.jpg)
 

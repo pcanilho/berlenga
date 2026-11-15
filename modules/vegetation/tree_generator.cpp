@@ -1110,8 +1110,13 @@ void TreeGenerator::_grow_year(int p_year) {
 		// the leader, which keeps conifers excurrent.
 		{
 			const Node &on = nodes[buds[bi].node];
-			const int ord = (buds[bi].terminal || buds[bi].node == 0) ? on.order : on.order + 1;
+			const int ord = (buds[bi].terminal || buds[bi].sprout || buds[bi].node == 0) ? on.order : on.order + 1;
 			buds[bi].vigor *= Math::pow(params[PARAM_APICAL_CONTROL], float(ord));
+			// A cut stem's root system feeds a few poles: they shoot up 1-3 m a year (coppice
+			// regrowth; Rackham 2006).
+			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= 4) {
+				buds[bi].vigor *= 1.6f;
+			}
 		}
 		// Stochastic rounding: a bud with vigor 0.4 grows one internode four years in ten, so weak
 		// buds are slow rather than starved outright.
@@ -1159,7 +1164,7 @@ void TreeGenerator::_grow_year(int p_year) {
 		// shoots stay short inside the crown instead of reaching out at full length.
 		const Node &from = nodes[bud.node];
 		const bool from_root = bud.node == 0;
-		const int order = (bud.terminal || from_root) ? from.order : from.order + 1;
+		const int order = (bud.terminal || bud.sprout || from_root) ? from.order : from.order + 1;
 		// Lateral extension (Wilson 2000; Kantola and Makela 2004): in excurrent conifers the
 		// branches lengthen far more slowly than the leader, which sets the narrow cone. Scaling the
 		// vigor for it starved the crown of buds and leaves (vigor comes from collected light) and
@@ -1171,8 +1176,10 @@ void TreeGenerator::_grow_year(int p_year) {
 		// al., Enzyklopadie der Holzgewachse). Without it a stand-grown tree, its sides shaded,
 		// poured all vigor into the leader and reached 36-46 m in 50 years with a crown a few
 		// metres deep.
+		const bool pole = bud.sprout || (bud.terminal && from.pole);
 		if (params[PARAM_LEADER_GROWTH] > 0.0f) { // Every shoot: a branch turned up to replace the leader obeys it too.
-			len = MIN(len, params[PARAM_LEADER_GROWTH] / float(count));
+			// A resprout's first few years only: then the poles grow on as limbs.
+			len = MIN(len, params[PARAM_LEADER_GROWTH] * (pole && p_year - last_cut_year <= 4 ? 2.0f : 1.0f) / float(count));
 		}
 		const float grav = order == 0 ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
 		Vector3 pos = from_root ? from.start : from.end();
@@ -1195,6 +1202,10 @@ void TreeGenerator::_grow_year(int p_year) {
 				break;
 			}
 			const int idx = _add_node(parent, pos, dir, len, order, p_year, main);
+			nodes[idx].pole = pole;
+			if (k == 0 && bud.sprout) {
+				sprout_roots.insert(idx);
+			}
 			const bool last = k == count - 1;
 			_add_lateral_buds(idx, roll, last);
 			if (last) {
@@ -3006,6 +3017,162 @@ void TreeGenerator::_measure_lying(const Builder &p_b, int p_v0, int p_v1) {
 		const float perp = (rel - u * d).length();
 		const int bin = CLAMP(int(Math::round(d / len * (DEADWOOD_SAMPLES - 1))), 0, DEADWOOD_SAMPLES - 1);
 		deadwood_profile[bin] = MAX(deadwood_profile[bin], perp);
+	}
+}
+
+// Pollards and coppice (trees.md 5l): woodmen cut trees back for poles, fodder and firewood,
+// at head height out of reach of browsing stock (pollards) or at the ground (coppice), every 5-30
+// years. Dormant and adventitious buds round the cut resprout into a ring of straight poles of
+// one age; cut after cut the stubs and the callus over them build a swollen head (the bolling)
+// or a widening stool (Rackham 2006, Woodlands; Read 2000, Veteran Trees: a guide to good
+// management). The first cut takes each stem at cut_height and clears the bole below it; later
+// cuts take every pole grown since back to a stub, and new sprouts break from the stubs.
+float TreeGenerator::_stem_top() const {
+	float top = 0.0f;
+	for (const Node &n : nodes) {
+		if (!n.removed && n.order == 0) {
+			top = MAX(top, n.end().y - nodes[0].start.y);
+		}
+	}
+	return top;
+}
+
+void TreeGenerator::_cut_back(bool p_first) {
+	// The girth each piece had when it was cut stays: the stubs and the head keep it.
+	_compute_radii();
+	const float base_y = nodes[0].start.y;
+	const bool coppice = cut_height <= 0.5f;
+	LocalVector<int> fresh; // Where the sprouts break this time.
+	HashSet<int> cut; // Cut wood: its own buds go with the cut.
+	auto clear_children = [&](int p_i) {
+		Node &n = nodes[p_i];
+		if (n.main >= 0) {
+			nodes[n.main].removed = true;
+		}
+		n.main = -1;
+		for (int c = n.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+			nodes[c].removed = true;
+		}
+		n.first_lateral = -1;
+		n.leafy = false;
+	};
+	if (p_first) {
+		// Every stem for a coppice stool; a pollard keeps its thickest.
+		int thickest = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			const Node &n = nodes[i];
+			if (!n.removed && n.parent == 0 && (thickest < 0 || n.radius > nodes[thickest].radius)) {
+				thickest = i;
+			}
+		}
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &first = nodes[i];
+			if (first.removed || first.parent != 0) {
+				continue;
+			}
+			if (!coppice && i != thickest) {
+				first.removed = true;
+				continue;
+			}
+			int k = i;
+			while (true) {
+				Node &n = nodes[k];
+				cut.insert(k);
+				// The bole below the cut is cleared of its limbs.
+				const int keep_main = n.main;
+				n.main = -1;
+				for (int c = n.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+					nodes[c].removed = true;
+				}
+				n.first_lateral = -1;
+				n.leafy = false;
+				if (n.end().y - base_y >= cut_height || keep_main < 0 || nodes[keep_main].removed) {
+					if (n.dir.y > 0.2f) {
+						n.length = MAX((cut_height - (n.start.y - base_y)) / n.dir.y, 0.02f);
+					}
+					if (keep_main >= 0) {
+						nodes[keep_main].removed = true;
+					}
+					break;
+				}
+				n.main = keep_main;
+				k = keep_main;
+			}
+			// The head: short knuckles round the cut's rim, each a bud's seat.
+			const Node &top = nodes[k];
+			const float r = MAX(top.radius, 0.02f);
+			const int knuckles = coppice ? 3 + int(rng.rand() % 4) : 6 + int(rng.rand() % 7);
+			for (int q = 0; q < knuckles; q++) {
+				const float a = float(Math::TAU) * (q + 0.35f * (rng.randf() - 0.5f)) / knuckles;
+				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+				const Vector3 d = (out + Vector3(0, coppice ? 0.25f : 0.35f, 0)).normalized();
+				const int kn = _add_node(k, top.end() - Vector3(0, r * 0.4f, 0), d, r * Math::lerp(1.0f, 1.35f, rng.randf()), top.order, 0, false);
+				nodes[kn].leafy = false;
+				nodes[kn].radius = r * Math::lerp(0.5f, 0.7f, rng.randf());
+				cut_heads.push_back(kn);
+				fresh.push_back(kn);
+			}
+			cut_heads.push_back(k);
+		}
+	} else {
+		// Each pole back to a stub a hand long.
+		for (const int i : sprout_roots) {
+			Node &n = nodes[i];
+			if (n.removed) {
+				continue;
+			}
+			bool gone = false;
+			for (int p = n.parent; p > 0 && !gone; p = nodes[p].parent) {
+				gone = nodes[p].removed;
+			}
+			if (gone) {
+				continue;
+			}
+			clear_children(i);
+			cut.insert(i);
+			n.length = MIN(n.length, MAX(n.radius * 1.2f, 0.05f));
+			n.born = 0;
+			cut_heads.push_back(i);
+			fresh.push_back(i);
+		}
+	}
+	sprout_roots.clear();
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
+			nodes[i].removed = true;
+		}
+	}
+	for (Bud &b : buds) {
+		if (cut.has(b.node)) {
+			b.alive = false;
+		}
+	}
+	// Sprouts: straight poles, steeply up from a pollard head, spreading a little more from a
+	// stool, one or two from each stub.
+	for (const int i : fresh) {
+		if (nodes[i].removed) {
+			continue;
+		}
+		const int n_buds = p_first ? 1 + int(rng.randf() < 0.4f) : 1 + int(rng.randf() < 0.3f);
+		for (int q = 0; q < n_buds; q++) {
+			// Out along the knuckle or stub, else any bearing.
+			Vector3 out = nodes[i].dir;
+			out.y = 0.0f;
+			if (out.length() < 0.2f) {
+				out = Vector3();
+			}
+			if (out.length() < 0.01f) {
+				const float a = rng.randf() * float(Math::TAU);
+				out = Vector3(Math::cos(a), 0.0f, Math::sin(a));
+			}
+			out.normalize();
+			const float tilt = Math::deg_to_rad(Math::lerp(coppice ? 15.0f : 20.0f, coppice ? 40.0f : 55.0f, rng.randf()));
+			Bud b;
+			b.node = i;
+			b.dir = (Vector3(0, Math::cos(tilt), 0) + out * Math::sin(tilt) + _random_unit() * 0.08f).normalized();
+			b.sprout = true;
+			buds.push_back(b);
+		}
 	}
 }
 
@@ -7114,7 +7281,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		rad.push_back(r0);
 		for (int c = 0; c < int(chain.size()); c++) {
 			const Node &n = nodes[chain[c]];
-			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * 0.6f;
+			// A pollard's head or a stool's stub ends full-girth in its callus knob (trees.md 5l).
+			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) ? 1.0f : 0.6f);
 			// Where a lateral has outgrown the axis's own continuation (a leader overtaken at a
 			// fork), the axis keeps the lateral's girth to the fork: narrowing to the thinner
 			// continuation, it left the lateral's base standing out as a stub.
@@ -8908,6 +9076,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	fungi_cover = p_from.fungi_cover;
 	limb_breakage = p_from.limb_breakage;
 	uprooted = p_from.uprooted;
+	cut_height = p_from.cut_height;
+	cut_cycle = p_from.cut_cycle;
+	cut_since = p_from.cut_since;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -9576,6 +9747,8 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	nodes.clear();
 	buds.clear();
+	sprout_roots.clear();
+	cut_heads.clear();
 	shed_count = 0;
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) * 1013904223ull + 1);
 
@@ -9597,16 +9770,76 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		add_stem_bud(Math::TAU * s / stems + _rand(-0.4f, 0.4f), tilt);
 	}
 	const int years = CLAMP(int(params[PARAM_YEARS]), 1, 300);
+	int last_cut = -1;
+	last_cut_year = -1000;
+	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
 	for (int y = 1; y <= years; y++) {
 		if (params[PARAM_BASAL_SPROUTS] > 0.0f && rng.randf() < params[PARAM_BASAL_SPROUTS]) {
 			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
 		}
 		_grow_year(y);
+		if (cut_height > 0.0f) {
+			// Cut back every cycle (trees.md 5l), first once the stem stands well over the cut;
+			// the last cut cut_since years before the end.
+			const float top = _stem_top();
+			if (last_cut < 0 ? (y >= 8 && top > cut_height + 2.0f && y <= years - since) : (y - last_cut >= cut_cycle && y <= years - since)) {
+				_cut_back(last_cut < 0);
+				last_cut = y;
+				last_cut_year = y;
+			}
+		}
 		if (int(nodes.size()) >= MAX_NODES - 64) {
 			break;
 		}
 	}
 	_compute_radii();
+	bolling.clear();
+	if (!cut_heads.is_empty()) {
+		// The bolling (trees.md 5l): callus rolled over the cuts, cycle after cycle, swells the
+		// head and its knuckles past the stem below; the stem flares into it over its last half
+		// metre.
+		HashSet<int> &head = bolling;
+		for (const int i : cut_heads) {
+			if (!nodes[i].removed && !head.has(i)) {
+				head.insert(i);
+				// The stem's top swells most, the knuckles and stubs on it less.
+				nodes[i].radius *= nodes[i].order == 0 && nodes[i].parent > 0 && nodes[nodes[i].parent].order == 0 && nodes[i].first_lateral >= 0 ? 1.6f : 1.3f;
+				for (int p = nodes[i].parent, k = 0; p > 0 && k < 6 && nodes[i].start.distance_to(nodes[p].end()) < 0.6f; p = nodes[p].parent, k++) {
+					if (!head.has(p)) {
+						nodes[p].radius *= Math::lerp(1.3f, 1.05f, nodes[i].start.distance_to(nodes[p].start) / 0.6f);
+						head.insert(p);
+					}
+				}
+			}
+		}
+		// The knuckles were set on the stem when it was first cut, a few centimetres long; the
+		// head has swollen round them since. Each reaches out to the head's surface, carrying
+		// its stubs and poles with it.
+		LocalVector<uint8_t> moved;
+		for (const int i : cut_heads) {
+			Node &kn = nodes[i];
+			if (kn.removed || kn.parent <= 0 || !bolling.has(kn.parent) || nodes[kn.parent].main == i || sprout_roots.has(i)) {
+				continue;
+			}
+			const Node &par = nodes[kn.parent];
+			if (par.order != kn.order || kn.born != 0 || kn.length >= par.radius * 0.9f) {
+				continue;
+			}
+			const float grow = par.radius * 0.9f - kn.length;
+			const Vector3 shift = kn.dir * grow;
+			kn.length += grow;
+			moved.resize(nodes.size());
+			memset(moved.ptr(), 0, moved.size());
+			moved[i] = 1;
+			for (int c = i + 1; c < int(nodes.size()); c++) {
+				const int p = nodes[c].parent;
+				if (p >= 0 && moved[p]) {
+					moved[c] = 1;
+					nodes[c].start += shift;
+				}
+			}
+		}
+	}
 	_bend_under_gravity();
 	_prune_collisions();
 	_measure();
@@ -9723,6 +9956,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_fallen"), &TreeGenerator::is_fallen);
 	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
 	ClassDB::bind_method(D_METHOD("set_uprooted", "uprooted"), &TreeGenerator::set_uprooted);
+	ClassDB::bind_method(D_METHOD("set_cut_height", "height"), &TreeGenerator::set_cut_height);
+	ClassDB::bind_method(D_METHOD("get_cut_height"), &TreeGenerator::get_cut_height);
+	ClassDB::bind_method(D_METHOD("set_cut_cycle", "years"), &TreeGenerator::set_cut_cycle);
+	ClassDB::bind_method(D_METHOD("get_cut_cycle"), &TreeGenerator::get_cut_cycle);
+	ClassDB::bind_method(D_METHOD("set_cut_since", "years"), &TreeGenerator::set_cut_since);
+	ClassDB::bind_method(D_METHOD("get_cut_since"), &TreeGenerator::get_cut_since);
 	ClassDB::bind_method(D_METHOD("is_uprooted"), &TreeGenerator::is_uprooted);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &TreeGenerator::set_lichen_cover);
@@ -9814,6 +10053,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen"), "set_fallen", "is_fallen");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen_branch"), "set_fallen_branch", "is_fallen_branch");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "uprooted"), "set_uprooted", "is_uprooted");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cut_height", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:m"), "set_cut_height", "get_cut_height");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "cut_cycle", PROPERTY_HINT_RANGE, "2,60,1,suffix:years"), "set_cut_cycle", "get_cut_cycle");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "cut_since", PROPERTY_HINT_RANGE, "-1,300,1,suffix:years"), "set_cut_since", "get_cut_since");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
