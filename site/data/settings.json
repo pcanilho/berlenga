@@ -1772,13 +1772,14 @@
    "topic": "Plants"
   },
   {
-   "name": "Plants between stones",
+   "name": "Plants on and between stones",
    "settings": [
+    "PlantSpecies.stone_top",
     "PlantSpecies.stone_gap",
-    "PlantGenerator.make_stones"
+    "PlantGenerator.make_stones()"
    ],
    "note": "",
-   "what": "crevice ferns, stonecrop, saxifrage and thrift grow only in the gaps of scree, gravel and shingle.",
+   "what": "moss grows on the tops of generated stones, and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
