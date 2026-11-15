@@ -1522,7 +1522,7 @@
     "far_fade"
    ],
    "note": "",
-   "what": "far ground takes the colour of the plant cover map.",
+   "what": "far ground takes the colour of the plant cover map. With `far_start_from_vegetation` (off by default) the blend starts where the streamed plants end, else at `far_start`.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
