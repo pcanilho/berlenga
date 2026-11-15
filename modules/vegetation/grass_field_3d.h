@@ -99,6 +99,12 @@ class GrassField3D : public Node3D {
 	bool ground_tint_enabled = true;
 	Vector4 fade_band; // Last centre and band sent to the shaders.
 	static GrassField3D *fade_owner; // The field whose band the ground shader reads.
+	// The widest other field with a ground tint (an undercoat under a patchy tall sward): past its
+	// own band the ground takes its far colour, and past the fade owner's band the two far colours
+	// mix by the tall sward's cover share.
+	static GrassField3D *under_owner;
+	void _publish_under();
+	void _drop_under();
 	bool ground_baked = false;
 	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	class VegetationField3D *_get_undergrowth() const;
@@ -168,6 +174,7 @@ class GrassField3D : public Node3D {
 	class DirectionalLight3D *_get_sun();
 	void _publish_sun_view(const Vector3 &p_camera);
 	void _publish_far();
+	float _cover_share() const;
 	void _queue_far_bake();
 	void _far_bake_start();
 	void _far_bake_step();

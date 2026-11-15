@@ -66,6 +66,8 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_ground_far_lobe1", "vec4" },
 		{ "grass_ground_far_lobe2", "vec4" },
 		{ "grass_ground_far_scale", "vec4" },
+		{ "grass_ground_under", "vec4" },
+		{ "grass_ground_under_far", "vec4" },
 		{ "grass_ground_sun", "vec4" },
 		{ "grass_ground_view", "vec4" },
 		{ "grass_ground_dry", "vec4" },

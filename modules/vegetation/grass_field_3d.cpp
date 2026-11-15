@@ -912,6 +912,7 @@ void GrassField3D::_free_tile(Tile &p_tile) {
 // blade shader's fade_band), and the ground under the grass turns to the blades' colour over the
 // same band (grass_ground_fade, grass_ground_far), so the field ends without an edge.
 GrassField3D *GrassField3D::fade_owner = nullptr;
+GrassField3D *GrassField3D::under_owner = nullptr;
 
 void GrassField3D::_update_fade(const Vector2 &p_center) {
 	const Vector4 band(p_center.x, p_center.y, radius * 0.97f, radius * 0.37f);
@@ -925,11 +926,24 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 	// The ground's band is global: the widest field publishes it, so a near undercoat field does
 	// not pull the ground's blade colour in to its own short radius.
 	if (fade_owner && fade_owner != this && fade_owner->radius > radius) {
+		// A narrower field with its own ground tint (an undercoat): the ground past its band.
+		if (ground_tint_enabled && is_inside_tree() && (!under_owner || under_owner == this || under_owner->radius <= radius)) {
+			under_owner = this;
+			_publish_under();
+		}
 		return;
+	}
+	if (under_owner == this) {
+		_drop_under(); // Now the widest: its band is the main one.
 	}
 	// The widest field even without a ground tint of its own: its blades are the ones seen last.
 	if (is_inside_tree()) {
+		GrassField3D *prev = fade_owner;
 		fade_owner = this;
+		// Taking over from a narrower field with a ground tint: it is the undercoat now.
+		if (prev && prev != this && prev->ground_tint_enabled && prev->is_inside_tree() && (!under_owner || under_owner->radius <= prev->radius)) {
+			under_owner = prev;
+		}
 		RenderingServer *rs = RenderingServer::get_singleton();
 		rs->global_shader_parameter_set("grass_ground_fade", band);
 		_publish_far();
@@ -1209,6 +1223,8 @@ void GrassField3D::_far_bake_step() {
 	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s), sun azimuth lobes %s %s; by sun elevation 12/30/50/72 degrees %s %s %s %s.", get_name(), far_color_baked, _far_color_hand(), far_lobe1, far_lobe2, far_elev_color[0], far_elev_color[1], far_elev_color[2], far_elev_color[3]));
 	if (fade_owner == this) {
 		_publish_far();
+	} else if (under_owner == this) {
+		_publish_under();
 	}
 	emit_signal(SNAME("far_color_changed"));
 }
@@ -1245,10 +1261,45 @@ void GrassField3D::_publish_far() {
 		scale = Color(ref.r > 0.0f ? far.r / ref.r : 1.0f, ref.g > 0.0f ? far.g / ref.g : 1.0f, ref.b > 0.0f ? far.b / ref.b : 1.0f, 1.0f);
 	}
 	published_far_elevation = sun_elevation_deg;
-	rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, 1.0f));
+	// a: the share of the ground this sward covers (its patches), the rest the undercoat's.
+	rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, _cover_share()));
 	rs->global_shader_parameter_set("grass_ground_far_lobe1", Vector4(l1.r, l1.g, l1.b, 0.0f));
 	rs->global_shader_parameter_set("grass_ground_far_lobe2", Vector4(l2.r, l2.g, l2.b, 0.0f));
 	rs->global_shader_parameter_set("grass_ground_far_scale", Vector4(scale.r, scale.g, scale.b, 1.0f));
+	if (under_owner && under_owner != this) {
+		under_owner->_publish_under(); // At the same sun elevation.
+	}
+}
+
+// The share of the ground the blades stand on: the patch cover when the rules grow it in patches.
+float GrassField3D::_cover_share() const {
+	if (rules.is_valid() && rules->get_patch_scale() > 0.0f) {
+		return CLAMP(rules->get_patch_cover(), 0.0f, 1.0f);
+	}
+	return 1.0f;
+}
+
+// The undercoat's band and far colour (at the main field's sun elevation), for grass_ground().
+void GrassField3D::_publish_under() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	Color far = get_far_color();
+	if (far_baked) {
+		Color l1, l2;
+		_far_at_elevation(fade_owner ? fade_owner->sun_elevation_deg : sun_elevation_deg, far, l1, l2);
+	}
+	rs->global_shader_parameter_set("grass_ground_under", fade_band);
+	rs->global_shader_parameter_set("grass_ground_under_far", Vector4(far.r, far.g, far.b, 1.0f));
+}
+
+void GrassField3D::_drop_under() {
+	if (under_owner != this) {
+		return;
+	}
+	under_owner = nullptr;
+	if (RenderingServer::get_singleton()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_under", Vector4());
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_under_far", Vector4());
+	}
 }
 
 PackedColorArray GrassField3D::get_far_color_lobes() const {
@@ -1511,6 +1562,8 @@ global uniform vec4 grass_ground_fade; // xy: centre of the blades, z: where the
 global uniform vec4 grass_ground_far; // rgb: the blades' colour seen from a distance.
 global uniform vec4 grass_ground_far_lobe1; // rgb: its change with cos of the sun's azimuth from the view.
 global uniform vec4 grass_ground_far_lobe2; // rgb: and with cos of twice that azimuth.
+global uniform vec4 grass_ground_under; // xy: centre, z: radius, w: band of the undercoat field (0: none).
+global uniform vec4 grass_ground_under_far; // rgb: the undercoat's far colour; a: 1 when set.
 global uniform vec4 grass_ground_far_scale; // rgb: the far colour at the sun's elevation over the cover map's (30 degrees).
 global uniform vec4 grass_ground_sun; // xy: the sun light's heading (xz); z: how much the azimuth counts.
 global uniform vec4 grass_ground_view; // xyz: the camera.
@@ -1557,6 +1610,9 @@ float grass_ground_weight(vec3 world_pos) {
 	float gone = 0.0;
 	if (grass_ground_fade.w > 0.0) {
 		gone = 1.0 - clamp((grass_ground_fade.z - length(world_pos.xz - grass_ground_fade.xy)) / grass_ground_fade.w, 0.0, 1.0);
+	}
+	if (grass_ground_under.w > 0.0 && grass_ground_under_far.a > 0.0) {
+		gone = max(gone, 1.0 - clamp((grass_ground_under.z - length(world_pos.xz - grass_ground_under.xy)) / grass_ground_under.w, 0.0, 1.0));
 	}
 	return cover * mix(grass_ground_color.a, 1.0, gone);
 }
@@ -1609,22 +1665,40 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	if (grass_ground_fade.w > 0.0) {
 		gone = 1.0 - clamp((grass_ground_fade.z - length(world_pos.xz - grass_ground_fade.xy)) / grass_ground_fade.w, 0.0, 1.0);
 	}
+	// Past the undercoat's own band (a narrower field under a patchy tall sward) its blades are
+	// gone too: the ground between the tall patches becomes the undercoat's far colour.
+	float gone_u = 0.0;
+	if (grass_ground_under.w > 0.0 && grass_ground_under_far.a > 0.0) {
+		gone_u = 1.0 - clamp((grass_ground_under.z - length(world_pos.xz - grass_ground_under.xy)) / grass_ground_under.w, 0.0, 1.0);
+	}
 	vec3 turf = grass_turf(world_pos);
-	if (gone > 0.0) {
+	if (gone > 0.0 || gone_u > 0.0) {
 		vec2 xz = world_pos.xz;
-		vec3 far = grass_ground_far.rgb * grass_patch_tint(xz, grass_noise(xz * 3.0), 0.5, grass_ground_params.x);
+		vec3 tint = grass_patch_tint(xz, grass_noise(xz * 3.0), 0.5, grass_ground_params.x);
 		// A sward looked at down-sun shows its lit faces (the hot spot), into the sun its shadowed
 		// sides: the bake's azimuth lobes, by the angle between the view and the sun's light.
+		vec3 lobe = vec3(1.0);
 		vec2 to = xz - grass_ground_view.xz;
 		float to_len = length(to);
 		if (grass_ground_sun.z > 0.0 && to_len > 1e-3) {
 			float c1 = dot(to / to_len, grass_ground_sun.xy);
-			far *= max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
+			lobe = max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
 		}
 		// Keep the turf's streaks and thatch as brightness, so the far sward is not flat.
-		float lum = dot(turf, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3);
-		turf = mix(turf, far * clamp(lum, 0.5, 1.5), gone);
+		float lum = clamp(dot(turf, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3), 0.5, 1.5);
+		vec3 under = grass_ground_under_far.rgb * tint * lobe;
+		if (gone_u > 0.0) {
+			turf = mix(turf, under * lum, gone_u);
+		}
+		if (gone > 0.0) {
+			vec3 far = grass_ground_far.rgb * tint * lobe;
+			if (grass_ground_under_far.a > 0.0) {
+				far = mix(under, far, grass_ground_far.a); // The tall patches over the undercoat.
+			}
+			turf = mix(turf, far * lum, gone);
+		}
 	}
+	gone = max(gone, gone_u);
 	return mix(albedo, turf, cover * mix(grass_ground_color.a, 1.0, gone));
 }
 )";
@@ -1655,6 +1729,9 @@ void GrassField3D::set_ground_tint_enabled(bool p_enabled) {
 	ground_tint_enabled = p_enabled;
 	ground_baked = false;
 	_queue_far_bake();
+	if (!p_enabled) {
+		_drop_under();
+	}
 	if (!p_enabled && is_inside_tree()) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_rect", Vector4());
 	}
@@ -1953,6 +2030,7 @@ void GrassField3D::_notification(int p_what) {
 }
 
 GrassField3D::~GrassField3D() {
+	_drop_under();
 	if (fade_owner == this) {
 		fade_owner = nullptr;
 		if (RenderingServer::get_singleton()) {
