@@ -2138,10 +2138,11 @@
    "settings": [
     "decay_class",
     "fallen",
-    "bark_peel"
+    "bark_peel",
+    "uprooted"
    ],
    "note": "",
-   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood.",
+   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Windthrown trees lie with their root plate on edge, holding soil, stones and torn roots, the butt held off the ground.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"
