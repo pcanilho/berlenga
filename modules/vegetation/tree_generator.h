@@ -242,6 +242,11 @@ private:
 		// v; zero scale: no lichen there), so its pattern does not repeat with the bark's tile.
 		Vector4 uv2_map;
 		LocalVector<Vector4> part_uv2;
+		// Bark only: vertices that are not bark (a log's broken end face), left out of peeling.
+		LocalVector<uint32_t> not_bark;
+		// Bark only: per vertex, the relief's offset (metres, 0 on plate tops, negative in furrows)
+		// and its scale, so lost bark can sink to the furrow floor; vertices without one read 0.
+		LocalVector<Vector2> relief_off;
 		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
@@ -315,6 +320,10 @@ private:
 	Ref<Texture2D> _lichen_texture();
 	float _lichen_amount() const;
 	float _lichen_at(const Vector3 &p_pos, float p_radius, float p_moss) const;
+	// Bark lost from dead wood (trees.md 5f): 0 bark, 1 bare, 0.5 the edge.
+	float _bare_amount() const;
+	float _bare_at(const Vector3 &p_pos, const Vector3 &p_normal, const Vector3 &p_axis, float p_ground) const;
+	void _peel_bark(Builder &r_bark);
 	static Array _plant_climber_leaves(Climber p_climber);
 	static Array plant_climber_cache[4];
 	// The same leaves' arrays, read once: reading a mesh back from the RenderingServer waits on
@@ -430,6 +439,7 @@ public:
 	// shell over the bark at LOD 0, by species, height, upper faces and decay.
 	float moss_cover = 1.0f;
 	float lichen_cover = 1.0f;
+	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
 	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
@@ -537,6 +547,7 @@ private:
 		Ref<Image> height; // Metres of relief over the tile, for displaced near trunks.
 		float relief_gain = 0.0f; // Metres the displaced near tube is closer to the relief than a smooth one.
 		float relief_along = 0.05f; // Metres between the displaced tube's rings.
+		float relief_floor = 0.0f; // The height map's lowest value (metres, the deepest furrow).
 	};
 	BarkSet bark_sets[BARK_MAX];
 	BarkSet moss_set;
@@ -637,6 +648,8 @@ public:
 	float get_moss_cover() const { return moss_cover; }
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
+	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	float get_bark_peel() const { return bark_peel; }
 	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }
 	bool is_fallen_branch() const { return fallen_branch; }
 	void set_envelope(const AABB &p_envelope) { envelope = p_envelope; }

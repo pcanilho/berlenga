@@ -660,6 +660,27 @@ height, azimuth, size) for birds, bats and gameplay. Stems under 16 cm diameter 
 into the main stem's plain, relief and moss tubes alike, working on the undisplaced tube so the
 three stay together, and normals are rebuilt there. The tree's growth and skeleton do not change.
 
+### 5f. Bark peeling on dead wood (15 Nov; Paulo: "all of them if they are worthwhile")
+
+Research. Bark loosens once the cambium under it dies and rots, and falls in plates and strips
+along the grain. The deadwood decay classes (Maser et al. 1979) set how much: class 1 intact,
+2 loose with some lost, 3 traces only, 4 and 5 none. A standing snag keeps its bark longest at
+the foot and loses it from the top; a log first on its upper side, where it dries and splits.
+Weathered wood in the open goes silver-grey, rotting and on the ground it browns, and it checks
+along the grain as it dries.
+
+As built (`bark_peel`, 1 by default, 0 keeps the bark):
+- **Where.** A field per bark vertex: noise stretched fivefold along the stem, plus height on
+  snags or the upper side on logs, against the class's share (8, 35, 65, 95, 97%). Moss holds
+  the bark under it. A log's broken end face is left out.
+- **Shape.** Bare vertices sink to the furrow floor of displaced bark (the plates above it are
+  gone), or by the bark's thickness on smooth tubes. Per vertex and interpolated, never stepped.
+- **Look.** No extra surface or geometry: the bark shader reads the bare field from the vertex
+  alpha (lichen keeps the upper half of it), breaks the edge along the bark's furrows (the
+  relief in the roughness map's blue channel), darkens the bark's broken rim, and draws wood:
+  fibres along the stem, long drying checks, grey or brown by class, smoother normal, roughness
+  0.8. The whole-tree weathering tint of classes 3 to 5 is lighter, since the wood now shows.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
