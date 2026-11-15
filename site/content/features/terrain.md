@@ -1,6 +1,7 @@
 ---
 title: "Terrain"
 weight: 50
+group: "World"
 summary: "Mountain ranges raised and eroded per seed, with geology, river networks, coasts and lakes; non-destructive height brushes; terrain data maps."
 ---
 

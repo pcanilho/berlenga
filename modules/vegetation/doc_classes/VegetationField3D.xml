@@ -174,6 +174,12 @@
 		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
 			Rocks on the ground that no plant grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, for example from [method TerrainGenerator3D.get_boulders]. A ground plant's stem keeps 3 cm off a rock, a tree's trunk foot and a log's length keep clear of it. A ground plant's leaves reach at most 8 cm in over a rock's foot: one that would reach farther grows smaller and leans away from the rock (down to 45% of its size), or is not placed. Give the widest radius of a rock that bulges out above the soil. Give the same list to the [GrassField3D] layers. Takes effect at the next [method populate].
 		</member>
+		<member name="stone_top_normals" type="PackedVector3Array" setter="set_stone_top_normals" getter="get_stone_top_normals" default="PackedVector3Array()">
+			Optional, one per [member stone_tops] entry: the surface normal of each cap, measured on the stone (for example by a ray down onto its collision hull). With them, a cap is a flat patch of the stone's surface: a plant there is set on the plane through the cap's point and tilted to its normal, which fits sloping and flat stone faces; give a cap radius only as wide as the surface stays within about a centimetre of that plane. Ignored unless it has as many entries as [member stone_tops]. Takes effect at the next [method populate].
+		</member>
+		<member name="stone_tops" type="PackedVector4Array" setter="set_stone_tops" getter="get_stone_tops" default="PackedVector4Array()">
+			The caps of stones that [member PlantSpecies.stone_top] species grow on: each (x, top y, z, cap radius), the stone's highest point and the radius of its rounded top, for example from [code]RockField3D.get_stones()[/code] ([code]top[/code], and about half the [code]footprint[/code]). A plant there is set down the cap as a dome of that radius from the top and tilted with it (or on the cap's plane, with [member stone_top_normals]), 3 mm into the stone. Takes effect at the next [method populate].
+		</member>
 		<member name="populate_on_ready" type="bool" setter="set_populate_on_ready" getter="is_populate_on_ready" default="true">
 			If [code]true[/code], populate when ready (once the map is baked) and again whenever the map is baked again, after terrain edits.
 		</member>

@@ -1,6 +1,7 @@
 ---
 title: "Rocks"
 weight: 55
+group: "World"
 summary: "Rocks and stones as geometry, broken along each rock type's joints and weathered; placed by rockfall, scree, glacial till, rivers, shores and cliffs."
 ---
 

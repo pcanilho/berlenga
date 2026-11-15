@@ -1,6 +1,7 @@
 ---
 title: "Materials"
 weight: 20
+group: "Rendering"
 summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster."
 ---
 

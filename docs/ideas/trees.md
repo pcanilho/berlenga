@@ -808,6 +808,45 @@ limbs and hangers are among the commonest tree-related microhabitats (Larrieu et
 - **Checks.** Raster and path-traced close-ups keep the same face and splinters (PT does not
   remove detail).
 
+### 5k. Uprooted trees: root plate and pit (research, 15 Nov; Paulo picked)
+
+Windthrow tips a tree out by its roots rather than snapping it: the root plate (the lateral
+roots and the soil they hold) hinges up about its leeward edge, and the tree lies with its butt
+held up by the plate, which stands on edge beside the pit it came out of (pit-and-mound
+microtopography; Schaetzl et al. 1989, Norman, Schaetzl and Small 1995).
+
+- **Sizes.** Norway spruce thrown on mineral soil: DBH 25.5 cm, plate radius 1.4 m, plate height
+  1.1 m, centre depth 28 cm (max 46 cm), 0.5 m3; on peat DBH 31 cm, radius 2.0 m, depth 45-50 cm
+  (max 83 cm), 1.5 m3 (Krisans et al. 2020, Forests 11:1143). So radius about 5.5-6.5 DBH and a
+  plate 0.3-0.5 m thick. Shallow-rooted species (spruce, beech on wet soil) throw the largest.
+- **Pit.** Pits are deepest when fresh and fill as the plate sheds soil back into them: 0.95 m at
+  one year, 0.65 m at three, 0.52 m at five (Zadrozny et al. 2017, iForest 10:783); the soil
+  that falls off the plate builds the mound, which can last centuries.
+- **Decay of the plate.** A fresh plate is a wall of soil, stones and torn roots, its old top
+  (litter, moss) facing away from the fall; as the roots rot it slumps into a mound beside the
+  pit (Krisans et al.). By decay class: 1-2 a full plate, 3 a slumped plate with roots showing,
+  4-5 a low mound with root stubs.
+- **Roots.** Rhizomorph (Li et al., SIGGRAPH 2023) grows roots with the shoots in a soil
+  volume; we keep our own structural roots (the root collar, 5d) and add the plate's laterals
+  radiating to its rim, sinkers under it, torn ends past the soil.
+- **As built (`uprooted`, on a fallen tree; class 3 and older rot to a plain log).** The plate
+  hinges about a point 0.75 of its radius out on the fall side, the stem turning with it until
+  its top reaches the ground, so the butt stands about a metre up on the plate. Plate radius 11
+  stem radii (0.9-2.8 m), thickness 0.22 of that (0.25-0.6 m), both 0.8 once rotting. Its own
+  surface "soil" (vertex colour, one LOD): a ragged lobed rim, the old forest floor on top
+  (litter hummocks, moss patches), a lumpy domed underside with clods, humus over mineral soil
+  mottled grey and rust, and 6-15 stones. In the bark surface: 8-13 laterals from a thick root
+  crown along the underside, mostly bared, to torn ends past the rim that hang down; side roots;
+  3-5 sinkers torn under the stem; about 30 fine roots per metre of radius hanging off the
+  underside. Torn ends over 1.2 cm get a fracture (5j).
+- **For terrain and plants.** Mesh meta `tree_root_pit`: centre (the old foot, mesh space),
+  radius (0.9 of the plate's), depth (1.6 plate thicknesses, 0.35-0.95 m, shallower with decay).
+  The bench's ground is flat, so the pit shows only where the terrain digs it. The deadwood reach
+  profile (5b) takes in the plate and roots.
+- **Stands.** Of each stand's three log variants the freshest (class 2) is uprooted.
+- **Cost.** Beech log (stem radius 0.54 m): +34k bark (roots), 14k wood (fractures), 5.4k soil
+  triangles, about 8% over the snapped log; generation time unchanged within noise.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

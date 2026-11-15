@@ -1,6 +1,7 @@
 ---
 title: "Sky and clouds"
-weight: 80
+weight: 85
+group: "World"
 summary: "Sun and moon set by date, time and place; a scattering atmosphere with twilight; a cloud layer from the weather map, reprojected, path traced, with shadows on the ground."
 ---
 

@@ -14,6 +14,9 @@ extends Node3D
 #   --no-rocks            with --world: no rocks at all
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
 #   --cam=x,y,z --look=x,y,z   a fixed camera
+#   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
+#                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
+#                         shots, same camera); --dist=m sets the camera's distance from the spot
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block"]
@@ -24,6 +27,7 @@ var args := {}
 var raster := false
 var spp := 16
 var out := ""
+var plants_ready := false
 var fails := 0
 var gen: TerrainGenerator3D
 var rocks: RockField3D
@@ -246,11 +250,18 @@ func _world() -> void:
 		add_child(rocks)
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
+		if args.has("plants"):
+			# Hulls on every stone near the spot, for measuring their tops (_stone_caps).
+			rocks.collision_enabled = true
+			rocks.collision_min_size = 0.0
+			rocks.collision_radius = 40.0
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0}.get(view, 10.0) as float
+	if args.has("dist"):
+		dist = float(args["dist"])
 	cam.position = _view_from(spot, dist)
 	if view == "river" or view == "shore":
 		# Low ground under steep sides: look down on the bed from higher, over the walls round it.
@@ -264,6 +275,94 @@ func _world() -> void:
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if args.has("plants"):
+			_crevice_plants(spot, view, land)
+
+
+# --plants: the stand's crevice plants between the field's stones round the spot (docs/ideas/vegetation.md,
+# "Plants between stones"), on a 64 m data map over the landscape.
+func _crevice_plants(spot: Vector3, view: String, land: Landscape3D) -> void:
+	var t0 := Time.get_ticks_msec()
+	var dm := TerrainDataMap3D.new()
+	dm.name = "PlantMap"
+	dm.size = 64.0
+	dm.resolution = 256
+	dm.bake_on_ready = false
+	add_child(dm)
+	dm.global_position = Vector3(spot.x, 0.0, spot.z)
+	dm.height_source = dm.get_path_to(land)
+	dm.geology_source = dm.get_path_to(gen)
+	dm.bake()
+	var stand: int = {"river": PlantGenerator.STONES_RIVER, "shore": PlantGenerator.STONES_SHORE}.get(view, PlantGenerator.STONES_SCREE)
+	var species: Array[PlantSpecies] = []
+	for sp in PlantGenerator.make_stones(stand, 3, true, {"forcing": 900.0, "day_of_year": 175}):
+		species.append(sp as PlantSpecies)
+	var biome := Biome.new()
+	biome.species = species
+	var veg := VegetationField3D.new()
+	veg.name = "CrevicePlants"
+	veg.populate_on_ready = false
+	veg.biome = biome
+	veg.obstacles = rocks.get_obstacles(Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0), 0.0)
+	# Moss cushions on the stones' tops, measured on the stones' hulls once physics has them.
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_stone_caps(veg, Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0))
+	add_child(veg)
+	veg.data_map = veg.get_path_to(dm)
+	veg.populate()
+	var counts := []
+	for i in species.size():
+		counts.append(veg.get_placements(i).size())
+	veg.visible = args["plants"] != "off"
+	print("crevice plants (%s): %d obstacles, %d stone caps, per species %s, %d ms" % [view, veg.obstacles.size(), veg.stone_tops.size(), str(counts), Time.get_ticks_msec() - t0])
+	plants_ready = true
+
+
+# Each stone's cap: a ray down onto its hull at the stone's centre gives the point and normal; the cap
+# then widens while rays round it stay on that plane within a centimetre (VegetationField3D.stone_top_normals).
+func _stone_caps(veg: VegetationField3D, rect: Rect2) -> void:
+	var space := get_world_3d().direct_space_state
+	var tops := PackedVector4Array()
+	var normals := PackedVector3Array()
+	var ray := func(x: float, z: float, y0: float, y1: float) -> Dictionary:
+		return space.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(x, y0, z), Vector3(x, y1, z)))
+	for layer in LAYERS.size():
+		if LAYERS[layer] == "cliff":
+			continue
+		for st in rocks.get_stones(layer, rect):
+			var pos: Vector3 = st["position"]
+			var top := float(st["top"])
+			var hit: Dictionary = ray.call(pos.x, pos.z, top + 0.2, float(st["ground"]) - 0.05)
+			if hit.is_empty():
+				continue
+			var p: Vector3 = hit["position"]
+			var n: Vector3 = hit["normal"]
+			if n.y < 0.6:
+				continue
+			var reach := float(st["footprint"]) * 0.6
+			var r := 0.0
+			var step := 0.04
+			while r + step <= reach:
+				var rs := r + step
+				var flat := true
+				for k in 8:
+					var a := TAU * k / 8.0
+					var x := p.x + cos(a) * rs
+					var z := p.z + sin(a) * rs
+					var plane_y := p.y - (n.x * (x - p.x) + n.z * (z - p.z)) / n.y
+					var h: Dictionary = ray.call(x, z, plane_y + 0.2, plane_y - 0.2)
+					if h.is_empty() or absf((h["position"] as Vector3).y - plane_y) > 0.012 or (h["normal"] as Vector3).y < 0.5:
+						flat = false
+						break
+				if not flat:
+					break
+				r = rs
+			if r >= 0.06:
+				tops.append(Vector4(p.x, p.y, p.z, r * 0.85))
+				normals.append(n)
+	veg.stone_tops = tops
+	veg.stone_top_normals = normals
 
 
 func _sunlit(p: Vector3) -> bool:
@@ -509,6 +608,8 @@ func _test() -> void:
 
 
 func _render_later() -> void:
+	while args.has("plants") and rocks and not plants_ready:
+		await get_tree().process_frame
 	var frames := 8 if raster else 12
 	var t0 := 0
 	for i in frames:

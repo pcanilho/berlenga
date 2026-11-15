@@ -382,6 +382,17 @@ private:
 	bool rigged = false;
 	int decay_class = 0; // 0 living; 1-5 deadwood decay classes (Maser et al. 1979).
 	bool fallen = false; // Lying on the ground as a log.
+	bool uprooted = false; // A fallen tree thrown with its root plate (section 5k); else snapped at the butt.
+	// The root plate of an uprooted tree (section 5k): built upright about base0, then turned
+	// with the stem about the hinge.
+	struct RootPlate {
+		bool on = false;
+		Vector3 base0, hinge;
+		Basis rot;
+		float radius = 0.0f, thick = 0.0f, trunk_r = 0.0f;
+		Vector3 to_world(const Vector3 &p_local) const { return hinge + rot.xform(base0 + p_local - hinge); }
+	} plate;
+	Builder soil_b; // The root plate's soil and stones (section 5k).
 	bool fallen_branch = false; // Only one shed limb of the grown tree, lying on the ground.
 	AABB envelope; // Clipping volume for hedges and topiary (size 0: off).
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
@@ -416,6 +427,7 @@ private:
 	void _apply_veteran();
 	void _break_limbs();
 	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
+	void _root_plate(Builder &r_bark);
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -666,6 +678,8 @@ public:
 	int get_decay_class() const { return decay_class; }
 	void set_fallen(bool p_fallen) { fallen = p_fallen; }
 	bool is_fallen() const { return fallen; }
+	void set_uprooted(bool p_uprooted) { uprooted = p_uprooted; }
+	bool is_uprooted() const { return uprooted; }
 	void set_climber(Climber p_climber) { climber = p_climber; }
 	Climber get_climber() const { return climber; }
 	void set_climber_cover(float p_cover) { climber_cover = CLAMP(p_cover, 0.0f, 1.0f); }

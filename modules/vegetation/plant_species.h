@@ -91,6 +91,7 @@ private:
 	float align_to_ground = 0.0f;
 	bool random_yaw = true;
 	bool floating = false; // Rides the water surface (water lilies), not the ground under it.
+	bool stone_top = false; // Grows only on the tops of stones (VegetationField3D.stone_tops): moss cushions.
 	// Patches: clover beds, flower drifts. Value noise over the ground keeps the species to
 	// patches about patch_scale metres across, covering patch_cover of the ground.
 	float patch_scale = 0.0f; // 0: no patches.
@@ -221,6 +222,8 @@ public:
 	bool is_random_yaw() const { return random_yaw; }
 	void set_floating(bool p_floating);
 	bool is_floating() const { return floating; }
+	void set_stone_top(bool p_on) { stone_top = p_on; emit_changed(); }
+	bool is_stone_top() const { return stone_top; }
 
 	void set_deadwood_rule(DeadwoodRule p_rule) { deadwood_rule = p_rule; }
 	DeadwoodRule get_deadwood_rule() const { return deadwood_rule; }

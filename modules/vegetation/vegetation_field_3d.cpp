@@ -292,6 +292,8 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.mask_rect = density_mask_rect;
 	}
 	r_setup.obstacles = obstacle_grid;
+	r_setup.stone_tops = stone_top_grid;
+	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
 	r_setup.other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
 	if (r_setup.other == this) {
@@ -819,6 +821,21 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
 					suit *= rock_boost;
+					// On stone tops (PlantSpecies.stone_top): only inside a stone's cap.
+					bool on_top = false;
+					Vector4 top_cap;
+					Vector3 top_normal;
+					if (suit > 0.0f && sp->is_stone_top()) {
+						int ti = -1;
+						const float c = p_setup.stone_tops.clearance(xz, 0.0f, nullptr, &ti);
+						if (ti >= 0 && c < 0.0f) {
+							on_top = true;
+							top_cap = p_setup.stone_tops.items[ti];
+							top_normal = ti < p_setup.stone_top_normals.size() ? p_setup.stone_top_normals[ti] : Vector3();
+						} else {
+							suit = 0.0f;
+						}
+					}
 					// Crevice plants: only in the fine soil caught between stones (PlantSpecies.stone_gap).
 					if (suit > 0.0f && sp->get_stone_gap() > 0.0f) {
 						const float gap_reach = 6.0f * PlantSpecies::STONE_GAP_REACH;
@@ -830,7 +847,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					// Rocks: no stem inside one. A tree's trunk foot clears it, a log its whole
 					// length, a ground plant its stem; leaves may lean over the rock.
-					if (!p_setup.obstacles.is_empty()) {
+					if (!p_setup.obstacles.is_empty() && !on_top) {
 						const float om = is_log ? ps.deadwood_reach : (canopy_r > 0.0f ? ps.stem_foot * MAX(scale_range.x, scale_range.y) : 0.0f) + OBSTACLE_MARGIN;
 						if (p_setup.obstacles.blocks(xz, om)) {
 							continue;
@@ -873,7 +890,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// grows smaller and leans away, as plants pressed against a boulder do.
 					float rock_fit = 1.0f;
 					Vector2 rock_away;
-					if (canopy_r <= 0.0f && !is_log && !on_log && ps.spread > 0.0f && !p_setup.obstacles.is_empty()) {
+					if (canopy_r <= 0.0f && !is_log && !on_log && !on_top && ps.spread > 0.0f && !p_setup.obstacles.is_empty()) {
 						const float reach = ps.spread * scale;
 						const float c = p_setup.obstacles.clearance(xz, reach, &rock_away);
 						if (c + ROCK_OVERHANG < reach) {
@@ -914,10 +931,26 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// On a log: on the moss that covers its upper side, not on the bare wood under it
 					// (the trees' moss shell stands up to 1.1 to 2.5 cm proud of the bark, section 5c of
 					// trees.md), so cushions and seedlings are not swallowed by it.
-					const float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
 					const float slope = floats ? 0.0f : map->get_slope_at(p3);
 					const float aspect = map->get_aspect_at(p3);
-					const Vector3 normal = on_log ? hit.normal : Vector3(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
+					Vector3 normal = on_log ? hit.normal : Vector3(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
+					if (on_top) {
+						const Vector2 off(xz.x - top_cap.x, xz.y - top_cap.z);
+						if (top_normal.y > 0.1f) {
+							// A measured cap (stone_top_normals): the plane through its point, as flat
+							// as the caller found the stone's surface there.
+							y = float(top_cap.y) - (top_normal.x * off.x + top_normal.z * off.y) / top_normal.y - STONE_TOP_SINK;
+							normal = top_normal;
+						} else {
+							// Otherwise a dome of the cap's radius (a stone's top is rounded): set down
+							// its curve from the highest point and tilted with it.
+							const float rr = MAX(float(top_cap.w), 0.01f);
+							const float t = MIN(off.length() / rr, 1.0f);
+							y = float(top_cap.y) - 0.5f * rr * t * t - STONE_TOP_SINK;
+							normal = Vector3(off.x / rr, 1.0f, off.y / rr).normalized();
+						}
+					}
 					const Vector3 up = Vector3(0, 1, 0).lerp(normal, align).normalized();
 					Basis b;
 					const Vector3 axis = Vector3(0, 1, 0).cross(up);
@@ -1907,6 +1940,30 @@ void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacle_grid.build(obstacles);
 }
 
+void VegetationField3D::set_stone_tops(const PackedVector4Array &p_tops) {
+	stone_tops = p_tops;
+	_build_stone_tops();
+}
+
+void VegetationField3D::set_stone_top_normals(const PackedVector3Array &p_normals) {
+	stone_top_normals = p_normals;
+	_build_stone_tops();
+}
+
+void VegetationField3D::_build_stone_tops() {
+	stone_top_grid.build(stone_tops);
+	// The grid drops empty caps: keep the normals in step with the caps it kept.
+	stone_top_grid_normals.clear();
+	if (stone_top_normals.size() == stone_tops.size()) {
+		for (int i = 0; i < stone_tops.size(); i++) {
+			if (stone_tops[i].w > 0.0f) {
+				const Vector3 n = stone_top_normals[i];
+				stone_top_grid_normals.push_back(n.length_squared() > 1e-8f ? n.normalized() : Vector3());
+			}
+		}
+	}
+}
+
 float VegetationField3D::get_sward_shade_at(const Vector3 &p_global_position) const {
 	return sward_at(p_global_position, nullptr);
 }
@@ -2691,6 +2748,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
 	ClassDB::bind_method(D_METHOD("get_obstacles"), &VegetationField3D::get_obstacles);
+	ClassDB::bind_method(D_METHOD("set_stone_tops", "tops"), &VegetationField3D::set_stone_tops);
+	ClassDB::bind_method(D_METHOD("get_stone_tops"), &VegetationField3D::get_stone_tops);
+	ClassDB::bind_method(D_METHOD("set_stone_top_normals", "normals"), &VegetationField3D::set_stone_top_normals);
+	ClassDB::bind_method(D_METHOD("get_stone_top_normals"), &VegetationField3D::get_stone_top_normals);
 	ClassDB::bind_method(D_METHOD("set_canopy_field", "path"), &VegetationField3D::set_canopy_field);
 	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
 	ClassDB::bind_method(D_METHOD("set_litter_wind", "wind"), &VegetationField3D::set_litter_wind);
@@ -2753,6 +2814,8 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "stone_tops"), "set_stone_tops", "get_stone_tops");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "stone_top_normals"), "set_stone_top_normals", "get_stone_top_normals");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");

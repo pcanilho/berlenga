@@ -266,6 +266,9 @@
 		<member name="leaves_per_internode" type="float" setter="set_param" getter="get_param" default="32.0">
 			Leaves or needles per internode.
 		</member>
+		<member name="limb_breakage" type="float" setter="set_limb_breakage" getter="get_limb_breakage" default="1.0">
+			Storm-broken limbs on living trees: limbs 5-22 cm thick snap partway out with a splintered end, more on tall and old trees ([member veteran]), and some stay hanging dead beside the break. 0 for none.
+		</member>
 		<member name="mask_channel" type="int" setter="set_mask_channel" getter="get_mask_channel" default="-1">
 			Channel of [member VegetationField3D.density_mask] (0 red to 3 alpha) that every species from [method make_species], [method make_stand] and [method make_woodland] reads, so painted clearings and paths keep trees and woody shrubs out. -1 ignores the mask.
 		</member>
@@ -337,6 +340,9 @@
 		</member>
 		<member name="twig_droop" type="float" setter="set_param" getter="get_param" default="0.0">
 			Hang of the twigs on branches (spruce, larch, willow).
+		</member>
+		<member name="uprooted" type="bool" setter="set_uprooted" getter="is_uprooted" default="false">
+			With [member fallen]: the tree was thrown by its roots. The root plate (soil, stones and torn roots) stands on edge at the butt, which it holds up off the ground; the mesh carries meta [code]tree_root_pit[/code] (centre, radius, depth in mesh space) for the pit to dig in the terrain. From [member decay_class] 4 on the plate has rotted to a plain log.
 		</member>
 		<member name="vigor" type="float" setter="set_param" getter="get_param" default="2.0">
 			Vigor per unit of light gathered.

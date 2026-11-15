@@ -3009,6 +3009,321 @@ void TreeGenerator::_measure_lying(const Builder &p_b, int p_v0, int p_v1) {
 	}
 }
 
+// The root plate of an uprooted tree (trees.md 5k): a thick disc of soil torn out with the
+// lateral roots, standing on edge where the tree tipped over it. Built upright about the old
+// base (y up, the ground at 0) and turned with the stem. The old ground surface (litter, moss)
+// faces away from the fall; the underside is raw soil, darker humus under the top, stones, and
+// the roots running out through it to torn ends past the rim; sinkers hang from under the stem.
+void TreeGenerator::_root_plate(Builder &r_bark) {
+	Builder &w = soil_b;
+	RandomPCG pr;
+	pr.seed(uint64_t(seed) * 0x2545f491u + 0x706c6174u);
+	const float R = plate.radius, T = plate.thick, tr = plate.trunk_r;
+	const float rotten = CLAMP(float(decay_class - 1) / 2.0f, 0.0f, 1.0f);
+	const uint32_t salt = uint32_t(seed) * 2654435761u;
+	const int sectors = 72;
+	// The rim: torn ragged, lobed where the big roots held more soil.
+	float rim[sectors];
+	for (int k = 0; k < sectors; k++) {
+		const float a = float(Math::TAU) * k / sectors;
+		const Vector3 q(Math::cos(a) * 1.7f, 0.0f, Math::sin(a) * 1.7f);
+		rim[k] = R * (0.82f + 0.3f * moss_noise(q + Vector3(3.1f, 0, 0), salt + 1u) + 0.08f * (pr.randf() - 0.5f));
+	}
+	auto rim_at = [&](float p_a) {
+		const float f = p_a / float(Math::TAU) * sectors;
+		const int k0 = int(Math::floor(f));
+		const float t = f - k0;
+		return Math::lerp(rim[((k0 % sectors) + sectors) % sectors], rim[((k0 + 1) % sectors + sectors) % sectors], t);
+	};
+	// The underside: a shallow dome, thickest under the stem, lumpy.
+	auto under = [&](float p_rho, const Vector3 &p_q) {
+		// Clods torn out with the roots: lumps over a hand to a pace across.
+		const float lump = moss_noise(p_q * 2.3f, salt + 2u) - 0.5f + 0.5f * (moss_noise(p_q * 6.0f, salt + 3u) - 0.5f);
+		const float clod = moss_noise(p_q * 13.0f, salt + 10u) - 0.5f;
+		return -T * (0.2f + 0.8f * Math::pow(MAX(1.0f - p_rho * p_rho, 0.0f), 0.6f)) * (1.0f - 0.25f * rotten) + T * 0.45f * lump + 0.035f * clod;
+	};
+	auto top = [&](const Vector3 &p_q) {
+		// The old forest floor: hummocks of litter and moss, small lumps of humus.
+		return 0.03f + 0.07f * (moss_noise(p_q * 3.0f, salt + 4u) - 0.5f) + 0.03f * (moss_noise(p_q * 9.0f, salt + 14u) - 0.5f);
+	};
+	const Color litter = Color(0.31f, 0.23f, 0.14f).srgb_to_linear();
+	const Color moss_c = Color(0.25f, 0.3f, 0.12f).srgb_to_linear();
+	const Color humus = Color(0.13f, 0.1f, 0.075f).srgb_to_linear();
+	const Color mineral = Color(0.34f, 0.28f, 0.21f).srgb_to_linear();
+	const Color stone_c = Color(0.46f, 0.45f, 0.42f).srgb_to_linear();
+	auto soil_colour = [&](const Vector3 &p_q, float p_depth) {
+		// Humus under the old surface, then the mineral soil, mottled; drying paler with age.
+		const float m = moss_noise(p_q * 4.0f, salt + 5u);
+		const float m2 = moss_noise(p_q * 11.0f, salt + 11u);
+		Color c = humus.lerp(mineral, Math::smoothstep(0.06f, 0.22f, p_depth + 0.06f * (m - 0.5f)));
+		// Mottled: grey gley and rusty patches in the mineral soil, the clods' tops dried paler.
+		c = c.lerp(Color(0.36f, 0.34f, 0.3f).srgb_to_linear(), 0.5f * Math::smoothstep(0.62f, 0.8f, moss_noise(p_q * 2.7f, salt + 12u)));
+		c = c.lerp(Color(0.45f, 0.3f, 0.18f).srgb_to_linear(), 0.3f * Math::smoothstep(0.65f, 0.85f, moss_noise(p_q * 3.3f, salt + 13u)));
+		c = c * (0.7f + 0.35f * m + 0.3f * m2);
+		c = c.lerp(c * 1.25f, 0.4f * rotten);
+		c.a = 1.0f;
+		return c;
+	};
+	LocalVector<Vector3> outward; // Per vertex: which way is out, for the winding.
+	auto push = [&](const Vector3 &p_local, const Vector3 &p_out, const Color &p_c, const Vector2 &p_uv) {
+		w.verts.push_back(plate.to_world(p_local));
+		w.normals.push_back(Vector3());
+		w.uvs.push_back(p_uv);
+		w.colors.push_back(p_c);
+		outward.push_back(plate.rot.xform(p_out));
+		return w.verts.size() - 1;
+	};
+	auto tri = [&](int a, int b, int c) {
+		// Counter-clockwise seen from outside, as the bark (flipped for Godot with it).
+		const Vector3 n = (w.verts[b] - w.verts[a]).cross(w.verts[c] - w.verts[a]);
+		if (n.dot(outward[a] + outward[b] + outward[c]) < 0.0f) {
+			SWAP(b, c);
+		}
+		w.indices.push_back(a);
+		w.indices.push_back(b);
+		w.indices.push_back(c);
+	};
+	Vector4i part;
+	w.begin(part);
+	const int rings = 16;
+	// Top (rings 0..rings), rim wall (3 rings), underside (rings..0): one grid of sectors.
+	LocalVector<int> grid;
+	int rows = 0;
+	auto row = [&](auto p_point) {
+		for (int k = 0; k < sectors; k++) {
+			grid.push_back(p_point(k));
+		}
+		rows++;
+	};
+	for (int i = 0; i <= rings; i++) {
+		const float rho = float(i) / rings;
+		row([&](int k) {
+			const float a = float(Math::TAU) * k / sectors;
+			const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+			Vector3 q = d * (rim_at(a) * rho);
+			q.y = top(q);
+			const float mz = moss_noise(q * 1.6f, salt + 6u);
+			Color c = litter.lerp(moss_c, Math::smoothstep(0.45f, 0.7f, mz) * (1.0f - 0.6f * rotten)) * (0.85f + 0.3f * moss_noise(q * 7.0f, salt + 7u));
+			c.a = 1.0f;
+			return push(q, Vector3(0, 1, 0), c, Vector2(q.x, q.z));
+		});
+	}
+	for (int j = 1; j <= 3; j++) {
+		const float f = float(j) / 4.0f;
+		row([&](int k) {
+			const float a = float(Math::TAU) * k / sectors;
+			const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+			Vector3 q = d * (rim_at(a) * (1.0f + 0.05f * Math::sin(f * float(Math::PI)) + 0.04f * (moss_noise(d * 5.0f + Vector3(0, f * 3.0f, 0), salt + 8u) - 0.5f)));
+			const float y0 = top(q), y1 = under(1.0f, q);
+			q.y = Math::lerp(y0, y1, f);
+			return push(q, d, soil_colour(q, y0 - q.y), Vector2(a * R, q.y));
+		});
+	}
+	for (int i = rings; i >= 1; i--) {
+		const float rho = float(i) / rings;
+		row([&](int k) {
+			const float a = float(Math::TAU) * k / sectors;
+			const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+			Vector3 q = d * (rim_at(a) * rho);
+			q.y = under(rho, q);
+			return push(q, (Vector3(0, -1, 0) + d * rho).normalized(), soil_colour(q, top(q) - q.y), Vector2(q.x, q.z));
+		});
+	}
+	for (int rr = 0; rr + 1 < rows; rr++) {
+		for (int k = 0; k < sectors; k++) {
+			const int k1 = (k + 1) % sectors;
+			const int a0 = grid[rr * sectors + k], a1 = grid[rr * sectors + k1];
+			const int b0 = grid[(rr + 1) * sectors + k], b1 = grid[(rr + 1) * sectors + k1];
+			tri(a0, b0, a1);
+			tri(a1, b0, b1);
+		}
+	}
+	// Close the underside under the stem.
+	{
+		const Vector3 q(0, under(0.0f, Vector3()), 0);
+		const int c = push(q, Vector3(0, -1, 0), soil_colour(q, top(q) - q.y), Vector2());
+		for (int k = 0; k < sectors; k++) {
+			tri(grid[(rows - 1) * sectors + k], c, grid[(rows - 1) * sectors + (k + 1) % sectors]);
+		}
+	}
+	// Stones in the underside: lumpy, flattened octahedra pushed half out of the soil.
+	const int stones = 6 + int(pr.rand() % 10);
+	for (int st = 0; st < stones; st++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const float rho = Math::sqrt(pr.randf()) * 0.92f;
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		Vector3 c = d * (rim_at(a) * rho);
+		c.y = under(rho, c);
+		const float sz = Math::lerp(0.04f, 0.16f, pr.randf() * pr.randf()) * (0.6f + 0.4f * R / 2.0f);
+		const Basis b = Basis(Vector3(pr.randf(), pr.randf(), pr.randf()).normalized(), pr.randf() * 3.0f);
+		const Vector3 sc(sz * Math::lerp(0.8f, 1.3f, pr.randf()), sz * Math::lerp(0.5f, 0.8f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
+		const float tone = 0.8f + 0.35f * pr.randf();
+		const Color col = Color(stone_c.r * tone, stone_c.g * tone, stone_c.b * tone);
+		// A subdivided octahedron, its points jittered.
+		const Vector3 oct[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+		const int faces[8][3] = { { 0, 2, 4 }, { 4, 2, 1 }, { 1, 2, 5 }, { 5, 2, 0 }, { 0, 4, 3 }, { 4, 1, 3 }, { 1, 5, 3 }, { 5, 0, 3 } };
+		auto sp = [&](const Vector3 &p_u) {
+			const Vector3 u = p_u.normalized();
+			const float j = 0.85f + 0.3f * moss_noise(u * 2.5f + c * 3.0f, salt + 9u);
+			return c + b.xform(u * sc * j);
+		};
+		for (const auto &f : faces) {
+			const Vector3 A = oct[f[0]], B = oct[f[1]], C = oct[f[2]];
+			const Vector3 AB = (A + B) * 0.5f, BC = (B + C) * 0.5f, CA = (C + A) * 0.5f;
+			const Vector3 sub[4][3] = { { A, AB, CA }, { AB, B, BC }, { CA, BC, C }, { AB, BC, CA } };
+			for (const auto &sf : sub) {
+				int ids[3];
+				for (int e = 0; e < 3; e++) {
+					const Vector3 lp = sp(sf[e]);
+					ids[e] = push(lp, b.xform(sf[e].normalized()), col, Vector2(lp.x, lp.z) * 4.0f);
+				}
+				tri(ids[0], ids[1], ids[2]);
+			}
+		}
+	}
+	// Normals from the faces (smooth over the soil; the stones' corners share none).
+	{
+		Vector3 *nw = w.normals.ptrw();
+		const Vector3 *vw = w.verts.ptr();
+		for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+			const int a = w.indices[i], b = w.indices[i + 1], c = w.indices[i + 2];
+			const Vector3 fn = (vw[b] - vw[a]).cross(vw[c] - vw[a]);
+			nw[a] += fn;
+			nw[b] += fn;
+			nw[c] += fn;
+		}
+		for (int v = part.z; v < w.verts.size(); v++) {
+			nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : outward[v];
+		}
+	}
+	w.end(part, R);
+	// The roots: laterals from the stem's foot out through the plate, half out of its underside,
+	// to torn ends past the rim; a few side roots off each; sinkers hanging under the stem.
+	const Color root_c = Color(0.3f, 0.22f, 0.15f).srgb_to_linear().lerp(Color(0.4f, 0.37f, 0.33f).srgb_to_linear(), 0.5f * rotten);
+	LocalVector<Vector3> pts;
+	LocalVector<float> rad;
+	// p_free: from which point on the root is out of the soil and hangs under its own weight
+	// (world down), p_droop metres at its end.
+	auto root = [&](const LocalVector<Vector3> &p_local, const LocalVector<float> &p_r, bool p_torn, int p_free = 1 << 20, float p_droop = 0.0f) {
+		pts.clear();
+		rad.clear();
+		const int n = int(p_local.size());
+		for (int i = 0; i < n; i++) {
+			const float f = i > p_free ? float(i - p_free) / MAX(n - 1 - p_free, 1) : 0.0f;
+			pts.push_back(plate.to_world(p_local[i]) - Vector3(0, p_droop * f * f, 0));
+			rad.push_back(p_r[i]);
+		}
+		const int sides = CLAMP(int(p_r[0] * 160.0f), 5, 12);
+		Vector4i rp;
+		r_bark.bone = 0;
+		r_bark.begin(rp);
+		_tube(r_bark, pts, rad, sides, 0.0f, root_c, nullptr, 0.0f, -1.0f, false);
+		r_bark.end(rp, p_r[0]);
+		if (p_torn && pts.size() >= 2 && p_r[p_r.size() - 1] >= 0.012f) {
+			wood_b.bone = 0;
+			_fracture(pts[pts.size() - 1], (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized(), rad[rad.size() - 1], 0.2f + 0.6f * rotten, pr.rand());
+		}
+	};
+	LocalVector<Vector3> lp;
+	LocalVector<float> lr;
+	const int laterals = 8 + int(pr.rand() % 6);
+	for (int l = 0; l < laterals; l++) {
+		const float a0 = float(Math::TAU) * (l + 0.3f * (pr.randf() - 0.5f)) / laterals;
+		const float r0 = tr * Math::lerp(0.3f, 0.48f, pr.randf());
+		const float reach = Math::lerp(1.0f, 1.25f, pr.randf());
+		lp.clear();
+		lr.clear();
+		const int steps = 12;
+		float a = a0;
+		for (int i = 0; i <= steps; i++) {
+			const float f = float(i) / steps;
+			a += 0.12f * (pr.randf() - 0.5f);
+			const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+			const float rho = Math::lerp(0.6f * tr / MAX(rim_at(a), 0.1f), reach, f);
+			Vector3 q = d * (rim_at(a) * rho);
+			// Thick at the root crown under the stem, tapering fast (Coutts 1983, the zone of rapid
+			// taper), then slowly to the rim.
+			const float rr = r0 * (0.3f + 0.7f * Math::pow(1.0f - f, 2.0f)) + tr * 0.25f * MAX(0.0f, 1.0f - f * 4.0f);
+			// Inside the plate near the stem, then along the underside mostly out of the soil
+			// (washed and shaken bare), and past the rim hanging under their own weight.
+			const float floor_y = under(MIN(rho, 1.0f), q) + rr * 0.15f;
+			q.y = rho <= 1.0f ? MIN(floor_y, Math::lerp(-0.12f, floor_y, Math::smoothstep(0.0f, 0.35f, rho))) : under(1.0f, q) + rr * 0.15f;
+			lp.push_back(q);
+			lr.push_back(rr);
+		}
+		int free_at = steps;
+		for (int i = 0; i <= steps; i++) {
+			if (Vector2(lp[i].x, lp[i].z).length() > rim_at(Math::atan2(lp[i].z, lp[i].x))) {
+				free_at = i;
+				break;
+			}
+		}
+		root(lp, lr, true, free_at, 0.25f * R * (reach - 1.0f) + 0.1f);
+		// Side roots.
+		const int sides_n = 1 + int(pr.rand() % 3);
+		for (int sr = 0; sr < sides_n; sr++) {
+			const int at = 4 + int(pr.rand() % 6);
+			const Vector3 o = lp[at];
+			const float sa = Math::atan2(o.z, o.x) + (pr.randf() < 0.5f ? -1.0f : 1.0f) * Math::lerp(0.35f, 0.7f, pr.randf());
+			const float s0 = lr[at] * 0.55f;
+			LocalVector<Vector3> sp2;
+			LocalVector<float> sr2;
+			const float rho0 = Vector2(o.x, o.z).length() / MAX(rim_at(sa), 0.1f);
+			for (int i = 0; i <= 6; i++) {
+				const float f = float(i) / 6.0f;
+				const Vector3 d(Math::cos(sa), 0.0f, Math::sin(sa));
+				const float rho = Math::lerp(rho0, Math::lerp(1.0f, 1.15f, pr.randf()), f);
+				Vector3 q = i == 0 ? o : d * (rim_at(sa) * rho);
+				const float rr = s0 * Math::lerp(1.0f, 0.35f, f);
+				if (i > 0) {
+					q.y = under(MIN(rho, 1.0f), q) + rr * 0.2f;
+				}
+				sp2.push_back(q);
+				sr2.push_back(rr);
+			}
+			root(sp2, sr2, true, 4, 0.15f);
+		}
+	}
+	// Fine roots torn out of the underside and the rim: thin, many, hanging down.
+	const int fines = int(30.0f * R);
+	for (int k = 0; k < fines; k++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const float rho = Math::lerp(0.25f, 1.02f, Math::sqrt(pr.randf()));
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		Vector3 o = d * (rim_at(a) * rho);
+		o.y = under(MIN(rho, 1.0f), o) + 0.01f;
+		const float len = Math::lerp(0.12f, 0.45f, pr.randf());
+		const float r0 = Math::lerp(0.004f, 0.012f, pr.randf());
+		lp.clear();
+		lr.clear();
+		const Vector3 go = (d * Math::lerp(0.3f, 1.0f, pr.randf()) + Vector3(0, -1, 0)).normalized();
+		for (int i = 0; i <= 4; i++) {
+			const float f = float(i) / 4.0f;
+			lp.push_back(o + go * (len * f) + Vector3(pr.randf() - 0.5f, pr.randf() - 0.5f, pr.randf() - 0.5f) * (0.04f * f));
+			lr.push_back(r0 * Math::lerp(1.0f, 0.4f, f));
+		}
+		root(lp, lr, false, 0, len * 0.5f);
+	}
+	// Sinkers: straight down from under the stem, snapped where the soil held them.
+	const int sinkers = 3 + int(pr.rand() % 3);
+	for (int k = 0; k < sinkers; k++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		const Vector3 o = d * (tr * Math::lerp(0.3f, 1.2f, pr.randf()));
+		const float len = Math::lerp(0.25f, 0.7f, pr.randf()) * (1.0f - 0.4f * rotten);
+		const float r0 = tr * Math::lerp(0.12f, 0.22f, pr.randf());
+		lp.clear();
+		lr.clear();
+		const float y0 = under(0.0f, o) + 0.1f;
+		for (int i = 0; i <= 5; i++) {
+			const float f = float(i) / 5.0f;
+			lp.push_back(o + d * (0.12f * len * f) + Vector3(0, y0 - len * f, 0) + Vector3(pr.randf() - 0.5f, 0, pr.randf() - 0.5f) * (0.03f * f));
+			lr.push_back(r0 * Math::lerp(1.0f, 0.45f, f));
+		}
+		root(lp, lr, true);
+	}
+}
+
 // A branch or stem snapped by wind, snow or its own rot (trees.md 5j). Wood fails in tension on
 // the side the load pulls and buckles on the side it pushes: the tension side tears out long
 // splinters of the outer wood, the compression side breaks short and crumpled, and the bark tears
@@ -5130,13 +5445,53 @@ void TreeGenerator::_fell() {
 		}
 	}
 	const Basis turn(axis, float(Math::PI) * 0.5f * (0.96f + 0.04f * fr.randf()));
-	// Bedding (trees.md 5d): a fresh log rests on the litter, a decayed one has settled into the
-	// soil and moss (Harmon et al. 1986), sunk 15% of its radius at class 1-2 up to 45% at 5.
-	static const float SINK[6] = { 0.15f, 0.15f, 0.15f, 0.25f, 0.35f, 0.45f };
-	const float lift = trunk_r * (1.0f - SINK[CLAMP(decay_class, 0, 5)]);
-	for (Node &n : nodes) {
-		n.start = base + turn.xform(n.start - base) + Vector3(0, lift, 0);
-		n.dir = turn.xform(n.dir);
+	plate.on = uprooted && decay_class <= 3;
+	if (plate.on) {
+		// Thrown by the roots (trees.md 5k): the root plate hinges up about its edge on the side
+		// the tree falls to, and the stem turns with it, its butt held up by the plate, until
+		// the top comes down on the ground. Plate radius about 5.5-6.5 times the stem's
+		// diameter, 0.3-0.5 m thick (Krisans et al. 2020); smaller and slumped once rotting.
+		const float rot_k = decay_class >= 3 ? 0.8f : 1.0f;
+		plate.trunk_r = trunk_r;
+		plate.radius = CLAMP(11.0f * trunk_r * Math::lerp(0.9f, 1.2f, fr.randf()), 0.9f, 2.8f) * rot_k;
+		plate.thick = CLAMP(0.22f * plate.radius, 0.25f, 0.6f) * rot_k;
+		Vector3 fall = turn.xform(Vector3(0, 1, 0));
+		fall.y = 0.0f;
+		fall.normalize();
+		plate.base0 = base;
+		plate.hinge = base + fall * (0.75f * plate.radius) - Vector3(0, 0.1f, 0);
+		// The stem's top: its furthest point from the base.
+		Vector3 tip = base;
+		float tip_r = trunk_r;
+		for (const Node &n : nodes) {
+			if (!n.removed && n.order == 0 && n.end().distance_squared_to(base) > tip.distance_squared_to(base)) {
+				tip = n.end();
+				tip_r = n.radius;
+			}
+		}
+		float ang = float(Math::PI) * 0.5f;
+		for (int it = 0; it < 4; it++) {
+			const Basis r(axis, ang);
+			const Vector3 b2 = plate.hinge + r.xform(base - plate.hinge);
+			const Vector3 t2 = plate.hinge + r.xform(tip - plate.hinge);
+			const float d = MAX(Vector2(t2.x - b2.x, t2.z - b2.z).length(), 1.0f);
+			ang += Math::atan((t2.y - (base.y + tip_r + 0.05f)) / d);
+		}
+		plate.rot = Basis(axis, ang);
+		for (Node &n : nodes) {
+			n.start = plate.hinge + plate.rot.xform(n.start - plate.hinge);
+			n.dir = plate.rot.xform(n.dir);
+		}
+	} else {
+		// Bedding (trees.md 5d): a fresh log rests on the litter, a decayed one has settled into
+		// the soil and moss (Harmon et al. 1986), sunk 15% of its radius at class 1-2 up to 45%
+		// at 5.
+		static const float SINK[6] = { 0.15f, 0.15f, 0.15f, 0.25f, 0.35f, 0.45f };
+		const float lift = trunk_r * (1.0f - SINK[CLAMP(decay_class, 0, 5)]);
+		for (Node &n : nodes) {
+			n.start = base + turn.xform(n.start - base) + Vector3(0, lift, 0);
+			n.dir = turn.xform(n.dir);
+		}
 	}
 	for (int i = 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
@@ -7468,6 +7823,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 	}
+	soil_b = Builder();
+	if (plate.on) {
+		const int roots_v0 = int(bark.verts.size());
+		_root_plate(bark);
+		_measure_lying(bark, roots_v0, int(bark.verts.size()));
+		_measure_lying(soil_b, 0, int(soil_b.verts.size()));
+	}
 	if (dw_v0 >= 0) {
 		_measure_lying(bark, dw_v0, dw_v1 >= 0 ? dw_v1 : int(bark.verts.size()));
 		_measure_lying(moss, dw_m0, dw_m1 >= 0 ? dw_m1 : int(moss.verts.size()));
@@ -7793,14 +8155,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	mesh.instantiate();
 	Builder fungi;
 	_grow_fungi(bark, fungi);
-	Builder *builders[7] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b };
-	for (int s = 0; s < 7; s++) {
+	Builder *builders[8] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b };
+	for (int s = 0; s < 8; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
 		}
-		if (s == 0 || s == 2) {
-			// The bark and moss builders wind their triangles counter-clockwise seen from outside;
+		if (s == 0 || s == 2 || s == 7) {
+			// The bark, moss and soil builders wind their triangles counter-clockwise seen from outside;
 			// Godot's front faces wind clockwise (as PlantGenerator flips its builders). Unflipped,
 			// the raster drew every stem's far inner wall, and the moss shell lay behind it.
 			int32_t *iw = b.indices.ptrw();
@@ -7832,8 +8194,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _leaf_lods(b);
 			} else if (s == 3 || s == 6) {
 				lods = _leaf_lods(b, false);
-			} else if (s == 5) {
-				// Broken wood: a few hundred triangles a break, seen from every distance.
+			} else if (s == 5 || s == 7) {
+				// Broken wood: a few hundred triangles a break, seen from every distance; a root
+				// plate's soil a few thousand.
 			} else if (s == 4) {
 				// Fungi are a few thousand triangles at most: one level, seen from every distance.
 				// The lichen strands after them (millimetre threads, sub-pixel past a few metres)
@@ -7927,7 +8290,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
 			// thread.
-			const char *names[7] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult" };
+			const char *names[8] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult", "soil" };
 			int found = -1;
 			for (int i = 0; i < material_source->get_surface_count(); i++) {
 				if (material_source->surface_get_name(i) == names[s]) {
@@ -7980,6 +8343,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			mesh->surface_set_name(mesh->get_surface_count() - 1, s == 6 ? "climber_leaves_adult" : "climber_leaves");
+		} else if (s == 7) {
+			// A root plate's soil and stones (trees.md 5k): vertex colour, the relief is geometry.
+			m->set_roughness(0.95f);
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "soil");
 		} else if (s == 5) {
 			// Broken wood (trees.md 5j): fracture faces and splinters, vertex colour by how fresh
 			// the break is, a texture of fibres along v with their relief.
@@ -8476,6 +8843,9 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 	if (p_form == FORM_SNAG || p_form == FORM_LOG) {
 		decay_class = 2 + p_variant % 3;
 		fallen = p_form == FORM_LOG;
+		// Windthrow tips trees out by the roots about as often as it snaps them (trees.md 5k):
+		// the freshest log of each three lies with its root plate.
+		uprooted = fallen && p_variant % 3 == 0;
 	} else if (p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		// Freshly shed (twigs still on) to well rotted.
 		decay_class = 1 + p_variant % 3;
@@ -8537,6 +8907,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	bark_peel = p_from.bark_peel;
 	fungi_cover = p_from.fungi_cover;
 	limb_breakage = p_from.limb_breakage;
+	uprooted = p_from.uprooted;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -8664,6 +9035,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const int saved_decay = decay_class;
 		const bool saved_fallen = fallen;
 		const bool saved_branch = fallen_branch;
+		const bool saved_uprooted = uprooted;
 		const Climber saved_climber = climber;
 		const float saved_climber_cover = climber_cover;
 		if (p_form == FORM_SAPLING) {
@@ -8704,6 +9076,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		decay_class = saved_decay;
 		fallen = saved_fallen;
 		fallen_branch = saved_branch;
+		uprooted = saved_uprooted;
 		shed_radius_max = 0.14f;
 		climber = saved_climber;
 		climber_cover = saved_climber_cover;
@@ -9250,6 +9623,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
 		_apply_veteran();
 	}
+	plate.on = false;
 	hanger_bases.clear();
 	if (decay_class == 0 && !fallen && !fallen_branch && envelope.size == Vector3()) {
 		_break_limbs();
@@ -9306,6 +9680,17 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			axis.push_back(deadwood_profile[i]);
 		}
 		mesh->set_meta(SNAME("tree_deadwood_axis"), axis);
+		if (plate.on) {
+			// The pit the plate came out of (trees.md 5k), for the terrain to dig and the ground
+			// plants to keep bare: centre (the old foot), radius, depth. Deepest when fresh: about
+			// 0.95 m at a year, 0.5 m at five (Zadrozny et al. 2017).
+			const float depth = CLAMP(1.6f * plate.thick, 0.35f, 0.95f) * (1.0f - 0.2f * MAX(decay_class - 1, 0));
+			PackedFloat32Array pit;
+			for (float v : { plate.base0.x, plate.base0.y, plate.base0.z, plate.radius * 0.9f, depth }) {
+				pit.push_back(v);
+			}
+			mesh->set_meta(SNAME("tree_root_pit"), pit);
+		}
 	}
 	bark_color = living_bark;
 	leaf_color = living_leaf;
@@ -9337,6 +9722,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fallen", "fallen"), &TreeGenerator::set_fallen);
 	ClassDB::bind_method(D_METHOD("is_fallen"), &TreeGenerator::is_fallen);
 	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
+	ClassDB::bind_method(D_METHOD("set_uprooted", "uprooted"), &TreeGenerator::set_uprooted);
+	ClassDB::bind_method(D_METHOD("is_uprooted"), &TreeGenerator::is_uprooted);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &TreeGenerator::set_lichen_cover);
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
@@ -9426,6 +9813,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "decay_class", PROPERTY_HINT_RANGE, "0,5,1"), "set_decay_class", "get_decay_class");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen"), "set_fallen", "is_fallen");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen_branch"), "set_fallen_branch", "is_fallen_branch");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "uprooted"), "set_uprooted", "is_uprooted");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");

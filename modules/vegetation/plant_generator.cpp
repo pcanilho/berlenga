@@ -6017,6 +6017,7 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		float spacing, footprint, density, scale_min, scale_max;
 		float gap, rock_foot, visibility;
 		float water_max = 0.0f; // > 0: within this distance of water.
+		bool top = false; // On the stones' tops (VegetationField3D.stone_tops).
 	};
 	LocalVector<StoneSpec> set;
 	switch (p_stand) {
@@ -6027,7 +6028,8 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 					{ P::PRESET_SAXIFRAGE, 0.25f, 0.06f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_SPLEENWORT, 0.25f, 0.05f, 0.4f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_THRIFT, 0.3f, 0.05f, 0.3f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
-					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f } });
+					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f },
+					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.8f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true } });
 			break;
 		case STONES_RIVER:
 			// River and stream gravels: saxifrage and stonecrop on the bars, sedges and rushes at the
@@ -6037,7 +6039,8 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 					{ P::PRESET_THRIFT, 0.5f, 0.05f, 0.15f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
 					{ P::PRESET_SEDGE, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 0.5f, 2.0f, 25.0f, 6.0f },
 					{ P::PRESET_RUSH, 0.6f, 0.15f, 0.4f, 0.8f, 1.1f, 0.5f, 1.5f, 30.0f, 4.0f },
-					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f } });
+					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f },
+					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.9f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true } });
 			break;
 		case STONES_SHORE:
 			// Shingle above the strandline (Scott 1963): thrift and stonecrop in the stable gaps,
@@ -6073,6 +6076,11 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
 		sp->set_stone_gap(f.gap);
 		sp->set_rock_foot(f.rock_foot);
+		if (f.top) {
+			// Moss cushions on the stones' tops, more on the damp river stones; set on the cap's curve.
+			sp->set_stone_top(true);
+			sp->set_align_to_ground(1.0f);
+		}
 		sp->set_visibility_range(f.visibility);
 		if (f.water_max > 0.0f) {
 			sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, f.water_max));

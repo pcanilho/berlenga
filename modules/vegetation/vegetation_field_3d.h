@@ -105,6 +105,11 @@ class VegetationField3D : public Node3D {
 	Rect2 density_mask_rect;
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
+	PackedVector4Array stone_tops; // (x, top y, z, cap radius): where stone_top species grow.
+	VegetationObstacles stone_top_grid;
+	PackedVector3Array stone_top_normals; // Optional, one per stone_tops entry: the cap's surface normal.
+	PackedVector3Array stone_top_grid_normals; // stone_top_normals matched to stone_top_grid.items.
+	void _build_stone_tops();
 	// Canopy closure and conifer share for the ground's litter (forest_floor_* globals).
 	bool forest_floor_enabled = true;
 	Ref<Texture2D> floor_texture;
@@ -172,6 +177,8 @@ class VegetationField3D : public Node3D {
 		float litter_reach = 0.0f; // How far past a crown its litter can land.
 		float deadwood_reach = 0.0f; // The widest a log reaches from its origin plus the widest deadwood band of a species.
 		VegetationObstacles obstacles; // Rocks the plants keep out of (a copy, for the worker threads).
+		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
+		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -351,9 +358,14 @@ public:
 	// Rocks on the ground, (x, ground y, z, radius at the soil): no plant grows inside one.
 	void set_obstacles(const PackedVector4Array &p_obstacles);
 	PackedVector4Array get_obstacles() const { return obstacles; }
+	void set_stone_tops(const PackedVector4Array &p_tops);
+	PackedVector4Array get_stone_tops() const { return stone_tops; }
+	void set_stone_top_normals(const PackedVector3Array &p_normals);
+	PackedVector3Array get_stone_top_normals() const { return stone_top_normals; }
 	const VegetationObstacles &get_obstacle_grid() const { return obstacle_grid; }
 	// Obstacles keep plants this far past their edge: a ground plant's stem off the rock's foot.
 	static constexpr float OBSTACLE_MARGIN = 0.03f;
+	static constexpr float STONE_TOP_SINK = 0.003f; // Metres a plant on a stone top sits into it (the cap is not a true dome).
 	// How far a ground plant's leaves may reach in over a rock's foot; a plant reaching farther is
 	// made smaller and leans away from the rock, down to ROCK_FIT_MIN of its size, or not placed.
 	static constexpr float ROCK_OVERHANG = 0.08f;
