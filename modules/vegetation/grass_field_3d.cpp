@@ -950,7 +950,11 @@ Color GrassField3D::_far_color_hand() const {
 // would have to copy the raster's lighting and drift when the blade shader changes.
 namespace {
 constexpr float FAR_BAKE_VIEW_DEG = 7.0f; // The view a far meadow is seen in (eye 1.7 m, 14 m out).
-constexpr float FAR_BAKE_SUN_DEG = 30.0f;
+constexpr float FAR_BAKE_SUN_DEG = 30.0f; // The reference elevation (get_far_color(), the cover map).
+// The elevations the sward is baked at (the reference among them): the far colour follows the sun
+// between them (bench: a 63 degree sun lit the far ground 1.55 times as much against the blades as a
+// 30 degree one).
+constexpr float FAR_BAKE_ELEVATIONS_DEG[4] = { 12.0f, 30.0f, 50.0f, 72.0f };
 constexpr float FAR_BAKE_ORTHO = 2.0f; // Metres across the image.
 constexpr float FAR_BAKE_CAM_DIST = 20.0f;
 constexpr int FAR_BAKE_SIZE = 96;
@@ -1102,16 +1106,20 @@ void GrassField3D::_far_bake_start() {
 // view renders FAR_BAKE_FRAMES frames, then is read.
 void GrassField3D::_far_bake_step() {
 	constexpr int WHITE = FAR_BAKE_AZIMUTHS;
-	constexpr int VIEWS = 2 * FAR_BAKE_AZIMUTHS + 1;
+	constexpr int PER_ELEVATION = 2 * FAR_BAKE_AZIMUTHS + 1;
+	constexpr int VIEWS = PER_ELEVATION * FAR_ELEVATIONS;
+	static_assert(sizeof(FAR_BAKE_ELEVATIONS_DEG) / sizeof(float) == FAR_ELEVATIONS);
 	if (far_bake_wait == 0) {
-		const bool bare = far_bake_state >= WHITE;
-		const int azimuth = far_bake_state < WHITE ? far_bake_state : (far_bake_state == WHITE ? 0 : far_bake_state - WHITE - 1);
+		const int sub = far_bake_state % PER_ELEVATION;
+		const float elev = FAR_BAKE_ELEVATIONS_DEG[far_bake_state / PER_ELEVATION];
+		const bool bare = sub >= WHITE;
+		const int azimuth = sub < WHITE ? sub : (sub == WHITE ? 0 : sub - WHITE - 1);
 		const Color gt = ground_tint_enabled ? Color(ground_tint.r, ground_tint.g, ground_tint.b) : Color(0.11f, 0.12f, 0.06f);
-		far_bake_ground_mat->set_albedo(bare ? (far_bake_state == WHITE ? Color(1, 1, 1) : Color(0, 0, 0)) : gt);
+		far_bake_ground_mat->set_albedo(bare ? (sub == WHITE ? Color(1, 1, 1) : Color(0, 0, 0)) : gt);
 		far_bake_ground_mat->set_roughness(0.95f);
 		far_bake_ground_mat->set_specular(0.1f);
 		far_bake_blades->set_visible(!bare);
-		far_bake_sun->set_rotation_degrees(Vector3(-FAR_BAKE_SUN_DEG, 360.0f / FAR_BAKE_AZIMUTHS * azimuth, 0.0f));
+		far_bake_sun->set_rotation_degrees(Vector3(-elev, 360.0f / FAR_BAKE_AZIMUTHS * azimuth, 0.0f));
 	}
 	if (++far_bake_wait <= FAR_BAKE_FRAMES + (far_bake_state == 0 ? 2 : 0)) {
 		return;
@@ -1136,44 +1144,60 @@ void GrassField3D::_far_bake_step() {
 		return;
 	}
 	_far_bake_free();
-	// The albedo each azimuth needs. The white's diffuse light does not turn with the sun (the
-	// ground is Lambertian under its sheen), so one white view serves all four. The sheen never
-	// takes more than three quarters of the blades' light (a dark sward seen very low).
-	const Color diffuse = far_bake_view[WHITE] - far_bake_view[WHITE + 1];
-	if (diffuse.r <= 1e-4f || diffuse.g <= 1e-4f || diffuse.b <= 1e-4f) {
-		return;
-	}
-	Color need[FAR_BAKE_AZIMUTHS];
-	Color mean(0, 0, 0, 0);
-	for (int k = 0; k < FAR_BAKE_AZIMUTHS; k++) {
-		const Color &b = far_bake_view[k];
-		const Color &black = far_bake_view[WHITE + 1 + k];
+	// Per elevation: the albedo each azimuth needs. The white's diffuse light does not turn with the
+	// sun (the ground is Lambertian under its sheen), so one white view serves all four. The sheen
+	// never takes more than three quarters of the blades' light (a dark sward seen very low).
+	int baked = 0;
+	for (int e = 0; e < FAR_ELEVATIONS; e++) {
+		const Color *views = far_bake_view + e * PER_ELEVATION;
+		const Color diffuse = views[WHITE] - views[WHITE + 1];
+		if (diffuse.r <= 1e-4f || diffuse.g <= 1e-4f || diffuse.b <= 1e-4f) {
+			break;
+		}
+		Color need[FAR_BAKE_AZIMUTHS];
+		Color mean(0, 0, 0, 0);
+		for (int k = 0; k < FAR_BAKE_AZIMUTHS; k++) {
+			const Color &b = views[k];
+			const Color &black = views[WHITE + 1 + k];
+			for (int c = 0; c < 3; c++) {
+				need[k][c] = MAX(b[c] - black[c], 0.25f * b[c]) / diffuse[c];
+			}
+			mean += need[k] / float(FAR_BAKE_AZIMUTHS);
+		}
+		if (!Math::is_finite(mean.r) || !Math::is_finite(mean.g) || !Math::is_finite(mean.b) || mean.r <= 0.0f || mean.g <= 0.0f || mean.b <= 0.0f) {
+			break;
+		}
+		// The azimuths are 0 (sun behind the view, the hot spot), 90, 180 (into the sun) and 270,
+		// so c(phi) = a0 + a1 cos(phi) + a2 cos(2 phi) through them: a1 = (front - back) / 2,
+		// a2 = (front + back - sides) / 4. Bounded so the factor stays between 0.1 and 1.9.
+		Color l1c, l2c;
 		for (int c = 0; c < 3; c++) {
-			need[k][c] = MAX(b[c] - black[c], 0.25f * b[c]) / diffuse[c];
+			float l1 = 0.5f * (need[0][c] - need[2][c]) / mean[c];
+			float l2 = 0.25f * (need[0][c] + need[2][c] - need[1][c] - need[3][c]) / mean[c];
+			const float total = Math::abs(l1) + Math::abs(l2);
+			if (total > 0.9f) {
+				l1 *= 0.9f / total;
+				l2 *= 0.9f / total;
+			}
+			l1c[c] = l1;
+			l2c[c] = l2;
 		}
-		mean += need[k] / float(FAR_BAKE_AZIMUTHS);
+		l1c.a = l2c.a = 0.0f;
+		far_elev_color[e] = Color(CLAMP(mean.r, 0.0f, 1.0f), CLAMP(mean.g, 0.0f, 1.0f), CLAMP(mean.b, 0.0f, 1.0f), 1.0f);
+		far_elev_lobe1[e] = l1c;
+		far_elev_lobe2[e] = l2c;
+		baked++;
 	}
-	if (!Math::is_finite(mean.r) || !Math::is_finite(mean.g) || !Math::is_finite(mean.b) || mean.r <= 0.0f || mean.g <= 0.0f || mean.b <= 0.0f) {
+	if (baked < FAR_ELEVATIONS) {
 		return;
 	}
-	// The azimuths are 0 (sun behind the view, the hot spot), 90, 180 (into the sun) and 270, so
-	// c(phi) = a0 + a1 cos(phi) + a2 cos(2 phi) through them: a1 = (front - back) / 2,
-	// a2 = (front + back - sides) / 4. Bounded so the factor stays between 0.1 and 1.9.
-	for (int c = 0; c < 3; c++) {
-		float l1 = 0.5f * (need[0][c] - need[2][c]) / mean[c];
-		float l2 = 0.25f * (need[0][c] + need[2][c] - need[1][c] - need[3][c]) / mean[c];
-		const float total = Math::abs(l1) + Math::abs(l2);
-		if (total > 0.9f) {
-			l1 *= 0.9f / total;
-			l2 *= 0.9f / total;
-		}
-		far_lobe1[c] = l1;
-		far_lobe2[c] = l2;
-	}
-	far_lobe1.a = far_lobe2.a = 0.0f;
-	far_color_baked = Color(CLAMP(mean.r, 0.0f, 1.0f), CLAMP(mean.g, 0.0f, 1.0f), CLAMP(mean.b, 0.0f, 1.0f), 1.0f);
+	far_elev_count = baked;
+	far_color_baked = far_elev_color[FAR_REF_ELEVATION];
+	far_lobe1 = far_elev_lobe1[FAR_REF_ELEVATION];
+	far_lobe2 = far_elev_lobe2[FAR_REF_ELEVATION];
+	published_far_elevation = -1000.0f;
 	far_baked = true;
-	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s), sun azimuth lobes %s %s.", get_name(), far_color_baked, _far_color_hand(), far_lobe1, far_lobe2));
+	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s), sun azimuth lobes %s %s; by sun elevation 12/30/50/72 degrees %s %s %s %s.", get_name(), far_color_baked, _far_color_hand(), far_lobe1, far_lobe2, far_elev_color[0], far_elev_color[1], far_elev_color[2], far_elev_color[3]));
 	if (fade_owner == this) {
 		_publish_far();
 	}
@@ -1181,14 +1205,41 @@ void GrassField3D::_far_bake_step() {
 }
 
 // The far colour and its azimuth lobes, for grass_ground(). The fade owner's only.
+// At the sun's elevation, between the baked ones (the lowest and highest held beyond them).
+void GrassField3D::_far_at_elevation(float p_deg, Color &r_color, Color &r_lobe1, Color &r_lobe2) const {
+	if (far_elev_count < FAR_ELEVATIONS) {
+		r_color = far_color_baked;
+		r_lobe1 = far_lobe1;
+		r_lobe2 = far_lobe2;
+		return;
+	}
+	int i = 0;
+	while (i < FAR_ELEVATIONS - 2 && p_deg > FAR_BAKE_ELEVATIONS_DEG[i + 1]) {
+		i++;
+	}
+	const float t = CLAMP((p_deg - FAR_BAKE_ELEVATIONS_DEG[i]) / (FAR_BAKE_ELEVATIONS_DEG[i + 1] - FAR_BAKE_ELEVATIONS_DEG[i]), 0.0f, 1.0f);
+	r_color = far_elev_color[i].lerp(far_elev_color[i + 1], t);
+	r_lobe1 = far_elev_lobe1[i].lerp(far_elev_lobe1[i + 1], t);
+	r_lobe2 = far_elev_lobe2[i].lerp(far_elev_lobe2[i + 1], t);
+}
+
+// The far colour at the sun's elevation, its azimuth lobes and its ratio to get_far_color() (the
+// cover map's, at 30 degrees: grass_ground_far_scale, for the terrain's far cover). The fade owner's
+// only.
 void GrassField3D::_publish_far() {
 	RenderingServer *rs = RenderingServer::get_singleton();
-	const Color far = get_far_color();
+	Color far = get_far_color();
+	Color l1, l2, scale(1, 1, 1, 1);
+	if (far_baked) {
+		_far_at_elevation(sun_elevation_deg, far, l1, l2);
+		const Color ref = far_color_baked;
+		scale = Color(ref.r > 0.0f ? far.r / ref.r : 1.0f, ref.g > 0.0f ? far.g / ref.g : 1.0f, ref.b > 0.0f ? far.b / ref.b : 1.0f, 1.0f);
+	}
+	published_far_elevation = sun_elevation_deg;
 	rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, 1.0f));
-	const Color l1 = far_baked ? far_lobe1 : Color(0, 0, 0, 0);
-	const Color l2 = far_baked ? far_lobe2 : Color(0, 0, 0, 0);
 	rs->global_shader_parameter_set("grass_ground_far_lobe1", Vector4(l1.r, l1.g, l1.b, 0.0f));
 	rs->global_shader_parameter_set("grass_ground_far_lobe2", Vector4(l2.r, l2.g, l2.b, 0.0f));
+	rs->global_shader_parameter_set("grass_ground_far_scale", Vector4(scale.r, scale.g, scale.b, 1.0f));
 }
 
 PackedColorArray GrassField3D::get_far_color_lobes() const {
@@ -1232,8 +1283,10 @@ DirectionalLight3D *GrassField3D::_get_sun() {
 }
 
 // The sun's heading and the camera, so grass_ground() can turn the far colour with the azimuth
-// between them. The lobes were baked with the sun 30 degrees up; the azimuth matters less as the
-// sun climbs (none at the zenith) and goes with the sun below the horizon.
+// between them, and the sun's elevation for the far colour itself. Without the elevation bake the
+// lobes are the 30 degree ones, and the azimuth matters less as the sun climbs (none at the
+// zenith); with it the lobes are those of the sun's own elevation. Either way it goes with the sun
+// below the horizon.
 void GrassField3D::_publish_sun_view(const Vector3 &p_camera) {
 	Vector4 sun_v;
 	DirectionalLight3D *sun = _get_sun();
@@ -1242,9 +1295,14 @@ void GrassField3D::_publish_sun_view(const Vector3 &p_camera) {
 		const float h = Vector2(d.x, d.z).length();
 		const float up = -d.y; // Sine of the sun's elevation.
 		if (h > 1e-4f) {
-			const float strength = MIN(h / Math::cos(Math::deg_to_rad(FAR_BAKE_SUN_DEG)), 1.15f) * CLAMP((up + 0.05f) / 0.1f, 0.0f, 1.0f);
+			const float horizon = CLAMP((up + 0.05f) / 0.1f, 0.0f, 1.0f);
+			const float strength = far_elev_count == FAR_ELEVATIONS ? horizon : MIN(h / Math::cos(Math::deg_to_rad(FAR_BAKE_SUN_DEG)), 1.15f) * horizon;
 			sun_v = Vector4(d.x / h, d.z / h, strength, 0.0f);
 		}
+		sun_elevation_deg = Math::rad_to_deg(Math::asin(CLAMP(up, -1.0f, 1.0f)));
+	}
+	if (far_baked && Math::abs(sun_elevation_deg - published_far_elevation) > 0.5f) {
+		_publish_far(); // The sun has climbed or sunk: the far colour that matches the blades now.
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!sun_v.is_equal_approx(published_sun)) {
@@ -1444,6 +1502,7 @@ global uniform vec4 grass_ground_fade; // xy: centre of the blades, z: where the
 global uniform vec4 grass_ground_far; // rgb: the blades' colour seen from a distance.
 global uniform vec4 grass_ground_far_lobe1; // rgb: its change with cos of the sun's azimuth from the view.
 global uniform vec4 grass_ground_far_lobe2; // rgb: and with cos of twice that azimuth.
+global uniform vec4 grass_ground_far_scale; // rgb: the far colour at the sun's elevation over the cover map's (30 degrees).
 global uniform vec4 grass_ground_sun; // xy: the sun light's heading (xz); z: how much the azimuth counts.
 global uniform vec4 grass_ground_view; // xyz: the camera.
 )";

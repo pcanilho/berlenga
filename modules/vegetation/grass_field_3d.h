@@ -142,12 +142,24 @@ class GrassField3D : public Node3D {
 	int far_bake_wait = 0;
 	bool far_bake_queued = false;
 	bool far_baked = false;
-	Color far_bake_view[9]; // Mean of each view: sward at the four sun azimuths, white, black at the four.
+	// Mean of each view, per sun elevation: sward at the four sun azimuths, white, black at the four.
+	static constexpr int FAR_ELEVATIONS = 4;
+	static constexpr int FAR_REF_ELEVATION = 1; // 30 degrees: get_far_color() and the cover map's colour.
+	Color far_bake_view[9 * FAR_ELEVATIONS];
 	Color far_color_baked;
 	// The far colour's change with the sun's azimuth from the view (phi): factor 1 + lobe1 cos(phi)
 	// + lobe2 cos(2 phi) per channel, fitted to the four baked azimuths (canopy BRDF hot spot).
 	Color far_lobe1;
 	Color far_lobe2;
+	// The same at each baked sun elevation: a sward of upright blades takes less of a high sun than
+	// flat ground does, so its matching albedo falls as the sun climbs.
+	Color far_elev_color[FAR_ELEVATIONS];
+	Color far_elev_lobe1[FAR_ELEVATIONS];
+	Color far_elev_lobe2[FAR_ELEVATIONS];
+	int far_elev_count = 0; // How many elevations baked (0: only the reference, as before).
+	float sun_elevation_deg = 30.0f; // The sun's elevation as last published.
+	float published_far_elevation = -1000.0f;
+	void _far_at_elevation(float p_deg, Color &r_color, Color &r_lobe1, Color &r_lobe2) const;
 	NodePath sun_light; // The DirectionalLight3D whose azimuth turns the far colour; empty: the first in the scene.
 	ObjectID sun_cache;
 	int sun_search_wait = 0;

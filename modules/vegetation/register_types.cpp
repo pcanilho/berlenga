@@ -65,6 +65,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_ground_far", "vec4" },
 		{ "grass_ground_far_lobe1", "vec4" },
 		{ "grass_ground_far_lobe2", "vec4" },
+		{ "grass_ground_far_scale", "vec4" },
 		{ "grass_ground_sun", "vec4" },
 		{ "grass_ground_view", "vec4" },
 		{ "grass_ground_dry", "vec4" },
@@ -82,7 +83,9 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	for (const auto &g : globals) {
 		Dictionary d;
 		d["type"] = g.type;
-		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : (String(g.type) == "float" ? Variant(0.0f) : Variant(""));
+		// A scale is 1 until a field sets it.
+		const bool unit = String(g.name) == "grass_ground_far_scale";
+		d["value"] = String(g.type) == "vec4" ? Variant(unit ? Vector4(1, 1, 1, 1) : Vector4()) : (String(g.type) == "float" ? Variant(0.0f) : Variant(""));
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}
 }
