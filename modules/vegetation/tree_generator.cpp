@@ -4181,16 +4181,16 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 }
 
 // Liana stands for clematis (old man's beard), the hanging climber of rich lowland woods.
-Array TreeGenerator::plant_climber_cache[4];
-LocalVector<TreeGenerator::ClimberLeafShape> TreeGenerator::plant_climber_shapes[4];
+Array TreeGenerator::plant_climber_cache[CLIMBER_MAX + 1];
+LocalVector<TreeGenerator::ClimberLeafShape> TreeGenerator::plant_climber_shapes[CLIMBER_MAX + 1];
 
-Array TreeGenerator::_plant_climber_leaves(Climber p_climber) {
+Array TreeGenerator::_plant_climber_leaves(int p_climber) {
 	Array *cache = plant_climber_cache;
-	if (p_climber <= CLIMBER_NONE || p_climber >= CLIMBER_MAX) {
+	if (p_climber <= CLIMBER_NONE || p_climber > CLIMBER_MAX) {
 		return Array();
 	}
 	if (cache[p_climber].is_empty()) {
-		const int kind = p_climber == CLIMBER_IVY ? PlantGenerator::CLIMBER_IVY : (p_climber == CLIMBER_LIANA ? PlantGenerator::CLIMBER_CLEMATIS : PlantGenerator::CLIMBER_HONEYSUCKLE);
+		const int kind = p_climber == CLIMBER_MAX ? PlantGenerator::CLIMBER_IVY_ADULT : (p_climber == CLIMBER_IVY ? PlantGenerator::CLIMBER_IVY : (p_climber == CLIMBER_LIANA ? PlantGenerator::CLIMBER_CLEMATIS : PlantGenerator::CLIMBER_HONEYSUCKLE));
 		cache[p_climber] = PlantGenerator::make_climber_leaves(kind, 4);
 		LocalVector<ClimberLeafShape> &shapes = plant_climber_shapes[p_climber];
 		shapes.clear();
@@ -4213,12 +4213,17 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 	// the host's leaf width.
 	const float saved_width = params[PARAM_LEAF_WIDTH];
 	params[PARAM_LEAF_WIDTH] = 0.42f;
-	const Array plant = climber_plant_leaves ? _plant_climber_leaves(climber) : Array();
+	const uint32_t h = hash_murmur3_one_32(uint32_t(climber_leaves.size() / CLIMBER_LEAF_FLOATS), uint32_t(seed) * 7919u + 13u);
+	// Old ivy flowers on adult shoots where it reaches the light: unlobed, ovate leaves on the
+	// upper third of old stems (Metcalfe 2005), the change spread over a band of the stem.
+	const bool adult = climber == CLIMBER_IVY && climber_stem_age > 0.35f &&
+			climber_stem_up > 0.6f + 0.15f * float((h >> 16) & 0xff) / 255.0f - 0.1f * climber_stem_age;
+	const int slot = adult ? int(CLIMBER_MAX) : int(climber);
+	const Array plant = climber_plant_leaves ? _plant_climber_leaves(slot) : Array();
 	if (!plant.is_empty()) {
 		// The ground plants' leaf for this climber (lies in XZ, base at the origin, +Z, 1 m),
 		// one of its variants, turned onto our blade frame and scaled to the leaf's length.
-		const uint32_t h = hash_murmur3_one_32(uint32_t(climber_leaves.size() / CLIMBER_LEAF_FLOATS), uint32_t(seed) * 7919u + 13u);
-		const ClimberLeafShape &shape = plant_climber_shapes[climber][h % plant_climber_shapes[climber].size()];
+		const ClimberLeafShape &shape = plant_climber_shapes[slot][h % plant_climber_shapes[slot].size()];
 		const PackedVector3Array &mv = shape.verts;
 		const PackedVector3Array &mn = shape.normals;
 		const PackedVector2Array &mu = shape.uvs;
@@ -4227,7 +4232,7 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 		z = z.length_squared() > 1e-8f ? z.normalized() : p_normal.cross(Vector3(1, 0, 0)).normalized();
 		const Vector3 y = p_normal.normalized();
 		const Basis b = Basis(y.cross(z), y, z) * p_size; // Columns: X, Y (blade normal), Z (along).
-		Builder &cb = climber_leaf_b;
+		Builder &cb = adult ? climber_adult_b : climber_leaf_b;
 		cb.bone = p_bone;
 		Vector4i part;
 		cb.begin(part);
@@ -4255,7 +4260,6 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 	params[PARAM_LEAF_WIDTH] = saved_width;
 	leaf_count++;
 	// Published for vegetation's climber leaf meshes: position, blade normal, petiole direction,
-	// size, light.
 	// size, light, the stem's age (0 young, 1 old) and how far up the stem the leaf is (0 foot, 1 tip):
 	// old ivy grows adult shoots with unlobed leaves where it reaches the light high up.
 	const float vals[CLIMBER_LEAF_FLOATS] = { p_at.x, p_at.y, p_at.z, p_normal.x, p_normal.y, p_normal.z, p_out.x, p_out.y, p_out.z, p_size, 0.5f, climber_stem_age, climber_stem_up };
@@ -7781,6 +7785,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 
 	climber_leaf_b = Builder();
+	climber_adult_b = Builder();
 	if (climber != CLIMBER_NONE && climber_cover > 0.0f) {
 		_grow_climbers(bark, leaves);
 	}
@@ -7788,8 +7793,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	mesh.instantiate();
 	Builder fungi;
 	_grow_fungi(bark, fungi);
-	Builder *builders[6] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b };
-	for (int s = 0; s < 6; s++) {
+	Builder *builders[7] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b };
+	for (int s = 0; s < 7; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -7825,7 +7830,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _bark_lods(b);
 			} else if (s == 1) {
 				lods = _leaf_lods(b);
-			} else if (s == 3) {
+			} else if (s == 3 || s == 6) {
 				lods = _leaf_lods(b, false);
 			} else if (s == 5) {
 				// Broken wood: a few hundred triangles a break, seen from every distance.
@@ -7922,7 +7927,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
 			// thread.
-			const char *names[6] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood" };
+			const char *names[7] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult" };
 			int found = -1;
 			for (int i = 0; i < material_source->get_surface_count(); i++) {
 				if (material_source->surface_get_name(i) == names[s]) {
@@ -7962,9 +7967,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				mesh->surface_set_material(mesh->get_surface_count() - 1, _lichen_material(m));
 				continue;
 			}
-		} else if (s == 3) {
+		} else if (s == 3 || s == 6) {
 			// The climber's own leaf textures from the plant material; vertex colour is a tone.
-			const Ref<ArrayMesh> pmesh = _plant_climber_leaves(climber)[0];
+			const Ref<ArrayMesh> pmesh = _plant_climber_leaves(s == 6 ? int(CLIMBER_MAX) : int(climber))[0];
 			const Ref<ShaderMaterial> pm = pmesh->surface_get_material(0);
 			if (pm.is_valid()) {
 				m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, pm->get_shader_parameter("albedo_tex"));
@@ -7974,7 +7979,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				m->set_roughness(pm->get_shader_parameter("roughness"));
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
-			mesh->surface_set_name(mesh->get_surface_count() - 1, "climber_leaves");
+			mesh->surface_set_name(mesh->get_surface_count() - 1, s == 6 ? "climber_leaves_adult" : "climber_leaves");
 		} else if (s == 5) {
 			// Broken wood (trees.md 5j): fracture faces and splinters, vertex colour by how fresh
 			// the break is, a texture of fibres along v with their relief.
@@ -8560,6 +8565,7 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->leaf_twins = Builder();
 	self->leaf_twin_of.clear();
 	self->climber_leaf_b = Builder();
+	self->climber_adult_b = Builder();
 }
 
 Ref<Mesh> TreeGenerator::request_near_mesh(int p_key, int p_variant) {

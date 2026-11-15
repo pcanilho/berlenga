@@ -1,6 +1,7 @@
 ---
 title: "Open worlds"
-weight: 140
+weight: 100
+group: "Engine"
 summary: "Camera-relative tracing, persistent instances, culling, mesh LOD."
 ---
 

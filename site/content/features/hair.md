@@ -1,6 +1,7 @@
 ---
 title: "Hair"
-weight: 40
+weight: 95
+group: "Simulation"
 summary: "Fibre shading, strand grooms, TressFX strand simulation with body collision."
 ---
 

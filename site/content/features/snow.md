@@ -1,6 +1,7 @@
 ---
 title: "Snow"
-weight: 90
+weight: 75
+group: "World"
 summary: "A snowpack from the weather map that falls, settles, melts, slides and drifts; deep snow with tracks; baked winters and cornices."
 ---
 

@@ -6,7 +6,8 @@ description: "Download Berlenga, turn on path tracing and find the settings."
 
 ## Download
 
-[Latest release](https://github.com/pcanilho/berlenga/releases/latest), named by commit:
+{{< downloads >}}
+
 
 - **Windows**: for Ray Reconstruction, add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe (not shipped).
 - **Linux** x86_64 and arm64: no Ray Reconstruction.

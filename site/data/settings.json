@@ -633,579 +633,47 @@
    "topic": ""
   },
   {
-   "name": "Shadows on water",
+   "name": "Histogram metering",
    "settings": [
-    "wave_shadows"
+    "rendering/camera/auto_exposure/metering"
    ],
    "note": "",
-   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
+   "what": "lamps in view no longer darken the scene.",
+   "page": "exposure",
+   "title": "Exposure",
+   "topic": ""
   },
   {
-   "name": "Refraction",
+   "name": "Dark-scene key",
    "settings": [
-    "rendering/pathtracing/refraction"
+    "dark_scene_luminance"
    ],
    "note": "",
-   "what": "water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
+   "what": "night stays night.",
+   "page": "exposure",
+   "title": "Exposure",
+   "topic": ""
   },
   {
-   "name": "Murky water",
+   "name": "Local exposure",
    "settings": [
-    "IOR",
-    "ABSORPTION",
-    "SCATTERING",
-    "KHR_materials_scatter"
-   ],
-   "note": "",
-   "what": "scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Caustics",
-   "settings": [
-    "rendering/pathtracing/caustics",
-    "caustics_enabled"
-   ],
-   "note": "",
-   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Caustic cascades",
-   "settings": [
-    "rendering/pathtracing/caustics_cascades"
-   ],
-   "note": "",
-   "what": "sun caustics out to 256 m, near lines unchanged.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Clear water",
-   "settings": [
-    "clear_water"
-   ],
-   "note": "",
-   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Path-traced ocean",
-   "settings": [
-    "PhysXWaterSurface3D",
-    "pathtraced_absorption",
-    "pathtraced_scattering",
-    "pathtraced_roughness"
-   ],
-   "note": "",
-   "what": "waves refract, tint and scatter, with caustics on the seabed.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Ocean swell",
-   "settings": [
-    "wave_cascades"
-   ],
-   "note": "",
-   "what": "up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Measured wave spreading",
-   "settings": [
-    "wave_spreading",
-    "swell"
-   ],
-   "note": "",
-   "what": "Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Whitecaps by wind speed",
-   "settings": [
-    "whitecap_auto",
-    "whitecap_cover_scale"
-   ],
-   "note": "",
-   "what": "whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Storm seas",
-   "settings": [
-    "crest_spray",
-    "crest_spray_amount"
-   ],
-   "note": "",
-   "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Lake ripples",
-   "settings": [
-    "fetch"
-   ],
-   "note": "",
-   "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Raster reflections",
-   "settings": [
-    "raster_reflections"
-   ],
-   "note": "",
-   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Finer water mesh up close",
-   "settings": [
-    "mesh_detail"
+    "local_highlight_contrast",
+    "local_shadow_contrast"
    ],
    "note": "",
    "what": "",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
+   "page": "exposure",
+   "title": "Exposure",
+   "topic": ""
   },
   {
-   "name": "Boat wakes",
-   "settings": [
-    "PhysXWaterWake3D.dispersive",
-    "breaking_slope"
-   ],
-   "note": "",
-   "what": "waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Shore waves",
-   "settings": [
-    "shore_waves"
-   ],
-   "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Wave groups",
-   "settings": [
-    "shore_wave_groups"
-   ],
-   "note": "",
-   "what": "shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Plunging breakers",
-   "settings": [
-    "shore_wave_curl",
-    "shore_spray",
-    "shore_spray_amount"
-   ],
-   "note": "",
-   "what": "the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Shore wetness",
-   "settings": [
-    "contact_wetness"
-   ],
-   "note": "",
-   "what": "sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Currents",
-   "settings": [
-    "current",
-    "flow_period"
-   ],
-   "note": "",
-   "what": "flow round rocks and along shores carries waves, foam and floating objects.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Live flow",
-   "settings": [
-    "live_flow",
-    "wall_friction"
-   ],
-   "note": "",
-   "what": "near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Live water",
-   "settings": [
-    "PhysXLiveWater3D",
-    "streaming"
-   ],
-   "note": "",
-   "what": "water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Bodies push water",
-   "settings": [
-    "PhysXWaterPusher3D"
-   ],
-   "note": "",
-   "what": "legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "White water",
-   "settings": [
-    "flow_foam"
-   ],
-   "note": "",
-   "what": "foam in fast water, trailing rocks and drifting downstream.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Rivers",
-   "settings": [
-    "PhysXRiver3D",
-    "discharge",
-    "roughness",
-    "max_slope"
-   ],
-   "note": "",
-   "what": "drawn as a curve; finds its depth and never runs uphill.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Contact waterfalls",
-   "settings": [
-    "PhysXWaterfalls3D",
-    "contact_falls",
-    "wet_margin",
-    "surface"
-   ],
-   "note": "",
-   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Plunging waterfalls",
-   "settings": [
-    "plunge_falls",
-    "column_density",
-    "wind_exposure"
-   ],
-   "note": "",
-   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist; where the face leans into the jet, the fall keeps to the rock and fans out down it.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Faster flow bakes",
-   "settings": [
-    "physics/physx_3d/water/multigrid_flow"
-   ],
-   "note": "",
-   "what": "multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Camera under water",
-   "settings": [
-    "underwater_enabled"
-   ],
-   "note": "",
-   "what": "fog, scattering, Snell's window, image split at the water line.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Under water"
-  },
-  {
-   "name": "Fibre shading",
-   "settings": [
-    "rendering/pathtracing/hair"
-   ],
-   "note": "",
-   "what": "Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Raster hair shading",
-   "settings": [
-    "PhysXHair3D.hair_shading"
-   ],
-   "note": "",
-   "what": "Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Deep opacity shadows",
-   "settings": [
-    "PhysXHair3D.deep_shadows",
-    "hair_shading"
-   ],
-   "note": "",
-   "what": "raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Hair shadows",
-   "settings": [
-    "cast_hair_shadows"
-   ],
-   "note": "",
-   "what": "raster strand hair casts shadows on the face, body and ground.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Custom hair shaders",
-   "settings": [
-    "HAIR",
-    "HAIR_ABSORPTION",
-    "HAIR_ROUGHNESS",
-    "POSITIONAL_SHADOW_OFFSET",
-    "hair_strands",
-    "hair_cards",
-    "IN_PATH_TRACER"
-   ],
-   "note": "",
-   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Strand grooms",
-   "settings": [
-    "HairGroom",
-    "HairMesh"
-   ],
-   "note": "",
-   "what": "grown on a scalp mesh or loaded from a HAIR file.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Moving strand hair",
-   "settings": [
-    "PhysXHair3D"
-   ],
-   "note": "",
-   "what": "AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Swept sphere strands",
-   "settings": [
-    "rendering/pathtracing/linear_swept_spheres"
-   ],
-   "note": "",
-   "what": "where the GPU traces swept spheres in hardware, strands are traced as round tubes, one primitive per segment, and shaded where the ray meets the fibre; other GPUs keep crossed strips. Not yet checked on supporting hardware.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Raster strands",
+   "name": "Pixel antialiasing",
    "settings": [],
-   "note": "TressFX coverage",
-   "what": "blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Distance LOD",
-   "settings": [
-    "PhysXHair3D",
-    "lod_enabled",
-    "lod_start_distance",
-    "lod_end_distance",
-    "lod_strand_ratio"
-   ],
    "note": "",
-   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Far hair for crowds",
-   "settings": [
-    "cards_enabled",
-    "card_count"
-   ],
-   "note": "",
-   "what": "far strand hair hands over to one thick strand per clump, a clump at a time once it is 2 pixels across, simulating only the guides once the whole head has handed over. Raster only; path tracing keeps the strands.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Motion vectors for strands",
-   "settings": [
-    "PREVIOUS_FRAME",
-    "render_mode alpha_motion_vectors"
-   ],
-   "note": "",
-   "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Wet hair",
-   "settings": [
-    "wetness",
-    "weather_wetting",
-    "wet_clumping"
-   ],
-   "note": "",
-   "what": "strands soak in rain and dry over time, turning darker, glossier, heavier, flatter and clumped.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Snow on hair",
-   "settings": [
-    "snow",
-    "snow_capacity"
-   ],
-   "note": "",
-   "what": "snow from the weather settles on the top layer and windward side as small clumps, on strands and hair cards alike, and melts into wetness.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Grey and sun-bleached hair",
-   "settings": [
-    "grey_ratio",
-    "sun_bleaching"
-   ],
-   "note": "",
-   "what": "single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Body collision",
-   "settings": [
-    "PhysXHair3D",
-    "collision_body",
-    "collision_cell_size"
-   ],
-   "note": "",
-   "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
-   "name": "Hair on cloth",
-   "settings": [
-    "collision_cloth",
-    "cloth_thickness"
-   ],
-   "note": "",
-   "what": "strands rest on simulated cloth such as a collar or hood, lying over it as it moves.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
-   "name": "Strand-strand collision",
-   "settings": [
-    "strand_collision",
-    "strand_collision_radius",
-    "strand_collision_friction"
-   ],
-   "note": "",
-   "what": "guide strands no longer pass through each other, with friction.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
-   "name": "Hair volume",
-   "settings": [
-    "volume_enabled",
-    "volume_friction",
-    "volume_stiffness"
-   ],
-   "note": "",
-   "what": "strands push and drag on each other through a density grid, so hair keeps its volume.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
+   "what": "when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.",
+   "page": "dlss-ray-reconstruction",
+   "title": "DLSS Ray Reconstruction",
+   "topic": ""
   },
   {
    "name": "Mountain generation",
@@ -1669,6 +1137,361 @@
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
+  },
+  {
+   "name": "Shadows on water",
+   "settings": [
+    "wave_shadows"
+   ],
+   "note": "",
+   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Refraction",
+   "settings": [
+    "rendering/pathtracing/refraction"
+   ],
+   "note": "",
+   "what": "water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Murky water",
+   "settings": [
+    "IOR",
+    "ABSORPTION",
+    "SCATTERING",
+    "KHR_materials_scatter"
+   ],
+   "note": "",
+   "what": "scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Caustics",
+   "settings": [
+    "rendering/pathtracing/caustics",
+    "caustics_enabled"
+   ],
+   "note": "",
+   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Caustic cascades",
+   "settings": [
+    "rendering/pathtracing/caustics_cascades"
+   ],
+   "note": "",
+   "what": "sun caustics out to 256 m, near lines unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Clear water",
+   "settings": [
+    "clear_water"
+   ],
+   "note": "",
+   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Path-traced ocean",
+   "settings": [
+    "PhysXWaterSurface3D",
+    "pathtraced_absorption",
+    "pathtraced_scattering",
+    "pathtraced_roughness"
+   ],
+   "note": "",
+   "what": "waves refract, tint and scatter, with caustics on the seabed.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Ocean swell",
+   "settings": [
+    "wave_cascades"
+   ],
+   "note": "",
+   "what": "up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Measured wave spreading",
+   "settings": [
+    "wave_spreading",
+    "swell"
+   ],
+   "note": "",
+   "what": "Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Whitecaps by wind speed",
+   "settings": [
+    "whitecap_auto",
+    "whitecap_cover_scale"
+   ],
+   "note": "",
+   "what": "whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Storm seas",
+   "settings": [
+    "crest_spray",
+    "crest_spray_amount"
+   ],
+   "note": "",
+   "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Lake ripples",
+   "settings": [
+    "fetch"
+   ],
+   "note": "",
+   "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Raster reflections",
+   "settings": [
+    "raster_reflections"
+   ],
+   "note": "",
+   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Finer water mesh up close",
+   "settings": [
+    "mesh_detail"
+   ],
+   "note": "",
+   "what": "",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Boat wakes",
+   "settings": [
+    "PhysXWaterWake3D.dispersive",
+    "breaking_slope"
+   ],
+   "note": "",
+   "what": "waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Shore waves",
+   "settings": [
+    "shore_waves"
+   ],
+   "note": "",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Wave groups",
+   "settings": [
+    "shore_wave_groups"
+   ],
+   "note": "",
+   "what": "shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Plunging breakers",
+   "settings": [
+    "shore_wave_curl",
+    "shore_spray",
+    "shore_spray_amount"
+   ],
+   "note": "",
+   "what": "the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Shore wetness",
+   "settings": [
+    "contact_wetness"
+   ],
+   "note": "",
+   "what": "sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Currents",
+   "settings": [
+    "current",
+    "flow_period"
+   ],
+   "note": "",
+   "what": "flow round rocks and along shores carries waves, foam and floating objects.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Live flow",
+   "settings": [
+    "live_flow",
+    "wall_friction"
+   ],
+   "note": "",
+   "what": "near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Live water",
+   "settings": [
+    "PhysXLiveWater3D",
+    "streaming"
+   ],
+   "note": "",
+   "what": "water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Bodies push water",
+   "settings": [
+    "PhysXWaterPusher3D"
+   ],
+   "note": "",
+   "what": "legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "White water",
+   "settings": [
+    "flow_foam"
+   ],
+   "note": "",
+   "what": "foam in fast water, trailing rocks and drifting downstream.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Rivers",
+   "settings": [
+    "PhysXRiver3D",
+    "discharge",
+    "roughness",
+    "max_slope",
+    "gradually_varied_flow",
+    "bend_superelevation",
+    "carve",
+    "obstacle_collision_mask",
+    "live_flow",
+    "mouth_target",
+    "fall_min_height",
+    "fall_mist_amount",
+    "PhysXWaterMist3D",
+    "edge_lap_height",
+    "edge_relief",
+    "edge_foam"
+   ],
+   "note": "",
+   "what": "drawn as a curve; finds its depth and never runs uphill.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Contact waterfalls",
+   "settings": [
+    "PhysXWaterfalls3D",
+    "contact_falls",
+    "wet_margin",
+    "surface"
+   ],
+   "note": "",
+   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Plunging waterfalls",
+   "settings": [
+    "plunge_falls",
+    "column_density",
+    "wind_exposure"
+   ],
+   "note": "",
+   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist; where the face leans into the jet, the fall keeps to the rock and fans out down it.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Faster flow bakes",
+   "settings": [
+    "physics/physx_3d/water/multigrid_flow"
+   ],
+   "note": "",
+   "what": "multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Camera under water",
+   "settings": [
+    "underwater_enabled"
+   ],
+   "note": "",
+   "what": "fog, scattering, Snell's window, image split at the water line.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Under water"
   },
   {
    "name": "Plant placement",
@@ -2239,7 +2062,7 @@
     "climber_cover"
    ],
    "note": "",
-   "what": "ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree.",
+   "what": "ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree. Old ivy has woody stems that thicken with the host's age and lie on the bark ridges, with unlobed adult leaves high on old stems.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2404,214 +2227,6 @@
    "page": "trees",
    "title": "Trees",
    "topic": "Wind and touch"
-  },
-  {
-   "name": "Weather map",
-   "settings": [
-    "WeatherMap3D"
-   ],
-   "note": "",
-   "what": "one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Wind",
-   "settings": [
-    "roughness_length"
-   ],
-   "note": "",
-   "what": "slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Wind near the ground",
-   "settings": [
-    "add_canopy",
-    "add_shelter_box",
-    "gust_patch_size"
-   ],
-   "note": "",
-   "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Season state",
-   "settings": [
-    "WeatherMap3D.get_season()"
-   ],
-   "note": "",
-   "what": "day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Storms",
-   "settings": [
-    "add_storm"
-   ],
-   "note": "",
-   "what": "drift with the wind, with a rain core and a downdraft.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Lightning and thunder",
-   "settings": [
-    "WeatherLightning3D"
-   ],
-   "note": "",
-   "what": "strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Precipitation haze",
-   "settings": [
-    "WeatherMap3D.set_precipitation_extinction()"
-   ],
-   "note": "",
-   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Haze and cloud shadow in fog",
-   "settings": [
-    "aerosol_haze",
-    "haze_visibility"
-   ],
-   "note": "",
-   "what": "volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Wet surfaces and puddles",
-   "settings": [
-    "surface_storage",
-    "puddle_drain_rate",
-    "temperature",
-    "humidity"
-   ],
-   "note": "",
-   "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Contact wetness",
-   "settings": [
-    "contact_wetness_enabled"
-   ],
-   "note": "",
-   "what": "ground that running water crossed stays dark after it drains, then dries with the weather.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Followers",
-   "settings": [
-    "follow_weather",
-    "weather_wind"
-   ],
-   "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Sun and moon clock",
-   "settings": [
-    "SkyClock"
-   ],
-   "note": "",
-   "what": "date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Sky atmosphere",
-   "settings": [
-    "WeatherSkyMaterial.atmosphere_model",
-    "SkyClock.drive_light_energy"
-   ],
-   "note": "",
-   "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Cloud layer",
-   "settings": [
-    "cloud_base_height",
-    "cloud_thickness",
-    "cloud_density"
-   ],
-   "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Clouds that never repeat",
-   "settings": [],
-   "note": "always on",
-   "what": "shape noise read at two scales with an irrational ratio.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Cloud reprojection",
-   "settings": [
-    "WeatherSkyMaterial.cloud_reprojection"
-   ],
-   "note": "",
-   "what": "clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Cloud shadows",
-   "settings": [
-    "sun_light"
-   ],
-   "note": "",
-   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Sun projector",
-   "settings": [
-    "light_projector",
-    "projector_size",
-    "projector_offset"
-   ],
-   "note": "",
-   "what": "`light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
   },
   {
    "name": "Snow cover",
@@ -2825,46 +2440,211 @@
    "topic": "Sparkle"
   },
   {
-   "name": "Histogram metering",
+   "name": "Weather map",
    "settings": [
-    "rendering/camera/auto_exposure/metering"
+    "WeatherMap3D"
    ],
    "note": "",
-   "what": "lamps in view no longer darken the scene.",
-   "page": "exposure",
-   "title": "Exposure",
+   "what": "one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.",
+   "page": "weather",
+   "title": "Weather",
    "topic": ""
   },
   {
-   "name": "Dark-scene key",
+   "name": "Wind",
    "settings": [
-    "dark_scene_luminance"
+    "roughness_length"
    ],
    "note": "",
-   "what": "night stays night.",
-   "page": "exposure",
-   "title": "Exposure",
+   "what": "slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.",
+   "page": "weather",
+   "title": "Weather",
    "topic": ""
   },
   {
-   "name": "Local exposure",
+   "name": "Wind near the ground",
    "settings": [
-    "local_highlight_contrast",
-    "local_shadow_contrast"
+    "add_canopy",
+    "add_shelter_box",
+    "gust_patch_size"
    ],
    "note": "",
-   "what": "",
-   "page": "exposure",
-   "title": "Exposure",
+   "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
+   "page": "weather",
+   "title": "Weather",
    "topic": ""
   },
   {
-   "name": "Pixel antialiasing",
+   "name": "Season state",
+   "settings": [
+    "WeatherMap3D.get_season()"
+   ],
+   "note": "",
+   "what": "day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Storms",
+   "settings": [
+    "add_storm"
+   ],
+   "note": "",
+   "what": "drift with the wind, with a rain core and a downdraft.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Lightning and thunder",
+   "settings": [
+    "WeatherLightning3D"
+   ],
+   "note": "",
+   "what": "strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Precipitation haze",
+   "settings": [
+    "WeatherMap3D.set_precipitation_extinction()"
+   ],
+   "note": "",
+   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Haze and cloud shadow in fog",
+   "settings": [
+    "aerosol_haze",
+    "haze_visibility"
+   ],
+   "note": "",
+   "what": "volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wet surfaces and puddles",
+   "settings": [
+    "surface_storage",
+    "puddle_drain_rate",
+    "temperature",
+    "humidity"
+   ],
+   "note": "",
+   "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Contact wetness",
+   "settings": [
+    "contact_wetness_enabled"
+   ],
+   "note": "",
+   "what": "ground that running water crossed stays dark after it drains, then dries with the weather.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Followers",
+   "settings": [
+    "follow_weather",
+    "weather_wind"
+   ],
+   "note": "",
+   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Sun and moon clock",
+   "settings": [
+    "SkyClock"
+   ],
+   "note": "",
+   "what": "date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Sky atmosphere",
+   "settings": [
+    "WeatherSkyMaterial.atmosphere_model",
+    "SkyClock.drive_light_energy"
+   ],
+   "note": "",
+   "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Cloud layer",
+   "settings": [
+    "cloud_base_height",
+    "cloud_thickness",
+    "cloud_density"
+   ],
+   "note": "",
+   "what": "shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Clouds that never repeat",
    "settings": [],
+   "note": "always on",
+   "what": "shape noise read at two scales with an irrational ratio.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Cloud reprojection",
+   "settings": [
+    "WeatherSkyMaterial.cloud_reprojection"
+   ],
    "note": "",
-   "what": "when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.",
-   "page": "dlss-ray-reconstruction",
-   "title": "DLSS Ray Reconstruction",
+   "what": "clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Cloud shadows",
+   "settings": [
+    "sun_light"
+   ],
+   "note": "",
+   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Sun projector",
+   "settings": [
+    "light_projector",
+    "projector_size",
+    "projector_offset"
+   ],
+   "note": "",
+   "what": "`light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
    "topic": ""
   },
   {
@@ -2902,6 +2682,238 @@
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
+  },
+  {
+   "name": "Fibre shading",
+   "settings": [
+    "rendering/pathtracing/hair"
+   ],
+   "note": "",
+   "what": "Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Raster hair shading",
+   "settings": [
+    "PhysXHair3D.hair_shading"
+   ],
+   "note": "",
+   "what": "Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Deep opacity shadows",
+   "settings": [
+    "PhysXHair3D.deep_shadows",
+    "hair_shading"
+   ],
+   "note": "",
+   "what": "raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Hair shadows",
+   "settings": [
+    "cast_hair_shadows"
+   ],
+   "note": "",
+   "what": "raster strand hair casts shadows on the face, body and ground.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Custom hair shaders",
+   "settings": [
+    "HAIR",
+    "HAIR_ABSORPTION",
+    "HAIR_ROUGHNESS",
+    "POSITIONAL_SHADOW_OFFSET",
+    "hair_strands",
+    "hair_cards",
+    "IN_PATH_TRACER"
+   ],
+   "note": "",
+   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Strand grooms",
+   "settings": [
+    "HairGroom",
+    "HairMesh"
+   ],
+   "note": "",
+   "what": "grown on a scalp mesh or loaded from a HAIR file.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Moving strand hair",
+   "settings": [
+    "PhysXHair3D"
+   ],
+   "note": "",
+   "what": "AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Swept sphere strands",
+   "settings": [
+    "rendering/pathtracing/linear_swept_spheres"
+   ],
+   "note": "",
+   "what": "where the GPU traces swept spheres in hardware, strands are traced as round tubes, one primitive per segment, and shaded where the ray meets the fibre; other GPUs keep crossed strips. Not yet checked on supporting hardware.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Raster strands",
+   "settings": [],
+   "note": "TressFX coverage",
+   "what": "blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Distance LOD",
+   "settings": [
+    "PhysXHair3D",
+    "lod_enabled",
+    "lod_start_distance",
+    "lod_end_distance",
+    "lod_strand_ratio"
+   ],
+   "note": "",
+   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Far hair for crowds",
+   "settings": [
+    "cards_enabled",
+    "card_count"
+   ],
+   "note": "",
+   "what": "far strand hair hands over to one thick strand per clump, a clump at a time once it is 2 pixels across, simulating only the guides once the whole head has handed over. Raster only; path tracing keeps the strands.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Motion vectors for strands",
+   "settings": [
+    "PREVIOUS_FRAME",
+    "render_mode alpha_motion_vectors"
+   ],
+   "note": "",
+   "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Wet hair",
+   "settings": [
+    "wetness",
+    "weather_wetting",
+    "wet_clumping"
+   ],
+   "note": "",
+   "what": "strands soak in rain and dry over time, turning darker, glossier, heavier, flatter and clumped.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Snow on hair",
+   "settings": [
+    "snow",
+    "snow_capacity"
+   ],
+   "note": "",
+   "what": "snow from the weather settles on the top layer and windward side as small clumps, on strands and hair cards alike, and melts into wetness.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Grey and sun-bleached hair",
+   "settings": [
+    "grey_ratio",
+    "sun_bleaching"
+   ],
+   "note": "",
+   "what": "single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Body collision",
+   "settings": [
+    "PhysXHair3D",
+    "collision_body",
+    "collision_cell_size"
+   ],
+   "note": "",
+   "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Hair on cloth",
+   "settings": [
+    "collision_cloth",
+    "cloth_thickness"
+   ],
+   "note": "",
+   "what": "strands rest on simulated cloth such as a collar or hood, lying over it as it moves.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Strand-strand collision",
+   "settings": [
+    "strand_collision",
+    "strand_collision_radius",
+    "strand_collision_friction"
+   ],
+   "note": "",
+   "what": "guide strands no longer pass through each other, with friction.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Hair volume",
+   "settings": [
+    "volume_enabled",
+    "volume_friction",
+    "volume_stiffness"
+   ],
+   "note": "",
+   "what": "strands push and drag on each other through a density grid, so hair keeps its volume.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
   },
   {
    "name": "Camera-relative tracing",

@@ -430,7 +430,7 @@ func _build_scene() -> void:
 				var vv: PackedVector3Array = lm.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
 				var li := int(OS.get_environment("LV")) if OS.has_environment("LV") else vv.size() / 2
 				at = vv[clampi(li, 0, vv.size() - 1)] + Vector3(xs[0], 0, 0)
-				print("lichen surface vertices ", vv.size())
+				print("lichen surface vertices ", vv.size(), " at ", at - Vector3(xs[0], 0, 0))
 		var ld := float(OS.get_environment("LDIST")) if OS.has_environment("LDIST") else 0.35
 		cam.position = at + Vector3(0.6, 0.25, 0.75).normalized() * ld
 		cam.look_at(at)

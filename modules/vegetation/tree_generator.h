@@ -312,6 +312,7 @@ private:
 	// Climber leaves from PlantGenerator.make_climber_leaves (one baked set per climber, shared),
 	// instanced into their own surface; empty when climber_plant_leaves is off.
 	Builder climber_leaf_b;
+	Builder climber_adult_b; // Ivy's adult leaves, on their own material (trees.md 5i).
 	bool climber_plant_leaves = true;
 	float leaf_flutter = 1.0f; // Leaf flutter amount (trees.md 3b); 0 keeps the plain material.
 	Ref<Material> _flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const;
@@ -336,8 +337,9 @@ private:
 	float _bare_amount() const;
 	float _bare_at(const Vector3 &p_pos, const Vector3 &p_normal, const Vector3 &p_axis, float p_ground) const;
 	void _peel_bark(Builder &r_bark);
-	static Array _plant_climber_leaves(Climber p_climber);
-	static Array plant_climber_cache[4];
+	// Slots: the Climber kinds, then CLIMBER_MAX for ivy's adult leaves (trees.md 5i).
+	static Array _plant_climber_leaves(int p_slot);
+	static Array plant_climber_cache[CLIMBER_MAX + 1];
 	// The same leaves' arrays, read once: reading a mesh back from the RenderingServer waits on
 	// the render thread for every leaf, and blocks near meshes built on worker threads.
 	struct ClimberLeafShape {
@@ -346,7 +348,7 @@ private:
 		PackedVector2Array uvs;
 		PackedInt32Array indices;
 	};
-	static LocalVector<ClimberLeafShape> plant_climber_shapes[4];
+	static LocalVector<ClimberLeafShape> plant_climber_shapes[CLIMBER_MAX + 1];
 
 public:
 	static void free_climber_leaves() {
