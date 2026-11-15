@@ -105,7 +105,7 @@
 			With [constant DEADWOOD_BESIDE]: how far from a log's side the species grows, in metres, thinning out across the band.
 		</member>
 		<member name="deadwood_min_radius" type="float" setter="set_deadwood_min_radius" getter="get_deadwood_min_radius" default="0.08">
-			With [constant DEADWOOD_ON]: the thinnest log it grows on (radius, metres). Thickness stands for decay: thin branches stay bare, thick rotting trunks carry seedlings.
+			With [constant DEADWOOD_ON]: the thinnest log it grows on (radius, metres). Thickness stands for decay: thin branches stay bare, thick rotting trunks carry seedlings. With [constant DEADWOOD_BESIDE]: the thinnest log it grows beside (0: by any fallen wood).
 		</member>
 		<member name="deadwood_rule" type="int" setter="set_deadwood_rule" getter="get_deadwood_rule" enum="PlantSpecies.DeadwoodRule" default="0">
 			How the species meets fallen wood placed by [VegetationField3D] (this field's or its [member VegetationField3D.canopy_field]'s): species with the meta [code]deadwood[/code] whose meshes carry the meta [code]tree_deadwood_axis[/code] (start, end and radius in mesh space, as [code]TreeGenerator[/code] gives its logs, fallen branches and sticks).

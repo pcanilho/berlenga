@@ -677,7 +677,14 @@ func _deadwood_checks() -> void:
 	ground.name = "DeadwoodGround"
 	ground.populate_on_ready = false
 	var gb := Biome.new()
-	gb.species = [cover, moss, fern]
+	# Honey fungus as make_floor() sets it up (beside logs at least 12 cm thick), on the test's mesh.
+	var honey: PlantSpecies = null
+	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 1, false):
+		if sp.has_meta("mushroom") and sp.deadwood_rule == PlantSpecies.DEADWOOD_BESIDE:
+			honey = sp.duplicate()
+	honey.meshes = [sm]
+	honey.density = 0.8
+	gb.species = [cover, moss, fern, honey]
 	ground.biome = gb
 	add_child(ground)
 	ground.data_map = ground.get_path_to(dm)
@@ -707,6 +714,12 @@ func _deadwood_checks() -> void:
 				in_stem += 1
 			elif d < 0.6:
 				near_stem += 1
+	var honey_by := 0
+	for p in ground.get_placements(3):
+		var h: Dictionary = wood.get_deadwood_at(p, 0.85)
+		if not h.is_empty() and h["side"] >= 0.0 and h["side"] < 0.85:
+			honey_by += 1
+	_check("deadwood: honey fungus tufts beside the logs", ground.get_placements(3).size() > 0 and honey_by == ground.get_placements(3).size(), [ground.get_placements(3).size(), honey_by, nlogs])
 	_check("deadwood: ground plants keep out of the canopy field's trunks, and grow up to them", stems.size() > 3 and in_stem == 0 and near_stem > 0, [stems.size(), in_stem, near_stem])
 	# Rocks (VegetationField3D.obstacles): boulders where cover grew; none of it inside them after,
 	# and it grows up to their foot.
@@ -1067,6 +1080,7 @@ func _deadwood_view() -> void:
 		var sp: PlantSpecies = wood.biome.species[i]
 		if sp.has_meta("deadwood") and sp.resource_name.contains("(log)"):
 			log_i = i
+			print("VEG_LOGS %s placed %d" % [sp.resource_name, wood.get_placements(i).size()])
 	var at := Vector3(0, height(0, 0), 0)
 	if log_i >= 0 and wood.get_placements(log_i).size() > 0:
 		var best := 1e9
@@ -1103,6 +1117,12 @@ func _deadwood_view() -> void:
 				sp.density = 0.0
 			else:
 				sp.deadwood_rule = PlantSpecies.DEADWOOD_IGNORE
+	if OS.get_environment("VEG_HONEY_DEBUG") != "":
+		for sp in floor_set:
+			if sp.has_meta("mushroom") and sp.deadwood_rule == PlantSpecies.DEADWOOD_BESIDE:
+				sp.footprint = 0.0
+				sp.density = 1.0
+				print("VEG_HONEY footprint 0, density 1, min radius %.2f band %.2f shade %s" % [sp.deadwood_min_radius, sp.deadwood_band, str(sp.get_rule_range(PlantSpecies.RULE_SHADE))])
 	gb.species = floor_set
 	print("VEG_DEADWOOD_VIEW floor made in %d ms" % (Time.get_ticks_msec() - t0))
 	ground.biome = gb
@@ -1169,24 +1189,29 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 					tuft = p
 					at = l
 	print("VEG_MUSHROOMS honey tufts %d, nearest %.2f m from the log at %s" % [ground.get_placements(honey).size() if honey >= 0 else 0, best, str(tuft)])
-	# Looking from the log's side across the tuft: the camera on the side away from the log.
+	# Looking along the log past the tuft: the log runs away on one side, the birch behind.
+	var wood := ground.get_node(ground.canopy_field) as VegetationField3D
+	var hit: Dictionary = wood.get_deadwood_at(tuft, 1.0)
 	var away := Vector3(tuft.x - at.x, 0, tuft.z - at.z)
-	if away.length() < 0.2:
+	if not hit.is_empty():
+		var n: Vector3 = hit["normal"]
+		away = Vector3(n.x, 0, n.z)
+	if away.length() < 0.05:
 		away = Vector3(1, 0, 0)
 	away = away.normalized()
 	var side := Vector3(-away.z, 0, away.x)
-	var eye := tuft + side * 0.9 + away * 0.45
+	var eye := tuft - side * 0.95 + away * 0.3
 	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.5, eye.z)
-	var look := (Vector3(tuft.x, 0, tuft.z) - Vector3(eye.x, 0, eye.z)).normalized()
+	var look := side
 	cam.fov = 50.0
-	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.12, tuft.z) + look * 0.6)
+	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.15, tuft.z) + look * 0.5)
 	var extra: Array[Node3D] = []
 	var tg := TreeGenerator.new()
 	tg.preset = TreeGenerator.PRESET_BIRCH
 	tg.seed = 3
 	var birch := MeshInstance3D.new()
 	birch.mesh = tg.generate()
-	var bp := tuft + look * 3.5 + side * 0.4
+	var bp := tuft + look * 3.5 + away * 0.9
 	birch.position = Vector3(bp.x, height(bp.x, bp.z) - 0.05, bp.z)
 	add_child(birch)
 	var pg := PlantGenerator.new()
@@ -1196,7 +1221,7 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 		pg.seed = 7 + k
 		var fa := MeshInstance3D.new()
 		fa.mesh = pg.generate()
-		var fp := tuft + look * (2.5 + 0.5 * k) + side * (0.1 - 0.7 * k)
+		var fp := tuft + look * (2.4 + 0.5 * k) + away * (0.5 + 0.6 * k)
 		fa.position = Vector3(fp.x, height(fp.x, fp.z), fp.z)
 		fa.rotation.y = 1.3 * k
 		add_child(fa)

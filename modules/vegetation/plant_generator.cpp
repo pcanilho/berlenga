@@ -5418,7 +5418,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		const FloorSpec chanterelle = { P::PRESET_CHANTERELLE, 1.6f, 0.12f, 0.14f, 0.9f, 1.1f, 6.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 20.0f };
 		const FloorSpec brittlegill = { P::PRESET_BRITTLEGILL, 2.0f, 0.1f, 0.12f, 0.9f, 1.1f, 8.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 20.0f };
 		const FloorSpec clouded = { P::PRESET_CLOUDED_AGARIC, 0.9f, 0.12f, 0.6f, 0.9f, 1.1f, 9.0f, 0.35f, 0.3f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
-		FloorSpec honey = { P::PRESET_HONEY_FUNGUS, 1.4f, 0.2f, 0.5f, 0.9f, 1.1f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
+		FloorSpec honey = { P::PRESET_HONEY_FUNGUS, 1.4f, 0.0f, 1.0f, 0.9f, 1.1f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
 		honey.deadwood = PlantSpecies::DEADWOOD_BESIDE;
 		honey.deadwood_size = 0.8f;
 		switch (p_stand) {
@@ -5590,6 +5590,9 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			} else {
 				sp->set_deadwood_band(f.deadwood_size);
 				sp->set_deadwood_uphill(f.uphill);
+				// Ferns and banked leaves by any fallen wood; honey fungus by logs and stumps only,
+				// whose rotting wood feeds it.
+				sp->set_deadwood_min_radius(f.preset == P::PRESET_HONEY_FUNGUS ? 0.12f : 0.0f);
 			}
 			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
 		}

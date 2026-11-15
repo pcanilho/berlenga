@@ -86,7 +86,7 @@ class VegetationField3D : public Node3D {
 	HashMap<Vector2i, LocalVector<int>> deadwood_grid;
 	float deadwood_max_radius = 0.0f;
 	// The nearest log within reach of its side, this field's own (under crown_lock).
-	bool _deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit) const;
+	bool _deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit, float p_min_radius = 0.0f) const;
 	// A placed crown that shades the ground under it.
 	struct Crown {
 		Vector2 xz;

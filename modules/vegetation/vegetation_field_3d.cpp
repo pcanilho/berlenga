@@ -533,7 +533,8 @@ void deadwood_insert(Grid &r_grid, const Log &p_log, int p_index, float p_cell) 
 // The log whose side is nearest the point (within p_reach), seen from above: a log is a cylinder
 // round its axis, so over its footprint the upper surface stands sqrt(r^2 - d^2) over the axis.
 template <typename Grid, typename Logs, typename Hit>
-bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_xz, float p_reach, float p_cell, Hit &r_hit) {
+// p_min_radius: only wood at least that thick (a plant beside logs, not the sticks round them).
+bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_xz, float p_reach, float p_cell, Hit &r_hit, float p_min_radius = 0.0f) {
 	if (p_logs.is_empty()) {
 		return false;
 	}
@@ -548,6 +549,9 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 			}
 			for (int idx : *bucket) {
 				const auto &d = p_logs[idx];
+				if (d.radius < p_min_radius) {
+					continue;
+				}
 				const Vector2 a(d.a.x, d.a.z), ab = Vector2(d.b.x, d.b.z) - a;
 				const float len2 = ab.length_squared();
 				const float t = len2 > 1e-8f ? CLAMP((p_xz - a).dot(ab) / len2, 0.0f, 1.0f) : 0.0f;
@@ -599,9 +603,9 @@ Dictionary VegetationField3D::get_deadwood_at(const Vector3 &p_global_position, 
 	return d;
 }
 
-bool VegetationField3D::_deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit) const {
+bool VegetationField3D::_deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit, float p_min_radius) const {
 	RWLockRead guard(crown_lock);
-	return deadwood_nearest(deadwood_grid, deadwood, p_xz, p_reach, DEADWOOD_CELL, r_hit);
+	return deadwood_nearest(deadwood_grid, deadwood, p_xz, p_reach, DEADWOOD_CELL, r_hit, p_min_radius);
 }
 
 // The placed logs, for other fields' plants (canopy_field) and get_deadwood_at().
@@ -775,9 +779,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					DeadwoodHit hit;
 					if (dw_rule != PlantSpecies::DEADWOOD_IGNORE && suit > 0.0f) {
 						const float dw_reach = dw_rule == PlantSpecies::DEADWOOD_BESIDE ? dw_band : 0.0f;
-						bool found = deadwood_nearest(local_deadwood_grid, local_deadwood, xz, dw_reach, DEADWOOD_CELL, hit);
+						// Beside: the nearest wood thick enough, past any sticks nearer.
+						const float dw_min = dw_rule == PlantSpecies::DEADWOOD_BESIDE ? sp->get_deadwood_min_radius() : 0.0f;
+						bool found = deadwood_nearest(local_deadwood_grid, local_deadwood, xz, dw_reach, DEADWOOD_CELL, hit, dw_min);
 						if (p_setup.other) {
-							found = p_setup.other->_deadwood_at(xz, dw_reach, hit) || found;
+							found = p_setup.other->_deadwood_at(xz, dw_reach, hit, dw_min) || found;
 						}
 						if (dw_rule == PlantSpecies::DEADWOOD_AVOID) {
 							if (found && hit.side < 0.0f) {
@@ -792,7 +798,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 							on_log = true;
 						} else {
-							if (hit.side < 0.0f) {
+							// Beside it: outside the log, and only by wood thick enough (honey fungus
+							// by stumps and trunks, not twigs).
+							if (hit.side < 0.0f || hit.radius < sp->get_deadwood_min_radius()) {
 								suit = 0.0f;
 							}
 							suit *= 1.0f - CLAMP(hit.side / dw_band, 0.0f, 1.0f);
