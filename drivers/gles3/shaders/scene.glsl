@@ -1515,6 +1515,12 @@ layout(location = 0) out vec4 motion_vectors;
 
 /* clang-format off */
 
+// sun_visibility(world_position): the Compatibility renderer keeps its shadows in its own passes, so no
+// directional shadow can be read at an arbitrary point here; the light counts as unshadowed.
+vec3 sun_visibility(vec3 p_world) {
+	return vec3(1.0);
+}
+
 #GLOBALS
 
 /* clang-format on */

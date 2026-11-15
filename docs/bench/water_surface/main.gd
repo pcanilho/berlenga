@@ -53,6 +53,7 @@ extends Node3D
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
+#   --shade=X,Z     a slab 12 m up whose shadow (a 5 m band along x) falls on the water at X,Z (an overhang's shade)
 #
 # Run with --fixed-fps 30 so raster and path traced frames show the same waves.
 
@@ -67,6 +68,7 @@ var slope_deg := -1.0
 var cam_dy := 0.0
 var sun_energy := 1.0
 var dive := 0.0
+var shade := Vector2(INF, INF)
 var bench_cam: Camera3D
 var water_params := {}
 var node_params := {}
@@ -175,6 +177,9 @@ func _ready() -> void:
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
+		elif a.begins_with("--shade="):
+			var v := a.substr(8).split_floats(",")
+			shade = Vector2(v[0], v[1])
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
 			water_params[wkv[0]] = str_to_var(wkv[1])
@@ -229,6 +234,11 @@ func _ready() -> void:
 	rock_mat.roughness = 0.8
 	for p in [Vector3(-2.5, -1.4, -4.0), Vector3(1.5, -1.9, -7.0), Vector3(3.0, -0.9, -1.5)]:
 		_slab(Vector3(1.2, 1.2, 1.2), p, Vector3(0.3, 0.7, 0.2), rock_mat)
+	if shade.x != INF:
+		# Under the sun at the shade point, 12 m up the light's ray.
+		var d := -sun.global_transform.basis.z
+		var top := Vector3(shade.x, 0.0, shade.y) - d * (12.0 / -d.y)
+		_slab(Vector3(60, 0.4, 5), top, Vector3.ZERO, rock_mat)
 	# A rock standing out of the water, for a current to go round.
 	_slab(Vector3(2.0, 4.0, 3.0), Vector3(-6.0, -1.0, -9.0), Vector3(0.0, 0.4, 0.0), rock_mat)
 

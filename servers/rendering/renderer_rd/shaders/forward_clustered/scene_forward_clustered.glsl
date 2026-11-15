@@ -1092,6 +1092,48 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
+// sun_visibility(world_position) (spatial fragment and light): the first directional light's shadow,
+// with its projector (the cloud shadow), at any world position. One hardware PCF tap from the cascade
+// that covers the point; callers that march through a medium jitter their steps instead.
+vec3 sun_visibility(vec3 p_world) {
+	if (scene_data_block.data.directional_light_count == 0u) {
+		return vec3(1.0);
+	}
+	mat4 view = transpose(mat4(scene_data_block.data.view_matrix[0], scene_data_block.data.view_matrix[1], scene_data_block.data.view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0)));
+	vec3 vertex = (view * vec4(p_world, 1.0)).xyz;
+	float shadow = 1.0;
+	if (directional_lights.data[0].shadow_opacity > 0.001) {
+		float depth_z = -vertex.z;
+		vec4 splits = directional_lights.data[0].shadow_split_offsets;
+		vec4 coord = vec4(-1.0);
+		if (depth_z < splits.x) {
+			coord = directional_lights.data[0].shadow_matrix1 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.x, 1.0);
+		} else if (depth_z < splits.y) {
+			coord = directional_lights.data[0].shadow_matrix2 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.y, 1.0);
+		} else if (depth_z < splits.z) {
+			coord = directional_lights.data[0].shadow_matrix3 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.z, 1.0);
+		} else if (depth_z < splits.w) {
+			coord = directional_lights.data[0].shadow_matrix4 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.w, 1.0);
+		}
+		if (coord.w > 0.0) {
+			coord /= coord.w;
+			shadow = textureProj(sampler2DShadow(directional_shadow_atlas, shadow_sampler), vec4(coord.xy, coord.z, 1.0));
+			shadow = mix(shadow, 1.0, smoothstep(directional_lights.data[0].fade_from, directional_lights.data[0].fade_to, vertex.z));
+			shadow = mix(1.0, shadow, directional_lights.data[0].shadow_opacity);
+		}
+	}
+	vec3 projector = vec3(1.0);
+	vec4 rect = directional_lights.data[0].projector_rect;
+	if (rect != vec4(0.0)) {
+		vec2 uv = vec2(dot(vec4(vertex, 1.0), directional_lights.data[0].projector_u), dot(vec4(vertex, 1.0), directional_lights.data[0].projector_v));
+		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+			vec4 proj = textureLod(sampler2D(decal_atlas_srgb, light_projector_sampler), uv * rect.zw + rect.xy, 0.0);
+			projector = proj.rgb * proj.a;
+		}
+	}
+	return shadow * projector;
+}
+
 #GLOBALS
 
 // POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow
