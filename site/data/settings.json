@@ -1639,6 +1639,38 @@
    "topic": "Ground"
   },
   {
+   "name": "Rock generator",
+   "settings": [
+    "RockGenerator",
+    "rock_type",
+    "family",
+    "transport_distance",
+    "weathering"
+   ],
+   "note": "",
+   "what": "rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; granite, limestone, sandstone, basalt and slate.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
+   "name": "Rock fields",
+   "settings": [
+    "RockField3D",
+    "rockfall_",
+    "scree_",
+    "glacial_",
+    "river_",
+    "shore_",
+    "cliff_"
+   ],
+   "note": "",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Plant placement",
    "settings": [
     "VegetationField3D",
@@ -1912,6 +1944,18 @@
    ],
    "note": "",
    "what": "ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Plants between stones",
+   "settings": [
+    "PlantSpecies.stone_gap",
+    "PlantGenerator.make_stones"
+   ],
+   "note": "",
+   "what": "crevice ferns, stonecrop, saxifrage and thrift grow only in the gaps of scree, gravel and shingle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
