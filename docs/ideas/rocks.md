@@ -203,6 +203,19 @@ out to which the up-facing surface stays within the tolerance of that plane. 128
 crests and knolls they sit in the ground instead of perching on the centre point (at most a third of their
 height deeper).
 
+Review pass (15 Nov, late): the close-up marks are now laid out in the stone's own frame (fixed from the field's
+zero crossings before carving, shared by the base and close-up shapes, so they also match in scale and the swap
+does not pop) and in metres at the family's typical size, which UV2.y carries to the shader. Granite: a crystal
+map of 1.8 cm cells (quartz 30% proud, feldspar lower, each crystal a tilted facet, etched boundaries, cleavage
+glints) and a biotite map of 1.3 cm clots weathered into pits, both read by the shader with the same integer hash
+(rk_crystal), so colour and relief agree; flakes spalled from the rind (6 cm plates), grus pits, hairline cracks on
+a 9 cm map, short hackle steps on fresh breaks. Sandstone laminae of 1.9 cm as ledges by hardness (shader colour
+from the same lamina hash), limestone runnels with knife-edge crests, basalt vesicles as spherical cavities.
+Fresh rockfall and scree fragments spread over the Zingg classes (32% slabs, 23% rods, 20% wedges, the rest
+blocks); the scree toe gets a few 2 to 6 m blocks. Caps: the largest up-facing patch, 3 cm tolerance, on the base
+shape (1196 of 1282 scree stones with a cap of 6 cm or more). Debris skirts of chips round rockfall and glacial
+blocks over 0.8 m; moss favours pole-facing faces and lichen the lit ones (`pole_direction`, `aspect_strength`).
+
 ## Sources
 
 Domokos et al. PNAS 2020 (arXiv 1912.04628); Paris et al. Visual Computer 2020 (hal-02926218);

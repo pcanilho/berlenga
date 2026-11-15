@@ -233,71 +233,166 @@ void rk_worley2(const Vector3 &p_p, uint32_t p_seed, float &r_f1, float &r_f2, u
 	r_id = id;
 }
 
-// Millimetre relief of a rock surface, in metres, outward positive. p in metres in the rock's own space, n the
-// outward normal, fresh 1 on a fresh break. Scales follow the rock's fabric: granite crystals of 4 to 10 mm
-// (feldspar standing proud of etched quartz and mica, Migoń 2006), sandstone grains and laminae of a few mm,
-// limestone solution flutes (rillenkarren, 1 to 2 cm apart, running down the upper faces; Ford and Williams
-// 2007) and micropits, basalt vesicles of 2 to 6 mm, slate cleavage steps under a millimetre, and conchoidal
-// ripples and hackle on fresh breaks (Kulander et al. 1990).
-float rk_relief(RockGenerator::RockType p_type, const Vector3 &p, const Vector3 &n, float p_fresh, uint32_t p_seed, float p_cell) {
-	// A feature needs about three grid cells across to be meshed rather than aliased: fade the finer ones out.
+// Worley cell search that also gives the nearest feature point (in cells).
+void rk_worley_point(const Vector3 &p_p, uint32_t p_seed, float &r_f1, float &r_f2, uint32_t &r_id, Vector3 &r_point) {
+	const int x = int(Math::floor(p_p.x)), y = int(Math::floor(p_p.y)), z = int(Math::floor(p_p.z));
+	float f1 = 9.0f, f2 = 9.0f;
+	uint32_t id = 0;
+	Vector3 best;
+	for (int k = -1; k <= 1; k++) {
+		for (int j = -1; j <= 1; j++) {
+			for (int i = -1; i <= 1; i++) {
+				const int cx = x + i, cy = y + j, cz = z + k;
+				const Vector3 f(cx + rk_lattice(cx, cy, cz, p_seed), cy + rk_lattice(cx, cy, cz, p_seed + 7u), cz + rk_lattice(cx, cy, cz, p_seed + 13u));
+				const float d = (f - p_p).length_squared();
+				if (d < f1) {
+					f2 = f1;
+					f1 = d;
+					id = rk_hash(uint32_t(cx) * 73856093u ^ uint32_t(cy) * 19349663u ^ uint32_t(cz) * 83492791u ^ (p_seed + 29u));
+					best = f;
+				} else if (d < f2) {
+					f2 = d;
+				}
+			}
+		}
+	}
+	r_f1 = Math::sqrt(f1);
+	r_f2 = Math::sqrt(f2);
+	r_id = id;
+	r_point = best;
+}
+
+// The granite crystal map, shared with the shader (rk_crystal there, same hash and lattice): crystal cells of
+// 1.8 cm, quartz (30%) or feldspar by the cell's id; biotite clots on a 1.3 cm map of their own (12% of its cells).
+static const float RK_CRYSTAL_CELL = 0.018f;
+static const uint32_t RK_CRYSTAL_SEED = 0x51A7u;
+static const float RK_BIOTITE_CELL = 0.013f;
+// Sandstone laminae: 1.9 cm, each with its own hardness (shared with the shader's lamina colour).
+static const float RK_LAMINA = 0.019f;
+static const uint32_t RK_LAMINA_SEED = 0x5A5Du;
+static const uint32_t RK_BIOTITE_SEED = 0xB10Bu;
+static const float RK_BIOTITE_SHARE = 0.12f;
+
+// Millimetre to decimetre relief of a rock surface, in metres, outward positive. p in metres in the stone's own
+// frame (the frame the shader sees), n the outward normal in that frame, fresh 1 on a fresh break, p_cell the
+// grid cell in metres. Each scale is geometry, so the silhouette breaks and the path tracer sees it:
+// - granite: crystals as planar facets at their own heights from the crystal map (quartz proud, feldspar a little
+//   lower, biotite weathered out into pits; Migoń 2006), etched boundaries, grus pits where crystals were
+//   plucked, flakes spalled off the rind, hairline cracks;
+// - sandstone: laminae as ledges, harder ones standing out (differential weathering of beds);
+// - limestone: rillenkarren as cut runnels, sharp crests between round channels, running down the upper faces
+//   (Ford and Williams 2007), and micropits;
+// - basalt: vesicles as real spherical cavities;
+// - slate: cleavage steps;
+// - fresh breaks: stepped fracture faces (hackle steps) and conchoidal ripples (Kulander et al. 1990).
+// A feature needs about three grid cells across to be meshed rather than aliased: finer ones fade out.
+float rk_relief(RockGenerator::RockType p_type, const Vector3 &p, const Vector3 &n, float p_fresh, float p_cell, float p_weather) {
 	auto fit = [&](float p_size) { return Math::smoothstep(1.5f * p_cell, 3.0f * p_cell, p_size); };
-	// Everything here is at least three vertex spacings (4 mm edges) across; finer grain stays in the shader's
-	// normal, which fades out by pixel footprint.
-	float d = 0.0005f * fit(0.015f) * rk_fbm(p / 0.015f, p_seed + 3u, 2);
+	const float old = 1.0f - p_fresh;
+	float d = 0.0f;
 	float f1, f2;
 	uint32_t id;
+	Vector3 fp;
+	// Flakes spalled off a weathered face: plates of 4 to 8 cm, each its own plane at its own depth, so the face is
+	// terraced and the outline steps (all rock types but the soft ones get this on old faces).
+	if (p_type == RockGenerator::ROCK_GRANITE || p_type == RockGenerator::ROCK_BASALT || p_type == RockGenerator::ROCK_SANDSTONE) {
+		rk_worley_point(p / 0.06f, 0x3F1Au, f1, f2, id, fp);
+		const float u = float(id >> 8) / 16777216.0f;
+		const Vector3 tilt = Vector3(float((id >> 4) & 15u) - 7.5f, float((id >> 12) & 15u) - 7.5f, float((id >> 20) & 15u) - 7.5f) * 0.012f;
+		const float plate = -0.004f * u + tilt.dot(p - fp * 0.06f);
+		d += fit(0.06f) * old * MIN(plate, 0.0015f) * (0.5f + 0.5f * p_weather);
+	}
 	switch (p_type) {
 		case RockGenerator::ROCK_GRANITE: {
-			const float cell = 0.02f;
-			rk_worley2(p / cell, p_seed + 11u, f1, f2, id);
-			const float border = f2 - f1; // 0 on a grain boundary
-			const float h = float(id >> 8) / 16777216.0f;
-			// Each crystal a facet at its own height, boundaries etched; quartz (a third) sits lower and glassier.
-			d += fit(cell) * (h < 0.33f ? -0.0012f : 0.0014f * h) * (1.0f - p_fresh * 0.5f);
-			d -= fit(cell) * 0.0022f * (1.0f - Math::smoothstep(0.0f, 0.22f, border));
-			// Grus: loose grains a few millimetres across, standing proud on a weathered face.
-			d += fit(0.008f) * 0.0006f * rk_fbm(p / 0.008f, p_seed + 12u, 2) * (1.0f - p_fresh);
+			rk_worley_point(p / RK_CRYSTAL_CELL, RK_CRYSTAL_SEED, f1, f2, id, fp);
+			const float u = float(id >> 8) / 16777216.0f;
+			// Each crystal a planar facet: its class height plus a small tilt about its centre (cleavage faces).
+			const Vector3 tilt = Vector3(float((id >> 2) & 15u) - 7.5f, float((id >> 10) & 15u) - 7.5f, float((id >> 18) & 15u) - 7.5f) * 0.022f;
+			float facet = u < 0.3f ? 0.0012f : 0.0003f; // quartz proud, feldspar lower (it kaolinises)
+			facet += tilt.dot(p - fp * RK_CRYSTAL_CELL);
+			d += fit(RK_CRYSTAL_CELL) * facet;
+			// Etched boundaries: a V groove along each grain edge.
+			const float border = (f2 - f1) * RK_CRYSTAL_CELL; // metres to the boundary, about twice
+			d -= fit(RK_CRYSTAL_CELL) * 0.0009f * old * (1.0f - Math::smoothstep(0.0f, 1.2f * p_cell, border));
+			// Biotite: clots of dark mica on their own finer map, weathered out into pits (the shader's dark grains).
+			{
+				float b1, b2;
+				uint32_t bid;
+				Vector3 bp;
+				rk_worley_point(p / RK_BIOTITE_CELL, RK_BIOTITE_SEED, b1, b2, bid, bp);
+				if (float(bid >> 8) / 16777216.0f < RK_BIOTITE_SHARE) {
+					d -= Math::smoothstep(1.1f * p_cell, 2.2f * p_cell, RK_BIOTITE_CELL) * 0.0022f * (0.5f + 0.5f * old) * Math::smoothstep(0.0f, 0.2f, b2 - b1);
+				}
+			}
+			// Grus pits: crystals plucked out of the rind, flat-bottomed, a few per decimetre.
+			rk_worley_point(p / 0.035f, 0x6A11u, f1, f2, id, fp);
+			if ((id & 255u) < 30u) {
+				d -= fit(0.035f) * 0.003f * old * p_weather * Math::smoothstep(0.42f, 0.3f, f1);
+			}
 		} break;
 		case RockGenerator::ROCK_SANDSTONE: {
-			d += 0.0005f * fit(0.015f) * rk_fbm(p / 0.015f, p_seed + 21u, 2);
-			const float s = p.y / 0.012f + 0.3f * rk_fbm(p / 0.03f, p_seed + 22u, 2);
-			d += fit(0.012f) * 0.0006f * Math::sin(s * float(Math::TAU)) * (1.0f - Math::abs(n.y));
+			// Laminae 1.4 to 2.6 cm, each with its own hardness: the hard ones stand out as ledges.
+			const float q = p.y / RK_LAMINA; // planar, so the shader's lamina colour lines up
+			const float lam = Math::floor(q);
+			const float in_lam = q - lam;
+			const float hard = rk_lattice(int(lam), 0, 0, RK_LAMINA_SEED);
+			const float ledge = 0.005f * hard * Math::smoothstep(0.0f, 0.1f, in_lam) * Math::smoothstep(1.0f, 0.9f, in_lam);
+			d += fit(RK_LAMINA) * (ledge - 0.0025f) * (1.0f - Math::abs(n.y)) * (0.5f + 0.5f * old);
+			d += fit(0.012f) * 0.0006f * rk_fbm(p / 0.012f, 0x21u, 2);
 		} break;
 		case RockGenerator::ROCK_LIMESTONE: {
-			// Flutes run down the slope of an upper face: the coordinate across the slope.
+			// Runnels down the slope of an upper face: round channels, knife-edge crests between them.
 			const Vector3 across = n.cross(Vector3(0, 1, 0));
-			if (across.length_squared() > 1e-4f && n.y > 0.2f) {
-				const float q = (across.normalized().dot(p) + 0.004f * rk_fbm(p / 0.02f, p_seed + 31u, 2)) / 0.018f;
-				const float flute = Math::pow(0.5f + 0.5f * Math::cos(q * float(Math::TAU)), 3.0f);
-				d -= fit(0.018f) * 0.002f * flute * Math::smoothstep(0.2f, 0.7f, n.y) * (1.0f - p_fresh);
+			if (across.length_squared() > 1e-4f && n.y > 0.15f) {
+				const float q = (across.normalized().dot(p) + 0.005f * rk_fbm(p / 0.03f, 0x31u, 2)) / 0.022f;
+				const float w = 2.0f * Math::abs(q - Math::floor(q) - 0.5f); // 0 mid-channel, 1 on the crest
+				const float channel = 1.0f - w * w;
+				d -= fit(0.022f) * 0.005f * channel * Math::smoothstep(0.15f, 0.6f, n.y) * (0.3f + 0.7f * old);
 			}
-			rk_worley2(p / 0.016f, p_seed + 33u, f1, f2, id);
+			rk_worley_point(p / 0.016f, 0x33u, f1, f2, id, fp);
 			if ((id & 255u) < 90u) {
-				d -= fit(0.016f) * 0.0012f * Math::pow(MAX(0.0f, 1.0f - f1 / 0.4f), 2.0f);
+				d -= fit(0.016f) * 0.0015f * Math::pow(MAX(0.0f, 1.0f - f1 / 0.4f), 2.0f);
 			}
 		} break;
 		case RockGenerator::ROCK_BASALT: {
-			rk_worley2(p / 0.018f, p_seed + 41u, f1, f2, id);
-			if ((id & 255u) < 110u) {
-				const float r = 0.25f + 0.2f * float((id >> 8) & 255u) / 255.0f;
-				d -= fit(0.018f) * 0.0028f * Math::pow(MAX(0.0f, 1.0f - f1 / r), 0.6f);
+			// Vesicles: gas bubbles frozen in the lava, cut open at the surface as spherical cavities of 3 to 7 mm.
+			rk_worley_point(p / 0.024f, 0x41u, f1, f2, id, fp);
+			if ((id & 255u) < 120u) {
+				const float r = (0.22f + 0.2f * float((id >> 8) & 255u) / 255.0f) * 0.024f;
+				const float f = f1 * 0.024f;
+				// A cavity is a dip one or two cells across even when it cannot be meshed round: fade later.
+				d -= Math::smoothstep(1.0f * p_cell, 2.0f * p_cell, 2.0f * r) * Math::sqrt(MAX(r * r - f * f, 0.0f)) * 1.3f;
 			}
-			d += fit(0.015f) * 0.0004f * rk_fbm(p / 0.015f, p_seed + 42u, 2);
+			d += fit(0.015f) * 0.0004f * rk_fbm(p / 0.015f, 0x42u, 2);
 		} break;
 		case RockGenerator::ROCK_SLATE: {
-			const float s = p.y / 0.009f + 0.4f * rk_fbm(p / 0.02f, p_seed + 51u, 2);
-			d += fit(0.009f) * 0.0008f * (s - Math::floor(s)) * (1.0f - Math::abs(n.y));
+			const float q = p.y / 0.015f + 0.4f * rk_fbm(p / 0.03f, 0x51u, 2);
+			d += fit(0.015f) * 0.0016f * (q - Math::floor(q)) * (1.0f - Math::abs(n.y));
 		} break;
 		default:
 			break;
 	}
-	// Fresh breaks: conchoidal ripples round a few points of origin, fading out, and hackle across them.
+	// Hairline cracks: along cell boundaries of a 9 cm map, about one boundary in three, a V a few mm deep.
+	if (p_type != RockGenerator::ROCK_SANDSTONE) {
+		rk_worley_point(p / 0.09f, 0x7C3u, f1, f2, id, fp);
+		const float edge = (f2 - f1) * 0.09f;
+		const float on = Math::smoothstep(0.55f, 0.7f, rk_noise(p / 0.05f, 0x7C4u));
+		d -= fit(0.03f) * 0.003f * on * (1.0f - Math::smoothstep(0.0f, 1.5f * p_cell, edge));
+	}
+	// Fresh breaks: hackle steps (a stepped face, risers of 2 to 4 mm every 4 to 7 cm across the break) and
+	// conchoidal ripples round points of origin.
 	if (p_fresh > 0.05f) {
-		rk_worley2(p / 0.12f, p_seed + 61u, f1, f2, id);
+		const Vector3 dir = Vector3(0.6f, 0.3f, 0.74f);
+		const float q = dir.dot(p) / 0.055f + 0.35f * rk_fbm(p / 0.1f, 0x61u, 2);
+		const float st = q - Math::floor(q);
+		// Steps are short: each riser runs a few centimetres and dies out (they branch from the fracture front).
+		const float run = Math::smoothstep(0.45f, 0.65f, rk_noise(p / 0.07f + Vector3(Math::floor(q) * 3.1f, 0, 0), 0x64u));
+		const float riser = (0.0015f + 0.002f * rk_lattice(int(Math::floor(q)), 1, 0, 0x62u)) * run;
+		d += fit(0.055f) * p_fresh * riser * (Math::smoothstep(0.0f, 0.08f, st) - st);
+		rk_worley2(p / 0.12f, 0x63u, f1, f2, id);
 		const float r = f1 * 0.12f;
 		const float ripple = Math::sin(r / 0.02f * float(Math::TAU)) * Math::exp(-r / 0.1f);
-		d += fit(0.02f) * p_fresh * 0.0007f * ripple;
+		d += fit(0.02f) * p_fresh * 0.0008f * ripple;
 	}
 	return d;
 }
@@ -503,6 +598,19 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	if (family == FAMILY_PEBBLE) {
 		c *= 0.8f; // shingle starts platy as well as wearing so
 	}
+	// Fresh fragments spread over the Zingg classes rather than sitting near the cube: talus and rockfall hold many
+	// slabs and blades, rods and wedges as well as blocks (Domokos et al. 2020 give the mean, not the spread).
+	int fragment_form = 0; // 0 block, 1 slab, 2 rod, 3 wedge
+	if (family == FAMILY_ROCKFALL || family == FAMILY_SCREE) {
+		const float f = rng.randf();
+		fragment_form = f < 0.32f ? 1 : (f < 0.55f ? 2 : (f < 0.75f ? 3 : 0));
+		if (fragment_form == 1) {
+			c *= 0.6f;
+		} else if (fragment_form == 2) {
+			a *= 1.4f;
+			c *= 0.85f;
+		}
+	}
 	a = MAX(a, 1.0f);
 	c = MIN(c, 1.0f);
 	LocalVector<RockPlane> planes;
@@ -571,6 +679,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float support = Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
 			planes.push_back({ n, support * (0.55f + 0.3f * rng.randf()), true });
 		}
+	}
+	if (fragment_form == 3) {
+		// A wedge: one face cut steeply across the top, from near full height on one side to low on the other.
+		const float side = rng.randf() < 0.5f ? -1.0f : 1.0f;
+		const Vector3 n = Vector3(side * (0.8f + 0.5f * rng.randf()) * c / a, 1.0f, (rng.randf() - 0.5f) * 0.4f).normalized();
+		planes.push_back({ n, n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f, true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
 	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2 };
@@ -760,6 +874,68 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 	}
 
+	// The stone's own frame (rest pose: longest axis x, shortest y, b axis z, 2 units long), fixed here from the
+	// field's zero crossings before the marks are carved, so a base shape and its close-up version share it exactly
+	// and the marks can be laid out in the frame the shader sees (UV, UV2.x).
+	AABB box;
+	{
+		bool any = false;
+		const int strides[3] = { 1, fine.nx, fine.nx * fine.ny };
+		for (int z = 0; z < fine.nz; z++) {
+			for (int y = 0; y < fine.ny; y++) {
+				for (int x = 0; x < fine.nx; x++) {
+					const int i = fine.idx(x, y, z);
+					const float a = fine.v[i];
+					const int lim[3] = { x < fine.nx - 1, y < fine.ny - 1, z < fine.nz - 1 };
+					for (int ax = 0; ax < 3; ax++) {
+						if (!lim[ax]) {
+							continue;
+						}
+						const float b = fine.v[i + strides[ax]];
+						if ((a < 0.0f) != (b < 0.0f)) {
+							Vector3 q = fine.pos(x, y, z);
+							q[ax] += fine.h * a / (a - b);
+							if (!any) {
+								box = AABB(q, Vector3());
+								any = true;
+							} else {
+								box.expand_to(q);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	const Vector3 centre = box.get_center();
+	int ord[3] = { 0, 1, 2 };
+	for (int i = 0; i < 3; i++) {
+		for (int j = i + 1; j < 3; j++) {
+			if (box.size[ord[j]] > box.size[ord[i]]) {
+				SWAP(ord[i], ord[j]);
+			}
+		}
+	}
+	const int ax_long = ord[0], ax_b = ord[1], ax_short = ord[2];
+	auto permute = [&](const Vector3 &p_v) { return Vector3(p_v[ax_long], p_v[ax_short], p_v[ax_b]); };
+	// An odd permutation mirrors the stone: flip z then, so the winding stays outward.
+	const bool odd = !((ax_long == 0 && ax_short == 1) || (ax_long == 1 && ax_short == 2) || (ax_long == 2 && ax_short == 0));
+	const float scale = 2.0f / MAX(box.size[ax_b], 1e-4f);
+	auto to_local = [&](const Vector3 &p_p) {
+		Vector3 q = permute((p_p - centre) * scale);
+		if (odd) {
+			q.z = -q.z;
+		}
+		return q;
+	};
+	auto dir_local = [&](const Vector3 &p_n) {
+		Vector3 q = permute(p_n);
+		if (odd) {
+			q.z = -q.z;
+		}
+		return q;
+	};
+
 	// 3. Weathering and the rock's own marks, carved into the fine field near its surface.
 	LocalVector<int> band;
 	rk_band(fine, MAX(5.0f * h, 3.0f * hb), band);
@@ -829,9 +1005,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Close-up: the rock's own millimetre fabric as geometry (crystals, grains, vesicles, karren, cleavage steps,
 		// conchoidal ripples on fresh breaks), so the path tracer and raster see the same relief.
 		if (close_up) {
+			// In the stone's frame, in metres at the family's typical size: the same map the shader colours the
+			// minerals from (UV2.y carries the metres per unit).
 			const float mpu = float(get_family_metres_per_unit(family));
 			const float fr = CLAMP(fresh_grid.sample(p), 0.0f, 1.0f);
-			phi -= rk_relief(rock_type, p * mpu, n, fr, nseed + 101u, h * mpu) / mpu * float(detail) * (0.4f + 0.6f * worn);
+			const float to_units = 1.0f / (mpu * scale); // metres to field units
+			phi -= rk_relief(rock_type, to_local(p) * mpu, dir_local(n), fr, h * scale * mpu, weather) * to_units * float(detail) * (0.5f + 0.5f * worn);
 		}
 		// Glacial striations: fine grooves on the faces the ice dragged over the bed, all one way.
 		if (family == FAMILY_GLACIAL) {
@@ -1004,26 +1183,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			indices = ki;
 		}
 	}
-	// Normalise the rock: b axis (z) 2 units long, centred.
-	AABB box(verts[0], Vector3());
-	for (const Vector3 &v : verts) {
-		box.expand_to(v);
-	}
-	const Vector3 centre = box.get_center();
-	// Rest pose: the longest axis on x, the shortest on y (the stone lies on its flattest side), b on z.
-	int ord[3] = { 0, 1, 2 };
-	for (int i = 0; i < 3; i++) {
-		for (int j = i + 1; j < 3; j++) {
-			if (box.size[ord[j]] > box.size[ord[i]]) {
-				SWAP(ord[i], ord[j]);
-			}
-		}
-	}
-	const int ax_long = ord[0], ax_b = ord[1], ax_short = ord[2];
-	auto permute = [&](const Vector3 &p_v) { return Vector3(p_v[ax_long], p_v[ax_short], p_v[ax_b]); };
-	// An odd permutation mirrors the stone: flip z then, so the winding stays outward.
-	const bool odd = !((ax_long == 0 && ax_short == 1) || (ax_long == 1 && ax_short == 2) || (ax_long == 2 && ax_short == 0));
-	const float scale = 2.0f / MAX(box.size[ax_b], 1e-4f);
+	// Normalise the rock in the frame fixed above.
 	PackedVector3Array out_verts, out_normals;
 	PackedColorArray out_colors;
 	PackedVector2Array out_uv, out_uv2;
@@ -1045,17 +1205,13 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 		const float cavity = CLAMP(1.0f - occ * 0.9f, 0.0f, 1.0f);
 		const float fr = CLAMP(fresh_grid.sample(p), 0.0f, 1.0f);
-		Vector3 q = permute((p - centre) * scale);
-		n = permute(n);
-		if (odd) {
-			q.z = -q.z;
-			n.z = -n.z;
-		}
+		const Vector3 q = to_local(p);
+		n = dir_local(n);
 		out_verts.write[k] = q;
 		out_normals.write[k] = n;
 		out_colors.write[k] = Color(cavity, fr, 0.0f, 1.0f);
 		out_uv.write[k] = Vector2(q.x, q.z);
-		out_uv2.write[k] = Vector2(q.y, 0.0f);
+		out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
 		const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
 		out_tangents.write[k * 4 + 0] = t.x;
 		out_tangents.write[k * 4 + 1] = t.y;
@@ -1116,7 +1272,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	}
 	const Vector3 axes = Vector3(box.size[ax_long], box.size[ax_short], box.size[ax_b]) * scale * 0.5f;
 	r_meta["rock_axes"] = axes;
-	r_meta["rock_bottom"] = -axes.y;
+	float bottom = 0.0f;
+	for (int k = 0; k < out_verts.size(); k++) {
+		bottom = MIN(bottom, out_verts[k].y);
+	}
+	r_meta["rock_bottom"] = bottom;
 	r_meta["rock_hull"] = hull;
 	r_meta["rock_faces"] = int(planes.size());
 	r_meta["rock_roundness"] = roundness;
@@ -1169,6 +1329,11 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 uniform vec3 base_color = vec3(0.30, 0.28, 0.26);
 uniform vec3 speck_color = vec3(0.04);
 uniform float speck_share = 0.18;
+// Granite: the crystals come from the same map as the close-up geometry (rk_relief), so quartz and feldspar stand
+// proud and biotite sits in its pits in colour as in relief.
+uniform bool crystal_map = false;
+uniform bool lamina_map = false;
+uniform vec3 quartz_color = vec3(0.15, 0.15, 0.148);
 uniform float speck_size = 0.004;
 uniform vec3 band_color = vec3(0.42, 0.34, 0.30);
 uniform float band_contrast = 0.15;
@@ -1180,6 +1345,10 @@ uniform float grain_bump = 0.2;
 uniform float lichen_cover = 0.5;
 uniform float moss_cover = 0.4;
 uniform vec3 moss_color = vec3(0.035, 0.06, 0.012);
+// The side away from the noon sun (north in the northern hemisphere): moss holds on the shaded, damp faces, the
+// crust lichens on the lit ones.
+uniform vec3 pole_direction = vec3(0.0, 0.0, -1.0);
+uniform float aspect_strength = 1.0;
 uniform vec3 contact_color = vec3(0.07, 0.055, 0.04);
 uniform float contact_height = 0.08;
 uniform float wetness = 1.0;
@@ -1232,6 +1401,45 @@ vec2 rk_grain(vec3 p) {
 	return vec2(id, f2 - f1);
 }
 
+uint rk_hash_u(uint x) {
+	x ^= x >> 16u;
+	x *= 2146121005u;
+	x ^= x >> 15u;
+	x *= 2221713035u;
+	x ^= x >> 16u;
+	return x;
+}
+
+float rk_lattice_u(ivec3 c, uint s) {
+	return float(rk_hash_u(uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u ^ s) >> 8u) / 16777216.0;
+}
+
+// The crystal map of rk_relief (rk_worley_point with RK_CRYSTAL_SEED): x the cell's class value, y the distance
+// to its boundary in cells (about twice).
+vec2 rk_crystal(vec3 p, uint s) {
+	ivec3 i = ivec3(floor(p));
+	float f1 = 9.0, f2 = 9.0;
+	uint id = 0u;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				ivec3 c = i + ivec3(x, y, z);
+				vec3 f = vec3(c) + vec3(rk_lattice_u(c, s), rk_lattice_u(c, s + 7u), rk_lattice_u(c, s + 13u));
+				vec3 dv = f - p;
+				float d = dot(dv, dv);
+				if (d < f1) {
+					f2 = f1;
+					f1 = d;
+					id = rk_hash_u(uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u ^ (s + 29u));
+				} else if (d < f2) {
+					f2 = d;
+				}
+			}
+		}
+	}
+	return vec2(float(id >> 8u) / 16777216.0, sqrt(f2) - sqrt(f1));
+}
+
 void vertex() {
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_custom = INSTANCE_CUSTOM;
@@ -1251,6 +1459,12 @@ void fragment() {
 	col *= 0.9 + 0.2 * rk_noise3(vec3(seed));
 	float bands = 0.5 + 0.5 * sin(6.2831853 * (lp.y * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
 	col = mix(col, band_color, band_contrast * smoothstep(0.3, 0.9, bands));
+	if (lamina_map && UV2.y > 0.0) {
+		// The laminae the geometry carved: harder ones (standing out) paler and better cemented.
+		vec3 mg = lp * UV2.y;
+		float hard = rk_lattice_u(ivec3(int(floor(mg.y / 0.019)), 0, 0), 23133u);
+		col *= 0.88 + 0.24 * hard;
+	}
 	// Pixel footprint in metres from the projection (no screen derivatives, so the path tracer's hits agree).
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float footprint = PROJECTION_MATRIX[3][3] != 0.0 ? pix : length(VERTEX) * pix;
@@ -1259,6 +1473,31 @@ void fragment() {
 	// Grains, not voxels: cellular grains, irregular polygons, only evaluated while a pixel is finer than a grain.
 	float near_grain = 1.0 - smoothstep(0.5 * speck_size, 2.0 * speck_size, footprint);
 	float speck_mix = speck_share;
+	float crystal_gloss = 0.0;
+	if (crystal_map) {
+		// In the stone's frame at its family's typical size (UV2.y metres per unit), as the geometry was carved.
+		vec3 mg = lp * (UV2.y > 0.0 ? UV2.y : v_scale);
+		float near_crystal = 1.0 - smoothstep(0.006, 0.03, footprint);
+		float quartz = 0.3;
+		speck_mix = 0.12;
+		if (near_crystal > 0.0) {
+			vec2 c = rk_crystal(mg / 0.018, 20903u);
+			vec2 b = rk_crystal(mg / 0.013, 45323u);
+			float edge = smoothstep(0.0, 0.1, c.y);
+			float bio = step(b.x, 0.12) * smoothstep(0.0, 0.1, b.y);
+			float qz = step(c.x, 0.3);
+			speck_mix = mix(0.12, bio, near_crystal);
+			quartz = mix(quartz, qz, near_crystal);
+			// Cleavage faces of feldspar and glassy quartz catch the light: smoother than the rind round them.
+			crystal_gloss = near_crystal * (qz * 0.6 + (1.0 - qz) * step(0.8, fract(c.x * 13.7)) * 0.5);
+			// Feldspar: each crystal its own shade, the boundaries etched darker.
+			col *= mix(1.0, 0.9 + 0.2 * fract(c.x * 7.31), near_crystal);
+			col *= mix(1.0, 0.9 + 0.1 * edge, near_crystal);
+		}
+		col = mix(col, quartz_color, quartz * 0.8);
+
+		near_grain = 0.0;
+	}
 	if (near_grain > 0.0) {
 		vec2 g = rk_grain(mp / speck_size);
 		float in_speck = step(1.0 - speck_share, g.x) * smoothstep(0.0, 0.08, g.y);
@@ -1271,7 +1510,7 @@ void fragment() {
 	// The rind: weathered faces stained and duller than a fresh break.
 	vec3 weathered = mix(col, rind_color, 0.45 + 0.25 * rk_fbm3(mp * 3.1));
 	col = mix(weathered, col * 1.08, fresh);
-	float rough = rock_roughness;
+	float rough = mix(rock_roughness, 0.42, crystal_gloss * (0.4 + 0.6 * fresh));
 
 	// Grain-scale relief as a normal (the stone's geometry carries everything from about a centimetre up).
 	float grain_fade = 1.0 - smoothstep(0.004, 0.03, footprint);
@@ -1295,7 +1534,10 @@ void fragment() {
 
 	// Lichen: crusts on open, lit, old faces (not on fresh breaks or under water), patches of grey-green with a few
 	// orange and black ones (Rhizocarpon, Xanthoria, Lecidea are the common rock crusts).
-	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - v_custom.y) * smoothstep(-0.3, 0.5, wn.y);
+	// Aspect: how far the face turns to the pole (+1) or the sun (-1), on its horizontal part.
+	vec3 wh = vec3(wn.x, 0.0, wn.z);
+	float shade_side = aspect_strength * dot(wh, normalize(vec3(pole_direction.x, 0.0, pole_direction.z) + vec3(1e-5, 0.0, 0.0)));
+	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - v_custom.y) * smoothstep(-0.3, 0.5, wn.y) * clamp(0.75 - 0.45 * shade_side, 0.2, 1.2);
 	float lic_n = rk_fbm3(mp * 11.0 + 3.0);
 	float lic = open_face * smoothstep(0.7 - 0.2 * lichen_cover, 0.73 - 0.2 * lichen_cover, lic_n) * step(0.01, lichen_cover);
 	float kind = rk_noise3(mp * 1.3 + 7.0);
@@ -1304,7 +1546,7 @@ void fragment() {
 	rough = mix(rough, 0.9, lic);
 
 	// Moss: on the tops and in the hollows, more near the ground and where it stays damp.
-	float moss_place = smoothstep(0.35, 0.85, wn.y + 0.35 * (1.0 - cavity) + 0.3 * contact) * (1.0 - fresh);
+	float moss_place = smoothstep(0.35, 0.85, wn.y + 0.35 * (1.0 - cavity) + 0.3 * contact + 0.45 * shade_side) * (1.0 - fresh);
 	float moss = moss_cover * moss_place * smoothstep(0.42, 0.58, rk_fbm3(mp * 2.2 + 17.0) + 0.25 * moss_cover - 0.12);
 	col = mix(col, moss_color * (0.7 + 0.6 * rk_fbm3(mp * 25.0)), moss);
 	rough = mix(rough, 0.95, moss);
@@ -1355,6 +1597,8 @@ Ref<ShaderMaterial> RockGenerator::get_material(RockType p_type) {
 	m->set_shader_parameter("rock_roughness", l.roughness);
 	m->set_shader_parameter("porosity", l.porosity);
 	m->set_shader_parameter("grain_bump", 0.1f + 0.2f * l.grain);
+	m->set_shader_parameter("crystal_map", key == ROCK_GRANITE);
+	m->set_shader_parameter("lamina_map", key == ROCK_SANDSTONE);
 	material_cache.insert(key, m);
 	return m;
 }

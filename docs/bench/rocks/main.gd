@@ -13,7 +13,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
-#   --cam=x,y,z --look=x,y,z   a fixed camera
+#   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
@@ -69,6 +69,12 @@ func _ready() -> void:
 		var l: PackedStringArray = args.get("look", "0,0,0").split(",")
 		cam.position = Vector3(float(c[0]), float(c[1]), float(c[2]))
 		cam.look_at(Vector3(float(l[0]), float(l[1]), float(l[2])))
+	if args.has("sun"):
+		# --sun=elevation,yaw in degrees (a low grazing sun shows relief)
+		var sv: PackedStringArray = args["sun"].split(",")
+		for n in get_children():
+			if n is DirectionalLight3D:
+				(n as DirectionalLight3D).rotation_degrees = Vector3(-float(sv[0]), float(sv[1]) if sv.size() > 1 else -50.0, 0)
 	if out != "":
 		_render_later()
 
@@ -163,9 +169,9 @@ func _families() -> void:
 		["granite", "glacial", 1.7, Vector3(0.1, 0, -0.2), 2.4],
 		["sandstone", "cliff_block", 1.3, Vector3(2.8, 0, 0), 0.25],
 		# The small three close to the camera, so a 7 cm pebble still reads.
-		["limestone", "scree", 0.32, Vector3(-0.6, 0, 3.7), 0.9],
-		["basalt", "cobble", 0.22, Vector3(0.0, 0, 3.85), 2.0],
-		["slate", "pebble", 0.07, Vector3(0.3, 0, 4.4), 0.4],
+		["basalt", "scree", 0.32, Vector3(-0.6, 0, 3.7), 0.9],
+		["limestone", "cobble", 0.22, Vector3(0.0, 0, 3.85), 2.0],
+		["slate", "pebble", 0.07, Vector3(0.62, 0, 4.6), 0.4],
 	]
 	for r in rows:
 		var m := _rock(TYPES.find(r[0]), FAMILIES.find(r[1]), sd)
@@ -533,15 +539,18 @@ func _test() -> void:
 	var tc := Time.get_ticks_msec()
 	var caps: Array = rocks.get_stone_caps(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var bad_caps := 0
+	var usable := 0
 	var radii := 0.0
 	for c in caps:
 		var cp: Vector3 = c["cap_point"]
 		var cn: Vector3 = c["cap_normal"]
 		var sc: float = c["scale"]
-		if cp.y > float(c["top"]) + 0.01 or cp.y < float(c["top"]) - 0.5 * sc or cn.y < 0.3 or float(c["cap_radius"]) > 2.5 * sc:
+		if cp.y > float(c["top"]) + 0.01 or cp.y < float(c["ground"]) - 0.2 * sc or cn.y < 0.65 or float(c["cap_radius"]) > 2.5 * sc:
 			bad_caps += 1
 		radii += float(c["cap_radius"]) / sc
-	check(caps.size() > 0 and bad_caps <= caps.size() / 100, "stone caps: %d stones, %d off their tops, mean flat radius %.2f of the half size (%d ms)" % [caps.size(), bad_caps, radii / maxf(caps.size(), 1), Time.get_ticks_msec() - tc])
+		if float(c["cap_radius"]) >= 0.06:
+			usable += 1
+	check(caps.size() > 0 and bad_caps <= caps.size() / 100 and usable > caps.size() / 2, "stone caps: %d stones, %d off their tops or tilted past 50 degrees, %d with a flat radius of 6 cm or more, mean flat radius %.2f of the half size (%d ms)" % [caps.size(), bad_caps, usable, radii / maxf(caps.size(), 1), Time.get_ticks_msec() - tc])
 	var t1 := Time.get_ticks_msec()
 	var obs: PackedVector4Array = rocks.get_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256), 0.25)
 	check(obs.size() > 0, "obstacles for the plant fields: %d stones of 25 cm and more in 256 m round the scree (%d ms)" % [obs.size(), Time.get_ticks_msec() - t1])

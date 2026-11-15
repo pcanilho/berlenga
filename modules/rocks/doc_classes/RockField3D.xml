@@ -84,9 +84,9 @@
 			<return type="Array" />
 			<param index="0" name="layer" type="int" />
 			<param index="1" name="rect" type="Rect2" />
-			<param index="2" name="tolerance" type="float" default="0.01" />
+			<param index="2" name="tolerance" type="float" default="0.03" />
 			<description>
-				Like [method get_stones], with each stone's cap, where moss, snow and litter settle, from its shape: [code]cap_point[/code] (Vector3, the centre of the up-facing surface round the stone's highest point), [code]cap_normal[/code] (Vector3) and [code]cap_radius[/code] (metres the surface stays within [param tolerance] metres of the cap's plane). No physics is needed. The caps hold for the close-up shapes too, whose relief is finer than a centimetre.
+				Like [method get_stones], with each stone's cap, where moss, snow and litter settle, from its base shape: the largest connected patch of up-facing surface (normals within about 45 degrees of up), not the region round the highest point. [code]cap_point[/code] (Vector3, the patch's centre on the surface), [code]cap_normal[/code] (Vector3, its mean normal) and [code]cap_radius[/code] (metres out from the centre that the surface stays within [param tolerance] metres of the cap's plane). No physics is needed. The base shape is used, so the close-up shapes' millimetre relief does not shrink the caps.
 			</description>
 		</method>
 		<method name="get_stone_count" qualifiers="const">

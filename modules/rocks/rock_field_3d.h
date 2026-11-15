@@ -263,7 +263,7 @@ public:
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);
-	Array get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance = 0.01);
+	Array get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance = 0.03);
 	int get_stone_count() const { return stone_count; }
 	int get_cell_count() const { return cells.size(); }
 	double get_last_build_msec() const { return last_build_msec; }

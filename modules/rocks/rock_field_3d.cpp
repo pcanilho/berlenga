@@ -384,6 +384,42 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 		Vector3 tilt_axis;
 	};
 	LocalVector<Pending> pending;
+	// A debris skirt round a big block: flakes and fragments it shed as it weathered (granular disintegration and
+	// spalling) or broke off when it landed collect at its foot, more on the downhill side. A few to ten angular
+	// chips of 4 to 15% of its size, a power law, in a ring just outside its footprint.
+	auto skirt = [&](const Stone &p_big, RockGenerator::RockType p_type, float p_share) {
+		const float b = 2.0f * p_big.scale;
+		if (b < 0.8f) {
+			return;
+		}
+		const uint32_t key = _library_key(p_type, RockGenerator::FAMILY_SCREE, 0);
+		Library *lib = _ensure_library(key);
+		if (!lib) {
+			return;
+		}
+		const Vector3 n = ground_normal(gen, p_big.position.x, p_big.position.z, MAX(real_t(0.5), real_t(p_big.footprint)));
+		const Vector3 down = Vector3(n.x, 0, n.z);
+		const int count = int(float(3 + MIN(int(b * 3.0f), 7)) * p_share + rng.randf());
+		for (int k = 0; k < count; k++) {
+			const float d = b * MIN(0.04f * Math::pow(1.0f - rng.randf() * 0.97f, -1.0f / 1.8f), 0.15f);
+			if (d < min_size) {
+				continue;
+			}
+			const float a = rng.randf() * float(Math::TAU);
+			const float r = float(p_big.footprint) * (0.8f + 0.7f * Math::pow(rng.randf(), 1.5f)) + d * 0.5f;
+			Vector3 p = Vector3(p_big.position.x, 0, p_big.position.z) + Vector3(Math::cos(a), 0, Math::sin(a)) * r + down * (float(p_big.footprint) * 0.6f * rng.randf());
+			if (gen->get_water_depth(p) > water_skip) {
+				continue;
+			}
+			Stone st;
+			st.layer = p_big.layer;
+			st.library = key;
+			st.variant = pick_variant(lib);
+			st.scale = d * 0.5f;
+			_rest(gen, st, *lib, p, rng.randf() * Math::TAU, 0.2 + 0.2 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(25.0f) * rng.randf(), 0.8);
+			r_stones.push_back(st);
+		}
+	};
 
 	switch (p_layer) {
 		case LAYER_ROCKFALL: {
@@ -404,6 +440,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				}
 				_rest(gen, st, *lib, Vector3(b.x, 0, b.z), rng.randf() * Math::TAU, 0.15 + 0.15 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(12.0f) * rng.randf(), 0.5);
 				r_stones.push_back(st);
+				skirt(st, rock_type, 1.0f);
 			}
 		} break;
 		case LAYER_GLACIAL: {
@@ -450,6 +487,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						}
 						_rest(gen, st, *lib, p, rng.randf() * Math::TAU, 0.25 + 0.25 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(15.0f) * rng.randf(), 0.6);
 						r_stones.push_back(st);
+						skirt(st, t, 0.5f); // a boulder long in the till has shed less, and grus has washed away
+
 					}
 				}
 			}
@@ -483,6 +522,22 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
 						pd.sink = 0.15f + 0.15f * rng.randf();
 						pd.follow = 0.8f;
+						pd.film = 0.0f;
+						pending.push_back(pd);
+					}
+					// The toe: the largest blocks roll furthest and stop on the thin apron below the cone, car- to
+					// house-sized (2 to 6 m), a few per hundred metres of toe (fall sorting; Kirkby and Statham 1975).
+					const float toe = 1.0f - t;
+					if (toe > 0.4f && rng.randf() < 0.012f * toe * float(density)) {
+						Pending pd;
+						pd.xz = Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub);
+						pd.size = 2.0f + 4.0f * rng.randf() * rng.randf();
+						pd.key = _library_key(rock_type, RockGenerator::FAMILY_ROCKFALL, 0);
+						pd.yaw = rng.randf() * Math::TAU;
+						pd.tilt = Math::deg_to_rad(12.0f) * rng.randf();
+						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
+						pd.sink = 0.12f + 0.12f * rng.randf();
+						pd.follow = 0.5f;
 						pd.film = 0.0f;
 						pending.push_back(pd);
 					}
@@ -1360,13 +1415,16 @@ Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
 	return out;
 }
 
-// A stone's cap, where moss, snow and litter settle: from the library mesh's surface samples placed by the stone's
-// basis. The cap centre is the mean of the samples near the highest one (within a fifth of the stone's half size)
-// that face up, its normal their mean normal; the flat radius is how far out from the centre the upward-facing
-// surface stays within `p_tolerance` metres of that plane.
+// A stone's cap, where moss, snow and litter settle: from the library (base) mesh's surface samples placed by the
+// stone's basis. The cap is the largest connected patch of up-facing surface (normals within about 45 degrees of
+// up), not the region round the highest point, which on a tilted block is a corner or an edge. Its centre is the
+// patch's mean, its normal the patch's mean normal, and its flat radius how far out from the centre the surface
+// stays within `p_tolerance` metres of that plane.
 Array RockField3D::get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance) {
 	Array out = get_stones(p_layer, p_rect);
 	LocalVector<Vector3> wp, wn;
+	LocalVector<int> up, comp, queue;
+	HashMap<Vector3i, LocalVector<int>> grid;
 	for (int i = 0; i < out.size(); i++) {
 		Dictionary d = out[i];
 		const uint32_t key = _library_key(RockGenerator::RockType(int(d["rock_type"])), RockGenerator::Family(int(d["family"])), int(d["bin"]));
@@ -1384,29 +1442,88 @@ Array RockField3D::get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tol
 			const Basis rot = b.orthonormalized();
 			wp.resize(cp.size());
 			wn.resize(cp.size());
-			int high = 0;
+			up.clear();
 			for (uint32_t k = 0; k < cp.size(); k++) {
 				wp[k] = pos + b.xform(cp[k]);
 				wn[k] = rot.xform(cn[k]);
-				if (wp[k].y > wp[high].y) {
-					high = int(k);
+				if (wn[k].y > 0.7f) {
+					up.push_back(int(k));
 				}
 			}
-			// Centre and normal: the up-facing samples round the highest one.
-			const real_t near = MAX(0.2 * scale, real_t(0.02));
-			Vector3 sum, nsum;
-			int count = 0;
-			for (uint32_t k = 0; k < wp.size(); k++) {
-				if (wn[k].y > 0.0f && wp[k].distance_to(wp[high]) < near) {
-					sum += wp[k];
-					nsum += wn[k];
-					count++;
+			if (!up.is_empty()) {
+				// Connected patches: neighbours within one and a half sample spacings, found through a grid.
+				const real_t link = 0.06f * 1.5f * scale;
+				grid.clear();
+				for (int k : up) {
+					grid[Vector3i((wp[k] / link).floor())].push_back(k);
 				}
-			}
-			if (count > 0 && nsum.length_squared() > 1e-12f) {
-				cap_point = sum / real_t(count);
+				comp.resize(cp.size());
+				for (int &c : comp) {
+					c = -1;
+				}
+				int best = -1, best_count = 0;
+				for (int seed_k : up) {
+					if (comp[seed_k] >= 0) {
+						continue;
+					}
+					int count = 0;
+					queue.clear();
+					queue.push_back(seed_k);
+					comp[seed_k] = seed_k;
+					for (uint32_t qi = 0; qi < queue.size(); qi++) {
+						const int k = queue[qi];
+						count++;
+						const Vector3i g = Vector3i((wp[k] / link).floor());
+						for (int dz = -1; dz <= 1; dz++) {
+							for (int dy = -1; dy <= 1; dy++) {
+								for (int dx = -1; dx <= 1; dx++) {
+									const LocalVector<int> *cell = grid.getptr(g + Vector3i(dx, dy, dz));
+									if (!cell) {
+										continue;
+									}
+									for (int o : *cell) {
+										if (comp[o] < 0 && wp[o].distance_to(wp[k]) < link) {
+											comp[o] = seed_k;
+											queue.push_back(o);
+										}
+									}
+								}
+							}
+						}
+					}
+					if (count > best_count) {
+						best_count = count;
+						best = seed_k;
+					}
+				}
+				Vector3 sum, nsum;
+				for (int k : up) {
+					if (comp[k] == best) {
+						sum += wp[k];
+						nsum += wn[k];
+					}
+				}
+				cap_point = sum / real_t(best_count);
 				cap_normal = nsum.normalized();
-				// The flat radius: the nearest up-facing sample off the plane by more than the tolerance.
+				// Onto the surface: the mean of a curved patch lies inside the stone, so lift it to the height (along
+				// the normal) of the patch sample nearest it across the plane.
+				real_t nearest = 1e20;
+				real_t lift = 0.0;
+				for (int k : up) {
+					if (comp[k] != best) {
+						continue;
+					}
+					const Vector3 rel = wp[k] - cap_point;
+					const real_t off = rel.dot(cap_normal);
+					const real_t across = (rel - cap_normal * off).length_squared();
+					if (across < nearest) {
+						nearest = across;
+						lift = off;
+					}
+				}
+				cap_point += cap_normal * lift;
+				// The flat radius: the nearest up-facing sample off the plane by more than the tolerance, within
+				// the reach of the patch.
 				real_t r = 1e20;
 				real_t reach = 0.0;
 				for (uint32_t k = 0; k < wp.size(); k++) {
@@ -1418,11 +1535,11 @@ Array RockField3D::get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tol
 					const real_t across = (rel - cap_normal * off).length();
 					if (Math::abs(off) > p_tolerance) {
 						r = MIN(r, across);
-					} else {
+					} else if (comp[k] == best) {
 						reach = MAX(reach, across);
 					}
 				}
-				cap_radius = MIN(r, reach);
+				cap_radius = MIN(r, reach + 0.03f * scale);
 			}
 		}
 		d["cap_point"] = cap_point;
@@ -1633,7 +1750,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
 	ClassDB::bind_method(D_METHOD("get_stones", "layer", "rect"), &RockField3D::get_stones);
-	ClassDB::bind_method(D_METHOD("get_stone_caps", "layer", "rect", "tolerance"), &RockField3D::get_stone_caps, DEFVAL(0.01));
+	ClassDB::bind_method(D_METHOD("get_stone_caps", "layer", "rect", "tolerance"), &RockField3D::get_stone_caps, DEFVAL(0.03));
 	ClassDB::bind_method(D_METHOD("get_stone_count"), &RockField3D::get_stone_count);
 	ClassDB::bind_method(D_METHOD("get_cell_count"), &RockField3D::get_cell_count);
 	ClassDB::bind_method(D_METHOD("get_last_build_msec"), &RockField3D::get_last_build_msec);
