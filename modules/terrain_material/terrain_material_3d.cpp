@@ -139,6 +139,10 @@ global uniform vec4 terrain_cover_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
+		if (far_start_from_vegetation) {
+			// Where a streaming VegetationField3D's placed plants end (0: none streams).
+			c += "global uniform float vegetation_near_radius;\n";
+		}
 	}
 	if (sky_occlusion_enabled) {
 		// The ground's sky occlusion (TerrainGenerator3D.sky_occlusion; rect width 0 = none).
@@ -679,8 +683,10 @@ void fragment() {
 		// Far ground: the bare ground under the plant cover's colour by its cover share, taking over from the near
 		// grass tint and vegetation_far() between far_start and far_start + far_fade (one source for both: the
 		// vegetation builds the cover map from the same colours). Before rain and snow, which still lie on it.
+		// far_start_from_vegetation: the blend ends where a streaming field's placed plants end.
+		c += far_start_from_vegetation ? "\tfloat tm_fs = vegetation_near_radius > 0.0 ? max(vegetation_near_radius - tm_far_fade, 0.0) : tm_far_start;\n" : "\tfloat tm_fs = tm_far_start;\n";
 		c += R"(	if (terrain_cover_rect.z > 0.0) {
-		float far_t = smoothstep(tm_far_start, tm_far_start + tm_far_fade, length(wp - CAMERA_POSITION_WORLD));
+		float far_t = smoothstep(tm_fs, tm_fs + tm_far_fade, length(wp - CAMERA_POSITION_WORLD));
 		vec2 cuv = (wp.xz - terrain_cover_rect.xy) / terrain_cover_rect.zw;
 		if (far_t > 0.0 && all(greaterThanEqual(cuv, vec2(0.0))) && all(lessThanEqual(cuv, vec2(1.0)))) {
 			vec4 cover = textureLod(terrain_cover_map, cuv, 0.0);
@@ -894,6 +900,7 @@ MAT_SETTER_CODE(bool, wetness_enabled)
 MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
 MAT_SETTER(float, far_start, MAX(p_value, 0.0f))
+MAT_SETTER_CODE(bool, far_start_from_vegetation)
 MAT_SETTER(float, far_fade, MAX(p_value, 1.0f))
 
 void TerrainMaterial3D::set_sky_occlusion_enabled(bool p_enabled) {
@@ -952,6 +959,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, far_blend_enabled, is_far_blend_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, far_start, get_far_start, PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m")
 	BIND_PROP(Variant::FLOAT, far_fade, get_far_fade, PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m")
+	BIND_PROP(Variant::BOOL, far_start_from_vegetation, is_far_start_from_vegetation, PROPERTY_HINT_NONE, "")
 #undef BIND_PROP
 
 	BIND_ENUM_CONSTANT(LAYER_ROCK);
