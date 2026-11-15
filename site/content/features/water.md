@@ -2,7 +2,7 @@
 title: "Water"
 weight: 60
 group: "World"
-summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water."
+summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boat wakes, white water, rivers and waterfalls, live water that floods and drains, shore waves, camera under water."
 ---
 
 ## Light in water

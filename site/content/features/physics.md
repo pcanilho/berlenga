@@ -2,7 +2,7 @@
 title: "Physics (PhysX 5)"
 weight: 90
 group: "Simulation"
-summary: "PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke."
+summary: "PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke, lit smoke in raster."
 ---
 
 ![PhysX, path traced: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke lit by a lamp](media/physx-pathtraced.webp)
