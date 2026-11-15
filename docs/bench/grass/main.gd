@@ -89,6 +89,7 @@ var no_floor := false
 var no_sward := false
 var undergrowth := ""
 var grazed := false # --grazed: the tall grass grazed short (upland pasture).
+var ug_dir := Vector3(0, 0, 1)
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
 var no_rock_foot := false # --no-rock-foot: the floor species without their rock_foot.
 var no_margin := false # --no-margin: undergrowth stands without their margin.
@@ -575,23 +576,47 @@ func _frame_undergrowth() -> void:
 # fronds' drop towards the grass shows against what is behind.
 func _frame_undergrowth_edge(c: Vector3) -> void:
 	var usp: PlantSpecies = ug_field.biome.species[0]
-	var sun_dir := -sun_node.global_transform.basis.z
-	var side := Vector3(-sun_dir.z, 0, sun_dir.x).normalized()
+	# The straightest long stretch of the stand's edge within 30 m: points where the depth crosses 0,
+	# scored by how far the stand runs on (depth > 0.5 m, 1.5 m in) and the meadow stays open (depth
+	# < 0, 1 m out) along it.
+	var best_score := -1
 	var e := c
-	for k in 80:
-		if usp.get_patch_depth(e) <= 0.0:
-			break
-		e += side * 0.1
-	# Way out of the patch: the depth's falling gradient.
-	var h := 0.3
-	var g := Vector3(usp.get_patch_depth(e + Vector3(h, 0, 0)) - usp.get_patch_depth(e - Vector3(h, 0, 0)), 0, usp.get_patch_depth(e + Vector3(0, 0, h)) - usp.get_patch_depth(e - Vector3(0, 0, h)))
-	var out := (-g).normalized() if g.length() > 1e-6 else side
-	var along := Vector3(-out.z, 0, out.x)
-	var eye := e + along * 3.5 + out * 0.6
+	var out := Vector3(1, 0, 0)
+	for gx in range(-30, 31):
+		for gz in range(-30, 31):
+			var p := c + Vector3(gx, 0, gz)
+			var d0 := usp.get_patch_depth(p)
+			if absf(d0) > 0.15:
+				continue
+			var h := 0.3
+			var g := Vector3(usp.get_patch_depth(p + Vector3(h, 0, 0)) - usp.get_patch_depth(p - Vector3(h, 0, 0)), 0, usp.get_patch_depth(p + Vector3(0, 0, h)) - usp.get_patch_depth(p - Vector3(0, 0, h)))
+			if g.length() < 1e-6:
+				continue
+			var o := (-g).normalized()
+			for sgn: float in [-1.0, 1.0]:
+				var al: Vector3 = Vector3(-o.z, 0, o.x) * sgn
+				var score := 0
+				for t in range(0, 14):
+					var q: Vector3 = p + al * float(t)
+					if usp.get_patch_depth(q - o * 1.5) > 0.5 and usp.get_patch_depth(q + o * 1.0) < 0.0:
+						score += 1
+					else:
+						break
+				# The meadow to the right of the view: out must be the view's right.
+				var view := al
+				if Vector3(-view.z, 0, view.x).dot(o) < 0.0:
+					continue
+				if score > best_score:
+					best_score = score
+					e = p
+					out = o
+					ug_dir = al
+	# Stand 1.5 m out from the edge, a step back along it, 1 m up, looking along the edge.
+	var eye := e + out * 1.5 - ug_dir * 1.0
 	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 1.0, eye.z)
-	var at := e - along * 1.0
-	cam.look_at(Vector3(at.x, height(at.x, at.z) + 0.45, at.z))
-	print("GRASS_UNDERGROWTH_EDGE edge=%s out=%s eye=%s" % [str(e), str(out), str(cam.position)])
+	var at := e + ug_dir * 7.0 - out * 1.2
+	cam.look_at(Vector3(at.x, height(at.x, at.z) + 0.5, at.z))
+	print("GRASS_UNDERGROWTH_EDGE edge=%s out=%s run=%d m eye=%s" % [str(e), str(out), best_score, str(cam.position)])
 
 # Boulders for --rocks: lumpy weathered rocks, a little sunk, in front of the camera. Each is a disc
 # on the ground for the fields' obstacles, its radius where the rock meets the soil.
