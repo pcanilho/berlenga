@@ -36,6 +36,12 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Coast guide: a drawn bay with beaches along its shore.*
 
+- **Touch-ups** (`TerrainBrush3D` under `TerrainGenerator3D`): height brushes reshape the generated ground and lakes and rivers re-solve around them, so a raised dam backs up a lake and a dug hollow holds a pond.
+
+  ![A generated valley from above, then with a dam and a pond brushed in](media/terrain-touchup.jpg)
+
+  *Touch-ups: a dam across the valley backs up a lake, and a dug hollow holds a pond.*
+
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 
   ![The same range eroded directly and coarse to fine, 8 m cells](media/terrain-coarse-to-fine.jpg)
@@ -135,7 +141,11 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Cliff relief** (Landscape3D `cliff_relief`, metres, off by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too.
 
-- **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`, off by default): far ground takes the colour of the plant cover map.
+  ![A cliff face in raking sun, smooth and with cliff relief, raster](media/terrain-cliff-relief.jpg)
+
+  *Cliff relief: ledges and joint steps cast shadows across the face.*
+
+- **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`, off by default): far ground takes the colour of the plant cover map. With `far_start_from_vegetation` (off by default) the blend starts where the streamed plants end, else at `far_start`.
 
 - **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves. Heights stream in coarse first and chunk meshes build on worker threads (`stream_heights`); baked heights load 4 km at 1 m in under a second.
 

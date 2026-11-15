@@ -2318,3 +2318,30 @@ pixel to pixel where the waves bend the offset (a stepped edge across the shallo
 sun body term (#286) is off in this mode, its sun being inside the medium's light; glitter, reflections,
 foam and wet sand are as before. The light in the water is now set every frame (also in the editor), not
 only near the camera. Rivers follow.
+
+Step 1b (15 Nov): rivers too. The clear-water code moved into water_raster_reflections.h
+(`water_clear_through`, with `water_light_in_water` deriving the refracted sun and the sky's radiance from the
+raster reflection uniforms both shaders already share), and PhysXRiver3D's shader uses it with the ribbon's
+own depth for the bed (`clear_water`, on). The waterline's foam lace (edge_foam) now shows as the thin line it
+was meant to be; under the old tint's low alpha it was barely visible.
+
+Step 2 (15 Nov): shadows in the water from above. `water_clear_through` marches the sun's scattered light
+along the refracted path (12 steps over about four mean free paths, jittered per pixel and frame), each
+step lit as far as its refracted sun ray entered the water (`sun_visibility`), as the underwater pass does.
+A shadow across deep water now darkens the water body itself; on the bench's open sea the raster colour
+now matches the path tracer's (median 58/109/107 against 45/112/116). Shallow water shows little change:
+there the bed's own light, already shadowed, dominates.
+
+Step 3 (15 Nov): waves shadowing themselves. `wave_shadows` (on): from each surface point the sun's ray is
+marched over the resting heights (6 jittered steps, far enough to climb 2.5 m); the length it spends inside
+crests in front dims the sun on foam and wet sand (Beer-Lambert) and removes the glitter on the lee sides
+(heightfield self-shadowing, as relief mapping's: Policarpo and Oliveira 2006, Tatarchuk 2006). Subtle on
+the bench's chop; it matters with swell at a low sun. Cost: six height lookups per pixel of water.
+Raster caustics are not part of this: the caustic map (water_caustics_map.glsl) stores a tone-mapped
+focusing excess, not an energy-conserving ratio, and nothing draws it in raster today; making it physical
+first is its own piece of work.
+
+Found on the way (bug): the surface lies on the ground as a swash film wherever the ground stands above
+it, so over a block standing out of the water the mesh's triangles were drawn up its faces from the
+waterline to its top (dark teeth, raster and path traced). The film now lies only on ground less steep
+than about 35-50 degrees (the slope of the seabed texture over 0.7 m).

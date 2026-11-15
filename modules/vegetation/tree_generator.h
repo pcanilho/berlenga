@@ -238,6 +238,10 @@ private:
 		};
 		LocalVector<uint8_t> part_role;
 		uint8_t role = ROLE_ALL;
+		// Bark only: the lichen layer's UV2 from UV, per part (scale u, scale v, offset u, offset
+		// v; zero scale: no lichen there), so its pattern does not repeat with the bark's tile.
+		Vector4 uv2_map;
+		LocalVector<Vector4> part_uv2;
 		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
@@ -262,6 +266,7 @@ private:
 				parts.push_back(r_part);
 				part_size.push_back(p_size);
 				part_role.push_back(role);
+				part_uv2.push_back(uv2_map);
 			}
 		}
 	};
@@ -305,6 +310,11 @@ private:
 	bool climber_plant_leaves = true;
 	float leaf_flutter = 1.0f; // Leaf flutter amount (trees.md 3b); 0 keeps the plain material.
 	Ref<Material> _flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const;
+	Ref<Material> _lichen_material(const Ref<StandardMaterial3D> &p_base);
+	Ref<Texture2D> lichen_texture;
+	Ref<Texture2D> _lichen_texture();
+	float _lichen_amount() const;
+	float _lichen_at(const Vector3 &p_pos, float p_radius, float p_moss) const;
 	static Array _plant_climber_leaves(Climber p_climber);
 	static Array plant_climber_cache[4];
 	// The same leaves' arrays, read once: reading a mesh back from the RenderingServer waits on
@@ -419,6 +429,7 @@ public:
 	// Moss on bark (docs/ideas/trees.md section 5c): a tint at every LOD and a displaced moss
 	// shell over the bark at LOD 0, by species, height, upper faces and decay.
 	float moss_cover = 1.0f;
+	float lichen_cover = 1.0f;
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
 	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
@@ -436,6 +447,7 @@ public:
 	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount, bool p_clamp = true) const;
 	static constexpr float MOSS_SHELL_MIN_RADIUS = 0.05f;
 	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.
+	static constexpr float LICHEN_TILE = 0.6f; // Metres of bark the lichen layer's tile covers.
 	static constexpr int RIG_STRIDE = 18;
 	// Rig record layout (Mesh meta "tree_rig", RIG_STRIDE floats per bone).
 	enum RigField {
@@ -523,6 +535,8 @@ private:
 		Ref<Texture2D> normal;
 		Ref<Texture2D> roughness;
 		Ref<Image> height; // Metres of relief over the tile, for displaced near trunks.
+		float relief_gain = 0.0f; // Metres the displaced near tube is closer to the relief than a smooth one.
+		float relief_along = 0.05f; // Metres between the displaced tube's rings.
 	};
 	BarkSet bark_sets[BARK_MAX];
 	BarkSet moss_set;
@@ -621,6 +635,8 @@ public:
 	bool is_compress_vertices() const { return compress_vertices; }
 	void set_moss_cover(float p_cover) { moss_cover = MAX(p_cover, 0.0f); }
 	float get_moss_cover() const { return moss_cover; }
+	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
+	float get_lichen_cover() const { return lichen_cover; }
 	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }
 	bool is_fallen_branch() const { return fallen_branch; }
 	void set_envelope(const AABB &p_envelope) { envelope = p_envelope; }

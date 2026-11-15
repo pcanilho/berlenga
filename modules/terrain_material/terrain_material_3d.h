@@ -109,6 +109,7 @@ private:
 	float snow_max_slope = 60.0f;
 	bool far_blend_enabled = false;
 	float far_start = 300.0;
+	bool far_start_from_vegetation = false;
 	float far_fade = 150.0;
 	bool ground_deform_enabled = true;
 	bool sky_occlusion_enabled = true;
@@ -164,6 +165,8 @@ public:
 	bool is_far_blend_enabled() const { return far_blend_enabled; }
 	void set_far_start(float p_value);
 	float get_far_start() const { return far_start; }
+	void set_far_start_from_vegetation(bool p_value);
+	bool is_far_start_from_vegetation() const { return far_start_from_vegetation; }
 	void set_far_fade(float p_value);
 	float get_far_fade() const { return far_fade; }
 	void set_wetness_enabled(bool p_enabled);

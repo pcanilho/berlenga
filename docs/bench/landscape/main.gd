@@ -35,8 +35,11 @@ extends Node3D
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
 #   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
+#   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
+#                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
+#                         (--map-clean: without the red fall markers, for docs pairs)
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
 #                         (--tree-variants=N, default 2)
@@ -722,6 +725,24 @@ func _generate() -> void:
 		guide_nodes.append(beach_g)
 	for g in guide_nodes:
 		gen.add_child(g)
+	# --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...: TerrainBrush3D touch-ups under the generator (mode lower, raise,
+	# flatten or add; y the brush's height), applied to the generated ground with the water re-solved.
+	if args.has("touch"):
+		var modes := {"lower": TerrainBrush3D.MODE_LOWER, "raise": TerrainBrush3D.MODE_RAISE, "flatten": TerrainBrush3D.MODE_FLATTEN, "add": TerrainBrush3D.MODE_ADD}
+		var ti := 0
+		for spec in args["touch"].split(";"):
+			var tv: PackedStringArray = spec.split(",")
+			var br := TerrainBrush3D.new()
+			br.name = "Touch%d" % ti
+			ti += 1
+			br.position = Vector3(float(tv[0]), float(tv[5]), float(tv[1]))
+			br.size = Vector2(float(tv[2]), float(tv[3]))
+			br.mode = modes.get(tv[4], TerrainBrush3D.MODE_FLATTEN)
+			br.depth = float(tv[6]) if tv.size() > 6 else 0.0
+			br.falloff = float(tv[7]) if tv.size() > 7 else 40.0
+			br.profile = TerrainBrush3D.PROFILE_BOWL if tv.size() > 8 and tv[8] == "bowl" else TerrainBrush3D.PROFILE_FLAT
+			br.cell_size = 4.0
+			gen.add_child(br)
 	var rp: Array[NodePath] = []
 	for n in range_nodes:
 		rp.append(gen.get_path_to(n))
@@ -921,6 +942,18 @@ func _generate() -> void:
 						tot += 1
 						o3 += 6.0
 				_log("  stage at a third %.2f, head %.2f, foot %.2f; %d%% of the plain under it; %.1f m3/s at the head" % [st[k], st[0], st[st.size() - 1], 100 * wet / maxi(tot, 1), float(bp["discharge"])])
+	if args.has("touch"):
+		_log("touch-ups: %d cells moved, %d new lakes, %.0f ms" % [gen.get_last_touch_up_cells(), gen.get_last_touch_up_lakes(), gen.get_last_touch_up_msec()])
+		for l in gen.get_lake_results():
+			_log("  lake level %.1f m, depth %.1f m, %.1f ha at %s" % [l["level"], l["depth"], l["area"] / 1e4, l["center"]])
+		if args.has("touch-undo"):
+			# Take the brushes away again: the ground and the water go back to the generated ones.
+			var h0 := gen.get_height(Vector3(100, 0, 0))
+			for br in gen.find_children("Touch*", "TerrainBrush3D", true, false):
+				gen.remove_child(br)
+				br.free()
+			gen.apply_touch_ups()
+			_log("touch-ups undone: %d cells moved, %d lakes, ground at (100, 0) %.1f m (was %.1f m)" % [gen.get_last_touch_up_cells(), gen.get_lake_results().size(), gen.get_height(Vector3(100, 0, 0)), h0])
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:
@@ -1143,7 +1176,7 @@ func _save_map(path: String) -> void:
 			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
 			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
 				img.set_pixelv(pi, Color(0.3, 0.9, 1.0))
-	for f in gen_falls:
+	for f in (gen_falls if not args.has("map-clean") else []):
 		var q: Vector3 = f["top"]
 		var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
 		for dy in range(-2, 3):

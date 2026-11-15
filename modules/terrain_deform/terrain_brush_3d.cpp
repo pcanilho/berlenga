@@ -31,27 +31,33 @@
 
 #include "terrain_brush_3d.h"
 
+#include "terrain_generator_3d.h"
+
 #include "core/object/class_db.h"
 
 void TerrainBrush3D::_changed() {
-	if (is_inside_tree()) {
-		emit_signal(SNAME("carve_changed"));
+	if (!is_inside_tree()) {
+		return;
+	}
+	emit_signal(SNAME("carve_changed"));
+	// Under a generator it is a touch-up: the generator applies it to the ground it made and re-solves the water.
+	for (Node *p = get_parent(); p; p = p->get_parent()) {
+		if (TerrainGenerator3D *g = Object::cast_to<TerrainGenerator3D>(p)) {
+			g->touch_up_changed();
+			return;
+		}
 	}
 }
 
-Dictionary TerrainBrush3D::get_carve_brush() const {
-	Dictionary d;
-	if (!enabled || !is_inside_tree() || size.x <= 0.0 || size.y <= 0.0) {
-		return d;
+Rect2 TerrainBrush3D::get_world_rect() const {
+	if (!is_inside_tree()) {
+		return Rect2();
 	}
-	const Transform3D xf = get_global_transform();
-	const Transform3D inv = xf.affine_inverse();
-	const Vector2 half = size * 0.5;
-	const real_t fall = MAX(falloff, real_t(0.0));
-
 	// World XZ bounds of the shape plus its falloff, from the rotated local corners.
+	const Transform3D xf = get_global_transform();
+	const real_t fall = MAX(falloff, real_t(0.0));
+	const Vector2 ext = size * 0.5 + Vector2(fall, fall);
 	Rect2 rect;
-	const Vector2 ext = half + Vector2(fall, fall);
 	for (int i = 0; i < 4; i++) {
 		const Vector3 corner = xf.xform(Vector3((i & 1) ? ext.x : -ext.x, 0.0, (i & 2) ? ext.y : -ext.y));
 		const Vector2 c(corner.x, corner.z);
@@ -61,6 +67,43 @@ Dictionary TerrainBrush3D::get_carve_brush() const {
 			rect.expand_to(c);
 		}
 	}
+	return rect;
+}
+
+void TerrainBrush3D::sample_world(const Transform3D &p_xf, const Transform3D &p_inv, real_t p_x, real_t p_z, float &r_height, float &r_mask) const {
+	const Vector2 half = size * 0.5;
+	const real_t fall = MAX(falloff, real_t(0.0));
+	const real_t level = p_xf.origin.y;
+	const Vector3 local = p_inv.xform(Vector3(p_x, level, p_z));
+	// r: 0 at the centre, 1 at the shape's edge. outside: distance beyond the edge, in local units.
+	real_t r, outside;
+	if (shape == SHAPE_CIRCLE) {
+		const Vector2 q(local.x / half.x, local.z / half.y);
+		r = q.length();
+		outside = MAX(real_t(0.0), r - 1.0) * MIN(half.x, half.y);
+	} else {
+		r = MAX(Math::abs(local.x) / half.x, Math::abs(local.z) / half.y);
+		const Vector2 dq(MAX(real_t(0.0), Math::abs(local.x) - half.x), MAX(real_t(0.0), Math::abs(local.z) - half.y));
+		outside = dq.length();
+	}
+	// Soft edge: smoothstep over the falloff band (Unreal Landmass brushes use the same shape).
+	real_t m = 1.0;
+	if (outside > 0.0) {
+		m = fall > 0.0 ? 1.0 - Math::smoothstep(real_t(0.0), fall, outside) : 0.0;
+	}
+	const real_t shape_depth = profile == PROFILE_BOWL ? depth * MAX(real_t(0.0), real_t(1.0) - MIN(r, real_t(1.0)) * MIN(r, real_t(1.0))) : depth;
+	r_height = float(mode == MODE_ADD ? -shape_depth : level - shape_depth);
+	r_mask = float(m);
+}
+
+Dictionary TerrainBrush3D::get_carve_brush() const {
+	Dictionary d;
+	if (!enabled || !is_inside_tree() || size.x <= 0.0 || size.y <= 0.0) {
+		return d;
+	}
+	const Transform3D xf = get_global_transform();
+	const Transform3D inv = xf.affine_inverse();
+	Rect2 rect = get_world_rect();
 	// Cell-centred samples over a rect of n * cs, the convention TerrainDeformer3D and PhysXRiver3D share.
 	const real_t cs = MAX(cell_size, real_t(0.01));
 	const Vector2i n(MAX(2, int(Math::ceil(rect.size.x / cs))), MAX(2, int(Math::ceil(rect.size.y / cs))));
@@ -72,29 +115,9 @@ Dictionary TerrainBrush3D::get_carve_brush() const {
 	mask.resize(n.x * n.y);
 	float *hp = heights.ptrw();
 	float *mp = mask.ptrw();
-	const real_t level = xf.origin.y;
 	for (int z = 0; z < n.y; z++) {
 		for (int x = 0; x < n.x; x++) {
-			const Vector3 local = inv.xform(Vector3(rect.position.x + (x + 0.5) * cs, level, rect.position.y + (z + 0.5) * cs));
-			// r: 0 at the centre, 1 at the shape's edge. outside: distance beyond the edge, in local units.
-			real_t r, outside;
-			if (shape == SHAPE_CIRCLE) {
-				const Vector2 q(local.x / half.x, local.z / half.y);
-				r = q.length();
-				outside = MAX(real_t(0.0), r - 1.0) * MIN(half.x, half.y);
-			} else {
-				r = MAX(Math::abs(local.x) / half.x, Math::abs(local.z) / half.y);
-				const Vector2 dq(MAX(real_t(0.0), Math::abs(local.x) - half.x), MAX(real_t(0.0), Math::abs(local.z) - half.y));
-				outside = dq.length();
-			}
-			// Soft edge: smoothstep over the falloff band (Unreal Landmass brushes use the same shape).
-			real_t m = 1.0;
-			if (outside > 0.0) {
-				m = fall > 0.0 ? 1.0 - Math::smoothstep(real_t(0.0), fall, outside) : 0.0;
-			}
-			const real_t shape_depth = profile == PROFILE_BOWL ? depth * MAX(real_t(0.0), real_t(1.0) - MIN(r, real_t(1.0)) * MIN(r, real_t(1.0))) : depth;
-			hp[z * n.x + x] = float(mode == MODE_ADD ? -shape_depth : level - shape_depth);
-			mp[z * n.x + x] = float(m);
+			sample_world(xf, inv, rect.position.x + (x + 0.5) * cs, rect.position.y + (z + 0.5) * cs, hp[z * n.x + x], mp[z * n.x + x]);
 		}
 	}
 	static const char *mode_names[] = { "lower", "raise", "flatten", "add" };
@@ -150,6 +173,8 @@ void TerrainBrush3D::set_enabled(bool p_enabled) {
 
 void TerrainBrush3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE:
+		case NOTIFICATION_EXIT_TREE:
 		case NOTIFICATION_TRANSFORM_CHANGED:
 		case NOTIFICATION_VISIBILITY_CHANGED: {
 			_changed();
@@ -175,6 +200,7 @@ void TerrainBrush3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_enabled", "enabled"), &TerrainBrush3D::set_enabled);
 	ClassDB::bind_method(D_METHOD("is_enabled"), &TerrainBrush3D::is_enabled);
 	ClassDB::bind_method(D_METHOD("get_carve_brush"), &TerrainBrush3D::get_carve_brush);
+	ClassDB::bind_method(D_METHOD("get_world_rect"), &TerrainBrush3D::get_world_rect);
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enabled"), "set_enabled", "is_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape", PROPERTY_HINT_ENUM, "Circle,Rectangle"), "set_shape", "get_shape");

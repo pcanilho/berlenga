@@ -1435,6 +1435,22 @@ takes 2.7 s with the write against 7.2 s for the full 16 m run without it: the g
 sky occlusion and rivers have fixed costs, so it is not 16 times faster. Faster previews (skipping the ice and sky at
 preview, or a GPU solver as Schott et al. 2023) are for later if it is too slow on the PC.
 
+Built, step 2 (15 Nov): touch-ups. A `TerrainBrush3D` under the generator (at any depth) is a touch-up: generate()
+keeps the ground and water it made, and the brushes (lower, raise, flatten, add; circle or rectangle, flat or bowl) go
+on that ground in tree order, after which the water is solved again without eroding. Routing is Priority-Flood+epsilon
+(Barnes et al. 2014) from the generated outlets: every cell keeps its generated receiver where that still runs downhill
+on the filled surface and lies more than two cells from moved ground, else takes the steepest descent on it, so the
+rivers away from the brushes do not change. A generated lake the brushes did not reach stays as it was; any closed
+basin within two cells of moved ground (or where a reached lake lay) fills to its spill point as the glacial basins do,
+down to nine cells (a pond dug on purpose). The channels ride the ground moved under them, the river tails, lips,
+spray and sky are baked again. A flatten brush keeps its ground flat (the erosion detail fades under it); the tile
+erosion's gullies fade wherever a brush moved the ground, since they belong to the ground before. Moving or changing a
+brush re-applies the touch-ups and writes the terrain once it has been still for 0.4 s. On the bench (`--touch`), a
+25 m dam across the hanging valley's trough backs up a 30 ha lake 24 m deep whose outlet runs round the dam's end, and
+an 8 m bowl dug on the floor holds a 2.5 ha pond, in 0.8 s at 16 m cells; taking the brushes away gives back the
+generated map exactly. Left for later: a channel that crossed a raised dam rides over its crest (a spillway look); the
+sea mask does not move with the brushes.
+
 
 ## Sources
 

@@ -634,9 +634,11 @@
   },
   {
    "name": "Shadows on water",
-   "settings": [],
-   "note": "always on",
-   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing; under the surface, the light in the water takes the sun's and the clouds' shadows too.",
+   "settings": [
+    "wave_shadows"
+   ],
+   "note": "",
+   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).",
    "page": "water",
    "title": "Water",
    "topic": "Light in water"
@@ -694,7 +696,7 @@
     "clear_water"
    ],
    "note": "",
-   "what": "in raster, as under path tracing, the bed shows through the shallows of sea and lakes, refracted, and fades with depth.",
+   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1202,6 +1204,18 @@
    "topic": "Generation"
   },
   {
+   "name": "Touch-ups",
+   "settings": [
+    "TerrainBrush3D",
+    "TerrainGenerator3D"
+   ],
+   "note": "",
+   "what": "height brushes reshape the generated ground and lakes and rivers re-solve around them, so a raised dam backs up a lake and a dug hollow holds a pond.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "Coarse-to-fine erosion",
    "settings": [
     "coarse_levels",
@@ -1522,7 +1536,7 @@
     "far_fade"
    ],
    "note": "",
-   "what": "far ground takes the colour of the plant cover map.",
+   "what": "far ground takes the colour of the plant cover map. With `far_start_from_vegetation` (off by default) the blend starts where the streamed plants end, else at `far_start`.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2100,6 +2114,17 @@
    ],
    "note": "",
    "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Bark lichen",
+   "settings": [
+    "lichen_cover"
+   ],
+   "note": "",
+   "what": "lichen on bark, placed by height, crown light, stem age and moss; 0 turns it off.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

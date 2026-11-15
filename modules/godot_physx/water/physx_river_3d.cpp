@@ -120,6 +120,14 @@ uniform vec2 live_texel = vec2(0.25);
 uniform vec3 live_tilt = vec3(0.0);
 uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
+// Clear water (raster, seen from above; docs/ideas/water.md "Clear water you can see into"): the bed read
+// through the surface along the refracted ray and passed through the path tracer's medium, as on the sea
+// (PhysXWaterSurface3D). Off: the older tint (water_color, shallow_color).
+uniform bool clear_water = true;
+#if !defined(RT)
+uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
+uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
+#endif
 // Raster reflections from above (water_raster_reflections.h).
 )";
 const char *RIVER_SHADER_SRC_TAIL = R"(
@@ -287,6 +295,16 @@ void fragment() {
 	vec3 unlit_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
 	vec3 base_rgb = unlit_rgb * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
+	if (clear_water && raster_reflections) {
+		// The bed through the water, refracted, in place of the tint and its blend; its sun is inside it.
+		vec3 sun_dir;
+		vec3 sun_irr;
+		vec3 sky;
+		water_light_in_water(sun_dir, sun_irr, sky);
+		base_rgb = water_clear_through(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
+		unlit_rgb = vec3(0.0);
+		base_a = 1.0;
+	}
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	float a0 = mix(base_a, foam_color.a, foam) * edge;
 	// The reflection term is linear in the colour, so the water's part and the

@@ -6,7 +6,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
 ## Light in water
 
-- **Shadows on water** (always on): rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing; under the surface, the light in the water takes the sun's and the clouds' shadows too.
+- **Shadows on water** (always on): rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).
 - **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.
 
   ![A pool with a checkered floor and coloured posts, refraction off and on](media/water-refraction.jpg)
@@ -29,7 +29,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
 ## Sea and lakes
 
-- **Clear water** (`clear_water`, on by default): in raster, as under path tracing, the bed shows through the shallows of sea and lakes, refracted, and fades with depth.
+- **Clear water** (`clear_water`, on by default): in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.
 
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 

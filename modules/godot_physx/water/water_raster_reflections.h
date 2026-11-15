@@ -165,6 +165,136 @@ vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_wo
 	r_sun_a2 = a2;
 	return vec4((p_albedo * p_alpha * (1.0 - f_eff) + add) * inv, a_new);
 }
+
+// The light inside the water from this sky and sun: the sun's direction once refracted (Snell, 1.33), its
+// irradiance past the surface (Fresnel transmission), and the sky's radiance from above. Zero without them.
+void water_light_in_water(out vec3 r_sun_dir, out vec3 r_sun_irradiance, out vec3 r_sky_radiance) {
+	r_sun_dir = vec3(0.0, -1.0, 0.0);
+	r_sun_irradiance = vec3(0.0);
+	r_sky_radiance = vec3(0.0);
+	if (!water_raster_lit()) {
+		return;
+	}
+	r_sky_radiance = raster_sky_irradiance * raster_sky_energy / PI;
+	vec3 travel = normalize(raster_sun_travel);
+	float cos_i = -travel.y;
+	if (cos_i <= 0.0) {
+		return;
+	}
+	float sin_t = sqrt(max(1.0 - cos_i * cos_i, 0.0)) / 1.33;
+	float cos_t = sqrt(max(1.0 - sin_t * sin_t, 0.0));
+	vec2 hz = travel.xz;
+	hz = dot(hz, hz) > 1e-12 ? normalize(hz) : vec2(0.0);
+	r_sun_dir = vec3(hz.x * sin_t, -cos_t, hz.y * sin_t);
+	float rs = (cos_i - 1.33 * cos_t) / (cos_i + 1.33 * cos_t);
+	float rp = (1.33 * cos_i - cos_t) / (1.33 * cos_i + cos_t);
+	r_sun_irradiance = raster_sun_irradiance * (1.0 - 0.5 * (rs * rs + rp * rp));
+}
+
+// Interleaved gradient noise (Jimenez 2014), a new pattern each frame: per-pixel offsets for marches.
+float water_jitter(vec2 p_frag, float p_time) {
+	p_frag += 5.588238 * floor(p_time * 60.0);
+	return fract(52.9829189 * fract(dot(p_frag, vec2(0.06711056, 0.00583715))));
+}
+
+#if !defined(RT)
+// Clear water seen from above (docs/ideas/water.md "Clear water you can see into"): the light coming up
+// through the surface at p_s toward the eye, before the surface's own Fresnel reflection. The view ray v
+// refracts into the water along n (Snell). Where the straight ray meets the bed at depth z0 (z_bed, the
+// water's own depth there when known, >= 0; else from the screen's depth), the refracted one meets it after
+// z0 / -t.y (a level bed); that screen point is read for colour and depth. Where it shows something in
+// front of the water (a rock standing out of it), the offset is halved, twice, then given up for the
+// straight pixel (GPU Gems 2, ch. 19). The light seen there was dimmed on its way down to that depth and is
+// dimmed again along the refracted path (Beer-Lambert, per channel); the water adds its own scattered sun
+// (Henyey-Greenstein, as far as sun_visibility lets the sun reach the surface) and sky along the path. The
+// medium is the path tracer's: absorption p_ab and scattering p_sc per metre, anisotropy p_g.
+vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
+		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
+		mat4 view, mat4 inv_proj, mat4 inv_view) {
+	vec3 t = refract(v, n, 1.0 / 1.33);
+	if (dot(t, t) < 1e-6) {
+		t = v;
+	}
+	float d0 = texture(p_depth, uv).r;
+	float len0 = 1e4;
+	if (d0 > 0.0) {
+		vec4 b = inv_proj * vec4(uv * 2.0 - 1.0, d0, 1.0);
+		len0 = distance((inv_view * vec4(b.xyz / b.w, 1.0)).xyz, p_s);
+	}
+	float z0 = z_bed >= 0.0 ? z_bed : max(-v.y, 0.0) * min(len0, 1e3);
+	float len_r = min(z0 / max(-t.y, 0.05), 60.0);
+	// Given up: the straight-through colour, but the refracted ray's path to the same depth (the straight
+	// ray's own, longer at a glancing view, would change the tint in a step where the offset is given up).
+	vec2 uv_r = uv;
+	float len = len0 < 1e4 ? z0 / max(-t.y, 0.05) : len0;
+	vec4 cs = proj * view * vec4(p_s, 1.0);
+	float d_s = cs.z / cs.w;
+	vec4 c = proj * view * vec4(p_s + t * len_r, 1.0);
+	if (c.w > 0.0) {
+		vec2 q_full = clamp(c.xy / c.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+		for (int i = 0; i < 3; i++) {
+			vec2 q = mix(uv, q_full, exp2(-float(i)));
+			float d1 = texture(p_depth, q).r;
+			// Reverse Z: behind the surface is a smaller depth than the surface's own.
+			if (d1 <= d_s) {
+				uv_r = q;
+				len = 1e4;
+				if (d1 > 0.0) {
+					vec4 b = inv_proj * vec4(q * 2.0 - 1.0, d1, 1.0);
+					len = distance((inv_view * vec4(b.xyz / b.w, 1.0)).xyz, p_s);
+				}
+				break;
+			}
+		}
+	}
+	// The known bed's path, unless something stands nearer on it (a rock, a hull): the screen's depth jumps
+	// from pixel to pixel where waves bend the offset, the bed's does not.
+	if (z_bed >= 0.0) {
+		len = min(len, z_bed / max(-t.y, 0.05) + 0.25);
+	}
+	vec3 st = max(p_ab, vec3(0.0)) + max(p_sc, vec3(0.0));
+	float mu = max(-p_sun_dir.y, 0.05);
+	// The light reaching the bed's depth: the sun along its refracted slant, the sky crossing the Snell window.
+	float z_b = max(-t.y, 0.0) * min(len, 1e3);
+	float w_sun = dot(p_sun_irr, vec3(1.0 / 3.0)) * mu / PI;
+	float w_sky = dot(p_sky, vec3(1.0 / 3.0));
+	vec3 down = w_sun + w_sky > 0.0 ? (w_sun * exp(-st * z_b / mu) + w_sky * exp(-st * 1.2 * z_b)) / (w_sun + w_sky) : exp(-st * z_b);
+	vec3 seen = texture(p_screen, uv_r).rgb * down * exp(-st * len);
+	// Scattered along the path (closed form, as the underwater pass): depth grows as -t.y per metre.
+	vec3 a = st / mu;
+	vec3 ka = st - a * t.y;
+	// The sun's share marched in steps over the near water (shadows in the water: a cliff's or a cloud's shadow
+	// darkens the water body, not only its surface), each step lit as far as the light reached where its
+	// refracted ray entered the water (sun_visibility there), integrated in closed form within the step and
+	// jittered per pixel; past the march the last step's light carries on (as the underwater pass, #287).
+	const int STEPS = 12;
+	float reach = min(len, 4.0 / max(dot(st, vec3(1.0 / 3.0)), 1e-3));
+	float dt = reach / float(STEPS);
+	vec3 seg_sun = vec3(0.0);
+	vec3 vis = vec3(1.0);
+	for (int i = 0; i < STEPS; i++) {
+		float s0 = float(i) * dt;
+		float sj = s0 + p_jitter * dt;
+		float z = max(-t.y * sj, 0.0);
+		vis = sun_visibility(p_s + t * sj - p_sun_dir * (z / mu));
+		vec3 seg = mix(vec3(dt), (1.0 - exp(-ka * dt)) / ka, step(vec3(1e-4), abs(ka * dt)));
+		seg_sun += vis * exp(-ka * s0) * seg;
+	}
+	if (len > reach) {
+		float rest = min(len - reach, 1e4);
+		vec3 seg = mix(vec3(rest), (1.0 - exp(-ka * rest)) / ka, step(vec3(1e-4), abs(ka * rest)));
+		seg_sun += vis * exp(-ka * reach) * seg;
+	}
+	vec3 kb = st - st * 1.2 * t.y;
+	vec3 seg_sky = mix(vec3(len), (1.0 - exp(-kb * len)) / kb, step(vec3(1e-4), abs(kb * len)));
+	float cth = dot(p_sun_dir, -t);
+	float g2 = p_g * p_g;
+	float hg = (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * p_g * cth, 1e-4), 1.5));
+	vec3 sun = p_sun_irr * hg * seg_sun;
+	vec3 sky = p_sky * 0.5 * seg_sky;
+	return seen + max(p_sc, vec3(0.0)) * (sun + sky);
+}
+#endif
 )";
 
 // The CPU side: finds the sun and bakes the sky panorama, and sets the uniforms above on a material.

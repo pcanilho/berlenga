@@ -136,11 +136,14 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 	g.forest_spacing = STAND_SPACING[p] * 1.3
 	var mesh := g.generate()
 	var tris := 0
+	var bark_tris := 0
 	for i in mesh.get_surface_count():
 		tris += mesh.surface_get_array_index_len(i) / 3
+		if mesh.surface_get_name(i) == "bark":
+			bark_tris += mesh.surface_get_array_index_len(i) / 3
 	return {"mesh": mesh, "height": g.get_height(), "crown_radius": g.get_crown_radius(), "crown_base": g.get_crown_base(),
 		"internodes": g.get_internode_count(), "leaves": g.get_leaf_count(), "dead": g.get_dead_branch_count(),
-		"shed": g.get_shed_count(), "tris": tris, "ms": g.get_generation_usec() / 1000.0,
+		"shed": g.get_shed_count(), "tris": tris, "bark_tris": bark_tris, "ms": g.get_generation_usec() / 1000.0,
 		"capsules": g.get_collision_capsules(), "features": g.get_veteran_features()}
 
 # The shared season state (WeatherMap3D.get_season(), section 2c) for a 0 C January / 18 C July
@@ -194,13 +197,13 @@ func _check(ok: bool, what: String) -> void:
 	print(("PASS " if ok else "FAIL ") + what)
 
 func _run_test() -> void:
-	print("species        stand   height  crown_r  crown_base  internodes  leaves   dead  shed  tris      ms")
+	print("species        stand   height  crown_r  crown_base  internodes  leaves   dead  shed  tris      bark      ms")
 	for p in (pick if not pick.is_empty() else ([preset] if preset >= 0 else range(NAMES.size()))):
 		var o := _gen(p, false, seed)
 		var f := _gen(p, true, seed)
 		for pair in [["open", o], ["forest", f]]:
 			var d: Dictionary = pair[1]
-			print("%-14s %-7s %6.1f  %7.1f  %10.1f  %10d  %6d  %5d  %4d  %8d  %6.0f" % [NAMES[p], pair[0], d.height, d.crown_radius, d.crown_base, d.internodes, d.leaves, d.dead, d.shed, d.tris, d.ms])
+			print("%-14s %-7s %6.1f  %7.1f  %10.1f  %10d  %6d  %5d  %4d  %8d  %8d  %6.0f" % [NAMES[p], pair[0], d.height, d.crown_radius, d.crown_base, d.internodes, d.leaves, d.dead, d.shed, d.tris, d.bark_tris, d.ms])
 		var r: Vector2 = HEIGHT_RANGE[p]
 		_check(o.height >= r.x and o.height <= r.y, "%s open-grown height %.1f m in %.0f-%.0f m" % [NAMES[p], o.height, r.x, r.y])
 		if not p in SHRUBS and not p in [14, 25]: # Shrubs and shade-tolerant fir and hemlock keep low foliage in a stand.
@@ -444,8 +447,14 @@ func _build_scene() -> void:
 func _render_later() -> void:
 	if OS.has_environment("WIRE"):
 		get_viewport().debug_draw = Viewport.DEBUG_DRAW_WIREFRAME
-	for i in (8 if raster else 12):
+	var frames := 8 if raster else 12
+	var t0 := 0
+	for i in frames:
+		if i == frames - 4:
+			t0 = Time.get_ticks_usec()
 		await RenderingServer.frame_post_draw
+	# The last four frames' mean, after shaders and acceleration structures settled.
+	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(1 if fails > 0 else 0)

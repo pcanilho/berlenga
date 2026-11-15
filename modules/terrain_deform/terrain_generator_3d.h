@@ -310,7 +310,22 @@ private:
 	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
 	void _shape_coast(const LocalVector<uint8_t> &p_sea);
 	void _make_lakes(const LocalVector<uint8_t> &p_sea);
-	void _basin_lakes(std::vector<uint8_t> &r_taken);
+	// p_want marks the cells that make a basin a lake (none: the cells the last glaciation's ice covered).
+	void _basin_lakes(std::vector<uint8_t> &r_taken, const uint8_t *p_want = nullptr, double p_min_area = -1.0);
+	// Touch-ups: TerrainBrush3D nodes under the generator, applied to the ground generate() made, the water re-solved.
+	LocalVector<float> heights_generated; // the ground as generate() left it, before the touch-ups
+	LocalVector<int32_t> receivers_generated;
+	LocalVector<int32_t> water_body_generated;
+	LocalVector<LakeInfo> lakes_generated;
+	LocalVector<Channel> channels_generated; // before the river tails were cut
+	LocalVector<float> touch_mask; // per cell: the mask of the brushes that moved it (the tile erosion fades there)
+	LocalVector<float> touch_flat; // per cell: the mask of the flatten brushes (the erosion detail fades there)
+	int last_touch_cells = 0;
+	int last_touch_lakes = 0;
+	double last_touch_msec = 0.0;
+	double touch_wait = -1.0;
+	void _brushes(LocalVector<class TerrainBrush3D *> &r_out, Node *p_node = nullptr) const;
+	void _touch_up();
 	struct InflowPoint {
 		Vector2 position;
 		double area = 0.0; // m2
@@ -727,6 +742,14 @@ public:
 	// generate() and write_to_terrain() at guide_preview_scale times the cell size; the cell size is restored after.
 	int preview();
 	double get_last_preview_msec() const { return last_preview_msec; }
+	// Apply the TerrainBrush3D touch-ups under this generator to the generated ground and re-solve the lakes and
+	// rivers (generate() does this itself). False with no generated ground.
+	bool apply_touch_ups();
+	// A brush under this generator changed: apply_touch_ups() and write_to_terrain() once it has been still for 0.4 s.
+	void touch_up_changed();
+	int get_last_touch_up_cells() const { return last_touch_cells; }
+	int get_last_touch_up_lakes() const { return last_touch_lakes; }
+	double get_last_touch_up_msec() const { return last_touch_msec; }
 	void set_sky_light_source(const NodePath &p_path);
 	NodePath get_sky_light_source() const { return sky_light_source; }
 	void set_sky_light_interval(real_t p_seconds) { sky_light_interval = MAX(p_seconds, real_t(0.0)); }

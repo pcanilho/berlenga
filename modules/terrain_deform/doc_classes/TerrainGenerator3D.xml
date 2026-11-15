@@ -373,6 +373,30 @@
 				The world X and Z rectangle the generator covers ([code]position.y[/code] is Z).
 			</description>
 		</method>
+		<method name="apply_touch_ups">
+			<return type="bool" />
+			<description>
+				Applies the [TerrainBrush3D] nodes under this generator (at any depth, in tree order) to the ground the last [method generate] made, then re-solves the water: the rivers re-route where the brushes moved the ground, a lake the brushes left alone stays as it was, and a closed basin they made or changed (a dug hollow, the valley behind a raised dam) fills to its spill point. Ground a flatten brush covers keeps no erosion detail; the tile erosion fades wherever a brush moved the ground. [method generate] applies the touch-ups itself, and moving or changing a brush calls this and [method write_to_terrain] once it has been still for 0.4 s. Returns [code]false[/code] with no generated ground. Emits [signal changing] and [signal generated].
+			</description>
+		</method>
+		<method name="get_last_touch_up_cells" qualifiers="const">
+			<return type="int" />
+			<description>
+				Grid cells the last touch-ups moved by more than a centimetre.
+			</description>
+		</method>
+		<method name="get_last_touch_up_lakes" qualifiers="const">
+			<return type="int" />
+			<description>
+				Lakes the last touch-ups made (in basins they dug or dammed, or where they changed a generated lake).
+			</description>
+		</method>
+		<method name="get_last_touch_up_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last touch-ups took, in milliseconds.
+			</description>
+		</method>
 		<method name="guide_changed">
 			<return type="void" />
 			<description>
@@ -410,6 +434,12 @@
 			<param index="2" name="size" type="Vector2i" />
 			<description>
 				The final ground (as [method get_height]) on a regular grid of [param size] points starting at world [param origin] (x, z), [param spacing] metres apart, as an [constant Image.FORMAT_RF] image. Rows are computed in parallel. Points outside the rectangle are NaN.
+			</description>
+		</method>
+		<method name="touch_up_changed">
+			<return type="void" />
+			<description>
+				Called by a [TerrainBrush3D] under this generator when it moves or changes: runs [method apply_touch_ups] and [method write_to_terrain] once the brush has been still for 0.4 s.
 			</description>
 		</method>
 		<method name="write_to_terrain">

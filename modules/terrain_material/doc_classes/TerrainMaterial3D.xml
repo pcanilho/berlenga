@@ -66,6 +66,18 @@
 		<member name="detail_octaves" type="int" setter="set_detail_octaves" getter="get_detail_octaves" default="4">
 			Octaves of the erosion detail normal. It fades out where a pixel covers it.
 		</member>
+		<member name="far_blend_enabled" type="bool" setter="set_far_blend_enabled" getter="is_far_blend_enabled" default="false">
+			If [code]true[/code], far ground takes the plant cover's colour from the cover map a [VegetationField3D] publishes, taking over from the near grass tint between [member far_start] and [member far_start] + [member far_fade].
+		</member>
+		<member name="far_fade" type="float" setter="set_far_fade" getter="get_far_fade" default="150.0">
+			Distance in metres over which the far blend takes over.
+		</member>
+		<member name="far_start" type="float" setter="set_far_start" getter="get_far_start" default="300.0">
+			Distance from the camera in metres where the far blend starts.
+		</member>
+		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="false">
+			If [code]true[/code], the far blend ends where a streaming [VegetationField3D]'s placed plants end (the global shader parameter [code]vegetation_near_radius[/code]): it starts at that radius less [member far_fade]. With no field streaming it uses [member far_start].
+		</member>
 		<member name="geology_enabled" type="bool" setter="set_geology_enabled" getter="is_geology_enabled" default="true">
 			Follow the generator's geology maps when they are set.
 		</member>
