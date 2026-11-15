@@ -39,6 +39,7 @@ extends Node3D
 #                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
+#                         (--map-clean: without the red fall markers, for docs pairs)
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
 #                         (--tree-variants=N, default 2)
@@ -1175,7 +1176,7 @@ func _save_map(path: String) -> void:
 			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
 			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
 				img.set_pixelv(pi, Color(0.3, 0.9, 1.0))
-	for f in gen_falls:
+	for f in (gen_falls if not args.has("map-clean") else []):
 		var q: Vector3 = f["top"]
 		var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
 		for dy in range(-2, 3):
