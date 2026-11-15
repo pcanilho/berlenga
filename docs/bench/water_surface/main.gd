@@ -56,6 +56,8 @@ extends Node3D
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --plain-sand    noise-toned sand instead of the checker (for shots)
+#   --no-props      no slabs, standing rock or floating boxes (for shots)
+#   --view=shallows lower and closer over the shallow sand (caustics shots)
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #   --sun-pitch=DEG the sun's height above the horizon (default 50)
 #   --shade=X,Z     a slab 12 m up whose shadow (a 5 m band along x) falls on the water at X,Z (an overhang's shade)
@@ -71,6 +73,7 @@ var out := ""
 var debug_mode := 0
 var slope_deg := -1.0
 var plain_sand := false
+var no_props := false
 var cam_dy := 0.0
 var sun_energy := 1.0
 var dive := 0.0
@@ -173,6 +176,7 @@ func _ready() -> void:
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
 		elif a == "--plain-sand": plain_sand = true
+		elif a == "--no-props": no_props = true
 		elif a.begins_with("--boat="): boat_speed = float(a.substr(7))
 		elif a.begins_with("--wake-out="): wake_out = a.substr(11)
 		elif a.begins_with("--wake="):
@@ -339,7 +343,7 @@ func _ready() -> void:
 	add_child(cam)
 	match view:
 		"shallows":
-			cam.look_at_from_position(Vector3(0, 1.6, 4.0), Vector3(-1.0, -1.0, -5.0))
+			cam.look_at_from_position(Vector3(0, 3.0, 8.0), Vector3(0.0, -1.0, -4.0))
 		"under":
 			cam.look_at_from_position(Vector3(0, 3.5, 5.0), Vector3(0, -1.0, -1.5))
 		"submerged":
