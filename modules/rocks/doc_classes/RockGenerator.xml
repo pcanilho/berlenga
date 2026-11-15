@@ -55,6 +55,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="close_up" type="bool" setter="set_close_up" getter="get_close_up" default="false">
+			Build the close-up version of the shape: the same stone on a grid of about 3 mm cells at the family's typical size (at most 300 cells across), with the rock's millimetre fabric carved in as geometry. Several times the triangles; meant for stones within a few metres of the camera (see [member RockField3D.close_up_radius]).
+		</member>
 		<member name="detail" type="float" setter="set_detail" getter="get_detail" default="1.0">
 			Scales the grid resolution of the shape. Lower is faster and coarser.
 		</member>
