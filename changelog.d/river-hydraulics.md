@@ -1,1 +1,0 @@
-- Water: `PhysXRiver3D.gradually_varied_flow`, `PhysXRiver3D.bend_superelevation`. Rivers pool behind bumps, draw down before steps, run fast below them and end in a hydraulic jump; the surface banks up round bends. Fast water is lace rather than a solid white sheet.

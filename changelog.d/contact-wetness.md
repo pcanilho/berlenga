@@ -1,1 +1,0 @@
-- Weather: contact wetness. Ground that water ran over stays dark and glossy after the water has gone, then dries with the weather (`WeatherMap3D.contact_wetness_enabled`, `add_contact_wetness()`); live water areas wet the ground they cover.

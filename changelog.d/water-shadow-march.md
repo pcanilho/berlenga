@@ -1,1 +1,0 @@
-- Water: seen from above, the sea, lakes and rivers darken inside under cliff and cloud shadows (raster), not only at the surface.

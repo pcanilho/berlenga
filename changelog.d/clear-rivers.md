@@ -1,1 +1,0 @@
-- Water: rivers are see-through in raster too: the bed shows through, refracted, and fades with depth (`clear_water` on the river shader).
