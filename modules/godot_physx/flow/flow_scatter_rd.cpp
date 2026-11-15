@@ -31,6 +31,7 @@
 
 #include "flow_scatter_rd.h"
 
+#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
@@ -52,6 +53,9 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 misc; // x: sigma per meter per unit smoke, y: anisotropy, z: shadow reach (m), w: 1 = sample light shadows
 	ivec4 size; // xy: the frame; zw: the scattering texture (the frame / res.x)
 	ivec4 res; // x: frame pixels per scattering texel, each way
+	vec4 ambient; // rgb: ambient color (linear, * energy); w: sky contribution
+	vec4 sky; // xy: the sky octmap's uv border; z: its last mip; w: 1 = ambient light on, plus sky energy * 2 (see below)
+	vec4 sky_xform[3]; // rows: world direction -> sky direction
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane).
@@ -98,6 +102,34 @@ layout(set = 0, binding = 4, std430) restrict readonly buffer Lights {
 
 // Godot's shadow atlas (omni: dual paraboloid; spot: projected).
 layout(set = 0, binding = 6) uniform sampler2D shadow_atlas;
+
+// The sky's radiance octmap (Godot's reflections and volumetric fog read it).
+#ifdef SKY_ARRAY
+layout(set = 0, binding = 7) uniform sampler2DArray sky_tex;
+#else
+layout(set = 0, binding = 7) uniform sampler2D sky_tex;
+#endif
+
+vec2 oct_wrap(vec2 v) {
+	return (1.0 - abs(v.yx)) * mix(vec2(-1.0), vec2(1.0), greaterThanEqual(v.xy, vec2(0.0)));
+}
+
+// As oct_inc.glsl's vec3_to_oct_with_border.
+vec2 sky_uv(vec3 n) {
+	n /= (abs(n.x) + abs(n.y) + abs(n.z));
+	vec2 uv = n.z >= 0.0 ? n.xy : oct_wrap(n.xy);
+	uv = uv * 0.5 + 0.5;
+	return uv * p.sky.y + p.sky.x;
+}
+
+vec3 sky_radiance(vec3 world_dir, float lod) {
+	vec3 d = vec3(dot(p.sky_xform[0].xyz, world_dir), dot(p.sky_xform[1].xyz, world_dir), dot(p.sky_xform[2].xyz, world_dir));
+#ifdef SKY_ARRAY
+	return textureLod(sky_tex, vec3(sky_uv(d), lod), 0.0).rgb;
+#else
+	return textureLod(sky_tex, sky_uv(d), lod).rgb;
+#endif
+}
 
 #define BLOCK_DIM_BITS (p.level[1].xyz)
 #define TABLE_DIM_LESS_ONE (p.level[2].xyz)
@@ -255,6 +287,21 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	light_acc.location = ivec4(0x40000000);
 	light_acc.valid = false;
 
+	// The ambient light reaching the gas from all around, as Godot's volumetric fog has it:
+	// the ambient color mixed with the sky (one isotropic tap up, one along the scattering
+	// direction, weighed by the anisotropy) by the sky contribution.
+	bool ambient_on = p.sky.w > 0.5;
+	vec3 ambient = vec3(0.0);
+	if (ambient_on) {
+		ambient = p.ambient.rgb;
+		if (p.ambient.w > 0.0) {
+			float sky_energy = p.sky.w - 1.0;
+			vec3 isotropic = sky_radiance(vec3(0.0, 1.0, 0.0), p.sky.z);
+			vec3 anisotropic = sky_radiance(g < 0.0 ? -dir : dir, max(p.sky.z - 1.0, 0.0));
+			ambient = mix(ambient, mix(isotropic, anisotropic, abs(g)) * sky_energy, p.ambient.w);
+		}
+	}
+
 	float transmittance = 1.0;
 	vec3 sum = vec3(0.0);
 	float t = t0 + step_len * ign(vec2(px));
@@ -322,6 +369,27 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				float c = dot(dir, ldir);
 				float phase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5);
 				in_light += L.color_decay.rgb * (atten * phase * light_t);
+			}
+			if (ambient_on) {
+				// How much of the sky the point sees: the gas straight above it (a short march up).
+				// (Normalized: 1 in the open, as Godot's fog has its ambient.)
+				float sky_t = 1.0;
+				if (shadow_steps > 0) {
+					float ds = p.misc.z * upm / float(shadow_steps);
+					float od = 0.0;
+					for (int s = 0; s < shadow_steps; s++) {
+						float ls;
+						smoke_at(pos + vec3(0.0, ds * (float(s) + 0.5), 0.0), cell_inv, light_acc, ls);
+						od += ls;
+					}
+					// Multiple scattering, approximated as in Wrenninge et al. 2013 ("Oz: the great and
+					// volumetric") and Hillaire 2016 (Frostbite sky and clouds): octaves of ever weaker,
+					// ever less attenuated light, so dense smoke isn't black inside as single scattering
+					// makes it.
+					float tau = od * sigma * ds;
+					sky_t = (exp(-tau) + 0.5 * exp(-0.5 * tau) + 0.25 * exp(-0.25 * tau)) * (1.0 / 1.75);
+				}
+				in_light += ambient * sky_t;
 			}
 			sum += transmittance * alpha * in_light;
 			transmittance *= 1.0 - alpha;
@@ -405,12 +473,15 @@ void main() {
 }
 )";
 
-constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8;
+constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8 + 4 * 5;
 
-RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name) {
+RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name, bool p_sky_array = false) {
 	Ref<RDShaderFile> file;
 	file.instantiate();
-	const String source = String(p_source).replace("@PARAMS_BLOCK@", PARAMS_BLOCK);
+	String source = String(p_source).replace("@PARAMS_BLOCK@", PARAMS_BLOCK);
+	if (p_sky_array) {
+		source = source.replace("#version 450\n", "#version 450\n#define SKY_ARRAY\n");
+	}
 	ERR_FAIL_COND_V_MSG(file->parse_versions_from_text(source) != OK, RID(), vformat("PhysXFlow3D: light scattering %s shader failed to compile.", p_name));
 	Ref<RDShaderSPIRV> spirv = file->get_spirv();
 	ERR_FAIL_COND_V(spirv.is_null(), RID());
@@ -429,7 +500,8 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 		return false;
 	}
 	failed = true;
-	shader = compile(p_rd, SCATTER_SHADER, "scattering");
+	sky_array = RendererSceneRenderRD::get_singleton() != nullptr && RendererSceneRenderRD::get_singleton()->is_using_radiance_octmap_array();
+	shader = compile(p_rd, SCATTER_SHADER, "scattering", sky_array);
 	ERR_FAIL_COND_V(!shader.is_valid(), false);
 	pipeline = p_rd->compute_pipeline_create(shader);
 	ERR_FAIL_COND_V(!pipeline.is_valid(), false);
@@ -451,6 +523,13 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 	shadow_state.mag_filter = RD::SAMPLER_FILTER_LINEAR;
 	shadow_state.min_filter = RD::SAMPLER_FILTER_LINEAR;
 	shadow_sampler = p_rd->sampler_create(shadow_state);
+	RD::SamplerState sky_state;
+	sky_state.mag_filter = RD::SAMPLER_FILTER_LINEAR;
+	sky_state.min_filter = RD::SAMPLER_FILTER_LINEAR;
+	sky_state.mip_filter = RD::SAMPLER_FILTER_LINEAR;
+	sky_state.repeat_u = RD::SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE;
+	sky_state.repeat_v = RD::SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE;
+	sky_sampler = p_rd->sampler_create(sky_state);
 	params_buffer = p_rd->uniform_buffer_create(PARAMS_WORDS * 4);
 	lights_buffer = p_rd->storage_buffer_create(MAX_LIGHTS * sizeof(Light));
 	failed = false;
@@ -458,10 +537,10 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 }
 
 void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_shadow_atlas, const Size2i &p_size) {
-	if (!p_source.valid || p_light_count <= 0 || p_size.x <= 0 || p_size.y <= 0 || !_ensure(p_rd)) {
+	if (!p_source.valid || (p_light_count <= 0 && !p_params.ambient) || p_size.x <= 0 || p_size.y <= 0 || !_ensure(p_rd)) {
 		return;
 	}
-	const int count = MIN(p_light_count, MAX_LIGHTS);
+	const int count = CLAMP(p_light_count, 0, MAX_LIGHTS);
 	const int res = MAX(p_params.resolution_divisor, 1);
 	const Size2i low((p_size.x + res - 1) / res, (p_size.y + res - 1) / res);
 	if (!scatter_texture.is_valid() || scatter_size != low) {
@@ -524,9 +603,36 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	iw[w++] = low.y;
 	iw[w++] = res;
 	w += 3;
+	RendererRD::TextureStorage *ts = RendererRD::TextureStorage::get_singleton();
+	RID sky = p_params.sky_radiance;
+	if (sky.is_valid() && (!p_rd->texture_is_valid(sky) || (p_rd->texture_get_format(sky).texture_type == RD::TEXTURE_TYPE_2D_ARRAY) != sky_array)) {
+		sky = RID();
+	}
+	const bool use_sky = p_params.ambient && sky.is_valid() && p_params.sky_contribution > 0.0f;
+	if (!sky.is_valid()) {
+		sky = ts->texture_rd_get_default(sky_array ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+	}
+	f[w++] = p_params.ambient ? p_params.ambient_color[0] : 0.0f;
+	f[w++] = p_params.ambient ? p_params.ambient_color[1] : 0.0f;
+	f[w++] = p_params.ambient ? p_params.ambient_color[2] : 0.0f;
+	f[w++] = use_sky ? CLAMP(p_params.sky_contribution, 0.0f, 1.0f) : 0.0f;
+	f[w++] = p_params.sky_border[0];
+	f[w++] = p_params.sky_border[1];
+	f[w++] = use_sky ? (float)MAX((int)p_rd->texture_get_format(sky).mipmaps - 1, 0) : 0.0f;
+	// 0: no ambient; else 1 + the sky's energy.
+	f[w++] = p_params.ambient ? 1.0f + MAX(p_params.sky_energy, 0.0f) : 0.0f;
+	for (int r = 0; r < 3; r++) {
+		const Vector3 row = p_params.sky_inverse.rows[r];
+		f[w++] = row.x;
+		f[w++] = row.y;
+		f[w++] = row.z;
+		w++;
+	}
 	ERR_FAIL_COND(w != PARAMS_WORDS);
 	p_rd->buffer_update(params_buffer, 0, sizeof(words), words);
-	p_rd->buffer_update(lights_buffer, 0, count * sizeof(Light), p_lights);
+	if (count > 0) {
+		p_rd->buffer_update(lights_buffer, 0, count * sizeof(Light), p_lights);
+	}
 
 	LocalVector<RD::Uniform> uniforms;
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ linear_sampler, RID::from_uint64(p_source.density_rid) })));
@@ -538,6 +644,7 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	// Something must be bound even when the frame has no shadow atlas.
 	const RID atlas = p_shadow_atlas.is_valid() ? p_shadow_atlas : RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_DEPTH);
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 6, Vector<RID>({ shadow_sampler, atlas })));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 7, Vector<RID>({ sky_sampler, sky })));
 	const RID set = p_rd->uniform_set_create(uniforms, shader, 0);
 	ERR_FAIL_COND(!set.is_valid());
 	LocalVector<RD::Uniform> up;
@@ -565,7 +672,7 @@ void FlowScatterRD::free(RenderingDevice *p_rd) {
 	if (p_rd == nullptr) {
 		return;
 	}
-	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &params_buffer, &lights_buffer }) {
+	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &sky_sampler, &params_buffer, &lights_buffer }) {
 		if (r->is_valid()) {
 			p_rd->free_rid(*r);
 			*r = RID();

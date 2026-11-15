@@ -41,6 +41,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="ambient_scattering" type="bool" setter="set_ambient_scattering" getter="is_ambient_scattering" default="false">
+			When enabled, the environment's ambient light lights the gas in raster, as it does Godot's volumetric fog: [member Environment.ambient_light_color] mixed with the sky's radiance by [member Environment.ambient_light_sky_contribution], scaled by [member Environment.ambient_light_energy]. Each point is dimmed by the gas above it (a short march up over [member scattering_shadow_reach] in [member scattering_shadow_steps] steps), so the inside of a dense plume is darker than its edge. It replaces the flat grey floor Flow's own renderer gives the unlit side of the smoke. It shares the light scattering pass, at [member scattering_resolution]. The path tracer lights the gas with the sky and ambient on its own, so this only affects raster.
+		</member>
 		<member name="buoyancy" type="float" setter="set_buoyancy" getter="get_buoyancy" default="2.0">
 			Upward acceleration per unit of temperature: hot gas rises, cool gas hangs. "Up" is opposite the project's default gravity.
 		</member>

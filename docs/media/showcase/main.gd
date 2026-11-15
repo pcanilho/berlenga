@@ -3,6 +3,9 @@ extends Node3D
 # --shot=city|lights|plaza|room|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
+# --flow=property:value (a PhysXFlow3D property in the physx shot, e.g. --flow=ambient_scattering:1)
+# --sky (the physx shot under a procedural sky that is also its ambient light)
+# --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -11,6 +14,9 @@ var far := 0
 var raster := false
 var rr := false
 var bounces := -1
+var flow_props := {}
+var sky := false
+var freeze := 0
 var n := 0
 var env := Environment.new()
 
@@ -24,13 +30,18 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--rr": rr = true
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
+		elif a.begins_with("--flow="):
+			var fkv := a.substr(7).split(":")
+			flow_props[fkv[0]] = float(fkv[1])
+		elif a == "--sky": sky = true
+		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			ProjectSettings.set_setting(kv[0], float(kv[1]))
 	seed(11)
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0)
-	env.pathtracing_enabled = not raster
+	env.pathtracing_enabled = not raster and freeze <= 0
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
 	env.pathtracing_denoiser = 0
@@ -265,6 +276,12 @@ func shot_physx() -> void:
 	env.background_color = Color(0.05, 0.06, 0.08)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.12, 0.12, 0.14)
+	if sky:
+		var s := Sky.new()
+		s.sky_material = ProceduralSkyMaterial.new()
+		env.sky = s
+		env.background_mode = Environment.BG_SKY
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	camera(Vector3(0.3, 2.3, 6.6), Vector3(0, 1.2, -0.4), 50)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-40, 160, 0)
@@ -372,6 +389,8 @@ func shot_physx() -> void:
 	var flow = ClassDB.instantiate("PhysXFlow3D")
 	flow.smoke_density = 8.0
 	flow.position = Vector3(2.5, 0, 0.6)
+	for k in flow_props:
+		flow.set(k, flow_props[k])
 	add_child(flow)
 	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
 	em.position = Vector3(0, 0.3, 0)
@@ -494,6 +513,9 @@ func shot_night() -> void:
 
 func _process(_d: float) -> void:
 	n += 1
+	if freeze > 0 and n == frames - freeze:
+		Engine.time_scale = 0.0
+		env.pathtracing_enabled = true
 	if n == frames:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
