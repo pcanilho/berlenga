@@ -350,6 +350,11 @@ private:
 	double last_sky_light_msec = 0.0;
 	// The sky light, read back from an environment's sky now and then (sky_light_source).
 	NodePath sky_light_source;
+	// Guide preview: a coarse run (guide_preview_scale times the cell size) a moment after a guide changes.
+	bool guide_preview = false;
+	real_t guide_preview_scale = 4.0;
+	double preview_wait = -1.0;
+	double last_preview_msec = 0.0;
 	real_t sky_light_interval = 2.0;
 	double sky_light_wait = 0.0;
 	PackedFloat32Array sky_light_last; // the last panorama used, to skip updates when the sky has not changed
@@ -713,6 +718,15 @@ public:
 	double get_last_sky_msec() const { return last_sky_msec; }
 	double get_last_sky_light_msec() const { return last_sky_light_msec; }
 	bool update_sky_light(const Ref<Image> &p_panorama);
+	void set_guide_preview(bool p_enable) { guide_preview = p_enable; }
+	bool is_guide_preview() const { return guide_preview; }
+	void set_guide_preview_scale(real_t p_scale) { guide_preview_scale = CLAMP(p_scale, real_t(1.0), real_t(16.0)); }
+	real_t get_guide_preview_scale() const { return guide_preview_scale; }
+	// A guide under this generator changed: with guide_preview, run preview() once it has been still for 0.4 s.
+	void guide_changed();
+	// generate() and write_to_terrain() at guide_preview_scale times the cell size; the cell size is restored after.
+	int preview();
+	double get_last_preview_msec() const { return last_preview_msec; }
 	void set_sky_light_source(const NodePath &p_path);
 	NodePath get_sky_light_source() const { return sky_light_source; }
 	void set_sky_light_interval(real_t p_seconds) { sky_light_interval = MAX(p_seconds, real_t(0.0)); }

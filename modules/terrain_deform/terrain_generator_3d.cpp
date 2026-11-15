@@ -4261,7 +4261,18 @@ void TerrainGenerator3D::_notification(int p_what) {
 			set_process_internal(!sky_light_source.is_empty());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			_sky_light_poll(get_process_delta_time());
+			if (!sky_light_source.is_empty()) {
+				_sky_light_poll(get_process_delta_time());
+			}
+			if (preview_wait >= 0.0) {
+				preview_wait -= get_process_delta_time();
+				if (preview_wait < 0.0) {
+					preview();
+				}
+			}
+			if (preview_wait < 0.0 && sky_light_source.is_empty()) {
+				set_process_internal(false);
+			}
 		} break;
 	}
 }
@@ -6485,6 +6496,28 @@ int TerrainGenerator3D::bake() {
 	return written;
 }
 
+void TerrainGenerator3D::guide_changed() {
+	if (!guide_preview || !is_inside_tree()) {
+		return;
+	}
+	preview_wait = 0.4;
+	set_process_internal(true);
+}
+
+int TerrainGenerator3D::preview() {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const real_t keep = cell_size;
+	cell_size = keep * guide_preview_scale;
+	int written = 0;
+	if (generate()) {
+		written = write_to_terrain();
+	}
+	cell_size = keep;
+	last_preview_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	print_verbose(vformat("TerrainGenerator3D: preview at %.0f m cells in %.0f ms.", double(keep * guide_preview_scale), last_preview_msec));
+	return written;
+}
+
 Callable TerrainGenerator3D::get_bake_button() {
 	return callable_mp(this, &TerrainGenerator3D::bake);
 }
@@ -6721,6 +6754,13 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_last_sky_msec"), &TerrainGenerator3D::get_last_sky_msec);
 	ClassDB::bind_method(D_METHOD("get_last_sky_light_msec"), &TerrainGenerator3D::get_last_sky_light_msec);
 	ClassDB::bind_method(D_METHOD("update_sky_light", "panorama"), &TerrainGenerator3D::update_sky_light);
+	ClassDB::bind_method(D_METHOD("set_guide_preview", "enable"), &TerrainGenerator3D::set_guide_preview);
+	ClassDB::bind_method(D_METHOD("is_guide_preview"), &TerrainGenerator3D::is_guide_preview);
+	ClassDB::bind_method(D_METHOD("set_guide_preview_scale", "scale"), &TerrainGenerator3D::set_guide_preview_scale);
+	ClassDB::bind_method(D_METHOD("get_guide_preview_scale"), &TerrainGenerator3D::get_guide_preview_scale);
+	ClassDB::bind_method(D_METHOD("guide_changed"), &TerrainGenerator3D::guide_changed);
+	ClassDB::bind_method(D_METHOD("preview"), &TerrainGenerator3D::preview);
+	ClassDB::bind_method(D_METHOD("get_last_preview_msec"), &TerrainGenerator3D::get_last_preview_msec);
 	ClassDB::bind_method(D_METHOD("set_sky_light_source", "path"), &TerrainGenerator3D::set_sky_light_source);
 	ClassDB::bind_method(D_METHOD("get_sky_light_source"), &TerrainGenerator3D::get_sky_light_source);
 	ClassDB::bind_method(D_METHOD("set_sky_light_interval", "seconds"), &TerrainGenerator3D::set_sky_light_interval);
@@ -6806,6 +6846,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_last_change"), &TerrainGenerator3D::get_last_change);
 	ClassDB::bind_method(D_METHOD("get_bake_button"), &TerrainGenerator3D::get_bake_button);
 
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "guide_preview"), "set_guide_preview", "is_guide_preview");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "guide_preview_scale", PROPERTY_HINT_RANGE, "1,16,0.5"), "set_guide_preview_scale", "get_guide_preview_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "generate_button", PROPERTY_HINT_TOOL_BUTTON, "Generate,Terrain", PROPERTY_USAGE_EDITOR), "", "get_bake_button");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "size", PROPERTY_HINT_NONE, "suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cell_size", PROPERTY_HINT_RANGE, "0.25,256,0.25,or_greater,suffix:m"), "set_cell_size", "get_cell_size");

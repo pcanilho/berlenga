@@ -1427,6 +1427,14 @@ reads as a natural inlet; sea cells are outlets as before, so rivers end in it a
 follow. `beach_width` on a coast guide, or a beach guide (a band of `width` round its line), sets the beach width
 along that stretch (0: none), blended over the band's outer quarter, over the generator's noise beaches.
 
+Built, step 1c (15 Nov): the preview. `guide_preview` on the generator (off by default): a guide that moves, is
+redrawn or changes a setting tells the generator above it, which waits until the guide has been still for 0.4 s and
+then runs generate() and write_to_terrain() at `guide_preview_scale` (4) times the cell size, restoring the cell size
+after; the inspector's Generate button still makes the full run. On the cloud box (CPU only) the valley at 64 m cells
+takes 2.7 s with the write against 7.2 s for the full 16 m run without it: the glacial stage keeps its own grid and the
+sky occlusion and rivers have fixed costs, so it is not 16 times faster. Faster previews (skipping the ice and sky at
+preview, or a GPU solver as Schott et al. 2023) are for later if it is too slow on the PC.
+
 
 ## Sources
 

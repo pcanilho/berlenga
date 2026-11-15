@@ -31,45 +31,84 @@
 
 #include "terrain_guide_3d.h"
 
+#include "terrain_generator_3d.h"
+
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+
+// Tell the generator above (if any) so its preview can follow the guide.
+void TerrainGuide3D::_changed() {
+	if (!is_inside_tree()) {
+		return;
+	}
+	for (Node *p = get_parent(); p; p = p->get_parent()) {
+		if (TerrainGenerator3D *g = Object::cast_to<TerrainGenerator3D>(p)) {
+			g->guide_changed();
+			return;
+		}
+	}
+}
+
+void TerrainGuide3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			set_notify_transform(true);
+			if (!is_connected(SNAME("curve_changed"), callable_mp(this, &TerrainGuide3D::_changed))) {
+				connect(SNAME("curve_changed"), callable_mp(this, &TerrainGuide3D::_changed));
+			}
+		} break;
+		case NOTIFICATION_TRANSFORM_CHANGED: {
+			_changed();
+		} break;
+	}
+}
 
 void TerrainGuide3D::set_mode(Mode p_mode) {
 	mode = p_mode;
 	notify_property_list_changed();
 	update_gizmos();
+	_changed();
 }
 
 void TerrainGuide3D::set_width(real_t p_width) {
 	width = MAX(p_width, real_t(1.0));
 	update_gizmos();
+	_changed();
 }
 
 void TerrainGuide3D::set_strength(real_t p_strength) {
 	strength = CLAMP(p_strength, real_t(0.0), real_t(4.0));
+	_changed();
 }
 
 void TerrainGuide3D::set_bar_width(real_t p_width) {
 	bar_width = MAX(p_width, real_t(1.0));
+	_changed();
 }
 
 void TerrainGuide3D::set_apron_slope(real_t p_slope) {
 	apron_slope = MAX(p_slope, real_t(0.0));
+	_changed();
 }
 
 void TerrainGuide3D::set_lip_clear(real_t p_distance) {
 	lip_clear = MAX(p_distance, real_t(0.0));
+	_changed();
 }
 
 void TerrainGuide3D::set_beach_width(real_t p_width) {
 	beach_width = MAX(p_width, real_t(-1.0));
+	_changed();
 }
 
 void TerrainGuide3D::set_roughness(real_t p_roughness) {
 	roughness = MAX(p_roughness, real_t(0.0));
+	_changed();
 }
 
 void TerrainGuide3D::set_invert(bool p_invert) {
 	invert = p_invert;
+	_changed();
 }
 
 bool TerrainGuide3D::is_sea_at(const Vector2 &p_point) const {
@@ -127,6 +166,7 @@ real_t TerrainGuide3D::distance_to(const Vector2 &p_point) const {
 
 void TerrainGuide3D::set_enabled(bool p_enabled) {
 	enabled = p_enabled;
+	_changed();
 }
 
 PackedVector3Array TerrainGuide3D::get_global_points() const {

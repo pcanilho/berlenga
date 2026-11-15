@@ -35,6 +35,7 @@ extends Node3D
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
 #   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
+#   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
@@ -166,6 +167,20 @@ func _ready() -> void:
 					gi.set_pixel(x, y, Color(gc.r, gc.g, 0.0, gc.a))
 		no_till_tex = ImageTexture.create_from_image(gi)
 		RenderingServer.global_shader_parameter_set("terrain_geology_map", no_till_tex.get_rid())
+	if args.has("preview-test"):
+		# Guide preview timing: move the first guide 200 m east, let the generator's debounce fire (0.4 s), then time
+		# the coarse run it made, against the full run above.
+		var guides := gen.find_children("*", "TerrainGuide3D", true, false)
+		var full_ms := gen.get_last_generate_msec()
+		gen.guide_preview = true
+		gen.guide_preview_scale = float(args["preview-test"]) if args["preview-test"] != "1" else 4.0
+		if not guides.is_empty():
+			guides[0].position += Vector3(200, 0, 0)
+		for k in 5000:
+			await get_tree().process_frame
+			if gen.get_last_preview_msec() > 0.0:
+				break
+		print("[landscape] guide preview at %.0f m cells: %.0f ms with the write (full run %.0f ms without)" % [gen.cell_size * gen.guide_preview_scale, gen.get_last_preview_msec(), full_ms])
 	if args.has("map"):
 		_save_map(args["map"])
 		get_tree().quit(0)

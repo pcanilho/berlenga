@@ -178,6 +178,12 @@
 				Time the last [method generate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_last_preview_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last [method preview] took, the write included.
+			</description>
+		</method>
 		<method name="get_last_runoff_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -367,6 +373,12 @@
 				The world X and Z rectangle the generator covers ([code]position.y[/code] is Z).
 			</description>
 		</method>
+		<method name="guide_changed">
+			<return type="void" />
+			<description>
+				Called by a [TerrainGuide3D] under this generator when it moves or changes: with [member guide_preview], runs [method preview] once the guide has been still for 0.4 s.
+			</description>
+		</method>
 		<method name="has_result" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -383,6 +395,12 @@
 			<return type="bool" />
 			<description>
 				Whether the last [method generate] made any sea.
+			</description>
+		</method>
+		<method name="preview">
+			<return type="int" />
+			<description>
+				Runs [method generate] and [method write_to_terrain] at [member guide_preview_scale] times [member cell_size], then restores the cell size. Returns the vertices written.
 			</description>
 		</method>
 		<method name="sample_heights" qualifiers="const">
@@ -486,6 +504,12 @@
 		</member>
 		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] regenerated from a [HeightMapShape3D] ground after the write. The [member deformer]'s ground mesh is used when empty.
+		</member>
+		<member name="guide_preview" type="bool" setter="set_guide_preview" getter="is_guide_preview" default="false">
+			When a [TerrainGuide3D] under this generator moves or changes, run a coarse [method preview] a moment later, so the guide's effect shows while drawing.
+		</member>
+		<member name="guide_preview_scale" type="float" setter="set_guide_preview_scale" getter="get_guide_preview_scale" default="4.0">
+			How many times coarser than [member cell_size] the guide preview runs.
 		</member>
 		<member name="height_offset" type="float" setter="set_height_offset" getter="get_height_offset" default="0.0">
 			Added to every generated height.
