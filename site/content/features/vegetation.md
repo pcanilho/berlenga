@@ -91,6 +91,8 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Plants by season: by December the bracken stands dead and russet.*
 
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
+- **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
 - **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.

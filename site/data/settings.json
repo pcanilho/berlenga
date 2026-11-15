@@ -1821,6 +1821,30 @@
    "topic": "Plants"
   },
   {
+   "name": "Stand margins",
+   "settings": [
+    "PlantSpecies.margin_width",
+    "margin_scale",
+    "margin_lean"
+   ],
+   "note": "",
+   "what": "bracken and bramble stands grow shorter and lean outward toward their edges.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Rock foot",
+   "settings": [
+    "PlantSpecies.rock_foot"
+   ],
+   "note": "",
+   "what": "ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Plants on deadwood",
    "settings": [
     "PlantSpecies.deadwood_rule"
