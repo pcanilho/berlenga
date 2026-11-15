@@ -66,7 +66,11 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
 
-- **Ocean detail** (`detail_waves`, on): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
+- **Ocean detail** (`detail_waves`, on; `bubble_strength`): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
+
+  ![Sun glitter on a moderate sea from 2 m up, without and with detail waves, raster](media/water-ocean-detail.jpg)
+
+  *Ocean detail: the sun's path breaks into fine glints instead of a few smooth streaks.*
 
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 
