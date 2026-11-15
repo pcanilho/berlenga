@@ -318,6 +318,12 @@ private:
 	Ref<Material> _lichen_material(const Ref<StandardMaterial3D> &p_base);
 	Ref<Texture2D> lichen_texture;
 	Ref<Texture2D> _lichen_texture();
+	// Bracket fungi (trees.md 5g): fruiting bodies of wood-decay fungi on veteran trees, snags and
+	// logs, by host and decay class, in their own surface.
+	void _grow_fungi(const Builder &p_bark, Builder &r_fungi);
+	Ref<Texture2D> fungus_texture;
+	PackedFloat32Array fungi_points; // Mesh meta tree_fungi: 8 floats per cluster.
+	Ref<Texture2D> _fungus_texture();
 	float _lichen_amount() const;
 	float _lichen_at(const Vector3 &p_pos, float p_radius, float p_moss) const;
 	// Bark lost from dead wood (trees.md 5f): 0 bark, 1 bare, 0.5 the edge.
@@ -439,6 +445,7 @@ public:
 	// shell over the bark at LOD 0, by species, height, upper faces and decay.
 	float moss_cover = 1.0f;
 	float lichen_cover = 1.0f;
+	float fungi_cover = 1.0f; // Bracket fungi on old and dead wood (section 5g); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
@@ -649,6 +656,8 @@ public:
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }
+	float get_fungi_cover() const { return fungi_cover; }
 	float get_bark_peel() const { return bark_peel; }
 	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }
 	bool is_fallen_branch() const { return fallen_branch; }

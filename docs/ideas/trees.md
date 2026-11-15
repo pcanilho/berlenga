@@ -681,6 +681,44 @@ As built (`bark_peel`, 1 by default, 0 keeps the bark):
   fibres along the stem, long drying checks, grey or brown by class, smoother normal, roughness
   0.8. The whole-tree weathering tint of classes 3 to 5 is lighter, since the wood now shows.
 
+### 5g. Fungi on wood as geometry (15 Nov; Paulo: "real geometry is going to add a lot")
+
+Research. The fruit bodies on a tree tell which rot is in it and how far it has gone (Rayner and
+Boddy 1988, *Fungal Decomposition of Wood*; Stokland, Siitonen and Jonsson 2012, *Biodiversity
+in Dead Wood*):
+- Perennial brackets on standing dead and dying wood: the tinder hoof (Fomes fomentarius) on
+  beech and birch, grey with a ridge for each year; the red-belted bracket (Fomitopsis pinicola)
+  on conifers; the birch polypore (F. betulina), a smooth buff cushion, on birch only.
+- The artist's bracket (Ganoderma applanatum), a flat brown shelf with a white margin, low on
+  old broadleaves; chicken of the woods (Laetiporus), sulphur-orange fans in tiers, on old oaks.
+- Annual tiers of thin zoned brackets (Trametes versicolor) on logs and stumps.
+- Gilled mushrooms in tufts: honey fungus (Armillaria) at the foot of dying and dead broadleaves,
+  sulphur tuft (Hypholoma fasciculare) on stumps and logs.
+- Brackets are level whatever the wood does: the tubes grow downwards (gravitropism).
+Shape references: caps as revolved profiles and gills as radial blades (Desbenoit, Vanderhaghe,
+Galin and Grosjean, *Interactive modeling of mushrooms*, Eurographics 2004). Games at the bar
+(KCD2's forests, Nyx I) place fungi as authored props; nothing public on how. Here they grow from
+the tree's own decay state.
+
+As built (`fungi_cover`, 1 by default, 0 none), a surface "fungi" of the tree mesh, skinned to the
+wood it grows on:
+- **Where.** By host and decay class: snags carry hooves (2-3 on class 2-3), broadleaf snags a
+  Ganoderma low down, logs Trametes tiers (up to 5 on class 2-3), veteran oaks a Laetiporus, the
+  feet of dying broadleaves honey fungus, stumps and logs sulphur tufts. A node of the wood thick
+  enough is picked in proportion to its bark area; the bracket sits on the nearest bark vertex.
+- **Brackets.** A shell from the back edge (following the stem's round, sunk a fifth into it) out
+  to a rounded margin: hoof or shelf by profile, a ridge per growth zone, zoned colour, a pore
+  face underneath (texture of tube mouths), wavy margins for the fans.
+- **Mushrooms.** Stalks fanning from one foot and turning up, caps revolved and kept level (domed
+  when young, flat and wider when old), an underside and 22 real gill blades kept under the cap's
+  margin.
+- **For ground plants.** Mesh meta `tree_fungi`: per cluster position (3), the wood's normal (3),
+  width and kind (0 Fomes, 1 F. pinicola, 2 F. betulina, 3 Ganoderma, 4 Laetiporus, 5 Trametes,
+  6 honey fungus, 7 sulphur tuft), in mesh space. Ground mushrooms belong to vegetation.
+- **Cost.** A heavy log or snag gets 2-8 clusters, about 2,000-20,000 triangles, against 1-4 million
+  in the tree; one draw call more per tree mesh that has any. Living trees without veteran
+  features get none.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

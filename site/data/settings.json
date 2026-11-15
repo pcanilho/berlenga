@@ -2231,6 +2231,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Fungi",
+   "settings": [
+    "fungi_cover"
+   ],
+   "note": "",
+   "what": "bracket fungi and mushroom tufts with stalks, caps and gills grow as geometry on old and dead wood, by host and decay class.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Fallen branches",
    "settings": [
     "fallen_branch"

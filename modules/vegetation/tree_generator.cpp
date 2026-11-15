@@ -2823,6 +2823,556 @@ float TreeGenerator::_lichen_at(const Vector3 &p_pos, float p_radius, float p_mo
 	return CLAMP(a * light * rise * young * patch * (1.0f - CLAMP(p_moss * 1.3f, 0.0f, 1.0f)), 0.0f, 1.0f);
 }
 
+// Bracket fungi (docs/ideas/trees.md 5g). The fruiting bodies of the wood-decay fungi that rot
+// a tree's heart or its dead wood: perennial hooves on standing snags (Fomes fomentarius on beech
+// and birch, Fomitopsis pinicola on conifers, Fomitopsis betulina on birch), flat shelves at the
+// foot of old broadleaves (Ganoderma applanatum), sulphur fans on old oaks (Laetiporus), and tiers
+// of thin zoned brackets on logs and stumps (Trametes versicolor). Their tubes grow downwards,
+// so every bracket is level whatever the wood does (gravitropism; Rayner and Boddy 1988, Fungal
+// Decomposition of Wood; Stokland, Siitonen and Jonsson 2012, Biodiversity in Dead Wood).
+namespace {
+enum FungusKind {
+	FUNGUS_FOMES,
+	FUNGUS_PINICOLA,
+	FUNGUS_BETULINA,
+	FUNGUS_GANODERMA,
+	FUNGUS_LAETIPORUS,
+	FUNGUS_TRAMETES,
+	FUNGUS_BRACKETS, // Kinds below are brackets; from here, gilled mushrooms in clusters.
+	FUNGUS_HONEY = FUNGUS_BRACKETS, // Armillaria: at the foot of dying and dead broadleaves.
+	FUNGUS_TUFT, // Hypholoma fasciculare, sulphur tuft: on stumps and logs.
+	FUNGUS_MAX,
+};
+struct FungusLook {
+	float w0, w1; // Width across the wood (metres).
+	float depth; // Out from the wood, x width.
+	float height; // Thickness at the back, x depth.
+	float margin; // Thickness at the margin, x height.
+	float dome; // Top profile exponent: low = hoof, high = flat shelf.
+	int zones; // Growth zones on the top.
+	float wave; // Wavy margin.
+	int tier0, tier1; // Brackets in a cluster.
+	Color back, mid, rim, pores, zone;
+};
+const FungusLook FUNGUS_LOOKS[FUNGUS_BRACKETS] = {
+	// Fomes: grey hoof with ridged annual zones, brown margin.
+	{ 0.12f, 0.24f, 0.75f, 0.7f, 0.25f, 1.0f, 6, 0.0f, 1, 2, Color(0.17f, 0.16f, 0.15f), Color(0.36f, 0.35f, 0.33f), Color(0.5f, 0.37f, 0.24f), Color(0.42f, 0.32f, 0.22f), Color(0.22f, 0.21f, 0.2f) },
+	// Fomitopsis pinicola: dark crust, red band, cream margin.
+	{ 0.1f, 0.26f, 0.65f, 0.6f, 0.3f, 1.1f, 5, 0.0f, 1, 2, Color(0.13f, 0.09f, 0.07f), Color(0.5f, 0.14f, 0.07f), Color(0.82f, 0.77f, 0.6f), Color(0.85f, 0.8f, 0.65f), Color(0.2f, 0.1f, 0.07f) },
+	// Fomitopsis betulina: smooth buff cushion, rolled white margin.
+	{ 0.08f, 0.2f, 0.75f, 0.45f, 0.45f, 1.6f, 0, 0.0f, 1, 1, Color(0.5f, 0.42f, 0.32f), Color(0.72f, 0.66f, 0.55f), Color(0.86f, 0.84f, 0.78f), Color(0.86f, 0.84f, 0.79f), Color(0.66f, 0.6f, 0.5f) },
+	// Ganoderma applanatum: flat cocoa-brown shelf, white margin and pores.
+	{ 0.15f, 0.38f, 0.6f, 0.28f, 0.35f, 2.0f, 8, 0.03f, 1, 2, Color(0.24f, 0.17f, 0.12f), Color(0.36f, 0.25f, 0.17f), Color(0.84f, 0.81f, 0.74f), Color(0.86f, 0.83f, 0.77f), Color(0.28f, 0.19f, 0.13f) },
+	// Laetiporus: orange fans grading to a sulphur margin, in tiers.
+	{ 0.1f, 0.28f, 0.6f, 0.22f, 0.45f, 2.5f, 2, 0.08f, 3, 6, Color(0.8f, 0.42f, 0.1f), Color(0.88f, 0.55f, 0.12f), Color(0.95f, 0.82f, 0.25f), Color(0.94f, 0.85f, 0.35f), Color(0.85f, 0.5f, 0.12f) },
+	// Trametes: thin, velvety, strongly zoned in browns and greys, cream margin; many tiers.
+	{ 0.03f, 0.08f, 0.6f, 0.13f, 0.5f, 3.0f, 10, 0.07f, 4, 9, Color(0.24f, 0.2f, 0.17f), Color(0.42f, 0.38f, 0.33f), Color(0.82f, 0.78f, 0.68f), Color(0.84f, 0.8f, 0.7f), Color(0.2f, 0.22f, 0.25f) },
+};
+// Gilled mushrooms: a stalk bending up from the wood, a revolved cap kept level, and real gill
+// blades under it (Desbenoit, Vanderhaghe, Galin and Grosjean, Interactive modeling of mushrooms,
+// Eurographics 2004 short paper: caps as revolved profiles, gills as radial blades).
+struct AgaricLook {
+	float stalk0, stalk1; // Stalk length (metres).
+	float stalk_r; // Stalk radius at the cap.
+	float cap0, cap1; // Cap radius.
+	int count0, count1; // Mushrooms in a cluster.
+	Color cap_mid, cap_centre, gills, stalk, base;
+};
+const AgaricLook AGARIC_LOOKS[FUNGUS_MAX - FUNGUS_BRACKETS] = {
+	// Honey fungus: honey-brown caps with a darker scaly centre, cream gills, a ring on the stalk.
+	{ 0.05f, 0.1f, 0.005f, 0.022f, 0.05f, 6, 14, Color(0.62f, 0.44f, 0.2f), Color(0.38f, 0.25f, 0.12f), Color(0.86f, 0.79f, 0.62f), Color(0.72f, 0.62f, 0.45f), Color(0.36f, 0.26f, 0.16f) },
+	// Sulphur tuft: sulphur caps with an orange-tan centre, greenish-yellow gills, dense tufts.
+	{ 0.035f, 0.075f, 0.0035f, 0.016f, 0.034f, 8, 18, Color(0.86f, 0.77f, 0.32f), Color(0.72f, 0.45f, 0.18f), Color(0.66f, 0.68f, 0.36f), Color(0.82f, 0.74f, 0.42f), Color(0.55f, 0.4f, 0.2f) },
+};
+} // namespace
+
+// Growth lines and pores, 256 square: the top half is the bracket's top (u across, v out from
+// the wood: fine concentric lines and radial fibrils, a velvet), the bottom half its pore face
+// (tubes of a quarter to half a millimetre, seen as a fine dark dot grid).
+Ref<Texture2D> TreeGenerator::_fungus_texture() {
+	if (fungus_texture.is_valid()) {
+		return fungus_texture;
+	}
+	const int N = 256;
+	Vector<uint8_t> data;
+	data.resize(N * N * 3);
+	uint8_t *w = data.ptrw();
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
+			float t;
+			if (v < 0.5f) {
+				const float r = v * 2.0f;
+				const float lines = 0.5f + 0.5f * Math::sin((r * 46.0f + 1.5f * bark_fbm(u, r, 8, 8, 2, 0x66756e67u)) * float(Math::TAU));
+				const float fibril = bark_fbm(u * 1.0f, r, 96, 6, 2, 0x66696272u);
+				t = 0.86f + 0.1f * lines + 0.12f * fibril;
+			} else {
+				const float px = u * 48.0f, py = (v - 0.5f) * 96.0f;
+				const float dx = px - Math::floor(px) - 0.5f, dy = py - Math::floor(py) - 0.5f;
+				const float pore = Math::smoothstep(0.18f, 0.32f, Math::sqrt(dx * dx + dy * dy));
+				t = 0.72f + 0.26f * pore + 0.06f * bark_fbm(u, v, 16, 16, 2, 0x706f7265u);
+			}
+			const uint8_t c = uint8_t(CLAMP(t, 0.0f, 1.0f) * 255.0f);
+			w[(y * N + x) * 3 + 0] = c;
+			w[(y * N + x) * 3 + 1] = c;
+			w[(y * N + x) * 3 + 2] = c;
+		}
+	}
+	Ref<Image> img = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, data);
+	img->generate_mipmaps();
+	fungus_texture = ImageTexture::create_from_image(img);
+	return fungus_texture;
+}
+
+void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
+	r_fungi = Builder();
+	fungi_points.clear();
+	if (fungi_cover <= 0.0f || nodes.is_empty() || p_bark.verts.is_empty()) {
+		return;
+	}
+	RandomPCG fr;
+	fr.seed(uint64_t(seed) * 2862933555777941757ull + uint64_t(decay_class) * 131u + 0x66756eu);
+	const bool conifer = params[PARAM_NEEDLES] > 0.5f;
+	const bool birch = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
+	const bool oak = preset == PRESET_OAK || preset == PRESET_RED_OAK || preset == PRESET_WHITE_OAK;
+	const bool lying = fallen || fallen_branch;
+	const float ground = nodes[0].start.y;
+	// Clusters to place: (kind, at the foot).
+	struct Want {
+		FungusKind kind;
+		bool foot;
+	};
+	LocalVector<Want> want;
+	auto chance = [&](float p_p) { return fr.randf() < p_p * fungi_cover; };
+	auto count = [&](float p_mean) {
+		const float m = p_mean * fungi_cover;
+		int n = int(Math::floor(m));
+		if (fr.randf() < m - n) {
+			n++;
+		}
+		return n;
+	};
+	const FungusKind snag_kind = conifer ? FUNGUS_PINICOLA : (birch && fr.randf() < 0.6f ? FUNGUS_BETULINA : FUNGUS_FOMES);
+	if (fallen_branch) {
+		if (decay_class >= 2 && decay_class <= 4) {
+			for (int i = count(0.8f); i > 0; i--) {
+				want.push_back({ FUNGUS_TRAMETES, false });
+			}
+		}
+	} else if (fallen) {
+		static const float LOG_TIERS[6] = { 0.0f, 1.5f, 4.0f, 5.0f, 2.5f, 0.8f };
+		for (int i = count(LOG_TIERS[CLAMP(decay_class, 0, 5)]); i > 0; i--) {
+			want.push_back({ FUNGUS_TRAMETES, false });
+		}
+		if (decay_class >= 2 && decay_class <= 3 && chance(0.5f)) {
+			want.push_back({ snag_kind, false });
+		}
+	} else if (decay_class > 0) {
+		// Perennial brackets of the snag's own decayer, most on class 2-3 snags.
+		static const float SNAG[6] = { 0.0f, 1.0f, 2.5f, 3.0f, 1.5f, 0.6f };
+		for (int i = count(SNAG[CLAMP(decay_class, 0, 5)]); i > 0; i--) {
+			want.push_back({ snag_kind, false });
+		}
+		if (!conifer && decay_class <= 3 && chance(0.45f)) {
+			want.push_back({ FUNGUS_GANODERMA, true });
+		}
+		if (decay_class >= 2 && chance(0.6f)) {
+			want.push_back({ FUNGUS_TRAMETES, true });
+		}
+	} else if (veteran > 0.0f) {
+		// Heart rot of old living trees: the fruit bodies show where it reached the surface.
+		if (oak && chance(0.6f * veteran)) {
+			want.push_back({ FUNGUS_LAETIPORUS, false });
+		}
+		if (!conifer && chance(0.4f * veteran)) {
+			want.push_back({ FUNGUS_GANODERMA, true });
+		}
+		if (!conifer && !oak && chance(0.25f * veteran)) {
+			want.push_back({ FUNGUS_FOMES, false });
+		}
+	}
+	// Gilled mushrooms in clusters: honey fungus at the foot of dying and dead broadleaves (its
+	// rhizomorphs kill and then rot them), sulphur tuft on stumps and logs. Autumn fruiters; the
+	// season is left to the placement for now.
+	if (!fallen_branch) {
+		if (fallen) {
+			if (decay_class >= 2 && decay_class <= 4) {
+				for (int i = count(1.2f); i > 0; i--) {
+					want.push_back({ FUNGUS_TUFT, false });
+				}
+				if (!conifer && chance(0.35f)) {
+					want.push_back({ FUNGUS_HONEY, false });
+				}
+			}
+		} else if (!conifer && ((decay_class >= 1 && decay_class <= 3 && chance(0.55f)) || (decay_class == 0 && chance(0.3f * veteran)))) {
+			want.push_back({ FUNGUS_HONEY, true });
+		}
+		if (!fallen && decay_class >= 2 && decay_class <= 4 && chance(0.4f)) {
+			want.push_back({ FUNGUS_TUFT, true });
+		}
+	}
+	if (want.is_empty()) {
+		return;
+	}
+	const Vector3 up(0, 1, 0);
+	const int nv = p_bark.verts.size();
+	const Vector3 *bv = p_bark.verts.ptr();
+	const Vector3 *bn = p_bark.normals.ptr();
+	const bool skin = rigged && p_bark.bones.size() >= nv * 4;
+	r_fungi.bones.clear();
+	auto push_v = [&](const Vector3 &p_pos, const Vector2 &p_uv, const Color &p_col, int p_bv) {
+		r_fungi.verts.push_back(p_pos);
+		r_fungi.uvs.push_back(p_uv);
+		r_fungi.colors.push_back(p_col.srgb_to_linear()); // Looks are sRGB; vertex colour is linear.
+		r_fungi.normals.push_back(Vector3());
+		if (skin) {
+			for (int q = 0; q < 4; q++) {
+				r_fungi.bones.push_back(p_bark.bones[p_bv * 4 + q]);
+				r_fungi.weights.push_back(p_bark.weights[p_bv * 4 + q]);
+			}
+		}
+	};
+	auto quad = [&](int i0, int i1, int i2, int i3) { // i0-i1 one edge, i2-i3 the next, clockwise from outside.
+		r_fungi.indices.push_back(i0);
+		r_fungi.indices.push_back(i1);
+		r_fungi.indices.push_back(i2);
+		r_fungi.indices.push_back(i1);
+		r_fungi.indices.push_back(i3);
+		r_fungi.indices.push_back(i2);
+	};
+	// One cluster: stalks from a shared foot on the wood, bending up; caps level.
+	auto add_cluster = [&](const AgaricLook &p_look, const Vector3 &p_at, const Vector3 &p_normal, float p_width, int p_bv) {
+		Vector3 side = p_normal.cross(up);
+		if (side.length_squared() < 1e-4f) {
+			side = Vector3(1, 0, 0);
+		}
+		side.normalize();
+		const Vector3 lift = side.cross(p_normal).normalized() * (side.cross(p_normal).dot(up) < 0.0f ? -1.0f : 1.0f);
+		const int nm = p_look.count0 + int(fr.rand() % uint32_t(p_look.count1 - p_look.count0 + 1));
+		const int SIDES = 7, CAP_SEG = 18, CAP_RINGS = 6, GILLS = 22;
+		for (int m = 0; m < nm; m++) {
+			Vector4i part;
+			r_fungi.begin(part);
+			// Age: young ones small and domed, old ones wide and flat, some with an upturned rim.
+			const float age = fr.randf();
+			const float stalk_len = Math::lerp(p_look.stalk0, p_look.stalk1, fr.randf()) * Math::lerp(0.55f, 1.0f, age);
+			const float rs = p_look.stalk_r * Math::lerp(0.7f, 1.15f, fr.randf());
+			const float rc = Math::lerp(p_look.cap0, p_look.cap1, fr.randf()) * Math::lerp(0.6f, 1.0f, Math::sqrt(age));
+			const float cap_h = rc * Math::lerp(0.7f, 0.22f, age);
+			// The foot: within the cluster's patch on the wood, a little inside it.
+			// Feet close together (the tuft grows from one point of the mycelium), stalks fanning out.
+			const float fan_a = (fr.randf() - 0.5f) * 2.4f;
+			const Vector3 foot = p_at + side * ((fr.randf() - 0.5f) * p_width * 0.35f) + lift * ((fr.randf() - 0.5f) * p_width * 0.2f) - p_normal * (rs * 1.5f);
+			// The stalk leaves the wood outwards and turns up (quadratic Bezier).
+			const Vector3 lean = (side * (fr.randf() - 0.5f) * 0.6f + lift * 0.1f).normalized() * 0.0f;
+			const Vector3 p1 = foot + (p_normal * 0.8f + side * Math::sin(fan_a) + lift * 0.2f).normalized() * (stalk_len * 0.5f) + lean;
+			const Vector3 p2 = p1 + up * (stalk_len * 0.7f) + (p1 - foot) * 0.25f;
+			const int RINGS = 6;
+			const int sbase = r_fungi.verts.size();
+			Vector3 prev_t = (p1 - foot).normalized();
+			for (int r = 0; r <= RINGS; r++) {
+				const float t = float(r) / RINGS;
+				const Vector3 c = foot * ((1 - t) * (1 - t)) + p1 * (2 * (1 - t) * t) + p2 * (t * t);
+				Vector3 tg = ((p1 - foot) * (2 * (1 - t)) + (p2 - p1) * (2 * t)).normalized();
+				if (tg.length_squared() < 1e-6f) {
+					tg = prev_t;
+				}
+				prev_t = tg;
+				Vector3 bx = tg.cross(side);
+				if (bx.length_squared() < 1e-6f) {
+					bx = tg.cross(up);
+				}
+				bx.normalize();
+				const Vector3 by = tg.cross(bx).normalized();
+				const float rr = rs * Math::lerp(1.35f, 1.0f, Math::sqrt(t));
+				const Color col = p_look.base.lerp(p_look.stalk, Math::smoothstep(0.0f, 0.5f, t));
+				for (int k = 0; k <= SIDES; k++) {
+					const float a = float(Math::TAU) * k / SIDES;
+					push_v(c + (bx * Math::cos(a) + by * Math::sin(a)) * rr, Vector2(float(k) / SIDES, 0.5f + 0.4f * t), col, p_bv);
+				}
+			}
+			for (int r = 0; r < RINGS; r++) {
+				for (int k = 0; k < SIDES; k++) {
+					const int i0 = sbase + r * (SIDES + 1) + k;
+					quad(i0, i0 + SIDES + 1, i0 + 1, i0 + SIDES + 2);
+				}
+			}
+			// The cap, revolved about the vertical through the stalk's top: a dome that flattens
+			// with age, the margin rolled down, a broad bump (umbo) in the middle.
+			const Vector3 cap_c = p2 + up * (cap_h * 0.15f);
+			const float spin = fr.randf() * float(Math::TAU);
+			const float wob = fr.randf() * float(Math::TAU);
+			auto cap_point = [&](float p_r, float p_a, float p_dy) {
+				const float x = p_r / rc;
+				const float y = cap_h * (Math::pow(MAX(1.0f - x * x, 0.0f), 0.7f) + 0.12f * (1.0f - age) * Math::exp(-x * x * 12.0f)) - cap_h * 0.25f * x * x * x * x;
+				const float rim = 1.0f + 0.05f * Math::sin(p_a * 5.0f + wob) * x;
+				return cap_c + (side * Math::cos(p_a + spin) + side.cross(up) * Math::sin(p_a + spin)) * (p_r * rim) + up * (y + p_dy);
+			};
+			const int cbase = r_fungi.verts.size();
+			for (int j = 0; j <= CAP_RINGS; j++) {
+				const float x = float(j) / CAP_RINGS;
+				const Color col = p_look.cap_centre.lerp(p_look.cap_mid, Math::smoothstep(0.0f, 0.75f, x)).lerp(p_look.cap_mid * 1.12f, Math::smoothstep(0.85f, 1.0f, x));
+				for (int k = 0; k <= CAP_SEG; k++) {
+					const float a = float(Math::TAU) * k / CAP_SEG;
+					push_v(cap_point(rc * x, a, 0.0f), Vector2(float(k) / CAP_SEG, 0.5f * x), col, p_bv);
+				}
+			}
+			for (int j = 0; j < CAP_RINGS; j++) {
+				for (int k = 0; k < CAP_SEG; k++) {
+					const int i0 = cbase + j * (CAP_SEG + 1) + k;
+					quad(i0, i0 + CAP_SEG + 1, i0 + 1, i0 + CAP_SEG + 2);
+				}
+			}
+			// The underside: from the margin in to the stalk, just under the cap's flesh.
+			const float flesh = cap_h * 0.35f + rc * 0.06f;
+			const int ubase = r_fungi.verts.size();
+			for (int j = 0; j <= 2; j++) {
+				const float x = Math::lerp(1.0f, rs / rc, float(j) / 2.0f);
+				for (int k = 0; k <= CAP_SEG; k++) {
+					const float a = float(Math::TAU) * k / CAP_SEG;
+					const Vector3 top = cap_point(rc * x, a, 0.0f);
+					push_v(j == 0 ? top : top - up * flesh, Vector2(float(k) / CAP_SEG, 0.25f), p_look.gills * 0.85f, p_bv);
+				}
+			}
+			for (int j = 0; j < 2; j++) {
+				for (int k = 0; k < CAP_SEG; k++) {
+					const int i0 = ubase + j * (CAP_SEG + 1) + k;
+					quad(i0, i0 + CAP_SEG + 1, i0 + 1, i0 + CAP_SEG + 2);
+				}
+			}
+			// Gills: thin blades from the stalk to the margin, deepest a third of the way out.
+			const float gt = rc * 0.012f + 0.0003f;
+			for (int g = 0; g < GILLS; g++) {
+				const float a = float(Math::TAU) * (g + 0.5f) / GILLS;
+				const float r_in = (g % 2) ? rc * 0.45f : rs * 1.1f; // Short gills between long ones.
+				const Vector3 dir = side * Math::cos(a + spin) + side.cross(up) * Math::sin(a + spin);
+				const Vector3 tn = up.cross(dir).normalized();
+				const int GS = 4;
+				for (int face = 0; face < 2; face++) {
+					const float off = face == 0 ? gt : -gt;
+					const int gb = r_fungi.verts.size();
+					for (int q = 0; q <= GS; q++) {
+						const float x = Math::lerp(r_in, rc * 0.9f, float(q) / GS);
+						const Vector3 top = cap_point(x, a, -flesh * 0.9f) + tn * off;
+						// Never below the cap's margin: from the side the cap hides its gills.
+						const float room = MAX(cap_point(x, a, -flesh * 0.9f).dot(up) - cap_point(rc, a, 0.0f).dot(up), 0.0f);
+						const float depth = MIN(rc * 0.14f * Math::sin(Math::PI * CLAMP((x - r_in) / (rc - r_in), 0.0f, 1.0f)) * (g % 2 ? 0.7f : 1.0f), room * 0.7f);
+						push_v(top, Vector2(0.5f, 0.2f), p_look.gills, p_bv);
+						push_v(top - up * depth, Vector2(0.5f, 0.22f), p_look.gills * 0.92f, p_bv);
+					}
+					for (int q = 0; q < GS; q++) {
+						const int i0 = gb + q * 2;
+						if (face == 0) {
+							quad(i0, i0 + 1, i0 + 2, i0 + 3);
+						} else {
+							quad(i0, i0 + 2, i0 + 1, i0 + 3);
+						}
+					}
+				}
+			}
+			r_fungi.end(part, rc);
+		}
+	};
+	for (const Want &wt : want) {
+		const bool agaric = wt.kind >= FUNGUS_BRACKETS;
+		const FungusLook &lk = FUNGUS_LOOKS[agaric ? 0 : wt.kind];
+		const float width = agaric ? Math::lerp(0.08f, 0.16f, fr.randf()) : Math::lerp(lk.w0, lk.w1, fr.randf());
+		const float min_r = MAX(width * 0.55f, 0.035f);
+		// A node of the main wood thick enough to carry it, at the wanted height, picked in
+		// proportion to its bark area.
+		int pick = -1;
+		float pick_t = 0.0f;
+		{
+			LocalVector<int> cand;
+			LocalVector<float> acc;
+			float total = 0.0f;
+			for (int i = 0; i < int(nodes.size()); i++) {
+				const Node &c = nodes[i];
+				if (c.removed || c.radius < min_r || c.length <= 0.0f) {
+					continue;
+				}
+				if (!lying) {
+					const float h0 = MIN(c.start.y, c.end().y) - ground, h1 = MAX(c.start.y, c.end().y) - ground;
+					if (wt.foot ? (h1 < 0.15f || h0 > 0.7f) : (h1 < 0.6f || h0 > MAX(height * 0.7f, 1.5f))) {
+						continue;
+					}
+				}
+				total += c.radius * c.length;
+				cand.push_back(i);
+				acc.push_back(total);
+			}
+			for (int tries = 0; tries < 16 && pick < 0 && total > 0.0f; tries++) {
+				const float x = fr.randf() * total;
+				uint32_t k = 0;
+				while (k + 1 < acc.size() && acc[k] < x) {
+					k++;
+				}
+				const Node &c = nodes[cand[k]];
+				const float t = fr.randf();
+				const float h = c.start.y + c.dir.y * c.length * t - ground;
+				if (!lying && (wt.foot ? (h < 0.15f || h > 0.7f) : (h < 0.6f || h > MAX(height * 0.7f, 1.5f)))) {
+					continue;
+				}
+				pick = cand[k];
+				pick_t = t;
+			}
+		}
+		if (pick < 0) {
+			continue;
+		}
+		const Node &n = nodes[pick];
+		const Vector3 axis_p = n.start + n.dir * (n.length * pick_t);
+		// A bearing round the stem; on logs only the flanks (|normal.y| small).
+		Vector3 side = n.dir.cross(Math::abs(n.dir.y) < 0.9f ? up : Vector3(1, 0, 0)).normalized();
+		Vector3 out;
+		for (int tries = 0; tries < 12; tries++) {
+			const float a = fr.randf() * float(Math::TAU);
+			out = side.rotated(n.dir, a);
+			if (Math::abs(out.y) < 0.55f || (agaric && out.y > 0.0f)) {
+				break;
+			}
+		}
+		// The bark surface there: the bark vertex nearest the ray out from the axis.
+		const float r_guess = n.radius;
+		const Vector3 target = axis_p + out * r_guess;
+		float best = 1e18f;
+		int bi = -1;
+		const float reach2 = (r_guess * 1.5f + 0.1f) * (r_guess * 1.5f + 0.1f);
+		for (int v = 0; v < nv; v++) {
+			const float d2 = bv[v].distance_squared_to(target);
+			if (d2 < best && d2 < reach2 && bn[v].dot(out) > 0.5f) {
+				best = d2;
+				bi = v;
+			}
+		}
+		if (bi < 0) {
+			continue;
+		}
+		fungi_points.push_back(bv[bi].x);
+		fungi_points.push_back(bv[bi].y);
+		fungi_points.push_back(bv[bi].z);
+		fungi_points.push_back(bn[bi].x);
+		fungi_points.push_back(bn[bi].y);
+		fungi_points.push_back(bn[bi].z);
+		fungi_points.push_back(width);
+		fungi_points.push_back(float(wt.kind));
+		if (agaric) {
+			add_cluster(AGARIC_LOOKS[wt.kind - FUNGUS_BRACKETS], bv[bi], bn[bi], width, bi);
+			continue;
+		}
+		Vector3 nout = Vector3(bn[bi].x, 0.0f, bn[bi].z);
+		if (nout.length_squared() < 0.05f) {
+			fungi_points.resize(fungi_points.size() - 8);
+			continue;
+		}
+		nout.normalize();
+		const Vector3 tan = up.cross(nout).normalized();
+		// The stem's radius across the bracket: distance of the surface point from the axis.
+		const Vector3 rel = bv[bi] - n.start;
+		const float surf_r = MAX((rel - n.dir * rel.dot(n.dir)).length(), min_r * 0.8f);
+		const int tiers = lk.tier0 + int(fr.rand() % uint32_t(lk.tier1 - lk.tier0 + 1));
+		float y_off = 0.0f;
+		for (int k = 0; k < tiers; k++) {
+			const float w = width * (k == 0 ? 1.0f : Math::lerp(0.55f, 1.0f, fr.randf()));
+			const float depth = w * lk.depth;
+			const float hgt = depth * lk.height;
+			const float mth = hgt * lk.margin;
+			const float shift = (k == 0 ? 0.0f : (fr.randf() - 0.5f) * width * 0.6f);
+			// The back edge follows the stem's round, sunk a fifth of the depth into the wood.
+			const Vector3 o = bv[bi] + up * y_off + tan * shift;
+			const float embed = depth * 0.22f;
+			const float phase = fr.randf() * float(Math::TAU);
+			const int cols = 16, rows_top = 18, rows_rim = 4, rows_bot = 5;
+			const int rows = rows_top + rows_rim + rows_bot + 1;
+			const int base = r_fungi.verts.size();
+			Vector4i part;
+			r_fungi.begin(part);
+			for (int j = 0; j < rows; j++) {
+				for (int c = 0; c <= cols; c++) {
+					const float a = -1.0f + 2.0f * c / cols;
+					const float reach = Math::pow(MAX(1.0f - a * a, 0.0f), 0.55f) * (1.0f + lk.wave * Math::sin(a * 7.0f + phase));
+					const float sag = surf_r - Math::sqrt(MAX(surf_r * surf_r - (a * w * 0.5f) * (a * w * 0.5f), 0.0f));
+					float b, y, rim_out = 0.0f;
+					float vv;
+					if (j <= rows_top) {
+						b = float(j) / rows_top;
+						float thick = mth + (hgt - mth) * (1.0f - Math::pow(b, lk.dome)) * Math::pow(MAX(1.0f - a * a, 0.0f), 0.35f);
+						if (lk.zones > 0) {
+							// Each season's growth adds a ridge round the margin (a furrow between).
+							const float z = Math::fract(b * lk.zones + 0.15f * Math::sin(a * 3.0f + phase));
+							thick += hgt * 0.1f * Math::sin(z * float(Math::PI)) * (1.0f - b * 0.4f);
+						}
+						y = thick - mth * 0.5f;
+						vv = 0.5f * b;
+					} else if (j <= rows_top + rows_rim) {
+						const float th = float(j - rows_top) / (rows_rim + 1) * float(Math::PI);
+						b = 1.0f;
+						y = mth * 0.5f * Math::cos(th);
+						rim_out = mth * 0.5f * Math::sin(th);
+						vv = 0.5f;
+					} else {
+						b = 1.0f - float(j - rows_top - rows_rim) / rows_bot;
+						y = -mth * 0.5f - hgt * 0.06f * (1.0f - b) * b * 4.0f;
+						vv = 0.5f + 0.5f * b;
+					}
+					const float o_out = b * depth * reach + rim_out * reach - embed - sag;
+					const Vector3 pos = o + tan * (a * w * 0.5f) + nout * o_out + up * (y + hgt * 0.15f);
+					r_fungi.verts.push_back(pos);
+					r_fungi.uvs.push_back(Vector2(0.5f + 0.5f * a, vv));
+					Color col;
+					if (j <= rows_top) {
+						col = lk.back.lerp(lk.mid, Math::smoothstep(0.0f, 0.6f, b));
+						if (lk.zones > 0) {
+							const float z = Math::fract(b * lk.zones + 0.15f * Math::sin(a * 3.0f + phase));
+							col = col.lerp(lk.zone, 0.5f * Math::smoothstep(0.55f, 0.85f, z));
+						}
+						col = col.lerp(lk.rim, Math::smoothstep(0.96f, 1.0f, b) * 0.7f);
+					} else if (j <= rows_top + rows_rim) {
+						col = lk.mid.lerp(lk.rim, 0.75f);
+					} else {
+						col = lk.pores.lerp(lk.rim, Math::smoothstep(0.85f, 1.0f, b) * 0.5f);
+					}
+					r_fungi.colors.push_back(col.srgb_to_linear());
+					r_fungi.normals.push_back(Vector3());
+					if (skin) {
+						for (int q = 0; q < 4; q++) {
+							r_fungi.bones.push_back(p_bark.bones[bi * 4 + q]);
+							r_fungi.weights.push_back(p_bark.weights[bi * 4 + q]);
+						}
+					}
+				}
+			}
+			// Front faces wind clockwise seen from outside (Godot's convention).
+			for (int j = 0; j < rows - 1; j++) {
+				for (int c = 0; c < cols; c++) {
+					const int i0 = base + j * (cols + 1) + c, i1 = i0 + 1, i2 = i0 + cols + 1, i3 = i2 + 1;
+					r_fungi.indices.push_back(i0);
+					r_fungi.indices.push_back(i1);
+					r_fungi.indices.push_back(i2);
+					r_fungi.indices.push_back(i1);
+					r_fungi.indices.push_back(i3);
+					r_fungi.indices.push_back(i2);
+				}
+			}
+			r_fungi.end(part, w);
+			y_off -= hgt * Math::lerp(0.9f, 1.4f, fr.randf());
+		}
+	}
+	// Smooth normals from the faces; the winding is checked against the top facing up.
+	Vector3 *nw = r_fungi.normals.ptrw();
+	const Vector3 *vw = r_fungi.verts.ptr();
+	const int32_t *iw = r_fungi.indices.ptr();
+	for (int64_t i = 0; i + 2 < r_fungi.indices.size(); i += 3) {
+		const Vector3 fnrm = (vw[iw[i + 2]] - vw[iw[i]]).cross(vw[iw[i + 1]] - vw[iw[i]]);
+		nw[iw[i]] += fnrm;
+		nw[iw[i + 1]] += fnrm;
+		nw[iw[i + 2]] += fnrm;
+	}
+	for (int v = 0; v < r_fungi.normals.size(); v++) {
+		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : up;
+	}
+}
+
 // Bark lost from dead wood (docs/ideas/trees.md 5f). Bark loosens as the cambium under it rots
 // and falls in plates and strips, more each decay class (Maser et al. 1979: class 1 bark intact,
 // 2 loosening, 3 trace, 4 and 5 none); a standing snag sheds it from the top down and keeps it
@@ -6587,8 +7137,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	Builder *builders[4] = { &bark, &leaves, &moss, &climber_leaf_b };
-	for (int s = 0; s < 4; s++) {
+	Builder fungi;
+	_grow_fungi(bark, fungi);
+	Builder *builders[5] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi };
+	for (int s = 0; s < 5; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -6626,6 +7178,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _leaf_lods(b);
 			} else if (s == 3) {
 				lods = _leaf_lods(b, false);
+			} else if (s == 4) {
+				// Fungi are a few thousand triangles at most: one level, seen from every distance.
 			} else {
 				// The moss shell is LOD 0 only (and the path tracer's); coarser levels keep the tint.
 				PackedInt32Array none;
@@ -6704,7 +7258,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
 			// thread.
-			const char *names[4] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves" };
+			const char *names[5] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi" };
 			int found = -1;
 			for (int i = 0; i < material_source->get_surface_count(); i++) {
 				if (material_source->surface_get_name(i) == names[s]) {
@@ -6757,6 +7311,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "climber_leaves");
+		} else if (s == 4) {
+			// Fungi: vertex colour per species and zone, a texture of growth lines and pores.
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _fungus_texture());
+			m->set_roughness(0.72f);
+			m->set_feature(BaseMaterial3D::FEATURE_SNOW, false);
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "fungi");
 		} else if (s == 2) {
 			const BarkSet &ms = _moss_set();
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, ms.albedo);
@@ -6796,6 +7356,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	mesh->set_meta(SNAME("tree_colliders"), _collider_data());
 	if (!climber_leaves.is_empty()) {
 		mesh->set_meta(SNAME("tree_climber_leaves"), climber_leaves);
+	}
+	if (!fungi_points.is_empty()) {
+		// Where the tree's own fungi grow (trees.md 5g), for ground plants of the same rot: per
+		// cluster position (3), the wood's outward normal there (3), the cluster's width (m) and
+		// its kind (0 Fomes, 1 Fomitopsis pinicola, 2 F. betulina, 3 Ganoderma, 4 Laetiporus,
+		// 5 Trametes, 6 honey fungus, 7 sulphur tuft); mesh space.
+		mesh->set_meta(SNAME("tree_fungi"), fungi_points);
 	}
 	if (rigged) {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
@@ -6900,8 +7467,12 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// weathers in the open, browner as it rots. The bark's broken edge is darker (its
 			// thickness in shadow).
 			float grain = texture(lichen_map, vec2(base_uv.x * 1.7, base_uv.y * 0.08)).r;
-			float checks = texture(lichen_map, vec2(base_uv.x * 2.3 + 0.37, base_uv.y * 0.04)).a;
-			vec3 wood = bark_wood_color * (0.72 + 0.45 * grain) * mix(0.3, 1.0, smoothstep(0.35, 0.65, checks));
+			// Checks: thin dark splits along the grain, wavering with it, broken into lengths.
+			float wander = texture(lichen_map, vec2(base_uv.x * 0.7 + 0.53, base_uv.y * 0.02)).r;
+			float split = abs(fract(base_uv.x * 3.0 + 1.2 * wander) - 0.5);
+			float run = smoothstep(0.5, 0.65, texture(lichen_map, vec2(base_uv.x * 0.9 + 0.21, base_uv.y * 0.03)).r);
+			float checks = mix(1.0, smoothstep(0.01, 0.07, split), run);
+			vec3 wood = bark_wood_color * (0.72 + 0.45 * grain) * mix(0.35, 1.0, checks);
 			float rim = smoothstep(0.25, 0.47, bare_field) * (1.0 - bark_bare);
 			ALBEDO *= 1.0 - 0.45 * rim;
 			ALBEDO = mix(ALBEDO, wood, bark_bare);
@@ -7276,6 +7847,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	moss_cover = p_from.moss_cover;
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
+	fungi_cover = p_from.fungi_cover;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -8055,6 +8627,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
+	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
+	ClassDB::bind_method(D_METHOD("get_fungi_cover"), &TreeGenerator::get_fungi_cover);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
@@ -8138,6 +8712,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "compress_vertices"), "set_compress_vertices", "is_compress_vertices");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "climber_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_climber_cover", "get_climber_cover");

@@ -66,6 +66,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Bark peel: on a class 2 snag the bark has come away in plates from the upper stem, baring grey wood.*
 
+- **Fungi** (`fungi_cover`): bracket fungi and mushroom tufts with stalks, caps and gills grow as geometry on old and dead wood, by host and decay class.
 - **Fallen branches** (`fallen_branch`): shed limbs and sticks on the forest floor, from the stand's own trees.
 
 ## Wind and touch
