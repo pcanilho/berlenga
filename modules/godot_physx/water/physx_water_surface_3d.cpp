@@ -302,6 +302,16 @@ uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_
 // (pathtraced_absorption, pathtraced_scattering) as the underwater pass does, instead of blending a tint
 // over it. Off: the older tint (water_color, shallow_color).
 uniform bool clear_water = true;
+// Caustics on what clear water shows (raster): the light-space caustics map (water_caustics_map.glsl), the
+// sun's irradiance at caustics_ref_depth under the waves over a flat surface's, scales the sun's share of the
+// bed's light. Set from PhysXWaterSurface3D (caustics_enabled); the path tracer finds its own.
+uniform bool caustics_on = false;
+uniform sampler2D caustics_tex : filter_linear, repeat_disable;
+uniform vec3 caustics_origin = vec3(0.0);
+uniform vec3 caustics_right = vec3(1.0, 0.0, 0.0);
+uniform vec3 caustics_up = vec3(0.0, 0.0, 1.0);
+uniform float caustics_half_extent = 1.0;
+uniform float caustics_ref_depth = 2.5;
 // Waves shadowing themselves (raster; the path tracer traces it): the sun's ray from each point toward the sun,
 // marched over the surface's heights, is inside the water wherever it crosses a crest in front. Glitter needs
 // the sun in the open, so it goes where the ray is inside; foam and wet sand are lit through the crest's water
@@ -1279,7 +1289,30 @@ void fragment() {
 		vec3 p_s = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float bed_d = depth_r(v_rest_xz, cuv_fade);
 		float z_bed = bed_d < 999.0 ? max(bed_d + p_s.y - (MODEL_MATRIX[3].y + water_level), 0.0) : -1.0;
-		base_rgb = water_clear_through(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
+		vec3 seen;
+		vec3 bed_p;
+		float sun_share;
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, seen, bed_p, sun_share);
+		if (caustics_on && sun_share > 0.0) {
+			// The bed point back up its refracted sun ray to the surface, then down it to the map's reference
+			// depth: where the map holds that ray's light (a bed at the reference depth reads its own point).
+			vec3 r = underwater_sun_direction;
+			float z = max(MODEL_MATRIX[3].y + water_level - bed_p.y, 0.0);
+			vec3 l = bed_p + r * (caustics_ref_depth - z / max(-r.y, 0.05)) - caustics_origin;
+			vec2 cuv = vec2(dot(l, caustics_right), dot(l, caustics_up)) / caustics_half_extent * 0.5 + 0.5;
+			if (all(greaterThan(cuv, vec2(0.0))) && all(lessThan(cuv, vec2(1.0)))) {
+				vec2 c = texture(caustics_tex, cuv).rg;
+				float e = c.r + (1.0 - clamp(c.g, 0.0, 1.0)); // the dry share of the texel lit evenly
+				// Faded out at the map's edge and on beds far below the reference depth, where the sun's
+				// half-degree disc blurs the real pattern away (the map holds one depth's sharpness).
+				vec2 edge = min(cuv, 1.0 - cuv);
+				float zr = caustics_ref_depth * max(-r.y, 0.05);
+				e = mix(1.0, e, smoothstep(0.0, 0.08, min(edge.x, edge.y)) * (1.0 - smoothstep(3.0 * zr, 8.0 * zr, z)));
+				// Only the sun that reached the bed (its shadow is already in the bed's colour).
+				float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
+				base_rgb += seen * sun_share * vis * (e - 1.0);
+			}
+		}
 		unlit_rgb = vec3(0.0); // its sun is already in it, shadowed
 		base_a = 1.0;
 	}
@@ -4437,12 +4470,14 @@ void PhysXWaterSurface3D::_update_water_light(const Camera3D *cam) {
 	DirectionalLight3D *sun = raster_reflection_state.find_sun(this);
 	Vector3 sun_dir(0, -1, 0);
 	Vector3 sun_irradiance;
+	water_light_sun_travel = Vector3();
 	if (sun != nullptr && sun->is_visible_in_tree()) {
 		// Light travels along the light's -Z; refracted down into the water (Snell, IOR 1.33) and
 		// thinned by the surface's Fresnel reflection. Raster lights are pi x energy in irradiance.
 		const Vector3 travel = -sun->get_global_transform().basis.get_column(2).normalized();
 		const float cos_i = -travel.y;
 		if (cos_i > 0.0f) {
+			water_light_sun_travel = travel;
 			const float sin_i = Math::sqrt(MAX(1.0f - cos_i * cos_i, 0.0f));
 			const float sin_t = sin_i / 1.33f;
 			const float cos_t = Math::sqrt(MAX(1.0f - sin_t * sin_t, 0.0f));
@@ -4920,7 +4955,22 @@ void PhysXWaterSurface3D::_after_step() {
 		}
 	}
 	if (solver.is_available() && caustics_enabled) {
-		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, _open_beyond());
+		// The scene's sun when there is one up (the light the water is drawn with), else caustics_sun_direction.
+		const Vector3 sun_travel = water_light_sun_travel.is_zero_approx() ? caustics_sun_direction : water_light_sun_travel;
+		const Vector3 origin(grid_center.x, get_global_position().y, grid_center.y);
+		solver.render_caustics(origin, sun_travel, caustics_reference_depth, 1.333f, _open_beyond());
+		if (water_material.is_valid() && caustics_texture.is_valid()) {
+			water_material->set_shader_parameter("caustics_on", true);
+			water_material->set_shader_parameter("caustics_tex", caustics_texture);
+			// The map's heights are about the node's origin, the drawn surface's about water_level above it.
+			water_material->set_shader_parameter("caustics_origin", origin + Vector3(0.0f, water_level, 0.0f));
+			water_material->set_shader_parameter("caustics_right", solver.get_caustics_light_right());
+			water_material->set_shader_parameter("caustics_up", solver.get_caustics_light_up());
+			water_material->set_shader_parameter("caustics_half_extent", solver.get_caustics_half_extent());
+			water_material->set_shader_parameter("caustics_ref_depth", caustics_reference_depth);
+		}
+	} else if (water_material.is_valid()) {
+		water_material->set_shader_parameter("caustics_on", false);
 	}
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {

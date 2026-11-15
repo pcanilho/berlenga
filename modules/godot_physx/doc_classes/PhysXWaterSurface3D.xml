@@ -69,7 +69,7 @@
 		<method name="get_caustics_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
-				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. Red is the caustic light; green is 1 where the sun ray through that spot crossed the water's surface over water and 0 where it didn't. Multiply by green, or the outside of a pool's wall, which lines up with lit spots inside the pool, gets caustics its light never passed through. Past the simulated square, light counts as coming through water only when the surface is rendered out there ([member render_extent]). Null until [member caustics_enabled] is true and the node has built.
+				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. A half-float texture. Red is the sun's irradiance at [member caustics_reference_depth] over what a flat surface lets through (1 even light, 0 none, above 1 at a focus, up to 64), already multiplied by green; green is 1 where the sun ray through that spot crossed the water's surface over water and 0 where it didn't. Use [code]red + (1 - green)[/code] as the factor on the sun's light, so the outside of a pool's wall, which lines up with lit spots inside the pool, stays evenly lit. Past the simulated square, light counts as coming through water only when the surface is rendered out there ([member render_extent]). Null until [member caustics_enabled] is true and the node has built.
 			</description>
 		</method>
 		<method name="get_caustics_tile_size" qualifiers="const">
@@ -209,13 +209,13 @@
 	</methods>
 	<members>
 		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="false">
-			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. See [method get_caustics_texture]. Off by default: the pass draws every frame, and caustics only show over a floor seen through fairly shallow water (a pool, a beach, a lake shore), so turn it on where you have one.
+			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. Clear water ([code]clear_water[/code] in the material) lights the bed it shows with it in the rasterizer: the sun's share of the bed's light is scaled by the map's ratio (the path tracer finds its own caustics). See [method get_caustics_texture]. Off by default: the pass draws every frame, and caustics only show over a floor seen through fairly shallow water (a pool, a beach, a lake shore), so turn it on where you have one.
 		</member>
 		<member name="caustics_reference_depth" type="float" setter="set_caustics_reference_depth" getter="get_caustics_reference_depth" default="2.5">
-			Approximate distance the refracted light travels below the surface before it is mapped into the caustics texture. Larger values spread the pattern farther sideways for oblique light.
+			Distance along the refracted light below the surface at which the caustics map is drawn: the depth where the pattern is sharpest (as HDRP's virtual plane distance). Beds much deeper than this fade to even light.
 		</member>
 		<member name="caustics_sun_direction" type="Vector3" setter="set_caustics_sun_direction" getter="get_caustics_sun_direction" default="Vector3(-0.35, -1, -0.25)">
-			World-space direction that light travels from the source toward the water. It need not be normalized.
+			World-space direction that light travels from the source toward the water, used only while the scene has no visible [DirectionalLight3D] above the horizon (the map otherwise follows the light the water is drawn with). It need not be normalized.
 		</member>
 		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
 			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
