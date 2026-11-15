@@ -83,6 +83,7 @@ struct LibraryJob {
 	float transport = -1.0f;
 	int seed = 0;
 	float detail = 1.0f;
+	bool close_up = false;
 	Ref<ImporterMesh> mesh;
 	Dictionary meta;
 };
@@ -96,7 +97,13 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_seed(job.seed);
 	g->set_transport_distance(job.transport);
 	g->set_detail(job.detail);
+	g->set_close_up(job.close_up);
+	g->set_lods(!job.close_up); // a close-up shape only draws within close_up_radius
 	job.mesh = g->build_importer_mesh(job.meta);
+}
+
+void close_job(void *p_userdata) {
+	library_job(p_userdata, 0);
 }
 
 // Ground normal from the generator's height, by central differences.
@@ -226,6 +233,39 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 			lib.axes.push_back(j.meta.get("rock_axes", Vector3(1, 0.5, 1)));
 			lib.bottom.push_back(j.meta.get("rock_bottom", -0.5));
 			lib.hulls.push_back(j.meta.get("rock_hull", PackedVector3Array()));
+			// Cap samples: the mesh's vertices thinned to one per 0.06-unit voxel (normals averaged).
+			LocalVector<Vector3> cp, cn;
+			{
+				const Array arrays = mesh->surface_get_arrays(0);
+				const PackedVector3Array verts = arrays[Mesh::ARRAY_VERTEX];
+				const PackedVector3Array norms = arrays[Mesh::ARRAY_NORMAL];
+				HashMap<Vector3i, uint32_t> voxel;
+				const float cell = 0.06f;
+				for (int i = 0; i < verts.size(); i++) {
+					const Vector3i key = Vector3i((verts[i] / cell).floor());
+					const Vector3 nrm = i < norms.size() ? norms[i] : Vector3();
+					uint32_t *at = voxel.getptr(key);
+					if (at) {
+						cn[*at] += nrm;
+					} else {
+						voxel.insert(key, cp.size());
+						cp.push_back(verts[i]);
+						cn.push_back(nrm);
+					}
+				}
+				for (Vector3 &n : cn) {
+					n = n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, 1, 0);
+				}
+			}
+			lib.cap_points.push_back(std::move(cp));
+			lib.cap_normals.push_back(std::move(cn));
+		}
+		lib.close.resize(lib.meshes.size());
+		lib.close_state.resize(lib.meshes.size());
+		lib.close_used.resize(lib.meshes.size());
+		for (uint32_t v = 0; v < lib.meshes.size(); v++) {
+			lib.close_state[v] = 0;
+			lib.close_used[v] = 0;
 		}
 		libraries.insert(missing[m], lib);
 	}
@@ -307,7 +347,19 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	}
 	const real_t slope = MIN(Math::sqrt(MAX(real_t(1.0) / (n.y * n.y) - real_t(1.0), real_t(0.0))), real_t(1.0));
 	const real_t height = 2.0f * axes.y * s;
-	const real_t sink = p_sink * height + slope * MAX(axes.x, axes.z) * s * (1.0f - p_follow_ground) * 0.6f;
+	real_t sink = p_sink * height + slope * MAX(axes.x, axes.z) * s * (1.0f - p_follow_ground) * 0.6f;
+	// Convex ground (crests, ridges, knolls) falls away under a big block's edges, and a block seated on the centre
+	// point alone looks perched. Seat it to the mean height round its footprint (the slope cancels in the mean, so
+	// only the curvature counts), at most a third of its height deeper.
+	const real_t reach = MAX(axes.x, axes.z) * s * 0.85f;
+	if (reach > 0.25f) {
+		real_t ring = 0.0;
+		for (int k = 0; k < 6; k++) {
+			const real_t a = p_yaw + real_t(k) * real_t(Math::TAU) / 6.0f;
+			ring += p_gen->get_height(Vector3(p_xz.x + Math::cos(a) * reach, 0, p_xz.z + Math::sin(a) * reach));
+		}
+		sink += CLAMP(ground - ring / 6.0f, real_t(0.0), height / 3.0f);
+	}
 	r_stone.basis = b.scaled(Vector3(s, s, s));
 	r_stone.position = Vector3(p_xz.x, ground - p_lib.bottom[v] * s - sink, p_xz.z);
 	r_stone.ground = ground;
@@ -774,6 +826,8 @@ void RockField3D::_free_cell(Cell &r_cell) {
 		}
 	}
 	r_cell.instances.clear();
+	r_cell.groups.clear();
+	close_dirty = true;
 	if (r_cell.body) {
 		r_cell.body->queue_free();
 		r_cell.body = nullptr;
@@ -822,11 +876,23 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		mm->set_use_custom_data(true);
 		mm->set_mesh(lib->meshes[v]);
 		mm->set_instance_count(int(g.value.size()));
+		Group grp;
+		grp.library = lk;
+		grp.variant = v;
+		grp.multimesh = mm;
+		const Vector3 ax = lib->axes[v];
 		for (uint32_t k = 0; k < g.value.size(); k++) {
 			const Stone &st = stones[g.value[k]];
-			mm->set_instance_transform(int(k), Transform3D(st.basis, st.position));
-			mm->set_instance_custom_data(int(k), Color(st.ground, st.film, st.scale, rng.randf()));
+			const Transform3D xf(st.basis, st.position);
+			const Color cd(st.ground, st.film, st.scale, rng.randf());
+			mm->set_instance_transform(int(k), xf);
+			mm->set_instance_custom_data(int(k), cd);
+			grp.xforms.push_back(xf);
+			grp.custom.push_back(cd);
+			grp.reach.push_back(st.scale * MAX(ax.x, MAX(ax.y, ax.z)));
+			grp.near.push_back(false);
 		}
+		cell.groups.push_back(grp);
 		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 		mmi->set_multimesh(mm);
 		mmi->set_material_override(_material(key_type(lk)));
@@ -875,6 +941,7 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		cell.body = body;
 	}
 	cells.insert(p_key, cell);
+	close_dirty = true;
 }
 
 void RockField3D::_update_streaming(bool p_all) {
@@ -938,10 +1005,220 @@ void RockField3D::_update_streaming(bool p_all) {
 		_build_cell(w.key);
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	_update_close_up(p_all);
+}
+
+// Close-up detail: stones whose surface comes within close_up_radius of the target are drawn with a close-up
+// version of their shape (RockGenerator.close_up: the grid fine enough to carry the rock's millimetre fabric as
+// geometry), shared by every near stone of that shape; the base instance is collapsed meanwhile. Close-up shapes
+// are built on worker threads as they are first wanted and dropped when no stone has wanted them for a while.
+void RockField3D::_update_close_up(bool p_wait) {
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	// Finished builds.
+	for (int i = int(close_jobs.size()) - 1; i >= 0; i--) {
+		CloseJob &cj = close_jobs[i];
+		if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(cj.task)) {
+			continue;
+		}
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(cj.task);
+		LibraryJob *job = static_cast<LibraryJob *>(cj.job);
+		if (Library *lib = libraries.getptr(cj.library)) {
+			if (cj.variant < int(lib->close.size())) {
+				if (job->mesh.is_valid()) {
+					lib->close[cj.variant] = job->mesh->get_mesh();
+					lib->close_state[cj.variant] = 2;
+				} else {
+					lib->close_state[cj.variant] = 0;
+				}
+			}
+		}
+		memdelete(job);
+		close_jobs.remove_at(i);
+		close_dirty = true;
+	}
+	if (!close_up_enabled) {
+		return;
+	}
+	const Vector3 tp = _target_position();
+	if (!close_dirty && tp.distance_to(close_target) < 0.25f) {
+		return;
+	}
+	close_dirty = false;
+	close_target = tp;
+	// Which stones are near, by shape; start builds for shapes not ready.
+	HashMap<uint64_t, LocalVector<int>> wanted_count;
+	HashMap<uint64_t, LocalVector<Transform3D>> near_xf;
+	HashMap<uint64_t, LocalVector<Color>> near_cd;
+	int building = int(close_jobs.size());
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		const real_t cs = _cell_size(Layer(kv.key.x));
+		const Rect2 rect(kv.key.y * cs, kv.key.z * cs, cs, cs);
+		const Vector2 nearest(CLAMP(tp.x, rect.position.x, rect.get_end().x), CLAMP(tp.z, rect.position.y, rect.get_end().y));
+		const bool cell_near = nearest.distance_to(Vector2(tp.x, tp.z)) < close_up_radius + 6.0f;
+		for (Group &grp : kv.value.groups) {
+			Library *lib = libraries.getptr(grp.library);
+			if (!lib || grp.variant >= int(lib->close.size())) {
+				continue;
+			}
+			// Cobbles and pebbles: the base grid already holds their fabric at millimetres.
+			const RockGenerator::Family fam = key_family(grp.library);
+			if (fam == RockGenerator::FAMILY_COBBLE || fam == RockGenerator::FAMILY_PEBBLE) {
+				continue;
+			}
+			const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
+			bool changed = false;
+			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
+				bool want = cell_near && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < close_up_radius;
+				if (want) {
+					lib->close_used[grp.variant] = now;
+					if (lib->close_state[grp.variant] == 0 && building < 2) {
+						// Build it: one or two at a time, so the workers keep up with walking pace.
+						LibraryJob *job = memnew(LibraryJob);
+						job->type = key_type(grp.library);
+						job->family = key_family(grp.library);
+						job->seed = seed * 1000 + grp.variant;
+						job->detail = float(detail);
+						job->close_up = true;
+						if (job->family == RockGenerator::FAMILY_COBBLE) {
+							job->transport = RockGenerator::get_lithology(job->type).abrasion_length * cobble_bins[CLAMP(key_bin(grp.library), 0, 2)];
+						}
+						CloseJob cj;
+						cj.library = grp.library;
+						cj.variant = grp.variant;
+						cj.job = job;
+						cj.task = WorkerThreadPool::get_singleton()->add_native_task(&close_job, job, false, "RockField3D close-up");
+						close_jobs.push_back(cj);
+						lib->close_state[grp.variant] = 1;
+						building++;
+					}
+					want = lib->close_state[grp.variant] == 2;
+				}
+				if (want != grp.near[k]) {
+					grp.near[k] = want;
+					grp.multimesh->set_instance_transform(int(k), want ? Transform3D(Basis().scaled(Vector3(0, 0, 0)), grp.xforms[k].origin) : grp.xforms[k]);
+					changed = true;
+				}
+				if (want) {
+					near_xf[key].push_back(grp.xforms[k]);
+					near_cd[key].push_back(grp.custom[k]);
+				}
+			}
+			(void)changed;
+		}
+	}
+	// Close-up instances: one MultiMesh per shape, rebuilt from the near list.
+	LocalVector<uint64_t> drop;
+	for (KeyValue<uint64_t, MultiMeshInstance3D *> &kv : close_instances) {
+		if (!near_xf.has(kv.key)) {
+			kv.value->queue_free();
+			drop.push_back(kv.key);
+		}
+	}
+	for (uint64_t k : drop) {
+		close_instances.erase(k);
+	}
+	for (KeyValue<uint64_t, LocalVector<Transform3D>> &kv : near_xf) {
+		const uint32_t lk = uint32_t(kv.key >> 16);
+		const int v = int(kv.key & 0xFFFF);
+		Library *lib = libraries.getptr(lk);
+		MultiMeshInstance3D *mmi = nullptr;
+		if (MultiMeshInstance3D **found = close_instances.getptr(kv.key)) {
+			mmi = *found;
+		} else {
+			mmi = memnew(MultiMeshInstance3D);
+			Ref<MultiMesh> mm;
+			mm.instantiate();
+			mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+			mm->set_use_custom_data(true);
+			mm->set_mesh(lib->close[v]);
+			mmi->set_multimesh(mm);
+			mmi->set_material_override(_material(key_type(lk)));
+			mmi->set_meta("rock_close_up", true);
+			add_child(mmi, false, INTERNAL_MODE_BACK);
+			mmi->set_as_top_level(true);
+			mmi->set_global_transform(Transform3D());
+			close_instances.insert(kv.key, mmi);
+		}
+		Ref<MultiMesh> mm = mmi->get_multimesh();
+		const LocalVector<Color> &cd = near_cd[kv.key];
+		mm->set_instance_count(int(kv.value.size()));
+		for (uint32_t k = 0; k < kv.value.size(); k++) {
+			mm->set_instance_transform(int(k), kv.value[k]);
+			mm->set_instance_custom_data(int(k), cd[k]);
+		}
+	}
+	// Drop close-up shapes nothing has wanted for half a minute, oldest first, beyond the budget.
+	int ready = 0;
+	for (KeyValue<uint32_t, Library> &kv : libraries) {
+		for (uint32_t v = 0; v < kv.value.close.size(); v++) {
+			if (kv.value.close_state[v] == 2) {
+				ready++;
+				if (ready > close_up_max_shapes && now - kv.value.close_used[v] > 30000000u) {
+					kv.value.close[v] = Ref<ArrayMesh>();
+					kv.value.close_state[v] = 0;
+					ready--;
+				}
+			}
+		}
+	}
+}
+
+void RockField3D::_clear_close_up() {
+	for (CloseJob &cj : close_jobs) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(cj.task);
+		memdelete(static_cast<LibraryJob *>(cj.job));
+	}
+	close_jobs.clear();
+	for (KeyValue<uint64_t, MultiMeshInstance3D *> &kv : close_instances) {
+		kv.value->queue_free();
+	}
+	close_instances.clear();
+	close_dirty = true;
+}
+
+int RockField3D::get_close_up_shape_count() const {
+	int n = 0;
+	for (const KeyValue<uint32_t, Library> &kv : libraries) {
+		for (uint8_t st : kv.value.close_state) {
+			n += st == 2 ? 1 : 0;
+		}
+	}
+	return n;
+}
+
+int RockField3D::get_close_up_triangle_count() const {
+	int t = 0;
+	for (const KeyValue<uint32_t, Library> &kv : libraries) {
+		for (const Ref<ArrayMesh> &m : kv.value.close) {
+			if (m.is_valid() && m->get_surface_count() > 0) {
+				t += m->surface_get_array_index_len(0) / 3;
+			}
+		}
+	}
+	return t;
+}
+
+void RockField3D::set_close_up_enabled(bool p_enabled) {
+	close_up_enabled = p_enabled;
+	if (!close_up_enabled) {
+		for (KeyValue<Vector3i, Cell> &kv : cells) {
+			for (Group &grp : kv.value.groups) {
+				for (uint32_t k = 0; k < grp.near.size(); k++) {
+					if (grp.near[k]) {
+						grp.near[k] = false;
+						grp.multimesh->set_instance_transform(int(k), grp.xforms[k]);
+					}
+				}
+			}
+		}
+		_clear_close_up();
+	}
+	close_dirty = true;
 }
 
 void RockField3D::rebuild() {
 	clear();
+	obstacle_cache.clear();
 	rivers_ready = false;
 	if (is_inside_tree() && streaming) {
 		set_process_internal(true);
@@ -954,6 +1231,7 @@ void RockField3D::clear() {
 	}
 	cells.clear();
 	stone_count = 0;
+	_clear_close_up();
 }
 
 int RockField3D::build_area(const Rect2 &p_rect) {
@@ -977,6 +1255,21 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 		}
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	// Close-up shapes too, waiting for them (stills and benches want the finished picture): two passes, the first
+	// starts the builds, the second places them.
+	if (close_up_enabled) {
+		for (int pass = 0; pass < 8; pass++) {
+			close_dirty = true;
+			_update_close_up(true);
+			if (close_jobs.is_empty()) {
+				close_dirty = true;
+				_update_close_up(true);
+				if (close_jobs.is_empty()) {
+					break;
+				}
+			}
+		}
+	}
 	return built;
 }
 
@@ -991,11 +1284,25 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
 		for (int z = z0; z <= z1; z++) {
 			for (int x = x0; x <= x1; x++) {
-				LocalVector<Stone> stones;
-				_place(Layer(l), Rect2(x * cs, z * cs, cs, cs), rf_hash3(l, x, z, uint32_t(seed) * 2654435761u), stones);
-				for (const Stone &st : stones) {
-					if (2.0f * st.scale >= p_min_size && st.footprint > 0.0f && p_rect.has_point(Vector2(st.position.x, st.position.z))) {
-						out.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
+				// Placement is deterministic per cell, so each cell is placed once and its obstacles kept.
+				const Vector3i key(l, x, z);
+				ObstacleCell *oc = obstacle_cache.getptr(key);
+				if (!oc) {
+					LocalVector<Stone> stones;
+					_place(Layer(l), Rect2(x * cs, z * cs, cs, cs), rf_hash3(l, x, z, uint32_t(seed) * 2654435761u), stones);
+					ObstacleCell cell;
+					for (const Stone &st : stones) {
+						if (st.footprint > 0.0f) {
+							cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
+							cell.sizes.push_back(2.0f * st.scale);
+						}
+					}
+					oc = &obstacle_cache.insert(key, std::move(cell))->value;
+				}
+				for (uint32_t k = 0; k < oc->obstacles.size(); k++) {
+					const Vector4 &o = oc->obstacles[k];
+					if (oc->sizes[k] >= p_min_size && p_rect.has_point(Vector2(o.x, o.z))) {
+						out.push_back(o);
 					}
 				}
 			}
@@ -1030,10 +1337,18 @@ Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
 				d["bin"] = key_bin(st.library);
 				d["variant"] = int(st.variant);
 				d["layer"] = p_layer;
-				// Highest point, for what grows or lies on the stone (moss tops, snow): the box of its axes turned by its basis.
+				// Highest point of the stone as placed: the support of its hull straight up (the hull holds the mesh's
+				// extreme vertices, so this is the mesh's own top, not the box of its axes).
 				real_t top = st.position.y + st.scale;
 				const Library *lib = libraries.getptr(st.library);
-				if (lib && st.variant < lib->axes.size()) {
+				if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
+					const PackedVector3Array &hull = lib->hulls[st.variant];
+					real_t best = -1e20;
+					for (int k = 0; k < hull.size(); k++) {
+						best = MAX(best, st.basis.rows[1].dot(hull[k]));
+					}
+					top = st.position.y + best;
+				} else if (lib && st.variant < lib->axes.size()) {
 					const Vector3 ax = lib->axes[st.variant];
 					top = st.position.y + Math::abs(st.basis.rows[1].x) * ax.x + Math::abs(st.basis.rows[1].y) * ax.y + Math::abs(st.basis.rows[1].z) * ax.z;
 				}
@@ -1041,6 +1356,78 @@ Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
 				out.push_back(d);
 			}
 		}
+	}
+	return out;
+}
+
+// A stone's cap, where moss, snow and litter settle: from the library mesh's surface samples placed by the stone's
+// basis. The cap centre is the mean of the samples near the highest one (within a fifth of the stone's half size)
+// that face up, its normal their mean normal; the flat radius is how far out from the centre the upward-facing
+// surface stays within `p_tolerance` metres of that plane.
+Array RockField3D::get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance) {
+	Array out = get_stones(p_layer, p_rect);
+	LocalVector<Vector3> wp, wn;
+	for (int i = 0; i < out.size(); i++) {
+		Dictionary d = out[i];
+		const uint32_t key = _library_key(RockGenerator::RockType(int(d["rock_type"])), RockGenerator::Family(int(d["family"])), int(d["bin"]));
+		const Library *lib = _ensure_library(key);
+		const int v = d["variant"];
+		const Vector3 pos = d["position"];
+		const Basis b = d["basis"];
+		const real_t scale = d["scale"];
+		Vector3 cap_point = Vector3(pos.x, real_t(d["top"]), pos.z);
+		Vector3 cap_normal(0, 1, 0);
+		real_t cap_radius = 0.0;
+		if (lib && v < int(lib->cap_points.size()) && !lib->cap_points[v].is_empty()) {
+			const LocalVector<Vector3> &cp = lib->cap_points[v];
+			const LocalVector<Vector3> &cn = lib->cap_normals[v];
+			const Basis rot = b.orthonormalized();
+			wp.resize(cp.size());
+			wn.resize(cp.size());
+			int high = 0;
+			for (uint32_t k = 0; k < cp.size(); k++) {
+				wp[k] = pos + b.xform(cp[k]);
+				wn[k] = rot.xform(cn[k]);
+				if (wp[k].y > wp[high].y) {
+					high = int(k);
+				}
+			}
+			// Centre and normal: the up-facing samples round the highest one.
+			const real_t near = MAX(0.2 * scale, real_t(0.02));
+			Vector3 sum, nsum;
+			int count = 0;
+			for (uint32_t k = 0; k < wp.size(); k++) {
+				if (wn[k].y > 0.0f && wp[k].distance_to(wp[high]) < near) {
+					sum += wp[k];
+					nsum += wn[k];
+					count++;
+				}
+			}
+			if (count > 0 && nsum.length_squared() > 1e-12f) {
+				cap_point = sum / real_t(count);
+				cap_normal = nsum.normalized();
+				// The flat radius: the nearest up-facing sample off the plane by more than the tolerance.
+				real_t r = 1e20;
+				real_t reach = 0.0;
+				for (uint32_t k = 0; k < wp.size(); k++) {
+					if (wn[k].dot(cap_normal) <= 0.2f) {
+						continue;
+					}
+					const Vector3 rel = wp[k] - cap_point;
+					const real_t off = rel.dot(cap_normal);
+					const real_t across = (rel - cap_normal * off).length();
+					if (Math::abs(off) > p_tolerance) {
+						r = MIN(r, across);
+					} else {
+						reach = MAX(reach, across);
+					}
+				}
+				cap_radius = MIN(r, reach);
+			}
+		}
+		d["cap_point"] = cap_point;
+		d["cap_normal"] = cap_normal;
+		d["cap_radius"] = cap_radius;
 	}
 	return out;
 }
@@ -1229,6 +1616,14 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_collision_radius"), &RockField3D::get_collision_radius);
 	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &RockField3D::set_collision_layer);
 	ClassDB::bind_method(D_METHOD("get_collision_layer"), &RockField3D::get_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_close_up_enabled", "enabled"), &RockField3D::set_close_up_enabled);
+	ClassDB::bind_method(D_METHOD("is_close_up_enabled"), &RockField3D::is_close_up_enabled);
+	ClassDB::bind_method(D_METHOD("set_close_up_radius", "radius"), &RockField3D::set_close_up_radius);
+	ClassDB::bind_method(D_METHOD("get_close_up_radius"), &RockField3D::get_close_up_radius);
+	ClassDB::bind_method(D_METHOD("set_close_up_max_shapes", "count"), &RockField3D::set_close_up_max_shapes);
+	ClassDB::bind_method(D_METHOD("get_close_up_max_shapes"), &RockField3D::get_close_up_max_shapes);
+	ClassDB::bind_method(D_METHOD("get_close_up_shape_count"), &RockField3D::get_close_up_shape_count);
+	ClassDB::bind_method(D_METHOD("get_close_up_triangle_count"), &RockField3D::get_close_up_triangle_count);
 	ClassDB::bind_method(D_METHOD("set_build_budget_msec", "msec"), &RockField3D::set_build_budget_msec);
 	ClassDB::bind_method(D_METHOD("get_build_budget_msec"), &RockField3D::get_build_budget_msec);
 	ClassDB::bind_method(D_METHOD("set_streaming", "streaming"), &RockField3D::set_streaming);
@@ -1238,6 +1633,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
 	ClassDB::bind_method(D_METHOD("get_stones", "layer", "rect"), &RockField3D::get_stones);
+	ClassDB::bind_method(D_METHOD("get_stone_caps", "layer", "rect", "tolerance"), &RockField3D::get_stone_caps, DEFVAL(0.01));
 	ClassDB::bind_method(D_METHOD("get_stone_count"), &RockField3D::get_stone_count);
 	ClassDB::bind_method(D_METHOD("get_cell_count"), &RockField3D::get_cell_count);
 	ClassDB::bind_method(D_METHOD("get_last_build_msec"), &RockField3D::get_last_build_msec);
@@ -1275,6 +1671,10 @@ void RockField3D::_bind_methods() {
 	ADD_GROUP("Streaming", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "build_budget_msec", PROPERTY_HINT_RANGE, "0.1,50,0.1,suffix:ms"), "set_build_budget_msec", "get_build_budget_msec");
+	ADD_GROUP("Close-up", "close_up_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "close_up_enabled"), "set_close_up_enabled", "is_close_up_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "close_up_radius", PROPERTY_HINT_RANGE, "0,50,0.1,suffix:m"), "set_close_up_radius", "get_close_up_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "close_up_max_shapes", PROPERTY_HINT_RANGE, "1,64,1"), "set_close_up_max_shapes", "get_close_up_max_shapes");
 
 	BIND_ENUM_CONSTANT(LAYER_ROCKFALL);
 	BIND_ENUM_CONSTANT(LAYER_SCREE);

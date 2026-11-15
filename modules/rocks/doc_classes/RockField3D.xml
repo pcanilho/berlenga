@@ -28,6 +28,18 @@
 				Cells built.
 			</description>
 		</method>
+		<method name="get_close_up_shape_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Number of close-up shapes loaded (built and kept within [member close_up_max_shapes]).
+			</description>
+		</method>
+		<method name="get_close_up_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Triangles in the loaded close-up shapes.
+			</description>
+		</method>
 		<method name="get_last_build_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -65,7 +77,16 @@
 			<param index="0" name="rect" type="Rect2" />
 			<param index="1" name="min_size" type="float" default="0.25" />
 			<description>
-				Stones in [param rect] of b-axis diameter at least [param min_size], as [code](x, ground y, z, footprint radius)[/code], for vegetation obstacles and water flow. Placement is deterministic, so this works for cells not built yet. Cliff blocks are left out.
+				Stones in [param rect] of b-axis diameter at least [param min_size], as [code](x, ground y, z, footprint radius)[/code], for vegetation obstacles and water flow. Placement is deterministic, so this works for cells not built yet. Each placement cell is placed once and kept (16 bytes a stone) until [method rebuild], so repeated and overlapping queries are fast. Cliff blocks are left out.
+			</description>
+		</method>
+		<method name="get_stone_caps">
+			<return type="Array" />
+			<param index="0" name="layer" type="int" />
+			<param index="1" name="rect" type="Rect2" />
+			<param index="2" name="tolerance" type="float" default="0.01" />
+			<description>
+				Like [method get_stones], with each stone's cap, where moss, snow and litter settle, from its shape: [code]cap_point[/code] (Vector3, the centre of the up-facing surface round the stone's highest point), [code]cap_normal[/code] (Vector3) and [code]cap_radius[/code] (metres the surface stays within [param tolerance] metres of the cap's plane). No physics is needed. The caps hold for the close-up shapes too, whose relief is finer than a centimetre.
 			</description>
 		</method>
 		<method name="get_stone_count" qualifiers="const">
@@ -79,7 +100,7 @@
 			<param index="0" name="layer" type="int" />
 			<param index="1" name="rect" type="Rect2" />
 			<description>
-				Stones of a layer in [param rect], placed whether or not they are built, as dictionaries with [code]position[/code], [code]basis[/code], [code]scale[/code], [code]ground[/code], [code]footprint[/code], [code]film[/code], [code skip-lint]rock_type[/code], [code]family[/code], [code]bin[/code], [code]variant[/code], [code]layer[/code] and [code]top[/code] (height of its highest point).
+				Stones of a layer in [param rect], placed whether or not they are built, as dictionaries with [code]position[/code], [code]basis[/code], [code]scale[/code], [code]ground[/code], [code]footprint[/code], [code]film[/code], [code skip-lint]rock_type[/code], [code]family[/code], [code]bin[/code], [code]variant[/code], [code skip-lint]layer[/code] and [code]top[/code] (height of its highest point, from its shape as placed).
 			</description>
 		</method>
 		<method name="is_layer_enabled" qualifiers="const">
@@ -132,6 +153,15 @@
 		</member>
 		<member name="cliff_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="500.0">
 			How far round the follow target cliff blocks are built.
+		</member>
+		<member name="close_up_enabled" type="bool" setter="set_close_up_enabled" getter="is_close_up_enabled" default="true">
+			Near the follow target, stones are drawn with close-up shapes: the same stone on a grid of about 3 mm cells carrying the rock's millimetre fabric as geometry (crystals, grains, laminae, karren, vesicles, cleavage steps, conchoidal ripples). Built on worker threads as they are first wanted. Not used for cobbles and pebbles, whose base shapes already hold it.
+		</member>
+		<member name="close_up_max_shapes" type="int" setter="set_close_up_max_shapes" getter="get_close_up_max_shapes" default="12">
+			Close-up shapes kept loaded; beyond this, the ones no stone has wanted for 30 seconds are dropped.
+		</member>
+		<member name="close_up_radius" type="float" setter="set_close_up_radius" getter="get_close_up_radius" default="8.0">
+			Distance in metres from the follow target to a stone's surface within which it is drawn with its close-up shape.
 		</member>
 		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
 			Gives stones near the follow target convex hull collision shapes, one static body per cell.

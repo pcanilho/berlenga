@@ -110,6 +110,7 @@ private:
 	real_t detail = 1.0;
 	bool lods = true;
 	bool simplify = true;
+	bool close_up = false;
 
 	double last_build_msec = 0.0;
 	int last_triangles = 0;
@@ -140,7 +141,12 @@ public:
 	bool get_lods() const { return lods; }
 	void set_simplify(bool p_simplify) { simplify = p_simplify; }
 	bool get_simplify() const { return simplify; }
+	void set_close_up(bool p_close_up) { close_up = p_close_up; }
+	bool get_close_up() const { return close_up; }
+	// Metres per mesh unit of a typical rock of a family (half its b axis), for the millimetre relief.
+	static real_t get_family_metres_per_unit(Family p_family);
 
+	int get_base_resolution() const;
 	int get_effective_resolution() const;
 	real_t get_effective_transport_distance() const;
 	real_t get_effective_weathering() const;
