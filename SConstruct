@@ -282,7 +282,7 @@ opts.Add("build_profile", "Path to a file containing a feature build profile", "
 opts.Add("custom_modules", "A list of comma-separated directory paths containing custom modules to build.", "")
 opts.Add(BoolVariable("custom_modules_recursive", "Detect custom modules recursively for each specified path.", True))
 opts.Add(BoolVariable("modules_enabled_by_default", "If no, disable all modules except ones explicitly enabled", True))
-opts.Add(BoolVariable("no_editor_splash", "Don't use the custom splash screen for the editor", True))
+opts.Add(BoolVariable("no_editor_splash", "Don't use the custom splash screen for the editor", False))
 opts.Add(
     "system_certs_path",
     "Use this path as TLS certificates default for editor and Linux/BSD export templates (for package maintainers)",
