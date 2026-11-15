@@ -2485,3 +2485,24 @@ water shader (clear water, shadows, caustics, foam where it runs fast or falls),
 tracer through vertex capture. A CPU readback gives `sample_height()` and `sample_flow()` for
 buoyancy. Later, the same tiles stream over a whole world (tile manager, LOD, sleeping tiles) as
 "The full live version" lays out.
+
+### Built (15 Nov): `PhysXLiveWater3D`, placed live areas
+
+- A Node3D holding a `size` grid of `cell_size` cells (default 64 x 64 at 0.5 m). Ground comes from
+  physics ray casts against static bodies on `ground_collision_mask`; cells with no ground drain.
+  `update_ground()` re-reads it and keeps the water, so a wall that breaks lets the water through.
+- Solver: the virtual pipe model on the CPU (Mei, Decaudin and Hu 2007), `friction` damping the
+  fluxes, CFL substeps (at most 16 a tick), `open_edges` letting water leave at the border.
+  Volume is conserved exactly: a 1.5 m^3/s spring matches the stored plus lost volume to the litre.
+- Water in: `fill_rect` + `fill_height` at start, `sources` (x, y, z, m^3/s), `add_water()`, rain in
+  mm/h (or the WeatherMap3D rate with `rain_from_weather`), `infiltration_rate` soaking it away.
+- Surface: a grid mesh with the river shader (shadows, clear water, reflections), depth and foam
+  per vertex, velocity in UV2 so foam and normals follow the flow. Foam appears where the water runs
+  faster than `foam_speed` and supercritically (Froude above 1.5). Dry vertices sit just under the
+  ground, so wet/dry edges move with the water.
+- Queries for gameplay and buoyancy: `sample_depth()`, `sample_height()`, `sample_flow()`,
+  `get_total_volume()`, `get_volume_out()`, `get_cost_ms()`.
+- Cost: about 3 ms a tick for 160 x 160 cells on the cloud CPU (peaks near 11 ms in a dam break).
+- Bench: `docs/bench/live_water` with `--scene=spring|dam|rain`, `--view=overview|low`, `--break=s`.
+- Not yet: GPU solver, depth over 3 m shading (the river depth encoding), muddy water colour,
+  streaming over a whole world (step c, only if wanted).
