@@ -34,6 +34,7 @@ extends Node3D
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
+#   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
@@ -146,7 +147,7 @@ func _ready() -> void:
 			# ridges drains into the bowl (250 km², --bowl-inflow) so the fall carries about 3 m³/s in the spring melt.
 			vd.merge({"ice-inflow": "0.05", "outwash-age": "3000", "bowl": "900,-1550,420,0.5",
 					"bar": "450,-2040,450,-1650,450,-1300,700,-1200,1500,-1250,2040,-1250", "bar-level": "520,420,480,500,520,540",
-					"bar-apron": "1.0", "bowl-inflow": "250"}, true)
+					"bar-apron": "1.0", "bowl-inflow": "250", "guides": "1"}, true)
 		if args.has("lake-x"):
 			vd.erase("no-lake") # a placed high lake instead of the marked bowl's
 		for k in vd:
@@ -568,6 +569,8 @@ func check(ok: bool, what: String, gap := false) -> void:
 func _generate() -> void:
 	var layout: String = args.get("layout", "range")
 	var range_nodes: Array[Node3D] = []
+	# Sculpting guides (--guides: the bowl, ridges and bar as TerrainGuide3D nodes under the generator).
+	var guide_nodes: Array[Node3D] = []
 	var noise := FastNoiseLite.new()
 	noise.seed = 7
 	noise.frequency = 1.0 / 1500.0
@@ -597,9 +600,12 @@ func _generate() -> void:
 			# A high bowl among the peaks (x,z,radius,share): uplift scaled down inside it, so its floor stays gentle above
 			# the rock bar that holds its outlet.
 			var bw: PackedStringArray = args["bowl"].split(",")
-			var bowl := _range_path("Bowl", [Vector3(float(bw[0]), 0, float(bw[1])), Vector3(float(bw[0]) + 1.0, 0, float(bw[1]))], float(bw[2]), float(bw[3]))
-			bowl.set_meta("basin", true)
-			range_nodes.append(bowl)
+			if args.has("guides"):
+				guide_nodes.append(_guide("Bowl", TerrainGuide3D.MODE_LOWER, [Vector3(float(bw[0]), 0, float(bw[1]))], float(bw[2]), float(bw[3])))
+			else:
+				var bowl := _range_path("Bowl", [Vector3(float(bw[0]), 0, float(bw[1])), Vector3(float(bw[0]) + 1.0, 0, float(bw[1]))], float(bw[2]), float(bw[3]))
+				bowl.set_meta("basin", true)
+				range_nodes.append(bowl)
 		if args.has("ridges"):
 			# Extra ridges, "x,z,x,z,...,width,uplift" separated by ";": raised-cosine bands of uplift along the line.
 			var ri := 0
@@ -608,7 +614,10 @@ func _generate() -> void:
 				var rpts: Array[Vector3] = []
 				for k in range(0, rv.size() - 2, 2):
 					rpts.append(Vector3(float(rv[k]), 0, float(rv[k + 1])))
-				range_nodes.append(_range_path("Ridge%d" % ri, rpts, float(rv[rv.size() - 2]), float(rv[rv.size() - 1])))
+				if args.has("guides"):
+					guide_nodes.append(_guide("Ridge%d" % ri, TerrainGuide3D.MODE_RAISE, rpts, float(rv[rv.size() - 2]), float(rv[rv.size() - 1])))
+				else:
+					range_nodes.append(_range_path("Ridge%d" % ri, rpts, float(rv[rv.size() - 2]), float(rv[rv.size() - 1])))
 				ri += 1
 		range_nodes.append(_range_path("WestRidge", [Vector3(-1500, 0, -900), Vector3(-1450, 0, 1100)], 380.0, 0.35))
 		range_nodes.append(_range_path("EastRidge", [Vector3(1500, 0, -900), Vector3(1450, 0, 1100)], 380.0, 0.35))
@@ -676,6 +685,28 @@ func _generate() -> void:
 	if args.has("steps"):
 		gen.steps = int(args["steps"]) # rivers drop sediment where they slow (Yuan et al. 2019)
 	add_child(gen)
+	# --coast-guide=x,z,x,z,...[;beach]: sea inside the closed line (repeat the first point) or left of an open one;
+	# --beach-guide=x,z,x,z,...;width;beach: a drawn beach (0: cliffs) along the coast within width of the line.
+	if args.has("coast-guide"):
+		var cg: PackedStringArray = args["coast-guide"].split(";")
+		var cv: PackedStringArray = cg[0].split(",")
+		var cpts: Array[Vector3] = []
+		for k in range(0, cv.size() - 1, 2):
+			cpts.append(Vector3(float(cv[k]), 0, float(cv[k + 1])))
+		var coast := _guide("Coast", TerrainGuide3D.MODE_COAST, cpts, 0.0, 0.0)
+		coast.beach_width = float(cg[1]) if cg.size() > 1 else -1.0
+		guide_nodes.append(coast)
+	if args.has("beach-guide"):
+		var bg: PackedStringArray = args["beach-guide"].split(";")
+		var bv2: PackedStringArray = bg[0].split(",")
+		var bpts: Array[Vector3] = []
+		for k in range(0, bv2.size() - 1, 2):
+			bpts.append(Vector3(float(bv2[k]), 0, float(bv2[k + 1])))
+		var beach_g := _guide("Beach", TerrainGuide3D.MODE_BEACH, bpts, float(bg[1]), 0.0)
+		beach_g.beach_width = float(bg[2])
+		guide_nodes.append(beach_g)
+	for g in guide_nodes:
+		gen.add_child(g)
 	var rp: Array[NodePath] = []
 	for n in range_nodes:
 		rp.append(gen.get_path_to(n))
@@ -732,7 +763,19 @@ func _generate() -> void:
 				sill.set_meta("level", float(args["sill-level"]))
 			add_child(sill)
 			markers.append(gen.get_path_to(sill))
-		if args.get("bar", "none") != "none":
+		if args.get("bar", "none") != "none" and args.has("guides"):
+			# The bar as a guide: its points' heights are the levels; the apron falls to the right of the line.
+			var gbv: PackedStringArray = args["bar"].split(",")
+			var gbl: PackedStringArray = args.get("bar-level", "450").split(",")
+			var gpts: Array[Vector3] = []
+			for k in range(0, gbv.size() - 1, 2):
+				var lv := float(gbl[k / 2]) if gbl.size() == gbv.size() / 2 else float(gbl[0])
+				gpts.append(Vector3(float(gbv[k]), lv, float(gbv[k + 1])))
+			var bar_guide := _guide("Bar", TerrainGuide3D.MODE_BAR, gpts, 0.0, 0.0)
+			bar_guide.bar_width = float(args.get("bar-width", "40"))
+			bar_guide.apron_slope = float(args.get("bar-apron", "0"))
+			gen.add_child(bar_guide)
+		elif args.get("bar", "none") != "none":
 			# A bar of resistant rock across the valley (x0,z0,x1,z1), held at --bar-level: a riegel the river and the
 			# ice cross slowly, so the ground above it stays high (sill markers every 32 m).
 			var bv: PackedStringArray = args["bar"].split(",")
@@ -1012,6 +1055,20 @@ func _generate() -> void:
 		_log("  lake level %.1f m, depth %.1f m, area %.1f ha, outlet %s" % [l["level"], l["depth"], l["area"] / 10000.0, l.has("outlet")])
 	_log("sample_heights %d ms, highest %.0f m" % [Time.get_ticks_msec() - t, hmax])
 
+
+
+func _guide(n: String, mode: int, pts: Array, width: float, strength: float) -> TerrainGuide3D:
+	var g := TerrainGuide3D.new()
+	g.name = n
+	g.mode = mode
+	if width > 0.0:
+		g.width = width
+	g.strength = strength
+	var curve := Curve3D.new()
+	for p in pts:
+		curve.add_point(p)
+	g.curve = curve
+	return g
 
 
 func _range_path(n: String, pts: Array, width: float, uplift: float) -> Path3D:

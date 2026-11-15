@@ -34,6 +34,7 @@
 #include "climate_recipe.h"
 #include "landscape_3d.h"
 #include "terrain_brush_3d.h"
+#include "terrain_guide_3d.h"
 #include "terrain_data_map_3d.h"
 #include "terrain_deformer_3d.h"
 #include "terrain_generator_3d.h"
@@ -47,6 +48,7 @@ void initialize_terrain_deform_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(ClimateRecipe);
 	GDREGISTER_CLASS(Landscape3D);
 	GDREGISTER_CLASS(TerrainBrush3D);
+	GDREGISTER_CLASS(TerrainGuide3D);
 	GDREGISTER_CLASS(TerrainDeformer3D);
 	GDREGISTER_CLASS(TerrainDataMap3D);
 	GDREGISTER_CLASS(TerrainGenerator3D);

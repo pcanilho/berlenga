@@ -633,6 +633,15 @@
    "topic": ""
   },
   {
+   "name": "Shadows on water",
+   "settings": [],
+   "note": "always on",
+   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing; under the surface, the light in the water takes the sun's and the clouds' shadows too.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
    "name": "Refraction",
    "settings": [
     "rendering/pathtracing/refraction"
@@ -1152,6 +1161,31 @@
    ],
    "note": "",
    "what": "raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Terrain guides",
+   "settings": [
+    "TerrainGuide3D",
+    "apron_slope"
+   ],
+   "note": "",
+   "what": "paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Coast and beach guides",
+   "settings": [
+    "TerrainGuide3D",
+    "invert",
+    "roughness"
+   ],
+   "note": "",
+   "what": "draw a bay, a shore or an island, with a wandering shoreline that rivers run into, and set where its beaches go and how wide.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"

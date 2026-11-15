@@ -849,6 +849,48 @@ vec3 uw_inscatter(float z0, vec3 d, float len) {
 	return ss * (sun + sky);
 }
 
+#if (defined(UNDERWATER_FOG) || defined(UNDERWATER_SURFACE)) && !defined(RT)
+// uw_inscatter with the sun's shadows (docs/ideas/water.md, "Shadows in the water"): the sun's share marched
+// in steps from p0 along d, each step lit as far as the light reached the point where it entered the water
+// (sun_visibility there: the shadow maps and the cloud projector, as the surface itself takes them), and
+// integrated in closed form within the step. The march covers the near water, where shafts show; past it the
+// last step's light carries on. jitter (0..1) moves the samples within their steps from pixel to pixel.
+vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
+	vec3 st = uw_sigma_t();
+	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	vec3 sd = underwater_sun_direction;
+	float mu = max(-sd.y, 0.05);
+	vec3 a = st / mu;
+	vec3 k = st - a * d.y;
+	const int STEPS = 24;
+	float reach = min(len, 5.0 / max(dot(st, vec3(1.0 / 3.0)), 1e-3));
+	float dt = reach / float(STEPS);
+	vec3 sun = vec3(0.0);
+	vec3 vis = vec3(1.0);
+	for (int i = 0; i < STEPS; i++) {
+		float t = float(i) * dt;
+		vec3 q = p0 + d * (t + jitter * dt);
+		// Back up the refracted sun ray to the surface over the point.
+		float z = max(z0 - d.y * (t + jitter * dt), 0.0);
+		vis = sun_visibility(q - sd * (z / mu));
+		sun += vis * exp(-k * t) * uw_segment(k, dt);
+	}
+	if (len > reach) {
+		sun += vis * exp(-k * reach) * uw_segment(k, len - reach);
+	}
+	sun *= underwater_sun_irradiance * uw_hg(dot(sd, -d), pathtraced_scattering_anisotropy) * exp(-a * z0);
+	vec3 kk = st * 1.2;
+	vec3 sky = underwater_sky_radiance * 0.5 * exp(-kk * z0) * uw_segment(st - kk * d.y, len);
+	return ss * (sun + sky);
+}
+
+// Interleaved gradient noise (Jimenez 2014), a new pattern each frame.
+float uw_jitter(vec2 frag, float time) {
+	frag += 5.588238 * floor(time * 60.0);
+	return fract(52.9829189 * fract(dot(frag, vec2(0.06711056, 0.00583715))));
+}
+#endif
+
 // The share of the surface's light left at depth z (raster lights ignore the water above a surface).
 vec3 uw_light_at_depth(float z) {
 	vec3 st = uw_sigma_t();
@@ -935,7 +977,7 @@ void fragment() {
 			scene *= uw_light_at_depth(max(surface_height_world(p_o.xz, base_y) - p_o.y, 0.0));
 		}
 		float seg = min(len, to_surface);
-		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter(z0, d, seg)) * (1.0 - meniscus);
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter_shadowed(p_near, z0, d, seg, uw_jitter(FRAGCOORD.xy, TIME))) * (1.0 - meniscus);
 		ALPHA = 1.0;
 	}
 #endif
@@ -1092,9 +1134,9 @@ void fragment() {
 	}
 	vec3 surf = from_above * (1.0 - fresnel) + mirrored * fresnel;
 	// Foam from below: a lit, rough layer that lets little through.
-	surf = mix(surf, foam_color.rgb * (underwater_sky_radiance + underwater_sun_irradiance / PI) * 0.5, foam * 0.85);
+	surf = mix(surf, foam_color.rgb * (underwater_sky_radiance + underwater_sun_irradiance * sun_visibility(p_w) / PI) * 0.5, foam * 0.85);
 	float z_cam = max(MODEL_MATRIX[3].y + water_level - cam.y, 0.0);
-	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter(z_cam, d, dist);
+	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter_shadowed(cam, z_cam, d, dist, uw_jitter(FRAGCOORD.xy, TIME));
 	ALPHA = 1.0;
 #else
 	// unshaded + a small self-contained, bounded normal-based shading term --
@@ -1136,8 +1178,10 @@ void fragment() {
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
+	vec3 unlit_rgb = base_rgb;
 #if !defined(RT)
-	base_rgb *= water_raster_body_light(); // lit by the sun and sky, as the foam beside it is
+	// Lit by the sky here and by the sun through light() (shadowed), as the foam beside it is.
+	base_rgb *= water_raster_body_light();
 #endif
 	float base_a = mix(water_color.a, shallow_color.a, shallow);
 	// Thin water is clear: the swash film and the last few cm at the edge let
@@ -1199,12 +1243,20 @@ void fragment() {
 	float a0 = water_a + wet_a;
 	float inv_a0 = 1.0 / max(a0, 1e-4);
 	vec3 open_rgb = base_rgb * (1.0 - foam) * water_a * inv_a0;
+	vec3 open_unlit = unlit_rgb * (1.0 - foam) * water_a * inv_a0;
 	vec3 lit_rgb = (foam_color.rgb * foam * water_a + wet_sand_color.rgb * wet_a) * inv_a0;
 	vec4 refl = vec4(open_rgb, a0);
+	// The sun's share (body light and glitter) goes through light(), so the water takes the scene's shadows.
+	vec3 sun_body = water_raster_lit() ? open_unlit / PI : vec3(0.0);
+	vec4 sun_glint = vec4(0.0, 1.0, 0.0, 0.0);
+	float sun_a2 = 1.0;
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness);
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness, open_unlit, sun_body, sun_glint, sun_a2);
 	}
+	wr_sun_body = sun_body;
+	wr_sun_glint = sun_glint;
+	wr_sun_a2 = sun_a2;
 	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
 	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
 	float lit_w = clamp((foam * water_a + wet_a) * inv_a0, 0.0, 1.0);
@@ -1219,6 +1271,15 @@ void fragment() {
 #endif // UNDERWATER_SURFACE
 }
 #endif // UNDERWATER_FOG
+
+#if !defined(RT) && !defined(UNDERWATER_SURFACE) && !defined(UNDERWATER_FOG)
+// The lights on the water: foam and wet sand (ALBEDO) as a Lambert surface, and the open water's sun share
+// (water_raster_reflections.h), all under each light's shadow and cloud projector.
+void light() {
+	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * max(dot(NORMAL, LIGHT), 0.0) / PI;
+	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body, wr_sun_glint, wr_sun_a2);
+}
+#endif
 )";
 
 // The whole shader: head, the raster reflections (water_raster_reflections.h), tail.

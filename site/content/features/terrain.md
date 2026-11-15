@@ -24,6 +24,18 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Crests: before, a thin regular comb along the summits; now, irregular crests and pinnacles.*
 
+- **Terrain guides** (`TerrainGuide3D`: Raise, Lower, Bar, `apron_slope`): paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion.
+
+  ![A generated valley from above, without and with a drawn ridge guide](media/terrain-guide.jpg)
+
+  *Terrain guides: a drawn ridge across the valley floor; the rivers route round it and a pond forms upstream.*
+
+- **Coast and beach guides** (`TerrainGuide3D` Coast: `invert`, `roughness`; Beach): draw a bay, a shore or an island, with a wandering shoreline that rivers run into, and set where its beaches go and how wide.
+
+  ![A bay drawn with a coast guide, beaches round it and mountains behind, raster](media/terrain-coast-guide.jpg)
+
+  *Coast guide: a drawn bay with beaches along its shore.*
+
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 
   ![The same range eroded directly and coarse to fine, 8 m cells](media/terrain-coarse-to-fine.jpg)

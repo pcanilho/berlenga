@@ -1298,6 +1298,16 @@ path traced frames at the bar face match (the BLAS holds the ledges). Cost on th
 338 m wall goes from 2.6 to 5.5 M triangles; a wide view of it is unchanged (relief beyond the radius is subpixel and
 left to the shader). Next: the far strata in the shader, matched to these beds.
 
+Fix (15 Nov, the docs cliff pair): under a raking sun the ledges' shadow edges were saw-toothed. The steps cross the
+heightfield's diagonal triangles, and per-vertex normals cannot follow a 1.5 m rounding at 1 m vertex rows; twice the
+rows (2.7x the triangles) did not cure it and smoother vertex normals blurred the ledges. Now the cliff meshes carry
+the undisplaced point and scale (CUSTOM0) and the heightfield normal (CUSTOM1), both linear over each undisplaced
+triangle, and TerrainMaterial3D evaluates the same relief function per pixel (a bit-for-bit port of the hash and
+noise) and differences it over the pixel's footprint (at least 0.15 m) for the shading normal, the usual split of
+coarse displacement plus per-pixel normal (Frostbite, Widmark 2012; REDengine 3, Gollent 2014). The vertices still
+give the silhouette, shadows and the BLAS. Cost: four evaluations of the relief per cliff pixel (about 90 integer
+hashes), nothing elsewhere; 32 bytes more per cliff vertex.
+
 ## Rock detail on steep faces and scree (12 Nov; Paulo picked shader detail first, then displaced cliffs)
 
 Why: the generator's erosion detail is a heightfield (offsets in y over x z), so faces near vertical get none: gorge
@@ -1400,6 +1410,23 @@ Plan, in two steps:
 
 Cost: guides add one pass over the uplift field per guide (milliseconds); the touch-up water solve is the same as
 the generator's final water stage (about 0.3 s at 16 m here).
+
+Built, step 1a (15 Nov): `TerrainGuide3D` (a Path3D, so the editor's curve tools draw it) under the generator, at any
+depth. Raise and lower act as ranges and basins (each cell takes the line's nearest point, so a curve's segments do
+not compound). Bar holds rock at each curve point's height every 32 m, the lowest point being the lip; its
+`apron_slope` makes the right-hand side a rock slope: each point's rock falls away in a strip straight out to that
+side (`InflowPoint` slope and side, levels combined by maximum), so the strips join into one smooth slope and the lip's
+`lip_clear` stretch stays a sheer face the water falls from. The first apron, discs stepping down every 32 m, left
+regular terraces; a cone per point spread along the line and buried the lip in a gorge. The bench's `--hanging` is
+now three guides (bowl, bar, plus the inflow): lake at 422 m, a 316 m free fall at 3.5 m3/s. Next: the coast guide,
+then the coarse preview.
+
+Built, step 1b (15 Nov): coast and beach guides. A coast guide adds sea to the sea mask inside a closed line (outside
+with `invert`) or left of an open one, the shore wandering up to `roughness` either way by fBm, so a four-click bay
+reads as a natural inlet; sea cells are outlets as before, so rivers end in it and the shoreface (Dean) and beaches
+follow. `beach_width` on a coast guide, or a beach guide (a band of `width` round its line), sets the beach width
+along that stretch (0: none), blended over the band's outer quarter, over the generator's noise beaches.
+
 
 ## Sources
 

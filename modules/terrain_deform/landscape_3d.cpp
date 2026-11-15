@@ -367,15 +367,36 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	// Displace, and the normal from the displaced surface around each point (seamless: it reads positions only).
 	PackedVector3Array verts;
 	PackedVector3Array norms;
+	// For the material's per-pixel relief normal (TerrainMaterial3D, cliff relief): CUSTOM0 the undisplaced point in
+	// landscape space and the displacement scale (cliff_relief times the face weight), CUSTOM1 the heightfield normal.
+	// Both are linear over each triangle of the undisplaced surface, so the pixel gets them exactly; the vertex
+	// normals below only light what the triangles can carry, and the ledges' edges came out saw-toothed.
+	PackedFloat32Array cus0, cus1;
 	verts.resize(base.size());
 	norms.resize(base.size());
+	cus0.resize(base.size() * 4);
+	cus1.resize(base.size() * 4);
 	Vector3 *vp = verts.ptrw();
 	Vector3 *nw = norms.ptrw();
+	float *c0 = cus0.ptrw();
+	float *c1 = cus1.ptrw();
 	const real_t e = 0.3f;
 	for (uint32_t i = 0; i < base.size(); i++) {
 		const Vector3 p = base[i];
 		vp[i] = _cliff_point(p, keep[i]) - corner;
 		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+		{
+			const real_t w = (1.0f - CLAMP((nb.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0)));
+			const real_t ml = Vector2(nb.x, nb.z).length();
+			c0[i * 4 + 0] = p.x;
+			c0[i * 4 + 1] = p.y;
+			c0[i * 4 + 2] = p.z;
+			c0[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(cliff_relief * w * w * (3.0f - 2.0f * w) * keep[i]);
+			c1[i * 4 + 0] = nb.x;
+			c1[i * 4 + 1] = nb.y;
+			c1[i * 4 + 2] = nb.z;
+			c1[i * 4 + 3] = 0.0f;
+		}
 		if (nb.y > 0.64f || keep[i] <= 0.0) {
 			nw[i] = nb;
 			continue;
@@ -398,8 +419,11 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	arrays.resize(RSE::ARRAY_MAX);
 	arrays[RSE::ARRAY_VERTEX] = verts;
 	arrays[RSE::ARRAY_NORMAL] = norms;
+	arrays[RSE::ARRAY_CUSTOM0] = cus0;
+	arrays[RSE::ARRAY_CUSTOM1] = cus1;
 	arrays[RSE::ARRAY_INDEX] = ia;
-	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays);
+	const uint64_t cflags = (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM0_SHIFT) | (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM1_SHIFT);
+	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), cflags);
 	r_job.triangles = int(tris.size() / 3);
 }
 

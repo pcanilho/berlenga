@@ -2221,3 +2221,89 @@ and path tracing fade the bed alike), `d` the still-water depth and `mu` the cos
 Alpha goes from the water's own value over the shallows to opaque where the bed is gone. The swash film and the
 waterline's cut-out are unchanged. Same technique as depth-based water opacity in UE's single-layer water and
 HDRP's water (absorption distance).
+
+## Every water body takes shadows (15 Nov, bug)
+
+Paulo saw the river under the big fall stay bright in the cliff's shadow. In raster the open water of PhysXRiver3D
+and PhysXWaterSurface3D (lakes, the sea) is drawn as emission, its own bounded look: lit as a whole PBR surface
+and blended over the lit floor it had blown out. But the sun's share of that emission (the glitter's GGX lobe and
+the sun's light on the body colour) came from uniforms, so no shadow map, terrain shadow or cloud projector ever
+reached it. Foam, wet sand, the contact sheets, the plunge columns and spray were already lit as surfaces and took
+shadows; the path tracer traces its own shadows for all of them.
+
+- How engines do it: water shaders take the main light's shadow attenuation for the sun specular and the
+  sunlit part of the scattering, and keep the sky reflection unshadowed (Unity HDRP water samples the directional
+  shadow for its specular and its scattering; UE's single-layer water applies the directional light's shadow to
+  its direct lighting while reflections come from captures and SSR).
+- Built: the sun's two terms move to light(). The fragment hands the body colour's weight, the glitter's normal,
+  weight and roughness (widened by the screen derivatives there, since light() has none) to light() through
+  varyings; light() adds them for the directional light under `ATTENUATION` and `LIGHT_COLOR`, which carry the
+  shadow maps, the light's exposure normalisation and the cloud projector. The sky's share of the body light and
+  the mirrored sky stay in the emission, since water in shadow still mirrors the sky. Foam keeps a Lambert term in
+  the same light().
+- Under 0.6 cloud cover the sea now darkens under the cloud shadows like the beach beside it.
+
+## Shadows in the water (15 Nov, bug)
+
+With the camera under the water, the raster light scattered in the water toward the eye was the sun's
+everywhere: a bay under a cliff, or under a cloud shadow, glowed as if lit. The surface and the bed took their
+shadows (#286 and the scene's own lights); the medium between them did not, while the path tracer lit it only
+where the sun reached.
+
+How others do it: Crest reads the shadow maps into its own data before the transparent pass and uses a soft
+term for the scattering in the volume; Unreal's Single Layer Water leaves its medium unshadowed (its docs say
+moving under the water projects no shadowing) and relies on Volumetric Fog for shafts; froxel fog (Wronski
+2014, Hillaire 2015) is the general answer, but Godot's fog density and absorption are grey, and water's
+absorption is strongly per channel, so the medium stays in our own pass.
+
+What we build: a spatial stage function, `sun_visibility(world_position)` (vec3), the first directional
+light's shadow (one hardware PCF tap from the cascade over the point) times its projector (the cloud shadow),
+at any point; Forward+ and Mobile read the shadow atlas, Compatibility returns 1. The underwater pass marches
+the sun's share over the near water (24 steps, about five mean free paths), each step lit as far as the
+light reached where its refracted ray entered the water (the shadow map holds the shadow above the surface;
+beneath it the refracted ray bends away from the map's), integrated in closed form within the step, and
+jittered per pixel and frame (interleaved gradient noise, Jimenez 2014). The camera-to-surface stretch seen
+from below and the foam's sun from below take the same light.
+
+Left for later: the sky's share is still unoccluded (a cliff hides part of the sky too; the terrain's sky
+map could be read here), and an underwater rock's own shadow in the medium (the march reads the light at
+the surface only).
+
+## Clear water you can see into, shadowed (15 Nov, research for Paulo)
+
+Paulo: water should be partly transparent and shadow itself, for instance on a beach (examples he pointed
+at: Derelicts, an indie survival game on UE5, and FluidNinja LIVE 2 for UE5).
+
+Where we are. The path tracer already does this physically: the surface refracts, the water absorbs per
+channel, scatters, and every ray to the sun is a shadow ray, so a beach shows the sand through the
+shallows, a cliff's shadow darkens the water body and the bed under it, and caustics form. The raster
+surface is an alpha-blended tint over the bed (an early version that read the screen texture blew out, and
+alpha blending replaced it), so on the water bench the raster shallows read milky where the path tracer
+shows clear water over sand, and a shadow across the water only darkens the surface's sun terms (#286),
+not the water below it. The underwater passes since read the screen texture without trouble.
+
+What others do:
+- Unreal, Single Layer Water: a pass after the lighting reads the scene colour and depth behind the
+  surface and applies a homogeneous medium (absorption and scattering per channel in 1/m, Schlick phase).
+  Its docs say the medium projects no shadowing; shafts come from Volumetric Fog. Studios on it (Photon
+  Water, LightSpeed) add their own underwater volumetric lighting.
+- Crest (Unity): refraction off the camera colour texture with per-channel depth fog, subsurface terms for
+  the sun, and the shadow maps read into its own data before the transparent pass: a hard term that blocks
+  the specular and a soft term for the scattering in the volume, tinted by a shadow colour. Caustics from a
+  texture with a focal depth.
+- HDRP water: refraction with a maximum distance, absorption distance, scattering from ambient, height,
+  displacement and the direct light; caustics that take the directional light's shadow.
+- Fluid Flux 2 (UE5, the beach demos): shallow-water simulation blended with wave profiles near the shore,
+  listed features include wave shadow.
+- Real-Time Underwater Spectral Rendering (Monzón et al., Eurographics 2024): spectral attenuation and
+  scattering for underwater, the reference for per-channel colour.
+
+Proposal (raster; the path tracer needs nothing):
+1. See-through water: the surface reads the scene behind it (colour and depth), offset by the refracted
+   ray, and dims it per channel by Beer-Lambert over the real path through the water (down to the bed and
+   back along the view), adding the scattered light; the Fresnel reflection on top. Shallows show the sand,
+   deep water turns to the water's own colour, both matching the path tracer.
+2. Shadows in the water from above: the scattered light marched along that refracted path with
+   `sun_visibility` (as under water, #287), so a cliff's or a cloud's shadow darkens the water body itself.
+3. Waves shadowing: the displaced surface casts the sun's shadow onto the troughs and the bed (and the
+   caustics take the shadow maps, as HDRP's do).
