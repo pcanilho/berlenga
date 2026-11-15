@@ -29,6 +29,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Haze and cloud shadow in fog** (`aerosol_haze`, `haze_visibility`, off by default): volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.
 
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
+- **Contact wetness** (`contact_wetness_enabled`): ground that running water crossed stays dark after it drains, then dries with the weather.
 
   ![A beach dry and after rain: darker sand, puddles and a sheen](media/weather-wet.jpg)
 

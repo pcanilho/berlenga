@@ -862,7 +862,7 @@
     "wall_friction"
    ],
    "note": "",
-   "what": "near the player, rocks and banks shed wakes and eddies.",
+   "what": "near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
@@ -2428,6 +2428,17 @@
    ],
    "note": "",
    "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Contact wetness",
+   "settings": [
+    "contact_wetness_enabled"
+   ],
+   "note": "",
+   "what": "ground that running water crossed stays dark after it drains, then dries with the weather.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
