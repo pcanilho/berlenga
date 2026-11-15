@@ -192,6 +192,10 @@ void VegetationField3D::_publish_near_radius(float p_radius) {
 	HashMap<ObjectID, float> &radii = _near_radii();
 	const ObjectID id = get_instance_id();
 	if (p_radius > 0.0f) {
+		const float *had = radii.getptr(id);
+		if (had && *had == p_radius) {
+			return;
+		}
 		radii[id] = p_radius;
 	} else if (!radii.erase(id)) {
 		return;
@@ -200,6 +204,7 @@ void VegetationField3D::_publish_near_radius(float p_radius) {
 	for (const KeyValue<ObjectID, float> &kv : radii) {
 		r = r > 0.0f ? MIN(r, kv.value) : kv.value;
 	}
+	print_verbose(vformat("VegetationField3D \"%s\": stream radius %.1f m %s; vegetation_near_radius %.1f m.", get_name(), p_radius, p_radius > 0.0f ? "published" : "withdrawn", r));
 	if (r == near_radius_published) {
 		return;
 	}
