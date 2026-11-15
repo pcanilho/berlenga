@@ -1298,6 +1298,16 @@ path traced frames at the bar face match (the BLAS holds the ledges). Cost on th
 338 m wall goes from 2.6 to 5.5 M triangles; a wide view of it is unchanged (relief beyond the radius is subpixel and
 left to the shader). Next: the far strata in the shader, matched to these beds.
 
+Fix (15 Nov, the docs cliff pair): under a raking sun the ledges' shadow edges were saw-toothed. The steps cross the
+heightfield's diagonal triangles, and per-vertex normals cannot follow a 1.5 m rounding at 1 m vertex rows; twice the
+rows (2.7x the triangles) did not cure it and smoother vertex normals blurred the ledges. Now the cliff meshes carry
+the undisplaced point and scale (CUSTOM0) and the heightfield normal (CUSTOM1), both linear over each undisplaced
+triangle, and TerrainMaterial3D evaluates the same relief function per pixel (a bit-for-bit port of the hash and
+noise) and differences it over the pixel's footprint (at least 0.15 m) for the shading normal, the usual split of
+coarse displacement plus per-pixel normal (Frostbite, Widmark 2012; REDengine 3, Gollent 2014). The vertices still
+give the silhouette, shadows and the BLAS. Cost: four evaluations of the relief per cliff pixel (about 90 integer
+hashes), nothing elsewhere; 32 bytes more per cliff vertex.
+
 ## Rock detail on steep faces and scree (12 Nov; Paulo picked shader detail first, then displaced cliffs)
 
 Why: the generator's erosion detail is a heightfield (offsets in y over x z), so faces near vertical get none: gorge

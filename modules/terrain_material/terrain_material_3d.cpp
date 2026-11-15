@@ -280,11 +280,69 @@ vec3 tm_perturb(vec3 nt, ivec2 axes) {
 		}
 		c += "}\n";
 	}
+	// Landscape3D's cliff relief: the shading normal per pixel from the same relief the vertices were pushed by
+	// (Landscape3D::_cliff_offset, ported bit for bit), so ledges light cleanly whatever the triangles do. The mesh
+	// hands the undisplaced point and scale in CUSTOM0 and the heightfield normal in CUSTOM1; other meshes leave
+	// them zero and skip it.
+	c += R"(
+varying vec4 tm_cl_p;
+varying vec3 tm_cl_n;
+float tm_cl_hash(int a, int b, int c) {
+	uint h = uint(a) * 0x8DA6B343u ^ uint(b) * 0xD8163841u ^ uint(c) * 0xCB1AB31Fu;
+	h ^= h >> 13u;
+	h *= 0x5BD1E995u;
+	h ^= h >> 15u;
+	return float(h & 0xFFFFFFu) / float(0xFFFFFF);
+}
+float tm_cl_noise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = p - i;
+	f = f * f * (3.0 - 2.0 * f);
+	ivec3 q = ivec3(i);
+	float a = mix(mix(tm_cl_hash(q.x, q.y, q.z + 7919), tm_cl_hash(q.x + 1, q.y, q.z + 7919), f.x), mix(tm_cl_hash(q.x, q.y + 1, q.z + 7919), tm_cl_hash(q.x + 1, q.y + 1, q.z + 7919), f.x), f.y);
+	float b = mix(mix(tm_cl_hash(q.x, q.y, q.z + 7920), tm_cl_hash(q.x + 1, q.y, q.z + 7920), f.x), mix(tm_cl_hash(q.x, q.y + 1, q.z + 7920), tm_cl_hash(q.x + 1, q.y + 1, q.z + 7920), f.x), f.y);
+	return mix(a, b, f.z);
+}
+float tm_cl_offset(vec3 p) {
+	const float T = 3.0;
+	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0;
+	int bed = int(floor(yb / T));
+	float fy = yb - float(bed) * T;
+	float o0 = tm_cl_hash(bed, 11, 3) * 2.0 - 1.0;
+	float o1 = tm_cl_hash(bed + 1, 11, 3) * 2.0 - 1.0;
+	float ty = clamp((fy - (T - 1.5)) / 1.5, 0.0, 1.0);
+	float o = mix(o0, o1, ty * ty * (3.0 - 2.0 * ty));
+	float u = p.x * 0.8 + p.z * 0.6 + tm_cl_hash(bed, 5, 1) * 4.5;
+	int jb = int(floor(u / 4.5));
+	float fu = u - float(jb) * 4.5;
+	float j0 = tm_cl_hash(bed, jb, 9) - 0.5, j1 = tm_cl_hash(bed, jb + 1, 9) - 0.5;
+	float tu = clamp((fu - 3.0) / 1.5, 0.0, 1.0);
+	o += 1.2 * mix(j0, j1, tu * tu * (3.0 - 2.0 * tu));
+	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5) + 0.2 * (tm_cl_noise(p * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5);
+	return o;
+}
+// The relief's normal at the undisplaced point p (landscape space), differenced over e (the pixel's footprint, so
+// relief finer than a pixel fades instead of aliasing).
+vec3 tm_cl_normal(vec3 p, vec3 nb, float k, float e) {
+	vec3 m = normalize(vec3(nb.x, 0.0, nb.z));
+	vec3 t1 = cross(nb, vec3(0.0, 1.0, 0.0));
+	t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : vec3(1.0, 0.0, 0.0);
+	vec3 t2 = cross(t1, nb);
+	vec3 a = p + t1 * e, b = p - t1 * e, c = p + t2 * e, d = p - t2 * e;
+	vec3 du = (a + m * k * tm_cl_offset(a)) - (b + m * k * tm_cl_offset(b));
+	vec3 dv = (c + m * k * tm_cl_offset(c)) - (d + m * k * tm_cl_offset(d));
+	vec3 nn = cross(dv, du);
+	nn = dot(nn, nb) < 0.0 ? -nn : nn;
+	return dot(nn, nn) > 1e-12 ? normalize(nn) : nb;
+}
+)";
+	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1.xyz;\n";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
-		c += "\nvoid vertex() {\n\tground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n}\n";
+		c += "\tground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
 	}
+	c += "}\n";
 	if (rock_detail_enabled) {
 		c += R"(
 // Rock detail on steep faces and scree with no textures (rock_detail_enabled): a height in metres from 3D noise in
@@ -568,6 +626,13 @@ void fragment() {
 	dn /= total;
 	porosity /= total;
 	vec3 sn = normalize(wn + dn);
+	if (tm_cl_p.w > 0.0) {
+		// Cliff relief: the face's normal per pixel (see tm_cl_normal), with the layers' own detail on top.
+		float cl_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n), tm_cl_p.w, max(0.15, cl_fp));
+		cl_n = normalize(mat3(MODEL_MATRIX) * cl_n);
+		sn = normalize(cl_n + dn);
+	}
 )";
 	if (detail) {
 		c += R"(	// The generator's erosion detail below the vertex spacing, faded out where a pixel covers it.
