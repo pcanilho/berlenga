@@ -1728,7 +1728,7 @@ ProjectManager::ProjectManager() {
 			sidebar_buttons_containter->add_child(erase_missing_btn);
 
 			donate_btn = memnew(Button);
-			donate_btn->set_text(TTRC("Donate"));
+			donate_btn->set_text(TTRC("Support Godot"));
 			donate_btn->connect(SceneStringName(pressed), callable_mp(this, &ProjectManager::_open_donate_page));
 			project_list_sidebar->add_child(donate_btn);
 		}
