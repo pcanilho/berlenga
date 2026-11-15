@@ -1043,6 +1043,65 @@ float rt_emissive_hit_weight(uint p_geometry_idx, uint p_prim, vec3 p_from, vec3
 	return rt_mis_power(p_bsdf_pdf, pdf_l);
 }
 
+// The shadow terminator of smooth-shaded meshes: the interpolated normal faces a light while the flat
+// triangle under it already turns away, so its shadow ray starts below the surface the normals describe
+// and hits the neighbouring triangles. Under a grazing sun a coarse, ridged mesh (bark) breaks into
+// whole triangles of black. Raster hides it with shadow-map bias. Hanika, "Hacking the Shadow
+// Terminator", Ray Tracing Gems II (2021), ch. 4: lift the shadow ray's origin onto the curved surface
+// the vertex normals imply, by projecting the hit onto each vertex's tangent plane where it lies below
+// it and blending those by the barycentrics. Points already above every tangent plane do not move.
+vec3 rt_terminator_shadow_point(HitData h) {
+#ifdef ENABLE_INTERSECTION_SHADERS
+	if ((geometries[h.geometry_idx].flags & FLAG_PROCEDURAL) != 0u) {
+		return h.hit_pos;
+	}
+#endif
+#ifdef RT_LSS
+	if (rt_lss_hit) {
+		return h.hit_pos;
+	}
+#endif
+	GeometryData geom = geometries[h.geometry_idx];
+	if (geom.normal_byte_offset == OFFSET_NONE || geom.vertex_address == 0ul) {
+		return h.hit_pos;
+	}
+	uint i0, i1, i2;
+	get_triangle_indices(geom, i0, i1, i2);
+	vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
+	mat4x3 o2w = gl_ObjectToWorldEXT;
+	mat3 nm = mat3(normalize(o2w[0]), normalize(o2w[1]), normalize(o2w[2]));
+	vec3 p0 = o2w * vec4(fetch_object_position(geom, i0), 1.0);
+	vec3 p1 = o2w * vec4(fetch_object_position(geom, i1), 1.0);
+	vec3 p2 = o2w * vec4(fetch_object_position(geom, i2), 1.0);
+	TBNResult t0, t1, t2;
+	if ((geom.flags & FLAG_COMPRESSED) != 0u) {
+		t0 = fetch_tbn_compressed_vertex(geom, i0);
+		t1 = fetch_tbn_compressed_vertex(geom, i1);
+		t2 = fetch_tbn_compressed_vertex(geom, i2);
+	} else {
+		t0 = fetch_tbn_uncompressed_vertex(geom, i0);
+		t1 = fetch_tbn_uncompressed_vertex(geom, i1);
+		t2 = fetch_tbn_uncompressed_vertex(geom, i2);
+	}
+	vec3 n0 = normalize(nm * t0.normal);
+	vec3 n1 = normalize(nm * t1.normal);
+	vec3 n2 = normalize(nm * t2.normal);
+	// Back faces of side-checked materials shade with the flipped normal: lift towards that side.
+	float side = dot(bary.x * n0 + bary.y * n1 + bary.z * n2, h.geometry_normal) < 0.0 ? -1.0 : 1.0;
+	n0 *= side;
+	n1 *= side;
+	n2 *= side;
+	vec3 p = h.hit_pos;
+	vec3 lift = bary.x * min(0.0, dot(p - p0, n0)) * n0 + bary.y * min(0.0, dot(p - p1, n1)) * n1 + bary.z * min(0.0, dot(p - p2, n2)) * n2;
+	// Keep it local: a lift past a fraction of the triangle's size means a broken normal, not curvature.
+	float size = max(max(distance(p0, p1), distance(p1, p2)), distance(p2, p0));
+	float len = length(lift);
+	if (len > 0.25 * size) {
+		lift *= 0.25 * size / len;
+	}
+	return p - lift;
+}
+
 // p_is_indirect: the path made a diffuse bounce, scaling lights by indirect_energy and emission by emission_indirect.
 // p_bsdf_pdf: PathState::bsdf_pdf of the ray that hit (0: the emission counts in full).
 vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_indirect, float p_bsdf_pdf, inout uint rng_state) {
@@ -1057,7 +1116,7 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	vec3 lit = m.emissive * emission_weight;
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
-	vec3 hit_pos_offset = offset_ray_origin(h.hit_pos, h.geometry_normal, gl_HitTEXT);
+	vec3 hit_pos_offset = offset_ray_origin(rt_terminator_shadow_point(h), h.geometry_normal, gl_HitTEXT);
 	rt_set_shadow_origins(hit_pos_offset, offset_ray_origin(h.hit_pos, -h.geometry_normal, gl_HitTEXT), h.geometry_normal);
 	uint layers = geometries[h.geometry_idx].layers;
 	uint shadow_mask = rt_receiver_shadow_mask(h.geometry_idx);

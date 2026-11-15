@@ -20,6 +20,7 @@ extends Node3D
 #   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
 #   --litter          leaf litter on the ground round the first tree (roots sink into it)
 #   --sun=EL,AZ       sun elevation and azimuth in degrees (default 35,35)
+#   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
@@ -53,6 +54,7 @@ var overrides := {}
 var decays := false
 var litter := false
 var sun_dir := Vector2(-35, 35) # Elevation, azimuth (degrees).
+var sun_energy := 1.4
 var day := -1
 var fails := 0
 
@@ -101,6 +103,8 @@ func _ready() -> void:
 			decays = true
 		elif a == "--litter":
 			litter = true
+		elif a.begins_with("--sun-energy="):
+			sun_energy = float(a.substr(13))
 		elif a.begins_with("--sun="):
 			var sv := a.substr(6).split_floats(",")
 			sun_dir = Vector2(-sv[0], sv[1])
@@ -319,7 +323,7 @@ func _build_scene() -> void:
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(sun_dir.x, sun_dir.y, 0)
-	sun.light_energy = 1.4
+	sun.light_energy = sun_energy
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
 	if view in ["bole", "junction", "fork", "leaf", "veteran", "base"]:
