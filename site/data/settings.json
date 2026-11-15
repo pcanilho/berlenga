@@ -880,6 +880,17 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Bodies push water",
+   "settings": [
+    "PhysXWaterPusher3D"
+   ],
+   "note": "",
+   "what": "legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "White water",
    "settings": [
     "flow_foam"
