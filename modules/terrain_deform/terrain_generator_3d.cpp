@@ -4724,6 +4724,34 @@ void TerrainGenerator3D::_build_sea_mask(LocalVector<uint8_t> &r_sea) const {
 			}
 		}
 	}
+	// Coast guides: sea inside a closed line (outside with invert) or left of an open one.
+	LocalVector<TerrainGuide3D *> guides;
+	_guides(guides);
+	for (TerrainGuide3D *g : guides) {
+		if (!g->is_enabled() || g->get_mode() != TerrainGuide3D::MODE_COAST) {
+			continue;
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				const Vector2 q(rect.position.x + x * cell_size, rect.position.y + z * cell_size);
+				bool sea = g->is_sea_at(q);
+				const real_t rough = g->get_roughness();
+				if (rough > 0.0) {
+					// The drawn line wanders by up to roughness either way (fBm, as the edge coasts' line does), so a
+					// few clicks give a natural shore.
+					const real_t d = g->distance_to(q);
+					if (d < rough) {
+						const uint32_t gs = uint32_t(seed) * 0x2C1B3C6Du + 0x297A2D39u;
+						const double wob = TerrainErosionFilter::fbm(gs, q.x, q.y, MAX(4.0 * double(rough), 200.0), 5);
+						sea = (sea ? double(d) : -double(d)) + double(rough) * wob > 0.0;
+					}
+				}
+				if (sea) {
+					r_sea[z * nx + x] = 1;
+				}
+			}
+		}
+	}
 	if (sea_map.is_valid()) {
 		Ref<Image> img = sea_map->get_image();
 		if (img.is_valid() && !img->is_empty()) {
@@ -4766,6 +4794,13 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 	beach.resize(n);
 	memset(beach.ptr(), 0, sizeof(float) * n);
 	const uint32_t s = uint32_t(seed) * 0x9E3779B1u + 0x7F4A7C15u;
+	LocalVector<TerrainGuide3D *> guides, beach_guides;
+	_guides(guides);
+	for (TerrainGuide3D *g : guides) {
+		if (g->is_enabled() && ((g->get_mode() == TerrainGuide3D::MODE_COAST && g->get_beach_width() >= 0.0) || (g->get_mode() == TerrainGuide3D::MODE_BEACH && g->get_beach_width() >= 0.0))) {
+			beach_guides.push_back(g);
+		}
+	}
 	for (int i = 0; i < n; i++) {
 		const double px = result_rect.position.x + (i % nx) * cell_size;
 		const double pz = result_rect.position.y + (i / nx) * cell_size;
@@ -4780,14 +4815,29 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			// beach rising at beach_slope over beach_width, then 2 m per km inland, so it stays dry above the swash.
 			const double floor_h = water + 0.15 + beach_slope * MIN(x, double(beach_width)) + 0.002 * MAX(x - double(beach_width), 0.0);
 			heights[i] = float(MAX(double(heights[i]), floor_h));
-			if (beach_width <= 0.0) {
-				continue;
-			}
 			// Beaches along some stretches of the coast and none along others (cliffs), from low noise: a beach
 			// face of beach_slope up to w from the waterline, then a backshore blending into the land over 60 m.
-			const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
-			const double t0 = CLAMP((vary - 0.3) / 0.4, 0.0, 1.0);
-			const double w = 2.0 * beach_width * t0 * t0 * (3.0 - 2.0 * t0);
+			double w = 0.0;
+			if (beach_width > 0.0) {
+				const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
+				const double t0 = CLAMP((vary - 0.3) / 0.4, 0.0, 1.0);
+				w = 2.0 * beach_width * t0 * t0 * (3.0 - 2.0 * t0);
+			}
+			// Drawn beaches: a coast guide's own width along its line, a beach guide's within its band (blended over
+			// the band's outer quarter), in tree order.
+			for (const TerrainGuide3D *g : beach_guides) {
+				const bool coast_g = g->get_mode() == TerrainGuide3D::MODE_COAST;
+				const double reach = coast_g ? 2.0 * MAX(double(g->get_beach_width()), 0.0) + 120.0 + cell_size : double(g->get_width());
+				const double d = g->distance_to(Vector2(px, pz));
+				if (d >= reach) {
+					continue;
+				}
+				const double tb = CLAMP((reach - d) / (0.25 * reach), 0.0, 1.0);
+				w = Math::lerp(w, double(g->get_beach_width()), tb * tb * (3.0 - 2.0 * tb));
+			}
+			if (w <= 0.0) {
+				continue;
+			}
 			const double back = 60.0;
 			if (w > 0.0 && x < w + back) {
 				const double t = CLAMP((x - w) / back, 0.0, 1.0);

@@ -46,6 +46,13 @@
 //   (interpolated along it): a riegel, a rock step, a lip a lake spills over. Its lowest point is the lip. With
 //   `apron_slope` above 0 the side to the right of the line (looking along it) falls away as a rock slope of that
 //   rise over run instead of a sheer wall, except within `lip_clear` of the lip.
+// - Coast: sea where the line says, joined to the generator's ocean edges and sea map: inside a closed curve (outside
+//   with `invert`: an island), or left of an open one (looking along it). Sea cells are the run's outlets, so rivers
+//   end on it and the land rises from it; the shoreface and beaches follow as for any coast. `beach_width` 0 or more
+//   sets the beach along it (0: cliffs); -1 keeps the generator's own beaches. The shore wanders up to `roughness`
+//   either way of the line.
+// - Beach: a stretch of coast within `width` of the line gets a beach of `beach_width` (0: a cliff coast), blended
+//   in over the band's edge.
 class TerrainGuide3D : public Path3D {
 	GDCLASS(TerrainGuide3D, Path3D);
 
@@ -54,6 +61,8 @@ public:
 		MODE_RAISE,
 		MODE_LOWER,
 		MODE_BAR,
+		MODE_COAST,
+		MODE_BEACH,
 	};
 
 	struct BarPoint {
@@ -71,6 +80,9 @@ private:
 	real_t bar_width = 40.0;
 	real_t apron_slope = 0.0;
 	real_t lip_clear = 160.0;
+	real_t beach_width = -1.0;
+	real_t roughness = 120.0;
+	bool invert = false;
 	bool enabled = true;
 
 protected:
@@ -90,11 +102,21 @@ public:
 	real_t get_apron_slope() const { return apron_slope; }
 	void set_lip_clear(real_t p_distance);
 	real_t get_lip_clear() const { return lip_clear; }
+	void set_beach_width(real_t p_width);
+	real_t get_beach_width() const { return beach_width; }
+	void set_roughness(real_t p_roughness);
+	real_t get_roughness() const { return roughness; }
+	void set_invert(bool p_invert);
+	bool is_invert() const { return invert; }
 	void set_enabled(bool p_enabled);
 	bool is_enabled() const { return enabled; }
 
-	// The line in global space (one point: the centre).
+	// The line in global space (one point: the centre; a closed curve ends where it starts).
 	PackedVector3Array get_global_points() const;
+	// Coast: whether a point (global x, z) is sea by this guide.
+	bool is_sea_at(const Vector2 &p_point) const;
+	// Distance (global x, z) to the line.
+	real_t distance_to(const Vector2 &p_point) const;
 	// Bar: the resistant rock as discs every 32 m along the line, global x/z, level in metres (apron in slope, side).
 	Vector<BarPoint> get_bar_points() const;
 	PackedVector3Array get_bar_points_array() const; // x, level, z per disc (for scripts and tests)

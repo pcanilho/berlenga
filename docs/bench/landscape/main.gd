@@ -34,6 +34,7 @@ extends Node3D
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
+#   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
@@ -684,6 +685,26 @@ func _generate() -> void:
 	if args.has("steps"):
 		gen.steps = int(args["steps"]) # rivers drop sediment where they slow (Yuan et al. 2019)
 	add_child(gen)
+	# --coast-guide=x,z,x,z,...[;beach]: sea inside the closed line (repeat the first point) or left of an open one;
+	# --beach-guide=x,z,x,z,...;width;beach: a drawn beach (0: cliffs) along the coast within width of the line.
+	if args.has("coast-guide"):
+		var cg: PackedStringArray = args["coast-guide"].split(";")
+		var cv: PackedStringArray = cg[0].split(",")
+		var cpts: Array[Vector3] = []
+		for k in range(0, cv.size() - 1, 2):
+			cpts.append(Vector3(float(cv[k]), 0, float(cv[k + 1])))
+		var coast := _guide("Coast", TerrainGuide3D.MODE_COAST, cpts, 0.0, 0.0)
+		coast.beach_width = float(cg[1]) if cg.size() > 1 else -1.0
+		guide_nodes.append(coast)
+	if args.has("beach-guide"):
+		var bg: PackedStringArray = args["beach-guide"].split(";")
+		var bv2: PackedStringArray = bg[0].split(",")
+		var bpts: Array[Vector3] = []
+		for k in range(0, bv2.size() - 1, 2):
+			bpts.append(Vector3(float(bv2[k]), 0, float(bv2[k + 1])))
+		var beach_g := _guide("Beach", TerrainGuide3D.MODE_BEACH, bpts, float(bg[1]), 0.0)
+		beach_g.beach_width = float(bg[2])
+		guide_nodes.append(beach_g)
 	for g in guide_nodes:
 		gen.add_child(g)
 	var rp: Array[NodePath] = []

@@ -1421,6 +1421,12 @@ regular terraces; a cone per point spread along the line and buried the lip in a
 now three guides (bowl, bar, plus the inflow): lake at 422 m, a 316 m free fall at 3.5 m3/s. Next: the coast guide,
 then the coarse preview.
 
+Built, step 1b (15 Nov): coast and beach guides. A coast guide adds sea to the sea mask inside a closed line (outside
+with `invert`) or left of an open one, the shore wandering up to `roughness` either way by fBm, so a four-click bay
+reads as a natural inlet; sea cells are outlets as before, so rivers end in it and the shoreface (Dean) and beaches
+follow. `beach_width` on a coast guide, or a beach guide (a band of `width` round its line), sets the beach width
+along that stretch (0: none), blended over the band's outer quarter, over the generator's noise beaches.
+
 
 ## Sources
 

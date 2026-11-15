@@ -60,6 +60,71 @@ void TerrainGuide3D::set_lip_clear(real_t p_distance) {
 	lip_clear = MAX(p_distance, real_t(0.0));
 }
 
+void TerrainGuide3D::set_beach_width(real_t p_width) {
+	beach_width = MAX(p_width, real_t(-1.0));
+}
+
+void TerrainGuide3D::set_roughness(real_t p_roughness) {
+	roughness = MAX(p_roughness, real_t(0.0));
+}
+
+void TerrainGuide3D::set_invert(bool p_invert) {
+	invert = p_invert;
+}
+
+bool TerrainGuide3D::is_sea_at(const Vector2 &p_point) const {
+	const PackedVector3Array pts = get_global_points();
+	if (pts.size() < 2) {
+		return false;
+	}
+	const Ref<Curve3D> c = get_curve();
+	const bool closed = c.is_valid() && (c->is_closed() || Vector2(pts[0].x, pts[0].z).distance_to(Vector2(pts[pts.size() - 1].x, pts[pts.size() - 1].z)) < 1.0);
+	bool sea = false;
+	if (closed) {
+		// Inside by the crossing rule.
+		for (int i = 0, j = pts.size() - 1; i < pts.size(); j = i++) {
+			const real_t zi = pts[i].z, zj = pts[j].z;
+			if ((zi > p_point.y) != (zj > p_point.y) && p_point.x < (pts[j].x - pts[i].x) * (p_point.y - zi) / (zj - zi) + pts[i].x) {
+				sea = !sea;
+			}
+		}
+	} else {
+		// Left of the nearest segment, looking along the line (x right, z towards the viewer: left is (dz, -dx)).
+		real_t best = 1e30;
+		for (int i = 0; i + 1 < pts.size(); i++) {
+			const Vector2 a(pts[i].x, pts[i].z), b(pts[i + 1].x, pts[i + 1].z);
+			const Vector2 ab = b - a;
+			const real_t len2 = ab.length_squared();
+			if (len2 <= 0.0) {
+				continue;
+			}
+			const real_t t = CLAMP((p_point - a).dot(ab) / len2, real_t(0.0), real_t(1.0));
+			const real_t d = p_point.distance_squared_to(a + ab * t);
+			if (d < best - 1e-6f) {
+				best = d;
+				sea = ab.cross(p_point - a) < 0.0;
+			}
+		}
+	}
+	return sea != invert;
+}
+
+real_t TerrainGuide3D::distance_to(const Vector2 &p_point) const {
+	const PackedVector3Array pts = get_global_points();
+	real_t best = 1e30;
+	if (pts.size() == 1) {
+		return p_point.distance_to(Vector2(pts[0].x, pts[0].z));
+	}
+	for (int i = 0; i + 1 < pts.size(); i++) {
+		const Vector2 a(pts[i].x, pts[i].z), b(pts[i + 1].x, pts[i + 1].z);
+		const Vector2 ab = b - a;
+		const real_t len2 = ab.length_squared();
+		const real_t t = len2 > 0.0 ? CLAMP((p_point - a).dot(ab) / len2, real_t(0.0), real_t(1.0)) : real_t(0.0);
+		best = MIN(best, p_point.distance_to(a + ab * t));
+	}
+	return best;
+}
+
 void TerrainGuide3D::set_enabled(bool p_enabled) {
 	enabled = p_enabled;
 }
@@ -79,6 +144,9 @@ PackedVector3Array TerrainGuide3D::get_global_points() const {
 	out.resize(baked.size());
 	for (int i = 0; i < baked.size(); i++) {
 		out.set(i, xf.xform(baked[i]));
+	}
+	if (c->is_closed() && out.size() > 1 && out[0].distance_to(out[out.size() - 1]) > 1e-3f) {
+		out.push_back(out[0]);
 	}
 	return out;
 }
@@ -147,7 +215,16 @@ PackedVector3Array TerrainGuide3D::get_bar_points_array() const {
 }
 
 void TerrainGuide3D::_validate_property(PropertyInfo &p_property) const {
-	if (mode == MODE_BAR && (p_property.name == "width" || p_property.name == "strength")) {
+	if ((mode == MODE_BAR || mode == MODE_COAST) && (p_property.name == "width" || p_property.name == "strength")) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	}
+	if (mode == MODE_BEACH && p_property.name == "strength") {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	}
+	if (mode != MODE_COAST && mode != MODE_BEACH && p_property.name == "beach_width") {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	}
+	if (mode != MODE_COAST && (p_property.name == "invert" || p_property.name == "roughness")) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 	if (mode != MODE_BAR && (p_property.name == "bar_width" || p_property.name == "apron_slope" || p_property.name == "lip_clear")) {
@@ -168,20 +245,33 @@ void TerrainGuide3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_apron_slope"), &TerrainGuide3D::get_apron_slope);
 	ClassDB::bind_method(D_METHOD("set_lip_clear", "distance"), &TerrainGuide3D::set_lip_clear);
 	ClassDB::bind_method(D_METHOD("get_lip_clear"), &TerrainGuide3D::get_lip_clear);
+	ClassDB::bind_method(D_METHOD("set_beach_width", "width"), &TerrainGuide3D::set_beach_width);
+	ClassDB::bind_method(D_METHOD("get_beach_width"), &TerrainGuide3D::get_beach_width);
+	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &TerrainGuide3D::set_roughness);
+	ClassDB::bind_method(D_METHOD("get_roughness"), &TerrainGuide3D::get_roughness);
+	ClassDB::bind_method(D_METHOD("set_invert", "invert"), &TerrainGuide3D::set_invert);
+	ClassDB::bind_method(D_METHOD("is_invert"), &TerrainGuide3D::is_invert);
+	ClassDB::bind_method(D_METHOD("is_sea_at", "point"), &TerrainGuide3D::is_sea_at);
+	ClassDB::bind_method(D_METHOD("distance_to", "point"), &TerrainGuide3D::distance_to);
 	ClassDB::bind_method(D_METHOD("set_enabled", "enabled"), &TerrainGuide3D::set_enabled);
 	ClassDB::bind_method(D_METHOD("is_enabled"), &TerrainGuide3D::is_enabled);
 	ClassDB::bind_method(D_METHOD("get_global_points"), &TerrainGuide3D::get_global_points);
 	ClassDB::bind_method(D_METHOD("get_bar_points"), &TerrainGuide3D::get_bar_points_array);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "mode", PROPERTY_HINT_ENUM, "Raise,Lower,Bar"), "set_mode", "get_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "mode", PROPERTY_HINT_ENUM, "Raise,Lower,Bar,Coast,Beach"), "set_mode", "get_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "width", PROPERTY_HINT_RANGE, "1,5000,1,or_greater,suffix:m"), "set_width", "get_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_strength", "get_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bar_width", PROPERTY_HINT_RANGE, "1,500,1,suffix:m"), "set_bar_width", "get_bar_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "apron_slope", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_apron_slope", "get_apron_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lip_clear", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_lip_clear", "get_lip_clear");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_width", PROPERTY_HINT_RANGE, "-1,500,0.1,or_greater,suffix:m"), "set_beach_width", "get_beach_width");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_roughness", "get_roughness");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "invert"), "set_invert", "is_invert");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enabled"), "set_enabled", "is_enabled");
 
 	BIND_ENUM_CONSTANT(MODE_RAISE);
 	BIND_ENUM_CONSTANT(MODE_LOWER);
 	BIND_ENUM_CONSTANT(MODE_BAR);
+	BIND_ENUM_CONSTANT(MODE_COAST);
+	BIND_ENUM_CONSTANT(MODE_BEACH);
 }
