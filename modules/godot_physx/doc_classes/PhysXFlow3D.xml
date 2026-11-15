@@ -127,6 +127,9 @@
 		<member name="smoke_ramp" type="Gradient" setter="set_smoke_ramp" getter="get_smoke_ramp">
 			The smoke's color by temperature, from [code]0[/code] to [member temperature_range] -- e.g. black soot near a fire turning light gray as it cools. Empty uses [member smoke_color] at every temperature. Alpha is ignored (opacity comes from the smoke itself).
 		</member>
+		<member name="sun_scattering" type="bool" setter="set_sun_scattering" getter="is_sun_scattering" default="false">
+			When enabled, the scene's [DirectionalLight3D] nodes light the gas in raster through the light scattering pass instead of Flow's own renderer: each with its color, energy and [member Light3D.light_volumetric_fog_energy], the Henyey-Greenstein phase of [member scattering_anisotropy], the gas between the point and the light (over [member scattering_shadow_reach] in [member scattering_shadow_steps] steps, with a multiple-scattering approximation), and the light's shadow cascades, so a wall between the sun and the smoke shades it as it shades Godot's volumetric fog. Flow's renderer then only draws the smoke's opacity and its glow. The path tracer lights the gas on its own, so this only affects raster.
+		</member>
 		<member name="temperature_range" type="float" setter="set_temperature_range" getter="get_temperature_range" default="2.0">
 			The temperature at the end of [member heat_ramp].
 		</member>

@@ -437,7 +437,7 @@ void PhysXFlowRenderEffect::_render(int p_callback_type, const RenderData *p_ren
 			}
 		}
 		for (PhysXFlow3D *flow : sorted) {
-			flow->render_rd(this, rd, view_f, projection_f, size, depth, target, inv_view_projection, view_eye, render_data_rd != nullptr ? render_data_rd->lights : nullptr, render_data_rd != nullptr ? render_data_rd->shadow_atlas : RID(), render_data_rd != nullptr ? render_data_rd->environment : RID(), v == 0, v + 1 == view_count);
+			flow->render_rd(this, rd, view_f, projection_f, size, depth, target, inv_view_projection, view_eye, render_data_rd != nullptr ? render_data_rd->lights : nullptr, render_data_rd != nullptr ? render_data_rd->shadow_atlas : RID(), render_data_rd != nullptr ? render_data_rd->environment : RID(), render_data_rd != nullptr ? render_data_rd->directional_light_count : 0u, scene->get_cam_transform().affine_inverse(), v == 0, v + 1 == view_count);
 		}
 		if (!direct) {
 			_write_back(rd, work, color, 1.0f / luminance);

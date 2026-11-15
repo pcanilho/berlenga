@@ -370,7 +370,7 @@ void PhysXFlow3D::_fill_scatter_ambient(FlowScatterRD::Params &r_params, const R
 	r_params.sky_inverse = scene->environment_get_sky_orientation(p_environment).inverse();
 }
 
-void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_rd, const float p_view[16], const float p_projection[16], const Size2i &p_size, const RID &p_depth, const RID &p_color, const Projection &p_inv_view_projection, const Vector3 &p_camera, const PagedArray<RID> *p_lights, const RID &p_shadow_atlas, const RID &p_environment, bool p_first_view, bool p_last_view) {
+void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_rd, const float p_view[16], const float p_projection[16], const Size2i &p_size, const RID &p_depth, const RID &p_color, const Projection &p_inv_view_projection, const Vector3 &p_camera, const PagedArray<RID> *p_lights, const RID &p_shadow_atlas, const RID &p_environment, uint32_t p_directional_count, const Transform3D &p_world_to_view, bool p_first_view, bool p_last_view) {
 	if (grid == nullptr || p_rd != rd) {
 		return;
 	}
@@ -392,13 +392,13 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		_fill_scatter_shadows(lights, p_lights, p_shadow_atlas, receive);
 	}
 	FlowBackend::ScatterSource source;
-	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering) ? nullptr : &source, p_first_view);
+	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering) ? nullptr : &source, p_first_view);
 	stat_render_calls++;
 	stat_render_outputs += out != 0 ? 1 : 0;
 	if (out != 0 && out != p_color.get_id()) {
 		p_effect->copy_texture(p_rd, RID::from_uint64(out), p_color, p_size);
 	}
-	if ((!lights.is_empty() || ambient_scattering) && !source.valid) {
+	if ((!lights.is_empty() || ambient_scattering || sun_scattering) && !source.valid) {
 		stat_scatter_no_source++;
 	}
 	if (out != 0 && source.valid) {
@@ -420,6 +420,13 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		params.resolution_divisor = scattering_resolution == SCATTERING_RESOLUTION_FULL ? 1 : (scattering_resolution == SCATTERING_RESOLUTION_HALF ? 2 : 4);
 		if (ambient_scattering) {
 			_fill_scatter_ambient(params, p_environment);
+		}
+		if (sun_scattering && p_directional_count > 0) {
+			RendererRD::LightStorage *ls = RendererRD::LightStorage::get_singleton();
+			params.directional_count = (int)p_directional_count;
+			params.directional_buffer = ls->get_directional_light_buffer();
+			params.directional_shadow_atlas = ls->directional_shadow_get_texture();
+			params.world_to_view = p_world_to_view;
 		}
 		RID atlas;
 		if (receive != 0 && p_shadow_atlas.is_valid() && RendererRD::LightStorage::get_singleton()->owns_shadow_atlas(p_shadow_atlas)) {
@@ -702,7 +709,13 @@ void PhysXFlow3D::_gather_scatter_lights() {
 				continue;
 			}
 			Candidate c;
-			const Color col = l->get_color().srgb_to_linear() * energy;
+			// The energy as Godot's light buffers carry it (LightStorage::update_light_buffers): times pi
+			// without physical light units; with them, the luminous intensity of the light's power.
+			float units = Math::PI;
+			if (GLOBAL_GET_CACHED(bool, "rendering/lights_and_shadows/use_physical_light_units")) {
+				units = l->get_param(Light3D::PARAM_INTENSITY) / (Object::cast_to<SpotLight3D>(l) != nullptr ? Math::PI : 4.0f * Math::PI);
+			}
+			const Color col = l->get_color().srgb_to_linear() * (energy * units);
 			c.light.position_range[0] = xf.origin.x;
 			c.light.position_range[1] = xf.origin.y;
 			c.light.position_range[2] = xf.origin.z;
@@ -746,6 +759,9 @@ void PhysXFlow3D::_fill_render_settings(FlowBackend::Settings &r_settings) {
 	Color light;
 	Color ambient;
 	_gather_light(dir, light, ambient);
+	if (sun_scattering) {
+		light = Color(0, 0, 0); // the scattering pass lights the smoke with the sun instead
+	}
 	for (int i = 0; i < FlowBackend::Settings::COLORMAP_POINTS; i++) {
 		const float t = (float)i / (float)(FlowBackend::Settings::COLORMAP_POINTS - 1);
 		const Color smoke = (smoke_ramp.is_valid() ? smoke_ramp->get_color_at_offset(t) : smoke_color).srgb_to_linear();
@@ -1075,6 +1091,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_light_scattering"), &PhysXFlow3D::is_light_scattering);
 	ClassDB::bind_method(D_METHOD("set_ambient_scattering", "enabled"), &PhysXFlow3D::set_ambient_scattering);
 	ClassDB::bind_method(D_METHOD("is_ambient_scattering"), &PhysXFlow3D::is_ambient_scattering);
+	ClassDB::bind_method(D_METHOD("set_sun_scattering", "enabled"), &PhysXFlow3D::set_sun_scattering);
+	ClassDB::bind_method(D_METHOD("is_sun_scattering"), &PhysXFlow3D::is_sun_scattering);
 	ClassDB::bind_method(D_METHOD("set_scattering_max_lights", "count"), &PhysXFlow3D::set_scattering_max_lights);
 	ClassDB::bind_method(D_METHOD("get_scattering_max_lights"), &PhysXFlow3D::get_scattering_max_lights);
 	ClassDB::bind_method(D_METHOD("set_scattering_strength", "strength"), &PhysXFlow3D::set_scattering_strength);
@@ -1124,6 +1142,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_GROUP("Light Scattering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_scattering"), "set_light_scattering", "is_light_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ambient_scattering"), "set_ambient_scattering", "is_ambient_scattering");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_scattering"), "set_sun_scattering", "is_sun_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_max_lights", PROPERTY_HINT_RANGE, vformat("1,%d,1", FlowScatterRD::MAX_LIGHTS)), "set_scattering_max_lights", "get_scattering_max_lights");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_strength", PROPERTY_HINT_RANGE, "0,8,0.01,or_greater"), "set_scattering_strength", "get_scattering_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), "set_scattering_anisotropy", "get_scattering_anisotropy");

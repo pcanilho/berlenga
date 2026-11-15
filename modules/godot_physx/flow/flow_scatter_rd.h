@@ -35,6 +35,7 @@
 
 #include "core/math/basis.h"
 #include "core/math/projection.h"
+#include "core/math/transform_3d.h"
 #include "core/math/vector2i.h"
 #include "core/templates/rid.h"
 #include "core/math/vector3.h"
@@ -95,6 +96,13 @@ public:
 		RID sky_radiance; // the sky's radiance octmap (RID(): none)
 		float sky_border[2] = { 0.0f, 1.0f }; // the octmap's uv border (SkyRD::sky_get_uv_border_size)
 		Basis sky_inverse; // world direction -> the sky's own orientation
+		// The frame's directional lights (Godot's own light buffer, in view space) light the gas here
+		// instead of in Flow's colormap, with their shadow cascades (walls shade the smoke).
+		int directional_count = 0; // 0: none (Flow's colormap carries the sun)
+		bool directional_shadows = true;
+		RID directional_buffer; // LightStorage::get_directional_light_buffer()
+		RID directional_shadow_atlas; // LightStorage::directional_shadow_get_texture()
+		Transform3D world_to_view; // meters
 	};
 
 private:
@@ -111,6 +119,7 @@ private:
 	RID sky_sampler;
 	RID params_buffer;
 	RID lights_buffer;
+	RID directional_dummy;
 	bool failed = false;
 	bool sky_array = false; // the shader reads the sky as a 2D array (Godot's radiance octmap array)
 
