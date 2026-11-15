@@ -159,6 +159,20 @@ uniform sampler2D cascade_deriv_3 : hint_default_black, filter_linear, repeat_en
 uniform sampler2D cascade_foam_1 : hint_default_black, filter_linear, repeat_enable;
 uniform sampler2D cascade_foam_2 : hint_default_black, filter_linear, repeat_enable;
 uniform sampler2D cascade_foam_3 : hint_default_black, filter_linear, repeat_enable;
+// Detail waves (docs/ideas/water.md "Ocean detail"): a small tile of the short waves, for the per-pixel normal only.
+uniform bool detail_enabled = false;
+uniform sampler2D detail_deriv_tex : hint_default_black, filter_linear, repeat_enable;
+uniform vec2 detail_domain = vec2(5.0);
+uniform float detail_texel = 0.04;
+uniform float detail_k_min = 5.0; // rad/m, where the band starts
+// Its mean square slope, handed to the roughness where a pixel is too large to show it (Bruneton et al. 2010).
+uniform float detail_variance = 0.0;
+// Bubbles under foam (docs/ideas/water.md "Ocean detail"): the plume a breaking crest drives down scatters light
+// back up through the water above it (Crest's "foam bubbles"; War Thunder's "milkiness").
+uniform vec3 bubble_color : source_color = vec3(0.40, 0.82, 0.78);
+uniform float bubble_strength : hint_range(0.0, 2.0, 0.01) = 1.2;
+uniform float bubble_depth : hint_range(0.0, 3.0, 0.01) = 0.6; // m, the plume's mean depth (parallax)
+uniform float bubble_scattering : hint_range(0.0, 20.0, 0.1) = 4.0; // 1/m added to the path tracer's water
 // Shore waves (PhysXWaterSurface3D::shore_waves), on the ripple grid: a = (phase,
 // height) of trains 1 and 2, b = their phase gradients (k times the direction of
 // travel, world xz); omega = each train's angular frequency.
@@ -743,8 +757,89 @@ float foam_value_noise(vec2 p) {
 			mix(foam_hash(i + vec2(0.0, 1.0)), foam_hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
-// Visible foam for the water resting at world_xz: the persistent foam amount,
-// eroded by fixed-to-the-water noise so it breaks into lace as it fades.
+// Voronoi (Worley 1996) on a jittered grid: the nearest and second-nearest feature distances (x, y), the
+// nearest cell's own random number (z) and its feature's distance along x (w, for the bubble normal), in cell
+// units.
+vec4 foam_voronoi(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	float d1 = 8.0;
+	float d2 = 8.0;
+	float rnd = 0.0;
+	float rx = 0.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 g = vec2(float(x), float(y));
+			vec2 o = vec2(foam_hash(i + g), foam_hash(i + g + vec2(17.3, 5.1)));
+			vec2 r = g + 0.15 + 0.7 * o - f;
+			float d = dot(r, r);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+				rnd = foam_hash(i + g + vec2(41.7, 23.9));
+				rx = r.x;
+			} else if (d < d2) {
+				d2 = d;
+			}
+		}
+	}
+	return vec4(sqrt(d1), sqrt(d2), rnd, rx);
+}
+
+// How much of the surface foam covers, from its amount (docs/ideas/water.md "Ocean detail"). Fresh foam is a
+// solid sheet. As it drains, films rupture: holes open in it, each its own size, and grow until only strands
+// of the borders between them are left (Plateau borders: Weaire and Hutzler 1999), which thin and break --
+// the marbled lace an old whitecap leaves. Holes at two scales (about a metre and a third of that), their
+// cells warped by value noise; fine bubble cells (a few cm) give the sheet its grain. Each layer fades to its
+// mean cover where it is finer than the pixel (footprint, m).
+float foam_structure(vec2 p, float amount, float footprint) {
+	vec2 q = p * foam_detail_scale;
+	vec2 warp = vec2(foam_value_noise(q * 1.3 + 3.7), foam_value_noise(q * 1.3 - 8.1)) - 0.5;
+	vec4 v1 = foam_voronoi(q * 1.1 + warp * 1.2);
+	vec4 v2 = foam_voronoi(q * 3.3 + warp * 2.0 + 11.0);
+	float a = clamp(amount, 0.0, 1.0);
+	float open = 1.0 - pow(a, 0.6); // how far the foam has drained
+	float soft1 = 0.05 + footprint * foam_detail_scale * 2.2;
+	float soft2 = 0.05 + footprint * foam_detail_scale * 6.6;
+	// Holes: radius per cell, growing as the foam drains (and the largest cells opening first).
+	float r1 = open * (0.35 + 0.75 * v1.z);
+	float r2 = open * (0.2 + 0.8 * v2.z);
+	float keep1 = smoothstep(r1 - soft1, r1 + soft1, v1.x);
+	float keep2 = smoothstep(r2 - soft2, r2 + soft2, v2.x);
+	// Strands along the borders, thinning and breaking along their length.
+	float strand = foam_value_noise(q * 2.3 + 1.7);
+	float w = (0.02 + 0.1 * a) * smoothstep(0.25, 0.75, strand);
+	float border = 1.0 - smoothstep(w - soft1 * 0.5, w + soft1 * 0.5, v1.y - v1.x);
+	float cover = max(keep1 * mix(1.0, keep2, 0.85), border * smoothstep(0.05, 0.3, a));
+	// Past where the holes are under a pixel, their mean cover.
+	float coarse = clamp(footprint * foam_detail_scale * 3.0 - 0.15, 0.0, 1.0);
+	cover = mix(cover, clamp(1.0 - 1.6 * open * open, 0.05, 1.0), coarse);
+	// Bubble grain: lighter walls, darker cell middles, a few cm across; gone past a centimetre a pixel.
+	float grain = 1.0 - clamp((footprint - 0.004) / 0.012, 0.0, 1.0);
+	vec4 b = foam_voronoi(p * 28.0);
+	float wall = 1.0 - smoothstep(0.0, 0.25, b.y - b.x);
+	float bubbles = mix(1.0, 0.82 + 0.18 * wall, grain);
+	// Thin foam is translucent, thick foam opaque.
+	float density = smoothstep(0.02, 0.35, a);
+	return clamp(cover * density * bubbles, 0.0, 1.0);
+}
+
+// The bubbles' own normal (each a low dome a few cm across), for the light to catch the foam's grain; up past a
+// centimetre a pixel.
+vec3 foam_bubble_normal(vec2 p, float footprint) {
+	float grain = 1.0 - clamp((footprint - 0.004) / 0.012, 0.0, 1.0);
+	vec4 b = foam_voronoi(p * 28.0);
+	// From the bubble's centre: its distance, split along x by the feature's offset (z from the rest).
+	float rx = -b.w;
+	float rz = sqrt(max(b.x * b.x - rx * rx, 0.0)) * (foam_hash(floor(p * 28.0)) > 0.5 ? 1.0 : -1.0);
+	vec2 r = vec2(rx, rz);
+	float rr = clamp(dot(r, r) / 0.25, 0.0, 0.95);
+	vec2 tilt = r * 2.0 * grain;
+	return normalize(vec3(tilt.x, sqrt(1.0 - rr) + 0.3, tilt.y));
+}
+
+// Visible foam for the water resting at world_xz: the persistent foam amount, drawn as foam
+// (foam_structure: solid when fresh, draining into a lace of borders as it fades).
 float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
@@ -803,21 +898,40 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	}
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
 	amount = max(amount, wake_foam(world_xz - choppiness * fade * disp.rg));
-	// The lace is carried with the foam (the same two phases).
+	if (amount < 1e-3) {
+		return 0.0;
+	}
+	// Thickness follows the surface's squeeze (War Thunder, NVIDIA 2015): foam bunched on a compressed crest
+	// is thicker, foam on stretched water thinner.
+	{
+		float s = -choppiness * fade;
+		float jac = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * disp.b * disp.b;
+		amount *= mix(1.2, 0.85, smoothstep(0.4, 1.4, jac));
+	}
+	// The structure is carried with the foam (the same two phases as the current).
 	vec2 o_a;
 	vec2 o_b;
 	float w = flow_phases(world_xz, o_a, o_b);
-	vec2 p = (world_xz - o_a) * foam_detail_scale;
-	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
+	float footprint = 0.002 * length(rel) + 0.002;
+	float f = foam_structure(world_xz - o_a, amount, footprint);
 	if (w < 1.0) {
-		vec2 q = (world_xz - o_b) * foam_detail_scale;
-		n = n * w + (0.5 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.7 + 17.0) + 0.2 * foam_value_noise(q * 7.3 - 5.0)) * (1.0 - w);
+		f = f * w + foam_structure(world_xz - o_b, amount, footprint) * (1.0 - w);
 	}
-	// (The streaks carry their own structure; the whitecaps' lace stays as it is in any wind.)
-	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
-	// lacy as the noise eats into it, rather than cutting off at an edge.
-	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
-	return f * f * (3.0 - 2.0 * f);
+	return f;
+}
+
+// The bubble plume's share under the water resting at world_xz, seen along view direction d through normal n:
+// the persistent foam read where the refracted view reaches the plume (two depths, so it reads soft and deep).
+float bubbles_under(vec2 world_xz, vec3 d, vec3 n) {
+	vec3 t = refract(d, n, 1.0 / 1.33);
+	if (dot(t, t) < 1e-6) {
+		return 0.0;
+	}
+	vec2 step_xz = t.xz / max(-t.y, 0.25);
+	float b = 0.0;
+	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 0.5);
+	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 1.2);
+	return clamp(0.5 * b, 0.0, 1.0);
 }
 
 float foam_at(vec2 world_xz) {
@@ -1135,11 +1249,34 @@ void fragment() {
 		world_normal = nl > 1e-3 ? v_world_normal / nl : vec3(0.0, 1.0, 0.0);
 	}
 	float foam = v_foam;
+	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
 		vec4 der = ocean_deriv_all(v_rest_xz);
 		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
-		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
 		foam = foam_at_with(v_rest_xz, der, disp);
+		if (detail_enabled) {
+			// Shown while its shortest waves (two texels) cover a few pixels; beyond, their slope goes to the
+			// roughness so the sea keeps its glitter without shimmering (Bruneton, Neyret and Holzschuch 2010).
+			// A pixel shows the waves longer than two of its footprints: the share of the band (in log k, where
+			// the slope variance lies evenly) from the band's start up to that.
+			vec2 fw = fwidth(v_rest_xz);
+			float footprint = max(sqrt(fw.x * fw.y), 1e-5);
+			float k_hi = PI / detail_texel;
+			float shown = clamp(log(PI / (2.0 * footprint) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
+			if (shown > 0.0) {
+				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * shown;
+			}
+			// Beckmann/GGX: alpha^2 adds the slope variance; alpha = roughness^2.
+			float a = pathtraced_roughness * pathtraced_roughness;
+			water_roughness = sqrt(sqrt(a * a + detail_variance * (1.0 - shown)));
+		}
+		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
+		if (foam > 0.01) {
+			// The foam's bubbles tilt the normal under it: its grain catches the light.
+			vec2 fw = fwidth(v_rest_xz);
+			vec3 bn = foam_bubble_normal(v_rest_xz, max(fw.x, fw.y));
+			world_normal = normalize(world_normal + vec3(bn.x, 0.0, bn.z) * foam * 0.6);
+		}
 	}
 #if defined(UNDERWATER_SURFACE) && defined(RT)
 	ALPHA = 0.0; // the path tracer has the real surface
@@ -1313,6 +1450,19 @@ void fragment() {
 		base_a = 1.0;
 	}
 #endif
+	// The bubble plume under whitecaps, glowing through the water above it.
+	float bubbles = 0.0;
+	if (bubble_strength > 0.0 && v_lip < 0.5 && CAMERA_POSITION_WORLD.y > MODEL_MATRIX[3].y + water_level) {
+		vec3 p_b = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		bubbles = bubbles_under(v_rest_xz, normalize(p_b - CAMERA_POSITION_WORLD), world_normal) * fade_r(v_rest_xz, cuv_fade);
+#if !defined(RT)
+		// Both the sky's part (base_rgb) and the sun's, which light() adds from unlit_rgb (zero for clear water,
+		// whose sun is already in base_rgb).
+		float bk = clamp(bubbles * bubble_strength, 0.0, 0.85);
+		base_rgb = mix(base_rgb, bubble_color * water_raster_body_light(), bk);
+		unlit_rgb = mix(unlit_rgb, bubble_color * step(1e-6, dot(unlit_rgb, vec3(1.0))), bk);
+#endif
+	}
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
 	float water_a = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
 	// Wet sand under and behind the swash: blended in where the water is
@@ -1334,13 +1484,13 @@ void fragment() {
 	// rough white layer on top; where the swash has left the sand, no surface.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	ROUGHNESS = mix(water_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
 	IOR = 1.33;
 	ABSORPTION = pathtraced_absorption;
-	SCATTERING = pathtraced_scattering;
+	SCATTERING = pathtraced_scattering + vec3(bubble_scattering * bubbles * bubble_strength);
 	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 #if !defined(BREAKER_LIP)
 	// A lip is water wherever it is (the shore cut-out belongs to the swash film). It writes no alpha at
@@ -1366,7 +1516,7 @@ void fragment() {
 	float sun_a2 = 1.0;
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness, open_unlit, sun_body, sun_glint, sun_a2);
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), water_roughness, open_unlit, sun_body, sun_glint, sun_a2);
 	}
 	wr_sun_body = sun_body;
 	v_wave_through = 1.0;
@@ -1553,6 +1703,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shore_wave_direction"), &PhysXWaterSurface3D::get_shore_wave_direction);
 	ClassDB::bind_method(D_METHOD("set_wave_cascades", "count"), &PhysXWaterSurface3D::set_wave_cascades);
 	ClassDB::bind_method(D_METHOD("get_wave_cascades"), &PhysXWaterSurface3D::get_wave_cascades);
+	ClassDB::bind_method(D_METHOD("set_detail_waves", "enabled"), &PhysXWaterSurface3D::set_detail_waves);
+	ClassDB::bind_method(D_METHOD("get_detail_waves"), &PhysXWaterSurface3D::get_detail_waves);
+	ClassDB::bind_method(D_METHOD("get_detail_wave_tile"), &PhysXWaterSurface3D::get_detail_wave_tile);
+	ClassDB::bind_method(D_METHOD("get_detail_slope_variance"), &PhysXWaterSurface3D::get_detail_slope_variance);
 	ClassDB::bind_method(D_METHOD("set_wave_cascade_ratio", "ratio"), &PhysXWaterSurface3D::set_wave_cascade_ratio);
 	ClassDB::bind_method(D_METHOD("get_wave_cascade_ratio"), &PhysXWaterSurface3D::get_wave_cascade_ratio);
 	ClassDB::bind_method(D_METHOD("get_wave_cascade_size", "index"), &PhysXWaterSurface3D::get_wave_cascade_size);
@@ -1711,6 +1865,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_cascades", PROPERTY_HINT_RANGE, "1,4,1"), "set_wave_cascades", "get_wave_cascades");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_cascade_ratio", PROPERTY_HINT_RANGE, "2,16,0.1"), "set_wave_cascade_ratio", "get_wave_cascade_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_waves"), "set_detail_waves", "get_detail_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_spreading", PROPERTY_HINT_ENUM, "Cos2,Donelan-Banner,Hasselmann"), "set_wave_spreading", "get_wave_spreading");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swell", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_swell", "get_swell");
@@ -1859,6 +2014,54 @@ void PhysXWaterSurface3D::_clear_cascades() {
 		memdelete(c);
 	}
 	extra_cascades.clear();
+	if (detail_cascade != nullptr) {
+		memdelete(detail_cascade);
+		detail_cascade = nullptr;
+	}
+}
+
+void PhysXWaterSurface3D::_update_detail_material() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const bool on = detail_cascade != nullptr && detail_cascade->deriv_tex.is_valid();
+	water_material->set_shader_parameter("detail_enabled", on);
+	if (on) {
+		water_material->set_shader_parameter("detail_domain", detail_cascade->domain);
+		water_material->set_shader_parameter("detail_texel", detail_cascade->domain.x / detail_resolution);
+		water_material->set_shader_parameter("detail_k_min", _detail_k_min());
+		water_material->set_shader_parameter("detail_variance", get_detail_slope_variance());
+	}
+}
+
+void PhysXWaterSurface3D::set_detail_waves(bool p_enabled) {
+	detail_waves = p_enabled;
+	_rebuild();
+}
+
+// The finest cascade (cascade 0) resolves waves down to two of its texels: Nyquist k = pi N / L.
+float PhysXWaterSurface3D::_detail_k_min() const {
+	const float l = MAX(MIN(ocean_domain_size.x, ocean_domain_size.y), 0.1f);
+	return Math::PI * _resolved_ocean_grid_resolution() / l;
+}
+
+// The detail tile keeps, like every cascade, the waves shorter than a quarter of its side: a side of 8 pi / k_min
+// starts its band just where cascade 0's grid stops (5 m for 40 m on 64 texels), held to 1..8 m.
+Vector2 PhysXWaterSurface3D::get_detail_wave_tile() const {
+	const float side = CLAMP(8.0f * Math::PI / _detail_k_min(), 1.0f, 8.0f);
+	return Vector2(side, side);
+}
+
+// Mean square slope of the detail band, from the Phillips saturation range of a JONSWAP sea,
+// S(k) = alpha / (2 k^3) (Phillips 1958; Hasselmann et al. 1973): integral k^2 S dk = alpha / 2 ln(k2 / k1),
+// with alpha = 0.076 (U^2 / (F g))^0.22 from the fetch. For the roughness the faded detail hands over.
+float PhysXWaterSurface3D::get_detail_slope_variance() const {
+	const float g = 9.81f;
+	const float u = MAX(wind_speed, 0.5f);
+	const float alpha = MIN(0.076f * Math::pow(u * u / (MAX(get_effective_fetch(), 1.0f) * g), 0.22f), 0.04f);
+	const float k1 = _detail_k_min();
+	const float k2 = Math::PI * detail_resolution / get_detail_wave_tile().x;
+	return k2 > k1 ? 0.5f * alpha * Math::log(k2 / k1) * wave_amplitude * wave_amplitude : 0.0f;
 }
 
 // Ocean-only solvers for cascades 1.. : the same sea state on a larger tile and
@@ -1880,6 +2083,23 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 		c->solver.configure(s);
 		c->solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 		extra_cascades.push_back(c);
+	}
+	if (detail_waves) {
+		WaveCascade *c = memnew(WaveCascade);
+		WaterSolver::Settings s = p_base;
+		s.grid_resolution = 8;
+		s.domain_size = Vector2(8, 8);
+		s.cell_depth = PackedFloat32Array();
+		s.caustics_enabled = false;
+		s.ocean_grid_resolution = detail_resolution;
+		s.ocean_domain_size = get_detail_wave_tile();
+		s.ocean_k_min = _detail_k_min();
+		s.ocean_k_max = 0.0f;
+		c->domain = s.ocean_domain_size;
+		c->solver.set_rest_threshold(1e-3f);
+		c->solver.configure(s);
+		c->solver.set_foam_settings(false, choppiness, _live_foam_threshold(), foam_persistence, 0.0f, shore_undertow);
+		detail_cascade = c;
 	}
 }
 
@@ -3408,6 +3628,10 @@ void PhysXWaterSurface3D::_reinit_spectrum() {
 		for (WaveCascade *c : extra_cascades) {
 			c->solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
 		}
+		if (detail_cascade != nullptr) {
+			detail_cascade->solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
+		}
+		_update_detail_material();
 		_update_cull_box();
 		return;
 	}
@@ -4302,6 +4526,9 @@ void PhysXWaterSurface3D::_set_spreading() {
 		for (WaveCascade *c : extra_cascades) {
 			c->solver.set_spreading(int(wave_spreading), swell);
 		}
+		if (detail_cascade != nullptr) {
+			detail_cascade->solver.set_spreading(int(wave_spreading), swell);
+		}
 		return;
 	}
 	_rebuild();
@@ -4861,6 +5088,9 @@ void PhysXWaterSurface3D::_detach_textures() {
 			texture->set_texture_rd_rid(RID());
 		}
 	}
+	if (detail_cascade != nullptr && detail_cascade->deriv_tex.is_valid()) {
+		detail_cascade->deriv_tex->set_texture_rd_rid(RID());
+	}
 	for (WaveCascade *c : extra_cascades) {
 		const Ref<Texture2DRD> textures_c[] = { c->height_tex, c->disp_tex, c->deriv_tex, c->foam_tex };
 		for (const Ref<Texture2DRD> &texture : textures_c) {
@@ -4959,6 +5189,9 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		for (WaveCascade *c : extra_cascades) {
 			c->solver.queue_tick(p_delta);
 		}
+		if (detail_cascade != nullptr) {
+			detail_cascade->solver.queue_tick(p_delta);
+		}
 		// Readbacks land at the end of a frame: this tick's sample_height() sees them, as it does per tick.
 		_refresh_cpu_cache();
 		return;
@@ -4966,6 +5199,9 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	solver.step(p_delta); // no-ops internally until solver.is_available() (see water_solver.cpp)
 	for (WaveCascade *c : extra_cascades) {
 		c->solver.step(p_delta);
+	}
+	if (detail_cascade != nullptr) {
+		detail_cascade->solver.step(p_delta);
 	}
 	_after_step();
 }
@@ -4983,6 +5219,9 @@ void PhysXWaterSurface3D::_frame_update() {
 	solver.flush_ticks();
 	for (WaveCascade *c : extra_cascades) {
 		c->solver.flush_ticks();
+	}
+	if (detail_cascade != nullptr) {
+		detail_cascade->solver.flush_ticks();
 	}
 	_after_step();
 }
@@ -5104,6 +5343,16 @@ void PhysXWaterSurface3D::_bind_textures() {
 			water_material->set_shader_parameter("cascade_domain_" + itos(i + 1), c->domain);
 		}
 	}
+	if (detail_cascade != nullptr) {
+		if (detail_cascade->deriv_tex.is_null()) {
+			detail_cascade->deriv_tex.instantiate();
+		}
+		detail_cascade->deriv_tex->set_texture_rd_rid(detail_cascade->solver.get_ocean_derivative_texture_rd_rid());
+		if (water_material.is_valid()) {
+			water_material->set_shader_parameter("detail_deriv_tex", detail_cascade->deriv_tex);
+		}
+	}
+	_update_detail_material();
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("wave_cascade_count", 1 + (int)extra_cascades.size());
 		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);

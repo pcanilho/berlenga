@@ -150,6 +150,13 @@ public:
 	~PhysXWaterSurface3D();
 	void set_wave_cascades(int p_count);
 	int get_wave_cascades() const { return wave_cascades; }
+	// Detail waves: a small FFT tile carrying the short waves (down to about 8 cm) the finest cascade's grid
+	// cannot, for the per-pixel normals only; faded out by each pixel's footprint, its slope variance going to
+	// the roughness instead (Bruneton, Neyret and Holzschuch 2010). docs/ideas/water.md "Ocean detail".
+	void set_detail_waves(bool p_enabled);
+	bool get_detail_waves() const { return detail_waves; }
+	Vector2 get_detail_wave_tile() const;
+	float get_detail_slope_variance() const;
 	void set_wave_cascade_ratio(float p_ratio);
 	float get_wave_cascade_ratio() const { return wave_cascade_ratio; }
 	// Tile size of cascade i (0 = ocean_domain_size).
@@ -446,6 +453,7 @@ private:
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
 	int wave_cascades = 1;
+	bool detail_waves = true;
 	float wave_cascade_ratio = 6.0f;
 	bool shore_waves = false;
 	float shore_wave_height = 0.8f; // m, offshore
@@ -539,6 +547,9 @@ private:
 		double previous_time = 0.0;
 	};
 	LocalVector<WaveCascade *> extra_cascades;
+	WaveCascade *detail_cascade = nullptr; // the detail waves' tile (normals only), or null
+	int detail_resolution = 128;
+	float _detail_k_min() const; // the finest cascade's Nyquist wavenumber (rad/m)
 	void _configure_cascades(const WaterSolver::Settings &p_base);
 	void _clear_cascades();
 	// The wavenumber where cascade i hands over to cascade i + 1 (rad/m).
@@ -634,6 +645,7 @@ private:
 	Ref<ImageTexture> flow_texture;
 	void _bake_flow();
 	void _update_flow_material();
+	void _update_detail_material();
 	// Flow at grid-relative (x, z), as the shader's flow_at().
 	Vector2 _flow_at(float p_x, float p_z) const;
 	// Rivers flowing in (PhysXRiver3D's mouth): each spreads as a turbulent
