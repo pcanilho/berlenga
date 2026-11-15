@@ -2017,7 +2017,18 @@ void main() {
 				vec2 half_texel = 0.5 / max(wsize, vec2(1.0));
 				vec3 wpos = h.hit_pos + rt_origin.xyz;
 				vec2 wuv = clamp((wpos.xz - wrect.xy) / wrect.zw, half_texel, 1.0 - half_texel);
-				wet *= textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g;
+				float weather_wet = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g;
+				// Wet where water has been (contact wetness), easing out over its square's outer tenth.
+				uint cmap = uint(get_rt_param(RT_PARAM_CONTACT_WET_MAP));
+				if (cmap != 0u) {
+					vec2 cuv = (wpos.xz - vec2(get_rt_param(RT_PARAM_CONTACT_WET_X), get_rt_param(RT_PARAM_CONTACT_WET_Z))) / max(get_rt_param(RT_PARAM_CONTACT_WET_SIZE), 1e-3);
+					vec2 ce = min(cuv, 1.0 - cuv);
+					float cedge = smoothstep(0.0, 0.1, min(ce.x, ce.y));
+					if (cedge > 0.0) {
+						weather_wet = max(weather_wet, textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), cuv, 0.0).r * cedge);
+					}
+				}
+				wet *= weather_wet;
 			} else {
 				wet = 0.0;
 			}

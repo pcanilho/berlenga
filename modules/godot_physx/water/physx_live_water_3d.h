@@ -90,6 +90,8 @@ class PhysXLiveWater3D : public Node3D {
 	bool ground_update_pending = false;
 	void _step(float p_dt);
 	void _update_mesh();
+	void _wet_ground();
+	LocalVector<float> wet_cells;
 	float _rain_mm_per_hour() const;
 	bool _cell_of(const Vector3 &p_global, int &r_x, int &r_z, float &r_fx, float &r_fz) const;
 

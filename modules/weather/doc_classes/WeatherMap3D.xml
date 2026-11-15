@@ -24,14 +24,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="aerosol_extinction" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="dry_visibility_km" type="float" />
-			<param index="1" name="humidity" type="float" />
-			<description>
-				Extinction (1/m) at the ground of the background aerosol haze: Koschmieder's 3.912 / visibility for dry air, grown with the relative humidity as (1 - RH)^-0.35 (Hänel 1976), with the humidity capped at 0.98.
-			</description>
-		</method>
 		<method name="add_canopy">
 			<return type="int" />
 			<param index="0" name="center" type="Vector2" />
@@ -40,6 +32,25 @@
 			<param index="3" name="density" type="float" default="2.5" />
 			<description>
 				Adds a round stand of plants (world x, z centre, radius and canopy height in metres) and returns its id. [param density] is Cionco's attenuation coefficient: about 1 for open orchards, 2 to 3 for crops and most forests, 4 for dense stands (Cionco 1978). Under the canopy the wind falls off as [code]u(hc) exp(a (z / hc - 1))[/code]; above it the log law starts from a displaced ground at 0.7 hc with roughness 0.1 hc (Raupach 1994). Takes effect at the next shelter bake (see [method rebake_shelter]).
+			</description>
+		</method>
+		<method name="add_contact_wetness">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="amount" type="float" default="1.0" />
+			<description>
+				Wets a disc where water touched (a splash, a wading leg, a dripping body): [param amount] 0 to 1, kept where it is more than what is there, easing out over the disc's outer quarter. It then dries over [method get_contact_drying_time]. Only inside the contact square round the camera ([member contact_wetness_size]).
+			</description>
+		</method>
+		<method name="add_contact_wetness_grid">
+			<return type="void" />
+			<param index="0" name="values" type="PackedFloat32Array" />
+			<param index="1" name="width" type="int" />
+			<param index="2" name="height" type="int" />
+			<param index="3" name="rect" type="Rect2" />
+			<description>
+				Wets from a grid of [param width] by [param height] values (0 to 1, row-major in z then x) laid over [param rect] in world XZ, e.g. the wet cells of a live water area. Kept where more than what is there.
 			</description>
 		</method>
 		<method name="add_shelter_box">
@@ -65,6 +76,14 @@
 			<param index="0" name="seconds" type="float" />
 			<description>
 				Runs the weather forward by [param seconds] of weather time at once (in steps of a minute): storms drift, the base state eases, surfaces wet and dry.
+			</description>
+		</method>
+		<method name="aerosol_extinction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="dry_visibility_km" type="float" />
+			<param index="1" name="humidity" type="float" />
+			<description>
+				Extinction (1/m) at the ground of the background aerosol haze: Koschmieder's 3.912 / visibility for dry air, grown with the relative humidity as (1 - RH)^-0.35 (Hänel 1976), with the humidity capped at 0.98.
 			</description>
 		</method>
 		<method name="clear_precipitation_extinction">
@@ -151,6 +170,25 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Cloud type at [param position], 0 (stratus) to 1 (cumulonimbus), as in the Nubis weather map.
+			</description>
+		</method>
+		<method name="get_contact_drying_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long contact wetness takes to fall to 1/e now, in seconds of weather time: [member contact_wetness_dry_time] scaled by the air's vapour deficit (saturation pressure times one minus the humidity) and the wind, against 20 C, half humidity and 2 m/s. [code]0[/code] while it rains (nothing dries).
+			</description>
+		</method>
+		<method name="get_contact_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Contact wetness (0 to 1) at [param position]: how wet the water that touched it has left it. [code]0[/code] outside the contact square.
+			</description>
+		</method>
+		<method name="get_contact_wetness_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The contact square in world XZ, published with its texture as the shader globals [code]weather_contact_rect[/code] and [code]weather_contact_map[/code].
 			</description>
 		</method>
 		<method name="get_day_of_year" qualifiers="const">
@@ -410,6 +448,18 @@
 		</member>
 		<member name="cloud_variation" type="float" setter="set_cloud_variation" getter="get_cloud_variation" default="0.35">
 			How far the drifting noise moves the cloud cover up or down from [member cloud_cover]. [code]0[/code] gives an even sky.
+		</member>
+		<member name="contact_wetness_dry_time" type="float" setter="set_contact_wetness_dry_time" getter="get_contact_wetness_dry_time" default="600.0">
+			Seconds for contact wetness to fall to 1/e at 20 C, half humidity and a light wind; warmer, drier or windier air dries it faster (see [method get_contact_drying_time]).
+		</member>
+		<member name="contact_wetness_enabled" type="bool" setter="set_contact_wetness_enabled" getter="is_contact_wetness_enabled" default="true">
+			Wet where water has been: a fine square round the camera that keeps, per texel, the most water that touched it (live water, splashes, scripts) and dries it over time. Wetness readers (BaseMaterial3D Wetness, terrain, grass, the path tracer) take the wetter of it and the rain's.
+		</member>
+		<member name="contact_wetness_resolution" type="int" setter="set_contact_wetness_resolution" getter="get_contact_wetness_resolution" default="512">
+			Texels along each side of the contact square.
+		</member>
+		<member name="contact_wetness_size" type="float" setter="set_contact_wetness_size" getter="get_contact_wetness_size" default="64.0">
+			Side of the contact square in metres. It follows the camera (or [member follow_target]) and keeps what overlaps when it moves.
 		</member>
 		<member name="drive_environment_fog" type="bool" setter="set_drive_environment_fog" getter="get_drive_environment_fog" default="true">
 			The haze from [method set_precipitation_extinction] drives the environment's fog and volumetric fog, while the game runs. Off, the sources only answer [method get_precipitation_extinction_at].

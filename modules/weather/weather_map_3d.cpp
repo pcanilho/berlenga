@@ -835,6 +835,7 @@ void WeatherMap3D::_notification(int p_what) {
 			}
 			_apply_shadow();
 			_apply_haze();
+			_update_contact(wdt);
 			if (update_accum >= period) {
 				_update_cells(update_accum);
 				update_accum = 0.0;
@@ -1187,6 +1188,87 @@ void WeatherMap3D::set_painted_map(const Ref<Texture2D> &p_map) {
 
 void WeatherMap3D::set_painted_map_rect(Rect2 p_rect) {
 	painted_map_rect = p_rect;
+}
+
+// Wet where water has been (docs/ideas/water.md).
+void WeatherMap3D::set_contact_wetness_enabled(bool p_enabled) {
+	contact_wetness_enabled = p_enabled;
+	if (!p_enabled && contact_global_added) {
+		_set_global("weather_contact_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+}
+
+void WeatherMap3D::set_contact_wetness_resolution(int p_resolution) {
+	contact_wetness_resolution = CLAMP(p_resolution, 16, 4096);
+}
+
+void WeatherMap3D::set_contact_wetness_size(float p_size) {
+	contact_wetness_size = MAX(p_size, 1.0f);
+}
+
+void WeatherMap3D::set_contact_wetness_dry_time(float p_seconds) {
+	contact_wetness_dry_time = MAX(p_seconds, 0.0f);
+}
+
+void WeatherMap3D::add_contact_wetness(Vector3 p_position, float p_radius, float p_amount) {
+	if (contact_wetness_enabled) {
+		contact.add_disc(p_position, p_radius, p_amount);
+	}
+}
+
+void WeatherMap3D::add_contact_wetness_grid(const PackedFloat32Array &p_values, int p_width, int p_height, Rect2 p_rect) {
+	ERR_FAIL_COND(p_values.size() < p_width * p_height);
+	add_contact_wetness_cells(p_values.ptr(), p_width, p_height, p_rect);
+}
+
+void WeatherMap3D::add_contact_wetness_cells(const float *p_values, int p_width, int p_height, Rect2 p_rect) {
+	if (contact_wetness_enabled) {
+		contact.add_grid(p_values, p_width, p_height, p_rect);
+	}
+}
+
+float WeatherMap3D::get_contact_wetness_at(Vector3 p_position) const {
+	return contact_wetness_enabled ? contact.sample(p_position) : 0.0f;
+}
+
+float WeatherMap3D::get_contact_drying_time() const {
+	// Rain keeps it wet. Otherwise evaporation goes with the air's vapour deficit (Magnus saturation
+	// pressure times one minus the humidity) and, more weakly, the wind (Penman's wind function, about
+	// 1 + 0.54 u), against 20 C, half humidity and 2 m/s for contact_wetness_dry_time.
+	if (cur_rain_rate > 0.1f) {
+		return 0.0f;
+	}
+	auto saturation = [](float p_c) { return 6.112f * Math::exp(17.62f * p_c / (243.12f + p_c)); };
+	const float deficit = saturation(cur_temperature) * (1.0f - CLAMP(cur_humidity, 0.0f, 0.98f));
+	const float ref_deficit = saturation(20.0f) * 0.5f;
+	const float wind = (1.0f + 0.54f * cur_wind_speed) / (1.0f + 0.54f * 2.0f);
+	return contact_wetness_dry_time * ref_deficit / MAX(deficit * wind, 1e-3f);
+}
+
+void WeatherMap3D::_update_contact(double p_weather_dt) {
+	if (!contact_wetness_enabled) {
+		return;
+	}
+	contact.configure(contact_wetness_resolution, contact_wetness_size);
+	contact.follow(_follow_position());
+	contact_accum += p_weather_dt;
+	if (contact_accum >= 0.1) {
+		const float t = get_contact_drying_time();
+		if (t > 0.0f) {
+			contact.dry(float(contact_accum), t);
+		}
+		contact_accum = 0.0;
+	}
+	Ref<ImageTexture> tex = contact.upload();
+	if (!publish_shader_globals || active != this || tex.is_null()) {
+		return;
+	}
+	if (!contact_global_added) {
+		_set_global("weather_contact_map", tex->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		contact_global_added = true;
+	}
+	const Rect2 r = contact.rect();
+	_set_global("weather_contact_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 }
 
 void WeatherMap3D::set_publish_shader_globals(bool p_enabled) {
@@ -1643,6 +1725,19 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_painted_map"), &WeatherMap3D::get_painted_map);
 	ClassDB::bind_method(D_METHOD("set_painted_map_rect", "rect"), &WeatherMap3D::set_painted_map_rect);
 	ClassDB::bind_method(D_METHOD("get_painted_map_rect"), &WeatherMap3D::get_painted_map_rect);
+	ClassDB::bind_method(D_METHOD("set_contact_wetness_enabled", "enabled"), &WeatherMap3D::set_contact_wetness_enabled);
+	ClassDB::bind_method(D_METHOD("is_contact_wetness_enabled"), &WeatherMap3D::is_contact_wetness_enabled);
+	ClassDB::bind_method(D_METHOD("set_contact_wetness_resolution", "resolution"), &WeatherMap3D::set_contact_wetness_resolution);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness_resolution"), &WeatherMap3D::get_contact_wetness_resolution);
+	ClassDB::bind_method(D_METHOD("set_contact_wetness_size", "size"), &WeatherMap3D::set_contact_wetness_size);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness_size"), &WeatherMap3D::get_contact_wetness_size);
+	ClassDB::bind_method(D_METHOD("set_contact_wetness_dry_time", "seconds"), &WeatherMap3D::set_contact_wetness_dry_time);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness_dry_time"), &WeatherMap3D::get_contact_wetness_dry_time);
+	ClassDB::bind_method(D_METHOD("add_contact_wetness", "position", "radius", "amount"), &WeatherMap3D::add_contact_wetness, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("add_contact_wetness_grid", "values", "width", "height", "rect"), &WeatherMap3D::add_contact_wetness_grid);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness_at", "position"), &WeatherMap3D::get_contact_wetness_at);
+	ClassDB::bind_method(D_METHOD("get_contact_drying_time"), &WeatherMap3D::get_contact_drying_time);
+	ClassDB::bind_method(D_METHOD("get_contact_wetness_rect"), &WeatherMap3D::get_contact_wetness_rect);
 	ClassDB::bind_method(D_METHOD("set_publish_shader_globals", "enabled"), &WeatherMap3D::set_publish_shader_globals);
 	ClassDB::bind_method(D_METHOD("get_publish_shader_globals"), &WeatherMap3D::get_publish_shader_globals);
 
@@ -1786,6 +1881,12 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surface_storage", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:mm"), "set_surface_storage", "get_surface_storage");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "puddle_max_depth", PROPERTY_HINT_RANGE, "0,200,0.1,suffix:mm"), "set_puddle_max_depth", "get_puddle_max_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "puddle_drain_rate", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:mm/h"), "set_puddle_drain_rate", "get_puddle_drain_rate");
+
+	ADD_GROUP("Contact Wetness", "contact_wetness_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_wetness_enabled"), "set_contact_wetness_enabled", "is_contact_wetness_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "contact_wetness_resolution", PROPERTY_HINT_RANGE, "16,4096,1"), "set_contact_wetness_resolution", "get_contact_wetness_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_wetness_size", PROPERTY_HINT_RANGE, "1,1024,1,or_greater,suffix:m"), "set_contact_wetness_size", "get_contact_wetness_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_wetness_dry_time", PROPERTY_HINT_RANGE, "0,7200,1,or_greater,suffix:s"), "set_contact_wetness_dry_time", "get_contact_wetness_dry_time");
 
 	BIND_CONSTANT(GUSTS_PER_AXIS);
 	BIND_CONSTANT(GUST_COUNT);
