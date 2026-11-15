@@ -12,6 +12,8 @@ extends Node3D
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
 #   --sun-elev=D     sun elevation in degrees (default 28)
+#   --ambient=K      the sky light's energy times K
+#   --shadow-max=M   the sun's shadow distance (default 100; a landscape's is thousands of metres)
 #   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
@@ -115,6 +117,8 @@ var t_frames := 0
 var under: GrassField3D
 var cover: VegetationField3D
 var far_match := false
+var ambient := 1.0 # --ambient=k: the sky light's energy times k (a scene's sky may light far more than the bench's)
+var shadow_max := 0.0 # --shadow-max: the sun's shadow distance (0: the light's default)
 var far_a := Color()
 var far_w := Color()
 var ball: StaticBody3D
@@ -163,6 +167,8 @@ func _ready() -> void:
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
 		elif a == "--far-match": far_match = true
+		elif a.begins_with("--shadow-max="): shadow_max = float(a.substr(13))
+		elif a.begins_with("--ambient="): ambient = float(a.substr(10))
 		elif a == "--impostors=0": no_impostors = true
 		elif a == "--lone":
 			forest = true
@@ -406,6 +412,7 @@ void fragment() {
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = ambient
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR if far_match else Environment.TONE_MAPPER_AGX # Linear: colours compare as they are.
 	env.pathtracing_enabled = not raster
 	env.pathtracing_sky_shader_enabled = true
@@ -418,6 +425,8 @@ void fragment() {
 	sun_node = sun
 	sun.rotation_degrees = Vector3(-sun_elev, sun_yaw, 0)
 	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
+	if shadow_max > 0.0:
+		sun.directional_shadow_max_distance = shadow_max
 	if OS.get_environment("GRASS_DIAG").contains("ssaa"):
 		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 		get_viewport().scaling_3d_scale = 2.0

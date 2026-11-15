@@ -17,6 +17,7 @@ extends Node3D
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
+#   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block"]
@@ -277,6 +278,8 @@ func _world() -> void:
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:
+		if args.has("stone-density"):
+			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
