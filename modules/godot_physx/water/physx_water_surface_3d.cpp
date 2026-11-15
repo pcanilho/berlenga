@@ -3198,15 +3198,11 @@ void PhysXWaterSurface3D::_make_crest_spume() {
 	sh.instantiate();
 	sh->set_code(R"(
 shader_type spatial;
-render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled;
+render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled, billboard_particles;
 uniform vec3 spray_color : source_color = vec3(0.93, 0.95, 0.97);
 varying float seed;
 void vertex() {
 	seed = INSTANCE_CUSTOM.x;
-	mat4 mat_world = mat4(normalize(INV_VIEW_MATRIX[0]), normalize(INV_VIEW_MATRIX[1]), normalize(INV_VIEW_MATRIX[2]), MODEL_MATRIX[3]);
-	mat_world = mat_world * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));
-	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
-	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
 }
 float h(vec2 p) {
 	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
