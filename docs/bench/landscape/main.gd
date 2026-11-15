@@ -89,6 +89,7 @@ var cover: VegetationField3D # meadow herbs and waterside plants near the camera
 var prints: GroundSurface3D
 var prints_probe: Node3D
 var sun: DirectionalLight3D
+var boulder_obstacles := PackedVector4Array() # (x, ground y, z, radius at the soil) for the plant fields
 var boulder_spot := Vector3.ZERO
 var cover_tex: ImageTexture
 var clock: SkyClock
@@ -206,6 +207,27 @@ func _ready() -> void:
 			_build_camera()
 			cam.make_current()
 			await _forest_settle()
+	if args.has("bracken"):
+		await _frame_bracken()
+	if args.has("log"):
+		await _frame_log()
+	if args.has("foot"):
+		# --foot: 3 m from the foot of the broad-leaved tree nearest the first view, at knee height, side-lit
+		# (the moss sleeve and root ridges running into the litter).
+		var c4: Camera3D = get_viewport().get_camera_3d()
+		var near := Vector3.INF
+		for tp in _broadleaf_trees():
+			if tp.distance_to(c4.global_position) < near.distance_to(c4.global_position) and veg.get_litter_at(tp) > 0.5:
+				near = tp
+		if near != Vector3.INF:
+			var ts := sun.global_basis.z
+			var sd := Vector3(ts.x, 0.0, ts.z).normalized().cross(Vector3.UP).normalized()
+			var fp := near + sd * 3.0
+			fp.y = height_at(fp.x, fp.z) + 0.9
+			c4.global_position = fp
+			c4.look_at(near + Vector3.UP * 0.35)
+			await _forest_settle()
+			_log("foot cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [fp.x, fp.y, fp.z, near.x, near.y + 0.35, near.z])
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
 	if args.has("sun-off"):
 		sun.visible = false # an A/B frame: what the sky alone lights
@@ -387,6 +409,131 @@ func _broadleaf_trees() -> PackedVector3Array:
 			if veg.get_conifer_at(tp) < 0.3:
 				out.push_back(tp)
 	return out
+
+
+# --bracken (with --floor=oak): the camera 8 m from the densest bracken patch the cover placed round the first
+# view, side-lit (the sun square to the line of sight), for the season pairs (--day=200 vs --day=345).
+func _frame_bracken() -> void:
+	var n := 0
+	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	var idx := -1
+	for i in cover.biome.species.size():
+		if (cover.biome.species[i] as Resource).has_meta("bench_bracken"):
+			idx = i
+	if idx < 0:
+		_log("bracken: no bracken species (needs --floor=oak)")
+		return
+	var pts: PackedVector3Array = cover.get_placements(idx)
+	var best := Vector3.INF
+	var best_n := 0
+	var cells := {} # 4 m cells: the fullest one is the patch (a pairwise count is too slow on thousands of plants)
+	for a in pts:
+		var k := Vector2i(floori(a.x / 4.0), floori(a.z / 4.0))
+		cells[k] = cells.get(k, 0) + 1
+	for a in pts:
+		var c: int = cells[Vector2i(floori(a.x / 4.0), floori(a.z / 4.0))]
+		if c > best_n:
+			best_n = c
+			best = a
+	if best == Vector3.INF:
+		_log("bracken: none placed within the cover's reach of the first view")
+		return
+	var to_sun := sun.global_basis.z
+	var side := Vector3(to_sun.x, 0.0, to_sun.z).normalized().cross(Vector3.UP).normalized()
+	var cp := best + side * 8.0
+	cp.y = height_at(cp.x, cp.z) + 1.7
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = cp
+	c3.look_at(best + Vector3.UP * 0.4)
+	_log("bracken cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [cp.x, cp.y, cp.z, best.x, best.y + 0.4, best.z])
+	n = 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg != null and veg.streaming:
+		await _forest_settle()
+	_log("bracken: %d plants, patch of %d at %s, camera %s (side-lit), cover settled after %d frames" % [pts.size(), best_n, str(best.round()), str(cp.round()), n])
+
+
+# --log (with --trees=generated): the camera 2.5 m off the end of a fallen log near the first view, looking along it,
+# the log picked square to the sun so it is side-lit (deadwood plants pair; VEG_DW_OFF=1 for the before frame).
+func _frame_log() -> void:
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector2(to_sun.x, to_sun.z).normalized()
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var best_score := -INF
+	var best_a := Vector3.ZERO
+	var best_b := Vector3.ZERO
+	var nlogs := 0
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp == null or not String(sp.resource_name).contains("(log)"):
+			continue
+		for tp in veg.get_placements(i):
+			if tp.distance_to(c3.global_position) > 70.0:
+				continue
+			# The axis: the heading along which the ground stays under the log (get_deadwood_at side < 0).
+			var dir := Vector3.ZERO
+			var low := INF
+			for k in 24:
+				var ang := TAU * k / 24.0
+				var d := Vector3(cos(ang), 0.0, sin(ang))
+				var h: Dictionary = veg.get_deadwood_at(tp + d * 1.5, 1.0)
+				if not h.is_empty() and float(h["side"]) < low:
+					low = float(h["side"])
+					dir = d
+			if dir == Vector3.ZERO or low > 0.0:
+				continue
+			nlogs += 1
+			var ends := []
+			for sgn in [1.0, -1.0]:
+				var e := tp
+				for st in 40:
+					var q: Vector3 = tp + dir * sgn * 0.5 * (st + 1)
+					var h2: Dictionary = veg.get_deadwood_at(q, 1.0)
+					if h2.is_empty() or float(h2["side"]) > 0.0:
+						break
+					e = q
+				ends.append(e)
+			var length: float = (ends[0] as Vector3).distance_to(ends[1])
+			var radius: float = float(veg.get_deadwood_at(tp, 1.0).get("radius", 0.0))
+			# Side-lit: the log square to the sun; a long, thick log; open sky over it (little stand shade).
+			var square := 1.0 - absf(Vector2(dir.x, dir.z).dot(sun_flat))
+			var score := square * 2.0 + minf(length, 10.0) * 0.4 + radius * 2.0 - veg.get_stand_shade_at(tp)
+			if score > best_score:
+				best_score = score
+				best_a = ends[0]
+				best_b = ends[1]
+	if best_score == -INF:
+		_log("log: no fallen log within 70 m of the first view")
+		return
+	var axis := (best_a - best_b).normalized()
+	# Beside the log a fifth of the way in, looking down along it: the near (sawn-looking) end stays behind the camera
+	# and the far end beyond the bottom-up view of the trunk's middle.
+	var cp := best_a.lerp(best_b, 0.15) + axis.cross(Vector3.UP).normalized() * 1.3
+	cp.y = height_at(cp.x, cp.z) + 1.2
+	var mid := best_a.lerp(best_b, 0.55)
+	mid.y = height_at(mid.x, mid.z) + 0.1
+	c3.global_position = cp
+	c3.look_at(mid)
+	var n := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("log: %d logs near, picked %.1f m long, sun squareness score %.2f" % [nlogs, best_a.distance_to(best_b), best_score])
+	_log("log cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [cp.x, cp.y, cp.z, mid.x, mid.y, mid.z])
 
 
 func _forest_settle() -> void:
@@ -730,6 +877,8 @@ func _generate() -> void:
 			if b.w >= 1.0:
 				big += 1
 		_log("boulders below cliffs: %d (%d of 1 m radius or more) in %d ms" % [bl.size(), big, Time.get_ticks_msec() - tb])
+		for b in bl:
+			boulder_obstacles.push_back(Vector4(b.x, b.y, b.z, b.w * 1.1)) # the stand-in's footprint, slightly long
 		# For --view=boulders: the densest 40 m patch of blocks near the middle of the map.
 		var cells := {}
 		for b in bl:
@@ -1555,6 +1704,8 @@ func _build_vegetation() -> void:
 	veg.tile_size = 128.0
 	veg.populate_on_ready = false
 	add_child(veg)
+	if "obstacles" in veg and not boulder_obstacles.is_empty():
+		veg.obstacles = boulder_obstacles # no trees through the boulders
 	if args.get("trees", "cones") == "none":
 		veg.visible = false # --trees=none: placed (the other systems still read it) but not drawn, for views with no stand-ins
 
@@ -2109,7 +2260,18 @@ func _build_cover() -> void:
 	# --floor=beech|oak|hedgerow|montane picks the floor set (beech and oak floors carry the violets and herb robert).
 	var floors := {"montane": PlantGenerator.FLOOR_MONTANE_CONIFER, "beech": PlantGenerator.FLOOR_BEECH,
 			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW}
-	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3)
+	# The floor plants follow the weather's season (flowering, bracken croziers in spring, russet in autumn): --day=N.
+	var season: Dictionary = weather.get_season() if weather != null and weather.has_method("get_season") else {}
+	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
+	if OS.get_environment("VEG_DW_OFF") != "":
+		# The deadwood pair's before frame (as the vegetation bench): the floor blind to the logs.
+		for sp in floor_sp:
+			if sp.deadwood_rule == PlantSpecies.DEADWOOD_ON or sp.deadwood_rule == PlantSpecies.DEADWOOD_BESIDE:
+				sp.density = 0.0
+			else:
+				sp.deadwood_rule = PlantSpecies.DEADWOOD_IGNORE
+	if args.get("floor", "") == "oak" and floor_sp.size() > 1:
+		floor_sp[1].set_meta("bench_bracken", true) # FLOOR_OAK_MIXED: bramble, bracken, ... (the --bracken view's plant)
 	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
 	for sp in b.species:
 		var ps := sp as PlantSpecies
@@ -2132,6 +2294,12 @@ func _build_cover() -> void:
 	add_child(cover)
 	cover.data_map = cover.get_path_to(data_map)
 	cover.canopy_field = cover.get_path_to(veg) # shade and conifer share from the forest's crowns
+	for f in sward + [cover]:
+		if f != null and "obstacles" in f and not boulder_obstacles.is_empty():
+			f.obstacles = boulder_obstacles # nothing grows through the boulders
+	for g in sward:
+		if "undergrowth_field" in g:
+			g.undergrowth_field = g.get_path_to(cover) # the sward thins under bracken and bramble stands
 	_log("cover: %d species streaming round the camera, set up in %d ms" % [b.species.size(), Time.get_ticks_msec() - t])
 
 
