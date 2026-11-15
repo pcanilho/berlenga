@@ -27,6 +27,18 @@
 				CPU time the last physics tick spent on the solver and the surface mesh, in milliseconds.
 			</description>
 		</method>
+		<method name="get_sleeping_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Tiles of sleeping water kept outside the streamed area (see [member streaming]).
+			</description>
+		</method>
+		<method name="get_sleeping_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				Water asleep outside the streamed area, in m³ (see [member streaming]). With [method get_total_volume] and [method get_volume_out] it adds up to all the water put in.
+			</description>
+		</method>
 		<method name="get_total_volume" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -104,6 +116,9 @@
 		<member name="infiltration_rate" type="float" setter="set_infiltration_rate" getter="get_infiltration_rate" default="0.0">
 			Water soaking into the ground everywhere, in mm/h.
 		</member>
+		<member name="max_sleeping_tiles" type="int" setter="set_max_sleeping_tiles" getter="get_max_sleeping_tiles" default="4096">
+			At most this many tiles of 32 by 32 cells of sleeping water are kept while streaming (about 8 KB each); past it, water leaving the area is counted in [method get_volume_out].
+		</member>
 		<member name="open_edges" type="bool" setter="set_open_edges" getter="get_open_edges" default="true">
 			Water flows out over the area's edges (and is gone, counted in [method get_volume_out]). Off, the edges are walls.
 		</member>
@@ -127,6 +142,12 @@
 		</member>
 		<member name="sources" type="PackedVector4Array" setter="set_sources" getter="get_sources" default="PackedVector4Array()">
 			Springs and inflows: local position in xyz, inflow in m³/s in w.
+		</member>
+		<member name="stream_follow" type="NodePath" setter="set_stream_follow" getter="get_stream_follow" default="NodePath(&quot;&quot;)">
+			The node the streamed area stays centred on. Empty: the viewport's camera.
+		</member>
+		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="false">
+			The area follows the camera (or [member stream_follow]) over the whole world, moving itself in steps of an eighth of its [member size] along world-aligned cells (its rotation is dropped). Water it leaves behind falls asleep: kept and drawn as it lay, not simulated, and flowing again when the area comes back over it. Water that flows over the area's edge is added to the sleeping water just outside, which it fills until level. [member sources] are world positions while streaming and only flow while inside the area; rain and soaking in act inside it only.
 		</member>
 	</members>
 </class>
