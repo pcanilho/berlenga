@@ -2405,6 +2405,13 @@ its real depth; the bench's new `--view=storm` (and `storm_sun`) sets a deep gal
   its mean cover. Bench `--view=storm_low`: 3.5 m up looking downwind at 20 m/s. The puffs face the
   camera by `render_mode billboard_particles`, which the path tracer also honours (a vertex() billboard is
   not run for traced particles: they showed as flat bright rectangles; the falls' puffs had the same bug).
+- Third pass (docs: the windrows ran as smooth unbroken ribbons in one half of the frame, cut off along a
+  hard line by the banding noise, and the whitecaps looked smaller with streaks on). Windrows now: three
+  octaves stretched about thirty to one (filaments about a quarter metre across), broken along their
+  length every few metres by a second noise, and only gently denser in places (0.6 to 1, no band that
+  ends). The whitecaps' lace is no longer stretched along the wind (that thinned them in a gale); the
+  streaks carry their own structure. `foam_streaks` is a material uniform the node sets from
+  `wind_speed` (smoothstep 14 to 22 m/s), not a property.
 
 **Tried and dropped.** The sun's path in the water traced to the real surface toward the sun (a crest with
 the sun behind it lit through its thin top, the effect Sea of Thieves and Black Flag fake with a peak
