@@ -68,6 +68,8 @@ func _ready() -> void:
 		elif a == "--deadwood":
 			deadwood_view = true
 			size = 48.0 # A patch of the stand: lavapipe renders the whole map's trees too slowly.
+			if OS.get_environment("VEG_DW_SIZE") != "":
+				size = float(OS.get_environment("VEG_DW_SIZE")) # A bigger patch, for more logs to pick from.
 		elif a == "--stream-cost":
 			stream_cost = true
 			size = 1024.0
@@ -1069,7 +1071,14 @@ func _deadwood_view() -> void:
 	var wood := VegetationField3D.new()
 	wood.name = "Wood"
 	wood.populate_on_ready = false
-	wood.biome = tg.make_stand(TreeGenerator.STAND_BEECH, 1)
+	if OS.get_environment("VEG_DW_FUNGI") != "":
+		# The logs' and snags' fungi (TreeGenerator.fungi_cover, trees.md 5g): 0 for the before shot.
+		tg.fungi_cover = float(OS.get_environment("VEG_DW_FUNGI"))
+	if OS.get_environment("VEG_DW_SEED") != "":
+		tg.seed = int(OS.get_environment("VEG_DW_SEED"))
+	# VEG_DW_VARIANTS=3: logs and snags of decay classes 2-4 (one variant each), not only class 2.
+	var nvar := int(OS.get_environment("VEG_DW_VARIANTS")) if OS.get_environment("VEG_DW_VARIANTS") != "" else 1
+	wood.biome = tg.make_stand(TreeGenerator.STAND_BEECH, nvar)
 	print("VEG_DEADWOOD_VIEW stand made in %d ms" % (Time.get_ticks_msec() - t0))
 	add_child(wood)
 	wood.data_map = wood.get_path_to(dm)
@@ -1136,6 +1145,10 @@ func _deadwood_view() -> void:
 	ground.stream_radius = 30.0
 	ground.populate()
 	print("VEG_DEADWOOD_VIEW logs=%d log_species=%d at=%s" % [wood.get_deadwood_count(), log_i, str(at)])
+	if OS.get_environment("VEG_DW_FUNGI_VIEW") != "" or OS.get_environment("VEG_DW_CAM") != "":
+		for i in 3:
+			await get_tree().process_frame
+		_frame_log_fungi(wood, cam)
 	if OS.get_environment("VEG_DW_MOSS") != "":
 		# Close on a moss cushion on the log (the first of make_floor's log species).
 		for i in 3:
@@ -1246,6 +1259,79 @@ func _hide_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies]) 
 			mmi.visible = false
 			hidden += 1
 	print("VEG_MUSHROOMS off: %d mushroom MultiMeshes hidden" % hidden)
+
+# VEG_DW_FUNGI_VIEW=1: from about a metre at knee to hip height, looking along the log nearest
+# the middle that carries a bracket shelf (kinds 0-4) with a tuft of mushrooms (6, 7) on the same
+# side within 2.5 m of it (VEG_DW_VARIANTS=3 VEG_DW_SEED=24: a class 3 beech log with a Fomes and a sulphur tuft),
+# the sun behind the camera on the shelf's side. Prints VEG_DW_CAM=eye,look,sun so the same camera
+# can be given back (VEG_DW_CAM) for the shot without fungi.
+func _frame_log_fungi(p_wood: Node, p_cam: Camera3D) -> void:
+	var sun: DirectionalLight3D
+	for ch in get_children():
+		if ch is DirectionalLight3D:
+			sun = ch
+	if OS.get_environment("VEG_DW_CAM") != "":
+		var v := OS.get_environment("VEG_DW_CAM").split_floats(",")
+		p_cam.position = Vector3(v[0], v[1], v[2])
+		p_cam.look_at(Vector3(v[3], v[4], v[5]))
+		sun.look_at_from_position(Vector3(v[6], v[7], v[8]) * 10.0, Vector3.ZERO)
+		p_cam.fov = 55.0
+		return
+	var best := 1e9
+	var pick := []
+	for mmi in p_wood.find_children("*", "MultiMeshInstance3D", true, false):
+		var mm: MultiMesh = mmi.multimesh
+		if mm == null or mm.mesh == null or not mm.mesh.has_meta("tree_deadwood_axis"):
+			continue
+		var fp: PackedFloat32Array = mm.mesh.get_meta("tree_fungi", PackedFloat32Array())
+		if fp.size() < 16:
+			continue
+		for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+			var xf: Transform3D = mmi.global_transform * mm.get_instance_transform(i)
+			var d0 := Vector2(xf.origin.x, xf.origin.z).length()
+			if d0 >= best:
+				continue
+			for a in fp.size() / 8:
+				if int(fp[a * 8 + 7]) > 4:
+					continue
+				var pa := xf * Vector3(fp[a * 8], fp[a * 8 + 1], fp[a * 8 + 2])
+				var na := (xf.basis * Vector3(fp[a * 8 + 3], fp[a * 8 + 4], fp[a * 8 + 5])).normalized()
+				for b in fp.size() / 8:
+					if int(fp[b * 8 + 7]) < 6:
+						continue
+					var pb := xf * Vector3(fp[b * 8], fp[b * 8 + 1], fp[b * 8 + 2])
+					var nb := (xf.basis * Vector3(fp[b * 8 + 3], fp[b * 8 + 4], fp[b * 8 + 5])).normalized()
+					# On the same side of the log, so one camera sees both.
+					if Vector2(na.x, na.z).normalized().dot(Vector2(nb.x, nb.z).normalized()) < 0.2:
+						continue
+					# Well inside the ground patch (its edge shows past a log near it).
+					if maxf(absf(pa.x), absf(pa.z)) > size * 0.5 - 8.0:
+						continue
+					if pa.distance_to(pb) < 2.5 and pa.distance_to(pb) > 0.3 and d0 < best:
+						var ax: PackedFloat32Array = mm.mesh.get_meta("tree_deadwood_axis")
+						best = d0
+						pick = [pa, na, pb, (xf.basis * Vector3(ax[3] - ax[0], ax[4] - ax[1], ax[5] - ax[2])).normalized(), int(fp[a * 8 + 7]), int(fp[b * 8 + 7])]
+	if pick.is_empty():
+		print("VEG_DW_FUNGI_VIEW no log with a shelf and a tuft")
+		return
+	var pa: Vector3 = pick[0]
+	var pb: Vector3 = pick[2]
+	var ax: Vector3 = pick[3]
+	var nh := Vector3(pick[1].x, 0, pick[1].z).normalized()
+	var to_b := ax if (pb - pa).dot(ax) > 0.0 else -ax
+	to_b = Vector3(to_b.x, 0, to_b.z).normalized()
+	# A metre out and a little back along the log, the eye a hand above the shelf (knee to hip
+	# height over the floor for a log on the ground), so the tuft on the log's shoulder shows.
+	var eye := pa + nh * 0.85 - to_b * 0.55
+	eye.y = maxf(height(eye.x, eye.z) + 0.5, maxf(pa.y, pb.y) + 0.22)
+	var look := pa.lerp(pb, 0.4) - Vector3(0, 0.05, 0)
+	p_cam.position = eye
+	p_cam.look_at(look)
+	p_cam.fov = 55.0
+	var sdir := (nh * 0.8 - to_b * 0.4 + Vector3(0, 0.9, 0)).normalized()
+	sun.look_at_from_position(sdir * 10.0, Vector3.ZERO)
+	print("VEG_DW_FUNGI_VIEW shelf kind %d at %s, tuft kind %d at %s" % [pick[4], str(pa), pick[5], str(pb)])
+	print("VEG_DW_CAM=%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f" % [eye.x, eye.y, eye.z, look.x, look.y, look.z, sdir.x, sdir.y, sdir.z])
 
 func _render_later() -> void:
 	for i in (6 if raster else 10):

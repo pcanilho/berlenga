@@ -1053,6 +1053,16 @@ vec3 sun_visibility(vec3 p_world) {
 	return shadow * projector;
 }
 
+// sun_direction() (spatial fragment and light): the first directional light's direction, toward the light, in
+// world space; zero without one. For a surface that shadows itself per pixel and hands the result to SUN_SHADOW.
+vec3 sun_direction() {
+	if (scene_data_block.data.directional_light_count == 0u) {
+		return vec3(0.0);
+	}
+	mat3 inv_view = mat3(transpose(mat4(scene_data_block.data.inv_view_matrix[0], scene_data_block.data.inv_view_matrix[1], scene_data_block.data.inv_view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0))));
+	return normalize(inv_view * directional_lights.data[0].direction);
+}
+
 #GLOBALS
 
 // POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow
@@ -1318,6 +1328,7 @@ void main() {
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
 	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET
+	float sun_shadow = 1.0; // SUN_SHADOW: multiplies the first directional light's shadow (a surface's own relief)
 
 	mat3 model_normal_matrix;
 	if (bool(instances.data[draw_call.instance_index].flags & INSTANCE_FLAGS_NON_UNIFORM_SCALE)) {
@@ -2166,7 +2177,7 @@ void main() {
 #undef BIAS_FUNC
 				}
 
-				shadows[i] = shadow;
+				shadows[i] = i == 0u ? shadow * half(sun_shadow) : shadow; // SUN_SHADOW
 			}
 
 #ifdef USE_LIGHTMAP

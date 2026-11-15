@@ -515,6 +515,7 @@ bool TerrainGenerator3D::generate() {
 	glac.p.ela = glacial_ela;
 	glac.p.erodibility *= double(glacial_erosion);
 	glac.p.sliding = glacial_sliding;
+	glac.p.converged = glacial_converged;
 	// Glaciers whose catchment lies beyond the map come in with their rivers: each inflow brings its off-map area
 	// times the mean net balance there as ice.
 	glac.sources.clear();
@@ -534,6 +535,12 @@ bool TerrainGenerator3D::generate() {
 	TerrainGlacial *mid = &glac;
 	if (glacial_coarse_cell > 0.0) {
 		glac_mid.p.cell = double(glacial_coarse_cell);
+		mid = &glac_mid;
+	}
+	// glacial_converged: the last glaciation, whose forms are left, solves its ice to convergence; the ice ages
+	// before it keep the quick pseudo steps (a converged solve takes about a second a step, and there are hundreds).
+	if (glacial_converged) {
+		glac_mid.p.converged = false;
 		mid = &glac_mid;
 	}
 	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
@@ -2133,6 +2140,8 @@ bool TerrainGenerator3D::generate() {
 		}
 		last_glacial_eroded = real_t(glac.eroded_max);
 		last_glacial_ice_area = real_t(glac.ice_area);
+		last_glacial_residual = real_t(glac.residual);
+		last_glacial_outer = glac.outer_steps;
 		glacial_ice.resize(n);
 		for (int z = 0; z < ny; z++) {
 			for (int x = 0; x < nx; x++) {
@@ -7011,6 +7020,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
 	ClassDB::bind_method(D_METHOD("get_last_glacial_ice_area"), &TerrainGenerator3D::get_last_glacial_ice_area);
 	ClassDB::bind_method(D_METHOD("get_last_glacial_msec"), &TerrainGenerator3D::get_last_glacial_msec);
+	ClassDB::bind_method(D_METHOD("set_glacial_converged", "enable"), &TerrainGenerator3D::set_glacial_converged);
+	ClassDB::bind_method(D_METHOD("is_glacial_converged"), &TerrainGenerator3D::is_glacial_converged);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_residual"), &TerrainGenerator3D::get_last_glacial_residual);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_steps"), &TerrainGenerator3D::get_last_glacial_steps);
 	ClassDB::bind_method(D_METHOD("get_glacier_depth", "global_position"), &TerrainGenerator3D::get_glacier_depth);
 	ClassDB::bind_method(D_METHOD("set_strata_enabled", "value"), &TerrainGenerator3D::set_strata_enabled);
 	ClassDB::bind_method(D_METHOD("is_strata_enabled"), &TerrainGenerator3D::is_strata_enabled);
@@ -7271,6 +7284,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_variation", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_glacial_rock_variation", "get_glacial_rock_variation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_scale", PROPERTY_HINT_RANGE, "16,4000,1,suffix:m"), "set_glacial_rock_scale", "get_glacial_rock_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_inflow_balance", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater,suffix:m/yr"), "set_glacial_inflow_balance", "get_glacial_inflow_balance");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glacial_converged"), "set_glacial_converged", "is_glacial_converged");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_coarse_cell", PROPERTY_HINT_RANGE, "0,512,1,suffix:m"), "set_glacial_coarse_cell", "get_glacial_coarse_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ice_worn_detail"), "set_ice_worn_detail", "is_ice_worn_detail");
 

@@ -24,6 +24,13 @@
 //      more pass), the gravity term from the new heights (their eq. 8), wall friction along dry
 //      ground, damping of the live part, and the |v| <= 0.5 dx / dt clamp.
 //
+// Wet and dry fronts (Chentanez and Müller 2010, section 5): ground up to RUNUP_BAND above the
+// still water is simulated too, holding water depth max(cell_depth + eta, 0), so a wake or a
+// splash runs up a bank or beach and drains back. A dry cell's eta is its ground (cell_depth
+// negative over land); faces carry water only out of cells that have some (upwind depth), at
+// most a quarter of it per face and tick so a cell never empties below zero, and a face between
+// a dry cell and water lower than its ground carries no velocity.
+//
 // Written flat with small helpers on purpose (see this module's history with a heavily-inlined
 // helper hanging one driver's compiler).
 
@@ -40,6 +47,13 @@ layout(set = 0, binding = 8, rgba16f) uniform restrict writeonly image2D velocit
 #define FLOW_FOAM (ripple_control.z)
 #define FLOW_FOAM_PERSISTENCE (ripple_control.w)
 #define MIN_FLOW_DEPTH 0.25 // m: the depth face fluxes divide by, at least (as the bake)
+#define RUNUP_BAND 1.0 // m: ground this far above the still water is simulated (wet/dry fronts)
+#define DRY_DEPTH 0.002 // m: a cell holding less water than this is dry
+
+// Simulated: water at rest, or ground low enough for water to run up onto (not a wall).
+bool in_band(ivec2 c) {
+	return cell_depth(c) > -RUNUP_BAND;
+}
 
 float still_depth(ivec2 c) {
 	return max(cell_depth(c), 0.0);
@@ -54,7 +68,7 @@ float face_depth(ivec2 a, ivec2 b) {
 float face_u(ivec2 f) {
 	f = clamp(f, ivec2(0), ivec2(GRID_N - 1));
 	ivec2 b = ivec2(min(f.x + 1, GRID_N - 1), f.y);
-	if (!is_wet(f) || !is_wet(b)) {
+	if (!in_band(f) || !in_band(b)) {
 		return 0.0;
 	}
 	return texelFetch(base_flux_tex, f, 0).x / face_depth(f, b) + state_in[grid_index(f)].y;
@@ -64,7 +78,7 @@ float face_u(ivec2 f) {
 float face_w(ivec2 f) {
 	f = clamp(f, ivec2(0), ivec2(GRID_N - 1));
 	ivec2 b = ivec2(f.x, min(f.y + 1, GRID_N - 1));
-	if (!is_wet(f) || !is_wet(b)) {
+	if (!in_band(f) || !in_band(b)) {
 		return 0.0;
 	}
 	return texelFetch(base_flux_tex, f, 0).y / face_depth(f, b) + state_in[grid_index(f)].w;
@@ -125,10 +139,21 @@ float sample_w(vec2 p) {
 
 float eta_at(ivec2 c);
 
+// Water depth held by a simulated cell now (m).
+float water_depth(ivec2 c) {
+	return max(cell_depth(c) + eta_at(c), 0.0);
+}
+
+bool has_water(ivec2 c) {
+	return in_band(c) && water_depth(c) > DRY_DEPTH;
+}
+
+float dry_height(ivec2 c);
+
 // Total velocity at a cell's centre (faces averaged; the grid's own edge reads the nearest face).
 vec2 centre_velocity(ivec2 c) {
 	c = clamp(c, ivec2(0), ivec2(GRID_N - 1));
-	if (!is_wet(c)) {
+	if (!has_water(c)) {
 		return vec2(0.0);
 	}
 	float r = face_u(c);
@@ -162,7 +187,7 @@ float flow_foam_source(ivec2 c, vec2 v) {
 	shear += length(v - centre_velocity(c - ivec2(0, 1)));
 	shear *= 0.25 * 0.25 / CELL; // mean m/s change over 25 cm, so the cell size doesn't matter
 	float speed = length(v);
-	float froude = speed / sqrt(GRAV * max(still_depth(c) + eta_at(c), 0.02));
+	float froude = speed / sqrt(GRAV * max(water_depth(c), 0.02));
 	float trapped_air = smoothstep(0.15, 0.6, shear);
 	float supercritical = smoothstep(0.8, 1.6, froude);
 	float energy = smoothstep(0.5, 1.5, speed);
@@ -188,8 +213,12 @@ float face_flux(ivec2 a, ivec2 b, float q, float v) {
 	float total = q / d + v;
 	ivec2 up = total >= 0.0 ? a : b;
 	float eta_up = eta_at(up);
-	float depth_up = max(still_depth(up) + eta_up, 0.0);
-	return q + eta_up * (q / d) + min(depth_up, depth_cap()) * v;
+	float depth_up = water_depth(up);
+	float f = q + eta_up * (q / d) + min(depth_up, depth_cap()) * v;
+	// At most a quarter of the upwind cell's water through one face a tick, so the four together
+	// never take more than it holds (only bites in the thin water at a front).
+	float most = 0.25 * depth_up * CELL / DT;
+	return clamp(f, -most, most);
 }
 
 void height_pass(ivec2 c, int idx) {
@@ -204,7 +233,7 @@ void height_pass(ivec2 c, int idx) {
 	float f_bottom = 0.0;
 	if (c.x < GRID_N - 1) {
 		ivec2 r = c + ivec2(1, 0);
-		if (is_wet(r)) {
+		if (in_band(r)) {
 			f_right = face_flux(c, r, q.x, st.y);
 		}
 	} else {
@@ -212,7 +241,7 @@ void height_pass(ivec2 c, int idx) {
 	}
 	if (c.x > 0) {
 		ivec2 l = c - ivec2(1, 0);
-		if (is_wet(l)) {
+		if (in_band(l)) {
 			f_left = face_flux(l, c, texelFetch(base_flux_tex, l, 0).x, state_in[grid_index(l)].y);
 		}
 	} else {
@@ -220,7 +249,7 @@ void height_pass(ivec2 c, int idx) {
 	}
 	if (c.y < GRID_N - 1) {
 		ivec2 t = c + ivec2(0, 1);
-		if (is_wet(t)) {
+		if (in_band(t)) {
 			f_top = face_flux(c, t, q.y, st.w);
 		}
 	} else {
@@ -228,7 +257,7 @@ void height_pass(ivec2 c, int idx) {
 	}
 	if (c.y > 0) {
 		ivec2 b = c - ivec2(0, 1);
-		if (is_wet(b)) {
+		if (in_band(b)) {
 			f_bottom = face_flux(b, c, texelFetch(base_flux_tex, b, 0).y, state_in[grid_index(b)].w);
 		}
 	} else {
@@ -260,7 +289,7 @@ void height_pass(ivec2 c, int idx) {
 		}
 	}
 	hn += (target * RIPPLE_AMPLITUDE - hn) * weight * clamp(6.0 * DT, 0.0, 1.0);
-	hn = max(hn, 0.02 - still_depth(c)); // (no wet/dry fronts: the water never empties a cell)
+	hn = max(hn, -cell_depth(c)); // (never below the ground: a front's last water drains to dry)
 	if (!(abs(hn) < 1e4)) {
 		hn = 0.0; // NaN / runaway guard: one bad cell would spread over the grid
 	}
@@ -274,8 +303,12 @@ void height_pass(ivec2 c, int idx) {
 	}
 	foam = clamp(foam * exp(-DT / max(FLOW_FOAM_PERSISTENCE, 0.05)), 0.0, 1.0);
 
+	bool dry = cell_depth(c) + hn <= DRY_DEPTH;
+	if (dry) {
+		foam = 0.0;
+	}
 	state_out[idx] = vec4(hn, st.y, foam, st.w);
-	height_out[idx] = WATER_LEVEL + hn;
+	height_out[idx] = dry ? dry_height(c) : WATER_LEVEL + hn;
 	vec2 v = vec2(0.5 * (face_u(c) + face_u(c - ivec2(1, 0))), 0.5 * (face_w(c) + face_w(c - ivec2(0, 1))));
 	if (c.x == 0) {
 		v.x = 0.5 * (face_u(c) + q.z / max(still_depth(c), MIN_FLOW_DEPTH));
@@ -283,13 +316,41 @@ void height_pass(ivec2 c, int idx) {
 	if (c.y == 0) {
 		v.y = 0.5 * (face_w(c) + q.w / max(still_depth(c), MIN_FLOW_DEPTH));
 	}
-	imageStore(velocity_image, c, vec4(v, foam, 0.0)); // (b: flow foam, for materials)
+	imageStore(velocity_image, c, dry ? vec4(0.0) : vec4(v, foam, 0.0)); // (b: flow foam, for materials)
+}
+
+// Rendered height of a dry cell: it continues the adjacent water (mean of its wet 3x3
+// neighbours) instead of pinning to WATER_LEVEL: the surface mesh's rim lies between the last wet
+// and first dry cell centres, and a flat dry texel there turns every crest at the shoreline into
+// a one-cell sawtooth. The ground (higher than that water, or it would be wet) hides it. With no
+// water beside it, the still level, or just under the ground where that lies below it (a hollow
+// the water has drained from).
+float dry_height(ivec2 c) {
+	float sum = 0.0;
+	float count = 0.0;
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 nc = clamp(c + ivec2(dx, dy), ivec2(0), ivec2(GRID_N - 1));
+			if (has_water(nc)) {
+				sum += state_in[grid_index(nc)].x;
+				count += 1.0;
+			}
+		}
+	}
+	return WATER_LEVEL + (count > 0.0 ? sum / count : min(0.0, -cell_depth(c) - 0.05));
 }
 
 // One face's new live velocity. a, b: its two cells; along_wall: dry ground beside the face
 // (its tangential flow is slowed there, which is what sheds eddies off rocks and banks).
 float face_velocity(ivec2 a, ivec2 b, vec2 pos, float total, float other, float base, bool along_wall, bool x_face) {
 	float limit = 0.5 * CELL / DT;
+	// Fronts: no water either side, or a dry cell whose ground stands above the other side's
+	// surface (water can't climb it), carries nothing (Chentanez and Müller's dry-face rule).
+	bool wet_a = has_water(a);
+	bool wet_b = has_water(b);
+	if ((!wet_a && !wet_b) || (!wet_a && eta_at(a) >= eta_at(b)) || (!wet_b && eta_at(b) >= eta_at(a))) {
+		return -base; // (live part cancelling the baked flow, which is 0 over dry ground)
+	}
 	vec2 vel = x_face ? vec2(total, other) : vec2(other, total);
 	vec2 back = pos - clamp(vel, vec2(-limit), vec2(limit)) * DT / CELL;
 	float adv = x_face ? sample_u(back) : sample_w(back);
@@ -309,19 +370,19 @@ void velocity_pass(ivec2 c, int idx) {
 	float w_new = 0.0;
 	if (c.x < GRID_N - 1) {
 		ivec2 r = c + ivec2(1, 0);
-		if (is_wet(r)) {
+		if (in_band(r)) {
 			float base = q.x / face_depth(c, r);
 			float other = 0.25 * (face_w(c) + face_w(r) + face_w(c - ivec2(0, 1)) + face_w(r - ivec2(0, 1)));
-			bool wall = !is_wet(clamp(c + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(c - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(r + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(r - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1)));
+			bool wall = !has_water(clamp(c + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(c - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(r + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(r - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1)));
 			u_new = face_velocity(c, r, vec2(c) + vec2(1.0, 0.5), base + st.y, other, base, wall, true);
 		}
 	}
 	if (c.y < GRID_N - 1) {
 		ivec2 t = c + ivec2(0, 1);
-		if (is_wet(t)) {
+		if (in_band(t)) {
 			float base = q.y / face_depth(c, t);
 			float other = 0.25 * (face_u(c) + face_u(t) + face_u(c - ivec2(1, 0)) + face_u(t - ivec2(1, 0)));
-			bool wall = !is_wet(clamp(c + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(c - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(t + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(t - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1)));
+			bool wall = !has_water(clamp(c + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(c - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(t + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(t - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1)));
 			w_new = face_velocity(c, t, vec2(c) + vec2(0.5, 1.0), base + st.w, other, base, wall, false);
 		}
 	}
@@ -334,26 +395,12 @@ void main() {
 		return;
 	}
 	int idx = grid_index(c);
-	if (!is_wet(c)) {
-		// Dry (seabed above the water, or outside the surface mesh's footprint): never simulated.
-		// Its rendered height continues the adjacent water (mean of its wet 3x3 neighbours) instead
-		// of pinning to WATER_LEVEL: the surface mesh's rim lies between the last wet and first dry
-		// cell centres, and a flat dry texel there turns every crest at the staircase shoreline
-		// into a one-cell sawtooth.
+	if (!in_band(c)) {
+		// Wall (ground well above the water, or outside the surface mesh's footprint): never
+		// simulated.
 		state_out[idx] = vec4(0.0);
 		if (PASS == 0) {
-			float sum = 0.0;
-			float count = 0.0;
-			for (int dy = -1; dy <= 1; dy++) {
-				for (int dx = -1; dx <= 1; dx++) {
-					ivec2 nc = clamp(c + ivec2(dx, dy), ivec2(0), ivec2(GRID_N - 1));
-					if (is_wet(nc)) {
-						sum += state_in[grid_index(nc)].x;
-						count += 1.0;
-					}
-				}
-			}
-			height_out[idx] = WATER_LEVEL + (count > 0.0 ? sum / count : 0.0);
+			height_out[idx] = dry_height(c);
 			imageStore(velocity_image, c, vec4(0.0));
 		}
 		return;

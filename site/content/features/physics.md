@@ -4,7 +4,7 @@ weight: 120
 summary: "PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke."
 ---
 
-![PhysX: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke](media/physx.gif)
+![PhysX, path traced: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke lit by a lamp](media/physx-pathtraced.webp)
 
 Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Settings > Physics > 3D > Physics Engine**.
 - Either engine: tearable cloth, skinned cloth, Blast destruction, Flow smoke and fire, ocean buoyancy, compute-shader fluids.

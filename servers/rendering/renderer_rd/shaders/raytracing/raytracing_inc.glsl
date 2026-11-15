@@ -122,6 +122,10 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_GROUND_DEFORM_X 61 // its world XZ origin and size
 #define RT_PARAM_GROUND_DEFORM_Z 62
 #define RT_PARAM_GROUND_DEFORM_SIZE 63
+#define RT_PARAM_CONTACT_WET_MAP 64 // WeatherMap3D contact wetness (weather_contact_map, R), 0 = none
+#define RT_PARAM_CONTACT_WET_X 65 // its world XZ origin and side
+#define RT_PARAM_CONTACT_WET_Z 66
+#define RT_PARAM_CONTACT_WET_SIZE 67
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

@@ -862,7 +862,30 @@
     "wall_friction"
    ],
    "note": "",
-   "what": "near the player, rocks and banks shed wakes and eddies.",
+   "what": "near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Live water",
+   "settings": [
+    "PhysXLiveWater3D",
+    "streaming"
+   ],
+   "note": "",
+   "what": "water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Bodies push water",
+   "settings": [
+    "PhysXWaterPusher3D"
+   ],
+   "note": "",
+   "what": "legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
@@ -1282,7 +1305,7 @@
     "glacial_erosion"
    ],
    "note": "",
-   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain.",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged` (off by default), the ice settles to a steady state before it carves, conserving mass over cliffs.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1536,7 +1559,7 @@
     "cliff_relief"
    ],
    "note": "",
-   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too.",
+   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`, off by default).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2417,6 +2440,17 @@
    ],
    "note": "",
    "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Contact wetness",
+   "settings": [
+    "contact_wetness_enabled"
+   ],
+   "note": "",
+   "what": "ground that running water crossed stays dark after it drains, then dries with the weather.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

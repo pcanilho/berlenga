@@ -7508,6 +7508,27 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_W] = has_weather ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_H] = has_weather ? rect.w : 0.0f;
+			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
+			static const StringName contact_map_name = "weather_contact_map";
+			static const StringName contact_rect_name = "weather_contact_rect";
+			const Variant crect_var = ms->global_shader_parameter_get_internal(contact_rect_name);
+			const Vector4 crect = crect_var.get_type() == Variant::VECTOR4 ? Vector4(crect_var) : Vector4();
+			RID contact_tex;
+			const Variant ctex_var = ms->global_shader_parameter_get_internal(contact_map_name);
+			if (ctex_var.get_type() == Variant::RID) {
+				contact_tex = ctex_var;
+			} else if (ctex_var.get_type() == Variant::OBJECT) {
+				Object *t = ctex_var;
+				if (t) {
+					contact_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID contact_rd = contact_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(contact_tex) : RID();
+			const bool has_contact = has_weather && contact_rd.is_valid() && crect.z > 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_MAP] = has_contact ? float(bindless_block->add_texture(contact_rd)) : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_X] = crect.x;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_Z] = crect.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_SIZE] = has_contact ? crect.z : 0.0f;
 		}
 		// GroundSurface3D's deform map for its BaseMaterial3D patch (turned-ground tint).
 		{

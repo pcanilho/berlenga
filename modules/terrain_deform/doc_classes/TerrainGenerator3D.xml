@@ -178,6 +178,18 @@
 				Time the last [method generate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_last_glacial_residual" qualifiers="const">
+			<return type="float" />
+			<description>
+				The steady-state imbalance (m of ice a year) the last glaciation's last ice solve left: the largest over all but the worst 0.2% of the ice nodes.
+			</description>
+		</method>
+		<method name="get_last_glacial_steps" qualifiers="const">
+			<return type="int" />
+			<description>
+				Multigrid cycles and sweeps the last glaciation's converged ice solves took in all ([member glacial_converged]); 0 without it.
+			</description>
+		</method>
 		<method name="get_last_preview_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -531,6 +543,9 @@
 		</member>
 		<member name="generate_button" type="Callable" setter="" getter="get_bake_button" default="Callable()">
 			The inspector's Generate button: runs [method bake].
+		</member>
+		<member name="glacial_converged" type="bool" setter="set_glacial_converged" getter="is_glacial_converged" default="false">
+			If [code]true[/code], the last glaciation's steady-ice solves run until the ice balances its mass to within 0.5 m a year, instead of a fixed count of pseudo steps that stop before the ice settles: nonlinear projected Gauss-Seidel with multigrid cycles, and ice thicknesses at the cell faces that conserve mass over steep beds (Jarosch, Schoof and Anslow 2013). Each solve stops after 300 cycles: next to a trench the erosion has cut deep under a cliff the ice settles slowly, and there it is left close to balance rather than exactly balanced (on the hanging valley bench, 29 m a year at the worst 0.2% of the ice nodes, against well over 1000 m a year without this). Earlier ice ages keep the quick steps. The glacial terrain changes a little and the glacial stage takes several times longer.
 		</member>
 		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] regenerated from a [HeightMapShape3D] ground after the write. The [member deformer]'s ground mesh is used when empty.

@@ -155,6 +155,7 @@ ShaderTypes::ShaderTypes() {
 	// opacity map, skips its own layers in the shadow map.
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["DIRECTIONAL_SHADOW_OFFSET"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["POSITIONAL_SHADOW_OFFSET"] = ShaderLanguage::TYPE_FLOAT;
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SUN_SHADOW"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["FRAGCOORD"] = constt(ShaderLanguage::TYPE_VEC4);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["FRONT_FACING"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["NORMAL"] = ShaderLanguage::TYPE_VEC3;
@@ -318,6 +319,17 @@ ShaderTypes::ShaderTypes() {
 		func.return_type = ShaderLanguage::TYPE_VEC3;
 		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["sun_visibility"] = func;
 		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["sun_visibility"] = func;
+	}
+
+	{
+		// The first directional light's direction (toward the light, world space), for a surface that shadows
+		// itself per pixel (SUN_SHADOW). Zero where there is no directional light or the renderer traces its
+		// own shadows (the path tracer), so a shader can skip its march there.
+		ShaderLanguage::StageFunctionInfo func;
+		func.skip_function = "vertex";
+		func.return_type = ShaderLanguage::TYPE_VEC3;
+		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["sun_direction"] = func;
+		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["sun_direction"] = func;
 	}
 
 	// spatial render modes

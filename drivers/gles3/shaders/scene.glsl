@@ -1521,6 +1521,11 @@ vec3 sun_visibility(vec3 p_world) {
 	return vec3(1.0);
 }
 
+// sun_direction(): zero here, so a per-pixel shadow march (SUN_SHADOW) is skipped.
+vec3 sun_direction() {
+	return vec3(0.0);
+}
+
 #GLOBALS
 
 /* clang-format on */
@@ -2324,6 +2329,7 @@ void main() {
 #endif //LIGHT_VERTEX_USED
 	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET (Forward+ only)
 	float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET (Forward+ and Mobile only)
+	float sun_shadow = 1.0; // SUN_SHADOW (Forward+ and Mobile only)
 
 	highp mat3 model_normal_matrix;
 	if (bool(model_flags & uint(FLAGS_NON_UNIFORM_SCALE))) {

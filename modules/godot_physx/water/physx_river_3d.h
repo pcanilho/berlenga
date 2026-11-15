@@ -52,6 +52,10 @@ class Texture2DRD;
 // carried downstream. The surface is a mesh of its own (the path tracer sees
 // it as a water medium), and sample_height() / sample_flow() give buoyancy
 // the same river.
+// The river surface's shader (per vertex: UV2 flow, COLOR.r (depth + 1) / 4, COLOR.g white water, COLOR.b bank
+// fade); PhysXLiveWater3D draws with it too.
+const String &physx_river_water_shader_src();
+
 class PhysXRiver3D : public Path3D {
 	GDCLASS(PhysXRiver3D, Path3D);
 

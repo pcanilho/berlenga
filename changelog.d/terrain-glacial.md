@@ -9,3 +9,6 @@
 - TerrainGenerator3D `guide_preview`: a coarse run (`guide_preview_scale` times the cell size) a moment after a guide is moved or changed, so drawing guides in the editor shows their effect without a full run.
 - TerrainGenerator3D touch-ups: a TerrainBrush3D under the generator is applied to the generated ground and the water solved again (`apply_touch_ups()`), so a raised dam backs up a lake and a dug hollow holds a pond; moving a brush re-applies it a moment later.
 - TerrainMaterial3D `far_start_from_vegetation`: the far blend ends where a streaming VegetationField3D's placed plants end.
+- TerrainMaterial3D `cliff_self_shadow`: ledges of Landscape3D `cliff_relief` shadow each other per pixel in raster (a short march toward the sun through the same relief); spatial shaders gain `sun_direction()` and the fragment output `SUN_SHADOW`.
+- TerrainGenerator3D `glacial_converged`: the last glaciation solves its steady ice to near balance (multigrid, mass-conserving face thickness over steep beds) instead of fixed pseudo steps; off by default.
+- TerrainGenerator3D glacial erosion: the supercooling stop measures the ice surface slope along the flow, so glaciers no longer cut one-cell slots hundreds of metres deep at the foot of cliffs.

@@ -2485,3 +2485,149 @@ water shader (clear water, shadows, caustics, foam where it runs fast or falls),
 tracer through vertex capture. A CPU readback gives `sample_height()` and `sample_flow()` for
 buoyancy. Later, the same tiles stream over a whole world (tile manager, LOD, sleeping tiles) as
 "The full live version" lays out.
+
+### Built (15 Nov): `PhysXLiveWater3D`, placed live areas
+
+- A Node3D holding a `size` grid of `cell_size` cells (default 64 x 64 at 0.5 m). Ground comes from
+  physics ray casts against static bodies on `ground_collision_mask`; cells with no ground drain.
+  `update_ground()` re-reads it and keeps the water, so a wall that breaks lets the water through.
+- Solver: the virtual pipe model on the CPU (Mei, Decaudin and Hu 2007), `friction` damping the
+  fluxes, CFL substeps (at most 16 a tick), `open_edges` letting water leave at the border.
+  Volume is conserved exactly: a 1.5 m^3/s spring matches the stored plus lost volume to the litre.
+- Water in: `fill_rect` + `fill_height` at start, `sources` (x, y, z, m^3/s), `add_water()`, rain in
+  mm/h (or the WeatherMap3D rate with `rain_from_weather`), `infiltration_rate` soaking it away.
+- Surface: a grid mesh with the river shader (shadows, clear water, reflections), depth and foam
+  per vertex, velocity in UV2 so foam and normals follow the flow. Foam appears where the water runs
+  faster than `foam_speed` and supercritically (Froude above 1.5). Dry vertices sit just under the
+  ground, so wet/dry edges move with the water.
+- Queries for gameplay and buoyancy: `sample_depth()`, `sample_height()`, `sample_flow()`,
+  `get_total_volume()`, `get_volume_out()`, `get_cost_ms()`.
+- Cost: about 3 ms a tick for 160 x 160 cells on the cloud CPU (peaks near 11 ms in a dam break).
+- Bench: `docs/bench/live_water` with `--scene=spring|dam|rain`, `--view=overview|low`, `--break=s`.
+- Not yet: GPU solver, depth over 3 m shading (the river depth encoding), muddy water colour,
+  streaming over a whole world (step c, only if wanted).
+
+### Built (15 Nov): wet and dry fronts in the live window (step b)
+
+The live window (rivers, lakes and sea round the camera) now lets its water run up onto dry ground
+and drain back, after Chentanez and Müller 2010 section 5:
+- Ground up to 1 m above the still water (`RUNUP_BAND` in water_ripple.glsl) is simulated too; a dry
+  cell's height is its ground. Before, only cells under still water were simulated and a cell never
+  emptied below 2 cm, so a wake or splash stopped dead at the still waterline.
+- A face carries water only out of a cell that holds some (upwind depth), at most a quarter of it
+  per tick, so no cell goes below its ground; a face between a dry cell and water lower than its
+  ground carries no velocity.
+- Dry cells render as before (the neighbouring water continued under the ground), so static
+  shorelines look the same. River bank vertices now take the live height (the ribbon's margin), and
+  the river hands the window its signed depth (banks and rocks keep their real height; zero made
+  them flood as flat white blocks).
+- Bench: water_surface `--view=runup --splash=6,4 --node=wind_speed:1` (mounds dropped near the
+  shore every 2 s run up the sand and drain back within about 2 s).
+
+## Wet where water has been (15 Nov, FluidNinja parity step 4a, research)
+
+Paulo's ask (FluidNinja parity): ground, rocks and props stay dark and glossy where water ran over
+them, then dry out: a wave's reach on the sand, a flood's high-water line, splashes on a rock, a
+character's footprints out of a stream. What exists: `WeatherMap3D` wetness (rain film and puddles,
+material-wetness.md) in 32 m cells over 4 km, read by BaseMaterial3D Wetness, terrain, grass, plants
+and hair, raster and path traced. The sea draws its own wet sand behind the swash. Nothing records
+contact with water.
+
+**How others do it.** The film-industry "wet map" (Houdini wetmap, Thinkbox Stoke's wetmap field,
+RealFlow collider wet maps): per texel, wetness = max(wetness, contact) each step, then an
+exponential decay toward dry. FluidNinja LIVE 2 does the same on a render target round the player,
+written by its fluid's density, faded over time, read by the landscape and props. Fluid Flux reads
+its simulation depth for the shore's wetness. Drying speed in reality depends on air temperature,
+humidity and wind (evaporation); sand dries in minutes, rock in tens of minutes.
+
+**Plan.**
+- `WeatherMap3D` gains a contact wetness layer: a square of fine texels (default 512 over 64 m,
+  12.5 cm) that follows the camera, published as global `weather_contact_map` + `weather_contact_rect`.
+  Texel = max(texel, contact), decaying with a drying time from the weather (slower while it rains or
+  in cold, still air; `contact_dry_time` at 20 C as the base).
+- Writers: `add_contact_wetness(pos, radius, amount)` for scripts and bodies, `PhysXLiveWater3D`
+  (its wet cells each tick), the live window of seas, lakes and rivers (wet cells, done on the GPU
+  by the ripple pass), and spray/splash particles landing.
+- Readers: the existing `weather_wetness()` helpers take max(weather, contact): BaseMaterial3D,
+  TerrainMaterial3D, grass, plants; the path tracer the same through three new rt_params.
+- Cost: one more texture read where wetness is already read; a 512^2 R8 texture update a frame.
+
+### Built (15 Nov): contact wetness
+
+- `WeatherMap3D` `contact_wetness_*` (on by default; 512 texels over 64 m round the camera, R8),
+  globals `weather_contact_map` / `weather_contact_rect`, `add_contact_wetness()`,
+  `add_contact_wetness_grid()`, `get_contact_wetness_at()`, `get_contact_drying_time()`.
+- Drying: `contact_wetness_dry_time` (600 s) at 20 C, half humidity, 2 m/s, scaled by the vapour
+  deficit (Magnus) and Penman's wind function; none while it rains. Grids stamp bilinearly, so
+  0.5 m cells leave soft edges.
+- Readers: BaseMaterial3D and TerrainMaterial3D (shared `weather_wetness_at`), GrassField3D, the
+  path tracer (rt_params 64 to 67, RT_PARAM_COUNT 68). Plants and hair still read the rain only.
+- Writer: `PhysXLiveWater3D` stamps its wet cells each tick. Sea, lake and river live windows not yet.
+- Bench: live_water `--wet --scene=spring --stop=300 --frames=720` (the gully stays dark after the
+  spring stops and the water soaks away; `--dry=8` shows it dry). Raster and path traced match.
+
+## Live water over the whole world (15 Nov, FluidNinja parity step 3c)
+
+Paulo picked "both, streaming first". The plan in "The full live version" (sparse tiles, level of
+detail, streaming) asks for a tile manager round the solver. How others do it:
+- Fluid Flux (Unreal) runs its shallow-water simulation in a "simulation domain" that follows the
+  player, with the state outside it baked or frozen; its "coastline" and "river" setups keep a
+  static base state the live domain starts from.
+- Clipmaps for terrain and the toroidal update of snow and wetness maps (as our WeatherMap3D cells
+  and SnowCover3D do): a camera-centred grid shifted in whole cells, keeping what overlaps.
+- Sparse tiles with sleep/wake (Bridson and Müller-Fischer's sparse grids; Chentanez and Müller
+  2011 "Real-time Eulerian water simulation using a restricted tall cell grid" freezes inactive
+  regions): only tiles with water are kept; inactive ones are not stepped.
+
+**Built.** `PhysXLiveWater3D.streaming`: the area becomes a window of world-aligned cells that
+follows the camera (or `stream_follow`) in steps of an eighth of its size; the node moves itself.
+- Cells leaving the window fall asleep in tiles of 32 x 32 cells (ground and depth, NAN ground =
+  not measured): kept, drawn with the same surface (one mesh per tile, with a row and column from
+  the next tiles so they meet), not stepped. Cells coming in wake from their tile with their water at
+  rest, or have their ground measured (one ray each).
+- The edge is no wall: outside it the pipes see the sleeping water or dry ground just beyond, and
+  water that flows over it is added to that sleeping cell (so it piles only until level with the
+  water inside). Volume is kept: 30 m^3 in, 30.0 awake plus asleep after walking 100 m away and back.
+- Tiles with no water are dropped; `max_sleeping_tiles` (4096, about 32 MB) caps memory, past it
+  water leaving the window is counted lost. Sources are world positions while streaming and wait
+  while outside the window. Rain and soaking in only act inside it.
+- Cost: as a placed area of the same size (about 1.2 ms a tick for 96 x 96 cells on the cloud CPU),
+  plus one ray per new cell when the window steps (a strip of an eighth of the window).
+- Known limits: water outside the window is still (a stream cut by the window's edge stops there
+  and a pond forms at the edge until the window comes); no level of detail yet (far water is drawn,
+  not simulated); not saved with the game.
+- Bench: live_water `--scene=stream` (a 240 m hillside; the marker walks 100 m away and back).
+
+## Bodies pushing water (15 Nov, FluidNinja parity step 4b)
+
+Paulo's ask: legs, boats and props moving through any water push it aside: a heap at the front, a
+hollow and a wake behind, the level standing up against a leg. How others do it:
+- FluidNinja LIVE: "interaction" spheres placed on a character's bones (and on props) are written
+  into the fluid each frame as density and velocity sources.
+- Crest (Unity ocean): a `SphereWaterInteraction` component per limb or hull section, a set of
+  spheres that push the dynamic wave layer in proportion to their speed and how deep they sit.
+- Height-field solvers with bodies: Chentanez and Müller 2010 ("Real-time simulation of large
+  bodies of water with small scale details", section 6) and Thürey et al. 2007 put the body's
+  displaced height into the column's pressure head: water flows out of the space a body takes and
+  heaps round it, volume kept by construction.
+
+**Built.** `PhysXWaterPusher3D`, a node under the body (or `target`):
+- Its spheres come from a `Skeleton3D` (spheres of `bone_radius` along each bone) or from the
+  body's `CollisionShape3D` children (sphere; a row along a capsule or cylinder; a grid through a
+  box; others their bounds). `max_spheres` per water (16, at most 48) of those under the surface.
+- Every live water, sea and river in the tree gets them (rescanned every 2 s). Live water takes
+  them as displacement (`PhysXLiveWater3D.submit_sphere`): per cell, the sphere's height under the
+  surface is added to the pipe head, so water flows out of the body's space; a sphere thinner than a
+  cell spreads its submerged volume over the four nearest cells, so a leg 24 cm across still moves
+  water on 50 cm cells. The drawn surface and `sample_height` include it (the level stands round a
+  leg rather than dipping into it). Sea and rivers take the spheres in their ripple layer (as
+  buoyant bodies already do), pushed harder near the surface and when moving
+  (`rest_strength` at rest, full at `reference_speed`).
+- Result (live_water `--scene=wade`, legs walking 1.5 m/s through a 0.6 m pond): volume kept
+  exactly (227.11 m^3 all run); on 25 cm cells the surface 0.4 m ahead of the legs stands 10 cm above
+  the water beside them and 5 cm below behind, with a white wake; on 50 cm cells 1.5 cm and the wake
+  is too fine to draw. No measurable cost (a few spheres in a solver step of about 3 ms).
+- Known limits: the surface is drawn through the body's space, so an open hull would show water
+  inside it (no mask yet); speed comes from the body's motion between frames, not its rotation.
+- Benches: live_water `--scene=wade [--no-pusher] [--view=wade_close]`; water_surface `--wader
+  [--wader-nopush] --view=wader`.

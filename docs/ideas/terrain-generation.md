@@ -1482,6 +1482,27 @@ What else is out there, and what is worth taking:
   steep beds, after which the obstacle problem is well posed there and Newton or multigrid can converge. That is the
   next step for the solver (Paulo picked: other fixes first, the solver last). Work in progress, harness and dumped
   states: /mnt/project-files/fork/terrain/ice-solver/.
+  MUSCL tried (15 Nov evening): with superbee, as in Jarosch et al., and with van Leer, the projected Gauss-Seidel and
+  the cycles run away on two of five states (the compressive limiters switch between sweeps); defect correction
+  (upwind cycles against the MUSCL defect, Koren 1988) stalls. With the minmod limiter and plain (not over-relaxed)
+  sweeps every one of the 31 captured states settles to 0.5 m/yr, in 0.5 to 10 s (upwind: 0.2 to 3.5 s). In the
+  hanging valley run, converging the last glaciation this way takes the glacial stage from 9 to 87 s; its ice covers
+  6.9 km2 against 5.7 km2 today, and the 12.8 km2 the upwind scheme settled to was mostly ice that scheme invents over
+  steep beds. Maximum erosion stays as today (563 against 583 m). Shipped as `glacial_converged` (Paulo: off by
+  default). Limit: inside a run the solves on the last glaciation's thinner ice stop at the 300-cycle cap. The worst
+  nodes sit in a one-cell trench the erosion cut 700 m under a cliff, whose huge imbalance slows its neighbours; at
+  1000 cycles the run takes 248 s, leaves 5.6 m/yr and gives 7.4 km2 of ice, so the 300-cycle result (29 m/yr) is
+  close to, not at, the steady state. Next if wanted: keep the erosion from cutting single-cell trenches, or treat
+  such nodes as fixed in the solve.
+- One-cell trenches under cliffs (15 Nov, a bug the converged solver showed): the erosion cut a slot one ice cell
+  wide and up to 700 m deep along the foot of the trough wall below the hanging valley (beds of -314 m between walls
+  at -186 and 444 m). The supercooling stop (Alley et al. 2003; Cook and Swift 2012: no quarrying where the bed rises
+  along the flow faster than 1.5 times the ice surface slope) measured the surface slope with a centred difference,
+  and at a cliff's foot that difference spans the cliff top: the slot's ice, whose surface is flat, was taken to
+  slope at 3.3 (73 degrees) away from the cliff, so a 72 m rise of the bed ahead never stopped the quarrying and the
+  slot deepened with every step (an overdeepening that the threshold exists to end). Fix: the test now follows the
+  ice's own flux direction and compares the bed's rise with the surface's drop over the cell ahead (one-sided, as
+  the threshold is defined along the flow). Elsewhere, on smooth ice, the two measures agree.
 - Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
   droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
   simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;
@@ -1502,6 +1523,26 @@ Moreton 2001; Nießner et al. 2016), so vertices gather along the lips and the j
 reads the edge's two ends only, so neighbouring chunks agree and nothing cracks. Cost on the cliff view: 11.3 to 13.3
 million primitives (+18%). Making every face edge half a metre long instead (the first try) quadrupled the faces and
 ran the cloud PT out of memory.
+
+Raster ledge self-shadows (Paulo picked "Yes, off by default", 15 Nov): the shadow map holds the ledges only where the
+finest level displaces them, and at cascade texels of 0.3 to 1 m with their bias a half-metre ledge casts a blur or
+nothing past a few tens of metres, while the per-pixel normal still draws the ledge, lit as if nothing stood above it.
+Established ways: a screen-space contact shadow march (Unreal's contact shadows, HDRP's, Bend Studio's screen-space
+shadows, Aldridge 2023) reads the depth buffer, which holds the vertices, not the per-pixel relief; horizon mapping (Max
+1988; Sloan and Cohen 2000) bakes each texel's horizon from a tiled height map; relief mapping's shadow ray (Policarpo,
+Oliveira and Comba 2005; Tatarchuk 2006, parallax occlusion mapping with soft shadows) marches the light's ray
+through the height field per pixel. Our relief is an analytic function of the undisplaced point, so the third fits
+without a texture: TerrainMaterial3D `cliff_self_shadow` (off by default) marches twelve jittered steps toward the sun
+(denser near the pixel, as far as the relief's full range needs at the sun's rise over the face, at most 16 m),
+finds each sample's foot on the face's base plane and compares its distance out of the face with the relief there,
+and softens over the sun's disc or the pixel, whichever is wider. The engine gained two spatial built-ins for it:
+`sun_direction()` (the first directional light's direction in world space; zero under the path tracer, which traces
+the displaced faces' own shadows, and in Compatibility) and the fragment output `SUN_SHADOW` (multiplies that
+light's shadow; Forward+ and Mobile). The march leaves out the relief's finest noise (its shadows are smaller than
+the steps) and runs only on cliff pixels that face the sun where the relief is wider than a pixel. Measured on the
+bench's cliff views: the gain is small (near the camera the shadow map already draws most ledge shadows; the march
+adds thin lines under small ledges; farther faces carry no relief yet), so it stays off by default (Paulo: ship it,
+off). It grows in value once far faces get shader relief.
 
 ## Sources
 

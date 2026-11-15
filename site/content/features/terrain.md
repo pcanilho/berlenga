@@ -66,7 +66,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
 
-- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain.
+- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged` (off by default), the ice settles to a steady state before it carves, conserving mass over cliffs.
 - **Valley fill** (`outwash_age`): sediment left after the ice fills glacial troughs to flat floors, while cirque lakes stay open.
 - **Moraines** (`moraine_age`, years, 0 = off): debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.
 - **Ice-worn rock** (`ice_worn_detail`): faces toward the old ice flow are smoothed, faces away are stepped, with striations.
@@ -139,7 +139,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Rock detail** (`rock_detail_enabled`, off by default): steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.
 
-- **Cliff relief** (Landscape3D `cliff_relief`, metres, off by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too.
+- **Cliff relief** (Landscape3D `cliff_relief`, metres, off by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`, off by default).
 
   ![A cliff face in raking sun, smooth and with cliff relief, raster](media/terrain-cliff-relief.jpg)
 

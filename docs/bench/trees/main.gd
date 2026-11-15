@@ -17,6 +17,7 @@ extends Node3D
 #   --view=fork       where the first limbs leave the first tree's stem (junctions)
 #   --view=leaf       the crop view zoomed in to single leaves
 #   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
+#   --view=lichen     close on the first tree's lichen strands (env LV vertex, LDIST metres; trees.md 5h)
 #   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
 #   --litter          leaf litter on the ground round the first tree (roots sink into it)
 #   --sun=EL,AZ       sun elevation and azimuth in degrees (default 35,35)
@@ -409,6 +410,21 @@ func _build_scene() -> void:
 			cam.look_at(at + Vector3(0, 0.04, 0))
 			print("fungi clusters ", fp.size() / 8, " kind ", fp[k * 8 + 7])
 			cam.fov = 40.0
+	elif view == "lichen":
+		# Close on the first tree's lichen strands (trees.md 5h): the fungi surface's vertex
+		# number LV (env, default the middle one), from LDIST (default 0.35 m) to its south-east.
+		var lm: Mesh = first_info.mesh
+		var at := Vector3(xs[0], 3, 0)
+		for si in lm.get_surface_count():
+			if lm.surface_get_name(si) == "fungi":
+				var vv: PackedVector3Array = lm.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+				var li := int(OS.get_environment("LV")) if OS.has_environment("LV") else vv.size() / 2
+				at = vv[clampi(li, 0, vv.size() - 1)] + Vector3(xs[0], 0, 0)
+				print("lichen surface vertices ", vv.size())
+		var ld := float(OS.get_environment("LDIST")) if OS.has_environment("LDIST") else 0.35
+		cam.position = at + Vector3(0.6, 0.25, 0.75).normalized() * ld
+		cam.look_at(at)
+		cam.fov = 40.0
 	elif view == "log":
 		# The last plant in the row (the log with --decays) from 3.5 m, slightly above.
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)

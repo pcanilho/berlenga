@@ -137,6 +137,9 @@ private:
 	real_t glacial_final = 100000.0; // years of the last glaciation, after the rivers
 	real_t glacial_erosion = 1.0; // multiplier on K_g of Herman et al. 2015
 	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
+	bool glacial_converged = false; // the last glaciation solves its steady ice to convergence instead of fixed pseudo steps
+	real_t last_glacial_residual = 0.0;
+	int last_glacial_outer = 0;
 	real_t glacial_rock_variation = 0.0; // spread of rock quality under the ice (log of the erosion multiplier); 0 even
 	real_t glacial_rock_scale = 500.0; // m, wavelength of that variation
 	real_t glacial_inflow_balance = 0.0; // m/yr of ice per m2 of each inflow's off-map catchment (0: water only)
@@ -567,6 +570,10 @@ public:
 	bool is_ice_worn_detail() const { return ice_worn_detail; }
 	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_sliding() const { return glacial_sliding; }
+	void set_glacial_converged(bool p_value) { glacial_converged = p_value; }
+	bool is_glacial_converged() const { return glacial_converged; }
+	real_t get_last_glacial_residual() const { return last_glacial_residual; }
+	int get_last_glacial_steps() const { return last_glacial_outer; }
 	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }
 	real_t get_last_glacial_ice_area() const { return last_glacial_ice_area; }
 	real_t get_last_glacial_msec() const { return last_glacial_msec; }

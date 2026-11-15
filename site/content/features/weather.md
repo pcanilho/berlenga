@@ -34,4 +34,5 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 
   *Wet surfaces: the sand darkens, puddles form and catch the sky.*
 
+- **Contact wetness** (`contact_wetness_enabled`): ground that running water crossed stays dark after it drains, then dries with the weather.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).

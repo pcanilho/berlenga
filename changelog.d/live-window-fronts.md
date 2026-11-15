@@ -1,0 +1,1 @@
+- Water: the live water near the camera runs up onto dry banks and beaches and drains back (wet and dry fronts), so splashes and wakes wash over the shore instead of stopping at the still waterline.

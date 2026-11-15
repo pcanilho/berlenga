@@ -340,6 +340,60 @@ vec3 tm_cl_normal(vec3 p, vec3 nb, float k, float e) {
 	return dot(nn, nn) > 1e-12 ? normalize(nn) : nb;
 }
 )";
+	if (cliff_self_shadow) {
+		// Ledge self-shadows (cliff_self_shadow): the shadow map holds the relief only at the finest level and
+		// too coarsely for a 0.5 m ledge past a few tens of metres, so a short march toward the sun through the
+		// same analytic relief, as relief mapping's shadow ray (Policarpo et al. 2005; Tatarchuk 2006, parallax
+		// occlusion mapping) but against the procedural offset instead of a height texture. A sample q is above
+		// the relief when its distance out along m (from the base plane through p) exceeds the offset at its
+		// foot. The finest noise term is left out of the march: its shadows are smaller than the steps.
+		c += R"(
+float tm_cl_offset_coarse(vec3 p) {
+	const float T = 3.0;
+	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0;
+	int bed = int(floor(yb / T));
+	float fy = yb - float(bed) * T;
+	float o0 = tm_cl_hash(bed, 11, 3) * 2.0 - 1.0;
+	float o1 = tm_cl_hash(bed + 1, 11, 3) * 2.0 - 1.0;
+	float ty = clamp((fy - (T - 1.5)) / 1.5, 0.0, 1.0);
+	float o = mix(o0, o1, ty * ty * (3.0 - 2.0 * ty));
+	float u = p.x * 0.8 + p.z * 0.6 + tm_cl_hash(bed, 5, 1) * 4.5;
+	int jb = int(floor(u / 4.5));
+	float fu = u - float(jb) * 4.5;
+	float j0 = tm_cl_hash(bed, jb, 9) - 0.5, j1 = tm_cl_hash(bed, jb + 1, 9) - 0.5;
+	float tu = clamp((fu - 3.0) / 1.5, 0.0, 1.0);
+	o += 1.2 * mix(j0, j1, tu * tu * (3.0 - 2.0 * tu));
+	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5);
+	return o;
+}
+// The sun's visibility over the relief at the undisplaced point p (landscape space): l toward the sun, e the pixel's
+// footprint, j a 0-1 jitter for the steps.
+float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
+	vec3 m = normalize(vec3(nb.x, 0.0, nb.z));
+	float mn = max(dot(m, nb), 0.3);
+	float rise = dot(l, nb) / mn; // metres out of the face per metre along the ray
+	if (rise <= 0.02) {
+		return 1.0; // the face itself turns from the sun: its lighting and the shadow map have it
+	}
+	vec3 s0 = p + m * (k * tm_cl_offset_coarse(p));
+	// Long enough to clear the relief's whole range (about 4 k) at that rise.
+	float t_max = clamp(4.0 * k / rise, 1.0, 16.0);
+	float vis = 1.0;
+	const int STEPS = 12;
+	for (int i = 0; i < STEPS; i++) {
+		float u = (float(i) + j) / float(STEPS);
+		float t = max(t_max * u * u, 2.0 * e);
+		vec3 q = s0 + l * t;
+		float s = dot(q - p, nb) / mn;
+		float d = s - k * tm_cl_offset_coarse(q - m * s);
+		// Soft over the sun's disc (0.53 degrees) or the pixel, whichever is wider.
+		float w = max(t * 0.0093, e);
+		vis = min(vis, smoothstep(-w, w, d + 0.5 * w));
+	}
+	return vis;
+}
+)";
+	}
 	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1.xyz;\n";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
@@ -636,7 +690,21 @@ void fragment() {
 		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n), tm_cl_p.w, max(0.15, cl_fp));
 		cl_n = normalize(mat3(MODEL_MATRIX) * cl_n);
 		sn = normalize(cl_n + dn);
+)";
+	if (cliff_self_shadow) {
+		// Where the relief is still wider than a pixel and the pixel faces the sun. sun_direction() is zero under
+		// the path tracer, which traces the displaced faces' own shadows.
+		c += R"(		vec3 cl_l = sun_direction();
+		float cl_k = tm_cl_p.w;
+		if (dot(cl_l, cl_l) > 0.5 && dot(sn, cl_l) > 0.0 && cl_k > 0.5 * cl_fp) {
+			vec3 cl_ll = normalize(inverse(mat3(MODEL_MATRIX)) * cl_l);
+			float cl_j = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+			float cl_v = tm_cl_shadow(tm_cl_p.xyz, normalize(tm_cl_n), cl_k, cl_ll, cl_fp, cl_j);
+			SUN_SHADOW = mix(1.0, cl_v, smoothstep(0.5 * cl_fp, cl_fp, cl_k));
+		}
+)";
 	}
+	c += R"(	}
 )";
 	if (detail) {
 		c += R"(	// The generator's erosion detail below the vertex spacing, faded out where a pixel covers it.
@@ -702,6 +770,9 @@ void fragment() {
 				float c1 = dot(tm_to / tm_to_len, grass_ground_sun.xy);
 				cover_lin *= max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
 			}
+			// The cover map holds the far colour at a 30 degree sun; this scales it to the sun's elevation, as the
+			// grass fields' own far colour does.
+			cover_lin *= grass_ground_far_scale.rgb;
 )";
 		}
 		c += R"(
@@ -901,6 +972,7 @@ MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
 MAT_SETTER(float, far_start, MAX(p_value, 0.0f))
 MAT_SETTER_CODE(bool, far_start_from_vegetation)
+MAT_SETTER_CODE(bool, cliff_self_shadow)
 MAT_SETTER(float, far_fade, MAX(p_value, 1.0f))
 
 void TerrainMaterial3D::set_sky_occlusion_enabled(bool p_enabled) {
@@ -960,6 +1032,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::FLOAT, far_start, get_far_start, PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m")
 	BIND_PROP(Variant::FLOAT, far_fade, get_far_fade, PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m")
 	BIND_PROP(Variant::BOOL, far_start_from_vegetation, is_far_start_from_vegetation, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, cliff_self_shadow, is_cliff_self_shadow, PROPERTY_HINT_NONE, "")
 #undef BIND_PROP
 
 	BIND_ENUM_CONSTANT(LAYER_ROCK);

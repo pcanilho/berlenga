@@ -610,6 +610,9 @@ void BaseMaterial3D::init_shaders() {
 		map_rect["type"] = "vec4";
 		map_rect["value"] = Vector4();
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its contact wetness (wet where water has been): a fine square round the camera.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -722,15 +725,29 @@ String BaseMaterial3D::get_wetness_functions_code(bool p_from_weather) {
 	if (p_from_weather) {
 		code += R"(global uniform sampler2D weather_state_map;
 global uniform vec4 weather_map_rect;
+global uniform sampler2D weather_contact_map;
+global uniform vec4 weather_contact_rect;
 
-// Ground wetness from the weather map (0 dry, 1 soaked); 0 where no weather map is set.
+// Wet where water has been (WeatherMap3D contact wetness, 0..1); 0 outside its square, easing out
+// over the square's outer tenth so its edge never shows.
+float weather_contact_wetness_at(vec3 p_world_pos) {
+	if (weather_contact_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (p_world_pos.xz - weather_contact_rect.xy) / weather_contact_rect.zw;
+	vec2 e = min(uv, 1.0 - uv);
+	float edge = smoothstep(0.0, 0.1, min(e.x, e.y));
+	return edge > 0.0 ? textureLod(weather_contact_map, uv, 0.0).r * edge : 0.0;
+}
+
+// Ground wetness from the weather map (0 dry, 1 soaked) and where water has been; 0 with no weather map.
 float weather_wetness_at(vec3 p_world_pos) {
 	if (weather_map_rect.z <= 0.0) {
 		return 0.0;
 	}
 	vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
-	return textureLod(weather_state_map, uv, 0.0).g;
+	return max(textureLod(weather_state_map, uv, 0.0).g, weather_contact_wetness_at(p_world_pos));
 }
 )";
 	}
