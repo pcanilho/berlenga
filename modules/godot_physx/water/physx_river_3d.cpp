@@ -426,6 +426,11 @@ constexpr float CASCADE_MIN_DROP = 0.15f; // m
 
 } // namespace
 
+// The river's surface shader, shared with PhysXLiveWater3D (same per-vertex layout).
+const String &physx_river_water_shader_src() {
+	return river_shader_src();
+}
+
 String PhysXRiver3D::get_fall_shader_code() {
 	return String(FALL_SHADER_SRC);
 }

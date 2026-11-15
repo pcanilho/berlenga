@@ -63,6 +63,7 @@ def get_doc_classes():
         "PhysXBoat3D",
         "PhysXWaterWake3D",
         "PhysXWaterSpray3D",
+        "PhysXLiveWater3D",
         "PhysXWaterMist3D",
         "PhysXWaterfalls3D",
     ]
