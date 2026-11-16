@@ -355,6 +355,7 @@ private:
 		WOUND_FROST,
 		WOUND_DEER,
 		WOUND_SQUIRREL,
+		WOUND_CHECK, // A drying check down a log (section 5o).
 	};
 	struct Wound {
 		WoundKind kind = WOUND_LIGHTNING;
@@ -378,6 +379,9 @@ private:
 	// stem and az round it, on a stem of radius p_r; p_only: one wound (-1 all).
 	Vector3 _wound_at(float p_s, float p_az, float p_r, int p_only = -1) const;
 	void _grow_resin(Builder &r_resin);
+	// Where a lying stem's features are, for plants that root at them (vegetation's honey
+	// fungus): peel edges and checks, 8 floats each (mesh meta "tree_deadwood_features").
+	PackedFloat32Array deadwood_features;
 	// Slots: the Climber kinds, then CLIMBER_MAX for ivy's adult leaves (trees.md 5i).
 	static Array _plant_climber_leaves(int p_slot);
 	static Array plant_climber_cache[CLIMBER_MAX + 1];
@@ -549,7 +553,7 @@ public:
 	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
-	float bark_wounds = 0.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
+	float bark_wounds = 1.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
 	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
