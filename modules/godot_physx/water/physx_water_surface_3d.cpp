@@ -3496,7 +3496,7 @@ void PhysXWaterSurface3D::set_crest_sheet_amount(int p_amount) {
 
 namespace {
 // Torn spray sheets (docs/ideas/water.md "Torn spray sheets"). UV = (along the crest 0..1, along the flight from the
-// leading edge 0 to the root 1); COLOR = (age / life, seed, root still feeding, 1).
+// leading edge 0 to the root 1); COLOR = (age / life, seed, span / 8 m, 1).
 const char *CREST_SHEET_SHADER_SRC = R"(
 shader_type spatial;
 #if defined(RT)
@@ -3523,37 +3523,47 @@ float s_noise(vec2 p) {
 void fragment() {
 	float age = COLOR.r;
 	vec2 o = vec2(COLOR.g * 173.0, COLOR.g * 59.0);
-	float x = UV.x - 0.5;
-	// Never a card: the sheet is a tongue whose width wanders along the flight and narrows to the leading edge,
-	// which frays into fingers (the rim tearing into ligaments).
-	float width = (0.3 + 0.7 * s_noise(vec2(UV.y * 3.0, 0.5) + o)) * mix(0.35, 1.0, smoothstep(0.0, 0.6, UV.y));
-	float side = 1.0 - smoothstep(width * 0.3, width * 0.5, abs(x) + 0.12 * (s_noise(vec2(UV.y * 9.0, x * 4.0) - o) - 0.5));
-	float fingers = s_noise(vec2(UV.x * 14.0, 0.0) + o.yx);
-	float lead = smoothstep(0.0, 0.25, UV.y - 0.35 * (1.0 - fingers) * (0.5 + age));
-	// Streaks along the flight and finer lumps riding them; holes open from the thin parts as the sheet ages, until
-	// only ligaments are left.
-	float streak = 0.6 * s_noise(vec2(UV.x * 11.0, UV.y * 1.5) + o) + 0.4 * s_noise(vec2(UV.x * 27.0, UV.y * 4.0) - o);
-	float lumps = s_noise(vec2(UV.x * 37.0, UV.y * 15.0) + o.yx);
-	float thick = streak * 0.8 + lumps * 0.2;
-	float tear = mix(0.25, 0.75, age);
-	// Soft: a veil of spray with denser streaks in it, not cut-out flakes.
-	float cover = side * lead * smoothstep(tear - 0.2, tear + 0.25, thick);
-	// Thin unbroken water near the root is see-through tinted water, the torn parts white spray.
-	float white = clamp(0.55 + age * 0.9 + (1.0 - UV.y) * 0.6, 0.0, 1.0);
-	vec3 col = mix(water_tint, sheet_color, white);
-	ALBEDO = col * (0.8 + 0.2 * lumps);
-	BACKLIGHT = col * 0.6;
-	ROUGHNESS = mix(0.15, 0.8, white);
+	float span_m = COLOR.b * 8.0; // metres along the crest
+	// A veil torn into threads that stream downwind: thin ridges across the sheet (about 5 to 15 cm apart), each
+	// running the length of the flight; v = 0 at the leading edge (flown longest), 1 at the root on the crest's lip.
+	float u = UV.x * span_m;
+	float v = UV.y;
+	float n1 = s_noise(vec2(u * 9.0, v * 1.2) + o);
+	float n2 = s_noise(vec2(u * 23.0, v * 2.5) - o);
+	float ridge = 1.0 - abs(n1 * 2.0 - 1.0);
+	float threads = smoothstep(0.55, 0.95, 0.65 * ridge + 0.35 * n2);
+	// Toward the tail the threads break up into beads and drops (Rayleigh-Plateau): dashes along each thread.
+	float beads = smoothstep(0.35, 0.65, s_noise(vec2(u * 23.0, v * 22.0) + o.yx * 1.7));
+	threads *= mix(1.0, beads, smoothstep(0.85, 0.2, v));
+	// Each thread ends at its own length: the tail frays out further as the sheet ages.
+	float reach = s_noise(vec2(u * 6.0, 3.7) + o.yx);
+	float tail = smoothstep(0.0, 0.18, v - (1.0 - reach) * mix(0.35, 0.8, age));
+	// At the lip a ragged fringe of foam (torn into bits, never a smooth panel), threads past it, and a faint mist
+	// of droplets left in patches toward the tail where they tore.
+	float n3 = s_noise(vec2(u * 14.0, v * 9.0) + o.yx);
+	float fringe = smoothstep(0.86, 0.98, v) * smoothstep(0.45, 0.75, n3) * (1.0 - age * 0.8);
+	float mist = 0.1 * (1.0 - v) * smoothstep(0.45, 0.8, s_noise(vec2(u * 4.0, v * 3.0 - age * 2.0) + o)) * (0.3 + age);
+	float body = max(threads * tail * mix(0.4, 1.0, v), fringe) + mist;
+	// No clean edge anywhere: the ends along the crest fray, the root melts into the crest, the front into the air.
+	float ends = smoothstep(0.0, 0.25, UV.x + 0.15 * (n2 - 0.5)) * smoothstep(0.0, 0.25, 1.0 - UV.x + 0.15 * (n1 - 0.5));
+	ends *= smoothstep(0.0, 0.1, v) * (1.0 - smoothstep(0.96, 1.0, v));
+	float cover = clamp(body, 0.0, 1.0) * ends;
+	// Fading out as it ends, and edge-on (a thin veil seen side-on is next to nothing).
+	cover *= 1.0 - smoothstep(0.7, 1.0, age);
+	cover *= smoothstep(0.05, 0.3, abs(dot(NORMAL, VIEW)));
+	// Brightest at the root, white spray; the unbroken film at the lip is tinted water.
+	vec3 col = mix(sheet_color, water_tint, 0.35 * smoothstep(0.9, 1.0, v) * (1.0 - age));
+	ALBEDO = col;
+	// Thin water and droplets glow with the light behind them.
+	BACKLIGHT = col * 0.9;
+	ROUGHNESS = 0.35;
 	SPECULAR = 0.5;
-	// Fading out as it ends, and edge-on (a thin sheet seen side-on is next to nothing, not a white line).
-	cover *= 1.0 - smoothstep(0.75, 1.0, age);
-	cover *= smoothstep(0.08, 0.35, abs(dot(NORMAL, VIEW)));
 #if defined(RT)
 	// Stochastic transparency (Enderton et al. 2010), as the falls' sheets: each texel is the sheet or nothing.
-	ALPHA = s_hash(floor(vec2(UV.x * 400.0, UV.y * 120.0)) + o) < cover * mix(0.35, 0.7, white) ? 1.0 : 0.0;
+	ALPHA = s_hash(floor(vec2(UV.x * 600.0, UV.y * 200.0)) + o) < cover * 0.85 ? 1.0 : 0.0;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
-	ALPHA = cover * mix(0.35, 0.7, white);
+	ALPHA = cover * 0.85;
 #endif
 }
 )";
@@ -3643,9 +3653,9 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 			const float turn = sheet_rng.random(-0.45f, 0.45f);
 			sh.throw_dir = Vector3(wd.x * Math::cos(turn) - wd.y * Math::sin(turn), 0.0f, wd.x * Math::sin(turn) + wd.y * Math::cos(turn));
 			sh.across = Vector3(-sh.throw_dir.z, 0.0f, sh.throw_dir.x);
-			sh.speed = sheet_rng.random(0.3f, 0.5f) * wind_speed;
-			sh.rise = sheet_rng.random(2.5f, 5.0f) * Math::lerp(0.8f, 1.2f, wind_f);
-			sh.span = sheet_rng.random(2.0f, 5.0f);
+			sh.speed = sheet_rng.random(0.4f, 0.7f) * wind_speed;
+			sh.rise = sheet_rng.random(3.0f, 6.0f) * Math::lerp(0.8f, 1.2f, wind_f);
+			sh.span = sheet_rng.random(2.5f, 6.0f);
 			sh.feed = sheet_rng.random(0.3f, 0.6f);
 			sh.life = sheet_rng.random(0.8f, 1.3f);
 			sh.seed = sheet_rng.randf();
@@ -3675,8 +3685,8 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 	}
 	// The mesh in the node's space (it may sit anywhere); the sheets are kept in the world.
 	const Transform3D to_local = get_global_transform().affine_inverse();
-	constexpr int ROWS = 12;
-	constexpr int COLS = 8;
+	constexpr int ROWS = 16;
+	constexpr int COLS = 10;
 	const float crest_speed = 0.35f * wind_speed; // the short breaking crests' phase speed, roughly
 	const float wind_near = 0.6f * wind_speed; // the wind a metre or two above the water, for the drag
 	const float drag_t = 0.6f;
@@ -3709,8 +3719,9 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 			for (int c = 0; c < COLS; c++) {
 				const float u = (float)c / (COLS - 1);
 				// Each column's throw differs a little: a ragged sheet that twists as it flies.
-				const float j1 = Math::sin(sh.seed * 61.0f + c * 1.7f + r * 0.6f);
-				const float j2 = Math::sin(sh.seed * 37.0f + c * 2.3f - r * 0.9f);
+				// Smooth along the crest and the same for every row (a twist per row crumpled the sheet into facets).
+				const float j1 = Math::sin(sh.seed * 61.0f + u * 3.1f);
+				const float j2 = Math::sin(sh.seed * 37.0f + u * 4.3f);
 				const float rise = sh.rise * (1.0f + 0.25f * j1);
 				const float speed = sh.speed * (1.0f + 0.15f * j2);
 				// Horizontal: u(t) = U + (u0 - U) e^(-t/T), integrated.
@@ -3721,7 +3732,7 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 				pos += sh.across * (sh.span * (u - 0.5f) * (1.0f + 0.8f * f));
 				const int idx = base + r * COLS + c;
 				vw[idx] = to_local.xform(pos);
-				cw[idx] = Color(sh.age / sh.life, sh.seed, sh.age < sh.feed ? 1.0f : 0.0f, 1.0f);
+				cw[idx] = Color(sh.age / sh.life, sh.seed, MIN(sh.span / 8.0f, 1.0f), 1.0f);
 				uw[idx] = Vector2(u, v);
 				if (first) {
 					box = AABB(vw[idx], Vector3());
