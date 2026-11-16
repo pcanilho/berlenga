@@ -173,6 +173,13 @@
 				The rays are cast on the next physics tick, one per ripple cell, so this costs that one tick more the larger [member grid_resolution] is; don't call it every tick. Needs [member seabed_from_floor].
 			</description>
 		</method>
+		<method name="sample_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				Water depth in meters at [param world_pos]'s XZ: the surface as [method sample_height] reads it, over the seabed [member seabed_from_floor] measured (or [member depth] without one). Zero or below on dry ground. Safe from the physics thread.
+			</description>
+		</method>
 		<method name="sample_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="world_pos" type="Vector3" />
@@ -188,6 +195,13 @@
 			<param index="1" name="wake" type="Object" />
 			<description>
 				The same as [method sample_height], but leaving out one [PhysXWaterWake3D]'s contribution (pass [code]null[/code] to leave out nothing). A boat that does its own buoyancy in a script should pass its own wake: otherwise it reads the dip and bow wave its hull pushes into the water and rides its own wake, sinking at the stern and pitching. Other boats' wakes are still included, so it still rocks on theirs. [PhysXBuoyancy3D] (and so [PhysXBoat3D]) already does this for a [PhysXWaterWake3D] that is another child of the same body.
+			</description>
+		</method>
+		<method name="sample_swash" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				The swash on the shore at [param world_pos]'s XZ: [code]x[/code] is the run-up film on the beach (meters of water over the ground above still water: the run-up's level less the ground's height there; 0 past where it reaches, and 0 below still water, where [method sample_depth] gives the depth), [code]y[/code] the wet sand (0 to 1: 1 under water and where the run-up reached, fading as it dries over [member wet_sand_dry_time]). Read back from the GPU every 8th water step (about 0.13 s behind); the first call turns that readback on, so it returns [code]Vector2(0, 0)[/code] until the first one lands, and outside the simulated square. Safe from the physics thread.
 			</description>
 		</method>
 		<method name="sample_vertical_speed" qualifiers="const">
@@ -410,6 +424,9 @@
 		</member>
 		<member name="swell" type="float" setter="set_swell" getter="get_swell" default="0.0">
 			With [constant WAVE_SPREADING_DONELAN_BANNER] or [constant WAVE_SPREADING_HASSELMANN], how much of the sea is swell from a distant storm, 0 to 1: Horvath's term, a [code]cos^2s(theta / 2)[/code] factor with [code]s = 16 tanh(wp / w) swell^2[/code], narrows the long waves to nearly parallel crests. 0 is a pure wind sea.
+		</member>
+		<member name="terrain_source" type="NodePath" setter="set_terrain_source" getter="get_terrain_source" default="NodePath(&quot;&quot;)">
+			A terrain with holes, such as a [TerrainGenerator3D]. Where a [member seabed_from_floor] ray falls through one of its holes (a cave mouth) and finds nothing, the terrain's own height ([code]get_height[/code]) closes the hole, so the sea never shows through an open hole above the waterline; a static floor under the hole (a sea cave's) counts as usual. The seabed is measured again when the terrain's [code]holes_changed[/code] signal names a rectangle over the simulated square.
 		</member>
 		<member name="underwater_enabled" type="bool" setter="set_underwater_enabled" getter="get_underwater_enabled" default="true">
 			The view from under the water, in raster: while the camera is under the surface (or within reach of the waves), a full screen pass fogs what lies under the water by the distance the light travels in it, with the medium of the path traced water ([code]pathtraced_absorption[/code], [code]pathtraced_scattering[/code] and [code]pathtraced_scattering_anisotropy[/code] on [member water_material]), lit by the first visible [DirectionalLight3D] refracted into the water and by the environment's sky. The image splits where the surface crosses the lens, and the surface seen from below shows the world above through Snell's window, refracted, and a mirror of the water past the critical angle (total internal reflection). Surfaces under the water lose the light the water above them absorbed. Off, or with the camera away from the water, nothing extra is drawn. The path tracer needs no setting: it starts the camera's rays in the water by itself (with [code]rendering/pathtracing/refraction[/code] on). Transparent objects under the water are not fogged in raster.

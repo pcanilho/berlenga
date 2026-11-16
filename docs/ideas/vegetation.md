@@ -239,6 +239,159 @@ The cloud can build and run all of it on Lavapipe; GPU timings and PT/RR crops w
 - **Plants that give way.** Grass tramples; ferns, bracken and nettles do not. Bend them from the
   same trample field.
 
+## Next round candidates (16 Nov)
+
+Put to Paulo as a card; nothing built yet.
+
+- **Waterside and wet-stone plants (recommended).** Stream stones sort into bands by how often
+  they are under water: always submerged carries Fontinalis antipyretica and Platyhypnidium
+  riparioides, the splash and flood band Racomitrium aciculare and Hygrohypnum, the dry tops above
+  ordinary moss (Scarlett and O'Hare 2006, in-stream bryophytes of English and Welsh rivers; Glime,
+  "Bryophyte Ecology", vol. 1 ch. 11). Waterfall spray zones hold thallose liverworts (Conocephalum,
+  Pellia, Marchantia) and filmy ferns on constantly wet rock (Ratcliffe 1968, Atlantic bryophytes).
+  Banks carry marsh marigold at spring lines, meadowsweet in tall-herb fen, butterbur on gravel
+  bars (Rodwell, "British Plant Communities" vol. 2 and 3: M27 Filipendula-Angelica, S-gravel
+  communities). Placement reads what we have: the data map's `wetness`, `water_depth`,
+  `water_distance`, and per stone the water's height and flow (PhysXRiver3D `sample_height`,
+  `sample_depth`, `sample_flow`; PhysXWaterSurface3D `is_wet`; WeatherMap3D
+  `get_contact_wetness_at` for spray). Stone tops gain a submergence term next to
+  `stone_top_damp`. New presets: aquatic moss streamers (trailing in the flow direction), thallose
+  liverwort rosettes, marsh marigold, meadowsweet, butterbur.
+- **Dune grass that traps sand.** Marram thrives on burial and builds the foredune by slowing
+  saltating sand (Maun 1998, "Adaptations of plants to burial in coastal sand dunes"; Hesp 2002,
+  foredunes and blowouts). With the sand system's streamers and `blown` cells, marram tufts would
+  lower the wind's take and deposit behind themselves (shadow dunes, nebkha). Lyme grass, sea holly,
+  sea rocket. Needs the sand thread's deposit API.
+- **Bog and moor plants.** Sphagnum hummock and hollow microtopography (Rydin and Jeglum, "The
+  Biology of Peatlands"), cotton grass, bog asphodel, sundew, deer grass, in the wet hollows of
+  the upland valley beside heather and bilberry.
+- **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
+  instead of the colour bake; off by default until the PC measures cost.
+
+## Far plants as volume (built 16 Nov, off by default)
+
+Picked by Paulo on 16 Nov (fourth of the round). Sources: Unreal 5.7's Nanite Foliage, which
+voxelises distant foliage so a forest keeps its mass instead of thinning to cards (Epic docs
+"Nanite Foliage"; 80.lv on the voxel representation); Loubet and Neyret (2017), "Hybrid
+mesh-volume LoDs for all-scale pre-filtering of complex 3D assets" (geometry near, volume far);
+Neyret (1998) volumetric textures; Bako et al. (2023), "Deep Appearance Prefiltering".
+
+- Before: a species past its `visibility_range` leaves only the far colour on the ground (the
+  cover bake), so bracken, heather and tall herbs flatten into paint past 15 to 30 m, and the
+  silhouette of a fern bank against the slope is gone.
+- `VegetationField3D.far_volume` (off), `far_volume_range` (150 m), `far_volume_cell` (0.3 m):
+  per tile and species, each placed plant's mesh bounds fill an ellipsoid of leaf cover over its
+  foot; covers add on the voxel grid and a voxel is solid with probability 1 - exp(-cover)
+  (Beer-Lambert, a fixed hash: a thin stand stays porous and never flickers); the solid voxels'
+  faces open to the air make the mesh, corners jittered by a hash of their position (shared by all
+  faces there, so the shell stays closed) so it reads lumpy, not boxy; colour is the species' far
+  colour, darker three voxels down into the stand. Plain opaque geometry with vertex colour: the
+  path tracer sees exactly what raster draws. It crossfades in from 0.85 of the range (dither,
+  fade Self) as the plant shader thins the plants.
+- Bench: vegetation `--far-volume[=off]`, bracken and heather (25 and 18 m ranges) down the
+  256 m valley from eye height: 127 tile shells, 283k triangles for the whole map.
+- Not yet: coarser cells with distance (a second shell at 2x cell past half the range would
+  roughly quarter the triangles); per-voxel colour from the plants' real colours (it uses the
+  single far colour); shells in the cover map's far band. PC: GPU cost against the far colour
+  alone, and a denoised PT pair, before it can default on.
+
+## Dune grass that traps sand (built 16 Nov)
+
+Picked by Paulo on 16 Nov (third of the round). Sources: Maun (1998), "Adaptations of plants to
+burial in coastal sand dunes"; Hesp (2002), foredunes and blowouts; Huiskes (1979), Biological
+Flora of the British Isles: Ammophila arenaria; Raupach (1992, 1993) drag partition and Wolfe and
+Nickling (1996) for the frontal area index; Rodwell vol. 5 (SD4 to SD8) for the sets; Stace (2019).
+
+- The sand side is the ground module's (docs/ideas/sand.md, "Dune grass"; 96500d57): a
+  GroundSurface3D lists shelter nodes in `wind_shelters` and asks each
+  `sample_lateral_cover(position)` for lambda, the frontal area per square metre of ground.
+  VegetationField3D answers it: each placed plant's frontal area (`PlantSpecies.wind_frontal_area`
+  times its scale squared; negative, the default, takes 0.4 of its first mesh's height times its
+  mean width, a grass tuft's optical porosity being about 0.6) spread bilinearly over a 1 m grid,
+  rebuilt only when plants change (populate, streamed tiles in or out), read bilinearly, at most
+  0.5. Streamed and populated fields give the same answer (bench check "sand shelter").
+- Three presets, real geometry (plant_dunes.cpp): `PRESET_MARRAM` (45 to 70 rolled, stiff leaves,
+  a third dead and flopped; dense pale panicles with spikelets breaking their outline),
+  `PRESET_LYME_GRASS` (broad flat glaucous leaves, stout spikes), `PRESET_SEA_HOLLY` (spiny
+  holly-like blades: `_add_disc_leaf` gained a saw depth, five to seven sharp points between
+  rounded notches; a low-branching stiff bush, blue heads in spiny ruffs).
+- `PlantGenerator.make_dunes(DUNES_EMBRYO | DUNES_MOBILE | DUNES_FIXED)` by distance to the water
+  (2 to 30 m, 5 to 120 m, 80 to 400 m) and slope under 34 degrees, grasses in clonal patches.
+- Burial: marram grows up through burial (Maun 1998), so a tuft's base sinking into the sand the
+  ground deposits is the right look (nebkha: a hummock round the tuft). Raising plants with the
+  deposit is not done; at the ground's 2 cm an hour it would not show in a session.
+- Bench check with the real pair: a dry-sand GroundSurface3D following the bench field under a
+  12 m/s wind carries 0.012 kg/m/s among the plants on its own and 0.00007 once the field is in
+  its `wind_shelters`. Next: a dune view with nebkha forming round marram; the dune landforms
+  themselves are the terrain thread's.
+
+## Bog and moor plants (built 16 Nov)
+
+Picked by Paulo on 16 Nov (second of the round). Sources: Rydin and Jeglum, The Biology of
+Peatlands (2013) for the hummock and hollow pattern and the Sphagnum species by water table;
+Rodwell, British Plant Communities vol. 2 (M17 to M21 mires) for the sets; Stace, New Flora of
+the British Isles (2019) for sizes and flowering.
+
+- Four presets, real geometry (plant_bog.cpp): `PRESET_SPHAGNUM` (a low hummock 40 to 90 cm
+  across: a lumpy dome of packed shoots with 160 to 240 star-shaped capitula on it, 40% of them
+  at the edge), `PRESET_COTTONGRASS` (channelled leaves, two to six nodding spikelets that flower
+  dark in April and May, then hang as cotton balls into August), `PRESET_BOG_ASPHODEL` (flat
+  equitant fans, spikes of yellow six-tepal stars July and August, orange capsules into winter),
+  `PRESET_SUNDEW` (a flat rosette of red round blades, each with 16 rim and 7 inner tentacles
+  tipped by a glossy drop, roughness 0.08; white flowers in July).
+- Cotton heads: real heads are thousands of bristles 2 to 3 cm long, far too many to model, and
+  40 to 70 strips per head read as spiky starbursts. Each head is a white ovoid core (two domes,
+  1.2 to 1.7 cm radius) carrying the mass, with 40 to 55 short crinkled bristles breaking its
+  outline, so it reads as a soft ball close up and as a white dot far off.
+- Phenology in degree days over 5 C: cotton grass flowers 80 to 380, holds its cotton to 800;
+  bog asphodel 900 to 1350; sundew 800 to 1300.
+- `PlantGenerator.make_bog(BOG_BLANKET | BOG_VALLEY)`: all species on slopes under 8 degrees
+  (fade 3) where the wetness index is over 8 to 10 (fade 1.5). One patch noise per stand (scale
+  3 m, cover 0.4): hummock species in the patches, hollow species outside them
+  (`patch_invert`), so hummocks and hollows sort themselves without a new rule. Blanket: red
+  Sphagnum capillifolium hummocks with heather, ochre S. papillosum lawns, cotton grass, bog
+  asphodel and sundew in the hollows. Valley mire: green S. cuspidatum in the hollows, ochre on
+  the hummocks, cotton grass throughout, asphodel, sundew and rush.
+- Bench: plants bench size checks, cotton heads in July but none in April, the bog sets' rules
+  and hummock/hollow split.
+- Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
+  ground itself rather than sitting on it.
+
+## Waterside and wet-stone plants (built 16 Nov)
+
+Picked by Paulo on 16 Nov (first of the round; the research is in "Next round candidates (16 Nov)").
+
+- Five presets, real geometry (plant_waterside.cpp): `PRESET_MARSH_MARIGOLD` (kidney-shaped glossy
+  blades on arching stalks, golden cups March to May, then follicle stars), `PRESET_MEADOWSWEET`
+  (reddish stems to about 1 m, pinnate leaves with the small leaflets between the pairs, frothy
+  cream cymes June to September, brown stalks all winter), `PRESET_BUTTERBUR` (lilac-pink spikes
+  March to May before the leaves, then round blades 30 to 50 cm across on stalks to 75 cm, dying
+  back in autumn; the spikes lengthen and go white in fruit), `PRESET_RIVER_MOSS` (Platyhypnidium
+  and Fontinalis: dark leafy shoots along +X, still in the wind), `PRESET_LIVERWORT`
+  (Conocephalum: glossy forked ribbons with a darker midline groove, on the opaque centre surface).
+- Big blades are discs, not strips (`_add_disc_leaf`): a sinus where the stalk meets the blade,
+  the margin drooping and waving, a fine saw of teeth, the leaf texture mapped inside its round
+  outline. A 40 cm butterbur blade as a three-column strip could not droop or wave.
+- `PlantSpecies.stone_top_water` (Vector2, m): a stone-top species keeps to tops whose height over
+  the water is in the band. Over the water is the bed under the stone plus the map's water depth;
+  on the bank, the top's height over the ground plus a quarter of its distance to the water. River
+  stones: aquatic moss -0.6 to 0.1 m (with a `water_depth_range` reaching under water), liverworts
+  0.03 to 0.4 m on damp tops, green moss above 0.12 m, the dry olive moss above 0.3 m.
+- `PlantSpecies.follow_flow`: turned so +X runs down the fall line (water runs downhill), with a
+  little scatter; random on level ground.
+- Plants on a stone's top and plants on the ground round it no longer crowd each other's
+  footprints (sedges at the stones' feet were keeping moss off the tops).
+- `PlantGenerator.make_banks(BANKS_STREAM | BANKS_LAKE | BANKS_FALLS)`: marsh marigold -0.15 to
+  1.2 m from the water, butterbur colonies 0 to 4 m (streams only: it needs moving water's
+  gravel), meadowsweet 0.6 to 7 m; at falls liverworts where spray reaches 0.3 and marsh marigold.
+  All in clonal patches, none colouring the far ground.
+- Benches: vegetation `--stones=stream` (rock-generator cobbles across the river's edge, clear
+  water, the stream's banks; `VEG_STREAM_BANK=1` looks along the bank) and the check "stone tops
+  by water"; plants bench size checks, butterbur flowering before its leaves, the bank sets.
+- Next: aquatic moss on the stones' upstream faces as well as their tops (a cap-only placement
+  leaves one clump per cobble); reading the live water's height (PhysXRiver3D) instead of the
+  baked map once rivers move.
+
 ## Plants between stones (built 15 Nov)
 
 Crevice flora (chasmophytes) root in the fine soil caught between stones and in rock cracks: the

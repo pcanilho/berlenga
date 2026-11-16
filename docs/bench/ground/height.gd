@@ -16,6 +16,9 @@ func get_height(p: Vector3) -> float:
 		"slope":
 			# A 50 degree face rising toward +x, steeper than any repose angle here.
 			return p.x * tan(deg_to_rad(50.0))
+		"beach":
+			# A foreshore rising 1 in 12 toward +z out of still water at z = 0, with a little relief.
+			return p.z / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
 		"meadow":
 			return 0.12 * noise.get_noise_2d(p.x * 3.0, p.z * 3.0) + 0.02 * p.x
 		_:

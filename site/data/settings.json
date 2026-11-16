@@ -1127,7 +1127,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1139,6 +1139,29 @@
    ],
    "note": "",
    "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Sand glints",
+   "settings": [
+    "GroundSurface3D.sand_glints"
+   ],
+   "note": "",
+   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Wet sand",
+   "settings": [
+    "GroundSurface3D.water_coupling",
+    "water_sources"
+   ],
+   "note": "",
+   "what": "water fills the pores of sand below it and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1278,13 +1301,14 @@
    "topic": "Placement"
   },
   {
-   "name": "Cave mouths",
+   "name": "Caves",
    "settings": [
+    "CaveNetwork3D.build_meshes()",
     "RockField3D.cave_mouths",
     "terrain3d"
    ],
    "note": "",
-   "what": "limestone cliff feet get cave openings cut into the terrain, also on Terrain3D.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening; the entrances are cut into the terrain, also on Terrain3D.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1438,7 +1462,7 @@
     "foam_relief"
    ],
    "note": "",
-   "what": "sea foam patches have sharp, ragged edges with lit rims.",
+   "what": "sharp patch edges, torn lobed holes and bubble relief, up close and at range.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -2056,6 +2080,42 @@
    "topic": "Plants"
   },
   {
+   "name": "Waterside plants",
+   "settings": [
+    "PlantGenerator.make_banks()",
+    "PlantSpecies.stone_top_water",
+    "follow_flow"
+   ],
+   "note": "",
+   "what": "marsh marigold, meadowsweet and butterbur line streams, lakes and falls by distance to water; river stones carry river moss and liverwort by height over the water, the moss trailing downstream.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Bog plants",
+   "settings": [
+    "PlantGenerator.make_bog()"
+   ],
+   "note": "",
+   "what": "sphagnum hummocks, cotton grass, bog asphodel and sundew on wet level ground.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Dune plants",
+   "settings": [
+    "PlantGenerator.make_dunes()",
+    "GroundSurface3D.wind_shelters"
+   ],
+   "note": "",
+   "what": "marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Leaf wear",
    "settings": [
     "PlantGenerator.leaf_wear"
@@ -2114,6 +2174,17 @@
    ],
    "note": "",
    "what": "plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Far plants as volume",
+   "settings": [
+    "VegetationField3D.far_volume"
+   ],
+   "note": "",
+   "what": "past their range, plants keep a porous voxel shell of their leaf cover out to 150 m.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2267,6 +2338,17 @@
    ],
    "note": "",
    "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark carries stemflow tracks, low algae and crust lichen.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Bark stories",
+   "settings": [
+    "bark_wounds"
+   ],
+   "note": "",
+   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks and knots on lying logs.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

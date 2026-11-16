@@ -322,6 +322,12 @@ public:
 	bool get_seabed_from_floor() const { return seabed_from_floor; }
 	void set_seabed_collision_mask(uint32_t p_mask);
 	uint32_t get_seabed_collision_mask() const { return seabed_collision_mask; }
+	// A terrain with holes (TerrainGenerator3D: is_hole, get_height, signal holes_changed): where a seabed ray
+	// falls through a hole (a cave mouth) onto nothing, the terrain's own height closes it, so the sea never shows
+	// through an open hole above the waterline; a static floor under the hole (a sea cave's) is used as it is.
+	// The seabed is measured again when holes change over the water.
+	void set_terrain_source(const NodePath &p_path);
+	NodePath get_terrain_source() const { return terrain_source; }
 	// Water shallower than this fades the ocean chop out, to none at the
 	// waterline.
 	void set_shallow_fade_depth(float p_depth);
@@ -404,6 +410,14 @@ public:
 	void set_wake_slot(int p_slot, const Ref<Texture2D> &p_height, const Vector4 &p_rect);
 	// False outside the surface_mesh footprint (always true without one).
 	bool is_wet(Vector3 p_world_pos) const;
+	// Water depth (m) at a world position: the surface as drawn (sample_height) over the measured seabed (or the
+	// constant depth without one); <= 0 on dry ground.
+	float sample_depth(Vector3 p_world_pos) const;
+	// The swash on the shore at a world position: x the run-up film on the beach (m of water over ground above still
+	// water, 0 past the run-up and below still water), y the wet sand
+	// (0..1, 1 under water and where the run-up reached, fading as it dries). Read back from the GPU every 8th
+	// water step (about 0.13 s behind), asked for from the first call on; zero until the first readback.
+	Vector2 sample_swash(Vector3 p_world_pos) const;
 
 	// Flow (docs/ideas/water.md step 3b): a current in m/s. With a measured
 	// seabed (seabed_from_floor, or a surface_mesh footprint) the flow over
@@ -674,7 +688,14 @@ private:
 	// Seabed rays need the floor in the physics space, so with
 	// seabed_from_floor the solver is configured on the first physics tick.
 	bool seabed_pending = false;
-	bool seabed_remeasure_pending = false; // remeasure_seabed(): rays on the next tick, then in place
+	bool seabed_remeasure_pending = false;
+	NodePath terrain_source;
+	ObjectID terrain_connected;
+	void _connect_terrain();
+	void _disconnect_terrain();
+	void _on_terrain_holes_changed(const Rect2 &p_rect);
+	float _rest_depth_at(float p_rel_x, float p_rel_z) const; // the measured seabed's still-water depth (m)
+	mutable SafeFlag swash_queried; // sample_swash() was called: keep the swash readback on // remeasure_seabed(): rays on the next tick, then in place
 	Ref<ShaderMaterial> water_material;
 	Vector2 current;
 	float flow_period = 2.0f;

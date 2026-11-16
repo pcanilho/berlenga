@@ -113,6 +113,20 @@ public:
 		PRESET_STONECROP,
 		PRESET_SAXIFRAGE,
 		PRESET_THRIFT,
+		// Waterside and wet-stone plants (docs/ideas/vegetation.md, "Waterside and wet-stone plants").
+		PRESET_MARSH_MARIGOLD,
+		PRESET_MEADOWSWEET,
+		PRESET_BUTTERBUR,
+		PRESET_RIVER_MOSS,
+		PRESET_LIVERWORT,
+		// Bog and moor plants (docs/ideas/vegetation.md, "Bog and moor plants").
+		PRESET_SPHAGNUM,
+		PRESET_COTTONGRASS,
+		PRESET_BOG_ASPHODEL,
+		PRESET_SUNDEW,
+		PRESET_MARRAM,
+		PRESET_LYME_GRASS,
+		PRESET_SEA_HOLLY,
 		PRESET_MAX,
 	};
 
@@ -264,6 +278,24 @@ private:
 	void _build_stonecrop();
 	void _build_saxifrage();
 	void _build_thrift();
+	// Waterside plants (plant_waterside.cpp).
+	// A broad, round blade as a disc (big leaves: the strip of _add_leaf cannot droop and wave).
+	// Frame: z from the stalk's top along the blade, y its upper face; the stalk meets it in the
+	// sinus between the basal lobes. p_cleft: half-angle of the sinus (radians).
+	void _add_disc_leaf(const Transform3D &p_at, float p_radius, float p_cleft, float p_droop, float p_wave, int p_teeth, float p_wind_base, int p_rings, int p_sectors, float p_saw = 0.035f);
+	void _build_marsh_marigold();
+	void _build_meadowsweet();
+	void _build_butterbur();
+	void _build_river_moss();
+	void _build_liverwort();
+	// Bog plants (plant_bog.cpp); sphagnum hummocks are _build_moss().
+	void _build_cottongrass();
+	void _build_bog_asphodel();
+	void _build_sundew();
+	void _add_dune_spike(const Transform3D &p_top, float p_length, float p_radius);
+	void _build_marram();
+	void _build_lyme_grass();
+	void _build_sea_holly();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -431,9 +463,38 @@ public:
 		STONES_MAX,
 	};
 	static TypedArray<Resource> make_stones(StoneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+
+	// Waterside and wet-stone plants (docs/ideas/vegetation.md, "Waterside and wet-stone plants").
+	enum BankStand {
+		BANKS_STREAM, // Upland and lowland streams: tall herbs on the banks, aquatic moss on the stones.
+		BANKS_LAKE, // Still water: marsh marigold and meadowsweet at the edge, no current.
+		BANKS_FALLS, // Waterfall spray zones: liverworts and mosses on the wet rock.
+		BANKS_MAX,
+	};
+	static TypedArray<Resource> make_banks(BankStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+
+	// Bog and moor plants (docs/ideas/vegetation.md, "Bog and moor plants").
+	enum BogStand {
+		BOG_BLANKET, // Upland blanket bog: hummocks with heather, cotton grass, asphodel in the lawns.
+		BOG_VALLEY, // Valley mire: wetter, green sphagnum lawns and hollows, more cotton grass.
+		BOG_MAX,
+	};
+	static TypedArray<Resource> make_bog(BogStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Sand dunes by distance to the water: strandline embryo dunes, mobile marram foredunes, fixed
+	// dunes behind (docs/ideas/vegetation.md, "Dune grass").
+	enum DuneStand {
+		DUNES_EMBRYO,
+		DUNES_MOBILE,
+		DUNES_FIXED,
+		DUNES_MAX,
+	};
+	static TypedArray<Resource> make_dunes(DuneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
 VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);
 VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
+VARIANT_ENUM_CAST(PlantGenerator::BankStand);
+VARIANT_ENUM_CAST(PlantGenerator::BogStand);
+VARIANT_ENUM_CAST(PlantGenerator::DuneStand);

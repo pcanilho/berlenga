@@ -280,13 +280,13 @@ plainer), and the terrain material's far texture LOD under the scene's camera he
 The ring past the blades in the showcase (16 Nov): the match reads 1.01 there because its pairs (22
 and 42 m) both sit before the brightening, which ramps from about 40 to 75 m and holds past 100 m.
 The scene ruled out fog, albedo, the live match and the Cover herbs (all capped at 40 m, ramp
-unchanged). Leading cause, from the shaders: TerrainMaterial3D with far_start_from_vegetation
-starts its far blend at max(vegetation_near_radius - far_fade, 0), which is max(80 - 150, 0) = 0 m
-in the scene, so the ground slides toward the cover map's colour from the camera out to 150 m
-(smoothstep 0.18 at 40 m, 0.5 at 75 m), and the cover colour (tall grass patches over the undercoat,
-the far plant colours composited over them) comes out lighter than the sward's far colour. A frame
-with far_start_from_vegetation off is the test; then the cover colour is matched to grass_ground()'s
-far value, and the blend's start no longer clamps to the camera.
+unchanged). Also ruled out since: the terrain's far blend start (`far_start_from_vegetation` off,
+ramp unchanged), cloud shadow, and SSAO, SSIL and SDFGI (all off in the scene). An unshaded frame
+is flat (albedo about 72 near, 66 far), so the ramp is lighting: lit over unshaded rises from about
+0.8 at 45 m to 1.17 past 100 m. Terrain detail normals change flat ground by under 1% on the rocks
+bench at both 640 and 1280 wide, so they are a weak suspect. Open: one batch of single-toggle
+stills (no detail octaves, no sun shadow, no sky occlusion, grid mesh, clear weather, no plants,
+1280x720, grass radius 80) to find the term that moves it.
 
 ## References
 

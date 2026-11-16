@@ -114,6 +114,10 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Wetland plants: reeds and bulrushes stand in the shallows, lilies float.*
 
+- **Waterside plants** (`PlantGenerator.make_banks()`, `PlantSpecies.stone_top_water`, `follow_flow`): marsh marigold, meadowsweet and butterbur line streams, lakes and falls by distance to water; river stones carry river moss and liverwort by height over the water, the moss trailing downstream.
+- **Bog plants** (`PlantGenerator.make_bog()`, BOG_BLANKET or BOG_VALLEY): sphagnum hummocks, cotton grass, bog asphodel and sundew on wet level ground.
+- **Dune plants** (`PlantGenerator.make_dunes()`; `GroundSurface3D.wind_shelters`): marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.
+
 - **Leaf wear** (`PlantGenerator.leaf_wear`): insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.
 
   ![A dock plant without and with leaf wear](media/leaf-wear.jpg)
@@ -130,6 +134,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
 - **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
 - **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.
+- **Far plants as volume** (`VegetationField3D.far_volume`, off by default): past their range, plants keep a porous voxel shell of their leaf cover out to 150 m.
 - **Plant impostors** (`PlantGenerator.make_impostor()`, `add_impostors()`, `impostor_range`): large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.
 
 ## Instances

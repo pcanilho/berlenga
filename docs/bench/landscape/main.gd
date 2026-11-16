@@ -186,6 +186,16 @@ func _ready() -> void:
 			if gen.get_last_preview_msec() > 0.0:
 				break
 		print("[landscape] guide preview at %.0f m cells: %.0f ms with the write (full run %.0f ms without)" % [gen.cell_size * gen.guide_preview_scale, gen.get_last_preview_msec(), full_ms])
+	if args.has("find-caves"):
+		# --find-caves[=N]: cave entrances (CaveNetwork3D.find_entrances) on this terrain, printed, then quit.
+		var net := CaveNetwork3D.new()
+		gen.add_child(net)
+		net.generator = net.get_path_to(gen)
+		var n := int(args["find-caves"]) if args["find-caves"] != "1" else 8
+		for e in net.find_entrances(gen.get_world_rect(), n):
+			print("[landscape] cave entrance %s facing %s" % [e["position"], e["out"]])
+		get_tree().quit(0)
+		return
 	if args.has("map"):
 		_save_map(args["map"])
 		get_tree().quit(0)
@@ -381,6 +391,15 @@ func _ready() -> void:
 			for k in range(0, cv.point_count, 2):
 				var p: Vector3 = rv.global_transform * cv.get_point_position(k)
 				_log("  surf %d (%.0f, %.0f) ground %.2f surface %.2f depth %.2f" % [k, p.x, p.z, gen.get_height(p), rv.sample_height(p), rv.sample_depth(p)])
+	if args.has("height-line"):
+		# --height-line=x0,z0,x1,z1,n: the ground along a line (generator and drawn landscape), for steps and bands.
+		var hl: PackedStringArray = args["height-line"].split(",")
+		var a0 := Vector2(float(hl[0]), float(hl[1]))
+		var a1 := Vector2(float(hl[2]), float(hl[3]))
+		var hn := int(hl[4])
+		for k in hn + 1:
+			var q := a0.lerp(a1, float(k) / hn)
+			_log("  line %.2f (%.2f, %.2f) gen %.3f drawn %.3f" % [a0.distance_to(q), q.x, q.y, gen.get_height(Vector3(q.x, 0, q.y)), height_at(q.x, q.y)])
 	if args.has("probe-pixel"):
 		# --probe-pixel=x,y: what is drawn there (the ground under it, and every visual whose box covers it).
 		var pp: PackedStringArray = args["probe-pixel"].split(",")

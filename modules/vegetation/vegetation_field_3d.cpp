@@ -46,6 +46,7 @@
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "core/os/rw_lock.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
@@ -241,6 +242,8 @@ void VegetationField3D::_clear_generated() {
 	impostor_meshes.clear();
 	set_process_internal(false);
 	placements.clear();
+	shelter_static.clear();
+	shelter_dirty = true;
 	plant_count = 0;
 }
 
@@ -348,6 +351,15 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 		ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
 		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
+		ps.frontal = ps.sp->get_wind_frontal_area();
+		if (ps.frontal < 0.0f) {
+			ps.frontal = 0.0f;
+			if (ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
+				// A tuft's leaves hide about 0.4 of its outline (optical porosity 0.6, grasses).
+				const AABB bb = ps.meshes[0]->get_aabb();
+				ps.frontal = 0.4f * MAX(bb.get_end().y, 0.0f) * 0.5f * (bb.size.x + bb.size.z);
+			}
+		}
 		const Color far_srgb = ps.sp->get_far_color();
 		ps.far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
 		// Fallen wood from the trees module: each mesh's axis (docs/ideas/forest-floor.md, 6.6).
@@ -365,6 +377,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 					ps.deadwood_reach = MAX(ps.deadwood_reach, reach * smax);
 				}
 				ps.deadwood_axes.push_back(axis);
+				ps.deadwood_features.push_back(m.is_valid() && m->has_meta(SNAME("tree_deadwood_features")) ? PackedFloat32Array(m->get_meta(SNAME("tree_deadwood_features"))) : PackedFloat32Array());
 				ps.deadwood_pits.push_back(m.is_valid() && m->has_meta(SNAME("tree_root_pit")) ? PackedFloat32Array(m->get_meta(SNAME("tree_root_pit"))) : PackedFloat32Array());
 			}
 		}
@@ -554,7 +567,7 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 			}
 			for (int idx : *bucket) {
 				const auto &d = p_logs[idx];
-				if (d.pit || d.radius < p_min_radius) {
+				if (d.pit || d.feature >= 0 || d.radius < p_min_radius) {
 					continue;
 				}
 				const Vector2 a(d.a.x, d.a.z), ab = Vector2(d.b.x, d.b.z) - a;
@@ -587,6 +600,49 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 	return found;
 }
 
+// The nearest feature (Deadwood.feature: a crack or bark edge on a log's surface) to a point, across
+// the ground within p_reach, at p_low to p_high over p_ground and facing out sideways (not the top);
+// r_any: whether there are features in reach at all.
+template <typename Grid, typename Logs>
+bool deadwood_feature_nearest(const Grid &p_grid, const Logs &p_logs, const Vector3 &p_pos, float p_reach, float p_low, float p_high, float p_ground, float p_cell, Vector3 &r_point, Vector3 &r_normal, bool &r_any, float &r_best) {
+	bool found = false;
+	const int cx0 = int(Math::floor((p_pos.x - p_reach) / p_cell)), cx1 = int(Math::floor((p_pos.x + p_reach) / p_cell));
+	const int cz0 = int(Math::floor((p_pos.z - p_reach) / p_cell)), cz1 = int(Math::floor((p_pos.z + p_reach) / p_cell));
+	for (int cz = cz0; cz <= cz1; cz++) {
+		for (int cx = cx0; cx <= cx1; cx++) {
+			const auto *bucket = p_grid.getptr(Vector2i(cx, cz));
+			if (!bucket) {
+				continue;
+			}
+			for (int idx : *bucket) {
+				const auto &d = p_logs[idx];
+				if (d.feature < 0) {
+					continue;
+				}
+				const float dist = Vector2(d.a.x - p_pos.x, d.a.z - p_pos.z).length();
+				if (dist > p_reach) {
+					continue;
+				}
+				r_any = true;
+				const Vector3 n = (d.b - d.a).normalized();
+				const float over = d.a.y - p_ground;
+				if (over < p_low || over > p_high || n.y > 0.75f || Vector2(n.x, n.z).length_squared() < 0.04f) {
+					continue;
+				}
+				// Nearest, and a check a little before a peel edge (a crack splits the wood open).
+				const float score = dist + (d.feature == 1 ? 0.0f : 0.05f);
+				if (score < r_best) {
+					r_best = score;
+					r_point = d.a;
+					r_normal = n;
+					found = true;
+				}
+			}
+		}
+	}
+	return found;
+}
+
 // Whether the point lies in a root pit (Deadwood.pit) of the list.
 template <typename Grid, typename Logs>
 bool deadwood_pit(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_xz, float p_cell) {
@@ -612,7 +668,11 @@ bool VegetationField3D::_pit_at(const Vector2 &p_xz) const {
 
 int VegetationField3D::get_deadwood_count() const {
 	RWLockRead guard(crown_lock);
-	return deadwood.size();
+	int n = 0;
+	for (const Deadwood &d : deadwood) {
+		n += d.feature < 0 ? 1 : 0; // Logs and pits, not the places on them.
+	}
+	return n;
 }
 
 // The placed log whose side is nearest the point, within reach: side (m from its side across the
@@ -634,6 +694,12 @@ Dictionary VegetationField3D::get_deadwood_at(const Vector3 &p_global_position, 
 bool VegetationField3D::_deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit, float p_min_radius) const {
 	RWLockRead guard(crown_lock);
 	return deadwood_nearest(deadwood_grid, deadwood, p_xz, p_reach, DEADWOOD_CELL, r_hit, p_min_radius);
+}
+
+bool VegetationField3D::_deadwood_feature_at(const Vector3 &p_pos, float p_reach, float p_low, float p_high, float p_ground, Vector3 &r_point, Vector3 &r_normal, bool &r_any) const {
+	RWLockRead guard(crown_lock);
+	float best = 1e9f;
+	return deadwood_feature_nearest(deadwood_grid, deadwood, p_pos, p_reach, p_low, p_high, p_ground, DEADWOOD_CELL, r_point, r_normal, r_any, best);
 }
 
 // The placed logs, for other fields' plants (canopy_field) and get_deadwood_at().
@@ -870,6 +936,38 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						p3 = Vector3(xz.x, 0.0f, xz.y);
 						wood_out = hit.across;
 						wood_y = hit.axis_y - dy;
+						// Where the log carries its cracks and bark edges (tree_deadwood_features), the
+						// clump bursts from the nearest one low on its side instead: from a drying check
+						// or where the bark has peeled from the wood. None there on a log that has them:
+						// no clump.
+						Vector3 fp, fn;
+						bool any = false;
+						float best = 1e9f;
+						const Vector3 at(xz.x, wood_y, xz.y);
+						const float lo = 0.02f, hi = WOOD_FEEDER_HEIGHT + 0.12f;
+						bool got = deadwood_feature_nearest(local_deadwood_grid, local_deadwood, at, WOOD_FEEDER_REACH, lo, hi, ground, DEADWOOD_CELL, fp, fn, any, best);
+						if (p_setup.other) {
+							Vector3 op, on;
+							bool oany = false;
+							if (p_setup.other->_deadwood_feature_at(at, WOOD_FEEDER_REACH, lo, hi, ground, op, on, oany)) {
+								const float od = Vector2(op.x - at.x, op.z - at.z).length();
+								if (!got || od < best) {
+									fp = op;
+									fn = on;
+									got = true;
+								}
+							}
+							any = any || oany;
+						}
+						if (got) {
+							const Vector2 out2 = Vector2(fn.x, fn.z).normalized();
+							xz = Vector2(fp.x, fp.z) - out2 * WOOD_FEEDER_INSET;
+							p3 = Vector3(xz.x, 0.0f, xz.y);
+							wood_out = out2;
+							wood_y = fp.y;
+						} else if (any) {
+							suit = 0.0f;
+						}
 					}
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
@@ -902,6 +1000,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 								const float jitter = 0.1f * (float(ch & 0xffff) / 65535.0f - 0.5f);
 								const float damp = wet + jitter >= STONE_TOP_DAMP_SPLIT ? 1.0f : 0.0f;
 								suit *= sp->stone_top_damp_weight(damp);
+							}
+							if (sp->has_stone_top_water()) {
+								// The top's height over the water: in a stream the surface is the bed under
+								// the stone plus the map's water depth there; on the bank, its height over the
+								// ground plus a quarter of the way to the water (banks rise about 1 in 4), so
+								// a stone at the edge sits in the splash and flood band and one up the bank
+								// does not. Aquatic mosses keep under and just over the surface, dry-ground
+								// mosses above the flood line (Scarlett and O'Hare 2006).
+								const Vector3 cap3(top_cap.x, 0.0f, top_cap.z);
+								const float bed = map->get_height_at(cap3);
+								const float depth = map->get_water_depth_at(cap3);
+								const float over = depth > 0.0f ? float(top_cap.y) - (bed + depth) : float(top_cap.y) - bed + 0.25f * MAX(map->get_water_distance_at(cap3), 0.0f);
+								suit *= sp->stone_top_water_weight(over);
 							}
 						} else {
 							suit = 0.0f;
@@ -947,7 +1058,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 							for (int idx : *bucket) {
 								const Placed &o = placed[idx];
-								if (o.species == s || (o.deadwood && dw_near)) {
+								if (o.species == s || (o.deadwood && dw_near) || o.top != on_top) {
 									continue;
 								}
 								const float min_d = fp + o.footprint;
@@ -996,7 +1107,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
-					placed.push_back({ xz, fp, s, is_log });
+					placed.push_back({ xz, fp, s, is_log, on_top });
 					grid[gc].push_back(placed.size() - 1);
 					scale *= rock_fit;
 					// A stand's margin: smaller plants leaning out to the open (PlantSpecies.margin_*).
@@ -1055,6 +1166,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
 					if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
+					} else if (sp->is_follow_flow() && slope > 1e-3f) {
+						// Downstream: water runs downhill, so +X along the fall line (a little scatter,
+						// as shoots splay in the eddies behind a stone).
+						const Vector2 down(Math::sin(aspect), Math::cos(aspect));
+						yaw = Math::atan2(-down.y, down.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.5f;
 					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (wood_out != Vector2()) {
@@ -1108,6 +1224,23 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 								out->deadwood.push_back(log);
 							}
 						}
+						// Its cracks and bark edges (tree_deadwood_features), where wood feeders root.
+						if (variant < int(ps.deadwood_features.size())) {
+							const PackedFloat32Array &fa = ps.deadwood_features[variant];
+							const Basis nb = world.basis.inverse().transposed();
+							for (int f = 0; f + 7 < fa.size(); f += 8) {
+								Deadwood d;
+								d.feature = int8_t(fa[f]);
+								d.a = world.xform(Vector3(fa[f + 1], fa[f + 2], fa[f + 3]));
+								d.b = d.a + nb.xform(Vector3(fa[f + 4], fa[f + 5], fa[f + 6])).normalized() * 0.01f; // Kept short: the grid takes the a-b span.
+								d.radius = 0.0f;
+								local_deadwood.push_back(d);
+								deadwood_insert(local_deadwood_grid, d, local_deadwood.size() - 1, DEADWOOD_CELL);
+								if (out) {
+									out->deadwood.push_back(d);
+								}
+							}
+						}
 						// An uprooted tree's pit (cx, cy, cz, radius, depth in mesh space): bare soil.
 						if (variant < int(ps.deadwood_pits.size()) && ps.deadwood_pits[variant].size() >= 4) {
 							const PackedFloat32Array &pit = ps.deadwood_pits[variant];
@@ -1139,6 +1272,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						out->far.push_back({ xz, ps.far_color, float(ps.far_color.a * Math::PI * rr * rr), range });
 					}
 					out->species[s].positions.push_back(world.origin);
+					if (ps.frontal > 0.0f) {
+						out->shelter.push_back(Vector3(world.origin.x, world.origin.z, ps.frontal * scale * scale));
+					}
 					out->count++;
 				}
 			}
@@ -1347,6 +1483,186 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 			}
 		}
 	}
+	// Past the range: the plants as a voxel shell, so tall cover keeps its volume and silhouette
+	// instead of dropping to the ground's colour (far_volume, off by default).
+	if (far_volume && range > 0.0f && far_volume_range > range) {
+		const Ref<ArrayMesh> vol = _build_far_volume(p_setup, p_tile, p_species);
+		if (vol.is_valid()) {
+			Ref<MultiMesh> mm;
+			mm.instantiate();
+			mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+			mm->set_mesh(vol);
+			mm->set_instance_count(1);
+			mm->set_instance_transform(0, Transform3D());
+			MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+			mmi->set_name(vformat("FarVolume_%d_%d_%d", s, tx, tz));
+			mmi->set_multimesh(mm);
+			// Crossfades in while the plant shader thins the plants out, before their range.
+			mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+			mmi->set_visibility_range_begin(range * 0.85f);
+			mmi->set_visibility_range_begin_margin(range * 0.15f);
+			mmi->set_visibility_range_end(far_volume_range);
+			mmi->set_visibility_range_end_margin(far_volume_range * 0.1f);
+			add_child(mmi, false, INTERNAL_MODE_BACK);
+			r_nodes.push_back(mmi);
+		}
+	}
+}
+
+// Far plants as volume (docs/ideas/vegetation.md, "Far plants as volume"): the approach of Unreal
+// 5.7's voxelised Nanite foliage and of hybrid mesh-volume LoDs (Loubet and Neyret 2017), with
+// plain geometry so raster and path tracing see the same thing. Each plant's bounds fill an
+// ellipsoid of leaf cover over its foot; the cover sums on a voxel grid; a voxel is solid with
+// that probability (a fixed hash, so the shell is porous where the stand is thin and stable from
+// frame to frame); the solid voxels' faces open to the air are the mesh, their corners jittered by
+// a hash of their position (shared by every face meeting there) so the shell is lumpy, not boxy.
+// Colour: the species' far colour, darker down inside the stand.
+Ref<ArrayMesh> VegetationField3D::_build_far_volume(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species) const {
+	const PlaceSpecies &ps = p_setup.species[p_species];
+	if (ps.far_color.a <= 0.0f) {
+		return Ref<ArrayMesh>();
+	}
+	const TileOut::Species &so = p_tile.species[p_species];
+	const float cell = far_volume_cell;
+	const float inv = 1.0f / cell;
+	HashMap<Vector3i, float> cover;
+	for (int v = 0; v < int(so.xforms.size()); v++) {
+		const Ref<Mesh> &mesh = ps.meshes[v % ps.meshes.size()];
+		if (mesh.is_null()) {
+			continue;
+		}
+		const AABB bb = mesh->get_aabb();
+		const float height = bb.get_end().y;
+		const float half = 0.25f * (bb.size.x + bb.size.z);
+		if (height < cell * 0.5f) {
+			continue; // Too low to stand out of the ground: the far colour carries it.
+		}
+		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
+			const Vector3 o = p_setup.global_xf.xform(so.xforms[v][i].origin);
+			const float sc = so.customs[v][i].b;
+			const float ry = 0.5f * height * sc;
+			const float rxz = 0.8f * half * sc;
+			const Vector3 c = o + Vector3(0, ry, 0);
+			const Vector3i lo(int(Math::floor((c.x - rxz) * inv)), int(Math::floor(o.y * inv)), int(Math::floor((c.z - rxz) * inv)));
+			const Vector3i hi(int(Math::floor((c.x + rxz) * inv)), int(Math::floor((c.y + ry) * inv)), int(Math::floor((c.z + rxz) * inv)));
+			for (int z = lo.z; z <= hi.z; z++) {
+				for (int y = lo.y; y <= hi.y; y++) {
+					for (int x = lo.x; x <= hi.x; x++) {
+						const Vector3 p((x + 0.5f) * cell, (y + 0.5f) * cell, (z + 0.5f) * cell);
+						const float dx = (p.x - c.x) / MAX(rxz, 1e-3f);
+						const float dy = (p.y - c.y) / MAX(ry, 1e-3f);
+						const float dz = (p.z - c.z) / MAX(rxz, 1e-3f);
+						const float d2 = dx * dx + dy * dy + dz * dz;
+						if (d2 < 1.0f) {
+							cover[Vector3i(x, y, z)] += 0.45f * ps.far_color.a * (1.0f - d2);
+						}
+					}
+				}
+			}
+		}
+	}
+	if (cover.is_empty()) {
+		return Ref<ArrayMesh>();
+	}
+	auto hash01 = [](const Vector3i &p_k, uint32_t p_salt) {
+		uint32_t h = hash_murmur3_one_32(uint32_t(p_k.x), p_salt);
+		h = hash_murmur3_one_32(uint32_t(p_k.y), h);
+		h = hash_murmur3_one_32(uint32_t(p_k.z), h);
+		return float(hash_fmix32(h) & 0xffffff) / float(0x1000000);
+	};
+	HashSet<Vector3i> solid;
+	int top = INT32_MIN;
+	int bottom = INT32_MAX;
+	for (const KeyValue<Vector3i, float> &kv : cover) {
+		// Beer-Lambert: overlapping plants fill a voxel as their leaves would block a ray through it.
+		if (hash01(kv.key, 0x9e37u) < 1.0f - Math::exp(-kv.value)) {
+			solid.insert(kv.key);
+			top = MAX(top, kv.key.y);
+			bottom = MIN(bottom, kv.key.y);
+		}
+	}
+	if (solid.is_empty()) {
+		return Ref<ArrayMesh>();
+	}
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedColorArray colors;
+	PackedInt32Array indices;
+	const Vector3i dirs[6] = { Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1) };
+	const Color base = ps.far_color;
+	auto corner = [&](const Vector3i &p_c) {
+		const float j = 0.35f * cell;
+		return Vector3(p_c.x * cell + (hash01(p_c, 1u) - 0.5f) * j * 2.0f, p_c.y * cell + (hash01(p_c, 2u) - 0.5f) * j, p_c.z * cell + (hash01(p_c, 3u) - 0.5f) * j * 2.0f);
+	};
+	for (const Vector3i &k : solid) {
+		// Light falls off down into the stand (its own shade), as the plants' leaves do.
+		int depth = 0;
+		for (int up = 1; up <= 3 && solid.has(k + Vector3i(0, up, 0)); up++) {
+			depth = up;
+		}
+		const float shade = 1.0f - 0.15f * depth;
+		const Color col(base.r * shade, base.g * shade, base.b * shade, 1.0f);
+		for (int f = 0; f < 6; f++) {
+			const Vector3i d = dirs[f];
+			if (solid.has(k + d) || (d.y < 0 && k.y <= bottom)) {
+				continue; // Inside, or on the ground.
+			}
+			// The face's four corners, wound outward.
+			Vector3i a, b;
+			if (d.x != 0) {
+				a = Vector3i(0, 1, 0);
+				b = Vector3i(0, 0, 1);
+			} else if (d.y != 0) {
+				a = Vector3i(0, 0, 1);
+				b = Vector3i(1, 0, 0);
+			} else {
+				a = Vector3i(1, 0, 0);
+				b = Vector3i(0, 1, 0);
+			}
+			const Vector3i o = k + Vector3i(MAX(d.x, 0), MAX(d.y, 0), MAX(d.z, 0));
+			Vector3i q[4] = { o, o + a, o + a + b, o + b };
+			const bool flip = (d.x + d.y + d.z) < 0;
+			const int first = verts.size();
+			Vector3 pts[4];
+			for (int c = 0; c < 4; c++) {
+				pts[c] = corner(q[c]);
+			}
+			Vector3 n = (pts[1] - pts[0]).cross(pts[3] - pts[0]);
+			if (flip) {
+				n = -n;
+			}
+			n = n.normalized();
+			for (int c = 0; c < 4; c++) {
+				verts.push_back(pts[c]);
+				normals.push_back(n);
+				colors.push_back(col);
+			}
+			if (flip) {
+				indices.append_array(PackedInt32Array({ first, first + 1, first + 2, first, first + 2, first + 3 }));
+			} else {
+				indices.append_array(PackedInt32Array({ first, first + 2, first + 1, first, first + 3, first + 2 }));
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	Ref<StandardMaterial3D> mat = far_volume_material;
+	if (mat.is_null()) {
+		mat.instantiate();
+		mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+		mat->set_roughness(0.9f);
+		const_cast<VegetationField3D *>(this)->far_volume_material = mat;
+	}
+	mesh->surface_set_material(0, mat);
+	mesh->set_meta(SNAME("far_volume"), true);
+	return mesh;
 }
 
 // The maps from placed tiles (canopy, stand shade, forest floor, far colour), computed from the
@@ -1990,6 +2306,10 @@ Error VegetationField3D::populate() {
 	LocalVector<const LocalVector<Deadwood> *> deadwood_lists;
 	for (const TileOut &t : outs) {
 		plant_count += t.count;
+		for (const Vector3 &v : t.shelter) {
+			shelter_static.push_back(v);
+		}
+		shelter_dirty = true;
 		crown_lists.push_back(&t.crowns);
 		far_lists.push_back(&t.far);
 		deadwood_lists.push_back(&t.deadwood);
@@ -2067,6 +2387,58 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const 
 // from where the species grow: each one with a sward_shade weighs it by its density there (its
 // rules, patches and the canopy's shade, as placement sees them), so a grass tile reads the same
 // value whenever it is built. Main thread (it looks up the data map and canopy field nodes).
+// The plants' frontal area index for sand blown by the wind (docs/ideas/vegetation.md, "Dune grass"):
+// each plant's frontal area spread bilinearly over the 1 m grid's nodes, per square metre: Raupach's
+// (1993) lambda, which GroundSurface3D turns into the share of the wind's stress the sand keeps.
+void VegetationField3D::_build_shelter() const {
+	shelter_grid.clear();
+	const float inv = 1.0f / SHELTER_CELL;
+	const float per_m2 = inv * inv;
+	auto splat = [&](const Vector3 &p_v) {
+		const float fx = p_v.x * inv;
+		const float fz = p_v.y * inv;
+		const int x0 = int(Math::floor(fx));
+		const int z0 = int(Math::floor(fz));
+		const float tx = fx - x0;
+		const float tz = fz - z0;
+		const float a = p_v.z * per_m2;
+		shelter_grid[Vector2i(x0, z0)] += a * (1.0f - tx) * (1.0f - tz);
+		shelter_grid[Vector2i(x0 + 1, z0)] += a * tx * (1.0f - tz);
+		shelter_grid[Vector2i(x0, z0 + 1)] += a * (1.0f - tx) * tz;
+		shelter_grid[Vector2i(x0 + 1, z0 + 1)] += a * tx * tz;
+	};
+	for (const Vector3 &v : shelter_static) {
+		splat(v);
+	}
+	for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+		for (const Vector3 &v : kv.value->out.shelter) {
+			splat(v);
+		}
+	}
+	shelter_dirty = false;
+}
+
+float VegetationField3D::sample_lateral_cover(const Vector3 &p_position) const {
+	if (shelter_dirty) {
+		_build_shelter();
+	}
+	if (shelter_grid.is_empty()) {
+		return 0.0f;
+	}
+	const float fx = p_position.x / SHELTER_CELL;
+	const float fz = p_position.z / SHELTER_CELL;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	auto at = [&](int p_x, int p_z) {
+		const float *v = shelter_grid.getptr(Vector2i(p_x, p_z));
+		return v ? *v : 0.0f;
+	};
+	const float l = Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+	return MIN(l, 0.5f); // Past 0.5 the drag partition no longer holds; the sand is still.
+}
+
 void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacles = p_obstacles;
 	obstacle_grid.build(obstacles);
@@ -2548,6 +2920,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			stream_tiles.insert(job->tile, t);
 			plant_count += t->out.count;
 			stream_maps_dirty = true;
+			shelter_dirty = true;
 		}
 		memdelete(job);
 		stream_jobs.remove_at_unordered(i);
@@ -2610,6 +2983,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		stream_tiles.erase(key);
 		stream_maps_dirty = true;
+		shelter_dirty = true;
 	}
 	pending.sort();
 	for (const Pending &p : pending) {
@@ -2934,6 +3308,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
+	ClassDB::bind_method(D_METHOD("sample_lateral_cover", "position"), &VegetationField3D::sample_lateral_cover);
 	ClassDB::bind_method(D_METHOD("get_obstacles"), &VegetationField3D::get_obstacles);
 	ClassDB::bind_method(D_METHOD("set_stone_tops", "tops"), &VegetationField3D::set_stone_tops);
 	ClassDB::bind_method(D_METHOD("get_stone_tops"), &VegetationField3D::get_stone_tops);
@@ -2977,6 +3352,12 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cover_grass_layers", "paths"), &VegetationField3D::set_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("get_cover_grass_layers"), &VegetationField3D::get_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
+	ClassDB::bind_method(D_METHOD("set_far_volume", "enabled"), &VegetationField3D::set_far_volume);
+	ClassDB::bind_method(D_METHOD("is_far_volume"), &VegetationField3D::is_far_volume);
+	ClassDB::bind_method(D_METHOD("set_far_volume_range", "range"), &VegetationField3D::set_far_volume_range);
+	ClassDB::bind_method(D_METHOD("get_far_volume_range"), &VegetationField3D::get_far_volume_range);
+	ClassDB::bind_method(D_METHOD("set_far_volume_cell", "cell"), &VegetationField3D::set_far_volume_cell);
+	ClassDB::bind_method(D_METHOD("get_far_volume_cell"), &VegetationField3D::get_far_volume_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_cell"), &VegetationField3D::get_cover_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_texture"), &VegetationField3D::get_cover_texture);
 	ClassDB::bind_method(D_METHOD("set_streaming", "enable"), &VegetationField3D::set_streaming);
@@ -3013,6 +3394,10 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "cover_grass", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D"), "set_cover_grass", "get_cover_grass");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "cover_grass_layers", PROPERTY_HINT_ARRAY_TYPE, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D")), "set_cover_grass_layers", "get_cover_grass_layers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
+	ADD_GROUP("Far volume", "far_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_cell", PROPERTY_HINT_RANGE, "0.05,4,0.01,suffix:m"), "set_far_volume_cell", "get_far_volume_cell");
 	ADD_GROUP("Streaming", "stream");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "stream_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_stream_target", "get_stream_target");

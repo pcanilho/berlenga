@@ -36,6 +36,7 @@
 #include "ground_ripples.h"
 
 #include "core/object/worker_thread_pool.h"
+#include "core/variant/typed_array.h"
 #include "ground_terramechanics.h"
 #include "ground_height_query.h"
 
@@ -90,7 +91,11 @@ public:
 		float wheel_kphi = 1000.0f;
 		bool deformable = true;
 	};
-	static Cell material_cell(float p_sand, float p_moisture, float p_litter);
+	// p_saturation: pore water in the top layer, 0..1 (< 0: none known, p_moisture alone); p_water_speed: water
+	// flowing over it, m/s (sand stage 4).
+	static Cell material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation = -1.0f, float p_water_speed = 0.0f);
+	// Bed load under flowing water (Meyer-Peter and Mueller 1948) for fine sand, m2/s per m across the flow.
+	static float bed_load(float p_water_speed);
 
 private:
 	NodePath follow_target;
@@ -154,6 +159,17 @@ private:
 	bool ripple_published = false;
 	double ripple_mask_accum = 1e9;
 	LocalVector<float> ripple_show; // sand share the ripples show on (the texture's second channel)
+	// Far ripples: past the window the grown field (periodic) shades the rest of the patch as a normal. The
+	// ripple map carries, under the window's rows, the sand share over the patch and a row of numbers, so the
+	// path tracer reads all of it from one texture (rt param 68).
+	static constexpr int RIPPLE_SAND_N = 128;
+	LocalVector<float> ripple_sand; // RIPPLE_SAND_N squared over ripple_sand_rect
+	Rect2 ripple_sand_rect;
+	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
+	Ref<Image> ripple_far_image;
+	Ref<ImageTexture> ripple_far_texture;
+	bool ripple_far_published = false;
+	void _ripples_far_tile();
 	LocalVector<float> ripple_seen; // the field's surface change at each of its texels over the window
 	Vector2i ripple_seen_origin;
 	Ref<Image> ripple_image;
@@ -171,7 +187,7 @@ public:
 	// For the streamers (GroundStreamers3D): the 10 m wind over the field and the share of sand the wind can
 	// move at a place.
 	Vector2 get_wind_10m() const { return _wind_10m(); }
-	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown; }
+	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z); }
 
 private:
 
@@ -209,6 +225,49 @@ private:
 	bool ground_valid = false;
 	LocalVector<float> ground;
 	LocalVector<Cell> cells;
+	// Each cell's inputs, so water can redo one cell without the type map and weather lookups.
+	struct CellInput {
+		float sand = 0.0f;
+		float moisture = 0.0f;
+		float litter = 0.0f;
+		bool fixed = false; // rock or snow: never deforms
+	};
+	LocalVector<CellInput> cell_inputs;
+	// Sand and water (docs/ideas/sand.md, stage 4): pore water and the water over each cell.
+	TypedArray<NodePath> water_sources;
+	bool water_coupling = true;
+	LocalVector<float> pore; // saturation of the top 2 cm, 0..1, per lattice cell
+	LocalVector<float> water_speed; // m/s of water over the cell, 0 dry
+	LocalVector<float> cell_water; // the saturation and speed the cell was last built with (2 per cell)
+	double water_accum = 0.0;
+	float water_usec = 0.0f;
+	void _water_update(double p_delta);
+	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film,
+	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
+	Vector<uint8_t> wet_data;
+	Ref<ImageTexture> wet_texture;
+	bool wet_published = false;
+	bool sand_glints = false;
+	double wet_publish_accum = 0.0;
+	void _wet_publish(bool p_on);
+	// Vegetation sheltering the sand (dune grass, docs/ideas/sand.md): plants take a share of the wind's stress
+	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
+	TypedArray<NodePath> wind_shelters;
+	LocalVector<float> shelter_ratio; // the surface's friction speed over the open ground's, per lattice cell
+	LocalVector<float> shelter_flux; // the flux factor, Q(u* ratio) / Q(u*), 0..1 (1 with no plants)
+	LocalVector<float> sand_flux; // kg/m/s, along the wind
+	LocalVector<float> sand_dep_rate; // m/s, + piling up, - scoured
+	LocalVector<float> sand_dep; // m written to the ground since the cell came in
+	LocalVector<float> sand_dep_pending; // m owed, written in 2 mm steps
+	LocalVector<int> wind_order; // the cells in downwind order
+	Vector2 wind_order_dir;
+	Vector2 sand_flux_dir;
+	double wind_accum = 0.0;
+	float wind_usec = 0.0f;
+	void _wind_update(double p_delta);
+	float _shelter_flux_at(float p_x, float p_z) const;
+	float _lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const;
+	void _shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride);
 	float ground_min = 0.0f;
 	float ground_max = 0.0f;
 	Ref<Image> height_image;
@@ -339,6 +398,24 @@ public:
 	Vector2 get_wind_override() const { return wind_override; }
 	void set_wind_ripples(bool p_enabled);
 	bool is_wind_ripples() const { return wind_ripples; }
+	void set_water_sources(const TypedArray<NodePath> &p_sources) { water_sources = p_sources; }
+	TypedArray<NodePath> get_water_sources() const { return water_sources; }
+	void set_water_coupling(bool p_enabled);
+	bool is_water_coupling() const { return water_coupling; }
+	float get_saturation_at(const Vector3 &p_position) const;
+	float get_water_speed_at(const Vector3 &p_position) const;
+	float get_water_step_usec() const { return water_usec; }
+	void set_sand_glints(bool p_enabled) { sand_glints = p_enabled; }
+	bool is_sand_glints() const { return sand_glints; }
+	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }
+	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
+	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
+	// p_lambda (clamped to 0.5).
+	static float shelter_ratio_for(float p_lambda);
+	Vector2 get_sand_flux_at(const Vector3 &p_position) const;
+	float get_deposition_rate_at(const Vector3 &p_position) const;
+	float get_sand_deposit_at(const Vector3 &p_position) const;
+	float get_wind_step_usec() const { return wind_usec; }
 	void set_ripple_extent(float p_extent) { ripple_extent = CLAMP(p_extent, 1.0f, 16.0f); }
 	float get_ripple_extent() const { return ripple_extent; }
 	void set_ripple_time_scale(float p_scale) { ripple_time_scale = MAX(p_scale, 0.0f); }

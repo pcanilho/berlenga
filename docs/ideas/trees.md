@@ -1103,6 +1103,15 @@ mistletoe and brooms, which read from far.
   shell). Bare wood: fibres drawn in the shader, latewood ridges left by weathering, silver on
   the ridges and brown in the grooves, and a peel edge from noise at three scales stretched
   along the grain. Beech bark: lichen as lobed films, faint lenticels and folds.
+- **Round 5 (docs: "a flat olive wall", "planks")**: the wall was the log's own beech bark, its
+  albedo texture nearly one tone: crust colonies covered most of it and, past 1, clipped flat.
+  Smooth bark's texture is now stored with headroom (the material's albedo, 1.35, gives it back),
+  colonies are smaller and fewer, and grey mottling at two scales (about 4 and 1.5 cm) shows
+  between them (contrast in the frame 8.5 to 12.8 grey levels). Smooth bark on dead wood keeps
+  its grey; lying wood carries a quarter of the crust lichen (moss and algae win in the litter's
+  damp); the moss film ahead of the cushions lies in drifts, with a few centimetres of full tint
+  only at the shell's edge. Bare wood: the grain meanders a centimetre or two over half a metre,
+  ridges run a hand to a forearm long, knots are 1.5-4.5 cm.
 
 ### 5p. Bark stories (16 Nov; Paulo's third pick)
 
@@ -1133,6 +1142,24 @@ newly dead standing trees only.
   beads on a "resin" surface (LOD 0 and path tracing only).
 - **Dead lower branches** on shaded conifers already come from `dead_branch_keep` (spruce 0.7,
   fir 0.5).
+
+### 5q. Hard places (research, 16 Nov; on a card)
+
+The last item of 5m. Sources: Pirk et al., *Plastic Trees* (SIGGRAPH 2012: a grown tree adapts
+its skeleton to obstacles and light after the fact, bending and pruning branches); Palubicki et
+al. 2009 (self-organizing trees: buds compete for space and light, so a crown grows away from
+an obstacle); Li et al., *Rhizomorph* (2023: roots grown with soil and obstacles). In nature:
+roots over rock follow the stone surface and stay thick where exposed (they turn bark-covered,
+grey and ridged); trees on a cut bank or stream bank show their laterals arching down the face.
+Wind-flagged trees keep branches only on the lee side (ice and sand abrasion kill windward
+buds); krummholz is the low mat form at the tree line, a skirt of layered branches under the
+snow line and a few flagged stems above it.
+
+Plan (TreeGenerator only): an obstacle input (RockField3D.get_stones and the terrain height
+and slope at the root collar) lets surface roots drape over stones and down banks; a
+`prevailing_wind` direction and `exposure` turn on bud death on the windward side and, near the
+tree line, the krummholz skirt. Stands at the tree line and on coasts set exposure from height
+and distance to the sea.
 
 ## 6. What the games at Paulo's bar do
 

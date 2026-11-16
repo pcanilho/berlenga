@@ -636,6 +636,10 @@ void BaseMaterial3D::init_shaders() {
 		// And its wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the patch.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The grown ripple field's slope (periodic, mipmapped) for the far ripples past the window.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_far", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		// And its pore water (sand stage 4): wetness and sheen on the lattice, the last row its rect.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_wet_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -2488,12 +2492,33 @@ void fragment() {)";
 	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
 		// Turned ground (docs/ideas/ground-deform.md): darker and, wet, smoother where freshly dug; the path
 		// tracer applies the same factors (scene_raytracing_raygen.glsl).
-		code += R"(	{
+		code += R"(	vec3 ground_wet = vec3(0.0);
+	float ground_fp = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+	ground_fp = PROJECTION_MATRIX[3][3] != 0.0 ? ground_fp : length(VERTEX) * ground_fp;
+	{
 		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		ALBEDO *= gd_tint.x;
 		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
+		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+		if (gr_far != vec2(0.0)) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
+		}
+		ground_wet = ground_wet_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		// Loose sand shows its grains' colours (sand_glints).
+		if (ground_wet.z > 0.0) {
+			ALBEDO *= mix(1.0, ground_grain_speckle((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, ground_fp), ground_wet.z);
+		}
 	}
 )";
+		if (!features[FEATURE_WETNESS]) {
+			// Pore water (sand stage 4) darkens and smooths the sand by Lagarde's porous model, porosity 0.6.
+			code += R"(	{
+		float gw_f = mix(1.0, 0.2, (1.0 - METALLIC) * 0.6);
+		ALBEDO *= mix(1.0, gw_f, ground_wet.x);
+		ROUGHNESS *= mix(1.0, gw_f, 0.5 * ground_wet.x);
+	}
+)";
+		}
 	}
 
 	if (features[FEATURE_WETNESS]) {
@@ -2507,7 +2532,41 @@ void fragment() {)";
 		if (wetness_from_weather) {
 			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
 		}
+		if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+			code += "\twet = max(wet, ground_wet.x);\n";
+		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
+)";
+	}
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
+		// sand's relief and is smooth. Then, on dry loose sand, the grains that mirror the sun (sand_glints), as
+		// the snow's sparkle: the facet is the coat lobe on its own normal, the sand keeps its shading.
+		code += R"(	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
+	ROUGHNESS = mix(ROUGHNESS, 0.2, 0.6 * ground_wet.y);
+	{
+		float gl_w = ground_wet.z * (1.0 - smoothstep(0.05, 0.3, ground_wet.x));
+		vec4 gl = gl_w > 0.0 ? ground_glint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz), ground_fp) : vec4(0.0);
+		gl_w *= gl.w;
+		if (gl_w > 0.0) {
+			vec2 nm = NORMAL_MAP.xy * 2.0 - 1.0;
+			vec3 base = normalize(mix(NORMAL, TANGENT * nm.x + BINORMAL * nm.y + NORMAL * sqrt(max(0.0, 1.0 - dot(nm, nm))), NORMAL_MAP_DEPTH));
+			vec3 f = normalize((VIEW_MATRIX * vec4(gl.xyz, 0.0)).xyz);
+			mat3 tbf = mat3(TANGENT, BINORMAL, f);
+			if (abs(determinant(tbf)) > 1e-3) {
+				vec3 k = inverse(tbf) * base;
+				if (k.z > 0.0) {
+					k /= length(k);
+					NORMAL = f;
+					NORMAL_MAP = vec3(k.xy * 0.5 + 0.5, 1.0);
+					NORMAL_MAP_DEPTH = 1.0;
+					// Quartz F0 0.045 is 1.1 of the coat's 0.04.
+					CLEARCOAT = min(1.1 * gl_w, 1.0);
+					CLEARCOAT_ROUGHNESS = 0.45;
+				}
+			}
+		}
+	}
 )";
 	}
 
@@ -3765,6 +3824,8 @@ global uniform vec4 ground_deform_height_rect;
 global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
 global uniform sampler2D ground_ripple_map; // wind ripples: height (m), share of sand they show on
 global uniform vec4 ground_ripple_rect; // x, z, size, cell (m); size 0 = none
+global uniform sampler2D ground_ripple_far : filter_linear_mipmap_anisotropic, repeat_enable; // the grown field's slope
+global uniform sampler2D ground_wet_map : filter_linear, repeat_disable; // pore water: wetness, sheen; last row its rect
 )";
 	if (p_patch_uniform) {
 		code += "uniform bool ground_deform_patch = false;\n";
@@ -3793,9 +3854,127 @@ float ground_ripple(vec2 p_xz) {
 	if (min(e.x, e.y) <= 0.0) {
 		return 0.0;
 	}
+	// The window is the map's first n rows (under it: the sand share over the patch and a row of numbers).
+	float rows = float(textureSize(ground_ripple_map, 0).y);
+	uv.y *= (ground_ripple_rect.z / max(ground_ripple_rect.w, 1e-4)) / rows;
 	vec2 r = textureLod(ground_ripple_map, uv, 0.0).rg;
 	// Faded in over the outer 15% of the window, so its edge does not show as a line.
 	return r.x * r.y * smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y));
+}
+// Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
+// sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
+// path tracer reads the same map (scene_raytracing_raygen.glsl).
+vec2 ground_ripple_far_slope(vec2 p_xz) {
+	if (ground_ripple_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
+	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
+	if (m2.x < 0.5) {
+		return vec2(0.0);
+	}
+	int n = int(m2.y + 0.5);
+	int sn = int(m2.z + 0.5);
+	// The sand share, bilinear inside its block.
+	vec2 su = (p_xz - m1.xy) / m1.z * float(sn) - 0.5;
+	if (any(lessThan(su, vec2(-0.5))) || any(greaterThan(su, vec2(float(sn) - 0.5)))) {
+		return vec2(0.0);
+	}
+	ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+	ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+	vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+	float sand = mix(mix(texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).r, texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).r, sf.x),
+			mix(texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).r, texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).r, sf.x), sf.y);
+	vec2 uv = (p_xz - ground_ripple_rect.xy) / ground_ripple_rect.z;
+	vec2 e = min(uv, 1.0 - uv) * ground_ripple_rect.z;
+	float live = min(e.x, e.y) > 0.0 ? smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y)) : 0.0;
+	float w = sand * (1.0 - live);
+	if (w <= 0.0) {
+		return vec2(0.0);
+	}
+	// Cell c's centre is at c * cell, its texel (c mod n).
+	vec2 tuv = (p_xz / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
+	return w * texture(ground_ripple_far, tuv).rg;
+}
+// The ground's pore water at p_world (sand stage 4): (wetness, standing film) for Lagarde 2013's wet surfaces,
+// and the share of loose dry sand that shows its grains (sand glints); the path tracer reads the same map
+// (scene_raytracing_raygen.glsl). Zero off the patch.
+vec3 ground_wet_at(vec3 p_world, vec3 p_normal) {
+	ivec2 ts = textureSize(ground_wet_map, 0);
+	if (ts.y < 2) {
+		return vec3(0.0);
+	}
+	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
+	vec2 uv = (p_world.xz - r.xy) / max(r.z, 1e-3);
+	// r.w tags a published map (2.5): the global's default texture must not read as a wet square.
+	if (abs(r.w - 2.5) > 0.01 || r.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec3(0.0);
+	}
+	vec3 w = textureLod(ground_wet_map, vec2(uv.x, uv.y * float(ts.y - 1) / float(ts.y)), 0.0).rgb;
+	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), clamp(w.y, 0.0, 1.0) * smoothstep(0.7, 0.95, p_normal.y), clamp(w.z, 0.0, 1.0));
+}
+// Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
+// of 0.25 mm counted per cell of the pixel's footprint, as the snow's sparkle is (Zirr and Kaplanyan 2016;
+// Deliot and Belcour 2023): the cell is the grain size doubled until it covers the footprint.
+uint ground_grain_hash(ivec3 p_q, uint p_level) {
+	uint h = (uint(p_q.x) * 73856093u) ^ (uint(p_q.y) * 19349663u) ^ (uint(p_q.z) * 83492791u) ^ (p_level * 2654435761u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return h;
+}
+// Grain colour: sand is a mix of grains (quartz, feldspar, dark heavy minerals) whose colours average out over
+// the footprint, their contrast falling as one over the square root of the grains a cell holds; blended across
+// levels so it never steps. An albedo factor about 1.
+float ground_grain_layer(vec3 p_pos, float p_footprint, float p_grain, uint p_salt) {
+	float lf = max(log2(max(p_footprint, p_grain) / p_grain), 0.0);
+	float l0 = floor(lf);
+	float v = 0.0;
+	for (int k = 0; k < 2; k++) {
+		float level = l0 + float(k);
+		float cell = p_grain * exp2(level);
+		uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level) + p_salt);
+		// The sum of two uniforms: a rounded spread about 0, standard deviation 0.41.
+		float s = (float(h & 0xffffu) + float(h >> 16u)) / 65535.0 - 1.0;
+		v += (k == 0 ? 1.0 - (lf - l0) : lf - l0) * s / exp2(level);
+	}
+	return v;
+}
+// Medium sand (0.25 mm) and the coarse grains, shell bits and dark minerals among it (about 1.2 mm), which are
+// what still read as single grains from half a metre.
+float ground_grain_speckle(vec3 p_pos, float p_footprint) {
+	return 1.0 + 0.8 * ground_grain_layer(p_pos, p_footprint, 0.00025, 0u) + 0.45 * ground_grain_layer(p_pos, p_footprint, 0.0012, 40u);
+}
+// A share of the grains are clean faces (quartz cleavage, mica flakes) that mirror a light: one facet per cell, as
+// snow_glint() with sand's grain and share; returns its normal and weight (0: none).
+vec4 ground_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
+	const float grain = 0.00025;
+	const float share = 0.12;
+	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
+	if (level > 7.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = grain * exp2(level);
+	uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level) + 17u);
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.25 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
 }
 // The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
 float ground_deform_lowered(vec2 p_xz) {

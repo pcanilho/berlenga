@@ -2501,6 +2501,11 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 // one family, BARK_TILE metres square. Cracks follow Lefebvre and Neyret 2002 in spirit: a
 // stiff outer layer split into plates whose shape (long ridges, plates, scales, flakes) is the
 // family's, with depth from the species' bark thickness.
+// The bark albedo texture's scale: stored divided by it, the material's albedo multiplies it back.
+float TreeGenerator::_bark_headroom(BarkKind p_kind) {
+	return p_kind == BARK_SMOOTH ? 1.35f : 1.0f;
+}
+
 const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	BarkSet &set = bark_sets[p_kind];
 	if (set.albedo.is_valid()) {
@@ -2669,16 +2674,19 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// tiny dark fruiting dots, and here and there the black script of Graphis.
 					// Round discs on a grid read as stamps up close (docs, 16 Nov): the colonies
 					// are thresholds of noise at three scales instead, so no two edges repeat.
-					const float c1 = bark_fbm(u, v, 3, 2, 4, salt + 111u);
-					const float c2 = bark_fbm(u, v, 7, 5, 3, salt + 112u);
+					const float c1 = bark_fbm(u, v, 5, 3, 4, salt + 111u);
+					const float c2 = bark_fbm(u, v, 11, 8, 3, salt + 112u);
 					const float field = c1 + 0.45f * c2;
-					const float colony = Math::smoothstep(0.02f, 0.05f, field);
+					const float colony = Math::smoothstep(0.045f, 0.075f, field);
 					// A darker margin line where a colony meets bare bark or its neighbour.
-					const float margin = Math::exp(-Math::pow((field - 0.02f) / 0.008f, 2.0f));
+					const float margin = Math::exp(-Math::pow((field - 0.045f) / 0.008f, 2.0f));
 					const float grain = bark_fbm(u, v, 96, 96, 2, salt + 114u);
 					if (colony > 0.0f || margin > 0.01f) {
-						const float tone = 0.75f + 0.25f * Math::smoothstep(-0.05f, 0.15f, c2);
-						a = a.lerp(Color(1.4f, 1.4f, 1.3f) * tone, 0.75f * colony * (0.8f + 2.0f * grain));
+						// Whitish grey crusts, paler than the bark, granular. The weight is clamped: past 1
+						// the lerp overshot to white that the texture clipped flat, a beech log's whole
+						// side one tone at 40 cm (docs, 16 Nov).
+						const float tone = 0.85f + 0.15f * Math::smoothstep(-0.05f, 0.15f, c2);
+						a = a.lerp(Color(1.3f, 1.3f, 1.24f) * tone, CLAMP(0.75f * colony * (0.8f + 2.0f * grain), 0.0f, 0.9f));
 						a = a * Math::lerp(1.0f, 0.82f, margin * 0.7f);
 						height += 0.0002f * colony + 0.00015f * colony * grain;
 						r = Math::lerp(r, 0.9f, colony);
@@ -2712,10 +2720,15 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					}
 					// Green algal film (Desmococcus) in drifts, and silvery patches where the bark
 					// is dry: beech is mottled grey, green-grey and silver, not one grey.
-					const float alg = Math::smoothstep(-0.02f, 0.12f, bark_fbm(u, v, 2, 3, 4, salt + 141u));
+					// Drifts, not a cast: under a third of the bark (an even cover tinted it olive).
+					const float alg = Math::smoothstep(0.06f, 0.18f, bark_fbm(u, v, 2, 3, 4, salt + 141u));
 					a = Color(a.r * Math::lerp(1.0f, 0.84f, alg), a.g * Math::lerp(1.0f, 0.98f, alg), a.b * Math::lerp(1.0f, 0.66f, alg));
 					// Darker damp patches where water stands longer.
 					a = a * Math::lerp(1.0f, 0.78f, Math::smoothstep(0.04f, 0.16f, bark_fbm(u, v, 3, 2, 4, salt + 145u)));
+					// Mottling a few centimetres across, grey on grey: without it a hand's width of
+					// bark between colonies read as one flat wall at 40 cm (docs, 16 Nov).
+					a = a * Math::lerp(0.66f, 1.12f, Math::smoothstep(-0.1f, 0.1f, bark_fbm(u, v, 10, 7, 3, salt + 147u)));
+					a = a * Math::lerp(0.8f, 1.08f, Math::smoothstep(-0.08f, 0.08f, bark_fbm(u, v, 24, 16, 2, salt + 149u)));
 					// Elephant-skin wrinkling: soft relief a few centimetres across.
 					height += 0.0003f * bark_fbm(u, v, 12, 8, 3, salt + 143u);
 				}
@@ -2743,7 +2756,10 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			for (int c = 0; c < 3; c++) {
 				// The albedo multiplies the vertex colour (species and weathering), so it is stored
 				// as a linear factor encoded to sRGB for the albedo slot.
-				const float f = CLAMP(aw[k * 3 + c] * 0.92f, 0.0f, 1.0f);
+				// Smooth bark's pale crust colonies stand above 1 and were clipped flat (no lichen
+				// left on a beech log at 40 cm, docs 16 Nov): stored with headroom, which the
+				// material's albedo gives back.
+				const float f = CLAMP(aw[k * 3 + c] * 0.92f / _bark_headroom(p_kind), 0.0f, 1.0f);
 				abytes.write[k * 3 + c] = uint8_t(Math::round(Color(f, f, f).linear_to_srgb().r * 255.0f));
 			}
 			const float hx = hw[y * N + (x + 1) % N] - hw[y * N + (x + N - 1) % N];
@@ -3011,7 +3027,9 @@ float TreeGenerator::_lichen_amount() const {
 	static const float DECAY[6] = { 1.0f, 1.15f, 1.0f, 0.6f, 0.3f, 0.1f };
 	float k = lichen_cover * LICHEN_AFFINITY[preset].amount * DECAY[CLAMP(decay_class, 0, 5)];
 	if (fallen || fallen_branch) {
-		k *= 0.5f; // In the litter's damp and shade.
+		// In the litter's damp and shade crusts give way to moss and algae; a log's full cover
+		// read as one flat olive-grey wall at 40 cm (docs, 16 Nov).
+		k *= 0.25f;
 	}
 	return k;
 }
@@ -7279,6 +7297,10 @@ void TreeGenerator::_apply_decay() {
 		Color(0.35f, 0.28f, 0.2f), Color(0.3f, 0.24f, 0.17f) };
 	if (fallen_branch) {
 		bark_color = bark_color.lerp(LITTER_STAINED[decay_class], 0.7f);
+	} else if (_bark_kind(preset) == BARK_SMOOTH && decay_class <= 3) {
+		// Smooth bark (beech, hornbeam) stays silver-grey on dead wood until it sloughs; browned
+		// toward the general weathered tone it read olive under warm light (docs, 16 Nov).
+		bark_color = bark_color.lerp(Color(0.44f, 0.44f, 0.43f), 0.5f).lerp(WEATHERED[decay_class], 0.15f);
 	} else {
 		bark_color = bark_color.lerp(WEATHERED[decay_class], decay_class >= 3 && bark_peel <= 0.0f ? 0.85f : 0.55f);
 	}
@@ -8344,8 +8366,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
 			const float w = _moss_at(r_b.verts[v], r_b.normals[v], moss_ground, moss_k);
-			const float t = 0.85f * CLAMP((w - 0.15f) / 0.4f, 0.0f, 1.0f);
+			float t = 0.85f * CLAMP((w - 0.15f) / 0.4f, 0.0f, 1.0f);
 			if (t > 0.0f) {
+				// Ahead of the cushions the film is algae and protonema in drifts a hand to a
+				// forearm across, the bark's silver-grey between them; an even tint over the whole
+				// moss weight read as an olive wall on a lying beech at 40 cm (docs, 16 Nov).
+				const float drift = Math::smoothstep(0.42f, 0.62f, moss_noise(r_b.verts[v] * 6.0f, 0x66696c6du));
+				// The shell shows from about 0.47: a few centimetres of full tint at its edge hide the
+				// edge's grid (and moss creeps ahead of a cushion so); wider, it read as the wall.
+				t *= Math::lerp(0.1f + 0.75f * drift, 1.0f, Math::smoothstep(0.41f, 0.47f, w));
 				r_b.colors.write[v] = r_b.colors[v].lerp(moss_green, t);
 			}
 		}
@@ -11528,6 +11557,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (s == 0) {
 			const BarkSet &bs = _bark_set(_bark_kind(preset));
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, bs.albedo);
+			const float head = _bark_headroom(_bark_kind(preset));
+			m->set_albedo(Color(head, head, head));
 			m->set_roughness(1.0f);
 			m->set_texture(BaseMaterial3D::TEXTURE_ROUGHNESS, bs.roughness);
 			m->set_roughness_texture_channel(BaseMaterial3D::TEXTURE_CHANNEL_GREEN);
@@ -11732,7 +11763,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			vec4 lm = texture(lichen_map, UV2);
 			// A crust is a skin a fraction of a millimetre thick: the bark's own tone shows through
 			// it (darker in the bark's cracks), as do its relief and normal map.
-			float bark_tone = clamp(dot(albedo_tex.rgb, vec3(0.3, 0.5, 0.2)) / max(dot(COLOR.rgb, vec3(0.3, 0.5, 0.2)), 1e-3), 0.4, 1.4);
+			float bark_tone = clamp(dot(albedo.rgb * albedo_tex.rgb, vec3(0.3, 0.5, 0.2)) / max(dot(COLOR.rgb, vec3(0.3, 0.5, 0.2)), 1e-3), 0.4, 1.4);
 			// Crusts take the exposed ridges and plates first and reach into the furrows last
 			// (the furrows hold water and dirt, where moss and powdery Lepraria win).
 			float ridge = mix(0.2, 1.3, smoothstep(0.35, 0.75, texture(texture_roughness, base_uv).b));
@@ -11747,7 +11778,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// Each crust its own species' tone, from whitish to grey-green; paler at the growing
 			// rim than in the older middle.
 			vec3 crust_col = lichen_crust_color * mix(vec3(1.0), vec3(0.9, 1.0, 0.82), fract(lm.b * 5.3)) * mix(0.82, 1.1, fract(lm.b * 13.7));
-			vec3 cc = (lm.b < lichen_orange_share ? lichen_orange_color : crust_col) * mix(0.78, 1.05, lm.r) * mix(1.0, bark_tone, 0.45);
+			vec3 cc = (lm.b < lichen_orange_share ? lichen_orange_color : crust_col) * mix(0.78, 1.05, lm.r) * mix(1.0, bark_tone, 0.7);
 			// Rosettes: darker and wrinkled in the old middle, paler at the growing lobe tips.
 			vec3 lc = lichen_leafy_color * mix(0.62, 1.04, smoothstep(0.1, 0.9, lm.g / max(tf, 1e-3))) * mix(1.0, bark_tone, 0.25);
 			ALBEDO = mix(ALBEDO, cc * lm.a, crust * 0.85);
@@ -11763,9 +11794,12 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// millimetre and a half apart (BARK_TILE 0.4 m: 266 a tile), wavering with a slow
 			// noise, and coarser growth bands; faded out as they shrink below a pixel.
 			float warp = texture(lichen_map, vec2(base_uv.x * 0.6, base_uv.y * 0.12)).r;
+			// The grain meanders a centimetre or two either way over half a metre: straight
+			// parallel bands read as sawn planks (docs, 16 Nov).
+			float mea = (texture(lichen_map, vec2(base_uv.x * 0.35 + 0.61, base_uv.y * 0.09)).g - 0.5) * 0.06;
 			// Knots: the grain parts round each overgrown branch base and closes again behind
 			// it, the knot itself a dark end-grain eye with its own rings. Cells 16 cm round
-			// and 48 cm along the stem, about half with a knot 1-3 cm across.
+			// and 48 cm along the stem, about half with a knot 1.5-4.5 cm across.
 			vec2 kq = base_uv * vec2(2.5, 0.83);
 			vec2 kc = floor(kq);
 			float kx_shift = 0.0;
@@ -11775,7 +11809,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 				float kh = fract(sin(dot(cc, vec2(17.3, 91.7))) * 43758.5453);
 				if (kh < 0.5) {
 					vec2 ctr = (cc + vec2(0.2 + 0.6 * fract(kh * 13.1), 0.2 + 0.6 * fract(kh * 7.7))) / vec2(2.5, 0.83);
-					float kr = (0.01 + 0.02 * fract(kh * 3.3)) / 0.4; // Tile units.
+					float kr = (0.015 + 0.03 * fract(kh * 3.3)) / 0.4; // Tile units.
 					vec2 dq = base_uv - ctr;
 					dq.x = dq.x - round(dq.x * 1.0) * 1.0;
 					vec2 de = vec2(dq.x, dq.y * 0.3);
@@ -11785,15 +11819,16 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 					knot = max(knot, (1.0 - smoothstep(0.55, 0.75, kd)) * (0.75 + 0.25 * sin(kd * 30.0)));
 				}
 			}
-			float fx = (base_uv.x - kx_shift) * 266.0 + warp * 9.0;
+			float fx = (base_uv.x - kx_shift + mea) * 266.0 + warp * 9.0;
 			float fw = fwidth(fx);
 			float fib = 0.5 + 0.5 * sin(6.2832 * fx);
 			fib = mix(fib, 0.5, smoothstep(0.25, 0.6, fw));
 			// Weathering eats the soft earlywood and leaves the latewood standing in ridges
 			// along the grain, uneven in width (no planed board's even bands).
 			float bx = base_uv.x * 38.0 + warp * 3.0;
-			float kux = base_uv.x - kx_shift;
-			float band = 0.6 * texture(lichen_map, vec2(kux * 9.0, base_uv.y * 0.25)).r + 0.4 * texture(lichen_map, vec2(kux * 31.0 + 0.4, base_uv.y * 0.6)).r;
+			float kux = base_uv.x - kx_shift + mea;
+			// Ridges run a hand to a forearm and fade (sampled long, they ran the log's length).
+			float band = 0.6 * texture(lichen_map, vec2(kux * 9.0, base_uv.y * 0.7)).r + 0.4 * texture(lichen_map, vec2(kux * 31.0 + 0.4, base_uv.y * 1.5)).r;
 			// Rays: beech shows its broad rays on a split or peeled face as short dark spindles
 			// along the grain, a few millimetres long.
 			vec2 rq = vec2(base_uv.x * 140.0, base_uv.y * 26.0 + warp * 2.0);
@@ -11805,10 +11840,10 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			float grain = 0.55 * fib + 0.45 * band;
 			// Checks: thin dark splits along the grain, wavering with it, broken into lengths.
 			float wander = texture(lichen_map, vec2(base_uv.x * 0.7 + 0.53, base_uv.y * 0.02)).r;
-			float split = abs(fract(base_uv.x * 5.0 + 1.2 * wander) - 0.5);
+			float split = abs(fract(kux * 5.0 + 1.2 * wander) - 0.5);
 			float run = smoothstep(0.5, 0.65, texture(lichen_map, vec2(base_uv.x * 0.9 + 0.21, base_uv.y * 0.03)).r);
 			float checks = mix(1.0, smoothstep(0.01, 0.07, split), run);
-			vec3 wood = bark_wood_color * (0.7 + 0.5 * grain) * mix(0.3, 1.0, checks) * (1.0 - 0.3 * ray);
+			vec3 wood = bark_wood_color * (0.8 + 0.32 * grain) * mix(0.3, 1.0, checks) * (1.0 - 0.3 * ray);
 			// Silver-grey on the weathered ridges, brown in the grooves where it stays damp.
 			wood = mix(wood * vec3(0.92, 0.86, 0.78), wood * vec3(1.08, 1.08, 1.06), smoothstep(0.35, 0.7, band));
 			// Close up the long grain alone smeared into streaks (a texel stretched over a hand's
@@ -11851,10 +11886,10 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// The wood's own relief: fibre ridges across u and the checks as grooves, as a tangent
 			// space normal from the pattern's slope (finite differences of the same samples).
 			float du = 0.004;
-			float split1 = abs(fract((base_uv.x + du) * 5.0 + 1.2 * wander) - 0.5);
+			float split1 = abs(fract((kux + du) * 5.0 + 1.2 * wander) - 0.5);
 			float c1 = mix(1.0, smoothstep(0.01, 0.07, split1), run);
 			float bx1 = bx + du * 38.0;
-			float band1 = 0.6 * texture(lichen_map, vec2((base_uv.x + du) * 9.0, base_uv.y * 0.25)).r + 0.4 * texture(lichen_map, vec2((base_uv.x + du) * 31.0 + 0.4, base_uv.y * 0.6)).r;
+			float band1 = 0.6 * texture(lichen_map, vec2((kux + du) * 9.0, base_uv.y * 0.7)).r + 0.4 * texture(lichen_map, vec2((kux + du) * 31.0 + 0.4, base_uv.y * 1.5)).r;
 			float h0 = 0.6 * band + checks - 0.6 * gallery, h1 = 0.6 * band1 + c1 - 0.6 * gallery;
 			// The fibres' own ridges from their analytic slope (they repeat faster than du).
 			float fib_n = 0.1 * cos(6.2832 * fx) * (1.0 - smoothstep(0.25, 0.6, fw));

@@ -41,6 +41,8 @@
 #include "core/templates/local_vector.h"
 #include "core/templates/safe_refcount.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/material.h"
+#include "scene/resources/mesh.h"
 
 class MultiMesh;
 class MultiMeshInstance3D;
@@ -67,12 +69,14 @@ class VegetationField3D : public Node3D {
 		float footprint = 0.0f;
 		int species = 0;
 		bool deadwood = false; // A log: plants on and beside it ignore its footprint.
+		bool top = false; // On a stone's top: plants on the ground round the stone and on its top do not crowd each other.
 	};
 	// A placed log (a species marked "deadwood" whose meshes carry tree_deadwood_axis), in world space.
 	struct Deadwood {
 		Vector3 a, b;
 		float radius = 0.0f;
 		bool pit = false; // An uprooted tree's root pit (mesh meta tree_root_pit): a disc of bare soil of this radius round a, not wood.
+		int8_t feature = -1; // A place on a log's surface (tree_deadwood_features: 0 peel edge, 1 drying check): a the point, b - a its outward normal (1 cm); not wood.
 	};
 	// The log nearest a point, as seen from above.
 	struct DeadwoodHit {
@@ -87,6 +91,7 @@ class VegetationField3D : public Node3D {
 	static constexpr float DEADWOOD_BESIDE_GAP = 0.15f; // Plants beside a log only where its underside is within this of the ground.
 	static constexpr float WOOD_FEEDER_HEIGHT = 0.2f; // How far up a log's side a wood feeder roots (at most its axis).
 	static constexpr float WOOD_FEEDER_LEAN_DEG = 15.0f; // How far a wood feeder tips out of the bark.
+	static constexpr float WOOD_FEEDER_REACH = 0.6f; // How far along a log a wood feeder looks for a crack or bark edge to root in.
 	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
 	LocalVector<Deadwood> deadwood;
@@ -94,6 +99,10 @@ class VegetationField3D : public Node3D {
 	float deadwood_max_radius = 0.0f;
 	// The nearest log within reach of its side, this field's own (under crown_lock).
 	bool _deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit, float p_min_radius = 0.0f) const;
+	// The nearest crack or bark edge on a log's side (tree_deadwood_features) to a point, within reach
+	// across the ground, between p_low and p_high over the ground there; p_any: whether the logs there
+	// carry features at all.
+	bool _deadwood_feature_at(const Vector3 &p_pos, float p_reach, float p_low, float p_high, float p_ground, Vector3 &r_point, Vector3 &r_normal, bool &r_any) const;
 	// Whether the point lies in a placed root pit, this field's own (under crown_lock).
 	bool _pit_at(const Vector2 &p_xz) const;
 	// A placed crown that shades the ground under it.
@@ -165,8 +174,10 @@ class VegetationField3D : public Node3D {
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
 		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, widest reach, then optionally the reach profile (mesh space); empty if not deadwood.
+		LocalVector<PackedFloat32Array> deadwood_features; // Per variant: tree_deadwood_features (8 floats a record: kind, point, normal, half width; mesh space).
 		LocalVector<PackedFloat32Array> deadwood_pits; // Per variant: the root pit (tree_root_pit: centre, radius, depth in mesh space) of an uprooted tree; empty if none.
 		float deadwood_reach = 0.0f; // How far its logs reach from the plant's origin (times its largest scale); 0: not deadwood.
+		float frontal = 0.0f; // m2 a plant shows the wind at scale 1 (PlantSpecies.wind_frontal_area).
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;
@@ -208,6 +219,7 @@ class VegetationField3D : public Node3D {
 		LocalVector<Crown> crowns;
 		LocalVector<FarAdd> far;
 		LocalVector<Deadwood> deadwood;
+		LocalVector<Vector3> shelter; // Per plant that shelters sand: global x, z, and its frontal area (m2).
 		int count = 0;
 	};
 	void _publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists);
@@ -241,6 +253,13 @@ class VegetationField3D : public Node3D {
 	NodePath cover_grass;
 	TypedArray<NodePath> cover_grass_layers; // More GrassField3D under cover_grass, top down (an undercoat).
 	float cover_cell = 4.0f;
+	// Plants past their range as real volume (docs/ideas/vegetation.md, "Far plants as volume"):
+	// a voxel shell per tile and species, from the range out to far_volume_range.
+	bool far_volume = false;
+	float far_volume_range = 150.0f;
+	float far_volume_cell = 0.3f;
+	Ref<StandardMaterial3D> far_volume_material;
+	Ref<ArrayMesh> _build_far_volume(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species) const;
 	Ref<Texture2D> cover_texture;
 	struct CoverJob {
 		const PlaceSetup *setup = nullptr;
@@ -345,6 +364,13 @@ class VegetationField3D : public Node3D {
 	bool _path_traced() const;
 	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.
+	// The plants' frontal area per square metre (Raupach's lambda) on a 1 m grid, for sand
+	// sheltered from the wind (GroundSurface3D.wind_shelters); rebuilt on demand once plants change.
+	static constexpr float SHELTER_CELL = 1.0f;
+	LocalVector<Vector3> shelter_static; // populate()'s plants (x, z, area).
+	mutable HashMap<Vector2i, float> shelter_grid;
+	mutable bool shelter_dirty = true;
+	void _build_shelter() const;
 	int plant_count = 0;
 	double populate_msec = 0.0;
 	bool populate_queued = false;
@@ -372,6 +398,9 @@ public:
 	Rect2 get_density_mask_rect() const { return density_mask_rect; }
 	// Rocks on the ground, (x, ground y, z, radius at the soil): no plant grows inside one.
 	void set_obstacles(const PackedVector4Array &p_obstacles);
+	// The placed plants' frontal area index (m2 shown to the wind per m2 of ground) at a point, for
+	// GroundSurface3D's sand shelter (its wind_shelters).
+	float sample_lateral_cover(const Vector3 &p_position) const;
 	PackedVector4Array get_obstacles() const { return obstacles; }
 	void set_stone_tops(const PackedVector4Array &p_tops);
 	PackedVector4Array get_stone_tops() const { return stone_tops; }
@@ -412,6 +441,12 @@ public:
 	void set_cover_grass_layers(const TypedArray<NodePath> &p_paths);
 	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
+	void set_far_volume(bool p_on) { far_volume = p_on; }
+	bool is_far_volume() const { return far_volume; }
+	void set_far_volume_range(float p_range) { far_volume_range = MAX(p_range, 0.0f); }
+	float get_far_volume_range() const { return far_volume_range; }
+	void set_far_volume_cell(float p_cell) { far_volume_cell = CLAMP(p_cell, 0.05f, 4.0f); }
+	float get_far_volume_cell() const { return far_volume_cell; }
 	float get_cover_cell() const { return cover_cell; }
 	Ref<Texture2D> get_cover_texture() const { return cover_texture; }
 

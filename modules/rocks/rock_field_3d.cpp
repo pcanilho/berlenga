@@ -36,6 +36,7 @@
 #include "core/config/engine.h"
 #include "core/math/convex_hull.h"
 #include "core/math/random_pcg.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -478,8 +479,9 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	real_t y = ground - p_lib.bottom[v] * s - sink;
 	// No daylight under the stone: the seat above uses the centre's ground and the unrotated bottom, so on a slope (or
 	// with the stone tilted) its downhill underside can stand off the ground. Take the stone's underside (its
-	// ellipsoid's lowest 15 % once rotated, sampled round it) and lower the stone until all of it meets the ground
-	// there; it never rises. Seating to the lowest support point is the contact rule of SpeedTree's and Megascans'
+	// ellipsoid's 15 % nearest the ground, measured along the ground's normal: the face that bears on the slope, not the
+	// lowest in height, which on a steep slope is only its downhill edge) and lower the stone until all of it meets
+	// the ground there; it never rises. Seating to the lowest support point is the contact rule of SpeedTree's and Megascans'
 	// scatter tools ("align to terrain, no gaps") and of rigid-body rest.
 	if (reach > 0.08f) {
 		static Vector3 dirs[48];
@@ -494,16 +496,18 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 			dirs_made = true;
 		}
 		Vector3 pts[48];
+		real_t dn[48];
 		real_t lo = 1e9, hi = -1e9;
 		for (int i = 0; i < 48; i++) {
 			pts[i] = r_stone.basis.xform(dirs[i] * axes);
-			lo = MIN(lo, pts[i].y);
-			hi = MAX(hi, pts[i].y);
+			dn[i] = pts[i].dot(n);
+			lo = MIN(lo, dn[i]);
+			hi = MAX(hi, dn[i]);
 		}
 		const real_t band = lo + 0.15 * (hi - lo);
 		const real_t floor_y = y - 0.35 * height; // a ledge or step under one side: lowered by at most a third of its height
 		for (int i = 0; i < 48; i++) {
-			if (pts[i].y <= band) {
+			if (dn[i] <= band) {
 				// The ellipsoid's centre over the mesh origin, so that its bottom is the mesh's (about 0 for most stones).
 				const real_t centre = (p_lib.bottom[v] + axes.y) * s;
 				y = MIN(y, p_gen->get_height(Vector3(p_xz.x + pts[i].x, 0, p_xz.z + pts[i].z)) - pts[i].y - centre);
@@ -1746,7 +1750,48 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, bool 
 	return m;
 }
 
+// Holes opened by others (CaveNetwork3D's entrance patches): the built cells over them are built again without the
+// stones that lay there. Holes this field opens itself are handled where it opens them (_build_cell).
+void RockField3D::_watch_holes() {
+	TerrainGenerator3D *gen = _get_generator();
+	if (!gen || gen->get_instance_id() == holes_watched) {
+		return;
+	}
+	const Callable cb = callable_mp(this, &RockField3D::_on_holes_changed);
+	if (Object *old = ObjectDB::get_instance(holes_watched)) {
+		if (old->is_connected(SNAME("holes_changed"), cb)) {
+			old->disconnect(SNAME("holes_changed"), cb);
+		}
+	}
+	gen->connect(SNAME("holes_changed"), cb);
+	holes_watched = gen->get_instance_id();
+}
+
+void RockField3D::_on_holes_changed(const Rect2 &p_rect) {
+	if (building > 0) {
+		return;
+	}
+	LocalVector<Vector3i> again;
+	for (const KeyValue<Vector3i, Cell> &kv : cells) {
+		const real_t ks = _cell_size(Layer(kv.key.x));
+		if (Rect2(kv.key.y * ks, kv.key.z * ks, ks, ks).intersects(p_rect.grow(2.0))) {
+			again.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : again) {
+		stone_count -= cells[k].stones;
+		_free_cell(cells[k]);
+		cells.erase(k);
+		_build_cell(k);
+	}
+}
+
 void RockField3D::_build_cell(const Vector3i &p_key) {
+	building++;
+	struct Done {
+		int &n;
+		~Done() { n--; }
+	} done{ building };
 	const Layer layer = Layer(p_key.x);
 	const real_t cs = _cell_size(layer);
 	const Rect2 rect(p_key.y * cs, p_key.z * cs, cs, cs);
@@ -1966,6 +2011,7 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 }
 
 void RockField3D::_update_streaming(bool p_all) {
+	_watch_holes();
 	TerrainGenerator3D *gen = _get_generator();
 	const Vector3 tp = _target_position();
 	if (!gen || !Math::is_finite(gen->get_height(tp))) {
@@ -2785,6 +2831,7 @@ void RockField3D::clear() {
 
 int RockField3D::build_area(const Rect2 &p_rect) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	_watch_holes();
 	int built = 0;
 	for (int l = 0; l < LAYER_MAX; l++) {
 		if (!layer_enabled[l]) {

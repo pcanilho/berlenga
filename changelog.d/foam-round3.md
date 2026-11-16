@@ -1,0 +1,1 @@
+- Water: foam holes torn at each scale (warped cell walls, lobed edges, unbroken rafts inside), patch edges antialiased without a dark outline; `sample_swash().x` is now the film over the ground (0 past the run-up).

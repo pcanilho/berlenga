@@ -8,7 +8,8 @@
 		Its key points are the entrance and sinks under closed hollows on the ground above. Points are sampled in the rock, more densely on the bedding planes and the water table, and joined to their nearest neighbours. Each edge costs the line integral of the medium: low along a bedding plane, a joint plane or the water table, low straight up or level, high when inclined.
 		The least-cost paths between key points are kept by a gamma-skeleton. Side passages branch off as dead ends, every chain wanders by [member tortuosity], and some junctions open into breakdown chambers.
 		Each passage takes a type from its height above the water table: a tube or bedding-plane passage at or below it, a keyhole just above it, a canyon well above it, and a shaft where it goes straight down.
-		The network is data for now (see [method get_segments]). The meshes and the entrance join to the terrain come next (docs/ideas/rocks.md).
+		[method build_meshes] turns the caves into meshes. The rock round the passages is one distance field: each passage's section is swept along it and the passages are joined with a smooth minimum, chambers are ellipsoids with a breakdown floor, and the walls are roughened by noise. Within [member patch_radius] of an entrance the field also holds the ground, as Paris et al. carve a cave out of the terrain's own field.
+		The field is polygonised per 16 m chunk by surface nets (Gibson 1998), with collision. Round each entrance a square patch carries the ground itself, drawn with [member ground_material], so the cliff, the opening and the passage are one surface. The [member generator] gets a hole 1.5 m inside that square, which [Landscape3D] (and a Terrain3D through [member RockField3D.terrain3d]) leaves out. Stones and plants already skip holes.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -21,10 +22,23 @@
 				Grows a cave from [param entrance] (the mouth's floor at the cliff foot) into the rock behind it ([param out] points away from the cliff). Returns its index, or -1 when there is too little rock behind the entrance. The same entrance and [member seed] always give the same cave.
 			</description>
 		</method>
+		<method name="build_meshes">
+			<return type="int" />
+			<param index="0" name="area" type="AABB" />
+			<description>
+				Meshes the chunks of every cave that [param area] reaches, on worker threads, with collision when [member collision] is on, and opens the landscape over each entrance's patch. Returns how many chunks were made. Chunks already built are kept.
+			</description>
+		</method>
 		<method name="clear_caves">
 			<return type="void" />
 			<description>
 				Forgets every cave.
+			</description>
+		</method>
+		<method name="clear_meshes">
+			<return type="void" />
+			<description>
+				Frees every meshed chunk.
 			</description>
 		</method>
 		<method name="find_entrances" qualifiers="const">
@@ -61,10 +75,41 @@
 				How long the last [method add_cave] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_last_mesh_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long the last [method build_meshes] took, in milliseconds.
+			</description>
+		</method>
 		<method name="get_last_sample_count" qualifiers="const">
 			<return type="int" />
 			<description>
 				How many points in the rock the last cave was grown through.
+			</description>
+		</method>
+		<method name="get_mesh_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many chunks are meshed.
+			</description>
+		</method>
+		<method name="is_streaming" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether a batch of chunks for [member follow_target] is being meshed on worker threads.
+			</description>
+		</method>
+		<method name="get_mesh_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Triangles in all the meshed chunks.
+			</description>
+		</method>
+		<method name="get_rock_distance" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The distance field the meshes are made from, at [param position]: positive in the rock, negative in the open (in a passage or above the ground).
 			</description>
 		</method>
 		<method name="get_segments" qualifiers="const">
@@ -85,8 +130,14 @@
 		<member name="chamber_chance" type="float" setter="set_chamber_chance" getter="get_chamber_chance" default="0.35">
 			The share of junctions that open into a breakdown chamber, 4 to 12 m across and kept under its cover of rock.
 		</member>
+		<member name="collision" type="bool" setter="set_collision" getter="has_collision" default="true">
+			Each meshed chunk gets a static body with its triangles (backface collision on).
+		</member>
 		<member name="cover" type="float" setter="set_cover" getter="get_cover" default="4.0">
 			The least rock over a passage, in metres. It grows by 0.08 m per metre from the entrance, up to 15 m more.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			A [Node3D] (usually the camera or the player) to stream meshes round. Chunks within [member stream_radius] are meshed on worker threads without stalling a frame, nearest first, when the target has moved 4 m; chunks further than the radius plus about two chunks are freed. Each entrance's patch chunks stay, since the landscape is open over the patch from any distance. Empty: no streaming ([method build_meshes] only).
 		</member>
 		<member name="gamma" type="float" setter="set_gamma" getter="get_gamma" default="2.0">
 			The gamma-skeleton's exponent. Two key points are linked unless a third lies in their lune. 2 gives branchwork caves (the Gabriel graph). Lower values link more pairs, toward mazes.
@@ -94,8 +145,20 @@
 		<member name="generator" type="NodePath" setter="set_generator" getter="get_generator" default="NodePath(&quot;&quot;)">
 			The [TerrainGenerator3D] whose ground the caves lie under.
 		</member>
+		<member name="ground_material" type="Material" setter="set_ground_material" getter="get_ground_material">
+			The material of an entrance patch's ground: the landscape's own (a TerrainMaterial3D works on any mesh), so the patch matches the cliff round it. When it has a [code]tm_rock_color[/code], the default wall material takes it too.
+		</member>
+		<member name="mesh_cell" type="float" setter="set_mesh_cell" getter="get_mesh_cell" default="0.3">
+			The surface nets cell in metres, rounded so a 16 m chunk holds whole cells.
+		</member>
+		<member name="patch_radius" type="float" setter="set_patch_radius" getter="get_patch_radius" default="14.0">
+			Half the side of the square round each entrance where the meshes carry the ground and the landscape is opened (1.5 m less, so the two overlap). 0 for no patch.
+		</member>
 		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
 			An optional [RockField3D] that says what the rock is: [method find_entrances] then keeps to limestone.
+		</member>
+		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="1.0">
+			How rough the walls are: noise at 2.2 m (dissolution hollows) and 0.7 m (spalls), up to 0.35 m and 0.12 m at 1.
 		</member>
 		<member name="sample_spacing" type="float" setter="set_sample_spacing" getter="get_sample_spacing" default="7.0">
 			Metres between the points sampled in the rock. Smaller spacing gives finer paths and a slower build.
@@ -106,8 +169,14 @@
 		<member name="side_passages" type="int" setter="set_side_passages" getter="get_side_passages" default="6">
 			How many dead-end side passages are tried, each joined to the network by its least-cost path.
 		</member>
+		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="64.0">
+			How far round [member follow_target] chunks are meshed, in metres.
+		</member>
 		<member name="tortuosity" type="float" setter="set_tortuosity" getter="get_tortuosity" default="0.4">
 			How far passages wander off their paths: from a few centimetres at 0 to 4 m at 1.
+		</member>
+		<member name="wall_material" type="Material" setter="set_wall_material" getter="get_wall_material">
+			The material of the passage walls. Without one, a built-in limestone in world space: mottled, with faint beds, darker and wet toward the floor, and the sediment floor brown.
 		</member>
 	</members>
 	<constants>

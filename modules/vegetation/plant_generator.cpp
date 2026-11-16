@@ -411,6 +411,33 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_THRIFT:
 			r_phenology = { 250.0f, 1500.0f, -1.0f, false }; // April to September; papery heads stand.
 			return true;
+		case PRESET_MARSH_MARIGOLD:
+			r_phenology = { 60.0f, 450.0f, 250.0f, true }; // March to May; the follicles into summer.
+			return true;
+		case PRESET_MEADOWSWEET:
+			r_phenology = { 700.0f, 1650.0f, -1.0f, true }; // June to September; brown stalks all winter.
+			return true;
+		case PRESET_BUTTERBUR:
+			r_phenology = { 40.0f, 330.0f, 150.0f, true }; // March to May, before the leaves.
+			return true;
+		case PRESET_COTTONGRASS:
+			r_phenology = { 80.0f, 380.0f, 800.0f, true }; // April and May; the cotton heads into August.
+			return true;
+		case PRESET_BOG_ASPHODEL:
+			r_phenology = { 900.0f, 1350.0f, -1.0f, true }; // July and August; orange capsules all winter.
+			return true;
+		case PRESET_SUNDEW:
+			r_phenology = { 800.0f, 1300.0f, 200.0f, true }; // June to August.
+			return true;
+		case PRESET_MARRAM:
+			r_phenology = { 950.0f, 1450.0f, -1.0f, true }; // July and August; bleached panicles all winter.
+			return true;
+		case PRESET_LYME_GRASS:
+			r_phenology = { 750.0f, 1350.0f, -1.0f, true }; // June to August; straw spikes stand.
+			return true;
+		case PRESET_SEA_HOLLY:
+			r_phenology = { 1000.0f, 1650.0f, -1.0f, true }; // July to September; the heads brown on the stems.
+			return true;
 		default:
 			return false;
 	}
@@ -577,6 +604,7 @@ PlantGenerator::FrondSeason PlantGenerator::_frond_season(float p_emerge, float 
 // flowers, and its leaves yellow and die down by early summer (Shirreffs 1985).
 float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) {
 	if (is_mushroom(p_preset)) {
+
 		return _mushroom_presence(p_preset, p_season);
 	}
 	if (!p_season.has("forcing") || p_preset != PRESET_WOOD_ANEMONE) {
@@ -585,7 +613,6 @@ float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) 
 	const float forcing = p_season["forcing"];
 	return smoothstep_f(15.0f, 40.0f, forcing) * (1.0f - smoothstep_f(650.0f, 720.0f, forcing));
 }
-
 
 // Mushrooms fruit in a season (British and central European field guides: chanterelle June to
 // November, brittlegill July to November, fly agaric, cep and honey fungus August or September to
@@ -1639,11 +1666,19 @@ void PlantGenerator::_build_moss() {
 	// and a few standing proud, where the silhouette shows them.
 	// Feather mosses (Hylocomium, Pleurozium) under conifers: wide, flat, loose carpets.
 	const bool carpet = preset == PRESET_FEATHER_MOSS;
-	const float radius = carpet ? _rand(0.18f, 0.32f) : _rand(0.06f, 0.12f);
-	const float height = radius * (carpet ? _rand(0.08f, 0.13f) : _rand(0.22f, 0.35f));
+	// Bog moss hummocks (Sphagnum capillifolium, S. papillosum): mounds 40 to 90 cm across and 10 to
+	// 30 cm high of packed shoots, their surface the star-shaped capitula (Rydin and Jeglum, "The
+	// Biology of Peatlands", 2013). Lawns and hollows are the same mound, lower and wider.
+	const bool hummock = preset == PRESET_SPHAGNUM;
+	float radius = carpet ? _rand(0.18f, 0.32f) : _rand(0.06f, 0.12f);
+	float height = radius * (carpet ? _rand(0.08f, 0.13f) : _rand(0.22f, 0.35f));
+	if (hummock) {
+		radius = _rand(0.2f, 0.45f);
+		height = radius * _rand(0.3f, 0.6f);
+	}
 	Builder &b = builders[SURFACE_CENTRE];
-	const int rings = 8;
-	const int sectors = 28;
+	const int rings = hummock ? 12 : 8;
+	const int sectors = hummock ? 40 : 28;
 	const int first = b.verts.size();
 	float ph[6];
 	for (float &p : ph) {
@@ -1660,7 +1695,9 @@ void PlantGenerator::_build_moss() {
 			const float rr = rim(a) * u;
 			const float x = Math::cos(a) * rr;
 			const float z = Math::sin(a) * rr;
-			const float lump = 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
+			// Sphagnum hummocks are broad and smooth, a few low swells over the dome.
+			const float lump = hummock ? 1.0f + 0.1f * Math::sin(x * 9.0f + ph[2]) * Math::sin(z * 8.0f + ph[3]) + 0.04f * Math::sin(x * 23.0f + ph[4] + z * 17.0f)
+									   : 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
 			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.9f) * lump - 0.004f;
 			b.verts.push_back(Vector3(x, y, z));
 			b.uvs.push_back(Vector2(x, z) / 0.05f);
@@ -1685,9 +1722,10 @@ void PlantGenerator::_build_moss() {
 	l.width = 0.002f;
 	l.fold = 0.3f;
 	l.segments = 2;
-	const int shoots = int(_rand(40.0f, 60.0f));
+	// Sphagnum: capitula over the whole mound, so its outline is knobbly against the light.
+	const int shoots = hummock ? int(_rand(160.0f, 240.0f)) : int(_rand(40.0f, 60.0f));
 	for (int s = 0; s < shoots; s++) {
-		const bool edge = s < shoots * 3 / 4;
+		const bool edge = s < shoots * (hummock ? 2 : 3) / (hummock ? 5 : 4);
 		const float a = _rand(0.0f, Math::TAU);
 		const float u = edge ? _rand(0.85f, 1.0f) : _rand(0.0f, 0.7f);
 		const float rr = rim(a) * u;
@@ -2043,6 +2081,8 @@ static float tex_noise(float p_x, float p_y, uint32_t p_seed) {
 	fy = fy * fy * (3.0f - 2.0f * fy);
 	const float a = tex_hash(ix, iy, p_seed);
 	const float b = tex_hash(ix + 1, iy, p_seed);
+
+
 	const float c = tex_hash(ix, iy + 1, p_seed);
 	const float d = tex_hash(ix + 1, iy + 1, p_seed);
 	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fy);
@@ -2051,8 +2091,6 @@ static float tex_noise(float p_x, float p_y, uint32_t p_seed) {
 static float tex_fbm(float p_x, float p_y, uint32_t p_seed) {
 	return 0.5f * tex_noise(p_x, p_y, p_seed) + 0.3f * tex_noise(p_x * 2.3f, p_y * 2.3f, p_seed + 7) + 0.2f * tex_noise(p_x * 5.1f, p_y * 5.1f, p_seed + 13);
 }
-
-
 
 // Forest floor (docs/ideas/forest-floor.md).
 
@@ -3639,6 +3677,26 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.base_tint = Color(0.88f, 0.9f, 0.62f, 0.25f);
 		} else if (preset == PRESET_THRIFT) {
 			t.base_tint = Color(0.62f, 0.25f, 0.42f, 0.35f);
+		} else if (preset == PRESET_MARSH_MARIGOLD) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.95f;
+			t.base_tint = Color(0.92f, 0.6f, 0.02f, 0.35f); // Glossy gold, deeper at the base.
+		} else if (preset == PRESET_MEADOWSWEET) {
+			t.base_tint = Color(0.9f, 0.88f, 0.62f, 0.3f);
+		} else if (preset == PRESET_BUTTERBUR) {
+			t.base_tint = Color(0.72f, 0.58f, 0.66f, 0.3f);
+		} else if (preset == PRESET_COTTONGRASS) {
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.05f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.base_tint = Color(0.85f, 0.82f, 0.72f, 0.3f); // Cotton bristles, creamy at the base.
+		} else if (preset == PRESET_BOG_ASPHODEL) {
+			l.shape = LEAF_LANCEOLATE;
+			t.aspect = 0.25f;
+			t.base_tint = Color(0.9f, 0.62f, 0.05f, 0.35f);
+		} else if (preset == PRESET_SUNDEW) {
+			t.base_tint = Color(0.95f, 0.92f, 0.9f, 0.2f);
 		} else {
 			t.base_tint = Color(0.9f, 0.55f, 0.02f, 0.4f);
 		}
@@ -3943,6 +4001,100 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.parallel_veins = 1;
 			t.yellowing = 0.25f;
 			t.spots = 0.1f;
+			break;
+		case PRESET_MARSH_MARIGOLD:
+			l.shape = LEAF_ROUND;
+			l.lobes = 9;
+			l.lobe_depth = 0.05f;
+			l.round_lobes = true;
+			t.aspect = 1.15f;
+			t.venation = VENATION_PALMATE;
+			t.vein = leaf_color.lerp(Color(0.3f, 0.42f, 0.18f), 0.25f);
+			t.yellowing = 0.15f;
+			t.spots = 0.1f;
+			break;
+		case PRESET_MEADOWSWEET:
+			l.shape = LEAF_OVATE;
+			l.lobes = 6;
+			l.lobe_depth = 0.12f;
+			t.aspect = 0.45f;
+			t.vein = leaf_color.lerp(Color(0.2f, 0.3f, 0.1f), 0.4f); // Deeply impressed, darker veins.
+			t.yellowing = 0.2f;
+			t.spots = 0.3f;
+			break;
+		case PRESET_BUTTERBUR:
+			l.shape = LEAF_ROUND;
+			l.lobes = 14;
+			l.lobe_depth = 0.035f;
+			t.aspect = 1.05f;
+			t.venation = VENATION_PALMATE;
+			t.vein = leaf_color.lerp(Color(0.55f, 0.6f, 0.35f), 0.4f);
+			t.yellowing = 0.3f;
+			t.spots = 0.5f; // Big leaves collect slug and insect damage.
+			break;
+		case PRESET_RIVER_MOSS:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.5f;
+			t.vein = leaf_color.lerp(Color(0.12f, 0.2f, 0.06f), 0.3f); // The costa.
+			t.yellowing = 0.05f;
+			t.spots = 0.0f;
+			break;
+		case PRESET_SPHAGNUM:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.2f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.0f;
+			t.spots = 0.0f;
+			break;
+		case PRESET_COTTONGRASS:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.06f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+			t.yellowing = 0.45f; // Red-brown tips, as cotton grass leaves have from midsummer.
+			t.spots = 0.1f;
+			break;
+		case PRESET_BOG_ASPHODEL:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.12f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 5;
+			t.yellowing = 0.3f;
+			t.spots = 0.1f;
+			break;
+		case PRESET_SUNDEW:
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.0f;
+			t.venation = VENATION_PALMATE;
+			t.vein = Color(0.55f, 0.1f, 0.08f);
+			t.yellowing = 0.0f;
+			t.spots = 0.6f; // The tentacles' bases, red dots over the blade.
+			break;
+		case PRESET_MARRAM:
+		case PRESET_LYME_GRASS:
+			l.shape = LEAF_LINEAR;
+			t.aspect = preset == PRESET_MARRAM ? 0.03f : 0.05f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = preset == PRESET_MARRAM ? 5 : 9; // Marram's rolled leaf shows its ribs.
+			t.vein = leaf_color.lerp(Color(0.8f, 0.78f, 0.62f), 0.3f);
+			t.yellowing = 0.25f; // Straw tips.
+			t.spots = 0.1f;
+			break;
+		case PRESET_SEA_HOLLY:
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.venation = VENATION_PALMATE;
+			t.vein = Color(0.88f, 0.92f, 0.9f); // The white veins and spiny margin.
+			t.yellowing = 0.0f;
+			t.spots = 0.0f;
+			break;
+		case PRESET_LIVERWORT:
+			l.shape = LEAF_SPATULATE;
+			t.aspect = 0.35f;
+			t.vein = leaf_color.lerp(Color(0.05f, 0.14f, 0.03f), 0.5f); // The darker midline.
+			t.yellowing = 0.05f;
+			t.spots = 0.3f; // The pores of the air chambers, pale dots over the surface.
 			break;
 		case PRESET_STONECROP: // Succulent leaves are solid beads on the stem surface, untextured.
 		case PRESET_FLY_AGARIC:
@@ -5168,6 +5320,71 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.86f, 0.46f, 0.64f); // Pink.
 			centre_color = Color(0.62f, 0.48f, 0.34f); // The papery bracts under the head.
 			break;
+		case PRESET_MARSH_MARIGOLD:
+			leaf_color = Color(0.07f, 0.22f, 0.05f); // Dark and glossy.
+			stem_color = Color(0.2f, 0.3f, 0.1f);
+			petal_color = Color(0.98f, 0.74f, 0.02f);
+			centre_color = Color(0.95f, 0.68f, 0.06f);
+			break;
+		case PRESET_MEADOWSWEET:
+			leaf_color = Color(0.1f, 0.25f, 0.06f);
+			stem_color = Color(0.33f, 0.17f, 0.1f); // Reddish.
+			petal_color = Color(0.93f, 0.9f, 0.76f); // Cream.
+			centre_color = Color(0.85f, 0.8f, 0.55f);
+			break;
+		case PRESET_BUTTERBUR:
+			leaf_color = Color(0.13f, 0.3f, 0.08f);
+			stem_color = Color(0.32f, 0.3f, 0.17f); // Grooved stalks, flushed red at the foot.
+			petal_color = Color(0.74f, 0.52f, 0.6f); // Lilac-pink heads.
+			centre_color = Color(0.6f, 0.45f, 0.5f);
+			break;
+		case PRESET_RIVER_MOSS:
+			leaf_color = Color(0.09f, 0.24f, 0.06f); // Dark green, blackish when old.
+			stem_color = Color(0.1f, 0.14f, 0.05f);
+			break;
+		case PRESET_SPHAGNUM:
+			// Ochre-green, as S. papillosum; make_bog() sets the red and green kinds.
+			leaf_color = Color(0.42f, 0.36f, 0.12f);
+			centre_color = Color(0.3f, 0.26f, 0.09f);
+			break;
+		case PRESET_COTTONGRASS:
+			leaf_color = Color(0.16f, 0.28f, 0.08f);
+			stem_color = Color(0.22f, 0.3f, 0.1f);
+			petal_color = Color(0.95f, 0.94f, 0.9f); // The cotton.
+			centre_color = Color(0.2f, 0.16f, 0.1f); // The dark spikelet the cotton comes from.
+			break;
+		case PRESET_BOG_ASPHODEL:
+			leaf_color = Color(0.2f, 0.32f, 0.1f);
+			stem_color = Color(0.4f, 0.3f, 0.1f);
+			petal_color = Color(0.95f, 0.78f, 0.08f);
+			centre_color = Color(0.9f, 0.4f, 0.05f); // Orange, woolly anthers; the capsules after.
+			break;
+		case PRESET_SUNDEW:
+			leaf_color = Color(0.5f, 0.12f, 0.06f); // Red in the open, greener in shade.
+			stem_color = Color(0.4f, 0.12f, 0.08f);
+			petal_color = Color(0.55f, 0.08f, 0.06f); // The tentacles.
+			centre_color = Color(0.85f, 0.82f, 0.78f); // The dew drops.
+			break;
+		case PRESET_MARRAM:
+			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.
+			stem_color = Color(0.4f, 0.42f, 0.28f);
+			centre_color = Color(0.72f, 0.68f, 0.52f); // Pale straw panicles.
+			break;
+		case PRESET_LYME_GRASS:
+			leaf_color = Color(0.42f, 0.54f, 0.58f); // Glaucous blue-grey.
+			stem_color = Color(0.42f, 0.5f, 0.48f);
+			centre_color = Color(0.5f, 0.56f, 0.5f);
+			break;
+		case PRESET_SEA_HOLLY:
+			leaf_color = Color(0.42f, 0.53f, 0.55f); // Waxy glaucous blue-green.
+			stem_color = Color(0.5f, 0.6f, 0.64f);
+			centre_color = Color(0.42f, 0.52f, 0.78f); // Powder-blue heads.
+			break;
+		case PRESET_LIVERWORT:
+			leaf_color = Color(0.1f, 0.26f, 0.06f);
+			stem_color = Color(0.08f, 0.2f, 0.05f);
+			centre_color = Color(0.1f, 0.27f, 0.06f); // The thallus (on the centre surface).
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -5325,6 +5542,42 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_THRIFT:
 			_build_thrift();
 			break;
+		case PRESET_MARSH_MARIGOLD:
+			_build_marsh_marigold();
+			break;
+		case PRESET_MEADOWSWEET:
+			_build_meadowsweet();
+			break;
+		case PRESET_BUTTERBUR:
+			_build_butterbur();
+			break;
+		case PRESET_RIVER_MOSS:
+			_build_river_moss();
+			break;
+		case PRESET_LIVERWORT:
+			_build_liverwort();
+			break;
+		case PRESET_SPHAGNUM:
+			_build_moss();
+			break;
+		case PRESET_COTTONGRASS:
+			_build_cottongrass();
+			break;
+		case PRESET_BOG_ASPHODEL:
+			_build_bog_asphodel();
+			break;
+		case PRESET_SUNDEW:
+			_build_sundew();
+			break;
+		case PRESET_MARRAM:
+			_build_marram();
+			break;
+		case PRESET_LYME_GRASS:
+			_build_lyme_grass();
+			break;
+		case PRESET_SEA_HOLLY:
+			_build_sea_holly();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -5351,7 +5604,35 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	im.instantiate();
 	LocalVector<CardSurface> card_surfaces;
 	const Color colors[SURFACE_MAX] = { leaf_color, stem_color, petal_color, centre_color };
-	const float roughness[SURFACE_MAX] = { preset == PRESET_WATER_LILY ? 0.35f : (preset == PRESET_IVY ? 0.6f : 0.72f), 0.75f, preset == PRESET_BUTTERCUP ? 0.2f : 0.5f, 0.8f }; // Lily pads: waxy, shed water.
+	// Lily pads: waxy, shed water. Marsh marigold's leaves and sepals shine; liverworts and aquatic
+	// mosses are wet.
+	float leaf_rough = 0.72f;
+	switch (preset) {
+		case PRESET_WATER_LILY:
+			leaf_rough = 0.35f;
+			break;
+		case PRESET_IVY:
+			leaf_rough = 0.6f;
+			break;
+		case PRESET_MARSH_MARIGOLD:
+			leaf_rough = 0.38f;
+			break;
+		case PRESET_LIVERWORT:
+			leaf_rough = 0.4f;
+			break;
+		case PRESET_RIVER_MOSS:
+			leaf_rough = 0.45f;
+			break;
+		case PRESET_LYME_GRASS:
+			leaf_rough = 0.5f; // Waxy bloom.
+			break;
+		case PRESET_SEA_HOLLY:
+			leaf_rough = 0.35f; // Leathery and waxy.
+			break;
+		default:
+			break;
+	}
+	const float roughness[SURFACE_MAX] = { leaf_rough, 0.75f, (preset == PRESET_BUTTERCUP || preset == PRESET_MARSH_MARIGOLD) ? 0.22f : 0.5f, preset == PRESET_LIVERWORT ? 0.6f : (preset == PRESET_SUNDEW ? 0.08f : 0.8f) }; // Sundew: the glistening dew.
 	for (int s = 0; s < SURFACE_MAX; s++) {
 		Builder &b = builders[s];
 		if (b.indices.is_empty()) {
@@ -5406,7 +5687,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			}
 		}
 		Ref<ShaderMaterial> mat;
-		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS) && s == SURFACE_CENTRE) {
+		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
 			if (!ts) {
@@ -5417,7 +5698,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		} else if (is_mushroom(preset)) {
 			// Thick flesh: no light through. Caps with a slight sheen (moist skin), matt stalks and gills.
 			// Honey fungus caps are a little viscid when damp: a little glossier, without the tight highlights of a smooth skin (they read as plastic in sun).
-			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.42f : 0.45f) : 0.85f, false);
+			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.5f : 0.45f) : 0.85f, false);
 		} else if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
 			// One texture set per preset, colour and variant (three per preset): shared by the
 			// plants of a meadow, so a thousand dandelions cost three textures.
@@ -5435,7 +5716,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -6031,6 +6312,8 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		float water_max = 0.0f; // > 0: within this distance of water.
 		bool top = false; // On the stones' tops (VegetationField3D.stone_tops).
 		float damp = 0.0f; // PlantSpecies.stone_top_damp; < 0 also the dry, yellow-olive colours.
+		Vector2 water; // PlantSpecies.stone_top_water: the top's height over the water.
+		bool flow = false; // PlantSpecies.follow_flow.
 	};
 	LocalVector<StoneSpec> set;
 	switch (p_stand) {
@@ -6047,15 +6330,20 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 			break;
 		case STONES_RIVER:
 			// River and stream gravels: saxifrage and stonecrop on the bars, sedges and rushes at the
-			// stones' feet near the water, moss on the damp side.
+			// stones' feet near the water, moss on the damp side. The stones' tops sort by how often
+			// the water covers them (Scarlett and O'Hare 2006): aquatic moss trailing downstream on
+			// those under and just over the surface, liverworts in the splash band on damp tops,
+			// land mosses only above the flood line.
 			set = LocalVector<StoneSpec>({ { P::PRESET_SAXIFRAGE, 0.35f, 0.06f, 0.5f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_STONECROP, 0.3f, 0.05f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_THRIFT, 0.5f, 0.05f, 0.15f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
 					{ P::PRESET_SEDGE, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 0.5f, 2.0f, 25.0f, 6.0f },
 					{ P::PRESET_RUSH, 0.6f, 0.15f, 0.4f, 0.8f, 1.1f, 0.5f, 1.5f, 30.0f, 4.0f },
 					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f },
-					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.9f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.6f },
-					{ P::PRESET_MOSS, 0.11f, 0.0f, 0.35f, 0.6f, 0.9f, 0.0f, 0.0f, 15.0f, 0.0f, true, -1.0f } });
+					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.9f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.6f, Vector2(0.12f, 1e3f) },
+					{ P::PRESET_MOSS, 0.11f, 0.0f, 0.35f, 0.6f, 0.9f, 0.0f, 0.0f, 15.0f, 0.0f, true, -1.0f, Vector2(0.3f, 1e3f) },
+					{ P::PRESET_RIVER_MOSS, 0.04f, 0.0f, 0.95f, 0.9f, 1.4f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.0f, Vector2(-0.6f, 0.1f), true },
+					{ P::PRESET_LIVERWORT, 0.1f, 0.0f, 0.7f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.8f, Vector2(0.03f, 0.4f) } });
 			break;
 		case STONES_SHORE:
 			// Shingle above the strandline (Scott 1963): thrift and stonecrop in the stable gaps,
@@ -6100,8 +6388,14 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 			// Moss cushions on the stones' tops, more on the damp river stones; set on the cap's curve.
 			sp->set_stone_top(true);
 			sp->set_stone_top_damp(f.damp);
+			sp->set_stone_top_water(f.water);
+			if (f.water.x < f.water.y) {
+				// The ground under a stone in the stream is under water; the top is what counts.
+				sp->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 3.0f));
+			}
 			sp->set_align_to_ground(1.0f);
 		}
+		sp->set_follow_flow(f.flow); // Still water or a level bed: a random turn.
 		sp->set_visibility_range(f.visibility);
 		if (f.water_max > 0.0f) {
 			sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, f.water_max));
@@ -6214,8 +6508,23 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_STONECROP);
 	BIND_ENUM_CONSTANT(PRESET_SAXIFRAGE);
 	BIND_ENUM_CONSTANT(PRESET_THRIFT);
+	BIND_ENUM_CONSTANT(PRESET_MARSH_MARIGOLD);
+	BIND_ENUM_CONSTANT(PRESET_MEADOWSWEET);
+	BIND_ENUM_CONSTANT(PRESET_BUTTERBUR);
+	BIND_ENUM_CONSTANT(PRESET_RIVER_MOSS);
+	BIND_ENUM_CONSTANT(PRESET_LIVERWORT);
+	BIND_ENUM_CONSTANT(PRESET_SPHAGNUM);
+	BIND_ENUM_CONSTANT(PRESET_COTTONGRASS);
+	BIND_ENUM_CONSTANT(PRESET_BOG_ASPHODEL);
+	BIND_ENUM_CONSTANT(PRESET_SUNDEW);
+	BIND_ENUM_CONSTANT(PRESET_MARRAM);
+	BIND_ENUM_CONSTANT(PRESET_LYME_GRASS);
+	BIND_ENUM_CONSTANT(PRESET_SEA_HOLLY);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
 	BIND_ENUM_CONSTANT(CLIMBER_IVY);
@@ -6239,5 +6548,16 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STONES_RIVER);
 	BIND_ENUM_CONSTANT(STONES_SHORE);
 	BIND_ENUM_CONSTANT(STONES_MAX);
+	BIND_ENUM_CONSTANT(BANKS_STREAM);
+	BIND_ENUM_CONSTANT(BANKS_LAKE);
+	BIND_ENUM_CONSTANT(BANKS_FALLS);
+	BIND_ENUM_CONSTANT(BANKS_MAX);
+	BIND_ENUM_CONSTANT(BOG_BLANKET);
+	BIND_ENUM_CONSTANT(BOG_VALLEY);
+	BIND_ENUM_CONSTANT(BOG_MAX);
+	BIND_ENUM_CONSTANT(DUNES_EMBRYO);
+	BIND_ENUM_CONSTANT(DUNES_MOBILE);
+	BIND_ENUM_CONSTANT(DUNES_FIXED);
+	BIND_ENUM_CONSTANT(DUNES_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

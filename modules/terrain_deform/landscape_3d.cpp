@@ -1369,6 +1369,11 @@ void Landscape3D::clear() {
 // A triangle is in a hole when the quad holding its centroid is (each triangle of a level's 2x2 fan lies in one
 // quad of that level): the hole follows its box to within half a quad, not a whole quad around every hole sample.
 bool Landscape3D::_hole_tri(const LocalVector<uint8_t> *p_holes, int p_level, int p_a, int p_b, int p_c) const {
+	// Holes are cut at level 0 only (a hole's chunk is pinned there once its heights are read): a coarse triangle
+	// spans many quads, and dropping it for its centre quad opened the ground far past the hole.
+	if (p_level > 0) {
+		return false;
+	}
 	const int s = 1 << p_level;
 	const int rl = (chunk_quads >> p_level) + 1;
 	const real_t x = real_t((p_a % rl) + (p_b % rl) + (p_c % rl)) * s / 3.0f;

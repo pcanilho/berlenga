@@ -18,11 +18,19 @@ extends Node3D
 #                         a wind shift turns them, none under the threshold or when damp, a print wipes
 #                         them and they grow back, the layer keeps its sand; blowing grains: speed, hop,
 #                         streamer cover, flux at 12 m/s, none under the threshold, drawn
+#   --test=water        sand and water (stage 4): bed load against the Shields threshold, pore water filling
+#                         under water and draining after, a damp wall holding where dry and saturated slump,
+#                         a print rounded off under flowing water and kept under slow water, volume kept
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
+#   --view=swash        boot prints in sand, the nearer ones after a minute under flowing water (sand stage 4)
+#   --view=grains       dry sand from 40 cm under a low sun behind the camera: grain colours and glints (sand_glints;
+#                       --glints=0 for the A/B)
+#   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
+#                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
 #   --raster            raster only (default path traced)
@@ -40,6 +48,8 @@ var test := false
 var soil_test := false
 var grains_test := false
 var wind_test := false
+var water_test := false
+var shelter_test := false
 var out := ""
 var spp := 16
 var gpu := true
@@ -63,6 +73,8 @@ func _ready() -> void:
 		elif a == "--test=soil": soil_test = true
 		elif a == "--test=grains": grains_test = true
 		elif a == "--test=wind": wind_test = true
+		elif a == "--test=water": water_test = true
+		elif a == "--test=shelter": shelter_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -71,6 +83,16 @@ func _ready() -> void:
 		elif a.begins_with("--cam="):
 			for v in a.substr(6).split(","):
 				cam_arg.append(float(v))
+	if shelter_test:
+		await _run_shelter_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if water_test:
+		await _run_water_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if wind_test:
 		await _run_wind_tests()
 		print("RESULT: %d failed" % fails)
@@ -100,6 +122,15 @@ func _ready() -> void:
 	if view == "ripples":
 		await _build_ripples()
 		return
+	if view == "swash":
+		await _build_swash()
+		return
+	if view == "grains":
+		await _build_grains()
+		return
+	if view == "shore":
+		await _build_shore()
+		return
 	await _build_trail()
 
 
@@ -127,6 +158,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.moisture = moisture
 	surface.litter_cover = litter
 	surface.gpu_simulation = gpu
+	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
 	add_child(surface)
 	await get_tree().physics_frame
 
@@ -590,6 +622,113 @@ func _run_wind_tests() -> void:
 	await _run_streamer_tests()
 
 
+# Dune grass (sand trapping by plants), with a stand-in for the vegetation module: a 2 m tuft of lambda 0.3 in a
+# 12 m/s wind over dry sand.
+func _run_shelter_tests() -> void:
+	await _soil_scene("dry_sand")
+	var r0 := GroundSurface3D.shelter_ratio_for(0.0)
+	var r1 := GroundSurface3D.shelter_ratio_for(0.3)
+	var u10 := 12.0
+	var ustar := 0.4 * u10 / log(10.0 / 1e-4)
+	_check("Raupach drag partition: open sand keeps all its stress, marram cover (lambda 0.3) stops saltation", r0 == 1.0 and ustar * r1 < 0.2, "u*s/u* %.2f at 0.3: %.3f m/s against the 0.2 m/s threshold" % [r1, ustar * r1])
+	_check("lambda clamped at 0.5", GroundSurface3D.shelter_ratio_for(5.0) == GroundSurface3D.shelter_ratio_for(0.5), "%.3f" % GroundSurface3D.shelter_ratio_for(5.0))
+	var grass := Node3D.new()
+	grass.set_script(load("res://shelter_fake.gd"))
+	add_child(grass)
+	surface.wind_shelters = [surface.get_path_to(grass)]
+	surface.wind_override = Vector2(u10, 0.0)
+	for i in 70:
+		await get_tree().physics_frame
+	var up := Vector3(-4.0, 0, 0)
+	var edge := Vector3(-0.75, 0, 0)
+	var inside := Vector3(0.5, 0, 0)
+	var q_up := surface.get_sand_flux_at(up)
+	var q_in := surface.get_sand_flux_at(inside).length()
+	var q_open: float = 2.6 * (1.2 / 9.81) * ustar * ustar * (ustar - 0.2)
+	_check("open sand upwind carries the saturated flux, along the wind (Lettau and Lettau)", absf(q_up.length() - q_open) < 0.05 * q_open and q_up.x > 0.0, "%.4f kg/m/s, expected %.4f" % [q_up.length(), q_open])
+	_check("the flux dies out inside the tuft (saturation length about 1 m)", q_in < 0.4 * q_open, "%.4f kg/m/s 1.25 m in" % q_in)
+	var d_edge := surface.get_deposition_rate_at(edge)
+	var d_up := surface.get_deposition_rate_at(up)
+	print("  deposition: %.2f mm/h on the tuft's windward edge, %.3f mm/h upwind" % [d_edge * 3.6e6, d_up * 3.6e6])
+	_check("sand lands at the tuft's windward edge, at Q / (rho l) (1 to 40 mm/h in a gale)", d_edge * 3.6e6 > 1.0 and d_edge * 3.6e6 < 40.0, "%.2f mm/h" % (d_edge * 3.6e6))
+	_check("none on open sand in equilibrium", absf(d_up) < 0.02 * d_edge, "%.4f mm/h" % (d_up * 3.6e6))
+	_check("the streamers thin among the grass (the wind's share of the sand)", surface.get_blown_at(inside.x, inside.z) < 0.2 * surface.get_blown_at(up.x, up.z), "%.2f inside, %.2f outside" % [surface.get_blown_at(inside.x, inside.z), surface.get_blown_at(up.x, up.z)])
+	# Two hours of gale (time scaled): a mound builds in the tuft.
+	var h0 := surface.get_surface_height_at(edge)
+	surface.ripple_time_scale = 1200.0
+	for i in 360:
+		await get_tree().physics_frame
+	surface.ripple_time_scale = 1.0
+	surface.sync_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	var dep := surface.get_sand_deposit_at(edge)
+	var rise := surface.get_surface_height_at(edge) - h0
+	print("  after %.1f h: %.1f mm deposited at the edge, the surface %.1f mm higher; %.1f mm upwind" % [6.0 * 1200.0 / 3600.0, dep * 1000.0, rise * 1000.0, surface.get_sand_deposit_at(up) * 1000.0])
+	_check("a mound builds round the grass (nebkha)", dep > 0.005 and rise > 0.5 * dep, "%.1f mm deposited, %.1f mm risen" % [dep * 1000.0, rise * 1000.0])
+	_check("open sand gets none", surface.get_sand_deposit_at(up) == 0.0, "%.1f mm" % (surface.get_sand_deposit_at(up) * 1000.0))
+	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
+	surface.wind_override = Vector2.ZERO
+
+
+# Sand and water (stage 4), with a stand-in for the water module.
+func _run_water_tests() -> void:
+	await _soil_scene("dry_sand")
+	var o := Vector3.ZERO
+	var uc := sqrt(0.047 * 1650.0 * 9.81 * 0.00025 / (1000.0 * 0.003))
+	_check("no bed load under the Shields threshold (Shields 1936)", GroundSurface3D.bed_load(0.9 * uc) == 0.0 and GroundSurface3D.bed_load(1.2 * uc) > 0.0, "threshold %.2f m/s depth-averaged" % uc)
+	var q := GroundSurface3D.bed_load(1.0)
+	_check("bed load at 1 m/s of the order field swash carries (1e-5 to 1e-3 m2/s)", q > 1e-5 and q < 1e-3, "%.5f m2/s" % q)
+	var water := Node3D.new()
+	water.set_script(load("res://water_fake.gd"))
+	add_child(water)
+	surface.water_sources = [surface.get_path_to(water)]
+	water.rect = Rect2(-3, -3, 6, 6)
+	water.depth = 0.03
+	water.flow = Vector3.ZERO
+	Engine.time_scale = 10.0
+	var t0 := Time.get_ticks_msec()
+	# 30 s of still water over the sand.
+	for i in 180:
+		await get_tree().physics_frame
+	var s_wet := surface.get_saturation_at(o)
+	_check("sand under water saturates in seconds (Green-Ampt)", s_wet > 0.95, "saturation %.2f after 30 s under 3 cm of water" % s_wet)
+	var sat_mat: Dictionary = surface.get_material_at(o)
+	water.depth = -1.0
+	# 3 minutes after it is gone.
+	for i in 1080:
+		await get_tree().physics_frame
+	var s_drained := surface.get_saturation_at(o)
+	_check("it drains towards field capacity (15%) in minutes", s_drained < 0.3 and s_drained >= 0.15, "saturation %.2f 3 min later" % s_drained)
+	Engine.time_scale = 1.0
+	var damp_mat: Dictionary = surface.get_material_at(o)
+	var dry_repose := 33.0
+	_check("damp sand holds a steep wall, saturated sand does not (Su et al. 2023)", float(damp_mat["repose"]) > 45.0 and absf(float(sat_mat["repose"]) - dry_repose) < 3.0,
+			"repose %.0f deg damp (%.2f), %.0f deg saturated, %.0f dry" % [float(damp_mat["repose"]), s_drained, float(sat_mat["repose"]), dry_repose])
+	print("  water step %.2f ms" % (surface.get_water_step_usec() / 1000.0))
+	_check("the water step is cheap", surface.get_water_step_usec() < 5000.0, "%.2f ms twice a second" % (surface.get_water_step_usec() / 1000.0))
+	# A boot print under water flowing at 0.6 m/s and at 0.15 m/s (under the threshold).
+	for speed in [0.6, 0.15]:
+		surface.clear_deformation()
+		water.depth = 0.05
+		water.flow = Vector3(speed, 0.0, 0.0)
+		for i in 60:
+			await get_tree().physics_frame
+		surface.press_box(o, Vector2(0.11, 0.29), 0.3, 0.0, 0.03)
+		var d0 := surface.get_dent_at(o)
+		var v0 := surface.get_moved_volume()
+		surface.settle(60.0)
+		var d1 := surface.get_dent_at(o)
+		var v1 := surface.get_moved_volume()
+		if speed > 0.5:
+			_check("flowing water rounds off a print within a minute", d1 < 0.3 * d0, "%.1f cm deep, %.1f cm after 60 s at %.1f m/s" % [d0 * 100.0, d1 * 100.0, speed])
+			_check("no sand made or lost (Exner)", absf((v1.y - v1.x) - (v0.y - v0.x)) < 0.02 * maxf(v0.x, 1e-6), "net %.3f l, was %.3f l" % [(v1.y - v1.x) * 1000.0, (v0.y - v0.x) * 1000.0])
+		else:
+			_check("slow water leaves a print (under the threshold)", d1 > 0.6 * d0, "%.1f cm deep, %.1f cm after 60 s at %.2f m/s" % [d0 * 100.0, d1 * 100.0, speed])
+	water.queue_free()
+	surface.water_sources = []
+
+
 # Streamers (stage 3): the saltating grains as particles.
 func _run_streamer_tests() -> void:
 	var v := GroundStreamers3D.grain_speed()
@@ -1035,6 +1174,155 @@ func _build_roost() -> void:
 		await get_tree().physics_frame
 	get_window().size = full
 	print("roost: %.1f l thrown, %d grains in the air, field on the %s" % [grains.get_dug_volume() * 1000.0, grains.get_airborne_count(), "GPU" if surface.is_gpu_active() else "CPU"])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand stage 4: a line of boot prints across sand; water flowed over the near half for a minute (the swash)
+# and drew back. Those prints are rounded off and shallow, the far ones keep their walls.
+func _build_swash() -> void:
+	kind = "damp_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(-18.0, 200.0, 0.0)
+	var water := Node3D.new()
+	water.set_script(load("res://water_fake.gd"))
+	add_child(water)
+	surface.water_sources = [surface.get_path_to(water)]
+	for i in 30:
+		await get_tree().physics_frame
+	for k in 8:
+		var p := Vector3(-1.6 + 0.45 * k, 0.0, 0.12 if k % 2 == 0 else -0.12)
+		p.y = _undisturbed(p)
+		surface.press_box(p, Vector2(0.11, 0.29), PI * 0.5, p.y, 0.035)
+	water.rect = Rect2(-3.0, -3.0, 3.0, 6.0)
+	water.depth = 0.03
+	water.flow = Vector3(0.0, 0.0, 0.6)
+	for i in 90:
+		await get_tree().physics_frame
+	surface.settle(60.0)
+	water.depth = -1.0
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 0.75, 1.25, 0.0, 0.0, -0.1])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
+	print("swash: prints %.1f cm deep washed, %.1f cm kept" % [surface.get_dent_at(Vector3(-1.6, 0, 0.12)) * 100.0, surface.get_dent_at(Vector3(1.55, 0, -0.12)) * 100.0])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand glints: loose dry sand seen from 40 cm, a low sun behind the camera and to one side, so single grains'
+# colours and the faces that mirror the sun read.
+func _build_grains() -> void:
+	kind = "dry_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.0, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(-22.0, 30.0, 0.0)
+	for i in 40:
+		await get_tree().physics_frame
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 0.4, 0.35, 0.0, 0.0, -0.15])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand stage 4 at a real shore: PhysXWaterSurface3D's shore waves run up a 1 in 12 beach as a swash film. A row of
+# boot prints walks out of the sea, over the line the swash reaches, onto the dry sand above it. The ground reads
+# the sea's depth and the weather's contact wetness, so the sand the swash covers is soaked and darkens, drying
+# with distance above the line, and the prints it covers round off while those above keep their walls. Low 3/4
+# view from about 2.5 m. --cam=x,dy,z,tx,dy,tz as in the other views.
+func _build_shore() -> void:
+	kind = "dry_sand"
+	await _setup("beach", GroundSurface3D.GROUND_SOIL, 0.0, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			# From over the sea, a little to the side: the wet sand and the film catch its sheen.
+			c.rotation_degrees = Vector3(-20.0, 200.0, 0.0)
+	if not ClassDB.class_exists("PhysXWaterSurface3D") or not ClassDB.class_exists("WeatherMap3D"):
+		push_error("This build has no PhysX water or weather module.")
+		get_tree().quit(1)
+		return
+	var weather: Node3D = ClassDB.instantiate("WeatherMap3D")
+	weather.set("rain_rate", 0.0)
+	weather.set("drive_environment_fog", false)
+	add_child(weather)
+	var sea: Node3D = ClassDB.instantiate("PhysXWaterSurface3D")
+	# The beach well inside the sea's domain, so its wet-sand edge never shows.
+	sea.position = Vector3(0.0, 0.0, -10.0)
+	sea.set("domain_size", Vector2(48, 48))
+	sea.set("grid_resolution", 192)
+	sea.set("seabed_from_floor", true)
+	sea.set("ocean_grid_resolution", 128)
+	sea.set("wind_speed", 5.0)
+	sea.set("wind_direction", Vector2(0.15, 1.0))
+	sea.set("render_extent", 400.0)
+	sea.set("shore_waves", true)
+	sea.set("shore_wave_height", 0.25)
+	sea.set("shore_wave_direction", Vector2(0.15, 1.0))
+	sea.set("swash_run_up", 0.12)
+	sea.set("contact_wetness", true)
+	add_child(sea)
+	surface.water_sources = [surface.get_path_to(sea)]
+	surface.water_coupling = not OS.get_cmdline_user_args().has("--coupling=0") # for an A/B of the look
+	# The prints first, then the sea comes up over the lower ones.
+	for i in 30:
+		await get_tree().physics_frame
+	for k in 16:
+		var p := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.3 * k)
+		p.y = _undisturbed(p)
+		surface.press_box(p, Vector2(0.11, 0.29), 0.0, p.y, 0.045)
+	# A few swashes only: prints at the top of the swash are softened, not yet gone.
+	for i in 300:
+		await get_tree().physics_frame
+		if OS.get_environment("SHORE_TRACE") != "" and i % 60 == 0:
+			var q := Vector3(0.0, _undisturbed(Vector3(0, 0, 5)), 5.0)
+			var pw := Vector3(-0.12, _undisturbed(Vector3(-0.12, 0, 0.66)), 0.66)
+			print("t%d sat %.2f depth %.3f swash %s | z0.66 print %.1f cm sat %.2f speed %.2f swash %s" % [i, surface.get_saturation_at(q), sea.call("sample_depth", q), str(sea.call("sample_swash", q)), surface.get_dent_at(pw) * 100.0, surface.get_saturation_at(pw), surface.get_water_speed_at(pw), str(sea.call("sample_swash", pw))])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.9, 0.9, 3.4, -0.1, 0.0, 1.2])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	var prof := ""
+	for k in 17:
+		var pz := -1.0 + 0.5 * k
+		var pp := Vector3(0.0, _undisturbed(Vector3(0.0, 0.0, pz)), pz)
+		prof += " z%.1f:%.2f(c%.2f s%s d%.2f)" % [pz, surface.get_saturation_at(pp), weather.call("get_contact_wetness_at", pp), str(sea.call("sample_swash", pp)), sea.call("sample_depth", pp)]
+	print("shore: saturation by z" + prof)
+	print("shore: saturation %.2f in the wash, %.2f above it; prints %.1f cm deep in the wash, %.1f cm above" % [
+		surface.get_saturation_at(Vector3(0.12, 0, -0.6)), surface.get_saturation_at(Vector3(-0.12, 0, 3.6)),
+		surface.get_dent_at(Vector3(0.12, 0, -0.6)) * 100.0, surface.get_dent_at(Vector3(-0.12, 0, 3.6)) * 100.0])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()

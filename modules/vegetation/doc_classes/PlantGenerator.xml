@@ -44,6 +44,36 @@
 				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]).
 			</description>
 		</method>
+		<method name="make_banks" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.BankStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the waterside plants for a stream, a lake or a waterfall's spray zone as [PlantSpecies], placed by their distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) in clonal patches: marsh marigold at the water's edge, butterbur colonies on stream banks, meadowsweet in the tall-herb band behind, and in spray ([constant PlantSpecies.RULE_SPRAY]) thallose liverworts on the wet ground. The plants of the stones in the water are in [method make_stones] with [constant STONES_RIVER]. They do not colour the far ground. Each species has the meta [code]banks[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the leaves' year.
+			</description>
+		</method>
+		<method name="make_bog" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.BogStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of a bog as [PlantSpecies]: sphagnum hummocks and lawns, cotton grass, bog asphodel and sundew, with heather on the hummocks of a blanket bog. They keep to wet, nearly level ground ([constant PlantSpecies.RULE_WETNESS], [constant PlantSpecies.RULE_SLOPE]) and share one patch noise per stand, the hummock species in its patches and the hollow species outside them ([member PlantSpecies.patch_invert]), so hummocks and hollows sort themselves. They do not colour the far ground. Each species has the meta [code]bog[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering, the cotton and the autumn colours.
+			</description>
+		</method>
+		<method name="make_dunes" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.DuneStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of a sand dune zone as [PlantSpecies], placed by distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) on slopes under dry sand's angle of repose: lyme grass and a little marram on the embryo dunes of the strandline, marram tussocks with lyme grass and sea holly on the mobile foredunes, thinning marram with a dry sward and moss on the fixed dunes behind. Grasses grow in clonal patches. Put the [VegetationField3D] in [code]GroundSurface3D.wind_shelters[/code] and the plants shelter the sand and trap it ([method VegetationField3D.sample_lateral_cover]). They do not colour the far ground. Each species has the meta [code]dunes[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering.
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -51,7 +81,7 @@
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
-				Returns the plants between stones for scree, river gravel or shingle as [PlantSpecies]. The crevice plants keep to the gaps between the field's obstacles ([member PlantSpecies.stone_gap] 1), so they grow only where a [VegetationField3D] has stones in [member VegetationField3D.obstacles]; on river gravel moss, sedges and rushes gather at the stones' feet ([member PlantSpecies.rock_foot]), and on scree and river stones moss cushions grow on the stones' tops ([member PlantSpecies.stone_top], from [member VegetationField3D.stone_tops]): green ones on the low, shaded, north-tilted tops, smaller yellow-olive ones on the high, sunlit tops ([member PlantSpecies.stone_top_damp]). They do not colour the far ground. Each species has the meta [code]stones[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the ferns' year.
+				Returns the plants between stones for scree, river gravel or shingle as [PlantSpecies]. The crevice plants keep to the gaps between the field's obstacles ([member PlantSpecies.stone_gap] 1), so they grow only where a [VegetationField3D] has stones in [member VegetationField3D.obstacles]; on river gravel moss, sedges and rushes gather at the stones' feet ([member PlantSpecies.rock_foot]), and on scree and river stones moss cushions grow on the stones' tops ([member PlantSpecies.stone_top], from [member VegetationField3D.stone_tops]): green ones on the low, shaded, north-tilted tops, smaller yellow-olive ones on the high, sunlit tops ([member PlantSpecies.stone_top_damp]). River stones sort by their tops' height over the water ([member PlantSpecies.stone_top_water]): aquatic moss trailing downstream on those under and just over the surface, liverworts on damp tops in the splash band, land mosses above the flood line. They do not colour the far ground. Each species has the meta [code]stones[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the ferns' year.
 			</description>
 		</method>
 		<method name="stand_litter_leaves" qualifiers="static">
@@ -314,7 +344,43 @@
 		<constant name="PRESET_THRIFT" value="49" enum="Preset">
 			Thrift ([i]Armeria maritima[/i]): a dense cushion of grass-like leaves with round pink heads on leafless stalks from April to September; papery brown heads after. Shingle, sea cliffs, mountain scree.
 		</constant>
-		<constant name="PRESET_MAX" value="50" enum="Preset">
+		<constant name="PRESET_MARSH_MARIGOLD" value="50" enum="Preset">
+			Marsh marigold ([i]Caltha palustris[/i]): a clump of long-stalked, kidney-shaped, glossy dark leaves and branched stems of golden cup flowers from March to May, then stars of green follicles. Stream and spring edges, marshes.
+		</constant>
+		<constant name="PRESET_MEADOWSWEET" value="51" enum="Preset">
+			Meadowsweet ([i]Filipendula ulmaria[/i]): reddish stems 60 to 120 cm with pinnate leaves of toothed leaflets and frothy cream cymes from June to September; the dead stalks stand brown through winter. Stream banks, tall-herb fen.
+		</constant>
+		<constant name="PRESET_BUTTERBUR" value="52" enum="Preset">
+			Butterbur ([i]Petasites hybridus[/i]): stout lilac-pink flower spikes from March to May before the leaves, then round leaves 30 to 90 cm across on stalks up to a metre, dying back in autumn. Colonies on stream banks.
+		</constant>
+		<constant name="PRESET_RIVER_MOSS" value="53" enum="Preset">
+			Aquatic moss of stream stones ([i]Platyhypnidium riparioides[/i], [i]Fontinalis[/i]): dark shoots 5 to 15 cm trailing along +X (downstream with [member PlantSpecies.follow_flow]), lying on the stone, still in the wind.
+		</constant>
+		<constant name="PRESET_LIVERWORT" value="54" enum="Preset">
+			Thallose liverwort ([i]Conocephalum conicum[/i]): glossy green ribbons 1 to 2 cm wide forking in two, lying in overlapping mats on wet rock and in waterfall spray.
+		</constant>
+		<constant name="PRESET_SPHAGNUM" value="55" enum="Preset">
+			Bog moss ([i]Sphagnum[/i]): a low hummock 40 to 90 cm across of tightly packed shoots, their star-shaped heads (capitula) making the surface. Ochre-green by default; [method make_bog] sets red and green kinds.
+		</constant>
+		<constant name="PRESET_COTTONGRASS" value="56" enum="Preset">
+			Common cotton grass ([i]Eriophorum angustifolium[/i]): narrow channelled leaves 15 to 35 cm, stems 20 to 50 cm with two to six nodding spikelets that flower dark in April and May, then hang as soft white cotton balls from late May into August.
+		</constant>
+		<constant name="PRESET_BOG_ASPHODEL" value="57" enum="Preset">
+			Bog asphodel ([i]Narthecium ossifragum[/i]): flat fans of curved iris-like leaves, spikes of yellow six-pointed stars in July and August, then deep orange capsules standing into winter.
+		</constant>
+		<constant name="PRESET_SUNDEW" value="58" enum="Preset">
+			Round-leaved sundew ([i]Drosera rotundifolia[/i]): a flat rosette 2 to 5 cm across of red, round leaves fringed with glandular hairs, each tipped with a glistening drop; small white flowers on a slender stem in July.
+		</constant>
+		<constant name="PRESET_MARRAM" value="59" enum="Preset">
+			Marram ([i]Ammophila arenaria[/i]): dense, stiff tussocks of grey-green leaves 45 to 85 cm rolled tight into spines, a third of them dead and straw-coloured; pale, dense, spike-like panicles on stems to a metre in July and August, standing bleached through winter. The grass that builds foredunes by trapping blown sand.
+		</constant>
+		<constant name="PRESET_LYME_GRASS" value="60" enum="Preset">
+			Lyme grass ([i]Leymus arenarius[/i]): loose tufts of broad, flat, glaucous blue-grey leaves 30 to 60 cm, arching; stout spikes 15 to 28 cm, June to August. The pioneer of the embryo dunes on the strandline.
+		</constant>
+		<constant name="PRESET_SEA_HOLLY" value="61" enum="Preset">
+			Sea holly ([i]Eryngium maritimum[/i]): a stiff, waxy, glaucous plant 20 to 40 cm of spiny, holly-like leaves, branching low, with round powder-blue flower heads in ruffs of spiny bracts from July to September.
+		</constant>
+		<constant name="PRESET_MAX" value="62" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -361,6 +427,39 @@
 		</constant>
 		<constant name="STONES_MAX" value="3" enum="StoneStand">
 			Number of stone stand types.
+		</constant>
+		<constant name="BANKS_STREAM" value="0" enum="BankStand">
+			A stream's banks: marsh marigold at the edge, butterbur on the banks, meadowsweet behind.
+		</constant>
+		<constant name="BANKS_LAKE" value="1" enum="BankStand">
+			A lake's or pond's margin: marsh marigold and meadowsweet, no butterbur.
+		</constant>
+		<constant name="BANKS_FALLS" value="2" enum="BankStand">
+			A waterfall's spray zone: liverworts and marsh marigold where the spray reaches.
+		</constant>
+		<constant name="BANKS_MAX" value="3" enum="BankStand">
+			Number of bank stand types.
+		</constant>
+		<constant name="BOG_BLANKET" value="0" enum="BogStand">
+			Upland blanket bog: red sphagnum hummocks with heather, ochre sphagnum lawns, cotton grass, bog asphodel and sundew in the hollows.
+		</constant>
+		<constant name="BOG_VALLEY" value="1" enum="BogStand">
+			Valley mire: green sphagnum in wet hollows, ochre on the hummocks, cotton grass throughout, bog asphodel, sundew and rush.
+		</constant>
+		<constant name="BOG_MAX" value="2" enum="BogStand">
+			Number of bog stand types.
+		</constant>
+		<constant name="DUNES_EMBRYO" value="0" enum="DuneStand">
+			Embryo dunes on the strandline, 2 to 30 m from the water: lyme grass, a little marram, sea holly.
+		</constant>
+		<constant name="DUNES_MOBILE" value="1" enum="DuneStand">
+			Mobile (yellow) foredunes, 5 to 120 m from the water: marram tussocks with bare sand between, lyme grass on the seaward foot, sea holly.
+		</constant>
+		<constant name="DUNES_FIXED" value="2" enum="DuneStand">
+			Fixed (grey) dunes, 80 to 400 m from the water: thinning marram, a dry sward, moss, a little sea holly.
+		</constant>
+		<constant name="DUNES_MAX" value="3" enum="DuneStand">
+			Number of dune stand types.
 		</constant>
 	</constants>
 </class>

@@ -499,7 +499,78 @@ func _caves(cam: Camera3D) -> void:
 			cm.albedo_color = Color(0.2, 1.0, 0.3)
 			ci.material_override = cm
 			add_child(ci)
-		if id == 0:
+		if id == 0 and args.has("cave-mesh"):
+			mi.visible = false
+			var land_m: Landscape3D = get_node("Landscape")
+			net.ground_material = land_m.material
+			if args.has("cell"):
+				net.mesh_cell = float(args["cell"])
+			var mr := float(args.get("mesh-radius", "50"))
+			var pos: Vector3 = e["position"]
+			var made := net.build_meshes(AABB(pos - Vector3(mr, mr, mr), Vector3(2 * mr, 2 * mr, 2 * mr)))
+			print("  meshes: %d chunks, %d triangles in %.0f ms (cell %.2f m)" % [made, net.get_mesh_triangle_count(), net.get_last_mesh_msec(), net.mesh_cell])
+			land_m.load_all_heights()
+			var tri := {"walls": 0, "ground": 0}
+			for ch in net.get_children():
+				if ch is MeshInstance3D:
+					var m: ArrayMesh = ch.mesh
+					for si in m.get_surface_count():
+						tri[m.surface_get_name(si)] += m.surface_get_array_index_len(si) / 3
+			print("  surfaces: %d wall triangles, %d ground triangles; holes %d, landscape quads %d" % [tri["walls"], tri["ground"], gen.get_hole_count(), land_m.get_hole_quad_count()])
+			for c in get_children():
+				if c is MeshInstance3D and c.material_override is StandardMaterial3D and (c.material_override as StandardMaterial3D).no_depth_test:
+					c.visible = false
+			# Debug: --hide=land|ground|walls hides one of the three surfaces; --tint colours ground red, walls blue.
+			if args.get("hide", "") == "land":
+				land_m.visible = false
+			for ch in net.get_children():
+				if ch is MeshInstance3D:
+					var m2: ArrayMesh = ch.mesh
+					for si in m2.get_surface_count():
+						var nm := m2.surface_get_name(si)
+						if args.get("hide", "") == nm:
+							var inv := StandardMaterial3D.new()
+							inv.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+							inv.albedo_color = Color(0, 0, 0, 0)
+							ch.set_surface_override_material(si, inv)
+						elif args.has("tint"):
+							var tm := StandardMaterial3D.new()
+							tm.albedo_color = Color(1, 0.2, 0.2) if nm == "ground" else Color(0.3, 0.5, 1)
+							ch.set_surface_override_material(si, tm)
+			var o: Vector3 = e["out"]
+			var f := -o
+			if args.get("cave-view", "outside") == "inside":
+				# From the first metres of passage, looking in along it, a lamp at the camera (a caver's).
+				var path: Array = []
+				for sg in segs:
+					path.append(sg["a"])
+				var eye: Vector3 = pos + f * float(args.get("in", "4")) + Vector3(0, 1.6, 0)
+				var tgt: Vector3 = eye + f * 10.0
+				var best := 1e9
+				for p in path:
+					var dd: float = (p as Vector3).distance_to(eye + f * 12.0)
+					if dd < best:
+						best = dd
+						tgt = p
+				cam.position = eye
+				cam.look_at(tgt + Vector3(0, 0.5, 0))
+				if args.has("lamp"):
+					var lamp := SpotLight3D.new()
+					lamp.spot_range = 40.0
+					lamp.spot_angle = 35.0
+					lamp.light_energy = 6.0
+					lamp.shadow_enabled = true
+					cam.add_child(lamp)
+			elif args.get("cave-view", "outside") == "top":
+				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)
+				cam.look_at(pos, f)
+			else:
+				var d := float(args.get("dist", "18"))
+				cam.position = pos + o * d + Vector3(0, 1.7, 0)
+				cam.position.y = maxf(cam.position.y, gen.get_height(cam.position) + 1.7)
+				cam.look_at(pos + Vector3(0, float(args.get("look-height", "3")), 0))
+			land_m.update_lods_from_camera()
+		elif id == 0:
 			var o: Vector3 = e["out"]
 			var c: Vector3 = e["position"] - o * net.cave_length * 0.45
 			cam.position = c + o * net.cave_length * 0.9 + Vector3(0, net.cave_length * 0.7, 0)
@@ -1044,6 +1115,46 @@ func _test() -> void:
 		check(id >= 0 and segs.size() > 10 and shallow == 0, "caves: %d entrances; a network of %d segments, %.0f m, %d chambers, %d key points in %.0f ms, %d under 1 m of rock" % [ents.size(), segs.size(), length, net.get_chambers(maxi(id, 0)).size(), net.get_key_points(maxi(id, 0)).size(), net.get_last_build_msec(), shallow])
 		var id2 := net.add_cave(e["position"], e["out"])
 		check(id2 >= 0 and net.get_segments(id2).size() == segs.size(), "caves: the same entrance grows the same network (%d and %d segments)" % [segs.size(), net.get_segments(maxi(id2, 0)).size()])
+		# Meshes near the entrance: walls and the entrance patch's ground, the landscape opened over the patch, the
+		# entrance open (air) and the rock round it solid.
+		net.clear_caves()
+		net.add_cave(e["position"], e["out"])
+		var holes_before := gen.get_hole_count()
+		var pos: Vector3 = e["position"]
+		var made := net.build_meshes(AABB(pos - Vector3(20, 20, 20), Vector3(40, 40, 40)))
+		var tri := {"walls": 0, "ground": 0}
+		for ch in net.get_children():
+			if ch is MeshInstance3D:
+				var m: ArrayMesh = ch.mesh
+				for si in m.get_surface_count():
+					tri[m.surface_get_name(si)] += m.surface_get_array_index_len(si) / 3
+		var in_air := net.get_rock_distance(pos + Vector3(0, 1.2, 0) - (e["out"] as Vector3) * 3.0)
+		var in_rock := net.get_rock_distance(pos + Vector3(0, -6.0, 0) + (e["out"] as Vector3) * 8.0)
+		check(made > 0 and tri["walls"] > 0 and tri["ground"] > 0 and gen.get_hole_count() > holes_before and in_air < 0.0 and in_rock > 0.0, "cave meshes: %d chunks, %d wall and %d ground triangles in %.0f ms; the landscape opened (%d holes); %.2f m into the air in the entrance, %.2f m into the rock under the foot" % [made, tri["walls"], tri["ground"], net.get_last_mesh_msec(), gen.get_hole_count() - holes_before, -in_air, in_rock])
+		# Streaming: a target 30 m into the cave gets the chunks round it on workers; moved 400 m away it keeps only
+		# the entrance patch (pinned while the landscape is open there).
+		net.clear_meshes()
+		var walker := Node3D.new()
+		add_child(walker)
+		walker.global_position = pos + Vector3(0, 1.5, 0) - (e["out"] as Vector3) * 30.0
+		net.stream_radius = 32.0
+		net.follow_target = net.get_path_to(walker)
+		var t_stream := Time.get_ticks_msec()
+		for i in 3000:
+			await get_tree().process_frame
+			if i > 2 and not net.is_streaming():
+				break
+		var near_chunks := net.get_mesh_chunk_count()
+		var stream_ms := Time.get_ticks_msec() - t_stream
+		walker.global_position += Vector3(400, 0, 0)
+		for i in 3000:
+			await get_tree().process_frame
+			if i > 2 and not net.is_streaming():
+				break
+		var far_chunks := net.get_mesh_chunk_count()
+		check(near_chunks > far_chunks and far_chunks > 0, "cave streaming: %d chunks round a target 30 m in (%d ms with frames running), %d left (the entrance patch) with it 400 m away" % [near_chunks, stream_ms, far_chunks])
+		net.follow_target = NodePath()
+		walker.queue_free()
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))

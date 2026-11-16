@@ -670,6 +670,7 @@ private:
 	BarkSet moss_set;
 	const BarkSet &_moss_set();
 	static BarkKind _bark_kind(Preset p_preset);
+	static float _bark_headroom(BarkKind p_kind);
 	const BarkSet &_bark_set(BarkKind p_kind);
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();

@@ -318,6 +318,7 @@ void GrassField3D::_build_material() {
 	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
 	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
 	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
+	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
@@ -464,6 +465,13 @@ void vertex() {
 		}
 	}
 
+	// Blades dead to the crown in winter or a drought (dormant) lose their turgor and lodge: they lie
+	// over, each its own way, a little shorter, in the mat rather than standing up as straw spikes.
+	if (rnd > 1.0 - dormant * 0.85) {
+		float la = fract(rnd * 53.7) * 6.2832;
+		off = off * 0.4 + vec2(cos(la), sin(la)) * (0.9 + 0.4 * fract(rnd * 17.3));
+		h *= 0.8;
+	}
 	// Length-preserving bend (Jahrmann and Wimmer 2017): the tip turns by the bend angle.
 	float ang = min(length(off), 1.45);
 	vec2 dir = length(off) > 1e-4 ? normalize(off) : vec2(0.0, 1.0);
@@ -522,7 +530,6 @@ void vertex() {
 }
 
 uniform float dryness;
-uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).
 uniform float sward_lai = 1.0;
 
 void fragment() {
@@ -533,7 +540,10 @@ void fragment() {
 	vec3 c = mix(base_color, tipc, t) * v_tint;
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
 	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85), v_dry);
-	c = mix(c, dry_color * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
+	// Dead leaves bleach to a pale grey buff, not the warm straw of a dry tip (a saturated straw read
+	// as orange specks on a dark winter sward).
+	vec3 straw = mix(dry_color, vec3(dot(dry_color, vec3(0.3, 0.59, 0.11))) * vec3(1.0, 0.96, 0.88), 0.5) * 0.85;
+	c = mix(c, straw * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
 	// Midrib and parallel veins (monocot leaves), faded out once a blade is under a few pixels wide.
 	float x = abs(UV.x - 0.5) * 2.0;
 	float fw = max(fwidth(UV.x), 1e-4);

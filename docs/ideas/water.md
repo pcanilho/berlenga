@@ -3184,3 +3184,46 @@ is under a pixel and the edge softens again. Fix: after the foam is read, its ed
 pixel's own scale (fwidth of the foam, as signed-distance text is sharpened), keeping 0.8 of the soft value.
 Bench `--view=storm_foam_close`: 1.5 m above gale foam, riding the sea, low side sun.
 Check: off/on pair at whitecap distance (storm_foam) and close (storm_plume), PT frame.
+
+Docs review 2: straight seams and polygonal patches up close, plus near-round holes. Ruled out by bench tests:
+detail waves, breaker lips, underwater passes, spray, wave shadows, depth order (depth_prepass_alpha,
+depth_draw_always), mesh folds (a Jacobian limiter), the shadow map and the sun share (light() split into its terms).
+Cause: each hole's radius came from the nearest Voronoi cell only (Worley's F1 with a per-cell value), and a hole
+wider than its cell was cut along the straight bisector to the next cell. Fix: every feature of the 3x3
+neighbourhood carves its own hole (the usual fix for per-cell radii; a radius under one cell keeps the 3x3 search
+exact), min'd together, with the edge wandered by lobe noise in proportion to the radius at all three scales.
+
+## Terrain holes and shore queries (16 Nov)
+
+Terrain holes (TerrainGenerator3D add_hole, cave mouths) leave the heightfield's collision open (NaN heights), so the
+sea's seabed rays fell through onto nothing and read the constant depth: open water showing through a hole above
+the waterline. `terrain_source` names the terrain: a ray that finds nothing where `is_hole()` is true takes the
+terrain's own height (`get_height`), and a static floor under the hole (a sea cave's, later) is used as it is. The
+seabed is measured again when `holes_changed` names a rectangle over the simulated square. Rivers and live water
+already treat a ray that finds nothing as dry.
+
+For the sand's shore coupling (ground stage 4): `sample_depth()` (the drawn surface over the measured seabed) and
+`sample_swash()` (the swash texture's run-up film and wet sand, read back every 8th step once asked for).
+Test: `docs/bench/water_surface/holes_test.gd` (-s).
+
+Docs review 3 (close frame): near holes were clean ovals, one wedge, stair-stepped rims with a dark outline.
+- Holes: each layer warps its own cell space by noise a few times finer than the cells (film rupture stretched by
+  surface strain: the walls between holes bend, no straight border is left) and tears each edge in lobes plus a
+  finer tear, both in proportion to the hole's size; the radius cap drops to 0.65 cells so a hole's reach with its
+  tear stays inside the 3x3 search (a larger one was cut straight where the search ended: the wedge).
+- Rafts: unruptured film left as islands well inside the larger holes (only where the point is deep in a hole, so
+  no hairline gap at the rim), faded before they shrink to pixel specks.
+- The foam amount is a bilinear texture: up close its contours run straight across each texel. Its lookup is
+  wandered by smooth noise about a texel long.
+- Rims: the pixel step spans about three pixels (fwidth is per 2x2 quad), and the relief reads the foam before the
+  step (the step's one-pixel jump tilted the normal hard over every rim: the dark outline).
+
+## Short-crested shore waves (16 Nov)
+
+Sand's shore frame showed a straight line through the surf foam, parallel to the beach: the plunging breaker's
+crest and the trough where its lip lands, both exactly long-crested over a straight beach (one direction per train,
+the eikonal phase from a plane wave). Real swell spreads over a range of directions (directional spreading, e.g.
+Longuet-Higgins' cos^2s), so crests are short: they bend, and a breaker peels and breaks unevenly along its length.
+Fix: the baked phase wanders by up to about a fifth of a wave, slowly along the crest (1.5 wavelengths) and more
+slowly across it (4 wavelengths); the gradient (direction of travel) follows it, and the CPU lip sheets and
+sample_height read the same baked phase, so the lips stay on their crests.

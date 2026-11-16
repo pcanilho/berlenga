@@ -849,8 +849,11 @@ void main() {
 		st.x *= keep;
 		st.y *= keep;
 		st.w *= params.kind.z;
-		st.x = st.x < 1e-4 ? 0.0 : st.x;
-		st.y = st.y < 1e-4 ? 0.0 : st.y;
+		// As the CPU: a texel both pressed and piled on loses the smaller from both, then films under 10 microns go.
+		float both = min(st.x, st.y);
+		st.xy -= vec2(both);
+		st.x = st.x < 1e-5 ? 0.0 : st.x;
+		st.y = st.y < 1e-5 ? 0.0 : st.y;
 		st.w = st.w < 0.01 ? 0.0 : st.w;
 		state[i] = st;
 	} else if (push.mode == MODE_RELAX) {

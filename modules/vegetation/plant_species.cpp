@@ -298,6 +298,12 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_stone_top"), &PlantSpecies::is_stone_top);
 	ClassDB::bind_method(D_METHOD("set_stone_top_damp", "amount"), &PlantSpecies::set_stone_top_damp);
 	ClassDB::bind_method(D_METHOD("get_stone_top_damp"), &PlantSpecies::get_stone_top_damp);
+	ClassDB::bind_method(D_METHOD("set_stone_top_water", "band"), &PlantSpecies::set_stone_top_water);
+	ClassDB::bind_method(D_METHOD("get_stone_top_water"), &PlantSpecies::get_stone_top_water);
+	ClassDB::bind_method(D_METHOD("set_follow_flow", "on"), &PlantSpecies::set_follow_flow);
+	ClassDB::bind_method(D_METHOD("is_follow_flow"), &PlantSpecies::is_follow_flow);
+	ClassDB::bind_method(D_METHOD("set_wind_frontal_area", "area"), &PlantSpecies::set_wind_frontal_area);
+	ClassDB::bind_method(D_METHOD("get_wind_frontal_area"), &PlantSpecies::get_wind_frontal_area);
 	ClassDB::bind_method(D_METHOD("set_rule_range", "rule", "range"), &PlantSpecies::set_rule_range);
 	ClassDB::bind_method(D_METHOD("get_rule_range", "rule"), &PlantSpecies::get_rule_range);
 	ClassDB::bind_method(D_METHOD("set_rule_fade", "rule", "fade"), &PlantSpecies::set_rule_fade);
@@ -355,6 +361,9 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floating"), "set_floating", "is_floating");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stone_top"), "set_stone_top", "is_stone_top");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stone_top_damp", PROPERTY_HINT_RANGE, "-1,1,0.01"), "set_stone_top_damp", "get_stone_top_damp");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "stone_top_water", PROPERTY_HINT_NONE, "suffix:m"), "set_stone_top_water", "get_stone_top_water");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "follow_flow"), "set_follow_flow", "is_follow_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_frontal_area", PROPERTY_HINT_RANGE, "-1,10,0.001,or_greater"), "set_wind_frontal_area", "get_wind_frontal_area");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range", PROPERTY_HINT_RANGE, "0,1000,0.5,or_greater,suffix:m"), "set_visibility_range", "get_visibility_range");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "far_color"), "set_far_color", "get_far_color");
 	ADD_GROUP("Near", "near_");
