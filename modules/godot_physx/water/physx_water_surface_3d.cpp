@@ -1517,6 +1517,14 @@ void fragment() {
 			// The roller is fresh, churning foam right through: no aged lace holes in it.
 			foam = max(foam, max(smoothstep(0.15, 0.6, fold), smoothstep(0.02, 0.2, v_roller)));
 		}
+		if (foam_crisp > 0.0) {
+			// Crisp at every distance: past a few metres the structure's detail is finer than a pixel and its
+			// edge goes soft again, so the patch's edge is stepped once more at the pixel's own scale (the foam's
+			// screen-space change, as signed-distance text is sharpened), keeping 0.8 of the soft value (haze).
+			float fwf = max(fwidth(foam), 1e-3);
+			float stepped = clamp((foam - 0.3) / (1.5 * fwf) + 0.5, 0.0, 1.0);
+			foam = mix(foam, max(stepped, 0.8 * foam), foam_crisp);
+		}
 		if (foam > 0.01) {
 			// The foam's bubbles tilt the normal under it: its grain catches the light.
 			vec2 fw = fwidth(v_rest_xz);

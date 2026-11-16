@@ -20,6 +20,7 @@ extends Node3D
 #   --view=storm_roller 1.75 m up, across the wind at the front face of spilling crests, low side sun (20 degrees)
 #   --view=storm_plume 4 m up, steeply down on a fresh whitecap and its turquoise bubble plume (as storm_foam)
 #   --view=storm_foam  13 m/s deep sea from 8 m up, 25 degrees down, sun to the side (--sun-pitch=20): whitecaps ageing to lace
+#   --view=storm_foam_close 22 m/s, 1.5 m above the foam riding the sea, low side sun: the foam's edges and rims
 #   --view=storm_sheets 22 m/s, 2 m up across the wind, low sun behind: the torn spray sheets in profile, backlit
 #                   (with --node=crest_sheets:true)
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
@@ -267,6 +268,10 @@ func _ready() -> void:
 		# 20 degrees up, from downwind: the light falls on the crests' front faces, side on to the camera.
 		var wdr := Vector2(-0.3, 1.0).normalized()
 		sun.look_at_from_position(Vector3.ZERO, Vector3(-wdr.x, -tan(deg_to_rad(20.0)), -wdr.y))
+	elif view == "storm_foam_close":
+		# 15 degrees up, from the side (along the wind): rims light on one side, shade on the other.
+		var wdf2 := Vector2(-0.3, 1.0).normalized()
+		sun.look_at_from_position(Vector3.ZERO, Vector3(-wdf2.x, -tan(deg_to_rad(15.0)), -wdf2.y))
 	elif view == "storm_sheets":
 		# 10 degrees up, behind the sheets and a little to the side: they backlight against the darker sea.
 		var wds2 := Vector2(-0.3, 1.0).normalized()
@@ -465,6 +470,11 @@ func _ready() -> void:
 			# in profile against the wave faces behind, lit from behind by the low sun.
 			var wds := Vector2(-0.3, 1.0).normalized()
 			cam.look_at_from_position(Vector3(0, 2.0, 0.0), Vector3(wds.y * 20.0, 0.6, -wds.x * 20.0))
+		"storm_foam_close":
+			# 1.5 m above the gale's foam (riding the sea), looking across the wind and down: patches fill the
+			# lower frame, the low side sun catching their rims.
+			var wdf := Vector2(-0.3, 1.0).normalized()
+			cam.look_at_from_position(Vector3(0, 1.5, 0.0), Vector3(wdf.y * 6.0, -1.0, -wdf.x * 6.0))
 		"storm_low":
 			# Low, looking downwind: the streaks run off toward the horizon, the crests' spume blows away from us.
 			var wd := Vector2(-0.3, 1.0).normalized()
@@ -742,7 +752,7 @@ func _process(_delta: float) -> void:
 			_save_wake()
 			if out == "":
 				get_tree().quit()
-	if view == "storm_sheets" and cam_set.size() != 6:
+	if (view == "storm_sheets" or view == "storm_foam_close") and cam_set.size() != 6:
 		# Ride the sea 2 m above it (a gale's waves are far taller than that), eased like a boat's deck.
 		# The highest water under and just ahead of the lens: up at once (never under a crest), down slowly.
 		var fwd_c := -bench_cam.global_transform.basis.z
@@ -753,7 +763,7 @@ func _process(_delta: float) -> void:
 			sea_y = maxf(sea_y, float(water.call("sample_height", Vector3(p.x, 0.0, p.z))))
 		if is_finite(sea_y):
 			ride_y = sea_y if (n <= 1 or sea_y > ride_y) else lerpf(ride_y, sea_y, 0.05)
-			bench_cam.position.y = ride_y + 2.0 + cam_dy
+			bench_cam.position.y = ride_y + (1.5 if view == "storm_foam_close" else 2.0) + cam_dy
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)

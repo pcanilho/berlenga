@@ -3178,4 +3178,9 @@ Built (16 Nov): a hard threshold of the amount (first try) lost the faint haze a
 water; a threshold spread evenly over 0 to 1 (per cell) kept the share but turned thin foam into square flakes.
 Kept: the density stepped against a ragged threshold near 0.32 for the patches' edges, max'd with 0.8 of the
 soft density so the haze stays. Relief from screen derivatives as planned.
+
+Docs review: at normal viewing distance off and on were near identical: past a few metres the structure's detail
+is under a pixel and the edge softens again. Fix: after the foam is read, its edge is stepped once more at the
+pixel's own scale (fwidth of the foam, as signed-distance text is sharpened), keeping 0.8 of the soft value.
+Bench `--view=storm_foam_close`: 1.5 m above gale foam, riding the sea, low side sun.
 Check: off/on pair at whitecap distance (storm_foam) and close (storm_plume), PT frame.
