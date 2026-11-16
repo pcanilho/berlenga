@@ -46,6 +46,30 @@ class RigidBody3D;
 class PhysXBuoyancy3D : public Node3D {
 	GDCLASS(PhysXBuoyancy3D, Node3D);
 
+public:
+	enum VolumeMode {
+		VOLUME_POINTS, // probe points sharing a footprint and a hull height
+		VOLUME_SHAPES, // the collision shapes' volume: spheres as pontoons, the rest in cells
+	};
+
+private:
+	VolumeMode volume_mode = VOLUME_POINTS;
+	int max_cells = 32; // cells a body in VOLUME_SHAPES (spheres are one each)
+	bool mass_from_densities = false; // body mass and centre of mass from the shapes' buoyancy_density
+	float default_density = 500.0f; // kg/m^3 for shapes without buoyancy_density (with mass_from_densities)
+	float drag_coefficient = 1.0f; // form drag, 0.5 rho Cd A |v| v on the wet part (VOLUME_SHAPES)
+	float wave_damping = 0.2f; // heave, pitch and roll damping by the waves a floating body makes, share of critical
+	struct Cell {
+		Vector3 local; // body-local centre
+		Vector3 axis[3]; // body-local half extents (a box cell's half axes)
+		float volume = 0.0f; // m^3
+		float radius = 0.0f; // > 0: a sphere (a pontoon), exact cap
+	};
+	LocalVector<Cell> cells;
+	float total_volume = 0.0f;
+	void _build_cells(RigidBody3D *p_body);
+	void _shapes_step(RigidBody3D *p_body);
+
 	NodePath water_surface_path;
 	PackedVector3Array sample_points; // body-local; empty = generated from the collision shapes
 	float hull_area = 0.0f; // m^2 footprint; 0 = from the collision shapes
@@ -85,6 +109,21 @@ public:
 	PhysXWaterSurface3D *get_water_surface() const;
 	PhysXRiver3D *get_river() const;
 
+	void set_volume_mode(VolumeMode p_mode);
+	VolumeMode get_volume_mode() const { return volume_mode; }
+	void set_max_cells(int p_cells);
+	int get_max_cells() const { return max_cells; }
+	void set_mass_from_densities(bool p_enabled);
+	bool get_mass_from_densities() const { return mass_from_densities; }
+	void set_default_density(float p_density);
+	float get_default_density() const { return default_density; }
+	void set_wave_damping(float p_ratio) { wave_damping = MAX(p_ratio, 0.0f); }
+	float get_wave_damping() const { return wave_damping; }
+	void set_drag_coefficient(float p_cd) { drag_coefficient = MAX(p_cd, 0.0f); }
+	float get_drag_coefficient() const { return drag_coefficient; }
+	// The volume in use in VOLUME_SHAPES (m^3).
+	float get_total_volume() const { return total_volume; }
+
 	void set_water_surface_path(const NodePath &p_path);
 	NodePath get_water_surface_path() const { return water_surface_path; }
 	void set_sample_points(const PackedVector3Array &p_points);
@@ -120,3 +159,5 @@ public:
 
 	PackedStringArray get_configuration_warnings() const override;
 };
+
+VARIANT_ENUM_CAST(PhysXBuoyancy3D::VolumeMode);
