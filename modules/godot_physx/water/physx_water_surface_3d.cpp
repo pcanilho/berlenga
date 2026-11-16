@@ -247,6 +247,12 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
 // Size of that lace: noise cells per meter, fixed to the water.
 uniform float foam_detail_scale = 1.5;
+// Crisp foam (docs/ideas/water.md "Crisp foam on the open sea"): the outline a step of the amount roughened by fine
+// noise, about a pixel wide (Sea of Thieves, Atlas), thin foam a sparse opaque web, the grain a light touch. 0: soft.
+uniform float foam_crisp : hint_range(0.0, 1.0) = 1.0;
+// The foam's thickness lights its rims (Crest's foam 3D lighting): its gradient tilts the normal as a skin this
+// share of 3 cm thick.
+uniform float foam_relief : hint_range(0.0, 2.0) = 0.5;
 // Foam streaks (Beaufort 8 and up, "foam blown in well-marked streaks along the direction of the wind"): set
 // from the wind by PhysXWaterSurface3D. 0 = none; toward 1 fading foam breaks up along foam_streak_dir
 // (downwind) instead of into lace, and trails downwind of the patches it leaves.
@@ -869,6 +875,17 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	bubbles *= mix(1.0, 0.7 + 0.45 * foam_fbm(pw * 3.5 + 2.3), cluster);
 	// Thin foam is translucent, thick foam opaque.
 	float density = smoothstep(0.02, 0.35, a);
+	if (foam_crisp > 0.0) {
+		// Crisp: a patch's edge is a narrow step of its density against a ragged threshold (fine noise), not
+		// the soft blob of the amount texture; the thin haze an old patch leaves stays, translucent, so no foam
+		// is lost.
+		float rough = 0.6 * foam_fbm(q * 3.1 + 5.3) + 0.4 * foam_fbm(q * 11.0 - 2.1);
+		float t_edge = 0.32 + 0.5 * (rough - 0.5);
+		float w_edge = clamp(0.02 + footprint * foam_detail_scale * 2.0, 0.02, 0.3);
+		float outline = max(smoothstep(t_edge - w_edge, t_edge + w_edge, density), 0.8 * density);
+		density = mix(density, outline, foam_crisp);
+		bubbles = mix(1.0, bubbles, 1.0 - 0.55 * foam_crisp);
+	}
 	return clamp(cover * density * bubbles, 0.0, 1.0);
 }
 
@@ -1506,6 +1523,30 @@ void fragment() {
 			vec3 bn = foam_bubble_normal(v_rest_xz, max(fw.x, fw.y));
 			world_normal = normalize(world_normal + vec3(bn.x, 0.0, bn.z) * foam * 0.6);
 		}
+		// The foam as a skin on the water: its gradient over the surface (from the screen derivatives, solved for
+		// world xz) tilts the normal, so the rims of patches and holes catch the sun on one side.
+#if defined(RT)
+		// The path tracer has no screen derivatives: central differences of the foam a couple of centimetres
+		// apart (the waves' slopes held, as they barely change over that).
+		if (foam_relief > 0.0 && foam > 0.01) {
+			const float fe = 0.02;
+			vec2 fg = vec2(foam_at_with(v_rest_xz + vec2(fe, 0.0), der, disp) - foam_at_with(v_rest_xz - vec2(fe, 0.0), der, disp),
+					foam_at_with(v_rest_xz + vec2(0.0, fe), der, disp) - foam_at_with(v_rest_xz - vec2(0.0, fe), der, disp)) / (2.0 * fe);
+			fg = clamp(fg * 0.03 * foam_relief, vec2(-1.2), vec2(1.2));
+			world_normal = normalize(world_normal - vec3(fg.x, 0.0, fg.y));
+		}
+#else
+		vec2 rdx = dFdx(v_rest_xz);
+		vec2 rdy = dFdy(v_rest_xz);
+		float fdx = dFdx(foam);
+		float fdy = dFdy(foam);
+		float rdet = rdx.x * rdy.y - rdx.y * rdy.x;
+		if (foam_relief > 0.0 && abs(rdet) > 1e-12) {
+			vec2 fg = vec2(rdy.y * fdx - rdx.y * fdy, rdx.x * fdy - rdy.x * fdx) / rdet;
+			fg = clamp(fg * 0.03 * foam_relief, vec2(-1.2), vec2(1.2));
+			world_normal = normalize(world_normal - vec3(fg.x, 0.0, fg.y));
+		}
+#endif
 	}
 #if defined(UNDERWATER_SURFACE) && defined(RT)
 	ALPHA = 0.0; // the path tracer has the real surface
@@ -3524,35 +3565,44 @@ void fragment() {
 	float age = COLOR.r;
 	vec2 o = vec2(COLOR.g * 173.0, COLOR.g * 59.0);
 	float span_m = COLOR.b * 8.0; // metres along the crest
-	// A veil torn into threads that stream downwind: thin ridges across the sheet (about 5 to 15 cm apart), each
-	// running the length of the flight; v = 0 at the leading edge (flown longest), 1 at the root on the crest's lip.
+	// Spindrift: mostly a soft translucent veil of fine drops, densest and brightest at the lip, its density
+	// patchy; its trailing fringe torn into a few threads of different widths and lengths that break into drops.
+	// v = 0 at the leading edge (flown longest), 1 at the root on the crest's lip.
 	float u = UV.x * span_m;
 	float v = UV.y;
-	float n1 = s_noise(vec2(u * 9.0, v * 1.2) + o);
-	float n2 = s_noise(vec2(u * 23.0, v * 2.5) - o);
-	float ridge = 1.0 - abs(n1 * 2.0 - 1.0);
-	float threads = smoothstep(0.55, 0.95, 0.65 * ridge + 0.35 * n2);
-	// Toward the tail the threads break up into beads and drops (Rayleigh-Plateau): dashes along each thread.
-	float beads = smoothstep(0.35, 0.65, s_noise(vec2(u * 23.0, v * 22.0) + o.yx * 1.7));
-	threads *= mix(1.0, beads, smoothstep(0.85, 0.2, v));
-	// Each thread ends at its own length: the tail frays out further as the sheet ages.
-	float reach = s_noise(vec2(u * 6.0, 3.7) + o.yx);
-	float tail = smoothstep(0.0, 0.18, v - (1.0 - reach) * mix(0.35, 0.8, age));
-	// At the lip a ragged fringe of foam (torn into bits, never a smooth panel), threads past it, and a faint mist
-	// of droplets left in patches toward the tail where they tore.
-	float n3 = s_noise(vec2(u * 14.0, v * 9.0) + o.yx);
-	float fringe = smoothstep(0.86, 0.98, v) * smoothstep(0.45, 0.75, n3) * (1.0 - age * 0.8);
-	float mist = 0.1 * (1.0 - v) * smoothstep(0.45, 0.8, s_noise(vec2(u * 4.0, v * 3.0 - age * 2.0) + o)) * (0.3 + age);
-	float body = max(threads * tail * mix(0.4, 1.0, v), fringe) + mist;
+	float n1 = s_noise(vec2(u * 1.6, v * 2.0) + o);
+	float n2 = s_noise(vec2(u * 4.5, v * 5.0 - age * 2.0) - o);
+	float n3 = s_noise(vec2(u * 11.0, v * 9.0) + o.yx);
+	// Where the veil ends and the fringe begins: ragged along the crest, creeping back toward the lip with age.
+	float edge = mix(0.15, 0.55, age) + 0.25 * (s_noise(vec2(u * 2.2, 1.3) + o.yx) - 0.5);
+	float veil_mask = smoothstep(edge - 0.06, edge + 0.12, v);
+	float density = (0.45 + 0.4 * n1) * (0.75 + 0.35 * n2) * (0.85 + 0.15 * n3);
+	float veil = veil_mask * density * mix(0.35, 0.8, smoothstep(0.3, 1.0, v));
+	// Brighter ragged rim where the veil tears.
+	veil += 0.25 * veil_mask * (1.0 - smoothstep(edge + 0.02, edge + 0.2, v)) * smoothstep(0.4, 0.7, n3);
+	// Threads in the fringe only: a sparse few (most columns have none), each its own width and length.
+	float lane = s_noise(vec2(u * 6.0, 0.5) + o);
+	float width = mix(0.04, 0.16, s_noise(vec2(u * 2.0, 7.1) + o.yx));
+	float to_line = 0.5 - abs(fract(u * 3.0 + 0.4 * n1) - 0.5); // 0 on a thread, 0.5 between
+	float thread = (1.0 - smoothstep(0.4 * width, width, to_line)) * step(0.55, lane);
+	float reach = s_noise(vec2(u * 5.0, 3.7) + o.yx);
+	thread *= (1.0 - veil_mask) * smoothstep(0.0, 0.1, v - (edge - 0.1) * (1.0 - reach));
+	// Breaking into drops along their length (Rayleigh-Plateau), more toward the tip.
+	float beads = smoothstep(0.4, 0.7, s_noise(vec2(u * 30.0, v * 26.0) + o.yx * 1.7));
+	thread *= mix(beads, 1.0, smoothstep(0.0, edge, v)) * 0.75;
+	// A faint mist of loose drops left behind the fringe.
+	float mist = 0.08 * (1.0 - veil_mask) * smoothstep(0.4, 0.8, n2);
+	float body = max(veil, thread) + mist;
 	// No clean edge anywhere: the ends along the crest fray, the root melts into the crest, the front into the air.
-	float ends = smoothstep(0.0, 0.25, UV.x + 0.15 * (n2 - 0.5)) * smoothstep(0.0, 0.25, 1.0 - UV.x + 0.15 * (n1 - 0.5));
-	ends *= smoothstep(0.0, 0.1, v) * (1.0 - smoothstep(0.96, 1.0, v));
+	float ends = smoothstep(0.0, 0.25, UV.x + 0.2 * (n2 - 0.5)) * smoothstep(0.0, 0.25, 1.0 - UV.x + 0.2 * (n1 - 0.5));
+	// The front dissolves over its last third into the patchy density (no outline).
+	ends *= smoothstep(0.0, 0.35, v + 0.25 * (n2 - 0.5)) * (1.0 - smoothstep(0.985, 1.0, v));
 	float cover = clamp(body, 0.0, 1.0) * ends;
 	// Fading out as it ends, and edge-on (a thin veil seen side-on is next to nothing).
 	cover *= 1.0 - smoothstep(0.7, 1.0, age);
 	cover *= smoothstep(0.05, 0.3, abs(dot(NORMAL, VIEW)));
 	// Brightest at the root, white spray; the unbroken film at the lip is tinted water.
-	vec3 col = mix(sheet_color, water_tint, 0.35 * smoothstep(0.9, 1.0, v) * (1.0 - age));
+	vec3 col = mix(sheet_color, water_tint, 0.3 * smoothstep(0.85, 1.0, v) * (1.0 - age));
 	ALBEDO = col;
 	// Thin water and droplets glow with the light behind them.
 	BACKLIGHT = col * 0.9;
@@ -3589,8 +3639,16 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 	const Vector3 cam_pos = cam->get_global_position();
 	// Ageing.
 	for (uint32_t i = 0; i < sheets.size();) {
-		sheets[i].age += p_dt;
-		if (sheets[i].age >= sheets[i].life) {
+		CrestSheet &sh = sheets[i];
+		sh.age += p_dt;
+		// Only while its root is on a crest: where the crest has run on or dropped from under the lip, the sheet
+		// is gone within a few frames (never a fan hanging in the air with nothing beneath it).
+		const Vector3 lip = sh.root + wind3 * (0.35f * wind_speed * MIN(sh.age, sh.feed));
+		const float lip_y = sample_height(lip);
+		if (Math::is_finite(lip_y) && (sh.root.y - lip_y > 0.35f || lip_y - sh.root.y > 0.6f)) {
+			sh.life = MIN(sh.life, sh.age + 0.12f);
+		}
+		if (sh.age >= sh.life) {
 			sheets.remove_at_unordered(i);
 		} else {
 			i++;
@@ -3647,9 +3705,10 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 			sh.root = p + Vector3(0.0f, origin.y, 0.0f);
 			// On the rendered surface (every cascade, not only the one the fold test reads).
 			const float sy = sample_height(sh.root);
-			if (Math::is_finite(sy)) {
-				sh.root.y = sy;
+			if (!Math::is_finite(sy) || sy < origin.y + 0.3f) {
+				continue; // a fold below the mean sea is no crest the wind can tear
 			}
+			sh.root.y = sy;
 			const float turn = sheet_rng.random(-0.45f, 0.45f);
 			sh.throw_dir = Vector3(wd.x * Math::cos(turn) - wd.y * Math::sin(turn), 0.0f, wd.x * Math::sin(turn) + wd.y * Math::cos(turn));
 			sh.across = Vector3(-sh.throw_dir.z, 0.0f, sh.throw_dir.x);

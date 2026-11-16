@@ -1,0 +1,1 @@
+- Water: torn spray sheets are a soft veil brightest at the lip with a few threads at the tail, and end as soon as their crest is gone.
