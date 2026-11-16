@@ -138,6 +138,42 @@ struct VegetationObstacles {
 		return second;
 	}
 
+	// How sheltered a point at height p_y is by taller items (y their top) within p_reach of it:
+	// the steepest angle up to a taller item's edge, as tan (0 open .. 1 at 45 degrees), items
+	// towards +Z (the sun's side, opposite the -Z pole) counting fully and those to -Z half.
+	float shelter(const Vector2 &p_xz, float p_y, float p_reach) const {
+		float best = 0.0f;
+		if (items.is_empty()) {
+			return best;
+		}
+		const int r = int(Math::ceil((max_radius + p_reach) / CELL));
+		const Vector2i c(int(Math::floor(p_xz.x / CELL)), int(Math::floor(p_xz.y / CELL)));
+		for (int dz = -r; dz <= r; dz++) {
+			for (int dx = -r; dx <= r; dx++) {
+				const LocalVector<uint32_t> *bucket = grid.getptr(c + Vector2i(dx, dz));
+				if (!bucket) {
+					continue;
+				}
+				for (uint32_t i : *bucket) {
+					const Vector4 &o = items[i];
+					const float rise = float(o.y) - p_y;
+					if (rise <= 0.05f) {
+						continue;
+					}
+					const Vector2 to(float(o.x) - p_xz.x, float(o.z) - p_xz.y);
+					const float len = to.length();
+					const float d = len - float(o.w);
+					if (d > p_reach) {
+						continue;
+					}
+					const float side = len > 1e-4f ? 0.75f + 0.25f * to.y / len : 1.0f;
+					best = MAX(best, CLAMP(side * rise / MAX(d, 0.05f), 0.0f, 1.0f));
+				}
+			}
+		}
+		return best;
+	}
+
 	// Whether a point lies within p_margin of an obstacle.
 	bool blocks(const Vector2 &p_xz, float p_margin) const {
 		return !items.is_empty() && clearance(p_xz, p_margin) < p_margin;

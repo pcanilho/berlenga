@@ -861,12 +861,20 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							top_normal = ti < p_setup.stone_top_normals.size() ? p_setup.stone_top_normals[ti] : Vector3();
 							if (damp_rule) {
 								// How damp the top stays: tilted to the pole (north) it is shaded, low
-								// over the ground it keeps the ground's humidity, under a canopy it is
-								// out of the sun. High, sun-facing tops dry out: hoary, yellow-olive
-								// cushions there (Racomitrium, Grimmia), deep green ones in the damp.
+								// over the ground it keeps the ground's humidity, beside taller stones
+								// (on the sun's side most) or under a canopy it is out of the sun. High,
+								// open, sun-facing tops dry out: hoary, yellow-olive cushions there
+								// (Racomitrium, Grimmia), deep green ones in the damp. The measure is
+								// the cap's, not the plant's, so a top reads as one or the other.
 								const float aspect = top_normal.y > 0.1f ? -top_normal.z : 0.0f;
-								const float low = 1.0f - Math::smoothstep(STONE_TOP_LOW, STONE_TOP_HIGH, float(top_cap.y) - map->get_height_at(p3));
-								const float damp = CLAMP(0.35f + 1.5f * aspect + 0.45f * low + 0.6f * shade, 0.0f, 1.0f);
+								const float low = 1.0f - Math::smoothstep(STONE_TOP_LOW, STONE_TOP_HIGH, float(top_cap.y) - map->get_height_at(Vector3(top_cap.x, 0.0f, top_cap.z)));
+								const float shelter = p_setup.stone_tops.shelter(Vector2(top_cap.x, top_cap.z), float(top_cap.y), STONE_TOP_SHELTER_REACH);
+								const float wet = 1.0f * aspect + 0.5f * low + 0.7f * shelter + 0.6f * shade;
+								// One or the other per stone (a little jitter per cap, so the split is not a
+								// contour line across the field).
+								const uint32_t ch = hash_murmur3_one_float(float(top_cap.x), hash_murmur3_one_float(float(top_cap.z)));
+								const float jitter = 0.1f * (float(ch & 0xffff) / 65535.0f - 0.5f);
+								const float damp = wet + jitter >= STONE_TOP_DAMP_SPLIT ? 1.0f : 0.0f;
 								suit *= sp->stone_top_damp_weight(damp);
 							}
 						} else {

@@ -278,8 +278,11 @@ river gravels by mossy saxifrage, stonecrop and, near water, sedges and rushes.
   high, sun-facing tops dry out between rains and carry hoary, yellow-olive xerophytes (Racomitrium
   lanuginosum, Grimmia); low, shaded, pole-facing tops keep the ground's humidity and carry deep
   green pleurocarps (Weibull and Rydin 2005, boulder bryophytes and canopy).
-  `PlantSpecies.stone_top_damp` (-1..1) weights a top by
-  damp = clamp(0.35 + 1.5 a + 0.45 low + 0.6 shade): a the cap's tilt to north (-Z, as the rocks'
-  moss `pole_direction`), low 1 at 10 cm over the ground falling to 0 at 1.2 m, shade the canopy.
+  `PlantSpecies.stone_top_damp` (-1..1) weights a top as damp or dry, per stone: damp where
+  1.0 a + 0.5 low + 0.7 shelter + 0.6 shade reaches 0.45 (jittered 0.05 per stone), all at the cap:
+  a its tilt to north (-Z, as the rocks' moss `pole_direction`), low 1 at 5 cm over the ground
+  falling to 0 at 0.8 m, shelter the steepest rise (tan, full at 45 degrees) to a taller stone top
+  within 2 m (south side full, north half), shade the canopy. Binary per stone so a top reads green
+  or olive; a first per-plant, graded version mixed both on sunlit tops (docs review).
   make_stones pairs green moss (+1 scree, +0.6 river) with a smaller, sparser yellow-olive one (-1).
 - Next: the river sets reading the stones' water film.
