@@ -1,0 +1,1 @@
+- Water: shore waves have short crests (the phase wanders along each crest), so breakers and their plunge lines bend and break unevenly instead of running as one straight line down a straight beach.
