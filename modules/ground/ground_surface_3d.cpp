@@ -713,6 +713,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			if (first) {
 				ripples.valid = false; // the whole window from it
 			}
+			_ripples_far_tile();
 		}
 	} else if (!ripples.tmpl_ready || (speed > 0.1f && ripples.tmpl_wind.dot(dir) < 0.82f)) {
 		ripple_grow_wind = dir;
@@ -745,6 +746,18 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 						ripple_show[z2 * ripples.n + x2] = show;
 					}
 				}
+			}
+		}
+		// The sand share over the patch for the far ripples, in 25 cm texels (at 32 m).
+		const int sn = RIPPLE_SAND_N;
+		const float size = deform_extent;
+		const float st = size / sn;
+		ripple_sand_rect = Rect2(Math::snapped(center.x, st) - 0.5f * size, Math::snapped(center.y, st) - 0.5f * size, size, size);
+		ripple_sand.resize(sn * sn);
+		for (int z = 0; z < sn; z++) {
+			for (int x = 0; x < sn; x++) {
+				const Cell &c = _cell_at(ripple_sand_rect.position.x + (x + 0.5f) * st, ripple_sand_rect.position.y + (z + 0.5f) * st);
+				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 			}
 		}
 		ripple_dirty = true;
@@ -803,19 +816,54 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	}
 	if (ripple_dirty) {
 		ripple_dirty = false;
-		const int nn = ripples.n * ripples.n;
+		// Rows 0..n-1: the window (height, sand share) and the grown field's slope at world cell mod n; rows
+		// n..n+S-1: the sand share over the patch; the last row: the window's rect and cell, the sand rect and
+		// the tile's size, and whether far ripples are on.
+		const int n = ripples.n;
+		const int nn = n * n;
+		const int sn = RIPPLE_SAND_N;
+		const int w = MAX(n, sn);
+		const int hgt = n + sn + 1;
 		Vector<uint8_t> data;
-		data.resize(nn * 8);
+		data.resize(w * hgt * 16);
+		memset(data.ptrw(), 0, data.size());
 		float *d = (float *)data.ptrw();
-		for (int i = 0; i < nn; i++) {
-			d[i * 2 + 0] = ripples.h[i];
-			d[i * 2 + 1] = (int)ripple_show.size() == nn ? ripple_show[i] : 0.0f;
+		const bool tile = (int)ripple_tile_slope.size() == nn * 2;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				float *o = d + (z * w + x) * 4;
+				o[0] = ripples.h[i];
+				o[1] = (int)ripple_show.size() == nn ? ripple_show[i] : 0.0f;
+				o[2] = tile ? ripple_tile_slope[i * 2 + 0] : 0.0f;
+				o[3] = tile ? ripple_tile_slope[i * 2 + 1] : 0.0f;
+			}
 		}
-		if (ripple_image.is_valid() && ripple_image->get_width() == ripples.n && ripple_texture.is_valid()) {
-			ripple_image->set_data(ripples.n, ripples.n, false, Image::FORMAT_RGF, data);
+		const bool sand = (int)ripple_sand.size() == sn * sn;
+		if (sand) {
+			for (int z = 0; z < sn; z++) {
+				for (int x = 0; x < sn; x++) {
+					d[((n + z) * w + x) * 4] = ripple_sand[z * sn + x];
+				}
+			}
+		}
+		float *meta = d + (n + sn) * w * 4;
+		meta[0] = (ripples.origin.x - 0.5f) * ripples.cell;
+		meta[1] = (ripples.origin.y - 0.5f) * ripples.cell;
+		meta[2] = n * ripples.cell;
+		meta[3] = ripples.cell;
+		meta[4] = ripple_sand_rect.position.x;
+		meta[5] = ripple_sand_rect.position.y;
+		meta[6] = ripple_sand_rect.size.x;
+		meta[7] = n * ripples.cell;
+		meta[8] = tile && sand ? 1.0f : 0.0f;
+		meta[9] = (float)n;
+		meta[10] = (float)sn;
+		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
+			ripple_image->set_data(w, hgt, false, Image::FORMAT_RGBAF, data);
 			ripple_texture->update(ripple_image);
 		} else {
-			ripple_image = Image::create_from_data(ripples.n, ripples.n, false, Image::FORMAT_RGF, data);
+			ripple_image = Image::create_from_data(w, hgt, false, Image::FORMAT_RGBAF, data);
 			ripple_texture = ImageTexture::create_from_image(ripple_image);
 			ripple_published = false;
 		}
@@ -824,6 +872,41 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	if (mesh_dirty) {
 		_build_mesh();
 	}
+}
+
+// The grown field's slope at each cell (it is periodic, so the differences wrap), for the far ripples: in
+// the ripple map for the path tracer and as its own mipmapped texture for the raster, so far ripples average
+// out to a flat normal instead of shimmering.
+void GroundSurface3D::_ripples_far_tile() {
+	const int n = ripples.n;
+	if ((int)ripples.tmpl.size() != n * n) {
+		return;
+	}
+	ripple_tile_slope.resize(n * n * 2);
+	Vector<uint8_t> data;
+	data.resize(n * n * 8);
+	float *d = (float *)data.ptrw();
+	const float inv = 0.5f / ripples.cell;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const float *t = ripples.tmpl.ptr();
+			const float sx = (t[z * n + (x + 1) % n] - t[z * n + (x + n - 1) % n]) * inv;
+			const float sz = (t[((z + 1) % n) * n + x] - t[((z + n - 1) % n) * n + x]) * inv;
+			ripple_tile_slope[(z * n + x) * 2 + 0] = sx;
+			ripple_tile_slope[(z * n + x) * 2 + 1] = sz;
+			d[(z * n + x) * 2 + 0] = sx;
+			d[(z * n + x) * 2 + 1] = sz;
+		}
+	}
+	ripple_far_image = Image::create_from_data(n, n, false, Image::FORMAT_RGF, data);
+	ripple_far_image->generate_mipmaps();
+	if (ripple_far_texture.is_valid() && ripple_far_texture->get_width() == n) {
+		ripple_far_texture->update(ripple_far_image);
+	} else {
+		ripple_far_texture = ImageTexture::create_from_image(ripple_far_image);
+		ripple_far_published = false;
+	}
+	ripple_dirty = true;
 }
 
 void GroundSurface3D::_ripples_publish() {
@@ -837,6 +920,10 @@ void GroundSurface3D::_ripples_publish() {
 	}
 	if (!ripple_published) {
 		_set_global("ground_ripple_map", ripple_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	}
+	if (!ripple_far_published && ripple_far_texture.is_valid()) {
+		_set_global("ground_ripple_far", ripple_far_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		ripple_far_published = true;
 	}
 	// Texel centres on the cells (and so on the fine ring's vertices).
 	_set_global("ground_ripple_rect", Vector4((ripples.origin.x - 0.5f) * ripples.cell, (ripples.origin.y - 0.5f) * ripples.cell, ripples.n * ripples.cell, ripples.cell), RSE::GLOBAL_VAR_TYPE_VEC4);
@@ -990,6 +1077,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_set_global("ground_deform_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				_set_global("ground_ripple_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				ripple_published = false;
+				ripple_far_published = false;
 				active = nullptr;
 			}
 			globals_published = false;

@@ -2002,6 +2002,47 @@ void main() {
 				m.roughness = clamp(m.roughness * g.a, 0.0, 1.0);
 			}
 		}
+		// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with
+		// texelFetch in place of the raster's mipmapped copy (the samples average what mips would).
+		uint rmap = uint(get_rt_param(RT_PARAM_GROUND_RIPPLE_MAP));
+		if (rmap != 0u) {
+			ivec2 ts = textureSize(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), 0);
+			vec4 m0 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(0, ts.y - 1), 0);
+			vec4 m1 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(1, ts.y - 1), 0);
+			vec4 m2 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(2, ts.y - 1), 0);
+			vec2 p = (h.hit_pos + rt_origin.xyz).xz;
+			int rn = int(m2.y + 0.5);
+			int sn = int(m2.z + 0.5);
+			vec2 su = (p - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
+			if (m2.x > 0.5 && rn > 0 && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
+				ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+				ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+				vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+				float sand = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s0.y), 0).r,
+										 texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s0.y), 0).r, sf.x),
+						mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s1.y), 0).r,
+								texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s1.y), 0).r, sf.x),
+						sf.y);
+				vec2 wuv = (p - m0.xy) / m0.z;
+				vec2 e = min(wuv, 1.0 - wuv) * m0.z;
+				float live = min(e.x, e.y) > 0.0 ? smoothstep(m0.w, 0.15 * m0.z, min(e.x, e.y)) : 0.0;
+				float w = sand * (1.0 - live);
+				if (w > 0.0) {
+					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
+					vec2 tc = p / m0.w;
+					ivec2 c0 = ivec2(floor(tc));
+					vec2 cf = tc - vec2(c0);
+					ivec2 a = ((c0 % rn) + rn) % rn;
+					ivec2 b = (a + 1) % rn;
+					vec2 sl = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, a.y), 0).ba,
+										  texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, a.y), 0).ba, cf.x),
+							mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, b.y), 0).ba,
+									texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, b.y), 0).ba, cf.x),
+							cf.y) * w;
+					m.normal = normalize(m.normal - vec3(sl.x, 0.0, sl.y));
+				}
+			}
+		}
 	}
 
 	// Wetness (BaseMaterial3D): Lagarde 2013, the same lines and inputs as the raster shader.

@@ -7553,6 +7553,26 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_Z] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_SIZE] = rect.z;
 		}
+		// And its wind ripple map, for the far ripples past the window (rect width 0 = ripples off).
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName ripple_map_name = "ground_ripple_map";
+			static const StringName ripple_rect_name = "ground_ripple_rect";
+			const Variant rect_var = ms->global_shader_parameter_get_internal(ripple_rect_name);
+			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
+			RID ripple_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(ripple_map_name);
+			if (tex_var.get_type() == Variant::RID) {
+				ripple_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				Object *t = tex_var;
+				if (t) {
+					ripple_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID ripple_rd = ripple_tex.is_valid() && rect.z > 0.0f ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(ripple_tex) : RID();
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_RIPPLE_MAP] = ripple_rd.is_valid() ? float(bindless_block->add_texture(ripple_rd)) : 0.0f;
+		}
 		// Snow for BaseMaterial3D Snow: SnowCover3D's global snow map (depth, albedo, wetness,
 		// density) and its rect, as the raster shader reads them. Width 0 = no snowpack.
 		{

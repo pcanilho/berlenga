@@ -636,6 +636,8 @@ void BaseMaterial3D::init_shaders() {
 		// And its wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the patch.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The grown ripple field's slope (periodic, mipmapped) for the far ripples past the window.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_far", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -2492,6 +2494,10 @@ void fragment() {)";
 		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		ALBEDO *= gd_tint.x;
 		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
+		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+		if (gr_far != vec2(0.0)) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
+		}
 	}
 )";
 	}
@@ -3765,6 +3771,7 @@ global uniform vec4 ground_deform_height_rect;
 global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
 global uniform sampler2D ground_ripple_map; // wind ripples: height (m), share of sand they show on
 global uniform vec4 ground_ripple_rect; // x, z, size, cell (m); size 0 = none
+global uniform sampler2D ground_ripple_far : filter_linear_mipmap_anisotropic, repeat_enable; // the grown field's slope
 )";
 	if (p_patch_uniform) {
 		code += "uniform bool ground_deform_patch = false;\n";
@@ -3793,9 +3800,48 @@ float ground_ripple(vec2 p_xz) {
 	if (min(e.x, e.y) <= 0.0) {
 		return 0.0;
 	}
+	// The window is the map's first n rows (under it: the sand share over the patch and a row of numbers).
+	float rows = float(textureSize(ground_ripple_map, 0).y);
+	uv.y *= (ground_ripple_rect.z / max(ground_ripple_rect.w, 1e-4)) / rows;
 	vec2 r = textureLod(ground_ripple_map, uv, 0.0).rg;
 	// Faded in over the outer 15% of the window, so its edge does not show as a line.
 	return r.x * r.y * smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y));
+}
+// Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
+// sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
+// path tracer reads the same map (scene_raytracing_raygen.glsl).
+vec2 ground_ripple_far_slope(vec2 p_xz) {
+	if (ground_ripple_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
+	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
+	if (m2.x < 0.5) {
+		return vec2(0.0);
+	}
+	int n = int(m2.y + 0.5);
+	int sn = int(m2.z + 0.5);
+	// The sand share, bilinear inside its block.
+	vec2 su = (p_xz - m1.xy) / m1.z * float(sn) - 0.5;
+	if (any(lessThan(su, vec2(-0.5))) || any(greaterThan(su, vec2(float(sn) - 0.5)))) {
+		return vec2(0.0);
+	}
+	ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+	ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+	vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+	float sand = mix(mix(texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).r, texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).r, sf.x),
+			mix(texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).r, texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).r, sf.x), sf.y);
+	vec2 uv = (p_xz - ground_ripple_rect.xy) / ground_ripple_rect.z;
+	vec2 e = min(uv, 1.0 - uv) * ground_ripple_rect.z;
+	float live = min(e.x, e.y) > 0.0 ? smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y)) : 0.0;
+	float w = sand * (1.0 - live);
+	if (w <= 0.0) {
+		return vec2(0.0);
+	}
+	// Cell c's centre is at c * cell, its texel (c mod n).
+	vec2 tuv = (p_xz / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
+	return w * texture(ground_ripple_far, tuv).rg;
 }
 // The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
 float ground_deform_lowered(vec2 p_xz) {

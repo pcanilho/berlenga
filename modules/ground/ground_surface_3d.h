@@ -154,6 +154,17 @@ private:
 	bool ripple_published = false;
 	double ripple_mask_accum = 1e9;
 	LocalVector<float> ripple_show; // sand share the ripples show on (the texture's second channel)
+	// Far ripples: past the window the grown field (periodic) shades the rest of the patch as a normal. The
+	// ripple map carries, under the window's rows, the sand share over the patch and a row of numbers, so the
+	// path tracer reads all of it from one texture (rt param 68).
+	static constexpr int RIPPLE_SAND_N = 128;
+	LocalVector<float> ripple_sand; // RIPPLE_SAND_N squared over ripple_sand_rect
+	Rect2 ripple_sand_rect;
+	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
+	Ref<Image> ripple_far_image;
+	Ref<ImageTexture> ripple_far_texture;
+	bool ripple_far_published = false;
+	void _ripples_far_tile();
 	LocalVector<float> ripple_seen; // the field's surface change at each of its texels over the window
 	Vector2i ripple_seen_origin;
 	Ref<Image> ripple_image;
