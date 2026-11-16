@@ -1108,6 +1108,19 @@
    "topic": "Ground"
   },
   {
+   "name": "Thrown sand",
+   "settings": [
+    "PhysXGroundGrains3D",
+    "tread_depth",
+    "kick()"
+   ],
+   "note": "",
+   "what": "spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Terrain deformation",
    "settings": [
     "TerrainDeformer3D",
