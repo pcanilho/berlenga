@@ -1193,7 +1193,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			struct Site {
 				Vector3 p;
 				float score;
-				int kind; // 0 pavement, 1 hoodoos
+				int kind; // 0 pavement, 1 hoodoos, 2 fins
 			};
 			LocalVector<Site> sites;
 			const real_t shore_top = gen->has_sea_result() ? gen->get_sea_level() + 6.0 : -1e9; // beaches and storm ridges are sand and shingle
@@ -1221,6 +1221,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							sites.push_back({ c, bare * (1.0f + rng.randf() * 0.3f), 0 });
 						}
 					}
+					// Fins: bare sandstone on gentle ground (Arches: under 15 degrees), the joints opened by weathering.
+					static const float fin_rate[RockGenerator::ROCK_MAX] = { 0.0f, 0.1f, 1.0f, 0.0f, 0.0f };
+					if (fin_rate[type] > 0.0f && n.y > 0.95f && bare > 0.5f) {
+						sites.push_back({ c, bare * fin_rate[type] * (0.9f + rng.randf() * 0.3f), 2 });
+					}
 					static const float hoodoo_rate[RockGenerator::ROCK_MAX] = { 0.0f, 0.25f, 1.0f, 0.0f, 0.15f };
 					if (hoodoo_rate[type] > 0.0f && n.y > 0.7f && n.y < 0.94f && bare > 0.5f) {
 						sites.push_back({ c, bare * hoodoo_rate[type] * (1.0f + rng.randf() * 0.3f), 1 });
@@ -1235,11 +1240,12 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			int made = 0;
 			// Hoodoos gather in badland heads and amphitheatres, not on every steep soft slope: one cell in four has them.
 			const bool badland = rng.randf() < 0.25f;
+			const bool fin_field = rng.randf() < 0.35f; // fins come in fields along one joint set
 			for (const Site &s : sites) {
-				if (s.kind == 1 && !badland) {
+				if ((s.kind == 1 && !badland) || (s.kind == 2 && !fin_field)) {
 					continue;
 				}
-				if (made >= 2 || rng.randf() > (s.kind == 1 ? 0.3f : 0.8f) * float(density)) { // flat bare benches are rare already
+				if (made >= 2 || rng.randf() > (s.kind == 0 ? 0.8f : 0.3f) * float(density)) { // flat bare benches are rare already
 					continue;
 				}
 				bool near = false;
@@ -1252,6 +1258,49 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				used.push_back(s.p);
 				made++;
 				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, gen->get_height(s.p), s.p.z));
+				if (s.kind == 2) {
+					// Fins: 3 to 7 parallel walls along one joint set, 6 to 14 m apart, each 12 to 35 m long, standing on
+					// the lowest ground along its foot.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_FIN, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					const real_t yaw = rng.randf() * Math::TAU;
+					const Vector3 along(Math::cos(yaw), 0, Math::sin(yaw));
+					const Vector3 up(0, 1, 0);
+					const Vector3 across = up.cross(along);
+					const int count = 3 + int(rng.randf() * 4.99f);
+					real_t off = -real_t(count) * 5.0;
+					for (int k = 0; k < count; k++) {
+						off += 6.0 + 8.0 * rng.randf();
+						const Vector3 at = s.p + across * off + along * real_t((rng.randf() - 0.5f) * 12.0f);
+						if (gen->get_water_depth(at) > 0.0) {
+							continue;
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const AABB box = lib->meshes[st.variant]->get_aabb();
+						const real_t length = 12.0 + 23.0 * rng.randf() * rng.randf();
+						st.scale = length / MAX(real_t(box.size.x), real_t(0.5));
+						const real_t jy = (rng.randf() - 0.5f) * 0.15f; // the joints wander a little from fin to fin
+						const Vector3 al = Basis(up, jy).xform(along), ac = Basis(up, jy).xform(across);
+						st.basis = Basis(al, ac, up).scaled_local(Vector3(st.scale, st.scale, st.scale));
+						real_t g = gen->get_height(at);
+						for (int j = -2; j <= 2; j++) {
+							for (int sd = -1; sd <= 1; sd += 2) {
+								g = MIN(g, gen->get_height(at + al * (real_t(j) * 0.22 * length) + ac * (real_t(sd) * real_t(box.size.y) * st.scale * 0.5)));
+							}
+						}
+						const real_t height = real_t(box.size.z) * st.scale;
+						st.position = Vector3(at.x, g - 0.04 * height - box.position.z * st.scale, at.z);
+						st.ground = gen->get_height(at);
+						r_stones.push_back(st);
+					}
+					continue;
+				}
 				if (s.kind == 0) {
 					// Pavement: a patch 8 to 16 m across, its top a little proud of the soil round it, its normal the
 					// ground's, turned to a random joint direction.
@@ -1534,22 +1583,29 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 				// A coast form is not convex (an arch's opening, a stack's notch, a platform's pools): its own
 				// triangles. Not breakable (no shape registered for it).
 				if (st.variant < lib->meshes.size() && lib->meshes[st.variant].is_valid()) {
-					Ref<ArrayMesh> m = lib->meshes[st.variant];
-					Vector<Vector3> faces;
-					const Array arrays = m->surface_get_arrays(0);
-					const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
-					const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
-					faces.resize(idx.size());
-					for (int k = 0; k < idx.size(); k++) {
-						faces.write[k] = xf.xform(v[idx[k]]);
+					Library *wlib = libraries.getptr(st.library);
+					if (wlib->trimesh.size() < wlib->meshes.size()) {
+						wlib->trimesh.resize(wlib->meshes.size());
 					}
-					Ref<ConcavePolygonShape3D> shape;
-					shape.instantiate();
-					shape->set_faces(faces);
+					if (wlib->trimesh[st.variant].is_null()) {
+						Ref<ConcavePolygonShape3D> shape;
+						shape.instantiate();
+						const Array arrays = lib->meshes[st.variant]->surface_get_arrays(0);
+						const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+						const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
+						Vector<Vector3> faces;
+						faces.resize(idx.size());
+						for (int k = 0; k < idx.size(); k++) {
+							faces.write[k] = v[idx[k]];
+						}
+						shape->set_faces(faces);
+						wlib->trimesh[st.variant] = shape;
+					}
 					CollisionShape3D *cs3 = memnew(CollisionShape3D);
-					cs3->set_shape(shape);
+					cs3->set_shape(wlib->trimesh[st.variant]);
+					cs3->set_transform(xf);
 					body->add_child(cs3);
-					coast_seabed_dirty = true;
+					coast_seabed_dirty = coast_seabed_dirty || layer == LAYER_COAST;
 				}
 				continue;
 			}

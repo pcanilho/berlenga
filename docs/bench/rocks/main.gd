@@ -5,14 +5,15 @@ extends Node3D
 #   --test                checks: every rock type and family builds (size, axes, timing), transport rounds and beach
 #                         wear flattens, then the field's six layers on a generated world; prints PASS/FAIL, quits
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
-#   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1)
+#   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
+#                         hoodoo or stack stood on end, side on)
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
 #                         densest place of that layer (default scree)
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -28,7 +29,7 @@ extends Node3D
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 const WORLD := 2048.0
 
@@ -202,6 +203,20 @@ func _one_rock() -> void:
 	var tf: PackedStringArray = args["rock"].split(",")
 	var m := _rock(TYPES.find(tf[0]), FAMILIES.find(tf[1]) if tf.size() > 1 else 0, int(args.get("seed", "3")))
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
+	var fam := FAMILIES.find(tf[1]) if tf.size() > 1 else 0
+	if args.has("stand") and fam in [RockGenerator.FAMILY_FIN, RockGenerator.FAMILY_HOODOO, RockGenerator.FAMILY_SEA_STACK]:
+		# --stand: on end as the field stands it (a fin's z up, a column's x up), seen side on from 6 b-axes away.
+		var mi := MeshInstance3D.new()
+		mi.mesh = m
+		var bs := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0)) if fam == RockGenerator.FAMILY_FIN else Basis(Vector3(0, 1, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1))
+		var box := m.get_aabb()
+		var foot := box.position.z if fam == RockGenerator.FAMILY_FIN else box.position.x
+		mi.transform = Transform3D(Basis(Vector3.UP, 0.35) * bs, Vector3(0, -foot - 0.05, 0))
+		add_child(mi)
+		var top := box.size.z if fam == RockGenerator.FAMILY_FIN else box.size.x
+		cam.position = Vector3(1.2, top * 0.45, top * 2.6 + 3.0)
+		cam.look_at(Vector3(0, top * 0.4, 0))
+		return
 	_place_mesh(m, 1.0, Vector3.ZERO, 0.6)
 	cam.position = Vector3(0.9, 0.75, 1.5)
 	cam.look_at(Vector3(0, 0.2, 0))
@@ -559,19 +574,19 @@ func _densest(layer: int) -> Vector3:
 		if not best.is_empty():
 			print("coast form: family %d at %s" % [best["family"], best["position"]])
 			return best["position"]
-	if layer == RockField3D.LAYER_LANDFORM and args.get("form", "") == "pavement":
-		# --form=pavement: the biggest pavement patch in the sun.
+	if layer == RockField3D.LAYER_LANDFORM and FAMILIES.has(args.get("form", "")):
+		# --form=pavement|fin|hoodoo: the biggest of that family in the sun.
 		var best := {}
 		for s in rocks.get_stones(layer, Rect2(-1000, -1000, 2000, 2000)):
 			# Sunlit first, then the bigger.
-			if int(s["family"]) != RockGenerator.FAMILY_PAVEMENT:
+			if int(s["family"]) != FAMILIES.find(args["form"]):
 				continue
 			var score := float(s["scale"]) + (100.0 if _sunlit(s["position"] + Vector3(0, 1, 0)) else 0.0)
 			if best.is_empty() or score > float(best["score"]):
 				best = s.duplicate()
 				best["score"] = score
 		if not best.is_empty():
-			print("pavement at %s" % [best["position"]])
+			print("%s at %s" % [args["form"], best["position"]])
 			return best["position"]
 	var cells := {}
 	var sums := {}
@@ -734,8 +749,9 @@ func _test() -> void:
 	var kinds := {}
 	for s in rocks.get_stones(RockField3D.LAYER_LANDFORM, wr):
 		kinds[s["family"]] = int(kinds.get(s["family"], 0)) + 1
-	print("landform families: %s" % [kinds])
-	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_PAVEMENT), "landforms: %d hoodoos, %d pavement patches" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0)])
+	# Pavement wants flat bare limestone benches, which this steep test world nearly lacks (0 to 2 of them): it
+	# is counted, not required.
+	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_FIN), "landforms: %d hoodoos, %d fins, %d pavement patches" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_FIN, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0)])
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var overlaps := 0

@@ -446,3 +446,18 @@ arches, goblins, potholes, cave mouths.
 - Upright forms (hoodoos, sea stacks) now carry their beds across the long axis: the laminae relief and the shader's
   colour bands (vertex COLOR.b) were running up the column like wood grain.
 - Bench: `--view=landform`, `--form=pavement`, `--only-layer`; `--test` checks both kinds are placed.
+
+### Landforms step 2a: fins and inland arches (16 Nov)
+
+- `FAMILY_FIN`: a wall between two joints (x along, z up, y 0.22 to 0.35 of the height thick). Whaleback crest that
+  falls 15 to 50% toward the ends and wanders along the fin; ends rounded in plan; beds etched across z as smooth
+  swells; an alcove on one face at a weak bed near the foot. About half carry an arch: walls at +-w (one leaning,
+  both ragged), the head a cosh curve (k 1.2 to 2.7: round to tall), floor 4 to 24% up, the opening flaring where it
+  meets the faces so the rim reads rounded, not drilled (Ostanin et al. 2017: the roof follows the stress arch).
+- Placement: bare sandstone (a little on limestone) under about 18 degrees, in one cell in three; rows of 3 to 7 fins
+  6 to 14 m apart along one joint set, each 12 to 35 m long, on the lowest ground along its foot.
+- Bedrock forms (coast and landforms) now cook their triangle collision once per shape and share it between
+  instances: a fin field went from 14 s to 0.2 s to build.
+- Bench: `--rock=sandstone,fin --stand` (a fin, hoodoo or stack stood on end), `--form=fin`. Pavement on the steep test
+  world is 0 to 2 patches, so the test counts it rather than requiring it.
+- Seen, not from this work: the test's cliff layer logs "Vector3 cannot be normalized" a few times.

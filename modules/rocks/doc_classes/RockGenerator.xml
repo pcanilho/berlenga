@@ -147,7 +147,10 @@
 		<constant name="FAMILY_PAVEMENT" value="11" enum="Family">
 			Limestone pavement: a flat slab of bedrock dissolved along two joint sets into clints between deep, narrow grykes, with solution pans on the tops.
 		</constant>
-		<constant name="FAMILY_MAX" value="12" enum="Family">
+		<constant name="FAMILY_FIN" value="12" enum="Family">
+			A sandstone fin: a narrow wall of bedrock between two joints (x along it, z up), its top and ends rounded, an alcove at a weak bed near the foot and, in about half of them, an arch through it with a smooth, catenary-like head.
+		</constant>
+		<constant name="FAMILY_MAX" value="13" enum="Family">
 			Number of families.
 		</constant>
 	</constants>

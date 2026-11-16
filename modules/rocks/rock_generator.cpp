@@ -77,7 +77,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -90,7 +90,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -117,7 +117,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -147,7 +147,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f };
 	return w[family];
 }
 
@@ -788,8 +788,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	} else if (family == FAMILY_PAVEMENT) {
 		a = 2.0f; // a square-ish patch of pavement; y: the slab's depth (the grykes' depth)
 		c = 0.16f + 0.06f * rng.randf();
+	} else if (family == FAMILY_FIN) {
+		a = 2.0f + 1.4f * rng.randf(); // x: along the joint; z: the fin's height; y: its thickness, between two joints
+		c = 0.22f + 0.13f * rng.randf();
 	}
-	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT;
+	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN;
 	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO; // stood on end in the field: beds cross x
 	// Fresh fragments spread over the Zingg classes rather than sitting near the cube: talus and rockfall hold many
 	// slabs and blades, rods and wedges as well as blocks (Domokos et al. 2020 give the mean, not the spread).
@@ -844,7 +847,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const Vector3 n = Vector3(1.0f, slope * Math::cos(az), slope * Math::sin(az)).normalized();
 			planes.push_back({ n, n.x * a * (0.82f + 0.16f * rng.randf()), k > 0 && rng.randf() < 0.5f });
 		}
-	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT) {
+	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT && family != FAMILY_FIN) {
 		// Columnar basalt: a 5 to 7-sided prism (contraction joints, mean six; Goehring 2009) along x, cut across.
 		const int sides = CLAMP(int(Math::round(6.0f + rng.randfn(0.0f, 0.8f))), 5, 7);
 		const float phase = rng.randf() * float(Math::TAU);
@@ -936,7 +939,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f, true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1041,7 +1044,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -1326,7 +1329,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// - pavement: a limestone slab dissolved along two joint sets into clints between deep, narrow grykes, the clint
 	//   edges rounded by solution, shallow pans (kamenitza) on their tops (Williams 1966; Goldie 2005).
 	if (landform) {
-		float x_lo = 1e9f, x_hi = -1e9f, y_top = -1e9f;
+		float x_lo = 1e9f, x_hi = -1e9f, y_top = -1e9f, z_lo = 1e9f, z_hi = -1e9f;
 		for (int z = 0; z < fine.nz; z++) {
 			for (int y = 0; y < fine.ny; y++) {
 				for (int x = 0; x < fine.nx; x++) {
@@ -1335,6 +1338,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						x_lo = MIN(x_lo, q.x);
 						x_hi = MAX(x_hi, q.x);
 						y_top = MAX(y_top, q.y);
+						z_lo = MIN(z_lo, q.z);
+						z_hi = MAX(z_hi, q.z);
 					}
 				}
 			}
@@ -1352,6 +1357,28 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				knot_rec.push_back((soft ? 0.12f + 0.14f * rng.randf() : 0.03f * rng.randf()) * c);
 				soft = rng.randf() < 0.75f ? !soft : soft;
 				b += 0.45f + 0.5f * rng.randf();
+			}
+		}
+		// Fin (Arches, Entrada and Navajo sandstone): a wall between two joints, its top and ends rounded by sheet wash,
+		// beds etched across it; a weak bed near the foot hollows into an alcove, and in about half of them the alcove
+		// has broken through into an arch whose roof follows the stress arch (Ostanin et al. 2017): a smooth
+		// catenary-like head, the opening flaring where it meets the faces.
+		const float fh = MAX(z_hi - z_lo, 0.01f);
+		const bool fin_arch = family == FAMILY_FIN && rng.randf() < 0.55f;
+		const float arch_w = (0.25f + 0.2f * rng.randf()) * a; // half width at the floor
+		const float arch_x = (rng.randf() - 0.5f) * 2.0f * MAX(0.0f, 0.75f * a - arch_w);
+		const float arch_floor = z_lo + (0.04f + 0.2f * rng.randf()) * fh;
+		const float arch_h = MIN((0.35f + 0.25f * rng.randf()) * fh, z_hi - 0.22f * fh - arch_floor);
+		const float arch_k = 1.2f + 1.5f * rng.randf(); // how pointed the head: low k a round arch, high k a tall one
+		const float alcove_z = arch_floor + 0.3f * arch_h, alcove_depth = (0.25f + 0.3f * rng.randf()) * c;
+		const float alcove_side = rng.randf() < 0.5f ? -1.0f : 1.0f;
+		const float fin_drop = 0.15f + 0.35f * rng.randf(); // how far the crest falls toward the ends
+		const float arch_lean = (rng.randf() - 0.5f) * 0.5f;
+		LocalVector<float> fin_bed_at, fin_bed_rec;
+		if (family == FAMILY_FIN) {
+			for (float b = z_lo - 0.1f; b < z_hi + 0.3f; b += 0.12f + 0.25f * rng.randf()) {
+				fin_bed_at.push_back(b);
+				fin_bed_rec.push_back((rng.randf() < 0.4f ? 0.05f + 0.1f * rng.randf() : 0.015f * rng.randf()) * c);
 			}
 		}
 		// Pavement: two joint sets 60 to 90 degrees apart, clints 0.5 to 3 m (at 4 m a unit, 0.12 to 0.75), grykes
@@ -1404,6 +1431,42 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// Rills: rain runs down the sides and fluted them, grooves along the column.
 						v += 0.07f * c * (rk_noise(Vector3(p.x * 0.35f, p.y * 4.0f, p.z * 4.0f), nseed + 120u) - 0.5f);
 						v += 0.05f * c * (rk_fbm(p * 2.2f, nseed + 113u, 3) - 0.5f);
+					} else if (family == FAMILY_FIN) {
+						const float xt = Math::abs(p.x - 0.5f * (x_lo + x_hi)) / MAX(0.5f * span, 0.01f);
+						// The top a whaleback: rounded across, falling away toward the ends, its crest line wandering up and
+						// down along the fin; the ends rounded in plan.
+						const float crest = z_hi - fh * (fin_drop * Math::pow(Math::smoothstep(0.25f, 1.0f, xt), 1.6f) + 0.12f * rk_fbm(Vector3(p.x * 0.6f, 0.0f, 0.0f), nseed + 134u, 3));
+						const float round_top = Math::smoothstep(crest - 0.5f * fh, crest, p.z);
+						v = MAX(v, (p.z - crest) + 0.25f * fh * round_top * round_top * Math::smoothstep(0.0f, 1.0f, Math::abs(p.y) / c));
+						v += 0.6f * c * round_top * round_top;
+						v += 0.6f * c * Math::pow(Math::smoothstep(0.6f, 1.0f, xt), 2.0f);
+						// Beds etched across, smooth swells rather than steps.
+						const float q = p.z + 0.06f * (rk_noise(p * 0.8f, nseed + 130u) - 0.5f);
+						int i = 0;
+						while (i + 2 < int(fin_bed_at.size()) && fin_bed_at[i + 1] <= q) {
+							i++;
+						}
+						const float f = Math::smoothstep(fin_bed_at[i], fin_bed_at[i + 1], q);
+						v += fin_bed_rec[i] + (fin_bed_rec[i + 1] - fin_bed_rec[i]) * f;
+						// The weak bed near the foot: an alcove under an overhang on one face, along part of the fin.
+						const float along = Math::abs(p.x - arch_x) / (arch_w * 1.6f);
+						v += alcove_depth * MAX(0.0f, 1.0f - along * along) * Math::exp(-Math::pow((p.z - alcove_z) / (0.15f * fh), 2.0f)) * Math::smoothstep(-0.2f * c, 0.6f * c, p.y * alcove_side);
+						if (fin_arch) {
+							// The opening: its walls at +-w(z), the head a cosh curve from the floor's width to the crown.
+							const float u = (p.x - arch_x) / arch_w;
+							const float ch = (Math::cosh(arch_k) - Math::cosh(arch_k * MIN(Math::abs(u), 1.0f))) / (Math::cosh(arch_k) - 1.0f);
+							const float head = arch_floor + arch_h * ch + 0.1f * fh * (rk_fbm(p * 1.1f, nseed + 131u, 2) - 0.5f);
+							// One wall leans; both wander where blocks have fallen out of them.
+							const float zl = (p.z - arch_floor) / MAX(arch_h, 0.01f);
+							const float wall = arch_w * (1.0f + arch_lean * zl * SIGN(p.x - arch_x)) + 0.12f * arch_w * (rk_fbm(p * 1.4f, nseed + 135u, 2) - 0.5f);
+							float d = MAX(MAX(Math::abs(p.x - arch_x) - wall, arch_floor - p.z), p.z - head);
+							// Wider where it meets the faces: the rim rounded back, not a drilled hole.
+							d -= 0.6f * c * Math::smoothstep(0.1f * c, 1.1f * c, Math::abs(p.y));
+							v = MAX(v, -d);
+						}
+						// Rills down the sides and sheet-wash pitting.
+						v += 0.05f * c * (rk_noise(Vector3(p.x * 4.0f, p.y * 4.0f, p.z * 0.4f), nseed + 132u) - 0.5f);
+						v += 0.06f * c * (rk_fbm(p * 1.8f, nseed + 133u, 3) - 0.5f);
 					} else {
 						const float top = p.y - (y_top - 0.9f * 2.0f * c); // grykes most of the way down
 						const float wob = 0.06f * (rk_noise(p * 1.7f, nseed + 114u) - 0.5f) + 0.25f * (rk_noise(p * 0.6f, nseed + 118u) - 0.5f) * js1; // joints wander and their spacing varies
@@ -1557,12 +1620,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Bedding laminae etched out by weathering (differential erosion of the softer laminae), slightly cross-bedded.
 		if (lith.laminae > 0.0f) {
 			const float lam = MAX(0.07f, min_period);
-			const float s = ((upright ? p.x + bed_tilt * p.z : p.y + bed_tilt * p.x) + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
+			const float s = ((upright ? p.x + bed_tilt * p.z : (family == FAMILY_FIN ? p.z + bed_tilt * p.x : p.y + bed_tilt * p.x)) + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
 			const float groove = Math::pow(0.5f + 0.5f * Math::cos(s * float(Math::TAU)), 6.0f);
 			// Laminae differ: most barely etched, a few soft ones weathered back deep.
 			const float lamina = rk_hash(uint32_t(int(Math::floor(s + 0.5f)) + 4096) ^ nseed) / 4294967295.0f;
 			const float strength = 0.25f + 0.75f * lamina * lamina;
-			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * hb * (1.0f - Math::abs(upright ? n.x : n.y)) * worn;
+			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * hb * (1.0f - Math::abs(upright ? n.x : (family == FAMILY_FIN ? n.z : n.y))) * worn;
 		}
 		// Slaty cleavage: plates stepping back at the edges.
 		if (lith.cleavage > 0.0f) {
@@ -1647,7 +1710,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			n = dir_local(n);
 			out_verts.write[k] = q;
 			out_normals.write[k] = n;
-			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : 0.0f, 1.0f); // b: the beds cross the long axis
+			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : (family == FAMILY_FIN ? 0.5f : 0.0f), 1.0f); // b: the beds cross x (1), z (0.5) or y (0)
 			out_uv.write[k] = Vector2(q.x, q.z);
 			out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
 			const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
@@ -2225,8 +2288,8 @@ void fragment() {
 	// Mineral colour: broad mottling, bands along the beds, specks of the dark (or light) mineral.
 	vec3 col = base_color * (0.82 + 0.36 * rk_fbm3(mp * 1.7));
 	col *= 0.9 + 0.2 * rk_noise3(vec3(seed));
-	// Beds lie across the short axis of a lying stone, across the long one of an upright form (COLOR.b).
-	float bed_q = mix(lp.y, lp.x, step(0.5, COLOR.b));
+	// Beds lie across the short axis of a lying stone, the long one of an upright form, the b axis of a fin (COLOR.b).
+	float bed_q = COLOR.b > 0.75 ? lp.x : (COLOR.b > 0.25 ? lp.z : lp.y);
 	float bands = 0.5 + 0.5 * sin(6.2831853 * (bed_q * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
 	col = mix(col, band_color, band_contrast * smoothstep(0.3, 0.9, bands));
 	// Mineral maps at the stone's real size, in octave steps from its family's typical size (UV2.y), the steps
@@ -2581,5 +2644,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_SEA_PLATFORM);
 	BIND_ENUM_CONSTANT(FAMILY_HOODOO);
 	BIND_ENUM_CONSTANT(FAMILY_PAVEMENT);
+	BIND_ENUM_CONSTANT(FAMILY_FIN);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }
