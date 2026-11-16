@@ -125,7 +125,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
 
-- **Exact path traced sparkle** (`snow_exact_glints`, off by default): every 2 mm ice grain is a facet hit per ray.
+- **Exact path traced sparkle** (`snow_exact_glints`): every 2 mm ice grain is a facet hit per ray.
 
   ![Snow sparkle in raster, path traced with the grid model, and path traced with exact grains](media/snow-exact-glints.jpg)
 
