@@ -162,6 +162,13 @@ uniform sampler2D cascade_foam_3 : hint_default_black, filter_linear, repeat_ena
 // Detail waves (docs/ideas/water.md "Ocean detail"): a small tile of the short waves, for the per-pixel normal only.
 uniform bool detail_enabled = false;
 uniform sampler2D detail_deriv_tex : hint_default_black, filter_linear, repeat_enable;
+// Its height and sideways displacement, added to the geometry where the open sea mesh's step can carry them.
+uniform sampler2D detail_height_tex : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D detail_disp_tex : hint_default_black, filter_linear, repeat_enable;
+uniform bool detail_geometry = false;
+// The open sea mesh's vertex step at the camera (m) and its growth per ring (0: not that mesh).
+uniform float mesh_near_step = 0.0;
+uniform float mesh_growth = 0.05;
 uniform vec2 detail_domain = vec2(5.0);
 uniform float detail_texel = 0.04;
 uniform float detail_k_min = 5.0; // rad/m, where the band starts
@@ -1226,10 +1233,27 @@ void vertex() {
 		v_foam = COLOR.r;
 	} else {
 	// Under path tracing too: a hit re-runs this on the captured rest pose.
+	// The vertex's place in the open sea mesh, centred on the camera: its step there is the near step plus
+	// the growth times its ring's half-size (the rings' steps grow geometrically).
+	float ring_r = max(abs(VERTEX.x), abs(VERTEX.z));
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_rest_xz = world_pos.xz;
 	VERTEX += surface_offset(world_pos.xz);
+	if (detail_geometry && mesh_near_step > 0.0) {
+		// The detail waves the step can carry without swimming (four steps a wavelength): the same share of
+		// the band as the pixel's normal shows (docs/ideas/water.md "Camera-centred water mesh").
+		float vstep = mesh_near_step + mesh_growth * ring_r;
+		float k_hi = PI / detail_texel;
+		float carried = clamp(log(PI / (2.0 * vstep) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
+		if (carried > 0.0) {
+			vec2 cuv_r = clamp((world_pos.xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+			float fade = fade_r(world_pos.xz, cuv_r);
+			float dh = cascade_tex(detail_height_tex, detail_domain, world_pos.xz).r;
+			vec2 dd = -choppiness * cascade_tex(detail_disp_tex, detail_domain, world_pos.xz).rg;
+			VERTEX += (inverse(MODEL_MATRIX) * vec4(dd.x, dh, dd.y, 0.0)).xyz * carried * fade;
+		}
+	}
 	v_world_normal = vec3(0.0, 1.0, 0.0);
 	v_foam = 0.0;
 	// Per pixel, fragment() computes the normal and foam instead.
@@ -1720,6 +1744,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shore_wave_height"), &PhysXWaterSurface3D::get_shore_wave_height);
 	ClassDB::bind_method(D_METHOD("set_mesh_detail", "detail"), &PhysXWaterSurface3D::set_mesh_detail);
 	ClassDB::bind_method(D_METHOD("get_mesh_detail"), &PhysXWaterSurface3D::get_mesh_detail);
+	ClassDB::bind_method(D_METHOD("set_near_mesh_step", "step"), &PhysXWaterSurface3D::set_near_mesh_step);
+	ClassDB::bind_method(D_METHOD("get_near_mesh_step"), &PhysXWaterSurface3D::get_near_mesh_step);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_curl", "curl"), &PhysXWaterSurface3D::set_shore_wave_curl);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_curl"), &PhysXWaterSurface3D::get_shore_wave_curl);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_groups", "groups"), &PhysXWaterSurface3D::set_shore_wave_groups);
@@ -1895,6 +1921,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_GROUP("Ocean", "ocean_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_grid_resolution"), "set_ocean_grid_resolution", "get_ocean_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_detail", PROPERTY_HINT_RANGE, "1,4,1"), "set_mesh_detail", "get_mesh_detail");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_mesh_step", PROPERTY_HINT_RANGE, "0,1,0.005,suffix:m"), "set_near_mesh_step", "get_near_mesh_step");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "ocean_domain_size"), "set_ocean_domain_size", "get_ocean_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
@@ -2063,6 +2090,11 @@ void PhysXWaterSurface3D::_update_detail_material() {
 	}
 	const bool on = detail_cascade != nullptr && detail_cascade->deriv_tex.is_valid();
 	water_material->set_shader_parameter("detail_enabled", on);
+	// The geometry carries the detail waves only on the open sea mesh with its fine near step.
+	const bool open_mesh = surface_mesh.is_null() && render_extent > MAX(ocean_domain_size.x, ocean_domain_size.y) && near_mesh_step > 0.0f;
+	water_material->set_shader_parameter("detail_geometry", on && open_mesh);
+	water_material->set_shader_parameter("mesh_near_step", open_mesh ? near_mesh_step / (float)mesh_detail : 0.0f);
+	water_material->set_shader_parameter("mesh_growth", NEAR_MESH_GROWTH);
 	if (on) {
 		water_material->set_shader_parameter("detail_domain", detail_cascade->domain);
 		water_material->set_shader_parameter("detail_texel", detail_cascade->domain.x / detail_resolution);
@@ -4625,6 +4657,11 @@ void PhysXWaterSurface3D::set_mesh_detail(int p_detail) {
 	_rebuild();
 }
 
+void PhysXWaterSurface3D::set_near_mesh_step(float p_step) {
+	near_mesh_step = p_step <= 0.0f ? 0.0f : CLAMP(p_step, 0.005f, 1.0f);
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_render_extent(float p_extent) {
 	render_extent = MAX(p_extent, 0.0f);
 	_rebuild();
@@ -4950,7 +4987,7 @@ void PhysXWaterSurface3D::_rebuild() {
 		}
 	}
 	if (water_mesh.is_null() && render_extent > MAX(ocean_domain_size.x, ocean_domain_size.y)) {
-		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution * mesh_detail, render_extent);
+		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution * mesh_detail, render_extent, near_mesh_step / (real_t)mesh_detail);
 	}
 	if (water_mesh.is_null()) {
 		Ref<PlaneMesh> plane;
@@ -5127,6 +5164,12 @@ void PhysXWaterSurface3D::_detach_textures() {
 	}
 	if (detail_cascade != nullptr && detail_cascade->deriv_tex.is_valid()) {
 		detail_cascade->deriv_tex->set_texture_rd_rid(RID());
+		if (detail_cascade->height_tex.is_valid()) {
+			detail_cascade->height_tex->set_texture_rd_rid(RID());
+		}
+		if (detail_cascade->disp_tex.is_valid()) {
+			detail_cascade->disp_tex->set_texture_rd_rid(RID());
+		}
 	}
 	for (WaveCascade *c : extra_cascades) {
 		const Ref<Texture2DRD> textures_c[] = { c->height_tex, c->disp_tex, c->deriv_tex, c->foam_tex };
@@ -5385,8 +5428,18 @@ void PhysXWaterSurface3D::_bind_textures() {
 			detail_cascade->deriv_tex.instantiate();
 		}
 		detail_cascade->deriv_tex->set_texture_rd_rid(detail_cascade->solver.get_ocean_derivative_texture_rd_rid());
+		if (detail_cascade->height_tex.is_null()) {
+			detail_cascade->height_tex.instantiate();
+		}
+		detail_cascade->height_tex->set_texture_rd_rid(detail_cascade->solver.get_ocean_height_texture_rd_rid());
+		if (detail_cascade->disp_tex.is_null()) {
+			detail_cascade->disp_tex.instantiate();
+		}
+		detail_cascade->disp_tex->set_texture_rd_rid(detail_cascade->solver.get_ocean_displacement_texture_rd_rid());
 		if (water_material.is_valid()) {
 			water_material->set_shader_parameter("detail_deriv_tex", detail_cascade->deriv_tex);
+			water_material->set_shader_parameter("detail_height_tex", detail_cascade->height_tex);
+			water_material->set_shader_parameter("detail_disp_tex", detail_cascade->disp_tex);
 		}
 	}
 	_update_detail_material();
@@ -5749,7 +5802,7 @@ PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &
 	return mask;
 }
 
-Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
+Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent, real_t p_near_step) const {
 	// A regular grid of (2K+1)^2 vertices whose square rings are spread out
 	// from the center: rings up to K0 are the simulated span at uniform
 	// spacing, and each ring past it is 15% further out than the step before
@@ -5777,6 +5830,25 @@ Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inne
 			radius.push_back(r);
 		}
 	}
+	// With a near step: the rings' half-sizes in metres instead, each step NEAR_MESH_GROWTH longer than the one
+	// inside it from p_near_step at the centre (the camera): spacing proportional to distance, as a geometry
+	// clipmap's (Losasso and Hoppe 2004), in one continuous grid with no LOD seams.
+	real_t unit_x = half_inner.x / (real_t)k0;
+	real_t unit_z = half_inner.y / (real_t)k0;
+	if (p_near_step > 0.0f) {
+		radius.clear();
+		radius.push_back(0.0f);
+		const real_t limit = p_extent * 0.5f;
+		real_t r = 0.0f;
+		real_t step = p_near_step;
+		while (r < limit) {
+			r = MIN(r + step, limit);
+			radius.push_back(r);
+			step *= 1.0f + NEAR_MESH_GROWTH;
+		}
+		unit_x = 1.0f;
+		unit_z = 1.0f;
+	}
 	const int kmax = (int)radius.size() - 1;
 	const int nx = 2 * kmax + 1;
 	const int nz = nx;
@@ -5785,7 +5857,7 @@ Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inne
 		const int aj = p_j < 0 ? -p_j : p_j;
 		const int ring = ai > aj ? ai : aj;
 		const real_t scale = ring == 0 ? (real_t)1.0 : radius[ring] / (real_t)ring;
-		return Vector2((real_t)p_i * scale * half_inner.x / (real_t)k0, (real_t)p_j * scale * half_inner.y / (real_t)k0);
+		return Vector2((real_t)p_i * scale * unit_x, (real_t)p_j * scale * unit_z);
 	};
 
 	PackedVector3Array verts;

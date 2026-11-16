@@ -319,6 +319,10 @@ public:
 	// the vertex and path tracing costs grow with the square.
 	void set_mesh_detail(int p_detail);
 	int get_mesh_detail() const { return mesh_detail; }
+	// Open sea (render_extent): the vertex spacing at the camera, growing 5% a ring out to the horizon
+	// (docs/ideas/water.md "Camera-centred water mesh"); 0 = the old even core over the simulated square.
+	void set_near_mesh_step(float p_step);
+	float get_near_mesh_step() const { return near_mesh_step; }
 
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
@@ -547,7 +551,7 @@ private:
 		double previous_time = 0.0;
 	};
 	LocalVector<WaveCascade *> extra_cascades;
-	WaveCascade *detail_cascade = nullptr; // the detail waves' tile (normals only), or null
+	WaveCascade *detail_cascade = nullptr; // the detail waves' tile (the normal; displaced near the camera on the open sea mesh), or null
 	int detail_resolution = 128;
 	float _detail_k_min() const; // the finest cascade's Nyquist wavenumber (rad/m)
 	void _configure_cascades(const WaterSolver::Settings &p_base);
@@ -560,6 +564,8 @@ private:
 	float swell = 0.0f;
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
+	float near_mesh_step = 0.0f;
+	static constexpr float NEAR_MESH_GROWTH = 0.05f;
 	bool follow_weather = false;
 	bool weather_sea_valid = false;
 	uint64_t weather_snap_serial = 0;
@@ -755,7 +761,7 @@ private:
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
 	// Plane over [-extent/2, extent/2]^2: uniform cells over the simulated
 	// p_inner size, then spacing growing geometrically outward.
-	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const;
+	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent, real_t p_near_step) const;
 	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();
 	void _refresh_cpu_cache();
