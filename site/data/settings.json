@@ -1203,6 +1203,20 @@
    "topic": "Placement"
   },
   {
+   "name": "Live rockfall",
+   "settings": [
+    "RockField3D.live_rockfall",
+    "live_rockfall_rate",
+    "live_rockfall_radius",
+    "live_rockfall_max"
+   ],
+   "note": "",
+   "what": "cliff blocks fall in frost, thaw and rain, and break on impact.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Tors and coasts",
    "settings": [
     "layer_enabled",

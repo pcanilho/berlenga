@@ -31,6 +31,8 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Breakable stones: the block breaks into a pile of angular pieces where it stood.*
 
+- **Live rockfall** (`RockField3D.live_rockfall`, off by default; `live_rockfall_rate`, `live_rockfall_radius`, `live_rockfall_max`): cliff blocks fall in frost, thaw and rain, and break on impact.
+
 - **Tors and coasts** (`layer_enabled`: `LAYER_TOR`, `LAYER_COAST`): tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.
 - **Landforms** (`layer_enabled`: `LAYER_LANDFORM`): hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.
 - **Cave mouths** (`RockField3D.cave_mouths`, off by default): limestone portals at cliff feet.
