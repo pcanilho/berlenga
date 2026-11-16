@@ -187,7 +187,7 @@ public:
 	// For the streamers (GroundStreamers3D): the 10 m wind over the field and the share of sand the wind can
 	// move at a place.
 	Vector2 get_wind_10m() const { return _wind_10m(); }
-	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown; }
+	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z); }
 
 private:
 
@@ -242,6 +242,29 @@ private:
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
+	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film's
+	// sheen, the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
+	Vector<uint8_t> wet_data;
+	Ref<ImageTexture> wet_texture;
+	bool wet_published = false;
+	void _wet_publish(const LocalVector<float> *p_depth);
+	// Vegetation sheltering the sand (dune grass, docs/ideas/sand.md): plants take a share of the wind's stress
+	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
+	TypedArray<NodePath> wind_shelters;
+	LocalVector<float> shelter_ratio; // the surface's friction speed over the open ground's, per lattice cell
+	LocalVector<float> shelter_flux; // the flux factor, Q(u* ratio) / Q(u*), 0..1 (1 with no plants)
+	LocalVector<float> sand_flux; // kg/m/s, along the wind
+	LocalVector<float> sand_dep_rate; // m/s, + piling up, - scoured
+	LocalVector<float> sand_dep; // m written to the ground since the cell came in
+	LocalVector<float> sand_dep_pending; // m owed, written in 2 mm steps
+	LocalVector<int> wind_order; // the cells in downwind order
+	Vector2 wind_order_dir;
+	Vector2 sand_flux_dir;
+	double wind_accum = 0.0;
+	float wind_usec = 0.0f;
+	void _wind_update(double p_delta);
+	float _shelter_flux_at(float p_x, float p_z) const;
+	float _lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const;
 	void _shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride);
 	float ground_min = 0.0f;
 	float ground_max = 0.0f;
@@ -380,6 +403,15 @@ public:
 	float get_saturation_at(const Vector3 &p_position) const;
 	float get_water_speed_at(const Vector3 &p_position) const;
 	float get_water_step_usec() const { return water_usec; }
+	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }
+	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
+	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
+	// p_lambda (clamped to 0.5).
+	static float shelter_ratio_for(float p_lambda);
+	Vector2 get_sand_flux_at(const Vector3 &p_position) const;
+	float get_deposition_rate_at(const Vector3 &p_position) const;
+	float get_sand_deposit_at(const Vector3 &p_position) const;
+	float get_wind_step_usec() const { return wind_usec; }
 	void set_ripple_extent(float p_extent) { ripple_extent = CLAMP(p_extent, 1.0f, 16.0f); }
 	float get_ripple_extent() const { return ripple_extent; }
 	void set_ripple_time_scale(float p_scale) { ripple_time_scale = MAX(p_scale, 0.0f); }

@@ -510,11 +510,15 @@ int CaveNetwork3D::add_cave(const Vector3 &p_entrance, const Vector3 &p_out) {
 	const bool ok = _grow(c, s);
 	last_build_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	ERR_FAIL_COND_V_MSG(!ok, -1, "CaveNetwork3D: no network could be grown here (no generator, or too little rock behind the entrance).");
+	_stream_finish(true); // the batch in flight reads the caves
+	streamed = false;
 	caves.push_back(c);
 	return int(caves.size()) - 1;
 }
 
 void CaveNetwork3D::clear_caves() {
+	_stream_finish(false);
+	streamed = false;
 	caves.clear();
 }
 
@@ -1043,7 +1047,9 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 struct CaveMeshJob {
 	const CaveNetwork3D *net;
 	LocalVector<Vector3i> keys;
+	LocalVector<CaveNetwork3D::Chunk> made;
 	LocalVector<CaveNetwork3D::Chunk *> out;
+	HashSet<Vector3i> pinned;
 };
 
 void CaveNetwork3D::_mesh_job(void *p_data, uint32_t p_index) {
@@ -1107,12 +1113,12 @@ void fragment() {
 	return default_wall;
 }
 
-int CaveNetwork3D::build_meshes(const AABB &p_area) {
-	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
-	TerrainGenerator3D *gen = _get_generator();
-	// Chunks any passage, chamber or patch reaches inside the area.
-	HashSet<Vector3i> want;
-	auto add_box = [&](const AABB &p_b, bool p_whole = false) {
+// Chunks any passage, chamber or patch reaches inside the area; the patch chunks (whole, whatever the area: the
+// landscape is open over all of the patch) also go in r_pinned; p_all_patches takes every cave's patch, near or not
+// (streaming: the landscape's hole is open from any distance).
+void CaveNetwork3D::_wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashSet<Vector3i> &r_pinned, bool p_all_patches) const {
+	const TerrainGenerator3D *gen = _get_generator();
+	auto add_box = [&](const AABB &p_b, bool p_whole) {
 		const AABB b = p_whole ? p_b : p_b.intersection(p_area);
 		if (!b.has_volume()) {
 			return;
@@ -1121,50 +1127,117 @@ int CaveNetwork3D::build_meshes(const AABB &p_area) {
 		for (int z = lo.z; z <= hi.z; z++) {
 			for (int y = lo.y; y <= hi.y; y++) {
 				for (int x = lo.x; x <= hi.x; x++) {
-					want.insert(Vector3i(x, y, z));
+					r_want.insert(Vector3i(x, y, z));
+					if (p_whole) {
+						r_pinned.insert(Vector3i(x, y, z));
+					}
 				}
 			}
 		}
 	};
 	for (const Cave &cv : caves) {
+		if (!cv.bounds.grow(chunk_size).intersects(p_area)) {
+			continue;
+		}
 		for (const Segment &sg : cv.segments) {
 			AABB b(sg.a, Vector3());
 			b.expand_to(sg.b);
-			add_box(b.grow(MAX(sg.ra, sg.rb) * 2.0 + 1.5));
+			add_box(b.grow(MAX(sg.ra, sg.rb) * 2.0 + 1.5), false);
 		}
 		for (const Chamber &ch : cv.chambers) {
-			add_box(AABB(ch.center - ch.radii, ch.radii * 2.0).grow(1.5));
-		}
-		if (patch_radius > 0.0) {
-			// The patch: from the foot to the top of the wall within the radius.
-			const real_t pr = patch_radius * 1.4143;
-			real_t top = cv.entrance.y + 4.0;
-			if (gen) {
-				for (real_t dz = -pr; dz <= pr; dz += 2.0) {
-					for (real_t dx = -pr; dx <= pr; dx += 2.0) {
-						top = MAX(top, gen->get_height(cv.entrance + Vector3(dx, 0, dz)) + 1.0);
-					}
-				}
-			}
-			// The whole patch, whatever the area (the landscape is open over all of it).
-			if (p_area.intersects(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, 8.0, 2.0 * pr)))) {
-				add_box(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, top - cv.entrance.y + 4.0, 2.0 * pr)), true);
-			}
+			add_box(AABB(ch.center - ch.radii, ch.radii * 2.0).grow(1.5), false);
 		}
 	}
-	mesh_gen = gen;
+	if (patch_radius <= 0.0) {
+		return;
+	}
+	for (const Cave &cv : caves) {
+		// The patch: from the foot to the top of the wall within the radius.
+		const real_t pr = patch_radius * 1.4143;
+		if (!p_all_patches && !p_area.intersects(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, 8.0, 2.0 * pr)))) {
+			continue;
+		}
+		real_t top = cv.entrance.y + 4.0;
+		if (gen) {
+			for (real_t dz = -pr; dz <= pr; dz += 2.0) {
+				for (real_t dx = -pr; dx <= pr; dx += 2.0) {
+					top = MAX(top, gen->get_height(cv.entrance + Vector3(dx, 0, dz)) + 1.0);
+				}
+			}
+		}
+		add_box(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, top - cv.entrance.y + 4.0, 2.0 * pr)), true);
+	}
+}
+
+void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
+	if (p_chunk.mesh.is_null()) {
+		return;
+	}
+	MeshInstance3D *mi = memnew(MeshInstance3D);
+	mi->set_name(vformat("Chunk %d %d %d", p_chunk.key.x, p_chunk.key.y, p_chunk.key.z));
+	mi->set_mesh(p_chunk.mesh);
+	for (int sfc = 0; sfc < p_chunk.mesh->get_surface_count(); sfc++) {
+		const bool is_ground = p_chunk.mesh->surface_get_name(sfc) == "ground";
+		mi->set_surface_override_material(sfc, is_ground && ground_material.is_valid() ? ground_material : p_wall);
+	}
+	add_child(mi);
+	mi->set_global_transform(Transform3D());
+	if (collision) {
+		StaticBody3D *body = memnew(StaticBody3D);
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		Ref<ConcavePolygonShape3D> shape;
+		shape.instantiate();
+		const Vector<Face3> faces = p_chunk.mesh->get_faces();
+		PackedVector3Array fv;
+		fv.resize(faces.size() * 3);
+		for (int fi = 0; fi < faces.size(); fi++) {
+			for (int k = 0; k < 3; k++) {
+				fv.write[fi * 3 + k] = faces[fi].vertex[k];
+			}
+		}
+		shape->set_faces(fv);
+		shape->set_backface_collision_enabled(true);
+		cs->set_shape(shape);
+		body->add_child(cs);
+		mi->add_child(body);
+	}
+	p_chunk.node = mi;
+}
+
+// The landscape opens over each patch (less a 1.5 m ring the patch overlaps), once per cave.
+void CaveNetwork3D::_open_holes() {
+	TerrainGenerator3D *gen = _get_generator();
+	if (!gen || patch_radius <= 1.5) {
+		return;
+	}
+	for (Cave &cv : caves) {
+		if (cv.holed) {
+			continue;
+		}
+		const real_t hr = patch_radius - 1.5;
+		const Vector3 o = Vector3(cv.out.x, 0, cv.out.z).normalized();
+		const Basis b(Vector3(-o.z, 0, o.x) * hr, Vector3(0, 500.0, 0), o * hr);
+		gen->add_hole(Transform3D(b, cv.entrance + Vector3(0, 490.0, 0)));
+		cv.holed = true;
+	}
+}
+
+int CaveNetwork3D::build_meshes(const AABB &p_area) {
+	_stream_finish(true);
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	HashSet<Vector3i> want, pinned;
+	_wanted(p_area, want, pinned);
+	mesh_gen = _get_generator();
 	CaveMeshJob job;
 	job.net = this;
 	for (const Vector3i &k : want) {
-		if (chunks.has(k)) {
-			continue;
+		if (!chunks.has(k)) {
+			job.keys.push_back(k);
 		}
-		job.keys.push_back(k);
 	}
-	LocalVector<Chunk> made;
-	made.resize(job.keys.size());
-	for (uint32_t i = 0; i < made.size(); i++) {
-		job.out.push_back(&made[i]);
+	job.made.resize(job.keys.size());
+	for (uint32_t i = 0; i < job.made.size(); i++) {
+		job.out.push_back(&job.made[i]);
 	}
 	if (!job.keys.is_empty()) {
 		WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&_mesh_job, &job, int(job.keys.size()), -1, true, "CaveNetwork3D meshes");
@@ -1172,62 +1245,153 @@ int CaveNetwork3D::build_meshes(const AABB &p_area) {
 	}
 	const Ref<Material> wm = _wall_material();
 	int count = 0;
-	for (Chunk &ch : made) {
-		if (ch.mesh.is_null()) {
-			continue;
-		}
-		MeshInstance3D *mi = memnew(MeshInstance3D);
-		mi->set_name(vformat("Chunk %d %d %d", ch.key.x, ch.key.y, ch.key.z));
-		mi->set_mesh(ch.mesh);
-		for (int sfc = 0; sfc < ch.mesh->get_surface_count(); sfc++) {
-			const bool is_ground = ch.mesh->surface_get_name(sfc) == "ground";
-			mi->set_surface_override_material(sfc, is_ground && ground_material.is_valid() ? ground_material : wm);
-		}
-		add_child(mi);
-		mi->set_global_transform(Transform3D());
-		if (collision) {
-			StaticBody3D *body = memnew(StaticBody3D);
-			CollisionShape3D *cs = memnew(CollisionShape3D);
-			Ref<ConcavePolygonShape3D> shape;
-			shape.instantiate();
-			const Vector<Face3> faces = ch.mesh->get_faces();
-			PackedVector3Array fv;
-			fv.resize(faces.size() * 3);
-			for (int fi = 0; fi < faces.size(); fi++) {
-				for (int k = 0; k < 3; k++) {
-					fv.write[fi * 3 + k] = faces[fi].vertex[k];
-				}
-			}
-			shape->set_faces(fv);
-			shape->set_backface_collision_enabled(true);
-			cs->set_shape(shape);
-			body->add_child(cs);
-			mi->add_child(body);
-		}
-		ch.node = mi;
+	for (Chunk &ch : job.made) {
+		ch.pinned = pinned.has(ch.key);
+		_add_chunk(ch, wm);
+		// Empty chunks are kept too (no node), so they are not meshed again.
 		chunks.insert(ch.key, ch);
-		count++;
+		count += ch.node ? 1 : 0;
 	}
-	// The landscape opens over each patch (less a 1.5 m ring the patch overlaps), as for the cave mouths.
-	if (gen && patch_radius > 1.5) {
-		for (const Cave &cv : caves) {
-			const real_t hr = patch_radius - 1.5;
-			const Vector3 o = Vector3(cv.out.x, 0, cv.out.z).normalized();
-			const Basis b(Vector3(-o.z, 0, o.x) * hr, Vector3(0, 500.0, 0), o * hr);
-			gen->add_hole(Transform3D(b, cv.entrance + Vector3(0, 490.0, 0)));
-		}
-	}
+	_open_holes();
 	last_mesh_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	return count;
 }
 
+void CaveNetwork3D::set_follow_target(const NodePath &p_path) {
+	follow_target = p_path;
+	streamed = false;
+	if (is_inside_tree()) {
+		set_process_internal(!follow_target.is_empty());
+	}
+}
+
+// One step of streaming: integrate a finished batch, else start the next one when the target has moved 4 m (or
+// nothing streamed yet). Freed: chunks past stream_radius plus one chunk, unless pinned.
+void CaveNetwork3D::_stream_update() {
+	if (stream_job) {
+		if (!WorkerThreadPool::get_singleton()->is_group_task_completed(stream_group)) {
+			return;
+		}
+		_stream_finish(true);
+	}
+	const Node3D *target = Object::cast_to<Node3D>(get_node_or_null(follow_target));
+	if (!target || caves.is_empty()) {
+		return;
+	}
+	const Vector3 p = target->get_global_position();
+	if (streamed && p.distance_to(stream_from) < 4.0) {
+		return;
+	}
+	stream_from = p;
+	streamed = true;
+	const real_t r = stream_radius;
+	const real_t half = chunk_size * 0.5;
+	auto centre = [&](const Vector3i &k) { return (Vector3(k) + Vector3(0.5, 0.5, 0.5)) * chunk_size; };
+	// Free the far ones.
+	LocalVector<Vector3i> drop;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		if (!kv.value.pinned && centre(kv.key).distance_to(p) > r + chunk_size * 1.8) {
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		if (chunks[k].node) {
+			chunks[k].node->queue_free();
+		}
+		chunks.erase(k);
+	}
+	// Mesh the near ones (nearest first, so the batch fills in from the target outwards).
+	HashSet<Vector3i> want, pinned;
+	_wanted(AABB(p - Vector3(r, r, r), Vector3(2.0 * r, 2.0 * r, 2.0 * r)), want, pinned, true);
+	LocalVector<Vector3i> keys;
+	for (const Vector3i &k : want) {
+		if (!chunks.has(k) && (pinned.has(k) || centre(k).distance_to(p) <= r + half)) {
+			keys.push_back(k);
+		}
+	}
+	_open_holes();
+	if (keys.is_empty()) {
+		return;
+	}
+	struct Near {
+		Vector3 p;
+		real_t cs = 16.0;
+		bool operator()(const Vector3i &a, const Vector3i &b) const {
+			return ((Vector3(a) + Vector3(0.5, 0.5, 0.5)) * cs).distance_squared_to(p) < ((Vector3(b) + Vector3(0.5, 0.5, 0.5)) * cs).distance_squared_to(p);
+		}
+	};
+	SortArray<Vector3i, Near> sorter;
+	sorter.compare.p = p;
+	sorter.compare.cs = chunk_size;
+	sorter.sort(keys.ptr(), keys.size());
+	mesh_gen = _get_generator();
+	stream_job = memnew(CaveMeshJob);
+	stream_job->net = this;
+	stream_job->keys = keys;
+	stream_job->pinned = pinned;
+	stream_job->made.resize(keys.size());
+	for (uint32_t i = 0; i < keys.size(); i++) {
+		stream_job->out.push_back(&stream_job->made[i]);
+	}
+	stream_group = WorkerThreadPool::get_singleton()->add_native_group_task(&_mesh_job, stream_job, int(keys.size()), -1, false, "CaveNetwork3D streaming");
+}
+
+// Waits for the batch in flight; p_keep adds its chunks, else drops them (the caves changed under it).
+void CaveNetwork3D::_stream_finish(bool p_keep) {
+	if (!stream_job) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(stream_group);
+	if (p_keep && is_inside_tree()) {
+		const Ref<Material> wm = _wall_material();
+		for (Chunk &ch : stream_job->made) {
+			if (chunks.has(ch.key)) {
+				continue;
+			}
+			ch.pinned = stream_job->pinned.has(ch.key);
+			_add_chunk(ch, wm);
+			chunks.insert(ch.key, ch);
+		}
+	}
+	memdelete(stream_job);
+	stream_job = nullptr;
+	stream_group = -1;
+}
+
+void CaveNetwork3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_READY: {
+			set_process_internal(!follow_target.is_empty());
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			_stream_update();
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			_stream_finish(false);
+		} break;
+		case NOTIFICATION_PREDELETE: {
+			_stream_finish(false);
+		} break;
+	}
+}
+
 void CaveNetwork3D::clear_meshes() {
+	_stream_finish(false);
+	streamed = false;
 	for (KeyValue<Vector3i, Chunk> &kv : chunks) {
 		if (kv.value.node) {
 			kv.value.node->queue_free();
 		}
 	}
 	chunks.clear();
+}
+
+int CaveNetwork3D::get_mesh_chunk_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		n += kv.value.node ? 1 : 0;
+	}
+	return n;
 }
 
 int CaveNetwork3D::get_mesh_triangle_count() const {
@@ -1252,6 +1416,11 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_meshes", "area"), &CaveNetwork3D::build_meshes);
 	ClassDB::bind_method(D_METHOD("clear_meshes"), &CaveNetwork3D::clear_meshes);
 	ClassDB::bind_method(D_METHOD("get_mesh_chunk_count"), &CaveNetwork3D::get_mesh_chunk_count);
+	ClassDB::bind_method(D_METHOD("is_streaming"), &CaveNetwork3D::is_streaming);
+	ClassDB::bind_method(D_METHOD("set_follow_target", "path"), &CaveNetwork3D::set_follow_target);
+	ClassDB::bind_method(D_METHOD("get_follow_target"), &CaveNetwork3D::get_follow_target);
+	ClassDB::bind_method(D_METHOD("set_stream_radius", "metres"), &CaveNetwork3D::set_stream_radius);
+	ClassDB::bind_method(D_METHOD("get_stream_radius"), &CaveNetwork3D::get_stream_radius);
 	ClassDB::bind_method(D_METHOD("get_mesh_triangle_count"), &CaveNetwork3D::get_mesh_triangle_count);
 	ClassDB::bind_method(D_METHOD("get_last_mesh_msec"), &CaveNetwork3D::get_last_mesh_msec);
 	ClassDB::bind_method(D_METHOD("get_rock_distance", "position"), &CaveNetwork3D::get_rock_distance);
@@ -1311,6 +1480,9 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision"), "set_collision", "has_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "wall_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_wall_material", "get_wall_material");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_ground_material", "get_ground_material");
+	ADD_GROUP("Streaming", "");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_target", "get_follow_target");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stream_radius", PROPERTY_HINT_RANGE, "8,512,1,suffix:m"), "set_stream_radius", "get_stream_radius");
 
 	BIND_ENUM_CONSTANT(PASSAGE_ENTRANCE);
 	BIND_ENUM_CONSTANT(PASSAGE_TUBE);

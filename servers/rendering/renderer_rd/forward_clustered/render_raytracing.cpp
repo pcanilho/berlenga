@@ -7573,6 +7573,23 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			RID ripple_rd = ripple_tex.is_valid() && rect.z > 0.0f ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(ripple_tex) : RID();
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_RIPPLE_MAP] = ripple_rd.is_valid() ? float(bindless_block->add_texture(ripple_rd)) : 0.0f;
 		}
+		// And its pore water map (sand stage 4): wet sand's look.
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName wet_map_name = "ground_wet_map";
+			RID wet_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(wet_map_name);
+			if (tex_var.get_type() == Variant::RID) {
+				wet_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				Object *t = tex_var;
+				if (t) {
+					wet_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID wet_rd = wet_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wet_tex) : RID();
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_WET_MAP] = wet_rd.is_valid() ? float(bindless_block->add_texture(wet_rd)) : 0.0f;
+		}
 		// Snow for BaseMaterial3D Snow: SnowCover3D's global snow map (depth, albedo, wetness,
 		// density) and its rect, as the raster shader reads them. Width 0 = no snowpack.
 		{

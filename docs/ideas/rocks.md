@@ -754,6 +754,10 @@ CaveNetwork3D builds meshes for its caves (`build_meshes(area)`), off until call
   limestone shader that takes the landscape's rock colour unless `wall_material` is set.
 - **Holes**: the landscape now cuts holes only at its finest level, so coarse rings no longer open early.
 
+Streaming (`follow_target`, `stream_radius` 64 m): chunks round the target are meshed on low-priority workers,
+nearest first, each time it moves 4 m; chunks past the radius plus about two chunks are freed. Entrance patch chunks
+stay, since the landscape's hole is open from any distance.
+
 Cost on the bench (one cave, 40 m around the entrance at 0.3 m): 27 chunks, about 139k triangles (88k wall, 51k
 ground), 14 s on the cloud machine without a GPU. Streaming near the camera and coarser cells far away come next.
 

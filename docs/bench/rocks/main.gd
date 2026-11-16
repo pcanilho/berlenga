@@ -1131,6 +1131,30 @@ func _test() -> void:
 		var in_air := net.get_rock_distance(pos + Vector3(0, 1.2, 0) - (e["out"] as Vector3) * 3.0)
 		var in_rock := net.get_rock_distance(pos + Vector3(0, -6.0, 0) + (e["out"] as Vector3) * 8.0)
 		check(made > 0 and tri["walls"] > 0 and tri["ground"] > 0 and gen.get_hole_count() > holes_before and in_air < 0.0 and in_rock > 0.0, "cave meshes: %d chunks, %d wall and %d ground triangles in %.0f ms; the landscape opened (%d holes); %.2f m into the air in the entrance, %.2f m into the rock under the foot" % [made, tri["walls"], tri["ground"], net.get_last_mesh_msec(), gen.get_hole_count() - holes_before, -in_air, in_rock])
+		# Streaming: a target 30 m into the cave gets the chunks round it on workers; moved 400 m away it keeps only
+		# the entrance patch (pinned while the landscape is open there).
+		net.clear_meshes()
+		var walker := Node3D.new()
+		add_child(walker)
+		walker.global_position = pos + Vector3(0, 1.5, 0) - (e["out"] as Vector3) * 30.0
+		net.stream_radius = 32.0
+		net.follow_target = net.get_path_to(walker)
+		var t_stream := Time.get_ticks_msec()
+		for i in 3000:
+			await get_tree().process_frame
+			if i > 2 and not net.is_streaming():
+				break
+		var near_chunks := net.get_mesh_chunk_count()
+		var stream_ms := Time.get_ticks_msec() - t_stream
+		walker.global_position += Vector3(400, 0, 0)
+		for i in 3000:
+			await get_tree().process_frame
+			if i > 2 and not net.is_streaming():
+				break
+		var far_chunks := net.get_mesh_chunk_count()
+		check(near_chunks > far_chunks and far_chunks > 0, "cave streaming: %d chunks round a target 30 m in (%d ms with frames running), %d left (the entrance patch) with it 400 m away" % [near_chunks, stream_ms, far_chunks])
+		net.follow_target = NodePath()
+		walker.queue_free()
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))

@@ -479,8 +479,9 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	real_t y = ground - p_lib.bottom[v] * s - sink;
 	// No daylight under the stone: the seat above uses the centre's ground and the unrotated bottom, so on a slope (or
 	// with the stone tilted) its downhill underside can stand off the ground. Take the stone's underside (its
-	// ellipsoid's lowest 15 % once rotated, sampled round it) and lower the stone until all of it meets the ground
-	// there; it never rises. Seating to the lowest support point is the contact rule of SpeedTree's and Megascans'
+	// ellipsoid's 15 % nearest the ground, measured along the ground's normal: the face that bears on the slope, not the
+	// lowest in height, which on a steep slope is only its downhill edge) and lower the stone until all of it meets
+	// the ground there; it never rises. Seating to the lowest support point is the contact rule of SpeedTree's and Megascans'
 	// scatter tools ("align to terrain, no gaps") and of rigid-body rest.
 	if (reach > 0.08f) {
 		static Vector3 dirs[48];
@@ -495,16 +496,18 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 			dirs_made = true;
 		}
 		Vector3 pts[48];
+		real_t dn[48];
 		real_t lo = 1e9, hi = -1e9;
 		for (int i = 0; i < 48; i++) {
 			pts[i] = r_stone.basis.xform(dirs[i] * axes);
-			lo = MIN(lo, pts[i].y);
-			hi = MAX(hi, pts[i].y);
+			dn[i] = pts[i].dot(n);
+			lo = MIN(lo, dn[i]);
+			hi = MAX(hi, dn[i]);
 		}
 		const real_t band = lo + 0.15 * (hi - lo);
 		const real_t floor_y = y - 0.35 * height; // a ledge or step under one side: lowered by at most a third of its height
 		for (int i = 0; i < 48; i++) {
-			if (pts[i].y <= band) {
+			if (dn[i] <= band) {
 				// The ellipsoid's centre over the mesh origin, so that its bottom is the mesh's (about 0 for most stones).
 				const real_t centre = (p_lib.bottom[v] + axes.y) * s;
 				y = MIN(y, p_gen->get_height(Vector3(p_xz.x + pts[i].x, 0, p_xz.z + pts[i].z)) - pts[i].y - centre);

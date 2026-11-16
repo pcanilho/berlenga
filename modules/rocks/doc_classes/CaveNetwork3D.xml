@@ -93,6 +93,12 @@
 				How many chunks are meshed.
 			</description>
 		</method>
+		<method name="is_streaming" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether a batch of chunks for [member follow_target] is being meshed on worker threads.
+			</description>
+		</method>
 		<method name="get_mesh_triangle_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -130,6 +136,9 @@
 		<member name="cover" type="float" setter="set_cover" getter="get_cover" default="4.0">
 			The least rock over a passage, in metres. It grows by 0.08 m per metre from the entrance, up to 15 m more.
 		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			A [Node3D] (usually the camera or the player) to stream meshes round. Chunks within [member stream_radius] are meshed on worker threads without stalling a frame, nearest first, when the target has moved 4 m; chunks further than the radius plus about two chunks are freed. Each entrance's patch chunks stay, since the landscape is open over the patch from any distance. Empty: no streaming ([method build_meshes] only).
+		</member>
 		<member name="gamma" type="float" setter="set_gamma" getter="get_gamma" default="2.0">
 			The gamma-skeleton's exponent. Two key points are linked unless a third lies in their lune. 2 gives branchwork caves (the Gabriel graph). Lower values link more pairs, toward mazes.
 		</member>
@@ -159,6 +168,9 @@
 		</member>
 		<member name="side_passages" type="int" setter="set_side_passages" getter="get_side_passages" default="6">
 			How many dead-end side passages are tried, each joined to the network by its least-cost path.
+		</member>
+		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="64.0">
+			How far round [member follow_target] chunks are meshed, in metres.
 		</member>
 		<member name="tortuosity" type="float" setter="set_tortuosity" getter="get_tortuosity" default="0.4">
 			How far passages wander off their paths: from a few centimetres at 0 to 4 m at 1.

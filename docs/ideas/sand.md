@@ -379,8 +379,14 @@ wetness:
   under 0.6 m/s is down to 7 mm in a minute; under 0.15 m/s it keeps its walls. The swash's run-up speed is
   taken as twice the shallow-water speed of its film. Slumping keeps the volume.
 - Not built: channels cut by runoff (they need the bed load carried along the flow, an advection pass on
-  the field, not only relaxation). The wet look is the weather map's contact wetness, drawn by the wetness
-  feature, not the pore water.
+  the field, not only relaxation).
+- The look follows the pore water (Lagarde 2013, "water drop 3b", porous surfaces): the ground publishes
+  `ground_wet_map` (per lattice cell: wetness = smoothstep(0.03, 0.4, S); sheen = 1 under water, else
+  0.5 smoothstep(0.9, 1, S) for the film standing on saturated sand). The patch darkens albedo by
+  mix(1, 0.2, porosity) and roughness by half that, porosity 0.6 when the material has no wetness of its
+  own (else its own, taking the wetter of the two so nothing is wetted twice); the sheen pulls roughness to
+  0.05. Raster and path tracer read the same map (rt param 69), so damp sand dries visibly back from the
+  swash line as it drains to field capacity.
 
 ### Look (any stage)
 
@@ -405,3 +411,18 @@ wetness:
 
 GPU timings for the ground field, the MPM domains and ripples; denoised PT shots of a truck
 digging in, a kicked spray, a ripple field at low sun.
+
+### Dune grass (sand trapping by plants)
+
+Built for the vegetation module's dune grass. Plants take a share of the wind's stress: Raupach's (1993) drag
+partition gives the friction speed left on the sand, u*s/u* = 1 / sqrt((1 - m sigma lambda)(1 + m beta lambda)),
+m 0.5, sigma 1, beta 150 (grass, Wolfe and Nickling 1996), lambda the frontal area index from `wind_shelters`
+(VegetationField3D answers `sample_lateral_cover`, clamped at 0.5). At marram's 0.3 the surface keeps 0.22 of
+u*, under the threshold in any gale. The flux each cell can carry is the Lettau and Lettau flux at that u*
+times its blown share; the flux carried relaxes to it over the saturation length (1 m, Andreotti et al. 2010),
+swept downwind cell by cell, and where it falls the sand lands (Exner, dh/dt = -dQ/dx / 1600 kg/m3), written
+to the field in 2 mm steps. A 12 m/s wind piles about 2 cm an hour on a tuft's windward edge: the nebkha.
+Sheltered sand also loses its ripples' and streamers' share and keeps its prints. Reads for vegetation:
+`get_sand_flux_at`, `get_deposition_rate_at`, `get_sand_deposit_at`. Bench `--test=shelter`. Not modelled:
+the lee eddy's scour and the wake's reduced flux past the plants (Okin 2008); the sand dropped on damp sand
+downwind of dry sand comes from the same rule.

@@ -1991,7 +1991,22 @@ void main() {
 	}
 
 	// Turned ground on GroundSurface3D's patch (docs/ideas/ground-deform.md): the raster shader's factors.
+	float g_wet = 0.0; // the ground's pore water (sand stage 4), as wetness, and its standing-water sheen
+	float g_sheen = 0.0;
 	if (rt_material_ground_deform(mat)) {
+		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
+		if (wmap_g != 0u) {
+			// The ground_wet_at() lines of material.cpp: the lattice's rows, then a row with its rect.
+			ivec2 gts = textureSize(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), 0);
+			vec4 grect = texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(0, gts.y - 1), 0);
+			vec2 guv = ((h.hit_pos + rt_origin.xyz).xz - grect.xy) / max(grect.z, 1e-3);
+			if (abs(grect.w - 2.5) < 0.01 && grect.z > 0.0 && all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+				vec2 gw = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, guv.y * float(gts.y - 1) / float(gts.y)), 0.0).rg;
+				float gup = smoothstep(-0.6, 0.2, h.geometry_normal.y);
+				g_wet = clamp(gw.x, 0.0, 1.0) * gup;
+				g_sheen = clamp(gw.y, 0.0, 1.0) * smoothstep(0.7, 0.95, h.geometry_normal.y);
+			}
+		}
 		uint gmap = uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP));
 		if (gmap != 0u) {
 			vec3 gpos = h.hit_pos + rt_origin.xyz;
@@ -2075,10 +2090,18 @@ void main() {
 			}
 		}
 		wet = clamp(wet, 0.0, 1.0) * smoothstep(-0.6, 0.2, h.geometry_normal.y);
+		wet = max(wet, g_wet); // the ground's own pore water: never wetted twice
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * wetness.x);
 		m.albedo *= mix(1.0, wet_factor, wet);
 		m.roughness *= mix(1.0, wet_factor, 0.5 * wet);
+	} else if (g_wet > 0.0) {
+		// A ground material without wetness: sand's porosity (0.6).
+		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * 0.6);
+		m.albedo *= mix(1.0, wet_factor, g_wet);
+		m.roughness *= mix(1.0, wet_factor, 0.5 * g_wet);
 	}
+	// Saturated ground under a film of water: the film's smooth surface (Lagarde 2013's accumulated water).
+	m.roughness = mix(m.roughness, 0.05, g_sheen);
 
 	// Snow (BaseMaterial3D, docs/ideas/snow.md): the same lines and inputs as the raster shader.
 	vec4 snow_p = rt_material_snow(mat);

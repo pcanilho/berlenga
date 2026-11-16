@@ -32,14 +32,16 @@
 #pragma once
 
 #include "core/math/random_pcg.h"
-#include "core/templates/local_vector.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
 class TerrainGenerator3D;
 class RockField3D;
+struct CaveMeshJob;
 
 // Cave networks under a heightfield (docs/ideas/rocks.md, "Real caves behind the mouths"): Paris, Peytavie, Guérin,
 // Collon, Galin, "Synthesizing Geologically Coherent Cave Networks" (Computer Graphics Forum 40(7), 2021). Each cave
@@ -47,6 +49,7 @@ class RockField3D;
 // bedding planes), a nearest-neighbour graph, least-cost paths under an anisotropic cost (bedding planes and joints
 // cheap), a gamma-skeleton between the key points (the entrance, sinks under closed hollows above), side passages,
 // tortuosity, and a passage type from the height over the water table.
+
 class CaveNetwork3D : public Node3D {
 	GDCLASS(CaveNetwork3D, Node3D);
 
@@ -77,6 +80,7 @@ public:
 		LocalVector<Chamber> chambers;
 		LocalVector<Vector3> keys;
 		AABB bounds;
+		bool holed = false; // the landscape has its hole over this cave's patch
 	};
 
 private:
@@ -88,6 +92,7 @@ private:
 		Ref<ArrayMesh> mesh;
 		Node3D *node = nullptr;
 		int triangles = 0;
+		bool pinned = false; // an entrance patch chunk: kept while the landscape's hole is open
 	};
 	struct FieldSource {
 		LocalVector<const Segment *> segments;
@@ -107,6 +112,15 @@ private:
 	Ref<ShaderMaterial> default_wall;
 	uint64_t last_mesh_usec = 0;
 	const TerrainGenerator3D *mesh_gen = nullptr; // resolved on the main thread for the mesh workers
+
+	// Streaming round a follow target: chunks within stream_radius are meshed on workers without waiting, those
+	// past it (plus a chunk of slack) are freed; entrance patches stay.
+	NodePath follow_target;
+	real_t stream_radius = 64.0;
+	CaveMeshJob *stream_job = nullptr;
+	int64_t stream_group = -1;
+	Vector3 stream_from;
+	bool streamed = false;
 
 	NodePath generator_path;
 	NodePath rock_field_path;
@@ -131,8 +145,14 @@ private:
 	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const;
 	static void _mesh_job(void *p_data, uint32_t p_index);
 	Ref<Material> _wall_material();
+	void _wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashSet<Vector3i> &r_pinned, bool p_all_patches = false) const;
+	void _add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall);
+	void _open_holes();
+	void _stream_update();
+	void _stream_finish(bool p_keep);
 
 protected:
+	void _notification(int p_what);
 	static void _bind_methods();
 
 public:
@@ -147,7 +167,7 @@ public:
 	real_t get_last_build_msec() const { return real_t(last_build_usec) / 1000.0; }
 	int build_meshes(const AABB &p_area);
 	void clear_meshes();
-	int get_mesh_chunk_count() const { return int(chunks.size()); }
+	int get_mesh_chunk_count() const;
 	int get_mesh_triangle_count() const;
 	real_t get_last_mesh_msec() const { return real_t(last_mesh_usec) / 1000.0; }
 	real_t get_rock_distance(const Vector3 &p_position) const;
@@ -158,6 +178,11 @@ public:
 	void set_roughness(real_t p_value) { roughness = CLAMP(p_value, real_t(0.0), real_t(4.0)); }
 	real_t get_roughness() const { return roughness; }
 	void set_collision(bool p_enable) { collision = p_enable; }
+	void set_follow_target(const NodePath &p_path);
+	NodePath get_follow_target() const { return follow_target; }
+	void set_stream_radius(real_t p_metres) { stream_radius = MAX(p_metres, 8.0); }
+	real_t get_stream_radius() const { return stream_radius; }
+	bool is_streaming() const { return stream_job != nullptr; }
 	bool has_collision() const { return collision; }
 	void set_wall_material(const Ref<Material> &p_material) { wall_material = p_material; }
 	Ref<Material> get_wall_material() const { return wall_material; }
