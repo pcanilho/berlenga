@@ -450,6 +450,8 @@ private:
 	void _root_plate(Builder &r_bark);
 	void _cut_back(bool p_first, int p_year);
 	void _saw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_age, uint32_t p_seed);
+	// A coppice stool's knuckle: its end is the first cut, an old sloping saw face.
+	bool _coppice_lobe(int p_node) const { return cut_height > 0.0f && cut_height <= 0.5f && decay_class == 0 && !fallen && !fallen_branch && cut_heads.has(p_node); }
 	float _stem_top() const;
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);

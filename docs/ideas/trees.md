@@ -930,6 +930,28 @@ management).
     real pollard, with four times the withies), lapsed beech 887k to 902k, hazel stool 386k to
     660k (the stool's knobs, and more rods now that young poles are not thinned). LOD 1 and on
     keep the plain tubes.
+- **Fourth review (16 Nov).** Willow passed; fixes for the rest:
+  - *Withy tips* ended in combs of side twigs (the leaf twig spray of an ordinary shoot). A
+    rod within six years of its cut now carries only its leaves on stubs, no twig spray.
+  - *Collar folds* were even full rings, a corrugated hose. Each fold now wobbles in phase,
+    runs part of the way round (a patch mask) and varies in depth, a soft fold above a sharp
+    crease.
+  - *Thick poles* carry branch scars: a low callus lip round a dark pit with a chevron of
+    wrinkled bark above (beech's "Chinese moustache"; Vaucher 2003), in half-metre cells a
+    quarter of the way round.
+  - *Rods* (under 8 cm) swell a little at their nodes, alternate sides every 12-20 cm, the
+    scar darker: hazel and willow rods are never straight pipes. Hazel's lenticels are fewer,
+    larger and paler, so they still read as a speckle at a few metres.
+  - *Head.* The smooth burl lumps are halved again (0.07 of the head's radius) and a burl on a
+    pollard head gets its own cluster of finer knobs, so no smooth or waxy bulge is left.
+  - *Hazel stool.* The pale pinwheels were not the saw faces: each stool knuckle closed with a
+    bark dome, its bark converging to a point. A knuckle now ends in the first cut, sloping
+    outward as coppice is cut, under a callus lip rolled over its rim (Shigo 1985), the face
+    sunk and rotted dark with moss in its hollow. Sawn stub faces follow the tube's own end.
+    Coppice rods get an algae film up their foot and pale crust lichen patches.
+  - *Pollard knuckles* whose poles are all gone close in a broad dome on eight rings, knobbed
+    like the head: on three, the last fan of long triangles shaded as a dark pinwheel.
+  - *Cost* (LOD 0 bark): willow 112k, beech 905k, hazel 668k.
 - **Not yet.** Stands do not cut anything yet: coppice-with-standards (a hazel understory
   coppiced under oak) and pollard rows along rivers are the natural next step.
 

@@ -2885,3 +2885,15 @@ Options, cheapest first:
 3. Plunging lips and spray sheets on storm crests: lip ribbons along the folding crest lines found on the
    CPU (the shore breaker's lip mesh, reused), falling over and tearing into spray sheets. The biggest
    visual change in a gale and the most work (several PRs, a particle system per crest).
+
+### Built (16 Nov): crests checked, spilling rollers (`roller_strength`, on)
+- Crest sharpening: not needed as a separate term. The choppy FFT displaces points horizontally, a
+  first-order Lagrangian (Gerstner) surface, whose Eulerian profile already carries the second-order Stokes
+  crest-up, trough-flat shape (`a cos(kx) + (k a^2 / 2) cos(2kx)` up to a mean shift). Adding a Stokes lift
+  on top would double it. Steeper seas remain `choppiness` and `wave_amplitude` (the Black Flag approach).
+- Rollers: where the summed displacement folds (the crest foam's Jacobian test), the crest gains a mass of
+  churned white water as geometry, a quarter of the crest's height at full fold (Duncan 1981: rollers are
+  0.1 to 0.3 of the wave height), boiling with two drifting noise octaves and thrown a little ahead along
+  the wind. The vertex stage raises it (so the path tracer sees it); per pixel its churn's slope is
+  analytic (value-noise gradient; screen derivatives gave 2x2 blocks). Material uniform `roller_strength`
+  (1; 0 = off). Cost: one more derivative and displacement lookup set per vertex on the open sea.
