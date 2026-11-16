@@ -104,6 +104,7 @@ private:
 		LocalVector<float> bottom;
 		LocalVector<PackedVector3Array> hulls;
 		LocalVector<PackedFloat32Array> potholes; // a pothole slab's floors (x, y, z, r in its frame), for grinders
+		LocalVector<Transform3D> caves; // a cave mouth's passage box (the unit cube through it, in its frame)
 		// Bedrock forms (coast, landforms) collide by their own triangles: one shape per variant, cooked once and shared
 		// by every instance (a fin is 30 to 150 thousand triangles).
 		LocalVector<Ref<Shape3D>> trimesh;
@@ -139,6 +140,8 @@ private:
 
 	NodePath generator_path;
 	NodePath follow_target_path;
+	NodePath terrain3d_path; // optional Terrain3D (by name, never bundled): cave holes are written into its control map
+	void _terrain3d_hole(const Transform3D &p_box);
 	int seed = 0;
 	RockGenerator::RockType rock_type = RockGenerator::ROCK_GRANITE;
 	RockGenerator::RockType soft_rock_type = RockGenerator::ROCK_LIMESTONE;
@@ -152,7 +155,7 @@ private:
 	bool ground_blend = false;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
-	bool cave_mouths = false; // portal blocks at limestone cliff feet: off until the terrain can open a hole behind them
+	bool cave_mouths = true; // portal blocks set into limestone cliff feet, their passages opened as terrain holes
 	bool mineral_glints = false;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
@@ -181,6 +184,7 @@ private:
 	HashMap<uint32_t, Library> libraries;
 	HashMap<int, Ref<ShaderMaterial>> materials; // per rock type, with this field's lichen and moss
 	HashMap<Vector3i, Cell> cells; // (layer, cell x, cell z)
+	LocalVector<Rect2> hole_rects; // holes opened while placing (cave mouths), whose built cells are built again
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;
@@ -263,6 +267,9 @@ public:
 	NodePath get_generator() const { return generator_path; }
 	void set_follow_target(const NodePath &p_path) { follow_target_path = p_path; }
 	NodePath get_follow_target() const { return follow_target_path; }
+	void set_terrain3d(const NodePath &p_path) { terrain3d_path = p_path; }
+	NodePath get_terrain3d() const { return terrain3d_path; }
+	int write_terrain3d_holes();
 	void set_seed(int p_seed);
 	int get_seed() const { return seed; }
 	void set_rock_type(RockGenerator::RockType p_type);

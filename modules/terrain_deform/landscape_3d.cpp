@@ -349,7 +349,11 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	};
 	LocalVector<T> stack;
 	const LocalVector<int> &idx = indices[0][r_job.mask & 15];
+	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
 	for (uint32_t t = 0; t < idx.size(); t += 3) {
+		if (hl && _hole_tri(hl, 0, idx[t], idx[t + 1], idx[t + 2])) {
+			continue; // a hole: refinement splits edges by their end points only, so the neighbours are unaffected
+		}
 		stack.push_back({ idx[t], idx[t + 1], idx[t + 2], 0 });
 		while (!stack.is_empty()) {
 			const T tr = stack[stack.size() - 1];
@@ -486,15 +490,27 @@ void Landscape3D::_build_surface(MeshJob &r_job) const {
 	}
 	const LocalVector<int> &idx = indices[r_job.level][r_job.mask & 15];
 	PackedInt32Array ia;
-	ia.resize(idx.size());
-	memcpy(ia.ptrw(), idx.ptr(), idx.size() * sizeof(int));
+	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
+	if (hl) {
+		// Triangles touching a hole sample are left out (a cave mouth's passage; its rock hides the edge).
+		for (uint32_t t = 0; t < idx.size(); t += 3) {
+			if (!_hole_tri(hl, r_job.level, idx[t], idx[t + 1], idx[t + 2])) {
+				ia.push_back(idx[t]);
+				ia.push_back(idx[t + 1]);
+				ia.push_back(idx[t + 2]);
+			}
+		}
+	} else {
+		ia.resize(idx.size());
+		memcpy(ia.ptrw(), idx.ptr(), idx.size() * sizeof(int));
+	}
 	Array arrays;
 	arrays.resize(RSE::ARRAY_MAX);
 	arrays[RSE::ARRAY_VERTEX] = verts;
 	arrays[RSE::ARRAY_NORMAL] = norms;
 	arrays[RSE::ARRAY_INDEX] = ia;
 	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays);
-	r_job.triangles = int(idx.size() / 3);
+	r_job.triangles = int(ia.size() / 3);
 }
 
 void Landscape3D::_mesh_task(uint32_t p_index, void *p_userdata) {
@@ -642,6 +658,24 @@ void Landscape3D::_collision_tile(int p_chunk) {
 	float *w = h.ptrw();
 	for (int j = 0; j < row; j++) {
 		memcpy(w + j * row, heights.ptr() + size_t(cz * chunk_quads + j) * gw + cx * chunk_quads, row * sizeof(float));
+	}
+	if (const LocalVector<uint8_t> *hl = chunk_holes.getptr(p_chunk)) {
+		// A NaN height is a hole for every physics backend here (PhysX eHOLE, Jolt FLT_MAX, Godot Physics): it takes
+		// every triangle touching the sample, so only samples whose quads are all holes go (the collision hole sits
+		// inside the drawn one; the cave block's own collision covers its edge).
+		const int n = chunk_quads;
+		for (int j = 0; j < row; j++) {
+			for (int i = 0; i < row; i++) {
+				bool all = true;
+				for (int k = 0; k < 4 && all; k++) {
+					const int qi = i - 1 + (k & 1), qj = j - 1 + (k >> 1);
+					all = qi >= 0 && qj >= 0 && qi < n && qj < n && (*hl)[qj * n + qi];
+				}
+				if (all) {
+					w[j * row + i] = Math::NaN;
+				}
+			}
+		}
 	}
 	Dictionary d;
 	d["width"] = row;
@@ -852,6 +886,9 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 	}
 	for (int i = 0; i < n; i++) {
 		want[i] = MAX(want[i], floor_l[i]);
+		if (chunks[i].fine && chunk_holes.has(i)) {
+			want[i] = 0; // a hole keeps its shape at any distance
+		}
 	}
 	// Neighbours at most one level apart; the finer side wins (never below the floor: a neighbour sits at or above
 	// its own floor, which is at most one under this one's).
@@ -877,6 +914,9 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 	need.resize(n);
 	for (int i = 0; i < n; i++) {
 		need[i] = chunks[i].fine ? 0 : (raw[i] < COARSE ? (chunks[i].error[COARSE] * scale_of[i] > lod_error * FIRST_VIEW_SLACK ? 3 : 2) : 1);
+		if (!chunks[i].fine && chunk_holes.has(i)) {
+			need[i] = 3;
+		}
 	}
 	for (int z = 0; z < ch; z++) {
 		for (int x = 0; x < cw; x++) {
@@ -1296,6 +1336,14 @@ void Landscape3D::set_cast_shadows(bool p_enable) {
 
 void Landscape3D::clear() {
 	_on_source_changing();
+	chunk_holes.clear();
+	if (TerrainGenerator3D *hg = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(hole_source))) {
+		const Callable hcb = callable_mp(this, &Landscape3D::_on_holes_changed);
+		if (hg->is_connected(SNAME("holes_changed"), hcb)) {
+			hg->disconnect(SNAME("holes_changed"), hcb);
+		}
+	}
+	hole_source = ObjectID();
 	_free_instances();
 	_free_all_collision();
 	_evict(true);
@@ -1314,6 +1362,100 @@ void Landscape3D::clear() {
 	detail_estimate = 0.0f;
 	have_camera = false;
 	lods_dirty = true;
+}
+
+/* Holes */
+
+// A triangle is in a hole when the quad holding its centroid is (each triangle of a level's 2x2 fan lies in one
+// quad of that level): the hole follows its box to within half a quad, not a whole quad around every hole sample.
+bool Landscape3D::_hole_tri(const LocalVector<uint8_t> *p_holes, int p_level, int p_a, int p_b, int p_c) const {
+	const int s = 1 << p_level;
+	const int rl = (chunk_quads >> p_level) + 1;
+	const real_t x = real_t((p_a % rl) + (p_b % rl) + (p_c % rl)) * s / 3.0f;
+	const real_t z = real_t((p_a / rl) + (p_b / rl) + (p_c / rl)) * s / 3.0f;
+	const int qx = CLAMP(int(x), 0, chunk_quads - 1), qz = CLAMP(int(z), 0, chunk_quads - 1);
+	return (*p_holes)[qz * chunk_quads + qx] != 0;
+}
+
+int Landscape3D::get_hole_quad_count() const {
+	int n = 0;
+	for (const KeyValue<int, LocalVector<uint8_t>> &kv : chunk_holes) {
+		for (uint8_t f : kv.value) {
+			n += f;
+		}
+	}
+	return n;
+}
+
+void Landscape3D::_on_holes_changed(const Rect2 &p_rect) {
+	_refresh_holes(p_rect);
+}
+
+// Reads the source's holes over the chunks touching p_rect (global x, z); a chunk whose holes changed gets new
+// meshes (its key changes) and its collision tile again.
+void Landscape3D::_refresh_holes(const Rect2 &p_rect) {
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(hole_source));
+	if (!gen || chunks.is_empty()) {
+		return;
+	}
+	_wait_all(); // mesh jobs read the flags
+	const Transform3D gt = is_inside_tree() ? get_global_transform() : Transform3D();
+	const Transform3D inv = gt.affine_inverse();
+	Vector2 lo(1e30f, 1e30f), hi(-1e30f, -1e30f);
+	for (int k = 0; k < 4; k++) {
+		const Vector3 c = inv.xform(Vector3((k & 1) ? p_rect.get_end().x : p_rect.position.x, 0, (k & 2) ? p_rect.get_end().y : p_rect.position.y));
+		lo = lo.min(Vector2(c.x, c.z));
+		hi = hi.max(Vector2(c.x, c.z));
+	}
+	const real_t size = chunk_quads * spacing;
+	const int x0 = CLAMP(int(Math::floor((lo.x - origin.x) / size)) - 1, 0, cw - 1), x1 = CLAMP(int(Math::floor((hi.x - origin.x) / size)) + 1, 0, cw - 1);
+	const int z0 = CLAMP(int(Math::floor((lo.y - origin.y) / size)) - 1, 0, ch - 1), z1 = CLAMP(int(Math::floor((hi.y - origin.y) / size)) + 1, 0, ch - 1);
+	for (int cz = z0; cz <= z1; cz++) {
+		for (int cx = x0; cx <= x1; cx++) {
+			const int ci = cz * cw + cx;
+			LocalVector<uint8_t> f;
+			bool any = false;
+			Vector2 wlo(1e30f, 1e30f), whi(-1e30f, -1e30f);
+			for (int k = 0; k < 4; k++) {
+				const Vector3 c = gt.xform(Vector3(origin.x + (cx + (k & 1)) * size, 0, origin.y + (cz + ((k >> 1) & 1)) * size));
+				wlo = wlo.min(Vector2(c.x, c.z));
+				whi = whi.max(Vector2(c.x, c.z));
+			}
+			if (gen->has_holes_in(Rect2(wlo, whi - wlo).grow(spacing))) {
+				// One flag per quad, from the hole test at its centre.
+				f.resize(chunk_quads * chunk_quads);
+				for (int j = 0; j < chunk_quads; j++) {
+					for (int i = 0; i < chunk_quads; i++) {
+						const Vector3 w = gt.xform(Vector3(origin.x + (cx * chunk_quads + i + 0.5f) * spacing, 0, origin.y + (cz * chunk_quads + j + 0.5f) * spacing));
+						const bool h = gen->is_hole(w);
+						f[j * chunk_quads + i] = h ? 1 : 0;
+						any = any || h;
+					}
+				}
+			}
+			const LocalVector<uint8_t> *old = chunk_holes.getptr(ci);
+			bool same = (old == nullptr) == !any;
+			if (same && any) {
+				for (int k = 0; k < chunk_quads * chunk_quads && same; k++) {
+					same = (*old)[k] == f[k];
+				}
+			}
+			if (same) {
+				continue;
+			}
+			if (any) {
+				chunk_holes[ci] = f;
+			} else {
+				chunk_holes.erase(ci);
+			}
+			chunks[ci].gen++;
+			if (chunks[ci].body.is_valid()) {
+				_free_collision(ci);
+			}
+			lods_dirty = true;
+		}
+	}
+	_update_collision();
 }
 
 bool Landscape3D::rebuild() {
@@ -1447,6 +1589,16 @@ bool Landscape3D::rebuild() {
 		// No camera yet: the coarsest level everywhere (cheap); the first camera refines it.
 		for (uint32_t i = 0; i < chunks.size(); i++) {
 			_set_chunk_mesh(i, levels - 1, 0);
+		}
+	}
+	if (TerrainGenerator3D *hg = Object::cast_to<TerrainGenerator3D>(src)) {
+		hole_source = hg->get_instance_id();
+		const Callable hcb = callable_mp(this, &Landscape3D::_on_holes_changed);
+		if (!hg->is_connected(SNAME("holes_changed"), hcb)) {
+			hg->connect(SNAME("holes_changed"), hcb);
+		}
+		if (hg->get_hole_count() > 0) {
+			_refresh_holes(Rect2(-1e9, -1e9, 2e9, 2e9));
 		}
 	}
 	_update_collision();
@@ -1681,6 +1833,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_chunk_loaded", "chunk"), &Landscape3D::is_chunk_loaded);
 	ClassDB::bind_method(D_METHOD("get_chunk_grid"), &Landscape3D::get_chunk_grid);
 	ClassDB::bind_method(D_METHOD("get_lod_count"), &Landscape3D::get_lod_count);
+	ClassDB::bind_method(D_METHOD("get_hole_chunk_count"), &Landscape3D::get_hole_chunk_count);
+	ClassDB::bind_method(D_METHOD("get_hole_quad_count"), &Landscape3D::get_hole_quad_count);
 	ClassDB::bind_method(D_METHOD("get_chunk_lod", "chunk"), &Landscape3D::get_chunk_lod);
 	ClassDB::bind_method(D_METHOD("get_chunk_edge_mask", "chunk"), &Landscape3D::get_chunk_edge_mask);
 	ClassDB::bind_method(D_METHOD("get_chunk_lod_error", "chunk", "level"), &Landscape3D::get_chunk_lod_error);

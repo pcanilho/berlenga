@@ -45,6 +45,7 @@ var cam: Camera3D
 
 
 var breaking := false
+var form_stone := {} # the stone --form framed
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -312,7 +313,7 @@ func _world() -> void:
 		# Off by default in the engine until their GPU cost is timed; on in the bench.
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.mineral_glints = not args.has("no-glints")
-		rocks.cave_mouths = true # off in the engine (a heightfield cannot open the hole behind them); on in the bench
+		rocks.cave_mouths = not args.has("no-caves")
 		if args.has("water"):
 			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")
@@ -344,6 +345,23 @@ func _world() -> void:
 		var sea_y := gen.get_sea_level() if gen.has_sea_result() else spot.y
 		cam.position.y = maxf(gen.get_height(cam.position) + 2.0, sea_y + float(args.get("cam-height", "6")))
 		look = Vector3(spot.x, sea_y + float(args.get("look-height", "8")), spot.z)
+	if form_stone.has("basis") and args.get("form", "") == "cave_mouth" and not args.has("cam"):
+		# A cave mouth from in front, at eye height a little above its floor: its basis y points out of the face.
+		var ob: Basis = form_stone["basis"]
+		var o := Vector3(ob.y.x, 0, ob.y.z).normalized()
+		var side := Vector3(-o.z, 0, o.x) * float(args.get("side", "0.3"))
+		var mouth: Vector3 = form_stone["position"]
+		# The passage's mouth from its terrain hole (the hole box's front, floor middle).
+		var best_d := 1e9
+		for h in gen.get_holes():
+			var hb: Transform3D = h
+			if hb.origin.distance_to(form_stone["position"]) < best_d:
+				best_d = hb.origin.distance_to(form_stone["position"])
+				mouth = hb * Vector3(0, 1, -1)
+		var d := float(args.get("dist", "14"))
+		cam.position = mouth + (o + side).normalized() * d
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
+		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
 	cam.look_at(look)
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
@@ -356,6 +374,16 @@ func _world() -> void:
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if gen.get_hole_count() > 0:
+			print("holes: %d in the generator, %d landscape chunks, %d quads" % [gen.get_hole_count(), land.get_hole_chunk_count(), land.get_hole_quad_count()])
+			if args.has("hole-dump"):
+				for h in gen.get_holes():
+					var hb: Transform3D = h
+					if hb.origin.distance_to(spot) < 60.0:
+						print("  hole at %s, half extents %.1f %.1f %.1f" % [hb.origin, hb.basis.x.length(), hb.basis.y.length(), hb.basis.z.length()])
+				for st in rocks.get_stones(RockField3D.LAYER_LANDFORM, Rect2(spot.x - 60, spot.z - 60, 120, 120)):
+					if int(st["family"]) == RockGenerator.FAMILY_CAVE_MOUTH:
+						print("  cave block at %s, scale %.2f, out %s" % [st["position"], st["scale"], (st["basis"] as Basis).y.normalized()])
 		if args.has("plants"):
 			_crevice_plants(spot, view, land)
 		if args.has("break"):
@@ -700,6 +728,7 @@ func _densest(layer: int) -> Vector3:
 				best["score"] = score
 		if not best.is_empty():
 			print("%s at %s" % [args["form"], best["position"]])
+			form_stone = best
 			return best["position"]
 	var cells := {}
 	var sums := {}
@@ -865,6 +894,21 @@ func _test() -> void:
 	# Pavement wants flat bare limestone benches and potholes level bedrock stream beds, which this steep, coarse
 	# test world nearly lacks: they are counted, not required.
 	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_FIN), "landforms: %d hoodoos, %d fins, %d pavement patches, %d pothole slabs, %d goblins, %d cave mouths" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_FIN, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0), kinds.get(RockGenerator.FAMILY_POTHOLE, 0), kinds.get(RockGenerator.FAMILY_GOBLIN, 0), kinds.get(RockGenerator.FAMILY_CAVE_MOUTH, 0)])
+	# Cave holes: each cave mouth opens the ground inside its passage (TerrainGenerator3D.add_hole), Landscape3D leaves
+	# those quads out, and a Terrain3D (here a stand-in with the addon's calls) gets them in its control map.
+	var caves := int(kinds.get(RockGenerator.FAMILY_CAVE_MOUTH, 0))
+	var land_h: Landscape3D = get_node("Landscape")
+	check(caves == 0 or (gen.get_hole_count() >= caves and land_h.get_hole_quad_count() > 0), "cave holes: %d cave mouths, %d holes, %d landscape quads left out in %d chunks" % [caves, gen.get_hole_count(), land_h.get_hole_quad_count(), land_h.get_hole_chunk_count()])
+	if gen.get_hole_count() > 0:
+		var t3 := Node3D.new()
+		t3.set_script(load("res://terrain3d_stand_in.gd"))
+		t3.name = "Terrain3DStandIn"
+		add_child(t3)
+		rocks.terrain3d = rocks.get_path_to(t3)
+		var written := rocks.write_terrain3d_holes()
+		check(t3.holes > 0 and t3.map_updates.has(1) and t3.collision_updates > 0, "Terrain3D holes: %d holes, %d control-map vertices, map updates %s, %d collision updates" % [written, t3.holes, t3.map_updates.slice(0, 3), t3.collision_updates])
+		rocks.terrain3d = NodePath()
+		t3.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var overlaps := 0

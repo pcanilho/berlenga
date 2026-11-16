@@ -328,6 +328,7 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 
 bool TerrainGenerator3D::generate() {
 	// Readers on other threads (Landscape3D streaming heights) finish before any grid is replaced.
+	holes.clear();
 	emit_signal(SNAME("changing"));
 	if (size.x <= 0.0 || size.y <= 0.0) {
 		clear_result();
@@ -2575,6 +2576,7 @@ bool TerrainGenerator3D::generate() {
 }
 
 void TerrainGenerator3D::clear_result() {
+	holes.clear();
 	emit_signal(SNAME("changing"));
 	nx = 0;
 	ny = 0;
@@ -3186,6 +3188,79 @@ void TerrainGenerator3D::_fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p
 	FillJob job{ this, p_x0, p_z0, p_spacing, p_width, r_out };
 	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_fill_row, &job, p_rows, -1, true, SNAME("TerrainGenerator3D"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+}
+
+/* Holes */
+
+bool TerrainGenerator3D::add_hole(const Transform3D &p_box) {
+	for (const Hole &h : holes) {
+		if (h.box.is_equal_approx(p_box)) {
+			return false;
+		}
+	}
+	Hole h;
+	h.box = p_box;
+	h.inv = p_box.affine_inverse();
+	Vector2 lo(1e30f, 1e30f), hi(-1e30f, -1e30f);
+	for (int k = 0; k < 8; k++) {
+		const Vector3 c = p_box.xform(Vector3((k & 1) ? 1 : -1, (k & 2) ? 1 : -1, (k & 4) ? 1 : -1));
+		lo = lo.min(Vector2(c.x, c.z));
+		hi = hi.max(Vector2(c.x, c.z));
+	}
+	h.rect = Rect2(lo, hi - lo);
+	holes.push_back(h);
+	emit_signal(SNAME("holes_changed"), h.rect);
+	return true;
+}
+
+void TerrainGenerator3D::clear_holes() {
+	if (holes.is_empty()) {
+		return;
+	}
+	Rect2 r = holes[0].rect;
+	for (const Hole &h : holes) {
+		r = r.merge(h.rect);
+	}
+	holes.clear();
+	emit_signal(SNAME("holes_changed"), r);
+}
+
+bool TerrainGenerator3D::has_holes_in(const Rect2 &p_rect) const {
+	for (const Hole &h : holes) {
+		if (h.rect.intersects(p_rect)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool TerrainGenerator3D::is_hole(const Vector3 &p_global_position) const {
+	const Vector2 q(p_global_position.x, p_global_position.z);
+	real_t y = Math::NaN;
+	for (const Hole &h : holes) {
+		if (!h.rect.has_point(q)) {
+			continue;
+		}
+		if (Math::is_nan(y)) {
+			y = get_height(p_global_position);
+			if (Math::is_nan(y)) {
+				return false;
+			}
+		}
+		const Vector3 l = h.inv.xform(Vector3(q.x, y, q.y));
+		if (Math::abs(l.x) <= 1.0f && Math::abs(l.y) <= 1.0f && Math::abs(l.z) <= 1.0f) {
+			return true;
+		}
+	}
+	return false;
+}
+
+TypedArray<Transform3D> TerrainGenerator3D::get_holes() const {
+	TypedArray<Transform3D> out;
+	for (const Hole &h : holes) {
+		out.push_back(h.box);
+	}
+	return out;
 }
 
 real_t TerrainGenerator3D::get_height(const Vector3 &p_global_position) const {
@@ -6831,6 +6906,7 @@ bool TerrainGenerator3D::apply_touch_ups() {
 	if (nx <= 0 || heights_generated.size() != uint32_t(nx * ny)) {
 		return false;
 	}
+	holes.clear();
 	emit_signal(SNAME("changing"));
 	_touch_up();
 	emit_signal(SNAME("generated"));
@@ -7331,6 +7407,12 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "deformer", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDeformer3D"), "set_deformer", "get_deformer");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "ground_mesh", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_ground_mesh", "get_ground_mesh");
 
+	ClassDB::bind_method(D_METHOD("add_hole", "box"), &TerrainGenerator3D::add_hole);
+	ClassDB::bind_method(D_METHOD("clear_holes"), &TerrainGenerator3D::clear_holes);
+	ClassDB::bind_method(D_METHOD("is_hole", "global_position"), &TerrainGenerator3D::is_hole);
+	ClassDB::bind_method(D_METHOD("get_hole_count"), &TerrainGenerator3D::get_hole_count);
+	ClassDB::bind_method(D_METHOD("get_holes"), &TerrainGenerator3D::get_holes);
+	ADD_SIGNAL(MethodInfo("holes_changed", PropertyInfo(Variant::RECT2, "rect")));
 	ADD_SIGNAL(MethodInfo("changing"));
 	ADD_SIGNAL(MethodInfo("generated"));
 	ADD_SIGNAL(MethodInfo("written", PropertyInfo(Variant::INT, "vertices")));

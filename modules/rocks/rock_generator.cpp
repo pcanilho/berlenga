@@ -1342,6 +1342,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	};
 	LocalVector<Pothole> potholes; // a pothole slab's, in the grid's frame (kept for the mesh meta)
 	float y_top_mesh = 0.0f;
+	AABB cave_box; // a cave mouth's passage, in the grid's frame (kept for the mesh meta: the terrain hole)
 	if (landform) {
 		float x_lo = 1e9f, x_hi = -1e9f, y_top = -1e9f, z_lo = 1e9f, z_hi = -1e9f;
 		for (int z = 0; z < fine.nz; z++) {
@@ -1420,6 +1421,17 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 					}
 				}
 			}
+		}
+		if (family == FAMILY_CAVE_MOUTH) {
+			// The passage's bounds: its centre swings by cave_turn d^2 over the 1.6c it goes in, it is at most 1.08 of
+			// cave_w wide, the roof at most cave_h (plus its roughness) over the floor, from the front in.
+			const float d_end = 1.6f * c;
+			const float swing = cave_turn * d_end * d_end;
+			const float w = cave_w * 1.05f;
+			const float lean = 0.5f * Math::abs(cave_skew) * w;
+			const float x0 = cave_x + MIN(0.0f, swing) - w - lean, x1 = cave_x + MAX(0.0f, swing) + w + lean;
+			const float below = 0.04f * (z_hi - z_lo); // down into the floor's rock, so no ground shows through the floor
+			cave_box = AABB(Vector3(x0, y_front - d_end, cave_floor - below), Vector3(x1 - x0, d_end, cave_h * 1.05f + 0.03f * (z_hi - z_lo) + below));
 		}
 		if (family == FAMILY_POTHOLE) {
 			const int count = 1 + int(rng.randf() * 2.99f);
@@ -1911,6 +1923,13 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	r_meta["rock_roundness"] = roundness;
 	r_meta["rock_type"] = int(rock_type);
 	r_meta["rock_family"] = int(family);
+	if (cave_box.has_volume()) {
+		// The passage as a box in the stone's frame: the unit cube [-1, 1]^3 through this transform.
+		const Vector3 o = to_local(cave_box.get_center());
+		const Vector3 h = cave_box.size * 0.5f;
+		const Basis b(to_local(cave_box.get_center() + Vector3(h.x, 0, 0)) - o, to_local(cave_box.get_center() + Vector3(0, h.y, 0)) - o, to_local(cave_box.get_center() + Vector3(0, 0, h.z)) - o);
+		r_meta["rock_cave"] = Transform3D(b, o);
+	}
 	if (!potholes.is_empty()) {
 		// The potholes' floors in the stone's frame (x, y, z, radius) for the field's grinder stones.
 		PackedFloat32Array holes;

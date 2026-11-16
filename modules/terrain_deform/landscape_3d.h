@@ -127,6 +127,14 @@ class Landscape3D : public Node3D {
 	int levels = 1; // lod_levels clamped to the chunk size
 	LocalVector<Chunk> chunks;
 	HashMap<uint64_t, MeshEntry> meshes;
+	// Holes from the source TerrainGenerator3D (cave mouths): per chunk holding any, one flag per quad
+	// (chunk_quads^2, tested at its centre). Triangles whose centroid is in a hole quad are left out; such chunks keep the
+	// finest level.
+	HashMap<int, LocalVector<uint8_t>> chunk_holes;
+	ObjectID hole_source;
+	void _refresh_holes(const Rect2 &p_rect);
+	void _on_holes_changed(const Rect2 &p_rect);
+	bool _hole_tri(const LocalVector<uint8_t> *p_holes, int p_level, int p_a, int p_b, int p_c) const;
 	LocalVector<int> indices[8][16]; // per (level, edge mask)
 	uint64_t frame = 0;
 	Transform3D last_camera;
@@ -250,6 +258,8 @@ public:
 
 	Vector2i get_chunk_grid() const { return Vector2i(cw, ch); }
 	int get_lod_count() const { return levels; }
+	int get_hole_chunk_count() const { return chunk_holes.size(); }
+	int get_hole_quad_count() const;
 	int get_chunk_lod(const Vector2i &p_chunk) const;
 	int get_chunk_edge_mask(const Vector2i &p_chunk) const;
 	real_t get_chunk_lod_error(const Vector2i &p_chunk, int p_level) const;

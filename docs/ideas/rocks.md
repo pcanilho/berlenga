@@ -549,3 +549,123 @@ Built (16 Nov): `live_rockfall` (off), `live_rockfall_rate` 4 per game hour, `li
   radius.
 - A synchronous trigger on an unprepared shape costs 0.6 to 1.4 s for a big block (the fracture); the live path
   builds it on a worker first.
+
+## Cave mouths into the terrain: holes (round 3, 16 Nov): research
+
+Paulo (16 Nov): cave mouths wanted (they make scenes with water: sea caves), with real holes, on Landscape3D and
+on Terrain3D.
+
+How engines do it:
+- **Unreal Landscape** (Visibility tool): a painted visibility layer and a Landscape Hole Material (opacity mask)
+  clip the surface; collision drops the quads under the painted vertices. Lower LODs read a mip of the mask, so
+  holes go blocky with distance; Epic's own guidance for caves is a hole plus a static mesh entrance that hides the
+  hole's quad edges (UE docs "Landscape Visibility Tool"; forum reports of collision offset by half a quad).
+- **Unity HDRP/URP terrain holes** (2019.3+): a hole texture at heightmap resolution, clipped in the pixel shader
+  (so it holds at every LOD) and honoured by the TerrainCollider; the jagged edge is again hidden by meshes.
+- **Terrain3D**: bit 2 of its control map is a hole (`Terrain3DData.set_control_hole(global_position, enable)`,
+  then `update_maps(TYPE_CONTROL)`; `get_surface_height` and `get_mesh_vertex` answer NaN there); resolution is the
+  vertex spacing. Collision follows `Terrain3DCollision.update()`.
+- **PhysX heightfields** take holes as `PxHeightFieldMaterial::eHOLE` per triangle; our PhysX backend already
+  turns NaN heights in a HeightMapShape3D into holes (Jolt's rule).
+
+What fits us: the hole is per height sample (every triangle touching a hole sample is dropped, as Terrain3D and
+UE do), and the cave mouth block covers its edges, as UE and Unity both recommend. Clip-in-shader holes do not suit path tracing (geometry that is not there must not be in the BLAS), so the triangles are left out of the mesh,
+and a chunk holding a hole keeps its finest level so the hole does not grow or close with distance (one chunk
+of 64 quads at full detail costs little).
+
+Plan:
+1. **TerrainGenerator3D holes**: `add_hole(transform, size)` (an oriented box), `clear_holes()`,
+   `is_hole(position)` (the ground at that x, z lies inside a hole box), signal `holes_changed(rect)`. Holes live
+   with the generator so every reader of its ground (Landscape3D, vegetation, water, rocks) can ask.
+2. **Landscape3D**: hole samples from the source's holes (or `set_hole(position, enabled)` for an image source);
+   triangles touching one are left out at level 0; such chunks stay at level 0; collision gets NaN heights there
+   (min/max exclude them); `holes_changed` rebuilds only the chunks it covers.
+3. **Cave mouths**: the portal block is set into the slope (its front at the face) instead of standing in front
+   of it; the generator exports the passage's box as mesh meta, and RockField3D adds it as a hole, so the
+   terrain inside the passage goes and the block's rock hides the rest. Vegetation skips holes.
+4. **Terrain3D**: optional and by name (never bundled, compiles without it): RockField3D `terrain3d` node path;
+   each cave's hole is written with `set_control_hole` over the vertices inside its box, then
+   `update_maps(TYPE_CONTROL)` and the collision update.
+5. Cave mouths on by default once the holes hold in a raster and a PT frame. Water in sea caves goes to the water
+   thread through the coordinator.
+
+## Real caves behind the mouths (16 Nov): research
+
+Paulo (16 Nov, card): build real caves behind the cave mouths: tunnels and chambers under the terrain, joined to
+the holes, including sea caves that water can fill later.
+
+The terrain is a heightfield, so nothing can sit under it. Every engine that keeps a heightfield does caves the
+same way: the cave is separate geometry under the ground, and the ground gets a hole where they meet.
+- **Unreal / Unity**: landscape hole plus a cave mesh (hand-made, or from Voxel Plugin's SDF tools). Red Dead
+  Redemption 2, Horizon and Far Cry all use authored cave meshes behind terrain holes.
+- **Full voxel terrain** (Voxel Plugin, Zylann's Voxel Tools for Godot, No Man's Sky, Astroneer) would replace
+  Landscape3D, Terrain3D support and every system that reads `get_height`. Too large a change for caves alone.
+  Rejected.
+
+What to build (the published method): **Paris, Peytavie, Guérin, Collon, Galin, "Synthesizing Geologically
+Coherent Cave Networks", Computer Graphics Forum 40(7), Pacific Graphics 2021**.
+- **Key points** are the entrances and exits. For us: the cave mouths (springs at cliff feet, already holes), sea
+  cave mouths, and sinks (shafts) on limestone benches.
+- **Points** are Poisson samples in the bedrock, denser on the inception horizons and the water table. The graph
+  is each point's 40 nearest neighbours.
+- **Paths** come from A* over an anisotropic cost:
+  - c_L = smoothstep(|z − horizon| / r) makes bedding planes cheap. Our horizons are the strata contacts of
+    TerrainGenerator3D (`strata_spacing`, `strata_dip`, `strata_wobble`).
+  - c_F = Σ w_k (1 − (n_k · dir)²) makes travel along joint planes cheap. Our joints: two regional joint directions per area, the
+    same ones the fins and cliff blocks follow.
+  - c_π is permeability.
+- **Skeleton**: the γ-skeleton keeps an edge (a, b) only if no key point k has d(a,k)^γ + d(k,b)^γ < d(a,b)^γ.
+  γ = 2 gives branchwork caves; γ below 1 gives mazes. Extra random dead-end and interior points then add
+  side passages. Tortuosity is midpoint displacement of up to 4 m (θ).
+- **Passage types** depend on height against the water table:
+  - above it (vadose): canyons, keyholes and shafts;
+  - below it (phreatic): tubes and bedding-plane passages;
+  - breakdown chambers where the rock is weakest.
+  - Radius is 0.5 to 4 m (epikarst 0.5 m).
+- **Geometry** is a signed distance field. Each passage is a profile swept along a segment:
+  d = √(s² + d_C²), with s the distance past the segment's ends and d_C the 2D distance to the profile. Curved
+  passages use unions of spheres. The cave is subtracted from the rock.
+- **Cost in the paper**: skeleton under 1 s, field 3 to 8 s, and polygonising 1 × 1 × 0.4 km at 0.5 m takes about
+  2 min (one CPU). That is too slow to do at once, so we mesh per chunk, near the player only, on workers.
+
+Paris 2021 leaves out the small features (scallops, speleothems). We add them as real geometry (Paulo's
+preference):
+- wall roughness from noise displacement of the field (scallop size set by the flow speed, Curl 1974);
+- stalactites and stalagmites as instanced meshes on drip points under the roof (density from the water above);
+- flowstone as a smooth field offset on the walls;
+- breakdown blocks in chambers from RockField3D's own stone shapes, so they break with Blast like other stones;
+- sediment floors that fill the bottom of tubes flat.
+
+**Sea caves** (coastal geomorphology: Trenhaile, *Coastal Dynamics and Landforms*; Moore 1954): wave quarrying
+along a joint or fault at the notch level gives these features:
+- short passages, mostly under 100 m, widest at the mouth;
+- the floor at or below low tide, so the sea comes in;
+- blowholes where the roof meets the surface.
+
+They come from the same field, with key points on coast cliffs over 0.8–12 m deep water (the coast layer's rule).
+Their water is the water thread's job (through the coordinator).
+
+**Meshing**: surface nets (Gibson 1998) on 0.25 m cells near the player and coarser further away. Chunks have
+shared seams, and a chunk's level steps by one at most (Transvoxel-style transition cells, Lengyel 2010). Surface
+nets gives one vertex per cell, which keeps the walls smooth. That suits path tracing: the triangles go in the BLAS
+like any mesh, so PT keeps the same detail as raster. Collision is a trimesh per chunk.
+
+**Joining the terrain**:
+- each cave mouth's `rock_cave` box is a key point, and the passage starts at its back face;
+- shafts that reach the ground add a TerrainGenerator3D hole (Landscape3D and Terrain3D both cut it);
+- vegetation and stones already skip holes.
+
+Plan (new node `CaveNetwork3D` in modules/rocks; reads the TerrainGenerator3D and the RockField3D; `caves` off by
+default until the PC measures its cost):
+1. **Network**: key points, Poisson samples, cost, A*, γ-skeleton, amplification, passage types. Bench
+   `--caves --cave-graph` draws the skeleton.
+2. **Geometry**:
+   - swept profiles (tube, canyon, keyhole, bed);
+   - chambers;
+   - roughness;
+   - chunked surface nets with LOD and seams;
+   - collision;
+   - limestone material shared with the rocks.
+   The network joins the cave mouths. Raster and PT frames inside.
+3. **Detail and sea caves**: speleothems, breakdown, sediment floors, sea caves and blowholes. Shafts open holes.
+   Water handed to the water thread.

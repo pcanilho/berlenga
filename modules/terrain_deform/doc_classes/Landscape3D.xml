@@ -75,6 +75,18 @@
 				The full-detail ground under [param global_position], bilinear between grid points.
 			</description>
 		</method>
+		<method name="get_hole_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Chunks holding a hole of the source [TerrainGenerator3D] (see [method TerrainGenerator3D.add_hole]). Triangles whose centre lies in a hole quad (tested at the quad's centre) are left out of their meshes, and their collision has NaN heights where all four quads round a sample are holes (a hole for every physics backend); these chunks keep the finest level at any distance, so a hole keeps its shape.
+			</description>
+		</method>
+		<method name="get_hole_quad_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Quads inside the source's holes.
+			</description>
+		</method>
 		<method name="get_lod_count" qualifiers="const">
 			<return type="int" />
 			<description>
