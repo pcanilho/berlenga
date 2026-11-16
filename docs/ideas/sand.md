@@ -215,8 +215,10 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
   damp sand the wheels dig in too, which real packed sand likely resists better. Light crates barely sink,
   so they barely plough.
 - `--view=ruts` renders a 4x4's S-curve through the ground; the PT frame matches raster detail. Found while
-  building it: turning `RenderingServer.render_loop_enabled` off with a GPU ground field running crashes
-  (an index out of bounds); not chased yet.
+  building it and fixed: with `RenderingServer.render_loop_enabled` off the device advances no frames, so
+  no async read back lands, and the field queued one each step until the device's download staging blocks
+  overran (a crash, ground and snow alike). Now one read back of each kind is in flight at a time; a check
+  in `--test` runs the loop off for 2 s.
 
 ### Stage 2: grains that move (hybrid height field and MPM, Holz 2009)
 

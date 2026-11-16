@@ -129,6 +129,9 @@ private:
 	PackedFloat32Array collision_heights;
 	Vector2 collision_center;
 	bool field_ready = false;
+	// Render thread only: an async read back asked for and not yet landed.
+	bool field_in_flight = false;
+	bool collision_in_flight = false;
 	PackedByteArray field_packed;
 	Vector2i field_origin;
 
