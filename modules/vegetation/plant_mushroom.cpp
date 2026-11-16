@@ -202,12 +202,12 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			// Thin-fleshed: convex with an in-rolled rim when young, flattening with age to a low
 			// umbo and a thin, wavy, finely lined margin (not the thick, pillowy rolls of a bolete).
 			m.cap_r = _rand(0.02f, 0.05f) * Math::lerp(0.55f, 1.0f, open);
-			m.cap_h = m.cap_r * Math::lerp(0.45f, 0.1f, open);
-			m.cap_thick = m.cap_r * Math::lerp(0.1f, 0.06f, open);
-			m.dome = Math::lerp(0.75f, 0.3f, open);
+			m.cap_h = m.cap_r * Math::lerp(0.38f, 0.08f, open);
+			m.cap_thick = m.cap_r * Math::lerp(0.08f, 0.05f, open);
+			m.dome = Math::lerp(0.6f, 0.25f, open); // A flatter shoulder: high domes read as bread rolls.
 			m.umbo = Math::lerp(0.02f, 0.22f, open);
-			m.curl = m.cap_r * Math::lerp(0.1f, -0.02f, open);
-			m.wave = Math::lerp(0.004f, 0.03f, open);
+			m.curl = m.cap_r * Math::lerp(0.07f, -0.03f, open);
+			m.wave = Math::lerp(0.002f, 0.022f, open);
 			m.wave_k = int(_rand(6.0f, 9.99f));
 			m.gills = 40;
 			m.gill_depth = m.cap_r * 0.12f;
@@ -223,8 +223,8 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.ring_tint = Color(1.0f, 0.9f, 0.62f); // Cottony, cream to yellowish (a pure white read as a blob in sun).
 			m.cap_centre = Color(0.32f, 0.22f, 0.16f); // Dark tawny brown over the boss.
 			m.cap_margin = Color(1.22f, 1.25f, 1.3f); // Pale honey yellow at the rim.
-			m.cap_fade = 1.0f; // The brown reaches well out: about half the cap.
-			m.fibrils = 0.2f;
+			m.cap_fade = 0.6f; // The brown reaches well out: about half the cap.
+			m.fibrils = 0.3f; // Matt, finely fibrillose: the streaks break up the sheen.
 			m.moist_band = rng.randf() < 0.5f ? _rand(0.1f, 0.25f) : 0.0f; // Some caps still damp at the rim.
 			m.bulb = 0.55f; // The foot swells where it fuses with its neighbours.
 			{
@@ -474,7 +474,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 	// Scales (honey fungus): small, dark brown fibrillose tufts crowded at the centre and thinning
 	// out to the margin: each a fine hair-like filament lying out from the centre, its tip lifted
 	// (erect at the centre, flatter outward), not a loose dot.
-	const int scale_n = int(p_m.scales * Math::lerp(140.0f, 320.0f, MIN(R / 0.05f, 1.0f)));
+	const int scale_n = int(p_m.scales * Math::lerp(90.0f, 200.0f, MIN(R / 0.05f, 1.0f)));
 	for (int w = 0; w < scale_n; w++) {
 		const float x = 0.65f * Math::pow(_rand(0.0f, 1.0f), 2.4f);
 		const float a = _rand(0.0f, Math::TAU);
@@ -492,11 +492,11 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		}
 		n.normalize();
 		const Vector3 out = (pn - p).normalized();
-		const float r = R * _rand(0.009f, 0.016f) * Math::lerp(1.2f, 0.7f, x);
-		const float len = R * _rand(0.05f, 0.09f) * Math::lerp(1.0f, 0.75f, x);
+		const float r = R * _rand(0.006f, 0.011f) * Math::lerp(1.2f, 0.7f, x);
+		const float len = R * _rand(0.04f, 0.07f) * Math::lerp(1.0f, 0.75f, x);
 		// Lying out from the centre, the tip lifting more near the centre; a little sideways jitter.
 		const Vector3 side = n.cross(out).normalized();
-		const float lift = Math::lerp(0.9f, 0.35f, MIN(x / 0.65f, 1.0f));
+		const float lift = Math::lerp(0.6f, 0.15f, MIN(x / 0.65f, 1.0f)); // Pressed to the cap but for the centre.
 		const Basis sf = mushroom_frame((out + n * lift + side * _rand(-0.35f, 0.35f)).normalized());
 		LocalVector<Transform3D> one;
 		one.push_back(Transform3D(sf, p - n * r * 0.5f));
@@ -506,10 +506,11 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		sp.push_back(Vector2(0.0f, len));
 		LocalVector<Color> sc;
 		// Dark brown fibrils (the centre surface is pale, so these factors stay low: lit from above, lighter ones read as pale grit).
-		const float dark = _rand(0.06f, 0.1f);
+		// Brown, not black: on the brown centre they read as a felt, not pepper (docs, 16 Nov).
+		const float dark = _rand(0.3f, 0.45f);
 		sc.push_back(Color(dark * 1.3f, dark * 0.95f, dark * 0.6f));
 		sc.push_back(Color(dark * 1.25f, dark * 0.9f, dark * 0.55f));
-		sc.push_back(Color(dark, dark * 0.72f, dark * 0.45f));
+		sc.push_back(Color(dark * 1.1f, dark * 0.78f, dark * 0.48f));
 		_add_lathe(SURFACE_CENTRE, one, sp, sc, 4, 0.0f, 1, 0.0f, 1.0f);
 	}
 }
@@ -550,7 +551,9 @@ void PlantGenerator::_build_mushrooms() {
 			break;
 	}
 	for (int i = 0; i < count; i++) {
-		const float age = _rand(0.1f, 1.0f);
+		// A clump is mostly open caps, a few still convex (young convex caps crowding it read as rolls).
+		const float u = _rand(0.0f, 1.0f);
+		const float age = tuft ? 1.0f - 0.9f * (1.0f - u) * (1.0f - u) : Math::lerp(0.1f, 1.0f, u);
 		const MushroomForm m = _mushroom_form(age);
 		float d = i == 0 ? 0.0f : spread * Math::sqrt(_rand(0.15f, 1.0f));
 		float a = _rand(0.0f, Math::TAU);
