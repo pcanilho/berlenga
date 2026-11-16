@@ -74,3 +74,20 @@ desktop is back. Every step is checked with raster and path-traced 100% crops of
   fixed steps, also through blocks that hold no gas. The view march already jumps over empty blocks through
   Flow's sparse table (as the path tracer does, Hofmann et al. 2024); the shadow pass should do the same, which
   keeps the result and cuts steps to the gas that is there. Measured in the cloud as steps per texel.
+
+## Next: one volumetric shadow map for the sun, and edge upsampling (16 Nov 2026)
+
+- **Sun light inside the gas from the shadow map.** The scattering pass marches 4 steps over 4 m toward the
+  sun from every sample: 4 density fetches each, and no self-shadow from gas further than 4 m away. Frostbite
+  (Hillaire 2015) lights its media from a volumetric shadow map: a light-space 3D texture of transmittance,
+  built once per frame, read with one filtered fetch by both the media and the opaque surfaces. Unreal's
+  heterogeneous volumes cache the same per light. The Beer map from step 3 only keeps the total and the front
+  and back depths, which assumes the gas is uniform along the light; that is fine for surfaces behind the gas
+  but not for points inside it. It becomes a 128 x 128 x 32 map of optical depth from the sun's side (one
+  R16F 3D texture, 1 MB), marched as before (empty blocks skipped). The scattering pass reads it with one fetch
+  (with the multiple-scattering octaves on top) and falls back to its march for other directional lights; the
+  opaque pass reads exp(-optical depth) at its own depth, with no uniform-gas assumption.
+- **Edges at quarter resolution.** The upsample blends the four nearest scattering texels by depth
+  similarity, so where the gas thins out over one texel the result shows the texel grid. The established
+  refinement is a wider joint bilateral upsample (Kopf et al. 2007): 3x3 texels, a Gaussian spatial weight
+  instead of the bilinear tent, and the same depth-similarity weight, so the texel grid no longer shows.

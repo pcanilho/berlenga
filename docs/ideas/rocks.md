@@ -372,3 +372,61 @@ outline more than by surface:
   that leans to one side; above the springing its outline steps where roof blocks fell; its edges are ragged. The
   deck sags over the span (a quarter to a half of the rock above the opening, never thinner than 0.4c) and dips
   along the ridge.
+
+## Mineral glints (round 3, 16 Nov)
+
+The close-up crystals (granite's quartz and feldspar cleavage, tilted up to ~45 degrees, rough 0.12) flash only while
+a pixel is finer than a crystal (footprint under ~3 cm): past that the crystal map fades to the mean and the sparkle
+is gone, though a sunlit granite boulder at 10 to 50 m visibly glitters. Published models:
+- **Jakob et al. 2014** (discrete stochastic microfacets) and **Yan et al. 2014/2016** (position-normal
+  distributions): the references; offline.
+- **Zirr and Kaplanyan 2016** (real-time glints): counts facets per pixel footprint with a binomial law per cell of
+  a multiscale grid.
+- **Chermain et al. 2020** (Procedural physically based BRDF for real-time rendering of glints, Pacific Graphics):
+  multiscale procedural microfacet slopes from a dictionary of 1D distributions, converging to the smooth GGX as the
+  footprint grows; energy-conserving, filtered over the footprint.
+- **Deliot and Belcour 2023** (Real-time rendering of glinty appearances using distributed binomial laws on
+  anisotropic grids, HPG): the same convergence with no dictionary, cheaper; Unity's take.
+The engine already has the reduced Deliot and Belcour counting for snow (snow_glint: one facet per footprint cell,
+weight share / chance / sqrt(share n), a coat lobe in raster) and an exact facet per grain under the path tracer
+(SPECULAR_NORMAL). Minerals use the same: Chermain's convergence argument with Deliot and Belcour's counting, so it
+is one technique engine-wide.
+- Raster, past the resolved crystals: rk_glint() counts crystals (1.8 cm on granite, share 0.45 glossy: quartz plus a
+  third of feldspars; 2 x speck size, share 0.12 on the other rocks: quartz and mica grains) per footprint cell up
+  to 32 crystals a cell, the facet GGX-tilted (alpha 0.6), drawn in the clear-coat lobe (F0 0.04, minerals about
+  0.045) with NORMAL_MAP solved back onto the stone's normal so its own shading is unchanged.
+- Path tracer: the facet of the crystal each sample hits, in the base specular only (SPECULAR_NORMAL), rough 0.12;
+  its samples count the footprint's crystals themselves.
+- Covered by lichen, moss, water film, snow and the ground's dust; dulled to 35% on the weathered rind.
+- `RockField3D.mineral_glints` (off until its GPU cost is timed on the PC; on in the bench); bench `--no-glints`. `ground_blend` likewise.
+
+## Landforms (round 3, 16 Nov): plan
+
+Bedrock forms bigger than a boulder but smaller than the terrain grid, each tied to a rock and a setting:
+- **Hoodoos** (Bryce Canyon; Twidale and Campbell 2005; Schumm's badlands): columns 2 to 40 m of soft, bedded rock
+  under a harder caprock that shields them; frost wedging along joints separates fins into columns (Bryce sees 200+
+  freeze-thaw cycles a year). Shape: a jointed column, beds recessed unevenly (soft beds deeply, so the column
+  "beads"), narrowing to a neck below a wider caprock that overhangs. Setting: soft bedded rock (sandstone,
+  limestone, mudstone) on steep, bare, gullied slopes (high rock exposure, 20 to 45 degrees, high drainage density),
+  in rows along the joints, at amphitheatre heads.
+- **Goblins** (Goblin Valley, Entrada sandstone): 1 to 6 m knobs, rounded by spheroidal weathering and sand blast,
+  mushroom heads on narrower necks, scattered on a flat, bare valley floor between mesa walls.
+- **Inland arches** (Arches NP; Ostanin et al. 2017, Nature Geoscience: stress shapes arches, the load arching round
+  the weak bed): sandstone fins 3 to 10 m thick in parallel rows along one joint set; a fin's weaker lower bed
+  weathers through (alcove first, then a window) and the opening's roof follows the stress arch (a smooth catenary
+  head, not stepped). Setting: sandstone, gentle bare bedrock (slope under 15 degrees).
+- **Clints and grykes** (limestone pavement; Williams 1966, Goldie 2005): glacially scoured flat limestone dissolved
+  along two joint sets into blocks (clints, 0.5 to 3 m) between slots (grykes, 0.1 to 0.5 m wide, 0.5 to 2 m deep),
+  clint tops fluted with runnels (rinnenkarren) and pans (kamenitza). Setting: limestone, flat (under 8 degrees),
+  bare or under thin soil, where ice scoured (the generator's ice flow map, else high exposure on flat ground).
+- **Potholes** (Richardson and Carling 2005, "A typology of sculpted forms in open bedrock channels"): round,
+  steep-walled hollows 0.2 to 3 m wide drilled by grinders (cobbles whirled by the flow) into bedrock river beds at
+  steps and constrictions, often in lines, sometimes breached into each other; a grinder stone left inside.
+  Setting: bedrock channels (rock exposure, steep reach, the river layer's beds).
+- **Cave mouths** (Ford and Williams 2007): in limestone cliffs, along a bedding plane or a joint intersection; an
+  arched or bedding-flat roof, breakdown blocks on the floor at the entrance, a dark interior. Setting: limestone
+  cliff faces (the generator's cliff points), at the foot or along a bed.
+Build: RockGenerator families (hoodoo, goblin, fin, pavement, pothole slab, cave mouth) on the same jointed implicit
+field as the coast forms (Paris et al. 2020), and a RockField3D landform layer placing them from the geology, slope,
+rock type and drainage, as the coast layer does. Order: pavement and hoodoos first (the most common), then fins and
+arches, goblins, potholes, cave mouths.

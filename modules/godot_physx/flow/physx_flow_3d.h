@@ -159,7 +159,7 @@ private:
 	// The directional lights through the same pass, with their shadow cascades (see
 	// FlowScatterRD::Params::directional_count). Off: Flow's colormap carries the first one.
 	bool sun_scattering = false;
-	// The gas shadows the scene from the first directional light: a Beer shadow map over the grid
+	// The gas shadows the scene from the first directional light: a volumetric shadow map over the grid
 	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
 	bool cast_shadows = false;
 	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
@@ -202,6 +202,7 @@ private:
 	bool traced_this_frame = false; // render thread only
 	// The sun the gas shadows the scene from (its light RID and the world direction toward it).
 	RID shadow_light;
+	bool shadow_light_casts = false; // it casts shadows (the gas then shadows the scene from it)
 	Vector3 shadow_to_light;
 	LocalVector<FlowScatterRD::Light> scatter_lights;
 	void _gather_scatter_lights();

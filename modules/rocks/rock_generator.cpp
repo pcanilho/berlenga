@@ -1944,6 +1944,8 @@ uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
 uniform vec3 ground_alluvium = vec3(0.064, 0.06, 0.022);
 uniform vec3 ground_sand = vec3(0.448, 0.342, 0.181);
 uniform float ground_alluvium_area = 5.5;
+// Mineral glints (docs/ideas/rocks.md): the glossy crystals past the distance where they are drawn one by one.
+uniform bool mineral_glints = false;
 // The sea's mean level (none below -1e4) and its tidal range in metres: stones reaching it carry the shore zones.
 uniform float sea_level = -100000.0;
 uniform float tide_range = 2.0;
@@ -1959,6 +1961,40 @@ varying float v_scale;
 varying vec3 v_origin;
 varying vec2 v_slope;
 varying float v_random;
+
+// Glints of crystals smaller than the pixel, counted per cell of the pixel's footprint (Zirr and Kaplanyan 2016;
+// Deliot and Belcour 2023, reduced to one facet per cell, as snow_glint() does for ice): a cell holding n crystals
+// has a glossy one with chance min(share n, 1), covering share / chance of it, its normal GGX-tilted (alpha 0.6:
+// cleavage planes up to about 45 degrees off the face). Returns the facet (world) and its weight (0: none).
+vec4 rk_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_grain, float p_share) {
+	float level = floor(max(log2(max(p_footprint, p_grain) / p_grain), 0.0));
+	if (level > 5.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = p_grain * exp2(level);
+	ivec3 q = ivec3(floor(p_pos / cell));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (uint(level) * 2654435761u) ^ 0x5bd1e995u;
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(p_share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.36 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	return vec4(normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st), p_share / chance / sqrt(max(p_share * grains, 1.0)));
+}
 
 float rk_hash3(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
@@ -2083,11 +2119,13 @@ void fragment() {
 	float near_grain = 1.0 - smoothstep(0.5 * speck_size, 2.0 * speck_size, footprint);
 	float speck_mix = speck_share;
 	float crystal_gloss = 0.0;
+	float resolved = 0.0; // how far the crystals are drawn one by one (1: all)
 	vec3 facet = vec3(0.0); // crystal facet tilt, in the stone's frame
 	if (crystal_map) {
 		// In the stone's frame at its own size (see mpu_marks), as the geometry was carved.
 		vec3 mg = lp * mpu_marks;
 		float near_crystal = 1.0 - smoothstep(0.006, 0.03, footprint);
+		resolved = near_crystal;
 		float quartz = 0.3;
 		speck_mix = 0.07;
 		if (near_crystal > 0.0) {
@@ -2160,6 +2198,7 @@ void fragment() {
 
 	// Ground contact: soil splashed up and damp where the stone sits in it.
 	float contact = 0.0;
+	float ground_cover = 0.0;
 	if (v_custom.z > 0.0) {
 		// The ground under this point: the plane through the stone's foot along the slope there.
 		float above = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
@@ -2190,6 +2229,7 @@ void fragment() {
 			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;
+			ground_cover = gb;
 		}
 	}
 	col *= mix(0.55, 1.0, cavity);
@@ -2248,11 +2288,66 @@ void fragment() {
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);
 	snow_cover_apply(sw, snow_s.y, snow_s.z, col, rough, metallic, specular);
 
+	vec3 n_view = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+	NORMAL = n_view;
+	// Mineral glints (Chermain et al. 2020; Deliot and Belcour 2023): past the distance where the crystals are drawn
+	// one by one, the glossy ones (quartz, feldspar cleavage; on other rocks quartz and mica grains) still flash.
+	// Crusts, moss, a water film, snow and the ground's dust cover them; the weathered rind dulls them.
+	float glint_ok = (1.0 - lic) * (1.0 - moss) * (1.0 - sw) * (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - ground_cover) * mix(0.35, 1.0, fresh) * (1.0 - resolved);
+	if (mineral_glints && glint_ok > 0.0) {
+		// Crystal size in metres on this stone (the marks' map is laid out at mpu_marks, the stone drawn at v_scale).
+		float gd = crystal_map ? 0.018 * v_scale / max(mpu_marks, 1e-4) : 2.0 * speck_size;
+		float gshare = crystal_map ? 0.45 : 0.12;
+		if (IN_PATH_TRACER) {
+			// Exact: the facet of the crystal each sample lands on (the path tracer's samples count the footprint's
+			// crystals themselves, at any distance and bounce), in the base specular only (the diffuse keeps NORMAL).
+			ivec3 q = ivec3(floor(v_world / gd));
+			uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ 0x2545f491u;
+			h ^= h >> 16u;
+			h *= 0x7feb352du;
+			h ^= h >> 15u;
+			h *= 0x846ca68bu;
+			h ^= h >> 16u;
+			if (float(h & 0x3ffu) / 1023.0 < gshare) {
+				float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+				float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+				float tan2 = 0.36 * r1 / max(1.0 - r1, 1e-3);
+				float ct = inversesqrt(1.0 + tan2);
+				float st = sqrt(max(1.0 - ct * ct, 0.0));
+				vec3 t = normalize(cross(wn, abs(wn.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+				vec3 b = cross(wn, t);
+				float phi = 6.2831853 * r2;
+				vec3 f = normalize(wn * ct + (t * cos(phi) + b * sin(phi)) * st);
+				SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(normalize(mix(wn, f, glint_ok)), 0.0)).xyz);
+				rough = mix(rough, 0.12, glint_ok);
+			}
+		} else {
+			// Raster: the counted facet as a second, near-mirror lobe (the coat's, which takes NORMAL before NORMAL_MAP
+			// as its normal), weighted by the share of the pixel it covers; NORMAL_MAP is solved to land back on the
+			// stone's own normal, so its shading is unchanged. Quartz and feldspar F0 about 0.045: the coat's 0.04.
+			vec4 g = rk_glint(v_world, wn, footprint, gd, gshare);
+			float gw = g.w * glint_ok;
+			if (gw > 0.0) {
+				vec3 f = normalize((VIEW_MATRIX * vec4(g.xyz, 0.0)).xyz);
+				vec3 t = normalize(cross(f, abs(f.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+				vec3 b = cross(f, t);
+				vec3 k = vec3(dot(n_view, t), dot(n_view, b), dot(n_view, f));
+				if (k.z > 0.05) {
+					NORMAL = f;
+					TANGENT = t;
+					BINORMAL = b;
+					NORMAL_MAP = vec3(k.xy * 0.5 + 0.5, 1.0);
+					NORMAL_MAP_DEPTH = 1.0;
+					CLEARCOAT = 0.6 * min(gw, 1.0); // (its ambient term sees no per-facet occlusion: held under the full coat)
+					CLEARCOAT_ROUGHNESS = 0.3;
+				}
+			}
+		}
+	}
 	ALBEDO = col;
 	ROUGHNESS = rough;
 	METALLIC = metallic;
 	SPECULAR = specular;
-	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 }
 )";
 	return c;

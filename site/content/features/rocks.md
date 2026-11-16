@@ -19,7 +19,8 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Close-up detail: the same granite face gains crystal relief, pits, hairline cracks and a broken top edge.*
 
-- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_blend`, `ground_blend_height`, `ground_material`): stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
+- **Mineral glints** (`RockField3D.mineral_glints`, off by default): glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.
+- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_blend` (off by default), `ground_blend_height`, `ground_material`): stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
 
 ## Placement
 

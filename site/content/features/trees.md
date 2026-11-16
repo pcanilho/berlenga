@@ -15,7 +15,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
 - **Stand and open forms** (`forest_shade`, `forest_spacing`): trees grown in a closed stand shed their lower limbs to a long clear bole under a narrow crown; open-grown trees keep leaves down to their lower limbs.
 - **Conifer crowns** (`crown_cone`): spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.
-- **Stands** (`make_stand`, `make_woodland`): ten stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
+- **Stands** (`make_stand`, `make_woodland`): thirteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
 - **Pollards and coppice** (`cut_height`, `cut_cycle`, `cut_since`): trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.
 - **Shrubs and hedges** (`stems`, `envelope`): many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.
 - **Clearings** (`mask_channel`): painted clearings and paths keep trees and shrubs out.
@@ -36,7 +36,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
-- **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches and berries on stalks in season; mistletoe on its hosts and witches' brooms as twig nests on birches.
+- **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.
 - **Bark lichen** (`lichen_cover`): lichen on bark, placed by height, crown light, stem age and moss; beard lichens and oakmoss hang from and stand off crown twigs on near trees. 0 turns it off.
 
   ![An oak's bole without and with lichen, raster](media/trees-lichen.jpg)

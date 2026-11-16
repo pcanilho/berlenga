@@ -322,9 +322,9 @@ layout(set = 0, binding = 20) uniform texture2D area_light_atlas;
 
 layout(set = 0, binding = 21) uniform texture2DArray volumetric_fog_noise;
 
-// A directional light's shadow through participating media (LightStorage::VolumeShadow): r transmittance
-// through the whole medium, g and b the depths (0..1 along the light) where it begins and ends.
-layout(set = 0, binding = 22) uniform texture2D volume_shadow_texture;
+// A directional light's shadow through participating media (LightStorage::VolumeShadow): the optical depth
+// from the light's side over the medium's box (u, v across the light, depth along it).
+layout(set = 0, binding = 22) uniform texture3D volume_shadow_texture;
 /* Set 1: Render Pass (changes per render pass) */
 
 layout(set = 1, binding = 0, std140) uniform SceneDataBlock {

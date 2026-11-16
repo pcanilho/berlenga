@@ -2280,6 +2280,7 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 	static const char *names[5] = { "rock", "scree", "soil", "alluvium", "sand" };
 	static const Color defaults[5] = { Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46) };
 	p_material->set_shader_parameter("ground_blend", ground_blend);
+	p_material->set_shader_parameter("mineral_glints", mineral_glints);
 	p_material->set_shader_parameter("ground_blend_height", ground_blend_height);
 	for (int i = 0; i < 5; i++) {
 		Color c = defaults[i];
@@ -2329,6 +2330,13 @@ void RockField3D::_remeasure_sea() {
 	Node *sea = gen ? gen->get_sea_node() : nullptr;
 	if (sea && sea->has_method("remeasure_seabed") && bool(sea->get("seabed_from_floor"))) {
 		sea->call("remeasure_seabed");
+	}
+}
+
+void RockField3D::set_mineral_glints(bool p_enabled) {
+	mineral_glints = p_enabled;
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		_apply_ground(kv.value);
 	}
 }
 
@@ -2454,6 +2462,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_variants"), &RockField3D::get_variants);
 	ClassDB::bind_method(D_METHOD("set_detail", "detail"), &RockField3D::set_detail);
 	ClassDB::bind_method(D_METHOD("get_detail"), &RockField3D::get_detail);
+	ClassDB::bind_method(D_METHOD("set_mineral_glints", "enabled"), &RockField3D::set_mineral_glints);
+	ClassDB::bind_method(D_METHOD("is_mineral_glints"), &RockField3D::is_mineral_glints);
 	ClassDB::bind_method(D_METHOD("set_coast_collision", "enabled"), &RockField3D::set_coast_collision);
 	ClassDB::bind_method(D_METHOD("is_coast_collision"), &RockField3D::is_coast_collision);
 	ClassDB::bind_method(D_METHOD("set_ground_blend", "enabled"), &RockField3D::set_ground_blend);
@@ -2534,6 +2544,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_blend"), "set_ground_blend", "is_ground_blend");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mineral_glints"), "set_mineral_glints", "is_mineral_glints");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_blend_height", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_ground_blend_height", "get_ground_blend_height");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_ground_material", "get_ground_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
