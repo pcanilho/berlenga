@@ -763,3 +763,26 @@ ground), 14 s on the cloud machine without a GPU. Streaming near the camera and 
 
 Fixes in the same commit: stones on slopes are seated on the lowest band of their hull (no more hovering talus), and
 the rock field rebuilds cells when the terrain's holes change.
+
+### Caves stage 3: drip formations, scallops, sea caves (16 Nov)
+
+- **Speleothems** (`speleothems`, density, 1 by default; the placement rule of Franke and Müller 2022). Every meshed
+  wall vertex under a roof (normal facing down) is a candidate drip point. It is taken more often where the rock
+  above is thin, since thin cover lets more water seep through. It needs a free fall of at least 0.6 m, and there
+  are none within 14 m of an entrance (air exchange dries the walls). Each drip point gets a stalactite and usually
+  a stalagmite where the drop lands; where they would meet, a column. Lengths follow a power law: many short, few
+  long. The shapes are lathed meshes with soft growth rings and a lobed, slowly twisting section, instanced per chunk
+  (MultiMesh), in a wet calcite material. About 340 in one bench cave.
+- **Scallops** (`scallops`, 1 by default): Worley (cellular) hollows 1.2 m across with ridges between them. These
+  are the large scallops of slow phreatic flow (Curl 1974); the small fast-flow ones are below the 0.3 m mesh cell.
+- **Sea caves** (`find_sea_entrances`, `add_sea_cave`; Moore 1954, Trenhaile):
+  - Mouths are cliffs at least 8 m over the sea, with 0.3 to 25 m of water in front. A beach at low tide still
+    floods at high water.
+  - One straight passage along a joint (the facing turned by up to 15 degrees), 35 to 95 m long. It stops where the
+    rock over it or to either side gets thin.
+  - The section is a tall arch (`PASSAGE_SEA`), widest at the mouth, floored 1.5 m below the sea at the mouth and
+    rising to high water at the back.
+  - Half of them end in a chamber. Where its roof is under 25 m thick, a shaft opens to the ground as a blowhole:
+    a terrain hole, see `get_blowholes`.
+  - No speleothems in sea caves (spray and waves).
+  - The water inside comes from the sea itself: the sea reads the cave floor through its terrain holes (#330).

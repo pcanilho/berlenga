@@ -22,6 +22,14 @@
 				Grows a cave from [param entrance] (the mouth's floor at the cliff foot) into the rock behind it ([param out] points away from the cliff). Returns its index, or -1 when there is too little rock behind the entrance. The same entrance and [member seed] always give the same cave.
 			</description>
 		</method>
+		<method name="add_sea_cave">
+			<return type="int" />
+			<param index="0" name="entrance" type="Vector3" />
+			<param index="1" name="out" type="Vector3" />
+			<description>
+				Adds a sea cave at [param entrance] (a cliff foot at the sea, as [method find_sea_entrances] gives), opening toward [param out]. Waves quarry sea caves along a joint at the cliff foot (Moore 1954, Trenhaile). The passage runs straight along the joint for 35 to 95 m. It is a tall arch ([constant PASSAGE_SEA]), widest at the mouth, and its floor lies 1.5 m below the sea at the mouth and rises to high water at the back. Half of them end in a chamber. Where the chamber's roof is under 25 m thick, a shaft breaks through to the ground as a blowhole ([method get_blowholes]), and the terrain gets a hole there. Returns the cave's index, or -1 if the cliff behind is too thin.
+			</description>
+		</method>
 		<method name="build_meshes">
 			<return type="int" />
 			<param index="0" name="area" type="AABB" />
@@ -47,6 +55,21 @@
 			<param index="1" name="max" type="int" default="8" />
 			<description>
 				Cliff feet inside [param rect] where a cave could open. A foot qualifies when a wall of 50 to 76 degrees rises at least 8 m within 12 m of level ground with no water. When [member rock_field] is set, the rock there must also be limestone. Entrances are at least 150 m apart, steepest walls first, and at most [param max] are returned. Each is a [Dictionary] with [code]position[/code] (the mouth's floor) and [code]out[/code] (away from the cliff).
+			</description>
+		</method>
+		<method name="find_sea_entrances" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<param index="1" name="max" type="int" default="4" />
+			<description>
+				Finds sea cave mouths in [param rect] (global x, z): cliffs at least 8 m over the sea, with water 0.3 to 25 m deep in front of them (a beach at low tide still floods at high water) and at least 8 m of cliff 10 m behind the mouth. The mouths are at least 80 m apart and the tallest cliffs come first. Each entry is a [Dictionary] with [code]position[/code] (at sea level) and [code]out[/code] (toward the sea). Returns nothing without a sea.
+			</description>
+		</method>
+		<method name="get_blowholes" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				Where a sea cave's shaft opens at the ground (the terrain has a hole there).
 			</description>
 		</method>
 		<method name="get_cave_count" qualifiers="const">
@@ -119,6 +142,19 @@
 				The cave's passages as straight pieces. Each is a [Dictionary] with [code]a[/code], [code]b[/code], [code]radius_a[/code], [code]radius_b[/code] (half widths in metres) and [code]type[/code] (a [enum PassageType]).
 			</description>
 		</method>
+		<method name="get_speleothem_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many stalactites, stalagmites and columns the meshed chunks hold.
+			</description>
+		</method>
+		<method name="is_sea_cave" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				Whether the cave was added with [method add_sea_cave].
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="bedding_spacing" type="float" setter="set_bedding_spacing" getter="get_bedding_spacing" default="12.0">
@@ -163,11 +199,17 @@
 		<member name="sample_spacing" type="float" setter="set_sample_spacing" getter="get_sample_spacing" default="7.0">
 			Metres between the points sampled in the rock. Smaller spacing gives finer paths and a slower build.
 		</member>
+		<member name="scallops" type="float" setter="set_scallops" getter="get_scallops" default="1.0">
+			Dissolution scallops on the walls: dish-shaped hollows about 1.2 m across with sharp ridges between them, from Worley (cellular) noise. Real scallops are cells of this kind (Curl 1974), and these are the large ones that slow phreatic flow leaves. 0 turns them off.
+		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			The seed. Each cave also takes its entrance's position into its own seed.
 		</member>
 		<member name="side_passages" type="int" setter="set_side_passages" getter="get_side_passages" default="6">
 			How many dead-end side passages are tried, each joined to the network by its least-cost path.
+		</member>
+		<member name="speleothems" type="float" setter="set_speleothems" getter="get_speleothems" default="1.0">
+			How dense the drip formations are, which are instanced meshes in each chunk. A drip point is a roof facing down with a free fall under it, more of them where the rock above is thin, and none within 14 m of the entrance (Franke and Müller 2022). Each drip point gets a stalactite and usually a stalagmite under it, and a column where the two would meet. Lengths follow a power law. 0: none.
 		</member>
 		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="64.0">
 			How far round [member follow_target] chunks are meshed, in metres.
@@ -198,7 +240,10 @@
 		<constant name="PASSAGE_SHAFT" value="5" enum="PassageType">
 			A vertical shaft.
 		</constant>
-		<constant name="PASSAGE_MAX" value="6" enum="PassageType">
+		<constant name="PASSAGE_SEA" value="6" enum="PassageType">
+			A sea cave: a tall arch along a joint, floored below low water.
+		</constant>
+		<constant name="PASSAGE_MAX" value="7" enum="PassageType">
 			The number of passage types.
 		</constant>
 	</constants>
