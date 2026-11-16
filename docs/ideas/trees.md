@@ -1056,6 +1056,34 @@ mistletoe and brooms, which read from far.
     per species length, width and colour (beech a long copper spindle, rowan dark purple and
     conical, ash black, oak clustered), at most two per tip; oak 750k, rowan 254k.
 
+### 5o. Deadwood and bark from the floor (16 Nov; vegetation's asks)
+
+- **Sticks** (`FORM_STICKS`): fine woody debris breaks into pieces as it falls and as it lies, most
+  of them under 1.5 m (Harmon et al. 1986; Woodall and Monleon 2008, FIA fine woody debris tallies
+  by length). A stick is now a 0.35-1.6 m piece of a twig or small branch, snapped at its far end
+  with a fracture face (5j), kinked 6-16 degrees at each node (the zigzag a twig grows bud to bud),
+  litter-stained brown rather than weathered grey, with less moss (thin wood dries between
+  showers). Side shoots standing more than 15 cm up broke off.
+- **Resting on two points**: a laid limb or stick tips about its level line until its underside
+  rests on two points of the ground, then sinks 15% of its radius; the end radius tapers to the
+  next internode's (a tip above the ground read as floating).
+- **Logs settle** (`_settle_log()`): walking out along the bole, each internode that ends above
+  or in the ground turns about its start, with the wood beyond it, toward lying on the ground, by
+  at most 4-7 degrees per internode while sound and 12-30 once soft (Fraver et al. 2002: decay
+  class by ground contact and collapse). A log thrown with its root plate touches down two
+  fifths to three fifths of the way out (sooner once rotten) and lies along the ground beyond,
+  instead of bridging from the plate to its top.
+- **Root plate**: the underside torn in blocks (head-sized relief), 22-32 soil clods per metre of
+  plate radius held in the root mat (smooth subdivided lumps in the soil's colours), 14-29
+  soil-stained stones from grit to head size, 14 torn root stubs per metre of radius standing out
+  of the face with fracture ends, and the laterals out of the soil by most of their girth
+  (Coutts 1983, 1986; Schaetzl et al. 1989 on pit and mound).
+- **Smooth bark films**: beech funnels up to a fifth of the rain down its stem (Levia and Frost
+  2003). The water runs in a few wandering tracks that stay dark and carry green algae
+  (Desmococcus, Trentepohlia); between them the bark is mottled by algae low on the stem and pale
+  crust lichen higher up (Barkman 1958). Vertex colour on stems over 4 cm of smooth or
+  lenticelled bark, wetter in a stand; holds at every LOD and under path tracing.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
