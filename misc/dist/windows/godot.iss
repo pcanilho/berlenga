@@ -1,11 +1,11 @@
-#define MyAppName "Godot Engine"
+#define MyAppName "Berlenga"
 #define MyAppVersion "4.8"
-#define MyAppPublisher "Godot Engine contributors"
-#define MyAppURL "https://godotengine.org/"
+#define MyAppPublisher "Berlenga contributors"
+#define MyAppURL "https://berlenga.canilho.net/"
 #define MyAppExeName "godot.exe"
 
 [Setup]
-AppId={{60D07AAA-400E-40F5-B073-A796C34D9D78}
+AppId={{FC00E23C-9975-4441-B506-22F4717829CB}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ; Don't add "version {version}" to the installed app name in the Add/Remove Programs
