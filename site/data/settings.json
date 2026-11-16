@@ -2104,6 +2104,18 @@
    "topic": "Plants"
   },
   {
+   "name": "Dune plants",
+   "settings": [
+    "PlantGenerator.make_dunes()",
+    "GroundSurface3D.wind_shelters"
+   ],
+   "note": "",
+   "what": "marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Leaf wear",
    "settings": [
     "PlantGenerator.leaf_wear"
