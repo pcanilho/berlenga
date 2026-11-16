@@ -161,6 +161,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept.
 - **Wind ripples** (`GroundSurface3D.wind_ripples`, off by default; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.
 - **Blowing sand** (`GroundStreamers3D`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.
+- **Wet sand** (`GroundSurface3D.water_coupling`, on by default; `water_sources`): water fills the pores of sand below it and drains after; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.
 
   ![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](media/ground-footprints.jpg)
 

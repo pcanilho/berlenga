@@ -1144,6 +1144,18 @@
    "topic": "Ground"
   },
   {
+   "name": "Wet sand",
+   "settings": [
+    "GroundSurface3D.water_coupling",
+    "water_sources"
+   ],
+   "note": "",
+   "what": "water fills the pores of sand below it and drains after; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Terrain deformation",
    "settings": [
     "TerrainDeformer3D",
