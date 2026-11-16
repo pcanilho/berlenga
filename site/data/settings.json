@@ -2179,6 +2179,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Far plants as volume",
+   "settings": [
+    "VegetationField3D.far_volume"
+   ],
+   "note": "",
+   "what": "past their range, plants keep a porous voxel shell of their leaf cover out to 150 m.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Plant impostors",
    "settings": [
     "PlantGenerator.make_impostor()",
