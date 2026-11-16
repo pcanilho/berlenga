@@ -8806,8 +8806,6 @@ static const struct {
 	{ 0.8f, 0.04f, 0.08f },
 };
 
-// The stone the roots drape over (trees.md 5q): an ellipsoid pushed out by noise folded into
-// facets, as the root plate's stones, in the soil surface; sunk so a third of it shows.
 // The stone (trees.md 5q): a RockGenerator boulder when the rocks module is built in (looked up
 // by name, so vegetation does not depend on it), glacial family: subrounded, its faces and
 // fractures real geometry. Fitted to the planned half extents and kept as vertices for the
@@ -12289,6 +12287,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _bark_lods(b);
 			} else if (s == 1) {
 				lods = _leaf_lods(b);
+				if (far_leaves && far_lod1) {
+					_promote_lod1(b, lods);
+				}
 			} else if (s == 3 || s == 6) {
 				lods = _leaf_lods(b, false);
 			} else if (s == 8) {
@@ -12960,6 +12961,89 @@ vec3 plant_wind(vec3 wp, float h) {
 	return m;
 }
 
+// Far meshes from LOD 1 (trees.md 8d): the leaves' LOD 1 (half the leaves, each grown to keep
+// the crown's leaf area; Cook et al. 2007) becomes the surface's own triangles, the coarser
+// levels stay, and vertices only LOD 0 used are dropped. Beyond the near range raster already
+// drew LOD 1 or coarser; the path tracer, which draws LOD 0, now sees LOD 1 there too.
+void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
+	const Variant first = TREE_LODS[0].error;
+	if (!r_lods.has(first)) {
+		return;
+	}
+	r_b.indices = r_lods[first];
+	r_lods.erase(first);
+	const int nv = r_b.verts.size();
+	LocalVector<int> remap;
+	remap.resize(nv);
+	for (int v = 0; v < nv; v++) {
+		remap[v] = -1;
+	}
+	auto mark = [&](const PackedInt32Array &p_idx) {
+		for (int i = 0; i < p_idx.size(); i++) {
+			remap[p_idx[i]] = 0;
+		}
+	};
+	mark(r_b.indices);
+	for (const KeyValue<Variant, Variant> &kv : r_lods) {
+		mark(kv.value);
+	}
+	int n = 0;
+	for (int v = 0; v < nv; v++) {
+		if (remap[v] == 0) {
+			remap[v] = n++;
+		}
+	}
+	const bool tang = r_b.use_tangents && r_b.tangents.size() >= nv * 4;
+	const bool skin = r_b.bones.size() >= nv * 4 && r_b.weights.size() >= nv * 4;
+	for (int v = 0; v < nv; v++) {
+		const int to = remap[v];
+		if (to < 0 || to == v) {
+			continue;
+		}
+		r_b.verts.write[to] = r_b.verts[v];
+		r_b.normals.write[to] = r_b.normals[v];
+		r_b.uvs.write[to] = r_b.uvs[v];
+		r_b.colors.write[to] = r_b.colors[v];
+		for (int k = 0; k < 4; k++) {
+			if (tang) {
+				r_b.tangents.write[to * 4 + k] = r_b.tangents[v * 4 + k];
+			}
+			if (skin) {
+				r_b.bones.write[to * 4 + k] = r_b.bones[v * 4 + k];
+				r_b.weights.write[to * 4 + k] = r_b.weights[v * 4 + k];
+			}
+		}
+	}
+	r_b.verts.resize(n);
+	r_b.normals.resize(n);
+	r_b.uvs.resize(n);
+	r_b.colors.resize(n);
+	if (tang) {
+		r_b.tangents.resize(n * 4);
+	}
+	if (skin) {
+		r_b.bones.resize(n * 4);
+		r_b.weights.resize(n * 4);
+	}
+	auto apply = [&](PackedInt32Array &r_idx) {
+		int32_t *w = r_idx.ptrw();
+		for (int i = 0; i < r_idx.size(); i++) {
+			w[i] = remap[w[i]];
+		}
+	};
+	apply(r_b.indices);
+	Dictionary out;
+	for (const KeyValue<Variant, Variant> &kv : r_lods) {
+		PackedInt32Array idx = kv.value;
+		apply(idx);
+		out[kv.key] = idx;
+	}
+	r_lods = out;
+	// The parts index the old vertices; nothing reads them past this point but keep them sane.
+	r_b.parts.clear();
+	r_b.part_size.clear();
+}
+
 Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 	Dictionary lods;
 	const int s_full_count = r_leaves.indices.size();
@@ -13389,8 +13473,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// meshes, and a copy of this generator, as set up here, builds the full-leaf mesh of a
 		// variant when the field asks for it (request_near_mesh()).
 		const LeafKind leaf_kind = LEAF_FORMS[p_preset].kind;
+		// With far_lod1 every broadleaf splits: its far mesh starts at LOD 1 (trees.md 8d).
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && params[PARAM_NEEDLES] <= 0.5f &&
-				(leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
+				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
 				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK);
 		if (near_split) {
 			Ref<TreeGenerator> src;
@@ -14574,6 +14659,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_near_needle_range"), &TreeGenerator::get_near_needle_range);
 	ClassDB::bind_method(D_METHOD("set_near_leaf_range", "range"), &TreeGenerator::set_near_leaf_range);
 	ClassDB::bind_method(D_METHOD("get_near_leaf_range"), &TreeGenerator::get_near_leaf_range);
+	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
+	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
 	ClassDB::bind_method(D_METHOD("get_near_mesh_count"), &TreeGenerator::get_near_mesh_count);
 	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
@@ -14641,6 +14728,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collider_radius", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_collider_radius", "get_collider_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_needle_range", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_near_needle_range", "get_near_needle_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_leaf_range", PROPERTY_HINT_RANGE, "0,200,0.5,suffix:m"), "set_near_leaf_range", "get_near_leaf_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_lod1"), "set_far_lod1", "get_far_lod1");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");
 	ADD_GROUP("Colors", "");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "bark_color"), "set_bark_color", "get_bark_color");

@@ -236,6 +236,9 @@
 		<member name="fallen" type="bool" setter="set_fallen" getter="is_fallen" default="false">
 			Lays the tree on the ground as a log along a random bearing; limbs that would reach into the ground break off, and on a decayed log ([member decay_class] 3 or more) so do the ones standing up.
 		</member>
+		<member name="far_lod1" type="bool" setter="set_far_lod1" getter="get_far_lod1" default="true">
+			With [member near_leaf_range] above 0, every broadleaf species from [method make_species], [method make_stand] and [method make_woodland] gets far meshes that start at the first coarser leaf level (half the leaves, each grown to keep the crown's leaf area); the full leaves are only in the near mesh. The path tracer then sees the lighter crown beyond the near range, where it matches the full one within half a percent.
+		</member>
 		<member name="forest_shade" type="float" setter="set_forest_shade" getter="get_forest_shade" default="0.0">
 			Side shade from neighbours: 0 grows the tree in the open; around 0.6 grows it in a closed stand.
 		</member>
