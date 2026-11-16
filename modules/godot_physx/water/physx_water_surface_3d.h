@@ -207,6 +207,14 @@ public:
 	int get_crest_spray_amount() const { return crest_spray_amount; }
 	// Droplets a second leaving the crests at the last update (for tests and profiling).
 	float get_crest_spray_rate() const { return crest_spray_rate; }
+	// Torn spray sheets (docs/ideas/water.md "Torn spray sheets"): from a near-gale, thin sheets of water the wind
+	// tears off the folding crests, flying downwind and tearing apart; geometry rebuilt each tick, so the path
+	// tracer sees them. crest_sheet_amount: sheets alive at most.
+	void set_crest_sheets(bool p_enabled);
+	bool get_crest_sheets() const { return crest_sheets; }
+	void set_crest_sheet_amount(int p_amount);
+	int get_crest_sheet_amount() const { return crest_sheet_amount; }
+	int get_crest_sheet_count() const { return (int)sheets.size(); }
 	// The last breaker build: crest points, lip vertices and triangles, the
 	// spray rate (droplets/s) and the CPU time it took (ms).
 	Dictionary get_breaker_stats() const;
@@ -533,6 +541,28 @@ private:
 	void _make_crest_spume();
 	RandomPCG crest_rng;
 	void _update_crest_spray();
+	struct CrestSheet {
+		Vector3 root; // where the sheet leaves the crest (world)
+		Vector3 across; // along the crest (unit, horizontal)
+		Vector3 throw_dir; // horizontal launch direction (unit)
+		float speed = 0.0f; // horizontal launch speed (m/s)
+		float rise = 0.0f; // vertical launch speed (m/s)
+		float span = 1.0f; // metres along the crest at launch
+		float feed = 0.3f; // seconds the root keeps feeding the sheet
+		float life = 1.0f; // seconds
+		float age = 0.0f;
+		float seed = 0.0f;
+	};
+	bool crest_sheets = false;
+	int crest_sheet_amount = 40;
+	LocalVector<CrestSheet> sheets;
+	MeshInstance3D *sheet_instance = nullptr;
+	Ref<ArrayMesh> sheet_mesh;
+	Ref<ShaderMaterial> sheet_material;
+	RandomPCG sheet_rng;
+	float sheet_fold_share = 0.0f;
+	float sheet_spawn = 0.0f;
+	void _update_crest_sheets(float p_dt);
 	void _update_foam_streaks();
 	// The summed cascades' Jacobian (Tessendorf's folding test, as the shader's foam) at the resting point
 	// (p_x, p_z) relative to the grid centre, and the surface point it moves to (relative to the node).

@@ -43,6 +43,12 @@
 				The plunging lips of the last tick: [code]crest_points[/code], [code]vertices[/code], [code]triangles[/code], [code]spray_rate[/code] (droplets per second) and [code]cpu_ms[/code] (time to build them).
 			</description>
 		</method>
+		<method name="get_crest_sheet_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Torn spray sheets alive at the last physics tick (see [member crest_sheets]).
+			</description>
+		</method>
 		<method name="get_crest_spray_rate" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -271,6 +277,12 @@
 		</member>
 		<member name="contact_wetness" type="bool" setter="set_contact_wetness" getter="get_contact_wetness" default="true">
 			Where the sea reached stays wet in the weather's contact wetness ([code]WeatherMap3D.contact_wetness_enabled[/code]), so sand, rocks, plants and props on the shore stay dark and glossy up to where the waves ran and dry with the weather (much slower than [member wet_sand_dry_time], which is the sea's own wet sand). The swash's wetness is read back from the GPU every eighth step, over land and still water shallower than half a metre (piers and hulls over deeper water are left alone). Needs a varying depth ([member seabed_from_floor]).
+		</member>
+		<member name="crest_sheet_amount" type="int" setter="set_crest_sheet_amount" getter="get_crest_sheet_amount" default="40">
+			Most [member crest_sheets] alive at once.
+		</member>
+		<member name="crest_sheets" type="bool" setter="set_crest_sheets" getter="get_crest_sheets" default="false">
+			From a near-gale (12 m/s, fully by 20 m/s), thin sheets of water the wind tears off the open sea's strongest folding crests, 8 to 30 m from the camera: each flies downwind, curls over and falls back within about a second, tearing into streaks and ligaments as it goes (bag breakup, Troitskaya et al. 2017). Real geometry rebuilt each physics tick, so the path tracer draws it too.
 		</member>
 		<member name="crest_spray" type="bool" setter="set_crest_spray" getter="get_crest_spray" default="true">
 			Spray torn off breaking crests by the wind (spume): droplets leave the open sea where the surface folds (the same test as the whitecaps) once [member wind_speed] passes about 9 m/s, rising to full by 20 m/s, and fly downwind. Emitted within 40 m of the camera, not nearer than 8 m, and drawn like the surf's spray, with soft puffs of fine spume (an eighth as many, a few metres across, kept low and blown along) so the spray reads as white smoke off each crest. The emitters are found on the CPU from the ocean's readback every fourth physics tick.

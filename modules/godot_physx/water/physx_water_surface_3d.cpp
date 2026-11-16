@@ -1933,6 +1933,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_crest_spray_amount", "amount"), &PhysXWaterSurface3D::set_crest_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_crest_spray_amount"), &PhysXWaterSurface3D::get_crest_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_crest_spray_rate"), &PhysXWaterSurface3D::get_crest_spray_rate);
+	ClassDB::bind_method(D_METHOD("set_crest_sheets", "enabled"), &PhysXWaterSurface3D::set_crest_sheets);
+	ClassDB::bind_method(D_METHOD("get_crest_sheets"), &PhysXWaterSurface3D::get_crest_sheets);
+	ClassDB::bind_method(D_METHOD("set_crest_sheet_amount", "amount"), &PhysXWaterSurface3D::set_crest_sheet_amount);
+	ClassDB::bind_method(D_METHOD("get_crest_sheet_amount"), &PhysXWaterSurface3D::get_crest_sheet_amount);
+	ClassDB::bind_method(D_METHOD("get_crest_sheet_count"), &PhysXWaterSurface3D::get_crest_sheet_count);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_period", "period"), &PhysXWaterSurface3D::set_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_period"), &PhysXWaterSurface3D::get_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_direction", "direction"), &PhysXWaterSurface3D::set_shore_wave_direction);
@@ -2123,6 +2128,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "whitecap_cover_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_whitecap_cover_scale", "get_whitecap_cover_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_spray"), "set_crest_spray", "get_crest_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "crest_spray_amount", PROPERTY_HINT_RANGE, "16,65536,1"), "set_crest_spray_amount", "get_crest_spray_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_sheets"), "set_crest_sheets", "get_crest_sheets");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "crest_sheet_amount", PROPERTY_HINT_RANGE, "1,256,1"), "set_crest_sheet_amount", "get_crest_sheet_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
@@ -3471,6 +3478,292 @@ void PhysXWaterSurface3D::set_crest_spray(bool p_enabled) {
 		crest_spray_node->set_emitting(false);
 		crest_spume_node->set_emitting(false);
 	}
+}
+
+void PhysXWaterSurface3D::set_crest_sheets(bool p_enabled) {
+	crest_sheets = p_enabled;
+	if (!crest_sheets) {
+		sheets.clear();
+		if (sheet_instance != nullptr) {
+			sheet_instance->set_visible(false);
+		}
+	}
+}
+
+void PhysXWaterSurface3D::set_crest_sheet_amount(int p_amount) {
+	crest_sheet_amount = CLAMP(p_amount, 1, 256);
+}
+
+namespace {
+// Torn spray sheets (docs/ideas/water.md "Torn spray sheets"). UV = (along the crest 0..1, along the flight from the
+// leading edge 0 to the root 1); COLOR = (age / life, seed, root still feeding, 1).
+const char *CREST_SHEET_SHADER_SRC = R"(
+shader_type spatial;
+#if defined(RT)
+render_mode cull_disabled, shadows_disabled;
+#else
+render_mode blend_mix, cull_disabled, depth_draw_never, shadows_disabled;
+#endif
+uniform vec3 sheet_color : source_color = vec3(0.9, 0.93, 0.95);
+uniform vec3 water_tint : source_color = vec3(0.55, 0.72, 0.74);
+
+float s_hash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float s_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(s_hash(i), s_hash(i + vec2(1.0, 0.0)), u.x), mix(s_hash(i + vec2(0.0, 1.0)), s_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+void fragment() {
+	float age = COLOR.r;
+	vec2 o = vec2(COLOR.g * 173.0, COLOR.g * 59.0);
+	float x = UV.x - 0.5;
+	// Never a card: the sheet is a tongue whose width wanders along the flight and narrows to the leading edge,
+	// which frays into fingers (the rim tearing into ligaments).
+	float width = (0.3 + 0.7 * s_noise(vec2(UV.y * 3.0, 0.5) + o)) * mix(0.35, 1.0, smoothstep(0.0, 0.6, UV.y));
+	float side = 1.0 - smoothstep(width * 0.3, width * 0.5, abs(x) + 0.12 * (s_noise(vec2(UV.y * 9.0, x * 4.0) - o) - 0.5));
+	float fingers = s_noise(vec2(UV.x * 14.0, 0.0) + o.yx);
+	float lead = smoothstep(0.0, 0.25, UV.y - 0.35 * (1.0 - fingers) * (0.5 + age));
+	// Streaks along the flight and finer lumps riding them; holes open from the thin parts as the sheet ages, until
+	// only ligaments are left.
+	float streak = 0.6 * s_noise(vec2(UV.x * 11.0, UV.y * 1.5) + o) + 0.4 * s_noise(vec2(UV.x * 27.0, UV.y * 4.0) - o);
+	float lumps = s_noise(vec2(UV.x * 37.0, UV.y * 15.0) + o.yx);
+	float thick = streak * 0.8 + lumps * 0.2;
+	float tear = mix(0.25, 0.75, age);
+	// Soft: a veil of spray with denser streaks in it, not cut-out flakes.
+	float cover = side * lead * smoothstep(tear - 0.2, tear + 0.25, thick);
+	// Thin unbroken water near the root is see-through tinted water, the torn parts white spray.
+	float white = clamp(0.55 + age * 0.9 + (1.0 - UV.y) * 0.6, 0.0, 1.0);
+	vec3 col = mix(water_tint, sheet_color, white);
+	ALBEDO = col * (0.8 + 0.2 * lumps);
+	BACKLIGHT = col * 0.6;
+	ROUGHNESS = mix(0.15, 0.8, white);
+	SPECULAR = 0.5;
+	// Fading out as it ends, and edge-on (a thin sheet seen side-on is next to nothing, not a white line).
+	cover *= 1.0 - smoothstep(0.75, 1.0, age);
+	cover *= smoothstep(0.08, 0.35, abs(dot(NORMAL, VIEW)));
+#if defined(RT)
+	// Stochastic transparency (Enderton et al. 2010), as the falls' sheets: each texel is the sheet or nothing.
+	ALPHA = s_hash(floor(vec2(UV.x * 400.0, UV.y * 120.0)) + o) < cover * mix(0.35, 0.7, white) ? 1.0 : 0.0;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#else
+	ALPHA = cover * mix(0.35, 0.7, white);
+#endif
+}
+)";
+} // namespace
+
+// Each sheet is a ribbon fed from its root on the crest for its feed time: a row is the water that left the root at
+// one moment, thrown downwind and up, its horizontal speed relaxing toward the wind near the surface (drag, about
+// 0.6 s for millimetre drops) while it falls, so the sheet curls over downwind and drops back. The root rides the crest.
+void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
+	const float wind_f = Math::smoothstep(12.0f, 20.0f, wind_speed);
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+	if (!crest_sheets || cam == nullptr || Engine::get_singleton()->is_editor_hint() || cached_ocean_height.is_empty()) {
+		if (sheet_instance != nullptr) {
+			sheet_instance->set_visible(false);
+		}
+		sheets.clear();
+		return;
+	}
+	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	const Vector3 wind3(wd.x, 0.0f, wd.y);
+	const Vector3 origin = get_global_position();
+	const Vector3 cam_pos = cam->get_global_position();
+	// Ageing.
+	for (uint32_t i = 0; i < sheets.size();) {
+		sheets[i].age += p_dt;
+		if (sheets[i].age >= sheets[i].life) {
+			sheets.remove_at_unordered(i);
+		} else {
+			i++;
+		}
+	}
+	// Spawning: a few candidate points a tick in front of the camera. The folding share they find (smoothed over about
+	// a second) sets how many sheets the sea keeps in the air, all crest_sheet_amount from a gale's share of folds
+	// (about 1% of the fold weight in front of the camera); new sheets start at the folds found, the strong ones far more often (weight squared).
+	constexpr int CANDIDATES = 32;
+	constexpr float NEAR = 8.0f;
+	constexpr float FAR = 30.0f;
+	const float mean_life = 1.05f;
+	if (wind_f > 0.0f && cam_pos.y - (origin.y + water_level) < 4.0f * FAR) {
+		const float threshold = _live_foam_threshold();
+		const Vector3 fwd = -cam->get_global_transform().basis.get_column(2);
+		const float cam_yaw = Math::atan2(fwd.z, fwd.x);
+		LocalVector<Vector3> folds;
+		LocalVector<float> fold_w;
+		float sum = 0.0f;
+		float sum2 = 0.0f;
+		for (int c = 0; c < CANDIDATES; c++) {
+			const float r = NEAR + (FAR - NEAR) * sheet_rng.randf(); // more of them near, where they read
+			// In front of the camera (a 130 degree fan): the budget goes where it is seen.
+			const float a = cam_yaw + sheet_rng.random(-1.13f, 1.13f);
+			const float x = cam_pos.x + r * Math::cos(a) - grid_center.x;
+			const float z = cam_pos.z + r * Math::sin(a) - grid_center.y;
+			if (!is_wet(Vector3(x + grid_center.x, origin.y, z + grid_center.y))) {
+				continue;
+			}
+			const float fade = _ocean_fade_at(x, z);
+			Vector3 p;
+			const float jac = _ocean_jacobian_at(x, z, fade, p);
+			const float w = CLAMP((threshold - jac) / 0.25f, 0.0f, 1.0f) * fade;
+			if (w > 0.0f) {
+				folds.push_back(p);
+				fold_w.push_back(w * w);
+				sum += w;
+				sum2 += w * w;
+			}
+		}
+		sheet_fold_share = Math::lerp(sheet_fold_share, sum / CANDIDATES, MIN(p_dt / 1.0f, 1.0f));
+		const float target = crest_sheet_amount * MIN(sheet_fold_share * 80.0f, 1.0f) * wind_f;
+		sheet_spawn += target / mean_life * p_dt;
+		while (sheet_spawn >= 1.0f && !folds.is_empty() && (int)sheets.size() < crest_sheet_amount) {
+			sheet_spawn -= 1.0f;
+			float pick = sheet_rng.randf() * sum2;
+			uint32_t k = 0;
+			while (k + 1 < folds.size() && pick > fold_w[k]) {
+				pick -= fold_w[k];
+				k++;
+			}
+			const Vector3 p = folds[k];
+			CrestSheet sh;
+			sh.root = p + Vector3(0.0f, origin.y, 0.0f);
+			// On the rendered surface (every cascade, not only the one the fold test reads).
+			const float sy = sample_height(sh.root);
+			if (Math::is_finite(sy)) {
+				sh.root.y = sy;
+			}
+			const float turn = sheet_rng.random(-0.45f, 0.45f);
+			sh.throw_dir = Vector3(wd.x * Math::cos(turn) - wd.y * Math::sin(turn), 0.0f, wd.x * Math::sin(turn) + wd.y * Math::cos(turn));
+			sh.across = Vector3(-sh.throw_dir.z, 0.0f, sh.throw_dir.x);
+			sh.speed = sheet_rng.random(0.3f, 0.5f) * wind_speed;
+			sh.rise = sheet_rng.random(2.5f, 5.0f) * Math::lerp(0.8f, 1.2f, wind_f);
+			sh.span = sheet_rng.random(2.0f, 5.0f);
+			sh.feed = sheet_rng.random(0.3f, 0.6f);
+			sh.life = sheet_rng.random(0.8f, 1.3f);
+			sh.seed = sheet_rng.randf();
+			sheets.push_back(sh);
+		}
+		sheet_spawn = MIN(sheet_spawn, 1.0f); // no burst saved up while nothing folded
+	}
+	if (sheet_instance == nullptr) {
+		sheet_instance = memnew(MeshInstance3D);
+		sheet_instance->set_name("CrestSheets");
+		sheet_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		add_child(sheet_instance, false, INTERNAL_MODE_BACK);
+		sheet_mesh.instantiate();
+		sheet_instance->set_mesh(sheet_mesh);
+		Ref<Shader> sh;
+		sh.instantiate();
+		sh->set_code(CREST_SHEET_SHADER_SRC);
+		sheet_material.instantiate();
+		sheet_material->set_shader(sh);
+		// After the sea in the transparent pass (it is sorted with it by distance, and its huge box would draw over).
+		sheet_material->set_render_priority(1);
+	}
+	sheet_mesh->clear_surfaces();
+	if (sheets.is_empty()) {
+		sheet_instance->set_visible(false);
+		return;
+	}
+	// The mesh in the node's space (it may sit anywhere); the sheets are kept in the world.
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	constexpr int ROWS = 8;
+	constexpr int COLS = 6;
+	const float crest_speed = 0.35f * wind_speed; // the short breaking crests' phase speed, roughly
+	const float wind_near = 0.6f * wind_speed; // the wind a metre or two above the water, for the drag
+	const float drag_t = 0.6f;
+	constexpr float GRAVITY_Y = -9.81f;
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedColorArray colors;
+	PackedVector2Array uvs;
+	PackedInt32Array indices;
+	verts.resize(sheets.size() * ROWS * COLS);
+	normals.resize(verts.size());
+	colors.resize(verts.size());
+	uvs.resize(verts.size());
+	Vector3 *vw = verts.ptrw();
+	Vector3 *nw = normals.ptrw();
+	Color *cw = colors.ptrw();
+	Vector2 *uw = uvs.ptrw();
+	AABB box;
+	bool first = true;
+	for (uint32_t k = 0; k < sheets.size(); k++) {
+		const CrestSheet &sh = sheets[k];
+		const float fed = MIN(sh.age, sh.feed);
+		const int base = k * ROWS * COLS;
+		for (int r = 0; r < ROWS; r++) {
+			// Row r left the root at tau (r = 0 the first water out, the leading edge; the last row the root).
+			const float v = (float)r / (ROWS - 1);
+			const float tau = fed * v;
+			const float f = sh.age - tau;
+			const Vector3 root = sh.root + wind3 * crest_speed * tau;
+			for (int c = 0; c < COLS; c++) {
+				const float u = (float)c / (COLS - 1);
+				// Each column's throw differs a little: a ragged sheet that twists as it flies.
+				const float j1 = Math::sin(sh.seed * 61.0f + c * 1.7f + r * 0.6f);
+				const float j2 = Math::sin(sh.seed * 37.0f + c * 2.3f - r * 0.9f);
+				const float rise = sh.rise * (1.0f + 0.25f * j1);
+				const float speed = sh.speed * (1.0f + 0.15f * j2);
+				// Horizontal: u(t) = U + (u0 - U) e^(-t/T), integrated.
+				const float relax = drag_t * (1.0f - Math::exp(-f / drag_t));
+				Vector3 pos = root + sh.throw_dir * (speed * relax) + wind3 * (wind_near * (f - relax));
+				pos.y += rise * f + 0.5f * GRAVITY_Y * f * f;
+				// Spread along the crest as it flies.
+				pos += sh.across * (sh.span * (u - 0.5f) * (1.0f + 0.8f * f));
+				const int idx = base + r * COLS + c;
+				vw[idx] = to_local.xform(pos);
+				cw[idx] = Color(sh.age / sh.life, sh.seed, sh.age < sh.feed ? 1.0f : 0.0f, 1.0f);
+				uw[idx] = Vector2(u, v);
+				if (first) {
+					box = AABB(vw[idx], Vector3());
+					first = false;
+				} else {
+					box.expand_to(vw[idx]);
+				}
+			}
+		}
+		// Normals from the grid.
+		for (int r = 0; r < ROWS; r++) {
+			for (int c = 0; c < COLS; c++) {
+				const int idx = base + r * COLS + c;
+				const Vector3 dr = vw[base + MIN(r + 1, ROWS - 1) * COLS + c] - vw[base + MAX(r - 1, 0) * COLS + c];
+				const Vector3 dc = vw[base + r * COLS + MIN(c + 1, COLS - 1)] - vw[base + r * COLS + MAX(c - 1, 0)];
+				const Vector3 n = dc.cross(dr);
+				nw[idx] = n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, 1, 0);
+			}
+		}
+		for (int r = 0; r + 1 < ROWS; r++) {
+			for (int c = 0; c + 1 < COLS; c++) {
+				const int i0 = base + r * COLS + c;
+				indices.push_back(i0);
+				indices.push_back(i0 + 1);
+				indices.push_back(i0 + COLS);
+				indices.push_back(i0 + 1);
+				indices.push_back(i0 + COLS + 1);
+				indices.push_back(i0 + COLS);
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	sheet_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	sheet_instance->set_material_override(sheet_material);
+	sheet_instance->set_custom_aabb(box.grow(1.0f));
+	sheet_instance->set_visible(true);
 }
 
 void PhysXWaterSurface3D::set_crest_spray_amount(int p_amount) {
@@ -5333,6 +5626,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 			_update_breakers();
 			_update_crest_spray();
+			_update_crest_sheets((float)get_physics_process_delta_time());
 			_wet_ground();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {

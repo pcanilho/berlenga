@@ -799,6 +799,8 @@ func _process(_delta: float) -> void:
 		_whitecap_step()
 	if view.begins_with("storm") and (n == frames - 1 or (debug_storm and n % 5 == 0)):
 		print("storm: crest spray %.0f droplets/s, whitecap cover %.3f (target %.3f)" % [water.call("get_crest_spray_rate"), water.call("get_whitecap_cover"), water.call("get_whitecap_target_cover")])
+		if water.get("crest_sheets"):
+			print("storm: %d torn spray sheets" % water.call("get_crest_sheet_count"))
 	if view == "sea" and n > 30:
 		# Significant wave height, 4 sigma of the height at one point over time (a line through the square is
 		# shorter than the swell).
