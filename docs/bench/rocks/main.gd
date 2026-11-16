@@ -753,6 +753,15 @@ func _test() -> void:
 				var ps := _piece_stats(node, Transform3D(big["basis"], big["position"]))
 				var grown: AABB = (ps["stone_box"] as AABB).grow(0.02 * (ps["stone_box"] as AABB).size.length())
 				check(absf(ps["volume"] / ps["stone_volume"] - 1.0) < 0.05 and grown.encloses(ps["box"]), "pieces are the stone: volume %.3f of %.3f m3, all inside its box (%s in %s)" % [ps["volume"], ps["stone_volume"], (ps["box"] as AABB).size, (ps["stone_box"] as AABB).size])
+			# A hit on a stone whose shape is already fractured (what break_prepare_radius does ahead of the player on a
+			# worker): only the swap for the pieces, no fracture on the main thread.
+			rocks.restore_broken()
+			var bp: Vector3 = big["position"]
+			rocks.build_area(Rect2(bp.x - 40, bp.z - 40, 80, 80)) # restore_broken drops the cells; build them again
+			var pt := Time.get_ticks_usec()
+			var again: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
+			var ms := (Time.get_ticks_usec() - pt) / 1000.0
+			check(again != null and ms < 16.0, "break_stone on a prepared shape: %.1f ms (under a 60 Hz frame)" % ms)
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.

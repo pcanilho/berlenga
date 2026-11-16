@@ -278,3 +278,12 @@ Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (k
   sets the sea level from its generator). Stacks are one mass (tiers sunk deep, barely shifted); the wave-cut
   platform's blocks touch across wandering joints and step down seaward in low ledges.
 - Bench: `--sea-res=N` sets the sea's simulated grid; at the default 16 m cells the water left the stack's foot dry.
+- A prepared stone breaks in about 12 ms (it was 87): the Blast asset is authored on the worker with the fracture,
+  each piece gets a small collision hull there (its convex hull thinned to 64 points by farthest-point sampling,
+  `PhysXBlastAsset.chunk_hulls`), and PhysXDestructible3D keeps indexed chunk meshes indexed instead of unrolling
+  them to a soup. Bench test: break, restore, break the same shape again.
+- Close-up memory: 46.8 MB for the 16 shapes near the bench target. A second tier at 3x cells beyond 4 m saved only
+  7 MB (most of those shapes have a stone within 4 m), so it was not kept. Left: compressed vertex attributes
+  (about half), to measure with the GPU.
+- Shore zones only on stones the sea reaches (coast, and shore stones on the sea's own water): flagged in the
+  instance film (+2); by height alone they darkened inland stones near sea level.

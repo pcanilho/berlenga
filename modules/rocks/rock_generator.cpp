@@ -1882,9 +1882,12 @@ void fragment() {
 	// Lichen: crusts on open, lit, old faces (not on fresh breaks or under water), patches of grey-green with a few
 	// orange and black ones (Rhizocarpon, Xanthoria, Lecidea are the common rock crusts).
 	// Aspect: how far the face turns to the pole (+1) or the sun (-1), on its horizontal part.
+	// Instance film, plus 2 on stones the sea reaches (RockField3D flags them for the shore zones below).
+	float at_sea = step(1.5, v_custom.y);
+	float film_in = v_custom.y - 2.0 * at_sea;
 	vec3 wh = vec3(wn.x, 0.0, wn.z);
 	float shade_side = aspect_strength * dot(wh, normalize(vec3(pole_direction.x, 0.0, pole_direction.z) + vec3(1e-5, 0.0, 0.0)));
-	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - v_custom.y) * smoothstep(-0.3, 0.5, wn.y) * clamp(0.75 - 0.45 * shade_side, 0.2, 1.2);
+	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - film_in) * smoothstep(-0.3, 0.5, wn.y) * clamp(0.75 - 0.45 * shade_side, 0.2, 1.2);
 	float lic_n = rk_fbm3(mp * 11.0 + 3.0);
 	float lic = open_face * smoothstep(0.7 - 0.2 * lichen_cover, 0.73 - 0.2 * lichen_cover, lic_n) * step(0.01, lichen_cover);
 	float kind = rk_noise3(mp * 1.3 + 7.0);
@@ -1899,12 +1902,12 @@ void fragment() {
 	rough = mix(rough, 0.95, moss);
 
 	// A film of water and its biofilm: river beds and the swash zone stay wet and darker.
-	float film = v_custom.y;
+	float film = film_in;
 	// The shore zones of rock by the sea (Stephenson and Stephenson 1949; Lewis 1964): below high water a crust of
 	// barnacles over the stone, weed toward low water, all of it wet; above it the splash zone's black Verrucaria
 	// lichen in a tar-like band; the grey and orange lichens only above that. Ragged edges, a wave's reach not a line.
 	float above_sea = v_world.y - sea_level;
-	if (above_sea < tide_range * 2.5) {
+	if (at_sea > 0.5 && above_sea < tide_range * 2.5) {
 		float zn = rk_fbm3(mp * 2.3 + 5.0);
 		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
 		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);

@@ -33,6 +33,7 @@
 #include "modules/terrain_deform/terrain_generator_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/convex_hull.h"
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
@@ -99,6 +100,8 @@ struct LibraryJob {
 	float marks_scale = 0.0f; // close-up: the size its marks are carved at
 	Ref<ImporterMesh> mesh;
 	Dictionary meta;
+	Ref<Resource> asset; // fracture: the pieces as a PhysXBlastAsset, with their hulls
+	float volume = 0.0f;
 };
 
 void library_job(void *p_userdata, uint32_t p_index) {
@@ -119,6 +122,98 @@ void library_job(void *p_userdata, uint32_t p_index) {
 
 void close_job(void *p_userdata) {
 	library_job(p_userdata, 0);
+}
+
+// A collision hull for a piece, few enough points that cooking it is cheap: the hull's own vertices, thinned by
+// farthest-point sampling to at most p_max (a rough break face has thousands; PhysX takes 255 and cooks slowly).
+PackedVector3Array rf_piece_hull(const PackedVector3Array &p_points, int p_max) {
+	Geometry3D::MeshData md;
+	if (ConvexHullComputer::convex_hull(Vector<Vector3>(p_points), md) != OK || md.vertices.size() < 4) {
+		return p_points;
+	}
+	const LocalVector<Vector3> &v = md.vertices;
+	PackedVector3Array out;
+	if (int(v.size()) <= p_max) {
+		for (const Vector3 &p : v) {
+			out.push_back(p);
+		}
+		return out;
+	}
+	LocalVector<real_t> dist;
+	dist.resize(v.size());
+	for (uint32_t i = 0; i < v.size(); i++) {
+		dist[i] = 1e30f;
+	}
+	uint32_t pick = 0;
+	for (int k = 0; k < p_max; k++) {
+		out.push_back(v[pick]);
+		uint32_t far = 0;
+		real_t far_d = -1.0f;
+		for (uint32_t i = 0; i < v.size(); i++) {
+			dist[i] = MIN(dist[i], v[i].distance_squared_to(v[pick]));
+			if (dist[i] > far_d) {
+				far_d = dist[i];
+				far = i;
+			}
+		}
+		pick = far;
+	}
+	return out;
+}
+
+// Breaking: the shape split into pieces, then (still on the worker) the Blast asset and each piece's hull, so a
+// prepared stone breaks with no fracture, authoring or hull cooking on the main thread.
+void fracture_job(void *p_userdata) {
+	LibraryJob *job = static_cast<LibraryJob *>(p_userdata);
+	library_job(p_userdata, 0);
+	if (job->mesh.is_null() || job->mesh->get_surface_count() == 0 || !job->meta.has("rock_chunks")) {
+		return;
+	}
+	const Array chunks = job->meta["rock_chunks"];
+	const Array bonds = job->meta["rock_bonds"];
+	Array pieces;
+	LocalVector<int> remap;
+	remap.resize(chunks.size());
+	for (int c = 0; c < chunks.size(); c++) {
+		const Array a = chunks[c];
+		remap[c] = a.size() == Mesh::ARRAY_MAX ? pieces.size() : -1;
+		if (remap[c] >= 0) {
+			pieces.push_back(a);
+		}
+	}
+	Array kept;
+	for (int b = 0; b < bonds.size(); b++) {
+		Dictionary d = Dictionary(bonds[b]).duplicate();
+		const Vector2i pair = d["chunks"];
+		if (pair.x < int(remap.size()) && pair.y < int(remap.size()) && remap[pair.x] >= 0 && remap[pair.y] >= 0) {
+			d["chunks"] = Vector2i(remap[pair.x], remap[pair.y]);
+			kept.push_back(d);
+		}
+	}
+	Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
+	if (!authoring) {
+		return;
+	}
+	Ref<RefCounted> holder(Object::cast_to<RefCounted>(authoring));
+	if (holder.is_null()) {
+		memdelete(authoring);
+		return;
+	}
+	if (pieces.size() < 2) {
+		return;
+	}
+	const Ref<Resource> asset = authoring->call("build_prefractured", job->mesh->get_surface_arrays(0), pieces, kept);
+	if (asset.is_null()) {
+		return;
+	}
+	const Array points = asset->call("get_chunk_points");
+	Array hulls;
+	for (int c = 0; c < points.size(); c++) {
+		hulls.push_back(rf_piece_hull(points[c], 64));
+	}
+	asset->call("set_chunk_hulls", hulls);
+	job->asset = asset;
+	job->volume = float(job->meta.get("rock_volume", 0.0));
 }
 
 // Ground normal from the generator's height, by central differences.
@@ -1248,10 +1343,20 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		grp.variant = v;
 		grp.multimesh = mm;
 		const Vector3 ax = lib->axes[v];
+		TerrainGenerator3D *sea_gen = _get_generator();
+		const bool has_sea = sea_gen && sea_gen->has_sea_result();
+		const real_t sea = has_sea ? sea_gen->get_sea_level() : 0.0;
 		for (uint32_t k = 0; k < g.value.size(); k++) {
 			const Stone &st = stones[g.value[k]];
 			const Transform3D xf(st.basis, st.position);
-			const Color cd(st.ground, st.film, st.scale, rng.randf());
+			// Stones the sea reaches carry the shore zones (the shader's sea_level): the coast's forms, and shore
+			// stones on the sea's own beach (not a lake's, not the land near sea level inland). Flagged as film + 2.
+			bool at_sea = false;
+			if (has_sea && (st.layer == LAYER_COAST || st.layer == LAYER_SHORE) && Math::abs(st.ground - sea) < 6.0) {
+				const real_t level = sea_gen->get_water_level(st.position);
+				at_sea = st.layer == LAYER_COAST || (!Math::is_nan(level) && Math::abs(level - sea) < 0.5);
+			}
+			const Color cd(st.ground, st.film + (at_sea ? 2.0f : 0.0f), st.scale, rng.randf());
 			mm->set_instance_transform(int(k), xf);
 			mm->set_instance_custom_data(int(k), cd);
 			grp.xforms.push_back(xf);
@@ -1622,7 +1727,7 @@ void RockField3D::_start_fracture(uint64_t p_key) {
 		job->transport = RockGenerator::get_lithology(job->type).abrasion_length * cobble_bins[CLAMP(key_bin(lk), 0, 2)];
 	}
 	f.job = job;
-	f.task = WorkerThreadPool::get_singleton()->add_native_task(&close_job, job, false, "RockField3D fracture");
+	f.task = WorkerThreadPool::get_singleton()->add_native_task(&fracture_job, job, false, "RockField3D fracture");
 	f.state = 1;
 }
 
@@ -1639,40 +1744,10 @@ bool RockField3D::_finish_fracture(uint64_t p_key, bool p_wait) {
 	LibraryJob *job = static_cast<LibraryJob *>(f->job);
 	f->job = nullptr;
 	f->state = 3;
-	if (job->mesh.is_valid() && job->mesh->get_surface_count() > 0 && job->meta.has("rock_chunks")) {
-		const Array chunks = job->meta["rock_chunks"];
-		const Array bonds = job->meta["rock_bonds"];
-		Array pieces;
-		LocalVector<int> remap;
-		remap.resize(chunks.size());
-		for (int c = 0; c < chunks.size(); c++) {
-			const Array a = chunks[c];
-			remap[c] = a.size() == Mesh::ARRAY_MAX ? pieces.size() : -1;
-			if (remap[c] >= 0) {
-				pieces.push_back(a);
-			}
-		}
-		Array kept;
-		for (int b = 0; b < bonds.size(); b++) {
-			Dictionary d = Dictionary(bonds[b]).duplicate();
-			const Vector2i pair = d["chunks"];
-			if (pair.x < int(remap.size()) && pair.y < int(remap.size()) && remap[pair.x] >= 0 && remap[pair.y] >= 0) {
-				d["chunks"] = Vector2i(remap[pair.x], remap[pair.y]);
-				kept.push_back(d);
-			}
-		}
-		Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
-		if (authoring && pieces.size() >= 2) {
-			Ref<RefCounted> holder(Object::cast_to<RefCounted>(authoring));
-			const Ref<Resource> asset = authoring->call("build_prefractured", job->mesh->get_surface_arrays(0), pieces, kept);
-			if (asset.is_valid()) {
-				f->asset = asset;
-				f->volume = float(job->meta.get("rock_volume", 0.0));
-				f->state = 2;
-			}
-		} else if (authoring && !Object::cast_to<RefCounted>(authoring)) {
-			memdelete(authoring);
-		}
+	if (job->asset.is_valid()) {
+		f->asset = job->asset;
+		f->volume = job->volume;
+		f->state = 2;
 	}
 	memdelete(job);
 	return f->state == 2;
