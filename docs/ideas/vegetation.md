@@ -293,8 +293,10 @@ Nickling (1996) for the frontal area index; Rodwell vol. 5 (SD4 to SD8) for the 
 - Burial: marram grows up through burial (Maun 1998), so a tuft's base sinking into the sand the
   ground deposits is the right look (nebkha: a hummock round the tuft). Raising plants with the
   deposit is not done; at the ground's 2 cm an hour it would not show in a session.
-- Next: a bench view with a GroundSurface3D and a marram field under a gale (the ground bench is
-  the sand thread's); the dune landforms themselves are the terrain thread's.
+- Bench check with the real pair: a dry-sand GroundSurface3D following the bench field under a
+  12 m/s wind carries 0.012 kg/m/s among the plants on its own and 0.00007 once the field is in
+  its `wind_shelters`. Next: a dune view with nebkha forming round marram; the dune landforms
+  themselves are the terrain thread's.
 
 ## Bog and moor plants (built 16 Nov)
 

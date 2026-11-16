@@ -1066,12 +1066,51 @@ func _lazy_near_checks() -> void:
 	field.populate()
 	target.queue_free()
 
+# The plants as the sand's wind shelter (GroundSurface3D.wind_shelters, docs/ideas/sand.md "Dune
+# grass"): a dry sand surface under a 12 m/s wind carries less sand among the plants once the
+# field shelters it.
+func _sand_shelter_check(spots: Array) -> void:
+	var at := Vector3.ZERO
+	for p in spots:
+		if field.sample_lateral_cover(p) > 0.2:
+			at = p
+			break
+	var hs := GDScript.new()
+	hs.source_code = "extends Node3D\nvar map: Node\nfunc get_height(p: Vector3) -> float:\n\treturn map.get_height_at(p)\n"
+	hs.reload()
+	var height := Node3D.new()
+	height.set_script(hs)
+	height.set("map", dm)
+	add_child(height)
+	var probe := Marker3D.new()
+	add_child(probe)
+	probe.global_position = at
+	var sand := GroundSurface3D.new()
+	sand.ground_type = GroundSurface3D.GROUND_SAND
+	sand.moisture = 0.0
+	add_child(sand)
+	sand.height_source = sand.get_path_to(height)
+	sand.follow_target = sand.get_path_to(probe)
+	sand.wind_override = Vector2(12.0, 0.0)
+	for i in 70:
+		await get_tree().physics_frame
+	var open := sand.get_sand_flux_at(at).length()
+	sand.wind_shelters = [sand.get_path_to(field)]
+	for i in 70:
+		await get_tree().physics_frame
+	var sheltered := sand.get_sand_flux_at(at).length()
+	_check("sand shelter: a ground surface under a gale carries less sand among the plants once they shelter it", open > 0.0 and sheltered < 0.5 * open, [snappedf(field.sample_lateral_cover(at), 0.01), open, sheltered])
+	sand.queue_free()
+	height.queue_free()
+	probe.queue_free()
+
 func _stream_checks() -> void:
 	field.weather_map = NodePath()
 	field.populate()
 	var full := []
 	for s in 3:
 		full.append(field.get_placements(s))
+	await _sand_shelter_check(full[0])
 	var target := Node3D.new()
 	add_child(target)
 	target.global_position = Vector3(-60, 0, -50)
