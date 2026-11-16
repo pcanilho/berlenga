@@ -81,6 +81,10 @@ func _ready() -> void:
 			if n is DirectionalLight3D:
 				(n as DirectionalLight3D).rotation_degrees = Vector3(-float(sv[0]), float(sv[1]) if sv.size() > 1 else -50.0, 0)
 	if out != "":
+		# Single captures have no TAA to smooth the soft-low shadow kernel's per-pixel rotation (a dot
+		# grid in penumbras): the high filter instead.
+		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
+		RenderingServer.positional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
 		_render_later()
 
 
