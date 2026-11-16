@@ -1121,6 +1121,29 @@
    "topic": "Ground"
   },
   {
+   "name": "Wind ripples",
+   "settings": [
+    "GroundSurface3D.wind_ripples",
+    "ripple_extent"
+   ],
+   "note": "",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing; prints wipe them and they form again.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Blowing sand",
+   "settings": [
+    "GroundStreamers3D"
+   ],
+   "note": "",
+   "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Terrain deformation",
    "settings": [
     "TerrainDeformer3D",
