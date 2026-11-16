@@ -547,15 +547,30 @@ void main() {
 	float od = 0.0;
 	float front = 1.0;
 	float back = 0.0;
-	for (int i = 0; i < steps; i++) {
+	// Fixed steps along the light, jumping over the blocks Flow's sparse table holds no gas in (the
+	// view march does the same): the samples taken are the ones that can see gas.
+	vec3 ro = base * upm;
+	vec3 rd = box.axis_w.xyz * upm;
+	vec3 rd_inv = 1.0 / rd;
+	int i = 0;
+	while (i < steps) {
 		float w = (float(i) + 0.5) / float(steps);
 		float smoke;
-		smoke_at((base + box.axis_w.xyz * w) * upm, cell_inv, a, smoke);
+		if (!smoke_at(ro + rd * w, cell_inv, a, smoke)) {
+			// An empty block: on to the first sample past where the column leaves it.
+			vec3 bmin = vec3(a.location.xyz) * p.block_size.xyz;
+			float b0;
+			float b1;
+			intersect_box(ro, rd_inv, bmin, bmin + p.block_size.xyz, b0, b1);
+			i = max(i + 1, int(ceil(b1 * float(steps) - 0.5)));
+			continue;
+		}
 		if (smoke > 0.001) {
 			front = min(front, w);
 			back = max(back, w);
 			od += smoke;
 		}
+		i++;
 	}
 	float transmittance = exp(-od * p.misc.x * ds);
 	if (back < front) {
@@ -939,7 +954,6 @@ void FlowScatterRD::_run_shadow(RenderingDevice *p_rd, const FlowBackend::Scatte
 	p_rd->compute_list_dispatch(list, (res + 7) / 8, (res + 7) / 8, 1);
 	p_rd->compute_list_end();
 	p_rd->free_rid(set);
-
 	// World -> (u, v, depth) in 0..1.
 	Transform3D xf;
 	xf.basis.rows[0] = u_axis / size.x;

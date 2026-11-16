@@ -60,3 +60,17 @@ bench.
 
 Costs are measured in the cloud as compute pass counts and steps per pixel, and on the PC as GPU time once the
 desktop is back. Every step is checked with raster and path-traced 100% crops of the showcase smoke shot.
+
+## Next: edge banding and shadow map cost (16 Nov 2026)
+
+- **Banding at the gas's edges (raster).** The scattering pass marches at a quarter of the resolution with a
+  per-pixel interleaved gradient noise offset (Jimenez 2014) that is the same every frame, then upsamples with
+  depth weights. The step pattern stays put and shows as stairs. The established fix is to vary the offset each
+  frame (IGN with a per-frame offset, or blue noise; Jimenez 2014, Wronski 2014 for AC4's volumetric fog) and
+  blend with a reprojected history (Hillaire 2015 for Frostbite's froxels; Godot's own volumetric fog keeps a
+  temporal history too). The history is rejected where the reprojected scene depth or the gas's depth moves too
+  far, and clamped to the current neighbourhood as TAA does (Karis 2014), so moving smoke does not smear.
+- **Shadow map cost.** The Beer shadow map marches every texel's full column through the grid's box, in
+  fixed steps, also through blocks that hold no gas. The view march already jumps over empty blocks through
+  Flow's sparse table (as the path tracer does, Hofmann et al. 2024); the shadow pass should do the same, which
+  keeps the result and cuts steps to the gas that is there. Measured in the cloud as steps per texel.
