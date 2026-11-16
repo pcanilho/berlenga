@@ -7,8 +7,14 @@ extends Node3D
 #                         dry sand slumps to its repose angle, damp sand keeps steep walls
 #                         mud creeps back slowly; an undisturbed 50 degree slope does not move
 #                         litter adds to the print; bare rock does not print; turned ground dries
+#   --test=soil         soft soil under wheels and feet (needs the PhysX build):
+#                         a wheel's sinkage, traction and resistance against Bekker, Wong and Janosi-Hanamoto
+#                         a 4x4 on dry sand, damp sand and firm ground; an aired-down tyre; a bogged car
+#                         walker footing: effort by print depth, sliding on a slope past the repose
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
+#   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
+#                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
@@ -21,6 +27,7 @@ var view := "trail"
 var kind := "soil"
 var raster := false
 var test := false
+var soil_test := false
 var out := ""
 var spp := 16
 var gpu := true
@@ -39,14 +46,23 @@ func _ready() -> void:
 		elif a.begins_with("--ground="): kind = a.substr(9)
 		elif a == "--raster": raster = true
 		elif a == "--test": test = true
+		elif a == "--test=soil": soil_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--gpu=0": gpu = false
+	if soil_test:
+		await _run_soil_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test:
 		await _run_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if view == "ruts":
+		await _build_ruts()
 		return
 	await _build_trail()
 
@@ -227,6 +243,191 @@ func _run_tests() -> void:
 	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
 
 
+# Bekker's rigid wheel, written out here apart from the engine's: z0 = (3 W / ((3 - n) b k sqrt(D)))^(2 / (2n + 1)).
+func _bekker_sinkage(load: float, radius: float, width: float, n: float, kc: float, kphi: float) -> float:
+	var k := (kc / width + kphi) * 1000.0
+	return pow(3.0 * load / ((3.0 - n) * width * k * sqrt(2.0 * radius)), 2.0 / (2.0 * n + 1.0))
+
+
+func _make_car(mass: float, torque: float, at: Vector3) -> PhysXVehicle3D:
+	var car := PhysXVehicle3D.new()
+	car.mass = mass
+	car.max_engine_torque = torque
+	car.can_sleep = false
+	var cs := CollisionShape3D.new()
+	cs.shape = BoxShape3D.new()
+	(cs.shape as BoxShape3D).size = Vector3(1.8, 0.6, 4.0)
+	cs.position = Vector3(0, 0.45, 0)
+	car.add_child(cs)
+	for k in 4:
+		var w := PhysXVehicleWheel3D.new()
+		w.position = Vector3(0.8 if k % 2 == 0 else -0.8, 0.0, 1.3 if k < 2 else -1.3)
+		w.radius = 0.35
+		w.half_width = 0.13
+		w.use_as_steering = k < 2
+		w.use_as_traction = true
+		car.add_child(w)
+	car.position = at
+	add_child(car)
+	return car
+
+
+# Drives a car straight at a steady throttle for p_seconds; returns [distance, mean sinkage, mean |slip|].
+func _drive(car: PhysXVehicle3D, p_seconds: float, p_throttle := 1.0) -> Array:
+	for i in 30:
+		await get_tree().physics_frame
+	var start := car.global_position
+	car.throttle = p_throttle
+	var sink := 0.0
+	var slip := 0.0
+	var n := 0
+	for i in int(p_seconds * 60.0):
+		await get_tree().physics_frame
+		for w in 4:
+			sink += car.get_wheel_sinkage(w)
+			slip += absf(car.get_wheel_slip(w))
+			n += 1
+	car.throttle = 0.0
+	var d := car.global_position - start
+	return [Vector2(d.x, d.z).length(), sink / maxi(n, 1), slip / maxi(n, 1)]
+
+
+func _soil_scene(kind_name: String) -> void:
+	await _setup("flat", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply(kind_name)
+	var floor_body := StaticBody3D.new()
+	var fc := CollisionShape3D.new()
+	fc.shape = BoxShape3D.new()
+	(fc.shape as BoxShape3D).size = Vector3(400, 2, 400)
+	fc.position = Vector3(0, -1, 0)
+	floor_body.add_child(fc)
+	add_child(floor_body)
+
+
+func _run_soil_tests() -> void:
+	await _soil_scene("dry_sand")
+	var o := Vector3.ZERO
+	# One wheel: 3.5 kN on a 0.35 m radius, 0.26 m wide, rigid (inflation 0).
+	var w: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 0.0, 0.0, 0.0)
+	var ref := _bekker_sinkage(3500.0, 0.35, 0.26, 1.1, 0.99, 1528.43)
+	_check("rigid wheel sinkage, dry sand (Wong table 2.2)", absf(w["sinkage"] - ref) < 0.002 and ref > 0.04, "%.1f cm, Bekker %.1f cm" % [w["sinkage"] * 100.0, ref * 100.0])
+	var rc: float = w["compaction"]
+	var rc_ref := 0.26 * (0.99 / 0.26 + 1528.43) * 1000.0 * pow(ref, 2.1) / 2.1
+	_check("compaction resistance", absf(rc - rc_ref) < 0.05 * rc_ref, "%.0f N (Bekker %.0f N), bulldozing %.0f N, %.0f%% of the load in all" % [rc, rc_ref, w["bulldozing"], 100.0 * w["resistance"] / 3500.0])
+	var aired: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 50.0, 0.0, 0.0)
+	var hard: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 240.0, 0.0, 0.0)
+	_check("airing down sinks less", aired["sinkage"] < hard["sinkage"] * 0.8 and aired["resistance"] < hard["resistance"], "50 kPa %.1f cm, %.0f N; 240 kPa %.1f cm, %.0f N" % [aired["sinkage"] * 100.0, aired["resistance"], hard["sinkage"] * 100.0, hard["resistance"]])
+	var s50: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 0.0, 0.5, 0.0)
+	_check("slip sinkage (Lyasko 2010)", absf(s50["sinkage"] / w["sinkage"] - 2.0) < 0.02, "%.1f cm at 50%% slip, %.2f times" % [s50["sinkage"] * 100.0, s50["sinkage"] / w["sinkage"]])
+	# Janosi-Hanamoto: traction grows with slip toward the shear limit.
+	var curve := []
+	var rising := true
+	var last := -1.0
+	for sl in [0.02, 0.05, 0.1, 0.2, 0.4, 0.8]:
+		var t: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 0.0, sl, 0.0)
+		var share: float = t["traction"] / t["shear_limit"]
+		rising = rising and share > last
+		last = share
+		curve.append("%.0f%%: %.2f" % [sl * 100.0, share])
+	_check("traction rises with slip (Janosi-Hanamoto)", rising and last > 0.9, ", ".join(curve))
+	var lim: float = w["shear_limit"]
+	_check("dry sand shear limit near tan(phi) W", lim > 3500.0 * 0.5 and lim < 3500.0 * 0.75, "%.0f N for 3500 N" % lim)
+	surface.moisture = 0.4
+	var damp: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 0.0, 0.0, 0.0)
+	_check("damp sand: firmer and grippier", damp["sinkage"] < w["sinkage"] * 0.6 and damp["shear_limit"] > lim, "%.1f cm, %.0f N resistance, shear limit %.0f N" % [damp["sinkage"] * 100.0, damp["resistance"], damp["shear_limit"]])
+	# Multi-pass: in the rut already pressed, little work is left.
+	surface.moisture = 0.0
+	surface.clear_deformation()
+	surface.press_wheel(o, Vector2(0.26, 0.6), 0.0, w["sinkage"])
+	surface.sync_deformation()
+	var again: Dictionary = surface.get_wheel_soil(o, 3500.0, 0.35, 0.26, 0.0, 0.0, 0.0)
+	_check("second pass in the rut", again["resistance"] < 0.3 * w["resistance"], "%.0f N against %.0f N on fresh sand" % [again["resistance"], w["resistance"]])
+
+	# Walker footing.
+	surface.clear_deformation()
+	var f_dry: Dictionary = surface.get_footing_at(o)
+	surface.moisture = 0.4
+	var f_damp: Dictionary = surface.get_footing_at(o)
+	surface.moisture = 0.0
+	_check("walking effort (Lejeune 1998: 1.6 to 2.5 on dry sand)", f_dry["effort"] > 1.6 and f_dry["effort"] < 2.5 and f_damp["effort"] < 1.5, "dry %.2f, damp %.2f" % [f_dry["effort"], f_damp["effort"]])
+	_check("no slide on the flat", (f_dry["slide"] as Vector3).length() < 1e-4, "%.3f m/s2" % (f_dry["slide"] as Vector3).length())
+	await _setup("slope", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	var sp := Vector3(1.0, height.get_height(Vector3(1.0, 0, 0)), 0.0)
+	var f_slope: Dictionary = surface.get_footing_at(sp)
+	var slide: Vector3 = f_slope["slide"]
+	_check("a footing on a 50 degree sand face slides down it", slide.length() > 2.0 and slide.x < 0.0 and slide.y < 0.0, "%.1f m/s2, %s" % [slide.length(), slide])
+
+	# A 300 kg stone block (0.4 m) shoved across dry sand at 3 m/s on a 0.3 friction floor: the sand it sinks
+	# into and ploughs (1.7 cm, Bekker) stops it sooner.
+	var slides := []
+	for plough in [false, true]:
+		await _soil_scene("dry_sand")
+		surface.ploughing = plough
+		var pm := PhysicsMaterial.new()
+		pm.friction = 0.3
+		for c in get_children():
+			if c is StaticBody3D:
+				c.physics_material_override = pm
+		var crate := RigidBody3D.new()
+		crate.mass = 300.0
+		crate.physics_material_override = pm
+		var cc := CollisionShape3D.new()
+		cc.shape = BoxShape3D.new()
+		(cc.shape as BoxShape3D).size = Vector3(0.4, 0.4, 0.4)
+		crate.add_child(cc)
+		crate.add_to_group("ground_deform")
+		crate.position = Vector3(0, 0.201, 0)
+		add_child(crate)
+		surface.follow_target = surface.get_path_to(crate)
+		for i in 10:
+			await get_tree().physics_frame
+		crate.linear_velocity = Vector3(3.0, 0, 0)
+		for i in 180:
+			await get_tree().physics_frame
+		slides.append(crate.global_position.x)
+	_check("a stone block shoved over dry sand ploughs to a stop sooner", slides[1] < 0.9 * slides[0], "%.2f m against %.2f m on the floor's friction alone" % [slides[1], slides[0]])
+
+	# A 1500 kg 4x4, 700 N m a wheel, for 4 s at half throttle (easing in, as one drives on sand): firm ground,
+	# damp sand, dry sand at road pressure (200 kPa) and aired down to 60 kPa; then floored on dry sand.
+	var results := {}
+	for k in ["firm", "damp_sand", "dry_sand", "dry_sand_aired", "dry_sand_floored"]:
+		await _soil_scene("damp_sand" if k == "damp_sand" else "dry_sand")
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		if k == "firm":
+			car.soft_soil = false
+		if k.begins_with("dry_sand_"):
+			for c in car.get_children():
+				if c is PhysXVehicleWheel3D:
+					c.tire_pressure = 60.0
+		surface.follow_target = surface.get_path_to(car)
+		var start := car.global_position
+		results[k] = await _drive(car, 4.0, 1.0 if k == "dry_sand_floored" else 0.5)
+		surface.sync_deformation()
+		# The deepest rut along the way.
+		var rut := 0.0
+		var fwd := car.get_forward()
+		var side := fwd.cross(Vector3.UP).normalized()
+		var steps := int(results[k][0] / 0.1)
+		for j in range(-16, steps + 17):
+			var q0 := start + fwd * (j * 0.1)
+			for x in 41:
+				var q := q0 + side * (x - 20) * 0.05
+				rut = maxf(rut, surface.get_dent_at(q) - surface.get_rim_at(q))
+		results[k].append(rut)
+		print("  %s: %.1f m in 4 s, sinkage %.1f cm, slip %.2f, rut %.1f cm" % [k, results[k][0], results[k][1] * 100.0, results[k][2], rut * 100.0])
+	_check("damp sand drives, slower than firm ground (motion resistance 0.15 to 0.3 of the load on sand, Wong table 1.1)",
+			results["damp_sand"][0] > 3.0 and results["damp_sand"][0] < 0.5 * results["firm"][0], "%.1f m against %.1f m" % [results["damp_sand"][0], results["firm"][0]])
+	_check("dry sand at road pressure: the car does not get going", results["dry_sand"][0] < 1.0 and results["dry_sand"][1] > 0.08,
+			"%.1f m, sinkage %.1f cm" % [results["dry_sand"][0], results["dry_sand"][1] * 100.0])
+	_check("aired down to 60 kPa it sinks less and gets further", results["dry_sand_aired"][0] > 3.0 * results["dry_sand"][0] and results["dry_sand_aired"][1] < 0.7 * results["dry_sand"][1],
+			"%.1f m, sinkage %.1f cm" % [results["dry_sand_aired"][0], results["dry_sand_aired"][1] * 100.0])
+	_check("floored, the wheels spin and dig in (slip sinkage)", results["dry_sand_floored"][2] > 0.5 and results["dry_sand_floored"][1] > 1.5 * results["dry_sand_aired"][1],
+			"slip %.2f, sinkage %.1f cm" % [results["dry_sand_floored"][2], results["dry_sand_floored"][1] * 100.0])
+	_check("wheels print ruts", results["damp_sand"][3] > 0.01 and results["dry_sand_aired"][3] > 0.03, "damp %.1f cm, dry aired down %.1f cm" % [results["damp_sand"][3] * 100.0, results["dry_sand_aired"][3] * 100.0])
+	_check("firm ground: no sinkage", results["firm"][1] == 0.0, "%.2f cm" % (results["firm"][1] * 100.0))
+	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
+
+
 func _ground_material(kind_name: String) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	match kind_name:
@@ -401,6 +602,70 @@ func _build_trail() -> void:
 		await get_tree().physics_frame
 	surface.sync_deformation()
 	print("ground %s: step %.2f ms on the %s, moved %s m3" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume()])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+func _build_ruts() -> void:
+	if not "--ground=" in " ".join(OS.get_cmdline_user_args()):
+		kind = "damp_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-16.0, 150.0, 0.0)
+	sun.directional_shadow_max_distance = 40.0
+	add_child(sun)
+	var car := _make_car(1500.0, 700.0, Vector3(-1.0, _undisturbed(Vector3(-1.0, 0, -9.0)) + 0.9, -9.0))
+	if kind == "dry_sand":
+		for c in car.get_children():
+			if c is PhysXVehicleWheel3D:
+				c.tire_pressure = 60.0
+	surface.follow_target = surface.get_path_to(car)
+	# Nothing to see while it drives: draw only the final frame.
+	RenderingServer.render_loop_enabled = false
+	for i in 30:
+		await get_tree().physics_frame
+	# A gentle S through the frame, then on out of it.
+	car.throttle = 0.5
+	var t := 0.0
+	while t < 9.0 and car.global_position.z < 14.0:
+		car.steer = 0.25 * sin(t * 0.8)
+		await get_tree().physics_frame
+		t += 1.0 / 60.0
+	car.throttle = 0.0
+	car.brake = 1.0
+	# The camera on the ruts, low, the car gone past; the field follows the camera now.
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = Vector3(1.6, _undisturbed(Vector3(1.6, 0, -3.5)) + 0.9, -3.5)
+	cam.look_at(Vector3(-0.6, _undisturbed(Vector3(-0.6, 0, 1.5)), 1.5))
+	cam.fov = 55.0
+	car.queue_free()
+	surface.follow_target = surface.get_path_to(cam)
+	for i in 60:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	RenderingServer.render_loop_enabled = true
+	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car.global_position, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()

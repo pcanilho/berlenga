@@ -157,6 +157,9 @@ void PhysXVehicleWheel3D::set_tire_slide_grip(real_t p_v) {
 	tire_slide_grip = p_v;
 	_rebuild_parent_if_live();
 }
+void PhysXVehicleWheel3D::set_tire_pressure(real_t p_v) {
+	tire_pressure = MAX(p_v, (real_t)10.0); // Read live by the soft-soil step: no rebuild.
+}
 void PhysXVehicleWheel3D::set_use_as_steering(bool p_v) {
 	use_as_steering = p_v;
 	_rebuild_parent_if_live();
@@ -219,6 +222,9 @@ void PhysXVehicleWheel3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_friction", PROPERTY_HINT_RANGE, "0.1,3,0.01,or_greater"), "set_tire_friction", "get_tire_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_rest_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_rest_grip", "get_tire_rest_grip");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_slide_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_slide_grip", "get_tire_slide_grip");
+	ClassDB::bind_method(D_METHOD("set_tire_pressure", "value"), &PhysXVehicleWheel3D::set_tire_pressure);
+	ClassDB::bind_method(D_METHOD("get_tire_pressure"), &PhysXVehicleWheel3D::get_tire_pressure);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_pressure", PROPERTY_HINT_RANGE, "10,1000,1,or_greater,suffix:kPa"), "set_tire_pressure", "get_tire_pressure");
 
 	ClassDB::bind_method(D_METHOD("set_use_as_steering", "value"), &PhysXVehicleWheel3D::set_use_as_steering);
 	ClassDB::bind_method(D_METHOD("is_used_as_steering"), &PhysXVehicleWheel3D::is_used_as_steering);

@@ -33,6 +33,7 @@
 
 #include "ground_deform_field.h"
 #include "ground_deform_gpu.h"
+#include "ground_terramechanics.h"
 #include "ground_height_query.h"
 
 #include "scene/3d/node_3d.h"
@@ -72,6 +73,17 @@ public:
 		float gloss = 1.0f; // roughness factor where freshly turned
 		float litter = 0.0f; // m of litter on top
 		float sand = 0.0f; // share of sand
+		// Soil strength (docs/ideas/sand.md, stage 1; Wong 2008, table 2.2).
+		float cohesion = 1.0f; // kPa
+		float tan_phi = 0.53f; // internal friction
+		float shear_k = 0.025f; // m, Janosi-Hanamoto shear deformation modulus
+		float unit_weight = 15.7f; // kN/m3
+		// Pressure-sinkage under a wheel. Bekker's values depend on the plate size they were measured with (Wong
+		// 2008, sec. 2.2): n, kc, kphi above are a boot's (and set the prints' look); a tyre's come from plates
+		// of its own size. They differ where the soil stiffens under load: damp, packed sand.
+		float wheel_n = 1.0f;
+		float wheel_kc = 1.0f;
+		float wheel_kphi = 1000.0f;
 		bool deformable = true;
 	};
 	static Cell material_cell(float p_sand, float p_moisture, float p_litter);
@@ -95,6 +107,8 @@ private:
 	float detail_spacing = 0.0625f;
 	float outer_spacing = 0.125f;
 	PackedStringArray deform_groups;
+	bool ploughing = true;
+	void _plough_bodies();
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
 	float character_contact_area = 0.035f;
@@ -206,6 +220,25 @@ public:
 	Ref<Image> get_type_map() const { return type_map; }
 	void set_type_map_rect(const Rect2 &p_rect);
 	Rect2 get_type_map_rect() const { return type_map_rect; }
+
+	// The surface the materials and the vehicles use (the first in the tree).
+	static GroundSurface3D *get_active() { return active; }
+
+	// Soft soil (docs/ideas/sand.md, stage 1).
+	GroundSoil get_soil(Vector3 p_position) const;
+	// The soil under a wheel at p_position (its lowest point): load N, radius and width m, tyre inflation kPa (0:
+	// rigid), longitudinal slip ratio, slip angle (radians). The rut already pressed there counts as done work.
+	GroundWheelSoil wheel_soil(Vector3 p_position, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle) const;
+	Dictionary get_wheel_soil(Vector3 p_position, float p_load, float p_radius, float p_width, float p_inflation = 200.0f, float p_slip = 0.0f, float p_slip_angle = 0.0f) const;
+	// Presses a wheel's contact: p_size (width, length along p_yaw) down to p_sinkage below the undisturbed
+	// ground. p_velocity is where the loose sand goes (backwards when the wheel spins).
+	float press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity = Vector2());
+	// A walker's footing: sinkage, the speed it keeps (Lejeune et al. 1998: walking in sand costs 1.6 to 2.5
+	// times the work), and the downhill acceleration where the slope is steeper than the material holds.
+	Dictionary get_footing_at(Vector3 p_position, float p_mass = 75.0f, float p_area = 0.035f) const;
+	// Rigid bodies in deform_groups moving through soft ground feel its resistance (on).
+	void set_ploughing(bool p_enabled) { ploughing = p_enabled; }
+	bool is_ploughing() const { return ploughing; }
 
 	void set_gpu_simulation(bool p_enabled);
 	bool is_gpu_simulation() const { return gpu_simulation; }

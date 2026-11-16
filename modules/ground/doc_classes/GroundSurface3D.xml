@@ -36,6 +36,14 @@
 				How far the ground at [param position] is pressed below its undisturbed height, in metres.
 			</description>
 		</method>
+		<method name="get_footing_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mass" type="float" default="75.0" />
+			<param index="2" name="area" type="float" default="0.035" />
+			<description>
+			</description>
+		</method>
 		<method name="get_fresh_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -99,6 +107,24 @@
 				The printed ground height at [param position]: the undisturbed ground plus the rim minus the dent.
 			</description>
 		</method>
+		<method name="get_wheel_soil" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="load" type="float" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="width" type="float" />
+			<param index="4" name="inflation" type="float" default="200.0" />
+			<param index="5" name="slip" type="float" default="0.0" />
+			<param index="6" name="slip_angle" type="float" default="0.0" />
+			<description>
+			</description>
+		</method>
+		<method name="is_gpu_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
+			</description>
+		</method>
 		<method name="press">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -121,10 +147,14 @@
 				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a boot, a crate. Returns the volume moved, in m³.
 			</description>
 		</method>
-		<method name="is_gpu_active" qualifiers="const">
-			<return type="bool" />
+		<method name="press_wheel">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="size" type="Vector2" />
+			<param index="2" name="yaw" type="float" />
+			<param index="3" name="sinkage" type="float" />
+			<param index="4" name="velocity" type="Vector2" default="Vector2(0, 0)" />
 			<description>
-				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
 			</description>
 		</method>
 		<method name="refresh_ground">
@@ -208,6 +238,8 @@
 		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.
+		</member>
+		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
 		</member>
 		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.
