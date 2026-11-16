@@ -2786,7 +2786,11 @@ float TreeGenerator::_moss_amount() const {
 	// Bryophyte succession on decaying logs, 1988): mossier with each decay class.
 	static const float DECAY[6] = { 1.0f, 0.8f, 1.1f, 1.3f, 1.3f, 1.4f };
 	float k = moss_cover * MOSS_AFFINITY[preset] * shade * DECAY[CLAMP(decay_class, 0, 5)];
-	if (fallen || fallen_branch) {
+	if (fallen_branch && shed_radius_max <= 0.05f) {
+		// Sticks dry out between showers (all surface, little wood to hold water): a few cushions,
+		// not the coat a log carries.
+		k *= 0.4f;
+	} else if (fallen || fallen_branch) {
 		k *= 1.3f; // Wood on the ground sits in the litter's moisture.
 	}
 	return k;
@@ -3355,7 +3359,10 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		// Clods torn out with the roots: lumps over a hand to a pace across.
 		const float lump = moss_noise(p_q * 2.3f, salt + 2u) - 0.5f + 0.5f * (moss_noise(p_q * 6.0f, salt + 3u) - 0.5f);
 		const float clod = moss_noise(p_q * 13.0f, salt + 10u) - 0.5f;
-		return -T * (0.2f + 0.8f * Math::pow(MAX(1.0f - p_rho * p_rho, 0.0f), 0.6f)) * (1.0f - 0.25f * rotten) + T * 0.45f * lump + 0.035f * clod;
+		// Torn, not smoothed: soil breaks away in blocks along root channels and cracks, a
+		// fist-to-head-sized relief over the whole face.
+		const float blocks = Math::abs(moss_noise(p_q * 4.5f, salt + 15u) - 0.5f);
+		return -T * (0.2f + 0.8f * Math::pow(MAX(1.0f - p_rho * p_rho, 0.0f), 0.6f)) * (1.0f - 0.25f * rotten) + T * 0.45f * lump + 0.05f * clod - 0.09f * (0.25f - blocks) * (1.0f - 0.4f * rotten);
 	};
 	auto top = [&](const Vector3 &p_q) {
 		// The old forest floor: hummocks of litter and moss, small lumps of humus.
@@ -3461,40 +3468,74 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 			tri(grid[(rows - 1) * sectors + k], c, grid[(rows - 1) * sectors + (k + 1) % sectors]);
 		}
 	}
-	// Stones in the underside: lumpy, flattened octahedra pushed half out of the soil.
-	const int stones = 6 + int(pr.rand() % 10);
-	for (int st = 0; st < stones; st++) {
-		const float a = pr.randf() * float(Math::TAU);
-		const float rho = Math::sqrt(pr.randf()) * 0.92f;
-		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
-		Vector3 c = d * (rim_at(a) * rho);
-		c.y = under(rho, c);
-		const float sz = Math::lerp(0.04f, 0.16f, pr.randf() * pr.randf()) * (0.6f + 0.4f * R / 2.0f);
-		const Basis b = Basis(Vector3(pr.randf(), pr.randf(), pr.randf()).normalized(), pr.randf() * 3.0f);
-		const Vector3 sc(sz * Math::lerp(0.8f, 1.3f, pr.randf()), sz * Math::lerp(0.5f, 0.8f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
-		const float tone = 0.8f + 0.35f * pr.randf();
-		const Color col = Color(stone_c.r * tone, stone_c.g * tone, stone_c.b * tone);
-		// A subdivided octahedron, its points jittered.
+	// Lumps on the underside: subdivided octahedra, their points jittered, scaled by p_sc and
+	// coloured per vertex by p_col (so a clod's soil can darken into its shade).
+	auto lump = [&](const Vector3 &p_c, const Basis &p_b, const Vector3 &p_sc, float p_jitter, const Color &p_col, float p_jitter_freq, int p_seg) {
 		const Vector3 oct[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
 		const int faces[8][3] = { { 0, 2, 4 }, { 4, 2, 1 }, { 1, 2, 5 }, { 5, 2, 0 }, { 0, 4, 3 }, { 4, 1, 3 }, { 1, 5, 3 }, { 5, 0, 3 } };
 		auto sp = [&](const Vector3 &p_u) {
 			const Vector3 u = p_u.normalized();
-			const float j = 0.85f + 0.3f * moss_noise(u * 2.5f + c * 3.0f, salt + 9u);
-			return c + b.xform(u * sc * j);
+			const float j = (1.0f - 0.5f * p_jitter) + p_jitter * moss_noise(u * p_jitter_freq + p_c * 3.0f, salt + 9u);
+			return p_c + p_b.xform(u * p_sc * j);
 		};
+		// Each face a grid of p_seg segments a side, its vertices shared within the face so a
+		// clod shades round, not faceted.
+		const int seg = MAX(p_seg, 1);
+		LocalVector<int> ids;
 		for (const auto &f : faces) {
 			const Vector3 A = oct[f[0]], B = oct[f[1]], C = oct[f[2]];
-			const Vector3 AB = (A + B) * 0.5f, BC = (B + C) * 0.5f, CA = (C + A) * 0.5f;
-			const Vector3 sub[4][3] = { { A, AB, CA }, { AB, B, BC }, { CA, BC, C }, { AB, BC, CA } };
-			for (const auto &sf : sub) {
-				int ids[3];
-				for (int e = 0; e < 3; e++) {
-					const Vector3 lp = sp(sf[e]);
-					ids[e] = push(lp, b.xform(sf[e].normalized()), col, Vector2(lp.x, lp.z) * 4.0f);
+			ids.clear();
+			for (int i = 0; i <= seg; i++) {
+				for (int j = 0; j <= seg - i; j++) {
+					const Vector3 u = A + (B - A) * (float(i) / seg) + (C - A) * (float(j) / seg);
+					const Vector3 lp = sp(u);
+					const float shade = 0.85f + 0.15f * u.normalized().y;
+					ids.push_back(push(lp, p_b.xform(u.normalized()), Color(p_col.r * shade, p_col.g * shade, p_col.b * shade), Vector2(lp.x, lp.z) * 4.0f));
 				}
-				tri(ids[0], ids[1], ids[2]);
+			}
+			auto at = [&](int i, int j) { return ids[i * (seg + 1) - i * (i - 1) / 2 + j]; };
+			for (int i = 0; i < seg; i++) {
+				for (int j = 0; j < seg - i; j++) {
+					tri(at(i, j), at(i + 1, j), at(i, j + 1));
+					if (j + 1 < seg - i) {
+						tri(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+					}
+				}
 			}
 		}
+	};
+	// Stones in the underside, half out of the soil: glacial till and brash carry stones from
+	// grit to small boulders, and a plate lifts them with it (Coutts 1986; the pit-and-mound
+	// literature: Schaetzl et al. 1989). Mostly small, a few the size of a head; soil-stained.
+	const int stones = 14 + int(pr.rand() % 16);
+	for (int st = 0; st < stones; st++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const float rho = Math::sqrt(pr.randf()) * 0.95f;
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		Vector3 c = d * (rim_at(a) * rho);
+		const float u = pr.randf();
+		const float sz = Math::lerp(0.03f, 0.22f, u * u * u) * (0.6f + 0.4f * R / 2.0f);
+		c.y = under(rho, c) + sz * Math::lerp(0.1f, 0.45f, pr.randf());
+		const Basis b = Basis(Vector3(pr.randf(), pr.randf(), pr.randf()).normalized(), pr.randf() * 3.0f);
+		const Vector3 sc(sz * Math::lerp(0.8f, 1.3f, pr.randf()), sz * Math::lerp(0.5f, 0.8f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
+		const float tone = 0.7f + 0.35f * pr.randf();
+		const Color stained = stone_c.lerp(mineral, Math::lerp(0.25f, 0.6f, pr.randf()));
+		lump(c, b, sc, 0.3f, Color(stained.r * tone, stained.g * tone, stained.b * tone), 2.5f, 2);
+	}
+	// Clods: soil held in the root mat, standing proud of the face round the laterals and along
+	// the rim where the plate tore, lumps from a fist to a bucket across, crumbling with rot.
+	const int clods = int((22.0f + 10.0f * pr.randf()) * R * (1.0f - 0.4f * rotten));
+	for (int k = 0; k < clods; k++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const float rho = Math::lerp(0.2f, 1.02f, Math::sqrt(pr.randf()));
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		Vector3 c = d * (rim_at(a) * MIN(rho, 1.0f));
+		const float u = pr.randf();
+		const float sz = Math::lerp(0.05f, 0.24f, u * u) * (0.7f + 0.3f * R / 2.0f);
+		c.y = under(MIN(rho, 1.0f), c) + sz * 0.3f;
+		const Basis b = Basis(Vector3(pr.randf(), pr.randf(), pr.randf()).normalized(), pr.randf() * 3.0f);
+		const Vector3 sc(sz * Math::lerp(0.9f, 1.4f, pr.randf()), sz * Math::lerp(0.45f, 0.75f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
+		lump(c, b, sc, 0.55f, soil_colour(c, top(c) - c.y + 0.05f), 4.0f, 4);
 	}
 	// Normals from the faces (smooth over the soil; the stones' corners share none).
 	{
@@ -3561,7 +3602,8 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 			const float rr = r0 * (0.3f + 0.7f * Math::pow(1.0f - f, 2.0f)) + tr * 0.25f * MAX(0.0f, 1.0f - f * 4.0f);
 			// Inside the plate near the stem, then along the underside mostly out of the soil
 			// (washed and shaken bare), and past the rim hanging under their own weight.
-			const float floor_y = under(MIN(rho, 1.0f), q) + rr * 0.15f;
+			// Washed and shaken bare: out of the soil by most of their girth.
+			const float floor_y = under(MIN(rho, 1.0f), q) - rr * 0.35f;
 			q.y = rho <= 1.0f ? MIN(floor_y, Math::lerp(-0.12f, floor_y, Math::smoothstep(0.0f, 0.35f, rho))) : under(1.0f, q) + rr * 0.15f;
 			lp.push_back(q);
 			lr.push_back(rr);
@@ -3618,6 +3660,29 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 			lr.push_back(r0 * Math::lerp(1.0f, 0.4f, f));
 		}
 		root(lp, lr, false, 0, len * 0.5f);
+	}
+	// Torn stubs: roots that ran down and out into the soil below the plate and snapped where
+	// it held them, standing out of the underside a hand or two (the plate's face reads as a
+	// bristle of broken ends; Coutts 1983).
+	const int stubs = int(14.0f * R);
+	for (int k = 0; k < stubs; k++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const float rho = Math::lerp(0.15f, 0.95f, Math::sqrt(pr.randf()));
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		Vector3 o = d * (rim_at(a) * rho);
+		o.y = under(rho, o) + 0.03f;
+		const float u = pr.randf();
+		const float r0 = Math::lerp(0.008f, 0.04f, u * u) * (0.6f + 0.4f * tr / 0.3f);
+		const float len = Math::lerp(0.08f, 0.35f, pr.randf());
+		const Vector3 go = (Vector3(0, -1, 0) + d * Math::lerp(0.2f, 0.9f, pr.randf()) + Vector3(pr.randf() - 0.5f, 0.0f, pr.randf() - 0.5f) * 0.5f).normalized();
+		lp.clear();
+		lr.clear();
+		for (int i = 0; i <= 3; i++) {
+			const float f = float(i) / 3.0f;
+			lp.push_back(o + go * (len * f) + Vector3(pr.randf() - 0.5f, pr.randf() - 0.5f, pr.randf() - 0.5f) * (0.02f * f));
+			lr.push_back(r0 * Math::lerp(1.0f, 0.8f, f));
+		}
+		root(lp, lr, true);
 	}
 	// Sinkers: straight down from under the stem, snapped where the soil held them.
 	const int sinkers = 3 + int(pr.rand() % 3);
@@ -6546,7 +6611,15 @@ void TreeGenerator::_apply_decay() {
 		Color(0.42f, 0.36f, 0.28f), Color(0.3f, 0.25f, 0.19f) };
 	// With bark_peel the lost bark shows as wood (trees.md 5f), so what bark is left keeps more of
 	// its own colour.
-	bark_color = bark_color.lerp(WEATHERED[decay_class], decay_class >= 3 && bark_peel <= 0.0f ? 0.85f : 0.55f);
+	// Fallen twigs and small branches lie in the litter's damp and stain brown as they rot,
+	// where standing dead wood bleaches grey in the sun and wind.
+	static const Color LITTER_STAINED[6] = { Color(), Color(0.31f, 0.25f, 0.2f), Color(0.33f, 0.27f, 0.21f), Color(0.35f, 0.29f, 0.22f),
+		Color(0.35f, 0.28f, 0.2f), Color(0.3f, 0.24f, 0.17f) };
+	if (fallen_branch) {
+		bark_color = bark_color.lerp(LITTER_STAINED[decay_class], 0.7f);
+	} else {
+		bark_color = bark_color.lerp(WEATHERED[decay_class], decay_class >= 3 && bark_peel <= 0.0f ? 0.85f : 0.55f);
+	}
 }
 
 // Old trees (docs/ideas/trees.md 5e): the tree-related microhabitats that come with age and girth
@@ -6867,6 +6940,73 @@ Array TreeGenerator::get_veteran_features() const {
 	return out;
 }
 
+// The thickest stem off the root node: the bole.
+int TreeGenerator::_main_stem() const {
+	int stem = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (!n.removed && n.parent == 0 && (stem < 0 || n.radius > nodes[stem].radius)) {
+			stem = i;
+		}
+	}
+	return stem;
+}
+
+// A felled stem is not a rigid rod. Its natural sweep and the crown's upturn left the top of a
+// log standing up off the ground, and a log thrown with its root plate bridged from the plate to
+// its top. Wood bends and cracks under its own weight where it is unsupported, the crown's limbs
+// break under it, and a rotting log sags into the soil until it lies along it (Harmon et al.
+// 1986; Fraver et al. 2002, decay classes by contact and collapse). Walking out along the bole,
+// each internode that ends off the ground (or in it) turns about its start, with all the wood
+// beyond it, toward resting on the ground, by at most a few degrees per internode while sound
+// (a gentle sag or a crack) and more once soft.
+void TreeGenerator::_settle_log(float p_ground, float p_trunk_r) {
+	static const float SINK[6] = { 0.15f, 0.15f, 0.15f, 0.25f, 0.35f, 0.45f };
+	static const float BEND[6] = { 4.0f, 5.0f, 7.0f, 12.0f, 20.0f, 30.0f };
+	const float sink = SINK[CLAMP(decay_class, 0, 5)];
+	const float max_bend = Math::deg_to_rad(BEND[CLAMP(decay_class, 0, 5)]);
+	LocalVector<bool> sub;
+	sub.resize(nodes.size());
+	bool touched = false;
+	for (int k = _main_stem(); k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+		Node &n = nodes[k];
+		const float r_end = (n.main >= 0 && !nodes[n.main].removed) ? nodes[n.main].radius : 0.6f * n.radius;
+		const float want = p_ground + r_end * (1.0f - sink);
+		const float h = n.end().y - want;
+		// Off the plate: the butt end stays up where the plate holds it, the bole only bends
+		// down once it has come to the ground, or where it already lies low.
+		if (!touched) {
+			touched = n.start.y - (p_ground + n.radius * (1.0f - sink)) < 0.5f * p_trunk_r + 0.05f;
+			if (!touched) {
+				continue;
+			}
+		}
+		if (Math::abs(h) < 0.01f || n.length < 1e-3f) {
+			continue;
+		}
+		Vector3 bend_axis = n.dir.cross(Vector3(0, 1, 0));
+		if (bend_axis.length_squared() < 1e-6f) {
+			continue;
+		}
+		bend_axis.normalize();
+		// Turning about n x up by +a lowers a forward-pointing end; solve for the angle that
+		// brings the end to the wanted height, within the wood's give.
+		const float cur = Math::asin(CLAMP(n.dir.y, -1.0f, 1.0f));
+		const float goal = Math::asin(CLAMP((want - n.start.y) / n.length, -1.0f, 1.0f));
+		const float a = CLAMP(cur - goal, -max_bend, max_bend);
+		// (A positive turn about dir x up lifts the end.)
+		const Basis rb(bend_axis, -a);
+		const Vector3 pivot = n.start;
+		for (int i = 0; i < int(nodes.size()); i++) {
+			sub[i] = !nodes[i].removed && (i == k || (i > k && nodes[i].parent >= 0 && sub[nodes[i].parent]));
+			if (sub[i]) {
+				nodes[i].start = pivot + rb.xform(nodes[i].start - pivot);
+				nodes[i].dir = rb.xform(nodes[i].dir).normalized();
+			}
+		}
+	}
+}
+
 // A log: the snag felled where it stood, lying along a random bearing, its stem resting on the
 // ground. Limbs that would reach into the ground broke off in the fall.
 void TreeGenerator::_fell() {
@@ -6897,13 +7037,27 @@ void TreeGenerator::_fell() {
 		fall.normalize();
 		plate.base0 = base;
 		plate.hinge = base + fall * (0.75f * plate.radius) - Vector3(0, 0.1f, 0);
-		// The stem's top: its furthest point from the base.
+		// Where the stem comes down: a long stem does not bridge from the plate to its top. The
+		// crown takes the fall, its limbs and often the top snapping, and the bole touches down
+		// about two fifths to three fifths of the way out, sooner once it has sagged and rotted (Harmon
+		// et al. 1986: most logs lie in contact with the ground for much of their length). The
+		// rest of the stem is laid along the ground below (_settle_log()).
 		Vector3 tip = base;
 		float tip_r = trunk_r;
-		for (const Node &n : nodes) {
-			if (!n.removed && n.order == 0 && n.end().distance_squared_to(base) > tip.distance_squared_to(base)) {
-				tip = n.end();
-				tip_r = n.radius;
+		{
+			float total = 0.0f;
+			for (int k = _main_stem(); k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+				total += nodes[k].length;
+			}
+			const float touch = total * Math::lerp(0.42f, 0.6f, fr.randf()) * (decay_class >= 3 ? 0.8f : 1.0f);
+			float run = 0.0f;
+			for (int k = _main_stem(); k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+				run += nodes[k].length;
+				tip = nodes[k].end();
+				tip_r = nodes[k].radius;
+				if (run >= touch) {
+					break;
+				}
 			}
 		}
 		float ang = float(Math::PI) * 0.5f;
@@ -6930,6 +7084,7 @@ void TreeGenerator::_fell() {
 			n.dir = turn.xform(n.dir);
 		}
 	}
+	_settle_log(base.y, trunk_r);
 	for (int i = 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
 		if (n.removed) {
@@ -6961,6 +7116,13 @@ void TreeGenerator::_shed_branch() {
 	// (thinner twig litter is the ground plants').
 	const float pick_u = br.randf();
 	const float target = Math::lerp(0.01f, MAX(shed_radius_max, 0.01f), pick_u * pick_u);
+	// Sticks: fine woody debris breaks into pieces when it falls and again as it lies, most of
+	// them well under a metre and a half (Harmon et al. 1986; Woodall and Monleon 2008, FIA fine
+	// woody debris tallies by length), so a stick is a piece of a twig or small branch, not the
+	// whole shoot.
+	const bool stick = shed_radius_max <= 0.05f;
+	const float stick_u = br.randf();
+	const float stick_len = 0.35f + 1.25f * stick_u * stick_u;
 	int pick = -1;
 	float best = 1e9f;
 	for (int i = 1; i < int(nodes.size()); i++) {
@@ -6976,7 +7138,7 @@ void TreeGenerator::_shed_branch() {
 		for (int k = i; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
 			chain += nodes[k].length;
 		}
-		const float d = Math::abs(Math::log(MAX(n.radius, 0.002f) / target)) - 0.15f * MIN(chain, 4.0f) + 0.05f * br.randf();
+		const float d = Math::abs(Math::log(MAX(n.radius, 0.002f) / target)) - 0.15f * MIN(chain, stick ? stick_len : 4.0f) + 0.05f * br.randf();
 		if (d < best) {
 			best = d;
 			pick = i;
@@ -6990,6 +7152,49 @@ void TreeGenerator::_shed_branch() {
 	keep.resize(nodes.size());
 	for (int i = 0; i < int(nodes.size()); i++) {
 		keep[i] = i == pick || (i > pick && nodes[i].parent >= 0 && keep[nodes[i].parent]);
+	}
+	if (stick) {
+		// Snapped to its length: the axis past it gone, a fracture at the break (trees.md 5j).
+		float run = 0.0f;
+		for (int k = pick; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			run += nodes[k].length;
+			const int next = nodes[k].main;
+			if (run >= stick_len && next >= 0) {
+				LocalVector<bool> cut;
+				cut.resize(nodes.size());
+				for (int i = 0; i < int(nodes.size()); i++) {
+					cut[i] = i == next || (i > next && nodes[i].parent >= 0 && cut[nodes[i].parent]);
+					if (cut[i]) {
+						keep[i] = false;
+					}
+				}
+				broken_ends.insert(k);
+				break;
+			}
+		}
+		// Twigs grow in a zigzag from bud to bud and dead wood keeps it: kinked a few degrees at
+		// every node, more on thin wood, instead of a smooth curve. Each kink turns the rest of
+		// the axis and its side shoots about the node.
+		for (int k = nodes[pick].main; k >= 0 && keep[k]; k = nodes[k].main) {
+			const Vector3 pivot = nodes[k].start;
+			Vector3 side = nodes[k].dir.cross(Vector3(0, 1, 0));
+			if (side.length_squared() < 1e-6f) {
+				side = nodes[k].dir.cross(Vector3(1, 0, 0));
+			}
+			side.normalize();
+			const Vector3 kink_axis = Basis(nodes[k].dir.normalized(), br.randf() * float(Math::TAU)).xform(side).normalized();
+			const float angle = Math::deg_to_rad(Math::lerp(6.0f, 16.0f, br.randf()) * CLAMP(0.012f / MAX(nodes[k].radius, 0.003f), 0.6f, 1.6f));
+			const Basis kb(kink_axis, angle);
+			LocalVector<bool> sub;
+			sub.resize(nodes.size());
+			for (int i = 0; i < int(nodes.size()); i++) {
+				sub[i] = keep[i] && (i == k || (i > k && nodes[i].parent >= 0 && sub[nodes[i].parent]));
+				if (sub[i]) {
+					nodes[i].start = pivot + kb.xform(nodes[i].start - pivot);
+					nodes[i].dir = kb.xform(nodes[i].dir);
+				}
+			}
+		}
 	}
 	for (int i = 1; i < int(nodes.size()); i++) {
 		if (!keep[i]) {
@@ -7047,6 +7252,47 @@ void TreeGenerator::_shed_branch() {
 			nodes[i].dir = turn.xform(nodes[i].dir);
 		}
 	}
+	// Tip it about the level line to rest on two points: a bent limb laid along its mean
+	// direction balances on its lowest point with an end in the air; it rocks until the hull of
+	// its underside meets the ground, so the gap under the axis is least.
+	{
+		const Vector3 pitch_axis = level.cross(Vector3(0, 1, 0)).normalized();
+		float best_pitch = 0.0f;
+		float best_gap = 1e30f;
+		for (int k = -30; k <= 30; k++) {
+			const Basis pb(pitch_axis, Math::deg_to_rad(float(k)));
+			float low = 1e30f;
+			float gap = 0.0f;
+			float total = 0.0f;
+			for (int pass = 0; pass < 2; pass++) {
+				for (int a = pick; a >= 0 && !nodes[a].removed; a = nodes[a].main) {
+					const Node &n = nodes[a];
+					const float y0 = pb.xform(n.start - ground).y - n.radius;
+					const float y1 = pb.xform(n.end() - ground).y - ((n.main >= 0 && !nodes[n.main].removed) ? nodes[n.main].radius : 0.5f * n.radius);
+					if (pass == 0) {
+						low = MIN(low, MIN(y0, y1));
+					} else {
+						gap += (0.5f * (y0 + y1) - low) * n.length;
+						total += n.length;
+					}
+				}
+			}
+			gap /= MAX(total, 1e-4f);
+			if (gap < best_gap - 1e-5f) {
+				best_gap = gap;
+				best_pitch = float(k);
+			}
+		}
+		if (best_pitch != 0.0f) {
+			const Basis pb(pitch_axis, Math::deg_to_rad(best_pitch));
+			for (int i = pick; i < int(nodes.size()); i++) {
+				if (keep[i]) {
+					nodes[i].start = ground + pb.xform(nodes[i].start - ground);
+					nodes[i].dir = pb.xform(nodes[i].dir);
+				}
+			}
+		}
+	}
 	// Rest the limb's own axis on the ground: its lowest point (a bent limb sags at one end or
 	// the middle) sits at ground level plus its radius there.
 	LocalVector<bool> axis_node;
@@ -7058,7 +7304,9 @@ void TreeGenerator::_shed_branch() {
 	for (int k = pick; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
 		axis_node[k] = true;
 		const Node &n = nodes[k];
-		lift = MAX(lift, ground.y + n.radius * 0.85f - MIN(n.start.y, n.end().y));
+		// The tube tapers along the internode to the next one's radius (or to a tip).
+		const float r_end = (n.main >= 0 && !nodes[n.main].removed) ? nodes[n.main].radius : 0.5f * n.radius;
+		lift = MAX(lift, MAX(ground.y + n.radius * 0.85f - n.start.y, ground.y + r_end * 0.85f - n.end().y));
 	}
 	for (int i = pick; i < int(nodes.size()); i++) {
 		if (keep[i]) {
@@ -7067,7 +7315,7 @@ void TreeGenerator::_shed_branch() {
 	}
 	// Side branches pointing into the ground broke off when it fell, and so did those standing
 	// high: a dead lateral more than a few limb diameters up snaps on impact or soon after.
-	const float stand_max = ground.y + MAX(0.6f, 8.0f * nodes[pick].radius);
+	const float stand_max = ground.y + MAX(stick ? 0.15f : 0.6f, 8.0f * nodes[pick].radius);
 	for (int i = pick + 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
 		if (n.removed || axis_node[i]) {
@@ -7427,6 +7675,48 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (t > 0.0f) {
 				r_b.colors.write[v] = r_b.colors[v].lerp(moss_green, t);
 			}
+		}
+	};
+	// Stemflow and the films it feeds (trees.md 5o): smooth-barked trees funnel rain down their
+	// stems, beech above all (stemflow up to a fifth of the rain on a beech stand; Levia and Frost
+	// 2003), and the water runs in a few wandering tracks that stay dark and wet for hours and
+	// carry green algae (Desmococcus, Trentepohlia) and cyanobacterial films; between the tracks
+	// the bark is mottled by algae lower down and pale crust lichen (Barkman 1958). Rough bark
+	// spreads the water through its furrows instead. Vertex colour, so it holds at every LOD and
+	// under path tracing.
+	const BarkKind film_kind = _bark_kind(preset);
+	const bool film_bark = (film_kind == BARK_SMOOTH || film_kind == BARK_LENTICELLED) && !fallen && !fallen_branch;
+	const float film_wet = 0.45f + 0.55f * CLAMP(forest_shade / 0.6f, 0.0f, 1.0f);
+	auto film_tint = [&](Builder &r_b, const Vector4i &p_part, float p_radius) {
+		if (!film_bark || p_radius < 0.04f || r_b.parts.is_empty() || r_b.parts[r_b.parts.size() - 1] != p_part) {
+			return;
+		}
+		const uint32_t fs = uint32_t(seed) * 2654435761u;
+		const Color algae_c(0.11f, 0.14f, 0.06f);
+		const float big = Math::smoothstep(0.04f, 0.15f, p_radius);
+		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
+			const Vector3 p = r_b.verts[v];
+			const float h = p.y - moss_ground;
+			// Tracks: bands a hand or two wide, running down the stem for metres and wandering.
+			const float wander = 0.6f * (moss_noise(p * Vector3(0.0f, 0.8f, 0.0f) + Vector3(0.3f, 0.0f, 0.7f), fs + 0x73666c31u) - 0.5f);
+			const Vector3 q = p + Vector3(wander, 0.0f, -wander);
+			const float track = big * Math::smoothstep(0.6f, 0.72f, moss_noise(q * Vector3(7.5f, 0.3f, 7.5f), fs + 0x73666c32u));
+			// Films between them: algae low on the stem in patches, crust lichen higher up.
+			const float low = 1.0f - Math::smoothstep(1.0f, 8.0f, h);
+			// Colonies at two scales: blotches a hand to a forearm across, ragged at the edge.
+			const float pn = 0.65f * moss_noise(p * Vector3(3.2f, 1.6f, 3.2f), fs + 0x73666c33u) + 0.35f * moss_noise(p * Vector3(11.0f, 7.0f, 11.0f), fs + 0x73666c35u);
+			const float patch = Math::smoothstep(0.5f, 0.62f, pn);
+			const float cn = 0.6f * moss_noise(p * Vector3(6.0f, 3.5f, 6.0f), fs + 0x73666c34u) + 0.4f * moss_noise(p * Vector3(16.0f, 10.0f, 16.0f), fs + 0x73666c36u);
+			const float crust = Math::smoothstep(0.55f, 0.66f, cn) * (1.0f - track) * (1.0f - 0.7f * patch);
+			Color c = r_b.colors[v];
+			const float a = c.a;
+			const float g = CLAMP(film_wet * (0.55f * track + 0.45f * patch * low), 0.0f, 0.75f);
+			c = c.lerp(algae_c, 0.8f * g);
+			const float dk = Math::lerp(1.0f, 0.6f, film_wet * track);
+			c = Color(c.r * dk, c.g * dk, c.b * dk);
+			c = c.lerp(Color(MIN(c.r * 1.35f + 0.03f, 1.0f), MIN(c.g * 1.35f + 0.03f, 1.0f), MIN(c.b * 1.3f + 0.025f, 1.0f)), 0.6f * big * crust);
+			c.a = a;
+			r_b.colors.write[v] = c;
 		}
 	};
 	if (rigged) {
@@ -9241,6 +9531,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (collar) {
 				root_collar(bark, part, sides, pts, rad, false);
 			}
+			film_tint(bark, part, r0);
 			moss_tint(bark, part);
 			lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : rad[0]), uint32_t(s));
 			end_grain(bark, part, pts, sides, girth_r, col);
@@ -9439,6 +9730,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					if (collar) {
 						root_collar(bark, part, bsides, bp, br, false);
 					}
+					film_tint(bark, part, r0);
 					moss_tint(bark, part);
 					lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : br[0]), uint32_t(s));
 					end_grain(bark, part, bp, bsides, girth_r, col);

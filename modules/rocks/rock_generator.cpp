@@ -77,7 +77,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -90,7 +90,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -117,7 +117,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -147,7 +147,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f };
 	return w[family];
 }
 
@@ -791,6 +791,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	} else if (family == FAMILY_FIN) {
 		a = 2.0f + 1.4f * rng.randf(); // x: along the joint; z: the fin's height; y: its thickness, between two joints
 		c = 0.22f + 0.13f * rng.randf();
+	} else if (family == FAMILY_CAVE_MOUTH) {
+		a = 1.3f + 0.5f * rng.randf(); // x: along the cliff; z: up; y: into it (the front face +y)
+		c = 0.62f + 0.1f * rng.randf(); // well under the height after rounding, so y stays the short axis
 	} else if (family == FAMILY_GOBLIN) {
 		a = 1.3f + 0.6f * rng.randf(); // x: up when stood; a knob a little taller than wide
 		c = 0.8f + 0.15f * rng.randf();
@@ -798,7 +801,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		a = 1.8f + 0.6f * rng.randf(); // x: down the channel; z: across; y: the slab's depth below the bed
 		c = 0.26f + 0.08f * rng.randf();
 	}
-	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE || family == FAMILY_GOBLIN;
+	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE || family == FAMILY_GOBLIN || family == FAMILY_CAVE_MOUTH;
 	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // stood on end in the field: beds cross x
 	// Fresh fragments spread over the Zingg classes rather than sitting near the cube: talus and rockfall hold many
 	// slabs and blades, rods and wedges as well as blocks (Domokos et al. 2020 give the mean, not the spread).
@@ -853,7 +856,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const Vector3 n = Vector3(1.0f, slope * Math::cos(az), slope * Math::sin(az)).normalized();
 			planes.push_back({ n, n.x * a * (0.82f + 0.16f * rng.randf()), k > 0 && rng.randf() < 0.5f });
 		}
-	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT && family != FAMILY_FIN && family != FAMILY_POTHOLE) {
+	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT && family != FAMILY_FIN && family != FAMILY_POTHOLE && family != FAMILY_CAVE_MOUTH) {
 		// Columnar basalt: a 5 to 7-sided prism (contraction joints, mean six; Goehring 2009) along x, cut across.
 		const int sides = CLAMP(int(Math::round(6.0f + rng.randfn(0.0f, 0.8f))), 5, 7);
 		const float phase = rng.randf() * float(Math::TAU);
@@ -945,7 +948,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f, true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1050,7 +1053,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -1398,6 +1401,26 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		y_top_mesh = y_top;
 		const float goblin_head = 0.72f + 0.14f * rng.randf(), goblin_neck = goblin_head - 0.26f - 0.08f * rng.randf();
 		const float goblin_pinch = 0.22f + 0.2f * rng.randf();
+		// Cave mouth (Ford and Williams 2007): a passage opened along a bedding plane or a joint where the cliff foot
+		// cuts it; the roof bedding-flat or arched, the passage narrowing and turning a little as it goes in, so the
+		// back is out of sight; a hood of the wall over the entrance.
+		const float cave_w = (0.32f + 0.18f * rng.randf()) * a, cave_x = (rng.randf() - 0.5f) * 0.4f * a;
+		const float cave_floor = z_lo + 0.06f * (z_hi - z_lo), cave_h = (0.38f + 0.2f * rng.randf()) * (z_hi - z_lo);
+		const bool cave_flat = rng.randf() < 0.5f; // a bedding-plane roof, else an arched one
+		const float cave_turn = (rng.randf() - 0.5f) * 0.8f; // how far the passage swings sideways per unit in
+		const float cave_skew = (rng.randf() - 0.5f) * 0.6f; // the opening leaning along a joint
+		float y_front = -1e9f;
+		if (family == FAMILY_CAVE_MOUTH) {
+			for (int z = 0; z < fine.nz; z++) {
+				for (int y = 0; y < fine.ny; y++) {
+					for (int x = 0; x < fine.nx; x++) {
+						if (fine.v[fine.idx(x, y, z)] < 0.0f) {
+							y_front = MAX(y_front, fine.pos(x, y, z).y);
+						}
+					}
+				}
+			}
+		}
 		if (family == FAMILY_POTHOLE) {
 			const int count = 1 + int(rng.randf() * 2.99f);
 			float px = -0.7f * a + 0.4f * a * rng.randf();
@@ -1459,6 +1482,41 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// Rills: rain runs down the sides and fluted them, grooves along the column.
 						v += 0.07f * c * (rk_noise(Vector3(p.x * 0.35f, p.y * 4.0f, p.z * 4.0f), nseed + 120u) - 0.5f);
 						v += 0.05f * c * (rk_fbm(p * 2.2f, nseed + 113u, 3) - 0.5f);
+					} else if (family == FAMILY_CAVE_MOUTH) {
+						const float fh = MAX(z_hi - z_lo, 0.01f);
+						const float zt = (p.z - z_lo) / fh;
+						// The front leans back above the entrance (the cliff above), the hood overhanging the opening.
+						const float into = y_front - p.y; // depth behind the front face
+						v += 0.25f * c * Math::smoothstep(0.55f, 1.0f, zt) * Math::smoothstep(0.0f, 0.6f * c, -into + 0.6f * c);
+						// The block's outline lost in the cliff: sides and top rounded back, the front bulging and hollowed
+						// at the scale of metres, a few thicker beds standing out.
+						const float xt = Math::abs(p.x - 0.5f * (x_lo + x_hi)) / MAX(0.5f * span, 0.01f);
+						v += 0.6f * c * Math::pow(Math::smoothstep(0.55f, 1.0f, xt), 2.0f);
+						v += 0.35f * c * Math::pow(Math::smoothstep(0.75f, 1.0f, zt), 2.0f);
+						v += 0.22f * c * (rk_fbm(p * 0.7f, nseed + 160u, 3) - 0.5f);
+						const float thick = p.z / 0.35f + 0.6f * rk_noise(p * 0.5f, nseed + 164u);
+						v -= 0.02f * c * Math::smoothstep(0.7f, 0.95f, 0.5f + 0.5f * Math::sin(thick * float(Math::TAU)));
+						// The passage: its centre swinging sideways as it goes in, narrowing, its roof flat or a cosh arch,
+						// the floor rising a little to a choke of fallen blocks at the back.
+						const float d_in = MAX(into, 0.0f);
+						const float cx = cave_x + cave_turn * d_in * d_in;
+						const float narrow = 1.0f - 0.35f * Math::smoothstep(0.0f, 1.5f * c, d_in);
+						const float w = cave_w * narrow * (1.0f + 0.15f * (rk_noise(p * 1.2f, nseed + 161u) - 0.5f));
+						const float u = (p.x - cx) / MAX(w, 0.01f) - cave_skew * (p.z - cave_floor) / MAX(cave_h, 0.01f);
+						float roof;
+						if (cave_flat) {
+							roof = cave_floor + cave_h * narrow * (1.0f - 0.25f * Math::pow(MIN(Math::abs(u), 1.0f), 6.0f));
+						} else {
+							roof = cave_floor + cave_h * narrow * (Math::cosh(1.6f) - Math::cosh(1.6f * MIN(Math::abs(u), 1.0f))) / (Math::cosh(1.6f) - 1.0f);
+						}
+						roof += 0.05f * fh * (rk_fbm(p * 1.5f, nseed + 162u, 2) - 0.5f);
+						const float floor_z = cave_floor + 0.15f * cave_h * Math::smoothstep(0.6f * c, 1.6f * c, d_in);
+						float d = MAX(MAX(Math::abs(p.x - cx) - w, floor_z - p.z), p.z - roof);
+						d = MAX(d, into - 1.6f * c); // a blind end, round
+						// The lip rounded back where the passage meets the front.
+						d -= 0.12f * c * Math::smoothstep(0.25f * c, 0.0f, into);
+						v = MAX(v, -d);
+						v += 0.06f * c * (rk_fbm(p * 1.8f, nseed + 163u, 3) - 0.5f);
 					} else if (family == FAMILY_GOBLIN) {
 						// Goblin (Entrada sandstone, Goblin Valley): a knob rounded by spheroidal weathering and sand blast,
 						// a bulbous head on a narrower neck over a flared foot, faint beds; no joint face left flat.
@@ -1685,12 +1743,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Bedding laminae etched out by weathering (differential erosion of the softer laminae), slightly cross-bedded.
 		if (lith.laminae > 0.0f) {
 			const float lam = MAX(0.07f, min_period);
-			const float s = ((upright ? p.x + bed_tilt * p.z : (family == FAMILY_FIN ? p.z + bed_tilt * p.x : p.y + bed_tilt * p.x)) + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
+			const float s = ((upright ? p.x + bed_tilt * p.z : ((family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH) ? p.z + bed_tilt * p.x : p.y + bed_tilt * p.x)) + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
 			const float groove = Math::pow(0.5f + 0.5f * Math::cos(s * float(Math::TAU)), 6.0f);
 			// Laminae differ: most barely etched, a few soft ones weathered back deep.
 			const float lamina = rk_hash(uint32_t(int(Math::floor(s + 0.5f)) + 4096) ^ nseed) / 4294967295.0f;
 			const float strength = 0.25f + 0.75f * lamina * lamina;
-			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * hb * (1.0f - Math::abs(upright ? n.x : (family == FAMILY_FIN ? n.z : n.y))) * worn;
+			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * hb * (1.0f - Math::abs(upright ? n.x : ((family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH) ? n.z : n.y))) * worn;
 		}
 		// Slaty cleavage: plates stepping back at the edges.
 		if (lith.cleavage > 0.0f) {
@@ -1775,7 +1833,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			n = dir_local(n);
 			out_verts.write[k] = q;
 			out_normals.write[k] = n;
-			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : (family == FAMILY_FIN ? 0.5f : 0.0f), 1.0f); // b: the beds cross x (1), z (0.5) or y (0)
+			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : ((family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH) ? 0.5f : 0.0f), 1.0f); // b: the beds cross x (1), z (0.5) or y (0)
 			out_uv.write[k] = Vector2(q.x, q.z);
 			out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
 			const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
@@ -2724,5 +2782,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_FIN);
 	BIND_ENUM_CONSTANT(FAMILY_POTHOLE);
 	BIND_ENUM_CONSTANT(FAMILY_GOBLIN);
+	BIND_ENUM_CONSTANT(FAMILY_CAVE_MOUTH);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }

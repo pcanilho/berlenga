@@ -483,3 +483,17 @@ arches, goblins, potholes, cave mouths.
   on a pinched neck over a flared foot, faint beds. Grid 128 cells (35 to 70 thousand triangles).
 - Placement: flat bare sandstone (normal y over 0.97), one cell in ten or so; clusters of 6 to 20 within 25 m, each on
   the floor (local normal y over 0.9), sunk 6% of its height below the lowest ground round it.
+
+### Landforms step 2d: cave mouths (16 Nov), off by default
+
+- `FAMILY_CAVE_MOUTH`: a limestone outcrop (x along the cliff, z up, front +y) with a passage along a bed or a joint:
+  roof bedding-flat or a cosh arch, the opening leaning along its joint, the passage narrowing by a third and swinging
+  sideways as it goes in to a round blind end 1.6c deep, its floor rising to a choke; the lip rounded; the block's
+  sides and top rounded back and bulging at the scale of metres, a few thick beds standing out.
+- Placement (`RockField3D.cave_mouths`, default off; the bench turns it on): bare limestone wall (normal y 0.23 to
+  0.64) whose foot 10 m down the fall line is level over 8 m, with the wall rising at least 8 m within 12 m behind;
+  one per cell in four such cells; the portal 6 to 12 m tall standing on the foot, its back to the wall, 3 to 7
+  fallen blocks at the entrance.
+- Why off: a heightfield cannot open a hole into its own slope, so the portal stands in front of the wall as its own
+  block and reads as an outcrop with a hole, not a cave in the cliff. A proper cave mouth needs the terrain to cut a
+  hole (or a mesh tile) behind it: a follow-up with the terrain thread.

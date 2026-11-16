@@ -151,6 +151,7 @@ private:
 	bool ground_blend = false;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
+	bool cave_mouths = false; // portal blocks at limestone cliff feet: off until the terrain can open a hole behind them
 	bool mineral_glints = false;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
@@ -262,6 +263,8 @@ public:
 	bool is_mineral_glints() const { return mineral_glints; }
 	void set_coast_collision(bool p_enabled);
 	bool is_coast_collision() const { return coast_collision; }
+	void set_cave_mouths(bool p_enabled);
+	bool is_cave_mouths() const { return cave_mouths; }
 	void set_ground_blend(bool p_enabled);
 	bool is_ground_blend() const { return ground_blend; }
 	void set_ground_blend_height(real_t p_height);

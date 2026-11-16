@@ -74,6 +74,7 @@ public:
 		FAMILY_FIN, // sandstone fin: a narrow wall of bedrock between two joints, its top rounded, some holed by an arch
 		FAMILY_POTHOLE, // a slab of river bedrock drilled with potholes in a line down the flow, polished and fluted
 		FAMILY_GOBLIN, // a sandstone knob (Goblin Valley): a bulbous head on a narrow neck, rounded all over
+		FAMILY_CAVE_MOUTH, // a limestone outcrop at a cliff foot with a passage opening into it (x along, z up, y out)
 		FAMILY_MAX,
 	};
 

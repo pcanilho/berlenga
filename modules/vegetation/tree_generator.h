@@ -457,6 +457,8 @@ private:
 	void _break_limbs();
 	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
 	void _root_plate(Builder &r_bark);
+	int _main_stem() const;
+	void _settle_log(float p_ground, float p_trunk_r);
 	void _cut_back(bool p_first, int p_year);
 	void _saw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_age, uint32_t p_seed);
 	// A coppice stool's knuckle: its end is the first cut, an old sloping saw face.

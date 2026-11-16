@@ -1209,7 +1209,18 @@
     "LAYER_LANDFORM"
    ],
    "note": "",
-   "what": "hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.",
+   "what": "hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Cave mouths",
+   "settings": [
+    "RockField3D.cave_mouths"
+   ],
+   "note": "",
+   "what": "limestone portals at cliff feet.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
