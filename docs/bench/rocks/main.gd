@@ -65,7 +65,7 @@ func _ready() -> void:
 	add_child(cam)
 	_environment()
 	if args.has("test"):
-		_test()
+		await _test()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("world"):
@@ -360,6 +360,10 @@ func _world() -> void:
 			_crevice_plants(spot, view, land)
 		if args.has("break"):
 			_break_near(spot, land)
+		if args.has("fall"):
+			_fall_near(spot, land)
+		if args.has("live"):
+			_live_falls(spot, land)
 
 
 # The pieces against the stone: their total volume and the box round them as drawn (each chunk through its
@@ -455,6 +459,111 @@ func _break_near(spot: Vector3, land: Landscape3D) -> void:
 	RenderingServer.render_loop_enabled = true
 	_report_pieces(node, Transform3D(big["basis"], at))
 	breaking = false
+
+
+# --fall[=ticks]: loose a cliff block near the spot (RockField3D.trigger_rockfall) and let it fall for that many
+# physics ticks (default 300) before the shot; prints its path. --fall-cam=dist frames where the pieces came to rest.
+func _fall_near(spot: Vector3, land: Landscape3D) -> void:
+	land.collision_enabled = true
+	land.rebuild()
+	land.load_all_heights()
+	rocks.collision_enabled = true
+	rocks.rebuild()
+	rocks.build_area(Rect2(spot.x - 80, spot.z - 80, 160, 160))
+	breaking = true
+	var r := await _rockfall_run(spot, float(args.get("fall-radius", "40")), int(args["fall"]) if args["fall"] != "1" else 300, true)
+	if not r.is_empty():
+		var d := float(args.get("fall-cam", "0"))
+		if d > 0.0:
+			var at: Vector3 = r["end"]
+			cam.position = _view_from(at, d)
+			cam.look_at(at)
+	breaking = false
+
+
+# --live[=frames]: live_rockfall at a very high rate round the spot for that many frames (default 240), printing each
+# fall and the slowest frame.
+func _live_falls(spot: Vector3, land: Landscape3D) -> void:
+	land.collision_enabled = true
+	land.rebuild()
+	land.load_all_heights()
+	rocks.collision_enabled = true
+	rocks.rebuild()
+	rocks.build_area(Rect2(spot.x - 120, spot.z - 120, 240, 240))
+	breaking = true
+	var n := [0]
+	var cb := func(p: Vector3, m: float) -> void:
+		n[0] += 1
+		print("  fall %d: %.0f kg at %s" % [n[0], m, p])
+	rocks.rockfall.connect(cb)
+	rocks.live_rockfall_rate = float(args.get("rate", "36000"))
+	rocks.live_rockfall = true
+	var frames := int(args["live"]) if args["live"] != "1" else 240
+	var slowest := 0.0
+	RenderingServer.render_loop_enabled = false
+	for i in frames:
+		var ft := Time.get_ticks_usec()
+		await get_tree().process_frame
+		var ms := (Time.get_ticks_usec() - ft) / 1000.0
+		slowest = maxf(slowest, ms)
+		if i % 30 == 29:
+			print("  frame %d: %d falls, slowest %.0f ms, last %.0f ms" % [i + 1, n[0], slowest, ms])
+	RenderingServer.render_loop_enabled = true
+	rocks.live_rockfall = false
+	rocks.rockfall.disconnect(cb)
+	print("live: %d falls in %d frames, slowest frame %.0f ms" % [n[0], frames, slowest])
+	breaking = false
+
+
+# One fall: loose a block within p_radius of p_at, run p_ticks physics ticks, and report where its pieces went.
+func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) -> Dictionary:
+	var fired := []
+	var cb := func(pos: Vector3, mass: float) -> void: fired.append([pos, mass])
+	rocks.rockfall.connect(cb)
+	var t0 := Time.get_ticks_usec()
+	var node: Node3D = rocks.trigger_rockfall(p_at, p_radius)
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	rocks.rockfall.disconnect(cb)
+	if node == null:
+		print("no cliff block within %.0f m of %s" % [p_radius, p_at])
+		return {}
+	var start := node.global_position
+	var top := start.y
+	if p_log:
+		print("loosed a %.0f kg block at %s in %.1f ms" % [fired[0][1] if fired.size() else 0.0, start, ms])
+	var max_speed := 0.0
+	var last := start
+	var broke_at := -1
+	RenderingServer.render_loop_enabled = false
+	for i in p_ticks:
+		await get_tree().physics_frame
+		var c := _pieces_centre(node)
+		max_speed = maxf(max_speed, c.distance_to(last) * Engine.physics_ticks_per_second)
+		last = c
+		if broke_at < 0 and node.is_fractured():
+			broke_at = i
+			if p_log:
+				print("  broke at tick %d, %.1f m below the start, into %d pieces" % [i, top - c.y, node.get_piece_count()])
+		if p_log and i % 60 == 59:
+			print("  tick %d: %d pieces, centre %s, %.1f m below the start, ground there %.1f" % [i + 1, node.get_piece_count(), c, top - c.y, gen.get_height(c)])
+	RenderingServer.render_loop_enabled = true
+	var below := 0
+	for i in node.get_piece_count():
+		var o: Vector3 = node.get_piece_transform(i).origin
+		if o.y < gen.get_height(o) - 1.0:
+			below += 1
+	var r := {"node": node, "start": start, "end": last, "drop": top - last.y, "travel": Vector2(last.x - start.x, last.z - start.z).length(), "pieces": node.get_piece_count(), "fractured": node.is_fractured(), "fired": fired.size(), "ms": ms, "max_speed": max_speed, "below": below}
+	if p_log:
+		print("fell %.1f m and %.1f m out, top speed %.1f m/s, %d pieces (%s), %d under the ground" % [r["drop"], r["travel"], max_speed, r["pieces"], "broke" if r["fractured"] else "whole", below])
+	return r
+
+
+func _pieces_centre(node: Node) -> Vector3:
+	var c := Vector3.ZERO
+	var n: int = node.get_piece_count()
+	for i in n:
+		c += node.get_piece_transform(i).origin
+	return c / maxf(n, 1)
 
 
 # --plants: the stand's crevice plants between the field's stones round the spot (docs/ideas/vegetation.md,
@@ -860,6 +969,43 @@ func _test() -> void:
 			var again: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
 			var ms := (Time.get_ticks_usec() - pt) / 1000.0
 			check(again != null and ms < 16.0, "break_stone on a prepared shape: %.1f ms (under a 60 Hz frame)" % ms)
+		# Live rockfall: a cliff block comes loose, out of the wall, falls under gravity and comes to rest on the ground.
+		check(is_equal_approx(rocks.get_rockfall_trigger(), 1.0), "rockfall trigger without weather: %.2f (base rate)" % rocks.get_rockfall_trigger())
+		var cliff: Array = rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(-800, -800, 1600, 1600))
+		var block: Dictionary = {}
+		for st in cliff:
+			if block.is_empty() or float(st["scale"]) > float(block["scale"]):
+				block = st
+		check(not block.is_empty(), "cliff blocks to loose: %d" % cliff.size())
+		if not block.is_empty():
+			var bp: Vector3 = block["position"]
+			var land: Landscape3D = get_node("Landscape")
+			cam.position = bp + Vector3(0, 20, 30) # the landscape's collision follows the camera
+			land.collision_enabled = true
+			land.rebuild()
+			land.load_all_heights()
+			rocks.collision_enabled = true
+			rocks.rebuild()
+			rocks.build_area(Rect2(bp.x - 60, bp.z - 60, 120, 120))
+			var before := rocks.get_broken_count()
+			var r := await _rockfall_run(bp, 1.0, 120, true)
+			check(not r.is_empty() and r["fired"] == 1 and rocks.get_broken_count() == before + 1, "trigger_rockfall: a block loosed (signal %d, broken %d), %.1f ms" % [r.get("fired", 0), rocks.get_broken_count() - before, r.get("ms", 0.0)])
+			if not r.is_empty():
+				check(r["drop"] > 0.5 and r["below"] == 0, "the fall: %.1f m down, %.1f m out, top speed %.1f m/s, %d pieces, none under the ground" % [r["drop"], r["travel"], r["max_speed"], r["pieces"]])
+			# Live: with the rate turned right up, blocks come loose by themselves (fracture on a worker first).
+			var live := [0]
+			var cb := func(_p: Vector3, _m: float) -> void: live[0] += 1
+			rocks.rockfall.connect(cb)
+			rocks.live_rockfall_rate = 36000.0
+			rocks.live_rockfall_radius = 2000.0
+			rocks.live_rockfall = true
+			# Software Vulkan draws a frame of this world in tens of seconds, so a frame here is many game seconds
+			# and a few frames are enough (frame cost goes to the PC queue).
+			for i in 6:
+				await get_tree().process_frame
+			rocks.live_rockfall = false
+			rocks.rockfall.disconnect(cb)
+			check(live[0] > 0, "live_rockfall: %d falls by themselves in 6 frames" % live[0])
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.

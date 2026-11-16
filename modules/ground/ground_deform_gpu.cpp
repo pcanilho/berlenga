@@ -359,15 +359,21 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		}
 		return;
 	}
-	if ((p_flags & STEP_COLLISION) && d.coll_w > 0) {
+	// One read back of each kind in flight at a time. They complete as the device advances frames; with the
+	// render loop off (RenderingServer.render_loop_enabled) none does, and queuing one each step overran the
+	// device's download staging blocks (a crash). The next step after one lands asks again.
+	if ((p_flags & STEP_COLLISION) && d.coll_w > 0 && !collision_in_flight) {
+		collision_in_flight = true;
 		rd->buffer_get_data_async(buf_collision, callable_mp(this, &GroundDeformGPU::rt_on_collision).bind(p_collision_center), 0, d.coll_w * d.coll_w * 4);
 	}
-	if (p_flags & STEP_READBACK) {
+	if ((p_flags & STEP_READBACK) && !field_in_flight) {
+		field_in_flight = true;
 		rd->buffer_get_data_async(buf_packed, callable_mp(this, &GroundDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4 * d.stride);
 	}
 }
 
 void GroundDeformGPU::rt_on_collision(const PackedByteArray &p_data, Vector2 p_center) {
+	collision_in_flight = false;
 	PackedFloat32Array h;
 	h.resize(p_data.size() / 4);
 	memcpy(h.ptrw(), p_data.ptr(), h.size() * 4);
@@ -378,6 +384,7 @@ void GroundDeformGPU::rt_on_collision(const PackedByteArray &p_data, Vector2 p_c
 }
 
 void GroundDeformGPU::rt_on_field(const PackedByteArray &p_data, Vector2i p_origin) {
+	field_in_flight = false;
 	MutexLock lock(mutex);
 	field_packed = p_data;
 	field_origin = p_origin;

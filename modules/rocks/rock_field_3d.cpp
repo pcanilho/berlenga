@@ -31,6 +31,7 @@
 #include "rock_field_3d.h"
 
 #include "modules/terrain_deform/terrain_generator_3d.h"
+#include "modules/weather/weather_map_3d.h"
 
 #include "core/config/engine.h"
 #include "core/math/convex_hull.h"
@@ -2254,7 +2255,20 @@ Node *RockField3D::break_stone(const Vector3 &p_position, real_t p_damage, real_
 	if (!_finish_fracture(key, true)) {
 		return nullptr;
 	}
-	const Fracture &f = fractures[key];
+	Node3D *node = _spawn_breakable(grp, best_k, key, false);
+	if (node) {
+		node->call("apply_radial_damage", p_position, p_damage, p_radius * 0.5f, p_radius);
+	}
+	return node;
+}
+
+// Swap stone p_k of p_grp for a PhysXDestructible3D of its pieces (its fracture p_key must be ready). A struck stone
+// keeps its bottom pieces where they sit; a fall comes loose whole, out of the wall, and breaks where it lands.
+Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, bool p_fall) {
+	const Fracture *f = fractures.getptr(p_key);
+	if (!f || f->state != 2) {
+		return nullptr;
+	}
 	Object *obj = ClassDB::instantiate("PhysXDestructible3D");
 	Node3D *node = Object::cast_to<Node3D>(obj);
 	if (!node) {
@@ -2263,41 +2277,241 @@ Node *RockField3D::break_stone(const Vector3 &p_position, real_t p_damage, real_
 		}
 		return nullptr;
 	}
-	const Transform3D xf = grp.xforms[best_k];
-	const Color cd = grp.custom[best_k];
+	Transform3D xf = p_grp.xforms[p_k];
+	const Color cd = p_grp.custom[p_k];
 	// Its own copy of the rock material, with the stone's instance data (ground, film, scale, seed), so the copy
 	// shades exactly like the stone it replaces.
-	Ref<ShaderMaterial> mat = _material(key_type(grp.library));
+	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library));
 	if (mat.is_valid()) {
 		mat = mat->duplicate();
 		mat->set_shader_parameter("rock_instance", Vector4(cd.r, cd.g, cd.b, cd.a));
 	}
 	const real_t s = xf.basis.get_scale().x;
-	node->set("blast_asset", f.asset);
+	const real_t mass = MAX(real_t(f->volume) * s * s * s * break_density, real_t(0.01));
+	node->set("blast_asset", f->asset);
 	node->set("material_override", mat);
 	node->set("auto_mass", false);
-	node->set("mass", MAX(real_t(f.volume) * s * s * s * break_density, real_t(0.01)));
-	// The bottom pieces stay where they are: a stone sits sunk in the ground (or in a wall or a tor), and a piece
-	// that starts inside the terrain would be pushed down through it rather than out.
-	node->set("anchor", 1); // ANCHOR_GROUNDED
-	node->set("buried_below_y", cd.r); // the ground under the stone
-	// Struck stone falls apart rather than exploding: pieces leave at a couple of metres a second at most.
-	node->set("shatter_speed", 2.5);
+	node->set("mass", mass);
+	if (p_fall) {
+		// A block loosed from the wall: a rigid body from the start, moved out of the face by its reach so it does
+		// not start inside the heightfield. It breaks where it hits hard: one contact taking the impulse of a 3 m/s
+		// change of its whole speed (an impact shares itself over several contacts; sliding on the face a contact
+		// takes a few percent of that). In the bench a 21 t block slides about 11 m down a 60 degree face, breaks in
+		// six at the first hard knock and in ten further down. Harder hits break it further (fragmentation grows with
+		// impact energy, Ruiz-Carulla et al. 2015).
+		Vector3 out(0, 1, 0);
+		if (TerrainGenerator3D *gen = _get_generator()) {
+			const Vector3 c = xf.origin;
+			const real_t e = 1.0;
+			const real_t gx = (gen->get_height(c + Vector3(e, 0, 0)) - gen->get_height(c - Vector3(e, 0, 0))) / (2.0 * e);
+			const real_t gz = (gen->get_height(c + Vector3(0, 0, e)) - gen->get_height(c - Vector3(0, 0, e))) / (2.0 * e);
+			out = Vector3(-gx, 1, -gz).normalized();
+			node->set("kill_y", gen->get_height(c) - 400.0);
+		}
+		xf.origin += out * (p_grp.reach[p_k] * 1.05f + 0.05f); // clear of the face plane: reach is its farthest surface point
+		node->set("dynamic", true);
+		node->set("anchor", 2); // ANCHOR_NONE
+		node->set("impact_strength", mass * 3.0);
+		node->set("impact_damage_scale", 1.0 / mass);
+		node->set("impact_radius", MAX(p_grp.reach[p_k] * 1.5f, real_t(0.5)));
+		node->set("shatter_speed", 1.5);
+		node->set("freeze_when_asleep", true);
+	} else {
+		// The bottom pieces stay where they are: a stone sits sunk in the ground (or in a wall or a tor), and a piece
+		// that starts inside the terrain would be pushed down through it rather than out.
+		node->set("anchor", 1); // ANCHOR_GROUNDED
+		node->set("buried_below_y", cd.r); // the ground under the stone
+		// Struck stone falls apart rather than exploding: pieces leave at a couple of metres a second at most.
+		node->set("shatter_speed", 2.5);
+	}
 	// Placed before it enters the tree: it reads its scale (the stone's) when it spawns its intact piece.
 	node->set_as_top_level(true);
 	node->set_transform(xf);
 	add_child(node, false, INTERNAL_MODE_BACK);
 	breakables.push_back(node->get_instance_id());
 	// Hide the stone and drop its collision.
-	grp.broken[best_k] = true;
-	grp.multimesh->set_instance_transform(best_k, Transform3D(Basis().scaled(Vector3(0, 0, 0)), xf.origin));
-	if (CollisionShape3D *shape = Object::cast_to<CollisionShape3D>(grp.shapes[best_k])) {
+	const Transform3D orig = p_grp.xforms[p_k];
+	p_grp.broken[p_k] = true;
+	p_grp.multimesh->set_instance_transform(p_k, Transform3D(Basis().scaled(Vector3(0, 0, 0)), orig.origin));
+	if (CollisionShape3D *shape = Object::cast_to<CollisionShape3D>(p_grp.shapes[p_k])) {
 		shape->set_disabled(true);
 	}
-	broken_stones.insert(Vector3i((xf.origin * 100.0f).round()));
+	broken_stones.insert(Vector3i((orig.origin * 100.0f).round()));
 	close_dirty = true;
-	node->call("apply_radial_damage", p_position, p_damage, p_radius * 0.5f, p_radius);
+	if (p_fall) {
+		falls.push_back(node->get_instance_id());
+		while (int(falls.size()) > rockfall_max) {
+			if (Node *old = Object::cast_to<Node>(ObjectDB::get_instance(falls[0]))) {
+				old->queue_free();
+			}
+			falls.remove_at(0);
+		}
+		emit_signal(SNAME("rockfall"), xf.origin, mass);
+	}
 	return node;
+}
+
+/* Live rockfall */
+
+// Falls per game hour now, as a multiple of rockfall_rate: 1 as the base, plus 3 in the frost-cracking window
+// (-8 to -3 C), plus 6 for two game hours after the air thaws through 0 C, plus the rain rate over 5 mm/h.
+real_t RockField3D::get_rockfall_trigger() const {
+	const WeatherMap3D *w = WeatherMap3D::get_active();
+	if (!w) {
+		return 1.0;
+	}
+	const Vector3 tp = _target_position();
+	real_t t = 1.0;
+	const real_t air = _rockfall_air(tp);
+	if (air >= -8.0f && air <= -3.0f) {
+		t += 3.0;
+	}
+	if (thaw_left > 0.0) {
+		t += 6.0;
+	}
+	t += MAX(real_t(w->get_rain_at(tp)), real_t(0.0)) / 5.0;
+	return t;
+}
+
+// The air at the target's height (standard lapse, 6.5 C per km, from the weather's ground height).
+real_t RockField3D::_rockfall_air(const Vector3 &p_pos) const {
+	const WeatherMap3D *w = WeatherMap3D::get_active();
+	if (!w) {
+		return 10.0;
+	}
+	return w->get_air_temperature() - 0.0065f * (p_pos.y - w->get_ground_height());
+}
+
+bool RockField3D::_find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_group, int &r_k) {
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (kv.key.x != LAYER_CLIFF) {
+			continue;
+		}
+		const real_t cs = _cell_size(LAYER_CLIFF);
+		const Rect2 rect(kv.key.y * cs, kv.key.z * cs, cs, cs);
+		if (!rect.grow(1.0).has_point(Vector2(p_origin.x, p_origin.z))) {
+			continue;
+		}
+		for (uint32_t g = 0; g < kv.value.groups.size(); g++) {
+			const Group &grp = kv.value.groups[g];
+			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
+				if (!grp.broken[k] && grp.xforms[k].origin.distance_squared_to(p_origin) < 1e-4f) {
+					r_cell = &kv.value;
+					r_group = int(g);
+					r_k = int(k);
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+// A random intact cliff block between p_min and p_max metres from p_center (reservoir sampling); false if none.
+bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key) {
+	int seen = 0;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (kv.key.x != LAYER_CLIFF) {
+			continue;
+		}
+		const real_t cs = _cell_size(LAYER_CLIFF);
+		const Rect2 rect(kv.key.y * cs, kv.key.z * cs, cs, cs);
+		const Vector2 nearest(CLAMP(p_center.x, rect.position.x, rect.get_end().x), CLAMP(p_center.z, rect.position.y, rect.get_end().y));
+		if (nearest.distance_to(Vector2(p_center.x, p_center.z)) > p_max) {
+			continue;
+		}
+		for (const Group &grp : kv.value.groups) {
+			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
+				if (grp.broken[k]) {
+					continue;
+				}
+				const real_t d = grp.xforms[k].origin.distance_to(p_center);
+				if (d < p_min || d > p_max) {
+					continue;
+				}
+				seen++;
+				if (fall_rng.rand() % uint32_t(seen) == 0) {
+					r_origin = grp.xforms[k].origin;
+					r_key = (uint64_t(grp.library) << 16) | uint64_t(rf_mark_slot(grp.library, grp.variant, grp.custom[k].b));
+				}
+			}
+		}
+	}
+	return seen > 0;
+}
+
+void RockField3D::_update_rockfall(double p_delta) {
+	if (!is_breaking_supported()) {
+		return;
+	}
+	const WeatherMap3D *w = WeatherMap3D::get_active();
+	const double dt = p_delta * (w ? double(w->get_time_scale()) : 1.0); // game seconds
+	const Vector3 tp = _target_position();
+	const real_t air = _rockfall_air(tp);
+	if (last_air < 0.0f && air >= 0.0f) {
+		thaw_left = 7200.0;
+	}
+	last_air = air;
+	thaw_left = MAX(thaw_left - dt, 0.0);
+	// The falls whose fracture is ready leave the wall now (the block may have streamed out meanwhile).
+	for (uint32_t i = 0; i < pending_falls.size();) {
+		const PendingFall pf = pending_falls[i];
+		if (!_finish_fracture(pf.key, false)) {
+			const Fracture *f = fractures.getptr(pf.key);
+			if (f && f->state == 1) {
+				i++;
+				continue;
+			}
+		} else {
+			Cell *cell = nullptr;
+			int g = -1, k = -1;
+			if (_find_stone(pf.origin, cell, g, k)) {
+				_spawn_breakable(cell->groups[g], k, pf.key, true);
+			}
+		}
+		pending_falls.remove_at(i);
+	}
+	// A Poisson process: the chance of at least one fall in this step.
+	const double rate = double(rockfall_rate) * double(get_rockfall_trigger()) / 3600.0;
+	if (pending_falls.size() >= 2 || fall_rng.randf() >= float(1.0 - Math::exp(-rate * dt))) {
+		return;
+	}
+	PendingFall pf;
+	if (_pick_fall(tp, MIN(real_t(20.0), rockfall_radius * 0.5f), rockfall_radius, pf.origin, pf.key)) {
+		_start_fracture(pf.key);
+		pending_falls.push_back(pf);
+	}
+}
+
+Node *RockField3D::trigger_rockfall(const Vector3 &p_position, real_t p_radius) {
+	ERR_FAIL_COND_V_MSG(!is_breaking_supported(), nullptr, "RockField3D: rockfall needs the godot_physx module (PhysX Blast).");
+	ERR_FAIL_COND_V(!is_inside_tree(), nullptr);
+	Vector3 origin;
+	uint64_t key = 0;
+	if (!_pick_fall(p_position, 0.0, p_radius, origin, key)) {
+		return nullptr;
+	}
+	_start_fracture(key);
+	if (!_finish_fracture(key, true)) {
+		return nullptr;
+	}
+	Cell *cell = nullptr;
+	int g = -1, k = -1;
+	if (!_find_stone(origin, cell, g, k)) {
+		return nullptr;
+	}
+	return _spawn_breakable(cell->groups[g], k, key, true);
+}
+
+void RockField3D::set_live_rockfall(bool p_enabled) {
+	live_rockfall = p_enabled;
+	if (is_inside_tree()) {
+		_update_process();
+	}
+}
+
+void RockField3D::_update_process() {
+	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall));
 }
 
 void RockField3D::restore_broken() {
@@ -2307,6 +2521,8 @@ void RockField3D::restore_broken() {
 		}
 	}
 	breakables.clear();
+	falls.clear();
+	pending_falls.clear();
 	if (!broken_stones.is_empty()) {
 		broken_stones.clear();
 		for (KeyValue<Vector3i, Cell> &kv : cells) {
@@ -2323,8 +2539,8 @@ void RockField3D::rebuild() {
 	fractures.clear();
 	obstacle_cache.clear();
 	rivers_ready = false;
-	if (is_inside_tree() && streaming) {
-		set_process_internal(true);
+	if (is_inside_tree() && (streaming || live_rockfall)) {
+		_update_process();
 	}
 }
 
@@ -2822,18 +3038,22 @@ void RockField3D::set_collision_enabled(bool p_enabled) {
 void RockField3D::set_streaming(bool p_streaming) {
 	streaming = p_streaming;
 	if (is_inside_tree()) {
-		set_process_internal(streaming && !Engine::get_singleton()->is_editor_hint());
+		_update_process();
 	}
 }
 
 void RockField3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
-			set_process_internal(streaming);
+			set_process_internal(streaming || live_rockfall);
+			fall_rng.seed(uint64_t(seed) * 2654435761u + 17);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (streaming) {
 				_update_streaming(false);
+			}
+			if (live_rockfall) {
+				_update_rockfall(get_process_delta_time());
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
@@ -2899,6 +3119,16 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("restore_broken"), &RockField3D::restore_broken);
 	ClassDB::bind_method(D_METHOD("get_broken_count"), &RockField3D::get_broken_count);
 	ClassDB::bind_method(D_METHOD("is_breaking_supported"), &RockField3D::is_breaking_supported);
+	ClassDB::bind_method(D_METHOD("set_live_rockfall", "enabled"), &RockField3D::set_live_rockfall);
+	ClassDB::bind_method(D_METHOD("is_live_rockfall"), &RockField3D::is_live_rockfall);
+	ClassDB::bind_method(D_METHOD("set_live_rockfall_rate", "rate"), &RockField3D::set_live_rockfall_rate);
+	ClassDB::bind_method(D_METHOD("get_live_rockfall_rate"), &RockField3D::get_live_rockfall_rate);
+	ClassDB::bind_method(D_METHOD("set_live_rockfall_radius", "radius"), &RockField3D::set_live_rockfall_radius);
+	ClassDB::bind_method(D_METHOD("get_live_rockfall_radius"), &RockField3D::get_live_rockfall_radius);
+	ClassDB::bind_method(D_METHOD("set_live_rockfall_max", "count"), &RockField3D::set_live_rockfall_max);
+	ClassDB::bind_method(D_METHOD("get_live_rockfall_max"), &RockField3D::get_live_rockfall_max);
+	ClassDB::bind_method(D_METHOD("get_rockfall_trigger"), &RockField3D::get_rockfall_trigger);
+	ClassDB::bind_method(D_METHOD("trigger_rockfall", "position", "radius"), &RockField3D::trigger_rockfall, DEFVAL(30.0));
 	ClassDB::bind_method(D_METHOD("set_collision_enabled", "enabled"), &RockField3D::set_collision_enabled);
 	ClassDB::bind_method(D_METHOD("is_collision_enabled"), &RockField3D::is_collision_enabled);
 	ClassDB::bind_method(D_METHOD("set_collision_min_size", "metres"), &RockField3D::set_collision_min_size);
@@ -2962,6 +3192,12 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "break_pieces", PROPERTY_HINT_RANGE, "2,48,1"), "set_break_pieces", "get_break_pieces");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_prepare_radius", PROPERTY_HINT_RANGE, "0,50,0.5,suffix:m"), "set_break_prepare_radius", "get_break_prepare_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_density", PROPERTY_HINT_RANGE, "500,4000,10,suffix:kg/m³"), "set_break_density", "get_break_density");
+	ADD_GROUP("Live Rockfall", "live_rockfall_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_rockfall"), "set_live_rockfall", "is_live_rockfall");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_rockfall_rate", PROPERTY_HINT_RANGE, "0,60,0.1,or_greater"), "set_live_rockfall_rate", "get_live_rockfall_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_rockfall_radius", PROPERTY_HINT_RANGE, "10,1000,1,suffix:m"), "set_live_rockfall_radius", "get_live_rockfall_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_rockfall_max", PROPERTY_HINT_RANGE, "1,128,1"), "set_live_rockfall_max", "get_live_rockfall_max");
+	ADD_SIGNAL(MethodInfo("rockfall", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "mass")));
 	ADD_GROUP("Collision", "collision_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_min_size", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_collision_min_size", "get_collision_min_size");

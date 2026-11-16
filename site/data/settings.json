@@ -1203,6 +1203,20 @@
    "topic": "Placement"
   },
   {
+   "name": "Live rockfall",
+   "settings": [
+    "RockField3D.live_rockfall",
+    "live_rockfall_rate",
+    "live_rockfall_radius",
+    "live_rockfall_max"
+   ],
+   "note": "",
+   "what": "cliff blocks fall in frost, thaw and rain, and break on impact.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Tors and coasts",
    "settings": [
     "layer_enabled",
@@ -1376,6 +1390,18 @@
    ],
    "note": "",
    "what": "in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Crisp sea foam",
+   "settings": [
+    "foam_crisp",
+    "foam_relief"
+   ],
+   "note": "",
+   "what": "sea foam patches have sharp, ragged edges with lit rims.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"

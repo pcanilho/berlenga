@@ -67,6 +67,12 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
 
 - **Torn spray sheets** (`crest_sheets`, off by default): in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.
+
+  ![A gale sea from 2 m up across the wind, without and with torn spray sheets, raster](media/water-spray-sheets.jpg)
+
+  *Torn spray sheets: veils of spray stream downwind off the folding crests.*
+
+- **Crisp sea foam** (`foam_crisp`, `foam_relief`, on by default): sea foam patches have sharp, ragged edges with lit rims.
 - **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
 - **Ocean detail** (`detail_waves`, on; `bubble_strength`): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 
