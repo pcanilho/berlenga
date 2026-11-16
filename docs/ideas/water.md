@@ -2928,6 +2928,40 @@ wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers nea
   dark notch with a hard rim, since the fill only ran where foam was already above 5%. The fill is now tied
   to the vertex raise (a varying, as a share of the 40 cm cap): wherever the band rises, it is white.
 
+## Torn spray sheets on the open sea (16 Nov, Paulo's pick)
+
+The plunging lips (branch `claude/ocean-lips`) read as fins and logs on the FFT's gentle faces, so the open sea
+finishes its breakers with what a gale shows instead: thin sheets of water torn off the folding crests by the
+wind, flying downwind, tearing apart into streaks and droplets.
+
+How it happens:
+- Veron 2015 (Annual Review of Fluid Mechanics, "Ocean spray"): above about 7 to 10 m/s the wind tears spume
+  off the crests directly, as sheets and ligaments that break into droplets of 20 µm to a few mm; the amount
+  grows steeply with the wind.
+- Troitskaya et al. 2017 (Scientific Reports 7, "Bag-breakup fragmentation as the dominant mechanism of
+  sea-spray production in high winds"): filmed from 10 to 35 m/s, most spray comes from small canopies of
+  water the wind lifts off the crests and inflates until they burst (bag breakup), then the rims tear into
+  ligaments and drops. Each event lasts a fraction of a second.
+- Erinin et al. 2019 (JFM, plunging breaker spray): the sheets and ligaments are thrown up at a few m/s and
+  fall back within about a second.
+
+What games do: Assassin's Creed IV: Black Flag and Uncharted 4 tear camera-facing particle sheets off folding
+crests. We already throw droplets and spume puffs from the crests the Jacobian test finds (`crest_spray`).
+
+What fits the fork: a camera-facing particle is a card the path tracer can only face with `billboard_particles`
+(no stretch along the velocity), so the sheets are real geometry instead, rebuilt each physics tick on the CPU
+like the shore breakers' lips:
+- Spawned at the strongest folds of the same crest sample `crest_spray` uses, from a near-gale up
+  (`smoothstep(12, 20, wind)`), 8 to 30 m in front of the camera, a few dozen alive at once (`crest_sheet_amount`).
+- Each sheet is a ribbon fed from its root on the crest for about half a second: each row is the water
+  that left the root at one moment, thrown downwind at 0.3 to 0.5 of the wind's speed and up at 2.5 to 5 m/s,
+  then falling with the wind's push (the droplets' law), so the sheet curls over downwind and falls back. Its
+  span (2 to 5 m, across the wind, jittered) stretches as it flies.
+- The shader tears it: streaks along the flow, holes that open as the sheet ages, a fraying rim; the
+  path-traced branch uses stochastic alpha (as the falls' sheets), the raster one blends. Thin water lit
+  from behind (backlight), no shadows cast.
+- `crest_sheets` (off by default until the GPU cost is measured on the PC), `crest_sheet_amount`.
+
 ## River standing waves (16 Nov, Fab idea 1 stage 2)
 
 Stage 1 gave the river a hydraulic profile (`gradually_varied_flow`): backwater, drawdown, supercritical
