@@ -239,6 +239,35 @@ The cloud can build and run all of it on Lavapipe; GPU timings and PT/RR crops w
 - **Plants that give way.** Grass tramples; ferns, bracken and nettles do not. Bend them from the
   same trample field.
 
+## Next round candidates (16 Nov)
+
+Put to Paulo as a card; nothing built yet.
+
+- **Waterside and wet-stone plants (recommended).** Stream stones sort into bands by how often
+  they are under water: always submerged carries Fontinalis antipyretica and Platyhypnidium
+  riparioides, the splash and flood band Racomitrium aciculare and Hygrohypnum, the dry tops above
+  ordinary moss (Scarlett and O'Hare 2006, in-stream bryophytes of English and Welsh rivers; Glime,
+  "Bryophyte Ecology", vol. 1 ch. 11). Waterfall spray zones hold thallose liverworts (Conocephalum,
+  Pellia, Marchantia) and filmy ferns on constantly wet rock (Ratcliffe 1968, Atlantic bryophytes).
+  Banks carry marsh marigold at spring lines, meadowsweet in tall-herb fen, butterbur on gravel
+  bars (Rodwell, "British Plant Communities" vol. 2 and 3: M27 Filipendula-Angelica, S-gravel
+  communities). Placement reads what we have: the data map's `wetness`, `water_depth`,
+  `water_distance`, and per stone the water's height and flow (PhysXRiver3D `sample_height`,
+  `sample_depth`, `sample_flow`; PhysXWaterSurface3D `is_wet`; WeatherMap3D
+  `get_contact_wetness_at` for spray). Stone tops gain a submergence term next to
+  `stone_top_damp`. New presets: aquatic moss streamers (trailing in the flow direction), thallose
+  liverwort rosettes, marsh marigold, meadowsweet, butterbur.
+- **Dune grass that traps sand.** Marram thrives on burial and builds the foredune by slowing
+  saltating sand (Maun 1998, "Adaptations of plants to burial in coastal sand dunes"; Hesp 2002,
+  foredunes and blowouts). With the sand system's streamers and `blown` cells, marram tufts would
+  lower the wind's take and deposit behind themselves (shadow dunes, nebkha). Lyme grass, sea holly,
+  sea rocket. Needs the sand thread's deposit API.
+- **Bog and moor plants.** Sphagnum hummock and hollow microtopography (Rydin and Jeglum, "The
+  Biology of Peatlands"), cotton grass, bog asphodel, sundew, deer grass, in the wet hollows of
+  the upland valley beside heather and bilberry.
+- **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
+  instead of the colour bake; off by default until the PC measures cost.
+
 ## Plants between stones (built 15 Nov)
 
 Crevice flora (chasmophytes) root in the fine soil caught between stones and in rock cracks: the
