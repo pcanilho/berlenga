@@ -1414,8 +1414,14 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 			(ch as DirectionalLight3D).global_transform = Transform3D(Basis.looking_at(ld, Vector3.UP), Vector3())
 			(ch as DirectionalLight3D).directional_shadow_max_distance = 20.0
 			(ch as DirectionalLight3D).light_angular_distance = 0.5
+			(ch as DirectionalLight3D).light_color = Color(1.0, 0.88, 0.72) # Late afternoon in a wood: warm low sun.
 		elif ch is WorldEnvironment:
-			(ch as WorldEnvironment).environment.tonemap_exposure = 2.4 # Most of a stop over the floor views: the shade under a log.
+			var env := (ch as WorldEnvironment).environment
+			env.tonemap_exposure = 2.4 # Most of a stop over the floor views: the shade under a log.
+			# Under the crowns the sky light reaches the floor filtered and reflected by leaves and
+			# litter: warmer and weaker than the open sky (the bench's sky reads blue-grey on bark).
+			env.ambient_light_color = Color(0.5, 0.44, 0.34)
+			env.ambient_light_sky_contribution = 0.45
 
 # --mushrooms=off: hide the floor's mushroom MultiMeshes once the tiles round the camera are in.
 func _hide_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies]) -> void:
