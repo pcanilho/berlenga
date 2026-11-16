@@ -141,6 +141,7 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 		s.granular_friction_deg = _granular_friction_deg();
 		s.granular_cohesion = _granular_cohesion();
 		s.rest_density = _granular_density(); // grain "weight" -- scales the collider coupling
+		s.granular_free_flight = mpm_free_flight;
 	}
 
 	// The MPM grid and the fluid particle spacing are coupled: too few particles
@@ -605,29 +606,31 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 	rs->multimesh_set_visible_instances(multimesh, n);
 }
 
+Ref<Mesh> PhysXParticleFluid3D::_make_mpm_particle_mesh() {
+	Ref<SphereMesh> sphere;
+	sphere.instantiate();
+	sphere->set_radius(particle_size * 0.5);
+	sphere->set_height(particle_size);
+	sphere->set_radial_segments(6);
+	sphere->set_rings(3);
+	// The particle spheres get their own opaque material; water_material is
+	// left for the isosurface path below (a shared handle shadowed it).
+	Ref<StandardMaterial3D> pm;
+	pm.instantiate();
+	pm->set_albedo(Color(0.16, 0.44, 0.66));
+	pm->set_metallic(0.0);
+	pm->set_roughness(0.25);
+	sphere->set_material(pm);
+	return sphere;
+}
+
 void PhysXParticleFluid3D::_make_fluid() {
 	if (multimesh.is_valid()) {
 		return;
 	}
 
 	if (_mpm_path()) {
-		Ref<SphereMesh> sphere;
-		sphere.instantiate();
-		sphere->set_radius(particle_size * 0.5);
-		sphere->set_height(particle_size);
-		sphere->set_radial_segments(6);
-		sphere->set_rings(3);
-		{
-			// The particle spheres get their own opaque material; water_material is
-			// left for the isosurface path below (a shared handle shadowed it).
-			Ref<StandardMaterial3D> pm;
-			pm.instantiate();
-			pm->set_albedo(Color(0.16, 0.44, 0.66));
-			pm->set_metallic(0.0);
-			pm->set_roughness(0.25);
-			sphere->set_material(pm);
-		}
-		particle_mesh = sphere;
+		particle_mesh = _make_mpm_particle_mesh();
 
 		RenderingServer *rs = RenderingServer::get_singleton();
 		multimesh = rs->multimesh_create();
@@ -975,6 +978,21 @@ void PhysXParticleFluid3D::_emit_step(double p_delta) {
 	// this the render path (gated on spawned || emitting) froze the liquid mid-air the moment a burst ended -- the
 	// MPM emit sets spawned the same way.
 	spawned = true;
+}
+
+MPMFluidSolver *PhysXParticleFluid3D::_mpm_ready_for_emit() {
+	if (!_mpm_path()) {
+		return nullptr;
+	}
+	_make_fluid();
+	if (mpm == nullptr || !mpm->has_device()) {
+		return nullptr;
+	}
+	if (!_mpm_configured) {
+		_mpm_configure(false);
+		spawned = _mpm_configured;
+	}
+	return _mpm_configured && mpm->is_available() ? mpm : nullptr;
 }
 
 void PhysXParticleFluid3D::_mpm_emit_step(double p_delta) {
@@ -1471,7 +1489,7 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 			// catch-up re-solves it several times per frame under load. The
 			// fluid MPM path stays physics-tick driven so its rigid coupling
 			// reaction stays in phase with the bodies it pushes.
-			if (_mpm_path() && _is_granular()) {
+			if (_mpm_path() && _is_granular() && !mpm_physics_tick) {
 				_mpm_accum += MIN(get_process_delta_time(), 1.0 / 20.0);
 				if (_mpm_accum >= 1.0 / 60.0) {
 					// Cap the solved step at ~2 physics ticks -- a stiff granular
@@ -1492,7 +1510,7 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 				// The user may swap compositors at any time.
 				PhysXFluidRenderEffect::install(get_world_3d().ptr(), get_viewport() ? get_viewport()->get_camera_3d() : nullptr);
 			}
-			const bool mpm_here = _mpm_path() && !_is_granular();
+			const bool mpm_here = _mpm_path() && (!_is_granular() || mpm_physics_tick);
 			const double pdt = get_physics_process_delta_time();
 			if (emitting) {
 				if (mpm_here) {

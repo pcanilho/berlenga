@@ -30,6 +30,8 @@
 
 #include "register_types.h"
 
+#include "modules/modules_enabled.gen.h" // For ground.
+
 #include "godot_physx_project_settings.h"
 #include "godot_physx_server_3d.h"
 #include "physx_info.h"
@@ -51,6 +53,9 @@
 #include "nodes/physx_fluid_render_effect.h"
 #include "nodes/physx_gi_effect.h"
 #include "nodes/physx_granular_3d.h"
+#ifdef MODULE_GROUND_ENABLED
+#include "nodes/physx_ground_grains_3d.h"
+#endif
 #include "nodes/physx_lens_dirt_3d.h"
 #include "nodes/physx_lens_dirt_effect.h"
 #include "nodes/physx_lens_flare_3d.h"
@@ -124,6 +129,9 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXParticleFluid3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXFluidRenderEffect);
 		GDREGISTER_CLASS(PhysXGranular3D);
+#ifdef MODULE_GROUND_ENABLED
+		GDREGISTER_CLASS(PhysXGroundGrains3D);
+#endif
 		GDREGISTER_CLASS(PhysXCloth3D);
 		GDREGISTER_CLASS(PhysXSkinnedCloth3D);
 		GDREGISTER_CLASS(PhysXHair3D);

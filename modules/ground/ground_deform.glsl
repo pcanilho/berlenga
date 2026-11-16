@@ -21,6 +21,7 @@
 #define STAMP_ROUND 2u
 #define STAMP_HELD 4u
 #define STAMP_BROKE 8u
+#define STAMP_AMOUNT 16u // dig (sink > 0) or deposit (sink < 0) a set depth, no contact: sand stage 2
 
 #define TILE 64
 #define WG 256
@@ -285,7 +286,65 @@ vec3 reduce3(float a, float b, float c) {
 	return r;
 }
 
+// Grains leaving the field (dig, depth > 0) or landing on it (deposit, depth < 0): the set depth over the
+// disc, rim first when digging, dent first when depositing, the dent within the deepest. Exact volume except
+// where a dig reaches the deepest dent.
+void run_amount_stamp(Stamp s) {
+	uint t = gl_LocalInvocationIndex;
+	int n = fn();
+	float tx = texel();
+	vec3 pos = s.a.xyz;
+	float radius = s.a.w;
+	float depth = s.c.x;
+	bool ground = is_ground();
+	float settle = ground ? s.d.w : params.relax.z;
+	int x0 = s.e.x;
+	int z0 = s.e.z;
+	int w = s.e.y - x0 + 1;
+	int h = s.e.w - z0 + 1;
+	if (w <= 0 || h <= 0) {
+		return;
+	}
+	for (int k = int(t); k < w * h; k += WG) {
+		int x = x0 + k % w;
+		int z = z0 + k / w;
+		vec2 wp = texel_world(x, z);
+		float sd = length(wp - pos.xz) - radius;
+		float cover = clamp(0.5 - sd / tx, 0.0, 1.0);
+		if (cover <= 0.0) {
+			continue;
+		}
+		Column c = column_at(wp, 0u);
+		if (!c.deformable) {
+			continue;
+		}
+		int i = z * n + x;
+		vec4 st = state[i];
+		float a = abs(depth) * cover;
+		if (depth > 0.0) {
+			float take = min(st.y, a);
+			st.y -= take;
+			st.x = min(st.x + a - take, c.max_dent);
+			if (ground) {
+				st.w = 1.0;
+			}
+		} else {
+			float fill = min(st.x, a);
+			st.x -= fill;
+			st.y += a - fill;
+		}
+		st.z = max(st.z, settle);
+		state[i] = st;
+	}
+	memoryBarrierBuffer();
+	barrier();
+}
+
 void run_stamp(Stamp s) {
+	if ((uint(s.d.y) & STAMP_AMOUNT) != 0u) {
+		run_amount_stamp(s);
+		return;
+	}
 	uint t = gl_LocalInvocationIndex;
 	int n = fn();
 	float tx = texel();

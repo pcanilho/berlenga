@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXGroundGrains3D" inherits="PhysXGranular3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Sand thrown out of a [GroundSurface3D] as grains that land back in it.
+	</brief_description>
+	<description>
+		The hybrid of a height field and particles of Holz, Beer and Kuhlen (2009): the [GroundSurface3D] field is the sand at rest; where a spinning wheel throws its tread's sand (the ground's sprays, from [PhysXVehicle3D] on soft soil) or a script calls [method kick], that volume is dug out of the field and flies as MPM grains (Drucker-Prager, inherited from [PhysXGranular3D]). A grain that comes down onto the field's surface is deposited back into its column and the field slumps it; one leaving the box flies on ballistically to where it lands. Volume is kept end to end: [method get_dug_volume] equals [method get_airborne_volume] plus [method get_deposited_volume].
+		Thrown grains fly ballistic (no settling damping above about 1 m/s) and are stepped on the physics tick. Each particle stands for about 3 cl of sand and is drawn as a loose cloud of fine specks, so a spray reads as a sheet of sand. The box (8 x 4 x 10 m at 6.25 cm cells) follows [member follow_target] and reaches the way the sand is thrown.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_airborne_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Grains in the air.
+			</description>
+		</method>
+		<method name="get_airborne_positions" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<description>
+				Where the grains in the air were last read back (a frame or two behind the solver).
+			</description>
+		</method>
+		<method name="get_airborne_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				The sand in the air, m3 (including dug sand not yet a whole grain).
+			</description>
+		</method>
+		<method name="get_deposited_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				The sand landed back in the ground so far, m3.
+			</description>
+		</method>
+		<method name="get_dug_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				The sand taken out of the ground so far, m3.
+			</description>
+		</method>
+		<method name="kick">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="velocity" type="Vector3" />
+			<description>
+				Digs a disc of [param radius] by [param depth] m out of the ground at [param position] and throws it at [param velocity]. Returns the volume, m3 ([code]0[/code] before the solver is ready or off soft ground).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the box follows (a vehicle), its floor a metre under the ground there.
+		</member>
+		<member name="grain_material" type="Material" setter="set_grain_material" getter="get_grain_material">
+			The grains' material. Empty: dry sand. Set before the grains are first thrown.
+		</member>
+		<member name="ground_surface" type="NodePath" setter="set_ground_surface" getter="get_ground_surface" default="NodePath(&quot;&quot;)">
+			The [GroundSurface3D] the sand comes from and goes back to. Empty: the active one.
+		</member>
+		<member name="max_flight_time" type="float" setter="set_max_flight_time" getter="get_max_flight_time" default="8.0">
+			A grain still in the air after this long lands where it is.
+		</member>
+		<member name="spray_spread" type="float" setter="set_spray_spread" getter="get_spray_spread" default="0.08">
+			The spread of a throw's velocity, as a share of its speed.
+		</member>
+		<member name="tread_depth" type="float" setter="set_tread_depth" getter="get_tread_depth" default="0.008">
+			The sand a slipping tread throws, m per metre of slip (to 10 m/s of slip), dug over the sand the tread reaches, its loose rim first. [code]0[/code] throws none.
+		</member>
+	</members>
+</class>

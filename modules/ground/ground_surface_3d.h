@@ -108,6 +108,21 @@ private:
 	float outer_spacing = 0.125f;
 	PackedStringArray deform_groups;
 	bool ploughing = true;
+
+public:
+	struct Spray {
+		Vector3 position;
+		Vector3 velocity;
+		float width = 0.0f;
+		float slip_speed = 0.0f;
+		// The loose sand the tread reaches: the contact and the rim heaped before and behind it.
+		Vector3 reach_center;
+		float reach_radius = 0.0f;
+	};
+
+private:
+	LocalVector<Spray> sprays;
+	uint64_t spray_frame = 0;
 	void _plough_bodies();
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
@@ -137,6 +152,7 @@ private:
 	struct GPUSink : public GroundDeformField::StampSink {
 		GroundSurface3D *surface = nullptr;
 		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
+		void amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) override;
 	};
 	GPUSink gpu_sink;
 	GroundDeformGPUHost gpu_host;
@@ -236,6 +252,13 @@ public:
 	// A walker's footing: sinkage, the speed it keeps (Lejeune et al. 1998: walking in sand costs 1.6 to 2.5
 	// times the work), and the downhill acceleration where the slope is steeper than the material holds.
 	Dictionary get_footing_at(Vector3 p_position, float p_mass = 75.0f, float p_area = 0.035f) const;
+	// Grains leaving the ground (dig) or landing on it (deposit): a set depth over a disc; the volume, m3.
+	float dig(Vector3 p_position, float p_radius, float p_depth);
+	float deposit(Vector3 p_position, float p_radius, float p_depth);
+	// Sand thrown by spinning wheels since the last call (press_wheel with slip): Array of Dictionaries
+	// (position, velocity, width, slip_speed, reach_center, reach_radius). For a grains node to dig and spawn (sand stage 2).
+	Array take_sprays();
+	void add_spray(const Spray &p_spray);
 	// Rigid bodies in deform_groups moving through soft ground feel its resistance (on).
 	void set_ploughing(bool p_enabled) { ploughing = p_enabled; }
 	bool is_ploughing() const { return ploughing; }

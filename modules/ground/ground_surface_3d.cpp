@@ -957,6 +957,82 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	surface->gpu_host.slump_until = MAX(surface->gpu_host.slump_until, surface->gpu_host.time + settle + 0.1);
 }
 
+void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) {
+	GroundDeformField &f = surface->field;
+	int x0, x1, z0, z1;
+	if (!f.valid || p_radius <= 0.0f || !GroundDeformGPUHost::stamp_bounds(f, p_position, p_radius + f.texel(), x0, x1, z0, z1)) {
+		return;
+	}
+	const float v[12] = {
+		p_position.x, p_position.y, p_position.z, p_radius,
+		0.0f, 0.0f, 0.0f, 0.0f,
+		p_depth, 0.0f, 0.0f, 0.0f
+	};
+	const float settle = MAX(f.press_settle, 0.0f);
+	const float d[4] = { 0.0f, 16.0f, 0.0f, settle }; // STAMP_AMOUNT
+	surface->gpu_host.add_stamp(f, v, d, x0, x1, z0, z1);
+	surface->gpu_host.slump_until = MAX(surface->gpu_host.slump_until, surface->gpu_host.time + settle + 0.1);
+}
+
+float GroundSurface3D::dig(Vector3 p_position, float p_radius, float p_depth) {
+	if (!field.valid || p_depth <= 0.0f) {
+		return 0.0f;
+	}
+	Columns cols;
+	cols.surface = this;
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
+	if (_gpu_on()) {
+		gpu_sink.amount(cols, p_position, p_radius, p_depth * field.amount_scale(p_position, p_radius));
+		// The GPU applies it; what it moves is the disc's, short only where the dent bottoms out.
+		return c.deformable ? (float)Math::PI * p_radius * p_radius * p_depth : 0.0f;
+	}
+	return field.add_amount(cols, p_position, p_radius, p_depth);
+}
+
+float GroundSurface3D::deposit(Vector3 p_position, float p_radius, float p_depth) {
+	if (!field.valid || p_depth <= 0.0f) {
+		return 0.0f;
+	}
+	Columns cols;
+	cols.surface = this;
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
+	if (_gpu_on()) {
+		gpu_sink.amount(cols, p_position, p_radius, -p_depth * field.amount_scale(p_position, p_radius));
+		return c.deformable ? (float)Math::PI * p_radius * p_radius * p_depth : 0.0f;
+	}
+	return field.add_amount(cols, p_position, p_radius, -p_depth);
+}
+
+void GroundSurface3D::add_spray(const Spray &p_spray) {
+	// Nobody taking them (no grains node): what is older than a couple of physics frames is dropped.
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	if (frame > spray_frame + 2) {
+		sprays.clear();
+	}
+	spray_frame = frame;
+	if (sprays.size() < 256) {
+		sprays.push_back(p_spray);
+	}
+}
+
+Array GroundSurface3D::take_sprays() {
+	Array out;
+	for (const Spray &s : sprays) {
+		Dictionary d;
+		d["position"] = s.position;
+		d["velocity"] = s.velocity;
+		d["width"] = s.width;
+		d["slip_speed"] = s.slip_speed;
+		d["reach_center"] = s.reach_center;
+		d["reach_radius"] = s.reach_radius;
+		out.push_back(d);
+	}
+	sprays.clear();
+	return out;
+}
+
 PackedByteArray GroundSurface3D::_gpu_cells() const {
 	PackedByteArray out;
 	const int n = ground_n;
@@ -1414,6 +1490,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_soil", "position", "load", "radius", "width", "inflation", "slip", "slip_angle"), &GroundSurface3D::get_wheel_soil, DEFVAL(200.0f), DEFVAL(0.0f), DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("press_wheel", "position", "size", "yaw", "sinkage", "velocity"), &GroundSurface3D::press_wheel, DEFVAL(Vector2()));
 	ClassDB::bind_method(D_METHOD("get_footing_at", "position", "mass", "area"), &GroundSurface3D::get_footing_at, DEFVAL(75.0f), DEFVAL(0.035f));
+	ClassDB::bind_method(D_METHOD("dig", "position", "radius", "depth"), &GroundSurface3D::dig);
+	ClassDB::bind_method(D_METHOD("deposit", "position", "radius", "depth"), &GroundSurface3D::deposit);
+	ClassDB::bind_method(D_METHOD("take_sprays"), &GroundSurface3D::take_sprays);
 	ClassDB::bind_method(D_METHOD("set_ploughing", "enabled"), &GroundSurface3D::set_ploughing);
 	ClassDB::bind_method(D_METHOD("is_ploughing"), &GroundSurface3D::is_ploughing);
 	ClassDB::bind_method(D_METHOD("set_gpu_simulation", "enabled"), &GroundSurface3D::set_gpu_simulation);

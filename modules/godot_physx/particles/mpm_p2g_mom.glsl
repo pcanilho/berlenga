@@ -16,6 +16,9 @@ void main() {
 	if (id >= uint(PCOUNT)) {
 		return;
 	}
+	if (particle_dead(id)) {
+		return;
+	}
 
 	Particle p = particles[id];
 	vec3 x = p.x_d.xyz;

@@ -55,6 +55,12 @@ layout(set = 0, binding = 0, std140) uniform Params {
 layout(set = 0, binding = 1, std430) restrict buffer Particles {
 	Particle particles[];
 };
+
+// A slot given back to a height field (PhysXGroundGrains3D: the grain was deposited) has v.w = 1 until an
+// emit reuses it; every pass skips it. Emitted and seeded particles start with v.w = 0, and g2p writes 0.
+bool particle_dead(uint p_id) {
+	return particles[p_id].v.w > 0.5;
+}
 layout(set = 0, binding = 2, std430) restrict buffer GridAcc {
 	int grid_i[];
 }; // 4 ints / cell: mass, mom.xyz -- indexed (blockslot*64 + celllin)

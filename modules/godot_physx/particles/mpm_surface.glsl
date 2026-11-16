@@ -18,6 +18,9 @@ void main() {
 	if (id >= uint(PCOUNT)) {
 		return;
 	}
+	if (particle_dead(id)) {
+		return;
+	}
 	vec3 x = particles[id].x_d.xyz;
 
 	float h = max(SURF_H, DX);

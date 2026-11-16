@@ -236,6 +236,44 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
 - Budget: one to four domains, a fixed particle budget (for example 50,000), oldest
   deposited first. Off by default until its GPU cost is measured on the PC.
 
+**Built** (`PhysXGroundGrains3D`, extends `PhysXGranular3D`; nothing throws sand without one in the scene):
+
+- The field gives sand up and takes it back: `GroundSurface3D.dig` (rim first, then dent) and `deposit`
+  (hollow first, then rim), on the CPU and as a GPU stamp. The depth is scaled by the disc's antialiased
+  cover summed over the cells, so the volume moved is the disc's exactly, even for a disc smaller than a
+  cell (a landed grain).
+- Sprays: on soft soil a `PhysXVehicle3D` wheel turning more than 0.5 m/s faster than it travels reports
+  a spray (`take_sprays`): from the rear of its contact, at up to 8 m/s of slip, 0.7 of it backwards and
+  0.45 up (about 30 degrees; sand slides on the rubber). The grains node digs `tread_depth` (8 mm) per metre
+  of slip (to 10 m/s) over the sand the tread reaches (contact plus 10 cm, the loose rim first, so a
+  spinning wheel throws its bow wave and berm back instead of heaping them round itself), and throws it,
+  spread along the step's path as particle emitters do. `kick(position, radius, depth, velocity)` for
+  scripts (a shovel, a foot, a blast).
+- Grains: one MPM particle per 3 cl (an 8 x 4 x 10 m box at 6.25 cm cells; it follows `follow_target` and
+  reaches 3 m the way the sprays head). Thrown grains fly ballistic: the MPM's settling damping (0.992 a
+  substep, there for piles that creep) fades out above 1 m/s for this node (`granular_free_flight`); it
+  steps on the physics tick, so the landing checks keep pace with the bodies throwing them. A grain lands
+  once it has been seen leaving its emit point and has risen a grain or flown 0.25 s, at the field's
+  surface; landings are merged per 6.25 cm cell and deposited as one disc each, and the slot given back
+  (`MPMFluidSolver::kill`, dead slots skipped in every pass). One leaving the box flies on ballistically to
+  where it comes down.
+- Drawing: thrown sand dilates to a few percent solids and its fine grains make a roost nearly opaque,
+  which no count of real-size grains can draw. Each particle is a loose cloud of 56 specks of 2.5 to 6 mm
+  over about 12 cm (jittered octahedra, real geometry the path tracer traces), each instance turned and
+  sized by its slot and tumbling as it travels (in the MPM render pass).
+- `--test=grains` (10 checks, GPU and CPU field): a kick digs its disc (3.53 l) and the field drops by it;
+  115 grains fly; dug = in the air + landed to 0.0000 l every step; everything lands; landed 3.51 of 3.53 l
+  (the rest is under one grain) and the field net -0.025 l; it lands at 1.25 m against 1.22 m for a
+  drag-free throw. A 1500 kg 4x4 floored on dry sand throws 54 l in 2 s, behind it, volume kept.
+- `--view=roost` (`--cam=`): the 4x4 floored from rest on dry sand, the frame mid-spray.
+- Found while building it: grains were thrown from below the rut floor (the contact is already at the
+  sunken road plane) and counted as landed at once; with the MPM stepped per frame they lagged the physics
+  and heaped up behind the wheels; grains leaving the box were dropped at its edge (walls of sand).
+- Known: the PhysX wheels spin up to 40+ m/s on loose sand at full throttle (no rev limit in the bench car);
+  the throw caps at 8 m/s, the volume at 10 m/s of slip. The MPM is a continuum: a dense sheet behaves as
+  one, which is what a roost is near the tyre; further out it is a ballistic cloud. Dust (silt) as Flow
+  density is not built.
+
 ### Stage 3: wind on sand (ripples, streamers, filling)
 
 - **Ripples** in the near field as a separate ripple height layer on the GPU field at a finer

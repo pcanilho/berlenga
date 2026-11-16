@@ -154,6 +154,7 @@ public:
 	void rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots, PackedByteArray p_sdf);
 	void rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_colliders, int p_ncol, int p_pcount, int p_node_count, Vector3i p_grid_dims, int p_substeps, bool p_want_surface, bool p_bench);
 	void rt_emit(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_blob, int p_head_bytes, int p_first_bytes);
+	void rt_kill(Ref<MPMFluidSolverGPU> p_self, PackedInt32Array p_slots);
 	void rt_read_positions(Ref<MPMFluidSolverGPU> p_self, int p_count);
 	void rt_set_sdf(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_sdf);
 	void rt_free(Ref<MPMFluidSolverGPU> p_self);
@@ -202,6 +203,7 @@ public:
 		float granular_hardness = 1.5e5f; // Young's modulus (Pa); softer = more stable, mushier
 		float granular_friction_deg = 35.0f; // internal friction angle -> angle of repose
 		float granular_cohesion = 0.0f; // 0 = dry sand; small values -> wet sand / packing snow
+		bool granular_free_flight = false; // the settling damping fades out with speed, so thrown grains fly ballistic
 		Vector3 gravity = Vector3(0, -9.8f, 0);
 		Vector3 domain = Vector3(3, 3, 3); // MPM sim box / boundary, centered on the solver transform
 		Vector3 spawn_region = Vector3(1, 1, 1); // prefill fills this, centered on the transform (clamped to the domain)
@@ -266,6 +268,10 @@ public:
 	// Insert new particles at the ring write head, overwriting the oldest once the
 	// buffer is full.
 	void emit(const LocalVector<EmittedParticle> &p_new);
+	// Give slots back (their grains went back to a height field): every pass skips them until an emit reuses
+	// them. The ring's next emit writes from get_write_head() on.
+	void kill(const LocalVector<int> &p_slots);
+	int get_write_head() const { return write_head; }
 
 	// Advance one rendered frame. `r_impulses`, when non-null, is filled with the
 	// most recently reaped per-collider reaction impulse (world space, N*s). With

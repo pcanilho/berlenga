@@ -352,6 +352,78 @@ float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
 	return load / (p_body.wheel ? l * MAX(p_body.width, 0.01f) : Math::PI * 0.25f * l * l);
 }
 
+float GroundDeformField::amount_scale(Vector3 p_position, float p_radius) const {
+	// The disc's antialiased cover summed over the texels: the depth is scaled so the volume moved is the
+	// disc's exactly, also for a disc smaller than a texel (a landed grain).
+	const float t = texel();
+	const int x0 = int(Math::floor((p_position.x - p_radius) / t)) - 1;
+	const int x1 = int(Math::ceil((p_position.x + p_radius) / t)) + 1;
+	const int z0 = int(Math::floor((p_position.z - p_radius) / t)) - 1;
+	const int z1 = int(Math::ceil((p_position.z + p_radius) / t)) + 1;
+	float w = 0.0f;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float sd = Vector2((x + 0.5f) * t - p_position.x, (z + 0.5f) * t - p_position.z).length() - p_radius;
+			w += CLAMP(0.5f - sd / t, 0.0f, 1.0f);
+		}
+	}
+	return w > 0.0f ? (float)Math::PI * p_radius * p_radius / (w * t * t) : 0.0f;
+}
+
+float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) {
+	if (!valid || p_radius <= 0.0f || p_depth == 0.0f) {
+		return 0.0f;
+	}
+	p_depth *= amount_scale(p_position, p_radius);
+	if (stamp_sink) {
+		stamp_sink->amount(p_columns, p_position, p_radius, p_depth);
+		return 0.0f;
+	}
+	const int n = resolution;
+	const float t = texel();
+	const int x0 = MAX(int(Math::floor((p_position.x - p_radius) / t)) - origin.x - 1, 0);
+	const int x1 = MIN(int(Math::ceil((p_position.x + p_radius) / t)) - origin.x + 1, n - 1);
+	const int z0 = MAX(int(Math::floor((p_position.z - p_radius) / t)) - origin.y - 1, 0);
+	const int z1 = MIN(int(Math::ceil((p_position.z + p_radius) / t)) - origin.y + 1, n - 1);
+	float volume = 0.0f;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float wx = (origin.x + x + 0.5f) * t;
+			const float wz = (origin.y + z + 0.5f) * t;
+			const float sd = Vector2(wx - p_position.x, wz - p_position.z).length() - p_radius;
+			const float cover = CLAMP(0.5f - sd / t, 0.0f, 1.0f);
+			if (cover <= 0.0f) {
+				continue;
+			}
+			const Column c = p_columns.column(wx, wz);
+			if (!c.deformable) {
+				continue;
+			}
+			const int i = z * n + x;
+			const float a = Math::abs(p_depth) * cover;
+			if (p_depth > 0.0f) {
+				const float take = MIN(rim[i], a);
+				rim[i] -= take;
+				const float before = dent[i];
+				dent[i] = MIN(dent[i] + a - take, c.max_dent);
+				volume += (take + dent[i] - before) * t * t;
+				if (track_fresh) {
+					fresh[i] = 1.0f;
+				}
+			} else {
+				const float fill = MIN(dent[i], a);
+				dent[i] -= fill;
+				rim[i] += a - fill;
+				volume += a * t * t;
+			}
+			_mark(x, z, press_settle);
+		}
+	}
+	dirty = true;
+	shape_dirty = true;
+	return volume;
+}
+
 float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
 	if (!valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
 		return 0.0f;

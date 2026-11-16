@@ -14,6 +14,13 @@ void main() {
 	}
 	vec3 x = particles[id].x_d.xyz;
 	uint o = id * 12u;
+	if (particle_dead(id)) {
+		// A slot given back (its grain went back to a height field): no instance drawn.
+		for (uint k = 0u; k < 12u; k++) {
+			mm[o + k] = 0.0;
+		}
+		return;
+	}
 	mm[o + 0] = 1.0;
 	mm[o + 1] = 0.0;
 	mm[o + 2] = 0.0;

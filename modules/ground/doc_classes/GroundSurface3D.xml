@@ -17,6 +17,24 @@
 				Removes every print, including the cached tiles.
 			</description>
 		</method>
+		<method name="deposit">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<description>
+				Lays [param depth] m of sand over a disc of [param radius] at [param position] (a hollow there fills first). The volume is the disc's exactly, also for a disc smaller than a cell. Returns it, m3 ([code]0[/code] off soft ground). For grains landing ([PhysXGroundGrains3D]).
+			</description>
+		</method>
+		<method name="dig">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<description>
+				Takes [param depth] m of sand out of a disc of [param radius] at [param position], any rim there first. Returns the volume, m3 ([code]0[/code] off soft ground). For grains leaving the ground ([PhysXGroundGrains3D]).
+			</description>
+		</method>
 		<method name="get_cached_tile_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -178,6 +196,12 @@
 			<return type="void" />
 			<description>
 				On the GPU path, waits for the field and reads it back now, so [method get_dent_at], [method get_rim_at], [method get_fresh_at], [method get_surface_height_at] and [method get_moved_volume] show everything pressed so far. It stalls the GPU: for tests and tools, not every frame. Does nothing on the CPU path.
+			</description>
+		</method>
+		<method name="take_sprays">
+			<return type="Array" />
+			<description>
+				The sand thrown by spinning wheels since the last call (from [PhysXVehicle3D] on soft soil), as Dictionaries: [code]position[/code], [code]velocity[/code], [code]width[/code], [code]slip_speed[/code], [code]reach_center[/code] and [code]reach_radius[/code] (the loose sand the tread reaches). Taken by a [PhysXGroundGrains3D]; with none, they are dropped after a couple of physics frames.
 			</description>
 		</method>
 	</methods>
