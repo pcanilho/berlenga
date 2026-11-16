@@ -30,6 +30,8 @@
 
 #include "physx_water_surface_3d.h"
 
+#include "core/object/callable_mp.h"
+
 #include "flow_poisson.h"
 #include "physx_water_wake_3d.h"
 #include "water_raster_reflections.h"
@@ -785,37 +787,41 @@ float foam_value_noise(vec2 p) {
 			mix(foam_hash(i + vec2(0.0, 1.0)), foam_hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
-// Voronoi (Worley 1996) on a jittered grid: the nearest and second-nearest feature distances (x, y), the
-// nearest cell's own random number (z) and its feature's distance along x (w, for the bubble normal), in cell
-// units.
-vec4 foam_voronoi(vec2 p) {
+float foam_fbm(vec2 p) {
+	return 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.3 + 7.1) + 0.2 * foam_value_noise(p * 5.1 - 3.3);
+}
+
+// Holes torn in a foam sheet, one per feature of a jittered grid (Worley 1996), each its own size: the cover left
+// (1 where no hole) and the nearest and second-nearest feature distances (for the strands along cell borders),
+// in cell units. Every feature in the 3x3 neighbourhood carves its own hole, so a hole wider than its cell runs
+// on into the next one instead of being cut along the straight cell border (a nearest-cell-only radius would).
+// jit is the ragged tear added to the distance; lobe wanders the edge in proportion to the hole's size.
+vec3 foam_holes(vec2 p, float open, float scale, float bias, float soft, float jit, float lobe) {
 	vec2 i = floor(p);
 	vec2 f = fract(p);
 	float d1 = 8.0;
 	float d2 = 8.0;
-	float rnd = 0.0;
-	float rx = 0.0;
+	float keep = 1.0;
 	for (int y = -1; y <= 1; y++) {
 		for (int x = -1; x <= 1; x++) {
 			vec2 g = vec2(float(x), float(y));
 			vec2 o = vec2(foam_hash(i + g), foam_hash(i + g + vec2(17.3, 5.1)));
 			vec2 r = g + 0.15 + 0.7 * o - f;
-			float d = dot(r, r);
+			float d = length(r);
 			if (d < d1) {
 				d2 = d1;
 				d1 = d;
-				rnd = foam_hash(i + g + vec2(41.7, 23.9));
-				rx = r.x;
 			} else if (d < d2) {
 				d2 = d;
 			}
+			// At most 0.95 cells: no feature outside the 3x3 neighbourhood is that close.
+			float rad = min(open * max(foam_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.95);
+			if (rad > 0.0) {
+				keep = min(keep, smoothstep(rad - soft, rad + soft, d + jit + 0.35 * rad * lobe));
+			}
 		}
 	}
-	return vec4(sqrt(d1), sqrt(d2), rnd, rx);
-}
-
-float foam_fbm(vec2 p) {
-	return 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.3 + 7.1) + 0.2 * foam_value_noise(p * 5.1 - 3.3);
+	return vec3(keep, d1, d2);
 }
 
 // How much of the surface foam covers, from its amount (docs/ideas/water.md "Ocean detail"). Fresh foam is a
@@ -834,26 +840,25 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	float open = 1.0 - pow(a, 0.6); // how far the foam has drained
 	// Older foam has been sheared and drawn out longer by the surface currents: a stronger warp.
 	float age_warp = 1.0 + 1.2 * open;
-	vec4 v1 = foam_voronoi(q * 0.5 + warp * 0.8 * age_warp);
-	vec4 v2 = foam_voronoi(q * 1.4 + warp * 1.4 * age_warp + 11.0);
-	vec4 v3 = foam_voronoi(q * 4.6 + warp * 2.0 * age_warp - 5.0);
 	// Ragged, torn edges: the distances jittered by finer noise.
 	float rag = foam_fbm(q * 9.0) - 0.5;
 	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
 	float soft2 = 0.015 + footprint * foam_detail_scale * 2.8;
 	float soft3 = 0.02 + footprint * foam_detail_scale * 9.2;
-	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide.
-	float r1 = open * max(v1.z * 1.5 - 0.3, 0.0);
-	float r2 = open * max(v2.z * 1.4 - 0.25, 0.0);
-	float r3 = open * max(v3.z * 1.2 - 0.15, 0.0);
-	float keep1 = smoothstep(r1 - soft1, r1 + soft1, v1.x + 0.12 * rag);
-	float keep2 = smoothstep(r2 - soft2, r2 + soft2, v2.x + 0.18 * rag);
-	float keep3 = smoothstep(r3 - soft3, r3 + soft3, v3.x + 0.25 * rag);
+	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide. Holes are never
+	// round: their edges wander with two scales of noise (lobes and a fine tear).
+	float lobe = foam_fbm(q * 1.9 - 6.2) - 0.5;
+	vec3 h1 = foam_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag, lobe);
+	vec3 h2 = foam_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag, lobe);
+	vec3 h3 = foam_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag, foam_fbm(q * 5.7 + 2.4) - 0.5);
+	float keep1 = h1.x;
+	float keep2 = h2.x;
+	float keep3 = h3.x;
 	float cover = keep1 * keep2 * mix(1.0, keep3, 0.75);
 	// Torn strands along the larger cells' borders, breaking along their length.
 	float brk = smoothstep(0.4, 0.62, foam_fbm(q * 2.7 + 1.7));
 	float w = (0.04 + 0.07 * a) * brk;
-	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, v1.y - v1.x + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, v2.y - v2.x + 0.25 * rag));
+	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, h1.z - h1.y + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, h2.z - h2.y + 0.25 * rag));
 	// Only where the sheet still holds enough foam (thin foam leaves no web over open water).
 	cover = max(cover, strands * smoothstep(0.15, 0.45, a));
 	// Thin scum of loose bubbles left in the holes.
@@ -2066,6 +2071,9 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_seabed_from_floor"), &PhysXWaterSurface3D::get_seabed_from_floor);
 	ClassDB::bind_method(D_METHOD("set_seabed_collision_mask", "mask"), &PhysXWaterSurface3D::set_seabed_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &PhysXWaterSurface3D::get_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_terrain_source", "path"), &PhysXWaterSurface3D::set_terrain_source);
+	ClassDB::bind_method(D_METHOD("get_terrain_source"), &PhysXWaterSurface3D::get_terrain_source);
+	ClassDB::bind_method(D_METHOD("_on_terrain_holes_changed", "rect"), &PhysXWaterSurface3D::_on_terrain_holes_changed);
 	ClassDB::bind_method(D_METHOD("set_shallow_fade_depth", "depth"), &PhysXWaterSurface3D::set_shallow_fade_depth);
 	ClassDB::bind_method(D_METHOD("get_shallow_fade_depth"), &PhysXWaterSurface3D::get_shallow_fade_depth);
 	ClassDB::bind_method(D_METHOD("set_render_extent", "extent"), &PhysXWaterSurface3D::set_render_extent);
@@ -2097,6 +2105,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sample_height_excluding_wake", "world_pos", "wake"), &PhysXWaterSurface3D::_sample_height_excluding_wake_bind);
 	ClassDB::bind_method(D_METHOD("sample_vertical_speed", "world_pos"), &PhysXWaterSurface3D::sample_vertical_speed);
 	ClassDB::bind_method(D_METHOD("is_wet", "world_pos"), &PhysXWaterSurface3D::is_wet);
+	ClassDB::bind_method(D_METHOD("sample_depth", "world_pos"), &PhysXWaterSurface3D::sample_depth);
+	ClassDB::bind_method(D_METHOD("sample_swash", "world_pos"), &PhysXWaterSurface3D::sample_swash);
 	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_sphere, DEFVAL(1.0f));
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
@@ -2153,6 +2163,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seabed_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_seabed_collision_mask", "get_seabed_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_source"), "set_terrain_source", "get_terrain_source");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shallow_fade_depth", PROPERTY_HINT_RANGE, "0.01,10,0.01,or_greater,suffix:m"), "set_shallow_fade_depth", "get_shallow_fade_depth");
 
 	ADD_GROUP("Ocean", "ocean_");
@@ -4235,6 +4246,48 @@ void PhysXWaterSurface3D::remeasure_seabed() {
 	seabed_remeasure_pending = true;
 }
 
+void PhysXWaterSurface3D::set_terrain_source(const NodePath &p_path) {
+	terrain_source = p_path;
+	if (is_inside_world()) {
+		_connect_terrain();
+		if (seabed_from_floor && !cell_depth.is_empty()) {
+			remeasure_seabed();
+		}
+	}
+}
+
+void PhysXWaterSurface3D::_connect_terrain() {
+	_disconnect_terrain();
+	Node *terrain = terrain_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(terrain_source);
+	if (terrain == nullptr || !terrain->has_signal(SNAME("holes_changed"))) {
+		return;
+	}
+	terrain->connect(SNAME("holes_changed"), callable_mp(this, &PhysXWaterSurface3D::_on_terrain_holes_changed));
+	terrain_connected = terrain->get_instance_id();
+}
+
+void PhysXWaterSurface3D::_disconnect_terrain() {
+	Object *terrain = ObjectDB::get_instance(terrain_connected);
+	const Callable cb = callable_mp(this, &PhysXWaterSurface3D::_on_terrain_holes_changed);
+	if (terrain != nullptr && terrain->is_connected(SNAME("holes_changed"), cb)) {
+		terrain->disconnect(SNAME("holes_changed"), cb);
+	}
+	terrain_connected = ObjectID();
+}
+
+// Holes opened or closed: measure the seabed again when they touch the simulated square (shore depth, swash, shore
+// foam and contact wetness all follow from it).
+void PhysXWaterSurface3D::_on_terrain_holes_changed(const Rect2 &p_rect) {
+	if (!seabed_from_floor || Engine::get_singleton()->is_editor_hint() || cell_depth.is_empty()) {
+		return;
+	}
+	const Rect2 square(grid_center - 0.5f * active_domain_size, active_domain_size);
+	if (p_rect.has_area() && !p_rect.intersects(square)) {
+		return;
+	}
+	seabed_remeasure_pending = true;
+}
+
 // The sea state changed: a built solver regenerates its spectrum IN PLACE (no rebuild -- the waves keep their phases,
 // ripples / wakes / foam survive: storms can ramp it); not built yet → the usual rebuild.
 // Foam streaks with the wind: none below Beaufort 7 (about 14 m/s), full by Beaufort 9 (about 22 m/s).
@@ -5120,7 +5173,7 @@ void PhysXWaterSurface3D::_wet_ground() {
 #ifdef MODULE_WEATHER_ENABLED
 	WeatherMap3D *weather = WeatherMap3D::get_active();
 	const bool want = contact_wetness && weather != nullptr && weather->is_contact_wetness_enabled() && !Engine::get_singleton()->is_editor_hint();
-	solver.set_wetness_readback(want);
+	solver.set_wetness_readback(want || swash_queried.is_set());
 	if (!want || cell_depth.is_empty()) {
 		return; // (constant depth everywhere: no shore)
 	}
@@ -5147,6 +5200,8 @@ void PhysXWaterSurface3D::_wet_ground() {
 	if (any) {
 		weather->add_contact_wetness_cells(cw, n, n, Rect2(grid_center - 0.5f * active_domain_size, active_domain_size));
 	}
+#else
+	solver.set_wetness_readback(swash_queried.is_set());
 #endif
 }
 
@@ -5687,11 +5742,13 @@ Ref<Texture2D> PhysXWaterSurface3D::get_caustics_texture() const {
 void PhysXWaterSurface3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			_connect_terrain();
 			_rebuild();
 			set_physics_process_internal(true);
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			_disconnect_terrain();
 			set_physics_process_internal(false);
 			set_process_internal(false);
 			_set_underwater_shown(false);
@@ -5851,6 +5908,12 @@ void PhysXWaterSurface3D::_sample_seabed() {
 	const Vector2 grid_min = grid_center - active_domain_size * 0.5f;
 	PhysicsDirectSpaceState3D *space = get_world_3d()->get_direct_space_state();
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	// Terrain holes (cave mouths) leave the heightfield's collision open: a ray through one finds nothing.
+	Node *terrain = terrain_source.is_empty() ? nullptr : get_node_or_null(terrain_source);
+	bool holes = false;
+	if (terrain != nullptr && terrain->has_method(SNAME("is_hole")) && terrain->has_method(SNAME("get_height"))) {
+		holes = terrain->has_method(SNAME("has_holes_in")) ? bool(terrain->call(SNAME("has_holes_in"), Rect2(grid_min, active_domain_size))) : true;
+	}
 	int hits = 0;
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
@@ -5866,6 +5929,7 @@ void PhysXWaterSurface3D::_sample_seabed() {
 			ray.collision_mask = seabed_collision_mask;
 			ray.collide_with_areas = false;
 			float d = depth; // nothing below: open water of the constant depth
+			bool hit = false;
 			for (int skip = 0; skip < MAX_SKIPS; skip++) {
 				PhysicsDirectSpaceState3D::RayResult result;
 				if (space == nullptr || !space->intersect_ray(ray, result)) {
@@ -5874,9 +5938,21 @@ void PhysXWaterSurface3D::_sample_seabed() {
 				if (ps->body_get_mode(result.rid) == PhysicsServer3D::BODY_MODE_STATIC) {
 					d = surface_y - result.position.y;
 					hits++;
+					hit = true;
 					break;
 				}
 				ray.exclude.insert(result.rid);
+			}
+			if (!hit && holes) {
+				// Through a hole onto nothing (no cave floor under it yet): the terrain's own height closes it.
+				const Vector3 at(p.x, surface_y, p.y);
+				if (bool(terrain->call(SNAME("is_hole"), at))) {
+					const float g = terrain->call(SNAME("get_height"), at);
+					if (Math::is_finite(g)) {
+						d = surface_y - g;
+						hits++;
+					}
+				}
 			}
 			dw[i] = d;
 		}
@@ -6527,6 +6603,58 @@ bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
 		gz = CLAMP(gz, 0, n - 1);
 	}
 	return cell_depth[gz * n + gx] > 0.0f;
+}
+
+// Bilinear over the seabed's cells with wall cells (WALL_DEPTH, outside a surface_mesh footprint) read as dry
+// ground a metre above the water, so a wall does not drag its neighbours ten kilometres down.
+float PhysXWaterSurface3D::sample_depth(Vector3 p_world_pos) const {
+	const float rest_y = get_global_position().y + water_level;
+	float h = sample_height(p_world_pos);
+	if (!Math::is_finite(h)) {
+		h = rest_y;
+	}
+	const float rise = h - rest_y;
+	const int n = grid_resolution;
+	if (cell_depth.is_empty() || cell_depth.size() != n * n) {
+		return depth + rise;
+	}
+	const float rel_x = p_world_pos.x - grid_center.x;
+	const float rel_z = p_world_pos.z - grid_center.y;
+	const bool outside = Math::abs(rel_x) > 0.5f * active_domain_size.x || Math::abs(rel_z) > 0.5f * active_domain_size.y;
+	if (outside && open_sea_beyond && _open_beyond()) {
+		return depth + rise;
+	}
+	const float gx = (rel_x / active_domain_size.x + 0.5f) * n - 0.5f;
+	const float gz = (rel_z / active_domain_size.y + 0.5f) * n - 0.5f;
+	const int x0 = CLAMP((int)Math::floor(gx), 0, n - 1);
+	const int z0 = CLAMP((int)Math::floor(gz), 0, n - 1);
+	const int x1 = MIN(x0 + 1, n - 1);
+	const int z1 = MIN(z0 + 1, n - 1);
+	const float fx = CLAMP(gx - (float)x0, 0.0f, 1.0f);
+	const float fz = CLAMP(gz - (float)z0, 0.0f, 1.0f);
+	const float *cd = cell_depth.ptr();
+	auto at = [cd, n](int p_x, int p_z) { const float v = cd[p_z * n + p_x]; return v <= 0.5f * WaterSolver::WALL_DEPTH ? -1.0f : v; };
+	const float d = Math::lerp(Math::lerp(at(x0, z0), at(x1, z0), fx), Math::lerp(at(x0, z1), at(x1, z1), fx), fz);
+	return d + rise;
+}
+
+Vector2 PhysXWaterSurface3D::sample_swash(Vector3 p_world_pos) const {
+	swash_queried.set();
+	Vector<float> wet;
+	Vector<float> run_up;
+	int n = 0;
+	int n_run = 0;
+	uint64_t serial = 0;
+	if (!solver.get_wetness_grid(wet, n, serial) || !solver.get_run_up_grid(run_up, n_run) || n != n_run) {
+		return Vector2();
+	}
+	const float rel_x = p_world_pos.x - grid_center.x;
+	const float rel_z = p_world_pos.z - grid_center.y;
+	if (Math::abs(rel_x) > 0.5f * active_domain_size.x || Math::abs(rel_z) > 0.5f * active_domain_size.y) {
+		return Vector2();
+	}
+	return Vector2(MAX(_bilinear_sample(run_up, n, active_domain_size, rel_x, rel_z), 0.0f),
+			CLAMP(_bilinear_sample(wet, n, active_domain_size, rel_x, rel_z), 0.0f, 1.0f));
 }
 
 Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {

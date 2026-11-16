@@ -1127,7 +1127,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1139,6 +1139,18 @@
    ],
    "note": "",
    "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Wet sand",
+   "settings": [
+    "GroundSurface3D.water_coupling",
+    "water_sources"
+   ],
+   "note": "",
+   "what": "water fills the pores of sand below it and drains after; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1278,13 +1290,14 @@
    "topic": "Placement"
   },
   {
-   "name": "Cave mouths",
+   "name": "Caves",
    "settings": [
+    "CaveNetwork3D.build_meshes()",
     "RockField3D.cave_mouths",
     "terrain3d"
    ],
    "note": "",
-   "what": "limestone cliff feet get cave openings cut into the terrain, also on Terrain3D.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening; the entrances are cut into the terrain, also on Terrain3D.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"

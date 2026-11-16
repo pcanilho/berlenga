@@ -687,6 +687,30 @@ default until the PC measures its cost):
 3. **Detail and sea caves**: speleothems, breakdown, sediment floors, sea caves and blowholes. Shafts open holes.
    Water handed to the water thread.
 
+### Caves: second research pass (16 Nov): newer papers, itch.io and Unreal tools
+
+Paulo asked whether itch.io gems and newer work had been checked. They had not. What they add:
+- **Franke and Müller, "Procedural generation of 3D karst caves with speleothems"**, Computers & Graphics 102
+  (2022). A karst density field on chunked voxels, passages by phenomenological dissolution, Marching Cubes.
+  Speleothems are placed where the local conditions suit them (drip water through the roof, a free fall below) and
+  grown as calcite deposits. Microforms are covered too. **Take for stage 3**: their placement rule for drip points.
+- **Douda, "Cave Networks Generation"**, CTU Prague thesis (2024). Shortest paths, primitive sweeping, Marching
+  Cubes, with stalactites and cave lakes. The same method we follow (Paris 2021), so it confirms the choice. Cave
+  lakes go with the sea caves to the water thread.
+- **"Modelling and animation of stalactite growth for virtual caves"** (Eurographics digital library): could not be
+  fetched. Read it before stage 3's stalactites.
+- **ProcGrotto** (itch.io, PROCJAM 2024): Perlin worms turned into a distance field, joined by a smooth minimum,
+  warped by Simplex and **Worley** noise, Marching Cubes per chunk, triplanar texturing. Same structure as ours.
+  **Take for stage 3**: Worley (cellular) noise for the wall relief, since real dissolution scallops are cells
+  (their length is set by the flow speed, Curl 1974).
+- **Instant Organic Caves** (itch.io and Fab, Unreal 5.7, MIT on GitHub): Perlin noise, a 3D cellular automaton,
+  Laplacian smoothing. Blobby game caves with no geology. Not taken.
+- **Terra Works** (Fab, Nov 2026): 30 cave schemes under an Unreal landscape. No method published.
+- Cellular automaton and hex-graph generators on itch.io (Evans, Serra) build rooms for levels, not natural caves.
+
+So nothing found beats Paris 2021 for the network, and surface nets matches or betters the Marching Cubes the
+others use (fewer slivers, smoother walls). Stage 3 takes the Franke and Müller drip-point rule and Worley scallops.
+
 ### Caves stage 1: the network (16 Nov)
 
 CaveNetwork3D (modules/rocks) grows a network from an entrance (`find_entrances`, `add_cave`). The method is Paris et
@@ -713,3 +737,25 @@ Cave mouth review fixes (16 Nov, same commit):
   is cut (`TerrainGenerator3D.is_hole_span`, also for Terrain3D vertices);
 - `cave_mouths` is off by default again: a block alone stands proud of gentle walls. The entrance patch in stage 2
   replaces it as the opening.
+
+### Caves stage 2: the meshes (16 Nov)
+
+CaveNetwork3D builds meshes for its caves (`build_meshes(area)`), off until called:
+- **Field**: one signed distance F = min(ground, cave air). The ground term is the height difference over
+  √(1+|∇h|²). The air is a sweep of per-type profiles: round tubes, wide flat beds, keyholes, tall canyons, shafts.
+  Passages blend with a smooth minimum (k 0.8). Chambers are flat-floored ellipsoids (k 2). Wall roughness is a two
+  octave value noise at 2.2 m and 0.7 m (`roughness`).
+- **Mesh**: surface nets (Gibson 1998) in 16 m chunks with whole cells (`mesh_cell`, 0.3 m), meshed on worker
+  threads. Each chunk is a MeshInstance3D with a matching trimesh collider (`collision`). Normals come from the field
+  gradient, so chunks meet without seams.
+- **Entrance patch**: inside a square (`patch_radius`, 14 m) along the entrance's facing, the mesh also carries the
+  ground. The landscape is cut by a hole box 1.5 m smaller than the patch, so the opening is part of the hillside
+  with no portal block. The patch uses the landscape material (`ground_material`); the walls use a world-space
+  limestone shader that takes the landscape's rock colour unless `wall_material` is set.
+- **Holes**: the landscape now cuts holes only at its finest level, so coarse rings no longer open early.
+
+Cost on the bench (one cave, 40 m around the entrance at 0.3 m): 27 chunks, about 139k triangles (88k wall, 51k
+ground), 14 s on the cloud machine without a GPU. Streaming near the camera and coarser cells far away come next.
+
+Fixes in the same commit: stones on slopes are seated on the lowest band of their hull (no more hovering talus), and
+the rock field rebuilds cells when the terrain's holes change.

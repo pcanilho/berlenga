@@ -33,7 +33,10 @@
 
 #include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/hash_map.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/material.h"
+#include "scene/resources/mesh.h"
 
 class TerrainGenerator3D;
 class RockField3D;
@@ -77,6 +80,34 @@ public:
 	};
 
 private:
+	// Meshes: the rock round the passages as one distance field (docs/ideas/rocks.md, "Real caves"), polygonised
+	// per chunk by surface nets (Gibson 1998). Round each entrance a patch also carries the ground itself, so the
+	// cliff, the opening and the passage are one surface; the landscape gets a hole there.
+	struct Chunk {
+		Vector3i key;
+		Ref<ArrayMesh> mesh;
+		Node3D *node = nullptr;
+		int triangles = 0;
+	};
+	struct FieldSource {
+		LocalVector<const Segment *> segments;
+		LocalVector<const Chamber *> chambers;
+		LocalVector<Vector3> patches; // entrances whose patch reaches this chunk
+		LocalVector<Vector3> patch_out;
+	};
+	friend struct CaveMeshJob;
+	HashMap<Vector3i, Chunk> chunks;
+	real_t mesh_cell = 0.3;
+	real_t chunk_size = 16.0;
+	real_t patch_radius = 14.0;
+	real_t roughness = 1.0;
+	bool collision = true;
+	Ref<Material> wall_material;
+	Ref<Material> ground_material;
+	Ref<ShaderMaterial> default_wall;
+	uint64_t last_mesh_usec = 0;
+	const TerrainGenerator3D *mesh_gen = nullptr; // resolved on the main thread for the mesh workers
+
 	NodePath generator_path;
 	NodePath rock_field_path;
 	int seed = 0;
@@ -94,6 +125,12 @@ private:
 
 	TerrainGenerator3D *_get_generator() const;
 	bool _grow(Cave &r_cave, uint32_t p_seed) const;
+	real_t _air(const FieldSource &p_src, const Vector3 &p_p) const;
+	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr) const;
+	void _gather(const AABB &p_box, FieldSource &r_src) const;
+	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const;
+	static void _mesh_job(void *p_data, uint32_t p_index);
+	Ref<Material> _wall_material();
 
 protected:
 	static void _bind_methods();
@@ -108,6 +145,24 @@ public:
 	Array get_key_points(int p_cave) const;
 	Array find_entrances(const Rect2 &p_rect, int p_max = 8) const;
 	real_t get_last_build_msec() const { return real_t(last_build_usec) / 1000.0; }
+	int build_meshes(const AABB &p_area);
+	void clear_meshes();
+	int get_mesh_chunk_count() const { return int(chunks.size()); }
+	int get_mesh_triangle_count() const;
+	real_t get_last_mesh_msec() const { return real_t(last_mesh_usec) / 1000.0; }
+	real_t get_rock_distance(const Vector3 &p_position) const;
+	void set_mesh_cell(real_t p_value) { mesh_cell = CLAMP(p_value, real_t(0.05), real_t(4.0)); }
+	real_t get_mesh_cell() const { return mesh_cell; }
+	void set_patch_radius(real_t p_value) { patch_radius = CLAMP(p_value, real_t(0.0), real_t(100.0)); }
+	real_t get_patch_radius() const { return patch_radius; }
+	void set_roughness(real_t p_value) { roughness = CLAMP(p_value, real_t(0.0), real_t(4.0)); }
+	real_t get_roughness() const { return roughness; }
+	void set_collision(bool p_enable) { collision = p_enable; }
+	bool has_collision() const { return collision; }
+	void set_wall_material(const Ref<Material> &p_material) { wall_material = p_material; }
+	Ref<Material> get_wall_material() const { return wall_material; }
+	void set_ground_material(const Ref<Material> &p_material) { ground_material = p_material; }
+	Ref<Material> get_ground_material() const { return ground_material; }
 	int get_last_sample_count() const { return last_samples; }
 
 	void set_generator(const NodePath &p_path) { generator_path = p_path; }

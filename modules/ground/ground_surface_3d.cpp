@@ -54,8 +54,23 @@ GroundSurface3D *GroundSurface3D::active = nullptr;
 // Lab; sandy loam at 15% moisture). Damp sand is firmer (capillary bridges, Hornbaker et al. 1997) and
 // its walls stand far steeper; soft mud is fitted to 5 to 10 cm under a boot, since Wong's clays are
 // trafficable soils. Repose of dry sand 33 degrees (Al-Hashemi and Al-Amoudi 2018).
-GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moisture, float p_litter) {
-	const float m = CLAMP(p_moisture, 0.0f, 1.0f);
+// Bed load of fine sand (0.25 mm quartz) under water flowing at p_water_speed: Meyer-Peter and Mueller (1948),
+// q = 8 sqrt((s - 1) g d^3) (theta - 0.047)^1.5, the Shields number from the bed shear of a depth-averaged
+// speed with a drag coefficient of 0.003 (tau = rho Cd u^2).
+float GroundSurface3D::bed_load(float p_water_speed) {
+	const float d = 0.00025f;
+	const float tau = 1000.0f * 0.003f * p_water_speed * p_water_speed;
+	const float theta = tau / (1650.0f * 9.81f * d);
+	if (theta <= 0.047f) {
+		return 0.0f;
+	}
+	return 8.0f * Math::sqrt(1.65f * 9.81f * d * d * d) * Math::pow(theta - 0.047f, 1.5f);
+}
+
+GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation, float p_water_speed) {
+	// Pore water (stage 4) wets the ground as rain does, and more where it is wetter.
+	const float sat = CLAMP(p_saturation, 0.0f, 1.0f);
+	const float m = CLAMP(p_saturation >= 0.0f ? MAX(p_moisture, sat) : p_moisture, 0.0f, 1.0f);
 	const float cohesion = Math::smoothstep(0.0f, 0.5f, m); // damp sand gets all its strength early
 	auto lerp_log = [](float a, float b, float t) { return Math::exp(Math::lerp(Math::log(a), Math::log(b), t)); };
 	Cell sand;
@@ -117,6 +132,26 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	c.wheel_kc = lerp_log(soil.wheel_kc, sand.wheel_kc, s);
 	c.wheel_kphi = lerp_log(soil.wheel_kphi, sand.wheel_kphi, s);
 	c.sand = s;
+	if (p_saturation >= 0.0f) {
+		// Saturated sand has no water bridges left between its grains (Su et al. 2023's capillary state and past
+		// it): its walls stand no steeper than dry sand's and slump as fast.
+		const float full = Math::smoothstep(0.8f, 0.95f, sat) * s;
+		c.tan_repose = Math::lerp(c.tan_repose, Math::tan(Math::deg_to_rad(33.0f)), full);
+		c.rate = Math::exp(Math::lerp(Math::log(c.rate), Math::log(4.0f), full));
+		c.cohesion = Math::lerp(c.cohesion, 1.04f, full);
+	}
+	if (p_water_speed > 0.0f && s > 0.0f) {
+		// Flowing water moves the sand (stage 4): the Exner equation with bed load running down the bed's slope
+		// (Bagnold's slope term, 1 / tan(33) = 1.5) is a diffusion of the bed, D = 1.5 q / (1 - porosity); at
+		// the scale of a print (30 cm) it relaxes the print at D (2 pi / 0.3)^2 per second. Slumping does the
+		// moving (volume kept), towards a near-flat bed.
+		const float q = bed_load(p_water_speed);
+		if (q > 0.0f) {
+			const float k = 1.5f * q / 0.6f * Math::pow(2.0f * Math::PI / 0.3f, 2.0f) * s;
+			c.rate = MAX(c.rate, k);
+			c.tan_repose = Math::lerp(c.tan_repose, 0.05f, s);
+		}
+	}
 	// Wind moves only dry sand: a few percent of water binds the grains and the threshold climbs out of reach
 	// (Belly 1964; McKenna Neuman and Nickling 1989).
 	c.blown = s * (1.0f - Math::smoothstep(0.05f, 0.2f, m));
@@ -226,6 +261,16 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		}
 	}
 	ground = next;
+	// The pore water moves with the lattice (new cells start dry).
+	if (keep && (int)pore.size() == p_n * p_n) {
+		_shift_lattice(pore, ground_origin, p_origin, p_n, 1);
+		_shift_lattice(water_speed, ground_origin, p_origin, p_n, 1);
+		_shift_lattice(cell_water, ground_origin, p_origin, p_n, 2);
+	} else {
+		pore.clear();
+		water_speed.clear();
+		cell_water.clear();
+	}
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
@@ -256,6 +301,18 @@ void GroundSurface3D::_update_cells() {
 		return;
 	}
 	cells.resize(n * n);
+	cell_inputs.resize(n * n);
+	if ((int)pore.size() != n * n) {
+		pore.resize(n * n);
+		water_speed.resize(n * n);
+		cell_water.resize(n * n * 2);
+		for (int i = 0; i < n * n; i++) {
+			pore[i] = 0.0f;
+			water_speed[i] = 0.0f;
+			cell_water[i * 2 + 0] = 0.0f;
+			cell_water[i * 2 + 1] = 0.0f;
+		}
+	}
 	gpu_cells_dirty = true;
 	const WeatherMap3D *wm = WeatherMap3D::get_active();
 	Node *hs = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
@@ -285,11 +342,19 @@ void GroundSurface3D::_update_cells() {
 			}
 			const float m = moisture >= 0.0f ? moisture : (wm ? wm->get_wetness_at(p) : 0.0f);
 			const float closure = wm ? wm->get_canopy_closure_at(p) : litter_cover;
-			Cell c = material_cell(sand, m, litter_depth * CLAMP(closure, 0.0f, 1.0f));
+			CellInput &in = cell_inputs[i];
+			in.sand = sand;
+			in.moisture = m;
+			in.litter = litter_depth * CLAMP(closure, 0.0f, 1.0f);
 			// Under more than a few centimetres of snow the snow surface takes the print.
-			if (rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f)) {
-				c.deformable = false;
+			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
+			const bool wet = water_coupling && (int)pore.size() == n * n && (pore[i] > 0.0f || water_speed[i] > 0.0f);
+			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i]) : material_cell(in.sand, in.moisture, in.litter);
+			if (wet) {
+				cell_water[i * 2 + 0] = pore[i];
+				cell_water[i * 2 + 1] = water_speed[i];
 			}
+			c.deformable = !in.fixed;
 			cells[i] = c;
 		}
 	}
@@ -681,6 +746,184 @@ void GroundSurface3D::_ripple_grow_task(void *p_self) {
 	GroundRipples::grow(self->ripple_grown, self->ripples.n, self->ripples, self->ripple_grow_wind, 500, 7);
 }
 
+void GroundSurface3D::_shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride) {
+	LocalVector<float> out;
+	out.resize(p_n * p_n * p_stride);
+	const Vector2i d = p_new_origin - p_old_origin;
+	for (int z = 0; z < p_n; z++) {
+		for (int x = 0; x < p_n; x++) {
+			const int sx = x + d.x;
+			const int sz = z + d.y;
+			const bool in = sx >= 0 && sz >= 0 && sx < p_n && sz < p_n;
+			for (int k = 0; k < p_stride; k++) {
+				out[(z * p_n + x) * p_stride + k] = in ? r_values[(sz * p_n + sx) * p_stride + k] : 0.0f;
+			}
+		}
+	}
+	r_values = out;
+}
+
+// Sand and water (docs/ideas/sand.md, stage 4). Twice a second, on a 1 m grid over the lattice: the water over
+// the ground from the water_sources (a surface's swash film and depth, a river's or live water's depth, and
+// their flow) and the weather map's contact wetness; then each cell's pore water in its top 2 cm (porosity 0.4):
+// filled under water by Green-Ampt infiltration (fine sand, k 1e-4 m/s, capillary head 15 cm: about 10 s),
+// drained by gravity to field capacity (15%) in a minute or two, then dried by evaporation (1e-7 m/s, hours).
+// Cells whose water changed are rebuilt with it.
+void GroundSurface3D::_water_update(double p_delta) {
+	const int n = ground_n;
+	if (!water_coupling || !ground_valid || n < 2 || (int)pore.size() != n * n || (int)cell_inputs.size() != n * n) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	LocalVector<Node *> sources;
+	if (is_inside_tree()) {
+		for (int k = 0; k < water_sources.size(); k++) {
+			Node *src = get_node_or_null(water_sources[k]);
+			if (src) {
+				sources.push_back(src);
+			}
+		}
+	}
+	if (sources.is_empty() && !wm) {
+		return;
+	}
+	static const StringName s_swash = "sample_swash";
+	static const StringName s_depth = "sample_depth";
+	static const StringName s_height = "sample_height";
+	static const StringName s_flow = "sample_flow";
+	const int step = MAX(1, (int)Math::round(1.0f / ground_spacing));
+	const int gn = (n - 1) / step + 2;
+	LocalVector<float> g_depth, g_speed, g_contact;
+	g_depth.resize(gn * gn);
+	g_speed.resize(gn * gn);
+	g_contact.resize(gn * gn);
+	for (int gz = 0; gz < gn; gz++) {
+		for (int gx = 0; gx < gn; gx++) {
+			const int lx = MIN(gx * step, n - 1);
+			const int lz = MIN(gz * step, n - 1);
+			const float gh = ground[lz * n + lx];
+			const Vector3 p((ground_origin.x + lx) * ground_spacing, gh, (ground_origin.y + lz) * ground_spacing);
+			float depth = 0.0f;
+			float speed = 0.0f;
+			for (Node *src : sources) {
+				float d = 0.0f;
+				float film = 0.0f;
+				if (src->has_method(s_swash)) {
+					const Vector2 sw = src->call(s_swash, p);
+					film = MAX(sw.x, 0.0f);
+				}
+				if (src->has_method(s_depth)) {
+					d = src->call(s_depth, p);
+				} else if (src->has_method(s_height)) {
+					d = float(src->call(s_height, p)) - gh;
+				}
+				if (!Math::is_finite(d)) {
+					d = 0.0f;
+				}
+				d = MAX(d, 0.0f);
+				float v = 0.0f;
+				if (d > 0.0f && src->has_method(s_flow)) {
+					const Vector3 f = src->call(s_flow, p);
+					v = Vector2(f.x, f.z).length();
+				}
+				if (film > d) {
+					// The swash's run-up: a thin bore moves at about twice the shallow-water speed of its film.
+					v = MAX(v, 2.0f * Math::sqrt(9.81f * film));
+					d = film;
+				}
+				if (d > depth) {
+					depth = d;
+					speed = v;
+				}
+			}
+			g_depth[gz * gn + gx] = depth;
+			g_speed[gz * gn + gx] = speed;
+			g_contact[gz * gn + gx] = wm ? wm->get_contact_wetness_at(p) : 0.0f;
+		}
+	}
+	const float dt = float(p_delta);
+	const float infil = 1e-4f * (1.0f + 0.15f / 0.02f) / (0.4f * 0.02f); // per s: k (1 + hc / L) / (phi L)
+	const float drain = 1e-4f / (0.4f * 0.02f); // per s: k / (phi L)
+	const float evap = 1e-7f / (0.4f * 0.02f); // saturation per s
+	const float fc = 0.15f;
+	bool changed = false;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float fx = float(x) / step;
+			const float fz = float(z) / step;
+			const int x0 = MIN((int)fx, gn - 2);
+			const int z0 = MIN((int)fz, gn - 2);
+			const float tx = fx - x0;
+			const float tz = fz - z0;
+			auto bil = [&](const LocalVector<float> &g) {
+				return Math::lerp(Math::lerp(g[z0 * gn + x0], g[z0 * gn + x0 + 1], tx), Math::lerp(g[(z0 + 1) * gn + x0], g[(z0 + 1) * gn + x0 + 1], tx), tz);
+			};
+			const float depth = bil(g_depth);
+			const float contact = bil(g_contact);
+			float s = pore[i];
+			if (depth > 0.001f) {
+				s += (1.0f - s) * MIN(infil * dt, 1.0f);
+			} else if (s > fc) {
+				s = MAX(fc, s - (s - fc) * MIN(drain * dt, 1.0f));
+			} else {
+				s = MAX(0.0f, s - evap * dt);
+			}
+			// Where the water has been (the weather map's contact wetness, drying with the weather), at least that wet.
+			s = MAX(s, CLAMP(contact, 0.0f, 1.0f));
+			pore[i] = s;
+			water_speed[i] = depth > 0.001f ? bil(g_speed) : 0.0f;
+			// Rebuilt when its water changed enough to matter.
+			float &bs = cell_water[i * 2 + 0];
+			float &bv = cell_water[i * 2 + 1];
+			if (Math::abs(s - bs) > 0.02f || Math::abs(water_speed[i] - bv) > 0.05f || (s == 0.0f && bs != 0.0f)) {
+				const CellInput &in = cell_inputs[i];
+				Cell c = material_cell(in.sand, in.moisture, in.litter, s, water_speed[i]);
+				c.deformable = !in.fixed;
+				cells[i] = c;
+				bs = s;
+				bv = water_speed[i];
+				changed = true;
+			}
+		}
+	}
+	if (changed) {
+		gpu_cells_dirty = true;
+	}
+	water_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+}
+
+void GroundSurface3D::set_water_coupling(bool p_enabled) {
+	water_coupling = p_enabled;
+	if (!p_enabled) {
+		pore.clear();
+		water_speed.clear();
+		cell_water.clear();
+		_update_cells();
+	}
+}
+
+float GroundSurface3D::get_saturation_at(const Vector3 &p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || (int)pore.size() != n * n) {
+		return 0.0f;
+	}
+	const int x = int(Math::round(p_position.x / ground_spacing)) - ground_origin.x;
+	const int z = int(Math::round(p_position.z / ground_spacing)) - ground_origin.y;
+	return x >= 0 && z >= 0 && x < n && z < n ? pore[z * n + x] : 0.0f;
+}
+
+float GroundSurface3D::get_water_speed_at(const Vector3 &p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || (int)water_speed.size() != n * n) {
+		return 0.0f;
+	}
+	const int x = int(Math::round(p_position.x / ground_spacing)) - ground_origin.x;
+	const int z = int(Math::round(p_position.z / ground_spacing)) - ground_origin.y;
+	return x >= 0 && z >= 0 && x < n && z < n ? water_speed[z * n + x] : 0.0f;
+}
+
 // Saltation flux from GroundRipples::saltation_flux. The ripple layer steps when q of sand a cell has moved
 // since its last step (q = Q / (bulk density * hop)), a few times a second at most.
 void GroundSurface3D::_ripples_update(double p_delta) {
@@ -713,6 +956,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			if (first) {
 				ripples.valid = false; // the whole window from it
 			}
+			_ripples_far_tile();
 		}
 	} else if (!ripples.tmpl_ready || (speed > 0.1f && ripples.tmpl_wind.dot(dir) < 0.82f)) {
 		ripple_grow_wind = dir;
@@ -745,6 +989,18 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 						ripple_show[z2 * ripples.n + x2] = show;
 					}
 				}
+			}
+		}
+		// The sand share over the patch for the far ripples, in 25 cm texels (at 32 m).
+		const int sn = RIPPLE_SAND_N;
+		const float size = deform_extent;
+		const float st = size / sn;
+		ripple_sand_rect = Rect2(Math::snapped(center.x, st) - 0.5f * size, Math::snapped(center.y, st) - 0.5f * size, size, size);
+		ripple_sand.resize(sn * sn);
+		for (int z = 0; z < sn; z++) {
+			for (int x = 0; x < sn; x++) {
+				const Cell &c = _cell_at(ripple_sand_rect.position.x + (x + 0.5f) * st, ripple_sand_rect.position.y + (z + 0.5f) * st);
+				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 			}
 		}
 		ripple_dirty = true;
@@ -803,19 +1059,54 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	}
 	if (ripple_dirty) {
 		ripple_dirty = false;
-		const int nn = ripples.n * ripples.n;
+		// Rows 0..n-1: the window (height, sand share) and the grown field's slope at world cell mod n; rows
+		// n..n+S-1: the sand share over the patch; the last row: the window's rect and cell, the sand rect and
+		// the tile's size, and whether far ripples are on.
+		const int n = ripples.n;
+		const int nn = n * n;
+		const int sn = RIPPLE_SAND_N;
+		const int w = MAX(n, sn);
+		const int hgt = n + sn + 1;
 		Vector<uint8_t> data;
-		data.resize(nn * 8);
+		data.resize(w * hgt * 16);
+		memset(data.ptrw(), 0, data.size());
 		float *d = (float *)data.ptrw();
-		for (int i = 0; i < nn; i++) {
-			d[i * 2 + 0] = ripples.h[i];
-			d[i * 2 + 1] = (int)ripple_show.size() == nn ? ripple_show[i] : 0.0f;
+		const bool tile = (int)ripple_tile_slope.size() == nn * 2;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				float *o = d + (z * w + x) * 4;
+				o[0] = ripples.h[i];
+				o[1] = (int)ripple_show.size() == nn ? ripple_show[i] : 0.0f;
+				o[2] = tile ? ripple_tile_slope[i * 2 + 0] : 0.0f;
+				o[3] = tile ? ripple_tile_slope[i * 2 + 1] : 0.0f;
+			}
 		}
-		if (ripple_image.is_valid() && ripple_image->get_width() == ripples.n && ripple_texture.is_valid()) {
-			ripple_image->set_data(ripples.n, ripples.n, false, Image::FORMAT_RGF, data);
+		const bool sand = (int)ripple_sand.size() == sn * sn;
+		if (sand) {
+			for (int z = 0; z < sn; z++) {
+				for (int x = 0; x < sn; x++) {
+					d[((n + z) * w + x) * 4] = ripple_sand[z * sn + x];
+				}
+			}
+		}
+		float *meta = d + (n + sn) * w * 4;
+		meta[0] = (ripples.origin.x - 0.5f) * ripples.cell;
+		meta[1] = (ripples.origin.y - 0.5f) * ripples.cell;
+		meta[2] = n * ripples.cell;
+		meta[3] = ripples.cell;
+		meta[4] = ripple_sand_rect.position.x;
+		meta[5] = ripple_sand_rect.position.y;
+		meta[6] = ripple_sand_rect.size.x;
+		meta[7] = n * ripples.cell;
+		meta[8] = tile && sand ? 1.0f : 0.0f;
+		meta[9] = (float)n;
+		meta[10] = (float)sn;
+		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
+			ripple_image->set_data(w, hgt, false, Image::FORMAT_RGBAF, data);
 			ripple_texture->update(ripple_image);
 		} else {
-			ripple_image = Image::create_from_data(ripples.n, ripples.n, false, Image::FORMAT_RGF, data);
+			ripple_image = Image::create_from_data(w, hgt, false, Image::FORMAT_RGBAF, data);
 			ripple_texture = ImageTexture::create_from_image(ripple_image);
 			ripple_published = false;
 		}
@@ -824,6 +1115,41 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	if (mesh_dirty) {
 		_build_mesh();
 	}
+}
+
+// The grown field's slope at each cell (it is periodic, so the differences wrap), for the far ripples: in
+// the ripple map for the path tracer and as its own mipmapped texture for the raster, so far ripples average
+// out to a flat normal instead of shimmering.
+void GroundSurface3D::_ripples_far_tile() {
+	const int n = ripples.n;
+	if ((int)ripples.tmpl.size() != n * n) {
+		return;
+	}
+	ripple_tile_slope.resize(n * n * 2);
+	Vector<uint8_t> data;
+	data.resize(n * n * 8);
+	float *d = (float *)data.ptrw();
+	const float inv = 0.5f / ripples.cell;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const float *t = ripples.tmpl.ptr();
+			const float sx = (t[z * n + (x + 1) % n] - t[z * n + (x + n - 1) % n]) * inv;
+			const float sz = (t[((z + 1) % n) * n + x] - t[((z + n - 1) % n) * n + x]) * inv;
+			ripple_tile_slope[(z * n + x) * 2 + 0] = sx;
+			ripple_tile_slope[(z * n + x) * 2 + 1] = sz;
+			d[(z * n + x) * 2 + 0] = sx;
+			d[(z * n + x) * 2 + 1] = sz;
+		}
+	}
+	ripple_far_image = Image::create_from_data(n, n, false, Image::FORMAT_RGF, data);
+	ripple_far_image->generate_mipmaps();
+	if (ripple_far_texture.is_valid() && ripple_far_texture->get_width() == n) {
+		ripple_far_texture->update(ripple_far_image);
+	} else {
+		ripple_far_texture = ImageTexture::create_from_image(ripple_far_image);
+		ripple_far_published = false;
+	}
+	ripple_dirty = true;
 }
 
 void GroundSurface3D::_ripples_publish() {
@@ -837,6 +1163,10 @@ void GroundSurface3D::_ripples_publish() {
 	}
 	if (!ripple_published) {
 		_set_global("ground_ripple_map", ripple_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	}
+	if (!ripple_far_published && ripple_far_texture.is_valid()) {
+		_set_global("ground_ripple_far", ripple_far_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		ripple_far_published = true;
 	}
 	// Texel centres on the cells (and so on the fine ring's vertices).
 	_set_global("ground_ripple_rect", Vector4((ripples.origin.x - 0.5f) * ripples.cell, (ripples.origin.y - 0.5f) * ripples.cell, ripples.n * ripples.cell, ripples.cell), RSE::GLOBAL_VAR_TYPE_VEC4);
@@ -886,10 +1216,15 @@ void GroundSurface3D::_age(double p_delta) {
 						rm *= keep;
 					}
 					field.fresh[i] *= dry;
-					if (dn < 1e-4f) {
+					// A texel both pressed and piled on is the same surface with the smaller of the two taken off both
+					// (water and wind spread sand thin over prints). Then films under 10 microns go, so tiles can rest.
+					const float both = MIN(dn, rm);
+					dn -= both;
+					rm -= both;
+					if (dn < 1e-5f) {
 						dn = 0.0f;
 					}
-					if (rm < 1e-4f) {
+					if (rm < 1e-5f) {
 						rm = 0.0f;
 					}
 					if (field.fresh[i] < 0.01f) {
@@ -990,6 +1325,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_set_global("ground_deform_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				_set_global("ground_ripple_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				ripple_published = false;
+				ripple_far_published = false;
 				active = nullptr;
 			}
 			globals_published = false;
@@ -1005,6 +1341,11 @@ void GroundSurface3D::_notification(int p_what) {
 			if (cells_accum >= 2.0) {
 				cells_accum = 0.0;
 				_update_cells();
+			}
+			water_accum += delta;
+			if (water_accum >= 0.5) {
+				_water_update(water_accum);
+				water_accum = 0.0;
 			}
 			const bool on_gpu = _gpu_on();
 			if (!on_gpu && gpu_host.gpu.is_valid()) {
@@ -1819,6 +2160,14 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_override"), &GroundSurface3D::get_wind_override);
 	ClassDB::bind_method(D_METHOD("set_wind_ripples", "enabled"), &GroundSurface3D::set_wind_ripples);
 	ClassDB::bind_method(D_METHOD("is_wind_ripples"), &GroundSurface3D::is_wind_ripples);
+	ClassDB::bind_method(D_METHOD("set_water_sources", "sources"), &GroundSurface3D::set_water_sources);
+	ClassDB::bind_method(D_METHOD("get_water_sources"), &GroundSurface3D::get_water_sources);
+	ClassDB::bind_method(D_METHOD("set_water_coupling", "enabled"), &GroundSurface3D::set_water_coupling);
+	ClassDB::bind_method(D_METHOD("is_water_coupling"), &GroundSurface3D::is_water_coupling);
+	ClassDB::bind_method(D_METHOD("get_saturation_at", "position"), &GroundSurface3D::get_saturation_at);
+	ClassDB::bind_method(D_METHOD("get_water_speed_at", "position"), &GroundSurface3D::get_water_speed_at);
+	ClassDB::bind_method(D_METHOD("get_water_step_usec"), &GroundSurface3D::get_water_step_usec);
+	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("bed_load", "water_speed"), &GroundSurface3D::bed_load);
 	ClassDB::bind_method(D_METHOD("set_ripple_extent", "extent"), &GroundSurface3D::set_ripple_extent);
 	ClassDB::bind_method(D_METHOD("get_ripple_extent"), &GroundSurface3D::get_ripple_extent);
 	ClassDB::bind_method(D_METHOD("set_ripple_time_scale", "scale"), &GroundSurface3D::set_ripple_time_scale);
@@ -1896,6 +2245,9 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_extent", PROPERTY_HINT_RANGE, "1,16,0.25,suffix:m"), "set_ripple_extent", "get_ripple_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_time_scale", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater"), "set_ripple_time_scale", "get_ripple_time_scale");
+	ADD_GROUP("Water", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_coupling"), "set_water_coupling", "is_water_coupling");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_spacing", PROPERTY_HINT_RANGE, "0.01,1,0.005,suffix:m"), "set_detail_spacing", "get_detail_spacing");

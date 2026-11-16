@@ -310,9 +310,11 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
   the path tracer, which reruns the vertex stage, sees them. They fade out over the window's outer 15%.
 - Limits: the profile is near symmetric (field ripples have a gentle stoss and a steeper lee); Anderson's
   1987 impact erosion would skew it but killed the instability here. A slight upwind drift of the pattern.
-- Past the window the sand is smooth. Next: the grown field (it is periodic) as a tiled normal on the rest
-  of the patch, raster and path tracer (the path tracer shades BaseMaterial3D itself, so it needs an rt
-  param for the map).
+- Far ripples: past the window the grown field (periodic, so it tiles) shades the rest of the patch as a
+  slope on the normal where there is sand, fading in as the window's geometry fades out. The raster reads
+  a mipmapped copy with anisotropic filtering (far ripples average out instead of shimmering); the path
+  tracer reads the ripple map itself (rt param 68), which carries the sand share over the patch and its
+  rects under the window's rows. They cast no shadows of their own, unlike the window's geometry.
 
 **Built: streamers (16 Nov 2026).** `GroundStreamers3D` (nothing blows without one in the scene):
 
@@ -333,6 +335,52 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
 The sand layer and water inside it from Su 2023 on the near field: swash smoothing prints,
 seepage, wet walls holding, runoff carving channels in a beach. Needs the shore water from
 Valence's water and the contact wetness; built only with that thread, through the coordinator.
+
+**Plan (16 Nov 2026).** The water stays the water module's (its surfaces, rivers and live water); the
+sand reads it and answers on its own field, so the coupling is one way, water to sand, which is what
+shows at a beach (sand changing under water; the water barely notices a footprint). From Su 2023 we take
+the sand side: water held in the sand and the cohesion it gives; from coastal and river engineering the
+sediment moved by flowing water.
+
+- **Pore water** per field texel: saturation S of the top layer (porosity 0.4). Filled by water over
+  the sand (a surface's `sample_depth` above zero, a river's or live water's depth, the swash film from
+  `sample_swash`) and rain (`get_wetness_at`); drains down by gravity (Darcy, fine sand k about
+  1e-4 m/s, so a wet layer drains in minutes) and spreads sideways in the sand by diffusion (seepage),
+  dries by evaporation at the weather's rate. The texel's moisture is S, not the surface's
+  single `moisture`, where water has been.
+- **Cohesion from S** (Su 2023's water stages: dry; pendular to 20%; funicular to 25%; capillary to 33%;
+  past it saturated): repose and slumping rate follow it, so damp sand holds a cut wall, dry and
+  saturated sand do not; saturated sand under a boot squelches (pore pressure: Bekker's kphi falls,
+  sinkage rises, the print's walls slump back).
+- **Sediment moved by water** (the Exner equation on the field's dent and rim layers): bed load from
+  the water's speed over the sand, Meyer-Peter and Mueller 1948, q = 8 sqrt((s - 1) g d^3)
+  (theta - theta_c)^1.5 with the Shields number theta from the flow's shear (a drag coefficient of
+  about 0.003 on the depth-averaged speed) and theta_c 0.047; carried along the flow, so a print under
+  the swash is rounded off and filled within a few waves, and runoff over a beach cuts small channels
+  and fans where it slows. Turned sand under water shows darker (wet) and its glints are gone.
+- Checks: a wet wall stands where a dry one slumps to 33 degrees; saturation drains from full to the
+  pendular state in minutes; a print under a 0.5 m/s swash loses most of its depth in under a minute and
+  no sand is made or lost (Exner keeps the volume); no sediment moves under the Shields threshold.
+
+**Built (16 Nov 2026).** `GroundSurface3D.water_coupling` (on; 0.3 ms twice a second) and `water_sources`
+(the water nodes it reads: a PhysXWaterSurface3D's `sample_swash` film and `sample_depth`, a river's or live
+water's `sample_depth`, all their `sample_flow`; any node with those calls), plus the weather map's contact
+wetness:
+
+- Pore water per lattice cell (25 cm), sampled from the water on a 1 m grid: Green-Ampt infiltration under
+  water (saturated in about 10 s), gravity drainage towards field capacity (15%, e-folding in 80 s), then
+  evaporation (hours); never drier than the contact wetness says. Sideways seepage is left out: at fine
+  sand's diffusivity (about 2e-5 m2/s) it moves nothing across a 25 cm cell in minutes.
+- The cell's rules take the pore water as their moisture, so damp sand is firm and holds steep walls; past
+  80 to 95% the water bridges are gone and the walls fall back to dry sand's 33 degrees (Su 2023's
+  capillary and saturated states).
+- Under water faster than the Shields threshold (0.25 m/s depth-averaged for 0.25 mm sand) the cell slumps
+  towards a near-flat bed at the Exner relaxation rate from Meyer-Peter and Mueller bed load: a 3 cm print
+  under 0.6 m/s is down to 7 mm in a minute; under 0.15 m/s it keeps its walls. The swash's run-up speed is
+  taken as twice the shallow-water speed of its film. Slumping keeps the volume.
+- Not built: channels cut by runoff (they need the bed load carried along the flow, an advection pass on
+  the field, not only relaxation). The wet look is the weather map's contact wetness, drawn by the wetness
+  feature, not the pore water.
 
 ### Look (any stage)
 

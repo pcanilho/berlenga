@@ -11,6 +11,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="bed_load" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="water_speed" type="float" />
+			<description>
+				The bed load of fine sand (0.25 mm) under water flowing at [param water_speed] m/s (depth-averaged), m² per second per metre across the flow: Meyer-Peter and Mueller (1948). [code]0.0[/code] under the Shields threshold, about 0.25 m/s.
+			</description>
+		</method>
 		<method name="clear_deformation">
 			<return type="void" />
 			<description>
@@ -140,6 +147,13 @@
 				How many saltation steps the ripples have taken since [member wind_ripples] was turned on, not counting the field grown in the background.
 			</description>
 		</method>
+		<method name="get_saturation_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pore water in the top 2 cm of the ground at [param position], as a share of the pore space (0 dry, 1 saturated). See [member water_coupling].
+			</description>
+		</method>
 		<method name="get_sinkage_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -161,6 +175,19 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The printed ground height at [param position]: the undisturbed ground plus the rim minus the dent.
+			</description>
+		</method>
+		<method name="get_water_speed_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The speed of the water flowing over the ground at [param position], m/s; [code]0.0[/code] where it is dry.
+			</description>
+		</method>
+		<method name="get_water_step_usec" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long the last water step took, in microseconds (it runs twice a second).
 			</description>
 		</method>
 		<method name="get_wheel_soil" qualifiers="const">
@@ -316,7 +343,7 @@
 			How fast rain softens prints: the share lost per hour per mm/h of rain.
 		</member>
 		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">
-			Width of the square of real ripple geometry round the follow point, m. The patch's middle is meshed at the ripple cell over it, so its vertex count grows as its square (4 m: about 100,000 vertices). The ripples fade out over its outer 15%.
+			Width of the square of real ripple geometry round the follow point, m. The patch's middle is meshed at the ripple cell over it, so its vertex count grows as its square (4 m: about 100,000 vertices). The ripples fade out over its outer 15%, into the same field drawn as surface detail (a normal, no shadows of their own) over the rest of the patch.
 		</member>
 		<member name="ripple_time_scale" type="float" setter="set_ripple_time_scale" getter="get_ripple_time_scale" default="1.0">
 			Speeds up the ripples' growth over real time; [code]1.0[/code] is real time, when ripples take minutes to re-form. For scenes and time-lapses.
@@ -344,6 +371,12 @@
 		</member>
 		<member name="type_map_rect" type="Rect2" setter="set_type_map_rect" getter="get_type_map_rect" default="Rect2(0, 0, 0, 0)">
 			The world XZ rectangle [member type_map] covers.
+		</member>
+		<member name="water_coupling" type="bool" setter="set_water_coupling" getter="is_water_coupling" default="true">
+			If [code]true[/code], water over the ground changes it. Water from [member water_sources] and the [code]WeatherMap3D[/code] contact wetness fills the pores of the top layer (saturated in about 10 s under water), which drain to field capacity in a minute or two and dry over hours. Damp sand is firm and holds steep walls; saturated sand slumps as dry sand does. Water flowing faster than the Shields threshold (about 0.25 m/s) moves the sand ([method bed_load]): prints under the swash or a stream are rounded off within a minute, the volume kept.
+		</member>
+		<member name="water_sources" type="NodePath[]" setter="set_water_sources" getter="get_water_sources" default="[]">
+			The water nodes the ground reads, sampled on a 1 m grid twice a second: any node with [code]sample_depth(position)[/code] (or [code]sample_height(position)[/code]), [code]sample_flow(position)[/code] and, for a sea's swash, [code]sample_swash(position)[/code], such as the water surface, river and live water nodes.
 		</member>
 		<member name="wind_override" type="Vector2" setter="set_wind_override" getter="get_wind_override" default="Vector2(0, 0)">
 			The 10 m wind over the ground in m/s, as world XZ. [code]Vector2(0, 0)[/code] reads it from the [code]WeatherMap3D[/code].
