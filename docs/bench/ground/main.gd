@@ -38,6 +38,7 @@ extends Node3D
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
+#   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
@@ -174,6 +175,10 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.litter_cover = litter
 	surface.gpu_simulation = gpu
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
+	# Everything ships on; each check turns on what it is about (--defaults keeps the shipped settings).
+	if not OS.get_cmdline_user_args().has("--defaults"):
+		surface.wind_ripples = false
+		surface.runoff_channels = false
 	add_child(surface)
 	await get_tree().physics_frame
 

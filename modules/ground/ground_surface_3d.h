@@ -150,7 +150,7 @@ private:
 
 	// Wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the field, its own
 	// finer ring of the patch. Off by default until its cost is measured.
-	bool wind_ripples = false;
+	bool wind_ripples = true;
 	float ripple_time_scale = 1.0f;
 	float ripple_extent = 4.0f; // m, the square of real ripple geometry round the follow point
 	GroundRipples ripples;
@@ -249,7 +249,7 @@ private:
 	Vector<uint8_t> wet_data;
 	Ref<ImageTexture> wet_texture;
 	bool wet_published = false;
-	bool sand_glints = false;
+	bool sand_glints = true;
 	double wet_publish_accum = 0.0;
 	void _wet_publish(bool p_on);
 	// Vegetation sheltering the sand (dune grass, docs/ideas/sand.md): plants take a share of the wind's stress
@@ -269,7 +269,7 @@ private:
 	void _wind_update(double p_delta);
 	// Runoff channels (docs/ideas/sand.md): water seeping out of soaked sand and rain the ground cannot take run
 	// downhill as sheet flow on a grid of twice the field's texel, gather and carry sand, cutting rills.
-	bool runoff_channels = false;
+	bool runoff_channels = true;
 	float runoff_time_scale = 1.0f;
 	Vector2i runoff_origin;
 	int runoff_n = 0;

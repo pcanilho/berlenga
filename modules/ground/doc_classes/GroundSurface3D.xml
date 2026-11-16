@@ -420,8 +420,8 @@
 		<member name="rock_from_geology" type="bool" setter="set_rock_from_geology" getter="is_rock_from_geology" default="true">
 			If [code]true[/code] and the height source is a [code]TerrainGenerator3D[/code], bare rock (exposure over one half) does not print.
 		</member>
-		<member name="runoff_channels" type="bool" setter="set_runoff_channels" getter="is_runoff_channels" default="false">
-			If [code]true[/code], water runs over the ground and cuts it: soaked sand on a slope seeps where the water table a falling tide or a lake left still meets the surface, and rain runs off where the ground cannot take it. The water gathers downhill into sheets and rills, carries sand and lays it down where it slows and at the water's edge, so a beach face grows the branching rills of low tide. It also keeps the sand above a high water table soaked through its capillary fringe. Reads the [member water_sources] and the weather map's rain. Off until its GPU cost is measured.
+		<member name="runoff_channels" type="bool" setter="set_runoff_channels" getter="is_runoff_channels" default="true">
+			If [code]true[/code], water runs over the ground and cuts it: soaked sand on a slope seeps where the water table a falling tide or a lake left still meets the surface, and rain runs off where the ground cannot take it. The water gathers downhill into sheets and rills, carries sand and lays it down where it slows and at the water's edge, so a beach face grows the branching rills of low tide. It also keeps the sand above a high water table soaked through its capillary fringe. Reads the [member water_sources] and the weather map's rain.
 		</member>
 		<member name="runoff_time_scale" type="float" setter="set_runoff_time_scale" getter="get_runoff_time_scale" default="1.0">
 			Speeds up the runoff's cutting and the water table's fall, for previews and benches.
@@ -429,8 +429,8 @@
 		<member name="sand_drift_rate" type="float" setter="set_sand_drift_rate" getter="get_sand_drift_rate" default="2.0">
 			How fast wind fills dry sand prints: the share lost per hour at 10 m/s, from nothing at 5 m/s (Bagnold's threshold).
 		</member>
-		<member name="sand_glints" type="bool" setter="set_sand_glints" getter="is_sand_glints" default="false">
-			If [code]true[/code], loose dry sand shows its grains up close: their mixed colours, averaging out with distance, and the clean faces among them flashing where they mirror the sun (counted per pixel footprint like snow's sparkle), in raster and under the path tracer alike. Wet sand loses them. Off until its GPU cost is measured.
+		<member name="sand_glints" type="bool" setter="set_sand_glints" getter="is_sand_glints" default="true">
+			If [code]true[/code], loose dry sand shows its grains up close: their mixed colours, averaging out with distance, and the clean faces among them flashing where they mirror the sun (counted per pixel footprint like snow's sparkle), in raster and under the path tracer alike. Wet sand loses them.
 		</member>
 		<member name="skirt" type="float" setter="set_skirt" getter="get_skirt" default="0.5">
 			How far the terrain is lowered under the patch, in metres.
@@ -460,7 +460,7 @@
 		<member name="wind_override" type="Vector2" setter="set_wind_override" getter="get_wind_override" default="Vector2(0, 0)">
 			The 10 m wind over the ground in m/s, as world XZ. [code]Vector2(0, 0)[/code] reads it from the [code]WeatherMap3D[/code].
 		</member>
-		<member name="wind_ripples" type="bool" setter="set_wind_ripples" getter="is_wind_ripples" default="false">
+		<member name="wind_ripples" type="bool" setter="set_wind_ripples" getter="is_wind_ripples" default="true">
 			If [code]true[/code], wind over dry sand grows ripples (Nishimori and Ouchi 1993) over [member ripple_extent] round the follow point: about 11 cm apart and 6 mm high at 8 m/s, crests across the wind, none under about 6 m/s (Bagnold's threshold), on damp sand or under litter (damp sand keeps the ripples it has). Prints wipe them and they grow back; a wind shift turns them. The patch's middle is meshed at the ripple cell, so the crests are real geometry the path tracer sees. [GroundStreamers3D] draws the grains in the air. Off by default until its cost is measured.
 		</member>
 		<member name="wind_shelters" type="NodePath[]" setter="set_wind_shelters" getter="get_wind_shelters" default="[]">

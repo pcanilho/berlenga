@@ -429,7 +429,7 @@ downwind of dry sand comes from the same rule.
 
 ### Sand glints and grain (built 16 Nov 2026)
 
-`sand_glints` (off until its GPU cost is measured). Up close, loose dry sand shows its grains: a 0.25 mm grain
+`sand_glints` (on by default). Up close, loose dry sand shows its grains: a 0.25 mm grain
 grid counted per pixel footprint as the snow's sparkle is (Zirr and Kaplanyan 2016; Deliot and Belcour 2023,
 one facet per cell): grain colours vary (sum of two uniforms, std 0.41) and average out as one over the square
 root of the grains a cell holds, blended across levels so it never steps; 12% of grains are clean faces
@@ -443,7 +443,7 @@ A second, coarser layer (1.2 mm, beach shell grit) joined the 0.25 mm one so gra
 
 ### Runoff channels (built 16 Nov 2026)
 
-`runoff_channels` (off until its GPU cost is measured). The rills a beach grows at low tide and the gullies
+`runoff_channels` (on by default). The rills a beach grows at low tide and the gullies
 rain cuts in soft ground. Research: beach rills are seepage erosion below the water table's exit point, which a
 falling tide leaves behind (Turner 1993; Horn 2002 on beach groundwater); channelisation of an erodible bed by
 sheet flow is a flow-concentration instability (Smith and Bretherton 1972; Schorghofer et al. 2004, rhomboid
