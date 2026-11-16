@@ -2132,6 +2132,19 @@
    "topic": "Wood and leaves"
   },
   {
+   "name": "Crown parts",
+   "settings": [
+    "fruit_cover",
+    "mistletoe",
+    "witches_brooms"
+   ],
+   "note": "",
+   "what": "cones, catkins with bract scales, ash keys in bunches and berries on stalks in season; mistletoe on its hosts and witches' brooms as twig nests on birches.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
    "name": "Bark lichen",
    "settings": [
     "lichen_cover"
