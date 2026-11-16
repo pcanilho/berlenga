@@ -207,9 +207,16 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
 - `--test=soil` (17 checks, GPU and CPU paths): rigid wheel 7.7 cm in dry sand (Bekker 7.7), Rc 874 N
   (Bekker 874), 50 kPa tyre 4.5 cm, slip sinkage x2.0 at 50%, Janosi share 0.37 at 10% and 0.93 at 80%,
   second pass in the rut 0 N, walking effort 2.11 dry and 1.30 damp, 3.9 m/s2 slide on a 50 degree face.
-  A 1500 kg 4x4 at half throttle for 4 s: 20.5 m firm, 5.3 m damp sand (2 cm ruts), 0.3 m dry sand at
-  200 kPa (12 cm), 1.2 m aired down to 60 kPa (6.4 cm); floored on dry sand the wheels spin (slip 0.94) and
-  dig to 13 cm. A 300 kg stone block shoved at 3 m/s stops in 1.15 m against 1.41 m.
+  A 1500 kg 4x4 at half throttle for 4 s: 20.5 m firm, 8.0 m damp sand (2 cm ruts), 0.5 m dry sand at
+  200 kPa (12 cm), 8.3 m aired down to 60 kPa (7 cm); floored on dry sand the wheels spin (slip 0.93) and
+  dig to 15 cm.
+- **Wheel bulldozing only past D/6 (16 Nov).** Bulldozing was applied at every depth, on top of compaction,
+  which the plan above never meant ("once sinkage passes a fraction of the radius"): a rear-drive 800 kg
+  buggy on 55 kPa tyres met 0.38 of its weight in dry-sand resistance before slip and crawled at 0.15 m/s at
+  any torque. Bekker's compaction theory holds to sinkage D/6; within it the field moves the displaced sand
+  to the rims (SCM has no bulldozing force at all) and bulldozing is marginal at small sinkage. Wheels now
+  bulldoze only the depth past D/6 (`wheel_bulldozing_resistance`); bodies ploughing keep the full term.
+  Buggy, full throttle on dry sand: 40 kPa 12 m/s after 9.5 s, 55 kPa about 0.6 m/s, 200 kPa bogged. A 300 kg stone block shoved at 3 m/s stops in 1.15 m against 1.41 m.
 - Known: motion resistance follows Bekker (damp sand 0.13 to 0.23 of the load, dry 0.5 at road pressure),
   inside Wong's 0.15 to 0.3 for sand except loose dry sand at road pressure, where cars do bog. Floored on
   damp sand the wheels dig in too, which real packed sand likely resists better. Light crates barely sink,

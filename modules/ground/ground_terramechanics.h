@@ -83,6 +83,8 @@ float wheel_static_sinkage(const GroundSoil &p_soil, float p_load, float p_radiu
 float slip_sinkage(float p_static, float p_slip);
 float compaction_resistance(const GroundSoil &p_soil, float p_width, float p_sinkage, float p_already); // N
 float bulldozing_resistance(const GroundSoil &p_soil, float p_width, float p_sinkage, float p_already); // N
+// A wheel's bulldozing: only the depth past a sixth of its diameter (see the .cpp).
+float wheel_bulldozing_resistance(const GroundSoil &p_soil, float p_width, float p_radius, float p_sinkage, float p_already); // N
 // The Janosi-Hanamoto share of the shear limit at shear displacement p_j over the contact (m): 0 to 1.
 float janosi_hanamoto(float p_j_end, float p_shear_k);
 GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle, float p_already_pressed);

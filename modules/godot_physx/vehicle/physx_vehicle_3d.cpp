@@ -262,7 +262,7 @@ public:
 			const float v_lng = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
 			// At the wheel's actual sinkage (which builds over time), not the steady state of this slip.
 			const float width = 2.0f * wp.halfWidth;
-			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::bulldozing_resistance(sw.soil, width, sw.sinkage, sw.already);
+			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already);
 			const float r = resist * CLAMP(v_lng / 0.3f, -1.0f, 1.0f);
 			if (r != 0.0f) {
 				const PxVec3 dF = lng * -r;
