@@ -2498,9 +2498,11 @@
   },
   {
    "name": "Tree LODs",
-   "settings": [],
+   "settings": [
+    "far_lod1"
+   ],
    "note": "",
-   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level.",
+   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
