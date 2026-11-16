@@ -1788,6 +1788,17 @@
    "topic": "Grass"
   },
   {
+   "name": "Grass edge match",
+   "settings": [
+    "GrassField3D.far_match_view"
+   ],
+   "note": "",
+   "what": "after each bake the ground past the grass is matched to the blades in view, so there is no brightness step where the blades end.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Grass under undergrowth",
    "settings": [
     "GrassField3D.undergrowth_field",

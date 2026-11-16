@@ -42,6 +42,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Grass edge fade: the band where grass ends blends into the ground.*
 
 - **Far grass in sunlight** (`GrassField3D.sun_light`): distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.
+- **Grass edge match** (`GrassField3D.far_match_view`, on by default): after each bake the ground past the grass is matched to the blades in view, so there is no brightness step where the blades end.
 
 - **Grass under undergrowth** (`GrassField3D.undergrowth_field`, `PlantSpecies.sward_shade`, `PlantSpecies.litter_color`): grass thins and shortens under bracken and bramble stands, as their shade kills the sward, and the stands lay their own litter beneath; thin margins keep their grass.
 
