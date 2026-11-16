@@ -60,7 +60,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Seasons: by November the beech has turned, the maple and birch are bare and the larch is gold.*
 
-- **Tree LODs**: far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level.
+- **Tree LODs** (`far_lod1`): far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m.
 
 ## Old trees and deadwood
 

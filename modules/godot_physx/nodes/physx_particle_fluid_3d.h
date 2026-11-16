@@ -248,6 +248,7 @@ private:
 	void _apply_gi_mode(RID p_instance) const;
 	void _make_surface_shadow_instance();
 	void _emit_step(double p_delta);
+	Vector3 _emission_spread(const Vector3 &p_world_vel, double p_delta, int p_count) const;
 
 protected:
 	void _notification(int p_what);

@@ -84,6 +84,8 @@ constexpr float EOS_GAMMA = 7.0f; // mirrors GAMMA in mpm_block_inc.glsl -- keep
 // ~200 boundary with a small margin, at least for this repro; revisit if a
 // future repro at very different particle_size/substeps disagrees.
 constexpr float STIFFNESS_CFL_SAFETY = 0.12f;
+// The most substeps a fluid step takes to keep its stiffness (above this it is clamped instead).
+constexpr int MAX_SUBSTEPS = 128;
 
 uint32_t groups_for(int p_count) {
 	return (uint32_t)((p_count + (int)GROUP - 1) / (int)GROUP);
@@ -1062,7 +1064,7 @@ LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 	return data;
 }
 
-void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes) const {
+void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes, bool p_warn) const {
 	r_bytes.resize(PARAMS_BYTES);
 	uint8_t *b = r_bytes.ptrw();
 	const Vector3 center = domain_xform.origin;
@@ -1109,8 +1111,8 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 		const float max_c = (float)(STIFFNESS_CFL_SAFETY * (double)dx / dt_sub);
 		const float max_stiffness = (max_c * max_c) * MAX(settings.rest_density, 1.0f) / EOS_GAMMA;
 		effective_stiffness = MIN(settings.stiffness, max_stiffness);
-		if (effective_stiffness < settings.stiffness - 1.0f) {
-			WARN_PRINT_ONCE(vformat("PhysX MPM fluid: mpm_stiffness (%.0f) is unstable at the current particle_size/mpm_substeps -- clamped to %.0f. Raise mpm_substeps, lower mpm_stiffness, or increase particle_size to use the full configured value.", settings.stiffness, max_stiffness));
+		if (p_warn && effective_stiffness < settings.stiffness - 1.0f) {
+			WARN_PRINT_ONCE(vformat("PhysX MPM fluid: mpm_stiffness (%.0f) needs more than %d substeps a step at this particle_size -- clamped to %.0f. Lower mpm_stiffness or increase particle_size to use the full configured value.", settings.stiffness, MAX_SUBSTEPS, max_stiffness));
 		}
 	}
 	put_f(52, effective_stiffness);
@@ -1223,7 +1225,7 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 	}
 
 	PackedByteArray params;
-	_pack_params(1.0 / 60.0 / settings.substeps, 0, params);
+	_pack_params(1.0 / 60.0 / settings.substeps, 0, params, false); // the real substeps are chosen per step
 
 	gpu->built.set_to(false);
 	const bool bs = !settings.granular;
@@ -1350,8 +1352,19 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 	const int ncol = MIN((int)p_colliders.size(), MAX_COLLIDERS);
 	const bool bench = OS::get_singleton()->has_environment("MPM_BENCH");
 
+	// Enough substeps for the configured stiffness: the EOS's sound speed must not cross more than
+	// STIFFNESS_CFL_SAFETY of a cell per substep (see _pack_params). With too few, the stiffness was
+	// clamped instead -- at a fine particle_size down to a tenth of mpm_stiffness or less, and the
+	// liquid sagged like a gel, settling in layers along its spawn lattice instead of splashing.
+	int substeps = settings.substeps;
+	if (!settings.granular) {
+		const double c_sound = Math::sqrt((double)EOS_GAMMA * (double)settings.stiffness / (double)MAX(settings.rest_density, 1.0f));
+		const int needed = (int)Math::ceil(p_delta * c_sound / ((double)STIFFNESS_CFL_SAFETY * (double)dx));
+		substeps = CLAMP(needed, settings.substeps, MAX_SUBSTEPS);
+	}
+
 	PackedByteArray params;
-	_pack_params(p_delta / (double)settings.substeps, ncol, params);
+	_pack_params(p_delta / (double)substeps, ncol, params);
 	PackedByteArray cdata;
 	if (ncol > 0) {
 		_pack_colliders(p_colliders, cdata);
@@ -1367,7 +1380,7 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 		gpu->imp_cache.clear();
 	}
 
-	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_step).bind(gpu, params, cdata, ncol, pcount, node_count, grid_dims, settings.substeps, p_want_surface, bench));
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_step).bind(gpu, params, cdata, ncol, pcount, node_count, grid_dims, substeps, p_want_surface, bench));
 }
 
 double MPMFluidSolver::get_last_step_msec() const {

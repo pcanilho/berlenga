@@ -284,7 +284,12 @@ which makes rate and bone LOD cheap to add.
   wind (0.2-0.6 Hz sway, Moore and Maguire 2004). From that and the tree's pixels per metre, the
   pose is held for as many frames (1-8) as keep its lag under `lod_pixel_error` (0.5 px).
   Instances take a hashed frame slot so the held ones spread evenly.
-- **Bone LOD**: a bone shorter than the error over 0.15 rad of bend rides its parent.
+- **Bone LOD**: a bone whose length plus foliage reach is under the error over 0.15 rad of bend
+  keeps only the lean the mean wind gives it (no gusts or resonance, the costly part of the
+  solve). Until 16 Nov such a bone rode its parent unbent and lost its whole lean, which the
+  0.15 rad bound did not count: the stand bench measured 1.36 px p99 against its 1 px bar, with
+  the held poses alone at 0.13 px. Now 0.46 px p99 (0.94 max), 0.86 ms a frame against 7.3 ms
+  for the full solve (it was 0.66 ms).
 - **Out of view**: a tree whose bounding sphere, grown by 2.5 heights for its shadow, is
   outside the frustum is solved every 8th frame. Reflections and a camera turn still find it
   near its pose.

@@ -436,9 +436,9 @@ func shot_physx() -> void:
 
 # A small lit scene --far metres from the world origin on x and z (try 65536), for
 # rendering/pathtracing/relative_origin_grid on and off.
-# A block of PhysX particle fluid dropped onto a lit, slightly glossy floor next to a low step, at the default look,
-# so its shadow and its reflection both read. The floor and a low step are static boxes the fluid finds
-# by itself (mpm_auto_colliders).
+# Water poured from a spout into a stone basin on a tiled floor, under a low side sun, at the
+# PhysXParticleFluid3D defaults (clear water, isosurface, foam); the basin and the floor are static
+# boxes the fluid finds by itself (mpm_auto_colliders). A fine particle size keeps the surface smooth.
 func shot_fluid() -> void:
 	if not ClassDB.class_exists("PhysXParticleFluid3D"):
 		push_error("This build has no PhysX module.")
@@ -450,14 +450,36 @@ func shot_fluid() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ssr_enabled = true
-	camera(Vector3(0.35, 0.6, 1.7), Vector3(-0.05, 0.18, 0), 45)
+	camera(Vector3(0.75, 0.38, 0.85), Vector3(0.0, 0.16, 0.02), 42)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-30, 150, 0) if sun_rotation == Vector3.INF else sun_rotation
-	sun.light_energy = 1.6
+	sun.rotation_degrees = Vector3(-28, -35, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.light_energy = 1.8
 	sun.shadow_enabled = true
 	add_child(sun)
-	var floor_mat := mat(Color(0.42, 0.43, 0.45), 0.15)
-	for b in [[Vector3(12, 0.2, 12), Vector3(0, -0.1, 0)], [Vector3(0.5, 0.1, 1.2), Vector3(0.55, 0.05, -0.2)]]:
+	# Tiles: 20 cm, light grout lines, a slight per-tile shade.
+	var img := Image.create(512, 512, false, Image.FORMAT_RGB8)
+	for ty in 8:
+		for tx in 8:
+			var shade := 0.62 + 0.06 * sin(float(tx * 7 + ty * 13))
+			img.fill_rect(Rect2i(tx * 64, ty * 64, 64, 64), Color(shade, shade * 0.97, shade * 0.92))
+	for k in 8:
+		img.fill_rect(Rect2i(k * 64, 0, 3, 512), Color(0.85, 0.84, 0.8))
+		img.fill_rect(Rect2i(0, k * 64, 512, 3), Color(0.85, 0.84, 0.8))
+	var tiles := mat(Color(1, 1, 1), 0.35)
+	tiles.albedo_texture = ImageTexture.create_from_image(img)
+	tiles.uv1_triplanar = true
+	tiles.uv1_scale = Vector3(0.625, 0.625, 0.625) # 1.6 m per texture: 20 cm tiles
+	var stone := mat(Color(0.55, 0.52, 0.48), 0.75)
+	var parts := [
+		[Vector3(8, 0.2, 8), Vector3(0, -0.1, 0), tiles],
+		[Vector3(8, 3, 0.2), Vector3(0, 1.5, -1.2), tiles],
+		[Vector3(0.7, 0.03, 0.7), Vector3(0, 0.015, 0), stone],
+		[Vector3(0.7, 0.16, 0.05), Vector3(0, 0.08, -0.325), stone],
+		[Vector3(0.7, 0.16, 0.05), Vector3(0, 0.08, 0.325), stone],
+		[Vector3(0.05, 0.16, 0.6), Vector3(-0.325, 0.08, 0), stone],
+		[Vector3(0.05, 0.16, 0.6), Vector3(0.325, 0.08, 0), stone],
+	]
+	for b in parts:
 		var body := StaticBody3D.new()
 		var cs := CollisionShape3D.new()
 		var bs := BoxShape3D.new()
@@ -466,12 +488,28 @@ func shot_fluid() -> void:
 		body.add_child(cs)
 		body.position = b[1]
 		add_child(body)
-		box(b[0], b[1], floor_mat)
+		box(b[0], b[1], b[2])
+	# The spout: a pipe out of the back, ending above the basin.
+	var pipe := MeshInstance3D.new()
+	var pm := CylinderMesh.new()
+	pm.top_radius = 0.03
+	pm.bottom_radius = 0.03
+	pm.height = 0.9
+	pm.material = mat(Color(0.35, 0.3, 0.25), 0.3)
+	pipe.mesh = pm
+	pipe.rotation_degrees = Vector3(90, 0, 0)
+	pipe.position = Vector3(0.0, 0.55, -0.68)
+	add_child(pipe)
 	var fluid = ClassDB.instantiate("PhysXParticleFluid3D")
-	fluid.position = Vector3(-0.25, 0.95, 0.0)
-	fluid.particle_size = 0.025
-	fluid.particle_count = 60000
-	fluid.spawn_region_size = Vector3(0.45, 0.5, 0.45)
+	fluid.position = Vector3(0.0, 0.55, -0.21)
+	fluid.particle_size = 0.008
+	fluid.particle_count = 80000
+	fluid.mpm_domain_size = Vector3(1.5, 1.5, 1.5)
+	fluid.spawn_on_ready = false
+	fluid.emitting = true
+	fluid.emission_radius = 0.024
+	fluid.emission_velocity = Vector3(0.0, -0.3, 1.4)
+	fluid.emission_rate = 8000.0
 	for k in flow_props:
 		fluid.set(k, flow_props[k])
 	add_child(fluid)
