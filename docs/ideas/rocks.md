@@ -446,3 +446,40 @@ arches, goblins, potholes, cave mouths.
 - Upright forms (hoodoos, sea stacks) now carry their beds across the long axis: the laminae relief and the shader's
   colour bands (vertex COLOR.b) were running up the column like wood grain.
 - Bench: `--view=landform`, `--form=pavement`, `--only-layer`; `--test` checks both kinds are placed.
+
+### Landforms step 2a: fins and inland arches (16 Nov)
+
+- `FAMILY_FIN`: a wall between two joints (x along, z up, y 0.22 to 0.35 of the height thick). Whaleback crest that
+  falls 15 to 50% toward the ends and wanders along the fin; ends rounded in plan; beds etched across z as smooth
+  swells; an alcove on one face at a weak bed near the foot. About half carry an arch: walls at +-w (one leaning,
+  both ragged), the head a cosh curve (k 1.2 to 2.7: round to tall), floor 4 to 24% up, the opening flaring where it
+  meets the faces so the rim reads rounded, not drilled (Ostanin et al. 2017: the roof follows the stress arch).
+- Placement: bare sandstone (a little on limestone) under about 18 degrees, in one cell in three; rows of 3 to 7 fins
+  6 to 14 m apart along one joint set, each 12 to 35 m long, on the lowest ground along its foot.
+- Bedrock forms (coast and landforms) now cook their triangle collision once per shape and share it between
+  instances: a fin field went from 14 s to 0.2 s to build.
+- Bench: `--rock=sandstone,fin --stand` (a fin, hoodoo or stack stood on end), `--form=fin`. Pavement on the steep test
+  world is 0 to 2 patches, so the test counts it rather than requiring it.
+- Seen, not from this work: the test's cliff layer logs "Vector3 cannot be normalized" a few times.
+
+### Landforms step 2b: river potholes (16 Nov)
+
+- `FAMILY_POTHOLE`: a slab of stream bedrock (x down the flow) with 1 to 3 round, undercut, round-floored potholes in a
+  line, some breached into the next, spiral grinder grooves on the walls; the top fluted along the flow, the upstream
+  edge rounded over and the whole top rolling down into the bed so no cut edge shows. Mesh meta `rock_potholes`
+  (floor x, y, z, r) lets the field drop a rounded cobble (the grinder) into about 60% of the holes.
+- Placement (landform layer, from the river paths): reaches of slope 0.03 to 0.4, bedrock exposed (or slope over 0.08),
+  above the delta, one slab per 50 to 90 m, only where the bed within 40% of the slab stays within 0.5 m of its
+  plane and is level across (normal y over 0.92); the top at the highest ground under it, so it never sinks.
+- Bedrock that is the ground (pavement, pothole slabs) keeps the ground-blend band below its top, at the buried
+  edges: flush with the soil, the whole top was being painted as grass.
+- The bench's 8 m terrain grid turns most stream beds into V-gullies, so it places 0 to 2 slabs; finer terrain places
+  more.
+
+### Landforms step 2c: goblins (16 Nov)
+
+- `FAMILY_GOBLIN` (Goblin Valley, Entrada sandstone): an upright knob 1.5 to 5 m tall, the round-plan joint block
+  pulled toward a round section (spheroidal weathering), a bulbous head (Gaussian swell at 72 to 86% of the height)
+  on a pinched neck over a flared foot, faint beds. Grid 128 cells (35 to 70 thousand triangles).
+- Placement: flat bare sandstone (normal y over 0.97), one cell in ten or so; clusters of 6 to 20 within 25 m, each on
+  the floor (local normal y over 0.9), sunk 6% of its height below the lowest ground round it.

@@ -37,6 +37,11 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
 - **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.
+
+  ![A rowan berry cluster among its leaves at about 0.6 m, raster](media/trees-rowan.jpg)
+
+  *Crown parts: a rowan corymb hangs on branching red stalks among toothed, veined leaflets.*
+
 - **Bark lichen** (`lichen_cover`): lichen on bark, placed by height, crown light, stem age and moss; beard lichens and oakmoss hang from and stand off crown twigs on near trees. 0 turns it off.
 
   ![An oak's bole without and with lichen, raster](media/trees-lichen.jpg)
@@ -44,7 +49,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
   *Bark lichen: pale colonies gather on the upper bole and thin out toward the mossy foot.*
 
 - **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree. Old ivy has woody stems that thicken with the host's age and lie on the bark ridges, with unlobed adult leaves high on old stems.
-- **Leaf shapes** (`TreeGenerator.get_leaf_form()`): simple, lobed, palmate and compound leaves per species, with the true outline as geometry.
+- **Leaf shapes** (`TreeGenerator.get_leaf_form()`): simple, lobed, palmate and compound leaves per species, with the true outline as geometry; compound leaflets take a toothed, veined texture, and leaf undersides are paler.
 - **Needles** (`needle_sprays`, `near_needle_range`): real needles near the camera, crossed needle sprays beyond.
 - **Near leaf detail** (`near_leaf_range`): lobed and compound leaves are built only for trees near the camera; further out each leaf is a simple leaf of the same area.
 - **Seasons** (`season`): leaves come out, turn and fall by species from the shared season state; larch turns gold and goes bare, evergreens stay.

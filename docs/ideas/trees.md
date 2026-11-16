@@ -1488,7 +1488,14 @@ managed woods that read as made by people (Rackham 2006, *Woodlands*; Peterken 1
   hawthorn. Deadwood a third of an unmanaged oakwood's: the wood is worked.
 - *Wood pasture* (`STAND_WOOD_PASTURE`): ancient beech and oak pollards (`FORM_POLLARD`, cut at
   2.2-2.7 m, lapsed 40-100 years, 140-200 years old, veteran 0.6-0.9; older beech pollards
-  died back to a few shoots on a bare head) and open-grown oaks, at 3x a
+  died back to a few shoots on a bare head). Grown open, not under forest shade (which drew
+  their poles into 22 m whips).
+- *Lapsed pollards regrow* (16 Nov). Cutting rejuvenates (Read 2000; Lonsdale 2013): once a
+  pollard is a cycle past its last cut, its shoots grow at the internode length of a tree aged
+  from that cut plus ten years, not of a 160-year-old (0.985^160, a tenth). At the next cycle
+  after lapsing the head self-thins to its 5-8 strongest poles; the rest die back to stubs. A
+  beech lapsed 60 years stood 10 m tall and 8 m across on 415k leaf triangles; now 16 m and
+  15 m across, its poles grown into limbs. Worked pollards and coppice keep their tuned rods. and open-grown oaks, at 3x a
   forest's spacing (a tree every 20-30 m; at forest spacing the crowns closed into a wood), with open-grown hawthorn and holly; grazed, so no saplings; fallen limbs and an
   occasional log.
 - *Pollard row* (`STAND_POLLARD_ROW`): working willow pollards 5 m apart along a ditch (cut at

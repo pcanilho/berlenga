@@ -102,6 +102,10 @@ private:
 		LocalVector<Vector3> axes;
 		LocalVector<float> bottom;
 		LocalVector<PackedVector3Array> hulls;
+		LocalVector<PackedFloat32Array> potholes; // a pothole slab's floors (x, y, z, r in its frame), for grinders
+		// Bedrock forms (coast, landforms) collide by their own triangles: one shape per variant, cooked once and shared
+		// by every instance (a fin is 30 to 150 thousand triangles).
+		LocalVector<Ref<Shape3D>> trimesh;
 		// Surface samples (one per 0.06 units of the mesh) with their normals, for stone caps.
 		LocalVector<LocalVector<Vector3>> cap_points, cap_normals;
 	};

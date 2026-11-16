@@ -344,6 +344,7 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 			lib.axes.push_back(j.meta.get("rock_axes", Vector3(1, 0.5, 1)));
 			lib.bottom.push_back(j.meta.get("rock_bottom", -0.5));
 			lib.hulls.push_back(j.meta.get("rock_hull", PackedVector3Array()));
+			lib.potholes.push_back(j.meta.get("rock_potholes", PackedFloat32Array()));
 			// Cap samples: the mesh's vertices thinned to one per 0.06-unit voxel (normals averaged).
 			LocalVector<Vector3> cp, cn;
 			{
@@ -1193,7 +1194,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			struct Site {
 				Vector3 p;
 				float score;
-				int kind; // 0 pavement, 1 hoodoos
+				int kind; // 0 pavement, 1 hoodoos, 2 fins, 3 goblins
 			};
 			LocalVector<Site> sites;
 			const real_t shore_top = gen->has_sea_result() ? gen->get_sea_level() + 6.0 : -1e9; // beaches and storm ridges are sand and shingle
@@ -1221,6 +1222,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							sites.push_back({ c, bare * (1.0f + rng.randf() * 0.3f), 0 });
 						}
 					}
+					// Goblins: flat, bare sandstone valley floors (Goblin Valley: Entrada between mesa walls).
+					if (type == RockGenerator::ROCK_SANDSTONE && n.y > 0.97f && bare > 0.5f) {
+						sites.push_back({ c, bare * (0.8f + rng.randf() * 0.3f), 3 });
+					}
+					// Fins: bare sandstone on gentle ground (Arches: under 15 degrees), the joints opened by weathering.
+					static const float fin_rate[RockGenerator::ROCK_MAX] = { 0.0f, 0.1f, 1.0f, 0.0f, 0.0f };
+					if (fin_rate[type] > 0.0f && n.y > 0.95f && bare > 0.5f) {
+						sites.push_back({ c, bare * fin_rate[type] * (0.9f + rng.randf() * 0.3f), 2 });
+					}
 					static const float hoodoo_rate[RockGenerator::ROCK_MAX] = { 0.0f, 0.25f, 1.0f, 0.0f, 0.15f };
 					if (hoodoo_rate[type] > 0.0f && n.y > 0.7f && n.y < 0.94f && bare > 0.5f) {
 						sites.push_back({ c, bare * hoodoo_rate[type] * (1.0f + rng.randf() * 0.3f), 1 });
@@ -1231,15 +1241,113 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				_FORCE_INLINE_ bool operator()(const Site &p_a, const Site &p_b) const { return p_a.score > p_b.score; }
 			};
 			sites.sort_custom<ByScore>();
+			// Potholes: river reaches steep enough to scour to bedrock (bed shear past what the supply can armour), one slab
+			// of drilled bedrock down the thalweg every 50 to 90 m, its top flush with the bed, a grinder stone left in
+			// some of its holes.
+			_prepare_rivers();
+			for (const River &rv : rivers) {
+				if (!rv.bounds.grow(20.0).intersects(p_rect)) {
+					continue;
+				}
+				real_t run = rng.randf() * 60.0;
+				for (uint32_t i = 0; i + 1 < rv.points.size(); i++) {
+					const Vector3 pa = rv.points[i], pb = rv.points[i + 1];
+					const Vector2 d2(pb.x - pa.x, pb.z - pa.z);
+					const real_t len = d2.length();
+					if (len < 1e-3) {
+						continue;
+					}
+					run += len;
+					const float slope = float((pa.y - pb.y) / len);
+					const float w = 0.5f * (rv.widths[i] + rv.widths[i + 1]);
+					// Steep, not a fall; a channel wide enough to carry grinders (the width stands in for the flow).
+					if (run < 50.0 || slope < 0.03f || slope > 0.4f || w < 0.6f) {
+						continue;
+					}
+					const Vector2 at2 = Vector2(pa.x, pa.z).lerp(Vector2(pb.x, pb.z), rng.randf());
+					if (!p_rect.has_point(at2)) {
+						continue;
+					}
+					const Vector3 at(at2.x, 0, at2.y);
+					if (gen->get_height(at) < shore_top || gen->get_water_depth(at) > 0.5) {
+						continue; // the delta and the lake: sediment, not a scoured bed
+					}
+					if (gen->get_rock_exposure(at) < 0.3 && slope < 0.08f) {
+						continue; // a gravel bed: the bedrock is under it
+					}
+					run = -40.0 * rng.randf();
+					const RockGenerator::RockType type = _type_at(gen, Vector3(at.x, gen->get_height(at), at.z));
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_POTHOLE, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = pick_variant(lib);
+					const AABB box = lib->meshes[st.variant]->get_aabb();
+					st.scale = CLAMP(real_t(w) * 3.0, 3.0, 9.0) / MAX(real_t(box.size.z), real_t(0.5)); // across the bed and into its banks
+					const Vector3 fx = Vector3(d2.x, 0, d2.y) / len;
+					const Vector3 n = ground_normal(gen, at.x, at.z, 3.0);
+					const Vector3 fz = fx.cross(n).normalized();
+					const Vector3 fxx = n.cross(fz).normalized();
+					st.basis = Basis(fxx, n, fz).scaled_local(Vector3(st.scale, st.scale, st.scale));
+					// A bed wide and level enough across to hold the slab flush: a V-shaped gully (or a terrain grid too
+					// coarse to carve the channel) would bury its sides or leave it standing proud.
+					const real_t g = gen->get_height(at);
+					const real_t half_l = real_t(box.size.x) * st.scale * 0.4, half_w = real_t(box.size.z) * st.scale * 0.4;
+					real_t worst = 0.0, above = 0.0;
+					for (int ia = -1; ia <= 1; ia++) {
+						for (int ic = -1; ic <= 1; ic++) {
+							const Vector3 o = fxx * (real_t(ia) * half_l) + fz * (real_t(ic) * half_w);
+							const real_t r = gen->get_height(at + Vector3(o.x, 0, o.z)) - (g + o.y);
+							worst = MAX(worst, Math::abs(r));
+							above = MAX(above, r);
+						}
+					}
+					if (worst > 0.5 || n.y < 0.92) {
+						continue; // not on a channel wall either
+					}
+					const real_t top = g + above; // never under the ground: where the bed falls away it stands as a low step
+					st.position = Vector3(at.x, top + 0.03 - (box.position.y + box.size.y) * st.scale, at.z);
+					st.ground = g - 0.5; // it is the bed: the ground-blend band below its top, at the buried edges
+					r_stones.push_back(st);
+					// Grinders: a rounded cobble on the floor of most holes, a little smaller than the hole.
+					const PackedFloat32Array holes = lib->potholes[st.variant]; // a copy: the cobble library may be added below
+					const uint32_t ckey = _library_key(type, RockGenerator::FAMILY_COBBLE, 2);
+					Library *clib = holes.is_empty() ? nullptr : _ensure_library(ckey);
+					for (int h = 0; clib && h + 3 < holes.size(); h += 4) {
+						if (rng.randf() > 0.6f) {
+							continue;
+						}
+						const Vector3 hole_at = st.position + st.basis.xform(Vector3(holes[h], holes[h + 1], holes[h + 2]));
+						const real_t r = real_t(holes[h + 3]) * st.scale;
+						Stone gs;
+						gs.layer = p_layer;
+						gs.library = ckey;
+						gs.variant = pick_variant(clib);
+						const Vector3 cax = clib->axes[gs.variant];
+						gs.scale = r * (0.35 + 0.25 * rng.randf()) / MAX(real_t(cax.z), real_t(0.3));
+						gs.basis = Basis(st.basis.orthonormalized()) * Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
+						gs.basis = gs.basis.scaled_local(Vector3(gs.scale, gs.scale, gs.scale));
+						gs.position = hole_at + n * real_t(-clib->bottom[gs.variant] * gs.scale);
+						gs.ground = float(hole_at.y);
+						r_stones.push_back(gs);
+					}
+				}
+			}
 			LocalVector<Vector3> used;
 			int made = 0;
 			// Hoodoos gather in badland heads and amphitheatres, not on every steep soft slope: one cell in four has them.
 			const bool badland = rng.randf() < 0.25f;
+			const bool fin_field = rng.randf() < 0.35f; // fins come in fields along one joint set
+			const bool goblin_field = rng.randf() < 0.3f;
 			for (const Site &s : sites) {
-				if (s.kind == 1 && !badland) {
+				if ((s.kind == 1 && !badland) || (s.kind == 2 && !fin_field) || (s.kind == 3 && !goblin_field)) {
 					continue;
 				}
-				if (made >= 2 || rng.randf() > (s.kind == 1 ? 0.3f : 0.8f) * float(density)) { // flat bare benches are rare already
+				if (made >= 2 || rng.randf() > (s.kind == 0 ? 0.8f : 0.3f) * float(density)) { // flat bare benches are rare already
 					continue;
 				}
 				bool near = false;
@@ -1252,6 +1360,82 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				used.push_back(s.p);
 				made++;
 				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, gen->get_height(s.p), s.p.z));
+				if (s.kind == 3) {
+					// Goblins: 6 to 20 knobs scattered within 25 m, 1.5 to 5 m tall, the foot set into the floor.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_GOBLIN, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					const int count = 6 + int(rng.randf() * 14.99f);
+					for (int k = 0; k < count; k++) {
+						const real_t ang = rng.randf() * Math::TAU, rad = 25.0 * Math::sqrt(rng.randf());
+						const Vector3 at = s.p + Vector3(Math::cos(ang), 0, Math::sin(ang)) * rad;
+						if (gen->get_water_depth(at) > 0.0 || ground_normal(gen, at.x, at.z, 3.0).y < 0.9) {
+							continue; // on the floor, not up the slopes round it
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const AABB box = lib->meshes[st.variant]->get_aabb();
+						const real_t height = 1.5 + 3.5 * rng.randf() * rng.randf();
+						st.scale = height / MAX(real_t(box.size.x), real_t(0.3));
+						st.basis = (Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5)).scaled(Vector3(st.scale, st.scale, st.scale));
+						const real_t r = real_t(box.size.y) * st.scale * 0.5;
+						real_t g = gen->get_height(at);
+						for (int j = 0; j < 6; j++) {
+							g = MIN(g, gen->get_height(at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
+						}
+						st.position = Vector3(at.x, g - 0.06 * height - box.position.x * st.scale, at.z);
+						st.ground = gen->get_height(at);
+						r_stones.push_back(st);
+					}
+					continue;
+				}
+				if (s.kind == 2) {
+					// Fins: 3 to 7 parallel walls along one joint set, 6 to 14 m apart, each 12 to 35 m long, standing on
+					// the lowest ground along its foot.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_FIN, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					const real_t yaw = rng.randf() * Math::TAU;
+					const Vector3 along(Math::cos(yaw), 0, Math::sin(yaw));
+					const Vector3 up(0, 1, 0);
+					const Vector3 across = up.cross(along);
+					const int count = 3 + int(rng.randf() * 4.99f);
+					real_t off = -real_t(count) * 5.0;
+					for (int k = 0; k < count; k++) {
+						off += 6.0 + 8.0 * rng.randf();
+						const Vector3 at = s.p + across * off + along * real_t((rng.randf() - 0.5f) * 12.0f);
+						if (gen->get_water_depth(at) > 0.0) {
+							continue;
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const AABB box = lib->meshes[st.variant]->get_aabb();
+						const real_t length = 12.0 + 23.0 * rng.randf() * rng.randf();
+						st.scale = length / MAX(real_t(box.size.x), real_t(0.5));
+						const real_t jy = (rng.randf() - 0.5f) * 0.15f; // the joints wander a little from fin to fin
+						const Vector3 al = Basis(up, jy).xform(along), ac = Basis(up, jy).xform(across);
+						st.basis = Basis(al, ac, up).scaled_local(Vector3(st.scale, st.scale, st.scale));
+						real_t g = gen->get_height(at);
+						for (int j = -2; j <= 2; j++) {
+							for (int sd = -1; sd <= 1; sd += 2) {
+								g = MIN(g, gen->get_height(at + al * (real_t(j) * 0.22 * length) + ac * (real_t(sd) * real_t(box.size.y) * st.scale * 0.5)));
+							}
+						}
+						const real_t height = real_t(box.size.z) * st.scale;
+						st.position = Vector3(at.x, g - 0.04 * height - box.position.z * st.scale, at.z);
+						st.ground = gen->get_height(at);
+						r_stones.push_back(st);
+					}
+					continue;
+				}
 				if (s.kind == 0) {
 					// Pavement: a patch 8 to 16 m across, its top a little proud of the soil round it, its normal the
 					// ground's, turned to a random joint direction.
@@ -1275,7 +1459,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 					const real_t g = gen->get_height(s.p);
 					st.position = Vector3(s.p.x, g + 0.15 - ax.y * st.scale, s.p.z);
-					st.ground = g;
+					st.ground = g - 0.4; // bedrock at the surface: the ground-blend band only at its buried edges
 					r_stones.push_back(st);
 				} else {
 					// Hoodoos: 3 to 9 columns in a row along a joint, 3 to 8 m apart, 4 to 20 m tall, the foot sunk in
@@ -1534,22 +1718,29 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 				// A coast form is not convex (an arch's opening, a stack's notch, a platform's pools): its own
 				// triangles. Not breakable (no shape registered for it).
 				if (st.variant < lib->meshes.size() && lib->meshes[st.variant].is_valid()) {
-					Ref<ArrayMesh> m = lib->meshes[st.variant];
-					Vector<Vector3> faces;
-					const Array arrays = m->surface_get_arrays(0);
-					const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
-					const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
-					faces.resize(idx.size());
-					for (int k = 0; k < idx.size(); k++) {
-						faces.write[k] = xf.xform(v[idx[k]]);
+					Library *wlib = libraries.getptr(st.library);
+					if (wlib->trimesh.size() < wlib->meshes.size()) {
+						wlib->trimesh.resize(wlib->meshes.size());
 					}
-					Ref<ConcavePolygonShape3D> shape;
-					shape.instantiate();
-					shape->set_faces(faces);
+					if (wlib->trimesh[st.variant].is_null()) {
+						Ref<ConcavePolygonShape3D> shape;
+						shape.instantiate();
+						const Array arrays = lib->meshes[st.variant]->surface_get_arrays(0);
+						const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+						const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
+						Vector<Vector3> faces;
+						faces.resize(idx.size());
+						for (int k = 0; k < idx.size(); k++) {
+							faces.write[k] = v[idx[k]];
+						}
+						shape->set_faces(faces);
+						wlib->trimesh[st.variant] = shape;
+					}
 					CollisionShape3D *cs3 = memnew(CollisionShape3D);
-					cs3->set_shape(shape);
+					cs3->set_shape(wlib->trimesh[st.variant]);
+					cs3->set_transform(xf);
 					body->add_child(cs3);
-					coast_seabed_dirty = true;
+					coast_seabed_dirty = coast_seabed_dirty || layer == LAYER_COAST;
 				}
 				continue;
 			}

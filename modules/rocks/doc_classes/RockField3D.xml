@@ -371,7 +371,7 @@
 			Sea stacks, arches and wave-cut platforms on cliffed coasts.
 		</constant>
 		<constant name="LAYER_LANDFORM" value="8" enum="Layer">
-			Bedrock landforms: limestone pavement and hoodoos.
+			Bedrock landforms: limestone pavement on flat bare limestone, hoodoo rows on steep bare soft rock, and rows of sandstone fins (some holed by arches) on gentle bare sandstone, clusters of goblins on flat bare sandstone, and pothole slabs with grinder stones in steep bedrock stream beds.
 		</constant>
 		<constant name="LAYER_MAX" value="9" enum="Layer">
 			Number of layers.
