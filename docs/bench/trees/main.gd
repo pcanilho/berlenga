@@ -481,12 +481,30 @@ func _build_scene() -> void:
 			if lm.surface_get_name(si) == (OS.get_environment("LSURF") if OS.has_environment("LSURF") else "fungi"):
 				var vv: PackedVector3Array = lm.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
 				var li := int(OS.get_environment("LV")) if OS.has_environment("LV") else vv.size() / 2
+				if li < 0:
+					li += vv.size() # Negative: counted from the end (the last part built).
 				at = vv[clampi(li, 0, vv.size() - 1)] + Vector3(xs[0], 0, 0)
 				print("lichen surface vertices ", vv.size(), " at ", at - Vector3(xs[0], 0, 0))
 		var ld := float(OS.get_environment("LDIST")) if OS.has_environment("LDIST") else 0.35
-		cam.position = at + Vector3(0.6, 0.25, 0.75).normalized() * ld
+		# env LDIR=x,y,z: the direction from the vertex to the camera (default south-east, a
+		# little above; a negative y looks up into the crown with sky behind).
+		var ldir := Vector3(0.6, 0.25, 0.75)
+		if OS.has_environment("LDIR"):
+			if OS.get_environment("LDIR").begins_with("out"):
+				# LDIR=out[,up]: outside the crown, straight out from the stem and from below
+				# (up, default -0.6), so the part stands against the sky, not the crown.
+				var rad := at - Vector3(xs[0], at.y, 0)
+				var up := OS.get_environment("LDIR").split_floats(",")
+				ldir = rad.normalized() + Vector3(0, up[1] if up.size() > 1 else -0.6, 0)
+			else:
+				var lv := OS.get_environment("LDIR").split_floats(",")
+				ldir = Vector3(lv[0], lv[1], lv[2])
+		cam.position = at + ldir.normalized() * ld
 		cam.look_at(at)
 		cam.fov = 40.0
+		# env LNEAR=m: clip what lies closer than that (leaves brushing the lens).
+		if OS.has_environment("LNEAR"):
+			cam.near = float(OS.get_environment("LNEAR"))
 	elif view == "log":
 		# The last plant in the row (the log with --decays) from 3.5 m, slightly above.
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)

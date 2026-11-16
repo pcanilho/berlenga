@@ -14,4 +14,7 @@ window/vsync/vsync_mode=0
 
 [rendering]
 
+; Soft shadow filtering without TAA: single raster captures, no dithered penumbras.
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
+lights_and_shadows/positional_shadow/soft_shadow_filter_quality=4
 pathtracing/async_shader_compilation=false
