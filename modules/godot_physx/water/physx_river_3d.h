@@ -173,6 +173,21 @@ private:
 	// Joins: where the river ends (a lake, the sea, or another river), and the
 	// rivers flowing into this one.
 	NodePath mouth_target;
+	// Lake outlets (docs/ideas/water.md "Lake outlets"): a river leaving a lake takes its discharge from the
+	// lake's head over its sill (a broad-crested weir).
+	NodePath source_lake;
+	float outlet_coefficient = 0.85f; // the weir's discharge coefficient (0.85 rough natural sill, 1 smooth crest)
+	float outlet_discharge = -1.0f; // m^3/s from the lake at the last build (< 0 without a lake)
+	float outlet_head = 0.0f; // m, the lake above the sill at the last build
+	ObjectID source_id; // the lake this river last registered its outlet with
+	float outlet_free = 0.0f; // m^3/s the sill would pass with free flow over it (critical depth on the crest)
+	float outlet_crest = 0.0f; // world height of the sill
+	float outlet_crest_s = 0.0f; // its arc length
+	float outlet_level = 0.0f; // the lake's world level
+	Vector3 outlet_at; // world, the sill's centre
+	Vector3 outlet_dir; // world, downstream
+	float outlet_width = 1.0f;
+	void _register_outlet();
 	float mouth_blend = 6.0f; // m past the shoreline over which the ribbon fades into the water it joins
 	struct Tributary {
 		ObjectID river;
@@ -221,6 +236,9 @@ private:
 	Node *_mouth_node() const;
 	void _register_mouth();
 	void _unregister_mouth();
+	Node *_source_node() const;
+	void _measure_outlet(PhysicsDirectSpaceState3D *p_space, const Ref<Curve3D> &p_curve, float p_ds);
+	void _unregister_outlet();
 	void _on_target_rebuilt();
 	Vector2 _live_velocity_at(const Vector3 &p_world) const;
 	float _live_height_at(const Vector3 &p_world) const;
@@ -313,6 +331,12 @@ public:
 	void clear_sphere(int p_owner);
 	void set_mouth_target(const NodePath &p_path);
 	NodePath get_mouth_target() const { return mouth_target; }
+	void set_source_lake(const NodePath &p_path);
+	NodePath get_source_lake() const { return source_lake; }
+	void set_outlet_coefficient(float p_coefficient);
+	float get_outlet_coefficient() const { return outlet_coefficient; }
+	float get_outlet_discharge() const { return MAX(outlet_discharge, 0.0f); }
+	float get_outlet_head() const { return outlet_head; }
 	void set_mouth_blend(float p_blend);
 	float get_mouth_blend() const { return mouth_blend; }
 	// A river joining this one at p_world (its mouth) adds p_discharge downstream of there.

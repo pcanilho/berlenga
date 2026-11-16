@@ -2967,3 +2967,47 @@ rebuild.
   chute). `get_section()` gives `wave_amplitude`, `wave_length` and `cross_waves`.
 - Later: V-shaped wakes behind rocks in fast water (the same characteristics from each obstacle), cross-
   waves in supercritical bends (Knapp 1951: they double the outer bank's superelevation).
+
+## Lake outlets (16 Nov, Fab idea 2)
+
+Step 4e left a lake's outlet river drawing its own `discharge` from nowhere: the lake did not drain
+towards it, and its level did not answer to what flows in.
+
+**What the hydraulics says.**
+- A lake drains over the highest point of its outlet channel, the sill, as a **broad-crested weir**: the
+  water speeds up to critical depth (two thirds of the head) over the crest, so the discharge follows
+  from the head alone, `Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)` with H the lake level above the sill and b
+  the crest width (Henderson 1966, Open Channel Flow, ch. 6; Bos 1976, Discharge Measurement
+  Structures). Cd is about 0.85 for a rough natural sill (1.0 for a smooth long crest). A 6 m wide sill
+  under 30 cm of head passes about 1.4 m3/s; under 60 cm, about 4.
+- **Level budget.** In steady state a lake's level sits where its outlets pass what flows in (rivers,
+  plus the rain and seepage of its catchment): `sum Q_out(level) = Q_in`. Because Q grows as H^(3/2), a
+  lake is self-levelling: doubling the inflow raises it by only 1.59 times the head (a flood raises a
+  big lake a few tens of centimetres). Its time to settle is the volume between the two levels over the
+  change in flow: hours for a small lake, days for a large one, so a steady level per inflow is right for
+  a game (no level that creeps during play).
+- **Approach flow.** Towards the outlet the lake's water converges as a sink in a half plane: speed
+  `Q / (pi r h)` at distance r, depth h, until it reaches the river's speed at the sill. It is slow
+  (a few cm/s 20 m out) but it is what carries leaves, foam and floaters to the outlet, and the
+  surface lines bunching towards the lip are the visual cue of an outlet.
+
+**Plan.**
+- `PhysXRiver3D.source_lake` (a `PhysXWaterSurface3D`): the river's discharge comes from the lake head
+  over its sill (the highest bed in its first 12 m, or `outlet_crest` if set), with `outlet_coefficient`
+  (0.85). No head, no flow.
+- The river registers its outlet with the lake (`set_outflow`): the lake adds the half-plane sink to its
+  flow texture next to the inflow plumes, so waves, foam and floaters drift to the outlet.
+- `PhysXWaterSurface3D.level_from_flows` (off): the lake's level settles where its outlets pass its
+  inflows plus `catchment_inflow` (m3/s); the outlet rivers rebuild when it moves more than a centimetre.
+
+**Built (16 Nov).** As planned, plus the **drowned sill**: the weir law assumes the water goes critical on
+the crest, which holds only if the channel below can carry it away (steep enough). On a mild channel the
+normal depth stands above critical, the sill is drowned, and the discharge is the one whose energy at the
+sill (normal depth plus velocity head, over the real cross-section) the lake's level just reaches. The lake
+drains by the same law (the weir coefficient scaled by the share the channel lets through), so its level
+budget and approach flow agree with the river. On the river bench (`--outlet`, `--view=outlet`, a basin above
+a 5 m sill on a 0.5% channel): a 0.30 m head passes 1.2 m3/s free but 0.41 drowned, and the river starts 2 cm
+below the lake; with `level_from_flows` and 3 m3/s of `catchment_inflow` the lake settles 0.79 m above the
+sill (outlet passing 3.04). Approach flow 2, 5 and 10 m from the sill: 14, 2.4 and 0.5 cm/s. Not yet: lakes
+filling or draining over time (the steady level is applied at once), and a chain of lakes settles only
+through the 1 cm rebuild loop between each pair.

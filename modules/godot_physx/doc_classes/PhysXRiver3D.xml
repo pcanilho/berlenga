@@ -46,6 +46,18 @@
 				World XZ centre of the live window.
 			</description>
 		</method>
+		<method name="get_outlet_discharge" qualifiers="const">
+			<return type="float" />
+			<description>
+				With [member source_lake]: the discharge (m³/s) the lake passes over the outlet's sill at the last build, which the river carries instead of [member discharge]. 0 without a lake.
+			</description>
+		</method>
+		<method name="get_outlet_head" qualifiers="const">
+			<return type="float" />
+			<description>
+				With [member source_lake]: how far (m) the lake stood above the outlet's sill at the last build.
+			</description>
+		</method>
 		<method name="get_section" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
@@ -216,11 +228,17 @@
 		<member name="obstacle_collision_mask" type="int" setter="set_obstacle_collision_mask" getter="get_obstacle_collision_mask" default="0">
 			Physics layers of rocks and other obstacles in the river, measured on top of the ground. The flow parts round them and white water gathers at them. Needed with [member carve], since a carving river measures the uncarved terrain from [member base_height_source]; without carving, rocks on the [member ground_collision_mask] layers are found anyway.
 		</member>
+		<member name="outlet_coefficient" type="float" setter="set_outlet_coefficient" getter="get_outlet_coefficient" default="0.85">
+			The discharge coefficient of the outlet's sill, a broad-crested weir: about 0.85 for a rough natural sill, 1.0 for a smooth long crest.
+		</member>
 		<member name="raster_reflections" type="bool" setter="set_raster_reflections" getter="get_raster_reflections" default="true">
 			Raster only: open water mirrors the sky and the sun's glitter by the exact Fresnel term, as the path tracer sees it (the same as [member PhysXWaterSurface3D.raster_reflections]). Off, the surface is the unlit tint it was before.
 		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.035">
 			Manning's roughness: about 0.013 for concrete, 0.03 for a clean natural channel, 0.05 for a stony or weedy one. Rougher rivers run slower and deeper.
+		</member>
+		<member name="source_lake" type="NodePath" setter="set_source_lake" getter="get_source_lake" default="NodePath(&quot;&quot;)">
+			A [PhysXWaterSurface3D] lake this river drains. Its discharge then comes from the lake's head over the sill (the highest bed in the river's first 12 m) as a broad-crested weir, [code]Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)[/code] with [member outlet_coefficient] as Cd, unless the channel below is too slow to carry that: then the sill is drowned and the discharge is the one whose energy at the sill the lake's level just reaches. No head, no flow (a trickle). The lake's water converges on the outlet, and with [member PhysXWaterSurface3D.level_from_flows] its level settles where the outlet passes what flows in. Replaces [member discharge].
 		</member>
 		<member name="standing_waves" type="bool" setter="set_standing_waves" getter="get_standing_waves" default="true">
 			Standing surface patterns from the solved profile (needs [member gradually_varied_flow]): below a weak hydraulic jump (Froude number 1 to 1.7) a train of smooth stationary waves whose wavelength is the one that stands still in the current downstream, decaying over about four wavelengths (a weak tail below stronger jumps); in fast (supercritical) water, cross-waves that leave each bank where the channel narrows or widens at the angle [code]asin(1/Fr)[/code] and reflect off the far bank, making diamond patterns. The water material's [code]froude_overlay[/code] parameter colours the water by its Froude number for tuning (blue slow, green near critical, red fast, white at jump toes).
