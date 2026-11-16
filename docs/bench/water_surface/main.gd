@@ -5,6 +5,7 @@ extends Node3D
 #
 #   --view=beach    the shore from above: shallows, swash and the sea beyond (default)
 #   --view=under    looking down into the shallows, where the floor shows through
+#   --lamps          a spot light and an omni lamp under the water by the submerged view (beams in the water)
 #   --view=submerged  the camera 1.4 m under the water, looking along the floor to the rock (--slope=12)
 #   --view=waterline  the camera at the surface: the lens split between above and below
 #   --view=up       from 2.5 m down, looking up at the surface: Snell's window and the mirror past it
@@ -52,6 +53,7 @@ extends Node3D
 #                   older SOR sweeps (physics/physx_3d/water/multigrid_flow), and print the mean of each
 #   --pt-from=N     rasterize until frame N, path trace from then on (a long settle at raster speed)
 #   --tracers=N     N white flecks floating on the surface, carried by sample_flow() (shows the flow)
+#   --cam=x,y,z,tx,ty,tz  an explicit camera position and target, over the view's
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --seq-step=K    with --seq, save every Kth frame (a time-lapse)
 #   --view=top      straight down over the surf zone
@@ -86,6 +88,7 @@ var plain_sand := false
 var no_props := false
 var cam_dy := 0.0
 var sun_energy := 1.0
+var lamps := false
 var dive := 0.0
 var shade := Vector2(INF, INF)
 var sun_pitch := 50.0
@@ -96,6 +99,7 @@ var current := Vector2.ZERO
 var flow_out := ""
 var bake_time := 0
 var seq := 0
+var cam_set := PackedFloat64Array() # --cam=x,y,z,tx,ty,tz: an explicit camera, over the view's
 var seq_step := 1
 var tracers := 0
 var pt_from := 0
@@ -175,6 +179,7 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--taa": get_viewport().use_taa = true # resolves the jittered ray marches (wave shadows), as in a game
 		elif a == "--wader": wader_on = true
+		elif a == "--lamps": lamps = true
 		elif a == "--contact": contact = true
 		elif a == "--wader-nopush": wader_on = true; wader_push = false
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -214,6 +219,7 @@ func _ready() -> void:
 		elif a == "--lip-debug": lip_debug = true
 		elif a == "--hide-lips": hide_lips = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
+		elif a.begins_with("--cam="): cam_set = a.substr(6).split_floats(",")
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--sun-pitch="): sun_pitch = float(a.substr(12))
@@ -390,6 +396,22 @@ func _ready() -> void:
 	if wader_on:
 		_add_wader()
 
+	if lamps:
+		# Under the water by the submerged view: a torch-like spot light crossing the view and an omni lamp.
+		var spot := SpotLight3D.new()
+		add_child(spot)
+		spot.look_at_from_position(Vector3(-2.0, -0.6, -12.0), Vector3(-4.0, -4.0, -9.0))
+		spot.spot_angle = 18.0
+		spot.spot_range = 14.0
+		spot.spot_angle = 14.0
+		spot.light_energy = 12.0
+		spot.light_color = Color(1.0, 0.95, 0.85)
+		var omni := OmniLight3D.new()
+		omni.position = Vector3(-4.5, -2.4, -7.5)
+		omni.omni_range = 6.0
+		omni.light_energy = 6.0
+		omni.light_color = Color(0.85, 0.95, 1.0)
+		add_child(omni)
 	var cam := Camera3D.new()
 	cam.fov = 45
 	add_child(cam)
@@ -471,6 +493,8 @@ func _ready() -> void:
 
 
 	cam.position.y += cam_dy
+	if cam_set.size() == 6:
+		cam.look_at_from_position(Vector3(cam_set[0], cam_set[1], cam_set[2]), Vector3(cam_set[3], cam_set[4], cam_set[5]))
 	bench_cam = cam
 
 

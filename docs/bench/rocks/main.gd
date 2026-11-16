@@ -12,6 +12,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
 #   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
@@ -248,7 +249,12 @@ func _world() -> void:
 	land.rebuild()
 	land.load_all_heights()
 	if args.has("water"):
-		gen.build_water(self)
+		var waters: Array = gen.build_water(self)
+		if args.has("sea-res"):
+			# The sea's shallow-water grid is 16 m cells on a 2 km world: too coarse for water round a stack.
+			for w in waters:
+				if w is Node and (w as Node).name == "Sea":
+					w.set("grid_resolution", int(args["sea-res"]))
 	var focus := Node3D.new()
 	focus.name = "Focus"
 	add_child(focus)
@@ -747,6 +753,15 @@ func _test() -> void:
 				var ps := _piece_stats(node, Transform3D(big["basis"], big["position"]))
 				var grown: AABB = (ps["stone_box"] as AABB).grow(0.02 * (ps["stone_box"] as AABB).size.length())
 				check(absf(ps["volume"] / ps["stone_volume"] - 1.0) < 0.05 and grown.encloses(ps["box"]), "pieces are the stone: volume %.3f of %.3f m3, all inside its box (%s in %s)" % [ps["volume"], ps["stone_volume"], (ps["box"] as AABB).size, (ps["stone_box"] as AABB).size])
+			# A hit on a stone whose shape is already fractured (what break_prepare_radius does ahead of the player on a
+			# worker): only the swap for the pieces, no fracture on the main thread.
+			rocks.restore_broken()
+			var bp: Vector3 = big["position"]
+			rocks.build_area(Rect2(bp.x - 40, bp.z - 40, 80, 80)) # restore_broken drops the cells; build them again
+			var pt := Time.get_ticks_usec()
+			var again: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
+			var ms := (Time.get_ticks_usec() - pt) / 1000.0
+			check(again != null and ms < 16.0, "break_stone on a prepared shape: %.1f ms (under a 60 Hz frame)" % ms)
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.

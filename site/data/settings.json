@@ -1183,7 +1183,7 @@
     "LAYER_COAST"
    ],
    "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts.",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1470,6 +1470,18 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Buoyancy from shapes",
+   "settings": [
+    "volume_mode",
+    "mass_from_densities"
+   ],
+   "note": "",
+   "what": "bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Bodies push water",
    "settings": [
     "PhysXWaterPusher3D"
@@ -1500,6 +1512,9 @@
     "max_slope",
     "gradually_varied_flow",
     "bend_superelevation",
+    "standing_waves",
+    "source_lake",
+    "level_from_flows",
     "carve",
     "obstacle_collision_mask",
     "live_flow",
@@ -1852,7 +1867,7 @@
     "PlantGenerator.make_stones()"
    ],
    "note": "",
-   "what": "moss grows on the tops of generated stones, and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
+   "what": "moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

@@ -33,6 +33,7 @@
 #include "modules/terrain_deform/terrain_generator_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/convex_hull.h"
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
@@ -99,6 +100,8 @@ struct LibraryJob {
 	float marks_scale = 0.0f; // close-up: the size its marks are carved at
 	Ref<ImporterMesh> mesh;
 	Dictionary meta;
+	Ref<Resource> asset; // fracture: the pieces as a PhysXBlastAsset, with their hulls
+	float volume = 0.0f;
 };
 
 void library_job(void *p_userdata, uint32_t p_index) {
@@ -119,6 +122,98 @@ void library_job(void *p_userdata, uint32_t p_index) {
 
 void close_job(void *p_userdata) {
 	library_job(p_userdata, 0);
+}
+
+// A collision hull for a piece, few enough points that cooking it is cheap: the hull's own vertices, thinned by
+// farthest-point sampling to at most p_max (a rough break face has thousands; PhysX takes 255 and cooks slowly).
+PackedVector3Array rf_piece_hull(const PackedVector3Array &p_points, int p_max) {
+	Geometry3D::MeshData md;
+	if (ConvexHullComputer::convex_hull(Vector<Vector3>(p_points), md) != OK || md.vertices.size() < 4) {
+		return p_points;
+	}
+	const LocalVector<Vector3> &v = md.vertices;
+	PackedVector3Array out;
+	if (int(v.size()) <= p_max) {
+		for (const Vector3 &p : v) {
+			out.push_back(p);
+		}
+		return out;
+	}
+	LocalVector<real_t> dist;
+	dist.resize(v.size());
+	for (uint32_t i = 0; i < v.size(); i++) {
+		dist[i] = 1e30f;
+	}
+	uint32_t pick = 0;
+	for (int k = 0; k < p_max; k++) {
+		out.push_back(v[pick]);
+		uint32_t far = 0;
+		real_t far_d = -1.0f;
+		for (uint32_t i = 0; i < v.size(); i++) {
+			dist[i] = MIN(dist[i], v[i].distance_squared_to(v[pick]));
+			if (dist[i] > far_d) {
+				far_d = dist[i];
+				far = i;
+			}
+		}
+		pick = far;
+	}
+	return out;
+}
+
+// Breaking: the shape split into pieces, then (still on the worker) the Blast asset and each piece's hull, so a
+// prepared stone breaks with no fracture, authoring or hull cooking on the main thread.
+void fracture_job(void *p_userdata) {
+	LibraryJob *job = static_cast<LibraryJob *>(p_userdata);
+	library_job(p_userdata, 0);
+	if (job->mesh.is_null() || job->mesh->get_surface_count() == 0 || !job->meta.has("rock_chunks")) {
+		return;
+	}
+	const Array chunks = job->meta["rock_chunks"];
+	const Array bonds = job->meta["rock_bonds"];
+	Array pieces;
+	LocalVector<int> remap;
+	remap.resize(chunks.size());
+	for (int c = 0; c < chunks.size(); c++) {
+		const Array a = chunks[c];
+		remap[c] = a.size() == Mesh::ARRAY_MAX ? pieces.size() : -1;
+		if (remap[c] >= 0) {
+			pieces.push_back(a);
+		}
+	}
+	Array kept;
+	for (int b = 0; b < bonds.size(); b++) {
+		Dictionary d = Dictionary(bonds[b]).duplicate();
+		const Vector2i pair = d["chunks"];
+		if (pair.x < int(remap.size()) && pair.y < int(remap.size()) && remap[pair.x] >= 0 && remap[pair.y] >= 0) {
+			d["chunks"] = Vector2i(remap[pair.x], remap[pair.y]);
+			kept.push_back(d);
+		}
+	}
+	Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
+	if (!authoring) {
+		return;
+	}
+	Ref<RefCounted> holder(Object::cast_to<RefCounted>(authoring));
+	if (holder.is_null()) {
+		memdelete(authoring);
+		return;
+	}
+	if (pieces.size() < 2) {
+		return;
+	}
+	const Ref<Resource> asset = authoring->call("build_prefractured", job->mesh->get_surface_arrays(0), pieces, kept);
+	if (asset.is_null()) {
+		return;
+	}
+	const Array points = asset->call("get_chunk_points");
+	Array hulls;
+	for (int c = 0; c < points.size(); c++) {
+		hulls.push_back(rf_piece_hull(points[c], 64));
+	}
+	asset->call("set_chunk_hulls", hulls);
+	job->asset = asset;
+	job->volume = float(job->meta.get("rock_volume", 0.0));
 }
 
 // Ground normal from the generator's height, by central differences.
@@ -1016,9 +1111,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const Vector3 ax = lib->axes[st.variant];
 					const float w = p_width * Math::pow(0.92f, float(tiers)) * (0.85f + 0.3f * rng.randf());
 					// Stood on end: the block's long axis up, so a stack is a few tall joint-bounded columns, each
-					// sunk a fifth into the one below so the joints read as grooves in one mass, not a pile.
+					// sunk deep into the one below so the joints read as grooves in one mass, not a pile.
 					st.scale = w * 0.5f;
-					Basis b = Basis(Vector3(0, 1, 0), p_yaw + (rng.randf() - 0.5f) * 0.3f) * Basis(Vector3(0, 0, 1), Math::PI * 0.5 + (rng.randf() - 0.5f) * 0.1);
+					Basis b = Basis(Vector3(0, 1, 0), p_yaw + (rng.randf() - 0.5f) * 0.12f) * Basis(Vector3(0, 0, 1), Math::PI * 0.5 + (rng.randf() - 0.5f) * 0.06);
 					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 					const real_t half_up = ax.x * st.scale;
 					st.position = Vector3(centre.x, y + half_up, centre.z);
@@ -1029,12 +1124,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// The foot is broader: a second column beside the first, a little lower.
 						Stone st2 = st;
 						st2.variant = pick_variant(lib);
-						const Vector3 side = Vector3(Math::cos(p_yaw + 1.5708f), 0, Math::sin(p_yaw + 1.5708f)) * w * (0.35f + 0.2f * rng.randf());
+						const Vector3 side = Vector3(Math::cos(p_yaw + 1.5708f), 0, Math::sin(p_yaw + 1.5708f)) * w * (0.22f + 0.12f * rng.randf()); // close enough to read as one mass
 						st2.position += side - Vector3(0, half_up * (0.15f + 0.2f * rng.randf()), 0);
 						r_stones.push_back(st2);
 					}
-					y = st.position.y + half_up * 0.4;
-					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.12f;
+					// Deep into the one below (a stack is one mass split by bedding joints, its rounded block ends must
+					// not read as necks), barely shifted.
+					y = st.position.y + half_up * 0.1;
+					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.05f;
 					tiers++;
 				}
 				return y;
@@ -1083,10 +1180,17 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			// The platform: a jointed rock pavement at the cliff foot, blocks on a grid along the joint sets with
 			// narrow open joints between them, tops a little above the water line, set deep into the bed.
 			const Vector3 shore_dir = sp.to_land;
+			// Not tiles: the blocks touch across joints that wander (each block jittered and turned a little, sizes
+			// mixed), and the beds step down seaward in low ledges, each row a bed at its own height.
 			const float joint = 2.2f + 1.2f * rng.randf();
+			float ledge[8];
+			for (int r = 0; r < 8; r++) {
+				ledge[r] = (r == 0 ? 0.35f : ledge[r - 1]) - (rng.randf() < 0.45f ? 0.08f + 0.12f * rng.randf() : 0.0f);
+			}
 			for (int k = 0; k < 64; k++) {
 				const int gi = k % 8 - 4, gj = k / 8;
-				const Vector3 at = sp.p + shore_dir * (6.0f + float(gj) * joint * 1.05f) + strike * (float(gi) * joint * 1.05f + (gj & 1) * joint * 0.3f);
+				const Vector3 jitter = (shore_dir * (rng.randf() - 0.5f) + strike * (rng.randf() - 0.5f)) * joint * 0.25f;
+				const Vector3 at = sp.p + shore_dir * (6.0f + float(gj) * joint * 1.05f) + strike * (float(gi) * joint * 1.05f + (gj & 1) * joint * 0.3f) + jitter;
 				const real_t h = gen->get_height(at);
 				if (h > level + 0.8 || h < level - 1.5 || rng.randf() < 0.2f) {
 					continue;
@@ -1096,10 +1200,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				st.library = key;
 				st.variant = pick_variant(lib);
 				const Vector3 ax = lib->axes[st.variant];
-				st.scale = joint * 0.5f / MAX(ax.x, 1.0f);
-				Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.06f);
+				st.scale = joint * 0.62f / MAX(ax.x, 1.0f) * (0.85f + 0.35f * rng.randf());
+				Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.3f);
 				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
-				const real_t top = level + 0.1 + 0.35 * rng.randf();
+				const real_t top = level + 0.1 + ledge[gj] + 0.08 * rng.randf();
 				st.position = Vector3(at.x, top - ax.y * st.scale, at.z);
 				st.ground = h;
 				st.footprint = MAX(ax.x, ax.z) * st.scale * 0.85f;
@@ -1186,6 +1290,9 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type) {
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("lichen_cover", lichen_cover);
 	m->set_shader_parameter("moss_cover", moss_cover);
+	if (TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
+		m->set_shader_parameter("sea_level", float(gen->get_sea_level())); // the shore zones of sea stones
+	}
 	materials.insert(int(p_type), m);
 	return m;
 }
@@ -1236,10 +1343,20 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		grp.variant = v;
 		grp.multimesh = mm;
 		const Vector3 ax = lib->axes[v];
+		TerrainGenerator3D *sea_gen = _get_generator();
+		const bool has_sea = sea_gen && sea_gen->has_sea_result();
+		const real_t sea = has_sea ? sea_gen->get_sea_level() : 0.0;
 		for (uint32_t k = 0; k < g.value.size(); k++) {
 			const Stone &st = stones[g.value[k]];
 			const Transform3D xf(st.basis, st.position);
-			const Color cd(st.ground, st.film, st.scale, rng.randf());
+			// Stones the sea reaches carry the shore zones (the shader's sea_level): the coast's forms, and shore
+			// stones on the sea's own beach (not a lake's, not the land near sea level inland). Flagged as film + 2.
+			bool at_sea = false;
+			if (has_sea && (st.layer == LAYER_COAST || st.layer == LAYER_SHORE) && Math::abs(st.ground - sea) < 6.0) {
+				const real_t level = sea_gen->get_water_level(st.position);
+				at_sea = st.layer == LAYER_COAST || (!Math::is_nan(level) && Math::abs(level - sea) < 0.5);
+			}
+			const Color cd(st.ground, st.film + (at_sea ? 2.0f : 0.0f), st.scale, rng.randf());
 			mm->set_instance_transform(int(k), xf);
 			mm->set_instance_custom_data(int(k), cd);
 			grp.xforms.push_back(xf);
@@ -1610,7 +1727,7 @@ void RockField3D::_start_fracture(uint64_t p_key) {
 		job->transport = RockGenerator::get_lithology(job->type).abrasion_length * cobble_bins[CLAMP(key_bin(lk), 0, 2)];
 	}
 	f.job = job;
-	f.task = WorkerThreadPool::get_singleton()->add_native_task(&close_job, job, false, "RockField3D fracture");
+	f.task = WorkerThreadPool::get_singleton()->add_native_task(&fracture_job, job, false, "RockField3D fracture");
 	f.state = 1;
 }
 
@@ -1627,40 +1744,10 @@ bool RockField3D::_finish_fracture(uint64_t p_key, bool p_wait) {
 	LibraryJob *job = static_cast<LibraryJob *>(f->job);
 	f->job = nullptr;
 	f->state = 3;
-	if (job->mesh.is_valid() && job->mesh->get_surface_count() > 0 && job->meta.has("rock_chunks")) {
-		const Array chunks = job->meta["rock_chunks"];
-		const Array bonds = job->meta["rock_bonds"];
-		Array pieces;
-		LocalVector<int> remap;
-		remap.resize(chunks.size());
-		for (int c = 0; c < chunks.size(); c++) {
-			const Array a = chunks[c];
-			remap[c] = a.size() == Mesh::ARRAY_MAX ? pieces.size() : -1;
-			if (remap[c] >= 0) {
-				pieces.push_back(a);
-			}
-		}
-		Array kept;
-		for (int b = 0; b < bonds.size(); b++) {
-			Dictionary d = Dictionary(bonds[b]).duplicate();
-			const Vector2i pair = d["chunks"];
-			if (pair.x < int(remap.size()) && pair.y < int(remap.size()) && remap[pair.x] >= 0 && remap[pair.y] >= 0) {
-				d["chunks"] = Vector2i(remap[pair.x], remap[pair.y]);
-				kept.push_back(d);
-			}
-		}
-		Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
-		if (authoring && pieces.size() >= 2) {
-			Ref<RefCounted> holder(Object::cast_to<RefCounted>(authoring));
-			const Ref<Resource> asset = authoring->call("build_prefractured", job->mesh->get_surface_arrays(0), pieces, kept);
-			if (asset.is_valid()) {
-				f->asset = asset;
-				f->volume = float(job->meta.get("rock_volume", 0.0));
-				f->state = 2;
-			}
-		} else if (authoring && !Object::cast_to<RefCounted>(authoring)) {
-			memdelete(authoring);
-		}
+	if (job->asset.is_valid()) {
+		f->asset = job->asset;
+		f->volume = job->volume;
+		f->state = 2;
 	}
 	memdelete(job);
 	return f->state == 2;

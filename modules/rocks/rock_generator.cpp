@@ -1664,6 +1664,9 @@ uniform vec3 pole_direction = vec3(0.0, 0.0, -1.0);
 uniform float aspect_strength = 1.0;
 uniform vec3 contact_color = vec3(0.07, 0.055, 0.04);
 uniform float contact_height = 0.08;
+// The sea's mean level (none below -1e4) and its tidal range in metres: stones reaching it carry the shore zones.
+uniform float sea_level = -100000.0;
+uniform float tide_range = 2.0;
 uniform float wetness = 1.0;
 uniform float snow = 1.0;
 uniform float snow_max_slope = 55.0;
@@ -1800,11 +1803,16 @@ void fragment() {
 		float quartz = 0.3;
 		speck_mix = 0.07;
 		if (near_crystal > 0.0) {
-			vec2 c = rk_crystal(mg / 0.018, 20903u);
-			vec2 b = rk_crystal(mg / 0.013, 45323u);
+			// Grain boundaries are not straight: crystals grew into each other, so the map is looked up through a
+			// small warp (a fifth of a crystal) and its borders come out ragged instead of a polygon mosaic.
+			vec3 warp = vec3(rk_noise3(mg * 160.0), rk_noise3(mg * 160.0 + 17.3), rk_noise3(mg * 160.0 + 41.9)) - 0.5;
+			vec3 mgw = mg + warp * 0.0045;
+			vec2 c = rk_crystal(mgw / 0.018, 20903u);
+			vec2 b = rk_crystal(mgw / 0.013, 45323u);
 			float edge = smoothstep(0.0, 0.1, c.y);
 			float bio = step(b.x, 0.07) * smoothstep(0.0, 0.1, b.y);
-			float qz = step(c.x, 0.3);
+			// Soft at the border: a crystal's class fades into its neighbour over the last tenth of a cell.
+			float qz = step(c.x, 0.3) * mix(0.6, 1.0, smoothstep(0.0, 0.12, c.y));
 			speck_mix = mix(0.07, bio, near_crystal);
 			quartz = mix(quartz, qz, near_crystal);
 			// Cleavage faces of feldspar and glassy quartz catch the light: smoother than the rind round them.
@@ -1819,6 +1827,10 @@ void fragment() {
 			facet = vec3(cos(fa) * sqrt(1.0 - fb * fb), fb, sin(fa) * sqrt(1.0 - fb * fb)) * near_crystal * tilt * (1.0 - bio);
 			// Feldspar: each crystal its own shade, the boundaries etched darker.
 			col *= mix(1.0, 0.9 + 0.2 * fract(c.x * 7.31), near_crystal);
+			// Inside each crystal: feldspar clouded by its alteration (sericite, kaolin) in soft blotches, quartz
+			// glassy and grey with faint inclusions. Tone noise per crystal, so no two cells are flat copies.
+			float cloud = rk_fbm3(mg * 240.0 + fract(c.x * 53.1) * 31.0);
+			col *= mix(1.0, mix(0.86 + 0.26 * cloud, 0.94 + 0.08 * cloud, qz), near_crystal);
 			col *= mix(1.0, 0.9 + 0.1 * edge, near_crystal);
 		}
 		col = mix(col, quartz_color, quartz * 0.8);
@@ -1870,9 +1882,12 @@ void fragment() {
 	// Lichen: crusts on open, lit, old faces (not on fresh breaks or under water), patches of grey-green with a few
 	// orange and black ones (Rhizocarpon, Xanthoria, Lecidea are the common rock crusts).
 	// Aspect: how far the face turns to the pole (+1) or the sun (-1), on its horizontal part.
+	// Instance film, plus 2 on stones the sea reaches (RockField3D flags them for the shore zones below).
+	float at_sea = step(1.5, v_custom.y);
+	float film_in = v_custom.y - 2.0 * at_sea;
 	vec3 wh = vec3(wn.x, 0.0, wn.z);
 	float shade_side = aspect_strength * dot(wh, normalize(vec3(pole_direction.x, 0.0, pole_direction.z) + vec3(1e-5, 0.0, 0.0)));
-	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - v_custom.y) * smoothstep(-0.3, 0.5, wn.y) * clamp(0.75 - 0.45 * shade_side, 0.2, 1.2);
+	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - film_in) * smoothstep(-0.3, 0.5, wn.y) * clamp(0.75 - 0.45 * shade_side, 0.2, 1.2);
 	float lic_n = rk_fbm3(mp * 11.0 + 3.0);
 	float lic = open_face * smoothstep(0.7 - 0.2 * lichen_cover, 0.73 - 0.2 * lichen_cover, lic_n) * step(0.01, lichen_cover);
 	float kind = rk_noise3(mp * 1.3 + 7.0);
@@ -1887,7 +1902,23 @@ void fragment() {
 	rough = mix(rough, 0.95, moss);
 
 	// A film of water and its biofilm: river beds and the swash zone stay wet and darker.
-	float film = v_custom.y;
+	float film = film_in;
+	// The shore zones of rock by the sea (Stephenson and Stephenson 1949; Lewis 1964): below high water a crust of
+	// barnacles over the stone, weed toward low water, all of it wet; above it the splash zone's black Verrucaria
+	// lichen in a tar-like band; the grey and orange lichens only above that. Ragged edges, a wave's reach not a line.
+	float above_sea = v_world.y - sea_level;
+	if (at_sea > 0.5 && above_sea < tide_range * 2.5) {
+		float zn = rk_fbm3(mp * 2.3 + 5.0);
+		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
+		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);
+		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.1, tide_range * 2.0, edge));
+		vec3 barnacle = vec3(0.36, 0.34, 0.30) * (0.65 + 0.7 * rk_noise3(mp * 140.0));
+		vec3 weed = vec3(0.07, 0.065, 0.03) * (0.8 + 0.4 * rk_noise3(mp * 9.0));
+		vec3 shore = mix(barnacle, weed, smoothstep(-0.05 * tide_range, -0.35 * tide_range, edge));
+		col = mix(col, shore, 0.85 * tidal);
+		col = mix(col, vec3(0.03, 0.03, 0.027), 0.9 * splash * (0.6 + 0.4 * smoothstep(0.35, 0.55, rk_fbm3(mp * 6.0 + 9.0) + 0.15)));
+		film = max(film, tidal);
+	}
 	col = mix(col, col * vec3(0.75, 0.72, 0.55), 0.5 * film);
 	float wet = max(wetness * weather_wetness_at(v_world), max(film, contact * 0.4 * weather_wetness_at(v_world)));
 	float metallic = 0.0;

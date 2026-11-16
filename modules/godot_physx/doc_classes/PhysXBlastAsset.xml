@@ -20,6 +20,9 @@
 		<member name="asset_bytes" type="PackedByteArray" setter="set_asset_bytes" getter="get_asset_bytes" default="PackedByteArray()">
 			The raw NvBlast asset data (bond/chunk support-graph structure) -- a single relocatable memory block per NvBlast's own design, stored here as-is. Not meaningful to edit by hand.
 		</member>
+		<member name="chunk_hulls" type="Array" setter="set_chunk_hulls" getter="get_chunk_hulls" default="[]">
+			Optional collision hulls, one [PackedVector3Array] of convex hull points per chunk (a few dozen points). [PhysXDestructible3D] cooks these instead of every triangle corner in [member chunk_points], which makes spawning pieces much cheaper. When this is empty, hulls are made from [member chunk_points].
+		</member>
 		<member name="chunk_meshes" type="Array" setter="set_chunk_meshes" getter="get_chunk_meshes" default="[]">
 			Optional render meshes, one [Mesh] arrays [Array] per chunk (indexed or not), for chunks authored with their own shading data (see [method PhysXBlastAuthoring.build_prefractured]). [PhysXDestructible3D] draws pieces with their normals, tangents, colours and UVs. When this is empty, pieces are drawn from [member chunk_points] with flat normals.
 		</member>

@@ -7,6 +7,7 @@ extends Node3D
 #   --view=top       straight down on the cascade, for the foam
 #   --view=bend      looking up a bend (with --carve: deep on the outside)
 #   --view=jump      side-on below the step: the fast water and the hydraulic jump that ends it
+#   --view=train     low, looking upstream at the jump: the stationary wave train below it (standing_waves)
 #   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -24,6 +25,10 @@ extends Node3D
 #                    flows into, and a tributary joining from the side below the step
 #   --view=joins     from above: the tributary's confluence and the lake
 #   --view=mouth     the river's mouth and its plume into the lake
+#   --narrows        the channel narrows below the step (5 m to 3.5 m and back): cross-waves in the fast water
+#   --outlet         the river leaves a lake at the top of the valley over a sill (source_lake): its discharge
+#                    is the lake's head over the sill; --lake=prop:value sets a lake property (e.g.
+#                    --lake=level_from_flows:true --lake=catchment_inflow:3.0); --view=outlet looks at the sill
 #   --falls          the step is a 6 m cliff: the river goes over it as a waterfall
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
@@ -46,6 +51,8 @@ var pt_from := 0
 var out := ""
 var seq := 0
 var report := false
+var lake_params := {}
+var narrows := false
 var mist_report := false
 var bake_time := 0
 var carve := false
@@ -53,6 +60,8 @@ var live := false
 var contact := false
 var weather: Node3D
 var joins := false
+var outlet := false
+var outlet_lake: Node3D
 var falls := false
 var lake: Node3D
 var tributary: Node3D
@@ -83,6 +92,11 @@ func _ground(x: float, z: float) -> float:
 	if joins:
 		base -= 3.5 * smoothstep(30.0, 40.0, z)
 		wall += 9.0 * smoothstep(28.0, 42.0, z)
+	if outlet:
+		# A lake basin above z = -30, 2.5 m deeper and wider; the river leaves it over a sill at z = -28.
+		var basin := 1.0 - smoothstep(-40.0, -29.0, z)
+		base -= 2.5 * basin
+		wall += 5.0 * basin
 	var h := base - channel + minf(maxf(d - wall, 0.0) * 0.4, 3.0)
 	if joins:
 		h = minf(h, _tributary_ground(x, z))
@@ -115,6 +129,8 @@ func _ready() -> void:
 		elif a == "--contact": contact = true
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
+		elif a == "--outlet": outlet = true
+		elif a == "--narrows": narrows = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -125,6 +141,9 @@ func _ready() -> void:
 		elif a.begins_with("--river="):
 			var rkv := a.substr(8).split(":", true, 1)
 			river_params[rkv[0]] = str_to_var(rkv[1])
+		elif a.begins_with("--lake="):
+			var lkv := a.substr(7).split(":", true, 1)
+			lake_params[lkv[0]] = str_to_var(lkv[1])
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
 			water_params[wkv[0]] = str_to_var(wkv[1])
@@ -174,12 +193,19 @@ func _ready() -> void:
 		return
 	river = ClassDB.instantiate("PhysXRiver3D")
 	var curve := Curve3D.new()
-	var z := -48.0
+	var z := -28.0 if outlet else -48.0
 	while z <= 48.0:
 		curve.add_point(Vector3(_valley_x(z), _ground(_valley_x(z), z), z))
 		z += 4.0
 	river.set("curve", curve)
 	river.set("default_width", 5.0)
+	if narrows:
+		# The fast water below the step runs into a narrowing (5 m to 3.5 m) and out again: cross-waves.
+		var w := PackedFloat32Array()
+		for i in curve.point_count:
+			var zz := curve.get_point_position(i).z
+			w.push_back(5.0 - 1.5 * clampf(1.0 - absf(zz - 10.0) / 6.0, 0.0, 1.0))
+		river.set("widths", w)
 	river.set("discharge", 6.0)
 	river.set("step_length", 0.5)
 	river.set("cross_segments", 24)
@@ -215,7 +241,23 @@ func _ready() -> void:
 		lake.set("wave_amplitude", 0.15)
 		lake.set("render_extent", 0.0)
 		add_child(lake)
+	if outlet:
+		outlet_lake = ClassDB.instantiate("PhysXWaterSurface3D")
+		outlet_lake.position = Vector3(_valley_x(-40.0), 0.0, -40.0)
+		outlet_lake.set("domain_size", Vector2(24, 24))
+		outlet_lake.set("grid_resolution", 128)
+		outlet_lake.set("seabed_from_floor", true)
+		outlet_lake.set("water_level", -0.75)
+		outlet_lake.set("ocean_grid_resolution", 64)
+		outlet_lake.set("wind_speed", 2.0)
+		outlet_lake.set("wave_amplitude", 0.05)
+		outlet_lake.set("render_extent", 0.0)
+		for k in lake_params:
+			outlet_lake.set(k, lake_params[k])
+		add_child(outlet_lake)
 	add_child(river)
+	if outlet:
+		river.set("source_lake", river.get_path_to(outlet_lake))
 	if joins:
 		river.set("mouth_target", river.get_path_to(lake))
 		tributary = ClassDB.instantiate("PhysXRiver3D")
@@ -270,6 +312,11 @@ func _ready() -> void:
 		print("flow difference: max %.4f m/s, mean %.5f m/s (fastest %.2f m/s)" % [worst, sum / maxi(fields[0].size(), 1), top])
 		ProjectSettings.set_setting("physics/physx_3d/water/multigrid_flow", keep)
 		river.call("rebuild")
+	if report and outlet:
+		for dz in [2.0, 5.0, 10.0]:
+			var pz: float = -28.0 - dz
+			print("  lake flow %4.1f m above the sill: %s m/s" % [dz, str(outlet_lake.call("sample_flow", Vector3(_valley_x(pz), -0.75, pz)))])
+		print("outlet: lake level %.3f, head %.3f m, discharge %.3f m3/s (lake sees %.3f)" % [outlet_lake.global_position.y + outlet_lake.get("water_level"), river.call("get_outlet_head"), river.call("get_outlet_discharge"), outlet_lake.call("get_outflow_discharge")])
 	if report:
 		for i in range(0, river.call("get_section_count"), 8):
 			var s: Dictionary = river.call("get_section", i)
@@ -282,8 +329,13 @@ func _ready() -> void:
 				print("  i=%d s=%.1f surf=%.3f crit=%.3f Fr=%.2f dmax=%.2f width=%.1f" % [i, sa.s, sa.surface, sa.critical_height, sa.froude, dmax, sa.width])
 		for i in river.call("get_section_count"):
 			var sj: Dictionary = river.call("get_section", i)
+			var cw: PackedFloat32Array = sj.cross_waves
+			var cw_max := 0.0
+			for v in cw: cw_max = maxf(cw_max, absf(v))
+			if cw_max > 0.005:
+				print("  cross-waves at s=%.1f: up to %.3f m (Fr %.2f, width %.1f)" % [sj.s, cw_max, sj.froude, sj.width])
 			if sj.jump > 0.0:
-				print("jump at s=%.1f: Fr1 %.2f, surface %.2f" % [sj.s, sj.jump, sj.surface])
+				print("jump at s=%.1f: Fr1 %.2f, surface %.2f, train %.3f m x %.2f m" % [sj.s, sj.jump, sj.surface, sj.wave_amplitude, sj.wave_length])
 		_print_cross()
 		if falls:
 			for i in range(92, 112):
@@ -311,7 +363,7 @@ func _ready() -> void:
 		body.add_child(mi)
 		var b: Node3D = ClassDB.instantiate("PhysXBuoyancy3D")
 		body.add_child(b)
-		var bz := -30.0 + 4.0 * i
+		var bz := (-26.0 if outlet else -30.0) + 4.0 * i
 		var bx := _valley_x(bz) + (i - 1) * 0.6
 		body.position = Vector3(bx, river.call("sample_height", Vector3(bx, 0, bz)) + 0.2, bz)
 		add_child(body)
@@ -326,6 +378,10 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
 		"jump":
 			cam.look_at_from_position(Vector3(_valley_x(8.0) + 11.0, 3.5, 6.0), Vector3(_valley_x(8.0), -2.4, 9.0))
+		"outlet":
+			cam.look_at_from_position(Vector3(_valley_x(-44.0) + 5.0, 2.0, -46.0), Vector3(_valley_x(-29.0), -1.0, -29.0))
+		"train":
+			cam.look_at_from_position(Vector3(_valley_x(26.0) + 2.5, -0.7, 26.0), Vector3(_valley_x(14.0), -1.9, 14.0))
 		"bend":
 			cam.look_at_from_position(Vector3(_valley_x(-23.6) + 2.0, 6.0, -14.0), Vector3(_valley_x(-23.6), -1.5, -23.6))
 		"joins":
