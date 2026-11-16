@@ -162,6 +162,8 @@ private:
 	// The gas shadows the scene from the first directional light: a Beer shadow map over the grid
 	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
 	bool cast_shadows = false;
+	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
+	bool scattering_temporal = false;
 	int scattering_max_lights = 4;
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
@@ -277,6 +279,8 @@ public:
 	bool is_sun_scattering() const { return sun_scattering; }
 	void set_cast_shadows(bool p_v) { cast_shadows = p_v; }
 	bool is_cast_shadows() const { return cast_shadows; }
+	void set_scattering_temporal(bool p_v) { scattering_temporal = p_v; }
+	bool is_scattering_temporal() const { return scattering_temporal; }
 	void set_scattering_max_lights(int p_v) { scattering_max_lights = CLAMP(p_v, 1, FlowScatterRD::MAX_LIGHTS); }
 	int get_scattering_max_lights() const { return scattering_max_lights; }
 	void set_scattering_strength(float p_v) { scattering_strength = MAX(p_v, 0.0f); }
