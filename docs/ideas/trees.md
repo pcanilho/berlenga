@@ -1103,6 +1103,15 @@ mistletoe and brooms, which read from far.
   shell). Bare wood: fibres drawn in the shader, latewood ridges left by weathering, silver on
   the ridges and brown in the grooves, and a peel edge from noise at three scales stretched
   along the grain. Beech bark: lichen as lobed films, faint lenticels and folds.
+- **Round 5 (docs: "a flat olive wall", "planks")**: the wall was the log's own beech bark, its
+  albedo texture nearly one tone: crust colonies covered most of it and, past 1, clipped flat.
+  Smooth bark's texture is now stored with headroom (the material's albedo, 1.35, gives it back),
+  colonies are smaller and fewer, and grey mottling at two scales (about 4 and 1.5 cm) shows
+  between them (contrast in the frame 8.5 to 12.8 grey levels). Smooth bark on dead wood keeps
+  its grey; lying wood carries a quarter of the crust lichen (moss and algae win in the litter's
+  damp); the moss film ahead of the cushions lies in drifts, with a few centimetres of full tint
+  only at the shell's edge. Bare wood: the grain meanders a centimetre or two over half a metre,
+  ridges run a hand to a forearm long, knots are 1.5-4.5 cm.
 
 ### 5p. Bark stories (16 Nov; Paulo's third pick)
 
