@@ -208,6 +208,7 @@ public:
 	SafeFlag swash_wet_wanted;
 	int swash_read_countdown = 0; // render thread only
 	Vector<float> swash_wet_cache;
+	Vector<float> swash_run_cache; // the swash texture's r: the run-up film (m)
 	uint64_t swash_wet_serial = 0;
 	void _rt_store_swash(const uint8_t *p_data, int p_bytes);
 	void rt_on_swash(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
@@ -561,6 +562,8 @@ public:
 	// the first read; r_serial changes with each new one.
 	void set_wetness_readback(bool p_enabled);
 	bool get_wetness_grid(Vector<float> &r_wet, int &r_n, uint64_t &r_serial) const;
+	// The run-up film (m of water over the sand, the swash texture's r) from the same readback.
+	bool get_run_up_grid(Vector<float> &r_run_up, int &r_n) const;
 	// dh/dx of the ocean layer from the FFT (readback, for tests).
 	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;
 

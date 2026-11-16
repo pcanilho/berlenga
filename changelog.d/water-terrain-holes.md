@@ -1,0 +1,1 @@
+- Water: `terrain_source` on PhysXWaterSurface3D closes the seabed under terrain holes (cave mouths) with the terrain's height and remeasures on `holes_changed`; new read-only `sample_depth()` and `sample_swash()` (run-up film, wet sand) for shore systems.
