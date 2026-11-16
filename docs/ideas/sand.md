@@ -362,6 +362,26 @@ sediment moved by flowing water.
   pendular state in minutes; a print under a 0.5 m/s swash loses most of its depth in under a minute and
   no sand is made or lost (Exner keeps the volume); no sediment moves under the Shields threshold.
 
+**Built (16 Nov 2026).** `GroundSurface3D.water_coupling` (on; 0.3 ms twice a second) and `water_sources`
+(the water nodes it reads: a PhysXWaterSurface3D's `sample_swash` film and `sample_depth`, a river's or live
+water's `sample_depth`, all their `sample_flow`; any node with those calls), plus the weather map's contact
+wetness:
+
+- Pore water per lattice cell (25 cm), sampled from the water on a 1 m grid: Green-Ampt infiltration under
+  water (saturated in about 10 s), gravity drainage towards field capacity (15%, e-folding in 80 s), then
+  evaporation (hours); never drier than the contact wetness says. Sideways seepage is left out: at fine
+  sand's diffusivity (about 2e-5 m2/s) it moves nothing across a 25 cm cell in minutes.
+- The cell's rules take the pore water as their moisture, so damp sand is firm and holds steep walls; past
+  80 to 95% the water bridges are gone and the walls fall back to dry sand's 33 degrees (Su 2023's
+  capillary and saturated states).
+- Under water faster than the Shields threshold (0.25 m/s depth-averaged for 0.25 mm sand) the cell slumps
+  towards a near-flat bed at the Exner relaxation rate from Meyer-Peter and Mueller bed load: a 3 cm print
+  under 0.6 m/s is down to 7 mm in a minute; under 0.15 m/s it keeps its walls. The swash's run-up speed is
+  taken as twice the shallow-water speed of its film. Slumping keeps the volume.
+- Not built: channels cut by runoff (they need the bed load carried along the flow, an advection pass on
+  the field, not only relaxation). The wet look is the weather map's contact wetness, drawn by the wetness
+  feature, not the pore water.
+
 ### Look (any stage)
 
 - Sand glints: the snow glint lobe (`snow_glint()`) with quartz grains (0.25 mm, share lower

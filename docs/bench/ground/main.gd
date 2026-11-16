@@ -18,11 +18,15 @@ extends Node3D
 #                         a wind shift turns them, none under the threshold or when damp, a print wipes
 #                         them and they grow back, the layer keeps its sand; blowing grains: speed, hop,
 #                         streamer cover, flux at 12 m/s, none under the threshold, drawn
+#   --test=water        sand and water (stage 4): bed load against the Shields threshold, pore water filling
+#                         under water and draining after, a damp wall holding where dry and saturated slump,
+#                         a print rounded off under flowing water and kept under slow water, volume kept
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
+#   --view=swash        boot prints in sand, the nearer ones after a minute under flowing water (sand stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
 #   --raster            raster only (default path traced)
@@ -40,6 +44,7 @@ var test := false
 var soil_test := false
 var grains_test := false
 var wind_test := false
+var water_test := false
 var out := ""
 var spp := 16
 var gpu := true
@@ -63,6 +68,7 @@ func _ready() -> void:
 		elif a == "--test=soil": soil_test = true
 		elif a == "--test=grains": grains_test = true
 		elif a == "--test=wind": wind_test = true
+		elif a == "--test=water": water_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -71,6 +77,11 @@ func _ready() -> void:
 		elif a.begins_with("--cam="):
 			for v in a.substr(6).split(","):
 				cam_arg.append(float(v))
+	if water_test:
+		await _run_water_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if wind_test:
 		await _run_wind_tests()
 		print("RESULT: %d failed" % fails)
@@ -99,6 +110,9 @@ func _ready() -> void:
 		return
 	if view == "ripples":
 		await _build_ripples()
+		return
+	if view == "swash":
+		await _build_swash()
 		return
 	await _build_trail()
 
@@ -590,6 +604,64 @@ func _run_wind_tests() -> void:
 	await _run_streamer_tests()
 
 
+# Sand and water (stage 4), with a stand-in for the water module.
+func _run_water_tests() -> void:
+	await _soil_scene("dry_sand")
+	var o := Vector3.ZERO
+	var uc := sqrt(0.047 * 1650.0 * 9.81 * 0.00025 / (1000.0 * 0.003))
+	_check("no bed load under the Shields threshold (Shields 1936)", GroundSurface3D.bed_load(0.9 * uc) == 0.0 and GroundSurface3D.bed_load(1.2 * uc) > 0.0, "threshold %.2f m/s depth-averaged" % uc)
+	var q := GroundSurface3D.bed_load(1.0)
+	_check("bed load at 1 m/s of the order field swash carries (1e-5 to 1e-3 m2/s)", q > 1e-5 and q < 1e-3, "%.5f m2/s" % q)
+	var water := Node3D.new()
+	water.set_script(load("res://water_fake.gd"))
+	add_child(water)
+	surface.water_sources = [surface.get_path_to(water)]
+	water.rect = Rect2(-3, -3, 6, 6)
+	water.depth = 0.03
+	water.flow = Vector3.ZERO
+	Engine.time_scale = 10.0
+	var t0 := Time.get_ticks_msec()
+	# 30 s of still water over the sand.
+	for i in 180:
+		await get_tree().physics_frame
+	var s_wet := surface.get_saturation_at(o)
+	_check("sand under water saturates in seconds (Green-Ampt)", s_wet > 0.95, "saturation %.2f after 30 s under 3 cm of water" % s_wet)
+	var sat_mat: Dictionary = surface.get_material_at(o)
+	water.depth = -1.0
+	# 3 minutes after it is gone.
+	for i in 1080:
+		await get_tree().physics_frame
+	var s_drained := surface.get_saturation_at(o)
+	_check("it drains towards field capacity (15%) in minutes", s_drained < 0.3 and s_drained >= 0.15, "saturation %.2f 3 min later" % s_drained)
+	Engine.time_scale = 1.0
+	var damp_mat: Dictionary = surface.get_material_at(o)
+	var dry_repose := 33.0
+	_check("damp sand holds a steep wall, saturated sand does not (Su et al. 2023)", float(damp_mat["repose"]) > 45.0 and absf(float(sat_mat["repose"]) - dry_repose) < 3.0,
+			"repose %.0f deg damp (%.2f), %.0f deg saturated, %.0f dry" % [float(damp_mat["repose"]), s_drained, float(sat_mat["repose"]), dry_repose])
+	print("  water step %.2f ms" % (surface.get_water_step_usec() / 1000.0))
+	_check("the water step is cheap", surface.get_water_step_usec() < 5000.0, "%.2f ms twice a second" % (surface.get_water_step_usec() / 1000.0))
+	# A boot print under water flowing at 0.6 m/s and at 0.15 m/s (under the threshold).
+	for speed in [0.6, 0.15]:
+		surface.clear_deformation()
+		water.depth = 0.05
+		water.flow = Vector3(speed, 0.0, 0.0)
+		for i in 60:
+			await get_tree().physics_frame
+		surface.press_box(o, Vector2(0.11, 0.29), 0.3, 0.0, 0.03)
+		var d0 := surface.get_dent_at(o)
+		var v0 := surface.get_moved_volume()
+		surface.settle(60.0)
+		var d1 := surface.get_dent_at(o)
+		var v1 := surface.get_moved_volume()
+		if speed > 0.5:
+			_check("flowing water rounds off a print within a minute", d1 < 0.3 * d0, "%.1f cm deep, %.1f cm after 60 s at %.1f m/s" % [d0 * 100.0, d1 * 100.0, speed])
+			_check("no sand made or lost (Exner)", absf((v1.y - v1.x) - (v0.y - v0.x)) < 0.02 * maxf(v0.x, 1e-6), "net %.3f l, was %.3f l" % [(v1.y - v1.x) * 1000.0, (v0.y - v0.x) * 1000.0])
+		else:
+			_check("slow water leaves a print (under the threshold)", d1 > 0.6 * d0, "%.1f cm deep, %.1f cm after 60 s at %.2f m/s" % [d0 * 100.0, d1 * 100.0, speed])
+	water.queue_free()
+	surface.water_sources = []
+
+
 # Streamers (stage 3): the saltating grains as particles.
 func _run_streamer_tests() -> void:
 	var v := GroundStreamers3D.grain_speed()
@@ -1035,6 +1107,50 @@ func _build_roost() -> void:
 		await get_tree().physics_frame
 	get_window().size = full
 	print("roost: %.1f l thrown, %d grains in the air, field on the %s" % [grains.get_dug_volume() * 1000.0, grains.get_airborne_count(), "GPU" if surface.is_gpu_active() else "CPU"])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand stage 4: a line of boot prints across sand; water flowed over the near half for a minute (the swash)
+# and drew back. Those prints are rounded off and shallow, the far ones keep their walls.
+func _build_swash() -> void:
+	kind = "damp_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(-18.0, 200.0, 0.0)
+	var water := Node3D.new()
+	water.set_script(load("res://water_fake.gd"))
+	add_child(water)
+	surface.water_sources = [surface.get_path_to(water)]
+	for i in 30:
+		await get_tree().physics_frame
+	for k in 8:
+		var p := Vector3(-1.6 + 0.45 * k, 0.0, 0.12 if k % 2 == 0 else -0.12)
+		p.y = _undisturbed(p)
+		surface.press_box(p, Vector2(0.11, 0.29), PI * 0.5, p.y, 0.035)
+	water.rect = Rect2(-3.0, -3.0, 3.0, 6.0)
+	water.depth = 0.03
+	water.flow = Vector3(0.0, 0.0, 0.6)
+	for i in 90:
+		await get_tree().physics_frame
+	surface.settle(60.0)
+	water.depth = -1.0
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 0.75, 1.25, 0.0, 0.0, -0.1])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
+	print("swash: prints %.1f cm deep washed, %.1f cm kept" % [surface.get_dent_at(Vector3(-1.6, 0, 0.12)) * 100.0, surface.get_dent_at(Vector3(1.55, 0, -0.12)) * 100.0])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
