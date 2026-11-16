@@ -50,6 +50,9 @@
 		<member name="blast_asset" type="PhysXBlastAsset" setter="set_blast_asset" getter="get_blast_asset">
 			The fractured mesh data to use, saved by the in-editor fracture dialog (or [PhysXBlastAuthoring] directly). Preferred over [member asset_path] / [member chunks_path] when set.
 		</member>
+		<member name="buried_below_y" type="float" setter="set_buried_below_y" getter="get_buried_below_y" default="-1e+09">
+			Pieces whose middle starts below this world height stay where they are: static, with no outward kick. This is for the part of an object set into the ground, such as a half-buried stone, which would otherwise start inside the terrain and be pushed down through it. The default, far below anything, turns this off.
+		</member>
 		<member name="cast_shadow" type="int" setter="set_cast_shadow" getter="get_cast_shadow" enum="PhysXDestructible3D.ShadowCastingSetting" default="1">
 			Shadow-casting behavior for every piece's render mesh, the same four settings as [member GeometryInstance3D.cast_shadow]. Applies uniformly, intact or fractured -- changing it re-pushes to every already-existing piece immediately.
 		</member>

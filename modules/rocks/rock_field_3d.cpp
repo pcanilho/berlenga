@@ -1772,12 +1772,16 @@ Node *RockField3D::break_stone(const Vector3 &p_position, real_t p_damage, real_
 	node->set("material_override", mat);
 	node->set("auto_mass", false);
 	node->set("mass", MAX(real_t(f.volume) * s * s * s * break_density, real_t(0.01)));
-	// Loose stones fall apart; blocks still in a wall or a tor keep their bottom pieces.
-	const RockGenerator::Family fam = key_family(grp.library);
-	node->set("anchor", (fam == RockGenerator::FAMILY_CLIFF_BLOCK || fam == RockGenerator::FAMILY_CORESTONE) ? 1 : 2);
-	add_child(node, false, INTERNAL_MODE_BACK);
+	// The bottom pieces stay where they are: a stone sits sunk in the ground (or in a wall or a tor), and a piece
+	// that starts inside the terrain would be pushed down through it rather than out.
+	node->set("anchor", 1); // ANCHOR_GROUNDED
+	node->set("buried_below_y", cd.r); // the ground under the stone
+	// Struck stone falls apart rather than exploding: pieces leave at a couple of metres a second at most.
+	node->set("shatter_speed", 2.5);
+	// Placed before it enters the tree: it reads its scale (the stone's) when it spawns its intact piece.
 	node->set_as_top_level(true);
-	node->set_global_transform(xf);
+	node->set_transform(xf);
+	add_child(node, false, INTERNAL_MODE_BACK);
 	breakables.push_back(node->get_instance_id());
 	// Hide the stone and drop its collision.
 	grp.broken[best_k] = true;

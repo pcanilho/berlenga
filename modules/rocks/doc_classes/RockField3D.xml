@@ -15,7 +15,7 @@
 			<param index="1" name="damage" type="float" default="10.0" />
 			<param index="2" name="radius" type="float" default="1.0" />
 			<description>
-				Breaks the stone whose surface lies nearest [param position], within [param radius]. The stone is hidden and its collision is turned off. In its place goes a [PhysXDestructible3D] of the shape's pieces (see [member RockGenerator.fracture_pieces]), drawn with a copy of the rock material that carries the stone's own instance data, and [param damage] is applied at [param position] over [param radius]. Loose stones fall apart; cliff blocks and tor blocks keep their bottom pieces. The stone stays broken when its cell is rebuilt, until [method restore_broken].
+				Breaks the stone whose surface lies nearest [param position], within [param radius]. The stone is hidden and its collision is turned off. In its place goes a [PhysXDestructible3D] of the shape's pieces (see [member RockGenerator.fracture_pieces]), drawn with a copy of the rock material that carries the stone's own instance data, and [param damage] is applied at [param position] over [param radius]. The bottom pieces, sunk in the ground (or held in a wall or a tor), stay put; the rest fall. The stone stays broken when its cell is rebuilt, until [method restore_broken].
 				A shape is fractured once and shared by every stone of that shape. Shapes near the follow target are fractured ahead (see [member break_prepare_radius]); otherwise the first hit builds it. Returns the new node, or [code]null[/code] if no stone is in reach or the godot_physx module is missing (see [method is_breaking_supported]).
 			</description>
 		</method>

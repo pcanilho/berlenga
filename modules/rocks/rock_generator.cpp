@@ -1808,12 +1808,15 @@ void fragment() {
 			speck_mix = mix(0.07, bio, near_crystal);
 			quartz = mix(quartz, qz, near_crystal);
 			// Cleavage faces of feldspar and glassy quartz catch the light: smoother than the rind round them.
-			crystal_gloss = near_crystal * (qz * 0.6 + (1.0 - qz) * step(0.8, fract(c.x * 13.7)) * 0.5);
+			crystal_gloss = near_crystal * (qz * 0.7 + (1.0 - qz) * step(0.65, fract(c.x * 13.7)));
 			// Each crystal a facet at its own tilt (cleavage planes of feldspar, quartz grains), crisp at the cell
 			// borders: a broken face reads as grains, not a smooth surface. Stronger on fresh breaks, where the
 			// rind has not dulled them.
 			float fa = fract(c.x * 91.7) * 6.2831853, fb = fract(c.x * 37.3) * 2.0 - 1.0;
-			facet = vec3(cos(fa) * sqrt(1.0 - fb * fb), fb, sin(fa) * sqrt(1.0 - fb * fb)) * near_crystal * (0.12 + 0.2 * fresh) * (1.0 - bio);
+			// Cleavage planes cut the crystal at any angle to the broken face, so the glossy ones tilt much further
+			// (up to about 45 degrees): spread over the hemisphere, a few of them face the half vector of any sun.
+			float tilt = mix(0.25 + 0.25 * fresh, 0.35 + 0.65 * fract(c.x * 5.13), step(0.5, crystal_gloss));
+			facet = vec3(cos(fa) * sqrt(1.0 - fb * fb), fb, sin(fa) * sqrt(1.0 - fb * fb)) * near_crystal * tilt * (1.0 - bio);
 			// Feldspar: each crystal its own shade, the boundaries etched darker.
 			col *= mix(1.0, 0.9 + 0.2 * fract(c.x * 7.31), near_crystal);
 			col *= mix(1.0, 0.9 + 0.1 * edge, near_crystal);
@@ -1834,7 +1837,9 @@ void fragment() {
 	// The rind: weathered faces stained and duller than a fresh break.
 	vec3 weathered = mix(col, rind_color, 0.45 + 0.25 * rk_fbm3(mp * 3.1));
 	col = mix(weathered, col * 1.08, fresh);
-	float rough = mix(rock_roughness, 0.42, crystal_gloss * (0.4 + 0.6 * fresh));
+	// Cleavage faces (a third of the feldspars) and glassy quartz are near mirrors, each at its own facet tilt: under a
+	// low sun a few of them flash (cleavage glints, the crystal-scale case of a discrete microfacet glint model).
+	float rough = mix(rock_roughness, 0.12, crystal_gloss * (0.6 + 0.4 * fresh));
 
 	// Grain-scale relief as a normal (the stone's geometry carries everything from about a centimetre up).
 	float grain_fade = 1.0 - smoothstep(0.004, 0.03, footprint);
