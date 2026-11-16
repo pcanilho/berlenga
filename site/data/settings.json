@@ -1257,10 +1257,11 @@
   {
    "name": "Cave mouths",
    "settings": [
-    "RockField3D.cave_mouths"
+    "RockField3D.cave_mouths",
+    "terrain3d"
    ],
    "note": "",
-   "what": "limestone portals at cliff feet.",
+   "what": "limestone cliff feet get cave openings cut into the terrain, also on Terrain3D.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
