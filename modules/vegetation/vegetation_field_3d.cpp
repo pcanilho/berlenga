@@ -855,11 +855,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// Wood feeders (PlantSpecies.deadwood_from_wood, honey fungus) come up from the wood
 					// itself: their foot moves onto the log's side where it meets the ground, the
 					// plant turned to face out of it (+X away from the wood).
+					// The foot goes up the side to a bark crack about 20 cm over the litter (or the
+					// log's widest girth on a thinner one), so the clump visibly roots in the wood.
 					Vector2 wood_out;
+					float wood_y = -1e9f;
 					if (dw_rule == PlantSpecies::DEADWOOD_BESIDE && suit > 0.0f && sp->is_deadwood_from_wood() && hit.across != Vector2()) {
-						xz -= hit.across * (hit.side + WOOD_FEEDER_INSET);
+						const float ground = map->get_height_at(p3);
+						const float lift = CLAMP(hit.axis_y - ground, 0.0f, WOOD_FEEDER_HEIGHT);
+						const float dy = hit.axis_y - (ground + lift);
+						const float reach = Math::sqrt(MAX(hit.radius * hit.radius - dy * dy, 0.0f)); // Out from the axis at that height.
+						xz -= hit.across * (hit.side + hit.radius - reach + WOOD_FEEDER_INSET);
 						p3 = Vector3(xz.x, 0.0f, xz.y);
 						wood_out = hit.across;
+						wood_y = hit.axis_y - dy;
 					}
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
@@ -1009,6 +1017,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// (the trees' moss shell stands up to 1.1 to 2.5 cm proud of the bark, section 5c of
 					// trees.md), so cushions and seedlings are not swallowed by it.
 					float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					if (wood_y > -1e8f) {
+						y = wood_y; // On the wood's side (above).
+					}
 					const float slope = floats ? 0.0f : map->get_slope_at(p3);
 					const float aspect = map->get_aspect_at(p3);
 					Vector3 normal = on_log ? hit.normal : Vector3(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
@@ -1039,6 +1050,12 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
 					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
+					if (wood_out != Vector2()) {
+						// Out of the bark: the clump's foot tips away from the wood, as it bursts
+						// from a crack in the side and the stalks curve up to the light.
+						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(wood_out.x, 0.0f, wood_out.y)).normalized();
+						b = Basis(lean_axis, Math::deg_to_rad(WOOD_FEEDER_LEAN_DEG)) * b;
+					}
 					if (margin > 0.0f && sp->get_margin_lean() > 0.0f && margin_out != Vector2()) {
 						// Tip the plant's axis towards the open, about the horizontal axis across it.
 						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(margin_out.x, 0.0f, margin_out.y)).normalized();

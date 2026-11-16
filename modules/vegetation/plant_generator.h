@@ -302,6 +302,7 @@ private:
 		float stalk_wave = 0.0f; // Sideways sway of the stalk's axis (rad over its length), fused tufts.
 		Color cap_centre = Color(1, 1, 1); // Tint at the centre against the margin.
 		Color cap_margin = Color(1, 1, 1);
+		float cap_fade = 0.0f; // How far the centre colour reaches out (0: the margin colour from mid-cap).
 	};
 	MushroomForm _mushroom_form(float p_age);
 	void _build_mushrooms();

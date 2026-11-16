@@ -1531,12 +1531,18 @@ void PlantGenerator::_build_stand_litter() {
 		const float k = _rand(0.8f, 1.15f);
 		Color c = is_fresh ? fallen : fallen.lerp(Color(0.36f, 0.25f, 0.15f), _rand(0.4f, 0.8f)); // Bleached tan-brown.
 		c = c * k;
-		const Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
+		Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
 		const float r = disc * Math::sqrt(rng.randf());
 		const float a = _rand(0.0f, Math::TAU);
 		const Vector3 at(Math::cos(a) * r, 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
 		const Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
-		const Vector3 up = rng.randf() < 0.7f ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
+		// About a third lie underside up: paler and duller (the lower epidermis, hairier and without
+		// the upper's wax). Shown by colour, the face still up, so a lying leaf is never drawn from
+		// its back face (whose flipped normal map read black or flat in close-ups).
+		if (rng.randf() >= 0.7f) {
+			tint = tint.lerp(tint * 1.25f, 0.8f) * Color(1.0f, 1.0f, 1.08f);
+		}
+		const Vector3 up(0, 1, 0);
 		const Basis frame = organ_frame(fwd, up);
 		const float curl = is_fresh ? 0.6f : 1.0f; // Older leaves dry and curl more.
 		Leaf l;

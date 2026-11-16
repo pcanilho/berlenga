@@ -84,6 +84,8 @@ class VegetationField3D : public Node3D {
 	};
 	static constexpr float DEADWOOD_CELL = 4.0f;
 	static constexpr float DEADWOOD_BESIDE_GAP = 0.15f; // Plants beside a log only where its underside is within this of the ground.
+	static constexpr float WOOD_FEEDER_HEIGHT = 0.2f; // How far up a log's side a wood feeder roots (at most its axis).
+	static constexpr float WOOD_FEEDER_LEAN_DEG = 15.0f; // How far a wood feeder tips out of the bark.
 	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
 	LocalVector<Deadwood> deadwood;
