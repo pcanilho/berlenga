@@ -1304,6 +1304,7 @@
    "name": "Caves",
    "settings": [
     "CaveNetwork3D.build_meshes()",
+    "follow_target",
     "speleothems",
     "scallops",
     "add_sea_cave()",
