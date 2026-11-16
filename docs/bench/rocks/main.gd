@@ -13,6 +13,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
+#   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
 #   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
@@ -785,7 +786,7 @@ func _render_later() -> void:
 		await get_tree().process_frame
 	while args.has("plants") and rocks and not plants_ready:
 		await get_tree().process_frame
-	var frames := 8 if raster else 12
+	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
 	for i in frames:
 		if i == frames - 4:
