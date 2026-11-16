@@ -2259,6 +2259,39 @@ void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const
 			}
 			const Vector3 tip = start + along * rachis + n * (-0.15f * rachis);
 			_add_blade(r_b, tip, along, side, n, leaflet, leaflet * hull, steps, 0, 0.0f, p_color, false, 1.0f);
+			{
+				// The rachis: a stalk 1.5-3 mm across carrying the pairs (grooved above in rowan and
+				// ash; Stace 2019). Without it near leaflets floated apart. A shallow V ribbon, so
+				// it keeps some width seen edge-on, sampled on the leaflet texture's midrib (opaque).
+				const float hw = MAX(0.0012f, 0.025f * leaflet);
+				const Color rc(p_color.r * 0.85f, p_color.g * 0.8f, p_color.b * 0.75f, p_color.a);
+				const int segs = 4;
+				const int base = r_b.verts.size();
+				for (int i = 0; i <= segs; i++) {
+					const float t = float(i) / segs;
+					const Vector3 mid = start + along * (rachis * t) + n * (-0.15f * rachis * t * t);
+					const float w = hw * Math::lerp(1.0f, 0.6f, t);
+					const Vector3 pts[3] = { mid + side * w + n * (0.7f * w), mid, mid - side * w + n * (0.7f * w) };
+					const Vector3 nrm[3] = { (n + side * 0.6f).normalized(), n, (n - side * 0.6f).normalized() };
+					for (int e = 0; e < 3; e++) {
+						r_b.verts.push_back(pts[e]);
+						r_b.normals.push_back(nrm[e]);
+						r_b.uvs.push_back(Vector2(0.49f + 0.01f * e, 0.5f));
+						r_b.colors.push_back(rc);
+					}
+				}
+				for (int i = 0; i < segs; i++) {
+					const int a = base + i * 3, b = a + 3;
+					for (int e = 0; e < 2; e++) {
+						r_b.indices.push_back(a + e);
+						r_b.indices.push_back(b + e);
+						r_b.indices.push_back(a + e + 1);
+						r_b.indices.push_back(a + e + 1);
+						r_b.indices.push_back(b + e);
+						r_b.indices.push_back(b + e + 1);
+					}
+				}
+			}
 		} break;
 		case LEAF_DIGITATE: {
 			const int k = form.count;
@@ -2484,7 +2517,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		float mottle; // Albedo variation over plates.
 	};
 	static const Look LOOKS[BARK_MAX] = {
-		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.1f }, // Smooth: no plates, fine grain, lenticels, creases.
+		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.18f }, // Smooth: no plates, fine grain, lenticels, creases, crust lichen.
 		{ 6, 3, 0.1f, 0.028f, 0.004f, 0.3f, 0.12f }, // Furrowed: long interlaced ridges.
 		{ 4, 2, 0.16f, 0.03f, 0.0025f, 0.25f, 0.2f }, // Plated: wide flat plates, deep furrows.
 		{ 12, 9, 0.06f, 0.006f, 0.0015f, 0.45f, 0.14f }, // Scaly: small overlapping scales.
@@ -2625,6 +2658,41 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 						const float m = (1.0f - Math::smoothstep(0.5f, 1.0f, Math::abs(dxw))) * (1.0f - Math::smoothstep(0.3f, 1.0f, Math::abs(dyw)));
 						a = a * Math::lerp(1.0f, 0.8f, m);
 						height -= m * 0.0005f;
+					}
+				}
+				if (p_kind == BARK_SMOOTH) {
+					// Crust lichens, the beech's own (Barkman 1958; Gilbert 2000): in colonies a
+					// hand across, pale warty discs of Pertusaria and Lecanora a few millimetres
+					// wide with a darker rim, and the black script of Graphis, short wavy lines.
+					// They are what makes smooth bark read as bark at a metre.
+					const float colony = Math::smoothstep(-0.03f, 0.05f, bark_fbm(u, v, 3, 3, 3, salt + 111u));
+					if (colony > 0.0f) {
+						const int du = 24, dv = 24;
+						const float lx = u * du, ly = v * dv;
+						const int ix = int(lx), iy = int(ly);
+						if (bark_hash(ix, iy, salt + 113u) < 0.55f) {
+							const float cx = 0.25f + 0.5f * bark_hash(ix, iy, salt + 115u);
+							const float cy = 0.25f + 0.5f * bark_hash(ix, iy, salt + 117u);
+							const float rr = 0.18f + 0.2f * bark_hash(ix, iy, salt + 119u);
+							const float d = Math::sqrt((lx - ix - cx) * (lx - ix - cx) + (ly - iy - cy) * (ly - iy - cy)) / rr;
+							const float disc = (1.0f - Math::smoothstep(0.8f, 1.0f, d)) * colony;
+							const float rim = Math::exp(-(d - 0.95f) * (d - 0.95f) * 60.0f) * colony;
+							a = a.lerp(Color(1.45f, 1.45f, 1.36f), 0.7f * disc);
+							a = a * Math::lerp(1.0f, 0.7f, rim);
+							height += 0.00025f * disc;
+							r = Math::lerp(r, 0.9f, disc);
+						}
+						const int gu = 16, gv = 34;
+						const float gx = u * gu, gy = v * gv;
+						const int jx = int(gx), jy = int(gy);
+						if (bark_hash(jx, jy, salt + 121u) < 0.4f) {
+							// A wavy dash along the stem, a few millimetres long.
+							const float cx = 0.3f + 0.4f * bark_hash(jx, jy, salt + 123u);
+							const float ox = gx - jx - cx, oy = (gy - jy - 0.5f);
+							const float wav = ox - 0.08f * Math::sin(oy * 9.0f + 6.0f * bark_hash(jx, jy, salt + 125u));
+							const float line = (1.0f - Math::smoothstep(0.03f, 0.07f, Math::abs(wav))) * (1.0f - Math::smoothstep(0.32f, 0.42f, Math::abs(oy)));
+							a = a * Math::lerp(1.0f, 0.3f, line * colony);
+						}
 					}
 				}
 				// Patches over a tile and finer blotches: the bark's own tone and the thin films of
@@ -3340,13 +3408,13 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 	const float R = plate.radius, T = plate.thick, tr = plate.trunk_r;
 	const float rotten = CLAMP(float(decay_class - 1) / 2.0f, 0.0f, 1.0f);
 	const uint32_t salt = uint32_t(seed) * 2654435761u;
-	const int sectors = 72;
+	const int sectors = 128;
 	// The rim: torn ragged, lobed where the big roots held more soil.
 	float rim[sectors];
 	for (int k = 0; k < sectors; k++) {
 		const float a = float(Math::TAU) * k / sectors;
 		const Vector3 q(Math::cos(a) * 1.7f, 0.0f, Math::sin(a) * 1.7f);
-		rim[k] = R * (0.82f + 0.3f * moss_noise(q + Vector3(3.1f, 0, 0), salt + 1u) + 0.08f * (pr.randf() - 0.5f));
+		rim[k] = R * (0.82f + 0.3f * moss_noise(q + Vector3(3.1f, 0, 0), salt + 1u) + 0.06f * (moss_noise(q * 6.0f, salt + 18u) - 0.5f));
 	}
 	auto rim_at = [&](float p_a) {
 		const float f = p_a / float(Math::TAU) * sectors;
@@ -3362,7 +3430,9 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		// Torn, not smoothed: soil breaks away in blocks along root channels and cracks, a
 		// fist-to-head-sized relief over the whole face.
 		const float blocks = Math::abs(moss_noise(p_q * 4.5f, salt + 15u) - 0.5f);
-		return -T * (0.2f + 0.8f * Math::pow(MAX(1.0f - p_rho * p_rho, 0.0f), 0.6f)) * (1.0f - 0.25f * rotten) + T * 0.45f * lump + 0.05f * clod - 0.09f * (0.25f - blocks) * (1.0f - 0.4f * rotten);
+		// Small blocks and crumbs down to a few centimetres: the grid is about 4 cm here.
+		const float fine = Math::abs(moss_noise(p_q * 14.0f, salt + 16u) - 0.5f) + 0.5f * (moss_noise(p_q * 30.0f, salt + 17u) - 0.5f);
+		return -T * (0.2f + 0.8f * Math::pow(MAX(1.0f - p_rho * p_rho, 0.0f), 0.6f)) * (1.0f - 0.25f * rotten) + T * 0.45f * lump + 0.05f * clod - 0.09f * (0.25f - blocks) * (1.0f - 0.4f * rotten) - 0.035f * (0.25f - fine);
 	};
 	auto top = [&](const Vector3 &p_q) {
 		// The old forest floor: hummocks of litter and moss, small lumps of humus.
@@ -3407,7 +3477,7 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 	};
 	Vector4i part;
 	w.begin(part);
-	const int rings = 16;
+	const int rings = 36;
 	// Top (rings 0..rings), rim wall (3 rings), underside (rings..0): one grid of sectors.
 	LocalVector<int> grid;
 	int rows = 0;
@@ -3468,38 +3538,39 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 			tri(grid[(rows - 1) * sectors + k], c, grid[(rows - 1) * sectors + (k + 1) % sectors]);
 		}
 	}
-	// Lumps on the underside: subdivided octahedra, their points jittered, scaled by p_sc and
-	// coloured per vertex by p_col (so a clod's soil can darken into its shade).
-	auto lump = [&](const Vector3 &p_c, const Basis &p_b, const Vector3 &p_sc, float p_jitter, const Color &p_col, float p_jitter_freq, int p_seg) {
-		const Vector3 oct[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
-		const int faces[8][3] = { { 0, 2, 4 }, { 4, 2, 1 }, { 1, 2, 5 }, { 5, 2, 0 }, { 0, 4, 3 }, { 4, 1, 3 }, { 1, 5, 3 }, { 5, 0, 3 } };
-		auto sp = [&](const Vector3 &p_u) {
-			const Vector3 u = p_u.normalized();
-			const float j = (1.0f - 0.5f * p_jitter) + p_jitter * moss_noise(u * p_jitter_freq + p_c * 3.0f, salt + 9u);
-			return p_c + p_b.xform(u * p_sc * j);
-		};
-		// Each face a grid of p_seg segments a side, its vertices shared within the face so a
-		// clod shades round, not faceted.
-		const int seg = MAX(p_seg, 1);
-		LocalVector<int> ids;
-		for (const auto &f : faces) {
-			const Vector3 A = oct[f[0]], B = oct[f[1]], C = oct[f[2]];
-			ids.clear();
-			for (int i = 0; i <= seg; i++) {
-				for (int j = 0; j <= seg - i; j++) {
-					const Vector3 u = A + (B - A) * (float(i) / seg) + (C - A) * (float(j) / seg);
-					const Vector3 lp = sp(u);
-					const float shade = 0.85f + 0.15f * u.normalized().y;
-					ids.push_back(push(lp, p_b.xform(u.normalized()), Color(p_col.r * shade, p_col.g * shade, p_col.b * shade), Vector2(lp.x, lp.z) * 4.0f));
+	// Lumps on the underside: a sphere of p_seg rings, its vertices shared so it shades round,
+	// pushed out by noise (p_jitter at frequency p_jitter_freq) and scaled by p_sc; p_angular
+	// folds the noise into ridges so a stone shows edges and flat faces, not a blob.
+	auto lump = [&](const Vector3 &p_c, const Basis &p_b, const Vector3 &p_sc, float p_jitter, const Color &p_col, float p_jitter_freq, int p_seg, float p_angular = 0.0f) {
+		const int rings = MAX(p_seg, 3), segs = 2 * rings;
+		const int first = w.verts.size();
+		const uint32_t ls = salt + uint32_t(Math::abs(p_c.x * 1000.0f + p_c.z * 37.0f));
+		for (int i = 0; i <= rings; i++) {
+			const float th = float(Math::PI) * float(i) / rings;
+			for (int j = 0; j < segs; j++) {
+				const float ph = float(Math::TAU) * float(j) / segs;
+				const Vector3 u(Math::sin(th) * Math::cos(ph), Math::cos(th), Math::sin(th) * Math::sin(ph));
+				const float nz = moss_noise(u * p_jitter_freq + Vector3(3.1f, 7.7f, 1.3f), ls);
+				const float nz2 = moss_noise(u * p_jitter_freq * 2.7f + Vector3(5.3f, 2.1f, 9.4f), ls + 7u);
+				float j_amt = (nz - 0.5f) + 0.4f * (nz2 - 0.5f);
+				if (p_angular > 0.0f) {
+					// Facets: quantised toward a few planes.
+					j_amt = Math::lerp(j_amt, Math::round(j_amt * 3.0f) / 3.0f, p_angular);
 				}
+				const Vector3 lp = p_c + p_b.xform(u * p_sc * (1.0f + p_jitter * j_amt));
+				const float shade = (0.82f + 0.18f * u.y) * (0.85f + 0.3f * nz2);
+				push(lp, p_b.xform(u), Color(p_col.r * shade, p_col.g * shade, p_col.b * shade), Vector2(lp.x, lp.z) * 4.0f);
 			}
-			auto at = [&](int i, int j) { return ids[i * (seg + 1) - i * (i - 1) / 2 + j]; };
-			for (int i = 0; i < seg; i++) {
-				for (int j = 0; j < seg - i; j++) {
-					tri(at(i, j), at(i + 1, j), at(i, j + 1));
-					if (j + 1 < seg - i) {
-						tri(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
-					}
+		}
+		for (int i = 0; i < rings; i++) {
+			for (int j = 0; j < segs; j++) {
+				const int a0 = first + i * segs + j, a1 = first + i * segs + (j + 1) % segs;
+				const int b0 = a0 + segs, b1 = a1 + segs;
+				if (i > 0) {
+					tri(a0, b0, a1);
+				}
+				if (i + 1 < rings) {
+					tri(a1, b0, b1);
 				}
 			}
 		}
@@ -3520,7 +3591,7 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		const Vector3 sc(sz * Math::lerp(0.8f, 1.3f, pr.randf()), sz * Math::lerp(0.5f, 0.8f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
 		const float tone = 0.7f + 0.35f * pr.randf();
 		const Color stained = stone_c.lerp(mineral, Math::lerp(0.25f, 0.6f, pr.randf()));
-		lump(c, b, sc, 0.3f, Color(stained.r * tone, stained.g * tone, stained.b * tone), 2.5f, 2);
+		lump(c, b, sc, 0.45f, Color(stained.r * tone, stained.g * tone, stained.b * tone), 1.8f, 6, 0.6f);
 	}
 	// Clods: soil held in the root mat, standing proud of the face round the laterals and along
 	// the rim where the plate tore, lumps from a fist to a bucket across, crumbling with rot.
@@ -3535,7 +3606,22 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		c.y = under(MIN(rho, 1.0f), c) + sz * 0.3f;
 		const Basis b = Basis(Vector3(pr.randf(), pr.randf(), pr.randf()).normalized(), pr.randf() * 3.0f);
 		const Vector3 sc(sz * Math::lerp(0.9f, 1.4f, pr.randf()), sz * Math::lerp(0.45f, 0.75f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
-		lump(c, b, sc, 0.55f, soil_colour(c, top(c) - c.y + 0.05f), 4.0f, 4);
+		lump(c, b, sc, 0.6f, soil_colour(c, top(c) - c.y + 0.05f), 2.2f, 7);
+	}
+	// Crumbs: the soil of a torn face is crumb and small-block structure, not a smooth skin
+	// (soil aggregates; a humus-rich topsoil crumbles into peas to walnuts). Thousands are far
+	// below the pixel; a few hundred of the larger ones per plate carry the texture as geometry.
+	const int crumbs = int(130.0f * R * (1.0f - 0.3f * rotten));
+	for (int k = 0; k < crumbs; k++) {
+		const float a = pr.randf() * float(Math::TAU);
+		const float rho = Math::lerp(0.1f, 1.0f, Math::sqrt(pr.randf()));
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		Vector3 c = d * (rim_at(a) * rho);
+		const float sz = Math::lerp(0.012f, 0.045f, pr.randf() * pr.randf());
+		c.y = under(rho, c) + sz * 0.35f;
+		const Basis b = Basis(Vector3(pr.randf(), pr.randf(), pr.randf()).normalized(), pr.randf() * 3.0f);
+		const Vector3 sc(sz * Math::lerp(0.8f, 1.3f, pr.randf()), sz * Math::lerp(0.6f, 0.9f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
+		lump(c, b, sc, 0.5f, soil_colour(c, top(c) - c.y + 0.03f * pr.randf()), 2.0f, 3);
 	}
 	// Normals from the faces (smooth over the soil; the stones' corners share none).
 	{
@@ -3567,14 +3653,28 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		for (int i = 0; i < n; i++) {
 			const float f = i > p_free ? float(i - p_free) / MAX(n - 1 - p_free, 1) : 0.0f;
 			pts.push_back(plate.to_world(p_local[i]) - Vector3(0, p_droop * f * f, 0));
-			rad.push_back(p_r[i]);
+			// Roots swell and pinch along their length where they grew round stones and
+			// through denser soil, not the even taper of a shoot.
+			const float swell = i == 0 ? 1.0f : 0.78f + 0.44f * moss_noise(p_local[i] * 9.0f, salt + 31u);
+			rad.push_back(p_r[i] * swell);
 		}
-		const int sides = CLAMP(int(p_r[0] * 160.0f), 5, 12);
+		const int sides = p_r[0] < 0.004f ? 3 : CLAMP(int(p_r[0] * 160.0f), 5, 12);
 		Vector4i rp;
 		r_bark.bone = 0;
 		r_bark.begin(rp);
 		_tube(r_bark, pts, rad, sides, 0.0f, root_c, nullptr, 0.0f, -1.0f, false);
 		r_bark.end(rp, p_r[0]);
+		// Soil crusted on in patches, the bark darker where it is still damp, paler rubbed bare.
+		for (int v = rp.z; v < rp.z + rp.w; v++) {
+			const Vector3 q = r_bark.verts[v];
+			const float tone = 0.72f + 0.5f * moss_noise(q * 14.0f, salt + 32u);
+			const float crust = Math::smoothstep(0.55f, 0.7f, moss_noise(q * 6.0f, salt + 33u));
+			Color c = r_bark.colors[v];
+			const float a = c.a;
+			c = Color(c.r * tone, c.g * tone, c.b * tone).lerp(mineral * 0.9f, 0.7f * crust);
+			c.a = a;
+			r_bark.colors.write[v] = c;
+		}
 		if (p_torn && pts.size() >= 2 && p_r[p_r.size() - 1] >= 0.012f) {
 			wood_b.bone = 0;
 			_fracture(pts[pts.size() - 1], (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized(), rad[rad.size() - 1], 0.2f + 0.6f * rotten, pr.rand());
@@ -3591,9 +3691,12 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		lr.clear();
 		const int steps = 12;
 		float a = a0;
+		float turn_rate = 0.0f;
 		for (int i = 0; i <= steps; i++) {
 			const float f = float(i) / steps;
-			a += 0.12f * (pr.randf() - 0.5f);
+			// Wandering, not zigzag: the turn itself drifts.
+			turn_rate = 0.7f * turn_rate + 0.12f * (pr.randf() - 0.5f);
+			a += turn_rate;
 			const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
 			const float rho = Math::lerp(0.6f * tr / MAX(rim_at(a), 0.1f), reach, f);
 			Vector3 q = d * (rim_at(a) * rho);
@@ -3642,22 +3745,29 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		}
 	}
 	// Fine roots torn out of the underside and the rim: thin, many, hanging down.
-	const int fines = int(30.0f * R);
+	// A mat of them: most of a tree's root length is under 2 mm thick (fine roots; Coutts 1983).
+	const int fines = int(110.0f * R);
 	for (int k = 0; k < fines; k++) {
 		const float a = pr.randf() * float(Math::TAU);
 		const float rho = Math::lerp(0.25f, 1.02f, Math::sqrt(pr.randf()));
 		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
 		Vector3 o = d * (rim_at(a) * rho);
 		o.y = under(MIN(rho, 1.0f), o) + 0.01f;
-		const float len = Math::lerp(0.12f, 0.45f, pr.randf());
-		const float r0 = Math::lerp(0.004f, 0.012f, pr.randf());
+		const float u = pr.randf();
+		const float len = Math::lerp(0.06f, 0.4f, pr.randf());
+		const float r0 = Math::lerp(0.0015f, 0.01f, u * u);
 		lp.clear();
 		lr.clear();
 		const Vector3 go = (d * Math::lerp(0.3f, 1.0f, pr.randf()) + Vector3(0, -1, 0)).normalized();
-		for (int i = 0; i <= 4; i++) {
-			const float f = float(i) / 4.0f;
-			lp.push_back(o + go * (len * f) + Vector3(pr.randf() - 0.5f, pr.randf() - 0.5f, pr.randf() - 0.5f) * (0.04f * f));
+		Vector3 at = o;
+		Vector3 head = go;
+		for (int i = 0; i <= 6; i++) {
+			const float f = float(i) / 6.0f;
+			lp.push_back(at);
 			lr.push_back(r0 * Math::lerp(1.0f, 0.4f, f));
+			// Wiry and kinked: each piece turns off a little, and hangs as it goes.
+			head = (head + Vector3(pr.randf() - 0.5f, pr.randf() - 0.5f, pr.randf() - 0.5f) * 0.9f + Vector3(0, -0.15f, 0)).normalized();
+			at += head * (len / 6.0f);
 		}
 		root(lp, lr, false, 0, len * 0.5f);
 	}
@@ -7229,8 +7339,14 @@ void TreeGenerator::_shed_branch() {
 		const float roll0 = br.randf() * float(Math::TAU);
 		float best_roll = roll0;
 		float best_rise = 1e30f;
-		for (int k = 0; k < 12; k++) {
-			const float roll = roll0 + float(k) * float(Math::TAU) / 12.0f;
+		// A bent or kinked axis also rolls until its bend lies flat: the spread of its points in
+		// height (an axis bowed upward stood one end in the air even after tipping).
+		float axis_len = 0.0f;
+		for (int a = pick; a >= 0 && keep[a]; a = nodes[a].main) {
+			axis_len += nodes[a].length;
+		}
+		for (int k = 0; k < 24; k++) {
+			const float roll = roll0 + float(k) * float(Math::TAU) / 24.0f;
 			const Basis t = Basis(level, roll) * turn;
 			float rise = 0.0f;
 			for (int i = pick + 1; i < int(nodes.size()); i++) {
@@ -7238,6 +7354,13 @@ void TreeGenerator::_shed_branch() {
 					rise += Math::abs(t.xform(nodes[i].dir).y) * nodes[i].length * nodes[i].radius;
 				}
 			}
+			float lo = 1e30f, hi = -1e30f;
+			for (int a = pick; a >= 0 && keep[a]; a = nodes[a].main) {
+				const float y = t.xform(nodes[a].end() - base).y;
+				lo = MIN(lo, y);
+				hi = MAX(hi, y);
+			}
+			rise += 3.0f * (hi - lo) * axis_len * nodes[pick].radius;
 			if (rise < best_rise) {
 				best_rise = rise;
 				best_roll = roll;
@@ -7692,7 +7815,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			return;
 		}
 		const uint32_t fs = uint32_t(seed) * 2654435761u;
-		const Color algae_c(0.11f, 0.14f, 0.06f);
+		const Color algae_c(0.09f, 0.15f, 0.04f);
 		const float big = Math::smoothstep(0.04f, 0.15f, p_radius);
 		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
 			const Vector3 p = r_b.verts[v];
@@ -7700,7 +7823,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// Tracks: bands a hand or two wide, running down the stem for metres and wandering.
 			const float wander = 0.6f * (moss_noise(p * Vector3(0.0f, 0.8f, 0.0f) + Vector3(0.3f, 0.0f, 0.7f), fs + 0x73666c31u) - 0.5f);
 			const Vector3 q = p + Vector3(wander, 0.0f, -wander);
-			const float track = big * Math::smoothstep(0.6f, 0.72f, moss_noise(q * Vector3(7.5f, 0.3f, 7.5f), fs + 0x73666c32u));
+			const float track = big * Math::smoothstep(0.56f, 0.66f, moss_noise(q * Vector3(7.5f, 0.3f, 7.5f), fs + 0x73666c32u));
 			// Films between them: algae low on the stem in patches, crust lichen higher up.
 			const float low = 1.0f - Math::smoothstep(1.0f, 8.0f, h);
 			// Colonies at two scales: blotches a hand to a forearm across, ragged at the edge.
@@ -7712,7 +7835,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float a = c.a;
 			const float g = CLAMP(film_wet * (0.55f * track + 0.45f * patch * low), 0.0f, 0.75f);
 			c = c.lerp(algae_c, 0.8f * g);
-			const float dk = Math::lerp(1.0f, 0.6f, film_wet * track);
+			const float dk = Math::lerp(1.0f, 0.5f, film_wet * track);
 			c = Color(c.r * dk, c.g * dk, c.b * dk);
 			c = c.lerp(Color(MIN(c.r * 1.35f + 0.03f, 1.0f), MIN(c.g * 1.35f + 0.03f, 1.0f), MIN(c.b * 1.3f + 0.025f, 1.0f)), 0.6f * big * crust);
 			c.a = a;
@@ -8734,16 +8857,18 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const float ridge = 1.0f - Math::abs(2.0f * moss_noise(hp * Vector3(1.0f / (0.22f * head_r), 1.0f / (0.7f * head_r), 1.0f / (0.22f * head_r)), 0x6b6e6233u) - 1.0f);
 				const float fis = Math::smoothstep(0.8f, 0.97f, ridge);
 				float crease = 0.0f;
-				const float kn = callus_knobs(hp, CLAMP(0.12f * head_r, 0.035f, 0.07f), 0.45f * head_r, 0.38f, 0x6b6e6234u, crease);
-				hoff += win * (head_r * (0.07f * k1 - 0.14f * fis) + kn * (1.0f - fis));
-				// The bark's own furrows mostly closed over by the callus: at full depth they
-				// crossed the knobs as long pleats.
-				hoff -= 0.75f * win * (vv[v].distance_to(p_pts[ring]) - r);
+				// Burrs a few centimetres across, hard-edged, many: the larger, merging knobs of the
+				// first try read as a melted mass (scene's close-up, 16 Nov).
+				const float kn = callus_knobs(hp, CLAMP(0.08f * head_r, 0.025f, 0.045f), 0.45f * head_r, 0.38f, 0x6b6e6234u, crease);
+				hoff += win * (head_r * (0.04f * k1 - 0.1f * fis) + kn * (1.0f - fis));
+				// The bark's own furrows half closed over by the callus: at full depth they crossed
+				// the knobs as long pleats; fully closed the head lost its bark and read as wax.
+				hoff -= 0.45f * win * (vv[v].distance_to(p_pts[ring]) - r);
 				dark = MIN(dark, Math::lerp(1.0f, 0.42f, win * fis));
 				dark = MIN(dark, Math::lerp(1.0f, 0.45f, win * crease));
 				// Green algae (Desmococcus) and moss film where water lingers between the knobs
 				// and on their tops; drier, paler grey on the bulges' flanks.
-				algae = win * CLAMP(0.35f + 1.6f * (-k1) + 0.5f * n.y + 0.3f * fis + 0.3f * crease, 0.0f, 0.85f);
+				algae = win * CLAMP(0.2f + 1.6f * (-k1) + 0.4f * n.y + 0.3f * fis + 0.3f * crease, 0.0f, 0.6f);
 				w_any = 1.0f;
 			}
 			if (p_features == 3) {
@@ -8758,9 +8883,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					float crease = 0.0f;
 					const float kn = callus_knobs(hp, 0.05f, 0.15f, 0.4f, 0x73746c33u, crease);
 					off += win * (MIN(r, 0.12f) * (0.25f * k1 - 0.3f * fis) + kn * (1.0f - fis));
-					dark = MIN(dark, Math::lerp(1.0f, 0.45f, win * fis));
-					dark = MIN(dark, Math::lerp(1.0f, 0.62f, win * crease));
-					algae = MAX(algae, win * CLAMP(0.2f + 1.2f * (-k1) + 0.3f * crease, 0.0f, 0.6f));
+					// Lighter than the head's: under the rods a stool is shaded already, and darker
+					// fissures turned it into a black clump (scene's close-up, 16 Nov).
+					dark = MIN(dark, Math::lerp(1.0f, 0.62f, win * fis));
+					dark = MIN(dark, Math::lerp(1.0f, 0.78f, win * crease));
+					algae = MAX(algae, win * CLAMP(0.1f + 0.8f * (-k1) + 0.3f * crease, 0.0f, 0.4f));
 					w_any = 1.0f;
 				}
 				// Up the pole: shallow, wavering flutes along it, a few round it (as on hornbeam
@@ -9166,7 +9293,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const bool stem = first.parent == 0;
 		// A hanger's base is a fracture hanging beside its stub, not a junction: no branch
 		// collar, fork crotch or weld into the parent.
-		const bool hanger = hanger_bases.has(s);
+		// A shed limb or stick (its parent gone) snapped off the same way: no junction with wood
+		// that is not there (the fork code pulled a stick's rings onto its old parent's axis).
+		const bool hanger = hanger_bases.has(s) || (first.parent > 0 && nodes[first.parent].removed);
 		// The root collar (flare and sink) belongs to a stem standing in the soil. A log or a
 		// fallen limb lies along the ground, every ring of it near the base height: the flare
 		// swelled the whole log and the sink dove its open butt into the soil, where it showed
@@ -9522,6 +9651,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const bool relief = near_tube && r0 >= RELIEF_MIN_RADIUS && !(cut_chain && s != veteran_stem && (bolling.has(s) || first.pole)) && bs.relief_gain * scale >= 0.001f;
 		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : 0));
 		// A mesh without LODs (the near variants) carries the near tube alone.
+		if ((fallen || fallen_branch) && r0 >= 0.03f) {
+			// Lying wood is seen from a step away, along its length: its peeled patches, moss and
+			// tint are per vertex, and rings an internode apart (30-50 cm on a log) smeared them
+			// into long streaks. Rings every few centimetres instead.
+			densify(pts, rad, [&](const Vector3 &, float p_r) { return CLAMP(0.25f * p_r, 0.03f, 0.06f); });
+		}
 		if (!(near_tube && skip_lods)) {
 			Vector4i part;
 			bark.role = near_tube ? Builder::ROLE_PLAIN : Builder::ROLE_ALL;
@@ -10854,13 +10989,39 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// Wood under lost bark: fibres along the stem (v), long drying checks, grey where it
 			// weathers in the open, browner as it rots. The bark's broken edge is darker (its
 			// thickness in shadow).
-			float grain = texture(lichen_map, vec2(base_uv.x * 1.7, base_uv.y * 0.08)).r;
+			float grain = texture(lichen_map, vec2(base_uv.x * 2.3, base_uv.y * 0.3)).r;
 			// Checks: thin dark splits along the grain, wavering with it, broken into lengths.
 			float wander = texture(lichen_map, vec2(base_uv.x * 0.7 + 0.53, base_uv.y * 0.02)).r;
 			float split = abs(fract(base_uv.x * 3.0 + 1.2 * wander) - 0.5);
 			float run = smoothstep(0.5, 0.65, texture(lichen_map, vec2(base_uv.x * 0.9 + 0.21, base_uv.y * 0.03)).r);
 			float checks = mix(1.0, smoothstep(0.01, 0.07, split), run);
 			vec3 wood = bark_wood_color * (0.72 + 0.45 * grain) * mix(0.35, 1.0, checks);
+			// Close up the long grain alone smeared into streaks (a texel stretched over a hand's
+			// length). Finer fibres; rot staining in patches; the black zone lines where rival
+			// fungi meet (spalting, beech above all); and bark beetles' galleries etched into the
+			// sapwood under the lost bark, a mother gallery along the grain with the larvae's
+			// tunnels running off it (Rayner and Boddy 1988; Gregoire et al., bark beetles, 2015).
+			float fine = texture(lichen_map, vec2(base_uv.x * 14.0, base_uv.y * 2.2)).r;
+			float stain = texture(lichen_map, vec2(base_uv.x * 1.3 + 0.37, base_uv.y * 0.6 + 0.11)).r;
+			float zn = texture(lichen_map, vec2(base_uv.x * 0.9 + 0.71, base_uv.y * 0.45 + 0.29)).r;
+			float zone = 1.0 - smoothstep(0.004, 0.014, abs(zn - 0.5));
+			wood *= (0.7 + 0.6 * fine) * mix(1.12, 0.72, smoothstep(0.35, 0.7, stain));
+			vec2 gq = base_uv * vec2(4.0, 1.6);
+			vec2 gc = floor(gq);
+			vec2 gl = fract(gq);
+			float gh = fract(sin(dot(gc, vec2(127.1, 311.7))) * 43758.5453);
+			float gallery = 0.0;
+			if (gh < 0.45) {
+				float gx = 0.35 + 0.3 * fract(gh * 7.31);
+				float along = smoothstep(0.1, 0.18, gl.y) * (1.0 - smoothstep(0.82, 0.9, gl.y));
+				float mother = (1.0 - smoothstep(0.012, 0.03, abs(gl.x - gx))) * along;
+				float side = abs(gl.x - gx);
+				float wig = abs(fract(gl.y * 11.0 + 0.6 * sin(side * 25.0 + gh * 20.0)) - 0.5);
+				float larva = (1.0 - smoothstep(0.03, 0.07, wig)) * (1.0 - smoothstep(0.12, 0.3, side)) * along;
+				gallery = max(mother, 0.7 * larva);
+			}
+			wood *= 1.0 - 0.65 * gallery;
+			wood = mix(wood, vec3(0.03, 0.025, 0.02), 0.85 * zone);
 			float rim = smoothstep(0.25, 0.47, bare_field) * (1.0 - bark_bare);
 			ALBEDO *= 1.0 - 0.45 * rim;
 			ALBEDO = mix(ALBEDO, wood, bark_bare);
@@ -10868,11 +11029,12 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// The wood's own relief: fibre ridges across u and the checks as grooves, as a tangent
 			// space normal from the pattern's slope (finite differences of the same samples).
 			float du = 0.004;
-			float g1 = texture(lichen_map, vec2((base_uv.x + du) * 1.7, base_uv.y * 0.08)).r;
+			float g1 = texture(lichen_map, vec2((base_uv.x + du) * 2.3, base_uv.y * 0.3)).r;
+			float f1 = texture(lichen_map, vec2((base_uv.x + du) * 14.0, base_uv.y * 2.2)).r;
 			float split1 = abs(fract((base_uv.x + du) * 3.0 + 1.2 * wander) - 0.5);
 			float c1 = mix(1.0, smoothstep(0.01, 0.07, split1), run);
-			float h0 = 0.4 * grain + checks, h1 = 0.4 * g1 + c1;
-			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 2.5, 0.0, 1.0), 0.5, 1.0);
+			float h0 = 0.4 * grain + 0.5 * fine + checks - 0.6 * gallery, h1 = 0.4 * g1 + 0.5 * f1 + c1 - 0.6 * gallery;
+			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0, 0.0, 1.0), 0.5, 1.0);
 		}
 	}
 )";
@@ -12077,6 +12239,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	sprout_roots.clear();
 	cut_heads.clear();
 	cut_stubs.clear();
+	thinned_stubs.clear();
 	seat_cuts.clear();
 	shed_count = 0;
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) * 1013904223ull + 1);
@@ -12174,6 +12337,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				const int r = rank[k].second;
 				nodes[r].dead = true;
 				nodes[r].leafy = false;
+				// Rotted back and snapped short over the decades since: a jagged stub, not a
+				// pole's rounded end (that read as a dark ball on the head).
+				nodes[r].length *= 0.45f;
+				thinned_stubs.push_back(r);
 				st.clear();
 				if (nodes[r].main >= 0) {
 					st.push_back(nodes[r].main);
@@ -12289,6 +12456,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	_bend_under_gravity();
 	_prune_collisions();
+	for (const int r : thinned_stubs) {
+		if (r < int(nodes.size()) && !nodes[r].removed) {
+			broken_ends.insert(r);
+		}
+	}
 	_measure();
 	_mark_spurs(years);
 	broken_tip = -1;

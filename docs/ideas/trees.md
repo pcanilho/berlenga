@@ -1083,6 +1083,19 @@ mistletoe and brooms, which read from far.
   (Desmococcus, Trentepohlia); between them the bark is mottled by algae low on the stem and pale
   crust lichen higher up (Barkman 1958). Vertex colour on stems over 4 cm of smooth or
   lenticelled bark, wetter in a stand; holds at every LOD and under path tracing.
+- **Round 2 (docs review)**: the plate's underside is a 4 cm grid with block and crumb relief
+  plus ~130 crumbs per metre of radius (soil aggregates), clods and stones are shared-vertex
+  spheres (stones quantised into facets), roots swell and pinch and carry soil crusts, and a
+  mat of ~110 fine roots per metre of radius hangs from the face. Smooth bark's texture carries
+  crust lichen colonies: pale Pertusaria/Lecanora discs with dark rims and Graphis script.
+  Shed pieces whose parent is gone are built like hangers (the fork code had pulled some
+  sticks' rings onto the old parent's axis). A lapsed pollard's thinned poles end in short
+  snapped stubs. Pinnate leaves have a grooved rachis ribbon.
+  Bare wood under lost bark: grain sampled at 0.3 tiles along (it had been stretched over a
+  hand's length and smeared into streaks), finer fibres, rot staining, spalting zone lines
+  (Rayner and Boddy 1988) and bark beetle galleries in its colour and relief. Pollard heads:
+  burrs 2.5-4.5 cm instead of 3.5-7 cm and the bark's furrows half closed rather than three
+  quarters (the head had read as melted wax); coppice stool fissures and creases lighter.
 
 ## 6. What the games at Paulo's bar do
 
