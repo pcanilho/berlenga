@@ -2914,3 +2914,7 @@ wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers nea
 - Fresh right through: the roller fills the foam to solid (no lace holes); two more churn octaves (about
   13 and 5 cm) in the per-pixel slope give it a bubbly, broken surface.
 - Spume sheets only from a near-gale (14 to 20 m/s, Beaufort 7 to 8), at two thirds of their old opacity.
+- Eased toward 40 cm (16 Nov, later): measured from the local mean, a gale's metres-high crests raised the
+  full share as a faceted white peak over a few 60 cm mesh cells. The height now eases toward 40 cm
+  (`0.4 tanh(h / 0.4)`, per `roller_strength`): a lumpy churning band on the crest that reads at 1.75 m in
+  the `storm_roller` view, without the peak.

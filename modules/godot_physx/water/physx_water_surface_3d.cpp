@@ -1039,7 +1039,13 @@ float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out ve
 	float k = roller_strength * 0.5 * crest * sqrt(b);
 	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2))
 			+ crest * sqrt(b) * roller_strength * (0.012 * 1.1 * 7.1 * foam_noise_grad(q3) + 0.005 * 1.1 * 17.3 * foam_noise_grad(q4));
-	return k * (0.45 + 0.9 * churn);
+	// Eased toward 40 cm: on a gale's metres-high crests the full share rose as a faceted white peak over a few
+	// mesh cells (the mesh near the camera is 60 cm apart), where a real roller is a lumpy band down the face.
+	float cap = 0.4 * roller_strength;
+	float raw = k * (0.45 + 0.9 * churn);
+	float e = tanh(raw / cap);
+	r_grad *= 1.0 - e * e;
+	return cap * e;
 }
 
 // The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
