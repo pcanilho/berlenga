@@ -1,0 +1,1 @@
+- Rivers: no crash when a river's last section runs supercritical with standing waves on (the cross-wave lookup read past the end).

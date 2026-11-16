@@ -2782,6 +2782,9 @@ void PhysXRiver3D::_solve_standing_waves() {
 		if (sections[q].s > p_s) {
 			return 0.0f;
 		}
+		if (q + 1 >= count) {
+			return theta[q]; // at the last section (no travel to the wall): its own angle
+		}
 		const float span = sections[q + 1].s - sections[q].s;
 		const float t = span > 1e-5f ? (p_s - sections[q].s) / span : 0.0f;
 		return Math::lerp(theta[q], theta[q + 1], CLAMP(t, 0.0f, 1.0f));
