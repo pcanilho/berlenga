@@ -1040,12 +1040,21 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// measured to the outside of the moss): one piece per span, so plants beside
 						// and on the log follow its real width and bends instead of the widest reach.
 						// Older 7-float meshes are one piece of that radius.
+						// Newer meshes add the stem's centreline: N points (x, y, z, girth to the outside
+						// of the moss) along it, so a bent stick or branch is its own thin wood, not a
+						// fat straight piece over its chord (whose reach takes the bend).
 						const int n = ax.size() >= 8 ? int(ax[7]) : 0;
 						const bool profile = n >= 2 && ax.size() >= 8 + n;
+						const bool centreline = profile && ax.size() >= 8 + 5 * n;
 						const int pieces = profile ? n - 1 : 1;
 						for (int k = 0; k < pieces; k++) {
 							Deadwood log = { la, lb, ax[6] * scale };
-							if (profile) {
+							if (centreline) {
+								const int c = 8 + n + 4 * k;
+								log.a = world.xform(Vector3(ax[c], ax[c + 1], ax[c + 2]));
+								log.b = world.xform(Vector3(ax[c + 4], ax[c + 5], ax[c + 6]));
+								log.radius = MAX(0.5f * (ax[c + 3] + ax[c + 7]) * scale - DEADWOOD_MOSS_LIFT, 0.01f);
+							} else if (profile) {
 								log.a = la.lerp(lb, float(k) / float(pieces));
 								log.b = la.lerp(lb, float(k + 1) / float(pieces));
 								log.radius = MAX(0.5f * (ax[8 + k] + ax[9 + k]) * scale - DEADWOOD_MOSS_LIFT, 0.01f);
