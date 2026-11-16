@@ -1126,7 +1126,7 @@
     "kick()"
    ],
    "note": "",
-   "what": "spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept.",
+   "what": "spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1150,6 +1150,18 @@
    ],
    "note": "",
    "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Dust",
+   "settings": [
+    "GroundDust3D",
+    "GroundSurface3D.dust_emission"
+   ],
+   "note": "",
+   "what": "the wind lifts dust off dry sand and carries it until it settles; needs volumetric fog.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
