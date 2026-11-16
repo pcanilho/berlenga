@@ -792,16 +792,22 @@ float foam_fbm(vec2 p) {
 }
 
 // Holes torn in a foam sheet, one per feature of a jittered grid (Worley 1996), each its own size: the cover left
-// (1 where no hole) and the nearest and second-nearest feature distances (for the strands along cell borders),
-// in cell units. Every feature in the 3x3 neighbourhood carves its own hole, so a hole wider than its cell runs
+// (1 where no hole), the nearest and second-nearest feature distances (for the strands along cell borders), in
+// cell units, and how far inside a hole the point lies (0 at its edge, 1 at its middle). Every feature in the 3x3 neighbourhood carves its own hole, so a hole wider than its cell runs
 // on into the next one instead of being cut along the straight cell border (a nearest-cell-only radius would).
-// jit is the ragged tear added to the distance; lobe wanders the edge in proportion to the hole's size.
-vec3 foam_holes(vec2 p, float open, float scale, float bias, float soft, float jit, float lobe) {
+// jit is the ragged tear added to the distance. Each layer tears at its own scale: the cell space is warped by noise a
+// few times finer than the cells (film rupture stretched by the surface's strain, so the walls between holes bend and
+// no border stays a straight segment), and each hole's edge wanders in lobes in proportion to its size.
+vec4 foam_holes(vec2 p, float open, float scale, float bias, float soft, float jit) {
+	p += 0.22 * (vec2(foam_fbm(p * 2.3 + 1.3), foam_fbm(p * 2.3 - 4.1)) - 0.5);
+	float lobe = foam_fbm(p * 3.7 + 7.3) - 0.5;
+	float tear = foam_fbm(p * 9.1 - 2.6) - 0.5;
 	vec2 i = floor(p);
 	vec2 f = fract(p);
 	float d1 = 8.0;
 	float d2 = 8.0;
 	float keep = 1.0;
+	float inside = 0.0;
 	for (int y = -1; y <= 1; y++) {
 		for (int x = -1; x <= 1; x++) {
 			vec2 g = vec2(float(x), float(y));
@@ -814,14 +820,18 @@ vec3 foam_holes(vec2 p, float open, float scale, float bias, float soft, float j
 			} else if (d < d2) {
 				d2 = d;
 			}
-			// At most 0.95 cells: no feature outside the 3x3 neighbourhood is that close.
-			float rad = min(open * max(foam_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.95);
+			// No feature outside the 3x3 neighbourhood is nearer than 1.15 cells, and a hole reaches its radius
+			// plus the tear and lobes (up to 0.16 + 0.43 of the radius) past it: at most 0.65 cells keeps every
+			// hole whole (a larger one was cut along a straight line where the search ended).
+			float rad = min(open * max(foam_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.65);
 			if (rad > 0.0) {
-				keep = min(keep, smoothstep(rad - soft, rad + soft, d + jit + 0.35 * rad * lobe));
+				float de = d + jit + rad * (0.6 * lobe + 0.25 * tear);
+				keep = min(keep, smoothstep(rad - soft, rad + soft, de));
+				inside = max(inside, (rad - de) / rad);
 			}
 		}
 	}
-	return vec3(keep, d1, d2);
+	return vec4(keep, d1, d2, inside);
 }
 
 // How much of the surface foam covers, from its amount (docs/ideas/water.md "Ocean detail"). Fresh foam is a
@@ -845,12 +855,11 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
 	float soft2 = 0.015 + footprint * foam_detail_scale * 2.8;
 	float soft3 = 0.02 + footprint * foam_detail_scale * 9.2;
-	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide. Holes are never
-	// round: their edges wander with two scales of noise (lobes and a fine tear).
-	float lobe = foam_fbm(q * 1.9 - 6.2) - 0.5;
-	vec3 h1 = foam_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag, lobe);
-	vec3 h2 = foam_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag, lobe);
-	vec3 h3 = foam_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag, foam_fbm(q * 5.7 + 2.4) - 0.5);
+	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide; each layer's holes
+	// torn at its own scale (foam_holes).
+	vec4 h1 = foam_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag);
+	vec4 h2 = foam_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag);
+	vec4 h3 = foam_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag);
 	float keep1 = h1.x;
 	float keep2 = h2.x;
 	float keep3 = h3.x;
@@ -861,6 +870,11 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, h1.z - h1.y + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, h2.z - h2.y + 0.25 * rag));
 	// Only where the sheet still holds enough foam (thin foam leaves no web over open water).
 	cover = max(cover, strands * smoothstep(0.15, 0.45, a));
+	// Islands and bridges: rafts of film that have not ruptured yet, left in the holes (fade where under a pixel).
+	// Only well inside the larger holes, so they float free of the hole's rim (no hairline gap round a raft).
+	float raft = smoothstep(0.62, 0.68, foam_fbm(q * 6.3 + 3.1)) * smoothstep(0.2, 0.5, a) * smoothstep(0.35, 0.5, max(h1.w, h2.w));
+	// Gone well before a raft is a pixel or two across (single-pixel specks in the open water otherwise).
+	cover = max(cover, raft * (1.0 - clamp(footprint * foam_detail_scale * 20.0 - 0.2, 0.0, 1.0)));
 	// Thin scum of loose bubbles left in the holes.
 	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, foam_fbm(q * 5.3 - 4.1)));
 	// Past where the holes are under a pixel, their mean cover.
@@ -916,7 +930,11 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
-	float amount = ocean_foam_all(world_xz) * fade;
+	// The foam amount is a bilinear texture: up close its contours (a patch's crisp edge) run as straight
+	// segments across each texel, with wedge corners where they meet. Its lookup is wandered by smooth noise
+	// about a texel long (a few decimetres), which bends those segments without moving the foam more than that.
+	vec2 wander = vec2(foam_value_noise(world_xz * 1.3 + 3.1), foam_value_noise(world_xz * 1.3 - 5.3)) - 0.5;
+	float amount = ocean_foam_all(world_xz + 0.5 * wander) * fade;
 	// Each cascade's foam pass sees only its own waves, but crests break
 	// where they add up: the long swell steepens the chop riding on it. The
 	// Jacobian of the summed displacement (Tessendorf) catches those crests
@@ -1522,12 +1540,17 @@ void fragment() {
 			// The roller is fresh, churning foam right through: no aged lace holes in it.
 			foam = max(foam, max(smoothstep(0.15, 0.6, fold), smoothstep(0.02, 0.2, v_roller)));
 		}
+		// The relief below reads the foam before its pixel step: the step's one-pixel jump would tilt the normal
+		// hard over the rim and draw a dark outline round every patch and hole.
+		float foam_soft = foam;
 		if (foam_crisp > 0.0) {
 			// Crisp at every distance: past a few metres the structure's detail is finer than a pixel and its
 			// edge goes soft again, so the patch's edge is stepped once more at the pixel's own scale (the foam's
 			// screen-space change, as signed-distance text is sharpened), keeping 0.8 of the soft value (haze).
+			// The step spans about three pixels (fwidth is shared by each 2x2 quad, so a narrower step lands in
+			// two-pixel blocks), so the rim is antialiased rather than stair-stepped where no temporal filter runs.
 			float fwf = max(fwidth(foam), 1e-3);
-			float stepped = clamp((foam - 0.3) / (1.5 * fwf) + 0.5, 0.0, 1.0);
+			float stepped = clamp((foam - 0.3) / (3.0 * fwf) + 0.5, 0.0, 1.0);
 			foam = mix(foam, max(stepped, 0.8 * foam), foam_crisp);
 		}
 		if (foam > 0.01) {
@@ -1551,8 +1574,8 @@ void fragment() {
 #else
 		vec2 rdx = dFdx(v_rest_xz);
 		vec2 rdy = dFdy(v_rest_xz);
-		float fdx = dFdx(foam);
-		float fdy = dFdy(foam);
+		float fdx = dFdx(foam_soft);
+		float fdy = dFdy(foam_soft);
 		float rdet = rdx.x * rdy.y - rdx.y * rdy.x;
 		if (foam_relief > 0.0 && abs(rdet) > 1e-12) {
 			vec2 fg = vec2(rdy.y * fdx - rdx.y * fdy, rdx.x * fdy - rdy.x * fdx) / rdet;
@@ -6607,25 +6630,17 @@ bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
 
 // Bilinear over the seabed's cells with wall cells (WALL_DEPTH, outside a surface_mesh footprint) read as dry
 // ground a metre above the water, so a wall does not drag its neighbours ten kilometres down.
-float PhysXWaterSurface3D::sample_depth(Vector3 p_world_pos) const {
-	const float rest_y = get_global_position().y + water_level;
-	float h = sample_height(p_world_pos);
-	if (!Math::is_finite(h)) {
-		h = rest_y;
-	}
-	const float rise = h - rest_y;
+float PhysXWaterSurface3D::_rest_depth_at(float p_rel_x, float p_rel_z) const {
 	const int n = grid_resolution;
 	if (cell_depth.is_empty() || cell_depth.size() != n * n) {
-		return depth + rise;
+		return depth;
 	}
-	const float rel_x = p_world_pos.x - grid_center.x;
-	const float rel_z = p_world_pos.z - grid_center.y;
-	const bool outside = Math::abs(rel_x) > 0.5f * active_domain_size.x || Math::abs(rel_z) > 0.5f * active_domain_size.y;
+	const bool outside = Math::abs(p_rel_x) > 0.5f * active_domain_size.x || Math::abs(p_rel_z) > 0.5f * active_domain_size.y;
 	if (outside && open_sea_beyond && _open_beyond()) {
-		return depth + rise;
+		return depth;
 	}
-	const float gx = (rel_x / active_domain_size.x + 0.5f) * n - 0.5f;
-	const float gz = (rel_z / active_domain_size.y + 0.5f) * n - 0.5f;
+	const float gx = (p_rel_x / active_domain_size.x + 0.5f) * n - 0.5f;
+	const float gz = (p_rel_z / active_domain_size.y + 0.5f) * n - 0.5f;
 	const int x0 = CLAMP((int)Math::floor(gx), 0, n - 1);
 	const int z0 = CLAMP((int)Math::floor(gz), 0, n - 1);
 	const int x1 = MIN(x0 + 1, n - 1);
@@ -6634,8 +6649,16 @@ float PhysXWaterSurface3D::sample_depth(Vector3 p_world_pos) const {
 	const float fz = CLAMP(gz - (float)z0, 0.0f, 1.0f);
 	const float *cd = cell_depth.ptr();
 	auto at = [cd, n](int p_x, int p_z) { const float v = cd[p_z * n + p_x]; return v <= 0.5f * WaterSolver::WALL_DEPTH ? -1.0f : v; };
-	const float d = Math::lerp(Math::lerp(at(x0, z0), at(x1, z0), fx), Math::lerp(at(x0, z1), at(x1, z1), fx), fz);
-	return d + rise;
+	return Math::lerp(Math::lerp(at(x0, z0), at(x1, z0), fx), Math::lerp(at(x0, z1), at(x1, z1), fx), fz);
+}
+
+float PhysXWaterSurface3D::sample_depth(Vector3 p_world_pos) const {
+	const float rest_y = get_global_position().y + water_level;
+	float h = sample_height(p_world_pos);
+	if (!Math::is_finite(h)) {
+		h = rest_y;
+	}
+	return _rest_depth_at(p_world_pos.x - grid_center.x, p_world_pos.z - grid_center.y) + (h - rest_y);
 }
 
 Vector2 PhysXWaterSurface3D::sample_swash(Vector3 p_world_pos) const {
@@ -6653,8 +6676,11 @@ Vector2 PhysXWaterSurface3D::sample_swash(Vector3 p_world_pos) const {
 	if (Math::abs(rel_x) > 0.5f * active_domain_size.x || Math::abs(rel_z) > 0.5f * active_domain_size.y) {
 		return Vector2();
 	}
-	return Vector2(MAX(_bilinear_sample(run_up, n, active_domain_size, rel_x, rel_z), 0.0f),
-			CLAMP(_bilinear_sample(wet, n, active_domain_size, rel_x, rel_z), 0.0f, 1.0f));
+	// The swash texture keeps the run-up's level (m above still water); the film is that level over the ground
+	// here (the ground stands -depth above still water), none past where the run-up reaches.
+	const float level = _bilinear_sample(run_up, n, active_domain_size, rel_x, rel_z);
+	const float ground = -_rest_depth_at(rel_x, rel_z);
+	return Vector2(ground > 0.0f ? MAX(level - ground, 0.0f) : 0.0f, CLAMP(_bilinear_sample(wet, n, active_domain_size, rel_x, rel_z), 0.0f, 1.0f));
 }
 
 Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {
