@@ -1405,11 +1405,25 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Cave mouth (Ford and Williams 2007): a passage opened along a bedding plane or a joint where the cliff foot
 		// cuts it; the roof bedding-flat or arched, the passage narrowing and turning a little as it goes in, so the
 		// back is out of sight; a hood of the wall over the entrance.
-		const float cave_w = (0.32f + 0.18f * rng.randf()) * a, cave_x = (rng.randf() - 0.5f) * 0.4f * a;
+		float cave_w = (0.32f + 0.18f * rng.randf()) * a, cave_x = (rng.randf() - 0.5f) * 0.4f * a;
 		const float cave_floor = z_lo + 0.06f * (z_hi - z_lo), cave_h = (0.38f + 0.2f * rng.randf()) * (z_hi - z_lo);
 		const bool cave_flat = rng.randf() < 0.5f; // a bedding-plane roof, else an arched one
-		const float cave_turn = (rng.randf() - 0.5f) * 0.8f; // how far the passage swings sideways per unit in
+		float cave_turn = (rng.randf() - 0.5f) * 0.8f; // how far the passage swings sideways per unit in
 		const float cave_skew = (rng.randf() - 0.5f) * 0.6f; // the opening leaning along a joint
+		if (family == FAMILY_CAVE_MOUTH) {
+			// The passage stays inside the block's full-thickness middle (the sides round back past 0.55 of the half
+			// span), so both walls and the floor's edges are rock, never a floor plate with a side open to the hill.
+			const float xm = 0.5f * (x_lo + x_hi), room = 0.3f * span;
+			// The widest the passage gets from its centre: 1.075 w with its wobble, plus 0.3 w of skew.
+			if (1.4f * cave_w > 0.8f * room) {
+				cave_w = 0.8f * room / 1.4f;
+			}
+			const float spare = MAX(room - 1.4f * cave_w, 0.0f);
+			cave_x = xm + CLAMP(cave_x, -0.5f * spare, 0.5f * spare);
+			const float d_end = 1.6f * c;
+			const float swing_max = MAX(spare - Math::abs(cave_x - xm), 0.0f);
+			cave_turn = CLAMP(cave_turn, -swing_max / (d_end * d_end), swing_max / (d_end * d_end));
+		}
 		float y_front = -1e9f;
 		if (family == FAMILY_CAVE_MOUTH) {
 			for (int z = 0; z < fine.nz; z++) {
@@ -1529,6 +1543,14 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						d -= 0.12f * c * Math::smoothstep(0.25f * c, 0.0f, into);
 						v = MAX(v, -d);
 						v += 0.06f * c * (rk_fbm(p * 1.8f, nseed + 163u, 3) - 0.5f);
+						// Inside, the walls are not smooth: the roof spalled along joints and beds into angular scars
+						// (breakdown, Ford and Williams 2007) and the walls dissolved into shallow hollows, rougher the
+						// further in, where no weather has rounded them.
+						const float inside = Math::smoothstep(0.0f, 0.35f * c, into) * Math::smoothstep(0.25f * c, 0.0f, Math::abs(d));
+						if (inside > 0.0f) {
+							const float scar = Math::abs(rk_fbm(p * 2.6f, nseed + 165u, 3) - 0.5f) * 2.0f; // creased: sharp edges
+							v += inside * c * (0.07f * (scar - 0.5f) + 0.05f * (rk_fbm(p * 5.0f, nseed + 166u, 2) - 0.5f));
+						}
 					} else if (family == FAMILY_GOBLIN) {
 						// Goblin (Entrada sandstone, Goblin Valley): a knob rounded by spheroidal weathering and sand blast,
 						// a bulbous head on a narrower neck over a flared foot, faint beds; no joint face left flat.
@@ -2281,6 +2303,9 @@ uniform float contact_height = 0.08;
 // grown with the stone's size), the ground's layer from the generator's geology, coloured as the landscape's layers.
 uniform bool ground_blend = false;
 uniform float ground_blend_height = 0.25;
+// Forms set into a terrain cliff (cave mouths): the rock keeps its own mottling, beds and marks but takes the
+// cliff's colour (ground_rock, the landscape's rock layer), so the block reads as part of the wall around it.
+uniform bool cliff_match = false;
 uniform vec3 ground_rock = vec3(0.107, 0.1, 0.089);
 uniform vec3 ground_scree = vec3(0.141, 0.133, 0.114);
 uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
@@ -2446,6 +2471,9 @@ void fragment() {
 	float bed_q = COLOR.b > 0.75 ? lp.x : (COLOR.b > 0.25 ? lp.z : lp.y);
 	float bands = 0.5 + 0.5 * sin(6.2831853 * (bed_q * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
 	col = mix(col, band_color, band_contrast * smoothstep(0.3, 0.9, bands));
+	if (cliff_match) {
+		col *= ground_rock / max(base_color, vec3(1e-3));
+	}
 	// Mineral maps at the stone's real size, in octave steps from its family's typical size (UV2.y), the steps
 	// the close-up shapes are carved at (RockGenerator.get_marks_metres_per_unit), so relief and colour share one map.
 	float mpu_marks = UV2.y > 0.0 ? UV2.y * exp2(round(log2(max(v_scale, 1e-4) / UV2.y))) : v_scale;

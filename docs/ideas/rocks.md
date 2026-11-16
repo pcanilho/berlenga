@@ -650,8 +650,25 @@ shared seams, and a chunk's level steps by one at most (Transvoxel-style transit
 nets gives one vertex per cell, which keeps the walls smooth. That suits path tracing: the triangles go in the BLAS
 like any mesh, so PT keeps the same detail as raster. Collision is a trimesh per chunk.
 
-**Joining the terrain**:
-- each cave mouth's `rock_cave` box is a key point, and the passage starts at its back face;
+**Joining the terrain** (the entrance patch). The portal block alone cannot do it, which the 16 Nov docs review
+showed:
+- the block stands proud of any wall gentler than its lean, so it reads as a card;
+- its colour differs from the cliff's;
+- setting it back into the hill leaves hole edges with nothing behind them.
+
+Paris 2021 carves the cave out of the terrain's own field: f = max(f_H, −f_K), with f_H = (p_z − h) / √(1 + λ²).
+Voxel Plugin entrances over a UE landscape work the same way. So, round each entrance:
+- a patch of about 15 m is meshed from that field with the same surface nets, so the cliff face, the opening and the
+  passage are one surface;
+- the landscape gets a hole over the patch's inner quads;
+- the patch's outer ring stays on the heightfield: vertices within one cell of the patch edge are snapped to
+  h(x, z), so the seam is exact;
+- the patch takes the landscape's own material (TerrainMaterial3D, triplanar on the steep parts), so the face matches
+  the cliff;
+- the portal block becomes an optional hood of fallen rock and is no longer the opening.
+
+The rest of the join:
+- each entrance is a key point, and its passage is the first segment of the network;
 - shafts that reach the ground add a TerrainGenerator3D hole (Landscape3D and Terrain3D both cut it);
 - vegetation and stones already skip holes.
 
@@ -669,3 +686,30 @@ default until the PC measures its cost):
    The network joins the cave mouths. Raster and PT frames inside.
 3. **Detail and sea caves**: speleothems, breakdown, sediment floors, sea caves and blowholes. Shafts open holes.
    Water handed to the water thread.
+
+### Caves stage 1: the network (16 Nov)
+
+CaveNetwork3D (modules/rocks) grows a network from an entrance (`find_entrances`, `add_cave`). The method is Paris et
+al. 2021, with these changes:
+- **Cost**: a water-table term (level travel near the table is cheap) and an incline term (sin 2θ, so travel is
+  level or vertical, rarely at 45 degrees). Without them the paths to sinks 130 m up hugged the hillside just under
+  the cover as one long inclined canyon. With them the network is a bedding-plane trunk near the spring, plus
+  shafts and canyons up to the sinks.
+- **Graph**: 20 nearest neighbours instead of 40 (at 7 m spacing the paths are as straight).
+- **Cover**: grows 0.08 m per metre in, up to 15 m more.
+
+On the bench world (1 to 1.2 km of passage each, 250 m reach):
+- 5,800 to 50,000 samples;
+- 0.2 to 1.8 s on one core (the sample count follows the height of the sinks above the entrance);
+- no passage under 1 m of rock.
+
+Bench: `--caves[=N]` draws the skeleton through the ground, coloured by passage type.
+
+Cave mouth review fixes (16 Nov, same commit):
+- the portal block takes the landscape's rock colour (`cliff_match`);
+- the passage is kept inside the block's full-thickness middle (it broke out of the side and left a floor plate);
+- the passage walls are rougher inside;
+- landscape hole quads are tested over the ground's full span across the quad, so a steep wall crossing the passage
+  is cut (`TerrainGenerator3D.is_hole_span`, also for Terrain3D vertices);
+- `cave_mouths` is off by default again: a block alone stands proud of gentle walls. The entrance patch in stage 2
+  replaces it as the opening.

@@ -30,6 +30,7 @@
 
 #include "register_types.h"
 
+#include "cave_network_3d.h"
 #include "rock_field_3d.h"
 #include "rock_generator.h"
 
@@ -42,6 +43,7 @@ void initialize_rocks_module(ModuleInitializationLevel p_level) {
 	}
 	GDREGISTER_CLASS(RockGenerator);
 	GDREGISTER_CLASS(RockField3D);
+	GDREGISTER_CLASS(CaveNetwork3D);
 	// The rock shader's ground blend reads the generator's geology map: declared so it compiles before a
 	// TerrainGenerator3D publishes it (rect width 0 = none), whichever module registers first.
 	const char *globals[2][2] = { { "terrain_geology_map", "sampler2D" }, { "terrain_geology_rect", "vec4" } };

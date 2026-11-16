@@ -719,6 +719,7 @@ public:
 	bool add_hole(const Transform3D &p_box);
 	void clear_holes();
 	bool is_hole(const Vector3 &p_global_position) const;
+	bool is_hole_span(real_t p_x, real_t p_z, real_t p_y0, real_t p_y1) const;
 	bool has_holes_in(const Rect2 &p_rect) const;
 	int get_hole_count() const { return int(holes.size()); }
 	TypedArray<Transform3D> get_holes() const;

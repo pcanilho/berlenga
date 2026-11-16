@@ -475,7 +475,43 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 		sink += CLAMP(ground - ring / 6.0f, real_t(0.0), height / 3.0f);
 	}
 	r_stone.basis = b.scaled(Vector3(s, s, s));
-	r_stone.position = Vector3(p_xz.x, ground - p_lib.bottom[v] * s - sink, p_xz.z);
+	real_t y = ground - p_lib.bottom[v] * s - sink;
+	// No daylight under the stone: the seat above uses the centre's ground and the unrotated bottom, so on a slope (or
+	// with the stone tilted) its downhill underside can stand off the ground. Take the stone's underside (its
+	// ellipsoid's lowest 15 % once rotated, sampled round it) and lower the stone until all of it meets the ground
+	// there; it never rises. Seating to the lowest support point is the contact rule of SpeedTree's and Megascans'
+	// scatter tools ("align to terrain, no gaps") and of rigid-body rest.
+	if (reach > 0.08f) {
+		static Vector3 dirs[48];
+		static bool dirs_made = false;
+		if (!dirs_made) { // a Fibonacci sphere, made once (the same on every thread)
+			for (int i = 0; i < 48; i++) {
+				const real_t yy = 1.0 - (real_t(i) + 0.5) * 2.0 / 48.0;
+				const real_t rr = Math::sqrt(MAX(real_t(1.0) - yy * yy, real_t(0.0)));
+				const real_t ph = real_t(i) * 2.39996323;
+				dirs[i] = Vector3(Math::cos(ph) * rr, yy, Math::sin(ph) * rr);
+			}
+			dirs_made = true;
+		}
+		Vector3 pts[48];
+		real_t lo = 1e9, hi = -1e9;
+		for (int i = 0; i < 48; i++) {
+			pts[i] = r_stone.basis.xform(dirs[i] * axes);
+			lo = MIN(lo, pts[i].y);
+			hi = MAX(hi, pts[i].y);
+		}
+		const real_t band = lo + 0.15 * (hi - lo);
+		const real_t floor_y = y - 0.35 * height; // a ledge or step under one side: lowered by at most a third of its height
+		for (int i = 0; i < 48; i++) {
+			if (pts[i].y <= band) {
+				// The ellipsoid's centre over the mesh origin, so that its bottom is the mesh's (about 0 for most stones).
+				const real_t centre = (p_lib.bottom[v] + axes.y) * s;
+				y = MIN(y, p_gen->get_height(Vector3(p_xz.x + pts[i].x, 0, p_xz.z + pts[i].z)) - pts[i].y - centre);
+			}
+		}
+		y = MAX(y, floor_y);
+	}
+	r_stone.position = Vector3(p_xz.x, y, p_xz.z);
 	r_stone.ground = ground;
 	r_stone.footprint = MAX(axes.x, axes.z) * s * 0.85f;
 }
@@ -1693,18 +1729,20 @@ void RockField3D::_free_cell(Cell &r_cell) {
 	r_cell.stones = 0;
 }
 
-Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type) {
-	if (Ref<ShaderMaterial> *m = materials.getptr(int(p_type))) {
+Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, bool p_cliff) {
+	const int mkey = int(p_type) + (p_cliff ? 1000 : 0);
+	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
 	}
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
+	m->set_shader_parameter("cliff_match", p_cliff);
 	m->set_shader_parameter("lichen_cover", lichen_cover);
 	m->set_shader_parameter("moss_cover", moss_cover);
 	_apply_ground(m);
 	if (TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
 		m->set_shader_parameter("sea_level", float(gen->get_sea_level())); // the shore zones of sea stones
 	}
-	materials.insert(int(p_type), m);
+	materials.insert(mkey, m);
 	return m;
 }
 
@@ -1806,7 +1844,7 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		cell.groups.push_back(grp);
 		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 		mmi->set_multimesh(mm);
-		mmi->set_material_override(_material(key_type(lk)));
+		mmi->set_material_override(_material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH));
 		mmi->set_visibility_range_end(vis);
 		mmi->set_visibility_range_end_margin(cs * 0.5);
 		add_child(mmi, false, INTERNAL_MODE_BACK);
@@ -2124,7 +2162,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 			mm->set_use_custom_data(true);
 			mm->set_mesh(lib->close[v]);
 			mmi->set_multimesh(mm);
-			mmi->set_material_override(_material(key_type(lk)));
+			mmi->set_material_override(_material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH));
 			mmi->set_meta("rock_close_up", true);
 			add_child(mmi, false, INTERNAL_MODE_BACK);
 			mmi->set_as_top_level(true);
@@ -2370,7 +2408,7 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	const Color cd = p_grp.custom[p_k];
 	// Its own copy of the rock material, with the stone's instance data (ground, film, scale, seed), so the copy
 	// shades exactly like the stone it replaces.
-	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library));
+	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library), key_family(p_grp.library) == RockGenerator::FAMILY_CAVE_MOUTH);
 	if (mat.is_valid()) {
 		mat = mat->duplicate();
 		mat->set_shader_parameter("rock_instance", Vector4(cd.r, cd.g, cd.b, cd.a));
@@ -2466,14 +2504,48 @@ void RockField3D::_terrain3d_hole(const Transform3D &p_box) {
 		lo = lo.min(Vector2(c.x, c.z));
 		hi = hi.max(Vector2(c.x, c.z));
 	}
-	const Transform3D inv = p_box.affine_inverse();
+	// Terrain3D's own heights where it has them (Terrain3DData.get_height), else the generator's. A vertex is a hole
+	// where the ground round it (half a spacing each way, so a steep wall's span) passes through the box.
+	const bool own = data->has_method("get_height");
+	auto height = [&](real_t p_x, real_t p_z) -> real_t {
+		if (own) {
+			const real_t h = data->call("get_height", Vector3(p_x, 0, p_z));
+			if (!Math::is_nan(h)) {
+				return h;
+			}
+		}
+		return gen->get_height(Vector3(p_x, 0, p_z));
+	};
 	int written = 0;
+	const Transform3D inv = p_box.affine_inverse();
 	for (real_t z = Math::floor(lo.y / step) * step; z <= hi.y; z += step) {
 		for (real_t x = Math::floor(lo.x / step) * step; x <= hi.x; x += step) {
-			const Vector3 p(x, gen->get_height(Vector3(x, 0, z)), z);
-			const Vector3 l = inv.xform(p);
-			if (Math::abs(l.x) <= 1.0f && Math::abs(l.y) <= 1.0f && Math::abs(l.z) <= 1.0f) {
-				data->call("set_control_hole", p, true);
+			real_t y0 = 1e30, y1 = -1e30;
+			for (int k = 0; k < 5; k++) {
+				const real_t hx = x + (k == 1 ? -0.5 : (k == 2 ? 0.5 : 0.0)) * step, hz = z + (k == 3 ? -0.5 : (k == 4 ? 0.5 : 0.0)) * step;
+				const real_t hy = height(hx, hz);
+				y0 = MIN(y0, hy);
+				y1 = MAX(y1, hy);
+			}
+			// The column from y0 to y1 against the box, in the box's unit frame (slab test).
+			const Vector3 a = inv.xform(Vector3(x, y0, z)), d = inv.xform(Vector3(x, y1, z)) - a;
+			real_t t0 = 0.0, t1 = 1.0;
+			for (int k = 0; k < 3 && t0 <= t1; k++) {
+				if (Math::abs(d[k]) < 1e-9f) {
+					if (Math::abs(a[k]) > 1.0f) {
+						t0 = 2.0;
+					}
+					continue;
+				}
+				real_t ta = (-1.0f - a[k]) / d[k], tb = (1.0f - a[k]) / d[k];
+				if (ta > tb) {
+					SWAP(ta, tb);
+				}
+				t0 = MAX(t0, ta);
+				t1 = MIN(t1, tb);
+			}
+			if (t0 <= t1) {
+				data->call("set_control_hole", Vector3(x, 0.5 * (y0 + y1), z), true);
 				written++;
 			}
 		}
