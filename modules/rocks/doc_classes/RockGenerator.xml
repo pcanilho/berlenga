@@ -150,7 +150,10 @@
 		<constant name="FAMILY_FIN" value="12" enum="Family">
 			A sandstone fin: a narrow wall of bedrock between two joints (x along it, z up), its top and ends rounded, an alcove at a weak bed near the foot and, in about half of them, an arch through it with a smooth, catenary-like head.
 		</constant>
-		<constant name="FAMILY_MAX" value="13" enum="Family">
+		<constant name="FAMILY_POTHOLE" value="13" enum="Family">
+			A slab of river bedrock (x down the flow) drilled with round, undercut potholes in a line, some breached into each other, the bed polished and fluted. The mesh meta [code]rock_potholes[/code] holds each pothole's floor and radius (x, y, z, r in the stone's frame).
+		</constant>
+		<constant name="FAMILY_MAX" value="14" enum="Family">
 			Number of families.
 		</constant>
 	</constants>

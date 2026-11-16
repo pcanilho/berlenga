@@ -461,3 +461,17 @@ arches, goblins, potholes, cave mouths.
 - Bench: `--rock=sandstone,fin --stand` (a fin, hoodoo or stack stood on end), `--form=fin`. Pavement on the steep test
   world is 0 to 2 patches, so the test counts it rather than requiring it.
 - Seen, not from this work: the test's cliff layer logs "Vector3 cannot be normalized" a few times.
+
+### Landforms step 2b: river potholes (16 Nov)
+
+- `FAMILY_POTHOLE`: a slab of stream bedrock (x down the flow) with 1 to 3 round, undercut, round-floored potholes in a
+  line, some breached into the next, spiral grinder grooves on the walls; the top fluted along the flow, the upstream
+  edge rounded over and the whole top rolling down into the bed so no cut edge shows. Mesh meta `rock_potholes`
+  (floor x, y, z, r) lets the field drop a rounded cobble (the grinder) into about 60% of the holes.
+- Placement (landform layer, from the river paths): reaches of slope 0.03 to 0.4, bedrock exposed (or slope over 0.08),
+  above the delta, one slab per 50 to 90 m, only where the bed within 40% of the slab stays within 0.5 m of its
+  plane and is level across (normal y over 0.92); the top at the highest ground under it, so it never sinks.
+- Bedrock that is the ground (pavement, pothole slabs) keeps the ground-blend band below its top, at the buried
+  edges: flush with the soil, the whole top was being painted as grass.
+- The bench's 8 m terrain grid turns most stream beds into V-gullies, so it places 0 to 2 slabs; finer terrain places
+  more.

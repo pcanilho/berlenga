@@ -72,6 +72,7 @@ public:
 		FAMILY_HOODOO, // a hoodoo: a beaded column of soft bedded rock (x up when stood on end) under a wider caprock
 		FAMILY_PAVEMENT, // limestone pavement: a flat slab of bedrock cut into clints by deep grykes, with pans
 		FAMILY_FIN, // sandstone fin: a narrow wall of bedrock between two joints, its top rounded, some holed by an arch
+		FAMILY_POTHOLE, // a slab of river bedrock drilled with potholes in a line down the flow, polished and fluted
 		FAMILY_MAX,
 	};
 

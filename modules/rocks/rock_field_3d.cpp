@@ -344,6 +344,7 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 			lib.axes.push_back(j.meta.get("rock_axes", Vector3(1, 0.5, 1)));
 			lib.bottom.push_back(j.meta.get("rock_bottom", -0.5));
 			lib.hulls.push_back(j.meta.get("rock_hull", PackedVector3Array()));
+			lib.potholes.push_back(j.meta.get("rock_potholes", PackedFloat32Array()));
 			// Cap samples: the mesh's vertices thinned to one per 0.06-unit voxel (normals averaged).
 			LocalVector<Vector3> cp, cn;
 			{
@@ -1236,6 +1237,102 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				_FORCE_INLINE_ bool operator()(const Site &p_a, const Site &p_b) const { return p_a.score > p_b.score; }
 			};
 			sites.sort_custom<ByScore>();
+			// Potholes: river reaches steep enough to scour to bedrock (bed shear past what the supply can armour), one slab
+			// of drilled bedrock down the thalweg every 50 to 90 m, its top flush with the bed, a grinder stone left in
+			// some of its holes.
+			_prepare_rivers();
+			for (const River &rv : rivers) {
+				if (!rv.bounds.grow(20.0).intersects(p_rect)) {
+					continue;
+				}
+				real_t run = rng.randf() * 60.0;
+				for (uint32_t i = 0; i + 1 < rv.points.size(); i++) {
+					const Vector3 pa = rv.points[i], pb = rv.points[i + 1];
+					const Vector2 d2(pb.x - pa.x, pb.z - pa.z);
+					const real_t len = d2.length();
+					if (len < 1e-3) {
+						continue;
+					}
+					run += len;
+					const float slope = float((pa.y - pb.y) / len);
+					const float w = 0.5f * (rv.widths[i] + rv.widths[i + 1]);
+					// Steep, not a fall; a channel wide enough to carry grinders (the width stands in for the flow).
+					if (run < 50.0 || slope < 0.03f || slope > 0.4f || w < 0.6f) {
+						continue;
+					}
+					const Vector2 at2 = Vector2(pa.x, pa.z).lerp(Vector2(pb.x, pb.z), rng.randf());
+					if (!p_rect.has_point(at2)) {
+						continue;
+					}
+					const Vector3 at(at2.x, 0, at2.y);
+					if (gen->get_height(at) < shore_top || gen->get_water_depth(at) > 0.5) {
+						continue; // the delta and the lake: sediment, not a scoured bed
+					}
+					if (gen->get_rock_exposure(at) < 0.3 && slope < 0.08f) {
+						continue; // a gravel bed: the bedrock is under it
+					}
+					run = -40.0 * rng.randf();
+					const RockGenerator::RockType type = _type_at(gen, Vector3(at.x, gen->get_height(at), at.z));
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_POTHOLE, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = pick_variant(lib);
+					const AABB box = lib->meshes[st.variant]->get_aabb();
+					st.scale = CLAMP(real_t(w) * 3.0, 3.0, 9.0) / MAX(real_t(box.size.z), real_t(0.5)); // across the bed and into its banks
+					const Vector3 fx = Vector3(d2.x, 0, d2.y) / len;
+					const Vector3 n = ground_normal(gen, at.x, at.z, 3.0);
+					const Vector3 fz = fx.cross(n).normalized();
+					const Vector3 fxx = n.cross(fz).normalized();
+					st.basis = Basis(fxx, n, fz).scaled_local(Vector3(st.scale, st.scale, st.scale));
+					// A bed wide and level enough across to hold the slab flush: a V-shaped gully (or a terrain grid too
+					// coarse to carve the channel) would bury its sides or leave it standing proud.
+					const real_t g = gen->get_height(at);
+					const real_t half_l = real_t(box.size.x) * st.scale * 0.4, half_w = real_t(box.size.z) * st.scale * 0.4;
+					real_t worst = 0.0, above = 0.0;
+					for (int ia = -1; ia <= 1; ia++) {
+						for (int ic = -1; ic <= 1; ic++) {
+							const Vector3 o = fxx * (real_t(ia) * half_l) + fz * (real_t(ic) * half_w);
+							const real_t r = gen->get_height(at + Vector3(o.x, 0, o.z)) - (g + o.y);
+							worst = MAX(worst, Math::abs(r));
+							above = MAX(above, r);
+						}
+					}
+					if (worst > 0.5 || n.y < 0.92) {
+						continue; // not on a channel wall either
+					}
+					const real_t top = g + above; // never under the ground: where the bed falls away it stands as a low step
+					st.position = Vector3(at.x, top + 0.03 - (box.position.y + box.size.y) * st.scale, at.z);
+					st.ground = g - 0.5; // it is the bed: the ground-blend band below its top, at the buried edges
+					r_stones.push_back(st);
+					// Grinders: a rounded cobble on the floor of most holes, a little smaller than the hole.
+					const PackedFloat32Array holes = lib->potholes[st.variant]; // a copy: the cobble library may be added below
+					const uint32_t ckey = _library_key(type, RockGenerator::FAMILY_COBBLE, 2);
+					Library *clib = holes.is_empty() ? nullptr : _ensure_library(ckey);
+					for (int h = 0; clib && h + 3 < holes.size(); h += 4) {
+						if (rng.randf() > 0.6f) {
+							continue;
+						}
+						const Vector3 hole_at = st.position + st.basis.xform(Vector3(holes[h], holes[h + 1], holes[h + 2]));
+						const real_t r = real_t(holes[h + 3]) * st.scale;
+						Stone gs;
+						gs.layer = p_layer;
+						gs.library = ckey;
+						gs.variant = pick_variant(clib);
+						const Vector3 cax = clib->axes[gs.variant];
+						gs.scale = r * (0.35 + 0.25 * rng.randf()) / MAX(real_t(cax.z), real_t(0.3));
+						gs.basis = Basis(st.basis.orthonormalized()) * Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
+						gs.basis = gs.basis.scaled_local(Vector3(gs.scale, gs.scale, gs.scale));
+						gs.position = hole_at + n * real_t(-clib->bottom[gs.variant] * gs.scale);
+						gs.ground = float(hole_at.y);
+						r_stones.push_back(gs);
+					}
+				}
+			}
 			LocalVector<Vector3> used;
 			int made = 0;
 			// Hoodoos gather in badland heads and amphitheatres, not on every steep soft slope: one cell in four has them.
@@ -1324,7 +1421,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 					const real_t g = gen->get_height(s.p);
 					st.position = Vector3(s.p.x, g + 0.15 - ax.y * st.scale, s.p.z);
-					st.ground = g;
+					st.ground = g - 0.4; // bedrock at the surface: the ground-blend band only at its buried edges
 					r_stones.push_back(st);
 				} else {
 					// Hoodoos: 3 to 9 columns in a row along a joint, 3 to 8 m apart, 4 to 20 m tall, the foot sunk in

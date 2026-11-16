@@ -13,7 +13,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -29,7 +29,7 @@ extends Node3D
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 const WORLD := 2048.0
 
@@ -749,9 +749,9 @@ func _test() -> void:
 	var kinds := {}
 	for s in rocks.get_stones(RockField3D.LAYER_LANDFORM, wr):
 		kinds[s["family"]] = int(kinds.get(s["family"], 0)) + 1
-	# Pavement wants flat bare limestone benches, which this steep test world nearly lacks (0 to 2 of them): it
-	# is counted, not required.
-	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_FIN), "landforms: %d hoodoos, %d fins, %d pavement patches" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_FIN, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0)])
+	# Pavement wants flat bare limestone benches and potholes level bedrock stream beds, which this steep, coarse
+	# test world nearly lacks: they are counted, not required.
+	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_FIN), "landforms: %d hoodoos, %d fins, %d pavement patches, %d pothole slabs" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_FIN, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0), kinds.get(RockGenerator.FAMILY_POTHOLE, 0)])
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var overlaps := 0
