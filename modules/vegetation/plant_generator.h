@@ -119,6 +119,11 @@ public:
 		PRESET_BUTTERBUR,
 		PRESET_RIVER_MOSS,
 		PRESET_LIVERWORT,
+		// Bog and moor plants (docs/ideas/vegetation.md, "Bog and moor plants").
+		PRESET_SPHAGNUM,
+		PRESET_COTTONGRASS,
+		PRESET_BOG_ASPHODEL,
+		PRESET_SUNDEW,
 		PRESET_MAX,
 	};
 
@@ -280,6 +285,10 @@ private:
 	void _build_butterbur();
 	void _build_river_moss();
 	void _build_liverwort();
+	// Bog plants (plant_bog.cpp); sphagnum hummocks are _build_moss().
+	void _build_cottongrass();
+	void _build_bog_asphodel();
+	void _build_sundew();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -456,6 +465,14 @@ public:
 		BANKS_MAX,
 	};
 	static TypedArray<Resource> make_banks(BankStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+
+	// Bog and moor plants (docs/ideas/vegetation.md, "Bog and moor plants").
+	enum BogStand {
+		BOG_BLANKET, // Upland blanket bog: hummocks with heather, cotton grass, asphodel in the lawns.
+		BOG_VALLEY, // Valley mire: wetter, green sphagnum lawns and hollows, more cotton grass.
+		BOG_MAX,
+	};
+	static TypedArray<Resource> make_bog(BogStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -463,3 +480,4 @@ VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);
 VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
 VARIANT_ENUM_CAST(PlantGenerator::BankStand);
+VARIANT_ENUM_CAST(PlantGenerator::BogStand);

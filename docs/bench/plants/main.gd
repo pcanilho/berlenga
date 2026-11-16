@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -345,6 +345,7 @@ func _checks() -> void:
 	_mushroom_checks()
 	_stone_checks()
 	_bank_checks()
+	_bog_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -435,6 +436,53 @@ func _bank_checks() -> void:
 		if s.stone_top and s.stone_top_water.x < 0.0 and s.follow_flow and s.water_depth_range.y > 0.5:
 			aquatic += 1
 	_check("river stones: an aquatic moss on the tops under the water, trailing downstream", aquatic == 1, aquatic)
+
+# Bog and moor plants (docs/ideas/vegetation.md): sizes from the floras, cotton grass in cotton
+# in July, the sets kept to wet, gentle ground with hummocks and hollows.
+func _bog_checks() -> void:
+	var P := PlantGenerator
+	var summer := {"forcing": 1000.0, "day_of_year": 190, "senescence": 0.0}
+	var sizes := {P.PRESET_SPHAGNUM: [0.05, 0.4, 1.1], P.PRESET_COTTONGRASS: [0.15, 0.7, 0.9], P.PRESET_BOG_ASPHODEL: [0.05, 0.45, 0.45], P.PRESET_SUNDEW: [0.003, 0.25, 0.12]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		g.season = summer
+		var ok := true
+		var info := []
+		for sd in 4:
+			g.seed = sd
+			var m := g.generate()
+			var bb := m.get_aabb()
+			ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 30000
+			info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 30k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	var cg := PlantGenerator.new()
+	cg.preset = P.PRESET_COTTONGRASS
+	cg.apply_preset_colors()
+	var cotton_july := 0
+	var cotton_april := 0
+	for sd in 4:
+		cg.seed = sd
+		cg.season = summer
+		cotton_july += _surface_tris(cg.generate(), "petal")
+		cg.season = {"forcing": 150.0, "day_of_year": 110, "senescence": 0.0}
+		cotton_april += _surface_tris(cg.generate(), "petal")
+	_check("cottongrass: white cotton heads in July, none while flowering in April", cotton_july > 500 and cotton_april < cotton_july / 4, [cotton_july, cotton_april])
+	for st in P.BOG_MAX:
+		var set := P.make_bog(st, 1, false)
+		var ok := set.size() >= 5
+		var hum := 0
+		var hol := 0
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("bog") and s.wetness_range.x >= 8.0 and s.slope_range.y <= 8.0
+			if s.patch_scale > 0.0:
+				if s.patch_invert:
+					hol += 1
+				else:
+					hum += 1
+		_check("bog set %d: wet, gentle ground; species on hummocks and in hollows" % st, ok and hum >= 1 and hol >= 1, [set.size(), hum, hol])
 
 func _surface_tris(m: Mesh, name: String) -> int:
 	for si in m.get_surface_count():

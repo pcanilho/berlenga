@@ -54,6 +54,16 @@
 				Returns the waterside plants for a stream, a lake or a waterfall's spray zone as [PlantSpecies], placed by their distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) in clonal patches: marsh marigold at the water's edge, butterbur colonies on stream banks, meadowsweet in the tall-herb band behind, and in spray ([constant PlantSpecies.RULE_SPRAY]) thallose liverworts on the wet ground. The plants of the stones in the water are in [method make_stones] with [constant STONES_RIVER]. They do not colour the far ground. Each species has the meta [code]banks[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the leaves' year.
 			</description>
 		</method>
+		<method name="make_bog" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.BogStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of a bog as [PlantSpecies]: sphagnum hummocks and lawns, cotton grass, bog asphodel and sundew, with heather on the hummocks of a blanket bog. They keep to wet, nearly level ground ([constant PlantSpecies.RULE_WETNESS], [constant PlantSpecies.RULE_SLOPE]) and share one patch noise per stand, the hummock species in its patches and the hollow species outside them ([member PlantSpecies.patch_invert]), so hummocks and hollows sort themselves. They do not colour the far ground. Each species has the meta [code]bog[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering, the cotton and the autumn colours.
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -339,7 +349,19 @@
 		<constant name="PRESET_LIVERWORT" value="54" enum="Preset">
 			Thallose liverwort ([i]Conocephalum conicum[/i]): glossy green ribbons 1 to 2 cm wide forking in two, lying in overlapping mats on wet rock and in waterfall spray.
 		</constant>
-		<constant name="PRESET_MAX" value="55" enum="Preset">
+		<constant name="PRESET_SPHAGNUM" value="55" enum="Preset">
+			Bog moss ([i]Sphagnum[/i]): a low hummock 40 to 90 cm across of tightly packed shoots, their star-shaped heads (capitula) making the surface. Ochre-green by default; [method make_bog] sets red and green kinds.
+		</constant>
+		<constant name="PRESET_COTTONGRASS" value="56" enum="Preset">
+			Common cotton grass ([i]Eriophorum angustifolium[/i]): narrow channelled leaves 15 to 35 cm, stems 20 to 50 cm with two to six nodding spikelets that flower dark in April and May, then hang as soft white cotton balls from late May into August.
+		</constant>
+		<constant name="PRESET_BOG_ASPHODEL" value="57" enum="Preset">
+			Bog asphodel ([i]Narthecium ossifragum[/i]): flat fans of curved iris-like leaves, spikes of yellow six-pointed stars in July and August, then deep orange capsules standing into winter.
+		</constant>
+		<constant name="PRESET_SUNDEW" value="58" enum="Preset">
+			Round-leaved sundew ([i]Drosera rotundifolia[/i]): a flat rosette 2 to 5 cm across of red, round leaves fringed with glandular hairs, each tipped with a glistening drop; small white flowers on a slender stem in July.
+		</constant>
+		<constant name="PRESET_MAX" value="59" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -398,6 +420,15 @@
 		</constant>
 		<constant name="BANKS_MAX" value="3" enum="BankStand">
 			Number of bank stand types.
+		</constant>
+		<constant name="BOG_BLANKET" value="0" enum="BogStand">
+			Upland blanket bog: red sphagnum hummocks with heather, ochre sphagnum lawns, cotton grass, bog asphodel and sundew in the hollows.
+		</constant>
+		<constant name="BOG_VALLEY" value="1" enum="BogStand">
+			Valley mire: green sphagnum in wet hollows, ochre on the hummocks, cotton grass throughout, bog asphodel, sundew and rush.
+		</constant>
+		<constant name="BOG_MAX" value="2" enum="BogStand">
+			Number of bog stand types.
 		</constant>
 	</constants>
 </class>

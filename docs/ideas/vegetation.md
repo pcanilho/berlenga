@@ -268,6 +268,38 @@ Put to Paulo as a card; nothing built yet.
 - **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
   instead of the colour bake; off by default until the PC measures cost.
 
+## Bog and moor plants (built 16 Nov)
+
+Picked by Paulo on 16 Nov (second of the round). Sources: Rydin and Jeglum, The Biology of
+Peatlands (2013) for the hummock and hollow pattern and the Sphagnum species by water table;
+Rodwell, British Plant Communities vol. 2 (M17 to M21 mires) for the sets; Stace, New Flora of
+the British Isles (2019) for sizes and flowering.
+
+- Four presets, real geometry (plant_bog.cpp): `PRESET_SPHAGNUM` (a low hummock 40 to 90 cm
+  across: a lumpy dome of packed shoots with 160 to 240 star-shaped capitula on it, 40% of them
+  at the edge), `PRESET_COTTONGRASS` (channelled leaves, two to six nodding spikelets that flower
+  dark in April and May, then hang as cotton balls into August), `PRESET_BOG_ASPHODEL` (flat
+  equitant fans, spikes of yellow six-tepal stars July and August, orange capsules into winter),
+  `PRESET_SUNDEW` (a flat rosette of red round blades, each with 16 rim and 7 inner tentacles
+  tipped by a glossy drop, roughness 0.08; white flowers in July).
+- Cotton heads: real heads are thousands of bristles 2 to 3 cm long, far too many to model, and
+  40 to 70 strips per head read as spiky starbursts. Each head is a white ovoid core (two domes,
+  1.2 to 1.7 cm radius) carrying the mass, with 40 to 55 short crinkled bristles breaking its
+  outline, so it reads as a soft ball close up and as a white dot far off.
+- Phenology in degree days over 5 C: cotton grass flowers 80 to 380, holds its cotton to 800;
+  bog asphodel 900 to 1350; sundew 800 to 1300.
+- `PlantGenerator.make_bog(BOG_BLANKET | BOG_VALLEY)`: all species on slopes under 8 degrees
+  (fade 3) where the wetness index is over 8 to 10 (fade 1.5). One patch noise per stand (scale
+  3 m, cover 0.4): hummock species in the patches, hollow species outside them
+  (`patch_invert`), so hummocks and hollows sort themselves without a new rule. Blanket: red
+  Sphagnum capillifolium hummocks with heather, ochre S. papillosum lawns, cotton grass, bog
+  asphodel and sundew in the hollows. Valley mire: green S. cuspidatum in the hollows, ochre on
+  the hummocks, cotton grass throughout, asphodel, sundew and rush.
+- Bench: plants bench size checks, cotton heads in July but none in April, the bog sets' rules
+  and hummock/hollow split.
+- Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
+  ground itself rather than sitting on it.
+
 ## Waterside and wet-stone plants (built 16 Nov)
 
 Picked by Paulo on 16 Nov (first of the round; the research is in "Next round candidates (16 Nov)").
