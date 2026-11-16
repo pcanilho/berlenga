@@ -363,6 +363,13 @@ uniform float caustics_ref_depth = 2.5;
 // Oliveira 2006; Tatarchuk 2006).
 uniform bool wave_shadows = true;
 varying float v_wave_through;
+// Crest glow (raster; the path tracer scatters through the crests itself): sunlight entering a wave's back and
+// leaving through its thin crest toward the viewer, turquoise against a low sun (Atlas, GDC 2019: k H <L,-V>^4
+// (0.5 - 0.5 L.N)^3). v_crest is the wave's height above still water at the vertex (m); wr_crest the single-
+// scattering colour times the open water's share, set in fragment() for light().
+uniform float crest_glow : hint_range(0.0, 4.0) = 1.0;
+varying float v_crest;
+varying vec3 wr_crest;
 #if !defined(RT) && !defined(UNDERWATER_FOG) && !defined(UNDERWATER_SURFACE) && !defined(BREAKER_LIP)
 uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -1432,6 +1439,7 @@ void vertex() {
 	v_rest_xz = world_pos.xz;
 	vec3 so = surface_offset(world_pos.xz);
 	VERTEX += so;
+	v_crest = so.y - water_level;
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
 		vec2 rg;
 		float rb;
@@ -1855,6 +1863,14 @@ void fragment() {
 	}
 	wr_sun_glint = sun_glint;
 	wr_sun_a2 = sun_a2;
+	{
+		// The light a crest passes on: the water's single-scattering albedo (what scatters of what it meets), over
+		// the open water only (foam and sand take their own light), stronger the higher the crest stands (its
+		// thin top lies further above the troughs that would hide it). Not in the swash or over the shallows' sand.
+		vec3 albedo = max(pathtraced_scattering, vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
+		float rise = smoothstep(0.0, 1.5, v_crest);
+		wr_crest = crest_glow * albedo * rise * (1.0 - foam) * water_a * inv_a0 * smoothstep(0.0, soft, shore) * (1.0 - v_lip);
+	}
 	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
 	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
 	float lit_w = clamp((foam * water_a + wet_a) * inv_a0, 0.0, 1.0);
@@ -1878,6 +1894,14 @@ void light() {
 	float through = LIGHT_IS_DIRECTIONAL ? v_wave_through : 1.0;
 	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * through * max(dot(NORMAL, LIGHT), 0.0) / PI;
 	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body * through, wr_sun_glint, wr_sun_a2);
+	if (LIGHT_IS_DIRECTIONAL && dot(wr_crest, vec3(1.0)) > 0.0) {
+		// Crest glow: looking toward the sun (<L,-V>^4: VIEW points at the camera, LIGHT at the sun) through a
+		// crest whose face turns from it ((0.5 - 0.5 L.N)^3). Not through v_wave_through: this light crossed the
+		// crest on purpose.
+		float toward = pow(max(dot(LIGHT, -VIEW), 0.0), 4.0);
+		float back = 0.5 - 0.5 * dot(LIGHT, NORMAL);
+		SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * wr_crest * (toward * back * back * back);
+	}
 }
 #endif
 )";
