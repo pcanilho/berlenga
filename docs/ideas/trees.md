@@ -1097,6 +1097,13 @@ mistletoe and brooms, which read from far.
   burrs 2.5-4.5 cm instead of 3.5-7 cm and the bark's furrows half closed rather than three
   quarters (the head had read as melted wax); coppice stool fissures and creases lighter.
 
+- **Round 3 (docs, the lying log at 40 cm)**: moss on lying wood gets modelled shoots, tufts of
+  four to seven tapered blades 0.6-2 cm long rising from the shell where the moss is thick
+  (about 0.36 tufts per square centimetre on stout wood; LOD 0 and the path tracer, as the
+  shell). Bare wood: fibres drawn in the shader, latewood ridges left by weathering, silver on
+  the ridges and brown in the grooves, and a peel edge from noise at three scales stretched
+  along the grain. Beech bark: lichen as lobed films, faint lenticels and folds.
+
 ### 5p. Bark stories (16 Nov; Paulo's third pick)
 
 What a living stem records of its life, each a few per stand, all modelled on the stem's own

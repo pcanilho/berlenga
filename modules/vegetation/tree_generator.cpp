@@ -2628,7 +2628,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float lx = u * cu, ly = v * cv;
 				const int ix = int(lx), iy = int(ly);
 				const float on = bark_hash(ix, iy, salt + 61u);
-				if (on > (p_kind == BARK_PAPERY ? 0.62f : 0.8f)) {
+				if (on > (p_kind == BARK_PAPERY ? 0.62f : 0.9f)) {
 					const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
 					const float len = p_kind == BARK_PAPERY ? 0.1f + 0.4f * bark_hash(ix, iy, salt + 65u) : 0.1f + 0.08f * on;
 					// Off the cell's middle both ways, so they do not line up in rows.
@@ -2636,9 +2636,10 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float dx = (lx - ix - cx) / len, dy = (ly - iy - cy) / (p_kind == BARK_PAPERY ? 0.18f : 0.1f);
 					const float m = 1.0f - Math::smoothstep(0.6f, 1.0f, dx * dx + dy * dy);
 					// Faint on beech: dashes darker than this read as a printed pattern up close.
-					const float lent = p_kind == BARK_PAPERY ? 0.18f : 0.92f;
+					const float lent = p_kind == BARK_PAPERY ? 0.18f : 0.95f;
 					a = a * Math::lerp(1.0f, lent, m);
-					height += m * 0.0004f;
+					// Flush on beech (a raised rim lit as a ring of dew drops at 40 cm).
+					height += m * (p_kind == BARK_PAPERY ? 0.0004f : 0.00005f);
 					r = Math::lerp(r, 0.97f, m);
 				}
 				if (p_kind == BARK_SMOOTH) {
@@ -2649,7 +2650,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float qx = u * wu_n, qy = v * wv_n;
 					const int jx = int(qx), jy = int(qy);
 					const float pick = bark_hash(jx, jy, salt + 91u);
-					if (pick > 0.55f) {
+					// Sparse and soft: dense regular folds read as a tiling hatch at 40 cm.
+					if (pick > 0.78f) {
 						const float cx = 0.5f + 0.4f * (bark_hash(jx, jy, salt + 93u) - 0.5f);
 						const float half = 0.25f + 0.35f * bark_hash(jx, jy, salt + 95u);
 						const float cy = 0.5f + 0.4f * (bark_hash(jx, jy, salt + 97u) - 0.5f);
@@ -2657,7 +2659,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 						const float dxw = (qx - jx - cx) / half;
 						const float dyw = (qy - jy - cy - 0.15f * dxw * dxw) / 0.09f;
 						const float m = (1.0f - Math::smoothstep(0.5f, 1.0f, Math::abs(dxw))) * (1.0f - Math::smoothstep(0.3f, 1.0f, Math::abs(dyw)));
-						a = a * Math::lerp(1.0f, 0.8f, m);
+						a = a * Math::lerp(1.0f, 0.9f, m);
 						height -= m * 0.0005f;
 					}
 				}
@@ -2698,14 +2700,14 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 						const int gu = 22, gv = 40;
 						const float gx = u * gu, gy = v * gv;
 						const int jx = int(gx), jy = int(gy);
-						if (bark_hash(jx, jy, salt + 121u) < 0.35f) {
+						if (bark_hash(jx, jy, salt + 121u) < 0.15f) {
 							const float cx = 0.3f + 0.4f * bark_hash(jx, jy, salt + 123u);
 							const float cy = 0.3f + 0.4f * bark_hash(jx, jy, salt + 127u);
 							const float ox = gx - jx - cx, oy = (gy - jy - cy);
 							const float len = 0.15f + 0.25f * bark_hash(jx, jy, salt + 129u);
 							const float wav = ox - 0.06f * Math::sin(oy * 11.0f + 6.0f * bark_hash(jx, jy, salt + 125u));
 							const float line = (1.0f - Math::smoothstep(0.02f, 0.05f, Math::abs(wav))) * (1.0f - Math::smoothstep(len - 0.08f, len, Math::abs(oy)));
-							a = a * Math::lerp(1.0f, 0.55f, line * script);
+							a = a * Math::lerp(1.0f, 0.72f, line * script);
 						}
 					}
 					// Green algal film (Desmococcus) in drifts, and silvery patches where the bark
@@ -6088,11 +6090,13 @@ Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) c
 				const float l = Math::angle_difference(p_az, w.az0 + w.twist * (p_s - w.s0) + 0.03f * (moss_noise(Vector3(p_s * 3.0f, 1.7f, salt), w.salt) - 0.5f) / MAX(p_r, 0.05f)) * p_r;
 				const float x = Math::abs(l);
 				// Two lips of callus either side of the split, each winter's growth (frost ribs).
-				const float wr = CLAMP(0.018f + 0.001f * w.age, 0.02f, 0.06f);
-				const float h = MIN(0.012f + 0.0012f * w.age, MIN(0.07f, 0.22f * p_r)) * e;
-				const float u = (x - 0.9f * wr) / (0.8f * wr);
-				off += h * Math::exp(-u * u) - 0.03f * e * (1.0f - Math::smoothstep(0.0f, 0.016f, x));
-				dark = MAX(dark, e * (1.0f - Math::smoothstep(0.004f, 0.02f, x)));
+				const float wr = CLAMP(0.03f + 0.0012f * w.age, 0.03f, 0.08f);
+				const float h = MIN(0.02f + 0.0015f * w.age, MIN(0.08f, 0.25f * p_r)) * e;
+				const float u = (x - 0.65f * wr) / (0.7f * wr);
+				// The split between them: a V a few centimetres deep (the bark's grid is 2 cm round a
+				// mature stem, so a narrower one would fall between its vertices).
+				off += h * Math::exp(-u * u) - (0.03f + 0.5f * h) * e * (1.0f - Math::smoothstep(0.0f, 0.03f, x));
+				dark = MAX(dark, e * (1.0f - Math::smoothstep(0.01f, 0.035f, x)));
 				continue;
 			}
 			case WOUND_DEER: {
@@ -6250,7 +6254,6 @@ void TreeGenerator::_grow_resin(Builder &r_resin) {
 					rr.push_back(rk);
 				}
 				_tube(r_resin, rp, rr, 6, 0.0f, col, nullptr, 0.0f, -1.0f, false);
-				stem_point(wound_pts, wound_arc, es - run, ea + 0.006f * Math::sin(wob + 9.0f) / MAX(r, 0.01f), 0.0f, out, axis);
 				const float se = es - run;
 				const Vector3 c = stem_point(wound_pts, wound_arc, se, ea + 0.006f * Math::sin(wob + 9.0f) / MAX(r, 0.01f), surf_at(se, ea) + 0.6f * rm * 1.4f, out, axis);
 				bead(c, out, axis, rm * 1.5f, col);
@@ -8301,18 +8304,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float keep = 1.0f;
 			if (f.x != 0.0f || f.y > 0.0f || f.z > 0.0f) {
 				if (moss_k > 0.0f) {
-					keep = 1.0f - Math::smoothstep(0.05f, 0.15f, _moss_at(vw[v], nw[v], moss_ground, moss_k));
+					// Only a cushion hides a wound: the faint green film at the moss weight's edge is on
+					// the wood as well (a strict cut there hid every wound low on a stand's stems).
+					keep = 1.0f - Math::smoothstep(0.3f, 0.5f, _moss_at(vw[v], nw[v], moss_ground, moss_k));
 				}
-				if (keep > 0.0f) {
+				// The relief is wood under the bark and keeps its shape under moss; bare wood and
+				// the crack's dark only show where the moss leaves the bark.
+				{
 					const float e = 0.004f;
 					const float fl = _wound_at(at.s, at.az + e / MAX(at.r, 0.01f), at.r).x;
 					const float fs = _wound_at(at.s + e, at.az, at.r).x;
 					const Vector3 tl = at.axis.cross(at.radial);
-					Vector3 n = nw[v] - (tl * ((fl - f.x) / e) + at.axis * ((fs - f.x) / e)) * keep;
+					Vector3 n = nw[v] - (tl * ((fl - f.x) / e) + at.axis * ((fs - f.x) / e));
 					if (n.length_squared() > 1e-8f) {
 						nw[v] = n.normalized();
 					}
-					vw[v] += at.radial * (f.x * keep);
+					vw[v] += at.radial * f.x;
 					if (tang) {
 						Vector3 t(tw[v * 4], tw[v * 4 + 1], tw[v * 4 + 2]);
 						t -= nw[v] * nw[v].dot(t);
@@ -8332,9 +8339,112 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const int is = CLAMP(int(at.s / 0.02f), 0, ns - 1);
 				const int ia = int((at.az + float(Math::PI)) / float(Math::TAU) * na) % na;
 				float &m = wound_surf[is * na + ia];
-				m = MAX(m, at.dist + f.x * keep);
+				m = MAX(m, at.dist + f.x);
 			}
 		}
+	};
+	// Moss shoots on lying wood (trees.md 5c): seen from a step away, the shell's texture blurs and
+	// its cushions are smooth domes, where a real carpet of Hypnum and Thuidium is a pile of
+	// leafy shoots a centimetre or two long, combed one way, lit at their tips and dark between.
+	// Modelled as tufts of tapered blades over the shell's shown faces, more where it is thick;
+	// LOD 0 and the path tracer only, as the shell.
+	auto moss_shoots = [&](const Vector4i &p_part, float p_r, uint32_t p_salt) {
+		RandomPCG mr;
+		mr.seed(uint64_t(seed) * 0x9e3779b9u + p_salt * 2654435761u + 0x73686f6fu);
+		LocalVector<int> tris;
+		for (int q = p_part.x; q + 2 < p_part.x + p_part.y; q += 3) {
+			tris.push_back(q);
+		}
+		if (tris.is_empty()) {
+			return;
+		}
+		Vector4i part;
+		moss.begin(part);
+		// Shoots per square metre: about one tuft per 2 cm square, thinner on thin wood.
+		const float density = 3600.0f * CLAMP(p_r / 0.12f, 0.4f, 1.0f);
+		const Vector3 comb = Vector3(0.3f, -1.0f, 0.2f).normalized(); // Shoots lean downhill a little.
+		for (int q : tris) {
+			const int i0 = moss.indices[q], i1 = moss.indices[q + 1], i2 = moss.indices[q + 2];
+			const Vector3 a = moss.verts[i0], b = moss.verts[i1], c = moss.verts[i2];
+			const Vector3 fn = (b - a).cross(c - a);
+			const float area = 0.5f * fn.length();
+			// Only over cushions: where all three corners stand above the bark the shell is thick.
+			const float tone = (moss.colors[i0].g + moss.colors[i1].g + moss.colors[i2].g) / 3.0f;
+			float want = area * density;
+			int n = int(want);
+			if (mr.randf() < want - n) {
+				n++;
+			}
+			for (int k = 0; k < n; k++) {
+				float u = mr.randf(), v = mr.randf();
+				if (u + v > 1.0f) {
+					u = 1.0f - u;
+					v = 1.0f - v;
+				}
+				const Vector3 p = a + (b - a) * u + (c - a) * v;
+				Vector3 nn = (moss.normals[i0] * (1.0f - u - v) + moss.normals[i1] * u + moss.normals[i2] * v).normalized();
+				// Only in the carpet: at its thin edge, over the bark, lone tufts read as stars.
+				const float mw = _moss_at(p, nn, moss_ground, moss_k);
+				if (mr.randf() > Math::smoothstep(0.3f, 0.6f, mw)) {
+					continue;
+				}
+				const Vector2 uv = moss.uvs[i0] * (1.0f - u - v) + moss.uvs[i1] * u + moss.uvs[i2] * v;
+				const Color base = moss.colors[i0].lerp(moss.colors[i1], u / MAX(u + v, 1e-4f)).lerp(moss.colors[i2], v);
+				Vector3 t1 = nn.cross(Math::abs(nn.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).normalized();
+				Vector3 t2 = nn.cross(t1);
+				const int blades = 4 + int(mr.randf() * 4.0f);
+				const float len = Math::lerp(0.006f, 0.016f, mr.randf()) * (0.8f + 3.0f * tone);
+				const float az0 = mr.randf() * float(Math::TAU);
+				// Each tuft's own shade: lit yellow-green tips, dark olive at the base.
+				const float sh = Math::lerp(0.8f, 1.25f, mr.randf());
+				const Color tip_c = Color(base.r * 1.6f * sh + 0.02f, base.g * 1.45f * sh + 0.02f, base.b * 0.9f * sh);
+				const Color root_c = Color(base.r * 0.55f, base.g * 0.6f, base.b * 0.55f);
+				for (int bl = 0; bl < blades; bl++) {
+					const float az = az0 + float(Math::TAU) * (float(bl) + 0.4f * mr.randf()) / blades;
+					// Shoots rise from the carpet and arch over, not spread flat as a star.
+					const float tilt = Math::lerp(0.2f, 0.75f, mr.randf());
+					Vector3 side = t1 * Math::cos(az) + t2 * Math::sin(az);
+					Vector3 dir = (nn * Math::cos(tilt) + side * Math::sin(tilt) + comb * 0.25f).normalized();
+					const float l = len * Math::lerp(0.7f, 1.15f, mr.randf());
+					const float w = Math::lerp(0.0012f, 0.0022f, mr.randf());
+					const Vector3 across = dir.cross(nn).normalized() * w;
+					// Bending over at the tip, away from the tuft.
+					const Vector3 mid = p + dir * (0.55f * l);
+					const Vector3 tip = mid + (dir * 0.6f + side * 0.5f - nn * 0.1f).normalized() * (0.45f * l);
+					Vector3 face = across.cross(dir).normalized();
+					if (face.dot(nn) < 0.0f) {
+						face = -face;
+					}
+					// Shaded as the cushion's surface, bent a little toward the blade's own face.
+					const Vector3 sn = (nn * 0.7f + face * 0.3f).normalized();
+					const int base_i = moss.verts.size();
+					const Vector3 vp[5] = { p - across, p + across, mid - across * 0.7f, mid + across * 0.7f, tip };
+					const Color vc[5] = { root_c, root_c, base.lerp(tip_c, 0.5f), base.lerp(tip_c, 0.5f), tip_c };
+					for (int j = 0; j < 5; j++) {
+						moss.verts.push_back(vp[j]);
+						moss.normals.push_back(sn);
+						moss.uvs.push_back(uv);
+						moss.colors.push_back(vc[j]);
+						moss.tangents.push_back(across.x / w);
+						moss.tangents.push_back(across.y / w);
+						moss.tangents.push_back(across.z / w);
+						moss.tangents.push_back(1.0f);
+					}
+					// Both faces (the moss material culls back faces); counter-clockwise from the
+					// front as the shell's, which is flipped with it.
+					static const int TRI[9] = { 0, 1, 2, 1, 3, 2, 2, 3, 4 };
+					for (int j = 0; j < 9; j += 3) {
+						moss.indices.push_back(base_i + TRI[j]);
+						moss.indices.push_back(base_i + TRI[j + 1]);
+						moss.indices.push_back(base_i + TRI[j + 2]);
+						moss.indices.push_back(base_i + TRI[j]);
+						moss.indices.push_back(base_i + TRI[j + 2]);
+						moss.indices.push_back(base_i + TRI[j + 1]);
+					}
+				}
+			}
+		}
+		moss.end(part, p_r);
 	};
 	// Stemflow and the films it feeds (trees.md 5o): smooth-barked trees funnel rain down their
 	// stems, beech above all (stemflow up to a fifth of the rain on a beech stand; Levia and Frost
@@ -10613,6 +10723,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						moss.part_size.resize(moss.part_size.size() - 1);
 						moss.part_role.resize(moss.part_role.size() - 1);
 					}
+					if (kept > 0 && (fallen || fallen_branch) && !rigged && r0 >= 0.03f) {
+						moss_shoots(Vector4i(part.x, kept, part.z, nv), r0, uint32_t(s));
+					}
 				}
 			}
 			cut_arc0 = 0.0f;
@@ -11518,8 +11631,13 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		if (bare_field > 0.0) {
 			// The edge wanders with the bark's furrows and, on smooth bark with little relief,
 			// with a soft noise (the relief alone tore it into a jagged cut).
-			float edge_n = mix(bark_relief, texture(lichen_map, base_uv * vec2(1.1, 0.35) + vec2(0.31, 0.17)).g, 0.55);
-			bare_field += 0.3 * (0.5 - edge_n);
+			// At three scales, stretched along the grain (bark tears along it): a straight
+			// contour between the vertices read as a cut (docs, 16 Nov).
+			float e1 = texture(lichen_map, base_uv * vec2(1.1, 0.35) + vec2(0.31, 0.17)).g;
+			float e2 = texture(lichen_map, base_uv * vec2(5.0, 1.1) + vec2(0.71, 0.43)).r;
+			float e3 = texture(lichen_map, base_uv * vec2(17.0, 3.0) + vec2(0.13, 0.89)).g;
+			float edge_n = 0.35 * bark_relief + 0.3 * e1 + 0.22 * e2 + 0.13 * e3;
+			bare_field += 0.5 * (0.5 - edge_n);
 			bark_bare = smoothstep(0.47, 0.53, bare_field);
 		}
 		// Lichen: a colony covers the texels whose growth order is under the weight.
@@ -11563,9 +11681,10 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			float fw = fwidth(fx);
 			float fib = 0.5 + 0.5 * sin(6.2832 * fx);
 			fib = mix(fib, 0.5, smoothstep(0.25, 0.6, fw));
+			// Weathering eats the soft earlywood and leaves the latewood standing in ridges
+			// along the grain, uneven in width (no planed board's even bands).
 			float bx = base_uv.x * 38.0 + warp * 3.0;
-			float band = 0.5 + 0.5 * sin(6.2832 * bx + 2.0 * sin(6.2832 * bx * 0.37));
-			band = mix(band, 0.5, smoothstep(0.25, 0.6, fwidth(bx)));
+			float band = 0.6 * texture(lichen_map, vec2(base_uv.x * 9.0, base_uv.y * 0.25)).r + 0.4 * texture(lichen_map, vec2(base_uv.x * 31.0 + 0.4, base_uv.y * 0.6)).r;
 			// Rays: beech shows its broad rays on a split or peeled face as short dark spindles
 			// along the grain, a few millimetres long.
 			vec2 rq = vec2(base_uv.x * 140.0, base_uv.y * 26.0 + warp * 2.0);
@@ -11577,10 +11696,12 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			float grain = 0.55 * fib + 0.45 * band;
 			// Checks: thin dark splits along the grain, wavering with it, broken into lengths.
 			float wander = texture(lichen_map, vec2(base_uv.x * 0.7 + 0.53, base_uv.y * 0.02)).r;
-			float split = abs(fract(base_uv.x * 3.0 + 1.2 * wander) - 0.5);
+			float split = abs(fract(base_uv.x * 5.0 + 1.2 * wander) - 0.5);
 			float run = smoothstep(0.5, 0.65, texture(lichen_map, vec2(base_uv.x * 0.9 + 0.21, base_uv.y * 0.03)).r);
 			float checks = mix(1.0, smoothstep(0.01, 0.07, split), run);
-			vec3 wood = bark_wood_color * (0.78 + 0.34 * grain) * mix(0.35, 1.0, checks) * (1.0 - 0.3 * ray);
+			vec3 wood = bark_wood_color * (0.7 + 0.5 * grain) * mix(0.3, 1.0, checks) * (1.0 - 0.3 * ray);
+			// Silver-grey on the weathered ridges, brown in the grooves where it stays damp.
+			wood = mix(wood * vec3(0.92, 0.86, 0.78), wood * vec3(1.08, 1.08, 1.06), smoothstep(0.35, 0.7, band));
 			// Close up the long grain alone smeared into streaks (a texel stretched over a hand's
 			// length). Finer fibres; rot staining in patches; the black zone lines where rival
 			// fungi meet (spalting, beech above all); and bark beetles' galleries etched into the
@@ -11614,11 +11735,11 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// The wood's own relief: fibre ridges across u and the checks as grooves, as a tangent
 			// space normal from the pattern's slope (finite differences of the same samples).
 			float du = 0.004;
-			float split1 = abs(fract((base_uv.x + du) * 3.0 + 1.2 * wander) - 0.5);
+			float split1 = abs(fract((base_uv.x + du) * 5.0 + 1.2 * wander) - 0.5);
 			float c1 = mix(1.0, smoothstep(0.01, 0.07, split1), run);
 			float bx1 = bx + du * 38.0;
-			float band1 = mix(0.5 + 0.5 * sin(6.2832 * bx1 + 2.0 * sin(6.2832 * bx1 * 0.37)), 0.5, smoothstep(0.25, 0.6, fwidth(bx)));
-			float h0 = 0.3 * band + checks - 0.6 * gallery, h1 = 0.3 * band1 + c1 - 0.6 * gallery;
+			float band1 = 0.6 * texture(lichen_map, vec2((base_uv.x + du) * 9.0, base_uv.y * 0.25)).r + 0.4 * texture(lichen_map, vec2((base_uv.x + du) * 31.0 + 0.4, base_uv.y * 0.6)).r;
+			float h0 = 0.6 * band + checks - 0.6 * gallery, h1 = 0.6 * band1 + c1 - 0.6 * gallery;
 			// The fibres' own ridges from their analytic slope (they repeat faster than du).
 			float fib_n = 0.1 * cos(6.2832 * fx) * (1.0 - smoothstep(0.25, 0.6, fw));
 			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0 - fib_n, 0.0, 1.0), 0.5, 1.0);
