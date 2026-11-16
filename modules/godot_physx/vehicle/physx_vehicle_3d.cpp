@@ -45,8 +45,225 @@
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/curve.h"
 
+#include "modules/modules_enabled.gen.h" // For ground.
+
+#ifdef MODULE_GROUND_ENABLED
+#include "modules/ground/ground_surface_3d.h"
+#include "modules/ground/ground_terramechanics.h"
+#endif
+
+
+// Soft soil (docs/ideas/sand.md, stage 1): the wheels of a vehicle on a GroundSurface3D's soft material sink, print
+// a rut, and feel the soil (Bekker and Wong terramechanics, as Project Chrono's Soil Contact Model; see
+// modules/ground/ground_terramechanics.h). Two components in the vehicle's own sequence:
+// - SoilRoad, once a step after the road query: each wheel's road plane is lowered by its sinkage (static
+//   sinkage from its load and tyre, slip sinkage when it spins), and the rut is pressed into the field.
+//   The soil also sets the tyre's grip: its friction to the shear limit (Mohr-Coulomb, A c + W tan phi) and its
+//   longitudinal stiffness to the initial slope of the Janosi-Hanamoto curve, W tan phi L / (2 K), so the tyre
+//   model's own smooth force curve rises and saturates as the soil's does.
+// - SoilTire, in each substep after the tire model: the motion resistance (compaction and bulldozing of the soil
+//   not yet pressed) acts at the axle against the travel. A towed wheel's soil reaction passes through
+//   its axle (Wong 2008, sec. 2.4), so the resistance gives the wheel no spin torque: a driven wheel's net pull
+//   is its traction less the resistance, and a car whose resistance passes its traction digs in.
+struct PhysXVehicleSoilWheel {
+	float inflation = 200.0f; // kPa, from the wheel node
+	float sinkage = 0.0f; // m, smoothed
+	float already = 0.0f; // m, the rut already pressed ahead of the wheel
+	float resistance = 0.0f; // N, the last substep's
+	float traction = 0.0f; // N, the soil's limit at the last substep's slip
+	float base_long_stiff = -1.0f; // the tyre's own, restored off the soil
+	float spin_sum = 0.0f; // rad/s, summed over the step's substeps
+	int spin_n = 0;
+	float slip = 0.0f; // terramechanics slip, smoothed over a tenth of a second
+	bool soft = false;
+	bool printed = false;
+	Vector3 last_print;
+#ifdef MODULE_GROUND_ENABLED
+	GroundSoil soil;
+#endif
+};
+
+#ifdef MODULE_GROUND_ENABLED
+// The slip of terramechanics (Wong 2008, sec. 2.4), not the tyre model's: i = 1 - v / (omega r) driving, and
+// i = omega r / v - 1 skidding, so it stays within -1 and 1 at any speed (the tyre model's own slip runs to
+// thousands while a wheel spins up from rest). Below 3 m/s it is measured against 3 m/s, as the tyre model's
+// own is on soft soil (see SoilRoad): a wheel creeping under a load it cannot move is not spinning. p_spin: the wheel's
+// rotation speed averaged over the last step's substeps (at low speed it swings from one substep to the next;
+// PhysX's own note on PxVehicleWheelRigidBody1dState).
+static constexpr float SOIL_SLIP_SPEED = 3.0f;
+
+static float _soil_slip(const Vehicle4W &p_v, PxU32 p_i, float p_spin) {
+	const float wr = p_spin * p_v.wheelParams[p_i].radius;
+	const float vx = p_v.tireSpeedStates[p_i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
+	const float d = MAX(MAX(Math::abs(wr), Math::abs(vx)), SOIL_SLIP_SPEED);
+	return CLAMP((wr - vx) / d, -1.0f, 1.0f);
+}
+
+class PhysXVehicleSoilRoad : public PxVehicleComponent {
+public:
+	Vehicle4W *vehicle = nullptr;
+	PhysXVehicleSoilWheel *wheels = nullptr;
+	PxVehicleSimulationContext *context = nullptr;
+	float base_slip_denominator = -1.0f;
+
+	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
+		Vehicle4W &v = *vehicle;
+		GroundSurface3D *ground = GroundSurface3D::get_active();
+		if (base_slip_denominator < 0.0f) {
+			base_slip_denominator = context->tireSlipParams.minActiveLongSlipDenominator;
+		}
+		// The tyre model's slip divides by the forward speed, floored at 0.1 m/s while driven: at walking pace its
+		// force swings hard with the wheel's speed, and the wheel's explicit integration rings between full
+		// drive and full braking from one substep to the next (PhysX's own note on PxVehicleTireSlipParams:
+		// larger time steps need a larger floor). A car on firm ground is past that in a moment; one held slow by
+		// soft soil is not, so on soft soil the floor is 3 m/s and its stiffness is kept within what the substep
+		// integrates stably.
+		bool any_soft = false;
+		for (PxU32 i = 0; i < 4; i++) {
+			PhysXVehicleSoilWheel &sw = wheels[i];
+			PxVehicleRoadGeometryState &road = v.roadGeomStates[i];
+			if (sw.base_long_stiff < 0.0f) {
+				sw.base_long_stiff = v.tireForceParams[i].longStiff;
+			}
+			v.tireForceParams[i].longStiff = sw.base_long_stiff;
+			if (!ground || !road.hitState) {
+				sw.soft = false;
+				sw.printed = false;
+				sw.sinkage = 0.0f;
+				sw.slip = 0.0f;
+				sw.spin_sum = 0.0f;
+				sw.spin_n = 0;
+				continue;
+			}
+			const PxTransform pose = v.rigidBodyState.pose * v.wheelLocalPoses[i].localPose;
+			const PxVec3 n = road.plane.n;
+			const PxVec3 contact = pose.p - n * (n.dot(pose.p) + road.plane.d);
+			const Vector3 at((real_t)contact.x, (real_t)contact.y, (real_t)contact.z);
+			sw.soil = ground->get_soil(at);
+			sw.soft = sw.soil.soft;
+			if (!sw.soft) {
+				sw.printed = false;
+				sw.sinkage = 0.0f;
+				sw.slip = 0.0f;
+				sw.spin_sum = 0.0f;
+				sw.spin_n = 0;
+				continue;
+			}
+			const PxVehicleWheelParams &wp = v.wheelParams[i];
+			const float width = 2.0f * wp.halfWidth;
+			const float load = v.tireGripStates[i].load;
+			const float spin = sw.spin_n > 0 ? sw.spin_sum / sw.spin_n : v.wheelRigidBody1dStates[i].rotationSpeed;
+			sw.spin_sum = 0.0f;
+			sw.spin_n = 0;
+			sw.slip += (_soil_slip(v, i, spin) - sw.slip) * MIN(p_dt / 0.1f, 1.0f);
+			const float slip = sw.slip;
+			const PxVec3 lng = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLONGITUDINAL];
+			const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
+			const float v_lng = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
+			// The soil the wheel is about to press: just ahead of its contact.
+			const GroundWheelSoil probe = GroundTerramechanics::wheel(sw.soil, load, wp.radius, width, sw.inflation, slip, 0.0f, 0.0f);
+			const float ahead = (v_lng >= 0.0f ? 1.0f : -1.0f) * (0.5f * probe.contact_length + 0.05f);
+			const Vector3 front = at + Vector3(lng.x, lng.y, lng.z) * ahead;
+			sw.already = MAX(ground->get_dent_at(front) - ground->get_rim_at(front), 0.0f);
+			// A rut already there ahead (another wheel's, an earlier pass) takes the wheel down into it.
+			const float rut = MIN(ground->get_dent_at(front) - ground->get_rim_at(front), sw.soil.max_sinkage);
+			// The load's sinkage settles over a tenth of a second (the soil yields as the load comes). Slip
+			// sinkage is a steady state over fresh soil (Lyasko 2010): it builds over the travel of a contact
+			// length, and a wheel spinning in place digs in over seconds rather than at once. A skidding wheel
+			// ploughs at its static sinkage.
+			const float static_z = MAX(probe.static_sinkage, rut);
+			const float target = MAX(slip > 0.0f ? probe.sinkage : probe.static_sinkage, rut);
+			if (sw.sinkage < static_z) {
+				sw.sinkage += (static_z - sw.sinkage) * MIN(p_dt / 0.1f, 1.0f);
+			}
+			const float tau = MAX(0.1f, probe.contact_length / MAX(Math::abs(v_lng), 0.1f));
+			sw.sinkage += (target - sw.sinkage) * MIN(p_dt / tau, 1.0f);
+			road.plane.d += sw.sinkage;
+			// The grip of the soil: the tyre's peak force to its shear limit, its stiffness to Janosi-Hanamoto's.
+			if (load > 0.0f) {
+				const PxVehicleTireForceParams &tp = v.tireForceParams[i];
+				const float peak = MAX(MAX(tp.frictionVsSlip[0][1], tp.frictionVsSlip[1][1]), MAX(tp.frictionVsSlip[2][1], 0.05f));
+				road.friction = probe.shear_limit / load / peak;
+				const float slope = probe.shear_limit * probe.contact_length / (2.0f * MAX(sw.soil.shear_k, 1e-3f));
+				const float substep = p_dt / 3.0f;
+				const float stable = 1.5f * wp.moi * SOIL_SLIP_SPEED / (MAX(substep, 1e-4f) * wp.radius * wp.radius);
+				v.tireForceParams[i].longStiff = MIN(MIN(sw.base_long_stiff, slope), stable);
+			}
+			any_soft = true;
+			// The rut: the contact patch, stretched over the travel since the last print so a fast wheel
+			// leaves no gaps.
+			const PxVec3 omega_r = lng * (v.wheelRigidBody1dStates[i].rotationSpeed * wp.radius);
+			const PxVec3 slip_vel = lng * v_lng - omega_r;
+			const Vector3 travel = sw.printed ? at - sw.last_print : Vector3();
+			const float travel_len = travel.length();
+			const Vector3 center = sw.printed && travel_len < 2.0f ? at - travel * 0.5f : at;
+			const float length = MAX(probe.contact_length, sw.printed && travel_len < 2.0f ? travel_len + probe.contact_length : 0.0f);
+			const float yaw = Math::atan2(-lat.z, lat.x);
+			if (sw.sinkage > 0.002f) {
+				ground->press_wheel(center, Vector2(width, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z));
+			}
+			sw.last_print = at;
+			sw.printed = true;
+		}
+		context->tireSlipParams.minActiveLongSlipDenominator = any_soft ? MAX(base_slip_denominator, SOIL_SLIP_SPEED) : base_slip_denominator;
+		return true;
+	}
+};
+
+class PhysXVehicleSoilTire : public PxVehicleComponent {
+public:
+	Vehicle4W *vehicle = nullptr;
+	PhysXVehicleSoilWheel *wheels = nullptr;
+
+	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
+		Vehicle4W &v = *vehicle;
+		for (PxU32 i = 0; i < 4; i++) {
+			PhysXVehicleSoilWheel &sw = wheels[i];
+			sw.spin_sum += v.wheelRigidBody1dStates[i].rotationSpeed;
+			sw.spin_n++;
+			if (!sw.soft || !v.roadGeomStates[i].hitState) {
+				sw.resistance = 0.0f;
+				sw.traction = 0.0f;
+				continue;
+			}
+			const PxVehicleWheelParams &wp = v.wheelParams[i];
+			const float load = v.tireGripStates[i].load;
+			if (load <= 0.0f) {
+				continue;
+			}
+			const float slip = sw.slip;
+			const float slip_angle = v.tireSlipStates[i].slips[PxVehicleTireDirectionModes::eLATERAL];
+			const GroundWheelSoil ws = GroundTerramechanics::wheel(sw.soil, load, wp.radius, 2.0f * wp.halfWidth, sw.inflation, slip, slip_angle, sw.already);
+			PxVehicleTireForce &f = v.tireForces[i];
+			const PxVec3 lng = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLONGITUDINAL];
+			// The motion resistance, against the travel, through the axle; eased in over the first 0.3 m/s so a
+			// car at rest is not pushed back and forth.
+			const float v_lng = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
+			// At the wheel's actual sinkage (which builds over time), not the steady state of this slip.
+			const float width = 2.0f * wp.halfWidth;
+			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::bulldozing_resistance(sw.soil, width, sw.sinkage, sw.already);
+			const float r = resist * CLAMP(v_lng / 0.3f, -1.0f, 1.0f);
+			if (r != 0.0f) {
+				const PxVec3 dF = lng * -r;
+				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+				f.forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
+				f.torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
+			}
+			sw.resistance = Math::abs(r);
+			sw.traction = ws.traction;
+		}
+		return true;
+	}
+};
+#endif
+
 struct PhysXVehicle3D::Impl {
 	Vehicle4W vehicle;
+	PhysXVehicleSoilWheel soil_wheels[4];
+#ifdef MODULE_GROUND_ENABLED
+	PhysXVehicleSoilRoad soil_road;
+	PhysXVehicleSoilTire soil_tire;
+#endif
 	PxVehiclePhysXSimulationContext simulationContext;
 	PxScene *scene = nullptr;
 	PxReal sleep_threshold = 0.0f;
@@ -189,6 +406,19 @@ bool PhysXVehicle3D::_build() {
 	impl->time_before_sleep = (PxReal)space->get_time_before_sleep();
 	const PxTransform pose = to_px(get_global_transform());
 	// Made and added where the scene may be touched, and waited for (see GodotPhysXServer3D::run_on_physics_thread()).
+#ifdef MODULE_GROUND_ENABLED
+	impl->soil_road.vehicle = &impl->vehicle;
+	impl->soil_road.wheels = impl->soil_wheels;
+	impl->soil_road.context = &impl->simulationContext;
+	impl->soil_road.base_slip_denominator = -1.0f;
+	impl->soil_tire.vehicle = &impl->vehicle;
+	impl->soil_tire.wheels = impl->soil_wheels;
+	impl->vehicle.soil_road_component = soft_soil ? &impl->soil_road : nullptr;
+	impl->vehicle.soil_tire_component = soft_soil ? &impl->soil_tire : nullptr;
+#endif
+	for (PhysXVehicleSoilWheel &sw : impl->soil_wheels) {
+		sw = PhysXVehicleSoilWheel();
+	}
 	GodotPhysXServer3D::run_on_physics_thread([&]() {
 		if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext, impl->wheel_order)) {
 			return;
@@ -269,6 +499,9 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			_engine_controls();
+			for (uint32_t i = 0; i < 4; i++) {
+				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
+			}
 			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
 			// v.rigidBodyState.pose is CoM-relative, not the actor's real
 			// origin (confirmed directly by comparing it against a raw
@@ -353,6 +586,51 @@ real_t PhysXVehicle3D::get_wheel_jounce(int p_wheel) const {
 		}
 	}
 	return 0.0;
+}
+
+void PhysXVehicle3D::set_soft_soil(bool p_enabled) {
+	if (soft_soil == p_enabled) {
+		return;
+	}
+	soft_soil = p_enabled;
+	_rebuild_if_live();
+}
+
+int PhysXVehicle3D::_soil_slot(int p_wheel) const {
+	if (!impl->built || (uint32_t)p_wheel >= wheels.size()) {
+		return -1;
+	}
+	for (uint32_t i = 0; i < 4; i++) {
+		if (impl->wheel_order[i] == (uint32_t)p_wheel) {
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+real_t PhysXVehicle3D::get_wheel_sinkage(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].sinkage;
+}
+
+real_t PhysXVehicle3D::get_wheel_soil_resistance(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].resistance;
+}
+
+real_t PhysXVehicle3D::get_wheel_soil_traction(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].traction;
+}
+
+real_t PhysXVehicle3D::get_wheel_slip(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].slip;
+}
+
+bool PhysXVehicle3D::is_wheel_on_soft_soil(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i >= 0 && impl->soil_wheels[i].soft;
 }
 
 real_t PhysXVehicle3D::get_wheel_separation(int p_wheel) const {
@@ -621,6 +899,9 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_tire_force_point", "value"), &PhysXVehicle3D::set_tire_force_point);
 	ClassDB::bind_method(D_METHOD("get_tire_force_point"), &PhysXVehicle3D::get_tire_force_point);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_force_point", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_tire_force_point", "get_tire_force_point");
+	ClassDB::bind_method(D_METHOD("set_soft_soil", "enabled"), &PhysXVehicle3D::set_soft_soil);
+	ClassDB::bind_method(D_METHOD("is_soft_soil"), &PhysXVehicle3D::is_soft_soil);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "soft_soil"), "set_soft_soil", "is_soft_soil");
 
 	ClassDB::bind_method(D_METHOD("set_throttle", "value"), &PhysXVehicle3D::set_throttle);
 	ClassDB::bind_method(D_METHOD("get_throttle"), &PhysXVehicle3D::get_throttle);
@@ -654,6 +935,11 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &PhysXVehicle3D::get_forward_speed);
 	ClassDB::bind_method(D_METHOD("get_forward"), &PhysXVehicle3D::get_forward);
 	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &PhysXVehicle3D::get_wheel_jounce);
+	ClassDB::bind_method(D_METHOD("get_wheel_sinkage", "wheel"), &PhysXVehicle3D::get_wheel_sinkage);
+	ClassDB::bind_method(D_METHOD("get_wheel_soil_resistance", "wheel"), &PhysXVehicle3D::get_wheel_soil_resistance);
+	ClassDB::bind_method(D_METHOD("get_wheel_soil_traction", "wheel"), &PhysXVehicle3D::get_wheel_soil_traction);
+	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);
+	ClassDB::bind_method(D_METHOD("is_wheel_on_soft_soil", "wheel"), &PhysXVehicle3D::is_wheel_on_soft_soil);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);
 	ClassDB::bind_method(D_METHOD("get_actor_position"), &PhysXVehicle3D::get_actor_position);
 

@@ -38,6 +38,7 @@
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -67,6 +68,18 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	sand.max_dent = 0.3f;
 	sand.darken = Math::lerp(0.3f, 0.12f, m);
 	sand.gloss = Math::lerp(1.0f, 0.85f, m);
+	// Dry sand (Land Locomotion Lab): c 1.04 kPa, phi 28 deg, loose (K 2.5 cm); damp sand as packed LETE sand
+	// (c 1.3 kPa, phi 31.1 deg) and firm in shear (K 1 cm).
+	sand.cohesion = Math::lerp(1.04f, 1.3f, cohesion);
+	sand.tan_phi = Math::tan(Math::deg_to_rad(Math::lerp(28.0f, 31.1f, cohesion)));
+	sand.shear_k = Math::lerp(0.025f, 0.01f, cohesion);
+	sand.unit_weight = Math::lerp(15.7f, 17.5f, m);
+	// Under a tyre damp sand bears as packed sand does: LETE sand (Wong table 2.2: n 0.79, kc 102, kphi 5301);
+	// dry, the Land Locomotion Lab's dry sand, as the boot.
+	const float packed = Math::smoothstep(0.0f, 0.35f, m);
+	sand.wheel_n = Math::lerp(1.1f, 0.79f, packed);
+	sand.wheel_kc = lerp_log(0.99f, 102.0f, packed);
+	sand.wheel_kphi = lerp_log(1528.43f, 5301.0f, packed);
 	Cell soil;
 	soil.n = Math::lerp(0.7f, 1.0f, m);
 	soil.kc = Math::lerp(5.27f, 3.5f, m);
@@ -77,6 +90,14 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	soil.max_dent = Math::lerp(0.08f, 0.3f, m);
 	soil.darken = Math::lerp(0.3f, 0.15f, m);
 	soil.gloss = Math::lerp(1.0f, 0.6f, m);
+	// Sandy loam at 15% (c 1.72 kPa, phi 29 deg) to clayey soil at 38% (c 4.14 kPa, phi 13 deg), Wong table 2.2.
+	soil.cohesion = Math::lerp(1.72f, 4.14f, m);
+	soil.tan_phi = Math::tan(Math::deg_to_rad(Math::lerp(29.0f, 13.0f, m)));
+	soil.shear_k = 0.025f;
+	soil.unit_weight = Math::lerp(15.0f, 17.0f, m);
+	soil.wheel_n = soil.n;
+	soil.wheel_kc = soil.kc;
+	soil.wheel_kphi = soil.kphi;
 	const float s = CLAMP(p_sand, 0.0f, 1.0f);
 	Cell c;
 	c.n = Math::lerp(soil.n, sand.n, s);
@@ -88,6 +109,13 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	c.max_dent = Math::lerp(soil.max_dent, sand.max_dent, s);
 	c.darken = Math::lerp(soil.darken, sand.darken, s);
 	c.gloss = Math::lerp(soil.gloss, sand.gloss, s);
+	c.cohesion = Math::lerp(soil.cohesion, sand.cohesion, s);
+	c.tan_phi = Math::lerp(soil.tan_phi, sand.tan_phi, s);
+	c.shear_k = Math::lerp(soil.shear_k, sand.shear_k, s);
+	c.unit_weight = Math::lerp(soil.unit_weight, sand.unit_weight, s);
+	c.wheel_n = Math::lerp(soil.wheel_n, sand.wheel_n, s);
+	c.wheel_kc = lerp_log(soil.wheel_kc, sand.wheel_kc, s);
+	c.wheel_kphi = lerp_log(soil.wheel_kphi, sand.wheel_kphi, s);
 	c.sand = s;
 	// Leaf litter on top: compresses to a third under a boot, pushes little aside, and shows the darker
 	// soil where it is pressed through.
@@ -662,6 +690,7 @@ void GroundSurface3D::_notification(int p_what) {
 				field.stamp_sink = &gpu_sink;
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
 				field.stamp_sink = nullptr;
+				_plough_bodies();
 				age_accum += delta;
 				double age = 0.0;
 				if (age_accum >= 1.0) {
@@ -681,6 +710,7 @@ void GroundSurface3D::_notification(int p_what) {
 				const Cell &c = _cell_at(center.x, center.y);
 				field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
+				_plough_bodies();
 				auto ground_fn = [this](float x, float z) { return _ground_at(x, z); };
 				auto params_fn = [this](float x, float z, float &r_tan, float &r_rate, float &r_max) {
 					const Cell &cl = _cell_at(x, z);
@@ -706,6 +736,169 @@ void GroundSurface3D::_notification(int p_what) {
 			step_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 		} break;
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Soft soil (docs/ideas/sand.md, stage 1)
+
+GroundSoil GroundSurface3D::get_soil(Vector3 p_position) const {
+	GroundSoil soil;
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	if (!c.deformable || !field.valid || _edge_distance(p_position.x, p_position.z) < terrain_margin + skirt_fade) {
+		return soil;
+	}
+	soil.soft = true;
+	soil.n = c.wheel_n;
+	soil.kc = c.wheel_kc;
+	soil.kphi = c.wheel_kphi;
+	soil.cohesion = c.cohesion;
+	soil.tan_phi = c.tan_phi;
+	soil.shear_k = c.shear_k;
+	soil.unit_weight = c.unit_weight;
+	soil.tan_repose = c.tan_repose;
+	soil.max_sinkage = c.max_dent;
+	return soil;
+}
+
+GroundWheelSoil GroundSurface3D::wheel_soil(Vector3 p_position, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle) const {
+	const GroundSoil soil = get_soil(p_position);
+	const float already = MAX(field.dent_at(p_position.x, p_position.z) - field.rim_at(p_position.x, p_position.z), 0.0f);
+	return GroundTerramechanics::wheel(soil, p_load, p_radius, p_width, p_inflation, p_slip, p_slip_angle, already);
+}
+
+Dictionary GroundSurface3D::get_wheel_soil(Vector3 p_position, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle) const {
+	const GroundWheelSoil w = wheel_soil(p_position, p_load, p_radius, p_width, p_inflation, p_slip, p_slip_angle);
+	Dictionary d;
+	d["soft"] = w.soft;
+	d["static_sinkage"] = w.static_sinkage;
+	d["sinkage"] = w.sinkage;
+	d["contact_length"] = w.contact_length;
+	d["compaction"] = w.compaction;
+	d["bulldozing"] = w.bulldozing;
+	d["resistance"] = w.compaction + w.bulldozing;
+	d["shear_limit"] = w.shear_limit;
+	d["traction"] = w.traction;
+	d["lateral"] = w.lateral;
+	return d;
+}
+
+float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity) {
+	if (!field.valid || p_sinkage <= 0.0f || p_size.x <= 0.0f || p_size.y <= 0.0f) {
+		return 0.0f;
+	}
+	Columns cols;
+	cols.surface = this;
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
+	const Vector2 half = p_size * 0.5f;
+	const float radius = 0.5f * MAX(p_size.x, p_size.y);
+	const float bottom = _ground_at(p_position.x, p_position.z) - p_sinkage;
+	if (_gpu_on()) {
+		// The bodies' path: only the GPU field takes it (the CPU copy follows at the read back).
+		gpu_sink.stamp(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
+		return 0.0f;
+	}
+	return field.press(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
+}
+
+void GroundSurface3D::_plough_bodies() {
+	// A rigid body sliding or rolling through soft ground (a crate, a rock, a barrel) works the soil it moves
+	// into as a wheel does: compaction of its print's new depth and bulldozing of the soil before it (Bekker,
+	// Wong 2008), at the body's width, against its travel. It still rests on the undisturbed collider.
+	if (!field.valid || !ploughing) {
+		return;
+	}
+	Columns cols;
+	cols.surface = this;
+	HashSet<ObjectID> done;
+	for (const String &group : deform_groups) {
+		for (Node *node : get_tree()->get_nodes_in_group(StringName(group))) {
+			RigidBody3D *rb = Object::cast_to<RigidBody3D>(node);
+			if (!rb || rb->is_freeze_enabled() || rb->is_sleeping() || done.has(rb->get_instance_id())) {
+				continue;
+			}
+			done.insert(rb->get_instance_id());
+			const Vector3 v = rb->get_linear_velocity();
+			const Vector3 vh(v.x, 0.0f, v.z);
+			const float speed = vh.length();
+			if (speed < 1e-3f) {
+				continue;
+			}
+			GroundDeformField::Body b;
+			field.read_body(rb, character_mass, character_contact_area, b);
+			const Cell &c = _cell_at(b.center.x, b.center.z);
+			if (!c.deformable) {
+				continue;
+			}
+			// Only while it touches the ground: its underside within the sinkage of the surface.
+			const float sink = cols.sinkage(b);
+			const float under = b.center.y - b.half_height - _ground_at(b.center.x, b.center.z);
+			if (sink <= 0.0f || under > contact_tolerance + sink) {
+				continue;
+			}
+			GroundSoil soil = get_soil(b.center);
+			if (!soil.soft) {
+				continue;
+			}
+			// A plate's pressure-sinkage, as its print.
+			soil.n = c.n;
+			soil.kc = c.kc;
+			soil.kphi = c.kphi;
+			const Vector3 dir = vh / speed;
+			const Vector3 front = b.center + dir * (b.radius + 0.05f);
+			const float already = MAX(field.dent_at(front.x, front.z) - field.rim_at(front.x, front.z), 0.0f);
+			const float width = b.width > 0.0f ? b.width : 2.0f * b.radius;
+			const float resist = GroundTerramechanics::compaction_resistance(soil, width, sink, already) + GroundTerramechanics::bulldozing_resistance(soil, width, sink, already);
+			// Eased in over the first 0.3 m/s, and never more than stops it within the step.
+			const float step = (float)get_physics_process_delta_time();
+			const float stop = rb->get_mass() * speed / MAX(step, 1e-4f);
+			const float f = MIN(resist * MIN(speed / 0.3f, 1.0f), stop);
+			rb->apply_central_force(-dir * f);
+		}
+	}
+}
+
+Dictionary GroundSurface3D::get_footing_at(Vector3 p_position, float p_mass, float p_area) const {
+	Dictionary d;
+	const GroundSoil soil = get_soil(p_position);
+	float sink = 0.0f;
+	Vector3 slide;
+	if (soil.soft) {
+		Columns cols;
+		cols.surface = this;
+		GroundDeformField::Body b;
+		b.center = p_position;
+		b.mass = p_mass;
+		b.area = p_area;
+		sink = cols.sinkage(b);
+		// The surface's slope over a boot length; past what the disturbed material holds (its repose, less the
+		// few degrees between the angle at which a granular slope starts and stops flowing; Pouliquen 1999,
+		// "Scaling laws in granular flows down rough inclined planes"), the footing slides with the grains:
+		// Coulomb friction on the slope, a = g (sin t - cos t tan(repose - 3 deg)).
+		const float h = 0.15f;
+		const float gx = (get_surface_height_at(p_position + Vector3(h, 0, 0)) - get_surface_height_at(p_position - Vector3(h, 0, 0))) / (2.0f * h);
+		const float gz = (get_surface_height_at(p_position + Vector3(0, 0, h)) - get_surface_height_at(p_position - Vector3(0, 0, h))) / (2.0f * h);
+		const float grad = Math::sqrt(gx * gx + gz * gz);
+		const float theta = Math::atan(grad);
+		const float hold = MAX(Math::atan(soil.tan_repose) - Math::deg_to_rad(3.0f), 0.0f);
+		if (grad > 1e-4f && theta > hold) {
+			const float a = 9.81f * (Math::sin(theta) - Math::cos(theta) * Math::tan(hold));
+			// Down the slope, along the surface.
+			const Vector3 down = Vector3(-gx, -grad * grad, -gz).normalized();
+			slide = down * a;
+		}
+	}
+	// Lejeune, Willems and Heglund 1998, "Mechanics and energetics of human locomotion on sand" (J. Exp. Biol.
+	// 201): 1.6 to 2.5 times the work of firm ground. Fitted to the print depth: 2 cm (dry sand) costs 2.1
+	// times, damp sand (0.6 cm) 1.3, deep mud at most 2.65; at the same effort the stride slows by the same
+	// factor.
+	const float cost = 1.0f + 1.1f * MIN(sink / 0.02f, 1.5f);
+	d["soft"] = soil.soft;
+	d["sinkage"] = sink;
+	d["effort"] = cost;
+	d["speed_scale"] = 1.0f / cost;
+	d["slide"] = slide;
+	return d;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1218,6 +1411,11 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rain_smoothing", "rate"), &GroundSurface3D::set_rain_smoothing);
 	ClassDB::bind_method(D_METHOD("get_rain_smoothing"), &GroundSurface3D::get_rain_smoothing);
 
+	ClassDB::bind_method(D_METHOD("get_wheel_soil", "position", "load", "radius", "width", "inflation", "slip", "slip_angle"), &GroundSurface3D::get_wheel_soil, DEFVAL(200.0f), DEFVAL(0.0f), DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("press_wheel", "position", "size", "yaw", "sinkage", "velocity"), &GroundSurface3D::press_wheel, DEFVAL(Vector2()));
+	ClassDB::bind_method(D_METHOD("get_footing_at", "position", "mass", "area"), &GroundSurface3D::get_footing_at, DEFVAL(75.0f), DEFVAL(0.035f));
+	ClassDB::bind_method(D_METHOD("set_ploughing", "enabled"), &GroundSurface3D::set_ploughing);
+	ClassDB::bind_method(D_METHOD("is_ploughing"), &GroundSurface3D::is_ploughing);
 	ClassDB::bind_method(D_METHOD("set_gpu_simulation", "enabled"), &GroundSurface3D::set_gpu_simulation);
 	ClassDB::bind_method(D_METHOD("is_gpu_simulation"), &GroundSurface3D::is_gpu_simulation);
 	ClassDB::bind_method(D_METHOD("is_gpu_active"), &GroundSurface3D::is_gpu_active);
@@ -1257,6 +1455,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deform_resolution", PROPERTY_HINT_RANGE, "128,4096,64"), "set_deform_resolution", "get_deform_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_spacing", PROPERTY_HINT_RANGE, "0.05,4,0.05,suffix:m"), "set_ground_spacing", "get_ground_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "deform_groups"), "set_deform_groups", "get_deform_groups");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ploughing"), "set_ploughing", "is_ploughing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_tolerance", PROPERTY_HINT_RANGE, "0,0.2,0.001,suffix:m"), "set_contact_tolerance", "get_contact_tolerance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_mass", PROPERTY_HINT_RANGE, "0,500,0.5,suffix:kg"), "set_character_mass", "get_character_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_contact_area", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m²"), "set_character_contact_area", "get_character_contact_area");
