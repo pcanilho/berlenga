@@ -212,7 +212,11 @@ void WeatherMap3D::_allocate() {
 }
 
 float WeatherMap3D::_cloud_noise(Vector2 p_xz) const {
-	return WeatherClouds::cover_noise(p_xz, cloud_drift, cloud_scale);
+	return WeatherClouds::cover_noise(p_xz, cloud_drift, cloud_scale, _cloud_evolve());
+}
+
+float WeatherMap3D::_cloud_evolve() const {
+	return cloud_evolution && cloud_lifetime > 0.0f ? float(cloud_time / double(cloud_lifetime)) : -1.0f;
 }
 
 float WeatherMap3D::_storm_weight(const Storm &p_storm) const {
@@ -561,6 +565,7 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 	const float aloft = Math::log(1000.0f / z0) / Math::log(10.0f / z0);
 	const Vector2 steer = cur_wind_direction * cur_wind_speed * aloft;
 	cloud_drift += steer * float(p_weather_dt);
+	cloud_time += p_weather_dt;
 	for (int i = storms.size() - 1; i >= 0; i--) {
 		Storm &s = storms.write[i];
 		s.position += steer * float(p_weather_dt);
@@ -1294,6 +1299,22 @@ void WeatherMap3D::set_cloud_shape_scale(float p_scale) {
 	cloud_shape_scale = MAX(p_scale, 1.0f);
 }
 
+void WeatherMap3D::set_cloud_evolution(bool p_enabled) {
+	cloud_evolution = p_enabled;
+}
+
+void WeatherMap3D::set_cloud_lifetime(float p_seconds) {
+	cloud_lifetime = MAX(p_seconds, 0.0f);
+}
+
+void WeatherMap3D::set_cloud_churn(float p_speed) {
+	cloud_churn = MAX(p_speed, 0.0f);
+}
+
+void WeatherMap3D::set_cloud_time(double p_seconds) {
+	cloud_time = MAX(p_seconds, 0.0);
+}
+
 void WeatherMap3D::set_sun_light(const NodePath &p_path) {
 	if (sun_light == p_path) {
 		return;
@@ -1329,6 +1350,14 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.cover_scale = cloud_scale;
 	st.shape_scale = cloud_shape_scale;
 	st.drift = cloud_drift;
+	st.evolve = _cloud_evolve();
+	if (cloud_evolution) {
+		// The shape noise's second read slides against the first at cloud_churn (m/s, in its own texture's
+		// units), and the sky's finer detail noise rises at twice it; wrapped, since every noise tiles.
+		const double a = double(cloud_churn) * cloud_time / double(cloud_shape_scale);
+		st.shift = Vector2(float(Math::fmod(a * 0.618034 * 0.6, 1.0)), float(Math::fmod(a * 0.618034 * 0.8, 1.0)));
+		st.rise_detail = float(Math::fmod(a * 2.0 * 8.0, 1.0));
+	}
 	for (const Storm &s : storms) {
 		const float env = _storm_weight(s);
 		if (env <= 0.0f || st.storm_count >= WeatherClouds::MAX_STORMS) {
@@ -1800,6 +1829,14 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cloud_density"), &WeatherMap3D::get_cloud_density);
 	ClassDB::bind_method(D_METHOD("set_cloud_shape_scale", "scale"), &WeatherMap3D::set_cloud_shape_scale);
 	ClassDB::bind_method(D_METHOD("get_cloud_shape_scale"), &WeatherMap3D::get_cloud_shape_scale);
+	ClassDB::bind_method(D_METHOD("set_cloud_evolution", "enabled"), &WeatherMap3D::set_cloud_evolution);
+	ClassDB::bind_method(D_METHOD("get_cloud_evolution"), &WeatherMap3D::get_cloud_evolution);
+	ClassDB::bind_method(D_METHOD("set_cloud_lifetime", "seconds"), &WeatherMap3D::set_cloud_lifetime);
+	ClassDB::bind_method(D_METHOD("get_cloud_lifetime"), &WeatherMap3D::get_cloud_lifetime);
+	ClassDB::bind_method(D_METHOD("set_cloud_churn", "speed"), &WeatherMap3D::set_cloud_churn);
+	ClassDB::bind_method(D_METHOD("get_cloud_churn"), &WeatherMap3D::get_cloud_churn);
+	ClassDB::bind_method(D_METHOD("set_cloud_time", "seconds"), &WeatherMap3D::set_cloud_time);
+	ClassDB::bind_method(D_METHOD("get_cloud_time"), &WeatherMap3D::get_cloud_time);
 	ClassDB::bind_method(D_METHOD("set_sun_light", "path"), &WeatherMap3D::set_sun_light);
 	ClassDB::bind_method(D_METHOD("get_sun_light"), &WeatherMap3D::get_sun_light);
 	ClassDB::bind_method(D_METHOD("set_cloud_shadow_extent", "extent"), &WeatherMap3D::set_cloud_shadow_extent);
@@ -1868,6 +1905,9 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_thickness", PROPERTY_HINT_RANGE, "10,10000,1,or_greater,suffix:m"), "set_cloud_thickness", "get_cloud_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_cloud_density", "get_cloud_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shape_scale", PROPERTY_HINT_RANGE, "100,50000,1,or_greater,suffix:m"), "set_cloud_shape_scale", "get_cloud_shape_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cloud_evolution"), "set_cloud_evolution", "get_cloud_evolution");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_lifetime", PROPERTY_HINT_RANGE, "0,7200,1,or_greater,suffix:s"), "set_cloud_lifetime", "get_cloud_lifetime");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_churn", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m/s"), "set_cloud_churn", "get_cloud_churn");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");

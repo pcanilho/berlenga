@@ -120,6 +120,11 @@ private:
 	float cloud_thickness = 1500.0f; // m, of cumulus
 	float cloud_density = 1.0f;
 	float cloud_shape_scale = 3000.0f; // m, one tile of the shape noise
+	// Clouds that form and clear (step 3e).
+	bool cloud_evolution = true;
+	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
+	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
+	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
 	int cloud_shadow_resolution = 256;
@@ -309,6 +314,7 @@ private:
 	static float _sample_shadow(const Vector<float> &p_values, int p_res, float p_size, Vector3 p_axis_u, Vector3 p_axis_v, Vector2 p_corner, Vector3 p_position);
 	Vector2 _shadow_corner_now() const;
 	float _cloud_noise(Vector2 p_xz) const;
+	float _cloud_evolve() const;
 	float _storm_weight(const Storm &p_storm) const;
 	WeatherClouds::State _cloud_state() const;
 	void _start_shadow_bake();
@@ -421,6 +427,14 @@ public:
 	float get_cloud_density() const { return cloud_density; }
 	void set_cloud_shape_scale(float p_scale);
 	float get_cloud_shape_scale() const { return cloud_shape_scale; }
+	void set_cloud_evolution(bool p_enabled);
+	bool get_cloud_evolution() const { return cloud_evolution; }
+	void set_cloud_lifetime(float p_seconds);
+	float get_cloud_lifetime() const { return cloud_lifetime; }
+	void set_cloud_churn(float p_speed);
+	float get_cloud_churn() const { return cloud_churn; }
+	void set_cloud_time(double p_seconds);
+	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
 	NodePath get_sun_light() const { return sun_light; }
 	void set_cloud_shadow_extent(float p_extent);

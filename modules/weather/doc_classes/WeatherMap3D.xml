@@ -158,6 +158,12 @@
 				The last cloud shadow bake: the sun's transmittance over [member cloud_shadow_extent], in the plane of [member sun_light], sRGB encoded. The map gives it to that light as its projector.
 			</description>
 		</method>
+		<method name="get_cloud_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				Seconds of weather time the clouds have evolved for, with [member cloud_evolution] (see [method set_cloud_time]).
+			</description>
+		</method>
 		<method name="get_cloud_top_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -364,6 +370,13 @@
 				Removes the storm with this [param id].
 			</description>
 		</method>
+		<method name="set_cloud_time">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Sets how far the clouds have evolved (seconds of weather time), for a time-lapse or to start a scene on other clouds. The drift with the wind is separate and unchanged.
+			</description>
+		</method>
 		<method name="set_precipitation_extinction">
 			<return type="void" />
 			<param index="0" name="source" type="Object" />
@@ -422,8 +435,17 @@
 		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.4">
 			Cloud cover, 0 (clear) to 1 (overcast). With [member cloud_variation], it is how much of the sky is cloud, in patches.
 		</member>
+		<member name="cloud_churn" type="float" setter="set_cloud_churn" getter="get_cloud_churn" default="1.5">
+			How fast the cloud shapes change (m/s), with [member cloud_evolution]: the shape noise's two reads slide apart at this speed, so each cloud reshapes over a few minutes, and the edges' detail churns at twice it. The share of sky the clouds cover does not change with it.
+		</member>
 		<member name="cloud_density" type="float" setter="set_cloud_density" getter="get_cloud_density" default="1.0">
 			Scale on the clouds' extinction. At [code]1[/code], the measured values: about 0.04 per metre in stratus, up to 0.1 in cumulus (Frostbite, 2016).
+		</member>
+		<member name="cloud_evolution" type="bool" setter="set_cloud_evolution" getter="get_cloud_evolution" default="true">
+			If [code]true[/code], clouds form and clear over time and their tops climb, in the sky, in path traced frames and in the cloud shadows alike: the cover noise moves through time (each octave over [member cloud_lifetime], smaller ones faster) and the cloud shapes churn at [member cloud_churn]. If [code]false[/code], the clouds only slide with the wind.
+		</member>
+		<member name="cloud_lifetime" type="float" setter="set_cloud_lifetime" getter="get_cloud_lifetime" default="900.0">
+			Seconds of weather time over which the largest patches of cloud cover form and clear, with [member cloud_evolution]. Each finer octave of the cover noise turns over faster, by 2.03^(-2/3) per octave (Kolmogorov's l^(2/3)). [code]0[/code] keeps the cover fixed while the shapes still churn.
 		</member>
 		<member name="cloud_scale" type="float" setter="set_cloud_scale" getter="get_cloud_scale" default="6000.0">
 			Size of the cloud cover patches, in metres.

@@ -58,6 +58,12 @@ struct State {
 	float cover_scale = 6000.0f; // m, the cover noise (WeatherMap3D::cloud_scale)
 	float shape_scale = 3000.0f; // m, one tile of the shape noise
 	Vector2 drift; // m, how far the clouds have moved with the wind aloft
+	// Clouds that form and clear (step 3e): the cover noise's time in lifetimes (below 0: frozen), how far the
+	// shape noise's second read has slid against the first, and how far the sky's detail noise has risen
+	// (texture units, wrapped).
+	float evolve = -1.0f;
+	Vector2 shift;
+	float rise_detail = 0.0f;
 	int storm_count = 0;
 	float storms[MAX_STORMS][4] = {}; // x, z, radius of the cloud shield, cover times growth
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
@@ -68,8 +74,9 @@ struct State {
 // Cloud top over the base for a cloud type: stratus a quarter of the thickness, cumulus (0.7) all of
 // it, cumulonimbus towers (type above 0.8) up to five times.
 float top_height(const State &p_state, float p_type);
-// The weather map's cover noise: four octaves of hashed value noise over (p - drift) / scale, 0..1.
-float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale);
+// The weather map's cover noise: four octaves of hashed value noise over (p - drift) / scale, 0..1. With
+// p_evolve >= 0 (time in lifetimes) each octave moves on through time (clouds form and clear).
+float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
 // Cover and type at world x, z: the weather map's drifting noise plus storms.
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
 // Extinction (1/m) at a world point, base shape only (the sky adds detail erosion at the edges).
