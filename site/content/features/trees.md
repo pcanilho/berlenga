@@ -34,7 +34,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Surface roots: buttress roots spread from the trunk into the litter, with moss in the crotches between them.*
 
-- **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
+- **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark carries stemflow tracks, low algae and crust lichen.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
 - **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.
 
@@ -68,7 +68,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Old trees: a basal hollow with a rounded lip, a rot hole, a brush of epicormic shoots and the edge of a burl.*
 
-- **Deadwood** (`decay_class`, `fallen`, `bark_peel`, `uprooted`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Windthrown trees lie with their root plate on edge, holding soil, stones and torn roots, the butt held off the ground.
+- **Deadwood** (`decay_class`, `fallen`, `bark_peel`, `uprooted`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.
 
   ![An oak snag without and with bark peel, raster](media/trees-bark-peel.jpg)
 
