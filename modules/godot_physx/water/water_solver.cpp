@@ -1242,7 +1242,7 @@ void WaterSolverGPU::rt_on_swash(const PackedByteArray &p_data, Ref<WaterSolverG
 	_rt_store_swash(p_data.ptr(), p_data.size());
 }
 
-// (cache_mtx held.) Keeps g (wetness) of each cell.
+// (cache_mtx held.) Keeps r (run-up film) and g (wetness) of each cell.
 void WaterSolverGPU::_rt_store_swash(const uint8_t *p_data, int p_bytes) {
 	const int cells = grid_resolution * grid_resolution;
 	if (p_data == nullptr || p_bytes < cells * 4 * (int)sizeof(float)) {
@@ -1250,8 +1250,11 @@ void WaterSolverGPU::_rt_store_swash(const uint8_t *p_data, int p_bytes) {
 	}
 	const float *st = (const float *)p_data;
 	swash_wet_cache.resize(cells);
+	swash_run_cache.resize(cells);
 	float *w = swash_wet_cache.ptrw();
+	float *ru = swash_run_cache.ptrw();
 	for (int i = 0; i < cells; i++) {
+		ru[i] = st[i * 4 + 0];
 		w[i] = st[i * 4 + 1];
 	}
 	swash_wet_serial++;
@@ -1924,6 +1927,20 @@ bool WaterSolver::get_wetness_grid(Vector<float> &r_wet, int &r_n, uint64_t &r_s
 	r_wet = gpu->swash_wet_cache;
 	r_n = n;
 	r_serial = gpu->swash_wet_serial;
+	return true;
+}
+
+bool WaterSolver::get_run_up_grid(Vector<float> &r_run_up, int &r_n) const {
+	if (gpu.is_null()) {
+		return false;
+	}
+	MutexLock lock(gpu->cache_mtx);
+	const int n = settings.grid_resolution;
+	if (gpu->swash_run_cache.size() != n * n) {
+		return false;
+	}
+	r_run_up = gpu->swash_run_cache;
+	r_n = n;
 	return true;
 }
 

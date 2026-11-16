@@ -3192,3 +3192,16 @@ Cause: each hole's radius came from the nearest Voronoi cell only (Worley's F1 w
 wider than its cell was cut along the straight bisector to the next cell. Fix: every feature of the 3x3
 neighbourhood carves its own hole (the usual fix for per-cell radii; a radius under one cell keeps the 3x3 search
 exact), min'd together, with the edge wandered by lobe noise in proportion to the radius at all three scales.
+
+## Terrain holes and shore queries (16 Nov)
+
+Terrain holes (TerrainGenerator3D add_hole, cave mouths) leave the heightfield's collision open (NaN heights), so the
+sea's seabed rays fell through onto nothing and read the constant depth: open water showing through a hole above
+the waterline. `terrain_source` names the terrain: a ray that finds nothing where `is_hole()` is true takes the
+terrain's own height (`get_height`), and a static floor under the hole (a sea cave's, later) is used as it is. The
+seabed is measured again when `holes_changed` names a rectangle over the simulated square. Rivers and live water
+already treat a ray that finds nothing as dry.
+
+For the sand's shore coupling (ground stage 4): `sample_depth()` (the drawn surface over the measured seabed) and
+`sample_swash()` (the swash texture's run-up film and wet sand, read back every 8th step once asked for).
+Test: `docs/bench/water_surface/holes_test.gd` (-s).
