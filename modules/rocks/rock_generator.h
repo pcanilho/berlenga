@@ -113,6 +113,7 @@ private:
 	bool simplify = true;
 	bool close_up = false;
 	int fracture_pieces = 0;
+	real_t marks_scale = 0.0; // m per unit the close-up marks are carved at; 0: the family's
 
 	double last_build_msec = 0.0;
 	int last_triangles = 0;
@@ -147,6 +148,9 @@ public:
 	bool get_close_up() const { return close_up; }
 	void set_fracture_pieces(int p_pieces) { fracture_pieces = CLAMP(p_pieces, 0, 64); }
 	int get_fracture_pieces() const { return fracture_pieces; }
+	void set_marks_scale(real_t p_scale) { marks_scale = MAX(p_scale, real_t(0.0)); }
+	real_t get_marks_scale() const { return marks_scale; }
+	real_t get_marks_metres_per_unit() const;
 	// Metres per mesh unit of a typical rock of a family (half its b axis), for the millimetre relief.
 	static real_t get_family_metres_per_unit(Family p_family);
 

@@ -70,6 +70,9 @@
 		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
 			Builds distance levels of detail for the mesh.
 		</member>
+		<member name="marks_scale" type="float" setter="set_marks_scale" getter="get_marks_scale" default="0.0">
+			The size, in metres per unit, that the close-up marks (crystals, laminae, striae) and a fracture's break relief are carved at, snapped to whole octaves from the family's typical size. The shader lays out its mineral colours at the same step from each stone's real size, so relief and colour share one map and crystals stay within 41% of their real size. 0 uses the family's typical size. [RockField3D] sets it per close-up and fracture shape.
+		</member>
 		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="0">
 			Grid cells across the rock. [code]0[/code] uses the family's own resolution.
 		</member>

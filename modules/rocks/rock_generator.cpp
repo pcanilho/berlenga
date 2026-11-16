@@ -99,8 +99,19 @@ int RockGenerator::get_effective_resolution() const {
 	if (!close_up) {
 		return r;
 	}
-	const int want = int(2.4f * float(get_family_metres_per_unit(family)) / 0.003f);
+	const int want = int(2.4f * float(get_marks_metres_per_unit()) / 0.003f);
 	return CLAMP(want, r, 300);
+}
+
+// The size the marks are laid out at: marks_scale, else the family's typical size, snapped to the scale steps the
+// shader uses (octaves from the family's size), so a stone's crystals are within 41% of their real size (granites
+// differ more than that) and the carved relief and the shader's mineral colours stay on one map.
+real_t RockGenerator::get_marks_metres_per_unit() const {
+	const real_t fam = get_family_metres_per_unit(family);
+	if (marks_scale <= 0.0) {
+		return fam;
+	}
+	return fam * Math::pow(real_t(2.0), Math::round(Math::log2(marks_scale / fam)));
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
@@ -263,7 +274,7 @@ void rk_worley_point(const Vector3 &p_p, uint32_t p_seed, float &r_f1, float &r_
 }
 
 // The granite crystal map, shared with the shader (rk_crystal there, same hash and lattice): crystal cells of
-// 1.8 cm, quartz (30%) or feldspar by the cell's id; biotite clots on a 1.3 cm map of their own (12% of its cells).
+// 1.8 cm, quartz (30%) or feldspar by the cell's id; biotite clots on a 1.3 cm map of their own (7% of its cells).
 static const float RK_CRYSTAL_CELL = 0.018f;
 static const uint32_t RK_CRYSTAL_SEED = 0x51A7u;
 static const float RK_BIOTITE_CELL = 0.013f;
@@ -271,7 +282,7 @@ static const float RK_BIOTITE_CELL = 0.013f;
 static const float RK_LAMINA = 0.019f;
 static const uint32_t RK_LAMINA_SEED = 0x5A5Du;
 static const uint32_t RK_BIOTITE_SEED = 0xB10Bu;
-static const float RK_BIOTITE_SHARE = 0.12f;
+static const float RK_BIOTITE_SHARE = 0.07f; // biotite is 5 to 10% of a granite
 
 // Millimetre to decimetre relief of a rock surface, in metres, outward positive. p in metres in the stone's own
 // frame (the frame the shader sees), n the outward normal in that frame, fresh 1 on a fresh break, p_cell the
@@ -298,17 +309,18 @@ float rk_relief(RockGenerator::RockType p_type, const Vector3 &p, const Vector3 
 	if (p_type == RockGenerator::ROCK_GRANITE || p_type == RockGenerator::ROCK_BASALT || p_type == RockGenerator::ROCK_SANDSTONE) {
 		rk_worley_point(p / 0.06f, 0x3F1Au, f1, f2, id, fp);
 		const float u = float(id >> 8) / 16777216.0f;
-		const Vector3 tilt = Vector3(float((id >> 4) & 15u) - 7.5f, float((id >> 12) & 15u) - 7.5f, float((id >> 20) & 15u) - 7.5f) * 0.012f;
-		const float plate = -0.004f * u + tilt.dot(p - fp * 0.06f);
-		d += fit(0.06f) * old * MIN(plate, 0.0015f) * (0.5f + 0.5f * p_weather);
+		const Vector3 tilt = Vector3(float((id >> 4) & 15u) - 7.5f, float((id >> 12) & 15u) - 7.5f, float((id >> 20) & 15u) - 7.5f) * 0.016f;
+		// Deep enough to step the outline at a metre's distance (a 3 to 7 mm scar where a flake came away).
+		const float plate = -0.007f * u + tilt.dot(p - fp * 0.06f);
+		d += fit(0.06f) * old * MIN(plate, 0.002f) * (0.5f + 0.5f * p_weather);
 	}
 	switch (p_type) {
 		case RockGenerator::ROCK_GRANITE: {
 			rk_worley_point(p / RK_CRYSTAL_CELL, RK_CRYSTAL_SEED, f1, f2, id, fp);
 			const float u = float(id >> 8) / 16777216.0f;
 			// Each crystal a planar facet: its class height plus a small tilt about its centre (cleavage faces).
-			const Vector3 tilt = Vector3(float((id >> 2) & 15u) - 7.5f, float((id >> 10) & 15u) - 7.5f, float((id >> 18) & 15u) - 7.5f) * 0.022f;
-			float facet = u < 0.3f ? 0.0012f : 0.0003f; // quartz proud, feldspar lower (it kaolinises)
+			const Vector3 tilt = Vector3(float((id >> 2) & 15u) - 7.5f, float((id >> 10) & 15u) - 7.5f, float((id >> 18) & 15u) - 7.5f) * 0.03f;
+			float facet = u < 0.3f ? 0.0016f : 0.0003f; // quartz proud, feldspar lower (it kaolinises)
 			facet += tilt.dot(p - fp * RK_CRYSTAL_CELL);
 			d += fit(RK_CRYSTAL_CELL) * facet;
 			// Etched boundaries: a V groove along each grain edge.
@@ -321,7 +333,7 @@ float rk_relief(RockGenerator::RockType p_type, const Vector3 &p, const Vector3 
 				Vector3 bp;
 				rk_worley_point(p / RK_BIOTITE_CELL, RK_BIOTITE_SEED, b1, b2, bid, bp);
 				if (float(bid >> 8) / 16777216.0f < RK_BIOTITE_SHARE) {
-					d -= Math::smoothstep(1.1f * p_cell, 2.2f * p_cell, RK_BIOTITE_CELL) * 0.0022f * (0.5f + 0.5f * old) * Math::smoothstep(0.0f, 0.2f, b2 - b1);
+					d -= Math::smoothstep(1.1f * p_cell, 2.2f * p_cell, RK_BIOTITE_CELL) * 0.0012f * (0.4f + 0.6f * old) * Math::smoothstep(0.0f, 0.2f, b2 - b1);
 				}
 			}
 			// Grus pits: crystals plucked out of the rind, flat-bottomed, a few per decimetre.
@@ -387,12 +399,12 @@ float rk_relief(RockGenerator::RockType p_type, const Vector3 &p, const Vector3 
 		const float st = q - Math::floor(q);
 		// Steps are short: each riser runs a few centimetres and dies out (they branch from the fracture front).
 		const float run = Math::smoothstep(0.45f, 0.65f, rk_noise(p / 0.07f + Vector3(Math::floor(q) * 3.1f, 0, 0), 0x64u));
-		const float riser = (0.0015f + 0.002f * rk_lattice(int(Math::floor(q)), 1, 0, 0x62u)) * run;
+		const float riser = (0.003f + 0.003f * rk_lattice(int(Math::floor(q)), 1, 0, 0x62u)) * run;
 		d += fit(0.055f) * p_fresh * riser * (Math::smoothstep(0.0f, 0.08f, st) - st);
 		rk_worley2(p / 0.12f, 0x63u, f1, f2, id);
 		const float r = f1 * 0.12f;
 		const float ripple = Math::sin(r / 0.02f * float(Math::TAU)) * Math::exp(-r / 0.1f);
-		d += fit(0.02f) * p_fresh * 0.0008f * ripple;
+		d += fit(0.02f) * p_fresh * 0.0012f * ripple;
 	}
 	return d;
 }
@@ -1176,7 +1188,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		if (close_up) {
 			// In the stone's frame, in metres at the family's typical size: the same map the shader colours the
 			// minerals from (UV2.y carries the metres per unit).
-			const float mpu = float(get_family_metres_per_unit(family));
+			const float mpu = float(get_marks_metres_per_unit());
 			const float fr = CLAMP(fresh_grid.sample(p), 0.0f, 1.0f);
 			const float to_units = 1.0f / (mpu * scale); // metres to field units
 			phi -= rk_relief(rock_type, to_local(p) * mpu, dir_local(n), fr, h * scale * mpu, weather) * to_units * float(detail) * (0.5f + 0.5f * worn);
@@ -1186,7 +1198,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			if (close_up) {
 				// Up close, scratches about a millimetre deep, spaced unevenly, each running a few centimetres and
 				// fading (striae are discontinuous; Benn and Evans 2010).
-				const float mpu = float(get_family_metres_per_unit(family));
+				const float mpu = float(get_marks_metres_per_unit());
 				// Lanes at least eight cells apart so each groove is meshed, not aliased into a comb.
 				const float spacing = MAX(0.007f, 8.0f * h * mpu);
 				const float q = (striae_perp.dot(p) * mpu + 0.004f * rk_fbm(p * mpu / 0.05f, nseed + 61u, 2)) / spacing;
@@ -1334,11 +1346,13 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			solid_nodes += fine.v[i] < 0.0f ? 1 : 0;
 		}
 		const float spacing = Math::pow(float(solid_nodes) * h * h * h / float(fracture_pieces), 1.0f / 3.0f);
-		const float warp_amp = 0.22f * spacing, warp_freq = 1.6f / spacing;
+		// Gentle wander only: a fresh break is near planar at the scale of the piece (it runs along the stress), rough at
+		// the scale of the grains; the roughness comes from rk_relief below, not from bulging walls.
+		const float warp_amp = 0.09f * spacing, warp_freq = 1.3f / spacing;
 		const uint32_t fseed = rk_hash(uint32_t(seed) * 7919u + 0xF2AC);
 		auto warped = [&](const Vector3 &p_p) {
 			const Vector3 q = p_p * warp_freq;
-			const Vector3 w(rk_fbm(q, fseed + 1u, 4), rk_fbm(q, fseed + 2u, 4), rk_fbm(q, fseed + 3u, 4));
+			const Vector3 w(rk_fbm(q, fseed + 1u, 3), rk_fbm(q, fseed + 2u, 3), rk_fbm(q, fseed + 3u, 3));
 			return (p_p + w * warp_amp) * metric;
 		};
 		// Sites inside the solid, at least two cells in.
@@ -1462,27 +1476,59 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 			bmin = (bmin - Vector3i(2, 2, 2)).max(Vector3i(0, 0, 0));
 			bmax = (bmax + Vector3i(2, 2, 2)).min(Vector3i(fine.nx - 1, fine.ny - 1, fine.nz - 1));
+			// The piece on its own grid, finer than the stone's (cells of about 7 mm at the marks' size, at most 1.6
+			// times finer), so the break's grain-scale relief is meshed: granite breaks round and through its
+			// crystals, with hackle steps and conchoidal ripples (rk_relief with a fresh face). Both pieces of a wall
+			// read the same displaced wall, so they still fit.
+			const float mm = float(get_marks_metres_per_unit());
+			const float sub = CLAMP(h * scale * mm / 0.007f, 1.0f, 1.6f);
+			const float hp = h / sub;
 			RockGrid piece;
-			piece.h = h;
-			piece.nx = bmax.x - bmin.x + 1;
-			piece.ny = bmax.y - bmin.y + 1;
-			piece.nz = bmax.z - bmin.z + 1;
+			piece.h = hp;
 			piece.origin = fine.pos(bmin.x, bmin.y, bmin.z);
+			piece.nx = int(Math::ceil(float(bmax.x - bmin.x) * sub)) + 1;
+			piece.ny = int(Math::ceil(float(bmax.y - bmin.y) * sub)) + 1;
+			piece.nz = int(Math::ceil(float(bmax.z - bmin.z) * sub)) + 1;
 			piece.v.resize(piece.nx * piece.ny * piece.nz);
 			for (int z = 0; z < piece.nz; z++) {
 				for (int y = 0; y < piece.ny; y++) {
 					for (int x = 0; x < piece.nx; x++) {
-						const int i = fine.idx(x + bmin.x, y + bmin.y, z + bmin.z);
-						float cell = 3.0f * h; // another piece's
-						if (n1[i] == c) {
-							cell = -wall[i];
-						} else if (n2[i] == c) {
-							cell = MAX(wall[i], 1e-4f * h);
+						const Vector3 p = piece.pos(x, y, z);
+						float f = fine.sample(p);
+						if (f < 2.0f * h) {
+							const Vector3 wp = warped(p);
+							float d1 = 1e30f, d2 = 1e30f;
+							int a = 0, b = 0;
+							for (int k = 0; k < pieces; k++) {
+								const float d = wp.distance_squared_to(sites[k]);
+								if (d < d1) {
+									d2 = d1;
+									b = a;
+									d1 = d;
+									a = k;
+								} else if (d < d2) {
+									d2 = d;
+									b = k;
+								}
+							}
+							float cell = 3.0f * h; // another piece's
+							if (c == a || c == b) {
+								const float wall_d = (d2 - d1) / (2.0f * MAX(sites[a].distance_to(sites[b]), 1e-6f));
+								cell = c == a ? -wall_d : MAX(wall_d, 1e-4f * hp);
+								if (wall_d < 4.0f * h) {
+									const int other = c == a ? b : a;
+									const int lo_c = MIN(c, other), hi_c = MAX(c, other);
+									Vector3 nab = (sites[hi_c] - sites[lo_c]) / metric;
+									nab = nab.length_squared() > 1e-20f ? nab.normalized() : Vector3(0, 1, 0);
+									const float r = rk_relief(rock_type, to_local(p) * mm, dir_local(nab), 1.0f, hp * scale * mm, 0.0f) / (mm * scale);
+									cell -= c == lo_c ? r : -r;
+								}
+							}
+							f = MAX(f, cell);
 						}
-						float f = MAX(fine.v[i], cell);
 						// The margin closes the piece.
 						if (x == 0 || y == 0 || z == 0 || x == piece.nx - 1 || y == piece.ny - 1 || z == piece.nz - 1) {
-							f = MAX(f, 0.5f * h);
+							f = MAX(f, 0.5f * hp);
 						}
 						piece.v[piece.idx(x, y, z)] = f;
 					}
@@ -1728,9 +1774,12 @@ void fragment() {
 	col *= 0.9 + 0.2 * rk_noise3(vec3(seed));
 	float bands = 0.5 + 0.5 * sin(6.2831853 * (lp.y * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
 	col = mix(col, band_color, band_contrast * smoothstep(0.3, 0.9, bands));
-	if (lamina_map && UV2.y > 0.0) {
+	// Mineral maps at the stone's real size, in octave steps from its family's typical size (UV2.y), the steps
+	// the close-up shapes are carved at (RockGenerator.get_marks_metres_per_unit), so relief and colour share one map.
+	float mpu_marks = UV2.y > 0.0 ? UV2.y * exp2(round(log2(max(v_scale, 1e-4) / UV2.y))) : v_scale;
+	if (lamina_map) {
 		// The laminae the geometry carved: harder ones (standing out) paler and better cemented.
-		vec3 mg = lp * UV2.y;
+		vec3 mg = lp * mpu_marks;
 		float hard = rk_lattice_u(ivec3(int(floor(mg.y / 0.019)), 0, 0), 23133u);
 		col *= 0.88 + 0.24 * hard;
 	}
@@ -1743,22 +1792,28 @@ void fragment() {
 	float near_grain = 1.0 - smoothstep(0.5 * speck_size, 2.0 * speck_size, footprint);
 	float speck_mix = speck_share;
 	float crystal_gloss = 0.0;
+	vec3 facet = vec3(0.0); // crystal facet tilt, in the stone's frame
 	if (crystal_map) {
-		// In the stone's frame at its family's typical size (UV2.y metres per unit), as the geometry was carved.
-		vec3 mg = lp * (UV2.y > 0.0 ? UV2.y : v_scale);
+		// In the stone's frame at its own size (see mpu_marks), as the geometry was carved.
+		vec3 mg = lp * mpu_marks;
 		float near_crystal = 1.0 - smoothstep(0.006, 0.03, footprint);
 		float quartz = 0.3;
-		speck_mix = 0.12;
+		speck_mix = 0.07;
 		if (near_crystal > 0.0) {
 			vec2 c = rk_crystal(mg / 0.018, 20903u);
 			vec2 b = rk_crystal(mg / 0.013, 45323u);
 			float edge = smoothstep(0.0, 0.1, c.y);
-			float bio = step(b.x, 0.12) * smoothstep(0.0, 0.1, b.y);
+			float bio = step(b.x, 0.07) * smoothstep(0.0, 0.1, b.y);
 			float qz = step(c.x, 0.3);
-			speck_mix = mix(0.12, bio, near_crystal);
+			speck_mix = mix(0.07, bio, near_crystal);
 			quartz = mix(quartz, qz, near_crystal);
 			// Cleavage faces of feldspar and glassy quartz catch the light: smoother than the rind round them.
 			crystal_gloss = near_crystal * (qz * 0.6 + (1.0 - qz) * step(0.8, fract(c.x * 13.7)) * 0.5);
+			// Each crystal a facet at its own tilt (cleavage planes of feldspar, quartz grains), crisp at the cell
+			// borders: a broken face reads as grains, not a smooth surface. Stronger on fresh breaks, where the
+			// rind has not dulled them.
+			float fa = fract(c.x * 91.7) * 6.2831853, fb = fract(c.x * 37.3) * 2.0 - 1.0;
+			facet = vec3(cos(fa) * sqrt(1.0 - fb * fb), fb, sin(fa) * sqrt(1.0 - fb * fb)) * near_crystal * (0.12 + 0.2 * fresh) * (1.0 - bio);
 			// Feldspar: each crystal its own shade, the boundaries etched darker.
 			col *= mix(1.0, 0.9 + 0.2 * fract(c.x * 7.31), near_crystal);
 			col *= mix(1.0, 0.9 + 0.1 * edge, near_crystal);
@@ -1790,6 +1845,12 @@ void fragment() {
 				rk_noise3((mp + vec3(0, 0, e)) * 180.0) - rk_noise3((mp - vec3(0, 0, e)) * 180.0));
 		g -= wn * dot(g, wn);
 		wn = normalize(wn - g * grain_bump * grain_fade);
+	}
+
+	if (dot(facet, facet) > 0.0) {
+		vec3 fw = normalize((MODEL_MATRIX * vec4(facet, 0.0)).xyz) * length(facet);
+		fw -= wn * dot(fw, wn);
+		wn = normalize(wn + fw);
 	}
 
 	// Ground contact: soil splashed up and damp where the stone sits in it.
@@ -1901,6 +1962,8 @@ void RockGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_close_up"), &RockGenerator::get_close_up);
 	ClassDB::bind_method(D_METHOD("set_fracture_pieces", "pieces"), &RockGenerator::set_fracture_pieces);
 	ClassDB::bind_method(D_METHOD("get_fracture_pieces"), &RockGenerator::get_fracture_pieces);
+	ClassDB::bind_method(D_METHOD("set_marks_scale", "metres_per_unit"), &RockGenerator::set_marks_scale);
+	ClassDB::bind_method(D_METHOD("get_marks_scale"), &RockGenerator::get_marks_scale);
 	ClassDB::bind_method(D_METHOD("get_roundness"), &RockGenerator::get_roundness);
 	ClassDB::bind_method(D_METHOD("generate"), &RockGenerator::generate);
 	ClassDB::bind_method(D_METHOD("generate_library", "count"), &RockGenerator::generate_library);
@@ -1919,6 +1982,7 @@ void RockGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simplify"), "set_simplify", "get_simplify");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "close_up"), "set_close_up", "get_close_up");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "marks_scale", PROPERTY_HINT_RANGE, "0,10,0.001,or_greater,suffix:m"), "set_marks_scale", "get_marks_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "fracture_pieces", PROPERTY_HINT_RANGE, "0,64,1"), "set_fracture_pieces", "get_fracture_pieces");
 
 	BIND_ENUM_CONSTANT(ROCK_GRANITE);

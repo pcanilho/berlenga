@@ -314,11 +314,14 @@ func _break_near(spot: Vector3, land: Landscape3D) -> void:
 	if d > 0.0:
 		cam.position = _view_from(at, d)
 		cam.look_at(at)
+	var ticks := int(args["break"]) if args["break"] != "1" else 120
+	if ticks <= 0:
+		print("intact %.2f m stone at %s (before)" % [2.0 * sc, at])
+		return
 	breaking = true
 	var hit := at + Vector3(0, sc * 0.6, 0)
 	var node: Node = rocks.break_stone(hit, float(args.get("damage", "100")), 3.0 * sc)
 	print("broke a %.2f m stone at %s into %d pieces" % [2.0 * sc, at, node.get_piece_count() if node else 0])
-	var ticks := int(args["break"]) if args["break"] != "1" else 120
 	RenderingServer.render_loop_enabled = false
 	for i in ticks:
 		await get_tree().physics_frame

@@ -240,6 +240,17 @@ radius)` swaps the nearest stone for a destructible copy (its own material copy 
 are fractured ahead on a worker (`break_prepare_radius`). Granite rockfall: 10 pieces filling the stone to 1%, 29
 bonds, 88k triangles, 0.3 s per shape.
 
+Docs review of the break (16 Nov): the break faces showed the crystal map blown up to 5 to 10 cm, because the
+marks were laid out at the family's typical size and the stone (a scree-family block of 1.3 m) was four times that.
+Now the shader lays mineral maps out at the stone's real size in whole octaves from its family's size, and close-up
+and fracture shapes are made per octave (`marks_scale`), so relief and colour still share one map (crystals within
+41% of true size; granites vary more). Close-ups keep to stones within an octave of their family's size. Breaks
+are near planar walls (gentle warp) with rk_relief on them as fresh faces (granite facets, hackle risers of 3 to 6
+mm, conchoidal ripples) on a grid up to 1.6 times finer than the stone's; crystals get their own facet normal in the
+shader (Chermain et al. 2020 is the next step for glints). Biotite share 7%, its pits half as deep; flakes 3 to 7
+mm. Cost: fractured granite shape 138k triangles, 2.2 s on a worker; close-ups near the bench target 16 shapes,
+1.6M triangles, 47 MB (8 MB before, when every size shared one shape).
+
 ## Sources
 
 Domokos et al. PNAS 2020 (arXiv 1912.04628); Mitchell SIGGRAPH 1991 (best-candidate sampling); NVIDIA Blast SDK docs (NvBlastCreateAsset, bonds); SideFX RBD Material Fracture docs; Paris et al. Visual Computer 2020 (hal-02926218);

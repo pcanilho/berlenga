@@ -74,8 +74,19 @@ inline int key_bin(uint32_t p_key) {
 	return int((p_key >> 8) & 0xF);
 }
 
+// Close-up shapes per variant: one per octave of stone size round the family's typical size (odd count).
+constexpr int RF_MARK_BINS = 9;
+
 // River transport distances of the cobble roundness bins, in abrasion lengths.
 const float cobble_bins[3] = { 0.25f, 1.0f, 3.0f };
+
+// Close-up and fracture shapes are made per octave of stone size, so their marks are carved at the stone's
+// own size: the slot of stone k of a group (variant and size bin).
+int rf_mark_slot(uint32_t p_library, int p_variant, real_t p_scale) {
+	const real_t fam_mpu = RockGenerator::get_family_metres_per_unit(key_family(p_library));
+	const int bin = CLAMP(int(Math::round(Math::log2(MAX(p_scale, real_t(1e-4)) / fam_mpu))), -RF_MARK_BINS / 2, RF_MARK_BINS / 2);
+	return p_variant * RF_MARK_BINS + bin + RF_MARK_BINS / 2;
+}
 
 struct LibraryJob {
 	RockGenerator::RockType type;
@@ -85,6 +96,7 @@ struct LibraryJob {
 	float detail = 1.0f;
 	bool close_up = false;
 	int fracture = 0; // pieces to split it into (break_stone)
+	float marks_scale = 0.0f; // close-up: the size its marks are carved at
 	Ref<ImporterMesh> mesh;
 	Dictionary meta;
 };
@@ -101,6 +113,7 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_close_up(job.close_up);
 	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
 	g->set_fracture_pieces(job.fracture);
+	g->set_marks_scale(job.marks_scale);
 	job.mesh = g->build_importer_mesh(job.meta);
 }
 
@@ -262,10 +275,10 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 			lib.cap_points.push_back(std::move(cp));
 			lib.cap_normals.push_back(std::move(cn));
 		}
-		lib.close.resize(lib.meshes.size());
-		lib.close_state.resize(lib.meshes.size());
-		lib.close_used.resize(lib.meshes.size());
-		for (uint32_t v = 0; v < lib.meshes.size(); v++) {
+		lib.close.resize(lib.meshes.size() * RF_MARK_BINS);
+		lib.close_state.resize(lib.meshes.size() * RF_MARK_BINS);
+		lib.close_used.resize(lib.meshes.size() * RF_MARK_BINS);
+		for (uint32_t v = 0; v < lib.close.size(); v++) {
 			lib.close_state[v] = 0;
 			lib.close_used[v] = 0;
 		}
@@ -1407,7 +1420,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 		const bool cell_near = nearest.distance_to(Vector2(tp.x, tp.z)) < close_up_radius + 6.0f;
 		for (Group &grp : kv.value.groups) {
 			Library *lib = libraries.getptr(grp.library);
-			if (!lib || grp.variant >= int(lib->close.size())) {
+			if (!lib || (grp.variant + 1) * RF_MARK_BINS > int(lib->close.size())) {
 				continue;
 			}
 			// Cobbles and pebbles: the base grid already holds their fabric at millimetres.
@@ -1415,13 +1428,19 @@ void RockField3D::_update_close_up(bool p_wait) {
 			if (fam == RockGenerator::FAMILY_COBBLE || fam == RockGenerator::FAMILY_PEBBLE) {
 				continue;
 			}
-			const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
+			const real_t fam_mpu = RockGenerator::get_family_metres_per_unit(fam);
 			bool changed = false;
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
-				bool want = !grp.broken[k] && cell_near && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < close_up_radius;
+				// One close-up shape per octave of size: its marks are carved at the stone's own size.
+				const int slot = rf_mark_slot(grp.library, grp.variant, grp.custom[k].b);
+				const int bin = slot % RF_MARK_BINS - RF_MARK_BINS / 2;
+				const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(slot);
+				// Stones more than an octave off their family's size (scree toe blocks, the odd giant chip) keep the
+				// base shape: their close-up would be a shape of its own for one or two stones.
+				bool want = !grp.broken[k] && Math::abs(bin) <= 1 && cell_near && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < close_up_radius;
 				if (want) {
-					lib->close_used[grp.variant] = now;
-					if (lib->close_state[grp.variant] == 0 && building < 2) {
+					lib->close_used[slot] = now;
+					if (lib->close_state[slot] == 0 && building < 2) {
 						// Build it: one or two at a time, so the workers keep up with walking pace.
 						LibraryJob *job = memnew(LibraryJob);
 						job->type = key_type(grp.library);
@@ -1429,19 +1448,20 @@ void RockField3D::_update_close_up(bool p_wait) {
 						job->seed = seed * 1000 + grp.variant;
 						job->detail = float(detail);
 						job->close_up = true;
+						job->marks_scale = float(fam_mpu * Math::pow(real_t(2.0), real_t(bin)));
 						if (job->family == RockGenerator::FAMILY_COBBLE) {
 							job->transport = RockGenerator::get_lithology(job->type).abrasion_length * cobble_bins[CLAMP(key_bin(grp.library), 0, 2)];
 						}
 						CloseJob cj;
 						cj.library = grp.library;
-						cj.variant = grp.variant;
+						cj.variant = slot;
 						cj.job = job;
 						cj.task = WorkerThreadPool::get_singleton()->add_native_task(&close_job, job, false, "RockField3D close-up");
 						close_jobs.push_back(cj);
-						lib->close_state[grp.variant] = 1;
+						lib->close_state[slot] = 1;
 						building++;
 					}
-					want = lib->close_state[grp.variant] == 2;
+					want = lib->close_state[slot] == 2;
 				}
 				if (want != grp.near[k]) {
 					grp.near[k] = want;
@@ -1581,9 +1601,11 @@ void RockField3D::_start_fracture(uint64_t p_key) {
 	LibraryJob *job = memnew(LibraryJob);
 	job->type = key_type(lk);
 	job->family = key_family(lk);
-	job->seed = seed * 1000 + int(p_key & 0xFFFF);
+	const int slot = int(p_key & 0xFFFF);
+	job->seed = seed * 1000 + slot / RF_MARK_BINS;
 	job->detail = float(detail);
 	job->fracture = break_pieces;
+	job->marks_scale = float(RockGenerator::get_family_metres_per_unit(job->family) * Math::pow(real_t(2.0), real_t(slot % RF_MARK_BINS - RF_MARK_BINS / 2)));
 	if (job->family == RockGenerator::FAMILY_COBBLE) {
 		job->transport = RockGenerator::get_lithology(job->type).abrasion_length * cobble_bins[CLAMP(key_bin(lk), 0, 2)];
 	}
@@ -1670,12 +1692,12 @@ void RockField3D::_update_breakable() {
 			continue;
 		}
 		for (const Group &grp : kv.value.groups) {
-			const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
-			const Fracture *f = fractures.getptr(key);
-			if (f && f->state != 0) {
-				continue;
-			}
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
+				const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(rf_mark_slot(grp.library, grp.variant, grp.custom[k].b));
+				const Fracture *f = fractures.getptr(key);
+				if (f && f->state != 0) {
+					continue;
+				}
 				if (!grp.broken[k] && grp.shapes[k] && grp.xforms[k].origin.distance_to(tp) - grp.reach[k] < break_prepare_radius) {
 					_start_fracture(key);
 					building++;
@@ -1722,7 +1744,7 @@ Node *RockField3D::break_stone(const Vector3 &p_position, real_t p_damage, real_
 		return nullptr;
 	}
 	Group &grp = best_cell->groups[best_group];
-	const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(grp.variant);
+	const uint64_t key = (uint64_t(grp.library) << 16) | uint64_t(rf_mark_slot(grp.library, grp.variant, grp.custom[best_k].b));
 	_start_fracture(key);
 	if (!_finish_fracture(key, true)) {
 		return nullptr;
