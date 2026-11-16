@@ -1095,6 +1095,19 @@
    "topic": "Ground"
   },
   {
+   "name": "Soft ground",
+   "settings": [
+    "soft_soil",
+    "tire_pressure",
+    "ploughing"
+   ],
+   "note": "",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Terrain deformation",
    "settings": [
     "TerrainDeformer3D",
