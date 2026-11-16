@@ -810,8 +810,9 @@ void GroundSurface3D::_water_update(double p_delta) {
 				float d = 0.0f;
 				float film = 0.0f;
 				if (src->has_method(s_swash)) {
+					// The film only where the swash covers the sand now (its wetness at 1, dropping as it dries).
 					const Vector2 sw = src->call(s_swash, p);
-					film = MAX(sw.x, 0.0f);
+					film = sw.y > 0.95f ? MAX(sw.x, 0.0f) : 0.0f;
 				}
 				if (src->has_method(s_depth)) {
 					d = src->call(s_depth, p);
@@ -848,6 +849,8 @@ void GroundSurface3D::_water_update(double p_delta) {
 	const float evap = 1e-7f / (0.4f * 0.02f); // saturation per s
 	const float fc = 0.15f;
 	bool changed = false;
+	LocalVector<float> cell_depth;
+	cell_depth.resize(n * n);
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
@@ -861,6 +864,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 				return Math::lerp(Math::lerp(g[z0 * gn + x0], g[z0 * gn + x0 + 1], tx), Math::lerp(g[(z0 + 1) * gn + x0], g[(z0 + 1) * gn + x0 + 1], tx), tz);
 			};
 			const float depth = bil(g_depth);
+			cell_depth[i] = depth;
 			const float contact = bil(g_contact);
 			float s = pore[i];
 			if (depth > 0.001f) {
@@ -891,7 +895,51 @@ void GroundSurface3D::_water_update(double p_delta) {
 	if (changed) {
 		gpu_cells_dirty = true;
 	}
+	_wet_publish(&cell_depth);
 	water_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+}
+
+void GroundSurface3D::_wet_publish(const LocalVector<float> *p_depth) {
+	const int n = ground_n;
+	const bool on = p_depth && active == this && water_coupling && ground_valid && n >= 2 && (int)pore.size() == n * n && (int)p_depth->size() == n * n;
+	if (!on && wet_texture.is_null()) {
+		return;
+	}
+	const int w = on ? n : (wet_texture.is_valid() ? wet_texture->get_width() : 1);
+	const int h = on ? n + 1 : (wet_texture.is_valid() ? wet_texture->get_height() : 2);
+	Vector<uint8_t> data;
+	data.resize(w * h * 16);
+	memset(data.ptrw(), 0, data.size());
+	if (on) {
+		float *d = (float *)data.ptrw();
+		for (int i = 0; i < n * n; i++) {
+			const float s = pore[i];
+			d[i * 4 + 0] = Math::smoothstep(0.03f, 0.4f, s);
+			// A film of water stands on sand at saturation, and over it while the water runs.
+			d[i * 4 + 1] = (*p_depth)[i] > 0.001f ? 1.0f : 0.5f * Math::smoothstep(0.9f, 1.0f, s);
+		}
+		// Texel centres on the lattice's vertices.
+		float *r = d + n * n * 4;
+		r[0] = (ground_origin.x - 0.5f) * ground_spacing;
+		r[1] = (ground_origin.y - 0.5f) * ground_spacing;
+		r[2] = n * ground_spacing;
+		r[3] = 2.5f; // tags a published map (material.cpp ground_wet_at)
+	}
+	if (data == wet_data && wet_published) {
+		return;
+	}
+	wet_data = data;
+	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGBAF, data);
+	if (wet_texture.is_valid() && wet_texture->get_width() == w && wet_texture->get_height() == h) {
+		wet_texture->update(img);
+	} else {
+		wet_texture = ImageTexture::create_from_image(img);
+		wet_published = false;
+	}
+	if (!wet_published && (on || active == this)) {
+		_set_global("ground_wet_map", wet_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		wet_published = true;
+	}
 }
 
 void GroundSurface3D::set_water_coupling(bool p_enabled) {
@@ -900,6 +948,7 @@ void GroundSurface3D::set_water_coupling(bool p_enabled) {
 		pore.clear();
 		water_speed.clear();
 		cell_water.clear();
+		_wet_publish(nullptr);
 		_update_cells();
 	}
 }
@@ -1326,6 +1375,8 @@ void GroundSurface3D::_notification(int p_what) {
 				_set_global("ground_ripple_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				ripple_published = false;
 				ripple_far_published = false;
+				_wet_publish(nullptr);
+				wet_published = false;
 				active = nullptr;
 			}
 			globals_published = false;

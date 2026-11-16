@@ -126,6 +126,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_CONTACT_WET_X 65 // its world XZ origin and side
 #define RT_PARAM_CONTACT_WET_Z 66
 #define RT_PARAM_CONTACT_WET_SIZE 67
+#define RT_PARAM_GROUND_WET_MAP 69 // GroundSurface3D pore water map (wetness, sheen; last row its rect), 0 = none
 #define RT_PARAM_GROUND_RIPPLE_MAP 68 // GroundSurface3D ripple map for far ripples (sand stage 3), 0 = none
 
 // ============================================================================

@@ -638,6 +638,8 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// The grown ripple field's slope (periodic, mipmapped) for the far ripples past the window.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_far", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		// And its pore water (sand stage 4): wetness and sheen on the lattice, the last row its rect.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_wet_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -2490,7 +2492,8 @@ void fragment() {)";
 	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
 		// Turned ground (docs/ideas/ground-deform.md): darker and, wet, smoother where freshly dug; the path
 		// tracer applies the same factors (scene_raytracing_raygen.glsl).
-		code += R"(	{
+		code += R"(	vec2 ground_wet = vec2(0.0);
+	{
 		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		ALBEDO *= gd_tint.x;
 		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
@@ -2498,8 +2501,18 @@ void fragment() {)";
 		if (gr_far != vec2(0.0)) {
 			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
 		}
+		ground_wet = ground_wet_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	}
 )";
+		if (!features[FEATURE_WETNESS]) {
+			// Pore water (sand stage 4) darkens and smooths the sand by Lagarde's porous model, porosity 0.6.
+			code += R"(	{
+		float gw_f = mix(1.0, 0.2, (1.0 - METALLIC) * 0.6);
+		ALBEDO *= mix(1.0, gw_f, ground_wet.x);
+		ROUGHNESS *= mix(1.0, gw_f, 0.5 * ground_wet.x);
+	}
+)";
+		}
 	}
 
 	if (features[FEATURE_WETNESS]) {
@@ -2513,8 +2526,15 @@ void fragment() {)";
 		if (wetness_from_weather) {
 			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
 		}
+		if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+			code += "\twet = max(wet, ground_wet.x);\n";
+		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
 )";
+	}
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		// Standing water film over saturated sand: a mirror sheen.
+		code += "\tROUGHNESS = mix(ROUGHNESS, 0.05, ground_wet.y);\n";
 	}
 
 	if (features[FEATURE_SNOW]) {
@@ -3772,6 +3792,7 @@ global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
 global uniform sampler2D ground_ripple_map; // wind ripples: height (m), share of sand they show on
 global uniform vec4 ground_ripple_rect; // x, z, size, cell (m); size 0 = none
 global uniform sampler2D ground_ripple_far : filter_linear_mipmap_anisotropic, repeat_enable; // the grown field's slope
+global uniform sampler2D ground_wet_map : filter_linear, repeat_disable; // pore water: wetness, sheen; last row its rect
 )";
 	if (p_patch_uniform) {
 		code += "uniform bool ground_deform_patch = false;\n";
@@ -3842,6 +3863,22 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 	// Cell c's centre is at c * cell, its texel (c mod n).
 	vec2 tuv = (p_xz / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
 	return w * texture(ground_ripple_far, tuv).rg;
+}
+// The ground's pore water at p_world (sand stage 4): (wetness, sheen) for Lagarde 2013's wet surfaces; the path
+// tracer reads the same map (scene_raytracing_raygen.glsl). Zero off the patch or with no water.
+vec2 ground_wet_at(vec3 p_world, vec3 p_normal) {
+	ivec2 ts = textureSize(ground_wet_map, 0);
+	if (ts.y < 2) {
+		return vec2(0.0);
+	}
+	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
+	vec2 uv = (p_world.xz - r.xy) / max(r.z, 1e-3);
+	// r.w tags a published map (2.5): the global's default texture must not read as a wet square.
+	if (abs(r.w - 2.5) > 0.01 || r.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec2(0.0);
+	}
+	vec2 w = textureLod(ground_wet_map, vec2(uv.x, uv.y * float(ts.y - 1) / float(ts.y)), 0.0).rg;
+	return vec2(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), clamp(w.y, 0.0, 1.0) * smoothstep(0.7, 0.95, p_normal.y));
 }
 // The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
 float ground_deform_lowered(vec2 p_xz) {

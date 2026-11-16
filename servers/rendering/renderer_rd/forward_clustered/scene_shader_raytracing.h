@@ -230,6 +230,8 @@ public:
 	static constexpr int RT_PARAM_CONTACT_WET_SIZE = 67;
 	// GroundSurface3D's ripple map (window, sand share over the patch, a row of numbers) for the far ripples.
 	static constexpr int RT_PARAM_GROUND_RIPPLE_MAP = 68;
+	// GroundSurface3D's pore water map (wetness, sheen; its last row the rect) for the wet sand look.
+	static constexpr int RT_PARAM_GROUND_WET_MAP = 69;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

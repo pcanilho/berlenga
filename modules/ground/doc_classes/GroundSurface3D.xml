@@ -374,6 +374,7 @@
 		</member>
 		<member name="water_coupling" type="bool" setter="set_water_coupling" getter="is_water_coupling" default="true">
 			If [code]true[/code], water over the ground changes it. Water from [member water_sources] and the [code]WeatherMap3D[/code] contact wetness fills the pores of the top layer (saturated in about 10 s under water), which drain to field capacity in a minute or two and dry over hours. Damp sand is firm and holds steep walls; saturated sand slumps as dry sand does. Water flowing faster than the Shields threshold (about 0.25 m/s) moves the sand ([method bed_load]): prints under the swash or a stream are rounded off within a minute, the volume kept.
+			The pore water also shows: wet sand darkens and turns smoother (Lagarde's porous wet surfaces), and a film stands glossy on saturated sand and under the water, in raster and under the path tracer alike, through the [code]ground_wet_map[/code] shader global.
 		</member>
 		<member name="water_sources" type="NodePath[]" setter="set_water_sources" getter="get_water_sources" default="[]">
 			The water nodes the ground reads, sampled on a 1 m grid twice a second: any node with [code]sample_depth(position)[/code] (or [code]sample_height(position)[/code]), [code]sample_flow(position)[/code] and, for a sea's swash, [code]sample_swash(position)[/code], such as the water surface, river and live water nodes.

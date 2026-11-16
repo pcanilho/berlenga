@@ -379,8 +379,14 @@ wetness:
   under 0.6 m/s is down to 7 mm in a minute; under 0.15 m/s it keeps its walls. The swash's run-up speed is
   taken as twice the shallow-water speed of its film. Slumping keeps the volume.
 - Not built: channels cut by runoff (they need the bed load carried along the flow, an advection pass on
-  the field, not only relaxation). The wet look is the weather map's contact wetness, drawn by the wetness
-  feature, not the pore water.
+  the field, not only relaxation).
+- The look follows the pore water (Lagarde 2013, "water drop 3b", porous surfaces): the ground publishes
+  `ground_wet_map` (per lattice cell: wetness = smoothstep(0.03, 0.4, S); sheen = 1 under water, else
+  0.5 smoothstep(0.9, 1, S) for the film standing on saturated sand). The patch darkens albedo by
+  mix(1, 0.2, porosity) and roughness by half that, porosity 0.6 when the material has no wetness of its
+  own (else its own, taking the wetter of the two so nothing is wetted twice); the sheen pulls roughness to
+  0.05. Raster and path tracer read the same map (rt param 69), so damp sand dries visibly back from the
+  swash line as it drains to field capacity.
 
 ### Look (any stage)
 

@@ -242,6 +242,12 @@ private:
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
+	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film's
+	// sheen, the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
+	Vector<uint8_t> wet_data;
+	Ref<ImageTexture> wet_texture;
+	bool wet_published = false;
+	void _wet_publish(const LocalVector<float> *p_depth);
 	void _shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride);
 	float ground_min = 0.0f;
 	float ground_max = 0.0f;

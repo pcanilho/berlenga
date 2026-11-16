@@ -27,6 +27,8 @@ extends Node3D
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
 #   --view=swash        boot prints in sand, the nearer ones after a minute under flowing water (sand stage 4)
+#   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
+#                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
 #   --raster            raster only (default path traced)
@@ -113,6 +115,9 @@ func _ready() -> void:
 		return
 	if view == "swash":
 		await _build_swash()
+		return
+	if view == "shore":
+		await _build_shore()
 		return
 	await _build_trail()
 
@@ -1151,6 +1156,81 @@ func _build_swash() -> void:
 	for i in 10:
 		await get_tree().physics_frame
 	print("swash: prints %.1f cm deep washed, %.1f cm kept" % [surface.get_dent_at(Vector3(-1.6, 0, 0.12)) * 100.0, surface.get_dent_at(Vector3(1.55, 0, -0.12)) * 100.0])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand stage 4 at a real shore: PhysXWaterSurface3D's shore waves run up a 1 in 12 beach as a swash film. A row of
+# boot prints walks out of the sea, over the line the swash reaches, onto the dry sand above it. The ground reads
+# the sea's depth and the weather's contact wetness, so the sand the swash covers is soaked and darkens, drying
+# with distance above the line, and the prints it covers round off while those above keep their walls. Low 3/4
+# view from about 2.5 m. --cam=x,dy,z,tx,dy,tz as in the other views.
+func _build_shore() -> void:
+	kind = "dry_sand"
+	await _setup("beach", GroundSurface3D.GROUND_SOIL, 0.0, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			# From over the sea, a little to the side: the wet sand and the film catch its sheen.
+			c.rotation_degrees = Vector3(-20.0, 200.0, 0.0)
+	if not ClassDB.class_exists("PhysXWaterSurface3D") or not ClassDB.class_exists("WeatherMap3D"):
+		push_error("This build has no PhysX water or weather module.")
+		get_tree().quit(1)
+		return
+	var weather: Node3D = ClassDB.instantiate("WeatherMap3D")
+	weather.set("rain_rate", 0.0)
+	weather.set("drive_environment_fog", false)
+	add_child(weather)
+	var sea: Node3D = ClassDB.instantiate("PhysXWaterSurface3D")
+	# The beach well inside the sea's domain, so its wet-sand edge never shows.
+	sea.position = Vector3(0.0, 0.0, -10.0)
+	sea.set("domain_size", Vector2(48, 48))
+	sea.set("grid_resolution", 192)
+	sea.set("seabed_from_floor", true)
+	sea.set("ocean_grid_resolution", 128)
+	sea.set("wind_speed", 5.0)
+	sea.set("wind_direction", Vector2(0.15, 1.0))
+	sea.set("render_extent", 400.0)
+	sea.set("shore_waves", true)
+	sea.set("shore_wave_height", 0.25)
+	sea.set("shore_wave_direction", Vector2(0.15, 1.0))
+	sea.set("swash_run_up", 0.12)
+	sea.set("contact_wetness", true)
+	add_child(sea)
+	surface.water_sources = [surface.get_path_to(sea)]
+	surface.water_coupling = not OS.get_cmdline_user_args().has("--coupling=0") # for an A/B of the look
+	# The prints first, then the sea comes up over the lower ones.
+	for i in 30:
+		await get_tree().physics_frame
+	for k in 12:
+		var p := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.42 * k)
+		p.y = _undisturbed(p)
+		surface.press_box(p, Vector2(0.11, 0.29), 0.0, p.y, 0.03)
+	for i in 900:
+		await get_tree().physics_frame
+		if OS.get_environment("SHORE_TRACE") != "" and i % 60 == 0:
+			var q := Vector3(0.0, _undisturbed(Vector3(0, 0, 5)), 5.0)
+			print("t%d sat %.2f depth %.3f swash %s" % [i, surface.get_saturation_at(q), sea.call("sample_depth", q), str(sea.call("sample_swash", q))])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.9, 0.9, 3.4, -0.1, 0.0, 1.2])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	var prof := ""
+	for k in 17:
+		var pz := -1.0 + 0.5 * k
+		var pp := Vector3(0.0, _undisturbed(Vector3(0.0, 0.0, pz)), pz)
+		prof += " z%.1f:%.2f(c%.2f s%s d%.2f)" % [pz, surface.get_saturation_at(pp), weather.call("get_contact_wetness_at", pp), str(sea.call("sample_swash", pp)), sea.call("sample_depth", pp)]
+	print("shore: saturation by z" + prof)
+	print("shore: saturation %.2f in the wash, %.2f above it; prints %.1f cm deep in the wash, %.1f cm above" % [
+		surface.get_saturation_at(Vector3(0.12, 0, -0.6)), surface.get_saturation_at(Vector3(-0.12, 0, 3.6)),
+		surface.get_dent_at(Vector3(0.12, 0, -0.6)) * 100.0, surface.get_dent_at(Vector3(-0.12, 0, 3.6)) * 100.0])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
