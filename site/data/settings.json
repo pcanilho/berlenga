@@ -1468,6 +1468,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Crest glow",
+   "settings": [
+    "crest_glow"
+   ],
+   "note": "",
+   "what": "low sun shines through thin wave crests in the water's own colour, in raster; path tracing already scatters through them.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Spilling rollers",
    "settings": [
     "roller_strength"

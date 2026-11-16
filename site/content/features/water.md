@@ -78,6 +78,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Crisp sea foam: soft foam turns into torn patches with ragged holes, floating rafts and raised bubble relief.*
 
+- **Crest glow** (`crest_glow`, on by default): low sun shines through thin wave crests in the water's own colour, in raster; path tracing already scatters through them.
 - **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
 - **Ocean detail** (`detail_waves`, on; `bubble_strength`): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 
