@@ -3240,3 +3240,45 @@ wave self-shadow (the light crosses the crest on purpose). The colour is the wat
 still water (smoothstep 0..1.5 m, from the vertex), the open water's share (no foam, sand, swash or lips).
 The k2 <V,N>^2 term is left out: the open water's body light (sun_body) already carries it.
 Bench: water_surface --view=storm_sun --sun-pitch=10 (into a low sun); crest_glow:0 for off.
+
+### Round 2: only the thin top of the crests (16 Nov, docs review)
+
+Docs declined round 1: the glow was a broad tint over whole mid-field wave faces. The fixed height window
+(0 to 1.5 m above still water) caught half of a 2.5 m sea. A test that weighted by the length the sun's ray crossed
+in the water (the self-shadow march) was no better: at a 10 degree sun nearly every lee face is crossed by a
+short path, so it stayed broad, and the crest tops (where the ray crosses nothing) lost the glow entirely.
+Built: Atlas's height term made relative to the chop itself. v_crest is the height of the two shortest cascades
+from their own mean (as roller_crest()): a crest thin enough to pass light is a wave of the chop, wherever the long
+swell under it puts it. The C++ measures that chop's rms height from the CPU grids it already reads back
+(`crest_sigma`, a few times a second; the JONSWAP integral over the same bands until the first readback), and the
+glow weight is smoothstep(1.5, 2.5, height / sigma): a thin line along the high crests' tops, in a calm or a gale
+alike. The whole sea's sigma (1.5 m in the bench gale) was the wrong scale: the long swell carries most of it,
+and no chop crest reached the threshold. 1.0 to 2.0 sigma still lit whole wave faces; 1.8 to 3.0 lit nothing.
+Bench: water_surface --view=storm_crest (camera 1.3 m up riding the sea, sun 10 degrees up straight ahead, clear
+sky with a crisp disc); --frames=420; --water=crest_glow:0 for off; --node=caustics_enabled:false
+--node=crest_sheets:false keep the cloud renders quick (neither shows here).
+
+## Everything on by default (16 Nov, Paulo's standing rule)
+
+Paulo: every feature ships on; the desktop trims cost later, and tests switch off what they do not need. On now:
+`crest_sheets`, `caustics_enabled` (raster; PT caustics were already on), `shore_waves`, and on WeatherMap3D
+`cloud_evolution` and `aerosol_haze`. Shore waves on by default meant every lake would get the open sea's 0.8 m
+swell, so enclosed water (a surface_mesh outline) now takes at most its own wind sea's rms wave (H_rms = 2 sqrt 2
+sigma from the fetch-limited JONSWAP integral), re-baked when the wind moves it by a tenth; a still pond gets none.
+Left off: ReSTIR DI and GI (`light_reuse`, `indirect_reuse`) until they are checked under PT with Ray Reconstruction
+on the PC (the cloud has no denoiser); `follow_weather`, `open_sea_beyond`, `seabed_from_floor`, `level_from_flows`,
+river `carve`, spray `water_collision` and buoyancy `mass_from_densities` are scene wiring, not features (each
+changes what an authored scene means: its wind, its edge, its level, its ground).
+
+## Far-sea filtering on every cascade (16 Nov, Paulo's pick 3 of 3)
+
+Research: Bruneton, Neyret and Holzschuch 2010 ("Real-time Realistic Ocean Lighting using Seamless Transitions
+from Geometry to BRDF"): waves smaller than a pixel leave the normal and go into the BRDF's roughness as slope
+variance, so the far sea keeps its glitter width and nothing aliases. Only the detail band did this so far.
+Built: each cascade knows its band of wavenumbers (`cascade_k_lo`/`cascade_k_hi`) and its mean square slope
+(`cascade_variance`: the Phillips saturation range, 0.5 alpha ln(hi / max(lo, k_peak)) amplitude squared, with
+k_peak = 0.77 g / U^2). The fragment finds the wavenumber a pixel can still show from its footprint
+(fwidth of the rest position), keeps the shown fraction of each cascade's slope (in log k) in the normal and adds
+the hidden fraction's variance to the roughness (sqrt(sqrt(a^2 + hidden))). Foam still reads the full field.
+`far_filter` (shader uniform, on) turns it off for comparisons.
+Status: in every crest glow render (on); a dedicated far-sea before/after and PT pair are next.

@@ -182,6 +182,14 @@ uniform float detail_texel = 0.04;
 uniform float detail_k_min = 5.0; // rad/m, where the band starts
 // Its mean square slope, handed to the roughness where a pixel is too large to show it (Bruneton et al. 2010).
 uniform float detail_variance = 0.0;
+// Far-sea filtering (Bruneton, Neyret and Holzschuch 2010) for every cascade: per cascade (0..3) the band of
+// wavenumbers it carries (rad/m) and that band's mean square slope. Where a pixel is too large to show a band's
+// waves, they leave the normal and their slope variance goes to the roughness: the far sea keeps its sheen and
+// glitter instead of shimmering into speckles and brushed streaks. far_filter 0 turns it off (for comparison).
+uniform float far_filter : hint_range(0.0, 1.0) = 1.0;
+uniform vec4 cascade_k_lo = vec4(1.0);
+uniform vec4 cascade_k_hi = vec4(2.0);
+uniform vec4 cascade_variance = vec4(0.0);
 // Bubbles under foam (docs/ideas/water.md "Ocean detail"): the plume a breaking crest drives down scatters light
 // back up through the water above it (Crest's "foam bubbles"; War Thunder's "milkiness").
 uniform vec3 bubble_color : source_color = vec3(0.42, 0.88, 0.80);
@@ -368,6 +376,9 @@ varying float v_wave_through;
 // (0.5 - 0.5 L.N)^3). v_crest is the wave's height above still water at the vertex (m); wr_crest the single-
 // scattering colour times the open water's share, set in fragment() for light().
 uniform float crest_glow : hint_range(0.0, 4.0) = 1.0;
+// The chop's rms height (m; the two shortest cascades, measured from their grids): the glow sits along the tops of
+// the chop's high crests (1.5 to 2.5 sigma up), where they are thin enough to pass light, not over whole faces.
+uniform float crest_sigma = 0.5;
 varying float v_crest;
 varying vec3 wr_crest;
 #if !defined(RT) && !defined(UNDERWATER_FOG) && !defined(UNDERWATER_SURFACE) && !defined(BREAKER_LIP)
@@ -499,6 +510,47 @@ vec4 ocean_deriv_all(vec2 world_xz) {
 		v += cascade_tex(cascade_deriv_3, cascade_domain_3, world_xz);
 	}
 	return v;
+}
+
+// The cascades' summed derivatives (as ocean_deriv_all), and the same with each band weighted by the share of it
+// a pixel of this footprint (m) shows (in log k, where the slope variance lies evenly; waves longer than two
+// footprints), with the hidden bands' slope variance in r_hidden.
+float far_shown(int i, float footprint) {
+	float lo = cascade_k_lo[i];
+	float hi = cascade_k_hi[i];
+	float shown = hi > lo * 1.0001 ? clamp(log(PI / (2.0 * footprint) / lo) / log(hi / lo), 0.0, 1.0) : 1.0;
+	return mix(1.0, shown, far_filter);
+}
+
+vec4 ocean_deriv_filtered(vec2 world_xz, float footprint, out vec4 r_all, out float r_hidden) {
+	vec4 d0 = ocean_tex(ocean_deriv_tex, world_xz);
+	float s0 = far_shown(0, footprint);
+	r_all = d0;
+	vec4 f = d0 * s0;
+	r_hidden = cascade_variance.x * (1.0 - s0);
+	if (wave_cascade_count > 1) {
+		vec4 d = cascade_tex(cascade_deriv_1, cascade_domain_1, world_xz);
+		float sh = far_shown(1, footprint);
+		r_all += d;
+		f += d * sh;
+		r_hidden += cascade_variance.y * (1.0 - sh);
+	}
+	if (wave_cascade_count > 2) {
+		vec4 d = cascade_tex(cascade_deriv_2, cascade_domain_2, world_xz);
+		float sh = far_shown(2, footprint);
+		r_all += d;
+		f += d * sh;
+		r_hidden += cascade_variance.z * (1.0 - sh);
+	}
+	if (wave_cascade_count > 3) {
+		vec4 d = cascade_tex(cascade_deriv_3, cascade_domain_3, world_xz);
+		float sh = far_shown(3, footprint);
+		r_all += d;
+		f += d * sh;
+		r_hidden += cascade_variance.w * (1.0 - sh);
+	}
+	r_hidden *= far_filter;
+	return f;
 }
 
 float ocean_foam_all(vec2 world_xz) {
@@ -1439,7 +1491,9 @@ void vertex() {
 	v_rest_xz = world_pos.xz;
 	vec3 so = surface_offset(world_pos.xz);
 	VERTEX += so;
-	v_crest = so.y - water_level;
+	// The chop's own crest height (the two shortest cascades, from their own mean, as roller_crest()): a crest thin
+	// enough to pass light is a wave of the chop, wherever the long swell under it puts it.
+	v_crest = ocean_tex(ocean_height_tex, world_pos.xz).r + (wave_cascade_count > 1 ? cascade_tex(cascade_height_1, cascade_domain_1, world_pos.xz).r : 0.0);
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
 		vec2 rg;
 		float rb;
@@ -1516,9 +1570,20 @@ void fragment() {
 	float foam = v_foam;
 	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
-		vec4 der = ocean_deriv_all(v_rest_xz);
+		// The pixel's longer side (along the view at grazing angles), so no band aliases there.
+		vec2 fw_px = fwidth(v_rest_xz);
+		float footprint_px = max(max(fw_px.x, fw_px.y), 1e-5);
+		vec4 der;
+		float hidden_var;
+		// The normal takes the bands the pixel shows; the foam reads the whole surface (its crests break as they are).
+		vec4 der_n = ocean_deriv_filtered(v_rest_xz, footprint_px, der, hidden_var);
 		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
 		foam = foam_at_with(v_rest_xz, der, disp);
+		der = der_n;
+		{
+			float a = pathtraced_roughness * pathtraced_roughness;
+			water_roughness = sqrt(sqrt(a * a + hidden_var));
+		}
 		if (detail_enabled) {
 			// Shown while its shortest waves (two texels) cover a few pixels; beyond, their slope goes to the
 			// roughness so the sea keeps its glitter without shimmering (Bruneton, Neyret and Holzschuch 2010).
@@ -1534,7 +1599,7 @@ void fragment() {
 			}
 			// Beckmann/GGX: alpha^2 adds the slope variance; alpha = roughness^2.
 			float a = pathtraced_roughness * pathtraced_roughness;
-			water_roughness = sqrt(sqrt(a * a + detail_variance * (1.0 - shown)));
+			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
 		// Wherever the band rises (the vertices' share, interpolated), not only under foam: an aged lace hole
@@ -1865,11 +1930,11 @@ void fragment() {
 	wr_sun_a2 = sun_a2;
 	{
 		// The light a crest passes on: the water's single-scattering albedo (what scatters of what it meets), over
-		// the open water only (foam and sand take their own light), stronger the higher the crest stands (its
-		// thin top lies further above the troughs that would hide it). Not in the swash or over the shallows' sand.
+		// the open water only (foam and sand take their own light), in the thin top third of the high crests
+		// (Atlas's height term, made relative to the chop's own rms height so it holds from a calm to a gale).
 		vec3 albedo = max(pathtraced_scattering, vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
-		float rise = smoothstep(0.0, 1.5, v_crest);
-		wr_crest = crest_glow * albedo * rise * (1.0 - foam) * water_a * inv_a0 * smoothstep(0.0, soft, shore) * (1.0 - v_lip);
+		float above = smoothstep(1.5, 2.5, v_crest / max(crest_sigma, 0.02));
+		wr_crest = crest_glow * 2.0 * albedo * above * (1.0 - foam) * water_a * inv_a0 * smoothstep(0.0, soft, shore) * (1.0 - v_lip);
 	}
 	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
 	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
@@ -2381,6 +2446,41 @@ void PhysXWaterSurface3D::_clear_cascades() {
 	}
 }
 
+// The wind sea's rms height (m): the deep-water JONSWAP S(w) of water_spectrum_init.glsl integrated over the
+// wavenumbers k_lo..k_hi, times wave_amplitude (which scales the variance by its square).
+float PhysXWaterSurface3D::_wind_sea_sigma(float p_k_lo, float p_k_hi) const {
+	const float g = 9.81f;
+	const float u = MAX(wind_speed, 0.5f);
+	const float fetch_m = MAX(get_effective_fetch(), 1.0f);
+	const float a_j = 0.076f * Math::pow(u * u / (fetch_m * g), 0.22f);
+	const float wp = 22.0f * Math::pow(g * g / (u * fetch_m), 1.0f / 3.0f);
+	const float w0 = Math::sqrt(g * MAX(p_k_lo, 1e-4f));
+	const float w1 = Math::sqrt(g * MAX(p_k_hi, MAX(p_k_lo, 1e-4f) * 1.001f));
+	// Even steps in log w: the peak and the long tail both get their share.
+	const int steps = 256;
+	const float lw0 = Math::log(w0);
+	const float dlw = (Math::log(w1) - lw0) / steps;
+	double sum = 0.0;
+	for (int j = 0; j < steps; j++) {
+		const float w = Math::exp(lw0 + (j + 0.5f) * dlw);
+		const float sg = w <= wp ? 0.07f : 0.09f;
+		const float r = Math::exp(-(w - wp) * (w - wp) / (2.0f * sg * sg * wp * wp));
+		const float s_w = a_j * g * g / Math::pow(w, 5.0f) * Math::exp(-1.25f * Math::pow(wp / w, 4.0f)) * Math::pow(3.3f, r);
+		sum += s_w * w * dlw;
+	}
+	return Math::sqrt((float)sum) * wave_amplitude;
+}
+
+// The swell that reaches the shore (m, rms train height): shore_wave_height on open water; enclosed water (a
+// surface_mesh outline) has no swell from outside, so there it is at most its own wind sea's rms wave
+// (H_rms = 2 sqrt(2) sigma), and a still pond gets none.
+float PhysXWaterSurface3D::_shore_height() const {
+	if (surface_mesh.is_null()) {
+		return shore_wave_height;
+	}
+	return MIN(shore_wave_height, 2.828f * _wind_sea_sigma(0.001f, 100.0f));
+}
+
 void PhysXWaterSurface3D::_update_detail_material() {
 	if (water_material.is_null()) {
 		return;
@@ -2394,6 +2494,35 @@ void PhysXWaterSurface3D::_update_detail_material() {
 	water_material->set_shader_parameter("mesh_growth", NEAR_MESH_GROWTH);
 	water_material->set_shader_parameter("mesh_core_step", MIN(ocean_domain_size.x, ocean_domain_size.y) / (float)MAX(ocean_grid_resolution * mesh_detail, 1));
 	water_material->set_shader_parameter("mesh_core_half", MAX(ocean_domain_size.x, ocean_domain_size.y) * 0.5f);
+	{
+		// Each cascade's band of the spectrum and its mean square slope (Phillips saturation range, as
+		// get_detail_slope_variance()), for the far-sea filtering. Below the spectrum's peak (k_p = 0.77 g / U^2,
+		// Pierson-Moskowitz) there is little slope to hand over.
+		const float g = 9.81f;
+		const float u = MAX(wind_speed, 0.5f);
+		const float alpha = MIN(0.076f * Math::pow(u * u / (MAX(get_effective_fetch(), 1.0f) * g), 0.22f), 0.04f);
+		const float k_peak = 0.77f * g / (u * u);
+		const int count = CLAMP(wave_cascades, 1, MAX_WAVE_CASCADES);
+		float lo[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		float hi[4] = { 2.0f, 2.0f, 2.0f, 2.0f };
+		float var[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		for (int i = 0; i < count && i < 4; i++) {
+			const Vector2 size = get_wave_cascade_size(i);
+			const float side = MAX(MIN(size.x, size.y), 0.1f);
+			hi[i] = i == 0 ? _detail_k_min() : _cascade_split(i - 1);
+			lo[i] = i + 1 < count ? _cascade_split(i) : Math::TAU / side;
+			if (hi[i] <= lo[i]) {
+				hi[i] = lo[i] * 1.001f;
+			}
+			const float from = MAX(lo[i], k_peak);
+			var[i] = hi[i] > from ? 0.5f * alpha * Math::log(hi[i] / from) * wave_amplitude * wave_amplitude : 0.0f;
+		}
+		water_material->set_shader_parameter("cascade_k_lo", Vector4(lo[0], lo[1], lo[2], lo[3]));
+		water_material->set_shader_parameter("cascade_k_hi", Vector4(hi[0], hi[1], hi[2], hi[3]));
+		water_material->set_shader_parameter("cascade_variance", Vector4(var[0], var[1], var[2], var[3]));
+		// Until the grids are read back (and in the editor), the spectrum's own figure.
+		water_material->set_shader_parameter("crest_sigma", MAX(measured_sigma > 0.0f ? measured_sigma : _wind_sea_sigma(lo[MIN(count, 2) - 1], hi[0]), 0.02f));
+	}
 	if (on) {
 		water_material->set_shader_parameter("detail_domain", detail_cascade->domain);
 		water_material->set_shader_parameter("detail_texel", detail_cascade->domain.x / detail_resolution);
@@ -2573,11 +2702,12 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 		dir0 = Vector2(1, 0);
 	}
 	const float *dw = cell_depth.ptr();
+	shore_baked_height = _shore_height();
 	for (int t = 0; t < SHORE_TRAINS; t++) {
 		// The second train: a little longer, lower and from a few degrees round,
 		// so the two beat into sets.
 		const float period = shore_wave_period * (t == 0 ? 1.0f : 1.13f);
-		const float h0 = shore_wave_height * (t == 0 ? 1.0f : 0.6f);
+		const float h0 = shore_baked_height * (t == 0 ? 1.0f : 0.6f);
 		const Vector2 dir = t == 0 ? dir0 : dir0.rotated(0.14f);
 		const float omega = Math::TAU / period;
 		shore_omega[t] = omega;
@@ -2731,7 +2861,7 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 	// from the beach slope over the cell and its neighbours (Battjes 1974).
 	{
 		const float l0 = 9.81f * shore_wave_period * shore_wave_period / Math::TAU;
-		const float steep = Math::sqrt(MAX(shore_wave_height, 0.01f) / MAX(l0, 0.1f));
+		const float steep = Math::sqrt(MAX(shore_baked_height, 0.01f) / MAX(l0, 0.1f));
 		LocalVector<float> slope;
 		slope.resize(n * n);
 		auto dep = [&](int x, int z) {
@@ -2823,7 +2953,7 @@ void PhysXWaterSurface3D::_update_shore_material() {
 	// phases and heights, on the render thread.
 	const float l0 = 9.81f * shore_wave_period * shore_wave_period / Math::TAU;
 	solver.set_shore_waves(RS::get_singleton()->texture_get_rd_texture(shore_wave_tex_a->get_rid()), true,
-			Vector2(shore_omega[0], shore_omega[1]), shore_wave_height, l0);
+			Vector2(shore_omega[0], shore_omega[1]), shore_baked_height, l0);
 }
 
 // As the shader's shore_wave() (height only, at the resting point: the shore
@@ -4395,6 +4525,10 @@ void PhysXWaterSurface3D::_reinit_spectrum() {
 		}
 		_update_detail_material();
 		_update_cull_box();
+		// Enclosed water's shore waves are its own wind sea: a new wind re-bakes them once the height has moved.
+		if (shore_waves && surface_mesh.is_valid() && Math::abs(_shore_height() - shore_baked_height) > 0.1f * MAX(shore_baked_height, 0.05f)) {
+			_bake_shore_waves();
+		}
 		return;
 	}
 	_rebuild();
@@ -6443,6 +6577,37 @@ void PhysXWaterSurface3D::_refresh_cpu_cache() {
 		c->height = h;
 		c->dx = dx;
 		c->solver.get_ocean_dz_grid(c->dz);
+	}
+	// The chop's rms height as simulated (the two shortest cascades, as v_crest; separate bands, so their
+	// variances add), for the crest glow. Measured, not taken from the spectrum's formula: the grids hold what the swell, spreading and the
+	// resolved bands actually made. A few times a second is plenty for a sea that changes over minutes.
+	if (--sigma_countdown <= 0 && !cached_ocean_height.is_empty()) {
+		sigma_countdown = 32;
+		double var = 0.0;
+		auto add = [&var](const Vector<float> &p_h) {
+			const int count = p_h.size();
+			if (count == 0) {
+				return;
+			}
+			const float *r = p_h.ptr();
+			double sum = 0.0, sum2 = 0.0;
+			for (int i = 0; i < count; i++) {
+				sum += r[i];
+				sum2 += (double)r[i] * r[i];
+			}
+			const double mean = sum / count;
+			var += MAX(sum2 / count - mean * mean, 0.0);
+		};
+		add(cached_ocean_height);
+		if (!extra_cascades.is_empty()) {
+			add(extra_cascades[0]->height);
+		}
+		const float sigma = Math::sqrt((float)var);
+		if (sigma > 0.0f && water_material.is_valid() && Math::abs(sigma - measured_sigma) > 0.02f * MAX(measured_sigma, 0.01f)) {
+			measured_sigma = sigma;
+			print_verbose(vformat("Water: the chop's rms height is %.2f m (crest glow).", sigma));
+			water_material->set_shader_parameter("crest_sigma", MAX(measured_sigma, 0.02f));
+		}
 	}
 }
 

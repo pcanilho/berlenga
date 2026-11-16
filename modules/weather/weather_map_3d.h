@@ -121,7 +121,7 @@ private:
 	float cloud_density = 1.0f;
 	float cloud_shape_scale = 3000.0f; // m, one tile of the shape noise
 	// Clouds that form and clear (step 3e).
-	bool cloud_evolution = false;
+	bool cloud_evolution = true;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
@@ -266,7 +266,7 @@ private:
 		Ref<FogMaterial> material;
 	};
 	LocalVector<HazeSource> haze_sources;
-	bool aerosol_haze = false;
+	bool aerosol_haze = true;
 	float haze_visibility = 40.0f; // km, dry air (relative humidity 0)
 	float haze_height = 1200.0f; // m, the aerosol's scale height (the boundary layer)
 	float applied_aerosol = -1.0f;
