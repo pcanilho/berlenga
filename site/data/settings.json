@@ -1395,6 +1395,18 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Crisp sea foam",
+   "settings": [
+    "foam_crisp",
+    "foam_relief"
+   ],
+   "note": "",
+   "what": "sea foam patches have sharp, ragged edges with lit rims.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Spilling rollers",
    "settings": [
     "roller_strength"
