@@ -1320,6 +1320,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Spilling rollers",
+   "settings": [
+    "roller_strength"
+   ],
+   "note": "",
+   "what": "breaking crests carry a raised, churning roller of white water.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Ocean detail",
    "settings": [
     "detail_waves",
