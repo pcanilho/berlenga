@@ -1987,6 +1987,19 @@ vec3 grass_turf(vec3 world_pos) {
 	return c;
 }
 
+// Within the blades, partial cover (a rule's fade: scree, rock, shade) as patches of turf and gaps
+// of bare ground, and the soil showing between the tufts close up, not as a smooth even tint (on a
+// half-covered talus the turf read as smooth streaks with no blades on them, scene 16 Nov). Past
+// the blades (gone 1) the cover stays as it is: there it stands for the whole far sward.
+float grass_ground_patchy(vec3 world_pos, float cover, float gone) {
+	vec2 xz = world_pos.xz;
+	float clump = grass_noise(xz * 0.9) * 0.6 + grass_noise(xz * 3.7 + 2.3) * 0.4;
+	float patchy = smoothstep(0.0, 0.25, cover - 0.75 * (1.0 - clump));
+	float tufts = mix(0.55, 1.0, smoothstep(0.3, 0.5, grass_noise(xz * 18.0 + 4.1)));
+	// Full cover keeps the even turf it always had: only thinning swards break up.
+	return mix(patchy * mix(1.0, tufts, 1.0 - cover), cover, gone);
+}
+
 // How much of the ground the sward stands for at a point: its cover, full where the blades have
 // thinned away (the outer band), as grass_ground() weighs the turf.
 float grass_ground_weight(vec3 world_pos) {
@@ -2001,7 +2014,7 @@ float grass_ground_weight(vec3 world_pos) {
 	if (grass_ground_under.w > 0.0 && grass_ground_under_far.a > 0.0) {
 		gone = max(gone, 1.0 - clamp((grass_ground_under.z - length(world_pos.xz - grass_ground_under.xy)) / grass_ground_under.w, 0.0, 1.0));
 	}
-	return cover * mix(grass_ground_color.a, 1.0, gone);
+	return grass_ground_patchy(world_pos, cover, gone) * mix(grass_ground_color.a, 1.0, gone);
 }
 
 // The ground's specular under the sward: the blades hide the soil's sheen at the grazing angles a
@@ -2086,7 +2099,7 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 		}
 	}
 	gone = max(gone, gone_u);
-	return mix(albedo, turf, cover * mix(grass_ground_color.a, 1.0, gone));
+	return mix(albedo, turf, grass_ground_patchy(world_pos, cover, gone) * mix(grass_ground_color.a, 1.0, gone));
 }
 )";
 	return code;
