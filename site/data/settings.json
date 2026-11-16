@@ -1500,6 +1500,7 @@
     "max_slope",
     "gradually_varied_flow",
     "bend_superelevation",
+    "standing_waves",
     "carve",
     "obstacle_collision_mask",
     "live_flow",

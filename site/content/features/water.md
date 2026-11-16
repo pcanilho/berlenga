@@ -158,6 +158,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *Rivers: the cascade and the white water below it.*
 
   - Pools behind bumps, draws down before steps and ends fast reaches in a hydraulic jump; the surface banks up round bends (`gradually_varied_flow`, `bend_superelevation`, on by default).
+  - A train of smooth standing waves below a weak hydraulic jump, and cross-waves where fast water narrows (`standing_waves`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
