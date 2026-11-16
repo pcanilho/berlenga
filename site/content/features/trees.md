@@ -18,6 +18,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 - **Stands** (`make_stand`, `make_woodland`): thirteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
 - **Pollards and coppice** (`cut_height`, `cut_cycle`, `cut_since`): trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.
 - **Shrubs and hedges** (`stems`, `envelope`): many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.
+- **Wind-shaped and bank trees** (`wind_exposure`, `krummholz`, `ground_slope`, `bank_erosion`): at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on banks lean their roots downhill, with eroded roots arching off the face.
 - **Clearings** (`mask_channel`): painted clearings and paths keep trees and shrubs out.
 
 ## Wood and leaves
