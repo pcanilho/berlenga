@@ -563,6 +563,25 @@ public:
 	// face. Placement turns +Z downhill (meta tree_ground_slope).
 	float ground_slope = 0.0f;
 	float bank_erosion = 0.0f;
+	// A stone the roots drape over (trees.md 5q): radius in metres (0: none), beside the stem on
+	// its +Z side, half in the soil; the generator builds it (surface "soil").
+	float root_stone = 0.0f;
+	struct RootStone {
+		bool on = false;
+		Vector3 c; // Centre.
+		Vector3 r; // Half extents along x, y, z.
+		float ground = 0.0f;
+		float root_top = 0.0f;
+		// The stone's own mesh (RockGenerator, when the rocks module is in), fitted to c and r:
+		// counter-clockwise like the root plate, COLOR.r its cavity. Empty: a noise ellipsoid.
+		PackedVector3Array verts;
+		PackedVector3Array normals;
+		PackedFloat32Array cavity;
+		PackedInt32Array indices;
+		// Its top above the ground on a gn x gn grid over c.xz +- r.xz, for the roots' drape.
+		LocalVector<float> top;
+		int gn = 0;
+	} stone;
 	float bark_wounds = 1.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
@@ -682,7 +701,10 @@ private:
 	static BarkKind _bark_kind(Preset p_preset);
 	static float _bark_headroom(BarkKind p_kind);
 	void _wind_flag();
-	void _bank_shear(Builder &r_b) const;
+	void _bank_shear(Builder &r_b, bool p_drape) const;
+	void _plan_root_stone_rock();
+	float _root_stone_top(float p_x, float p_z) const;
+	void _build_root_stone(Builder &r_b) const;
 	const BarkSet &_bark_set(BarkKind p_kind);
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
@@ -716,6 +738,7 @@ private:
 		FORM_POLLARD, // Cut at head height: willow on a short cycle, others lapsed for decades.
 		FORM_FLAGGED, // Open-grown in a hard prevailing wind: limbs on the lee side (section 5q).
 		FORM_KRUMMHOLZ, // The tree line's low wind- and snow-shorn mat (section 5q).
+		FORM_BANK, // On a stream bank or gorge side: variants over slopes 0 to 0.85 rad, roots eroded (section 5q).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -796,6 +819,8 @@ public:
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	void set_root_stone(float p_v) { root_stone = CLAMP(p_v, 0.0f, 2.0f); }
+	float get_root_stone() const { return root_stone; }
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
