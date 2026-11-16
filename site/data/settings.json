@@ -1498,7 +1498,7 @@
     "crest_glow"
    ],
    "note": "",
-   "what": "low sun shines through thin wave crests in the water's own colour, in raster; path tracing already scatters through them.",
+   "what": "low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1518,10 +1518,11 @@
    "name": "Ocean detail",
    "settings": [
     "detail_waves",
+    "far_filter",
     "bubble_strength"
    ],
    "note": "",
-   "what": "short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
+   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1577,7 +1578,7 @@
     "shore_waves"
    ],
    "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only.",
    "page": "water",
    "title": "Water",
    "topic": "Shore"
