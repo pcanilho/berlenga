@@ -123,11 +123,16 @@ private:
 	RID shader;
 	RID shadow_shader;
 	RID shadow_pipeline;
-	RID shadow_box_buffer;
-	RID shadow_texture;
-	int shadow_res = 0;
-	int shadow_slices = 0;
-	float shadow_box_data[20] = {}; // the ShadowBox block: origin, axes, then (res, steps, slices)
+	// A volumetric shadow map's own resources: the sun's, and the sky's (looking straight down).
+	struct MapSlot {
+		RID box_buffer;
+		RID texture;
+		int res = 0;
+		int slices = 0;
+		float box_data[20] = {}; // the ShadowBox block: origin, axes, then (res, steps, slices)
+	};
+	MapSlot sun_slot;
+	MapSlot sky_slot;
 	RID pipeline;
 	RID upsample_shader;
 	RID upsample_pipeline;
@@ -154,8 +159,8 @@ private:
 	bool sky_array = false; // the shader reads the sky as a 2D array (Godot's radiance octmap array)
 
 	bool _ensure(RenderingDevice *p_rd);
-	bool _fit_shadow(const FlowBackend::ScatterSource &p_source, ShadowMap &r_shadow);
-	void _run_shadow(RenderingDevice *p_rd, const LocalVector<RD::Uniform> &p_uniforms, ShadowMap &r_shadow);
+	bool _fit_shadow(const FlowBackend::ScatterSource &p_source, ShadowMap &r_shadow, MapSlot &r_slot);
+	void _run_shadow(RenderingDevice *p_rd, const LocalVector<RD::Uniform> &p_uniforms, ShadowMap &r_shadow, MapSlot &r_slot);
 
 public:
 	// After Flow composited into p_color (rgba16f, storage); p_depth is the
