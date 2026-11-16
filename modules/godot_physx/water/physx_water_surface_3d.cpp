@@ -1008,55 +1008,64 @@ float roller_crest(vec2 world_xz) {
 	return max(h_short, 0.0) + max(h_long, 0.0);
 }
 
-// r_grad: the slope of the roller's churn (its fine part; the fold and the crest vary slowly).
-float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out vec2 r_grad, out float r_fold) {
+// Where the roller rides and how high its crest stands, blurred over a couple of metres: five taps 1.2 m
+// apart, centred a little behind (upwind of) the point. The fold and the fresh foam are sharp at a point;
+// followed pointwise on a mesh 60 cm apart they raised one or two vertices into a cone (a snow-capped peak).
+// Broad, the band rises over several vertices, rounded, and is lower at its front where it spills down
+// the face. Fresh dense persistent foam marks it: it starts with the fold and lasts while the wave keeps
+// breaking (Duncan 1981), fading as the foam drains.
+float roller_band(vec2 world_xz, out float r_crest) {
+	vec2 c = world_xz - roller_dir * 0.4;
+	float m = 0.0;
+	float cr = 0.0;
+	for (int i = 0; i < 5; i++) {
+		vec2 o = i == 0 ? vec2(0.0) : vec2(i == 1 ? 1.2 : (i == 2 ? -1.2 : 0.0), i == 3 ? 1.2 : (i == 4 ? -1.2 : 0.0));
+		m += ocean_foam_all(c + o);
+		cr += roller_crest(c + o);
+	}
+	r_crest = cr / 5.0;
+	return smoothstep(0.3, 0.75, m / 5.0);
+}
+
+// r_grad: the slope of the roller's churn (the band and the crest vary slowly).
+float roller_height_grad(vec2 world_xz, out vec2 r_grad, out float r_fold) {
 	r_grad = vec2(0.0);
 	r_fold = 0.0;
-	if (roller_strength <= 0.0 || wave_cascade_count < 2 || foam_crest_threshold < -50.0 || crest <= 0.0) {
+	if (roller_strength <= 0.0 || wave_cascade_count < 2 || foam_crest_threshold < -50.0) {
 		return 0.0;
 	}
-	float s = -choppiness;
-	float jacobian = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * disp.b * disp.b;
-	// Over a wide band of the fold, so the mound rises gently (a fold that went from none to full within a
-	// mesh cell made cliffs the foam smeared down).
-	float b = smoothstep(0.0, 1.0, (foam_crest_threshold - jacobian) / 0.5);
-	// The fold lasts a fraction of a second, a spilling roller several (it rides the crest while the wave
-	// keeps breaking; Duncan 1981). Fresh, dense persistent foam on the crest keeps it going after the fold
-	// has passed: it fades as that foam drains, and with the crest height as the foam slides off the back.
-	b = max(b, smoothstep(0.45, 0.85, ocean_foam_all(world_xz)));
+	float crest;
+	float b = roller_band(world_xz, crest);
 	r_fold = b;
-	if (b <= 0.0) {
+	if (b <= 0.0 || crest <= 0.0) {
 		return 0.0;
 	}
-	// Churned: octaves boiling over a second or two, drifting with the crest; the finest (bubbly, a few cm)
-	// only in the slope, the mesh being coarser.
-	vec2 q = world_xz * 1.1 - roller_dir * water_time * 1.2;
-	vec2 q1 = q + vec2(0.0, water_time * 0.7);
-	vec2 q2 = q * 2.3 - vec2(water_time * 1.1, 3.0);
-	vec2 q3 = q * 7.1 + vec2(water_time * 2.3, -water_time * 1.7);
-	vec2 q4 = q * 17.3 - vec2(water_time * 3.1, 5.0);
-	float churn = 0.6 * foam_value_noise(q1) + 0.4 * foam_value_noise(q2);
+	// Churned into lobes a couple of metres across (rounded at the mesh's spacing), boiling and drifting with
+	// the crest; the finer octaves (bubbly, down to a few cm) only in the slope.
+	vec2 q = world_xz * 0.55 - roller_dir * water_time * 0.6;
+	vec2 q1 = q + vec2(0.0, water_time * 0.35);
+	vec2 q2 = q * 2.1 - vec2(water_time * 0.5, 3.0);
+	vec2 q3 = q * 14.0 + vec2(water_time * 2.3, -water_time * 1.7);
+	vec2 q4 = q * 35.0 - vec2(water_time * 3.1, 5.0);
+	float churn = 0.7 * foam_value_noise(q1) + 0.3 * foam_value_noise(q2);
 	float k = roller_strength * 0.5 * crest * sqrt(b);
-	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2))
-			+ crest * sqrt(b) * roller_strength * (0.012 * 1.1 * 7.1 * foam_noise_grad(q3) + 0.005 * 1.1 * 17.3 * foam_noise_grad(q4));
-	// Eased toward 40 cm: on a gale's metres-high crests the full share rose as a faceted white peak over a few
-	// mesh cells (the mesh near the camera is 60 cm apart), where a real roller is a lumpy band down the face.
+	// Eased toward 40 cm: on a gale's metres-high crests the full share would stand far above the band's width.
 	float cap = 0.4 * roller_strength;
-	float raw = k * (0.45 + 0.9 * churn);
+	float raw = k * (0.5 + 0.8 * churn);
 	float e = tanh(raw / cap);
-	r_grad *= 1.0 - e * e;
+	r_grad = (1.0 - e * e) * k * 0.8 * (0.7 * 0.55 * foam_noise_grad(q1) + 0.3 * 0.55 * 2.1 * foam_noise_grad(q2))
+			+ b * roller_strength * (0.006 * 0.55 * 14.0 * foam_noise_grad(q3) + 0.0025 * 0.55 * 35.0 * foam_noise_grad(q4));
 	return cap * e;
 }
 
-// The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
-// Jacobian test, or fresh dense foam just after it), a mass of churned white water rides the crest's front:
-// on average about half the crest's height above its mean, a fifth of the wave's height (Duncan 1981: the
-// roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy and boiling, leaning forward along
-// the waves' travel.
-float roller_height(vec2 world_xz, vec4 der, vec3 disp, float crest) {
+// The roller on a breaking crest at world_xz: a rounded band of churned white water riding the crest's
+// front where it breaks, on average about half the crest's height above its mean (a fifth of the wave's
+// height; Duncan 1981: 0.1 to 0.3), eased toward 40 cm, lumpy and boiling, leaning forward along the waves'
+// travel.
+float roller_height(vec2 world_xz) {
 	vec2 g;
 	float f;
-	return roller_height_grad(world_xz, der, disp, crest, g, f);
+	return roller_height_grad(world_xz, g, f);
 }
 
 float foam_at(vec2 world_xz) {
@@ -1328,9 +1337,9 @@ void vertex() {
 	vec3 so = surface_offset(world_pos.xz);
 	VERTEX += so;
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
-		float rh = roller_height(world_pos.xz, ocean_deriv_all(world_pos.xz), ocean_disp_all(world_pos.xz).rgb, roller_crest(world_pos.xz));
+		float rh = roller_height(world_pos.xz);
 		// Raised, and thrown a little ahead of the crest.
-		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.4, rh, roller_dir.y * rh * 0.4, 0.0)).xyz;
+		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.25, rh, roller_dir.y * rh * 0.25, 0.0)).xyz;
 	}
 	if (detail_geometry && mesh_near_step > 0.0) {
 		// The detail waves the step can carry without swimming (four steps a wavelength): the same share of
@@ -1425,7 +1434,7 @@ void fragment() {
 			// The roller's churn per pixel (its lumps are finer than the mesh): its analytic slope.
 			vec2 g;
 			float fold;
-			roller_height_grad(v_rest_xz, der, disp, roller_crest(v_rest_xz), g, fold);
+			roller_height_grad(v_rest_xz, g, fold);
 			world_normal = normalize(world_normal - vec3(g.x, 0.0, g.y));
 			// The roller is fresh, churning foam right through: no aged lace holes in it.
 			foam = max(foam, smoothstep(0.15, 0.6, fold));
