@@ -354,6 +354,29 @@ func _checks() -> void:
 	dm.bake()
 	field.populate()
 	_check("geology: rules ignored without a source", field.get_placements(0) == first, field.get_placements(0).size())
+	# Holes (a cave mouth's opening, TerrainGenerator3D.add_hole()): no plant in one. The generator
+	# is found as the map's geology source; it needs no terrain of its own for its boxes.
+	var hgen := TerrainGenerator3D.new()
+	hgen.name = "HoleGen"
+	add_child(hgen)
+	dm.geology_source = dm.get_path_to(hgen)
+	var hole := Transform3D(Basis.from_scale(Vector3(10, 30, 10)), Vector3(0, height(0, 0), 0))
+	var in_hole := func() -> int:
+		var n := 0
+		for s in field.biome.species.size():
+			for p in field.get_placements(s):
+				if absf(p.x) <= 10.0 and absf(p.z) <= 10.0:
+					n += 1
+		return n
+	var before_hole: int = in_hole.call()
+	hgen.add_hole(hole)
+	field.populate()
+	var after_hole: int = in_hole.call()
+	hgen.clear_holes()
+	field.populate()
+	_check("holes: no plant in a cave mouth's opening, back when it closes", before_hole > 0 and after_hole == 0 and in_hole.call() == before_hole, [before_hole, after_hole, in_hole.call()])
+	dm.geology_source = NodePath()
+	hgen.queue_free()
 	# Canopy shade: trees cast it, bushes that want shade grow only under crowns.
 	var bush_sp: PlantSpecies = field.biome.species[1]
 	var bushes_open := field.get_placements(1).size()
@@ -1399,13 +1422,15 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 	# log's bark behind: the clump fills about a third of the frame.
 	var dir := (-away * 0.85 + side * 0.5).normalized()
 	var eye := tuft - dir * 0.4
-	# The clump roots up the log's side (tuft.y): level with its foot, so the stalks show
-	# coming out of the bark under the caps.
-	cam.position = Vector3(eye.x, tuft.y + 0.02, eye.z)
-	cam.fov = 45.0
+	# The clump roots up the log's side (tuft.y): from 13 cm above its foot, looking a little down
+	# onto the caps and the stalks coming out of the bark (docs' framing: no sky in the frame).
+	cam.position = Vector3(eye.x, tuft.y + 0.13, eye.z)
+	cam.fov = 40.0
 	cam.near = 0.05
-	cam.look_at(tuft + Vector3(0, 0.04, 0))
-	print("VEG_MUSHROOMS camera eye %s look %s fov 45" % [str(cam.position), str(tuft + Vector3(0, 0.04, 0))])
+	cam.look_at(tuft)
+	print("VEG_MUSHROOMS camera eye %s look %s fov 40" % [str(cam.position), str(tuft)])
+	# Soft shadows without the per-pixel rotated kernel's dot pattern (no TAA in one still).
+	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
 	# Low side light: the sun 22 degrees up, across the view from the open side, so the caps' scales
 	# and the stalks' curves throw shadows.
 	for ch in get_children():
