@@ -185,6 +185,10 @@ private:
 	HashMap<int, Ref<ShaderMaterial>> materials; // per rock type, with this field's lichen and moss
 	HashMap<Vector3i, Cell> cells; // (layer, cell x, cell z)
 	LocalVector<Rect2> hole_rects; // holes opened while placing (cave mouths), whose built cells are built again
+	ObjectID holes_watched; // the generator whose holes_changed rebuilds cells (holes others open: caves)
+	int building = 0;
+	void _watch_holes();
+	void _on_holes_changed(const Rect2 &p_rect);
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;
