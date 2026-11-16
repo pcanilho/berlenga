@@ -50,7 +50,7 @@
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
 			<description>
-				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], [code]froude[/code] (the section's Froude number), [code]critical_height[/code] (world height of critical depth), [code]jump[/code] (the upstream Froude number of a hydraulic jump that ends here, else 0), [code]superelevation[/code] (m, outside bank above inside bank), and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank) and [code]foams[/code].
+				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], [code]froude[/code] (the section's Froude number), [code]critical_height[/code] (world height of critical depth), [code]jump[/code] (the upstream Froude number of a hydraulic jump that ends here, else 0), [code]superelevation[/code] (m, outside bank above inside bank), [code]wave_amplitude[/code] and [code]wave_length[/code] (m, a standing wave train passing here, see [member standing_waves]), and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank), [code]foams[/code] and [code]cross_waves[/code] (m, the standing cross-wave height in fast water).
 			</description>
 		</method>
 		<method name="get_section_count" qualifiers="const">
@@ -221,6 +221,9 @@
 		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.035">
 			Manning's roughness: about 0.013 for concrete, 0.03 for a clean natural channel, 0.05 for a stony or weedy one. Rougher rivers run slower and deeper.
+		</member>
+		<member name="standing_waves" type="bool" setter="set_standing_waves" getter="get_standing_waves" default="true">
+			Standing surface patterns from the solved profile (needs [member gradually_varied_flow]): below a weak hydraulic jump (Froude number 1 to 1.7) a train of smooth stationary waves whose wavelength is the one that stands still in the current downstream, decaying over about four wavelengths (a weak tail below stronger jumps); in fast (supercritical) water, cross-waves that leave each bank where the channel narrows or widens at the angle [code]asin(1/Fr)[/code] and reflect off the far bank, making diamond patterns. The water material's [code]froude_overlay[/code] parameter colours the water by its Froude number for tuning (blue slow, green near critical, red fast, white at jump toes).
 		</member>
 		<member name="snap_to_ground" type="bool" setter="set_snap_to_ground" getter="get_snap_to_ground" default="true">
 			Measure the ground under the river by raycasts. Off: the curve is the water surface, and the bed is a parabola [member depths] deep.

@@ -2956,5 +2956,14 @@ rebuild.
   section mean is subtracted so the 1D profile stays as stage 1 solved it.
 - **Froude overlay**: a debug view colouring the water by its Froude number (blue subcritical, green
   near critical, red supercritical, white at jump toes), for tuning rivers in the editor.
+- Built (16 Nov), `standing_waves` (on by default). On the river bench the jump below the step (Fr1 1.64)
+  gets a train about 10 cm high and 1.8 m long (bench view `train`). Two fixes from the first look: waves
+  shorter than six sections were raised in the mesh as faceted terraces, so they are now in the per-pixel
+  slope only (the mesh carries them from six sections a wavelength, fully past that), fading at the banks;
+  and the crests were ruler straight, so they now bow downstream mid-channel by a quarter wavelength at the
+  banks, as in photographs of undular jumps. Bodies still ride the full train (`sample_height`).
+  Cross-waves with `--narrows` (5 m to 3.5 m below the step) reach about 10 cm in the Fr 1.7 to 2.4 water,
+  but that water is white from the step on this bench, so they show only in clear fast water (a smooth
+  chute). `get_section()` gives `wave_amplitude`, `wave_length` and `cross_waves`.
 - Later: V-shaped wakes behind rocks in fast water (the same characteristics from each obstacle), cross-
   waves in supercritical bends (Knapp 1951: they double the outer bank's superelevation).

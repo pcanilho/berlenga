@@ -116,6 +116,9 @@ uniform float edge_relief : hint_range(0.0, 0.3, 0.005) = 0.05;
 // Debug: colour the water by its Froude number (blue subcritical, green critical, red supercritical, white
 // at jump toes).
 uniform bool froude_overlay = false;
+// Metres between the river's cross-sections (set by PhysXRiver3D): standing waves shorter than a few sections
+// are drawn in the slope only, as the mesh would facet them into ridges.
+uniform float section_step = 1.0;
 // The live window (set by PhysXRiver3D while live_flow runs): a square of
 // shallow-water simulation round the camera. Height is the disturbance on the
 // river's own surface; flow is the total velocity (rg, world xz, m/s) with the
@@ -211,8 +214,11 @@ void vertex() {
 	{
 		float x = UV.x - CUSTOM0.z;
 		if (CUSTOM0.x > 0.0 && x > 0.0) {
-			// Height only where the mesh can carry it (the slope is drawn per pixel below).
-			float h = CUSTOM0.x * sin(CUSTOM0.y * x) * exp(-x / CUSTOM0.w) * min(x * CUSTOM0.y / PI, 1.0);
+			// Height only where the mesh can carry it (four sections or more a wavelength), fading at the banks;
+			// the slope is drawn per pixel below.
+			float mesh_share = smoothstep(3.0, 6.0, TAU / (CUSTOM0.y * section_step));
+			float bank = smoothstep(0.0, 0.2, COLOR.r * 4.0 - 1.0);
+			float h = mesh_share * bank * CUSTOM0.x * sin(CUSTOM0.y * x) * exp(-x / CUSTOM0.w) * min(x * CUSTOM0.y / PI, 1.0);
 			VERTEX.y += h;
 			v_world.y += h;
 		}
@@ -2712,7 +2718,10 @@ void PhysXRiver3D::_build_mesh() {
 			verts.set(k, sec.centre + sec.side * n + Vector3(0.0f, sec.tilt * n + wave, 0.0f));
 			custom0.set(k * 4 + 0, sec.wave_amp);
 			custom0.set(k * 4 + 1, sec.wave_k);
-			custom0.set(k * 4 + 2, sec.wave_s0);
+			// The crests bow downstream mid-channel (slower water by the banks holds them back): a quarter
+			// wavelength at the banks, as in photographs of undular jumps (Chanson 2009).
+			const float r = CLAMP(n / MAX(0.5f * sec.width, 0.1f), -1.0f, 1.0f);
+			custom0.set(k * 4 + 2, sec.wave_s0 - (sec.wave_k > 0.0f ? 0.25f * (float)Math::TAU / sec.wave_k * r * r : 0.0f));
 			custom0.set(k * 4 + 3, sec.wave_decay);
 			uvs.set(k, Vector2(sec.s, n));
 			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
@@ -2779,6 +2788,9 @@ void PhysXRiver3D::_build_mesh() {
 	mesh.instantiate();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT);
 	mesh_instance->set_mesh(mesh);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter(SNAME("section_step"), count > 1 ? (sections[count - 1].s - sections[0].s) / (count - 1) : step_length);
+	}
 }
 
 // Waterfalls (docs/ideas/water.md "Step 4f"). A run of cascade sections that
@@ -3335,7 +3347,7 @@ float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
 		local_y += Math::lerp(cross_value(sections[i], sections[i].wave_at, n, bank_margin, cross_segments), cross_value(sections[i + 1], sections[i + 1].wave_at, n, bank_margin, cross_segments), t);
 	}
 	{
-		// The undular train, as the shader draws it.
+		// The undular train (the shader draws a short one in the slope only, but bodies ride the real waves).
 		const Section &a = sections[i];
 		const float s = Math::lerp(a.s, sections[i + 1].s, t);
 		const float x = s - a.wave_s0;
@@ -3396,6 +3408,8 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["froude"] = sec.froude;
 	d["critical_height"] = Math::is_finite(sec.critical) ? xf.xform(Vector3(sec.centre.x, sec.critical, sec.centre.z)).y : -Math::INF;
 	d["jump"] = sec.jump;
+	d["wave_amplitude"] = sec.wave_amp;
+	d["wave_length"] = sec.wave_k > 0.0f ? (float)Math::TAU / sec.wave_k : 0.0f;
 	d["superelevation"] = sec.tilt * (sec.width + 2.0f * bank_margin);
 	d["under_fall"] = sec.fall_drop;
 	d["plunge"] = sec.plunge;
@@ -3403,7 +3417,9 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	PackedFloat32Array speed;
 	PackedFloat32Array across;
 	PackedFloat32Array foam;
+	PackedFloat32Array waves;
 	for (uint32_t j = 0; j < sec.depth.size(); j++) {
+		waves.push_back(j < sec.wave_at.size() ? sec.wave_at[j] : 0.0f);
 		depth.push_back(sec.depth[j]);
 		speed.push_back(sec.speed_at[j]);
 		across.push_back(sec.across_at[j]);
@@ -3413,6 +3429,7 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["speeds"] = speed;
 	d["across"] = across;
 	d["foams"] = foam;
+	d["cross_waves"] = waves;
 	return d;
 }
 
