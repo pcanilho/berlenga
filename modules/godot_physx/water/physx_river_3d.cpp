@@ -411,6 +411,8 @@ uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.30, 0.42, 0.42, 0.45);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
+// The water a ray crosses through the sheet, for its tint under path tracing (m).
+uniform float sheet_thickness = 0.1;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
 // Streaks: per metre across, and per second of travel along (the pattern rides
 // the water, so it stretches as the sheet speeds up).
@@ -443,13 +445,13 @@ void fragment() {
 	float holes = broken * 0.8 + (1.0 - edge) * 0.6;
 	float cover = smoothstep(-0.04, 0.04, streak - holes + 0.12);
 #if defined(RT)
-	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
+	// A falling sheet is one surface with holes: traced as a thin wall (straight through, tinted by its thickness),
+	// not as the boundary of a medium, which a path leaving through a hole never left (see the contact sheet).
+	ALBEDO = mix(exp(-pathtraced_absorption * sheet_thickness), foam_color.rgb, foam);
 	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
-	IOR = 1.33;
-	ABSORPTION = pathtraced_absorption;
 	ALPHA = cover;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else

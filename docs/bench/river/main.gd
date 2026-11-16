@@ -35,7 +35,10 @@ extends Node3D
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
 #   --contact        with --live, a WeatherMap3D (dry) whose contact wetness the live window writes; prints the
 #                    wet share of the window every 60 frames
+#   --fall-run=M     with --falls, the cliff's face runs M metres out each side of the lip (default 0.1): 1.5 or more
+#                    makes a sloping face the water keeps to (a contact fall)
 #   --mist           with --falls, print the mist's densest point and its spread each second
+#   --sun=P,Y        the sun's pitch and yaw in degrees (default -50,-140); --sun=-35,180 puts the fall's face in shade
 #   --report         print the cross-sections and the boxes' positions
 #   --bake-time=N    time N rebuilds with the multigrid flow solve and with the older SOR sweeps
 #                    (physics/physx_3d/water/multigrid_flow), print each mean and how far the two flows differ
@@ -63,6 +66,8 @@ var joins := false
 var outlet := false
 var outlet_lake: Node3D
 var falls := false
+var fall_run := 0.1
+var sun_rot := Vector3(-50, -140, 0)
 var lake: Node3D
 var tributary: Node3D
 var focus: Marker3D
@@ -85,7 +90,7 @@ func _valley_x(z: float) -> float:
 # Ground height: a valley falling 0.5% downstream (+z), a 1.5 m step at z = 0, a parabolic channel 6 m wide.
 # With --joins: a lake basin from z = 30 down, and a side valley for the tributary.
 func _ground(x: float, z: float) -> float:
-	var base := -0.005 * z - (6.0 * smoothstep(-0.1, 0.1, z) if falls else 1.5 * smoothstep(-0.75, 0.75, z))
+	var base := -0.005 * z - (6.0 * smoothstep(-fall_run, fall_run, z) if falls else 1.5 * smoothstep(-0.75, 0.75, z))
 	var d := absf(x - _valley_x(z))
 	var channel := 1.2 * (1.0 - pow(d / 3.0, 2.0)) if d < 3.0 and not carve else 0.0
 	var wall := 3.0
@@ -129,6 +134,7 @@ func _ready() -> void:
 		elif a == "--contact": contact = true
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
+		elif a.begins_with("--fall-run="): fall_run = float(a.substr(11))
 		elif a == "--outlet": outlet = true
 		elif a == "--narrows": narrows = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
@@ -138,6 +144,9 @@ func _ready() -> void:
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
+		elif a.begins_with("--sun="):
+			var sp := a.substr(6).split(",")
+			sun_rot = Vector3(float(sp[0]), float(sp[1]), 0.0)
 		elif a.begins_with("--river="):
 			var rkv := a.substr(8).split(":", true, 1)
 			river_params[rkv[0]] = str_to_var(rkv[1])
@@ -171,7 +180,7 @@ func _ready() -> void:
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50, -140, 0)
+	sun.rotation_degrees = sun_rot
 	sun.shadow_enabled = true
 	add_child(sun)
 

@@ -3091,3 +3091,27 @@ wider (it scatters more than once; raster is single scattering). A spot seen sid
 water's phase (Henyey-Greenstein, g 0.85) sends little light sideways. Cost: 12 steps a lamp a pixel, only
 where the ray crosses the lamp's range. Not yet: lamp shadows in the medium, lamps seen through the surface
 from above.
+
+## Waterfall sheets near black in shade, path traced (16 Nov, bug)
+
+The big fall's sheet read nearly black in deep shade under path tracing (a tenth of the rock beside it) and white
+in sun. Reproduced on the valley's 336 m fall from below (`--time=16.5 --cam=620,-60,-1380 --look=545,112,-1470`):
+sheet 1.0, rock 9.1 (sRGB mean); raster 44.
+
+- **Cause.** The contact sheet's traced material wrote a fractional ALPHA, so the tracer took it as a blended
+  layer (a transparency peel): such a layer is shaded with its direct light and goes on to indirect light only
+  with a chance, which in shade, with no sun on it, left it close to black. The mist, the bounce count (2 or 6)
+  and the falling clumps made no difference; making the sheet opaque did.
+- **Fix: stochastic transparency** (Enderton et al. 2010), as the falling clumps already do: each 2.5 cm cell of
+  the sheet is water or nothing, with the cover as the chance (`ALPHA_SCISSOR_THRESHOLD`), so the sheet is an
+  opaque surface lit by the sky and bounces like the rock beside it; the samples of a pixel average to the same
+  cover, wet rock included. Same frame after: sheet 45, rock 9.1 (raster 44).
+- **Also wrong, fixed with it.** The sheet and the river's falling ribbon wrote IOR and ABSORPTION, making each
+  the boundary of a medium: a path that went in through the water and left through one of the sheet's gaps
+  (threads, tongues, wet rock) never left the water, and every later segment was absorbed as if under water. Both
+  are thin walls now (thin-walled transmission, as BaseMaterial3D's Transmission with thin_walled on): straight
+  through, tinted by `exp(-absorption * thickness)` (`film_thickness`, `sheet_thickness`, 0.1 m). A film
+  centimetres deep bends a ray by less than its own thickness, so the refraction was invisible anyway. On the
+  river bench's fall in shade (`--falls --view=fallfront --sun=-35,180`) the sheet matches, and a cyan glow along
+  its lip, light trapped in the medium, is gone.
+- The river bench takes `--fall-run=M` (a sloping face) and `--sun=P,Y`.
