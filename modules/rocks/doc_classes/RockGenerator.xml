@@ -141,7 +141,13 @@
 		<constant name="FAMILY_SEA_PLATFORM" value="9" enum="Family">
 			A wave-cut platform: a thin bench of bedrock (x along the shore, z out to sea) with two joint sets opened into grooves, low ledges stepping down seaward and a few rock pools.
 		</constant>
-		<constant name="FAMILY_MAX" value="10" enum="Family">
+		<constant name="FAMILY_HOODOO" value="10" enum="Family">
+			A hoodoo: a column of soft bedded rock (x up when stood on end), beaded by its softer beds and narrowing to a neck under a wider, harder caprock.
+		</constant>
+		<constant name="FAMILY_PAVEMENT" value="11" enum="Family">
+			Limestone pavement: a flat slab of bedrock dissolved along two joint sets into clints between deep, narrow grykes, with solution pans on the tops.
+		</constant>
+		<constant name="FAMILY_MAX" value="12" enum="Family">
 			Number of families.
 		</constant>
 	</constants>

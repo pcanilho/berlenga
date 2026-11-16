@@ -7,12 +7,12 @@ extends Node3D
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1)
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
-#                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast puts the camera at the
+#                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
 #                         densest place of that layer (default scree)
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -24,11 +24,12 @@ extends Node3D
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
+#   --only-layer          with --world: only the view's layer is placed
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform"]
-const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement"]
+const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 const WORLD := 2048.0
 
 var args := {}
@@ -299,7 +300,7 @@ func _world() -> void:
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
-	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0, "tor": 22.0, "coast": 60.0}.get(view, 10.0) as float
+	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0, "tor": 22.0, "coast": 60.0, "landform": 30.0}.get(view, 10.0) as float
 	if args.has("dist"):
 		dist = float(args["dist"])
 	cam.position = _view_from(spot, dist)
@@ -328,6 +329,9 @@ func _world() -> void:
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:
+		if args.has("only-layer"):
+			for i in LAYERS.size():
+				rocks.set_layer_enabled(i, LAYERS[i] == view)
 		if args.has("stone-density"):
 			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
 		var tb := Time.get_ticks_msec()
@@ -555,6 +559,20 @@ func _densest(layer: int) -> Vector3:
 		if not best.is_empty():
 			print("coast form: family %d at %s" % [best["family"], best["position"]])
 			return best["position"]
+	if layer == RockField3D.LAYER_LANDFORM and args.get("form", "") == "pavement":
+		# --form=pavement: the biggest pavement patch in the sun.
+		var best := {}
+		for s in rocks.get_stones(layer, Rect2(-1000, -1000, 2000, 2000)):
+			# Sunlit first, then the bigger.
+			if int(s["family"]) != RockGenerator.FAMILY_PAVEMENT:
+				continue
+			var score := float(s["scale"]) + (100.0 if _sunlit(s["position"] + Vector3(0, 1, 0)) else 0.0)
+			if best.is_empty() or score > float(best["score"]):
+				best = s.duplicate()
+				best["score"] = score
+		if not best.is_empty():
+			print("pavement at %s" % [best["position"]])
+			return best["position"]
 	var cells := {}
 	var sums := {}
 	for s in stones:
@@ -712,6 +730,12 @@ func _test() -> void:
 		var want_some := true
 		check(not want_some or st.size() > 0, "%s: %d stones over the world in %d ms" % [LAYERS[l], st.size(), Time.get_ticks_msec() - t0])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])
+	# Landforms: hoodoo rows on the steep soft beds, pavement on flat bare limestone; each kind somewhere.
+	var kinds := {}
+	for s in rocks.get_stones(RockField3D.LAYER_LANDFORM, wr):
+		kinds[s["family"]] = int(kinds.get(s["family"], 0)) + 1
+	print("landform families: %s" % [kinds])
+	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_PAVEMENT), "landforms: %d hoodoos, %d pavement patches" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0)])
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var overlaps := 0

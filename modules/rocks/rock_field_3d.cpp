@@ -1184,6 +1184,138 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				r_stones.push_back(st);
 			}
 		} break;
+		case LAYER_LANDFORM: {
+			// Bedrock landforms where their rock and setting are (docs/ideas/rocks.md, landforms):
+			// - limestone pavement on flat, bare limestone (ice-scoured, thin soil): slabs flush with the ground;
+			// - hoodoos on steep, bare, soft bedded rock (badland slopes, amphitheatre heads): a row of columns
+			//   along one joint set, a few metres apart.
+			const real_t sub = 12.0;
+			struct Site {
+				Vector3 p;
+				float score;
+				int kind; // 0 pavement, 1 hoodoos
+			};
+			LocalVector<Site> sites;
+			const real_t shore_top = gen->has_sea_result() ? gen->get_sea_level() + 6.0 : -1e9; // beaches and storm ridges are sand and shingle
+			for (real_t z = p_rect.position.y + sub * 0.5; z < p_rect.get_end().y; z += sub) {
+				for (real_t x = p_rect.position.x + sub * 0.5; x < p_rect.get_end().x; x += sub) {
+					const Vector3 c(x + (rng.randf() - 0.5f) * sub * 0.6f, 0, z + (rng.randf() - 0.5f) * sub * 0.6f);
+					if (gen->get_water_depth(c) > 0.0 || gen->get_height(c) < shore_top) {
+						continue;
+					}
+					const RockGenerator::RockType type = _type_at(gen, Vector3(c.x, gen->get_height(c), c.z));
+					const Vector3 n = ground_normal(gen, c.x, c.z, 4.0);
+					const float exposure = float(gen->get_rock_exposure(c));
+					const float thin = 1.0f - Math::smoothstep(0.2f, 0.8f, float(gen->get_soil_depth(c)));
+					const float bare = MAX(exposure, thin);
+					if (type == RockGenerator::ROCK_LIMESTONE && n.y > 0.94f && bare > 0.35f) { // up to 20 degrees: stepped pavements (Malham, the Burren) follow gentle slopes
+						// A bench, not a knoll or a col: the ground within 8 m stays on the plane through the centre.
+						const real_t h0 = gen->get_height(c);
+						const real_t sx = -n.x / MAX(n.y, real_t(0.1)), sz = -n.z / MAX(n.y, real_t(0.1));
+						float off = 0.0f;
+						for (int j = 0; j < 8; j++) {
+							const Vector3 d = Vector3(Math::cos(j * Math::TAU / 8.0), 0, Math::sin(j * Math::TAU / 8.0)) * 8.0;
+							off = MAX(off, float(Math::abs(gen->get_height(c + d) - (h0 + sx * d.x + sz * d.z))));
+						}
+						if (off < 0.8f) {
+							sites.push_back({ c, bare * (1.0f + rng.randf() * 0.3f), 0 });
+						}
+					}
+					static const float hoodoo_rate[RockGenerator::ROCK_MAX] = { 0.0f, 0.25f, 1.0f, 0.0f, 0.15f };
+					if (hoodoo_rate[type] > 0.0f && n.y > 0.7f && n.y < 0.94f && bare > 0.5f) {
+						sites.push_back({ c, bare * hoodoo_rate[type] * (1.0f + rng.randf() * 0.3f), 1 });
+					}
+				}
+			}
+			struct ByScore {
+				_FORCE_INLINE_ bool operator()(const Site &p_a, const Site &p_b) const { return p_a.score > p_b.score; }
+			};
+			sites.sort_custom<ByScore>();
+			LocalVector<Vector3> used;
+			int made = 0;
+			// Hoodoos gather in badland heads and amphitheatres, not on every steep soft slope: one cell in four has them.
+			const bool badland = rng.randf() < 0.25f;
+			for (const Site &s : sites) {
+				if (s.kind == 1 && !badland) {
+					continue;
+				}
+				if (made >= 2 || rng.randf() > (s.kind == 1 ? 0.3f : 0.8f) * float(density)) { // flat bare benches are rare already
+					continue;
+				}
+				bool near = false;
+				for (const Vector3 &u : used) {
+					near = near || Vector2(u.x - s.p.x, u.z - s.p.z).length() < 60.0f;
+				}
+				if (near) {
+					continue;
+				}
+				used.push_back(s.p);
+				made++;
+				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, gen->get_height(s.p), s.p.z));
+				if (s.kind == 0) {
+					// Pavement: a patch 8 to 16 m across, its top a little proud of the soil round it, its normal the
+					// ground's, turned to a random joint direction.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_PAVEMENT, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = pick_variant(lib);
+					const Vector3 ax = lib->axes[st.variant];
+					st.scale = (8.0f + 8.0f * rng.randf()) / MAX(2.0f * ax.x, 0.5f); // within the flat 8 m checked round the site
+					const Vector3 n = ground_normal(gen, s.p.x, s.p.z, real_t(ax.x * st.scale));
+					Basis b(Vector3(0, 1, 0), rng.randf() * Math::TAU);
+					const Vector3 axis = Vector3(0, 1, 0).cross(n);
+					if (axis.length_squared() > 1e-8) {
+						b = Basis(axis.normalized(), Math::acos(CLAMP(n.y, real_t(-1.0), real_t(1.0)))) * b;
+					}
+					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+					const real_t g = gen->get_height(s.p);
+					st.position = Vector3(s.p.x, g + 0.15 - ax.y * st.scale, s.p.z);
+					st.ground = g;
+					r_stones.push_back(st);
+				} else {
+					// Hoodoos: 3 to 9 columns in a row along a joint, 3 to 8 m apart, 4 to 20 m tall, the foot sunk in
+					// the debris apron.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_HOODOO, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					const real_t yaw = rng.randf() * Math::TAU;
+					const Vector3 along(Math::cos(yaw), 0, Math::sin(yaw));
+					const int count = 3 + int(rng.randf() * 6.99f);
+					Vector3 at = s.p - along * real_t(count) * 2.5;
+					for (int k = 0; k < count; k++) {
+						at += along * real_t(3.0 + 5.0 * rng.randf()) + Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * 2.0f;
+						if (gen->get_water_depth(at) > 0.0) {
+							continue;
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const AABB box = lib->meshes[st.variant]->get_aabb();
+						const real_t height = 4.0 + 16.0 * rng.randf() * rng.randf();
+						st.scale = height / MAX(real_t(box.size.x), real_t(0.5));
+						const Basis b = Basis(Vector3(0, 1, 0), yaw + rng.randf() * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5);
+						st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+						// The lowest ground under its foot, so no side hangs over the slope.
+						const real_t r = real_t(box.size.y) * st.scale * 0.5;
+						real_t g = gen->get_height(at);
+						for (int j = 0; j < 6; j++) {
+							g = MIN(g, gen->get_height(at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
+						}
+						st.position = Vector3(at.x, g - 0.12 * height - box.position.x * st.scale, at.z);
+						st.ground = gen->get_height(at);
+						r_stones.push_back(st);
+					}
+				}
+			}
+		} break;
 		default:
 			break;
 	}
@@ -2550,7 +2682,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_stones_per_cell", PROPERTY_HINT_RANGE, "1,100000,1"), "set_max_stones_per_cell", "get_max_stones_per_cell");
-	static const char *layer_names[LAYER_MAX] = { "rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast" };
+	static const char *layer_names[LAYER_MAX] = { "rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform" };
 	for (int l = 0; l < LAYER_MAX; l++) {
 		ADD_GROUP(String(layer_names[l]).capitalize(), String(layer_names[l]) + "_");
 		ADD_PROPERTYI(PropertyInfo(Variant::BOOL, String(layer_names[l]) + "_enabled"), "set_layer_enabled", "is_layer_enabled", l);
@@ -2583,5 +2715,6 @@ void RockField3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LAYER_CLIFF);
 	BIND_ENUM_CONSTANT(LAYER_TOR);
 	BIND_ENUM_CONSTANT(LAYER_COAST);
+	BIND_ENUM_CONSTANT(LAYER_LANDFORM);
 	BIND_ENUM_CONSTANT(LAYER_MAX);
 }
