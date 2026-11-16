@@ -72,7 +72,12 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Torn spray sheets: veils of spray stream downwind off the folding crests.*
 
-- **Crisp sea foam** (`foam_crisp`, `foam_relief`, on by default): sea foam patches have sharp, ragged edges with lit rims.
+- **Crisp sea foam** (`foam_crisp`, `foam_relief`, on by default): sharp patch edges, torn lobed holes and bubble relief, up close and at range.
+
+  ![Sea foam on a rough sea a few metres away, without and with crisp foam, raster](media/water-foam-crisp.jpg)
+
+  *Crisp sea foam: soft foam turns into torn patches with ragged holes, floating rafts and raised bubble relief.*
+
 - **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
 - **Ocean detail** (`detail_waves`, on; `bubble_strength`): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 

@@ -201,7 +201,7 @@
 			<return type="Vector2" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				The swash on the shore at [param world_pos]'s XZ: [code]x[/code] is the run-up film (meters of water over the sand), [code]y[/code] the wet sand (0 to 1: 1 under water and where the run-up reached, fading as it dries over [member wet_sand_dry_time]). Read back from the GPU every 8th water step (about 0.13 s behind); the first call turns that readback on, so it returns [code]Vector2(0, 0)[/code] until the first one lands, and outside the simulated square. Safe from the physics thread.
+				The swash on the shore at [param world_pos]'s XZ: [code]x[/code] is the run-up film on the beach (meters of water over the ground above still water: the run-up's level less the ground's height there; 0 past where it reaches, and 0 below still water, where [method sample_depth] gives the depth), [code]y[/code] the wet sand (0 to 1: 1 under water and where the run-up reached, fading as it dries over [member wet_sand_dry_time]). Read back from the GPU every 8th water step (about 0.13 s behind); the first call turns that readback on, so it returns [code]Vector2(0, 0)[/code] until the first one lands, and outside the simulated square. Safe from the physics thread.
 			</description>
 		</method>
 		<method name="sample_vertical_speed" qualifiers="const">

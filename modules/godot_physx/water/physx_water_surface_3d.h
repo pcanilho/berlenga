@@ -413,7 +413,8 @@ public:
 	// Water depth (m) at a world position: the surface as drawn (sample_height) over the measured seabed (or the
 	// constant depth without one); <= 0 on dry ground.
 	float sample_depth(Vector3 p_world_pos) const;
-	// The swash on the shore at a world position: x the run-up film (m of water over the sand), y the wet sand
+	// The swash on the shore at a world position: x the run-up film on the beach (m of water over ground above still
+	// water, 0 past the run-up and below still water), y the wet sand
 	// (0..1, 1 under water and where the run-up reached, fading as it dries). Read back from the GPU every 8th
 	// water step (about 0.13 s behind), asked for from the first call on; zero until the first readback.
 	Vector2 sample_swash(Vector3 p_world_pos) const;
@@ -693,6 +694,7 @@ private:
 	void _connect_terrain();
 	void _disconnect_terrain();
 	void _on_terrain_holes_changed(const Rect2 &p_rect);
+	float _rest_depth_at(float p_rel_x, float p_rel_z) const; // the measured seabed's still-water depth (m)
 	mutable SafeFlag swash_queried; // sample_swash() was called: keep the swash readback on // remeasure_seabed(): rays on the next tick, then in place
 	Ref<ShaderMaterial> water_material;
 	Vector2 current;
