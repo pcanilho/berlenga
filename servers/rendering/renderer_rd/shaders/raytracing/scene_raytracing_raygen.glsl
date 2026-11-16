@@ -1684,6 +1684,59 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's raster shader, there
 // with its comments. Returns a facet normal and its weight (0: none) for a footprint in metres.
+// Sand grains (the functions of the same names in material.cpp; docs/ideas/sand.md, sand glints).
+uint ground_grain_hash(ivec3 p_q, uint p_level) {
+	uint h = (uint(p_q.x) * 73856093u) ^ (uint(p_q.y) * 19349663u) ^ (uint(p_q.z) * 83492791u) ^ (p_level * 2654435761u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return h;
+}
+
+float ground_grain_speckle(vec3 p_pos, float p_footprint) {
+	const float grain = 0.00025;
+	float lf = max(log2(max(p_footprint, grain) / grain), 0.0);
+	float l0 = floor(lf);
+	float v = 0.0;
+	for (int k = 0; k < 2; k++) {
+		float level = l0 + float(k);
+		float cell = grain * exp2(level);
+		uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level));
+		float s = (float(h & 0xffffu) + float(h >> 16u)) / 65535.0 - 1.0;
+		v += (k == 0 ? 1.0 - (lf - l0) : lf - l0) * s / exp2(level);
+	}
+	return 1.0 + 0.8 * v;
+}
+
+vec4 ground_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
+	const float grain = 0.00025;
+	const float share = 0.12;
+	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
+	if (level > 7.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = grain * exp2(level);
+	uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level) + 17u);
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.25 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
+}
+
 vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	const float grain = 0.002;
 	const float share = 0.25;
@@ -1993,6 +2046,7 @@ void main() {
 	// Turned ground on GroundSurface3D's patch (docs/ideas/ground-deform.md): the raster shader's factors.
 	float g_wet = 0.0; // the ground's pore water (sand stage 4), as wetness, and its standing-water sheen
 	float g_sheen = 0.0;
+	float g_grain = 0.0; // the share of loose dry sand showing its grains (sand_glints)
 	if (rt_material_ground_deform(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
 		if (wmap_g != 0u) {
@@ -2001,7 +2055,8 @@ void main() {
 			vec4 grect = texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(0, gts.y - 1), 0);
 			vec2 guv = ((h.hit_pos + rt_origin.xyz).xz - grect.xy) / max(grect.z, 1e-3);
 			if (abs(grect.w - 2.5) < 0.01 && grect.z > 0.0 && all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
-				vec2 gw = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, guv.y * float(gts.y - 1) / float(gts.y)), 0.0).rg;
+				vec3 gw = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, guv.y * float(gts.y - 1) / float(gts.y)), 0.0).rgb;
+				g_grain = clamp(gw.z, 0.0, 1.0);
 				float gup = smoothstep(-0.6, 0.2, h.geometry_normal.y);
 				g_wet = clamp(gw.x, 0.0, 1.0) * gup;
 				g_sheen = clamp(gw.y, 0.0, 1.0) * smoothstep(0.7, 0.95, h.geometry_normal.y);
@@ -2100,8 +2155,34 @@ void main() {
 		m.albedo *= mix(1.0, wet_factor, g_wet);
 		m.roughness *= mix(1.0, wet_factor, 0.5 * g_wet);
 	}
-	// Saturated ground under a film of water: the film's smooth surface (Lagarde 2013's accumulated water).
-	m.roughness = mix(m.roughness, 0.05, g_sheen);
+	// Saturated ground under a film of water: the film's smooth surface hides the sand's relief (Lagarde 2013's
+	// accumulated water), as material.cpp does.
+	if (g_sheen > 0.0) {
+		m.normal = normalize(mix(m.normal, h.geometry_normal, 0.85 * g_sheen));
+		m.roughness = mix(m.roughness, 0.2, 0.6 * g_sheen);
+	}
+	// Loose dry sand: its grains' colours and the grains that mirror a light (sand_glints), sized by the
+	// footprint as the snow's sparkle is (camera rays: pixel angle times distance; others: their ray cone).
+	if (g_grain > 0.0) {
+		float gfp;
+		if (get_total_bounces(payload.packed_bounces_flags) == 0u) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+					scene_data_block.data.inv_view_matrix[2].w);
+			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+			gfp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+		} else {
+			gfp = exp2(rt_cone_footprint_log2);
+		}
+		vec3 gpos = h.hit_pos + rt_origin.xyz;
+		m.albedo *= mix(1.0, ground_grain_speckle(gpos, gfp), g_grain);
+		vec4 gl = ground_glint(gpos, h.geometry_normal, gfp);
+		float glw = g_grain * gl.w * (1.0 - smoothstep(0.05, 0.3, g_wet));
+		if (glw > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {
+			m.clearcoat = min(1.1 * glw, 1.0);
+			m.clearcoat_roughness = 0.45;
+			m.coat_normal = gl.xyz;
+		}
+	}
 
 	// Snow (BaseMaterial3D, docs/ideas/snow.md): the same lines and inputs as the raster shader.
 	vec4 snow_p = rt_material_snow(mat);

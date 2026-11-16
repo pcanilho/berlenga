@@ -823,9 +823,8 @@ void GroundSurface3D::_water_update(double p_delta) {
 				float d = 0.0f;
 				float film = 0.0f;
 				if (src->has_method(s_swash)) {
-					// The film only where the swash covers the sand now (its wetness at 1, dropping as it dries).
 					const Vector2 sw = src->call(s_swash, p);
-					film = sw.y > 0.95f ? MAX(sw.x, 0.0f) : 0.0f;
+					film = MAX(sw.x, 0.0f);
 				}
 				if (src->has_method(s_depth)) {
 					d = src->call(s_depth, p);
@@ -908,13 +907,13 @@ void GroundSurface3D::_water_update(double p_delta) {
 	if (changed) {
 		gpu_cells_dirty = true;
 	}
-	_wet_publish(&cell_depth);
 	water_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
 }
 
-void GroundSurface3D::_wet_publish(const LocalVector<float> *p_depth) {
+void GroundSurface3D::_wet_publish(bool p_on) {
 	const int n = ground_n;
-	const bool on = p_depth && active == this && water_coupling && ground_valid && n >= 2 && (int)pore.size() == n * n && (int)p_depth->size() == n * n;
+	const bool wet = water_coupling && (int)pore.size() == n * n;
+	const bool on = p_on && active == this && ground_valid && n >= 2 && (int)cells.size() == n * n && (wet || sand_glints);
 	if (!on && wet_texture.is_null()) {
 		return;
 	}
@@ -926,10 +925,13 @@ void GroundSurface3D::_wet_publish(const LocalVector<float> *p_depth) {
 	if (on) {
 		float *d = (float *)data.ptrw();
 		for (int i = 0; i < n * n; i++) {
-			const float s = pore[i];
+			const float s = wet ? pore[i] : 0.0f;
 			d[i * 4 + 0] = Math::smoothstep(0.03f, 0.4f, s);
 			// A film of water stands on sand at saturation (under water the water's own surface shows instead).
-			d[i * 4 + 1] = 0.35f * Math::smoothstep(0.95f, 1.0f, s);
+			d[i * 4 + 1] = Math::smoothstep(0.95f, 1.0f, s);
+			// Loose sand shows its grains: not under litter, not where cemented or fixed.
+			const Cell &c = cells[i];
+			d[i * 4 + 2] = sand_glints && c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 		}
 		// Texel centres on the lattice's vertices.
 		float *r = d + n * n * 4;
@@ -1173,7 +1175,7 @@ void GroundSurface3D::set_water_coupling(bool p_enabled) {
 		pore.clear();
 		water_speed.clear();
 		cell_water.clear();
-		_wet_publish(nullptr);
+		_wet_publish(false);
 		_update_cells();
 	}
 }
@@ -1600,7 +1602,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_set_global("ground_ripple_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				ripple_published = false;
 				ripple_far_published = false;
-				_wet_publish(nullptr);
+				_wet_publish(false);
 				wet_published = false;
 				active = nullptr;
 			}
@@ -1622,6 +1624,11 @@ void GroundSurface3D::_notification(int p_what) {
 			if (water_accum >= 0.5) {
 				_water_update(water_accum);
 				water_accum = 0.0;
+			}
+			wet_publish_accum += delta;
+			if (wet_publish_accum >= 0.5) {
+				_wet_publish(true);
+				wet_publish_accum = 0.0;
 			}
 			wind_accum += delta;
 			if (wind_accum >= 0.5) {
@@ -2448,6 +2455,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_saturation_at", "position"), &GroundSurface3D::get_saturation_at);
 	ClassDB::bind_method(D_METHOD("get_water_speed_at", "position"), &GroundSurface3D::get_water_speed_at);
 	ClassDB::bind_method(D_METHOD("get_water_step_usec"), &GroundSurface3D::get_water_step_usec);
+	ClassDB::bind_method(D_METHOD("set_sand_glints", "enabled"), &GroundSurface3D::set_sand_glints);
+	ClassDB::bind_method(D_METHOD("is_sand_glints"), &GroundSurface3D::is_sand_glints);
 	ClassDB::bind_method(D_METHOD("set_wind_shelters", "shelters"), &GroundSurface3D::set_wind_shelters);
 	ClassDB::bind_method(D_METHOD("get_wind_shelters"), &GroundSurface3D::get_wind_shelters);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("shelter_ratio_for", "lambda"), &GroundSurface3D::shelter_ratio_for);
@@ -2537,6 +2546,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_GROUP("Water", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_coupling"), "set_water_coupling", "is_water_coupling");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_glints"), "set_sand_glints", "is_sand_glints");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
