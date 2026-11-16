@@ -522,6 +522,12 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bank_margin"), &PhysXRiver3D::get_bank_margin);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXRiver3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXRiver3D::get_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_source_lake", "path"), &PhysXRiver3D::set_source_lake);
+	ClassDB::bind_method(D_METHOD("get_source_lake"), &PhysXRiver3D::get_source_lake);
+	ClassDB::bind_method(D_METHOD("set_outlet_coefficient", "coefficient"), &PhysXRiver3D::set_outlet_coefficient);
+	ClassDB::bind_method(D_METHOD("get_outlet_coefficient"), &PhysXRiver3D::get_outlet_coefficient);
+	ClassDB::bind_method(D_METHOD("get_outlet_discharge"), &PhysXRiver3D::get_outlet_discharge);
+	ClassDB::bind_method(D_METHOD("get_outlet_head"), &PhysXRiver3D::get_outlet_head);
 	ClassDB::bind_method(D_METHOD("set_mouth_target", "path"), &PhysXRiver3D::set_mouth_target);
 	ClassDB::bind_method(D_METHOD("get_mouth_target"), &PhysXRiver3D::get_mouth_target);
 	ClassDB::bind_method(D_METHOD("set_fall_min_height", "height"), &PhysXRiver3D::set_fall_min_height);
@@ -603,6 +609,9 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bend_superelevation"), "set_bend_superelevation", "get_bend_superelevation");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_waves"), "set_standing_waves", "get_standing_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
+	ADD_GROUP("Outlet", "outlet_");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source_lake", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_source_lake", "get_source_lake");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outlet_coefficient", PROPERTY_HINT_RANGE, "0.3,1.2,0.01"), "set_outlet_coefficient", "get_outlet_coefficient");
 	ADD_GROUP("Mouth", "mouth_");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mouth_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_mouth_target", "get_mouth_target");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mouth_blend", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m"), "set_mouth_blend", "get_mouth_blend");
@@ -692,8 +701,81 @@ void PhysXRiver3D::set_mouth_blend(float p_blend) {
 	_queue_build();
 }
 
+Node *PhysXRiver3D::_source_node() const {
+	if (source_lake.is_empty() || !is_inside_tree()) {
+		return nullptr;
+	}
+	Node *n = get_node_or_null(source_lake);
+	return n == this ? nullptr : n;
+}
+
+void PhysXRiver3D::set_source_lake(const NodePath &p_path) {
+	_unregister_outlet();
+	source_lake = p_path;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_outlet_coefficient(float p_coefficient) {
+	outlet_coefficient = CLAMP(p_coefficient, 0.05f, 2.0f);
+	_queue_build();
+}
+
+// The lake's head over the outlet's sill gives the river's discharge (a broad-crested weir, Henderson 1966:
+// Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)). The sill is the highest bed in the river's first 12 m.
+void PhysXRiver3D::_measure_outlet(PhysicsDirectSpaceState3D *p_space, const Ref<Curve3D> &p_curve, float p_ds) {
+	PhysXWaterSurface3D *lake = Object::cast_to<PhysXWaterSurface3D>(_source_node());
+	if (lake == nullptr) {
+		_unregister_outlet();
+		outlet_discharge = -1.0f;
+		outlet_head = 0.0f;
+		return;
+	}
+	const float length = p_curve->get_baked_length();
+	const Transform3D xf = get_global_transform();
+	float crest = -Math::INF;
+	float crest_s = 0.0f;
+	for (float s = 0.0f; s <= MIN(12.0f, length) + 1e-4f; s += MAX(p_ds, 0.25f)) {
+		const Vector3 c = p_curve->sample_baked(s, true);
+		float y = 0.0f;
+		if (_base_ground_at(p_space, c, y)) {
+			const float wy = xf.xform(Vector3(c.x, y, c.z)).y;
+			if (wy > crest) {
+				crest = wy;
+				crest_s = s;
+			}
+		}
+	}
+	const Vector3 at_local = p_curve->sample_baked(crest_s, true);
+	if (!Math::is_finite(crest)) {
+		crest = xf.xform(at_local).y; // no ground found: the curve's own height is the sill
+	}
+	const float level = lake->get_global_position().y + lake->get_water_level();
+	const float width = widths.is_empty() ? default_width : _point_value(widths, 0, default_width);
+	outlet_head = MAX(level - crest, 0.0f);
+	outlet_discharge = PhysXWaterSurface3D::weir_discharge(outlet_coefficient, width, outlet_head);
+	Vector3 ahead = p_curve->sample_baked(MIN(crest_s + 1.0f, length), true) - p_curve->sample_baked(MAX(crest_s - 1.0f, 0.0f), true);
+	ahead.y = 0.0f;
+	const Vector3 dir = xf.basis.xform(ahead.length_squared() > 1e-8f ? ahead.normalized() : Vector3(1, 0, 0));
+	if (source_id.is_valid() && source_id != lake->get_instance_id()) {
+		_unregister_outlet();
+	}
+	source_id = lake->get_instance_id();
+	lake->set_outflow((int64_t)(uint64_t)get_instance_id(), xf.xform(at_local), dir, width, crest, outlet_coefficient);
+}
+
+void PhysXRiver3D::_unregister_outlet() {
+	if (!source_id.is_valid()) {
+		return;
+	}
+	if (PhysXWaterSurface3D *lake = Object::cast_to<PhysXWaterSurface3D>(ObjectDB::get_instance(source_id))) {
+		lake->clear_outflow((int64_t)(uint64_t)get_instance_id());
+	}
+	source_id = ObjectID();
+}
+
 float PhysXRiver3D::get_discharge_at(float p_s) const {
-	float q = discharge;
+	// A lake outlet runs on what the lake passes over its sill (a trickle with no head, so the ribbon stays).
+	float q = outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge;
 	for (const Tributary &t : tributaries) {
 		if (p_s >= t.s) {
 			q += t.discharge;
@@ -1299,6 +1381,7 @@ void PhysXRiver3D::_notification(int p_what) {
 			set_process_internal(false);
 			_live_stop();
 			_unregister_mouth();
+			_unregister_outlet();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			// Ground rays need the ground in the physics space, which it is by the first tick.
@@ -1464,6 +1547,8 @@ void PhysXRiver3D::_build() {
 	if (snap_to_ground && is_inside_world() && get_world_3d().is_valid()) {
 		space = get_world_3d()->get_direct_space_state();
 	}
+
+	_measure_outlet(space, c, ds);
 
 	// Where each tributary joins: its mouth's place along this river, and which bank.
 	{

@@ -125,6 +125,18 @@ public:
 	// outflow spreads into this water as a plume. Called by PhysXRiver3D.
 	void set_inflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_discharge);
 	void clear_inflow(int64_t p_owner);
+	// A river leaving at p_at (world, its sill, at world height p_crest) along p_direction (out of the lake):
+	// the lake drains over the sill as a broad-crested weir, and its water converges on the outlet. Called by
+	// PhysXRiver3D (source_lake).
+	void set_outflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_crest, float p_coefficient);
+	void clear_outflow(int64_t p_owner);
+	// Broad-crested weir (Henderson 1966): m^3/s over a sill p_width wide under p_head of water.
+	static float weir_discharge(float p_coefficient, float p_width, float p_head);
+	void set_level_from_flows(bool p_enabled);
+	bool get_level_from_flows() const { return level_from_flows; }
+	void set_catchment_inflow(float p_discharge);
+	float get_catchment_inflow() const { return catchment_inflow; }
+	float get_outflow_discharge() const;
 	void set_water_level(float p_level);
 	float get_water_level() const { return water_level; }
 	void set_damping(float p_damping);
@@ -664,6 +676,19 @@ private:
 		float discharge = 0.0f;
 	};
 	LocalVector<Inflow> inflows;
+	// Rivers leaving (PhysXRiver3D's source_lake): each drains over its sill; the water converges on it.
+	struct Outflow {
+		int64_t owner = 0;
+		Vector3 at; // world, the sill's centre
+		Vector3 direction; // world, horizontal unit, out of the lake
+		float width = 1.0f;
+		float crest = 0.0f; // world height of the sill
+		float coefficient = 0.85f;
+	};
+	LocalVector<Outflow> outflows;
+	bool level_from_flows = false; // the level settles where the outlets pass the inflows (docs "Lake outlets")
+	float catchment_inflow = 0.0f; // m^3/s from rain and springs, besides the rivers flowing in
+	void _settle_level();
 	PackedVector2Array plume_cells; // m/s per ripple cell, world xz
 	Ref<ImageTexture> plume_texture;
 	void _bake_plumes();

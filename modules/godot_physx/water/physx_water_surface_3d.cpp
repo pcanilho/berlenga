@@ -1987,6 +1987,14 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
 	ClassDB::bind_method(D_METHOD("set_inflow", "owner", "at", "direction", "width", "discharge"), &PhysXWaterSurface3D::set_inflow);
 	ClassDB::bind_method(D_METHOD("clear_inflow", "owner"), &PhysXWaterSurface3D::clear_inflow);
+	ClassDB::bind_method(D_METHOD("set_outflow", "owner", "at", "direction", "width", "crest", "coefficient"), &PhysXWaterSurface3D::set_outflow);
+	ClassDB::bind_method(D_METHOD("clear_outflow", "owner"), &PhysXWaterSurface3D::clear_outflow);
+	ClassDB::bind_static_method("PhysXWaterSurface3D", D_METHOD("weir_discharge", "coefficient", "width", "head"), &PhysXWaterSurface3D::weir_discharge);
+	ClassDB::bind_method(D_METHOD("set_level_from_flows", "enabled"), &PhysXWaterSurface3D::set_level_from_flows);
+	ClassDB::bind_method(D_METHOD("get_level_from_flows"), &PhysXWaterSurface3D::get_level_from_flows);
+	ClassDB::bind_method(D_METHOD("set_catchment_inflow", "discharge"), &PhysXWaterSurface3D::set_catchment_inflow);
+	ClassDB::bind_method(D_METHOD("get_catchment_inflow"), &PhysXWaterSurface3D::get_catchment_inflow);
+	ClassDB::bind_method(D_METHOD("get_outflow_discharge"), &PhysXWaterSurface3D::get_outflow_discharge);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
@@ -2011,6 +2019,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "grid_resolution"), "set_grid_resolution", "get_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "depth"), "set_depth", "get_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "level_from_flows"), "set_level_from_flows", "get_level_from_flows");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "catchment_inflow", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m³/s"), "set_catchment_inflow", "get_catchment_inflow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "step_mode", PROPERTY_HINT_ENUM, "Per Tick,Per Frame"), "set_step_mode", "get_step_mode");
@@ -3948,6 +3958,7 @@ void PhysXWaterSurface3D::set_inflow(int64_t p_owner, const Vector3 &p_at, const
 	if (!found) {
 		inflows.push_back(f);
 	}
+	_settle_level();
 	_bake_plumes();
 }
 
@@ -3955,8 +3966,123 @@ void PhysXWaterSurface3D::clear_inflow(int64_t p_owner) {
 	for (uint32_t k = 0; k < inflows.size(); k++) {
 		if (inflows[k].owner == p_owner) {
 			inflows.remove_at(k);
+			_settle_level();
 			_bake_plumes();
 			return;
+		}
+	}
+}
+
+float PhysXWaterSurface3D::weir_discharge(float p_coefficient, float p_width, float p_head) {
+	if (!(p_head > 0.0f) || !(p_width > 0.0f)) {
+		return 0.0f;
+	}
+	// Critical depth (two thirds of the head) over the crest: Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2).
+	return p_coefficient * 0.5443311f * p_width * Math::sqrt(9.81f) * p_head * Math::sqrt(p_head);
+}
+
+void PhysXWaterSurface3D::set_outflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_crest, float p_coefficient) {
+	Outflow f;
+	f.owner = p_owner;
+	f.at = p_at;
+	f.direction = Vector3(p_direction.x, 0.0f, p_direction.z).normalized();
+	f.width = MAX(p_width, 0.1f);
+	f.crest = p_crest;
+	f.coefficient = MAX(p_coefficient, 0.0f);
+	bool found = false;
+	for (Outflow &e : outflows) {
+		if (e.owner == p_owner) {
+			if (e.at.distance_to(f.at) < 0.05f && e.direction.dot(f.direction) > 0.999f && Math::abs(e.width - f.width) < 1e-3f && Math::abs(e.crest - f.crest) < 1e-3f && Math::abs(e.coefficient - f.coefficient) < 1e-4f) {
+				return; // unchanged (each rebuild of the river registers again)
+			}
+			e = f;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		outflows.push_back(f);
+	}
+	_settle_level();
+	_bake_plumes();
+}
+
+void PhysXWaterSurface3D::clear_outflow(int64_t p_owner) {
+	for (uint32_t k = 0; k < outflows.size(); k++) {
+		if (outflows[k].owner == p_owner) {
+			outflows.remove_at(k);
+			_bake_plumes();
+			return;
+		}
+	}
+}
+
+void PhysXWaterSurface3D::set_level_from_flows(bool p_enabled) {
+	level_from_flows = p_enabled;
+	_settle_level();
+}
+
+void PhysXWaterSurface3D::set_catchment_inflow(float p_discharge) {
+	catchment_inflow = MAX(p_discharge, 0.0f);
+	_settle_level();
+}
+
+float PhysXWaterSurface3D::get_outflow_discharge() const {
+	const float level = (is_inside_tree() ? get_global_position().y : 0.0f) + water_level;
+	float q = 0.0f;
+	for (const Outflow &f : outflows) {
+		q += weir_discharge(f.coefficient, f.width, level - f.crest);
+	}
+	return q;
+}
+
+// The level budget (docs/ideas/water.md "Lake outlets"): steady state, where the outlets pass what flows in.
+// A lake takes hours to days to settle, so it holds the settled level rather than creeping during play.
+// When the level moves (over a centimetre) the rivers leaving and entering it rebuild on the new level.
+void PhysXWaterSurface3D::_settle_level() {
+	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	float q_in = catchment_inflow;
+	for (const Inflow &f : inflows) {
+		q_in += f.discharge;
+	}
+	float lo = Math::INF;
+	for (const Outflow &f : outflows) {
+		lo = MIN(lo, f.crest);
+	}
+	float hi = lo + 1.0f;
+	auto q_out = [&](float p_level) -> float {
+		float q = 0.0f;
+		for (const Outflow &f : outflows) {
+			q += weir_discharge(f.coefficient, f.width, p_level - f.crest);
+		}
+		return q;
+	};
+	while (q_out(hi) < q_in && hi < lo + 100.0f) {
+		hi = lo + 2.0f * (hi - lo);
+	}
+	for (int it = 0; it < 40; it++) {
+		const float mid = 0.5f * (lo + hi);
+		if (q_out(mid) < q_in) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	const float level = 0.5f * (lo + hi) - get_global_position().y;
+	if (Math::abs(level - water_level) < 0.01f) {
+		return;
+	}
+	set_water_level(level);
+	for (const Outflow &f : outflows) {
+		if (Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner))) {
+			o->call_deferred(SNAME("rebuild"));
+		}
+	}
+	for (const Inflow &f : inflows) {
+		if (Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner))) {
+			o->call_deferred(SNAME("rebuild"));
 		}
 	}
 }
@@ -3971,7 +4097,7 @@ void PhysXWaterSurface3D::clear_inflow(int64_t p_owner) {
 void PhysXWaterSurface3D::_bake_plumes() {
 	const int n = grid_resolution;
 	plume_cells.clear();
-	if (inflows.is_empty() || n < 4) {
+	if ((inflows.is_empty() && outflows.is_empty()) || n < 4) {
 		_update_flow_material();
 		return;
 	}
@@ -4016,6 +4142,36 @@ void PhysXWaterSurface3D::_bake_plumes() {
 				const float u = um * Math::exp(-0.693f * r * r) * wear * (along < 0.0f ? 1.0f + along / (0.5f * f.width) : 1.0f);
 				// Spreading: a little outward with the growing width.
 				out[z * n + x] += dir * u + perp * (u * 0.1f * CLAMP(r, -2.0f, 2.0f) * 0.5f);
+			}
+		}
+	}
+	// Outlets: the water converges on each sill as a sink in a half plane, Q / (pi r h) at distance r (potential
+	// flow), up to the speed over the sill (critical depth, two thirds of the head).
+	const float level_y = get_global_position().y + water_level;
+	for (const Outflow &f : outflows) {
+		const float head = level_y - f.crest;
+		const float q = weir_discharge(f.coefficient, f.width, head);
+		if (q <= 0.0f) {
+			continue;
+		}
+		const float u_sill = q / (f.width * MAX(head * 2.0f / 3.0f, 0.02f));
+		const Vector2 dir(f.direction.x, f.direction.z);
+		const float reach = 40.0f * f.width;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const float h = depth_at_cell(x, z);
+				if (!(h > 0.05f)) {
+					continue;
+				}
+				const Vector2 p(grid_center.x + (x + 0.5f - 0.5f * n) * dx - f.at.x, grid_center.y + (z + 0.5f - 0.5f * n) * dz - f.at.z);
+				const float r = p.length();
+				if (r > reach || r < 1e-3f) {
+					continue;
+				}
+				// Only the lake side of the sill draws (the half plane behind it), fading in across the line.
+				const float behind = CLAMP(-p.dot(dir) / (0.5f * f.width) + 0.5f, 0.0f, 1.0f);
+				const float u = MIN(q / ((float)Math::PI * MAX(r, 0.5f * f.width) * h), u_sill) * behind * (1.0f - r / reach);
+				out[z * n + x] -= p / r * u;
 			}
 		}
 	}
