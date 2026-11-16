@@ -13,7 +13,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -29,7 +29,7 @@ extends Node3D
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 const WORLD := 2048.0
 
@@ -204,16 +204,19 @@ func _one_rock() -> void:
 	var m := _rock(TYPES.find(tf[0]), FAMILIES.find(tf[1]) if tf.size() > 1 else 0, int(args.get("seed", "3")))
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
 	var fam := FAMILIES.find(tf[1]) if tf.size() > 1 else 0
-	if args.has("stand") and fam in [RockGenerator.FAMILY_FIN, RockGenerator.FAMILY_HOODOO, RockGenerator.FAMILY_SEA_STACK, RockGenerator.FAMILY_GOBLIN]:
+	if args.has("stand") and fam in [RockGenerator.FAMILY_FIN, RockGenerator.FAMILY_HOODOO, RockGenerator.FAMILY_SEA_STACK, RockGenerator.FAMILY_GOBLIN, RockGenerator.FAMILY_CAVE_MOUTH]:
 		# --stand: on end as the field stands it (a fin's z up, a column's x up), seen side on from 6 b-axes away.
 		var mi := MeshInstance3D.new()
 		mi.mesh = m
-		var bs := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0)) if fam == RockGenerator.FAMILY_FIN else Basis(Vector3(0, 1, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1))
+		var z_up := fam == RockGenerator.FAMILY_FIN or fam == RockGenerator.FAMILY_CAVE_MOUTH
+		var bs := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0)) if z_up else Basis(Vector3(0, 1, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1))
+		if fam == RockGenerator.FAMILY_CAVE_MOUTH:
+			bs = Basis(Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 1, 0)) # the opening (+y) toward the camera
 		var box := m.get_aabb()
-		var foot := box.position.z if fam == RockGenerator.FAMILY_FIN else box.position.x
+		var foot := box.position.z if z_up else box.position.x
 		mi.transform = Transform3D(Basis(Vector3.UP, 0.35) * bs, Vector3(0, -foot - 0.05, 0))
 		add_child(mi)
-		var top := box.size.z if fam == RockGenerator.FAMILY_FIN else box.size.x
+		var top := box.size.z if z_up else box.size.x
 		cam.position = Vector3(1.2, top * 0.45, top * 2.6 + 3.0)
 		cam.look_at(Vector3(0, top * 0.4, 0))
 		return
@@ -309,6 +312,7 @@ func _world() -> void:
 		# Off by default in the engine until their GPU cost is timed; on in the bench.
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.mineral_glints = not args.has("no-glints")
+		rocks.cave_mouths = true # off in the engine (a heightfield cannot open the hole behind them); on in the bench
 		if args.has("water"):
 			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")
@@ -751,7 +755,7 @@ func _test() -> void:
 		kinds[s["family"]] = int(kinds.get(s["family"], 0)) + 1
 	# Pavement wants flat bare limestone benches and potholes level bedrock stream beds, which this steep, coarse
 	# test world nearly lacks: they are counted, not required.
-	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_FIN), "landforms: %d hoodoos, %d fins, %d pavement patches, %d pothole slabs, %d goblins" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_FIN, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0), kinds.get(RockGenerator.FAMILY_POTHOLE, 0), kinds.get(RockGenerator.FAMILY_GOBLIN, 0)])
+	check(kinds.has(RockGenerator.FAMILY_HOODOO) and kinds.has(RockGenerator.FAMILY_FIN), "landforms: %d hoodoos, %d fins, %d pavement patches, %d pothole slabs, %d goblins, %d cave mouths" % [kinds.get(RockGenerator.FAMILY_HOODOO, 0), kinds.get(RockGenerator.FAMILY_FIN, 0), kinds.get(RockGenerator.FAMILY_PAVEMENT, 0), kinds.get(RockGenerator.FAMILY_POTHOLE, 0), kinds.get(RockGenerator.FAMILY_GOBLIN, 0), kinds.get(RockGenerator.FAMILY_CAVE_MOUTH, 0)])
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var overlaps := 0

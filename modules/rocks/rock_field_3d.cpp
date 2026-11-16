@@ -1194,7 +1194,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			struct Site {
 				Vector3 p;
 				float score;
-				int kind; // 0 pavement, 1 hoodoos, 2 fins, 3 goblins
+				int kind; // 0 pavement, 1 hoodoos, 2 fins, 3 goblins, 4 cave mouths
 			};
 			LocalVector<Site> sites;
 			const real_t shore_top = gen->has_sea_result() ? gen->get_sea_level() + 6.0 : -1e9; // beaches and storm ridges are sand and shingle
@@ -1220,6 +1220,18 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						}
 						if (off < 0.8f) {
 							sites.push_back({ c, bare * (1.0f + rng.randf() * 0.3f), 0 });
+						}
+					}
+					// Cave mouths: bare limestone cliff (a wall the terrain holds, 50 to 76 degrees) whose foot, 10 m down
+					// the fall line, flattens out: the passage opens at the foot.
+					if (cave_mouths && type == RockGenerator::ROCK_LIMESTONE && bare > 0.5f && n.y < 0.64f && n.y > 0.23f) {
+						const Vector2 down = Vector2(n.x, n.z).normalized(); // a ground normal leans downhill
+						const Vector3 foot = c + Vector3(down.x, 0, down.y) * 10.0;
+						// A real foot: level ground over 8 m in front, and the wall behind rising at least 8 m within 12 m.
+						const real_t hf = gen->get_height(foot);
+						const bool wall = gen->get_height(foot - Vector3(down.x, 0, down.y) * 12.0) > hf + 8.0;
+						if (wall && ground_normal(gen, foot.x + down.x * 4.0, foot.z + down.y * 4.0, 8.0).y > 0.93f && gen->get_water_depth(foot) <= 0.0) {
+							sites.push_back({ foot, bare * (0.7f + rng.randf() * 0.3f), 4 });
 						}
 					}
 					// Goblins: flat, bare sandstone valley floors (Goblin Valley: Entrada between mesa walls).
@@ -1343,11 +1355,12 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			const bool badland = rng.randf() < 0.25f;
 			const bool fin_field = rng.randf() < 0.35f; // fins come in fields along one joint set
 			const bool goblin_field = rng.randf() < 0.3f;
+			bool cave_made = rng.randf() > 0.25f; // a cave mouth in one cell in four that has a limestone cliff foot
 			for (const Site &s : sites) {
 				if ((s.kind == 1 && !badland) || (s.kind == 2 && !fin_field) || (s.kind == 3 && !goblin_field)) {
 					continue;
 				}
-				if (made >= 2 || rng.randf() > (s.kind == 0 ? 0.8f : 0.3f) * float(density)) { // flat bare benches are rare already
+				if (made >= 2 || rng.randf() > (s.kind == 0 ? 0.8f : (s.kind == 4 ? 1.0f : 0.3f)) * float(density)) { // flat bare benches are rare already
 					continue;
 				}
 				bool near = false;
@@ -1360,6 +1373,64 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				used.push_back(s.p);
 				made++;
 				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, gen->get_height(s.p), s.p.z));
+				if (s.kind == 4) {
+					if (cave_made) {
+						continue;
+					}
+					cave_made = true;
+					// The portal block stands on the foot in front of the wall (a heightfield cannot open a hole into
+					// its own slope), its back and top against the cliff, the opening facing out; a few fallen blocks
+					// on the floor at the entrance.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_CAVE_MOUTH, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					Vector3 up_n = ground_normal(gen, s.p.x, s.p.z, 12.0);
+					Vector2 o2 = Vector2(up_n.x, up_n.z);
+					if (o2.length() < 0.05f) {
+						continue;
+					}
+					o2.normalize(); // out, away from the cliff
+					const Vector3 out(o2.x, 0, o2.y), up(0, 1, 0);
+					const Vector3 strike(-o2.y, 0, o2.x); // so that strike x out = up
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = pick_variant(lib);
+					const AABB box = lib->meshes[st.variant]->get_aabb();
+					const real_t height = 6.0 + 6.0 * rng.randf();
+					st.scale = height / MAX(real_t(box.size.z), real_t(0.5));
+					st.basis = Basis(strike, out, up).scaled_local(Vector3(st.scale, st.scale, st.scale));
+					const Vector3 front = s.p + out * 1.0;
+					const Vector3 org = front - out * real_t((box.position.y + box.size.y) * st.scale);
+					real_t g = gen->get_height(front);
+					for (int j = -2; j <= 2; j++) {
+						g = MIN(g, gen->get_height(front + strike * (real_t(j) * 0.2 * real_t(box.size.x) * st.scale)));
+					}
+					st.position = Vector3(org.x, g - 0.05 * height - box.position.z * st.scale, org.z);
+					st.ground = g;
+					r_stones.push_back(st);
+					// Breakdown: 3 to 7 blocks fallen from the roof and the hood, on the floor in front of the entrance.
+					const uint32_t bkey = _library_key(type, RockGenerator::FAMILY_ROCKFALL, 0);
+					Library *blib = _ensure_library(bkey);
+					const int falls = blib ? 3 + int(rng.randf() * 4.99f) : 0;
+					for (int k = 0; k < falls; k++) {
+						const Vector3 at = front + out * real_t(0.5 + 4.0 * rng.randf()) + strike * real_t((rng.randf() - 0.5f) * 0.6f * float(box.size.x) * float(st.scale));
+						Stone bs;
+						bs.layer = p_layer;
+						bs.library = bkey;
+						bs.variant = pick_variant(blib);
+						const real_t size = 0.5 + 1.2 * rng.randf() * rng.randf();
+						bs.scale = size * 0.5;
+						bs.basis = Basis(up, rng.randf() * Math::TAU).scaled(Vector3(bs.scale, bs.scale, bs.scale));
+						const real_t gb = gen->get_height(at);
+						bs.position = Vector3(at.x, gb - blib->bottom[bs.variant] * bs.scale - 0.12 * size, at.z);
+						bs.ground = gb;
+						r_stones.push_back(bs);
+					}
+					continue;
+				}
 				if (s.kind == 3) {
 					// Goblins: 6 to 20 knobs scattered within 25 m, 1.5 to 5 m tall, the foot set into the floor.
 					const uint32_t key = _library_key(type, RockGenerator::FAMILY_GOBLIN, 0);
@@ -2668,6 +2739,11 @@ void RockField3D::set_coast_collision(bool p_enabled) {
 	rebuild();
 }
 
+void RockField3D::set_cave_mouths(bool p_enabled) {
+	cave_mouths = p_enabled;
+	rebuild();
+}
+
 void RockField3D::set_ground_blend(bool p_enabled) {
 	ground_blend = p_enabled;
 	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
@@ -2789,6 +2865,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_mineral_glints"), &RockField3D::is_mineral_glints);
 	ClassDB::bind_method(D_METHOD("set_coast_collision", "enabled"), &RockField3D::set_coast_collision);
 	ClassDB::bind_method(D_METHOD("is_coast_collision"), &RockField3D::is_coast_collision);
+	ClassDB::bind_method(D_METHOD("set_cave_mouths", "enabled"), &RockField3D::set_cave_mouths);
+	ClassDB::bind_method(D_METHOD("is_cave_mouths"), &RockField3D::is_cave_mouths);
 	ClassDB::bind_method(D_METHOD("set_ground_blend", "enabled"), &RockField3D::set_ground_blend);
 	ClassDB::bind_method(D_METHOD("is_ground_blend"), &RockField3D::is_ground_blend);
 	ClassDB::bind_method(D_METHOD("set_ground_blend_height", "height"), &RockField3D::set_ground_blend_height);
@@ -2889,6 +2967,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_min_size", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_collision_min_size", "get_collision_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_collision_radius", "get_collision_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "coast_collision"), "set_coast_collision", "is_coast_collision");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_mouths"), "set_cave_mouths", "is_cave_mouths");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
 	ADD_GROUP("Streaming", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");

@@ -156,7 +156,10 @@
 		<constant name="FAMILY_GOBLIN" value="14" enum="Family">
 			A goblin: a sandstone knob 1 to 6 m tall (x up when stood), rounded all over by spheroidal weathering, a bulbous head on a narrower neck over a flared foot.
 		</constant>
-		<constant name="FAMILY_MAX" value="15" enum="Family">
+		<constant name="FAMILY_CAVE_MOUTH" value="15" enum="Family">
+			A cave mouth: a limestone outcrop (x along the cliff, z up, the front face +y) with a passage opening into it along a bed or a joint, its roof bedding-flat or arched, narrowing and turning as it goes in to a blind end.
+		</constant>
+		<constant name="FAMILY_MAX" value="16" enum="Family">
 			Number of families.
 		</constant>
 	</constants>
