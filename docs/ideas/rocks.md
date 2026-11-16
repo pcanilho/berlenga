@@ -475,3 +475,11 @@ arches, goblins, potholes, cave mouths.
   edges: flush with the soil, the whole top was being painted as grass.
 - The bench's 8 m terrain grid turns most stream beds into V-gullies, so it places 0 to 2 slabs; finer terrain places
   more.
+
+### Landforms step 2c: goblins (16 Nov)
+
+- `FAMILY_GOBLIN` (Goblin Valley, Entrada sandstone): an upright knob 1.5 to 5 m tall, the round-plan joint block
+  pulled toward a round section (spheroidal weathering), a bulbous head (Gaussian swell at 72 to 86% of the height)
+  on a pinched neck over a flared foot, faint beds. Grid 128 cells (35 to 70 thousand triangles).
+- Placement: flat bare sandstone (normal y over 0.97), one cell in ten or so; clusters of 6 to 20 within 25 m, each on
+  the floor (local normal y over 0.9), sunk 6% of its height below the lowest ground round it.

@@ -77,7 +77,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -90,7 +90,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -117,7 +117,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -147,7 +147,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f };
 	return w[family];
 }
 
@@ -791,12 +791,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	} else if (family == FAMILY_FIN) {
 		a = 2.0f + 1.4f * rng.randf(); // x: along the joint; z: the fin's height; y: its thickness, between two joints
 		c = 0.22f + 0.13f * rng.randf();
+	} else if (family == FAMILY_GOBLIN) {
+		a = 1.3f + 0.6f * rng.randf(); // x: up when stood; a knob a little taller than wide
+		c = 0.8f + 0.15f * rng.randf();
 	} else if (family == FAMILY_POTHOLE) {
 		a = 1.8f + 0.6f * rng.randf(); // x: down the channel; z: across; y: the slab's depth below the bed
 		c = 0.26f + 0.08f * rng.randf();
 	}
-	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE;
-	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO; // stood on end in the field: beds cross x
+	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE || family == FAMILY_GOBLIN;
+	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // stood on end in the field: beds cross x
 	// Fresh fragments spread over the Zingg classes rather than sitting near the cube: talus and rockfall hold many
 	// slabs and blades, rods and wedges as well as blocks (Domokos et al. 2020 give the mean, not the spread).
 	int fragment_form = 0; // 0 block, 1 slab, 2 rod, 3 wedge
@@ -817,12 +820,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const Vector3 r(rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f);
 		return (p_axis + r * Math::tan(Math::deg_to_rad(p_degrees))).normalized();
 	};
-	if (family == FAMILY_SEA_STACK || family == FAMILY_HOODOO) {
+	if (family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN) {
 		// A stack is what is left of a headland between joints at all angles (Old Harry, the Twelve Apostles): in plan
 		// an irregular polygon of 6 to 9 joint faces at uneven azimuths and distances, each a few degrees off upright,
 		// the whole leaning a little one way and narrowing upward; the foot square across, the top two or three
 		// oblique breaks, ragged rather than flat.
-		const bool hoodoo = family == FAMILY_HOODOO; // nearly upright, the neck carved later under its cap
+		const bool hoodoo = family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // nearly upright, the neck carved later under its cap
 		// A hoodoo is rounded by rain wash rather than cut by joints: more, shorter faces, all at much the same reach.
 		const int sides = hoodoo ? 11 + int(rng.randf() * 4.99f) : 6 + int(rng.randf() * 3.99f);
 		float th[16];
@@ -942,7 +945,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f, true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1047,7 +1050,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -1393,6 +1396,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// in the flow, a little undercut, round-floored, in a line down the thalweg and sometimes breached into each
 		// other; the bed between them polished and fluted along the flow, its upstream edge rounded.
 		y_top_mesh = y_top;
+		const float goblin_head = 0.72f + 0.14f * rng.randf(), goblin_neck = goblin_head - 0.26f - 0.08f * rng.randf();
+		const float goblin_pinch = 0.22f + 0.2f * rng.randf();
 		if (family == FAMILY_POTHOLE) {
 			const int count = 1 + int(rng.randf() * 2.99f);
 			float px = -0.7f * a + 0.4f * a * rng.randf();
@@ -1454,6 +1459,22 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// Rills: rain runs down the sides and fluted them, grooves along the column.
 						v += 0.07f * c * (rk_noise(Vector3(p.x * 0.35f, p.y * 4.0f, p.z * 4.0f), nseed + 120u) - 0.5f);
 						v += 0.05f * c * (rk_fbm(p * 2.2f, nseed + 113u, 3) - 0.5f);
+					} else if (family == FAMILY_GOBLIN) {
+						// Goblin (Entrada sandstone, Goblin Valley): a knob rounded by spheroidal weathering and sand blast,
+						// a bulbous head on a narrower neck over a flared foot, faint beds; no joint face left flat.
+						const float t = (p.x - x_lo) / span;
+						const float head = Math::exp(-Math::pow((t - goblin_head) / 0.14f, 2.0f));
+						const float neck = Math::exp(-Math::pow((t - goblin_neck) / 0.12f, 2.0f));
+						v -= 0.2f * c * head;
+						v += goblin_pinch * c * neck;
+						v += 0.3f * c * Math::smoothstep(0.75f, 1.0f, t) * Math::smoothstep(0.75f, 1.0f, t); // the crown rounded
+						v -= 0.08f * c * (1.0f - Math::smoothstep(0.0f, 0.2f, t)); // the foot flared into the floor
+						// The joint faces rounded off: pulled toward a round section of the same reach.
+						const float ell = (Vector2(p.y / c, p.z).length() - 0.95f) * 0.6f;
+						v = v + (ell - v) * 0.3f;
+						const float bed = p.x / 0.06f;
+						v += 0.01f * c * (Math::abs(bed - Math::round(bed)) * 2.0f - 0.5f);
+						v += 0.07f * c * (rk_fbm(p * 2.0f, nseed + 150u, 3) - 0.5f);
 					} else if (family == FAMILY_POTHOLE) {
 						const float top_w = Math::smoothstep(y_top - 0.5f * c, y_top, p.y);
 						// Polished, fluted along the flow, the upstream edge rounded over.
@@ -2702,5 +2723,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_PAVEMENT);
 	BIND_ENUM_CONSTANT(FAMILY_FIN);
 	BIND_ENUM_CONSTANT(FAMILY_POTHOLE);
+	BIND_ENUM_CONSTANT(FAMILY_GOBLIN);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }

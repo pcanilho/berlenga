@@ -1194,7 +1194,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			struct Site {
 				Vector3 p;
 				float score;
-				int kind; // 0 pavement, 1 hoodoos, 2 fins
+				int kind; // 0 pavement, 1 hoodoos, 2 fins, 3 goblins
 			};
 			LocalVector<Site> sites;
 			const real_t shore_top = gen->has_sea_result() ? gen->get_sea_level() + 6.0 : -1e9; // beaches and storm ridges are sand and shingle
@@ -1221,6 +1221,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						if (off < 0.8f) {
 							sites.push_back({ c, bare * (1.0f + rng.randf() * 0.3f), 0 });
 						}
+					}
+					// Goblins: flat, bare sandstone valley floors (Goblin Valley: Entrada between mesa walls).
+					if (type == RockGenerator::ROCK_SANDSTONE && n.y > 0.97f && bare > 0.5f) {
+						sites.push_back({ c, bare * (0.8f + rng.randf() * 0.3f), 3 });
 					}
 					// Fins: bare sandstone on gentle ground (Arches: under 15 degrees), the joints opened by weathering.
 					static const float fin_rate[RockGenerator::ROCK_MAX] = { 0.0f, 0.1f, 1.0f, 0.0f, 0.0f };
@@ -1338,8 +1342,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			// Hoodoos gather in badland heads and amphitheatres, not on every steep soft slope: one cell in four has them.
 			const bool badland = rng.randf() < 0.25f;
 			const bool fin_field = rng.randf() < 0.35f; // fins come in fields along one joint set
+			const bool goblin_field = rng.randf() < 0.3f;
 			for (const Site &s : sites) {
-				if ((s.kind == 1 && !badland) || (s.kind == 2 && !fin_field)) {
+				if ((s.kind == 1 && !badland) || (s.kind == 2 && !fin_field) || (s.kind == 3 && !goblin_field)) {
 					continue;
 				}
 				if (made >= 2 || rng.randf() > (s.kind == 0 ? 0.8f : 0.3f) * float(density)) { // flat bare benches are rare already
@@ -1355,6 +1360,39 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				used.push_back(s.p);
 				made++;
 				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, gen->get_height(s.p), s.p.z));
+				if (s.kind == 3) {
+					// Goblins: 6 to 20 knobs scattered within 25 m, 1.5 to 5 m tall, the foot set into the floor.
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_GOBLIN, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					const int count = 6 + int(rng.randf() * 14.99f);
+					for (int k = 0; k < count; k++) {
+						const real_t ang = rng.randf() * Math::TAU, rad = 25.0 * Math::sqrt(rng.randf());
+						const Vector3 at = s.p + Vector3(Math::cos(ang), 0, Math::sin(ang)) * rad;
+						if (gen->get_water_depth(at) > 0.0 || ground_normal(gen, at.x, at.z, 3.0).y < 0.9) {
+							continue; // on the floor, not up the slopes round it
+						}
+						Stone st;
+						st.layer = p_layer;
+						st.library = key;
+						st.variant = pick_variant(lib);
+						const AABB box = lib->meshes[st.variant]->get_aabb();
+						const real_t height = 1.5 + 3.5 * rng.randf() * rng.randf();
+						st.scale = height / MAX(real_t(box.size.x), real_t(0.3));
+						st.basis = (Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5)).scaled(Vector3(st.scale, st.scale, st.scale));
+						const real_t r = real_t(box.size.y) * st.scale * 0.5;
+						real_t g = gen->get_height(at);
+						for (int j = 0; j < 6; j++) {
+							g = MIN(g, gen->get_height(at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
+						}
+						st.position = Vector3(at.x, g - 0.06 * height - box.position.x * st.scale, at.z);
+						st.ground = gen->get_height(at);
+						r_stones.push_back(st);
+					}
+					continue;
+				}
 				if (s.kind == 2) {
 					// Fins: 3 to 7 parallel walls along one joint set, 6 to 14 m apart, each 12 to 35 m long, standing on
 					// the lowest ground along its foot.
