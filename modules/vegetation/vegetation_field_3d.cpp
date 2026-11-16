@@ -1666,6 +1666,10 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		// undercoat that fills the gaps between them reads as the undercoat there, not bare soil.
 		float bare = 1.0f;
 		Vector3 grass;
+		// The light the blades grew in (GrassField3D tints them by it, VegetationLight): the far
+		// colours are measured on open flat ground, so they take the same tint here. Without it a
+		// meadow in a valley's shade read lighter and yellower past its blades.
+		const float light = (1.0f - closure) * VegetationLight::exposure(map, setup.sun_mean, xz.x, xz.y);
 		for (uint32_t l = 0; l < job.grass.size(); l++) {
 			float gl = 0.0f;
 			for (const Vector3 &q : subs) {
@@ -1675,7 +1679,9 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 				gl *= job.grass[l]->rule_weight(PlantSpecies::RULE_SHADE, closure);
 			}
 			const Color &fc = job.grass_far[l];
-			grass += Vector3(fc.r, fc.g, fc.b) * (gl * bare);
+			float fr = fc.r, fg = fc.g, fb = fc.b;
+			VegetationLight::tint(fr, fg, fb, light);
+			grass += Vector3(fr, fg, fb) * (gl * bare);
 			bare *= 1.0f - gl;
 		}
 		const float g = 1.0f - bare;
@@ -2338,6 +2344,12 @@ float VegetationField3D::get_shade_at(const Vector3 &p_global_position) const {
 	return _shade_at(Vector2(p_global_position.x, p_global_position.z));
 }
 
+float VegetationField3D::get_light_at(const Vector3 &p_global_position) const {
+	const TerrainDataMap3D *map = data_map.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	const float exposure = map && map->is_baked() ? VegetationLight::exposure(map, VegetationLight::sun_mean(map), p_global_position.x, p_global_position.z) : 1.0f;
+	return (1.0f - get_shade_at(p_global_position)) * exposure;
+}
+
 float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
 	float conifer = 0.0f;
@@ -2858,6 +2870,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_near_radius"), &VegetationField3D::get_near_radius);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
+	ClassDB::bind_method(D_METHOD("get_light_at", "global_position"), &VegetationField3D::get_light_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);

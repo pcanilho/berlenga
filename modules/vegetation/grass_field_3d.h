@@ -149,6 +149,7 @@ class GrassField3D : public Node3D {
 	Ref<StandardMaterial3D> far_bake_ground_mat;
 	int far_bake_state = -1;
 	int far_bake_wait = 0;
+	float far_bake_sun_energy = 1.0f; // The scene sun's energy the far colour was baked under.
 	bool far_bake_queued = false;
 	bool far_baked = false;
 	// Mean of each view, per sun elevation: sward at the four sun azimuths, white, black at the four.

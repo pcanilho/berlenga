@@ -428,6 +428,7 @@ public:
 	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
+	float get_light_at(const Vector3 &p_global_position) const;
 	float get_stand_shade_at(const Vector3 &p_global_position) const;
 	float get_sward_shade_at(const Vector3 &p_global_position) const;
 	// The undergrowth's own litter under its stands (PlantSpecies.litter_color): rgb colour, a cover.

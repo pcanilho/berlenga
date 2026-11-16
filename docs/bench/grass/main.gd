@@ -13,6 +13,7 @@ extends Node3D
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
 #   --sun-elev=D     sun elevation in degrees (default 28)
 #   --ambient=K      the sky light's energy times K
+#   --sun-energy=E   the sun's energy (1; a scene's may be brighter)
 #   --shadow-max=M   the sun's shadow distance (default 100; a landscape's is thousands of metres)
 #   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
@@ -52,6 +53,8 @@ extends Node3D
 #                    from 40 m up across its edge; --clearing=0 the same wood and camera, no mask
 #   --lone           scattered open-grown trees over the meadow (no litter mat under a lone
 #                    crown), seen from the --clearing camera
+#   --far-cover      with --far-match: the far ground from the cover map (VegetationField3D.cover_grass) blended
+#                    in as TerrainMaterial3D's far blend does, instead of grass_ground()'s far sward
 #   --far-match      the default view twice, the blades out to 22-32 m and then the ground's far
 #                    colour there instead (radius 10 m): prints both mean colours and their ratio
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
@@ -112,12 +115,14 @@ var ground_mat: ShaderMaterial
 var turf: GrassField3D
 var no_turf := false
 var terrain_mat := false
+var far_cover := false # --far-cover
 var notex := false
 var t_frames := 0
 var under: GrassField3D
 var cover: VegetationField3D
 var far_match := false
 var ambient := 1.0 # --ambient=k: the sky light's energy times k (a scene's sky may light far more than the bench's)
+var sun_energy := 1.0 # --sun-energy=e: the sun's energy
 var shadow_max := 0.0 # --shadow-max: the sun's shadow distance (0: the light's default)
 var far_a := Color()
 var far_w := Color()
@@ -169,6 +174,7 @@ func _ready() -> void:
 		elif a == "--far-match": far_match = true
 		elif a.begins_with("--shadow-max="): shadow_max = float(a.substr(13))
 		elif a.begins_with("--ambient="): ambient = float(a.substr(10))
+		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a == "--impostors=0": no_impostors = true
 		elif a == "--lone":
 			forest = true
@@ -180,6 +186,7 @@ func _ready() -> void:
 			far_view = true
 			dolly = true
 		elif a == "--terrain-material": terrain_mat = true
+		elif a == "--far-cover": far_cover = true
 		elif a == "--forest=in":
 			forest = true
 			forest_in = true
@@ -320,6 +327,11 @@ func _ready() -> void:
 			_set_clearing()
 		add_child(cover)
 		cover.data_map = cover.get_path_to(dm)
+		if far_cover:
+			# The terrain's far cover map from the sward's layers (tall patches over the undercoat).
+			cover.cover_map_enabled = true
+			cover.cover_grass = cover.get_path_to(grass)
+			cover.cover_grass_layers = [cover.get_path_to(under)]
 		if forest:
 			# The sward stays out from under the crowns.
 			for g in [grass, under, turf]:
@@ -377,13 +389,34 @@ func _ready() -> void:
 	var gs := Shader.new()
 	gs.code = "shader_type spatial;\n" + GrassField3D.get_ground_shader_code() + """
 varying vec3 wp;
+// --far-cover: TerrainMaterial3D's far blend over the cover map, from far_from metres.
+global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear;
+global uniform vec4 terrain_cover_rect;
+uniform float far_from = 1e9;
 // Under the crowns grass_ground() lays the forest floor's litter (VegetationField3D's
 // forest_floor_* globals): leaves, needles and moss by the stand above.
 void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-	ALBEDO = vegetation_far(wp, grass_ground(wp, vec3(0.11, 0.12, 0.06)), CAMERA_POSITION_WORLD);
+	vec3 a = vegetation_far(wp, grass_ground(wp, vec3(0.11, 0.12, 0.06)), CAMERA_POSITION_WORLD);
+	float spec = grass_ground_specular(wp, 0.5);
+	float t = smoothstep(far_from, far_from + 2.0, length(wp - CAMERA_POSITION_WORLD));
+	vec2 cuv = (wp.xz - terrain_cover_rect.xy) / max(terrain_cover_rect.zw, vec2(1e-3));
+	if (terrain_cover_rect.z > 0.0 && t > 0.0 && all(greaterThanEqual(cuv, vec2(0.0))) && all(lessThanEqual(cuv, vec2(1.0)))) {
+		vec4 cv = textureLod(terrain_cover_map, cuv, 0.0);
+		vec3 cs = cv.rgb;
+		vec3 cl = mix(cs / 12.92, pow((cs + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), cs));
+		vec2 to = wp.xz - grass_ground_view.xz;
+		if (grass_ground_sun.z > 0.0 && length(to) > 1e-3) {
+			float c1 = dot(normalize(to), grass_ground_sun.xy);
+			cl *= max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
+		}
+		cl *= grass_ground_far_scale.rgb;
+		a = mix(a, mix(a, cl, cv.a), t);
+		spec = mix(spec, mix(0.5, 0.1, cv.a), t);
+	}
+	ALBEDO = a;
 	ROUGHNESS = 0.95;
-	SPECULAR = grass_ground_specular(wp, 0.5);
+	SPECULAR = spec;
 }
 """
 	gm.shader = gs
@@ -424,6 +457,7 @@ void fragment() {
 	var sun := DirectionalLight3D.new()
 	sun_node = sun
 	sun.rotation_degrees = Vector3(-sun_elev, sun_yaw, 0)
+	sun.light_energy = sun_energy
 	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
 	if shadow_max > 0.0:
 		sun.directional_shadow_max_distance = shadow_max
@@ -1809,6 +1843,8 @@ func _process(dt: float) -> void:
 		far_a = _region_mean()
 		get_viewport().get_texture().get_image().save_png("user://far_match_a.png")
 		grass.radius = 10.0
+		if far_cover:
+			ground_mat.set_shader_parameter("far_from", 10.0)
 		return
 	if far_match and n == frames + 12:
 		await RenderingServer.frame_post_draw
