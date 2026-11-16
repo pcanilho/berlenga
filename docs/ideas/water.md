@@ -2918,3 +2918,9 @@ wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers nea
   full share as a faceted white peak over a few 60 cm mesh cells. The height now eases toward 40 cm
   (`0.4 tanh(h / 0.4)`, per `roller_strength`): a lumpy churning band on the crest that reads at 1.75 m in
   the `storm_roller` view, without the peak.
+- Rounded band (16 Nov, docs review of #312): the lumps still ended in cones, as the fold and the fresh foam
+  are sharp at a point and the mesh raised one or two vertices under it. The roller's extent and crest are
+  now blurred over five taps 1.2 m apart, centred 0.4 m upwind (lower at the front, where it spills), and
+  its geometric churn is in lobes about 2 m across; the fine churn stays in the slope only. Forward throw
+  0.25 of the height (was 0.4). Cost: ten more foam and height lookups per open-sea vertex, and per pixel
+  under foam.
