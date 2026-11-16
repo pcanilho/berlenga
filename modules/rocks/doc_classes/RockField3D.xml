@@ -96,6 +96,12 @@
 				Stones in [param rect] of b-axis diameter at least [param min_size], as [code](x, ground y, z, footprint radius)[/code], for vegetation obstacles and water flow. Placement is deterministic, so this works for cells not built yet. Each placement cell is placed once and kept (16 bytes a stone) until [method rebuild], so repeated and overlapping queries are fast. Cliff blocks are left out.
 			</description>
 		</method>
+		<method name="get_rockfall_trigger" qualifiers="const">
+			<return type="float" />
+			<description>
+				How many times [member live_rockfall_rate] the falls come now, from the active [WeatherMap3D] at the follow target's height (air cooled 6.5 C per km above the weather's ground height): 1, plus 3 in the frost-cracking window (-8 to -3 C), plus 6 for two game hours after the air thaws through 0 C, plus the rain rate in mm/h over 5. 1 without weather.
+			</description>
+		</method>
 		<method name="get_stone_caps">
 			<return type="Array" />
 			<param index="0" name="layer" type="int" />
@@ -166,6 +172,14 @@
 			<param index="1" name="radius" type="float" />
 			<description>
 				Sets how far round the follow target a layer is built.
+			</description>
+		</method>
+		<method name="trigger_rockfall">
+			<return type="Node" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" default="30.0" />
+			<description>
+				Looses a random built cliff block within [param radius] of [param position] now, as [member live_rockfall] does, and returns its [PhysXDestructible3D] (null if there is none, or without the godot_physx module). Its fracture is built at once if it is not ready, which can take tens of milliseconds, so call it sparingly.
 			</description>
 		</method>
 	</methods>
@@ -269,6 +283,18 @@
 		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="0.5">
 			Lichen crust on upper faces, from 0 to 1.
 		</member>
+		<member name="live_rockfall" type="bool" setter="set_live_rockfall" getter="is_live_rockfall" default="false">
+			Cliff blocks near the follow target come loose now and then and fall as [PhysXDestructible3D] bodies that break on hard impacts and stay as debris. The falls follow a Poisson process at [member live_rockfall_rate] times [method get_rockfall_trigger]: more in frost and thaw and in heavy rain. A block's fracture is built on a worker first, so a fall does not stall the frame. Needs the godot_physx module and the cliff layer. The signal [signal rockfall] reports each fall.
+		</member>
+		<member name="live_rockfall_max" type="int" setter="set_live_rockfall_max" getter="get_live_rockfall_max" default="16">
+			Falls kept; past this the oldest fall's pieces are freed.
+		</member>
+		<member name="live_rockfall_radius" type="float" setter="set_live_rockfall_radius" getter="get_live_rockfall_radius" default="150.0">
+			How far from the follow target blocks fall, in metres. None fall within 20 m of it unless [method trigger_rockfall] is called.
+		</member>
+		<member name="live_rockfall_rate" type="float" setter="set_live_rockfall_rate" getter="get_live_rockfall_rate" default="4.0">
+			Falls per game hour (in the [WeatherMap3D] time scale) within [member live_rockfall_radius], before the weather's trigger factor.
+		</member>
 		<member name="max_stones_per_cell" type="int" setter="set_max_stones_per_cell" getter="get_max_stones_per_cell" default="12000">
 			Caps the stones of one cell of one layer.
 		</member>
@@ -348,6 +374,15 @@
 			Shapes per rock type and family. Every stone uses one of them as a MultiMesh instance.
 		</member>
 	</members>
+	<signals>
+		<signal name="rockfall">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mass" type="float" />
+			<description>
+				A cliff block came loose at [param position] (out of the face), of [param mass] kg. For sound and camera shake.
+			</description>
+		</signal>
+	</signals>
 	<constants>
 		<constant name="LAYER_ROCKFALL" value="0" enum="Layer">
 			Rockfall blocks.

@@ -32,6 +32,7 @@
 
 #include "rock_generator.h"
 
+#include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/hash_map.h"
@@ -206,6 +207,27 @@ private:
 	void _start_fracture(uint64_t p_key);
 	bool _finish_fracture(uint64_t p_key, bool p_wait);
 	void _update_breakable();
+	Node3D *_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, bool p_fall);
+
+	// Live rockfall: cliff blocks come loose by a Poisson process whose rate follows the weather (frost, thaw, rain).
+	struct PendingFall {
+		Vector3 origin; // the block, found again by its position when its fracture is ready
+		uint64_t key = 0;
+	};
+	bool live_rockfall = false;
+	real_t rockfall_rate = 4.0; // falls per game hour in rockfall_radius
+	real_t rockfall_radius = 150.0;
+	int rockfall_max = 16;
+	LocalVector<PendingFall> pending_falls;
+	LocalVector<ObjectID> falls;
+	double thaw_left = 0.0; // game seconds of thaw left
+	real_t last_air = 1e9;
+	RandomPCG fall_rng;
+	real_t _rockfall_air(const Vector3 &p_pos) const;
+	bool _find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_group, int &r_k);
+	bool _pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key);
+	void _update_rockfall(double p_delta);
+	void _update_process();
 
 	struct CloseJob {
 		uint32_t library = 0;
@@ -316,6 +338,18 @@ public:
 	void restore_broken();
 	int get_broken_count() const { return broken_stones.size(); }
 	bool is_breaking_supported() const;
+
+	// Live rockfall (PhysX Blast): cliff blocks near the follow target fall now and then, more in frost, thaw and rain.
+	void set_live_rockfall(bool p_enabled);
+	bool is_live_rockfall() const { return live_rockfall; }
+	void set_live_rockfall_rate(real_t p_rate) { rockfall_rate = MAX(p_rate, real_t(0.0)); }
+	real_t get_live_rockfall_rate() const { return rockfall_rate; }
+	void set_live_rockfall_radius(real_t p_radius) { rockfall_radius = MAX(p_radius, real_t(1.0)); }
+	real_t get_live_rockfall_radius() const { return rockfall_radius; }
+	void set_live_rockfall_max(int p_count) { rockfall_max = MAX(p_count, 1); }
+	int get_live_rockfall_max() const { return rockfall_max; }
+	real_t get_rockfall_trigger() const;
+	Node *trigger_rockfall(const Vector3 &p_position, real_t p_radius = 30.0);
 
 	// Drop every built cell and the river cache (after the generator ran again); streaming builds them anew.
 	void rebuild();

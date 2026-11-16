@@ -497,3 +497,55 @@ arches, goblins, potholes, cave mouths.
 - Why off: a heightfield cannot open a hole into its own slope, so the portal stands in front of the wall as its own
   block and reads as an outcrop with a hole, not a cave in the cliff. A proper cave mouth needs the terrain to cut a
   hole (or a mesh tile) behind it: a follow-up with the terrain thread.
+
+## Live rockfall (round 3, 16 Nov): research
+
+What sets rocks off, and when:
+- **Freeze-thaw.** Frost cracking works hardest between about -3 and -8 C (the frost-cracking window; Hales and
+  Roering 2007, Walder and Hallet 1985). Ice holds the cracked blocks in place until it melts, so most falls come
+  in the thaw that follows: rockfall peaks in spring and on mornings after a freeze (Matsuoka and Sakai 1999;
+  D'Amato et al. 2016 measured falls a few hours after the temperature crosses 0 C).
+- **Rain.** Rockfall rates jump during and just after heavy rain, from water pressure in the joints (Krautblatter
+  and Moser 2009 in the Reintal; Delonca et al. 2014: rain above roughly 10 to 20 mm/h, and rain falling on
+  thawing ground, add up).
+- **Base rate.** Alpine walls shed small blocks all year round, rarely but steadily. Big falls are rarer by a
+  power law of volume (Hungr et al. 1999).
+
+How a fall moves:
+- Engineering rockfall codes treat the block as a rigid body bouncing down the slope. Rockyfor3D (Dorren 2012)
+  uses restitution coefficients; RAMMS::ROCK (Leine et al. 2014) keeps the real shape with non-smooth contact,
+  and its shape is what makes a block roll, slide or jump. A PhysX rigid body with the stone's own hull is the
+  same model.
+- Blocks break up when they hit hard. The share that fragments grows with impact energy (Ruiz-Carulla et al.
+  2015/2017, fractal fragmentation). PhysX Blast impact damage does this: impact_strength and
+  impact_damage_scale on PhysXDestructible3D.
+
+Plan (`RockField3D.live_rockfall`, off by default until its frame cost is measured):
+- **Hazard.** Rate = `rockfall_rate` (falls per game hour in the `rockfall_radius` round the follow target) times
+  a trigger factor from WeatherMap3D: 1 as the base, plus 3 in the frost-cracking window, plus 6 for two game
+  hours after the air crosses 0 C going up, plus the rain rate at the target divided by 5 mm/h. Falls are drawn
+  as a Poisson process per frame (game time from the weather's time_scale).
+- **Which block.** A random intact cliff-wall block (LAYER_CLIFF) 20 m to `rockfall_radius` from the target. Its
+  fracture is started on a worker, and the fall is spawned when the fracture is ready, so there is no hitch.
+- **The fall.** The block is hidden (and its collision dropped). A PhysXDestructible3D takes its place with no
+  anchor, moved out of the wall along the face normal by the depth it was set in, so it does not start inside the
+  heightfield. It breaks on hard impacts (impact damage). Its pieces freeze when asleep and stay as debris.
+  `rockfall_max` live falls are kept and the oldest is freed.
+- **Hooks.** The signal `rockfall(position, mass)` is for sound and camera shake. `trigger_rockfall(position,
+  radius)` forces a fall (for gameplay and the bench). It is synchronous, so use it sparingly.
+
+Built (16 Nov): `live_rockfall` (off), `live_rockfall_rate` 4 per game hour, `live_rockfall_radius` 150 m,
+`live_rockfall_max` 16, `get_rockfall_trigger()`, `trigger_rockfall(position, radius)`, signal `rockfall`.
+- The air at the target's height takes the standard lapse (6.5 C per km) from WeatherMap3D's air temperature.
+- A fall is a dynamic PhysXDestructible3D (`dynamic`, no anchor) set out of the face by the block's reach.
+  Impact break: `impact_strength` = mass x 3 m/s, `impact_damage_scale` = 1 / mass, `impact_radius` = 1.5 x
+  reach. Measured in the bench (Godot Physics contacts): a sliding 21 t block's single contacts take a median
+  of about 1 t m/s and up to about 6 t m/s per tonne on hard knocks, so 3 m/s per tonne breaks it at the first
+  real knock (11 m down a 60 degree face, into 6, then 10 pieces) and not while it slides. 2 m/s broke it at the
+  first touch; 6 m/s never broke it in a 200 m fall.
+- Bench: `--world --view=cliff --fall[=ticks] --fall-cam=d`; the test looses the biggest cliff block and runs
+  the live path at a very high rate. The Landscape3D collision follows the camera (192 m), so a fall outside it
+  drops through the ground until `kill_y` (400 m under it): keep `live_rockfall_radius` under the collision
+  radius.
+- A synchronous trigger on an unprepared shape costs 0.6 to 1.4 s for a big block (the fracture); the live path
+  builds it on a worker first.
