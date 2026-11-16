@@ -475,6 +475,84 @@ reproduced in `docs/bench/weather --view=clouds_wide` (its clear weather, sun an
 - Not the cause: the reprojection (with it off, the slabs show the same after 200 frames), the 12 h
   of drift, the Sky's process mode, the frame time.
 
+## Step 3e: clouds that grow and dissolve (16 Nov 2026)
+
+Paulo's pick (11 Nov): clouds should change over time, not only slide with the wind, in raster and path
+traced frames, with an opt-out. Today the shape noise and the cover noise are fixed in the frame of the drift:
+a cloud keeps its outline for as long as one watches, and only the weather's cover changes it.
+
+### How others do it
+
+- **Horizon Zero Dawn** (Schneider, Advances 2015): everything is "animated in a given wind direction"; the
+  weather map's channels (coverage, precipitation, type) are changed by a weather simulation during play, and
+  that is where clouds form and clear. The talk closes with making clouds evolve as the next step.
+- **Nubis Evolved** (Advances 2022, Horizon Forbidden West): the abstract names fast spinning superstorms;
+  the slides could not be fetched from the cloud machine, so nothing is taken from them here.
+- **Vimont et al., Interactive Meso-scale Simulation of Skyscapes** (Eurographics 2020): a layered Eulerian
+  atmosphere (about 200 m cells) carries temperature, humidity, water and wind; water condenses and evaporates
+  by relaxing to saturation (Tetens' formula), at 0.1 per second; convection from the moist static energy
+  between layers. Clouds form and clear by themselves, at 1.3 to 6.75 s a step on 32 CPU cores: far too slow
+  for us, but its rendering idea is ours already (procedural noise for the detail over a coarse field that
+  changes), and its lifecycle is a relaxation of a coarse field, which a cheap model can copy.
+- **Harris et al., Simulation of Cloud Dynamics on Graphics Hardware** (Graphics Hardware 2003) and
+  **Dobashi et al. 2000** (cellular automaton clouds): simulated grids, bounded volumes, not a sky to the horizon.
+- **Unreal 5** (VolumetricCloud): animation is left to the user's density material. **HDRP** volumetric clouds
+  scroll the shape and the erosion noise with the wind at their own speed multipliers, and an altitude
+  distortion leans the clouds downwind with height; nothing forms or clears by itself.
+- **Real clouds**: fair-weather cumulus (humilis) mostly dissolve a few minutes after forming; larger cumulus
+  last tens of minutes. Turrets rise at about the updraft speed (1 to 5 m/s) and evaporate at the top and edges.
+  Turbulent eddies of size l turn over in a time that goes as l^(2/3) (Kolmogorov), so small detail changes
+  faster than whole clouds.
+
+### What fits the fork
+
+All of it in the one density function (`weather_clouds.cpp`), so the sky march, the shadow bake and the CPU
+readers (`get_cloud_density_at`, `get_sun_visibility_at`) agree, and the path tracer sees the same clouds through
+the sky shader. One clock, `cloud_time`, pushed by the map like the drift.
+
+1. **Lifecycle in the cover noise.** Each octave of the cover noise moves through time as a stack of
+   independent slices, blended by smoothstep from one to the next over `cloud_lifetime` (default 15 min for the
+   largest octave); each finer octave turns over faster by Kolmogorov's 2.03^(-2/3) per step down in size.
+   Clouds form, swell and clear where the cover noise rises and falls. A plain blend of two slices is flatter
+   halfway (the whole sky would pulse); the blend divides by the length of its weights instead (Heitz and
+   Neyret 2018, variance-preserving blending), so the noise keeps its spread and cover still means share of
+   sky. Cost: two value noises per octave instead of one, on a 2D field.
+2. **Shapes that churn.** The plan was turrets rising: the shape noise read with a vertical offset growing at
+   the updraft speed inside the fixed height profile. Measured, the whole sky pulsed with it (share of cloud over
+   64 km 32 to 46% over an hour, against 45 to 47% for frozen clouds moved to other places): one height slice
+   of a 128^3 tile holds noticeably more or less cloud than the next, and every cloud in the sky reads the same
+   slice. Built instead: the second of the two shape reads slides across against the first at `cloud_churn`
+   (1.5 m/s), so their sum, the clouds, reshape, while each read still averages over the tile's whole area.
+3. **Detail that boils.** The edge erosion noise rises at twice `cloud_churn` (a 32^3 tile far smaller than a
+   cloud, so no pulse), so the edges churn faster than
+   the shapes (smaller eddies turn over faster), as Nubis and HDRP scroll their erosion noise on its own.
+
+Left out for now: wind shear (tops leaning downwind, HZD and HDRP): it changes the drift, which the shadow bake
+slides by, so it needs the bake to know the height of each shadow's cloud.
+
+Off: `cloud_evolution` false keeps today's frozen shapes (the opt-out). The shadow bake already runs once a
+second and slides between bakes; a lifecycle of minutes changes little in a second, so it still matches.
+
+### As built (16 Nov)
+
+`WeatherMap3D.cloud_evolution` (on), `cloud_lifetime` (900 s), `cloud_churn` (1.5 m/s), `set_cloud_time()`;
+the map advances the clock with weather time and hands the sky `cloud_evolve` and `cloud_churn`. The CPU density,
+the shadow bake and the sky shader share the code, so path traced frames (which read the sky shader) match.
+
+Checks (`docs/bench/weather --test`, cover 0.4, variation 0.35):
+- Share of cloud at 1950 m over 64 km through an hour: 42.8 to 47.1% (frozen, the same window at eight other
+  places: 45.2 to 46.6%). The rising version gave 32 to 46%.
+- Ground whose cloud shadow changed since minute 0: 8% after 1 min, 25% after 5, 36% after 15 (fair-weather
+  cumulus mostly last a few minutes).
+- Shadow share at cover 0.2 to 1.0, the 10 m march against the bake (0.011) and the off switch (density unchanged
+  after an hour) as before.
+- `--view=clouds --cloud-time=0/120/300`: holes close and open, clouds reshape; raster and path traced frames at
+  300 s show the same clouds and shadows.
+- Cost (lavapipe, 960x540, clouds view, reprojection off, so the march runs for every half resolution pixel):
+  112 against 102 ms a frame (+10%), the cover noise's second slice per octave. With reprojection on the march
+  is a quarter of that. GPU time on the PC queue. The shadow bake: 48 ms (52 before, noise).
+- `--cloud-time=S` and `--frozen` on the weather bench.
+
 ## Season state (11 Nov)
 
 One state of the year for every system that follows it: trees (budburst, colour, leaf fall), ground plants
