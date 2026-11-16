@@ -114,6 +114,10 @@ render_mode cull_disabled, rt_blas_rebuild;
 // bends light, tints with depth and casts caustics, lit by the scene's own
 // lights. The raster look below stays as it is.
 render_mode cull_disabled;
+#elif defined(BREAKER_LIP)
+// A lip is a closed blended sheet: without depth its far side and near side mix in triangle order (bands
+// across it). It writes depth, so its nearest side wins.
+render_mode blend_mix, cull_disabled, depth_draw_always;
 #else
 // Lit, but open water writes only EMISSION (see the end of fragment()), so only foam and wet sand take the
 // scene's light.
@@ -303,6 +307,9 @@ varying float v_foam;
 varying vec2 v_rest_xz;
 // 1 on the breaking lips' sheet (vertex colour alpha 0), whose vertices are already in place.
 varying float v_lip;
+#if defined(BREAKER_LIP)
+varying float v_lip_y; // the lip's world height (open-sea lips texture their churn in 3D)
+#endif
 
 // The camera under water (raster; the path tracer starts its camera rays in the water instead). Set by
 // PhysXWaterSurface3D while the camera is near the water: whether it is under the surface, and the light
@@ -1039,7 +1046,13 @@ float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out ve
 	float k = roller_strength * 0.5 * crest * sqrt(b);
 	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2))
 			+ crest * sqrt(b) * roller_strength * (0.012 * 1.1 * 7.1 * foam_noise_grad(q3) + 0.005 * 1.1 * 17.3 * foam_noise_grad(q4));
-	return k * (0.45 + 0.9 * churn);
+	// Eased toward 40 cm: on a gale's metres-high crests the full share rose as a faceted white peak over a few
+	// mesh cells (the mesh near the camera is 60 cm apart), where a real roller is a lumpy band down the face.
+	float cap = 0.4 * roller_strength;
+	float raw = k * (0.45 + 0.9 * churn);
+	float e = tanh(raw / cap);
+	r_grad *= 1.0 - e * e;
+	return cap * e;
 }
 
 // The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
@@ -1297,9 +1310,11 @@ void fragment() {
 
 void vertex() {
 #if defined(BREAKER_LIP)
-	// UV.x is the lip's white water (UV.y unused); the vertex is where it is drawn.
-	v_lip = 1.0;
+	// UV.x is the lip's white water, UV.y 1 on the open sea's lips (0 on the shore's); the vertex is where it
+	// is drawn.
+	v_lip = 1.0 + UV.y;
 	v_rest_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+	v_lip_y = (MODEL_MATRIX * vec4(VERTEX, 1.0)).y;
 	v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	v_foam = UV.x;
 #else
@@ -1392,6 +1407,21 @@ void fragment() {
 		world_normal = nl > 1e-3 ? v_world_normal / nl : vec3(0.0, 1.0, 0.0);
 	}
 	float foam = v_foam;
+#if defined(BREAKER_LIP)
+	if (v_lip > 1.5) {
+		// An open-sea lip: aerated water tumbling off the crest, boiling. Its churn is textured on two planes
+		// blended by the normal (the sheet curls: in xz alone it would smear down its sides), drifting.
+		vec2 qa = v_rest_xz * 4.0 + vec2(water_time * 1.3, 0.0);
+		vec2 qb = vec2(v_rest_xz.x + v_rest_xz.y * 0.7, v_lip_y) * 4.0 + vec2(0.0, -water_time * 1.5);
+		float wa = abs(world_normal.y) / (abs(world_normal.y) + length(world_normal.xz) + 1e-4);
+		float churn_a = 0.6 * foam_value_noise(qa) + 0.4 * foam_value_noise(qa * 2.7 + 3.1);
+		float churn_b = 0.6 * foam_value_noise(qb) + 0.4 * foam_value_noise(qb * 2.7 + 3.1);
+		foam = clamp(foam * (0.55 + 0.7 * mix(churn_b, churn_a, wa)), 0.0, 1.0);
+		vec2 ga = foam_noise_grad(qa * 2.7 + 3.1);
+		vec2 gb = foam_noise_grad(qb * 2.7 + 3.1);
+		world_normal = normalize(world_normal + 0.2 * foam * (wa * vec3(ga.x, 0.0, ga.y) + (1.0 - wa) * vec3(gb.x, gb.y, 0.0)));
+	}
+#endif
 	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
 		vec4 der = ocean_deriv_all(v_rest_xz);
@@ -1856,6 +1886,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_crest_spray_amount", "amount"), &PhysXWaterSurface3D::set_crest_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_crest_spray_amount"), &PhysXWaterSurface3D::get_crest_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_crest_spray_rate"), &PhysXWaterSurface3D::get_crest_spray_rate);
+	ClassDB::bind_method(D_METHOD("set_plunging_lips", "enabled"), &PhysXWaterSurface3D::set_plunging_lips);
+	ClassDB::bind_method(D_METHOD("get_plunging_lips"), &PhysXWaterSurface3D::get_plunging_lips);
+	ClassDB::bind_method(D_METHOD("get_plunging_lip_count"), &PhysXWaterSurface3D::get_plunging_lip_count);
+	ClassDB::bind_method(D_METHOD("get_plunging_lip_list"), &PhysXWaterSurface3D::get_plunging_lip_list);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_period", "period"), &PhysXWaterSurface3D::set_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_period"), &PhysXWaterSurface3D::get_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_direction", "direction"), &PhysXWaterSurface3D::set_shore_wave_direction);
@@ -2036,6 +2070,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "whitecap_cover_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_whitecap_cover_scale", "get_whitecap_cover_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_spray"), "set_crest_spray", "get_crest_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "crest_spray_amount", PROPERTY_HINT_RANGE, "16,65536,1"), "set_crest_spray_amount", "get_crest_spray_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunging_lips"), "set_plunging_lips", "get_plunging_lips");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
@@ -3469,9 +3504,16 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		return;
 	}
 	const float threshold = _live_foam_threshold();
+	const float lip_f = plunging_lips ? Math::smoothstep(12.0f, 22.0f, wind_speed) : 0.0f;
 	LocalVector<Vector3> pts;
 	LocalVector<float> wts;
 	float total = 0.0f;
+	// The plunging lips' edges and landings tear into the same spray.
+	for (const Vector3 &q : ocean_lip_spray) {
+		pts.push_back(q);
+		wts.push_back(1.0f);
+		total += 1.0f;
+	}
 	for (int i = 0; i < CANDIDATES; i++) {
 		// Not at the lens: droplets a few metres off fill the view as balls.
 		const float r = 8.0f + (RADIUS - 8.0f) * crest_rng.randf();
@@ -3485,6 +3527,10 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 		Vector3 p;
 		const float jac = _ocean_jacobian_at(x, z, fade, p);
 		const float wgt = CLAMP((threshold - jac) / 0.25f, 0.0f, 1.0f) * fade;
+		// The most strongly folding crests near the camera may throw a plunging lip.
+		if (lip_f > 0.0f && r < 30.0f && jac < threshold - 0.05f && fade > 0.5f && crest_rng.randf() < 0.5f * lip_f) {
+			_spawn_ocean_lip(p, origin.y, lip_f);
+		}
 		if (wgt > 0.0f) {
 			pts.push_back(p + Vector3(0.0f, origin.y, 0.0f));
 			wts.push_back(wgt);
@@ -3571,6 +3617,344 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 	crest_spume_node->set_amount_ratio(crest_spray_node->get_amount_ratio() * Math::smoothstep(14.0f, 20.0f, wind_speed));
 	crest_spume_node->set_visibility_aabb(box.grow(0.6f * wind_speed * 2.0f + 6.0f));
 	crest_spume_node->set_emitting(true);
+}
+
+void PhysXWaterSurface3D::set_plunging_lips(bool p_enabled) {
+	plunging_lips = p_enabled;
+	if (!plunging_lips) {
+		ocean_lips.clear();
+		ocean_lip_spray.clear();
+		if (ocean_lip_instance != nullptr) {
+			ocean_lip_instance->set_visible(false);
+		}
+	}
+}
+
+TypedArray<Dictionary> PhysXWaterSurface3D::get_plunging_lip_list() const {
+	TypedArray<Dictionary> out;
+	for (const OceanLip &l : ocean_lips) {
+		Dictionary d;
+		d["position"] = Vector3(l.pos.x, l.crest_y, l.pos.y);
+		d["direction"] = Vector3(l.dir.x, 0.0f, l.dir.y);
+		d["height"] = l.hc;
+		d["half_length"] = l.half_len;
+		d["age"] = l.age;
+		d["life"] = l.life;
+		out.push_back(d);
+	}
+	return out;
+}
+
+// The highest surface point within p_reach of p_xz along p_dir (world xz), in r_crest: the crest the lip rides.
+float PhysXWaterSurface3D::_crest_height_near(const Vector2 &p_xz, const Vector2 &p_dir, float p_reach, float p_origin_y, Vector2 &r_crest) const {
+	constexpr int STEPS = 4;
+	float best = -Math::INF;
+	r_crest = p_xz;
+	for (int i = -STEPS; i <= STEPS; i++) {
+		const Vector2 q = p_xz + p_dir * (p_reach * i / STEPS);
+		const float y = _sample_height_at(Vector3(q.x, 0.0f, q.y), ObjectID(), p_origin_y);
+		if (Math::is_finite(y) && y > best) {
+			best = y;
+			r_crest = q;
+		}
+	}
+	return best;
+}
+
+// A plunging lip on a crest folding at p_point (world xz; docs/ideas/water.md "Plunging lips on the open
+// sea"), sized from the wave under it: its crest-to-trough height down the front face, a wavelength at the
+// breaking steepness (H / L about 0.14; Michell 1893, Duncan 1981) and so its speed and period.
+void PhysXWaterSurface3D::_spawn_ocean_lip(const Vector3 &p_point, float p_origin_y, float p_strength) {
+	const int max_lips = (int)Math::ceil(16.0f * p_strength);
+	if ((int)ocean_lips.size() >= max_lips) {
+		return;
+	}
+	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	Vector2 crest;
+	const float cy = _crest_height_near(Vector2(p_point.x, p_point.z), wd, 2.0f, p_origin_y, crest);
+	if (!Math::is_finite(cy)) {
+		return;
+	}
+	for (const OceanLip &l : ocean_lips) {
+		if (crest.distance_to(l.pos) < 2.0f * l.half_len + 2.0f) {
+			return;
+		}
+	}
+	// This crest's own travel: down its front face's slope (a gale's crests are short and skewed to the wind;
+	// a lip laid across the wind cuts over the crest into the trough and stands up as a fin). Only crests
+	// facing downwind break forward.
+	Vector2 fdir = wd;
+	{
+		const Vector2 f = crest + wd * 1.0f;
+		const float e = 0.5f;
+		const float hx0 = _sample_height_at(Vector3(f.x - e, 0.0f, f.y), ObjectID(), p_origin_y);
+		const float hx1 = _sample_height_at(Vector3(f.x + e, 0.0f, f.y), ObjectID(), p_origin_y);
+		const float hz0 = _sample_height_at(Vector3(f.x, 0.0f, f.y - e), ObjectID(), p_origin_y);
+		const float hz1 = _sample_height_at(Vector3(f.x, 0.0f, f.y + e), ObjectID(), p_origin_y);
+		if (!Math::is_finite(hx0) || !Math::is_finite(hx1) || !Math::is_finite(hz0) || !Math::is_finite(hz1)) {
+			return;
+		}
+		const Vector2 down(-(hx1 - hx0), -(hz1 - hz0));
+		if (down.length() < 1e-3f) {
+			return;
+		}
+		fdir = down.normalized();
+		if (fdir.dot(wd) < 0.5f) {
+			return;
+		}
+	}
+	// The trough ahead, down the whole front face: the first low point, out to 16 m (the face of a gale's
+	// breaking wave, not just the chop riding on it).
+	float low = cy;
+	for (float d = 0.5f; d <= 16.01f; d += 0.5f) {
+		const float y = _sample_height_at(Vector3(crest.x + fdir.x * d, 0.0f, crest.y + fdir.y * d), ObjectID(), p_origin_y);
+		if (!Math::is_finite(y)) {
+			break;
+		}
+		if (y > low + 0.1f) {
+			break; // past the trough, up the next wave
+		}
+		low = MIN(low, y);
+	}
+	const float hc = cy - low;
+	if (hc < 0.3f) {
+		return;
+	}
+	OceanLip lip;
+	lip.pos = crest;
+	lip.crest_y = cy;
+	lip.dir = fdir;
+	lip.hc = MIN(hc, 3.0f);
+	const float g = 9.81f;
+	const float lambda = lip.hc / 0.14f;
+	lip.c = Math::sqrt(g * lambda / (float)Math::TAU);
+	// Deep-water plunging is short: the jet is thrown, lands and is gone within about half a period
+	// (Melville 1982; Rapp and Melville 1990).
+	const float period = Math::sqrt((float)Math::TAU * lambda / g);
+	lip.life = period * crest_rng.random(0.45f, 0.65f);
+	// Short: a real crest curves and breaks in pieces a few metres long; a long straight lip leaves it.
+	lip.half_len = CLAMP(lip.hc * crest_rng.random(0.6f, 1.4f), 0.6f, 2.5f);
+	lip.seed = crest_rng.random(0.0f, 100.0f);
+	ocean_lips.push_back(lip);
+	print_line(vformat("LIPDBG spawn pos %s y %f hc %f half %f life %f c %f", lip.pos, cy, lip.hc, lip.half_len, lip.life, lip.c));
+}
+
+// The lips ride their crests at the crest's speed (re-found on the surface each tick), grow as the jet is
+// thrown, land and sink into the white water they become: built as the shore breakers' closed lip sheet (rings
+// of a ballistic jet across the crest, Fournier and Reeves 1986 / Mead and Black 2001 shapes), drawn with the
+// same lip material, so the path tracer sees them too.
+void PhysXWaterSurface3D::_update_ocean_lips(float p_delta) {
+	ocean_lip_spray.clear();
+	const bool on = plunging_lips && crest_spray && is_inside_tree() && !Engine::get_singleton()->is_editor_hint() && !cached_ocean_height.is_empty() && Math::smoothstep(12.0f, 22.0f, wind_speed) > 0.0f;
+	if (!on) {
+		ocean_lips.clear();
+	}
+	const float origin_y = get_global_position().y;
+	for (uint32_t i = 0; i < ocean_lips.size();) {
+		OceanLip &l = ocean_lips[i];
+		l.age += p_delta;
+		l.pos += l.dir * (l.c * p_delta);
+		Vector2 crest;
+		const float cy = _crest_height_near(l.pos, l.dir, 0.6f, origin_y, crest);
+		if (l.age >= l.life || !Math::is_finite(cy)) {
+			ocean_lips.remove_at_unordered(i);
+			continue;
+		}
+		l.pos = crest;
+		l.crest_y = cy;
+		i++;
+	}
+	if (ocean_lips.is_empty()) {
+		if (ocean_lip_instance != nullptr) {
+			ocean_lip_instance->set_visible(false);
+		}
+		return;
+	}
+	const float g = 9.81f;
+	const Vector3 up(0, 1, 0);
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	const float winding = _front_winding();
+	constexpr int K = 8;
+	constexpr int RING = 2 * (K + 1);
+	LocalVector<Vector3> verts;
+	LocalVector<Vector3> normals;
+	LocalVector<float> tangents;
+	LocalVector<Color> colors;
+	LocalVector<Vector2> uvs;
+	LocalVector<int32_t> indices;
+	for (const OceanLip &l : ocean_lips) {
+		const Vector3 dir(l.dir.x, 0.0f, l.dir.y);
+		const Vector2 tan2(-l.dir.y, l.dir.x);
+		const Vector3 along_local = to_local.basis.xform(Vector3(tan2.x, 0.0f, tan2.y)).normalized();
+		auto push = [&](const Vector3 &p_world, const Vector3 &p_normal, float p_white) {
+			verts.push_back(to_local.xform(p_world));
+			const Vector3 n = to_local.basis.xform(p_normal).normalized();
+			normals.push_back(n);
+			Vector3 t = along_local - n * n.dot(along_local);
+			t = t.length_squared() > 1e-8f ? t.normalized() : n.get_any_perpendicular();
+			tangents.push_back(t.x);
+			tangents.push_back(t.y);
+			tangents.push_back(t.z);
+			tangents.push_back(1.0f);
+			colors.push_back(Color(p_white, 0, 0, 0));
+			uvs.push_back(Vector2(p_white, 1.0f)); // y: an open-sea lip (the material's churn)
+		};
+		const float s = l.age / l.life;
+		const float grow = Math::smoothstep(0.0f, 0.45f, s);
+		const float sink = Math::smoothstep(0.5f, 0.85f, s);
+		const float alive = 1.0f - Math::smoothstep(0.75f, 1.0f, s);
+		const bool landed = grow > 0.98f;
+		const int pieces = CLAMP((int)Math::ceil(2.0f * l.half_len / 0.25f), 4, 24);
+		const int first = verts.size();
+		// The crest line under the lip: the surface along it, smoothed over neighbours (each point snapping to its
+		// own highest sample made a sawtooth along the lip).
+		LocalVector<float> line_y;
+		line_y.resize(pieces + 1);
+		for (int r = 0; r <= pieces; r++) {
+			const Vector2 q = l.pos + tan2 * ((-1.0f + 2.0f * r / pieces) * l.half_len);
+			line_y[r] = _sample_height_at(Vector3(q.x, 0.0f, q.y), ObjectID(), origin_y);
+		}
+		for (int pass = 0; pass < 2; pass++) {
+			float prev = line_y[0];
+			for (int r = 1; r < pieces; r++) {
+				const float here = line_y[r];
+				if (Math::is_finite(prev) && Math::is_finite(here) && Math::is_finite(line_y[r + 1])) {
+					line_y[r] = 0.25f * prev + 0.5f * here + 0.25f * line_y[r + 1];
+				}
+				prev = here;
+			}
+		}
+		for (int r = 0; r <= pieces; r++) {
+			const float t = -1.0f + 2.0f * r / pieces;
+			// Thrown along most of the crest, tapering off over its last quarter at each end, unevenly along it.
+			const float w = (1.0f - Math::smoothstep(0.5f, 1.0f, Math::abs(t))) * (0.55f + 0.45f * _flow_value_noise(l.seed + t * 4.0f * l.half_len, l.seed * 0.37f));
+			const Vector2 c2 = l.pos + tan2 * (t * l.half_len);
+			const float cy = line_y[r];
+			const Vector3 crest(c2.x, cy, c2.y);
+			const float hc = l.hc;
+			if (w * alive < 0.02f || !Math::is_finite(cy)) {
+				const Vector3 at = Math::is_finite(cy) ? crest : Vector3(c2.x, origin_y + water_level, c2.y);
+				for (int k = 0; k < RING; k++) {
+					push(at, up, 0.0f);
+				}
+				continue;
+			}
+			const float throw_len = w * 0.5f * hc;
+			float land_y = _sample_height_at(crest + dir * throw_len, ObjectID(), origin_y);
+			if (!Math::is_finite(land_y)) {
+				land_y = cy - hc;
+			}
+			const float drop = CLAMP(cy - land_y, 0.25f * hc, 1.5f * hc);
+			// The crest steepens past vertical before it throws (Longuet-Higgins and Cokelet 1976): the jet leaves
+			// a bulge above the linear crest a little upward, so it arcs clear of the face and leaves a tube
+			// under it, rather than lying on the face.
+			const float lift = 0.15f * hc * grow * w;
+			const float rise = 0.3f; // upward speed over forward speed at the launch
+			// Flight to the landing: 0.5 g tau^2 - v0 tau = drop + lift, with v0 = rise u and u tau = throw_len.
+			const float tau_hit = Math::sqrt(2.0f * (drop + lift + rise * throw_len) / g);
+			const float u = throw_len / tau_hit;
+			const float v0 = rise * u;
+			const float tau_max = tau_hit * grow;
+			const float thick = 0.22f * hc * (1.0f - sink) * MIN(2.0f * alive, 1.0f) * Math::sqrt(w);
+			Vector3 outer[K + 1];
+			Vector3 nrm[K + 1];
+			float th[K + 1];
+			float white[K + 1];
+			float face[K + 1];
+			for (int j = 0; j <= K; j++) {
+				const float f = float(j) / K;
+				const float tau = tau_max * f;
+				th[j] = MAX(thick * (1.0f - 0.75f * f), 0.02f);
+				// Clear green water at the root, aerated white toward the edge, and all white once it lands.
+				// Deep-water lips are aerated through (Deane and Stokes 2002: the jet entrains air from its launch):
+				// white over most of the roll, a little clear water at its root.
+				white[j] = CLAMP(0.35f + 0.65f * Math::smoothstep(0.0f, 0.5f, f) * grow + sink, 0.0f, 1.0f);
+				nrm[j] = (dir * (g * tau - v0) + up * u).normalized();
+				outer[j] = crest + dir * (u * tau) + up * (lift * MIN(4.0f * f, 1.0f) + v0 * tau - 0.5f * g * tau * tau - sink * 0.8f * hc * f);
+				// The sheet never cuts into the front face below it: it rides the face, a little clear, and
+				// peels off where the face falls away (two crossing surfaces show through each other).
+				const float fy = j == 0 ? cy - th[j] : _sample_height_at(outer[j], ObjectID(), origin_y);
+				face[j] = Math::is_finite(fy) ? fy : outer[j].y - 1.0f;
+				outer[j].y = MAX(outer[j].y, face[j] + th[j] + 0.03f);
+			}
+			for (int j = 0; j <= K; j++) {
+				push(outer[j], nrm[j], white[j]);
+			}
+			for (int j = K; j >= 0; j--) {
+				Vector3 inner = outer[j] - nrm[j] * th[j];
+				inner.y = MAX(inner.y, face[j] + 0.01f);
+				push(inner, -nrm[j], white[j]);
+			}
+			// Spray: torn off the flying edge, and thrown up where it lands.
+			if (alive > 0.3f && (r & 1) == 0 && ocean_lip_spray.size() < 256) {
+				if (!landed) {
+					ocean_lip_spray.push_back(outer[K]);
+				} else if (sink < 0.6f) {
+					ocean_lip_spray.push_back(Vector3(outer[K].x, face[K] + 0.05f, outer[K].z));
+				}
+			}
+		}
+		// Rings joined into a closed tube, each triangle wound to agree with its normals (as the shore lips).
+		auto tri = [&](int p_a, int p_b, int p_c) {
+			const Vector3 fn = (verts[p_b] - verts[p_a]).cross(verts[p_c] - verts[p_a]);
+			const Vector3 vn = normals[p_a] + normals[p_b] + normals[p_c];
+			const bool flip = (fn.dot(vn) < 0.0f) == (winding > 0.0f);
+			indices.push_back(p_a);
+			indices.push_back(flip ? p_c : p_b);
+			indices.push_back(flip ? p_b : p_c);
+		};
+		for (int r = 0; r < pieces; r++) {
+			const int r0 = first + r * RING;
+			const int r1 = r0 + RING;
+			for (int k = 0; k < RING; k++) {
+				const int kn = (k + 1) % RING;
+				tri(r0 + k, r1 + k, r1 + kn);
+				tri(r0 + k, r1 + kn, r0 + kn);
+			}
+		}
+	}
+	if (ocean_lip_instance == nullptr) {
+		ocean_lip_instance = memnew(MeshInstance3D);
+		ocean_lip_instance->set_name("OceanLips");
+		ocean_lip_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		// Both are blended (the raster water's alpha is its reflection's), sorted back to front by their boxes'
+		// centres: the sea's follows the camera, so it would be drawn over lips tens of metres off. The lips
+		// ride the crests' tops, in front of the water around them: drawn after it.
+		ocean_lip_instance->set_sorting_offset(1000.0f);
+		add_child(ocean_lip_instance, false, INTERNAL_MODE_BACK);
+		ocean_lip_mesh.instantiate();
+		ocean_lip_instance->set_mesh(ocean_lip_mesh);
+	}
+	ocean_lip_mesh->clear_surfaces();
+	PackedVector3Array pv, pn;
+	PackedFloat32Array pt;
+	PackedColorArray pc;
+	PackedVector2Array pu;
+	PackedInt32Array pi;
+	pv.resize(verts.size());
+	pn.resize(verts.size());
+	pt.resize(tangents.size());
+	pc.resize(verts.size());
+	pu.resize(verts.size());
+	pi.resize(indices.size());
+	memcpy(pv.ptrw(), verts.ptr(), sizeof(Vector3) * verts.size());
+	memcpy(pn.ptrw(), normals.ptr(), sizeof(Vector3) * normals.size());
+	memcpy(pt.ptrw(), tangents.ptr(), sizeof(float) * tangents.size());
+	memcpy(pc.ptrw(), colors.ptr(), sizeof(Color) * colors.size());
+	memcpy(pu.ptrw(), uvs.ptr(), sizeof(Vector2) * uvs.size());
+	memcpy(pi.ptrw(), indices.ptr(), sizeof(int32_t) * indices.size());
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = pv;
+	arrays[Mesh::ARRAY_NORMAL] = pn;
+	arrays[Mesh::ARRAY_TANGENT] = pt;
+	arrays[Mesh::ARRAY_COLOR] = pc;
+	arrays[Mesh::ARRAY_TEX_UV] = pu;
+	arrays[Mesh::ARRAY_INDEX] = pi;
+	ocean_lip_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	ocean_lip_instance->set_material_override(_breaker_material());
+	print_line(vformat("LIPDBG mesh lips %d verts %d tris %d aabb %s", (int)ocean_lips.size(), (int)verts.size(), (int)indices.size() / 3, ocean_lip_mesh->get_aabb()));
+	ocean_lip_instance->set_visible(true);
 }
 
 // Spume (Monahan et al. 1986; Andreas 1998): past about 9 m/s the wind tears the crests into sheets of fine
@@ -5019,6 +5403,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 			_update_breakers();
 			_update_crest_spray();
+			_update_ocean_lips(get_physics_process_delta_time());
 			_wet_ground();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {

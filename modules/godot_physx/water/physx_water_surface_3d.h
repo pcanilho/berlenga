@@ -35,6 +35,7 @@
 
 #include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
+#include "core/variant/typed_array.h"
 #include "scene/3d/node_3d.h"
 
 class Camera3D;
@@ -193,6 +194,15 @@ public:
 	bool get_crest_spray() const { return crest_spray; }
 	void set_crest_spray_amount(int p_amount);
 	int get_crest_spray_amount() const { return crest_spray_amount; }
+	// Plunging lips on the open sea's breaking crests in strong winds (docs/ideas/water.md "Plunging lips on the
+	// open sea"): short lip sheets thrown forward off folding crests near the camera, landing and sinking into
+	// white water, torn into spray. From about 12 m/s, more with the wind.
+	void set_plunging_lips(bool p_enabled);
+	bool get_plunging_lips() const { return plunging_lips; }
+	// Lips alive at the last update (for tests and profiling).
+	int get_plunging_lip_count() const { return (int)ocean_lips.size(); }
+	// The lips alive: position (on the crest, world), direction, height (crest to trough), half_length, age, life.
+	TypedArray<Dictionary> get_plunging_lip_list() const;
 	// Droplets a second leaving the crests at the last update (for tests and profiling).
 	float get_crest_spray_rate() const { return crest_spray_rate; }
 	// The last breaker build: crest points, lip vertices and triangles, the
@@ -521,6 +531,25 @@ private:
 	void _make_crest_spume();
 	RandomPCG crest_rng;
 	void _update_crest_spray();
+	struct OceanLip {
+		Vector2 pos; // on the crest, world xz
+		Vector2 dir; // travel
+		float half_len = 1.0f;
+		float hc = 1.0f; // crest to trough
+		float crest_y = 0.0f; // world
+		float c = 3.0f; // crest speed
+		float age = 0.0f;
+		float life = 1.5f;
+		float seed = 0.0f;
+	};
+	bool plunging_lips = true;
+	LocalVector<OceanLip> ocean_lips;
+	LocalVector<Vector3> ocean_lip_spray; // lip edges and landings, world space, for the crest spray
+	MeshInstance3D *ocean_lip_instance = nullptr;
+	Ref<ArrayMesh> ocean_lip_mesh;
+	float _crest_height_near(const Vector2 &p_xz, const Vector2 &p_dir, float p_reach, float p_origin_y, Vector2 &r_crest) const;
+	void _spawn_ocean_lip(const Vector3 &p_point, float p_origin_y, float p_strength);
+	void _update_ocean_lips(float p_delta);
 	void _update_foam_streaks();
 	// The summed cascades' Jacobian (Tessendorf's folding test, as the shader's foam) at the resting point
 	// (p_x, p_z) relative to the grid centre, and the surface point it moves to (relative to the node).

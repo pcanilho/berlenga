@@ -42,6 +42,18 @@
 				Droplets a second leaving the open sea's crests at the last update of [member crest_spray] (0 when off, calm or out of reach).
 			</description>
 		</method>
+		<method name="get_plunging_lip_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Plunging lips alive at the last update of [member plunging_lips].
+			</description>
+		</method>
+		<method name="get_plunging_lip_list" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				The plunging lips alive at the last update of [member plunging_lips], each with [code]position[/code] (on its crest, in world space), [code]direction[/code] (its travel), [code]height[/code] (crest to trough), [code]half_length[/code], [code]age[/code] and [code]life[/code] (seconds).
+			</description>
+		</method>
 		<method name="get_caustics_half_extent" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -291,6 +303,9 @@
 		</member>
 		<member name="open_sea_beyond" type="bool" setter="set_open_sea_beyond" getter="get_open_sea_beyond" default="false">
 			With a [member render_extent] past the simulated square: if [code]true[/code], the sea out there is open, deep water (full waves, never dry) instead of the square's edge carried outward. Use it when the square follows the camera or player over a coastline: without it, the far sea takes the edge's seabed -- flat, raised to the ground height, with the shore's wet-sand and foam patterns, and [method sample_height] calling it dry.
+		</member>
+		<member name="plunging_lips" type="bool" setter="set_plunging_lips" getter="get_plunging_lips" default="true">
+			In strong winds (from about 12 m/s, more with the wind), the open sea's most strongly folding crests near the camera throw short plunging lips: sheets of water that fly forward off the crest, land, sink into white water and tear into [member crest_spray]. They need [member crest_spray] on.
 		</member>
 		<member name="raster_reflections" type="bool" setter="set_raster_reflections" getter="get_raster_reflections" default="true">
 			Raster only, seen from above: the surface mirrors the sky (a small panorama of the environment's sky, baked again every few seconds) and the sun's glitter by the exact Fresnel term, as the path tracer sees it. The sun's highlight uses a GGX lobe at [code]pathtraced_roughness[/code], widened by how fast the wave normals turn across each pixel (geometric specular antialiasing, Tokuyoshi and Kaplanyan 2019), so a far sea gathers its glints into a glitter path instead of flickering. Off, the surface is the unlit tint it was before.

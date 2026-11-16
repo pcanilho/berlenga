@@ -96,6 +96,7 @@ var current := Vector2.ZERO
 var flow_out := ""
 var bake_time := 0
 var seq := 0
+var cam_set := PackedFloat64Array() # --cam=x,y,z,tx,ty,tz: an explicit camera, over the view's
 var seq_step := 1
 var tracers := 0
 var pt_from := 0
@@ -214,6 +215,7 @@ func _ready() -> void:
 		elif a == "--lip-debug": lip_debug = true
 		elif a == "--hide-lips": hide_lips = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
+		elif a.begins_with("--cam="): cam_set = a.substr(6).split_floats(",")
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--sun-pitch="): sun_pitch = float(a.substr(12))
@@ -471,6 +473,8 @@ func _ready() -> void:
 
 
 	cam.position.y += cam_dy
+	if cam_set.size() == 6:
+		cam.look_at_from_position(Vector3(cam_set[0], cam_set[1], cam_set[2]), Vector3(cam_set[3], cam_set[4], cam_set[5]))
 	bench_cam = cam
 
 
@@ -686,6 +690,10 @@ func _tracers_step(p_dt: float) -> void:
 
 func _process(_delta: float) -> void:
 	n += 1
+	if water != null and view.begins_with("storm") and n % 10 == 0 and water.has_method("get_plunging_lip_count"):
+		print("frame %d plunging lips %d, crest spray %.0f/s" % [n, water.call("get_plunging_lip_count"), water.call("get_crest_spray_rate")])
+		for l in water.call("get_plunging_lip_list"):
+			print("  lip at %s dir %s height %.2f half %.2f age %.2f/%.2f" % [l.position, l.direction, l.height, l.half_length, l.age, l.life])
 	if weather != null and n % 60 == 0:
 		var line := ""
 		for z in [4.0, 6.0, 7.0, 8.0, 8.5, 9.0, 9.5, 10.0, 11.0, 13.0]:
@@ -709,11 +717,11 @@ func _process(_delta: float) -> void:
 	_tracers_step(1.0 / 30.0)
 	if hide_lips:
 		for c in water.get_children(true):
-			if c.name == "BreakerLips":
+			if c.name == "BreakerLips" or c.name == "OceanLips":
 				c.visible = false
 	if lip_debug:
 		for c in water.get_children(true):
-			if c.name == "BreakerLips":
+			if c.name == "BreakerLips" or c.name == "OceanLips":
 				var dm := StandardMaterial3D.new()
 				dm.albedo_color = Color(0.9, 0.15, 0.1)
 				dm.cull_mode = BaseMaterial3D.CULL_DISABLED
