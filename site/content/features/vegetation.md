@@ -115,6 +115,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Wetland plants: reeds and bulrushes stand in the shallows, lilies float.*
 
 - **Waterside plants** (`PlantGenerator.make_banks()`, `PlantSpecies.stone_top_water`, `follow_flow`): marsh marigold, meadowsweet and butterbur line streams, lakes and falls by distance to water; river stones carry river moss and liverwort by height over the water, the moss trailing downstream.
+- **Bog plants** (`PlantGenerator.make_bog()`, BOG_BLANKET or BOG_VALLEY): sphagnum hummocks, cotton grass, bog asphodel and sundew on wet level ground.
 
 - **Leaf wear** (`PlantGenerator.leaf_wear`): insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.
 
