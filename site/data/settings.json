@@ -2389,7 +2389,7 @@
     "bark_wounds"
    ],
    "note": "",
-   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks and knots on lying logs.",
+   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2400,7 +2400,7 @@
     "moss_cover"
    ],
    "note": "",
-   "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.",
+   "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2470,7 +2470,7 @@
     "near_leaf_range"
    ],
    "note": "",
-   "what": "lobed and compound leaves are built only for trees near the camera; further out each leaf is a simple leaf of the same area.",
+   "what": "lobed and compound leaves are built for trees near the camera; further out each leaf is a simple leaf of the same area.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2515,7 +2515,7 @@
     "uprooted"
    ],
    "note": "",
-   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
+   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood; peeled edges show the bark's thickness. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"
