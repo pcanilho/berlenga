@@ -42,6 +42,7 @@
 			<param index="1" name="mass" type="float" default="75.0" />
 			<param index="2" name="area" type="float" default="0.035" />
 			<description>
+				The footing at [param position] for a walker of [param mass] kg on [param area] m² of boot: [code]soft[/code], [code]sinkage[/code] (m), [code]effort[/code] (the work of walking against firm ground, 2.1 on dry sand), [code]speed_scale[/code] (its inverse) and [code]slide[/code] (an acceleration down a face steeper than the material holds, m/s²). The game decides how a controller uses them.
 			</description>
 		</method>
 		<method name="get_fresh_at" qualifiers="const">
@@ -117,6 +118,7 @@
 			<param index="5" name="slip" type="float" default="0.0" />
 			<param index="6" name="slip_angle" type="float" default="0.0" />
 			<description>
+				The soil under a wheel at [param position]: [param load] N on a wheel of [param radius] and [param width] m, a tyre at [param inflation] kPa ([code]0[/code]: rigid), at [param slip] and [param slip_angle] (radians). Returns [code]soft[/code], [code]static_sinkage[/code], [code]sinkage[/code] (m, with slip sinkage), [code]contact_length[/code] (m), [code]compaction[/code], [code]bulldozing[/code], [code]resistance[/code], [code]shear_limit[/code], [code]traction[/code] and [code]lateral[/code] (N).
 			</description>
 		</method>
 		<method name="is_gpu_active" qualifiers="const">
@@ -155,6 +157,7 @@
 			<param index="3" name="sinkage" type="float" />
 			<param index="4" name="velocity" type="Vector2" default="Vector2(0, 0)" />
 			<description>
+				Presses a wheel's rut: a flat print [param size] wide (x) and long (z), turned by [param yaw], [param sinkage] m deep, the soil thrown along [param velocity]. Returns the volume moved on the CPU field ([code]0[/code] on the GPU, where it is a stamp).
 			</description>
 		</method>
 		<method name="refresh_ground">
@@ -240,6 +243,7 @@
 			The patch's vertex spacing over the outer half of the field, in metres.
 		</member>
 		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
+			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.
 		</member>
 		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.

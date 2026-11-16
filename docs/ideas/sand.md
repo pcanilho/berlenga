@@ -180,10 +180,43 @@ is on the PC queue.
 - **Characters**: sinkage slows the stride (energy cost of walking on sand is 1.6 to 2.5 times
   that on firm ground; Lejeune et al. 1998, J. Exp. Biol.); on a face steeper than the repose
   angle the footing slides down with the grains (the print slumps under it). Exposed as
-  `get_sand_drag_at()` and a slide vector; the game decides how a controller uses them.
+  `get_footing_at()` (effort and a slide vector); the game decides how a controller uses them.
 - **Rigid bodies** (crates, rocks dropped on a beach) sink by Bekker and get a resistance force
   while moving through the field (the snow bow wave's ploughing term, sand values).
 - Collision stays the undisturbed collider plus sinkage, as now, so nothing new to trace.
+
+**Built (16 Nov 2026).** `modules/ground/ground_terramechanics.*` holds the soil maths (Bekker static
+sinkage with Wong's elastic-tyre mode, Lyasko slip sinkage, compaction and bulldozing for the new depth only,
+Janosi-Hanamoto traction); `GroundSurface3D.get_soil()` reads the material lattice. Each cell now carries
+shear values (c, phi, K, gamma; Wong table 2.2) and its own pressure-sinkage for tyres: Bekker's values depend
+on the plate size they were measured with, and damp sand under a tyre bears as packed LETE sand (n 0.79,
+kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they were.
+- **Vehicles** (`PhysXVehicle3D.soft_soil`, on; `PhysXVehicleWheel3D.tire_pressure`, 200 kPa): two
+  components in the PxVehicle2 sequence. After the road query, each wheel's road plane drops by its sinkage
+  (settling over 0.1 s; slip sinkage builds over a contact length of travel, so a wheel spinning in place
+  digs in over seconds), the rut is pressed along the travel, and the tyre's friction is set to the soil's
+  shear limit and its longitudinal stiffness to the Janosi-Hanamoto initial slope. In each substep the
+  motion resistance acts at the axle against the travel (no wheel torque: a towed wheel's soil reaction
+  passes through its axle). Not built as a force clamp: PhysX's wheel integration rings at walking pace
+  (its own note on `PxVehicleTireSlipParams`), so on soft soil the active slip floor is 3 m/s, the
+  stiffness is kept within what a substep integrates stably, and slip is averaged over the substeps.
+  Diagnostics: `get_wheel_sinkage/slip/soil_resistance/soil_traction`, `is_wheel_on_soft_soil`.
+- **Walkers**: `get_footing_at(position, mass, area)` returns effort (Lejeune 1998 fit to print depth) and
+  a slide acceleration on faces past repose less 3 degrees (Pouliquen 1999); the game's controller uses it.
+- **Rigid bodies** in `deform_groups` plough (`ploughing`, on): compaction and bulldozing at their width.
+- `--test=soil` (17 checks, GPU and CPU paths): rigid wheel 7.7 cm in dry sand (Bekker 7.7), Rc 874 N
+  (Bekker 874), 50 kPa tyre 4.5 cm, slip sinkage x2.0 at 50%, Janosi share 0.37 at 10% and 0.93 at 80%,
+  second pass in the rut 0 N, walking effort 2.11 dry and 1.30 damp, 3.9 m/s2 slide on a 50 degree face.
+  A 1500 kg 4x4 at half throttle for 4 s: 20.5 m firm, 5.3 m damp sand (2 cm ruts), 0.3 m dry sand at
+  200 kPa (12 cm), 1.2 m aired down to 60 kPa (6.4 cm); floored on dry sand the wheels spin (slip 0.94) and
+  dig to 13 cm. A 300 kg stone block shoved at 3 m/s stops in 1.15 m against 1.41 m.
+- Known: motion resistance follows Bekker (damp sand 0.13 to 0.23 of the load, dry 0.5 at road pressure),
+  inside Wong's 0.15 to 0.3 for sand except loose dry sand at road pressure, where cars do bog. Floored on
+  damp sand the wheels dig in too, which real packed sand likely resists better. Light crates barely sink,
+  so they barely plough.
+- `--view=ruts` renders a 4x4's S-curve through the ground; the PT frame matches raster detail. Found while
+  building it: turning `RenderingServer.render_loop_enabled` off with a GPU ground field running crashes
+  (an index out of bounds); not chased yet.
 
 ### Stage 2: grains that move (hybrid height field and MPM, Holz 2009)
 

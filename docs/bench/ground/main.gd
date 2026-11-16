@@ -640,8 +640,9 @@ func _build_ruts() -> void:
 			if c is PhysXVehicleWheel3D:
 				c.tire_pressure = 60.0
 	surface.follow_target = surface.get_path_to(car)
-	# Nothing to see while it drives: draw only the final frame.
-	RenderingServer.render_loop_enabled = false
+	# Nothing to see while it drives: draw it small (lavapipe), full size for the final frame.
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
 	for i in 30:
 		await get_tree().physics_frame
 	# A gentle S through the frame, then on out of it.
@@ -659,13 +660,14 @@ func _build_ruts() -> void:
 	cam.position = Vector3(1.6, _undisturbed(Vector3(1.6, 0, -3.5)) + 0.9, -3.5)
 	cam.look_at(Vector3(-0.6, _undisturbed(Vector3(-0.6, 0, 1.5)), 1.5))
 	cam.fov = 55.0
+	var car_end := car.global_position
 	car.queue_free()
 	surface.follow_target = surface.get_path_to(cam)
 	for i in 60:
 		await get_tree().physics_frame
 	surface.sync_deformation()
-	RenderingServer.render_loop_enabled = true
-	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car.global_position, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])
+	get_window().size = full
+	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car_end, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
