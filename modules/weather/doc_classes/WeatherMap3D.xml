@@ -414,7 +414,7 @@
 		</method>
 	</methods>
 	<members>
-		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="false">
+		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="true">
 			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Off, the air is clear unless the [Environment] adds fog.
 		</member>
 		<member name="canopy_map" type="Texture2D" setter="set_canopy_map" getter="get_canopy_map">
@@ -441,7 +441,7 @@
 		<member name="cloud_density" type="float" setter="set_cloud_density" getter="get_cloud_density" default="1.0">
 			Scale on the clouds' extinction. At [code]1[/code], the measured values: about 0.04 per metre in stratus, up to 0.1 in cumulus (Frostbite, 2016).
 		</member>
-		<member name="cloud_evolution" type="bool" setter="set_cloud_evolution" getter="get_cloud_evolution" default="false">
+		<member name="cloud_evolution" type="bool" setter="set_cloud_evolution" getter="get_cloud_evolution" default="true">
 			If [code]true[/code], clouds form and clear over time and their tops climb, in the sky, in path traced frames and in the cloud shadows alike: the cover noise moves through time (each octave over [member cloud_lifetime], smaller ones faster) and the cloud shapes churn at [member cloud_churn]. If [code]false[/code], the clouds only slide with the wind.
 		</member>
 		<member name="cloud_lifetime" type="float" setter="set_cloud_lifetime" getter="get_cloud_lifetime" default="900.0">

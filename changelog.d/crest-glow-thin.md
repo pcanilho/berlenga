@@ -1,0 +1,1 @@
+- Water: crest glow kept to the thin top third of the high crests, scaled to the sea's own wave height (`crest_glow`).

@@ -493,7 +493,7 @@ private:
 	int wave_cascades = 1;
 	bool detail_waves = true;
 	float wave_cascade_ratio = 6.0f;
-	bool shore_waves = false;
+	bool shore_waves = true;
 	float shore_wave_height = 0.8f; // m, offshore
 	float shore_wave_period = 8.0f; // s
 	float shore_wave_curl = 1.0f;
@@ -567,7 +567,7 @@ private:
 		float age = 0.0f;
 		float seed = 0.0f;
 	};
-	bool crest_sheets = false;
+	bool crest_sheets = true;
 	int crest_sheet_amount = 40;
 	LocalVector<CrestSheet> sheets;
 	MeshInstance3D *sheet_instance = nullptr;
@@ -610,6 +610,11 @@ private:
 	WaveCascade *detail_cascade = nullptr; // the detail waves' tile (the normal; displaced near the camera on the open sea mesh), or null
 	int detail_resolution = 128;
 	float _detail_k_min() const; // the finest cascade's Nyquist wavenumber (rad/m)
+	float _wind_sea_sigma(float p_k_lo, float p_k_hi) const;
+	float _shore_height() const;
+	float measured_sigma = -1.0f; // the simulated sea's rms height (m), from the CPU grids; < 0 until read
+	int sigma_countdown = 0;
+	float shore_baked_height = -1.0f; // the swell height the shore waves were last baked for (m)
 	void _configure_cascades(const WaterSolver::Settings &p_base);
 	void _clear_cascades();
 	// The wavenumber where cascade i hands over to cascade i + 1 (rad/m).
@@ -798,7 +803,7 @@ private:
 	bool raster_reflections = true;
 	WaterRasterReflections raster_reflection_state;
 	void _update_raster_reflections();
-	bool caustics_enabled = false; // off by default: a draw pass every frame, only worth it over a visible floor
+	bool caustics_enabled = true; // a draw pass every frame (the desktop measures and trims it)
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;
 

@@ -277,7 +277,7 @@
 		<member name="catchment_inflow" type="float" setter="set_catchment_inflow" getter="get_catchment_inflow" default="0.0">
 			With [member level_from_flows]: water reaching the lake besides the rivers flowing in (rain and springs of its catchment), m³/s.
 		</member>
-		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="false">
+		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="true">
 			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. Clear water ([code]clear_water[/code] in the material) lights the bed it shows with it in the rasterizer: the sun's share of the bed's light is scaled by the map's ratio (the path tracer finds its own caustics). See [method get_caustics_texture]. Off by default: the pass draws every frame, and caustics only show over a floor seen through fairly shallow water (a pool, a beach, a lake shore), so turn it on where you have one.
 		</member>
 		<member name="caustics_reference_depth" type="float" setter="set_caustics_reference_depth" getter="get_caustics_reference_depth" default="2.5">
@@ -295,7 +295,7 @@
 		<member name="crest_sheet_amount" type="int" setter="set_crest_sheet_amount" getter="get_crest_sheet_amount" default="40">
 			Most [member crest_sheets] alive at once.
 		</member>
-		<member name="crest_sheets" type="bool" setter="set_crest_sheets" getter="get_crest_sheets" default="false">
+		<member name="crest_sheets" type="bool" setter="set_crest_sheets" getter="get_crest_sheets" default="true">
 			From a near-gale (12 m/s, fully by 20 m/s), thin sheets of water the wind tears off the open sea's strongest folding crests, 8 to 30 m from the camera: each flies downwind, curls over and falls back within about a second, tearing into streaks and ligaments as it goes (bag breakup, Troitskaya et al. 2017). Real geometry rebuilt each physics tick, so the path tracer draws it too.
 		</member>
 		<member name="crest_spray" type="bool" setter="set_crest_spray" getter="get_crest_spray" default="true">
@@ -406,8 +406,8 @@
 		<member name="shore_wave_period" type="float" setter="set_shore_wave_period" getter="get_shore_wave_period" default="8.0">
 			Period (s) of the shore waves: longer swell runs faster, is turned more by the seabed, and breaks further out. The second train is 1.13 times longer, so the two beat into sets.
 		</member>
-		<member name="shore_waves" type="bool" setter="set_shore_waves" getter="get_shore_waves" default="false">
-			Swell rolling in onto the shore over the measured seabed ([member seabed_from_floor] or a [member surface_mesh]). Two wave trains whose crests follow a phase field solved over the depth (ray theory), so they slow, turn to follow the depth contours and bunch up in the shallows. They grow as the water shoals (energy flux), break where their height reaches 0.78 of the depth, and run in as white bores up to the waterline. The swash runs them up the sand, as far as the run-up of Stockdon et al. (2006) for the beach slope and the swell. On beaches that plunge the crests curl over first (see [member shore_wave_curl]). Heights vary slowly along the crests, so the waves come in sets. They fade out where the water is deeper than a quarter wavelength, which the FFT ocean carries. Included in [method sample_height].
+		<member name="shore_waves" type="bool" setter="set_shore_waves" getter="get_shore_waves" default="true">
+			Swell rolling in onto the shore over the measured seabed ([member seabed_from_floor] or a [member surface_mesh]). Two wave trains whose crests follow a phase field solved over the depth (ray theory), so they slow, turn to follow the depth contours and bunch up in the shallows. They grow as the water shoals (energy flux), break where their height reaches 0.78 of the depth, and run in as white bores up to the waterline. The swash runs them up the sand, as far as the run-up of Stockdon et al. (2006) for the beach slope and the swell. On beaches that plunge the crests curl over first (see [member shore_wave_curl]). Heights vary slowly along the crests, so the waves come in sets. They fade out where the water is deeper than a quarter wavelength, which the FFT ocean carries. Included in [method sample_height]. On enclosed water (a [member surface_mesh]) there is no swell from outside: the height is at most the water's own wind sea (from [member wind_speed] and its fetch), so a still pond has none.
 		</member>
 		<member name="step_mode" type="int" setter="set_step_mode" getter="get_step_mode" enum="PhysXWaterSurface3D.StepMode" default="0">
 			When the surface advances. [constant STEP_MODE_PER_TICK] runs the whole GPU step every physics tick. [constant STEP_MODE_PER_FRAME] records each physics tick (its delta and the spheres / impulses submitted so far) and runs them in ONE step per rendered frame: the ripple layer still takes one sub-step per tick with that tick's bodies (the same ripples), while the FFT ocean (evaluated at the summed time -- the same waves), foam, swash, the texture blits and the height readbacks run once. When the game runs several physics ticks per frame (a high tick rate, or a physics catch-up), this keeps the surface's cost at one step per frame.
