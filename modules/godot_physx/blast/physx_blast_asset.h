@@ -64,7 +64,14 @@ public:
 
 	int get_chunk_count() const { return chunk_points.size(); }
 
+	// Optional render meshes, one per chunk (entry i: a Mesh arrays Array, indexed or not, with any of normals,
+	// tangents, colours, UV and UV2), for chunks authored outside Blast with their own shading data (a procedural
+	// rock's pieces). Empty: pieces are drawn from chunk_points with flat normals, as before.
+	void set_chunk_meshes(const Array &p_meshes) { chunk_meshes = p_meshes; }
+	Array get_chunk_meshes() const { return chunk_meshes; }
+
 private:
 	PackedByteArray asset_bytes;
 	Array chunk_points;
+	Array chunk_meshes;
 };

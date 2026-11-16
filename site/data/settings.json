@@ -1165,6 +1165,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Breakable stones",
+   "settings": [
+    "RockField3D.break_stone"
+   ],
+   "note": "",
+   "what": "stones split into pieces along rough rock breaks, and layered rock into slabs.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Tors and coasts",
    "settings": [
     "layer_enabled",

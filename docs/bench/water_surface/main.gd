@@ -15,6 +15,8 @@ extends Node3D
 #   --view=storm    a gale over deep open sea (22 m/s, 4 cascades, depth 80 m, no floor) from 7 m up; storm_sun looks
 #                   toward the sun from 9 m up, through the crests; storm_low looks downwind from 3.5 m at 20 m/s
 #                   (the windrows run away from the viewer)
+#   --view=sea_level  eye 1 m above a moderate sea (5 m/s), into a low sun: near crests in silhouette
+#   --view=storm_plume 4 m up, steeply down on a fresh whitecap and its turquoise bubble plume (as storm_foam)
 #   --view=storm_foam  13 m/s deep sea from 8 m up, 25 degrees down, sun to the side (--sun-pitch=20): whitecaps ageing to lace
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
@@ -325,11 +327,18 @@ func _ready() -> void:
 		water.set("render_extent", 3000.0)
 		if view == "storm_low":
 			water.set("wind_speed", 20.0)
-		elif view == "storm_foam":
+		elif view == "storm_foam" or view == "storm_plume":
 			water.set("wind_speed", 13.0) # Beaufort 6: whitecaps everywhere, no gale streaks yet
 		elif view == "storm_glitter":
 			water.set("wind_speed", 8.0)
 			water.set("wave_cascades", 3)
+	if view == "sea_level":
+		water.set("render_extent", 3000.0)
+		water.set("depth", 80.0)
+		water.set("wind_speed", 5.0)
+		water.set("swell", 0.0)
+		water.set("wave_cascades", 3)
+		water.set("fetch", 500000.0)
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
@@ -428,6 +437,18 @@ func _ready() -> void:
 			var to_sun_f := sun.transform.basis.z
 			var side := Vector3(to_sun_f.z, 0.0, -to_sun_f.x).normalized()
 			cam.look_at_from_position(Vector3(0, 8.0, 0.0), side * 17.0)
+		"storm_plume":
+			# 4 m up, steeply down on the water in front of the storm_foam view: a fresh whitecap and its plume.
+			var to_sun_p := sun.transform.basis.z
+			var side_p := Vector3(to_sun_p.z, 0.0, -to_sun_p.x).normalized()
+			var right_p := side_p.cross(Vector3.UP)
+			cam.look_at_from_position(side_p * 4.0 - right_p * 0.5 + Vector3(0, 4.0, 0), side_p * 8.5 + right_p * 0.5)
+		"sea_level":
+			# Eye 1 m above the mean sea, looking across a moderate sea at the low sun: the near crests stand in
+			# silhouette against the sky and the glitter.
+			var to_sun_l := sun.transform.basis.z
+			var fwd := Vector3(to_sun_l.x, 0.0, to_sun_l.z).normalized()
+			cam.look_at_from_position(Vector3(0, 1.0, 0.0), fwd * 30.0 + Vector3(0, 0.8, 0))
 		"storm_glitter":
 			# 2 m up, into the sun's glitter path.
 			var to_sun_g := sun.transform.basis.z

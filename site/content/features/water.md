@@ -72,6 +72,10 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Ocean detail: the sun's path breaks into fine glints instead of a few smooth streaks.*
 
+  ![A fresh whitecap seen steeply from 4 m up, raster](media/water-bubble-plume.jpg)
+
+  *Ocean detail: a turquoise bubble plume glows under a fresh whitecap.*
+
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 
   ![A lake looking into the sun, raster, with wind ripples and glitter](media/lake-ripples.jpg)
