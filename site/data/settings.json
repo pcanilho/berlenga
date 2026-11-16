@@ -1144,6 +1144,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Sand glints",
+   "settings": [
+    "GroundSurface3D.sand_glints"
+   ],
+   "note": "",
+   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Wet sand",
    "settings": [
     "GroundSurface3D.water_coupling",

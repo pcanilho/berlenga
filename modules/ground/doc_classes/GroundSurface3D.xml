@@ -396,6 +396,9 @@
 		<member name="sand_drift_rate" type="float" setter="set_sand_drift_rate" getter="get_sand_drift_rate" default="2.0">
 			How fast wind fills dry sand prints: the share lost per hour at 10 m/s, from nothing at 5 m/s (Bagnold's threshold).
 		</member>
+		<member name="sand_glints" type="bool" setter="set_sand_glints" getter="is_sand_glints" default="false">
+			If [code]true[/code], loose dry sand shows its grains up close: their mixed colours, averaging out with distance, and the clean faces among them flashing where they mirror the sun (counted per pixel footprint like snow's sparkle), in raster and under the path tracer alike. Wet sand loses them. Off until its GPU cost is measured.
+		</member>
 		<member name="skirt" type="float" setter="set_skirt" getter="get_skirt" default="0.5">
 			How far the terrain is lowered under the patch, in metres.
 		</member>

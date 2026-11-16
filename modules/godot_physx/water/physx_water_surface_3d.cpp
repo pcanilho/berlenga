@@ -2489,6 +2489,24 @@ static float _flow_value_noise(float p_x, float p_y);
 
 // Wavenumber for angular frequency w in depth h: w^2 = g k tanh(k h), by
 // Fenton and McKee's (1990) explicit approximation (within 1.5%).
+// Smooth value noise (0..1) for the shore bake.
+static float _shore_hash(int p_x, int p_y, int p_seed) {
+	uint32_t h = uint32_t(p_x) * 374761393u + uint32_t(p_y) * 668265263u + uint32_t(p_seed) * 2246822519u;
+	h = (h ^ (h >> 13)) * 1274126177u;
+	return float((h ^ (h >> 16)) & 0xffffu) / 65535.0f;
+}
+
+static float _shore_noise(float p_x, float p_y, int p_seed) {
+	const float fx = Math::floor(p_x), fy = Math::floor(p_y);
+	const int ix = int(fx), iy = int(fy);
+	float ux = p_x - fx, uy = p_y - fy;
+	ux = ux * ux * (3.0f - 2.0f * ux);
+	uy = uy * uy * (3.0f - 2.0f * uy);
+	const float a = _shore_hash(ix, iy, p_seed), b = _shore_hash(ix + 1, iy, p_seed);
+	const float c = _shore_hash(ix, iy + 1, p_seed), d = _shore_hash(ix + 1, iy + 1, p_seed);
+	return Math::lerp(Math::lerp(a, b, ux), Math::lerp(c, d, ux), uy);
+}
+
 static float _shore_k(float p_omega, float p_h) {
 	const float k_deep = p_omega * p_omega / 9.81f;
 	const float x = k_deep * MAX(p_h, 1e-3f);
@@ -2628,6 +2646,23 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 		for (int i = 0; i < n * n; i++) {
 			if (!Math::is_finite(pw[i])) {
 				pw[i] = 0.0f;
+			}
+		}
+		// Short crests: a real swell spreads over a few degrees of direction, so its crests are never ruler-straight
+		// lines across a straight beach (they bend and break unevenly along their length). The phase wanders by up
+		// to about a fifth of a wave over a few wavelengths along the crest; the gradient below follows it. Without
+		// it a plunging wave's crest and the trough where its lip lands ran as one straight line down the beach.
+		{
+			const float wl = Math::TAU / k_deep;
+			const Vector2 along(-dir.y, dir.x);
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const Vector2 p = pos(x, z) + grid_center;
+					const float u = p.dot(along) / MAX(1.5f * wl, 1.0f);
+					const float v = p.dot(dir) / MAX(4.0f * wl, 1.0f);
+					const float w = 0.65f * _shore_noise(u, v, 11 + t) + 0.35f * _shore_noise(2.3f * u + 5.1f, 2.3f * v, 29 + t);
+					pw[z * n + x] += 1.3f * (w - 0.5f) * 2.0f;
+				}
 			}
 		}
 		// Gradient (k times the direction of travel) and height.

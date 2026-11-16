@@ -242,12 +242,14 @@ private:
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
-	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film's
-	// sheen, the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
+	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film,
+	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
 	Vector<uint8_t> wet_data;
 	Ref<ImageTexture> wet_texture;
 	bool wet_published = false;
-	void _wet_publish(const LocalVector<float> *p_depth);
+	bool sand_glints = false;
+	double wet_publish_accum = 0.0;
+	void _wet_publish(bool p_on);
 	// Vegetation sheltering the sand (dune grass, docs/ideas/sand.md): plants take a share of the wind's stress
 	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
 	TypedArray<NodePath> wind_shelters;
@@ -403,6 +405,8 @@ public:
 	float get_saturation_at(const Vector3 &p_position) const;
 	float get_water_speed_at(const Vector3 &p_position) const;
 	float get_water_step_usec() const { return water_usec; }
+	void set_sand_glints(bool p_enabled) { sand_glints = p_enabled; }
+	bool is_sand_glints() const { return sand_glints; }
 	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }
 	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
 	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index

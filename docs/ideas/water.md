@@ -3217,3 +3217,13 @@ Docs review 3 (close frame): near holes were clean ovals, one wedge, stair-stepp
   wandered by smooth noise about a texel long.
 - Rims: the pixel step spans about three pixels (fwidth is per 2x2 quad), and the relief reads the foam before the
   step (the step's one-pixel jump tilted the normal hard over every rim: the dark outline).
+
+## Short-crested shore waves (16 Nov)
+
+Sand's shore frame showed a straight line through the surf foam, parallel to the beach: the plunging breaker's
+crest and the trough where its lip lands, both exactly long-crested over a straight beach (one direction per train,
+the eikonal phase from a plane wave). Real swell spreads over a range of directions (directional spreading, e.g.
+Longuet-Higgins' cos^2s), so crests are short: they bend, and a breaker peels and breaks unevenly along its length.
+Fix: the baked phase wanders by up to about a fifth of a wave, slowly along the crest (1.5 wavelengths) and more
+slowly across it (4 wavelengths); the gradient (direction of travel) follows it, and the CPU lip sheets and
+sample_height read the same baked phase, so the lips stay on their crests.

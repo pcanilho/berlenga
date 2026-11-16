@@ -153,6 +153,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.moisture = moisture
 	surface.litter_cover = litter
 	surface.gpu_simulation = gpu
+	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
 	add_child(surface)
 	await get_tree().physics_frame
 

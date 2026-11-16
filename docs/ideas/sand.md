@@ -426,3 +426,15 @@ Sheltered sand also loses its ripples' and streamers' share and keeps its prints
 `get_sand_flux_at`, `get_deposition_rate_at`, `get_sand_deposit_at`. Bench `--test=shelter`. Not modelled:
 the lee eddy's scour and the wake's reduced flux past the plants (Okin 2008); the sand dropped on damp sand
 downwind of dry sand comes from the same rule.
+
+### Sand glints and grain (built 16 Nov 2026)
+
+`sand_glints` (off until its GPU cost is measured). Up close, loose dry sand shows its grains: a 0.25 mm grain
+grid counted per pixel footprint as the snow's sparkle is (Zirr and Kaplanyan 2016; Deliot and Belcour 2023,
+one facet per cell): grain colours vary (sum of two uniforms, std 0.41) and average out as one over the square
+root of the grains a cell holds, blended across levels so it never steps; 12% of grains are clean faces
+(quartz, mica) GGX-tilted (alpha 0.5) that flash as a coat lobe at quartz F0 0.045, roughness 0.45. The share
+is published per lattice cell in the wet map's B channel (sand, not litter, deformable); wetness puts the
+glints out. The path tracer applies the same functions on camera rays (pixel footprint) and others (ray cone).
+The standing film on saturated sand now also hides the sand's relief: the normal map's depth falls by 85% and
+roughness goes to 0.2 at 60% (Lagarde's accumulated water), raster and path traced.
