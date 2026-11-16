@@ -430,3 +430,19 @@ Build: RockGenerator families (hoodoo, goblin, fin, pavement, pothole slab, cave
 field as the coast forms (Paris et al. 2020), and a RockField3D landform layer placing them from the geology, slope,
 rock type and drainage, as the coast layer does. Order: pavement and hoodoos first (the most common), then fins and
 arches, goblins, potholes, cave mouths.
+
+### Landforms step 1: built (16 Nov)
+
+- `RockField3D.LAYER_LANDFORM` (radius 900 m), families `FAMILY_HOODOO` and `FAMILY_PAVEMENT`.
+- Hoodoos (Bryce, Drumheller): a round, irregular plan of 11 to 15 faces; a few smooth swells and necks up the
+  column (knots 0.45 to 0.95 units apart, soft ones 0.12 to 0.26c back, smoothstep between them, not steps); faint
+  hard ribs every 0.07 to 0.09; rills down the sides; a thin cap (top 6 to 13%) with a domed, uneven top over a neck.
+  Placed in rows of 3 to 9 on steep (20 to 45 degree) bare soft beds, only in one placement cell in four (badland
+  heads), 4 to 20 m tall, the foot sunk under the lowest ground round it.
+- Limestone pavement (Malham, the Burren): two joint sets, the cross set 1.4 to 2.8 times wider and intermittent, each
+  joint wandering and the spacing swinging by half, so clints differ; grykes most of the slab deep; rounded clint
+  edges, runnels and pans on the tops. Placed on bare limestone up to 20 degrees, only where the ground within 8 m
+  stays within 0.8 m of a plane (benches, not knolls) and 6 m above the sea; 8 to 16 m patches, top 15 cm proud.
+- Upright forms (hoodoos, sea stacks) now carry their beds across the long axis: the laminae relief and the shader's
+  colour bands (vertex COLOR.b) were running up the column like wood grain.
+- Bench: `--view=landform`, `--form=pavement`, `--only-layer`; `--test` checks both kinds are placed.
