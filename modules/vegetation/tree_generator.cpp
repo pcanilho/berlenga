@@ -3969,6 +3969,22 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			tri(iab, ibc, ica);
 		}
 	};
+	// A thin stalk, two points, three sides: what fruit and keys hang from.
+	auto stalk = [&](const Vector3 &p_a, const Vector3 &p_b, float p_r, const Color &p_c) {
+		if (p_a.distance_squared_to(p_b) < 1e-8f) {
+			return;
+		}
+		LocalVector<Vector3> sp;
+		LocalVector<float> sr;
+		LocalVector<Color> sc;
+		sp.push_back(p_a);
+		sp.push_back(p_b);
+		sr.push_back(p_r);
+		sr.push_back(p_r * 0.8f);
+		sc.push_back(p_c);
+		sc.push_back(p_c);
+		tube(sp, sr, 3, sc);
+	};
 	// A flat blade (key wing, mistletoe leaf): p_len along p_dir, its width profile over five
 	// stations, turned by p_twist (radians) from base to tip, colour from base to tip.
 	auto blade = [&](const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_width, float p_len, float p_w, const float *p_prof, float p_twist, float p_fold, const Color &p_c0, const Color &p_c1) {
@@ -4024,23 +4040,79 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		}
 		tube(cp, cr2, 4, cc);
 	};
-	// A catkin: a tube of tight scales hanging from the shoot, curving under its weight.
-	auto catkin = [&](const Vector3 &p_at, const Vector3 &p_dir, float p_len, float p_r, const Color &p_a, const Color &p_b, float p_hang) {
+	// A catkin, modelled: a thin axis (rachis) curving under its weight, clothed in spiral bract
+	// scales, each a small peaked shield; closed, they lie flat and overlap like a tiny cone;
+	// open, the axis lengthens, the bracts stand off it and each shows its stamens, a tuft of
+	// pollen-yellow anthers under the bract (hazel, birch and alder male catkins; Proctor and Yeo,
+	// The Pollination of Flowers, 1973). As a plain tube it read as a sausage.
+	auto catkin = [&](const Vector3 &p_at, const Vector3 &p_dir, float p_len, float p_r, const Color &p_a, const Color &p_b, float p_hang, bool p_open, const Color &p_pollen) {
+		// The axis.
+		const int n = 10;
 		LocalVector<Vector3> cp;
-		LocalVector<float> rr;
-		LocalVector<Color> cc;
+		LocalVector<Vector3> cd;
 		Vector3 pos = p_at;
 		Vector3 d = p_dir;
-		const int n = 8;
 		for (int k = 0; k <= n; k++) {
-			const float t = float(k) / n;
 			cp.push_back(pos);
-			rr.push_back(p_r * (k == 0 ? 0.45f : (0.85f + 0.15f * Math::sin(t * float(Math::PI))) * (1.0f - 0.55f * Math::smoothstep(0.7f, 1.0f, t))));
-			cc.push_back((k & 1) ? p_a : p_b);
+			cd.push_back(d);
 			d = d.lerp(Vector3(0, -1, 0), p_hang).normalized();
 			pos += d * (p_len / n);
 		}
-		tube(cp, rr, 6, cc);
+		{
+			LocalVector<float> rr;
+			LocalVector<Color> cc;
+			for (int k = 0; k <= n; k++) {
+				rr.push_back(p_r * (k == 0 ? 0.25f : 0.38f));
+				cc.push_back(p_b * 0.7f);
+			}
+			tube(cp, rr, 3, cc);
+		}
+		// Bract scales on a 137.5 degree spiral, one per fifth of the radius along the axis.
+		const int scales = CLAMP(int(p_len / (p_r * 0.2f)), 16, 90);
+		Vector3 side = perp(cd[0]);
+		for (int i = 0; i < scales; i++) {
+			const float t = (i + 0.5f) / scales;
+			const float ft = t * n;
+			const int k = MIN(int(ft), n - 1);
+			const float f = ft - k;
+			const Vector3 ax = cd[k].lerp(cd[k + 1], f).normalized();
+			const Vector3 c = cp[k].lerp(cp[k + 1], f);
+			side = (side - ax * side.dot(ax)).normalized();
+			const float a = i * 2.39996f;
+			const Vector3 rad = (side * Math::cos(a) + ax.cross(side) * Math::sin(a)).normalized();
+			// Tapering at both ends; open bracts stand out at 45-60 degrees.
+			const float prof = Math::smoothstep(0.0f, 0.12f, t) * (1.0f - 0.6f * Math::smoothstep(0.75f, 1.0f, t));
+			const float tilt = Math::deg_to_rad(p_open ? 34.0f : 14.0f);
+			const Vector3 sd = (rad * Math::sin(tilt) + ax * Math::cos(tilt)).normalized();
+			const Vector3 w = sd.cross(rad).normalized();
+			const float sl = p_r * (0.55f + 0.35f * prof) * (p_open ? 0.85f : 1.0f);
+			const float sw = p_r * (0.8f + 0.35f * prof);
+			const Vector3 root = c + rad * (p_r * (p_open ? 0.35f : 0.5f) * (0.4f + 0.6f * prof));
+			const Color cin = p_b, cout = p_a.lerp(p_b, 0.3f * (i & 1));
+			const int ia = vert(root, Vector2(0.5f, 0.0f), cin);
+			const int il = vert(root + sd * (sl * 0.45f) - w * (sw * 0.5f) + rad * (sl * 0.1f), Vector2(0.0f, 0.5f), cin.lerp(cout, 0.6f));
+			const int ir = vert(root + sd * (sl * 0.45f) + w * (sw * 0.5f) + rad * (sl * 0.1f), Vector2(1.0f, 0.5f), cin.lerp(cout, 0.6f));
+			// The peak bends back out a little: the bract's tip.
+			const int it = vert(root + sd * sl + rad * (sl * (p_open ? 0.3f : 0.18f)), Vector2(0.5f, 1.0f), cout);
+			tri(ia, il, ir);
+			tri(il, it, ir);
+			if (p_open && prof > 0.15f) {
+				// Stamens under the bract: a tuft of anthers, a small diamond turned alternately
+				// across and along the bract, so the tufts read from every side.
+				const Vector3 ac = root + rad * (p_r * 0.45f) + sd * (sl * 0.1f) - ax * (sl * 0.2f);
+				const float ar = p_r * 0.42f;
+				for (int q = i & 1; q < 1 + (i & 1); q++) {
+					const Vector3 u1 = q ? w : rad;
+					const Vector3 u2 = ax;
+					const int b0 = vert(ac - u2 * ar, Vector2(), p_pollen * 0.85f);
+					const int b1 = vert(ac + u1 * ar, Vector2(), p_pollen);
+					const int b2 = vert(ac + u2 * ar * 0.6f, Vector2(), p_pollen);
+					const int b3 = vert(ac - u1 * ar, Vector2(), p_pollen);
+					tri(b0, b1, b2);
+					tri(b0, b2, b3);
+				}
+			}
+		}
 	};
 
 	// Shoot tips: where cones, catkins, keys and berries hang.
@@ -4180,7 +4252,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			}
 			const int brooms = MIN(int(seats.size()), 1 + int(cr.randf() * 4.0f * MIN(witches_brooms, 2.0f)));
 			const Color twig_c = lin(0.27f, 0.15f, 0.11f);
-			const Color knob_c = bark_color.srgb_to_linear() * 0.6f;
+			const Color knob_c = bark_color.srgb_to_linear().lerp(Color(0.12f, 0.09f, 0.07f), 0.6f); // Dark gall bark.
 			for (int b = 0; b < brooms && !seats.is_empty(); b++) {
 				const int si = int(cr.rand() % seats.size());
 				const int at_node = seats[si];
@@ -4190,24 +4262,56 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				r_b.bone = bone_of(at_node);
 				Vector4i part;
 				r_b.begin(part);
-				// The infection's swelling, then a dense nest of thin upright shoots from it.
-				ball(at, hn.radius * 1.6f, knob_c);
-				const int twigs = 50 + int(cr.randf() * 70.0f);
+				// The infection's swelling: a lumpy gall of a few overlapping knobs, not one ball.
+				const int knobs = 3 + int(cr.randf() * 4.0f);
+				for (int q = 0; q < knobs; q++) {
+					const Vector3 o = Vector3(cr.randf() - 0.5f, cr.randf() - 0.3f, cr.randf() - 0.5f) * (hn.radius * 2.0f);
+					ball(at + o, hn.radius * Math::lerp(0.7f, 1.3f, cr.randf()), knob_c * Math::lerp(0.75f, 1.0f, cr.randf()));
+				}
+				// Then the broom, modelled (Taphrina betulina; Spanos and Woodward 1994): from the gall
+				// many shoots, each a run of short internodes kinked at every bud, branching again
+				// and again, all turning upward: a dense bird's-nest of twigs. Straight rays from one
+				// point read as a sea urchin.
 				const Vector3 out = (hn.dir.cross(Vector3(0, 1, 0)).cross(hn.dir)).normalized();
+				struct Shoot {
+					Vector3 p, d;
+					float r;
+					int level;
+				};
+				LocalVector<Shoot> stack;
+				const int primaries = 16 + int(cr.randf() * 18.0f);
+				for (int q = 0; q < primaries; q++) {
+					const Vector3 d = (out * 0.4f + Vector3(0, 0.6f, 0) + Vector3(cr.randf() - 0.5f, cr.randf() - 0.4f, cr.randf() - 0.5f) * 1.8f).normalized();
+					stack.push_back({ at + d * (hn.radius * 1.1f), d, Math::lerp(0.0022f, 0.0032f, cr.randf()), 0 });
+				}
 				float reach = 0.0f;
-				for (int t = 0; t < twigs; t++) {
-					Vector3 d = (out * 0.5f + Vector3(0, 1, 0) + Vector3(cr.randf() - 0.5f, cr.randf() * 0.4f - 0.2f, cr.randf() - 0.5f) * 1.6f).normalized();
-					const float len = Math::lerp(0.12f, 0.45f, cr.randf() * cr.randf() + 0.2f);
+				int budget_shoots = 220;
+				while (!stack.is_empty() && budget_shoots-- > 0) {
+					const Shoot sh = stack[stack.size() - 1];
+					stack.resize(stack.size() - 1);
+					const int internodes = sh.level == 0 ? 4 + int(cr.randf() * 4.0f) : 2 + int(cr.randf() * 3.0f);
 					LocalVector<Vector3> cp;
 					LocalVector<float> rr;
 					LocalVector<Color> cc;
-					Vector3 p = at + d * (hn.radius * 1.2f);
-					for (int k = 0; k < 4; k++) {
+					Vector3 p = sh.p;
+					Vector3 d = sh.d;
+					for (int k = 0; k <= internodes; k++) {
+						const float t = float(k) / internodes;
 						cp.push_back(p);
-						rr.push_back(Math::lerp(0.0028f, 0.0008f, k / 3.0f));
-						cc.push_back(twig_c);
-						d = (d + Vector3(cr.randf() - 0.5f, 0.1f, cr.randf() - 0.5f) * 0.25f).normalized();
-						p += d * (len / 3.0f);
+						rr.push_back(sh.r * (1.0f - 0.6f * t));
+						cc.push_back(twig_c * Math::lerp(1.0f, 1.25f, t));
+						if (k == internodes) {
+							break;
+						}
+						// A kink at each bud, alternate sides; the shoot turns upward as it goes.
+						const Vector3 kick = perp(d).rotated(d, cr.randf() * float(Math::TAU));
+						d = (d + kick * Math::lerp(0.25f, 0.5f, cr.randf()) + Vector3(0, 0.18f, 0)).normalized();
+						const float il = Math::lerp(0.025f, 0.055f, cr.randf()) * (sh.level == 0 ? 1.0f : 0.8f);
+						p += d * il;
+						if (sh.level < 2 && k > 0 && cr.randf() < (sh.level == 0 ? 0.45f : 0.3f)) {
+							const Vector3 sd2 = (d + perp(d).rotated(d, cr.randf() * float(Math::TAU)) * 0.9f + Vector3(0, 0.2f, 0)).normalized();
+							stack.push_back({ p, sd2, sh.r * (1.0f - 0.6f * t) * 0.75f, sh.level + 1 });
+						}
 					}
 					reach = MAX(reach, p.distance_to(at));
 					tube(cp, rr, 3, cc);
@@ -4414,15 +4518,16 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				const float len = (open_catkin ? len1 : len0) * Math::lerp(0.85f, 1.15f, cr.randf());
 				Color a, b;
 				if (open_catkin) {
-					a = kind == CATKIN_HAZEL ? lin(0.85f, 0.75f, 0.3f) : (kind == CATKIN_BIRCH ? lin(0.72f, 0.6f, 0.3f) : lin(0.55f, 0.32f, 0.2f));
-					b = kind == CATKIN_HAZEL ? lin(0.7f, 0.62f, 0.25f) : (kind == CATKIN_BIRCH ? lin(0.56f, 0.44f, 0.24f) : lin(0.42f, 0.24f, 0.17f));
+					a = kind == CATKIN_HAZEL ? lin(0.64f, 0.58f, 0.3f) : (kind == CATKIN_BIRCH ? lin(0.72f, 0.6f, 0.3f) : lin(0.55f, 0.32f, 0.2f));
+					b = kind == CATKIN_HAZEL ? lin(0.48f, 0.4f, 0.22f) : (kind == CATKIN_BIRCH ? lin(0.56f, 0.44f, 0.24f) : lin(0.42f, 0.24f, 0.17f));
 				} else {
 					a = kind == CATKIN_HAZEL ? lin(0.52f, 0.42f, 0.28f) : (kind == CATKIN_BIRCH ? lin(0.42f, 0.28f, 0.2f) : lin(0.4f, 0.22f, 0.2f));
 					b = a * 0.8f;
 				}
 				for (int q = 0; q < k; q++) {
 					const Vector3 cd = (d * 0.5f + sd.rotated(d, q * 2.3f) * 0.5f + Vector3(0, open_catkin ? -0.6f : 0.0f, 0)).normalized();
-					catkin(at + cd * 0.004f, cd, len, open_catkin ? 0.0045f : 0.0035f, a, b, open_catkin ? 0.35f : 0.12f);
+					const Color pollen = kind == CATKIN_ALDER ? lin(0.75f, 0.55f, 0.2f) : lin(0.93f, 0.82f, 0.3f);
+					catkin(at + cd * 0.004f, cd, len, open_catkin ? 0.0045f : 0.0035f, a, b, open_catkin ? 0.35f : 0.12f, open_catkin, pollen);
 				}
 				if (kind == CATKIN_ALDER) {
 					// Last year's woody fruit cones, 1.5 cm, in clusters behind the catkins.
@@ -4445,11 +4550,37 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				const Color c1 = ripe ? lin(0.66f, 0.55f, 0.36f) : lin(0.58f, 0.65f, 0.3f);
 				static const float key_prof[5] = { 0.35f, 0.6f, 0.9f, 1.0f, 0.55f };
 				const Vector3 hub = at + Vector3(0, -0.02f, 0);
+				const Color stalk_c = c0 * 0.7f;
+				// The bunch hangs on its own stalk, each key on a short branch of it.
+				stalk(at, hub, 0.0012f, stalk_c);
+				// A panicle: the stalk branches into a few sub-stalks and the keys hang along those,
+				// not from one point as a skirt.
+				LocalVector<Vector3> subs;
+				const int nsub = ash ? 3 + int(cr.randf() * 3.0f) : 1;
+				for (int q = 0; q < nsub; q++) {
+					const Vector3 sd2 = (Vector3(0, -1, 0) + Vector3(cr.randf() - 0.5f, 0.0f, cr.randf() - 0.5f) * 1.4f).normalized();
+					const Vector3 e = ash ? hub + sd2 * Math::lerp(0.015f, 0.035f, cr.randf()) : hub;
+					stalk(hub, e, 0.0009f, stalk_c);
+					subs.push_back(e);
+				}
 				for (int q = 0; q < k; q++) {
-					const Vector3 kd = (Vector3(0, -1, 0) + Vector3(cr.randf() - 0.5f, 0.0f, cr.randf() - 0.5f) * 1.2f).normalized();
-					const Vector3 st = hub + kd * Math::lerp(0.01f, 0.03f, cr.randf());
+					const Vector3 sub = subs[q % subs.size()];
+					const Vector3 from = ash ? hub.lerp(sub, Math::lerp(0.3f, 1.0f, cr.randf())) : hub;
+					const Vector3 kd = (Vector3(0, -1, 0) + Vector3(cr.randf() - 0.5f, 0.0f, cr.randf() - 0.5f) * 0.9f).normalized();
+					const Vector3 st = from + kd * Math::lerp(0.006f, 0.015f, cr.randf());
+					stalk(from, st, 0.0006f, stalk_c);
 					if (ash) {
 						blade(st, kd, perp(kd).rotated(kd, cr.randf() * 3.0f), 0.035f, 0.008f, key_prof, Math::lerp(0.5f, 1.2f, cr.randf()), 0.05f, c0 * 0.8f, c1);
+						// The seed: a slim swelling down the key's first third, darker.
+						LocalVector<Vector3> sp;
+						LocalVector<float> sr;
+						LocalVector<Color> sc;
+						for (int j = 0; j < 3; j++) {
+							sp.push_back(st + kd * (0.013f * j / 2.0f));
+							sr.push_back(j == 1 ? 0.0016f : 0.0008f);
+							sc.push_back(c0 * 0.75f);
+						}
+						tube(sp, sr, 4, sc);
 					} else {
 						const Vector3 w = perp(kd).rotated(kd, cr.randf() * 3.0f);
 						const float spread = Math::deg_to_rad(preset == PRESET_SUGAR_MAPLE ? 30.0f : 45.0f);
@@ -4472,9 +4603,30 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				const Color c = kind == BERRY_ELDER ? lin(0.08f, 0.05f, 0.08f) : (kind == BERRY_ROWAN ? lin(0.88f, 0.35f, 0.08f) : (kind == BERRY_HAW ? lin(0.55f, 0.08f, 0.06f) : lin(0.75f, 0.06f, 0.05f)));
 				const float spread = kind == BERRY_ROWAN || kind == BERRY_ELDER ? 0.045f : 0.012f;
 				const Vector3 hub = kind == BERRY_HOLLY || kind == BERRY_YEW ? n.start + n.dir * (n.length * 0.6f) : at + Vector3(0, -0.015f, 0);
+				// Each berry on its own stalk from the cluster's (a corymb on rowan and elder), with
+				// the dark remains of its calyx at the far end.
+				const Color stalk_c = kind == BERRY_ELDER ? lin(0.35f, 0.12f, 0.18f) : (kind == BERRY_ROWAN ? lin(0.5f, 0.38f, 0.2f) : lin(0.35f, 0.3f, 0.18f));
+				if (kind != BERRY_HOLLY && kind != BERRY_YEW) {
+					stalk(at, hub, 0.0013f, stalk_c);
+				}
 				for (int q = 0; q < k; q++) {
 					const Vector3 o = Vector3(cr.randf() - 0.5f, (cr.randf() - 0.8f) * 0.6f, cr.randf() - 0.5f) * (2.0f * spread);
-					ball(hub + o, br * Math::lerp(0.85f, 1.15f, cr.randf()), c * Math::lerp(0.85f, 1.1f, cr.randf()));
+					const float rb = br * Math::lerp(0.85f, 1.15f, cr.randf());
+					const Vector3 bc = hub + o;
+					const Vector3 away = o.length_squared() > 1e-10f ? o.normalized() : Vector3(0, -1, 0);
+					stalk(hub, bc - away * (rb * 0.8f), 0.00045f, stalk_c);
+					ball(bc, rb, c * Math::lerp(0.85f, 1.1f, cr.randf()));
+					if (kind != BERRY_YEW) {
+						// The calyx: a small dark five-pointed scar, as a two-triangle star.
+						const Vector3 cc0 = bc + away * (rb * 0.97f);
+						const Vector3 u1 = perp(away), u2 = away.cross(u1);
+						const float cs = rb * 0.35f;
+						const Color dk = c * 0.2f;
+						const int s0 = vert(cc0 + u1 * cs, Vector2(), dk), s1 = vert(cc0 + (u1 * -0.5f + u2 * 0.87f) * cs, Vector2(), dk), s2 = vert(cc0 + (u1 * -0.5f - u2 * 0.87f) * cs, Vector2(), dk);
+						const int s3 = vert(cc0 - u1 * cs, Vector2(), dk), s4 = vert(cc0 + (u1 * 0.5f - u2 * 0.87f) * cs, Vector2(), dk), s5 = vert(cc0 + (u1 * 0.5f + u2 * 0.87f) * cs, Vector2(), dk);
+						tri(s0, s1, s2);
+						tri(s3, s4, s5);
+					}
 				}
 				size = spread * 2.0f;
 			} break;

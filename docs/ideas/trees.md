@@ -1006,6 +1006,22 @@ mistletoe and brooms, which read from far.
   keys 53k; spruce cones 9k (against millions of bark and leaf triangles).
 - Fixed with it: a birch's thin shoots and leaf twigs took the trunk's white and read as frosted
   sprays; they are dark red-brown now, turning white from 1-3 cm.
+- **Modelled, round 2 (16 Nov, held to the pollards' standard).** A 3x close-up audit found the
+  parts painted or schematic:
+  - *Catkins* were smooth tubes, sausages. Now a thin axis curving under its weight, clothed in
+    spiral bract scales (137.5 degrees, a scale per fifth of the radius), each a small peaked
+    shield; closed they lie flat and overlap, open they stand at about 35 degrees with a tuft of
+    pollen-yellow anthers under each (Proctor and Yeo 1973).
+  - *Witches' brooms* were straight rays from one point, a sea urchin. Now 16-34 shoots from a
+    lumpy dark gall of overlapping knobs, each a run of 3-6 cm internodes kinked at every bud,
+    branching twice and turning upward: a bird's-nest of twigs (Spanos and Woodward 1994).
+  - *Ash keys* hung from one point as a skirt. Now a panicle: the stalk branches into three to
+    five sub-stalks, the keys hang along them on their own stalks, each with its seed swelling.
+  - *Berries* floated round a point. Each now hangs on its own stalk from the cluster's (a
+    corymb on rowan and elder) and carries the dark star of its calyx at the far end.
+  - *Cost* (LOD 0 crown parts, seed 1): hazel in flower 75k to 255k (closed in autumn 98k),
+    rowan in fruit 384k, ash with keys 281k, birch with brooms 82k. LOD 1 on keeps only
+    mistletoe and brooms, as before.
 
 ## 6. What the games at Paulo's bar do
 
