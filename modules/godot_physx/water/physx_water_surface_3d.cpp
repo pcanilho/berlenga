@@ -168,7 +168,9 @@ uniform sampler2D detail_disp_tex : hint_default_black, filter_linear, repeat_en
 uniform bool detail_geometry = false;
 // The open sea mesh's vertex step at the camera (m) and its growth per ring (0: not that mesh).
 uniform float mesh_near_step = 0.0;
-uniform float mesh_growth = 0.05;
+uniform float mesh_growth = 0.08;
+uniform float mesh_core_step = 0.6; // the even core's spacing (m), kept out to its half-size
+uniform float mesh_core_half = 20.0;
 uniform vec2 detail_domain = vec2(5.0);
 uniform float detail_texel = 0.04;
 uniform float detail_k_min = 5.0; // rad/m, where the band starts
@@ -1243,7 +1245,8 @@ void vertex() {
 	if (detail_geometry && mesh_near_step > 0.0) {
 		// The detail waves the step can carry without swimming (four steps a wavelength): the same share of
 		// the band as the pixel's normal shows (docs/ideas/water.md "Camera-centred water mesh").
-		float vstep = mesh_near_step + mesh_growth * ring_r;
+		float r_core = (mesh_core_step - mesh_near_step) / mesh_growth; // where the steps reach the core's
+		float vstep = ring_r < r_core ? mesh_near_step + mesh_growth * ring_r : (ring_r < mesh_core_half ? mesh_core_step : mesh_core_step + 0.15 * (ring_r - mesh_core_half));
 		float k_hi = PI / detail_texel;
 		float carried = clamp(log(PI / (2.0 * vstep) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
 		if (carried > 0.0) {
@@ -2095,6 +2098,8 @@ void PhysXWaterSurface3D::_update_detail_material() {
 	water_material->set_shader_parameter("detail_geometry", on && open_mesh);
 	water_material->set_shader_parameter("mesh_near_step", open_mesh ? near_mesh_step / (float)mesh_detail : 0.0f);
 	water_material->set_shader_parameter("mesh_growth", NEAR_MESH_GROWTH);
+	water_material->set_shader_parameter("mesh_core_step", MIN(ocean_domain_size.x, ocean_domain_size.y) / (float)MAX(ocean_grid_resolution * mesh_detail, 1));
+	water_material->set_shader_parameter("mesh_core_half", MAX(ocean_domain_size.x, ocean_domain_size.y) * 0.5f);
 	if (on) {
 		water_material->set_shader_parameter("detail_domain", detail_cascade->domain);
 		water_material->set_shader_parameter("detail_texel", detail_cascade->domain.x / detail_resolution);
@@ -5830,21 +5835,27 @@ Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inne
 			radius.push_back(r);
 		}
 	}
-	// With a near step: the rings' half-sizes in metres instead, each step NEAR_MESH_GROWTH longer than the one
-	// inside it from p_near_step at the centre (the camera): spacing proportional to distance, as a geometry
-	// clipmap's (Losasso and Hoppe 2004), in one continuous grid with no LOD seams.
+	// With a near step: the rings' half-sizes in metres instead. From p_near_step at the centre (the camera)
+	// each step is NEAR_MESH_GROWTH longer than the one inside it (spacing proportional to distance, as a
+	// geometry clipmap's: Losasso and Hoppe 2004) until it reaches the even core's spacing; then the core's
+	// spacing out to the core's edge and the usual 15% growth past it, so no ring is coarser than without it.
 	real_t unit_x = half_inner.x / (real_t)k0;
 	real_t unit_z = half_inner.y / (real_t)k0;
 	if (p_near_step > 0.0f) {
+		const real_t core_step = MIN(unit_x, unit_z);
 		radius.clear();
 		radius.push_back(0.0f);
 		const real_t limit = p_extent * 0.5f;
 		real_t r = 0.0f;
-		real_t step = p_near_step;
+		real_t step = MIN(p_near_step, core_step);
 		while (r < limit) {
 			r = MIN(r + step, limit);
 			radius.push_back(r);
-			step *= 1.0f + NEAR_MESH_GROWTH;
+			if (step < core_step) {
+				step = MIN(step * (1.0f + NEAR_MESH_GROWTH), core_step);
+			} else if (r >= max_half) {
+				step *= 1.15f;
+			}
 		}
 		unit_x = 1.0f;
 		unit_z = 1.0f;

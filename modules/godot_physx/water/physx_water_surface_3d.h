@@ -319,7 +319,7 @@ public:
 	// the vertex and path tracing costs grow with the square.
 	void set_mesh_detail(int p_detail);
 	int get_mesh_detail() const { return mesh_detail; }
-	// Open sea (render_extent): the vertex spacing at the camera, growing 5% a ring out to the horizon
+	// Open sea (render_extent): the vertex spacing at the camera, growing 8% a ring until it reaches the even core's spacing
 	// (docs/ideas/water.md "Camera-centred water mesh"); 0 = the old even core over the simulated square.
 	void set_near_mesh_step(float p_step);
 	float get_near_mesh_step() const { return near_mesh_step; }
@@ -565,7 +565,7 @@ private:
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
 	float near_mesh_step = 0.0f;
-	static constexpr float NEAR_MESH_GROWTH = 0.05f;
+	static constexpr float NEAR_MESH_GROWTH = 0.08f;
 	bool follow_weather = false;
 	bool weather_sea_valid = false;
 	uint64_t weather_snap_serial = 0;

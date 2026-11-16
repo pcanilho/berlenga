@@ -2831,3 +2831,17 @@ the glints a little, no more. Cost: about five times the vertices (110k against 
 renderer a raster frame took 115 s against 75 s, a PT frame 548 s against 431 s. So it ships off; 0.03 for
 cameras right at the water (a swimmer, a boat's rail), and GPU and PT checks on the PC list.
 
+### Revised (16 Nov): never coarser than the core, about 1.5 to 2 times the vertices
+The near rings now grow 8% each only until they reach the even core's spacing (domain / grid resolution),
+keep that spacing out to the core's edge, then grow 15% as before: finer near the camera, nowhere coarser
+than without it. Count at defaults (40 m, 64 cells): 42k vertices against 22k for a 3 km sea, 48k against
+27k for 8 km. A water-level scout (eye 1 m, 5 m/s, crests against a low sun, a box cutting the surface)
+showed no visible difference either, so it stays off by default.
+
+Coverage: only the open sea mesh. Lakes (`surface_mesh` footprint) use an even grid over the footprint;
+the same law would need the camera-following mesh with the footprint as a wet mask (discarding outside it)
+or a per-frame re-mesh of the footprint. Rivers (`PhysXRiver3D`) build their own ribbon at the section
+spacing, and `PhysXLiveWater3D` draws one vertex per simulation cell (its `cell_size`), so their geometry
+is set by their simulations. For all of them the visible gap is the same as the sea's: not triangle density
+but crest shape (see "Sharper crests and breaking lips").
+
