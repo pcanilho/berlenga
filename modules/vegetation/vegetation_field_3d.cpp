@@ -314,6 +314,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 	}
 	r_setup.litter_skew = skew.limit_length(0.8f);
+	r_setup.wind_dir = skew.length_squared() > 1e-8f ? skew.normalized() : Vector2();
 	r_setup.litter_reach = 3.0f * LITTER_SPREAD * (1.0f + r_setup.litter_skew.length());
 	litter_skew = r_setup.litter_skew;
 	const TypedArray<PlantSpecies> species_list = biome->get_species();
@@ -351,6 +352,21 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 		ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
 		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
+		// Trees shaped by the place (the trees module): flagged by the wind, and bank forms whose
+		// ground falls towards mesh +Z.
+		ps.wind_flag = bool(ps.sp->get_meta(SNAME("wind_flag"), false));
+		{
+			bool any_bank = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_bank = any_bank || (m.is_valid() && m->has_meta(SNAME("tree_ground_slope")));
+			}
+			if (any_bank) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					const Vector2 gs = m.is_valid() ? Vector2(m->get_meta(SNAME("tree_ground_slope"), Vector2())) : Vector2();
+					ps.bank_slopes.push_back(gs.x);
+				}
+			}
+		}
 		ps.frontal = ps.sp->get_wind_frontal_area();
 		if (ps.frontal < 0.0f) {
 			ps.frontal = 0.0f;
@@ -1164,8 +1180,32 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						b = Basis(axis.normalized(), Math::acos(CLAMP(up.y, -1.0f, 1.0f)));
 					}
 					float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
+					const Vector2 downhill(Math::sin(aspect), Math::cos(aspect));
+					int bank_variant = -1;
+					if (!ps.bank_slopes.is_empty()) {
+						// A bank tree: the variant grown on the slope nearest this ground's, ties
+						// broken by the plant's own random number.
+						float best = 1e9f;
+						const int nv = ps.bank_slopes.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float d = Math::abs(ps.bank_slopes[vi] - slope);
+							if (d < best - 1e-4f) {
+								best = d;
+								bank_variant = vi;
+							}
+						}
+					}
 					if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
+					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
+						// Its ground falls towards mesh +Z: turn +Z downhill.
+						yaw = Math::atan2(downhill.x, downhill.y);
+					} else if (ps.wind_flag && p_setup.wind_dir != Vector2()) {
+						// Flagged by the prevailing wind: mesh +X downwind, a little scatter (eddies
+						// round the land turn it locally).
+						yaw = Math::atan2(-p_setup.wind_dir.y, p_setup.wind_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.3f;
 					} else if (sp->is_follow_flow() && slope > 1e-3f) {
 						// Downstream: water runs downhill, so +X along the fall line (a little scatter,
 						// as shoots splay in the eddies behind a stone).
@@ -1189,7 +1229,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						b = Basis(lean_axis, Math::deg_to_rad(ROCK_LEAN_DEG) * (1.0f - rock_fit) / (1.0f - ROCK_FIT_MIN)) * b;
 					}
 					b.scale(Vector3(scale, scale, scale));
-					const int variant = MIN(int(r * variants), variants - 1);
+					const int variant = bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1);
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
 						const PackedFloat32Array &ax = ps.deadwood_axes[variant];

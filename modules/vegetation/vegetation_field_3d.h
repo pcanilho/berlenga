@@ -178,6 +178,8 @@ class VegetationField3D : public Node3D {
 		LocalVector<PackedFloat32Array> deadwood_pits; // Per variant: the root pit (tree_root_pit: centre, radius, depth in mesh space) of an uprooted tree; empty if none.
 		float deadwood_reach = 0.0f; // How far its logs reach from the plant's origin (times its largest scale); 0: not deadwood.
 		float frontal = 0.0f; // m2 a plant shows the wind at scale 1 (PlantSpecies.wind_frontal_area).
+		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
+		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;
@@ -195,6 +197,7 @@ class VegetationField3D : public Node3D {
 		float grid_cell = 1.0f;
 		float sun_mean = 0.0f; // VegetationLight::sun_mean().
 		Vector2 litter_skew; // crown_litter()'s downwind lean.
+		Vector2 wind_dir; // The prevailing wind's heading (unit, xz, towards where it blows), or zero.
 		float litter_reach = 0.0f; // How far past a crown its litter can land.
 		float deadwood_reach = 0.0f; // The widest a log reaches from its origin plus the widest deadwood band of a species.
 		VegetationObstacles obstacles; // Rocks the plants keep out of (a copy, for the worker threads).
