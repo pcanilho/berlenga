@@ -23,7 +23,7 @@ extends Node3D
 #   --view=climate   a winter baked over the mountain (SnowClimate): snow line, shaded north faces, loaded lee
 #   --view=cornice   a corniced ridge from below its lee face
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
-#                     first wets it (the glints go); --glints=exact: every grain a facet under the path tracer
+#                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
 #                     (sparkle) prints the share of glinting pixels and the mean luminance
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
@@ -93,9 +93,9 @@ var transport := true
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
-		if a == "--glints=exact":
-			# Every grain a facet under the path tracer (follow-up 5), against the footprint grid (stage 5).
-			RenderingServer.global_shader_parameter_set("snow_exact_glints", true)
+		if a == "--glints=exact" or a == "--glints=grid":
+			# Every grain a facet under the path tracer (follow-up 5, the default), or stage 5's footprint grid.
+			RenderingServer.global_shader_parameter_set("snow_exact_glints", a == "--glints=exact")
 		elif a == "--raster": raster = true
 		elif a.begins_with("--test"):
 			test = true
