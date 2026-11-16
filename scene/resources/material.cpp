@@ -3929,20 +3929,24 @@ uint ground_grain_hash(ivec3 p_q, uint p_level) {
 // Grain colour: sand is a mix of grains (quartz, feldspar, dark heavy minerals) whose colours average out over
 // the footprint, their contrast falling as one over the square root of the grains a cell holds; blended across
 // levels so it never steps. An albedo factor about 1.
-float ground_grain_speckle(vec3 p_pos, float p_footprint) {
-	const float grain = 0.00025;
-	float lf = max(log2(max(p_footprint, grain) / grain), 0.0);
+float ground_grain_layer(vec3 p_pos, float p_footprint, float p_grain, uint p_salt) {
+	float lf = max(log2(max(p_footprint, p_grain) / p_grain), 0.0);
 	float l0 = floor(lf);
 	float v = 0.0;
 	for (int k = 0; k < 2; k++) {
 		float level = l0 + float(k);
-		float cell = grain * exp2(level);
-		uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level));
+		float cell = p_grain * exp2(level);
+		uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level) + p_salt);
 		// The sum of two uniforms: a rounded spread about 0, standard deviation 0.41.
 		float s = (float(h & 0xffffu) + float(h >> 16u)) / 65535.0 - 1.0;
 		v += (k == 0 ? 1.0 - (lf - l0) : lf - l0) * s / exp2(level);
 	}
-	return 1.0 + 0.8 * v;
+	return v;
+}
+// Medium sand (0.25 mm) and the coarse grains, shell bits and dark minerals among it (about 1.2 mm), which are
+// what still read as single grains from half a metre.
+float ground_grain_speckle(vec3 p_pos, float p_footprint) {
+	return 1.0 + 0.8 * ground_grain_layer(p_pos, p_footprint, 0.00025, 0u) + 0.45 * ground_grain_layer(p_pos, p_footprint, 0.0012, 40u);
 }
 // A share of the grains are clean faces (quartz cleavage, mica flakes) that mirror a light: one facet per cell, as
 // snow_glint() with sand's grain and share; returns its normal and weight (0: none).
