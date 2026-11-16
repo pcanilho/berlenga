@@ -512,6 +512,7 @@ int CaveNetwork3D::add_cave(const Vector3 &p_entrance, const Vector3 &p_out) {
 	const bool ok = _grow(c, s);
 	last_build_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	ERR_FAIL_COND_V_MSG(!ok, -1, "CaveNetwork3D: no network could be grown here (no generator, or too little rock behind the entrance).");
+	_scatter_blocks(c, s);
 	_stream_finish(true); // the batch in flight reads the caves
 	streamed = false;
 	caves.push_back(c);
@@ -643,6 +644,47 @@ Array CaveNetwork3D::find_entrances(const Rect2 &p_rect, int p_max) const {
 }
 
 
+// Fallen blocks on the floors: breakdown in chambers (slabs off the roof along its beds, Ford and Williams, "Karst
+// Hydrogeology and Geomorphology", ch. 7) and rounded boulders in sea caves (tumbled by the waves). Each is a box,
+// slab-shaped in chambers, tilted, half sunk into the floor.
+void CaveNetwork3D::_scatter_blocks(Cave &r_cave, uint32_t p_seed) const {
+	RandomPCG rng(p_seed * 2654435761u + 41u);
+	auto add = [&](const Vector3 &p_at, const Vector3 &p_half, real_t p_round) {
+		Basis b = Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
+		b = Basis(Vector3(rng.randf() - 0.5, 0, rng.randf() - 0.5).normalized(), (rng.randf() - 0.5) * 0.7) * b;
+		Block bk;
+		bk.xform = Transform3D(b.scaled_local(p_half), p_at);
+		bk.inv = bk.xform.affine_inverse();
+		bk.round = p_round;
+		r_cave.blocks.push_back(bk);
+	};
+	for (const Chamber &ch : r_cave.chambers) {
+		const real_t floor_y = ch.center.y - 0.55 * ch.radii.y;
+		const int n = 4 + int(rng.randf() * 7.0);
+		for (int i = 0; i < n; i++) {
+			const real_t a = rng.randf() * Math::TAU, rr = Math::sqrt(rng.randf()) * 0.7;
+			const Vector3 at = ch.center + Basis(Vector3(0, 1, 0), ch.yaw).xform(Vector3(Math::cos(a) * ch.radii.x * rr, 0, Math::sin(a) * ch.radii.z * rr));
+			const real_t sz = 0.4 + 1.3 * Math::pow(double(rng.randf()), 1.8);
+			add(Vector3(at.x, floor_y + sz * 0.15, at.z), Vector3(sz, sz * (0.3 + 0.25 * rng.randf()), sz * (0.6 + 0.4 * rng.randf())), 0.06 + 0.05 * sz);
+		}
+	}
+	if (r_cave.sea) {
+		for (const Segment &sg : r_cave.segments) {
+			if (sg.type != PASSAGE_SEA || rng.randf() > 0.7f) {
+				continue;
+			}
+			const int n = 1 + int(rng.randf() * 3.0);
+			for (int i = 0; i < n; i++) {
+				const Vector3 m = sg.a.lerp(sg.b, rng.randf());
+				const Vector3 t = (sg.b - sg.a).normalized(), side = t.cross(Vector3(0, 1, 0)).normalized();
+				const real_t floor_y = m.y - 1.25 * sg.ra;
+				const real_t sz = 0.25 + 0.7 * Math::pow(double(rng.randf()), 1.5);
+				add(Vector3(m.x, floor_y + sz * 0.3, m.z) + side * ((rng.randf() - 0.5) * sg.ra), Vector3(sz, sz * (0.6 + 0.3 * rng.randf()), sz * (0.7 + 0.3 * rng.randf())), sz * 0.45);
+			}
+		}
+	}
+}
+
 // Sea caves (docs/ideas/rocks.md, stage 3; Moore 1954, Trenhaile, "Coastal Dynamics and Landforms"): waves quarry a
 // joint or fault at the foot of a cliff over water deep enough to keep their energy (the coast layer's 0.8 to 12 m).
 // The cave is short (under about 100 m), straight along its joint, widest and tallest at the mouth, floored below the
@@ -766,7 +808,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 		const real_t u = t / length;
 		// The floor (passage line minus 1.25 r) at 1.5 m below the sea at the mouth, rising to the high water at the back;
 		// a slight wander along the joint.
-		const real_t r = Math::lerp(r_mouth, real_t(1.3), Math::pow(u, real_t(0.7)));
+		const real_t r = Math::lerp(r_mouth, real_t(1.3), Math::pow(u, real_t(0.7))) * real_t(0.8 + 0.45 * TerrainErosionFilter::fbm(ws + 3u, t, 7.0, 14.0, 2));
 		const real_t floor_y = sea + Math::lerp(real_t(-1.5), real_t(0.6), u * u);
 		Vector3 p = p_entrance + dir * t + side * real_t((TerrainErosionFilter::fbm(ws, t, 0.0, 30.0, 2) - 0.5) * 3.0);
 		p.y = floor_y + 1.25 * r;
@@ -813,6 +855,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 			c.blowholes.push_back(Vector3(top.x, ground, top.z));
 		}
 	}
+	_scatter_blocks(c, rng.rand());
 	c.keys.push_back(p_entrance);
 	c.bounds = AABB(p_entrance, Vector3());
 	for (const Segment &sg : c.segments) {
@@ -943,10 +986,20 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 		case CaveNetwork3D::PASSAGE_SHAFT:
 			r_floor = -1e9;
 			return Math::sqrt(u * u + v * v) - r;
-		case CaveNetwork3D::PASSAGE_SEA:
-			// Straight walls up a joint, an arched roof; the floor is bare rock and boulders, no fill.
+		case CaveNetwork3D::PASSAGE_SEA: {
+			// Cut along a joint and the beds it crosses (sea caves are joint-guided, Moore 1954): straight sides
+			// stepped in and out at each bed (1.1 m), a gabled roof where blocks fell out along two joint sets, the
+			// floor bare rock and boulders, no fill. The sides lean a little with the joint's dip.
 			r_floor = -1.25 * r;
-			return MIN(cave_box(u, v, 0.75 * r, -1.3 * r, 0.6 * r, 0.25 * r), cave_ellipse(u, v, 0.75 * r, 0.9 * r, 0.6 * r));
+			const real_t bed = Math::fposmod(real_t(v + 0.37f * r), real_t(1.1)) / 1.1;
+			const real_t step = 0.18 * r * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(real_t(0.55), real_t(0.67), bed));
+			const real_t uu = u - 0.12 * v; // the joint's dip
+			const real_t hw = 0.62 * r + step;
+			const real_t sides = Math::abs(uu) - hw;
+			const real_t bottom = -1.3 * r - v;
+			const real_t gable = (v - (1.55 * r - 0.85 * Math::abs(uu))) * 0.76;
+			return MAX(MAX(sides, bottom), gable);
+		}
 		case CaveNetwork3D::PASSAGE_TUBE:
 		default:
 			r_floor = -0.55 * r;
@@ -987,6 +1040,8 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 		const real_t r = Math::lerp(real_t(sg->ra), real_t(sg->rb), lc / len);
 		real_t floor_v;
 		real_t dc = cave_profile(sg->type, q.dot(u_axis), q.dot(v_axis), r, floor_v);
+		// The fill is never quite level: ripples, puddle hollows and mud banks a few decimetres high.
+		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
 		dc = MAX(dc, floor_v - q.dot(v_axis));
 		const real_t ds = s > 0.0 ? (dc > 0.0 ? Math::sqrt(s * s + dc * dc) : s) : dc;
 		d = cave_smin(d, ds, 0.8);
@@ -1030,13 +1085,30 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		const real_t hz = p_gen->get_height(p_p + Vector3(0, 0, eps)) - p_gen->get_height(p_p - Vector3(0, 0, eps));
 		g /= Math::sqrt(1.0 + (hx * hx + hz * hz) / (4.0 * eps * eps));
 	}
+	real_t f = cave;
 	if (g < cave) {
 		if (r_ground) {
 			*r_ground = true;
 		}
-		return g;
+		f = g;
 	}
-	return cave;
+	// Fallen blocks: rounded boxes added to the rock, set into the floor with a small smooth blend.
+	for (const Block *bk : p_src.blocks) {
+		const Vector3 q = bk->inv.xform(p_p);
+		const Vector3 hs = bk->xform.basis.get_scale();
+		const Vector3 d = q.abs() * hs - hs + Vector3(bk->round, bk->round, bk->round); // in metres (inv maps to unit box)
+		real_t sd = Vector3(MAX(d.x, real_t(0.0)), MAX(d.y, real_t(0.0)), MAX(d.z, real_t(0.0))).length() + MIN(MAX(d.x, MAX(d.y, d.z)), real_t(0.0)) - bk->round;
+		if (sd < 0.5) {
+			// Broken faces: spalls and chipped edges.
+			sd += 0.32 * (cave_fbm(p_p / 0.8f, uint32_t(seed) + 211u, 2) - 0.5f) + 0.1 * (cave_fbm(p_p / 0.35f, uint32_t(seed) + 213u, 2) - 0.5f);
+		}
+		if (-sd > f - 0.3) {
+			const real_t k = 0.12;
+			const real_t hh = CLAMP(0.5 + 0.5 * (-sd - f) / k, 0.0, 1.0);
+			f = Math::lerp(f, -sd, hh) + k * hh * (1.0 - hh);
+		}
+	}
+	return f;
 }
 
 real_t CaveNetwork3D::get_rock_distance(const Vector3 &p_position) const {
@@ -1057,6 +1129,11 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 			b.expand_to(sg.b);
 			if (b.grow(r).intersects(p_box)) {
 				r_src.segments.push_back(&sg);
+			}
+		}
+		for (const Block &bk : c.blocks) {
+			if (AABB(bk.xform.origin, Vector3()).grow(bk.xform.basis.get_scale().length() + 1.0).intersects(p_box)) {
+				r_src.blocks.push_back(&bk);
 			}
 		}
 		for (const Chamber &ch : c.chambers) {
@@ -1089,6 +1166,12 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	if (src.segments.is_empty() && src.chambers.is_empty() && src.patches.is_empty()) {
 		return;
 	}
+	// Drip points round the chunk (their flowstone reaches over its sides), found from the field alone so every chunk
+	// finds the same ones.
+	LocalVector<Drip> drips;
+	if (speleothems > 0.0 && gen) {
+		_drips(src, gen, AABB(O, Vector3(chunk_size, chunk_size, chunk_size)).grow(2.0), drips);
+	}
 	const int S = N + 3; // samples from -1 to N + 1
 	auto sidx = [S](int x, int y, int z) { return ((z + 1) * S + (y + 1)) * S + (x + 1); };
 	LocalVector<float> f;
@@ -1100,7 +1183,10 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 		for (int y = -1; y <= N + 1; y++) {
 			for (int x = -1; x <= N + 1; x++) {
 				bool gr = false;
-				const float v = float(gen ? _rock(src, gen, O + Vector3(x, y, z) * c, &gr) : _air(src, O + Vector3(x, y, z) * c));
+				float v = float(gen ? _rock(src, gen, O + Vector3(x, y, z) * c, &gr) : _air(src, O + Vector3(x, y, z) * c));
+				if (!drips.is_empty()) {
+					v = float(_flowstone(drips, O + Vector3(x, y, z) * c, v));
+				}
 				f[sidx(x, y, z)] = v;
 				ground[sidx(x, y, z)] = gr ? 1 : 0;
 				any_pos = any_pos || v > 0.0f;
@@ -1245,7 +1331,6 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	}
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	LocalVector<Vector3> roof; // wall vertices under a roof (facing down), in this chunk only
 	for (int sfc = 0; sfc < 2; sfc++) {
 		if (tris[sfc].is_empty()) {
 			continue;
@@ -1253,22 +1338,29 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 		// Compact this surface's vertices; normals from the field's gradient (toward the open side).
 		HashMap<int, int> remap;
 		PackedVector3Array pv, pn;
+		PackedColorArray pc;
 		PackedInt32Array pi;
 		for (int vi : tris[sfc]) {
 			int *m = remap.getptr(vi);
 			if (!m) {
 				const Vector3 p = verts[vi];
 				const real_t e = 0.5 * c;
-				auto F = [&](const Vector3 &q) { return gen ? _rock(src, gen, q) : _air(src, q); };
+				auto F = [&](const Vector3 &q) {
+					const real_t r = gen ? _rock(src, gen, q) : _air(src, q);
+					return drips.is_empty() ? r : _flowstone(drips, q, r);
+				};
 				Vector3 g(F(p + Vector3(e, 0, 0)) - F(p - Vector3(e, 0, 0)), F(p + Vector3(0, e, 0)) - F(p - Vector3(0, e, 0)), F(p + Vector3(0, 0, e)) - F(p - Vector3(0, 0, e)));
 				Vector3 n = -g;
 				n = n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, 1, 0);
 				remap.insert(vi, pv.size());
 				pv.push_back(p);
 				pn.push_back(n);
-				if (sfc == 0 && n.y < -0.8f && p.x >= O.x && p.y >= O.y && p.z >= O.z && p.x < O.x + chunk_size && p.y < O.y + chunk_size && p.z < O.z + chunk_size) {
-					roof.push_back(p);
+				// Red: how much flowstone coats it (the wall shader turns it to wet calcite).
+				real_t fw = 0.0;
+				if (!drips.is_empty()) {
+					_flowstone(drips, p, 0.0, &fw);
 				}
+				pc.push_back(Color(fw, 0, 0));
 				pi.push_back(pv.size() - 1);
 			} else {
 				pi.push_back(*m);
@@ -1278,73 +1370,193 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 		arrays.resize(Mesh::ARRAY_MAX);
 		arrays[Mesh::ARRAY_VERTEX] = pv;
 		arrays[Mesh::ARRAY_NORMAL] = pn;
+		arrays[Mesh::ARRAY_COLOR] = pc;
 		arrays[Mesh::ARRAY_INDEX] = pi;
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 		mesh->surface_set_name(mesh->get_surface_count() - 1, sfc == 0 ? "walls" : "ground");
 		r_chunk.triangles += pi.size() / 3;
 	}
 	r_chunk.mesh = mesh;
-	if (speleothems > 0.0 && !roof.is_empty()) {
-		_place_speleothems(src, gen, roof, r_chunk);
+	// The formations of the drip points this chunk owns (by their roof, or their foot for standing ones alone).
+	const AABB own(O, Vector3(chunk_size, chunk_size, chunk_size));
+	auto owns = [&](const Vector3 &q) { return q.x >= O.x && q.y >= O.y && q.z >= O.z && q.x < own.get_end().x && q.y < own.get_end().y && q.z < own.get_end().z; };
+	for (const Drip &d : drips) {
+		const int vk = d.variant;
+		const Basis spin(Vector3(0, 1, 0), d.yaw);
+		if (d.kind == SPEL_COLUMN) {
+			if (owns(d.foot)) {
+				r_chunk.spel[SPEL_COLUMN * SPEL_VARIANTS + vk].push_back(Transform3D(spin.scaled(Vector3(d.rad, d.gap + 0.3, d.rad)), d.foot - Vector3(0, 0.15, 0)));
+			}
+			continue;
+		}
+		if (owns(d.roof)) {
+			if (d.kind == SPEL_CURTAIN) {
+				// x along the run, y down, z the sheet's thickness (baked in the mesh).
+				const Vector3 x = d.along * d.rad, z = d.along.cross(Vector3(0, 1, 0)).normalized();
+				r_chunk.spel[SPEL_CURTAIN * SPEL_VARIANTS + vk].push_back(Transform3D(Basis(x, Vector3(0, d.len + 0.15, 0), z), d.roof + Vector3(0, 0.15, 0)));
+			} else {
+				r_chunk.spel[SPEL_STALACTITE * SPEL_VARIANTS + vk].push_back(Transform3D(spin.scaled(Vector3(d.rad, d.len + 0.12, d.rad)), d.roof + Vector3(0, 0.12, 0)));
+			}
+		}
+		if (d.mite > 0.0 && owns(d.foot)) {
+			r_chunk.spel[SPEL_STALAGMITE * SPEL_VARIANTS + (vk + 1) % SPEL_VARIANTS].push_back(Transform3D(Basis(Vector3(0, 1, 0), d.yaw + 1.7).scaled(Vector3(d.mrad, d.mite + 0.12, d.mrad)), d.foot - Vector3(0, 0.12, 0)));
+		}
 	}
 }
 
 // Speleothems (docs/ideas/rocks.md, stage 3; the placement rule of Franke and Müller 2022): calcite is laid down
-// where water seeping through the roof drips into air. A drip point needs a roof facing down, water above (thin
-// cover feeds more drips: the seepage of the soil and epikarst), a free fall under it, and darkness (none in the
-// first metres from the entrance, where air exchange dries the walls). Under the stalactite grows a stalagmite where
-// the drop lands; where the two would meet, a column.
-void CaveNetwork3D::_place_speleothems(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const LocalVector<Vector3> &p_roof, Chunk &r_chunk) const {
-	auto F = [&](const Vector3 &q) { return p_gen ? _rock(p_src, p_gen, q) : _air(p_src, q); };
+// where water seeping through the roof drips into air. Candidate drip points sit on a jittered 0.6 m grid, more of
+// them along joint lines (seepage follows the cracks, so formations stand in rows and curtains), and more where the
+// cover is thin. Each column of the grid is walked down on a fixed global step to find its roofs, so every chunk
+// finds the same points. A roof needs a free fall under it and darkness (none in the first metres from an entrance,
+// nor in sea caves). Under a level roof hangs a stalactite, usually with a stalagmite where the drop lands, or a
+// column where the two would meet; under an inclined roof the water trickles along it and builds a curtain.
+void CaveNetwork3D::_drips(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const AABB &p_box, LocalVector<Drip> &r_drips) const {
+	auto F = [&](const Vector3 &q) { return _rock(p_src, p_gen, q); };
 	const uint32_t ns = uint32_t(seed) * 2246822519u + 29u;
-	for (const Vector3 &p : p_roof) {
-		const int qx = int(Math::floor(p.x * 4.0f)), qy = int(Math::floor(p.y * 4.0f)), qz = int(Math::floor(p.z * 4.0f));
-		const float pick = cave_hash(qx, qy, qz, ns);
-		// About one drip point per 6 m² of roof at full seepage.
-		const real_t cover = p_gen ? p_gen->get_height(p) - p.y : 20.0;
-		const real_t seep = CLAMP(1.15 - cover / 45.0, 0.15, 1.0);
-		if (pick > 0.06f * speleothems * seep) {
-			continue;
-		}
-		bool lit = false;
-		for (const Cave &cv : caves) {
-			// Near a mouth the air exchange dries the walls; sea caves have none at all (spray and waves).
-			lit = lit || cv.entrance.distance_to(p) < 14.0 || (cv.sea && cv.bounds.grow(2.0).has_point(p));
-		}
-		if (lit) {
-			continue;
-		}
-		// The free fall: down from the roof to the floor (rock again).
-		real_t gap = 0.0;
-		for (real_t y = 0.15; y < 16.0; y += 0.15) {
-			if (F(p - Vector3(0, y, 0)) > 0.0) {
-				gap = y;
-				break;
+	const real_t cell = 0.6, step = 0.2;
+	const real_t ja = cave_hash(1, 2, 3, ns) * Math::PI;
+	const Vector2 jn(Math::cos(ja), Math::sin(ja)); // across the joint lines
+	const int x0 = int(Math::floor(p_box.position.x / cell)), x1 = int(Math::floor(p_box.get_end().x / cell));
+	const int z0 = int(Math::floor(p_box.position.z / cell)), z1 = int(Math::floor(p_box.get_end().z / cell));
+	const int y0 = int(Math::floor(p_box.position.y / step)), y1 = int(Math::ceil(p_box.get_end().y / step));
+	for (int iz = z0; iz <= z1; iz++) {
+		for (int ix = x0; ix <= x1; ix++) {
+			const real_t px = (ix + cave_hash(ix, 0, iz, ns + 4u)) * cell, pz = (iz + cave_hash(ix, 0, iz, ns + 5u)) * cell;
+			// Joint lines 3.5 m apart, broken into lengths by noise: most drips fall on them.
+			const real_t across = (px * jn.x + pz * jn.y) / 3.5;
+			const real_t line = Math::pow(Math::abs(Math::cos(across * Math::PI)), 10.0) * (cave_fbm(Vector3(px, 0, pz) / 6.0f, ns + 6u, 2) > 0.45f ? 1.0 : 0.0);
+			// Chambers are the most decorated (big roofs, slow seepage over a wide area): twice the density.
+			bool in_chamber = false;
+			for (const Chamber *ch : p_src.chambers) {
+				const Vector3 q = Basis(Vector3(0, 1, 0), -ch->yaw).xform(Vector3(px, ch->center.y, pz) - ch->center);
+				in_chamber = in_chamber || Vector2(q.x / ch->radii.x, q.z / ch->radii.z).length_squared() < 1.0f;
+			}
+			const real_t dens = MIN(0.45 * speleothems * (0.2 + 1.8 * line) * (in_chamber ? 2.0 : 1.0), 0.9);
+			const float pick = cave_hash(ix, 1, iz, ns);
+			if (pick > dens) {
+				continue;
+			}
+			if (px < p_box.position.x || px >= p_box.get_end().x || pz < p_box.position.z || pz >= p_box.get_end().z) {
+				continue;
+			}
+			bool rock_above = F(Vector3(px, (y1 + 1) * step, pz)) > 0.0;
+			for (int iy = y1; iy >= y0; iy--) {
+				const Vector3 q(px, iy * step, pz);
+				const bool rock = F(q) > 0.0;
+				if (rock_above && !rock) {
+					// A roof between iy and iy + 1: refine it.
+					real_t lo = iy * step, hi = (iy + 1) * step;
+					for (int k = 0; k < 6; k++) {
+						const real_t mid = 0.5 * (lo + hi);
+						(F(Vector3(px, mid, pz)) > 0.0 ? hi : lo) = mid;
+					}
+					const Vector3 roof(px, 0.5 * (lo + hi), pz);
+					const real_t e = 0.15;
+					Vector3 n(F(roof - Vector3(e, 0, 0)) - F(roof + Vector3(e, 0, 0)), F(roof - Vector3(0, e, 0)) - F(roof + Vector3(0, e, 0)), F(roof - Vector3(0, 0, e)) - F(roof + Vector3(0, 0, e)));
+					n = n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, -1, 0); // toward the air
+					const real_t cover = p_gen->get_height(roof) - roof.y;
+					const real_t seep = CLAMP(1.15 - cover / 45.0, 0.2, 1.0);
+					bool dark = true;
+					for (const Cave &cv : caves) {
+						dark = dark && cv.entrance.distance_to(roof) > 14.0 && !(cv.sea && cv.bounds.grow(2.0).has_point(roof));
+					}
+					const int iyk = int(Math::floor(roof.y * 2.0));
+					if (dark && n.y < -0.45f && cave_hash(ix, iyk, iz, ns + 9u) < seep) {
+						real_t gap = 0.0;
+						for (real_t dy = 0.1; dy < 16.0; dy += 0.1) {
+							if (F(roof - Vector3(0, dy, 0)) > 0.0) {
+								gap = dy;
+								break;
+							}
+						}
+						if (gap >= 0.6) {
+							const float r1 = cave_hash(ix, iyk, iz, ns + 1u), r2 = cave_hash(ix, iyk, iz, ns + 2u), r3 = cave_hash(ix, iyk, iz, ns + 3u);
+							Drip d;
+							d.roof = roof;
+							d.foot = roof - Vector3(0, gap, 0);
+							d.gap = gap;
+							d.yaw = r3 * Math::TAU;
+							d.variant = int(cave_hash(ix, iyk, iz, ns + 7u) * float(int(SPEL_VARIANTS))) % SPEL_VARIANTS;
+							// Lengths follow a power law (many short, few long), as surveys of stalactite populations find.
+							d.len = MIN(0.15 + 1.8 * Math::pow(r1, 2.0f), 0.55 * gap);
+							d.mite = r2 < 0.7f ? MIN(0.12 + 1.4 * Math::pow(r2 / 0.7f, 1.6f), 0.45 * gap) : 0.0;
+							if (n.y > -0.85f) {
+								// An inclined roof: a curtain along its fall line, 0.6 to 2.5 m long.
+								d.kind = SPEL_CURTAIN;
+								d.along = Vector3(n.x, 0, n.z).normalized();
+								d.rad = 0.6 + 1.9 * r3;
+								d.len = MIN(0.2 + 0.9 * Math::pow(r1, 1.5f), 0.5 * gap);
+								d.mite = 0.0;
+							} else if (d.mite > 0.0 && d.len + d.mite > 0.8 * gap && gap < 6.0) {
+								d.kind = SPEL_COLUMN;
+								d.rad = 0.14 + 0.2 * r2 + 0.04 * gap;
+							} else {
+								d.kind = SPEL_STALACTITE;
+								d.rad = 0.04 + 0.13 * d.len; // a base about a sixth of the length, wider with age
+								d.mrad = 0.08 + 0.17 * d.mite; // stalagmites are blunter and wider (the drop splashes)
+							}
+							r_drips.push_back(d);
+						}
+					}
+				}
+				rock_above = rock;
 			}
 		}
-		if (gap < 0.6) {
-			continue;
+	}
+}
+
+// Flowstone: the calcite the drips leave round each formation's foot and at its roof, a low mound under standing
+// forms (sheets where mounds meet) and a boss round hanging ones, added to the rock with a smooth maximum so the
+// forms rise out of the floor and roof rather than standing on them. r_weight: how close p is to flowstone (0..1).
+real_t CaveNetwork3D::_flowstone(const LocalVector<Drip> &p_drips, const Vector3 &p_p, real_t p_rock, real_t *r_weight) {
+	real_t f = p_rock;
+	real_t w = 0.0;
+	for (const Drip &d : p_drips) {
+		const bool stands = d.kind == SPEL_COLUMN || d.mite > 0.0;
+		if (stands) {
+			const real_t rad = d.kind == SPEL_COLUMN ? d.rad : d.mrad;
+			const real_t R = 2.6 * rad + 0.35, h = 0.12 + 0.6 * rad;
+			const Vector3 q = p_p - d.foot;
+			if (q.length_squared() < (R + 0.6) * (R + 0.6)) {
+				const Vector3 e(q.x / R, q.y / h, q.z / R);
+				const real_t sd = (e.length() - 1.0) * MIN(R, h);
+				const real_t k = 0.25;
+				const real_t hh = CLAMP(0.5 + 0.5 * (-sd - f) / k, 0.0, 1.0);
+				f = Math::lerp(f, -sd, hh) + k * hh * (1.0 - hh); // smooth max(f, -sd)
+				w = MAX(w, CLAMP(1.0 - (e.length() - 1.0) / 0.6, 0.0, 1.0));
+			}
 		}
-		const float r1 = cave_hash(qx, qy, qz, ns + 1u), r2 = cave_hash(qx, qy, qz, ns + 2u), r3 = cave_hash(qx, qy, qz, ns + 3u);
-		const real_t yaw = r3 * Math::TAU;
-		// Lengths follow a power law (many short, few long), as surveys of stalactite populations find.
-		real_t len = MIN(0.12 + 1.6 * Math::pow(r1, 2.2f), 0.5 * gap);
-		real_t mite = MIN(0.08 + 1.1 * Math::pow(r2, 2.0f), 0.4 * gap);
-		const Vector3 top = p + Vector3(0, 0.08, 0); // into the roof a little, so the base is buried
-		const Vector3 foot = p - Vector3(0, gap + 0.06, 0);
-		if (len + mite > 0.85 * gap && gap < 5.0) {
-			// A column: one shape from floor to roof.
-			const real_t rad = 0.16 + 0.22 * r2;
-			r_chunk.spel[SPEL_COLUMN].push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw).scaled(Vector3(rad, gap + 0.14, rad)), foot));
-			continue;
-		}
-		const real_t rad = 0.05 + 0.16 * len; // stalactites taper from a base about a sixth of their length
-		r_chunk.spel[SPEL_STALACTITE].push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw).scaled(Vector3(rad, len + 0.08, rad)), top));
-		if (r2 < 0.65f) {
-			const real_t mrad = 0.1 + 0.3 * mite; // stalagmites are blunter and wider (the drop splashes)
-			r_chunk.spel[SPEL_STALAGMITE].push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw + 1.0).scaled(Vector3(mrad, mite + 0.06, mrad)), foot));
+		if (d.kind != SPEL_COLUMN) {
+			const real_t rad = d.kind == SPEL_CURTAIN ? 0.25 : d.rad;
+			const real_t R = 2.2 * rad + 0.25, h = 0.1 + 0.5 * rad;
+			const Vector3 q = p_p - d.roof;
+			if (q.length_squared() < (R + 0.5) * (R + 0.5)) {
+				const Vector3 e(q.x / R, q.y / h, q.z / R);
+				const real_t sd = (e.length() - 1.0) * MIN(R, h);
+				const real_t k = 0.2;
+				const real_t hh = CLAMP(0.5 + 0.5 * (-sd - f) / k, 0.0, 1.0);
+				f = Math::lerp(f, -sd, hh) + k * hh * (1.0 - hh);
+				w = MAX(w, CLAMP(1.0 - (e.length() - 1.0) / 0.5, 0.0, 1.0));
+			}
+		} else {
+			// A column's roof end flares into the roof too.
+			const real_t R = 2.0 * d.rad + 0.3, h = 0.1 + 0.5 * d.rad;
+			const Vector3 q = p_p - d.roof;
+			if (q.length_squared() < (R + 0.5) * (R + 0.5)) {
+				const Vector3 e(q.x / R, q.y / h, q.z / R);
+				const real_t sd = (e.length() - 1.0) * MIN(R, h);
+				const real_t k = 0.2;
+				const real_t hh = CLAMP(0.5 + 0.5 * (-sd - f) / k, 0.0, 1.0);
+				f = Math::lerp(f, -sd, hh) + k * hh * (1.0 - hh);
+				w = MAX(w, CLAMP(1.0 - (e.length() - 1.0) / 0.5, 0.0, 1.0));
+			}
 		}
 	}
+	if (r_weight) {
+		*r_weight = w;
+	}
+	return f;
 }
 
 struct CaveMeshJob {
@@ -1389,17 +1601,58 @@ void vertex() {
 	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	w_nrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 }
+// Joint cracks: two vertical joint sets (planes 1.7 and 2.3 m apart, crossing at about 70 degrees) and the bedding
+// planes, each a thin dark line where the wall cuts it, wobbled and broken into lengths by noise (joints are planar
+// sets, not cells).
+float joints(vec3 p) {
+	float wob = 0.15 * (fbm(p * 0.9) - 0.5);
+	float a = abs(fract(dot(p.xz, vec2(0.94, 0.34)) / 1.7 + wob) - 0.5) * 2.0;
+	float b = abs(fract(dot(p.xz, vec2(-0.17, 0.98)) / 2.3 + wob * 1.3) - 0.5) * 2.0;
+	float c = abs(fract(p.y / 1.1 + 0.6 * wob) - 0.5) * 2.0;
+	float ma = step(0.45, fbm(p * 0.35 + 3.0)), mb = step(0.5, fbm(p * 0.3 + 9.0)), mc = step(0.4, fbm(p * 0.25 + 15.0));
+	return max(max(ma * smoothstep(0.965, 0.995, a), mb * smoothstep(0.97, 0.995, b)), mc * smoothstep(0.96, 0.99, c));
+}
+// The surface relief the 0.3 m mesh cannot carry: spalls and dissolution pits (fbm at 0.3 m and 8 cm), bedding
+// steps, and the joints as grooves.
+float relief(vec3 p) {
+	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0);
+	float bed = fract(p.y / 1.1 + 0.4 * fbm(p * 0.6));
+	h += 0.3 * smoothstep(0.0, 0.08, bed) * (1.0 - bed);
+	h -= 0.5 * joints(p);
+	return h;
+}
 void fragment() {
 	float m = fbm(w_pos * 0.45);
 	float fine = fbm(w_pos * 3.1);
 	vec3 col = rock_color * (0.7 + 0.6 * m) * (0.85 + 0.3 * fine);
-	// Beds: faint darker bands every half metre or so.
-	col *= 0.9 + 0.1 * smoothstep(0.3, 0.7, sin(w_pos.y * 11.0 + 3.0 * m) * 0.5 + 0.5);
+	// Beds: darker bands every half metre or so.
+	col *= 0.85 + 0.15 * smoothstep(0.3, 0.7, sin(w_pos.y * 11.0 + 3.0 * m) * 0.5 + 0.5);
+	float crack = joints(w_pos);
+	col *= 1.0 - 0.35 * crack;
 	float floor_w = smoothstep(0.55, 0.85, w_nrm.y);
 	col = mix(col, sediment_color * (0.8 + 0.4 * fine), floor_w);
-	float wet = clamp(floor_w + 0.4 * smoothstep(0.55, 0.8, fbm(w_pos * 0.8 + 11.0)), 0.0, 1.0);
-	ALBEDO = col * mix(1.0, 0.7, wet);
-	ROUGHNESS = mix(0.85, 0.35, wet);
+	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler, glossy calcite in vertical
+	// streaks (noise stretched along the fall line).
+	float wall = 1.0 - abs(w_nrm.y);
+	float streak = smoothstep(0.62, 0.8, fbm(vec3(w_pos.x * 1.7, w_pos.y * 0.18, w_pos.z * 1.7) + 23.0)) * wall;
+	col = mix(col, vec3(0.48, 0.42, 0.34) * (0.85 + 0.3 * fine), streak * 0.7);
+	// Flowstone mounds and bosses round the formations (the mesher's red): smooth wet calcite.
+	float flow = clamp(COLOR.r, 0.0, 1.0);
+	col = mix(col, vec3(0.46, 0.38, 0.28) * (0.8 + 0.35 * fine), flow * 0.8);
+	streak = max(streak, flow);
+	float wet = clamp(floor_w + streak + 0.4 * smoothstep(0.55, 0.8, fbm(w_pos * 0.8 + 11.0)), 0.0, 1.0);
+	ALBEDO = col * mix(1.0, 0.72, wet);
+	ROUGHNESS = mix(0.9, 0.25, wet);
+	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it.
+	float e = 0.02;
+	float h0 = relief(w_pos);
+	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0)) - h0, relief(w_pos + vec3(0, e, 0)) - h0, relief(w_pos + vec3(0, 0, e)) - h0) / e;
+	vec3 n = normalize(w_nrm);
+	g -= n * dot(g, n);
+	float amount = 0.035 * (1.0 - 0.7 * streak) * (1.0 - 0.5 * floor_w);
+	vec3 nb = normalize(n - amount * g);
+	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
+	AO = 1.0 - 0.4 * crack;
 }
 )");
 	default_wall.instantiate();
@@ -1472,81 +1725,196 @@ void CaveNetwork3D::_wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashS
 	}
 }
 
-// The unit speleothem shapes, turned (a lathe) with growth rings and an uneven, slightly flattened section:
-// a stalactite from its base (y 0, radius 1) down to a point at y -1; a stalagmite from y 0 up to a rounded top at
-// y 1; a column from y 0 to 1, flared at both ends where its stalactite and stalagmite were.
-Ref<ArrayMesh> CaveNetwork3D::_spel_mesh(int p_kind) {
-	if (spel_mesh[p_kind].is_valid()) {
-		return spel_mesh[p_kind];
+// The unit speleothem shapes. Stalactites take the shape Short, Baygents and Goldstein found for them ("Stalactite
+// growth as a free-boundary problem", Physics of Fluids 2005): a long carrot taper from a flared base to a thin
+// soda-straw drip tip, the same for all sizes. Stalagmites are candles with a rounded, splash-flattened top and a
+// spread foot; columns are both, fused. Curtains are thin folded sheets hanging along an inclined roof, their lower
+// edge scalloped into drip tips. Each kind has four variants: lumpy, bent, some fused twins, never a clean lathe.
+// UV.y runs 0 at the base (roof or floor) to 1 at the tip, for the shader's wet tips and dark, muddy feet.
+Ref<ArrayMesh> CaveNetwork3D::_spel_mesh(int p_kind, int p_variant) {
+	const int key = p_kind * SPEL_VARIANTS + p_variant;
+	if (spel_mesh[key].is_valid()) {
+		return spel_mesh[key];
 	}
-	const int R = 16, H = 40;
+	RandomPCG rng(uint32_t(p_kind * 977 + p_variant * 131 + 7));
 	PackedVector3Array pv, pn;
+	PackedVector2Array puv;
 	PackedInt32Array pi;
-	auto radius = [p_kind](real_t t, real_t a) -> real_t {
-		// t 0 at the base (roof or floor), 1 at the tip (or the other end of a column).
-		// Growth rings, soft (a coarse ring pattern shades as bands), and a lobed section that twists slowly.
-		const real_t rings = 1.0 + 0.025 * Math::sin(t * 23.0 + a) + 0.015 * Math::sin(t * 61.0 + 2.0 * a);
-		const real_t lobes = 1.0 + 0.1 * Math::sin(a * 3.0 + t * 3.0) + 0.05 * Math::sin(a * 5.0 + 1.3 + t * 2.0);
-		real_t r;
-		if (p_kind == SPEL_STALACTITE) {
-			r = Math::pow(1.0 - t, 1.5) * (1.0 + 0.5 * Math::pow(1.0 - t, 8.0)); // a flared base, a long taper
-		} else if (p_kind == SPEL_STALAGMITE) {
-			r = Math::pow(MAX(1.0 - t * t * t, 0.0), 0.45) * (1.0 + 0.35 * Math::pow(1.0 - t, 6.0)); // blunt, rounded
-		} else {
-			const double m = Math::abs(2.0 * t - 1.0);
-			r = 0.55 + 0.45 * Math::pow(m, 3.0) + 0.25 * Math::pow(m, 12.0); // waisted, flared at both ends
+	const uint32_t ns = uint32_t(key) * 7919u + 3u;
+	// One turned tube along a bent axis, lumpy (3D noise on the radius, not rings); dir -1 hangs, +1 stands.
+	auto tube = [&](real_t p_dir, real_t p_scale, const Vector3 &p_offset, real_t p_bend, real_t p_lean, auto &&p_radius) {
+		const int R = 18, H = 44;
+		const int base = pv.size();
+		const real_t lean_a = rng.randf() * Math::TAU;
+		const Vector2 lean(Math::cos(lean_a), Math::sin(lean_a));
+		for (int j = 0; j <= H; j++) {
+			const real_t t = real_t(j) / H;
+			const Vector3 axis = p_offset + Vector3(lean.x * (p_lean * t + p_bend * t * t), p_dir * t * p_scale, lean.y * (p_lean * t + p_bend * t * t));
+			for (int i = 0; i < R; i++) {
+				const real_t a = Math::TAU * i / R;
+				const Vector3 dir(Math::cos(a), 0, Math::sin(a));
+				const real_t lump = 1.0 + 0.32 * (cave_fbm(dir * 1.4f + Vector3(0, t * 4.5f, 0), ns, 3) - 0.5f) + 0.12 * (cave_fbm(dir * 4.0f + Vector3(0, t * 14.0f, 0), ns + 1u, 2) - 0.5f);
+				const real_t r = p_radius(t) * lump * p_scale;
+				pv.push_back(axis + dir * r);
+				puv.push_back(Vector2(real_t(i) / R, t));
+			}
 		}
-		return r * rings * lobes;
+		for (int j = 0; j <= H; j++) {
+			for (int i = 0; i < R; i++) {
+				const Vector3 du = pv[base + j * R + (i + 1) % R] - pv[base + j * R + (i + R - 1) % R];
+				const Vector3 dv = pv[base + MIN(j + 1, H) * R + i] - pv[base + MAX(j - 1, 0) * R + i];
+				Vector3 n = du.cross(dv);
+				const Vector3 c = p_offset + Vector3(0, p_dir * real_t(j) / H * p_scale, 0);
+				const Vector3 out = pv[base + j * R + i] - c;
+				if (n.dot(Vector3(out.x, 0, out.z)) < 0.0) {
+					n = -n;
+				}
+				pn.push_back(n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, p_dir, 0));
+			}
+		}
+		for (int j = 0; j < H; j++) {
+			for (int i = 0; i < R; i++) {
+				const int a = base + j * R + i, b = base + j * R + (i + 1) % R, c = base + (j + 1) * R + i, d = base + (j + 1) * R + (i + 1) % R;
+				if (p_dir > 0.0) {
+					pi.append_array({ a, b, c, b, d, c });
+				} else {
+					pi.append_array({ a, c, b, b, c, d });
+				}
+			}
+		}
 	};
-	const real_t dir = p_kind == SPEL_STALACTITE ? -1.0 : 1.0;
-	for (int j = 0; j <= H; j++) {
-		const real_t t = real_t(j) / H;
-		for (int i = 0; i < R; i++) {
-			const real_t a = Math::TAU * i / R;
-			const real_t r = radius(t, a);
-			pv.push_back(Vector3(Math::cos(a) * r, dir * t, Math::sin(a) * r * 0.85));
-		}
-	}
-	// Normals from the neighbours on the grid.
-	for (int j = 0; j <= H; j++) {
-		for (int i = 0; i < R; i++) {
-			const Vector3 du = pv[j * R + (i + 1) % R] - pv[j * R + (i + R - 1) % R];
-			const Vector3 dv = pv[MIN(j + 1, H) * R + i] - pv[MAX(j - 1, 0) * R + i];
-			Vector3 n = du.cross(dv) * dir;
-			const Vector3 out = Vector3(pv[j * R + i].x, 0, pv[j * R + i].z);
-			if (n.dot(out) < 0.0) {
-				n = -n;
+	const real_t bend = (rng.randf() - 0.5) * 0.25, lean = (rng.randf() - 0.5) * 0.12;
+	if (p_kind == SPEL_STALACTITE) {
+		// The carrot: r = (1 - t)^0.9 flared at the base, down to a soda straw of a tenth of the base radius in the
+		// last eighth, closed in a round drip tip.
+		auto carrot = [](real_t t) -> real_t {
+			const real_t body = Math::pow(MAX(1.0 - t, 0.0), 0.9) * (1.0 + 0.6 * Math::pow(MAX(1.0 - t, 0.0), 10.0));
+			const real_t straw = 0.1 * Math::sqrt(MAX(1.0 - Math::pow((t - 0.86) / 0.14, 8.0), 0.0));
+			return t < 0.86 ? MAX(body, real_t(0.1)) : straw;
+		};
+		tube(-1.0, 1.0, Vector3(), bend, lean, carrot);
+		if (p_variant >= 2) {
+			// Fused twins (and a third in the last variant): younger stalactites grown from the same crack.
+			tube(-1.0, 0.55 + 0.2 * rng.randf(), Vector3(0.55, 0.0, 0.25), -bend, -lean, carrot);
+			if (p_variant == 3) {
+				tube(-1.0, 0.35 + 0.15 * rng.randf(), Vector3(-0.35, 0.0, 0.5), bend * 0.5, lean, carrot);
 			}
-			pn.push_back(n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, dir, 0));
 		}
-	}
-	for (int j = 0; j < H; j++) {
-		for (int i = 0; i < R; i++) {
-			const int a = j * R + i, b = j * R + (i + 1) % R, c = (j + 1) * R + i, d = (j + 1) * R + (i + 1) % R;
-			// Clockwise seen from outside (Godot's front faces).
-			if (dir > 0.0) {
-				pi.append_array({ a, b, c, b, d, c });
-			} else {
-				pi.append_array({ a, c, b, b, c, d });
+	} else if (p_kind == SPEL_STALAGMITE) {
+		auto candle = [](real_t t) -> real_t {
+			const real_t foot = 1.0 + 0.9 * Math::pow(MAX(1.0 - t, 0.0), 7.0); // spread on the floor
+			const real_t top = Math::sqrt(MAX(1.0 - Math::pow(double(t), 6.0), 0.0)); // rounded, splash-flattened
+			return 0.62 * foot * top;
+		};
+		tube(1.0, 1.0, Vector3(), bend * 0.5, lean, candle);
+		if (p_variant == 3) {
+			tube(1.0, 0.5, Vector3(0.6, 0.0, 0.2), 0.0, -lean, candle);
+		}
+	} else if (p_kind == SPEL_COLUMN) {
+		auto column = [](real_t t) -> real_t {
+			const double m = Math::abs(2.0 * t - 1.0);
+			return 0.5 + 0.35 * Math::pow(m, 3.0) + 0.5 * Math::pow(m, 14.0);
+		};
+		tube(1.0, 1.0, Vector3(), 0.0, 0.0, column);
+	} else {
+		// A curtain: a sheet 1 long (x, -0.5..0.5) hanging 1 down, folded in z, 3 to 5 cm thick, its lower edge
+		// scalloped into drip tips; built as two faces and a rim.
+		const int U = 64, V = 20;
+		const real_t thick = 0.02 + 0.01 * rng.randf();
+		const real_t fold_f = 3.0 + 3.0 * rng.randf(), fold_a = 0.05 + 0.05 * rng.randf();
+		auto depth = [&](real_t u) -> real_t {
+			const real_t env = Math::sqrt(MAX(1.0 - Math::pow(2.0 * Math::abs(u), 4.0), 0.0));
+			const real_t tips = 0.75 + 0.25 * Math::pow(Math::abs(Math::sin(u * Math::PI * (9.0 + p_variant * 2.0))), 0.5);
+			return env * tips * (0.85 + 0.3 * (cave_fbm(Vector3(u * 6.0f, 0, 0), ns + 3u, 2) - 0.5f));
+		};
+		for (int side = 0; side < 2; side++) {
+			const real_t sz = side == 0 ? 1.0 : -1.0;
+			const int base = pv.size();
+			for (int j = 0; j <= V; j++) {
+				const real_t t = real_t(j) / V;
+				for (int i = 0; i <= U; i++) {
+					const real_t u = real_t(i) / U - 0.5;
+					const real_t y = -t * depth(u);
+					const real_t fold = fold_a * Math::sin(u * Math::TAU * fold_f + 1.3 * p_variant) * (0.4 + 0.6 * t);
+					pv.push_back(Vector3(u, y, fold + sz * thick * (1.0 - 0.6 * t)));
+					puv.push_back(Vector2(u + 0.5, t));
+					// Normal: the fold's slope, facing this side.
+					const real_t dz = fold_a * Math::TAU * fold_f * Math::cos(u * Math::TAU * fold_f + 1.3 * p_variant) * (0.4 + 0.6 * t);
+					pn.push_back(Vector3(-dz * sz, 0.0, sz).normalized());
+				}
 			}
+			for (int j = 0; j < V; j++) {
+				for (int i = 0; i < U; i++) {
+					const int a = base + j * (U + 1) + i, b = a + 1, c = a + (U + 1), d = c + 1;
+					if (side == 0) {
+						pi.append_array({ a, c, b, b, c, d });
+					} else {
+						pi.append_array({ a, b, c, b, d, c });
+					}
+				}
+			}
+		}
+		// The rim along the lower edge joins the two faces.
+		const int f0 = V * (U + 1), f1 = (V + 1) * (U + 1) + V * (U + 1);
+		for (int i = 0; i < U; i++) {
+			const int a = f0 + i, b = f0 + i + 1, c = f1 + i, d = f1 + i + 1;
+			pi.append_array({ a, b, c, b, d, c });
 		}
 	}
 	Array arrays;
 	arrays.resize(Mesh::ARRAY_MAX);
 	arrays[Mesh::ARRAY_VERTEX] = pv;
 	arrays[Mesh::ARRAY_NORMAL] = pn;
+	arrays[Mesh::ARRAY_TEX_UV] = puv;
 	arrays[Mesh::ARRAY_INDEX] = pi;
-	spel_mesh[p_kind].instantiate();
-	spel_mesh[p_kind]->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	spel_mesh[key].instantiate();
+	spel_mesh[key]->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 	if (spel_material.is_null()) {
-		// Wet calcite: pale cream, smooth, glossy where water runs.
+		// Wet calcite: cream to amber, translucent-looking where thin, glossy where water runs (the tips and the
+		// curtain edges), dark and muddy at the feet of standing forms, banded faintly with growth layers.
+		Ref<Shader> sh;
+		sh.instantiate();
+		sh->set_code(R"(shader_type spatial;
+render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+uniform vec3 calcite = vec3(0.58, 0.49, 0.37);
+uniform vec3 amber = vec3(0.45, 0.30, 0.17);
+uniform vec3 mud = vec3(0.16, 0.12, 0.09);
+varying vec3 w_pos;
+varying float up;
+float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float vn(vec3 p) {
+	vec3 i = floor(p), f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+			mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p) { return 0.5 * vn(p) + 0.25 * vn(p * 2.03 + 7.0) + 0.125 * vn(p * 4.1 + 3.0); }
+void vertex() {
+	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	up = (MODEL_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).y; // < 0 never; the kind comes from the base height below
+}
+void fragment() {
+	float t = UV.y;
+	float m = fbm(w_pos * 6.0);
+	vec3 col = mix(calcite, amber, 0.25 + 0.5 * fbm(w_pos * 1.3 + 4.0));
+	col *= 0.8 + 0.35 * m;
+	// Growth layers, faint and irregular.
+	col *= 0.92 + 0.08 * sin(t * 60.0 + 8.0 * m);
+	// Wet: the tip (where the drop hangs) and the feet; the feet also take mud.
+	float tip = smoothstep(0.7, 1.0, t);
+	float foot = 1.0 - smoothstep(0.0, 0.18, t);
+	col = mix(col, mud * (0.8 + 0.4 * m), foot * 0.75);
+	float wet = max(tip, foot);
+	ALBEDO = col * mix(1.0, 0.75, wet);
+	ROUGHNESS = mix(0.5, 0.12, wet);
+	SPECULAR = 0.6;
+}
+)");
 		spel_material.instantiate();
-		spel_material->set_albedo(Color(0.80, 0.75, 0.66));
-		spel_material->set_roughness(0.32);
-		spel_material->set_specular(0.6);
+		spel_material->set_shader(sh);
 	}
-	spel_mesh[p_kind]->surface_set_material(0, spel_material);
-	return spel_mesh[p_kind];
+	spel_mesh[key]->surface_set_material(0, spel_material);
+	return spel_mesh[key];
 }
 
 void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
@@ -1581,20 +1949,21 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 		body->add_child(cs);
 		mi->add_child(body);
 	}
-	for (int k = 0; k < 3; k++) {
+	static const char *spel_names[SPEL_KINDS] = { "Stalactites", "Stalagmites", "Columns", "Curtains" };
+	for (int k = 0; k < SPEL_KINDS * SPEL_VARIANTS; k++) {
 		if (p_chunk.spel[k].is_empty()) {
 			continue;
 		}
 		Ref<MultiMesh> mm;
 		mm.instantiate();
 		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
-		mm->set_mesh(_spel_mesh(k));
+		mm->set_mesh(_spel_mesh(k / SPEL_VARIANTS, k % SPEL_VARIANTS));
 		mm->set_instance_count(int(p_chunk.spel[k].size()));
-		for (uint32_t i = 0; i < p_chunk.spel[k].size(); i++) {
-			mm->set_instance_transform(int(i), p_chunk.spel[k][i]);
+		for (int i = 0; i < p_chunk.spel[k].size(); i++) {
+			mm->set_instance_transform(i, p_chunk.spel[k][i]);
 		}
 		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
-		mmi->set_name(k == SPEL_STALACTITE ? "Stalactites" : (k == SPEL_STALAGMITE ? "Stalagmites" : "Columns"));
+		mmi->set_name(vformat("%s %d", spel_names[k / SPEL_VARIANTS], k % SPEL_VARIANTS));
 		mmi->set_multimesh(mm);
 		mi->add_child(mmi);
 	}
@@ -1792,7 +2161,7 @@ void CaveNetwork3D::clear_meshes() {
 int CaveNetwork3D::get_speleothem_count() const {
 	int n = 0;
 	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
-		for (int k = 0; k < 3; k++) {
+		for (int k = 0; k < SPEL_KINDS * SPEL_VARIANTS; k++) {
 			n += kv.value.node ? int(kv.value.spel[k].size()) : 0;
 		}
 	}

@@ -75,8 +75,15 @@ public:
 		Vector3 radii; // x, z across, y up
 		float yaw = 0.0f;
 	};
+	// A fallen block on a floor: breakdown in chambers, wave-tumbled boulders in sea caves.
+	struct Block {
+		Transform3D xform; // the box's half extents in its basis
+		Transform3D inv;
+		real_t round = 0.1;
+	};
 	struct Cave {
 		Vector3 entrance, out;
+		LocalVector<Block> blocks;
 		LocalVector<Segment> segments;
 		LocalVector<Chamber> chambers;
 		LocalVector<Vector3> keys;
@@ -96,16 +103,31 @@ private:
 		Node3D *node = nullptr;
 		int triangles = 0;
 		bool pinned = false; // an entrance patch chunk: kept while the landscape's hole is open
-		Vector<Transform3D> spel[3]; // speleothems: stalactites, stalagmites, columns (unit shapes placed)
+		Vector<Transform3D> spel[16]; // speleothems by kind * SPEL_VARIANTS + variant (unit shapes placed)
 	};
 	enum {
 		SPEL_STALACTITE,
 		SPEL_STALAGMITE,
 		SPEL_COLUMN,
+		SPEL_CURTAIN,
+		SPEL_KINDS,
+		SPEL_VARIANTS = 4,
+	};
+	// A drip point: where seepage through the roof drips into air, and what grows there.
+	struct Drip {
+		Vector3 roof, foot; // the roof point and the floor under it
+		Vector3 along; // a curtain's run (down the slope of an inclined roof), horizontal
+		real_t gap = 0.0;
+		real_t len = 0.0, rad = 0.0; // the hanging form
+		real_t mite = 0.0, mrad = 0.0; // the standing form (0: none)
+		real_t yaw = 0.0;
+		int kind = SPEL_STALACTITE;
+		int variant = 0;
 	};
 	struct FieldSource {
 		LocalVector<const Segment *> segments;
 		LocalVector<const Chamber *> chambers;
+		LocalVector<const Block *> blocks;
 		LocalVector<Vector3> patches; // entrances whose patch reaches this chunk
 		LocalVector<Vector3> patch_out;
 	};
@@ -117,8 +139,8 @@ private:
 	real_t roughness = 1.0;
 	real_t scallops = 1.0; // Worley dish hollows on the walls (0 off)
 	real_t speleothems = 1.0; // drip formations: density (0 none)
-	Ref<ArrayMesh> spel_mesh[3];
-	Ref<StandardMaterial3D> spel_material;
+	Ref<ArrayMesh> spel_mesh[16];
+	Ref<ShaderMaterial> spel_material;
 	bool collision = true;
 	Ref<Material> wall_material;
 	Ref<Material> ground_material;
@@ -152,12 +174,14 @@ private:
 
 	TerrainGenerator3D *_get_generator() const;
 	bool _grow(Cave &r_cave, uint32_t p_seed) const;
+	void _scatter_blocks(Cave &r_cave, uint32_t p_seed) const;
 	real_t _air(const FieldSource &p_src, const Vector3 &p_p) const;
 	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr) const;
 	void _gather(const AABB &p_box, FieldSource &r_src) const;
 	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const;
-	void _place_speleothems(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const LocalVector<Vector3> &p_roof, Chunk &r_chunk) const;
-	Ref<ArrayMesh> _spel_mesh(int p_kind);
+	void _drips(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const AABB &p_box, LocalVector<Drip> &r_drips) const;
+	static real_t _flowstone(const LocalVector<Drip> &p_drips, const Vector3 &p_p, real_t p_rock, real_t *r_weight = nullptr);
+	Ref<ArrayMesh> _spel_mesh(int p_kind, int p_variant);
 	static void _mesh_job(void *p_data, uint32_t p_index);
 	Ref<Material> _wall_material();
 	void _wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashSet<Vector3i> &r_pinned, bool p_all_patches = false) const;
