@@ -1135,6 +1135,17 @@
    "topic": "Shapes"
   },
   {
+   "name": "Mineral glints",
+   "settings": [
+    "RockField3D.mineral_glints"
+   ],
+   "note": "",
+   "what": "glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Ground contact and aspect",
    "settings": [
     "contact_height",
