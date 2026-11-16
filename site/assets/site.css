@@ -297,3 +297,11 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .side .navgroup summary.group:hover{opacity:.9}
 .navgroup ul{margin:0 0 6px 12px;padding-left:8px;border-left:1px solid var(--line)}
 .navgroup li a{padding-left:10px}
+
+/* Per-feature links */
+.prose li.feat{scroll-margin-top:84px}
+.prose li.feat{position:relative}
+.prose li.feat>.anchor{position:absolute;left:-2.4em;top:0;margin:0;width:1.2em;text-align:right}
+@media (max-width:700px){.prose li.feat>.anchor{display:none}}
+.prose li.feat:hover .anchor,.prose li.feat:target .anchor{opacity:1}
+.prose li.feat:target strong:first-child{background:var(--code);border-radius:3px;box-shadow:0 0 0 3px var(--code)}

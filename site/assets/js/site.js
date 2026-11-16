@@ -373,3 +373,27 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
     });
   });
 })();
+
+// Feature pages: each bold feature name gets its own link (#name, as Hugo's anchorize).
+(() => {
+  const prose = document.querySelector('.prose');
+  if (!prose || !document.querySelector('.eyebrow')) return;
+  const slug = (t) => t.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, '');
+  prose.querySelectorAll(':scope > ul > li').forEach((li) => {
+    let host = li;
+    if (li.firstElementChild && li.firstElementChild.tagName === 'P' && li.firstChild === li.firstElementChild) host = li.firstElementChild;
+    const b = host.firstElementChild;
+    if (!b || b.tagName !== 'STRONG' || host.firstChild !== b) return;
+    const id = slug(b.textContent);
+    if (!id || document.getElementById(id)) return;
+    li.id = id;
+    li.classList.add('feat');
+    const a = document.createElement('a');
+    a.className = 'anchor'; a.href = '#' + id; a.textContent = '#';
+    a.setAttribute('aria-label', 'Link to this feature'); a.setAttribute('data-pagefind-ignore', '');
+    li.prepend(a);
+  });
+  const id = decodeURIComponent(location.hash.slice(1));
+  const el = id && document.getElementById(id);
+  if (el && el.classList.contains('feat')) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' }));
+})();
