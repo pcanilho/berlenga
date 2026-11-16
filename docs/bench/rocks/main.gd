@@ -13,6 +13,8 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch
+#   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
+#   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --settle=N            N more frames before the capture (near plant cells are built lazily)
@@ -264,6 +266,14 @@ func _world() -> void:
 			for w in waters:
 				if w is Node and (w as Node).name == "Sea":
 					w.set("grid_resolution", int(args["sea-res"]))
+		if args.has("wind"):
+			# --wind=m/s: a rougher sea with some swell, so the foot of a stack has waves and foam on it.
+			for w in waters:
+				if w is Node and (w as Node).name == "Sea":
+					w.set("follow_weather", false)
+					w.set("wind_speed", float(args["wind"]))
+					w.set("swell", 0.5)
+					w.set("shore_wave_height", 1.4)
 	var focus := Node3D.new()
 	focus.name = "Focus"
 	add_child(focus)
@@ -293,7 +303,23 @@ func _world() -> void:
 		cam.position.y = maxf(cam.position.y, spot.y + dist * 0.9)
 	if args.has("top"):
 		cam.position = spot + Vector3(0, float(args["top"]) if args["top"] != "1" else 30.0, 0.5)
-	cam.look_at(spot + Vector3(0, 0.3, 0))
+	var look := spot + Vector3(0, 0.3, 0)
+	if view == "coast" and args.has("seaward"):
+		# --seaward: from the land side looking out, the form against sea and sky with the cliff behind the camera.
+		var land_dir := Vector3.ZERO
+		var top := -INF
+		for i in 16:
+			var d := Vector3(cos(TAU * i / 16.0), 0, sin(TAU * i / 16.0))
+			var hgt := gen.get_height(spot + d * 50.0)
+			if hgt > top:
+				top = hgt
+				land_dir = d
+		var side := land_dir.cross(Vector3.UP) * float(args.get("side", "0.35"))
+		cam.position = spot + (land_dir + side).normalized() * dist
+		var sea_y := gen.get_sea_level() if gen.has_sea_result() else spot.y
+		cam.position.y = maxf(gen.get_height(cam.position) + 2.0, sea_y + float(args.get("cam-height", "6")))
+		look = Vector3(spot.x, sea_y + float(args.get("look-height", "8")), spot.z)
+	cam.look_at(look)
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:

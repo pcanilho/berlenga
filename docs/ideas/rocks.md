@@ -304,3 +304,28 @@ cuts. Here three RockGenerator families do it on the field grid after the roundi
 - `FAMILY_SEA_PLATFORM`: a thin bench with vertical cuts for an irregular edge, two joint sets (the cross set stops and
   starts), seaward ledges and 3 to 6 pools; set 0.6 m above mean sea level, its landward edge sunk into the cliff foot.
 Coast forms get trimesh collision (an arch's opening stays open) and are not breakable or close-up shapes.
+
+#### Second review (16 Nov): crisp beds, open joints, shore bands
+
+Docs declined the stack and arch again: rounded "melted cushions" banded at even heights, a groove for a joint, no
+tidal bands, a pale plinth at the waterline. Causes and fixes:
+- The beds were a field offset blended over ~3 cells per bed (0.5 m beds at 0.5 m cells), plus 0.14c fbm bulges: all
+  rounded. Now bed boundaries fall at random intervals (0.3 to 1.9 x a mean of ~1.5 m), half the beds soft (recessed
+  0.12 to 0.24c, never two soft in a row) and the rest hard, the step between beds eased over 1.5 cells only, so a
+  hard bed's lip overhangs the soft one below with an arris. Hard lips break back where a block fell out. The fbm
+  bulges are gone; faces get quantised block relief (facets meeting in edges) instead. Stack resolution 160 -> 256,
+  arch 180 -> 224. No spheroidal rounding on coast forms.
+- One or two of the big side cuts are recent falls, flagged fresh (pale scar face, beds hardly recessed).
+- Joints are planar slots (a slab removed down to 0.55c from the surface, tapering shut at the tip) instead of a
+  smooth groove: a dark gap with flat walls.
+- Notch: sloping floor up to a sharp visor; below it the foot stays worn back, so clear water does not show a wider
+  plinth under the surface (the pale rim was that, plus the pale barnacle colour).
+- Arch: taller (span/height ~1.6), legs wider than the opening, a round-headed opening whose ceiling steps in blocks a
+  fifth of the thickness high (roof blocks fall one by one), walls upright below the spring.
+- Shore bands never showed on coast forms: the sea flag tested the stone's ground against the sea, and a coast form's
+  ground is 50 m below it. Coast forms are now always flagged when there is a sea. The barnacle band is a dull
+  grey-brown crust specked with pale shells, weed below, and the black splash band reaches up to 3x the tide range.
+- Fallen blocks at a stack's foot are rockfall fragments (slabs, wedges, rods), not cliff blocks.
+- Bench: `--wind=m/s` (sea wind and some swell), `--seaward` (camera on the land side looking out).
+Water does not yet see the forms (rock collision is off with --water, or the sea's seabed probe takes a stack for the
+bed), so no foam rings a stack's foot: a water-side hook would be needed.

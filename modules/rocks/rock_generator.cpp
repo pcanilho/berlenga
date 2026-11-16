@@ -88,7 +88,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 160, 180, 220 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -775,8 +775,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		a = 2.6f + 0.8f * rng.randf(); // x: the column's height when stood on end, several times its width
 		c = 0.75f + 0.2f * rng.randf();
 	} else if (family == FAMILY_SEA_ARCH) {
-		a = 2.0f + 0.5f * rng.randf(); // x: the span along the coast; y: its height, as much as its thickness
-		c = 0.95f;
+		a = 1.5f + 0.4f * rng.randf(); // x: the span along the coast; y: its height, as much as its thickness
+		c = 1.0f;
 	} else if (family == FAMILY_SEA_PLATFORM) {
 		a = 3.0f; // x: along the cliff foot; z: out to sea; y: a thin bench
 		c = 0.12f + 0.04f * rng.randf();
@@ -851,7 +851,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			Vector3 n(rng.randfn(0.0f, 1.0f), rng.randfn(0.0f, 1.0f) * (family == FAMILY_SEA_ARCH ? 0.5f : 1.0f), rng.randfn(0.0f, 1.0f));
 			n = n.length_squared() > 1e-6f ? n.normalized() : Vector3(0, 0, 1);
 			const float support = Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
-			planes.push_back({ n, support * (0.62f + 0.2f * rng.randf()), false });
+			// The last one or two are recent falls: a fresh scar face, paler and without the rind.
+			planes.push_back({ n, support * (0.62f + 0.2f * rng.randf()), k >= count - 1 - int(rng.randf() * 1.5f) });
 		}
 	}
 	// A platform's edge follows the joints and the sea's reach, not a rectangle: a few vertical cuts across corners.
@@ -995,7 +996,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.1f, 0.1f, 0.0f };
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f }; // coast forms: sharp arrises
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -1083,12 +1084,49 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// - arch: the opening the waves cut through a headland along a joint, from the bed up through most of its height;
 	// - platform: the bench cut flush at the cliff foot, crossed by two joint sets opened into grooves, with pools.
 	if (coast_form) {
-		const float layered = (rock_type == ROCK_GRANITE || rock_type == ROCK_BASALT) ? 0.35f : 1.0f;
+		const float layered = (rock_type == ROCK_GRANITE || rock_type == ROCK_BASALT) ? 0.45f : 1.0f;
 		const int bed_axis = family == FAMILY_SEA_STACK ? 0 : 1;
-		const float bed_t = family == FAMILY_SEA_PLATFORM ? 1.0f : (0.12f + 0.08f * rng.randf());
-		const float bed_off = rng.randf() * bed_t;
-		const float bed_rec = (family == FAMILY_SEA_PLATFORM ? 0.0f : 0.16f) * c * layered;
-		const float ex = extent.x;
+		// Beds of uneven thickness (Paris et al. 2020; Trenhaile 1987): boundaries at random intervals, each bed hard
+		// (it stands out, its underside an overhang) or soft (weathered back into a recess). The step between two beds
+		// is one cell wide, so a ledge has an arris; a field offset smoothed over a bed read as stacked cushions.
+		LocalVector<float> bed_at, bed_rec;
+		if (family != FAMILY_SEA_PLATFORM) {
+			const float mean = (family == FAMILY_SEA_STACK ? 0.42f : 0.3f) * (layered < 1.0f ? 1.5f : 1.0f);
+			const float lo = -extent[bed_axis] - 0.2f, hi = extent[bed_axis] + 0.2f;
+			float b = lo - rng.randf() * mean;
+			bed_at.push_back(b);
+			while (b < hi) {
+				const float u = rng.randf();
+				b += mean * (0.3f + 1.6f * u * u); // many thin beds, a few thick ones
+				bed_at.push_back(b);
+			}
+			bool prev_soft = false;
+			for (uint32_t k = 0; k + 1 < bed_at.size(); k++) {
+				// Softer beds rarely follow each other: a hard bed between keeps a ledge.
+				const bool soft = rng.randf() < (prev_soft ? 0.2f : 0.5f);
+				bed_rec.push_back((soft ? 0.12f + 0.12f * rng.randf() : 0.02f * rng.randf()) * c * layered);
+				prev_soft = soft;
+			}
+		}
+		const Vector3 dip = Vector3(0.0f, 0.0f, (rng.randf() - 0.5f) * 0.12f) + (bed_axis == 0 ? Vector3(0, (rng.randf() - 0.5f) * 0.12f, 0) : Vector3((rng.randf() - 0.5f) * 0.12f, 0, 0));
+		const float step_w = 0.75f * h;
+		// The recess at p: its bed's, eased into the neighbours' over a cell, varying along the bed, and hard beds
+		// broken back here and there where a block fell out of the lip.
+		auto bed_recess = [&](const Vector3 &p_p) -> float {
+			const float q = p_p[bed_axis] + dip.dot(p_p) + 0.06f * (rk_noise(p_p * 0.9f, nseed + 92u) - 0.5f);
+			int i = 0;
+			while (i + 2 < int(bed_at.size()) && bed_at[i + 1] <= q) {
+				i++;
+			}
+			const float r_lo = i > 0 ? bed_rec[i - 1] : bed_rec[i];
+			const float r_hi = i + 1 < int(bed_rec.size()) ? bed_rec[i + 1] : bed_rec[i];
+			float r = bed_rec[i];
+			r += (r_lo - r) * (1.0f - Math::smoothstep(-step_w, step_w, q - bed_at[i]));
+			r += (r_hi - r) * Math::smoothstep(-step_w, step_w, q - bed_at[i + 1]);
+			const float along = rk_noise(p_p * 0.8f + Vector3(0, 0, float(i) * 7.3f), nseed + 93u);
+			const float fallen = Math::smoothstep(0.62f, 0.65f, rk_noise(p_p * 0.55f + Vector3(float(i) * 3.1f, 0, 0), nseed + 94u));
+			return r * (0.7f + 0.6f * along) + 0.12f * c * layered * fallen;
+		};
 		// Stack: the notch a fifth of the way up the solid as it stands after the cuts (not the grid's box).
 		float x_lo = 1e9f, x_hi = -1e9f;
 		for (int z = 0; z < fine.nz; z++) {
@@ -1103,22 +1141,35 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 		const float notch_x = x_lo + 0.22f * (x_hi - x_lo);
-		const float notch_w = 0.08f * a, notch_d = 0.38f * c;
+		const float notch_w = 0.08f * a, notch_d = 0.3f * c;
+		// Open joints: planar slots down the stack from its top (unloading opens them there first), a dark gap with
+		// flat walls, not a groove; they close at the tip.
 		struct Joint {
 			Vector3 n;
-			float d, w, depth, x0, x1;
+			float d, w, depth, x0;
 		};
 		LocalVector<Joint> joints;
 		if (family == FAMILY_SEA_STACK) {
 			const int count = 1 + int(rng.randf() * 1.99f);
 			for (int k = 0; k < count; k++) {
 				const float th = rng.randf() * float(Math::TAU);
-				// Open from the top down (unloading opens them there first), stopping well above the foot.
-				joints.push_back({ Vector3(0, Math::cos(th), Math::sin(th)), (rng.randf() - 0.5f) * 0.8f * c, 0.08f * c, 0.3f * c, (-0.3f + 0.8f * rng.randf()) * ex, ex });
+				joints.push_back({ Vector3(0, Math::cos(th), Math::sin(th)), (rng.randf() - 0.5f) * 0.8f * c, MAX(0.07f * c, 2.5f * h), 0.55f * c, x_lo + (0.35f + 0.4f * rng.randf()) * (x_hi - x_lo) });
 			}
 		}
-		// Arch.
-		const float tx0 = (rng.randf() - 0.5f) * 0.25f * a, trx = (0.45f + 0.1f * rng.randf()) * a, try_ = (1.3f + 0.2f * rng.randf()) * c;
+		// Arch: the opening follows the rock's planes: walls along a joint, nearly upright; the roof a bed's underside,
+		// stepping down a bed toward the walls where the roof's blocks have not fallen yet.
+		const float tx0 = (rng.randf() - 0.5f) * 0.3f * a, trx = (0.24f + 0.08f * rng.randf()) * a; // legs wider than the opening
+		float roof = -extent.y + (1.4f + 0.25f * rng.randf()) * c;
+		if (family == FAMILY_SEA_ARCH && bed_at.size() > 2) {
+			uint32_t best = 1;
+			for (uint32_t k = 1; k < bed_at.size(); k++) {
+				if (Math::abs(bed_at[k] - roof) < Math::abs(bed_at[best] - roof)) {
+					best = k;
+				}
+			}
+			roof = bed_at[best];
+		}
+		const float spring = -extent.y + (0.45f + 0.2f * rng.randf()) * (roof + extent.y); // the walls upright below it
 		// Platform: joint sets at 60 to 90 degrees, a few pools.
 		const float js = 0.5f + 0.25f * rng.randf(); // 3 to 5 m apart on a platform of 30 to 40 m
 		const float th1 = rng.randf() * float(Math::PI), th2 = th1 + float(Math::PI) * (0.33f + 0.17f * rng.randf());
@@ -1132,35 +1183,56 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				pools.push_back({ Vector3((rng.randf() - 0.5f) * 1.6f * a, extent.y + r - depth, (rng.randf() - 0.5f) * 1.4f), r });
 			}
 		}
+		const float near = 0.5f * c;
 		for (int z = 0; z < fine.nz; z++) {
 			for (int y = 0; y < fine.ny; y++) {
 				for (int x = 0; x < fine.nx; x++) {
 					const Vector3 p = fine.pos(x, y, z);
 					float &v = fine.v[fine.idx(x, y, z)];
-					if (bed_rec > 0.0f) {
-						// Beds of uneven thickness (the coordinate warped a little), each weathered back by its own
-						// amount, the step between two beds sharp: ledges and recesses, not ribs.
-						const float q = (p[bed_axis] + bed_off + 0.35f * bed_t * (rk_noise(p * 1.3f, nseed + 92u) - 0.5f)) / bed_t;
-						const float i = Math::floor(q), f = q - i;
-						const float u0 = rk_lattice(int(i), 7, 0, nseed + 91u), u1 = rk_lattice(int(i) + 1, 7, 0, nseed + 91u);
-						const float r0 = u0 < 0.45f ? 0.6f + 0.4f * u0 / 0.45f : 0.1f * u0;
-						const float r1 = u1 < 0.45f ? 0.6f + 0.4f * u1 / 0.45f : 0.1f * u1;
-						v += bed_rec * Math::lerp(r0, r1, Math::smoothstep(0.93f, 1.0f, f)) * (0.85f + 0.3f * rk_noise(p * 3.0f, nseed + 93u));
+					if (v > near) {
+						continue; // far outside: nothing here reaches the surface
+					}
+					const float v0 = v;
+					if (!bed_rec.is_empty()) {
+						// A recent fall's face keeps its beds flush: they have not had time to weather back.
+						bool fr = false;
+						if (v0 > -near) {
+							shape(p, &fr);
+						}
+						v += bed_recess(p) * (fr ? 0.25f : 1.0f);
+					}
+					if (family != FAMILY_SEA_PLATFORM) {
+						// No joint face is a plane at this size: blocks a metre or so across stand proud or sit back
+						// by a hand's breadth (quantised noise, so the facets meet in edges), with a lumpy face on them.
+						const float blk = rk_noise(p * 1.6f, nseed + 101u) * 4.0f;
+						const float bi = Math::floor(blk);
+						const float bq = (bi + Math::smoothstep(0.85f, 1.0f, blk - bi)) / 4.0f;
+						v += 0.07f * c * (bq - 0.5f) + 0.05f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
 					}
 					if (family == FAMILY_SEA_STACK) {
+						// The notch: a sloping floor up to a sharp roof (the visor), and below it the foot stays worn
+						// back, so the column does not widen into a plinth under the water.
 						const float t = (p.x - notch_x) / notch_w;
-						v += notch_d * Math::exp(-t * t) * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
+						const float prof = t > 1.0f ? 0.0f : (t > 0.75f ? 1.0f - (t - 0.75f) / 0.25f : (t > -1.5f ? 0.55f + 0.45f * (t + 1.5f) / 2.25f : 0.55f));
+						v += notch_d * prof * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
 						v += 0.18f * c * CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f); // narrower upward
-						v += 0.14f * c * (rk_fbm(p * 0.9f, nseed + 99u, 3) - 0.5f); // not a squared column
 						for (const Joint &jt : joints) {
-							const float on = Math::smoothstep(jt.x0, jt.x0 + 0.3f, p.x);
-							const float g = MAX(0.0f, 1.0f - Math::abs(jt.n.dot(p) - jt.d) / jt.w);
-							v += jt.depth * g * g * on;
+							const float off = jt.n.dot(p) - jt.d - 0.03f * c * (rk_noise(p * 1.7f, nseed + 97u) - 0.5f);
+							const float tip = CLAMP((p.x - jt.x0) / (0.25f * (x_hi - x_lo)), 0.0f, 1.0f);
+							const float slot = 0.5f * jt.w * Math::sqrt(tip) - Math::abs(off);
+							v = MAX(v, MIN(MIN(slot, p.x - jt.x0), v0 + jt.depth));
 						}
 					} else if (family == FAMILY_SEA_ARCH) {
-						v += 0.16f * c * (rk_fbm(p * 0.9f, nseed + 99u, 3) - 0.5f); // not a squared wall
-						const Vector2 e((p.x - tx0) / trx, (p.y + extent.y) / try_);
-						const float tun = (e.length() - 1.0f) * MIN(trx, try_);
+						const float yb = (p.y + extent.y) / MAX(roof + extent.y, 0.01f);
+						const float half_w = trx * (1.0f - 0.08f * CLAMP(yb, 0.0f, 1.0f)) + 0.03f * c * (rk_noise(p * 1.6f, nseed + 99u) - 0.5f);
+						const float wall = Math::abs(p.x - tx0) - half_w;
+						// The roof's blocks fall out one by one: a round-headed opening whose ceiling steps in blocks a
+						// fifth of the rock's thickness high (the ellipse's height snapped down, the step edges sharp).
+						const float u = MIN(Math::abs(p.x - tx0) / trx + 0.1f * (rk_noise(p * 1.1f, nseed + 103u) - 0.5f), 1.0f);
+						const float y_e = spring + (roof - spring) * Math::sqrt(MAX(1.0f - u * u, 0.0f));
+						const float st = 0.2f * c, sq = (y_e - spring) / st, si = Math::floor(sq);
+						const float r = spring + st * (si + Math::smoothstep(0.9f, 1.0f, sq - si));
+						const float tun = MAX(wall, p.y - r);
 						v = MAX(v, -tun);
 					} else {
 						// Joints: grooves cut down from the top a little way, their lines wandering.
@@ -1296,7 +1368,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Grain-scale roughness (grus on granite, sand grains on sandstone).
 		phi += lith.grain * float(detail) * 0.45f * hb * rk_fbm(p / (2.2f * hb), nseed, 2) * worn;
 		// Lumps a few voxels wide: no rock face is a plane.
-		phi += float(detail) * (fresh_family ? 0.45f : 1.1f) * hb * rk_fbm(p * 2.6f, nseed + 5u, 3) * (0.5f + 0.5f * worn);
+		phi += float(detail) * ((fresh_family || coast_form) ? 0.45f : 1.1f) * hb * rk_fbm(p * 2.6f, nseed + 5u, 3) * (0.5f + 0.5f * worn);
 		// Solution pits on the upper faces (karren on limestone; Ford and Williams 2007) or gas vesicles (basalt).
 		if (lith.pits > 0.0f) {
 			const bool karst = !lith.columnar;
@@ -2053,16 +2125,20 @@ void fragment() {
 	// barnacles over the stone, weed toward low water, all of it wet; above it the splash zone's black Verrucaria
 	// lichen in a tar-like band; the grey and orange lichens only above that. Ragged edges, a wave's reach not a line.
 	float above_sea = v_world.y - sea_level;
-	if (at_sea > 0.5 && above_sea < tide_range * 2.5) {
+	if (at_sea > 0.5 && above_sea < tide_range * 4.0) {
 		float zn = rk_fbm3(mp * 2.3 + 5.0);
 		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
 		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);
-		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.1, tide_range * 2.0, edge));
-		vec3 barnacle = vec3(0.36, 0.34, 0.30) * (0.65 + 0.7 * rk_noise3(mp * 140.0));
-		vec3 weed = vec3(0.07, 0.065, 0.03) * (0.8 + 0.4 * rk_noise3(mp * 9.0));
-		vec3 shore = mix(barnacle, weed, smoothstep(-0.05 * tide_range, -0.35 * tide_range, edge));
-		col = mix(col, shore, 0.85 * tidal);
-		col = mix(col, vec3(0.03, 0.03, 0.027), 0.9 * splash * (0.6 + 0.4 * smoothstep(0.35, 0.55, rk_fbm3(mp * 6.0 + 9.0) + 0.15)));
+		// On an exposed stack the swash throws the splash zone several metres up.
+		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.6, tide_range * 3.0, edge + 0.6 * tide_range * (rk_fbm3(mp * 0.9 + 2.0) - 0.5)));
+		// Barnacles: a dull grey-brown crust, specked by the shells' pale plates, not a clean pale band.
+		float shells = smoothstep(0.62, 0.8, rk_noise3(mp * 140.0));
+		vec3 barnacle = mix(vec3(0.13, 0.12, 0.10), vec3(0.42, 0.40, 0.35), shells) * (0.8 + 0.4 * rk_noise3(mp * 23.0));
+		vec3 weed = vec3(0.05, 0.045, 0.02) * (0.8 + 0.4 * rk_noise3(mp * 9.0));
+		vec3 shore = mix(barnacle, weed, 1.0 - smoothstep(-0.25 * tide_range, 0.1 * tide_range, edge + 0.3 * tide_range * (rk_fbm3(mp * 4.0) - 0.5)));
+		col = mix(col, shore, 0.9 * tidal);
+		col = mix(col, vec3(0.025, 0.025, 0.022), 0.92 * splash * (0.65 + 0.35 * smoothstep(0.35, 0.55, rk_fbm3(mp * 6.0 + 9.0) + 0.15)));
+		rough = mix(rough, 0.85, tidal);
 		film = max(film, tidal);
 	}
 	col = mix(col, col * vec3(0.75, 0.72, 0.55), 0.5 * film);

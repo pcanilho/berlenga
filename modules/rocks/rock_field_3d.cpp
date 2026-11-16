@@ -1093,7 +1093,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			spots.sort_custom<ByScore>();
 			const Spot &sp = spots[0];
 			const RockGenerator::RockType type = _type_at(gen, sp.p + sp.to_land * 30.0);
-			const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
+			// The stack's fallen blocks: fresh fragments of all forms (slabs, wedges, rods), not wall blocks.
+			const uint32_t key = _library_key(type, RockGenerator::FAMILY_ROCKFALL, 0);
 			Library *lib = _ensure_library(key);
 			if (!lib) {
 				break;
@@ -1149,7 +1150,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						fb.layer = p_layer;
 						fb.library = key;
 						fb.variant = pick_variant(lib);
-						fb.scale = w * (0.08f + 0.08f * rng.randf());
+						fb.scale = w * (0.06f + 0.12f * rng.randf() * rng.randf());
 						const Vector3 at = sp.p + Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f).normalized() * w * (0.8f + 0.5f * rng.randf());
 						_rest(gen, fb, *lib, at, rng.randf() * Math::TAU, 0.2, Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(20.0f) * rng.randf(), 0.6);
 						r_stones.push_back(fb);
@@ -1324,9 +1325,12 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 			// Stones the sea reaches carry the shore zones (the shader's sea_level): the coast's forms, and shore
 			// stones on the sea's own beach (not a lake's, not the land near sea level inland). Flagged as film + 2.
 			bool at_sea = false;
-			if (has_sea && (st.layer == LAYER_COAST || st.layer == LAYER_SHORE) && Math::abs(st.ground - sea) < 6.0) {
+			// (A coast form's ground sits far below it, so it is not tested against the sea.)
+			if (has_sea && st.layer == LAYER_COAST) {
+				at_sea = true;
+			} else if (has_sea && st.layer == LAYER_SHORE && Math::abs(st.ground - sea) < 6.0) {
 				const real_t level = sea_gen->get_water_level(st.position);
-				at_sea = st.layer == LAYER_COAST || (!Math::is_nan(level) && Math::abs(level - sea) < 0.5);
+				at_sea = !Math::is_nan(level) && Math::abs(level - sea) < 0.5;
 			}
 			const Color cd(st.ground, st.film + (at_sea ? 2.0f : 0.0f), st.scale, rng.randf());
 			mm->set_instance_transform(int(k), xf);
