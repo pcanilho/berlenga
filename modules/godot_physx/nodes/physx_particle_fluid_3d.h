@@ -106,10 +106,10 @@ private:
 	// the fluid, and RigidBody3D entries get the reaction impulse back. Up to 32
 	// total (see MAX_COLLIDERS), shared with auto-collected bodies and debris.
 	TypedArray<NodePath> mpm_colliders;
-	// When set, also collides against every non-static PhysicsBody3D overlapping
-	// the domain each step -- so the fluid reacts to the player, thrown objects
-	// etc. without listing them, the way the CUDA path does automatically.
-	bool mpm_auto_colliders = false;
+	// When set, also collides against every body shape overlapping the domain each
+	// step (static ones only through exact shapes) -- so the fluid reacts to walls,
+	// the player, thrown objects etc. without listing them, the way the CUDA path does.
+	bool mpm_auto_colliders = true;
 	RID _mpm_query_shape; // box shape reused for the auto-collider overlap query
 	HashMap<ObjectID, Vector3> _mpm_prev_pos; // last frame's position, for velocity of non-rigid colliders
 
@@ -199,6 +199,8 @@ private:
 	// always-identity instance sidesteps this by never needing the conversion
 	// at all, the same way foam already avoids it.
 	RID array_mesh_instance;
+	RID array_mesh_shadow_instance; // the same mesh, drawn only into shadow maps (_make_surface_shadow_instance)
+	Ref<Material> shadow_material;
 	Ref<Material> water_material;
 	uint32_t surface_mesh_version = 0;
 
@@ -244,6 +246,7 @@ private:
 	// material_override) only ever touches get_instance(), so VoxelGI/baked-light
 	// participation has to be reapplied to each of them by hand instead.
 	void _apply_gi_mode(RID p_instance) const;
+	void _make_surface_shadow_instance();
 	void _emit_step(double p_delta);
 
 protected:

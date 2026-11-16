@@ -102,7 +102,7 @@ class Landscape3D : public Node3D {
 	int chunk_quads = 64;
 	int lod_levels = 5;
 	real_t lod_error = 1.0;
-	real_t cliff_relief = 0.0; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
+	real_t cliff_relief = 0.6; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
 	Ref<Material> material;
 	bool cast_shadows = true;
 	NodePath camera_path;

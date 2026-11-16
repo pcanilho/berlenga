@@ -67,14 +67,17 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sky_map; // w: 1 = present
 } p;
 
-// The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane).
+// The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane), at most
+// SKY_DISTANCE: it is kept in a 16-bit float, whose largest value is 65504, and a larger one (the sky)
+// would no longer match itself there, so the sky's texels would neither blend over time nor upsample.
+const float SKY_DISTANCE = 60000.0;
 float scene_distance(ivec2 frame_px, float depth) {
 	if (depth <= 1e-7) {
-		return 1e6;
+		return SKY_DISTANCE;
 	}
 	vec2 uv = (vec2(frame_px) + 0.5) / vec2(p.size.xy);
 	vec4 h = p.inv_view_projection * vec4(uv * 2.0 - 1.0, depth, 1.0);
-	return length(h.xyz / h.w - p.camera.xyz);
+	return min(length(h.xyz / h.w - p.camera.xyz), SKY_DISTANCE);
 }
 )";
 
@@ -707,6 +710,17 @@ void main() {
 		// A joint bilateral upsample (Kopf et al. 2007): the 4x4 texels around the pixel, by a Gaussian
 		// of their distance (wider and smoother than the bilinear tent, so the texel grid does not show
 		// where the gas thins out) and by how close their scene distance is to the pixel's.
+		// The gap a texel may have and still be the same surface: the slope of the pixel's own surface
+		// across a texel or two (a floor seen at a grazing angle changes distance fast from row to row,
+		// and its light must still blend there, or it steps at every texel row). Each way the smaller
+		// of the two one-sided differences, so an edge next to the pixel does not widen it.
+		ivec2 hi_px = p.size.xy - 1;
+		float dxp = scene_distance(min(px + ivec2(r, 0), hi_px), texelFetch(depth_tex, min(px + ivec2(r, 0), hi_px), 0).r);
+		float dxm = scene_distance(max(px - ivec2(r, 0), ivec2(0)), texelFetch(depth_tex, max(px - ivec2(r, 0), ivec2(0)), 0).r);
+		float dyp = scene_distance(min(px + ivec2(0, r), hi_px), texelFetch(depth_tex, min(px + ivec2(0, r), hi_px), 0).r);
+		float dym = scene_distance(max(px - ivec2(0, r), ivec2(0)), texelFetch(depth_tex, max(px - ivec2(0, r), ivec2(0)), 0).r);
+		float slope = max(min(abs(dxp - d), abs(dxm - d)), min(abs(dyp - d), abs(dym - d))) / max(d, 0.01);
+		float tolerance = 0.03 + 2.0 * slope;
 		vec2 f = (vec2(px) + 0.5) / float(r) - 0.5;
 		ivec2 base = ivec2(floor(f));
 		ivec2 hi = p.size.zw - 1;
@@ -720,7 +734,9 @@ void main() {
 				vec2 offset = vec2(base + ivec2(i, j)) - f;
 				float spatial = exp(-dot(offset, offset) * (1.0 / (2.0 * 0.7 * 0.7)));
 				float gap = abs(t.a - d) / max(d, 0.01);
-				float weight = spatial / (0.02 + gap * 20.0);
+				float g4 = gap / tolerance;
+				g4 *= g4;
+				float weight = spatial / (1.0 + g4 * g4);
 				sum += t.rgb * weight;
 				total += weight;
 				if (gap < nearest_gap) {

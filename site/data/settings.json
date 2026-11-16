@@ -700,7 +700,7 @@
     "apron_slope"
    ],
    "note": "",
-   "what": "paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview` (off by default), a 4x coarser run follows a guide in the editor as it is drawn.",
+   "what": "paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview`, a 4x coarser run follows a guide in the editor as it is drawn.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -784,7 +784,7 @@
     "glacial_erosion"
    ],
    "note": "",
-   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged` (off by default), the ice settles to a steady state before it carves, conserving mass over cliffs.",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`; 0 is even rock) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged`, the ice settles to a steady state before it carves, conserving mass over cliffs.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -840,7 +840,7 @@
     "scree_age"
    ],
    "note": "",
-   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks.",
+   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks, with gravel and fines between them up close.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -964,6 +964,17 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "Coastal dunes",
+   "settings": [
+    "dunes_enabled"
+   ],
+   "note": "",
+   "what": "beaches feed wind-blown sand inland; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Geology maps",
    "settings": [
     "terrain_geology()"
@@ -1038,7 +1049,7 @@
     "cliff_relief"
    ],
    "note": "",
-   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`, off by default).",
+   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1051,7 +1062,7 @@
     "far_fade"
    ],
    "note": "",
-   "what": "far ground takes the colour of the plant cover map. With `far_start_from_vegetation` (off by default) the blend starts where the streamed plants end, else at `far_start`.",
+   "what": "far ground takes the colour of the plant cover map. With `far_start_from_vegetation` the blend starts where the streamed plants end, else at `far_start`.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1238,7 +1249,7 @@
     "ground_material"
    ],
    "note": "",
-   "what": "stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
+   "what": "stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band (the landscape's TerrainMaterial3D when `ground_material` is unset), and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
@@ -1319,7 +1330,6 @@
     "speleothems",
     "scallops",
     "add_sea_cave()",
-    "RockField3D.cave_mouths",
     "terrain3d"
    ],
    "note": "",
@@ -2389,7 +2399,7 @@
     "bark_wounds"
    ],
    "note": "",
-   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks and knots on lying logs.",
+   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2400,7 +2410,7 @@
     "moss_cover"
    ],
    "note": "",
-   "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.",
+   "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2470,7 +2480,7 @@
     "near_leaf_range"
    ],
    "note": "",
-   "what": "lobed and compound leaves are built only for trees near the camera; further out each leaf is a simple leaf of the same area.",
+   "what": "lobed and compound leaves are built for trees near the camera; further out each leaf is a simple leaf of the same area.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2515,7 +2525,7 @@
     "uprooted"
    ],
    "note": "",
-   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
+   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood; peeled edges show the bark's thickness. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"

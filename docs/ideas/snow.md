@@ -721,9 +721,10 @@ in production.
   sets it; raster ignores it. `SnowSurface3D` uses it, and `snow_glint_apply_specular()` in
   `get_snow_shader_code()` gives other snow shaders the same (the terrain material).
 - **Wet and trodden snow** fade to the plain rough lobe exactly as stage 5's glints do.
-- **Toggle.** The global shader parameter `snow_exact_glints` (rt_param 57), off by default: at the
-  samples a CPU check can afford the result is grainy (8% of pixels glint at 16 samples against 0.1%
-  for the grid), which the denoiser is there to settle. Off, the path tracer keeps stage 5's grid.
+- **Toggle.** The global shader parameter `snow_exact_glints` (rt_param 57). It shipped off at first and has
+  been on by default since 16 Nov 2026 (every feature on; tuning comes later). At the samples a CPU check can
+  afford the result is grainy (8% of pixels glint at 16 samples against 0.1% for the grid), which the
+  denoiser is there to settle. Off, the path tracer keeps stage 5's grid.
 
 **Checks.** `--view=sparkle --spp=16 --glints=exact` (and `--view=trail ...` for `SnowSurface3D`): mean
 luminance 0.634 against 0.624 for the grid and 0.619 in raster (with the samples spread over the

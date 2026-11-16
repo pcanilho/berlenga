@@ -66,8 +66,8 @@
 		<member name="detail_octaves" type="int" setter="set_detail_octaves" getter="get_detail_octaves" default="4">
 			Octaves of the erosion detail normal. It fades out where a pixel covers it.
 		</member>
-		<member name="far_blend_enabled" type="bool" setter="set_far_blend_enabled" getter="is_far_blend_enabled" default="false">
-			If [code]true[/code], far ground takes the plant cover's colour from the cover map a [VegetationField3D] publishes, taking over from the near grass tint between [member far_start] and [member far_start] + [member far_fade].
+		<member name="far_blend_enabled" type="bool" setter="set_far_blend_enabled" getter="is_far_blend_enabled" default="true">
+			If [code]true[/code], far ground takes the plant cover's colour from the cover map a [VegetationField3D] publishes, taking over from the near grass tint between [member far_start] and [member far_start] + [member far_fade]. Without a field publishing the cover map it does nothing.
 		</member>
 		<member name="far_fade" type="float" setter="set_far_fade" getter="get_far_fade" default="150.0">
 			Distance in metres over which the far blend takes over.
@@ -75,10 +75,10 @@
 		<member name="far_start" type="float" setter="set_far_start" getter="get_far_start" default="300.0">
 			Distance from the camera in metres where the far blend starts.
 		</member>
-		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="false">
+		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="true">
 			If [code]true[/code], the far blend ends where a streaming [VegetationField3D]'s placed plants end (the global shader parameter [code]vegetation_near_radius[/code]): it starts at that radius less [member far_fade]. With no field streaming it uses [member far_start].
 		</member>
-		<member name="cliff_self_shadow" type="bool" setter="set_cliff_self_shadow" getter="is_cliff_self_shadow" default="false">
+		<member name="cliff_self_shadow" type="bool" setter="set_cliff_self_shadow" getter="is_cliff_self_shadow" default="true">
 			If [code]true[/code], ledges of a [Landscape3D]'s [member Landscape3D.cliff_relief] shadow each other per pixel under the first directional light: a short march toward the sun through the same relief that bends the faces' normals. The shadow map holds the ledges only near the camera and too coarsely for half-metre steps; the march keeps their shadow lines sharp at any distance where the relief is wider than a pixel. Forward+ and Mobile; the path tracer traces the real shadows instead.
 		</member>
 		<member name="geology_enabled" type="bool" setter="set_geology_enabled" getter="is_geology_enabled" default="true">
@@ -89,6 +89,9 @@
 		</member>
 		<member name="ground_deform_enabled" type="bool" setter="set_ground_deform_enabled" getter="is_ground_deform_enabled" default="true">
 			Take prints from a [GroundSurface3D] whose [member GroundSurface3D.material] is this material: the terrain sinks under the printed patch and freshly turned ground darkens (see [method BaseMaterial3D.get_ground_deform_shader_code]).
+		</member>
+		<member name="rock_detail_enabled" type="bool" setter="set_rock_detail_enabled" getter="is_rock_detail_enabled" default="true">
+			If [code]true[/code], steep faces and scree get rock detail without textures: a height from 3D noise (joints, beds, pits) and scree stones over a gravel and fines matrix, turned into a normal by its surface gradient and filtered by the pixel's footprint so it does not alias. [member rock_detail_scale] sets its size.
 		</member>
 		<member name="rock_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Bare rock.

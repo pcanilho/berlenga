@@ -37,6 +37,8 @@ extends Node3D
 #   --source-lakes        rivers that start at a lake take their discharge from its outlet (PhysXRiver3D.source_lake)
 #   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
 #   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
+#   --dunes=steps|0       coastal dunes behind the beaches (dunes_enabled, on); --dune-supply=m3/m, --dune-belt=m,
+#                         --dune-cell=m, --dune-wind=degrees from onshore, --dune-veg=0..1 (0: bare sand)
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
 #                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
@@ -194,6 +196,10 @@ func _ready() -> void:
 		var n := int(args["find-caves"]) if args["find-caves"] != "1" else 8
 		for e in net.find_entrances(gen.get_world_rect(), n):
 			print("[landscape] cave entrance %s facing %s" % [e["position"], e["out"]])
+		get_tree().quit(0)
+		return
+	if args.has("dune-map"):
+		_save_dune_map(args["dune-map"])
 		get_tree().quit(0)
 		return
 	if args.has("map"):
@@ -680,6 +686,10 @@ func _generate() -> void:
 		lake_marker.set_meta("rock_lip", true)
 		add_child(lake_marker)
 	gen = TerrainGenerator3D.new()
+	# Heavy generator options are on by default: this bench sets each from its own flags (dunes on, --dunes=0 off).
+	gen.glacial_enabled = false
+	gen.glacial_converged = false
+	gen.guide_preview = false
 	gen.name = "Generator"
 	gen.size = Vector2(GEN_SIZE, GEN_SIZE)
 	gen.cell_size = float(args.get("cell", "16"))
@@ -707,6 +717,15 @@ func _generate() -> void:
 	gen.meander_age = float(args.get("meander-age", "0"))
 	gen.outwash_age = float(args.get("outwash-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
+	gen.dunes_enabled = args.get("dunes", "1") != "0"
+	if gen.dunes_enabled:
+		if args.get("dunes", "1") != "1":
+			gen.dune_steps = int(args["dunes"])
+		gen.dune_supply = float(args.get("dune-supply", str(gen.dune_supply)))
+		gen.dune_belt_width = float(args.get("dune-belt", str(gen.dune_belt_width)))
+		gen.dune_cell = float(args.get("dune-cell", str(gen.dune_cell)))
+		gen.dune_wind_angle = float(args.get("dune-wind", "0"))
+		gen.dune_vegetation = float(args.get("dune-veg", "1"))
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
 		gen.glacial_enabled = true
@@ -718,7 +737,7 @@ func _generate() -> void:
 		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
 		gen.glacial_inflow_balance = float(args.get("ice-inflow", "0"))
 		gen.glacial_coarse_cell = float(args.get("ice-coarse", "0"))
-		gen.ice_worn_detail = args.has("ice-worn")
+		gen.ice_worn_detail = args.get("ice-worn", "1") != "0"
 		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
@@ -978,6 +997,8 @@ func _generate() -> void:
 			_log("touch-ups undone: %d cells moved, %d lakes, ground at (100, 0) %.1f m (was %.1f m)" % [gen.get_last_touch_up_cells(), gen.get_lake_results().size(), gen.get_height(Vector3(100, 0, 0)), h0])
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
+	if gen.dunes_enabled:
+		_log("dunes: %.0f ms, %.0f m3 of sand, deepest %.1f m" % [gen.get_last_dune_msec(), gen.get_last_dune_volume(), gen.get_last_dune_max()])
 	if gen.glacial_enabled:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m, ice imbalance %.2f m/yr (%d cycles)" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded(), gen.get_last_glacial_residual(), gen.get_last_glacial_steps()])
 		for l in gen.get_lake_results():
@@ -1164,6 +1185,39 @@ func _range_path(n: String, pts: Array, width: float, uplift: float) -> Path3D:
 
 # A top-down map of the generated land for laying out a scene quickly: hillshade, sea and lakes in blue, rivers in
 # cyan, the generator's waterfalls in red. 16 m a pixel, north up.
+# --dune-map=path.png[,x0,z0,size]: the dunes from above at their grid's spacing (or a square of the given size),
+# hillshaded, bare sand tan and marram green, then quit.
+func _save_dune_map(spec: String) -> void:
+	var parts := spec.split(",")
+	var r: Rect2 = gen.get_dune_rect()
+	if parts.size() >= 4:
+		r = Rect2(float(parts[1]), float(parts[2]), float(parts[3]), float(parts[3]))
+	if r.size.x <= 0.0:
+		_log("dune map: no dunes")
+		return
+	var step := float(gen.dune_cell)
+	var sz := Vector2i(int(r.size.x / step), int(r.size.y / step))
+	var hm: Image = gen.sample_heights(r.position, step, sz)
+	var img := Image.create(sz.x, sz.y, false, Image.FORMAT_RGB8)
+	var light := Vector3(-0.5, 0.75, -0.45).normalized()
+	for z in range(sz.y):
+		for x in range(sz.x):
+			var hc := hm.get_pixel(x, z).r
+			var hx := hm.get_pixel(mini(x + 1, sz.x - 1), z).r - hm.get_pixel(maxi(x - 1, 0), z).r
+			var hz := hm.get_pixel(x, mini(z + 1, sz.y - 1)).r - hm.get_pixel(x, maxi(z - 1, 0)).r
+			var nrm := Vector3(-hx, 4.0 * step, -hz).normalized()
+			var sh := clampf(nrm.dot(light), 0.0, 1.0)
+			var p := r.position + Vector2(x, z) * step
+			var c := Color(0.2, 0.32, 0.55)
+			if hc > float(gen.sea_level) + 0.05:
+				var sand := clampf(gen.get_dune_height(Vector3(p.x, 0, p.y)) / 0.3, 0.0, 1.0)
+				var veg := gen.get_dune_stability(Vector3(p.x, 0, p.y))
+				c = Color(0.42, 0.45, 0.32).lerp(Color(0.86, 0.78, 0.6), sand).lerp(Color(0.38, 0.52, 0.26), veg * sand)
+			img.set_pixel(x, z, c * (0.3 + 0.7 * sh))
+	img.save_png(spec.split(",")[0])
+	_log("dune map saved %s (%s, %.1f m a pixel)" % [spec.split(",")[0], r, step])
+
+
 func _save_map(path: String) -> void:
 	if args.has("profile"):
 		# Heights along rows (--profile=z1,z2,...): every 100 m across the map.
@@ -1324,8 +1378,8 @@ func _build_ground() -> void:
 		var tm := TerrainMaterial3D.new()
 		tm.use_generator(gen)
 		tm.detail_octaves = int(args.get("mdetail", "4"))
-		tm.rock_detail_enabled = args.has("rock-detail")
-		tm.cliff_self_shadow = args.has("ledge-shadow") # --ledge-shadow: ledges of --cliff-relief shadow each other per pixel (raster)
+		tm.rock_detail_enabled = args.get("rock-detail", "1") != "0"
+		tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: ledges of --cliff-relief without their per-pixel shadows (raster)
 		if args.has("far-cover"):
 			# Far ground blend against the plant cover map the world field builds (cover_map_enabled below).
 			tm.far_blend_enabled = true

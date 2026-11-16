@@ -268,14 +268,14 @@
 		<member name="glacial_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="300.0">
 			How far round the follow target glacial boulders are built.
 		</member>
-		<member name="ground_blend" type="bool" setter="set_ground_blend" getter="is_ground_blend" default="false">
+		<member name="ground_blend" type="bool" setter="set_ground_blend" getter="is_ground_blend" default="true">
 			Eases each stone's foot into the ground under it: over a band of [member ground_blend_height] the stone takes the ground layer's colour and roughness (the hollows first, the proud parts last, with a thinning dust above) and its normal turns toward the ground's, following the slope under the stone. The layer comes from the generator's geology, coloured as [member ground_material]'s layers.
 		</member>
 		<member name="ground_blend_height" type="float" setter="set_ground_blend_height" getter="get_ground_blend_height" default="0.25">
 			The ground-blend band's height in metres for a 1 m stone; it grows with the square root of the stone's size.
 		</member>
 		<member name="ground_material" type="ShaderMaterial" setter="set_ground_material" getter="get_ground_material">
-			The landscape's [TerrainMaterial3D]: the ground blend takes each layer's colour times the mean of its albedo texture. Without one, the terrain material's default colours.
+			Overrides the material the ground blend takes its colours from: each layer's colour times the mean of its albedo texture. When unset, the field uses the [TerrainMaterial3D] of the [Landscape3D] that draws its generator (else any landscape's), so the blend matches the ground with no wiring; with no landscape either, the terrain material's default colours.
 		</member>
 		<member name="landform_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many landforms are placed.
@@ -289,7 +289,7 @@
 		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="0.5">
 			Lichen crust on upper faces, from 0 to 1.
 		</member>
-		<member name="live_rockfall" type="bool" setter="set_live_rockfall" getter="is_live_rockfall" default="false">
+		<member name="live_rockfall" type="bool" setter="set_live_rockfall" getter="is_live_rockfall" default="true">
 			Cliff blocks near the follow target come loose now and then and fall as [PhysXDestructible3D] bodies that break on hard impacts and stay as debris. The falls follow a Poisson process at [member live_rockfall_rate] times [method get_rockfall_trigger]: more in frost and thaw and in heavy rain. A block's fracture is built on a worker first, so a fall does not stall the frame. Needs the godot_physx module and the cliff layer. The signal [signal rockfall] reports each fall.
 		</member>
 		<member name="live_rockfall_max" type="int" setter="set_live_rockfall_max" getter="get_live_rockfall_max" default="16">
@@ -304,7 +304,7 @@
 		<member name="max_stones_per_cell" type="int" setter="set_max_stones_per_cell" getter="get_max_stones_per_cell" default="12000">
 			Caps the stones of one cell of one layer.
 		</member>
-		<member name="mineral_glints" type="bool" setter="set_mineral_glints" getter="is_mineral_glints" default="false">
+		<member name="mineral_glints" type="bool" setter="set_mineral_glints" getter="is_mineral_glints" default="true">
 			Glossy crystals smaller than a pixel still flash: quartz and feldspar cleavage on granite, quartz and mica grains on the other rocks, counted per cell of the pixel's footprint in raster and the exact crystal's facet under the path tracer. Lichen, moss, a water film, snow and the ground's dust cover them; the weathered rind dulls them.
 		</member>
 		<member name="min_size" type="float" setter="set_min_size" getter="get_min_size" default="0.08">

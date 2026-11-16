@@ -25,7 +25,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Crests: before, a thin regular comb along the summits; now, irregular crests and pinnacles.*
 
-- **Terrain guides** (`TerrainGuide3D`: Raise, Lower, Bar, `apron_slope`): paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview` (off by default), a 4x coarser run follows a guide in the editor as it is drawn.
+- **Terrain guides** (`TerrainGuide3D`: Raise, Lower, Bar, `apron_slope`): paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview`, a 4x coarser run follows a guide in the editor as it is drawn.
 
   ![A generated valley from above, without and with a drawn ridge guide](media/terrain-guide.jpg)
 
@@ -67,23 +67,23 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
 
-- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged` (off by default), the ice settles to a steady state before it carves, conserving mass over cliffs.
+- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`; 0 is even rock) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged`, the ice settles to a steady state before it carves, conserving mass over cliffs.
 - **Valley fill** (`outwash_age`): sediment left after the ice fills glacial troughs to flat floors, while cirque lakes stay open.
 - **Moraines** (`moraine_age`, years, 0 = off): debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.
 - **Ice-worn rock** (`ice_worn_detail`): faces toward the old ice flow are smoothed, faces away are stepped, with striations.
 - **Cliff ledges** (`cliff_ledge_spacing`, `cliff_ledge_strength`): rock beds of uneven thickness step faces steeper than 40 degrees into ledges.
-- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks.
+- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks, with gravel and fines between them up close.
 - **Fallen blocks** (`get_boulders(rect, density)`): blocks shed by cliffs rest below them, the largest furthest out.
 
 ## Rivers, coasts and lakes
 
-- **River deposition** (`deposition`, off by default): rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.
+- **River deposition** (`deposition`): rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.
 
   ![A generated range around a wide flat valley floor that runs down to the beach, raster](media/terrain-deposition.jpg)
 
   *River deposition: the rivers fill the valley between the ridges with a flat alluvial floor.*
 
-- **Meandering rivers** (`meander_age`, years, off by default): bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.
+- **Meandering rivers** (`meander_age`, years): bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.
 
   ![A river across a valley floor before and after 3000 years of meandering, raster](media/terrain-meanders.jpg)
 
@@ -107,6 +107,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   ![The island, raster and path traced](media/terrain-coast.jpg)
 
   *Coast and lakes: beaches, a shelving seabed and lakes behind dams, from one seed.*
+
+- **Coastal dunes** (TerrainGenerator3D `dunes_enabled`): beaches feed wind-blown sand inland; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails.
 
 ## Maps
 
@@ -138,15 +140,15 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Sky occlusion** (`TerrainGenerator3D.sky_occlusion`, `TerrainMaterial3D.sky_occlusion`): raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.
 
-- **Rock detail** (`rock_detail_enabled`, off by default): steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.
+- **Rock detail** (`rock_detail_enabled`): steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.
 
-- **Cliff relief** (Landscape3D `cliff_relief`, metres, off by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`, off by default).
+- **Cliff relief** (Landscape3D `cliff_relief`, metres, 0.6 m by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`).
 
   ![A cliff face in raking sun, smooth and with cliff relief, raster](media/terrain-cliff-relief.jpg)
 
   *Cliff relief: ledges and joint steps cast shadows across the face.*
 
-- **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`, off by default): far ground takes the colour of the plant cover map. With `far_start_from_vegetation` (off by default) the blend starts where the streamed plants end, else at `far_start`.
+- **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`): far ground takes the colour of the plant cover map. With `far_start_from_vegetation` the blend starts where the streamed plants end, else at `far_start`.
 
 - **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves. Heights stream in coarse first and chunk meshes build on worker threads (`stream_heights`); baked heights load 4 km at 1 m in under a second.
 
@@ -164,9 +166,9 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Soft ground** (PhysXVehicle3D `soft_soil`, on by default; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`, on by default): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept.
-- **Wind ripples** (`GroundSurface3D.wind_ripples`, off by default; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.
+- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.
 - **Blowing sand** (`GroundStreamers3D`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.
-- **Sand glints** (`GroundSurface3D.sand_glints`, off by default): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.
+- **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.
 
   ![Dry sand 40 cm from the camera at full resolution, without and with sand glints, raster](media/sand-glints.jpg)
 
@@ -178,6 +180,6 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Wet sand: the band the sea has soaked turns glossy and catches the sun.*
 
-- **Runoff channels** (`GroundSurface3D.runoff_channels`, off by default): water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.
+- **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.
 
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.

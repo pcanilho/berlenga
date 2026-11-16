@@ -30,6 +30,7 @@
 
 #include "rock_field_3d.h"
 
+#include "modules/terrain_deform/landscape_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
 
@@ -46,7 +47,9 @@
 
 #include <cmath>
 #include "scene/3d/physics/static_body_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
 #include "scene/resources/3d/convex_polygon_shape_3d.h"
 #include "scene/resources/3d/importer_mesh.h"
@@ -2806,6 +2809,12 @@ void RockField3D::restore_broken() {
 
 void RockField3D::rebuild() {
 	clear();
+	auto_ground_found = false;
+	if (ground_material.is_null() && is_inside_tree()) {
+		for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+			_apply_ground(kv.value);
+		}
+	}
 	restore_broken();
 	fractures.clear();
 	obstacle_cache.clear();
@@ -3155,6 +3164,41 @@ void RockField3D::set_lichen_cover(real_t p_cover) {
 	}
 }
 
+// The material the blend band takes its ground colours from: ground_material when set, else the TerrainMaterial3D
+// of the Landscape3D that draws this field's generator (any landscape's when the field has no generator), so the
+// blend matches the ground without any wiring. Looked up once per rebuild.
+Ref<ShaderMaterial> RockField3D::_ground_source() const {
+	if (ground_material.is_valid()) {
+		return ground_material;
+	}
+	if (auto_ground_found || !is_inside_tree()) {
+		return auto_ground;
+	}
+	auto_ground_found = true;
+	auto_ground.unref();
+	const Node *gen = get_node_or_null(generator_path);
+	const TypedArray<Node> found = get_tree()->get_root()->find_children("*", "Landscape3D", true, false);
+	for (int i = 0; i < found.size(); i++) {
+		const Landscape3D *land = Object::cast_to<Landscape3D>(found[i]);
+		if (!land) {
+			continue;
+		}
+		const Ref<ShaderMaterial> m = land->get_material();
+		if (m.is_null() || !m->is_class("TerrainMaterial3D")) {
+			continue;
+		}
+		const Node *src = land->get_node_or_null(land->get_source());
+		if (gen && src == gen) {
+			auto_ground = m;
+			break;
+		}
+		if (auto_ground.is_null()) {
+			auto_ground = m;
+		}
+	}
+	return auto_ground;
+}
+
 // The ground's layer colours for the blend band: a TerrainMaterial3D's tm_<layer>_color times the mean of its albedo
 // texture (the texture's detail averages out over the band), as linear albedo. Without a ground material, the
 // terrain material's own defaults.
@@ -3164,14 +3208,15 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 	p_material->set_shader_parameter("ground_blend", ground_blend);
 	p_material->set_shader_parameter("mineral_glints", mineral_glints);
 	p_material->set_shader_parameter("ground_blend_height", ground_blend_height);
+	const Ref<ShaderMaterial> ground = _ground_source();
 	for (int i = 0; i < 5; i++) {
 		Color c = defaults[i];
-		if (ground_material.is_valid()) {
-			const Variant v = ground_material->get_shader_parameter(StringName(String("tm_") + names[i] + "_color"));
+		if (ground.is_valid()) {
+			const Variant v = ground->get_shader_parameter(StringName(String("tm_") + names[i] + "_color"));
 			if (v.get_type() == Variant::COLOR) {
 				c = v;
 			}
-			const Ref<Texture2D> tex = ground_material->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_tex"));
+			const Ref<Texture2D> tex = ground->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_tex"));
 			if (tex.is_valid()) {
 				Ref<Image> img = tex->get_image();
 				if (img.is_valid() && !img->is_empty()) {
@@ -3193,7 +3238,7 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 					}
 				}
 			}
-			const Variant aa = ground_material->get_shader_parameter("tm_alluvium_area");
+			const Variant aa = ground->get_shader_parameter("tm_alluvium_area");
 			if (aa.get_type() == Variant::FLOAT) {
 				p_material->set_shader_parameter("ground_alluvium_area", aa);
 			}
@@ -3317,6 +3362,7 @@ void RockField3D::set_streaming(bool p_streaming) {
 void RockField3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
+			auto_ground_found = false;
 			set_process_internal(streaming || live_rockfall);
 			fall_rng.seed(uint64_t(seed) * 2654435761u + 17);
 		} break;

@@ -105,6 +105,26 @@
 				Drainage area per grid node, [constant Image.FORMAT_RF], square metres.
 			</description>
 		</method>
+		<method name="get_dune_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Metres of wind-blown sand the dunes ([member dunes_enabled]) laid over the ground at [param global_position] (x and z); 0 outside them. [method get_height] includes it.
+			</description>
+		</method>
+		<method name="get_dune_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The world x and z rectangle the dunes' grid covers; empty without dunes.
+			</description>
+		</method>
+		<method name="get_dune_stability" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Marram cover on the dunes at [param global_position] (x and z), 0 bare and mobile to 1 fixed; 0 outside them. For plant rules: bare sand, partly fixed or fixed dunes.
+			</description>
+		</method>
 		<method name="get_geology_at" qualifiers="const">
 			<return type="Color" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -195,6 +215,24 @@
 			<return type="int" />
 			<description>
 				Deposition passes the last [method generate] ran, over all steps and levels (0 with [member deposition] 0). Each step solves the deposition exactly in two sweeps, then runs passes until no node moves 5 cm; one or two a step is usual.
+			</description>
+		</method>
+		<method name="get_last_dune_max" qualifiers="const">
+			<return type="float" />
+			<description>
+				The deepest sand (m) the last dune run left; 0 without [member dunes_enabled].
+			</description>
+		</method>
+		<method name="get_last_dune_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last dune run took.
+			</description>
+		</method>
+		<method name="get_last_dune_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				Cubic metres of sand the last dune run left on the land.
 			</description>
 		</method>
 		<method name="get_last_generate_msec" qualifiers="const">
@@ -537,7 +575,7 @@
 		<member name="deformer" type="NodePath" setter="set_deformer" getter="get_deformer" default="NodePath(&quot;&quot;)">
 			Optional [TerrainDeformer3D]. Its brushes are lifted before the write and applied again after it, and its terrain is used when [member terrain] is empty.
 		</member>
-		<member name="deposition" type="float" setter="set_deposition" getter="get_deposition" default="0.0">
+		<member name="deposition" type="float" setter="set_deposition" getter="get_deposition" default="0.5">
 			Sediment deposition, the [code]G[/code] of Yuan et al. 2019: [code]dh/dt = U - K A^m S + (G / A) Qs[/code], with [code]Qs[/code] the sediment carried from upstream. 0 keeps rivers cutting only. Where ranges rise out of ground that does not rise (low [member base_uplift]), about 0.5 makes the rivers leaving the mountains build flat alluvial plains with winding channels; higher values build fans up the range front. Where all the ground rises, deposition steepens the rivers instead and the mountains stand higher. Alluvium is added to [method get_sediment_depth]. Generation takes up to about 80% longer.
 		</member>
 		<member name="detail_assumed_slope" type="float" setter="set_detail_assumed_slope" getter="get_detail_assumed_slope" default="0.6">
@@ -564,6 +602,27 @@
 		<member name="detail_wavelength" type="float" setter="set_detail_wavelength" getter="get_detail_wavelength" default="128.0">
 			Width of the largest gullies, in metres.
 		</member>
+		<member name="dune_belt_width" type="float" setter="set_dune_belt_width" getter="get_dune_belt_width" default="300.0">
+			How far inland from the beaches (m) the dunes may reach. Sand blown past it is lost.
+		</member>
+		<member name="dune_cell" type="float" setter="set_dune_cell" getter="get_dune_cell" default="2.0">
+			Cell size (m) of the dunes' own grid. It grows if the belt would need more than four million cells.
+		</member>
+		<member name="dune_steps" type="int" setter="set_dune_steps" getter="get_dune_steps" default="1500">
+			Steps of the dune run. [member dune_supply] is spread over them, so more steps give the same sand longer to shape and travel, at more cost.
+		</member>
+		<member name="dune_supply" type="float" setter="set_dune_supply" getter="get_dune_supply" default="250.0">
+			Sand (m³ per metre of beach) the dry beaches give the wind over the whole run. A foredune 10 m high and 50 m wide holds about 250.
+		</member>
+		<member name="dune_vegetation" type="float" setter="set_dune_vegetation" getter="get_dune_vegetation" default="1.0">
+			How well marram grows behind the beaches, 0 to 1. With it, foredunes build along the plant line and blowouts and parabolic dunes open where the cover fails; at 0 the sand runs inland bare.
+		</member>
+		<member name="dune_wind_angle" type="float" setter="set_dune_wind_angle" getter="get_dune_wind_angle" default="0.0">
+			The dune-building wind's direction, in degrees from straight onshore (the mean direction up the beaches).
+		</member>
+		<member name="dunes_enabled" type="bool" setter="set_dunes_enabled" getter="is_dunes_enabled" default="true">
+			Coastal dunes: the dry beaches feed wind-blown sand inland over [member dune_belt_width] on a grid of [member dune_cell] (Werner's 1995 slab model, moved as expected amounts as Nilles et al. 2024 do, with a wind shadow behind crests, the wind's speed-up over them and avalanching past the angle of repose). Marram, after Nield and Baas 2008, grows under gentle burial, dies when buried deep or blown out, and holds and traps the sand. The sand is added to the ground and to the geology's beach sand. It adds seconds to [method generate] where there are beaches.
+		</member>
 		<member name="erodibility" type="float" setter="set_erodibility" getter="get_erodibility" default="2e-05">
 			Stream power coefficient [code]K[/code]. Relief at equilibrium grows with [member uplift] / [member erodibility].
 		</member>
@@ -576,13 +635,16 @@
 		<member name="generate_button" type="Callable" setter="" getter="get_bake_button" default="Callable()">
 			The inspector's Generate button: runs [method bake].
 		</member>
-		<member name="glacial_converged" type="bool" setter="set_glacial_converged" getter="is_glacial_converged" default="false">
+		<member name="glacial_converged" type="bool" setter="set_glacial_converged" getter="is_glacial_converged" default="true">
 			If [code]true[/code], the last glaciation's steady-ice solves run until the ice balances its mass to within 0.5 m a year, instead of a fixed count of pseudo steps that stop before the ice settles: nonlinear projected Gauss-Seidel with multigrid cycles, and ice thicknesses at the cell faces that conserve mass over steep beds (Jarosch, Schoof and Anslow 2013). Each solve stops after 300 cycles: next to a trench the erosion has cut deep under a cliff the ice settles slowly, and there it is left close to balance rather than exactly balanced (on the hanging valley bench, 29 m a year at the worst 0.2% of the ice nodes, against well over 1000 m a year without this). Earlier ice ages keep the quick steps. The glacial terrain changes a little and the glacial stage takes several times longer.
+		</member>
+		<member name="glacial_enabled" type="bool" setter="set_glacial_enabled" getter="is_glacial_enabled" default="true">
+			If [code]true[/code], ice ages: glaciers grow where the ground stands above the equilibrium line ([code]glacial_ela[/code]), carve troughs and cirques over part of the run ([code]glacial_share[/code]), and the last glaciation leaves its basins as lakes. Adds tens of seconds to [method generate].
 		</member>
 		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] regenerated from a [HeightMapShape3D] ground after the write. The [member deformer]'s ground mesh is used when empty.
 		</member>
-		<member name="guide_preview" type="bool" setter="set_guide_preview" getter="is_guide_preview" default="false">
+		<member name="guide_preview" type="bool" setter="set_guide_preview" getter="is_guide_preview" default="true">
 			When a [TerrainGuide3D] under this generator moves or changes, run a coarse [method preview] a moment later, so the guide's effect shows while drawing.
 		</member>
 		<member name="guide_preview_scale" type="float" setter="set_guide_preview_scale" getter="get_guide_preview_scale" default="4.0">
@@ -593,6 +655,9 @@
 		</member>
 		<member name="hillslope_diffusion" type="float" setter="set_hillslope_diffusion" getter="get_hillslope_diffusion" default="0.01">
 			Soil creep [code]k_d[/code] in square metres per year: rounds hilltops and softens ridges. 0 keeps sharp ridges.
+		</member>
+		<member name="ice_worn_detail" type="bool" setter="set_ice_worn_detail" getter="is_ice_worn_detail" default="true">
+			If [code]true[/code] and the last glaciation left ice ([member glacial_enabled]), the generator publishes the ice's flow and wear ([code]terrain_ice_flow[/code]) so the ground's detail normal smooths the faces the ice ground against, roughens the faces it plucked, and adds striations along its flow.
 		</member>
 		<member name="inflow_area" type="float" setter="set_inflow_area" getter="get_inflow_area" default="25.0">
 			Area (km²) an inflow marker without [code]area[/code] metadata brings in.
@@ -633,11 +698,20 @@
 		<member name="max_soil_depth" type="float" setter="set_max_soil_depth" getter="get_max_soil_depth" default="2.0">
 			Deepest soil and alluvium (basin fill comes on top).
 		</member>
+		<member name="meander_age" type="float" setter="set_meander_age" getter="get_meander_age" default="3000.0">
+			Years the rivers on flat alluvial floors have meandered (Howard and Knutson 1984), with neck and chute cutoffs leaving oxbows. 0 keeps them as routed.
+		</member>
+		<member name="moraine_age" type="float" setter="set_moraine_age" getter="get_moraine_age" default="2000.0">
+			Years the last glaciation's margins stood still, building moraines: terminal loops and lateral ridges of wall rockfall and basal debris, which can dam lakes. 0 builds none.
+		</member>
 		<member name="ocean_edges" type="int" setter="set_ocean_edges" getter="get_ocean_edges" default="0">
 			Edges of the rectangle that are open sea (bits as in [member outlet_edges]). The sea cells are the run's outlets, held at sea level, so the land drains to the coast; set [member outlet_edges] to 0 to make the sea the only outlet.
 		</member>
 		<member name="outlet_edges" type="int" setter="set_outlet_edges" getter="get_outlet_edges" default="15">
 			Edges of the rectangle held at [member sea_level] where water leaves: bits [constant OUTLET_NEGATIVE_X], [constant OUTLET_POSITIVE_X], [constant OUTLET_NEGATIVE_Z], [constant OUTLET_POSITIVE_Z].
+		</member>
+		<member name="outwash_age" type="float" setter="set_outwash_age" getter="get_outwash_age" default="10000.0">
+			Years the glacial outwash has worked since the ice left: gravel reaches below the last ice stand braid across flat outwash plains, and the basins the ice wore fill from the bottom up. 0 builds none.
 		</member>
 		<member name="publish_shader_globals" type="bool" setter="set_publish_shader_globals" getter="is_publishing_shader_globals" default="true">
 			Publishes the geology map as the [code]terrain_geology_map[/code] and [code]terrain_geology_rect[/code] shader globals after each [method generate] (see [method get_geology_shader_code]).
@@ -659,6 +733,9 @@
 		</member>
 		<member name="river_width_coefficient" type="float" setter="set_river_width_coefficient" getter="get_river_width_coefficient" default="7.0">
 			River width per square root of discharge: [code]width = coefficient * discharge^0.5[/code] (hydraulic geometry, Leopold and Maddock 1953). About 7 for mean flows.
+		</member>
+		<member name="scree_age" type="float" setter="set_scree_age" getter="get_scree_age" default="10000.0">
+			Years the cliffs have shed scree onto cones and aprons at their feet. 0 builds none.
 		</member>
 		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
 			Height of the outlets and of the flat start.
@@ -714,7 +791,7 @@
 		<member name="strata_dip_direction" type="float" setter="set_strata_dip_direction" getter="get_strata_dip_direction" default="0.0">
 			The way the layers go down, degrees clockwise from north (-Z).
 		</member>
-		<member name="strata_enabled" type="bool" setter="set_strata_enabled" getter="is_strata_enabled" default="false">
+		<member name="strata_enabled" type="bool" setter="set_strata_enabled" getter="is_strata_enabled" default="true">
 			Layered rock: bands of hard rock in a sequence of soft rock, rising with the uplift (Forte, Yanites and Whipple 2016). Hard rock erodes [member strata_hardness] times slower; where a river has cut through a band into the soft rock under it, the undercut block breaks off and the face retreats upstream as a cliff (the caprock waterfall, Gilbert 1907; Haviv et al. 2010). Rivers step down over waterfalls ([method get_waterfalls]) between flatter reaches, and the range stands higher than in one rock. Off, the ground is the same as without these settings.
 		</member>
 		<member name="strata_hard_fraction" type="float" setter="set_strata_hard_fraction" getter="get_strata_hard_fraction" default="0.35">
@@ -744,7 +821,7 @@
 		<member name="tile_erosion_droplets" type="float" setter="set_tile_erosion_droplets" getter="get_tile_erosion_droplets" default="1.0">
 			Droplets per grid cell. More gives deeper, more connected rills.
 		</member>
-		<member name="tile_erosion_enabled" type="bool" setter="set_tile_erosion_enabled" getter="is_tile_erosion_enabled" default="false">
+		<member name="tile_erosion_enabled" type="bool" setter="set_tile_erosion_enabled" getter="is_tile_erosion_enabled" default="true">
 			Runs hydraulic and thermal erosion on a fine grid at the end of [method generate] (stage 4): droplet erosion (Beyer 2015, after Mei et al. 2007's capacity law) cutting rills and gullies and laying fans and valley fills, two layers (loose cover erodes first, bedrock at [member tile_erosion_rock_hardness]; Stava et al. 2008), and thermal slides of loose material steeper than [member talus_angle]. Overlapping tiles are eroded on their own, each seeded by its index, and cross-faded, so the result does not depend on threads. [method get_height] includes it; turning it off shows the ground without it.
 		</member>
 		<member name="tile_erosion_max_depth" type="float" setter="set_tile_erosion_max_depth" getter="get_tile_erosion_max_depth" default="15.0">

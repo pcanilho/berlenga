@@ -206,6 +206,18 @@ func _build_generator(cell: float) -> void:
 	noise.fractal_octaves = 3
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
+	# Heavy generator options are on by default; this bench keeps its own fast choices.
+	gen.glacial_enabled = false
+	gen.glacial_converged = false
+	gen.tile_erosion_enabled = false
+	gen.strata_enabled = false
+	gen.guide_preview = false
+	gen.dunes_enabled = false
+	gen.deposition = 0.0
+	gen.moraine_age = 0.0
+	gen.scree_age = 0.0
+	gen.meander_age = 0.0
+	gen.outwash_age = 0.0
 	gen.size = Vector2(WORLD, WORLD)
 	gen.cell_size = cell
 	gen.seed = int(args.get("seed", "1"))
@@ -989,6 +1001,7 @@ func _build_view() -> void:
 	if args.has("landscape"):
 		# The ground as a Landscape3D: chunk meshes with LODs at the given spacing (1 m by default).
 		var ls := Landscape3D.new()
+		ls.cliff_relief = 0.0 # on by default; this bench measures without it
 		ls.spacing = float(args["landscape"]) if args["landscape"] != "1" else 1.0
 		ls.lod_error = float(args.get("lod-error", "1.0"))
 		ls.stream_heights = not args.has("no-stream")
@@ -1130,6 +1143,7 @@ func _edge_key(a: Vector3, b: Vector3) -> String:
 func _landscape_checks() -> void:
 	# Landscape3D: chunk meshes with an LOD chain over the generated ground, coarse here so the checks stay fast.
 	var ls := Landscape3D.new()
+	ls.cliff_relief = 0.0 # on by default; this bench measures without it
 	ls.spacing = float(args.get("spacing", "16"))
 	ls.chunk_quads = int(args.get("quads", "16"))
 	ls.lod_levels = 4
@@ -1149,6 +1163,7 @@ func _landscape_checks() -> void:
 	var seye := Transform3D(Basis(), sprobe + Vector3(0, gen.get_height(sprobe) + 30.0, 0)).looking_at(Vector3(1500, 0, 1500))
 	ls.update_lods(seye, sproj, 540.0)
 	var fullls := Landscape3D.new()
+	fullls.cliff_relief = 0.0 # on by default; this bench measures without it
 	fullls.spacing = ls.spacing
 	fullls.chunk_quads = ls.chunk_quads
 	fullls.lod_levels = ls.lod_levels
@@ -1264,6 +1279,7 @@ func _landscape_checks() -> void:
 	check(int(ls.get_stats()["lod_switches"]) - sw0 <= 2, "a 1 m jiggle does not flip levels (%d switches)" % (int(ls.get_stats()["lod_switches"]) - sw0))
 	# Full detail at 1 m over a 1 km square: build time and update cost.
 	var big := Landscape3D.new()
+	big.cliff_relief = 0.0 # on by default; this bench measures without it
 	big.spacing = 1.0
 	big.height_image = gen.sample_heights(Vector2(-500, -400), 1.0, Vector2i(1025, 1025))
 	big.origin = Vector2(-500, -400)
@@ -1292,6 +1308,7 @@ func _landscape_checks() -> void:
 func _landscape_collision_checks() -> void:
 	# Ground collision: static heightfields at full detail around a target, split like the drawn level 0 mesh.
 	var ls := Landscape3D.new()
+	ls.cliff_relief = 0.0 # on by default; this bench measures without it
 	ls.spacing = 2.0
 	ls.chunk_quads = 32
 	ls.collision_radius = 100.0
@@ -1365,6 +1382,7 @@ func _landscape_collision_checks() -> void:
 	check(int(ls.get_stats()["collision_tiles"]) == 0, "collision off frees every tile")
 	# Cost at game settings: 1 m spacing, 64-quad chunks, 192 m radius, ground read in full; a 64 m step.
 	var game := Landscape3D.new()
+	game.cliff_relief = 0.0 # on by default; this bench measures without it
 	game.collision_target = NodePath()
 	add_child(game)
 	game.source = game.get_path_to(gen)
@@ -1937,6 +1955,7 @@ func _landscape_time() -> void:
 	cam.global_transform = eye
 	cam.make_current()
 	var ls := Landscape3D.new()
+	ls.cliff_relief = 0.0 # on by default; this bench measures without it
 	ls.spacing = float(args.get("spacing", "1"))
 	ls.stream_heights = not args.has("no-stream")
 	add_child(ls)

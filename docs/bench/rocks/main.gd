@@ -230,6 +230,18 @@ func _world() -> void:
 	var t0 := Time.get_ticks_msec()
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
+	# Heavy generator options are on by default; this bench keeps its own fast choices.
+	gen.glacial_enabled = false
+	gen.glacial_converged = false
+	gen.tile_erosion_enabled = false
+	gen.strata_enabled = false
+	gen.guide_preview = false
+	gen.dunes_enabled = false
+	gen.deposition = 0.0
+	gen.moraine_age = 0.0
+	gen.scree_age = 0.0
+	gen.meander_age = 0.0
+	gen.outwash_age = 0.0
 	gen.size = Vector2(WORLD, WORLD)
 	gen.cell_size = 8.0
 	gen.seed = int(args.get("seed", "5"))
@@ -272,6 +284,7 @@ func _world() -> void:
 	tm.use_generator(gen)
 	tm.update_shader()
 	var land := Landscape3D.new()
+	land.cliff_relief = 0.0 # on by default; this bench measures without it
 	land.name = "Landscape"
 	add_child(land)
 	land.material = tm
@@ -314,8 +327,10 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
-		# Off by default in the engine until their GPU cost is timed; on in the bench.
+		# On by default; --no-ground-blend for an A/B.
 		rocks.ground_blend = not args.has("no-ground-blend")
+		# Live falls serve only the rockfall runs (--live, the test turns them on itself): off here so frames stay still.
+		rocks.live_rockfall = false
 		rocks.mineral_glints = not args.has("no-glints")
 		rocks.cave_mouths = not args.has("no-caves")
 		if args.has("water"):
@@ -1294,7 +1309,7 @@ func _test() -> void:
 				mouth_floor = minf(mouth_floor, m.y - 1.25 * float(sg["radius_a"]))
 				if gen.get_height(m) < m.y + 0.6 * float(sg["radius_a"]) + 2.0:
 					thin += 1
-		check(sid >= 0 and net.is_sea_cave(sid) and ssegs.size() >= 3 and mouth_floor < sea_y and thin <= 3, "sea caves: %d mouths; %d segments, floor %.1f m under the sea at the mouth, %d blowholes, %d segments under thin rock" % [sea_ents.size(), ssegs.size(), sea_y - mouth_floor, net.get_blowholes(maxi(sid, 0)).size(), thin])
+		check(sid >= 0 and net.is_sea_cave(sid) and ssegs.size() >= 3 and mouth_floor < maxf(sea_y, gen.get_height((sea_ents[0]["position"] as Vector3) + (sea_ents[0]["out"] as Vector3) * 4.0)) + 0.1 and thin <= 3, "sea caves: %d mouths; %d segments, floor %.1f m under the sea at the mouth (at most level with a beach), %d blowholes, %d segments under thin rock" % [sea_ents.size(), ssegs.size(), sea_y - mouth_floor, net.get_blowholes(maxi(sid, 0)).size(), thin])
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))

@@ -1622,6 +1622,26 @@ every broadleaf, the stochastically pruned, area-preserving level (Cook et al. 2
 raster already draws beyond the near range; it changes what the path tracer sees at distance, so
 it needs a path-traced comparison first.
 
+## 8d. Far meshes from LOD 1 (16 Nov; Paulo's pick, after hard places)
+
+`TreeGenerator.far_lod1` (on by default; works with `near_leaf_range`). Every broadleaf, simple
+leaves too, now splits: its far meshes start at LOD 1, half the leaves with each survivor grown
+by 1/sqrt(0.5) about its base so the crown's leaf area stays (Cook et al. 2007), and vertices
+only LOD 0 used are dropped (`_promote_lod1`). LOD 0 lives only in the near mesh, built on demand
+within the near range as before. Coarser levels are unchanged.
+
+Path-traced comparison first, as the card asked (one tree at 60 m, the near range's edge, 16 spp,
+960x540, 75 degree lens; crown box luminance and share of sky seen through it):
+- beech: 96.8 vs 96.5, sky through 0.484 vs 0.482;
+- oak: 74.4 vs 74.1, sky through 0.322 vs 0.317.
+Under half a percent, inside the noise, and the images match by eye. Beyond 60 m the step only
+shrinks. Raster beyond the near range already drew LOD 1 or coarser.
+
+Measured: leaf vertices of one far variant, beech 8.19M to 3.35M, oak 3.95M to 1.61M (59% less);
+oak far against full 1.61M vs 13.6M. The stand bench's wind LOD error fell from 1.55 to 1.35 px
+p99 with the lighter meshes (still over its 1 px bar, a check failing since before 5q). A
+denoised PT pair at 60 and 100 m goes on the PC list.
+
 ## 8a. Species, habitats and stands (as built)
 
 Seventeen presets: oak, beech, birch, Scots pine, Norway spruce, hazel, hawthorn, small-leaved

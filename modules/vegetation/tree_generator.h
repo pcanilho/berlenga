@@ -320,6 +320,7 @@ private:
 	PackedFloat32Array _rig_data() const;
 	Dictionary _bark_lods(const Builder &p_bark) const;
 	Dictionary _leaf_lods(Builder &r_leaves, bool p_twins = true) const;
+	void _promote_lod1(Builder &r_b, Dictionary &r_lods) const;
 	// Climber leaves from PlantGenerator.make_climber_leaves (one baked set per climber, shared),
 	// instanced into their own surface; empty when climber_plant_leaves is off.
 	Builder climber_leaf_b;
@@ -426,6 +427,9 @@ private:
 	// that builds the full-leaf mesh when a tree first comes within this range.
 	float near_leaf_range = 60.0f; // On by default (every feature on; the desktop tunes cost).
 	bool far_leaves = false; // _add_leaf(): species leaves as their simple twins only.
+	// Far meshes from LOD 1 (trees.md 8d): with near_leaf_range, every broadleaf's far mesh starts
+	// at the pruned, area-kept LOD 1 leaves; LOD 0 lives only in the near mesh.
+	bool far_lod1 = true;
 	bool skip_lods = false;
 	float bark_relief = 1.0f; // Scales the displaced bark of LOD 0; 0 = plain tubes only.
 	static constexpr float RELIEF_MIN_RADIUS = 0.08f; // Stems and limbs this thick get relief.
@@ -792,6 +796,12 @@ public:
 		near_sources.clear();
 	}
 	float get_near_leaf_range() const { return near_leaf_range; }
+	void set_far_lod1(bool p_on) {
+		far_lod1 = p_on;
+		mesh_cache.clear();
+		near_sources.clear();
+	}
+	bool get_far_lod1() const { return far_lod1; }
 	// For PlantSpecies.near_mesh_source: the full-leaf mesh of one variant (index into the
 	// species' meshes), or null while it is being built on a worker thread.
 	Ref<Mesh> request_near_mesh(int p_key, int p_variant);

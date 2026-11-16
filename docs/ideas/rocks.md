@@ -780,7 +780,7 @@ the rock field rebuilds cells when the terrain's holes change.
     floods at high water.
   - One straight passage along a joint (the facing turned by up to 15 degrees), 35 to 95 m long. It stops where the
     rock over it or to either side gets thin.
-  - The section is a tall arch (`PASSAGE_SEA`), widest at the mouth, floored 1.5 m below the sea at the mouth and
+  - The section is a tall arch (`PASSAGE_SEA`), widest at the mouth, floored 1.5 m below the sea at the mouth (level with the beach where one runs in front) and
     rising to high water at the back.
   - Half of them end in a chamber. Where its roof is under 25 m thick, a shaft opens to the ground as a blowhole:
     a terrain hole, see `get_blowholes`.
@@ -812,3 +812,10 @@ that are not round tubes.
 - **Fallen blocks** (rounded, spalled boxes): breakdown slabs in chambers and boulders in sea caves.
 - **Water**: the bench coast is a beach, so its sea cave floors stand dry above the water at this tide. The sea fills
   caves at plunging cliffs, where it reads the cave floor through the terrain hole (#330, `terrain_source`).
+
+Defaults (Paulo, 16 Nov: every feature on by default; the PC tunes cost later): `ground_blend`, `mineral_glints` and
+`live_rockfall` are now on. `cave_mouths` (the portal block) stays off: the meshed entrance patch of CaveNetwork3D
+replaced it as the opening.
+`ground_material` is now an override: unset, the field takes the TerrainMaterial3D of the Landscape3D drawing its
+generator, so the blend matches the ground with no wiring. The blend band is thin by design (`ground_blend_height`
+0.25 m times sqrt(scale): a full foot ~10 cm up a 1 m stone, dust to ~45 cm); scene's seat3 tries 0.45.

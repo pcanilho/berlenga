@@ -36,8 +36,8 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
   *Surface roots: buttress roots spread from the trunk into the litter, with moss in the crotches between them.*
 
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark carries stemflow tracks, low algae and crust lichen.
-- **Bark stories** (`bark_wounds`, on by default): frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks and knots on lying logs.
-- **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
+- **Bark stories** (`bark_wounds`, on by default): frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.
+- **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.
 - **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.
 
   ![A rowan berry cluster among its leaves at about 0.6 m, raster](media/trees-rowan.jpg)
@@ -52,8 +52,8 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
 - **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree. Old ivy has woody stems that thicken with the host's age and lie on the bark ridges, with unlobed adult leaves high on old stems.
 - **Leaf shapes** (`TreeGenerator.get_leaf_form()`): simple, lobed, palmate and compound leaves per species, with the true outline as geometry; compound leaflets take a toothed, veined texture, and leaf undersides are paler.
-- **Needles** (`needle_sprays`, `near_needle_range`): real needles near the camera, crossed needle sprays beyond.
-- **Near leaf detail** (`near_leaf_range`): lobed and compound leaves are built only for trees near the camera; further out each leaf is a simple leaf of the same area.
+- **Needles** (`needle_sprays`, `near_needle_range`, 30 m by default): real needles near the camera, crossed needle sprays beyond.
+- **Near leaf detail** (`near_leaf_range`, 60 m by default): lobed and compound leaves are built for trees near the camera; further out each leaf is a simple leaf of the same area.
 - **Seasons** (`season`): leaves come out, turn and fall by species from the shared season state; larch turns gold and goes bare, evergreens stay.
 
   ![Birch, beech, red maple and larch in July and November, raster](media/trees-seasons.jpg)
@@ -70,7 +70,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Old trees: a basal hollow with a rounded lip, a rot hole, a brush of epicormic shoots and the edge of a burl.*
 
-- **Deadwood** (`decay_class`, `fallen`, `bark_peel`, `uprooted`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.
+- **Deadwood** (`decay_class`, `fallen`, `bark_peel`, `uprooted`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood; peeled edges show the bark's thickness. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.
 
   ![An oak snag without and with bark peel, raster](media/trees-bark-peel.jpg)
 

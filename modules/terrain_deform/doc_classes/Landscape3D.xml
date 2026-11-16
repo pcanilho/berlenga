@@ -160,7 +160,7 @@
 		<member name="cast_shadows" type="bool" setter="set_cast_shadows" getter="is_casting_shadows" default="true">
 			Whether the ground casts shadows.
 		</member>
-		<member name="cliff_relief" type="float" setter="set_cliff_relief" getter="get_cliff_relief" default="0.0">
+		<member name="cliff_relief" type="float" setter="set_cliff_relief" getter="get_cliff_relief" default="0.6">
 			Metres of rock relief built into faces steeper than about 50 degrees near the camera: the finest level's triangles are refined there without cracks and pushed out into ledges of 3 m beds and staggered joint blocks. 0 turns it off.
 		</member>
 		<member name="chunk_quads" type="int" setter="set_chunk_quads" getter="get_chunk_quads" default="64">

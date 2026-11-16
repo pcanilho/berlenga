@@ -624,6 +624,18 @@ func _region(path: String) -> void:
 		noise.frequency = 1.0 / 1500.0
 		noise.fractal_octaves = 3
 		var g3 := TerrainGenerator3D.new()
+		# Heavy generator options are on by default; this bench keeps its own fast choices.
+		g3.glacial_enabled = false
+		g3.glacial_converged = false
+		g3.tile_erosion_enabled = false
+		g3.strata_enabled = false
+		g3.guide_preview = false
+		g3.dunes_enabled = false
+		g3.deposition = 0.0
+		g3.moraine_age = 0.0
+		g3.scree_age = 0.0
+		g3.meander_age = 0.0
+		g3.outwash_age = 0.0
 		g3.size = Vector2(WORLD, WORLD)
 		g3.cell_size = 16.0
 		g3.seed = 1

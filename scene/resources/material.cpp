@@ -621,11 +621,12 @@ void BaseMaterial3D::init_shaders() {
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). Off by
-		// default: it needs many samples or the denoiser; off, the path tracer uses the raster's footprint grid.
+		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). On by
+		// default (it settles with the denoiser or many samples); off, the path tracer uses the raster's
+		// footprint grid.
 		Dictionary exact;
 		exact["type"] = "bool";
-		exact["value"] = false;
+		exact["value"] = true;
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
 		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);

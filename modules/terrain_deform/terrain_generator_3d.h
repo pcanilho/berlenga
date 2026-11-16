@@ -76,7 +76,7 @@ private:
 	real_t erodibility = 2.0e-5;
 	real_t area_exponent = 0.5;
 	real_t hillslope_diffusion = 0.01; // m^2/yr
-	real_t deposition = 0.0; // G of Yuan et al. 2019; 0 = incision only
+	real_t deposition = 0.5; // G of Yuan et al. 2019; 0 = incision only
 	real_t critical_slope = 40.0; // degrees
 	real_t flow_exponent = 1.0;
 	real_t time_step = 20000.0; // years
@@ -102,7 +102,7 @@ private:
 	real_t cliff_ledge_strength = 1.0;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
-	bool tile_erosion_enabled = false;
+	bool tile_erosion_enabled = true;
 	real_t tile_erosion_spacing = 2.0; // m
 	real_t tile_erosion_tile_size = 512.0; // m
 	real_t tile_erosion_apron = 128.0; // m
@@ -119,7 +119,7 @@ private:
 
 	// Layered rock (strata): hard bands erode slower and stand in cliffs, so rivers crossing them step down in
 	// knickpoints and waterfalls (docs/ideas/terrain-generation.md, "Waterfalls from rock layers").
-	bool strata_enabled = false;
+	bool strata_enabled = true;
 	real_t strata_spacing = 90.0; // m, one hard and one soft layer
 	real_t strata_hard_fraction = 0.35; // share of the spacing that is hard rock
 	real_t strata_hardness = 100.0; // erodibility of soft rock over hard (rock strength squared, Sklar and Dietrich 2001)
@@ -132,20 +132,20 @@ private:
 	// Glaciers (docs/ideas/terrain-generation.md, "Glacial erosion"): ice from the shallow ice approximation erodes
 	// troughs, cirques and overdeepened basins; ice ages alternate with the rivers, and a last glaciation after them
 	// leaves its basins as lakes.
-	bool glacial_enabled = false;
+	bool glacial_enabled = true;
 	real_t glacial_ela = 500.0; // m, equilibrium line altitude
 	real_t glacial_share = 0.5; // share of the run's time under ice
 	real_t glacial_final = 100000.0; // years of the last glaciation, after the rivers
 	real_t glacial_erosion = 1.0; // multiplier on K_g of Herman et al. 2015
 	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
-	bool glacial_converged = false; // the last glaciation solves its steady ice to convergence instead of fixed pseudo steps
+	bool glacial_converged = true; // the last glaciation solves its steady ice to convergence instead of fixed pseudo steps
 	real_t last_glacial_residual = 0.0;
 	int last_glacial_outer = 0;
 	real_t glacial_rock_variation = 0.0; // spread of rock quality under the ice (log of the erosion multiplier); 0 even
 	real_t glacial_rock_scale = 500.0; // m, wavelength of that variation
 	real_t glacial_inflow_balance = 0.0; // m/yr of ice per m2 of each inflow's off-map catchment (0: water only)
 	real_t glacial_coarse_cell = 0.0; // m, ice grid of the ice ages between river steps; 0 = the last glaciation's
-	bool ice_worn_detail = false; // publish terrain_ice_flow: the detail normal smooths stoss faces, roughens lee faces, adds striations
+	bool ice_worn_detail = true; // publish terrain_ice_flow: the detail normal smooths stoss faces, roughens lee faces, adds striations
 	real_t last_glacial_eroded = 0.0;
 	real_t last_glacial_ice_area = 0.0;
 	real_t last_glacial_msec = 0.0;
@@ -167,6 +167,14 @@ private:
 	real_t max_sea_depth = 60.0; // m
 	real_t beach_width = 80.0; // m, mean; it varies along the coast
 	real_t beach_slope = 0.03;
+	// Coastal dunes (terrain_dunes.h): wind-blown sand off the beaches, on its own fine grid over the belt behind them.
+	bool dunes_enabled = true;
+	real_t dune_belt_width = 300.0; // m inland from the beaches
+	real_t dune_cell = 2.0; // m
+	real_t dune_supply = 250.0; // m3 of sand per metre of beach over the run
+	int dune_steps = 1500;
+	real_t dune_wind_angle = 0.0; // degrees from onshore
+	real_t dune_vegetation = 1.0; // marram: 0 none (bare sand), 1 where it can grow
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
@@ -233,15 +241,15 @@ private:
 		real_t floor_top = 0.0, floor_bottom = 0.0, length = 0.0;
 	};
 	double gorge_age = 0.0; // years of lip retreat; 0 none
-	double moraine_age = 0.0; // years the last glaciation's margins stood still, building moraines; 0 none
+	double moraine_age = 2000.0; // years the last glaciation's margins stood still, building moraines; 0 none
 	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
-	double scree_age = 0.0; // years cliffs have shed scree onto cones at their feet; 0 none
+	double scree_age = 10000.0; // years cliffs have shed scree onto cones at their feet; 0 none
 	double last_scree_volume = 0.0; // m3 of scree the last generate() laid
 	LocalVector<float> scree_cover, till_cover; // m of scree and of moraine till laid on each cell, for the materials
-	double meander_age = 0.0; // years the rivers on flat alluvial floors have meandered; 0 none
+	double meander_age = 3000.0; // years the rivers on flat alluvial floors have meandered; 0 none
 	int last_meander_count = 0; // reaches meandered by the last generate()
 	int last_oxbow_count = 0;
-	double outwash_age = 0.0; // years the glacial outwash rivers have braided; 0 none
+	double outwash_age = 10000.0; // years the glacial outwash rivers have braided; 0 none
 	int last_braid_count = 0;
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
@@ -370,7 +378,7 @@ private:
 	// The sky light, read back from an environment's sky now and then (sky_light_source).
 	NodePath sky_light_source;
 	// Guide preview: a coarse run (guide_preview_scale times the cell size) a moment after a guide changes.
-	bool guide_preview = false;
+	bool guide_preview = true;
 	real_t guide_preview_scale = 4.0;
 	double preview_wait = -1.0;
 	double last_preview_msec = 0.0;
@@ -402,6 +410,21 @@ private:
 	static void _erode_tile(void *p_job, uint32_t p_tile);
 	void _erode_tiles();
 	float _tile_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
+	// The dunes' result on their grid (dune_nx x dune_nz nodes from dune_origin, dune_grid_cell apart).
+	int dune_nx = 0;
+	int dune_nz = 0;
+	Vector2 dune_origin;
+	real_t dune_grid_cell = 2.0;
+	LocalVector<float> dune_sand; // m of sand
+	LocalVector<float> dune_plants; // 0..1 marram cover
+	LocalVector<float> dune_cover; // 0..1 loose sand at the surface, per node of the result (the geology's sand)
+	double last_dune_msec = 0.0;
+	double last_dune_volume = 0.0;
+	double last_dune_max = 0.0;
+	struct DuneJob;
+	static void _dune_tile(void *p_job, uint32_t p_tile);
+	void _build_dunes();
+	float _dune_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
@@ -645,6 +668,26 @@ public:
 	real_t get_beach_width() const { return beach_width; }
 	void set_beach_slope(real_t p_value) { beach_slope = CLAMP(p_value, real_t(0.001), real_t(1.0)); }
 	real_t get_beach_slope() const { return beach_slope; }
+	void set_dunes_enabled(bool p_value) { dunes_enabled = p_value; }
+	bool is_dunes_enabled() const { return dunes_enabled; }
+	void set_dune_belt_width(real_t p_value) { dune_belt_width = MAX(p_value, real_t(0.0)); }
+	real_t get_dune_belt_width() const { return dune_belt_width; }
+	void set_dune_cell(real_t p_value) { dune_cell = CLAMP(p_value, real_t(0.5), real_t(16.0)); }
+	real_t get_dune_cell() const { return dune_cell; }
+	void set_dune_supply(real_t p_value) { dune_supply = MAX(p_value, real_t(0.0)); }
+	real_t get_dune_supply() const { return dune_supply; }
+	void set_dune_steps(int p_value) { dune_steps = MAX(p_value, 0); }
+	int get_dune_steps() const { return dune_steps; }
+	void set_dune_wind_angle(real_t p_value) { dune_wind_angle = p_value; }
+	real_t get_dune_wind_angle() const { return dune_wind_angle; }
+	void set_dune_vegetation(real_t p_value) { dune_vegetation = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_dune_vegetation() const { return dune_vegetation; }
+	real_t get_dune_height(const Vector3 &p_global_position) const { return _dune_sample(dune_sand, p_global_position.x, p_global_position.z); }
+	real_t get_dune_stability(const Vector3 &p_global_position) const { return _dune_sample(dune_plants, p_global_position.x, p_global_position.z); }
+	Rect2 get_dune_rect() const;
+	real_t get_last_dune_msec() const { return last_dune_msec; }
+	real_t get_last_dune_volume() const { return last_dune_volume; }
+	real_t get_last_dune_max() const { return last_dune_max; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
 	void set_gorge_age(double p_years) { gorge_age = MAX(p_years, 0.0); }

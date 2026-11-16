@@ -19,8 +19,8 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Close-up detail: the same granite face gains crystal relief, pits, hairline cracks and a broken top edge.*
 
-- **Mineral glints** (`RockField3D.mineral_glints`, off by default): glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.
-- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_blend` (off by default), `ground_blend_height`, `ground_material`): stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
+- **Mineral glints** (`RockField3D.mineral_glints`): glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.
+- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_blend`, `ground_blend_height`, `ground_material`): stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band (the landscape's TerrainMaterial3D when `ground_material` is unset), and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
 
 ## Placement
 
@@ -31,8 +31,13 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Breakable stones: the block breaks into a pile of angular pieces where it stood.*
 
-- **Live rockfall** (`RockField3D.live_rockfall`, off by default; `live_rockfall_rate`, `live_rockfall_radius`, `live_rockfall_max`): cliff blocks fall in frost, thaw and rain, and break on impact.
+- **Live rockfall** (`RockField3D.live_rockfall`; `live_rockfall_rate`, `live_rockfall_radius`, `live_rockfall_max`): cliff blocks fall in frost, thaw and rain, and break on impact.
 
 - **Tors and coasts** (`layer_enabled`: `LAYER_TOR`, `LAYER_COAST`): tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.
 - **Landforms** (`layer_enabled`: `LAYER_LANDFORM`): hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.
-- **Caves** (`CaveNetwork3D.build_meshes()` or `follow_target`, `speleothems`, `scallops`, `add_sea_cave()`; `RockField3D.cave_mouths`, off by default; `terrain3d`): cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.
+- **Caves** (`CaveNetwork3D.build_meshes()` or `follow_target`, `speleothems`, `scallops`, `add_sea_cave()`; `terrain3d`): cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.
+
+  ![Looking out of a sea cave onto a beach and the sea, raster](media/rocks-sea-cave.jpg)
+
+  *Sea caves: a passage cut along a joint, with jointed walls, opens onto the beach.*
+
