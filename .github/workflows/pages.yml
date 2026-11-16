@@ -29,6 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -51,8 +54,12 @@ jobs:
           done
           jq '{tag_name, published_at, html_url, assets: [.assets[] | {name, size, browser_download_url}]}' /tmp/latest.json > site/data/release.json \
             || echo '{}' > site/data/release.json
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/releases?per_page=30" \
+            | jq '[.[] | {tag_name, published_at, draft}]' > site/data/releases.json || rm -f site/data/releases.json
       - name: Settings table
         run: python site/tools/settings.py
+      - name: What's new
+        run: python site/tools/whatsnew.py || echo '[]' > site/data/whatsnew.json
       - name: Build
         run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
       - name: GIF clips to video
