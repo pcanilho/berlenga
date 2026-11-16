@@ -12,6 +12,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
 #   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
@@ -248,7 +249,12 @@ func _world() -> void:
 	land.rebuild()
 	land.load_all_heights()
 	if args.has("water"):
-		gen.build_water(self)
+		var waters: Array = gen.build_water(self)
+		if args.has("sea-res"):
+			# The sea's shallow-water grid is 16 m cells on a 2 km world: too coarse for water round a stack.
+			for w in waters:
+				if w is Node and (w as Node).name == "Sea":
+					w.set("grid_resolution", int(args["sea-res"]))
 	var focus := Node3D.new()
 	focus.name = "Focus"
 	add_child(focus)

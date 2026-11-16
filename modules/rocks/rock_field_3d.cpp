@@ -1016,9 +1016,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const Vector3 ax = lib->axes[st.variant];
 					const float w = p_width * Math::pow(0.92f, float(tiers)) * (0.85f + 0.3f * rng.randf());
 					// Stood on end: the block's long axis up, so a stack is a few tall joint-bounded columns, each
-					// sunk a fifth into the one below so the joints read as grooves in one mass, not a pile.
+					// sunk deep into the one below so the joints read as grooves in one mass, not a pile.
 					st.scale = w * 0.5f;
-					Basis b = Basis(Vector3(0, 1, 0), p_yaw + (rng.randf() - 0.5f) * 0.3f) * Basis(Vector3(0, 0, 1), Math::PI * 0.5 + (rng.randf() - 0.5f) * 0.1);
+					Basis b = Basis(Vector3(0, 1, 0), p_yaw + (rng.randf() - 0.5f) * 0.12f) * Basis(Vector3(0, 0, 1), Math::PI * 0.5 + (rng.randf() - 0.5f) * 0.06);
 					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 					const real_t half_up = ax.x * st.scale;
 					st.position = Vector3(centre.x, y + half_up, centre.z);
@@ -1029,12 +1029,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// The foot is broader: a second column beside the first, a little lower.
 						Stone st2 = st;
 						st2.variant = pick_variant(lib);
-						const Vector3 side = Vector3(Math::cos(p_yaw + 1.5708f), 0, Math::sin(p_yaw + 1.5708f)) * w * (0.35f + 0.2f * rng.randf());
+						const Vector3 side = Vector3(Math::cos(p_yaw + 1.5708f), 0, Math::sin(p_yaw + 1.5708f)) * w * (0.22f + 0.12f * rng.randf()); // close enough to read as one mass
 						st2.position += side - Vector3(0, half_up * (0.15f + 0.2f * rng.randf()), 0);
 						r_stones.push_back(st2);
 					}
-					y = st.position.y + half_up * 0.4;
-					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.12f;
+					// Deep into the one below (a stack is one mass split by bedding joints, its rounded block ends must
+					// not read as necks), barely shifted.
+					y = st.position.y + half_up * 0.1;
+					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.05f;
 					tiers++;
 				}
 				return y;
@@ -1083,10 +1085,17 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			// The platform: a jointed rock pavement at the cliff foot, blocks on a grid along the joint sets with
 			// narrow open joints between them, tops a little above the water line, set deep into the bed.
 			const Vector3 shore_dir = sp.to_land;
+			// Not tiles: the blocks touch across joints that wander (each block jittered and turned a little, sizes
+			// mixed), and the beds step down seaward in low ledges, each row a bed at its own height.
 			const float joint = 2.2f + 1.2f * rng.randf();
+			float ledge[8];
+			for (int r = 0; r < 8; r++) {
+				ledge[r] = (r == 0 ? 0.35f : ledge[r - 1]) - (rng.randf() < 0.45f ? 0.08f + 0.12f * rng.randf() : 0.0f);
+			}
 			for (int k = 0; k < 64; k++) {
 				const int gi = k % 8 - 4, gj = k / 8;
-				const Vector3 at = sp.p + shore_dir * (6.0f + float(gj) * joint * 1.05f) + strike * (float(gi) * joint * 1.05f + (gj & 1) * joint * 0.3f);
+				const Vector3 jitter = (shore_dir * (rng.randf() - 0.5f) + strike * (rng.randf() - 0.5f)) * joint * 0.25f;
+				const Vector3 at = sp.p + shore_dir * (6.0f + float(gj) * joint * 1.05f) + strike * (float(gi) * joint * 1.05f + (gj & 1) * joint * 0.3f) + jitter;
 				const real_t h = gen->get_height(at);
 				if (h > level + 0.8 || h < level - 1.5 || rng.randf() < 0.2f) {
 					continue;
@@ -1096,10 +1105,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				st.library = key;
 				st.variant = pick_variant(lib);
 				const Vector3 ax = lib->axes[st.variant];
-				st.scale = joint * 0.5f / MAX(ax.x, 1.0f);
-				Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.06f);
+				st.scale = joint * 0.62f / MAX(ax.x, 1.0f) * (0.85f + 0.35f * rng.randf());
+				Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.3f);
 				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
-				const real_t top = level + 0.1 + 0.35 * rng.randf();
+				const real_t top = level + 0.1 + ledge[gj] + 0.08 * rng.randf();
 				st.position = Vector3(at.x, top - ax.y * st.scale, at.z);
 				st.ground = h;
 				st.footprint = MAX(ax.x, ax.z) * st.scale * 0.85f;
@@ -1186,6 +1195,9 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type) {
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("lichen_cover", lichen_cover);
 	m->set_shader_parameter("moss_cover", moss_cover);
+	if (TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
+		m->set_shader_parameter("sea_level", float(gen->get_sea_level())); // the shore zones of sea stones
+	}
 	materials.insert(int(p_type), m);
 	return m;
 }

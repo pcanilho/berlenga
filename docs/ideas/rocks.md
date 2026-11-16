@@ -270,3 +270,11 @@ Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (k
 - Glossy crystals (quartz and a third of the feldspars, the cleavage faces) tilt up to about 45 degrees with
   roughness 0.12: under a low sun a scatter of them flash, raster and path traced alike. A true glint BRDF
   (Chermain et al. 2020) is the next round.
+- Granite reads less like a mosaic: the crystal map is looked up through a small warp (ragged grain boundaries),
+  the quartz class fades over the last tenth of a cell, and each crystal carries its own cloud (altered feldspar
+  blotchy, quartz glassy and even).
+- Sea rock carries the shore zones (Stephenson and Stephenson 1949; Lewis 1964): wet barnacle crust and weed
+  below high water, the black Verrucaria band through the splash zone (shader `sea_level`, `tide_range`; the field
+  sets the sea level from its generator). Stacks are one mass (tiers sunk deep, barely shifted); the wave-cut
+  platform's blocks touch across wandering joints and step down seaward in low ledges.
+- Bench: `--sea-res=N` sets the sea's simulated grid; at the default 16 m cells the water left the stack's foot dry.
