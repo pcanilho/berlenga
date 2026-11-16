@@ -121,7 +121,7 @@ private:
 	float cloud_density = 1.0f;
 	float cloud_shape_scale = 3000.0f; // m, one tile of the shape noise
 	// Clouds that form and clear (step 3e).
-	bool cloud_evolution = true;
+	bool cloud_evolution = false;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
