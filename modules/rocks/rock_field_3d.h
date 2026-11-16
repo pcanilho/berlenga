@@ -152,15 +152,18 @@ private:
 	real_t lichen_cover = 0.5;
 	real_t moss_cover = 0.4;
 	// Ground blending: the stone's foot eased into the ground under it (docs/ideas/rocks.md).
-	bool ground_blend = false;
+	bool ground_blend = true;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
 	bool cave_mouths = false; // portal blocks set into limestone cliff feet, their passages opened as terrain holes; off until the entrance is meshed with the cave behind it
-	bool mineral_glints = false;
+	bool mineral_glints = true;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
 	real_t ground_blend_height = 0.25;
 	Ref<ShaderMaterial> ground_material;
+	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
+	mutable bool auto_ground_found = false;
+	Ref<ShaderMaterial> _ground_source() const;
 	void _apply_ground(const Ref<ShaderMaterial> &p_material) const;
 	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true, true };
 	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
@@ -222,7 +225,7 @@ private:
 		Vector3 origin; // the block, found again by its position when its fracture is ready
 		uint64_t key = 0;
 	};
-	bool live_rockfall = false;
+	bool live_rockfall = true;
 	real_t rockfall_rate = 4.0; // falls per game hour in rockfall_radius
 	real_t rockfall_radius = 150.0;
 	int rockfall_max = 16;

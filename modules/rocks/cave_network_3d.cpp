@@ -655,7 +655,7 @@ void CaveNetwork3D::_scatter_blocks(Cave &r_cave, uint32_t p_seed) const {
 		Block bk;
 		bk.xform = Transform3D(b.scaled_local(p_half), p_at);
 		bk.inv = bk.xform.affine_inverse();
-		bk.round = p_round;
+		bk.round = MIN(p_round, real_t(0.8) * MIN(p_half.x, MIN(p_half.y, p_half.z)));
 		r_cave.blocks.push_back(bk);
 	};
 	for (const Chamber &ch : r_cave.chambers) {
@@ -665,7 +665,7 @@ void CaveNetwork3D::_scatter_blocks(Cave &r_cave, uint32_t p_seed) const {
 			const real_t a = rng.randf() * Math::TAU, rr = Math::sqrt(rng.randf()) * 0.7;
 			const Vector3 at = ch.center + Basis(Vector3(0, 1, 0), ch.yaw).xform(Vector3(Math::cos(a) * ch.radii.x * rr, 0, Math::sin(a) * ch.radii.z * rr));
 			const real_t sz = 0.4 + 1.3 * Math::pow(double(rng.randf()), 1.8);
-			add(Vector3(at.x, floor_y + sz * 0.15, at.z), Vector3(sz, sz * (0.3 + 0.25 * rng.randf()), sz * (0.6 + 0.4 * rng.randf())), 0.06 + 0.05 * sz);
+			add(Vector3(at.x, floor_y + sz * 0.15, at.z), Vector3(sz, sz * (0.4 + 0.3 * rng.randf()), sz * (0.6 + 0.4 * rng.randf())), 0.12 + 0.18 * sz);
 		}
 	}
 	if (r_cave.sea) {
@@ -802,14 +802,20 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	const real_t length = 35.0 + 60.0 * rng.randf();
 	const real_t r_mouth = 2.6 + 1.6 * rng.randf();
 	const uint32_t ws = rng.rand();
-	Vector3 prev = p_entrance + c.out * 2.0;
+	// The floor at the mouth: 1.5 m under the sea off a cliff in the water; level with the beach where one runs in
+	// front (no step up out of the cave).
+	const Vector3 front = p_entrance + c.out * 5.0;
+	const real_t mouth_floor = MAX(sea - real_t(1.5), MIN(gen->get_height(front) - real_t(0.3), sea + real_t(0.5)));
+	// The passage starts out in front of the face, so the toe of the cliff is cut level with the floor outside.
 	real_t prev_r = r_mouth * 1.15;
+	Vector3 prev = front;
+	prev.y = mouth_floor + 1.25 * prev_r;
 	for (real_t t = 3.0; t <= length; t += 3.0) {
 		const real_t u = t / length;
 		// The floor (passage line minus 1.25 r) at 1.5 m below the sea at the mouth, rising to the high water at the back;
 		// a slight wander along the joint.
 		const real_t r = Math::lerp(r_mouth, real_t(1.3), Math::pow(u, real_t(0.7))) * real_t(0.8 + 0.45 * TerrainErosionFilter::fbm(ws + 3u, t, 7.0, 14.0, 2));
-		const real_t floor_y = sea + Math::lerp(real_t(-1.5), real_t(0.6), u * u);
+		const real_t floor_y = Math::lerp(mouth_floor, sea + real_t(0.6), u * u);
 		Vector3 p = p_entrance + dir * t + side * real_t((TerrainErosionFilter::fbm(ws, t, 0.0, 30.0, 2) - 0.5) * 3.0);
 		p.y = floor_y + 1.25 * r;
 		// Rock over the roof and to both sides: stop where it gets too thin (the cave would break out of the cliff).
@@ -1100,7 +1106,7 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		real_t sd = Vector3(MAX(d.x, real_t(0.0)), MAX(d.y, real_t(0.0)), MAX(d.z, real_t(0.0))).length() + MIN(MAX(d.x, MAX(d.y, d.z)), real_t(0.0)) - bk->round;
 		if (sd < 0.5) {
 			// Broken faces: spalls and chipped edges.
-			sd += 0.32 * (cave_fbm(p_p / 0.8f, uint32_t(seed) + 211u, 2) - 0.5f) + 0.1 * (cave_fbm(p_p / 0.35f, uint32_t(seed) + 213u, 2) - 0.5f);
+			sd += 0.5 * (cave_fbm(p_p / 1.1f, uint32_t(seed) + 211u, 2) - 0.5f) + 0.14 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 213u, 2) - 0.5f);
 		}
 		if (-sd > f - 0.3) {
 			const real_t k = 0.12;
@@ -1601,58 +1607,69 @@ void vertex() {
 	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	w_nrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 }
-// Joint cracks: two vertical joint sets (planes 1.7 and 2.3 m apart, crossing at about 70 degrees) and the bedding
-// planes, each a thin dark line where the wall cuts it, wobbled and broken into lengths by noise (joints are planar
-// sets, not cells).
+// Joints: two vertical sets (planes 1.7 and 2.3 m apart, crossing at about 70 degrees) and the bedding planes,
+// opened by solution into grooves: a V a few centimetres wide (wider where noise opens it), broken into lengths.
+// Returned as groove depth 0..1; the shading comes from the bump (the groove's sides catch and lose the light), not
+// from painting a line.
+float groove(float a, float w) { return smoothstep(1.0 - w, 1.0, a); }
 float joints(vec3 p) {
 	float wob = 0.15 * (fbm(p * 0.9) - 0.5);
+	float wv = 0.035 + 0.05 * fbm(p * 1.7 + 41.0);
 	float a = abs(fract(dot(p.xz, vec2(0.94, 0.34)) / 1.7 + wob) - 0.5) * 2.0;
 	float b = abs(fract(dot(p.xz, vec2(-0.17, 0.98)) / 2.3 + wob * 1.3) - 0.5) * 2.0;
 	float c = abs(fract(p.y / 1.1 + 0.6 * wob) - 0.5) * 2.0;
-	float ma = step(0.45, fbm(p * 0.35 + 3.0)), mb = step(0.5, fbm(p * 0.3 + 9.0)), mc = step(0.4, fbm(p * 0.25 + 15.0));
-	return max(max(ma * smoothstep(0.965, 0.995, a), mb * smoothstep(0.97, 0.995, b)), mc * smoothstep(0.96, 0.99, c));
+	float ma = smoothstep(0.42, 0.5, fbm(p * 0.35 + 3.0)), mb = smoothstep(0.47, 0.55, fbm(p * 0.3 + 9.0)), mc = smoothstep(0.38, 0.46, fbm(p * 0.25 + 15.0));
+	return max(max(ma * groove(a, wv), mb * groove(b, wv * 0.8)), mc * groove(c, wv * 1.2));
 }
-// The surface relief the 0.3 m mesh cannot carry: spalls and dissolution pits (fbm at 0.3 m and 8 cm), bedding
-// steps, and the joints as grooves.
+// The surface relief the 0.3 m mesh cannot carry: spalls and dissolution pits (fbm at 0.3 m and 8 cm), a fine grain
+// (2 cm), bedding steps, and the joints as grooves.
 float relief(vec3 p) {
-	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0);
+	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0) + 0.08 * vn(p * 48.0);
 	float bed = fract(p.y / 1.1 + 0.4 * fbm(p * 0.6));
 	h += 0.3 * smoothstep(0.0, 0.08, bed) * (1.0 - bed);
-	h -= 0.5 * joints(p);
+	h -= 0.9 * joints(p);
 	return h;
 }
 void fragment() {
 	float m = fbm(w_pos * 0.45);
 	float fine = fbm(w_pos * 3.1);
-	vec3 col = rock_color * (0.7 + 0.6 * m) * (0.85 + 0.3 * fine);
+	// Limestone grain: a micritic matrix speckled with paler shell fragments and darker grains (2 cm to 1 mm).
+	float grain = vn(w_pos * 55.0) * 0.6 + vn(w_pos * 160.0) * 0.4;
+	float shells = smoothstep(0.78, 0.86, vn(w_pos * 22.0 + 7.0));
+	vec3 col = rock_color * (0.7 + 0.6 * m) * (0.85 + 0.3 * fine) * (0.82 + 0.36 * grain);
+	col = mix(col, col * 1.35 + 0.03, shells * 0.6);
 	// Beds: darker bands every half metre or so.
 	col *= 0.85 + 0.15 * smoothstep(0.3, 0.7, sin(w_pos.y * 11.0 + 3.0 * m) * 0.5 + 0.5);
 	float crack = joints(w_pos);
-	col *= 1.0 - 0.35 * crack;
+	col *= 1.0 - 0.18 * crack; // a little dirt in the grooves; their shading is the bump's
 	float floor_w = smoothstep(0.55, 0.85, w_nrm.y);
-	col = mix(col, sediment_color * (0.8 + 0.4 * fine), floor_w);
-	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler, glossy calcite in vertical
-	// streaks (noise stretched along the fall line).
+	col = mix(col, sediment_color * (0.8 + 0.4 * fine) * (0.85 + 0.3 * grain), floor_w);
+	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler calcite in vertical streaks
+	// (noise stretched along the fall line).
 	float wall = 1.0 - abs(w_nrm.y);
 	float streak = smoothstep(0.62, 0.8, fbm(vec3(w_pos.x * 1.7, w_pos.y * 0.18, w_pos.z * 1.7) + 23.0)) * wall;
 	col = mix(col, vec3(0.48, 0.42, 0.34) * (0.85 + 0.3 * fine), streak * 0.7);
-	// Flowstone mounds and bosses round the formations (the mesher's red): smooth wet calcite.
+	// Flowstone mounds and bosses round the formations (the mesher's red): smooth calcite.
 	float flow = clamp(COLOR.r, 0.0, 1.0);
 	col = mix(col, vec3(0.46, 0.38, 0.28) * (0.8 + 0.35 * fine), flow * 0.8);
 	streak = max(streak, flow);
-	float wet = clamp(floor_w + streak + 0.4 * smoothstep(0.55, 0.8, fbm(w_pos * 0.8 + 11.0)), 0.0, 1.0);
-	ALBEDO = col * mix(1.0, 0.72, wet);
-	ROUGHNESS = mix(0.9, 0.25, wet);
-	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it.
-	float e = 0.02;
+	// Wet only where water stands or runs: puddles in floor hollows, the streaks; the rest is damp, matte rock.
+	float puddle = floor_w * smoothstep(0.58, 0.68, fbm(w_pos * 0.7 + 31.0));
+	float wet = clamp(puddle + 0.7 * streak, 0.0, 1.0);
+	ALBEDO = col * mix(1.0, 0.7, wet);
+	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3, wet);
+	SPECULAR = 0.4;
+	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it and
+	// under puddles.
+	float e = 0.01;
 	float h0 = relief(w_pos);
 	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0)) - h0, relief(w_pos + vec3(0, e, 0)) - h0, relief(w_pos + vec3(0, 0, e)) - h0) / e;
 	vec3 n = normalize(w_nrm);
 	g -= n * dot(g, n);
-	float amount = 0.035 * (1.0 - 0.7 * streak) * (1.0 - 0.5 * floor_w);
+	float amount = 0.03 * (1.0 - 0.7 * streak) * (1.0 - 0.8 * puddle);
 	vec3 nb = normalize(n - amount * g);
 	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
-	AO = 1.0 - 0.4 * crack;
+	AO = 1.0 - 0.3 * crack;
 }
 )");
 	default_wall.instantiate();
