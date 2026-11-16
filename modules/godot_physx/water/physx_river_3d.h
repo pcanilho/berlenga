@@ -89,6 +89,13 @@ public:
 		float jump = 0.0f; // > 0 at a hydraulic jump's toe: the upstream Froude number Fr1
 		float jump_foam = 0.0f; // 0..1 white water in a jump's roller
 		float tilt = 0.0f; // surface rise per m towards the left bank (bend superelevation)
+		LocalVector<float> wave_at; // standing cross-wave height per cross sample (supercritical flow), m
+		// An undular jump's (or a roller's tail) stationary wave train passing here: amplitude (m), wavenumber
+		// (rad/m), the toe's arc length and the decay length (m); the shader draws it (finer than the sections).
+		float wave_amp = 0.0f;
+		float wave_k = 0.0f;
+		float wave_s0 = 0.0f;
+		float wave_decay = 1.0f;
 	};
 	// A free overfall: the water leaves the lip and falls clear of the ground.
 	struct Fall {
@@ -117,6 +124,7 @@ private:
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
 	bool bend_superelevation = true; // the surface banks up against the outside of bends
+	bool standing_waves = true; // undular jump trains and supercritical cross-waves
 	bool snap_to_ground = true;
 	uint32_t ground_collision_mask = 1;
 	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
@@ -202,6 +210,7 @@ private:
 	void _build_fall_effects();
 	void _on_curve_changed();
 	void _solve_flow(float p_ds);
+	void _solve_standing_waves();
 	bool _strip_at(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
 	float _psi_at(const Vector3 &p_world, float &r_depth) const;
 	void _live_fields(PackedFloat32Array &r_depth, PackedFloat32Array &r_flux) const;
@@ -243,6 +252,8 @@ public:
 	bool get_gradually_varied_flow() const { return gradually_varied_flow; }
 	void set_bend_superelevation(bool p_enabled);
 	bool get_bend_superelevation() const { return bend_superelevation; }
+	void set_standing_waves(bool p_enabled);
+	bool get_standing_waves() const { return standing_waves; }
 	void set_snap_to_ground(bool p_snap);
 	bool get_snap_to_ground() const { return snap_to_ground; }
 	void set_ground_collision_mask(uint32_t p_mask);

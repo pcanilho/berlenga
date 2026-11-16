@@ -7,6 +7,7 @@ extends Node3D
 #   --view=top       straight down on the cascade, for the foam
 #   --view=bend      looking up a bend (with --carve: deep on the outside)
 #   --view=jump      side-on below the step: the fast water and the hydraulic jump that ends it
+#   --view=train     low, looking upstream at the jump: the stationary wave train below it (standing_waves)
 #   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -24,6 +25,7 @@ extends Node3D
 #                    flows into, and a tributary joining from the side below the step
 #   --view=joins     from above: the tributary's confluence and the lake
 #   --view=mouth     the river's mouth and its plume into the lake
+#   --narrows        the channel narrows below the step (5 m to 3.5 m and back): cross-waves in the fast water
 #   --falls          the step is a 6 m cliff: the river goes over it as a waterfall
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
@@ -46,6 +48,7 @@ var pt_from := 0
 var out := ""
 var seq := 0
 var report := false
+var narrows := false
 var mist_report := false
 var bake_time := 0
 var carve := false
@@ -115,6 +118,7 @@ func _ready() -> void:
 		elif a == "--contact": contact = true
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
+		elif a == "--narrows": narrows = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -180,6 +184,13 @@ func _ready() -> void:
 		z += 4.0
 	river.set("curve", curve)
 	river.set("default_width", 5.0)
+	if narrows:
+		# The fast water below the step runs into a narrowing (5 m to 3.5 m) and out again: cross-waves.
+		var w := PackedFloat32Array()
+		for i in curve.point_count:
+			var zz := curve.get_point_position(i).z
+			w.push_back(5.0 - 1.5 * clampf(1.0 - absf(zz - 10.0) / 6.0, 0.0, 1.0))
+		river.set("widths", w)
 	river.set("discharge", 6.0)
 	river.set("step_length", 0.5)
 	river.set("cross_segments", 24)
@@ -282,8 +293,13 @@ func _ready() -> void:
 				print("  i=%d s=%.1f surf=%.3f crit=%.3f Fr=%.2f dmax=%.2f width=%.1f" % [i, sa.s, sa.surface, sa.critical_height, sa.froude, dmax, sa.width])
 		for i in river.call("get_section_count"):
 			var sj: Dictionary = river.call("get_section", i)
+			var cw: PackedFloat32Array = sj.cross_waves
+			var cw_max := 0.0
+			for v in cw: cw_max = maxf(cw_max, absf(v))
+			if cw_max > 0.005:
+				print("  cross-waves at s=%.1f: up to %.3f m (Fr %.2f, width %.1f)" % [sj.s, cw_max, sj.froude, sj.width])
 			if sj.jump > 0.0:
-				print("jump at s=%.1f: Fr1 %.2f, surface %.2f" % [sj.s, sj.jump, sj.surface])
+				print("jump at s=%.1f: Fr1 %.2f, surface %.2f, train %.3f m x %.2f m" % [sj.s, sj.jump, sj.surface, sj.wave_amplitude, sj.wave_length])
 		_print_cross()
 		if falls:
 			for i in range(92, 112):
@@ -326,6 +342,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
 		"jump":
 			cam.look_at_from_position(Vector3(_valley_x(8.0) + 11.0, 3.5, 6.0), Vector3(_valley_x(8.0), -2.4, 9.0))
+		"train":
+			cam.look_at_from_position(Vector3(_valley_x(26.0) + 2.5, -0.7, 26.0), Vector3(_valley_x(14.0), -1.9, 14.0))
 		"bend":
 			cam.look_at_from_position(Vector3(_valley_x(-23.6) + 2.0, 6.0, -14.0), Vector3(_valley_x(-23.6), -1.5, -23.6))
 		"joins":

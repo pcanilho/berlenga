@@ -2927,3 +2927,43 @@ wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers nea
 - Solid where it rises (16 Nov, docs review of #313): an aged lace hole lifted onto the band's face showed as a
   dark notch with a hard rim, since the fill only ran where foam was already above 5%. The fill is now tied
   to the vertex raise (a varying, as a share of the 40 cm cap): wherever the band rises, it is white.
+
+## River standing waves (16 Nov, Fab idea 1 stage 2)
+
+Stage 1 gave the river a hydraulic profile (`gradually_varied_flow`): backwater, drawdown, supercritical
+reaches and jump toes with their Froude number. Stage 2 adds the standing surface patterns that profile
+implies. Both are stationary in the world (the water moves, the pattern stays), so they are baked once per
+rebuild.
+
+- **Undular jumps** (Fr1 from 1 to 1.7; Chanson and Montes 1995, Chanson 2009 "Current knowledge in
+  hydraulic jumps"): no roller, a train of smooth stationary waves downstream of the toe, five to ten of
+  them, decaying. Their wavelength is the one whose phase speed equals the current downstream: from linear
+  dispersion `U2^2 = (g/k) tanh(k h2)`, that is `Fr2^2 kh = tanh(kh)` (Lemoine 1948's linear theory, the
+  classic estimate for undular jumps and Favre waves). First crest height grows with Fr1; we take
+  `0.4 (y2 - y1)`, capped at 0.3 y2, decaying over about four wavelengths. Above Fr1 1.7 the roller
+  (stage 1) carries most of the energy away and only a weak tail (a third) is left. Wavelengths are
+  1 to 5 m, finer than the river's 1 m sections, so the train is evaluated in the shader from per-vertex
+  parameters (amplitude, wavenumber, toe position, decay): height in the vertex stage, slope per pixel.
+- **Cross-waves in supercritical flow** (Ippen 1951, Ippen and Dawson 1951 "Design of channel
+  contractions"; the shallow-water analogue of supersonic flow): a wall that turns into fast flow by a small
+  angle theta raises the depth along a front at the Mach angle `sin beta = 1/Fr`, by
+  `dy/y = Fr^2 theta / sqrt(Fr^2 - 1)` in linear theory, and the front reflects off the far wall. Along
+  each characteristic the disturbance is carried unchanged, so the depth at a point is the sum of the wall
+  angles where the characteristics through it left the walls: from each wall directly and after one to
+  three reflections (each reflection losing a fifth). Width changes of the channel set the wall angles.
+  This makes the diamond patterns of fast water in narrowing and widening channels. Baked into the mesh
+  heights at section spacing (their period along the river, `2B / tan beta`, is several metres). The
+  section mean is subtracted so the 1D profile stays as stage 1 solved it.
+- **Froude overlay**: a debug view colouring the water by its Froude number (blue subcritical, green
+  near critical, red supercritical, white at jump toes), for tuning rivers in the editor.
+- Built (16 Nov), `standing_waves` (on by default). On the river bench the jump below the step (Fr1 1.64)
+  gets a train about 10 cm high and 1.8 m long (bench view `train`). Two fixes from the first look: waves
+  shorter than six sections were raised in the mesh as faceted terraces, so they are now in the per-pixel
+  slope only (the mesh carries them from six sections a wavelength, fully past that), fading at the banks;
+  and the crests were ruler straight, so they now bow downstream mid-channel by a quarter wavelength at the
+  banks, as in photographs of undular jumps. Bodies still ride the full train (`sample_height`).
+  Cross-waves with `--narrows` (5 m to 3.5 m below the step) reach about 10 cm in the Fr 1.7 to 2.4 water,
+  but that water is white from the step on this bench, so they show only in clear fast water (a smooth
+  chute). `get_section()` gives `wave_amplitude`, `wave_length` and `cross_waves`.
+- Later: V-shaped wakes behind rocks in fast water (the same characteristics from each obstacle), cross-
+  waves in supercritical bends (Knapp 1951: they double the outer bank's superelevation).
