@@ -305,7 +305,7 @@ func _build_scene() -> void:
 			# A lapsed beech pollard of 160 years is a veteran (burls, hollows, epicormic shoots),
 			# its smooth bark well grown with crust lichens.
 			overrides["veteran"] = t[5] if t.size() > 5 else 0.0
-			overrides["lichen_cover"] = 1.2 if t.size() > 5 else 1.0
+			overrides["lichen_cover"] = 0.8 if t.size() > 5 else 1.0
 			var d := _gen(t[0], false, seed)
 			xs.append(5.0 * i)
 			_place(d.mesh, Vector3(5.0 * i - (0.8 if i == 2 else 0.0), 0, 3.0 if i == 2 else 0.0))
