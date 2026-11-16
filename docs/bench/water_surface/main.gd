@@ -52,6 +52,7 @@ extends Node3D
 #                   older SOR sweeps (physics/physx_3d/water/multigrid_flow), and print the mean of each
 #   --pt-from=N     rasterize until frame N, path trace from then on (a long settle at raster speed)
 #   --tracers=N     N white flecks floating on the surface, carried by sample_flow() (shows the flow)
+#   --cam=x,y,z,tx,ty,tz  an explicit camera position and target, over the view's
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --seq-step=K    with --seq, save every Kth frame (a time-lapse)
 #   --view=top      straight down over the surf zone
@@ -96,6 +97,7 @@ var current := Vector2.ZERO
 var flow_out := ""
 var bake_time := 0
 var seq := 0
+var cam_set := PackedFloat64Array() # --cam=x,y,z,tx,ty,tz: an explicit camera, over the view's
 var seq_step := 1
 var tracers := 0
 var pt_from := 0
@@ -214,6 +216,7 @@ func _ready() -> void:
 		elif a == "--lip-debug": lip_debug = true
 		elif a == "--hide-lips": hide_lips = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
+		elif a.begins_with("--cam="): cam_set = a.substr(6).split_floats(",")
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--sun-pitch="): sun_pitch = float(a.substr(12))
@@ -471,6 +474,8 @@ func _ready() -> void:
 
 
 	cam.position.y += cam_dy
+	if cam_set.size() == 6:
+		cam.look_at_from_position(Vector3(cam_set[0], cam_set[1], cam_set[2]), Vector3(cam_set[3], cam_set[4], cam_set[5]))
 	bench_cam = cam
 
 
