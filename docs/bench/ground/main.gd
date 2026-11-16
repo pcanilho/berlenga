@@ -12,6 +12,8 @@ extends Node3D
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
+#   --gpu=0             the field on the CPU (default: compute shaders where there is a GPU; --headless
+#                       always runs it on the CPU, so --test under a window and headless compares both)
 
 const HeightScript := preload("res://height.gd")
 
@@ -21,6 +23,7 @@ var raster := false
 var test := false
 var out := ""
 var spp := 16
+var gpu := true
 var bounces := 3
 var fails := 0
 var height: Node3D
@@ -39,6 +42,7 @@ func _ready() -> void:
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
+		elif a == "--gpu=0": gpu = false
 	if test:
 		await _run_tests()
 		print("RESULT: %d failed" % fails)
@@ -70,6 +74,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.ground_type = ground_type
 	surface.moisture = moisture
 	surface.litter_cover = litter
+	surface.gpu_simulation = gpu
 	add_child(surface)
 	await get_tree().physics_frame
 
@@ -216,9 +221,10 @@ func _run_tests() -> void:
 	foot.global_position = Vector3(1.0, 0.03, 1.0)
 	for i in 3:
 		await get_tree().physics_frame
+	surface.sync_deformation()
 	var auto_dent := surface.get_dent_at(Vector3(1.0, 0, 1.0)) - surface.get_rim_at(Vector3(1.0, 0, 1.0))
 	_check("a body in ground_deform prints", auto_dent > 0.01, "%.1f cm under the boot" % (auto_dent * 100.0))
-	print("step %.2f ms" % surface.get_step_time_msec())
+	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
 
 
 func _ground_material(kind_name: String) -> StandardMaterial3D:
@@ -393,7 +399,8 @@ func _build_trail() -> void:
 	# Let the walls settle as they would in the second after.
 	for i in 60:
 		await get_tree().physics_frame
-	print("ground %s: step %.2f ms, moved %s m3" % [kind, surface.get_step_time_msec(), surface.get_moved_volume()])
+	surface.sync_deformation()
+	print("ground %s: step %.2f ms on the %s, moved %s m3" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()

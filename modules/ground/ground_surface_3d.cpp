@@ -197,6 +197,7 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
+	gpu_ground_dirty = true;
 	ground_min = 1e20f;
 	ground_max = -1e20f;
 	for (float h : ground) {
@@ -223,6 +224,7 @@ void GroundSurface3D::_update_cells() {
 		return;
 	}
 	cells.resize(n * n);
+	gpu_cells_dirty = true;
 	const WeatherMap3D *wm = WeatherMap3D::get_active();
 	Node *hs = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
 	const TerrainGenerator3D *gen = rock_from_geology ? Object::cast_to<TerrainGenerator3D>(hs) : nullptr;
@@ -390,12 +392,16 @@ void GroundSurface3D::_ensure_children() {
 void GroundSurface3D::_follow(Vector3 p_center) {
 	field.extent = deform_extent;
 	field.resolution = deform_resolution;
-	field.max_cached_tiles = max_cached_tiles;
+	// On the GPU path the tile cache is the GPU's; the CPU copy keeps none.
+	field.max_cached_tiles = _gpu_on() ? 0 : max_cached_tiles;
 	field.track_fresh = true;
 	const Vector2 xz(p_center.x, p_center.z);
 	const Vector2i want = field.origin_for(xz);
 	const bool moved = !field.valid || want != field.origin;
 	if (moved) {
+		if (_gpu_on()) {
+			gpu_host.shift_to(field, want, deform_resolution, max_cached_tiles);
+		}
 		field.shift(want);
 	}
 	const Rect2 r = field.rect();
@@ -433,11 +439,12 @@ void GroundSurface3D::_set_global(const StringName &p_name, const Variant &p_val
 }
 
 void GroundSurface3D::_publish() {
-	if (active != this || globals_published || deform_texture.is_null() || height_texture.is_null()) {
+	const bool gpu_tex = _gpu_on() && gpu_host.texture.is_valid() && gpu_host.texture->get_texture_rd_rid().is_valid();
+	if (active != this || globals_published || (!gpu_tex && deform_texture.is_null()) || height_texture.is_null()) {
 		return;
 	}
 	const Rect2 r = field.rect();
-	_set_global("ground_deform_map", deform_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	_set_global("ground_deform_map", gpu_tex ? gpu_host.texture->get_rid() : deform_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	_set_global("ground_deform_height", height_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	_set_global("ground_deform_rect", Vector4(r.position.x, r.position.y, r.size.x, field.texel()), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("ground_deform_height_rect", Vector4((ground_origin.x - 0.5f) * ground_spacing, (ground_origin.y - 0.5f) * ground_spacing, ground_n * ground_spacing, ground_n * ground_spacing), RSE::GLOBAL_VAR_TYPE_VEC4);
@@ -545,6 +552,32 @@ void GroundSurface3D::_age(double p_delta) {
 
 void GroundSurface3D::settle(float p_seconds, float p_step) {
 	const float step = MAX(p_step, 1e-3f);
+	if (_gpu_on() && field.valid && is_inside_tree()) {
+		float left_gpu = p_seconds;
+		double age_gpu = 0.0;
+		float sync_accum = 0.0f;
+		while (left_gpu > 0.0f) {
+			const float dt = MIN(step, left_gpu);
+			age_gpu += dt;
+			const bool age_now = age_gpu >= 1.0;
+			// A blocking read back every simulated second keeps slumping going while texels still owe some.
+			sync_accum += dt;
+			const bool sync_now = sync_accum >= 1.0f;
+			_gpu_submit(dt, age_now ? age_gpu : 0.0, false, sync_now);
+			if (sync_now) {
+				sync_accum = 0.0f;
+			}
+			if (age_now) {
+				age_gpu = 0.0;
+			}
+			left_gpu -= dt;
+		}
+		if (age_gpu > 0.0) {
+			_gpu_submit(0.0, age_gpu, false, false);
+		}
+		sync_deformation();
+		return;
+	}
 	float left = p_seconds;
 	auto ground_fn = [this](float x, float z) { return _ground_at(x, z); };
 	auto params_fn = [this](float x, float z, float &r_tan, float &r_rate, float &r_max) {
@@ -594,6 +627,7 @@ void GroundSurface3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			set_physics_process_internal(false);
+			_gpu_release();
 			if (active == this) {
 				_set_global("ground_deform_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 				active = nullptr;
@@ -612,7 +646,36 @@ void GroundSurface3D::_notification(int p_what) {
 				cells_accum = 0.0;
 				_update_cells();
 			}
-			if (field.valid) {
+			const bool on_gpu = _gpu_on();
+			if (!on_gpu && gpu_host.gpu.is_valid()) {
+				_gpu_release();
+				field.invalidate();
+				_follow(_follow_position());
+			}
+			if (on_gpu && field.valid) {
+				_gpu_take();
+				Columns cols;
+				cols.surface = this;
+				const Cell &c = _cell_at(center.x, center.y);
+				field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
+				// The bodies press as stamps for the GPU field (the same maths).
+				field.stamp_sink = &gpu_sink;
+				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
+				field.stamp_sink = nullptr;
+				age_accum += delta;
+				double age = 0.0;
+				if (age_accum >= 1.0) {
+					age = age_accum;
+					age_accum = 0.0;
+				}
+				gpu_readback_accum += delta;
+				bool readback = false;
+				if (gpu_readback_accum >= 1.0 / 15.0) {
+					gpu_readback_accum = 0.0;
+					readback = true;
+				}
+				_gpu_submit(delta, age, readback, false);
+			} else if (field.valid) {
 				Columns cols;
 				cols.surface = this;
 				const Cell &c = _cell_at(center.x, center.y);
@@ -636,13 +699,232 @@ void GroundSurface3D::_notification(int p_what) {
 					age_accum = 0.0;
 				}
 			}
-			if (field.dirty) {
+			if (field.dirty && !on_gpu) {
 				_upload();
 			}
 			_publish();
 			step_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 		} break;
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The field on the GPU (docs/ideas/sand.md, stage 0)
+
+bool GroundSurface3D::_gpu_on() const {
+	return gpu_simulation && GroundDeformGPU::is_available();
+}
+
+void GroundSurface3D::set_gpu_simulation(bool p_enabled) {
+	if (gpu_simulation == p_enabled) {
+		return;
+	}
+	gpu_simulation = p_enabled;
+	// Each path keeps its own field: start the new one empty.
+	_gpu_release();
+	field.invalidate();
+	field.clear();
+	globals_published = false;
+	if (is_inside_tree()) {
+		_follow(_follow_position());
+		_upload();
+		_publish();
+	}
+}
+
+void GroundSurface3D::_gpu_release() {
+	gpu_host.release();
+	gpu_ground_dirty = true;
+	gpu_cells_dirty = true;
+	globals_published = false;
+}
+
+void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
+	GroundDeformField &f = surface->field;
+	if (!f.valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
+		return;
+	}
+	// The footprint's reach, as GroundDeformField::press works it out (no crusts in the ground).
+	const float ring = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
+	const float bow = CLAMP(p_velocity.length() / GroundDeformField::BOW_SPEED, 0.0f, 1.0f);
+	const float span = (p_box ? p_half.length() : p_radius) + ring * (1.0f + bow * GroundDeformField::BOW_REACH);
+	int x0, x1, z0, z1;
+	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
+		return;
+	}
+	const uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u);
+	const float v[12] = {
+		p_position.x, p_position.y, p_position.z, p_radius,
+		p_half.x, p_half.y, p_yaw, p_bottom,
+		p_sink, p_contact_tolerance, p_velocity.x, p_velocity.y
+	};
+	const float settle = MAX(f.press_settle, 0.0f);
+	const float d[4] = { 0.0f, float(flags), 0.0f, settle };
+	surface->gpu_host.add_stamp(f, v, d, x0, x1, z0, z1);
+	surface->gpu_host.slump_until = MAX(surface->gpu_host.slump_until, surface->gpu_host.time + settle + 0.1);
+}
+
+PackedByteArray GroundSurface3D::_gpu_cells() const {
+	PackedByteArray out;
+	const int n = ground_n;
+	if (!ground_valid || int(cells.size()) != n * n) {
+		return out;
+	}
+	out.resize(n * n * 32);
+	float *w = reinterpret_cast<float *>(out.ptrw());
+	for (int i = 0; i < n * n; i++) {
+		const Cell &c = cells[i];
+		w[i * 8 + 0] = c.rim_share;
+		w[i * 8 + 1] = c.tan_repose;
+		w[i * 8 + 2] = c.rate;
+		w[i * 8 + 3] = c.max_dent;
+		w[i * 8 + 4] = c.darken;
+		w[i * 8 + 5] = c.gloss;
+		w[i * 8 + 6] = c.sand;
+		w[i * 8 + 7] = c.deformable ? 1.0f : 0.0f;
+	}
+	return out;
+}
+
+PackedByteArray GroundSurface3D::_gpu_params(double p_delta, double p_age, double p_slow) const {
+	PackedByteArray b;
+	b.resize(GroundDeformGPU::PARAMS_BYTES);
+	uint8_t *w = b.ptrw();
+	memset(w, 0, GroundDeformGPU::PARAMS_BYTES);
+	const int n = deform_resolution;
+	const int32_t res[4] = { n, n / GroundDeformField::TILE, ground_n, ground_n };
+	memcpy(w, res, 16);
+	float *f = reinterpret_cast<float *>(w + 16);
+	auto put = [&](int p_vec, float a, float bb, float c, float d) {
+		f[p_vec * 4 + 0] = a;
+		f[p_vec * 4 + 1] = bb;
+		f[p_vec * 4 + 2] = c;
+		f[p_vec * 4 + 3] = d;
+	};
+	const Rect2 r = field.rect();
+	put(0, float(field.origin.x), float(field.origin.y), field.texel(), float(p_delta));
+	put(1, float(ground_origin.x), float(ground_origin.y), ground_spacing, 1.0f);
+	put(5, r.position.x, r.position.y, r.size.x, r.size.y);
+	put(8, GroundDeformField::BOW_SPEED, GroundDeformField::BOW_GAIN, GroundDeformField::BOW_REACH, 0.0f);
+	put(9, GroundDeformField::CRACK_LENGTH, GroundDeformField::PLATE, float(GroundDeformField::CRACK_SECTORS), 0.0f);
+	// Ageing (_age): the same numbers over p_age seconds.
+	float drift = 0.0f;
+	float soften = 0.0f;
+	if (p_age > 0.0) {
+		const WeatherMap3D *wm = WeatherMap3D::get_active();
+		if (wm) {
+			const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
+			const float wind = wm->get_wind_at(at, 10.0f).length();
+			drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f;
+			soften = rain_smoothing * wm->get_rain_at(at);
+		}
+	}
+	const float dry = p_age > 0.0 ? Math::exp(-float(p_age) / drying_time) : 1.0f;
+	put(11, 1.0f, float(p_slow), dry, drift);
+	put(12, soften, float(p_age) / 3600.0f, terrain_margin + skirt_fade, 0.0f);
+	return b;
+}
+
+void GroundSurface3D::_gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync) {
+	if (gpu_host.gpu.is_null()) {
+		gpu_host.gpu.instantiate();
+		gpu_host.reset = true;
+		gpu_ground_dirty = true;
+		gpu_cells_dirty = true;
+	}
+	if (gpu_host.texture.is_null()) {
+		gpu_host.texture.instantiate();
+	}
+	gpu_host.time += p_delta;
+	int flags = 0;
+	PackedByteArray ground_bytes;
+	if (gpu_ground_dirty && ground_valid) {
+		ground_bytes.resize(ground_n * ground_n * 4);
+		memcpy(ground_bytes.ptrw(), ground.ptr(), ground_n * ground_n * 4);
+		flags |= GroundDeformGPU::STEP_GROUND;
+		gpu_ground_dirty = false;
+	}
+	PackedByteArray cell_bytes;
+	if (gpu_cells_dirty && ground_valid) {
+		cell_bytes = _gpu_cells();
+		if (cell_bytes.size() > 0) {
+			flags |= GroundDeformGPU::STEP_COVER;
+			gpu_cells_dirty = false;
+		}
+	}
+	if (gpu_host.reset) {
+		flags |= GroundDeformGPU::STEP_RESET;
+	}
+	if (gpu_host.shift.size() > 0 || gpu_host.stores.size() > 0) {
+		flags |= GroundDeformGPU::STEP_SHIFT;
+	}
+	if (gpu_host.stamps.size() > 0) {
+		flags |= GroundDeformGPU::STEP_STAMPS;
+	}
+	// Slow material (mud) moves every tenth of a second, by the seconds saved up (the CPU's tile wait).
+	double slow = 0.0;
+	if (gpu_host.time <= gpu_host.slump_until && p_delta > 0.0) {
+		flags |= GroundDeformGPU::STEP_SLUMP;
+		gpu_slow_accum += p_delta;
+		if (gpu_slow_accum >= 0.1) {
+			slow = gpu_slow_accum;
+			gpu_slow_accum = 0.0;
+		}
+	} else {
+		gpu_slow_accum = 0.0;
+	}
+	if (p_age > 0.0) {
+		flags |= GroundDeformGPU::STEP_RELAX;
+	}
+	if (flags & (GroundDeformGPU::STEP_RESET | GroundDeformGPU::STEP_SHIFT | GroundDeformGPU::STEP_STAMPS | GroundDeformGPU::STEP_SLUMP | GroundDeformGPU::STEP_RELAX | GroundDeformGPU::STEP_COVER)) {
+		flags |= GroundDeformGPU::STEP_BLIT;
+		gpu_host.changed = true;
+	}
+	if ((p_readback && gpu_host.changed) || p_sync) {
+		flags |= GroundDeformGPU::STEP_READBACK;
+		gpu_host.changed = false;
+	}
+	if (p_sync) {
+		flags |= GroundDeformGPU::STEP_SYNC;
+	}
+	GroundDeformGPU::Dims d;
+	d.n = deform_resolution;
+	d.gn = ground_n;
+	d.cn = ground_n;
+	d.slots = MAX(max_cached_tiles, 1);
+	d.coll_w = 0;
+	d.stride = 2;
+	gpu_host.gpu->step(d, flags, _gpu_params(p_delta, p_age, slow), ground_bytes, cell_bytes, gpu_host.stamps, gpu_host.stores, gpu_host.shift, field.origin, Vector2());
+	gpu_host.stamps.clear();
+	gpu_host.stores.clear();
+	gpu_host.shift.clear();
+	gpu_host.reset = false;
+	if (p_sync) {
+		_gpu_take();
+	}
+}
+
+void GroundSurface3D::_gpu_take() {
+	if (gpu_host.gpu.is_null()) {
+		return;
+	}
+	if (gpu_host.take_texture()) {
+		globals_published = false;
+	}
+	// Slumping goes on while any texel still owes some (neighbours of a texel that moved are marked again,
+	// as on the CPU).
+	float owed = 0.0f;
+	if (gpu_host.take_field(field, 2, &owed) && owed > 0.0f) {
+		gpu_host.slump_until = MAX(gpu_host.slump_until, gpu_host.time + owed + 0.1);
+	}
+}
+
+void GroundSurface3D::sync_deformation() {
+	if (!_gpu_on() || !field.valid || !is_inside_tree()) {
+		return;
+	}
+	_gpu_submit(0.0, 0.0, true, true);
+	_publish();
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -653,7 +935,13 @@ float GroundSurface3D::press(Vector3 p_position, float p_radius, float p_bottom,
 	cols.surface = this;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
-	return field.press(cols, p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, contact_tolerance);
+	// On the GPU path the CPU copy takes the press too, so the volume returned and queries made before the
+	// next read back see it; the GPU field takes it as a stamp.
+	const float moved = field.press(cols, p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, contact_tolerance);
+	if (_gpu_on() && field.valid) {
+		gpu_sink.stamp(cols, p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, contact_tolerance, Vector2());
+	}
+	return moved;
 }
 
 float GroundSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink) {
@@ -661,7 +949,11 @@ float GroundSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw
 	cols.surface = this;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
-	return field.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance);
+	const float moved = field.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance);
+	if (_gpu_on() && field.valid) {
+		gpu_sink.stamp(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance, Vector2());
+	}
+	return moved;
 }
 
 float GroundSurface3D::get_sinkage_at(Vector3 p_position, float p_mass, float p_area, float p_width) const {
@@ -677,6 +969,10 @@ float GroundSurface3D::get_sinkage_at(Vector3 p_position, float p_mass, float p_
 
 void GroundSurface3D::clear_deformation() {
 	field.clear();
+	gpu_host.reset = true;
+	gpu_host.clear_cache();
+	gpu_host.stamps.clear();
+	gpu_host.slump_until = -1.0;
 	if (is_inside_tree()) {
 		_upload();
 	}
@@ -922,6 +1218,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rain_smoothing", "rate"), &GroundSurface3D::set_rain_smoothing);
 	ClassDB::bind_method(D_METHOD("get_rain_smoothing"), &GroundSurface3D::get_rain_smoothing);
 
+	ClassDB::bind_method(D_METHOD("set_gpu_simulation", "enabled"), &GroundSurface3D::set_gpu_simulation);
+	ClassDB::bind_method(D_METHOD("is_gpu_simulation"), &GroundSurface3D::is_gpu_simulation);
+	ClassDB::bind_method(D_METHOD("is_gpu_active"), &GroundSurface3D::is_gpu_active);
+	ClassDB::bind_method(D_METHOD("sync_deformation"), &GroundSurface3D::sync_deformation);
 	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round"), &GroundSurface3D::press, DEFVAL(0.0f), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink"), &GroundSurface3D::press_box, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_sinkage_at", "position", "mass", "area", "width"), &GroundSurface3D::get_sinkage_at, DEFVAL(0.0f));
@@ -961,6 +1261,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_mass", PROPERTY_HINT_RANGE, "0,500,0.5,suffix:kg"), "set_character_mass", "get_character_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_contact_area", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m²"), "set_character_contact_area", "get_character_contact_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_cached_tiles", PROPERTY_HINT_RANGE, "0,65536,1"), "set_max_cached_tiles", "get_max_cached_tiles");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_simulation"), "set_gpu_simulation", "is_gpu_simulation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drying_time", PROPERTY_HINT_RANGE, "1,86400,1,suffix:s"), "set_drying_time", "get_drying_time");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_drift_rate", PROPERTY_HINT_RANGE, "0,100,0.1"), "set_sand_drift_rate", "get_sand_drift_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rain_smoothing", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_rain_smoothing", "get_rain_smoothing");
@@ -977,6 +1278,7 @@ void GroundSurface3D::_bind_methods() {
 }
 
 GroundSurface3D::GroundSurface3D() {
+	gpu_sink.surface = this;
 	deform_groups.push_back("ground_deform");
 	deform_groups.push_back("snow_deform");
 	deform_groups.push_back("grass_trample");

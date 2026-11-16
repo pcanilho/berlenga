@@ -11,8 +11,8 @@ real sand, the way snow does, and whether PhysX helps.
   a pit in dry sand slumps to 33 degree walls in 3 s, one in damp sand keeps 61. Wind slowly fills
   prints (`sand_drift_rate`). It is CPU only: 2 ms per physics step while dry sand settles under a
   walker. Bodies stand on the undisturbed collider; the print forms under them.
-- **Snow got further.** `SnowSurface3D` has the same field on the GPU (`SnowDeformGPU`, 1.52 ms to
-  0.04 ms of main thread), a bow wave in front of ploughing bodies, crusts, and a two-way link with
+- **Snow got further.** `SnowSurface3D` has the same field on the GPU (`GroundDeformGPU` since stage 0,
+  1.52 ms to 0.04 ms of main thread), a bow wave in front of ploughing bodies, crusts, and a two-way link with
   the world tier. Sand has none of these yet.
 - **PhysX module.** `PhysXGranular3D`: a GPU MPM volume (Drucker-Prager, friction angle,
   cohesion, density) that piles, holds a slope and gets ploughed, drawn as a sphere per particle.
@@ -139,6 +139,33 @@ Jacobi slumping, the fresh (turned ground) channel and slow mud creep in compute
 for collision and queries, `gpu_simulation` on with the CPU path as fallback. Expected: the 2 ms
 settling step to under 0.1 ms of main thread, and a field large enough (64 m or more) for vehicles
 at speed. Same checks, bit-close on both paths. Pure performance; every later stage leans on it.
+
+**Built (16 Nov 2026).** The snow's GPU field moved to the ground module and now serves both:
+`modules/ground/ground_deform.glsl` and `GroundDeformGPU` (render thread), plus `GroundDeformGPUHost` (the
+main-thread side both nodes share: the stamps, the cache slots, the tile moves and the read back; the
+snow's copy of that code went). `params.kind.x` picks the owner's columns:
+- Ground columns come from the material lattice (rim share, repose slope, slumping rate, deepest dent,
+  darkening, gloss, sand share, deformable; 32 bytes a point, nearest point as on the CPU), with the CPU's
+  edge margin.
+- The fourth channel of each texel, unused by snow, holds the turned-ground freshness. The cache and the
+  read back carry it (two words a texel for the ground, one for snow).
+- Slumping takes the giving column's rim, then its dent down to the deepest, at the material's rate.
+  Slow material (mud) moves on every tenth of a second by the time saved up, which matches the CPU's tile
+  wait. A texel that still moves keeps the slumping it owes, as the CPU's tile marks do; the read back
+  carries what is owed, so the node keeps the slumping passes running while any texel owes some.
+- Ageing (`_age`: drying, wind filling dry sand, rain softening soil) is one pass a second.
+- The blit writes the turned-ground albedo and roughness factors, so the material and the path tracer's
+  rt_params read the GPU texture directly (`ground_deform_map` is a `Texture2DRD`).
+- `GroundSurface3D.gpu_simulation` (on), `is_gpu_active()`, `sync_deformation()`; queries read the copy
+  read back at 15 Hz. The CPU path stays the fallback (Compatibility, headless).
+
+Results (cloud, lavapipe): all 14 ground checks pass on both paths with the same numbers (dry sand pit
+62 to 33 degrees in 3 s, damp sand keeps 61, mud 63 after 10 s and 25 after 15 minutes, volume kept to
+0.001 l, turned ground dries). All 105 snow checks pass on both paths after the move, with the snow
+numbers recorded before (crust test: rim 0.0156 of 0.3285 m3). Trail view in dry sand: main-thread
+physics step 2.07 ms on the CPU path, 0.01 ms on the GPU path; moved volume 0.156741 against 0.156739 m3;
+the path-traced frames of both paths differ by 0.0002 of 255 on average (max 7, a few pixels). GPU time
+is on the PC queue.
 
 ### Stage 1: bodies feel the sand (terramechanics, SCM style)
 

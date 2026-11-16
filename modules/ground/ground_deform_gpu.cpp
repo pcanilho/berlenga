@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  snow_deform_gpu.cpp                                                   */
+/*  ground_deform_gpu.cpp                                                 */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -29,11 +29,13 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "snow_deform_gpu.h"
+#include "ground_deform_gpu.h"
 
-#include "snow_deform.glsl.gen.h"
+#include "ground_deform.glsl.gen.h"
+#include "ground_deform_field.h"
 
 #include "core/object/callable_mp.h"
+#include "core/templates/hash_set.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
 #include "servers/rendering/rendering_server.h"
@@ -53,34 +55,34 @@ enum {
 	MODE_PACK = 8,
 };
 
-bool SnowDeformGPU::is_available() {
+bool GroundDeformGPU::is_available() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	return rs && rs->get_rendering_device() != nullptr;
 }
 
-SnowDeformGPU::SnowDeformGPU() {
+GroundDeformGPU::GroundDeformGPU() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rd = rs ? rs->get_rendering_device() : nullptr;
 }
 
-SnowDeformGPU::~SnowDeformGPU() {
+GroundDeformGPU::~GroundDeformGPU() {
 }
 
-void SnowDeformGPU::shutdown() {
+void GroundDeformGPU::shutdown() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs || !rd) {
 		return;
 	}
-	rs->call_on_render_thread(callable_mp(this, &SnowDeformGPU::rt_free));
+	rs->call_on_render_thread(callable_mp(this, &GroundDeformGPU::rt_free));
 	rs->sync();
 }
 
-RID SnowDeformGPU::get_texture() const {
+RID GroundDeformGPU::get_texture() const {
 	MutexLock lock(mutex);
 	return texture_rid;
 }
 
-bool SnowDeformGPU::take_collision(PackedFloat32Array &r_heights, Vector2 &r_center) {
+bool GroundDeformGPU::take_collision(PackedFloat32Array &r_heights, Vector2 &r_center) {
 	MutexLock lock(mutex);
 	if (!collision_ready) {
 		return false;
@@ -91,7 +93,7 @@ bool SnowDeformGPU::take_collision(PackedFloat32Array &r_heights, Vector2 &r_cen
 	return true;
 }
 
-bool SnowDeformGPU::take_field(PackedByteArray &r_packed, Vector2i &r_origin) {
+bool GroundDeformGPU::take_field(PackedByteArray &r_packed, Vector2i &r_origin) {
 	MutexLock lock(mutex);
 	if (!field_ready) {
 		return false;
@@ -102,7 +104,7 @@ bool SnowDeformGPU::take_field(PackedByteArray &r_packed, Vector2i &r_origin) {
 	return true;
 }
 
-void SnowDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center) {
+void GroundDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center) {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs || !rd || failed) {
 		return;
@@ -113,7 +115,8 @@ void SnowDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArray 
 	d.push_back(p_dims.cn);
 	d.push_back(p_dims.slots);
 	d.push_back(p_dims.coll_w);
-	rs->call_on_render_thread(callable_mp(this, &SnowDeformGPU::rt_step).bind(d, p_flags, p_params, p_ground, p_cover, p_stamps, p_stores, p_shift, p_origin, p_collision_center));
+	d.push_back(p_dims.stride);
+	rs->call_on_render_thread(callable_mp(this, &GroundDeformGPU::rt_step).bind(d, p_flags, p_params, p_ground, p_cover, p_stamps, p_stores, p_shift, p_origin, p_collision_center));
 	if (p_flags & STEP_SYNC) {
 		rs->sync();
 	}
@@ -122,20 +125,20 @@ void SnowDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArray 
 // ---------------------------------------------------------------------------------------------------------
 // Render thread
 
-void SnowDeformGPU::_rt_compile() {
+void GroundDeformGPU::_rt_compile() {
 	if (compiled || failed) {
 		return;
 	}
 	Ref<RDShaderFile> sf;
 	sf.instantiate();
-	if (sf->parse_versions_from_text(snow_deform_shader_glsl) != OK) {
-		ERR_PRINT("SnowSurface3D: the print field's compute shader failed to compile; staying on the CPU.");
+	if (sf->parse_versions_from_text(ground_deform_shader_glsl) != OK) {
+		ERR_PRINT("Ground deform field: the print field's compute shader failed to compile; staying on the CPU.");
 		failed = true;
 		return;
 	}
 	shader = rd->shader_create_from_spirv(sf->get_spirv_stages());
 	if (shader.is_null()) {
-		ERR_PRINT("SnowSurface3D: the print field's compute shader failed to build; staying on the CPU.");
+		ERR_PRINT("Ground deform field: the print field's compute shader failed to build; staying on the CPU.");
 		failed = true;
 		return;
 	}
@@ -145,14 +148,14 @@ void SnowDeformGPU::_rt_compile() {
 	failed = !compiled;
 }
 
-RID SnowDeformGPU::_rt_storage(int p_bytes) {
+RID GroundDeformGPU::_rt_storage(int p_bytes) {
 	const int bytes = MAX(p_bytes, 16);
 	RID b = rd->storage_buffer_create(bytes);
 	rd->buffer_clear(b, 0, bytes);
 	return b;
 }
 
-void SnowDeformGPU::_rt_free_buffers() {
+void GroundDeformGPU::_rt_free_buffers() {
 	for (int i = 0; i < 2; i++) {
 		if (uset[i].is_valid() && rd->uniform_set_is_valid(uset[i])) {
 			rd->free_rid(uset[i]);
@@ -171,7 +174,7 @@ void SnowDeformGPU::_rt_free_buffers() {
 	dims = Dims();
 }
 
-void SnowDeformGPU::_rt_make_sets() {
+void GroundDeformGPU::_rt_make_sets() {
 	for (int i = 0; i < 2; i++) {
 		if (uset[i].is_valid() && rd->uniform_set_is_valid(uset[i])) {
 			rd->free_rid(uset[i]);
@@ -200,17 +203,17 @@ void SnowDeformGPU::_rt_make_sets() {
 	}
 }
 
-void SnowDeformGPU::_rt_ensure(const Dims &p_dims) {
+void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 	bool remake = false;
-	if (p_dims.n != dims.n || p_dims.slots != dims.slots) {
+	if (p_dims.n != dims.n || p_dims.slots != dims.slots || p_dims.stride != dims.stride) {
 		// The field itself: start over.
 		_rt_free_buffers();
 		const int n = p_dims.n;
 		buf_state[0] = _rt_storage(n * n * 16);
 		buf_state[1] = _rt_storage(n * n * 16);
 		buf_give = _rt_storage(n * n * 8);
-		buf_packed = _rt_storage(n * n * 4);
-		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4);
+		buf_packed = _rt_storage(n * n * 4 * p_dims.stride);
+		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * p_dims.stride);
 		RD::TextureFormat tf;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
 		tf.width = n;
@@ -250,7 +253,7 @@ void SnowDeformGPU::_rt_ensure(const Dims &p_dims) {
 	}
 }
 
-void SnowDeformGPU::_dispatch(int64_t p_list, int p_mode, int p_count, int p_groups) {
+void GroundDeformGPU::_dispatch(int64_t p_list, int p_mode, int p_count, int p_groups) {
 	if (p_groups <= 0) {
 		return;
 	}
@@ -261,9 +264,9 @@ void SnowDeformGPU::_dispatch(int64_t p_list, int p_mode, int p_count, int p_gro
 	rd->compute_list_add_barrier(p_list);
 }
 
-void SnowDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center) {
+void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center) {
 	_rt_compile();
-	if (failed || p_dims.size() < 5 || p_dims[0] <= 0 || p_params.size() != PARAMS_BYTES) {
+	if (failed || p_dims.size() < 6 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
 		return;
 	}
 	Dims d;
@@ -272,6 +275,7 @@ void SnowDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const P
 	d.cn = p_dims[2];
 	d.slots = p_dims[3];
 	d.coll_w = p_dims[4];
+	d.stride = p_dims[5];
 	_rt_ensure(d);
 	const int n = d.n;
 	const int field_groups = (n * n + WG - 1) / WG;
@@ -347,7 +351,7 @@ void SnowDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const P
 	rd->compute_list_end();
 
 	if (p_flags & STEP_SYNC) {
-		const Vector<uint8_t> fdata = rd->buffer_get_data(buf_packed, 0, n * n * 4);
+		const Vector<uint8_t> fdata = rd->buffer_get_data(buf_packed, 0, n * n * 4 * d.stride);
 		rt_on_field(fdata, p_origin);
 		if (d.coll_w > 0) {
 			const Vector<uint8_t> cdata = rd->buffer_get_data(buf_collision, 0, d.coll_w * d.coll_w * 4);
@@ -356,14 +360,14 @@ void SnowDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const P
 		return;
 	}
 	if ((p_flags & STEP_COLLISION) && d.coll_w > 0) {
-		rd->buffer_get_data_async(buf_collision, callable_mp(this, &SnowDeformGPU::rt_on_collision).bind(p_collision_center), 0, d.coll_w * d.coll_w * 4);
+		rd->buffer_get_data_async(buf_collision, callable_mp(this, &GroundDeformGPU::rt_on_collision).bind(p_collision_center), 0, d.coll_w * d.coll_w * 4);
 	}
 	if (p_flags & STEP_READBACK) {
-		rd->buffer_get_data_async(buf_packed, callable_mp(this, &SnowDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4);
+		rd->buffer_get_data_async(buf_packed, callable_mp(this, &GroundDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4 * d.stride);
 	}
 }
 
-void SnowDeformGPU::rt_on_collision(const PackedByteArray &p_data, Vector2 p_center) {
+void GroundDeformGPU::rt_on_collision(const PackedByteArray &p_data, Vector2 p_center) {
 	PackedFloat32Array h;
 	h.resize(p_data.size() / 4);
 	memcpy(h.ptrw(), p_data.ptr(), h.size() * 4);
@@ -373,14 +377,14 @@ void SnowDeformGPU::rt_on_collision(const PackedByteArray &p_data, Vector2 p_cen
 	collision_ready = true;
 }
 
-void SnowDeformGPU::rt_on_field(const PackedByteArray &p_data, Vector2i p_origin) {
+void GroundDeformGPU::rt_on_field(const PackedByteArray &p_data, Vector2i p_origin) {
 	MutexLock lock(mutex);
 	field_packed = p_data;
 	field_origin = p_origin;
 	field_ready = true;
 }
 
-void SnowDeformGPU::rt_free() {
+void GroundDeformGPU::rt_free() {
 	if (!rd) {
 		return;
 	}
@@ -397,4 +401,251 @@ void SnowDeformGPU::rt_free() {
 	compiled = false;
 	MutexLock lock(mutex);
 	texture_rid = RID();
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Main thread
+
+void GroundDeformGPUHost::release() {
+	if (gpu.is_valid()) {
+		gpu->shutdown();
+		gpu.unref();
+	}
+	if (texture.is_valid()) {
+		texture->set_texture_rd_rid(RID());
+	}
+	texture_serial = 0;
+	n = 0;
+	reset = true;
+	clear_cache();
+	stamps.clear();
+	stores.clear();
+	shift.clear();
+}
+
+void GroundDeformGPUHost::clear_cache() {
+	cache.clear();
+	free_slots.clear();
+	slots = 0;
+}
+
+bool GroundDeformGPUHost::stamp_bounds(const GroundDeformField &p_field, Vector3 p_position, float p_span, int &r_x0, int &r_x1, int &r_z0, int &r_z1) {
+	const int fn = p_field.resolution;
+	const float t = p_field.texel();
+	r_x0 = MAX(int(Math::floor((p_position.x - p_span) / t)) - p_field.origin.x, 0);
+	r_x1 = MIN(int(Math::ceil((p_position.x + p_span) / t)) - p_field.origin.x, fn - 1);
+	r_z0 = MAX(int(Math::floor((p_position.z - p_span) / t)) - p_field.origin.y, 0);
+	r_z1 = MIN(int(Math::ceil((p_position.z + p_span) / t)) - p_field.origin.y, fn - 1);
+	return r_x0 <= r_x1 && r_z0 <= r_z1;
+}
+
+void GroundDeformGPUHost::add_stamp(GroundDeformField &r_field, const float p_v[12], const float p_d[4], int p_x0, int p_x1, int p_z0, int p_z1) {
+	const int32_t e[4] = { p_x0, p_x1, p_z0, p_z1 };
+	const int at = stamps.size();
+	stamps.resize(at + GroundDeformGPU::STAMP_BYTES);
+	uint8_t *w = stamps.ptrw() + at;
+	memcpy(w, p_v, 48);
+	memcpy(w + 48, p_d, 16);
+	memcpy(w + 64, e, 16);
+	// The tiles it touches are live (they go to the cache when the field moves off them).
+	const int T = GroundDeformField::TILE;
+	const int nt = r_field.tiles();
+	if (int(tile_stamped.size()) != nt * nt) {
+		tile_stamped.resize(nt * nt);
+		for (float &s : tile_stamped) {
+			s = -1e9f;
+		}
+	}
+	for (int tz = p_z0 / T; tz <= p_z1 / T; tz++) {
+		for (int tx = p_x0 / T; tx <= p_x1 / T; tx++) {
+			tile_stamped[tz * nt + tx] = time;
+			r_field.tile_active[tz * nt + tx] = 1;
+		}
+	}
+}
+
+void GroundDeformGPUHost::shift_to(const GroundDeformField &p_field, Vector2i p_origin, int p_resolution, int p_max_cached_tiles) {
+	const int T = GroundDeformField::TILE;
+	const int fn = p_resolution;
+	const int nt = fn / T;
+	const bool keep = p_field.valid && n == fn && !reset;
+	const Vector2i old0 = p_field.origin / T;
+	const Vector2i new0 = p_origin / T;
+	const int want_slots = MAX(p_max_cached_tiles, 1);
+	if (slots != want_slots) {
+		clear_cache();
+		slots = want_slots;
+		for (int i = slots - 1; i >= 0; i--) {
+			free_slots.push_back(i);
+		}
+	}
+	stores.clear();
+	shift.clear();
+	shift.resize(nt * nt * 16);
+	int32_t *sh = reinterpret_cast<int32_t *>(shift.ptrw());
+	// Tiles coming in: from the old field where it overlaps, else from the cache.
+	LocalVector<int> loaded;
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			const Vector2i w = new0 + Vector2i(tx, tz);
+			const Vector2i o = w - old0;
+			int32_t *op = sh + (tz * nt + tx) * 4;
+			op[0] = 0;
+			op[1] = 0;
+			op[2] = 0;
+			op[3] = 0;
+			if (keep && o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) {
+				op[0] = 1;
+				op[1] = o.y * nt + o.x;
+			} else if (Slot *c = cache.getptr(w)) {
+				op[0] = 2;
+				op[1] = c->slot;
+				loaded.push_back(c->slot);
+				cache.erase(w);
+			}
+		}
+	}
+	// Tiles leaving with prints in them go to the cache (the least recently used make way), never into a
+	// slot being read in this same move.
+	if (keep && p_max_cached_tiles > 0) {
+		HashSet<int> busy;
+		for (int sl : loaded) {
+			busy.insert(sl);
+		}
+		for (int tz = 0; tz < nt; tz++) {
+			for (int tx = 0; tx < nt; tx++) {
+				const Vector2i w = old0 + Vector2i(tx, tz);
+				const Vector2i l = w - new0;
+				if (l.x >= 0 && l.y >= 0 && l.x < nt && l.y < nt) {
+					continue;
+				}
+				const int ti = tz * nt + tx;
+				const bool stamped = int(tile_stamped.size()) == nt * nt && time - tile_stamped[ti] < 1.5;
+				if (!(int(p_field.tile_active.size()) == nt * nt && p_field.tile_active[ti]) && !stamped) {
+					continue;
+				}
+				int slot = -1;
+				for (int k = int(free_slots.size()) - 1; k >= 0; k--) {
+					if (!busy.has(free_slots[k])) {
+						slot = free_slots[k];
+						free_slots.remove_at(k);
+						break;
+					}
+				}
+				if (slot < 0) {
+					// Evict the least recently used.
+					Vector2i oldest;
+					uint64_t best = UINT64_MAX;
+					for (const KeyValue<Vector2i, Slot> &kv : cache) {
+						if (kv.value.used < best && !busy.has(kv.value.slot)) {
+							best = kv.value.used;
+							oldest = kv.key;
+						}
+					}
+					if (best == UINT64_MAX) {
+						continue;
+					}
+					slot = cache[oldest].slot;
+					cache.erase(oldest);
+				}
+				busy.insert(slot);
+				cache.insert(w, Slot{ slot, ++cache_clock });
+				const int32_t st[4] = { tx, tz, slot, 0 };
+				const int at = stores.size();
+				stores.resize(at + 16);
+				memcpy(stores.ptrw() + at, st, 16);
+			}
+		}
+	}
+	for (int sl : loaded) {
+		free_slots.push_back(sl);
+	}
+	// Stamps still waiting were placed in the old field's texels: they go first (the order in the step is
+	// stores, shift, stamps), so move them to the new one.
+	if (keep && stamps.size() > 0) {
+		const Vector2i d = (old0 - new0) * T;
+		const int count = stamps.size() / GroundDeformGPU::STAMP_BYTES;
+		for (int i = 0; i < count; i++) {
+			int32_t *e = reinterpret_cast<int32_t *>(stamps.ptrw() + i * GroundDeformGPU::STAMP_BYTES + 64);
+			e[0] = MAX(e[0] + d.x, 0);
+			e[1] = MIN(e[1] + d.x, fn - 1);
+			e[2] = MAX(e[2] + d.y, 0);
+			e[3] = MIN(e[3] + d.y, fn - 1);
+		}
+	} else {
+		stamps.clear();
+	}
+	if (!keep) {
+		reset = true;
+		stores.clear();
+	}
+	if (int(tile_stamped.size()) == nt * nt && keep) {
+		LocalVector<float> next;
+		next.resize(nt * nt);
+		for (int tz = 0; tz < nt; tz++) {
+			for (int tx = 0; tx < nt; tx++) {
+				const Vector2i o = new0 + Vector2i(tx, tz) - old0;
+				next[tz * nt + tx] = (o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) ? tile_stamped[o.y * nt + o.x] : -1e9f;
+			}
+		}
+		tile_stamped = next;
+	}
+	n = fn;
+	changed = true;
+}
+
+bool GroundDeformGPUHost::take_texture() {
+	if (gpu.is_null()) {
+		return false;
+	}
+	if (texture.is_null()) {
+		texture.instantiate();
+	}
+	if (gpu->get_texture_serial() == texture_serial) {
+		return false;
+	}
+	texture_serial = gpu->get_texture_serial();
+	texture->set_texture_rd_rid(gpu->get_texture());
+	return true;
+}
+
+bool GroundDeformGPUHost::take_field(GroundDeformField &r_field, int p_stride, float *r_owed) {
+	PackedByteArray packed;
+	Vector2i origin;
+	if (gpu.is_null() || !gpu->take_field(packed, origin) || origin != r_field.origin || !r_field.valid) {
+		return false;
+	}
+	const int fn = r_field.resolution;
+	const bool fresh = p_stride == 2 && int(r_field.fresh.size()) == fn * fn;
+	if (packed.size() != fn * fn * 4 * p_stride || int(r_field.dent.size()) != fn * fn) {
+		return false;
+	}
+	const int T = GroundDeformField::TILE;
+	const uint16_t *h = reinterpret_cast<const uint16_t *>(packed.ptr());
+	const int nt = r_field.tiles();
+	for (int i = 0; i < nt * nt; i++) {
+		r_field.tile_active[i] = 0;
+	}
+	float owed = 0.0f;
+	for (int z = 0; z < fn; z++) {
+		for (int x = 0; x < fn; x++) {
+			const int i = z * fn + x;
+			const float dn = Math::half_to_float(h[i * 2 * p_stride + 0]);
+			const float rm = Math::half_to_float(h[i * 2 * p_stride + 1]);
+			const float fr = fresh ? Math::half_to_float(h[i * 2 * p_stride + 2]) : 0.0f;
+			r_field.dent[i] = dn;
+			r_field.rim[i] = rm;
+			if (fresh) {
+				r_field.fresh[i] = fr;
+				owed = MAX(owed, Math::half_to_float(h[i * 4 + 3]));
+			}
+			if (dn > 0.0f || rm > 0.0f || fr > 0.0f) {
+				r_field.tile_active[(z / T) * nt + x / T] = 1;
+			}
+		}
+	}
+	if (r_owed) {
+		*r_owed = owed;
+	}
+	return true;
 }
