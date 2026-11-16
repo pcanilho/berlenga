@@ -290,10 +290,9 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
-		if args.has("no-ground-blend"):
-			rocks.ground_blend = false
-		if args.has("no-glints"):
-			rocks.mineral_glints = false
+		# Off by default in the engine until their GPU cost is timed; on in the bench.
+		rocks.ground_blend = not args.has("no-ground-blend")
+		rocks.mineral_glints = not args.has("no-glints")
 		if args.has("water"):
 			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")

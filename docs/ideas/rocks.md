@@ -398,4 +398,35 @@ is one technique engine-wide.
 - Path tracer: the facet of the crystal each sample hits, in the base specular only (SPECULAR_NORMAL), rough 0.12;
   its samples count the footprint's crystals themselves.
 - Covered by lichen, moss, water film, snow and the ground's dust; dulled to 35% on the weathered rind.
-- `RockField3D.mineral_glints` (on); bench `--no-glints`.
+- `RockField3D.mineral_glints` (off until its GPU cost is timed on the PC; on in the bench); bench `--no-glints`. `ground_blend` likewise.
+
+## Landforms (round 3, 16 Nov): plan
+
+Bedrock forms bigger than a boulder but smaller than the terrain grid, each tied to a rock and a setting:
+- **Hoodoos** (Bryce Canyon; Twidale and Campbell 2005; Schumm's badlands): columns 2 to 40 m of soft, bedded rock
+  under a harder caprock that shields them; frost wedging along joints separates fins into columns (Bryce sees 200+
+  freeze-thaw cycles a year). Shape: a jointed column, beds recessed unevenly (soft beds deeply, so the column
+  "beads"), narrowing to a neck below a wider caprock that overhangs. Setting: soft bedded rock (sandstone,
+  limestone, mudstone) on steep, bare, gullied slopes (high rock exposure, 20 to 45 degrees, high drainage density),
+  in rows along the joints, at amphitheatre heads.
+- **Goblins** (Goblin Valley, Entrada sandstone): 1 to 6 m knobs, rounded by spheroidal weathering and sand blast,
+  mushroom heads on narrower necks, scattered on a flat, bare valley floor between mesa walls.
+- **Inland arches** (Arches NP; Ostanin et al. 2017, Nature Geoscience: stress shapes arches, the load arching round
+  the weak bed): sandstone fins 3 to 10 m thick in parallel rows along one joint set; a fin's weaker lower bed
+  weathers through (alcove first, then a window) and the opening's roof follows the stress arch (a smooth catenary
+  head, not stepped). Setting: sandstone, gentle bare bedrock (slope under 15 degrees).
+- **Clints and grykes** (limestone pavement; Williams 1966, Goldie 2005): glacially scoured flat limestone dissolved
+  along two joint sets into blocks (clints, 0.5 to 3 m) between slots (grykes, 0.1 to 0.5 m wide, 0.5 to 2 m deep),
+  clint tops fluted with runnels (rinnenkarren) and pans (kamenitza). Setting: limestone, flat (under 8 degrees),
+  bare or under thin soil, where ice scoured (the generator's ice flow map, else high exposure on flat ground).
+- **Potholes** (Richardson and Carling 2005, "A typology of sculpted forms in open bedrock channels"): round,
+  steep-walled hollows 0.2 to 3 m wide drilled by grinders (cobbles whirled by the flow) into bedrock river beds at
+  steps and constrictions, often in lines, sometimes breached into each other; a grinder stone left inside.
+  Setting: bedrock channels (rock exposure, steep reach, the river layer's beds).
+- **Cave mouths** (Ford and Williams 2007): in limestone cliffs, along a bedding plane or a joint intersection; an
+  arched or bedding-flat roof, breakdown blocks on the floor at the entrance, a dark interior. Setting: limestone
+  cliff faces (the generator's cliff points), at the foot or along a bed.
+Build: RockGenerator families (hoodoo, goblin, fin, pavement, pothole slab, cave mouth) on the same jointed implicit
+field as the coast forms (Paris et al. 2020), and a RockField3D landform layer placing them from the geology, slope,
+rock type and drainage, as the coast layer does. Order: pavement and hoodoos first (the most common), then fins and
+arches, goblins, potholes, cave mouths.

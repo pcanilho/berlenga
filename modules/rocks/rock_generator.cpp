@@ -1945,7 +1945,7 @@ uniform vec3 ground_alluvium = vec3(0.064, 0.06, 0.022);
 uniform vec3 ground_sand = vec3(0.448, 0.342, 0.181);
 uniform float ground_alluvium_area = 5.5;
 // Mineral glints (docs/ideas/rocks.md): the glossy crystals past the distance where they are drawn one by one.
-uniform bool mineral_glints = true;
+uniform bool mineral_glints = false;
 // The sea's mean level (none below -1e4) and its tidal range in metres: stones reaching it carry the shore zones.
 uniform float sea_level = -100000.0;
 uniform float tide_range = 2.0;

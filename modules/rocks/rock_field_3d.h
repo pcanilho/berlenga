@@ -143,10 +143,10 @@ private:
 	real_t lichen_cover = 0.5;
 	real_t moss_cover = 0.4;
 	// Ground blending: the stone's foot eased into the ground under it (docs/ideas/rocks.md).
-	bool ground_blend = true;
+	bool ground_blend = false;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
-	bool mineral_glints = true;
+	bool mineral_glints = false;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
 	real_t ground_blend_height = 0.25;
