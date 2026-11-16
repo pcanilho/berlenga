@@ -535,7 +535,7 @@ second and slides between bakes; a lifecycle of minutes changes little in a seco
 
 ### As built (16 Nov)
 
-`WeatherMap3D.cloud_evolution` (on), `cloud_lifetime` (900 s), `cloud_churn` (1.5 m/s), `set_cloud_time()`;
+`WeatherMap3D.cloud_evolution` (off by default until the GPU cost is measured on the PC), `cloud_lifetime` (900 s), `cloud_churn` (1.5 m/s), `set_cloud_time()`;
 the map advances the clock with weather time and hands the sky `cloud_evolve` and `cloud_churn`. The CPU density,
 the shadow bake and the sky shader share the code, so path traced frames (which read the sky shader) match.
 
@@ -550,7 +550,8 @@ Checks (`docs/bench/weather --test`, cover 0.4, variation 0.35):
   300 s show the same clouds and shadows.
 - Cost (lavapipe, 960x540, clouds view, reprojection off, so the march runs for every half resolution pixel):
   112 against 102 ms a frame (+10%), the cover noise's second slice per octave. With reprojection on the march
-  is a quarter of that. GPU time on the PC queue. The shadow bake: 48 ms (52 before, noise).
+  is a quarter of that in theory, but the default path measured the same share: 238 against 217 ms a frame
+  (+10%, reprojection on, 120 frames). So it ships off until the PC's GPU number is in. GPU time on the PC queue. The shadow bake: 48 ms (52 before, noise).
 - `--cloud-time=S` and `--frozen` on the weather bench.
 
 ## Season state (11 Nov)

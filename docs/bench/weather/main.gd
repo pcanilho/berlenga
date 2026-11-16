@@ -383,6 +383,7 @@ func _cloud_evolution_tests() -> void:
 	c.cloud_cover = 0.4
 	c.cloud_type = 0.6
 	c.cloud_variation = 0.35
+	c.cloud_evolution = true
 	c.sun_light = c.get_path_to(sun)
 	c.cloud_shadow_extent = 8192.0
 	c.cloud_shadow_resolution = 256
