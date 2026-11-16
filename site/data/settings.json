@@ -1470,6 +1470,18 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Buoyancy from shapes",
+   "settings": [
+    "volume_mode",
+    "mass_from_densities"
+   ],
+   "note": "",
+   "what": "bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Bodies push water",
    "settings": [
     "PhysXWaterPusher3D"

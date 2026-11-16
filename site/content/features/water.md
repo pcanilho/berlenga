@@ -144,6 +144,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *River live flow: the wake swings behind the rock.*
 
 - **Live water** (`PhysXLiveWater3D`, `streaming`): water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.
+- **Buoyancy from shapes** (PhysXBuoyancy3D `volume_mode`, `mass_from_densities`): bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.
 - **Bodies push water** (`PhysXWaterPusher3D`): legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
 
