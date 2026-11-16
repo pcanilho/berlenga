@@ -1,1 +1,0 @@
-- Water: lamps under the water (omni and spot lights) glow and scatter into the water in raster, as in path tracing.

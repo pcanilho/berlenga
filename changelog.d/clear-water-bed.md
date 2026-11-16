@@ -1,1 +1,0 @@
-- Water: no dark hard-edged blotches on clear shallow water where the simulated seabed map is coarser than the seabed in view.

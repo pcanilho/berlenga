@@ -1,1 +1,0 @@
-- Water: rivers show the standing waves of their flow: a train of smooth stationary waves below a weak hydraulic jump, and cross-waves where fast water runs into a narrowing (`standing_waves`).

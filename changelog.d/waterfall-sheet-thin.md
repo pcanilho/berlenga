@@ -1,1 +1,0 @@
-- Water: waterfall sheets in deep shade are no longer near black under path tracing.

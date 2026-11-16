@@ -6,6 +6,43 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-f2ad55f2 (2026-11-16)
+
+### Added
+- PhysXFlow3D.scattering_temporal (off by default): the raster scattering pass jitters its march every frame and blends over a reprojected, neighbourhood-clamped history, so its step pattern no longer shows as bands at the smoke's edges.
+- Trees: `bark_wounds` for lightning scars, frost cracks with ribs, deer and squirrel stripping, callus rolls and resin runs on living stems (off by default while tuned).
+- Trees: coppice-with-standards, wood pasture and pollard row stands (`TreeGenerator.STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`).
+- Trees: winter buds on shoot tips, shaped and coloured by species.
+
+### Changed
+- PhysXFlow3D.ambient_scattering: sky light inside the smoke is dimmed by all the gas above each point, read with one fetch from a volumetric shadow map built looking straight down, instead of a 4-step march over 4 m. Tall plumes darken at the base and core as in path tracing.
+- PhysXFlow3D raster smoke: the sun's smoke shadow is a volumetric shadow map (optical depth over 32 depth slices). `cast_shadows` reads it at each surface's depth, and `sun_scattering` lights the smoke from it with one fetch per sample instead of a 4-step march, so the whole plume self-shadows, not only the 4 m nearest. The quarter-resolution scattering upsamples with a wider joint bilateral filter, so the texel grid no longer shows at thin edges.
+- Trees: catkins are modelled as spiral bract scales, open ones with anther tufts; birch witches' brooms are dense nests of kinked, branching twigs on a lumpy gall.
+- Trees: ash keys hang in branched bunches with their seeds; berries hang on stalks with the dark calyx at their tips.
+- Trees: rowan, ash and elder leaflets are cut from a texture with a smooth pointed outline, toothed margins, midrib and veins; leaf undersides are paler; rowan bark carries pale lenticels.
+- Trees: pollard heads and coppice stools carry modelled burrs (clusters of hard-edged knobs) and deep fissures; poles swell out of their knuckles with folds of bark, carry girdle scars and, once thick, shallow flutes; pollard boles keep thickening every year.
+- Trees: willow pollards bear a dense fan of long unbranched withies.
+- Trees: hazel has its own glossy grey-brown bark with pale lenticels and peeling skin.
+- Trees: coppice stools end their lobes in old rotted cuts under a rolled callus lip; rods swell at their nodes and show hazel's pale lenticels.
+- Trees: pollard poles carry branch scars, and the folds where they leave the head are irregular and partial.
+- Trees: rowan and elder berries hang in dense domed corymbs on branching red stalks; rowan leaflets are narrow and lanceolate.
+
+### Improved
+- Trees: smooth bark (beech) carries lobed crust lichen films, green algae drifts and damp patches instead of a stamped pattern; bare wood shows drawn fibres, growth bands and rays, sharp at 30 cm.
+- Trees: sticks are short snapped pieces with kinks at their nodes, litter-brown and resting on the ground; fallen limbs rest on two points.
+- Trees: logs settle onto the ground along their length; uprooted logs slope off the root plate and touch down partway out.
+- Trees: root plates carry soil clods, stones and torn root stubs, with roots standing out of the soil.
+- Trees: smooth bark (beech and the like) carries stemflow tracks, algae and crust lichen films.
+- Trees: root plates show crumbly torn soil, a mat of fine roots and uneven, soil-crusted roots; smooth bark carries crust lichen colonies; compound leaves have a stalk.
+- Trees: bare wood on logs and snags shows finer grain, rot staining, spalting zone lines and bark beetle galleries.
+- Trees: pollard heads carry many small hard burrs over the bark instead of large smooth swellings; coppice stools are less dark.
+
+### Fixed
+- Trees: shed sticks and limbs no longer collapse onto their old parent's axis (some were invisible or floated); a lapsed pollard's dead poles end in snapped stubs instead of round balls.
+- Trees: lapsed pollards regrow broad crowns from a few leading limbs instead of a fan of whips, and pollards in stands grow open-grown.
+- Path tracing: alpha-cut materials with alpha to coverage are traced as alpha-tested opaque surfaces instead of transparent layers, so they no longer lose their indirect light.
+- Trees: fallen wood's `tree_deadwood_axis` meta appends points along the stem's centreline with the girth round each, so a bent stick no longer reads as a thick log.
+
 ## build-9ed2033b (2026-11-16)
 
 ### Added
