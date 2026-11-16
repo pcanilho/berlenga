@@ -1113,6 +1113,23 @@ mistletoe and brooms, which read from far.
   only at the shell's edge. Bare wood: the grain meanders a centimetre or two over half a metre,
   ridges run a hand to a forearm long, knots are 1.5-4.5 cm.
 
+Round 6 (16 Nov, after docs declined the round 5 frames: no checks visible, the peel edge a
+decal's edge, moss as flat round discs):
+- Drying checks are geometry (`_grow_checks`): each check gets two walls of split wood from its
+  lips down to a V floor below the stem's trough, a centimetre a step along the same wandering
+  line, buff inside and dark at the floor, in the "wood" surface. The stem's 2.5 cm grid alone
+  could only sink a soft groove.
+- The peel edge on logs is a step (`_split_peel_edge`): vertices sink the full bark thickness
+  or not at all (0.3 cm + 1.5% of the radius, a beech log's 5-10 mm), each triangle the edge
+  crosses is cut along it into a bark piece and a wood piece, and a wall of red-brown phloem
+  joins them. Cut points are shared by neighbouring triangles; parts keep their index ranges
+  (LODs), new vertices take their part's lichen UV2 (`Builder.extra_part`). PT and raster
+  match; the walls carry their own normals, so no terminator slits.
+- Moss margins are ragged (weight noise at 13 and 31 per metre, plus or minus 0.13) and the
+  shell is thin at its margin, thickening inward (15% of the cushion depth at the edge).
+- Still open: beech bark reads as soft mottling at a hand's distance (beech is smooth, but
+  real bark has lenticels and fine wrinkles); the log waits for the showcase forest for docs.
+
 ### 5p. Bark stories (16 Nov; Paulo's third pick)
 
 What a living stem records of its life, each a few per stand, all modelled on the stem's own

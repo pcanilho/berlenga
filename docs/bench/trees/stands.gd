@@ -50,6 +50,12 @@ func run(args: Dictionary) -> void:
 	variants = int(args.get("variants", "1"))
 	gen = TreeGenerator.new()
 	gen.seed = int(args.get("seed", "1"))
+	# Full-needle near meshes (about 30M vertices a conifer species) serve no placement check and
+	# overrun a 15 GB machine: off here unless asked for with --near-needles.
+	if not args.has("near-needles"):
+		gen.near_needle_range = 0.0
+	if args.has("no-near-leaves"):
+		gen.near_leaf_range = 0.0
 	if args.has("region"):
 		use_generator = args.has("generated")
 		north_america = args.has("na")

@@ -2325,15 +2325,16 @@
    "topic": "Growth"
   },
   {
-   "name": "Wind-shaped and bank trees",
+   "name": "Wind, bank and rock trees",
    "settings": [
     "wind_exposure",
     "krummholz",
     "ground_slope",
-    "bank_erosion"
+    "bank_erosion",
+    "root_stone"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on banks lean their roots downhill, with eroded roots arching off the face.",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3055,6 +3056,18 @@
    ],
    "note": "",
    "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Particle fluid surface",
+   "settings": [
+    "PhysXParticleFluid3D.render_mode",
+    "foam_enabled"
+   ],
+   "note": "",
+   "what": "particle fluids draw as a real isosurface mesh that casts shadows, shows in reflections and is path traced, with foam; Screen Space is the lighter alternative.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

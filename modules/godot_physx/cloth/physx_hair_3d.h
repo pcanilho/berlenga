@@ -127,7 +127,7 @@ class PhysXHair3D : public Node3D {
 	Ref<ShaderMaterial> snow_material;
 	float rain_shelter_timer = 0.0f;
 	// Thick strands for distant hair (docs/ideas/hair.md, stage 3): one strip a clump.
-	bool cards_enabled = false;
+	bool cards_enabled = true;
 	int card_count = 1024;
 	float _screen_size(const Camera3D *p_camera) const;
 	MeshInstance3D *card_instance = nullptr;

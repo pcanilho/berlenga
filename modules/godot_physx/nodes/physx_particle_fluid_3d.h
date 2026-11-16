@@ -166,7 +166,7 @@ private:
 
 	// When true, PhysX marching-cubes a smooth triangle mesh from the particles
 	// (PxIsosurfaceExtractor) and this node draws it as an ArrayMesh.
-	bool surface_mesh = false;
+	bool surface_mesh = true; // the default render_mode is Isosurface: a real mesh, traced and shadowed
 	// Opt-in: feed PhysX per-particle anisotropy to the isosurface extractor.
 	// Crisper crests, but it needles fast particles, so keep it off while emitting.
 	bool surface_anisotropy = false;
@@ -209,7 +209,7 @@ private:
 	Ref<Material> foam_water_material;
 	uint32_t foam_surface_mesh_version = 0;
 
-	bool foam_enabled = false;
+	bool foam_enabled = true;
 	int foam_particle_count = 16384;
 	float foam_lifetime = 1.5;
 	float foam_threshold = 300.0;
