@@ -2272,6 +2272,17 @@
    "topic": "Wood and leaves"
   },
   {
+   "name": "Bark stories",
+   "settings": [
+    "bark_wounds"
+   ],
+   "note": "",
+   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks and knots on lying logs.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
    "name": "Bark moss",
    "settings": [
     "moss_cover"
