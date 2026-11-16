@@ -222,6 +222,17 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.cap_centre = Color(0.4f, 0.27f, 0.2f); // Dark tawny brown over the boss.
 			m.cap_margin = Color(1.22f, 1.25f, 1.3f); // Pale honey yellow at the rim.
 			m.cap_fade = 1.0f; // The brown reaches well out: about half the cap.
+			m.fibrils = 0.3f;
+			m.moist_band = rng.randf() < 0.5f ? _rand(0.1f, 0.25f) : 0.0f; // Some caps still damp at the rim.
+			m.bulb = 0.55f; // The foot swells where it fuses with its neighbours.
+			{
+				// Each cap its own shade, honey yellow to tawny olive (the species varies with age,
+				// moisture and host; Kibby 2017).
+				const float v = _rand(0.0f, 1.0f);
+				const Color shade = Color(1.06f, 1.04f, 0.92f).lerp(Color(0.86f, 0.84f, 0.8f), v);
+				m.cap_centre *= shade;
+				m.cap_margin *= shade;
+			}
 			break;
 		default:
 			break;
@@ -304,7 +315,8 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 	auto curl_z = [&](float x) { return -p_m.curl * Math::pow(Math::smoothstep(0.6f, 1.0f, x), 2.0f); };
 	// Fewer sectors on small caps: about 6 mm between them at the margin, 16 to 32.
 	const int prof = 10;
-	const int cap_sectors = CLAMP(int(R * Math::TAU / 0.006f), 16, 32);
+	// Fibrillose caps get more sectors: their streaks are drawn by the vertex colours.
+	const int cap_sectors = p_m.fibrils > 0.0f ? CLAMP(int(R * Math::TAU / 0.003f), 32, 64) : CLAMP(int(R * Math::TAU / 0.006f), 16, 32);
 	// Top and margin (petal surface): from the margin's underside edge, up round the rim, over the
 	// top to the centre.
 	{
@@ -325,7 +337,24 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		Builder &pb = builders[SURFACE_PETAL];
 		const int from = pb.verts.size();
 		_add_lathe(SURFACE_PETAL, cf, p, c, cap_sectors, p_m.wave, p_m.wave_k, phase, 0.3f);
-		(void)from;
+		if (p_m.fibrils > 0.0f || p_m.moist_band > 0.0f) {
+			// Radial fibrils (a streak per few sectors, each its own depth) and the hygrophanous
+			// rim band, on the cap's vertex colours by angle and distance from the axis.
+			const Transform3D inv = cap.affine_inverse();
+			const float seed_k = _rand(0.0f, 100.0f);
+			Color *cols = pb.colors.ptrw();
+			const Vector3 *vs = pb.verts.ptr();
+			for (int v = from; v < pb.verts.size(); v++) {
+				const Vector3 l = inv.xform(vs[v]);
+				const float rr = Vector2(l.x, l.y).length() / MAX(R, 1e-4f);
+				const float ang = Math::atan2(l.y, l.x);
+				const float k = Math::floor((ang / Math::TAU + 0.5f) * float(cap_sectors) * 0.5f);
+				const float h = Math::fract(Math::sin(k * 12.9898f + seed_k) * 43758.5453f);
+				float f = 1.0f - p_m.fibrils * h * Math::smoothstep(0.15f, 0.6f, rr);
+				f *= 1.0f - p_m.moist_band * Math::smoothstep(0.62f, 0.78f, rr) * (1.0f - Math::smoothstep(0.9f, 1.0f, rr));
+				cols[v] = Color(cols[v].r * f, cols[v].g * f, cols[v].b * f, cols[v].a);
+			}
+		}
 	}
 	// Underside (centre surface): from the stalk out to the margin's lower edge. With a tube
 	// layer, a thick cushion whose lower face is the pores.
@@ -470,8 +499,8 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		sp.push_back(Vector2(r * 0.55f, r * 0.9f));
 		sp.push_back(Vector2(0.0f, r * 1.7f));
 		LocalVector<Color> sc;
-		// Dark brown fibrils (the centre surface is pale, so these factors stay low).
-		const float dark = _rand(0.16f, 0.28f);
+		// Dark brown fibrils (the centre surface is pale, so these factors stay low: lit from above, lighter ones read as pale grit).
+		const float dark = _rand(0.07f, 0.13f);
 		sc.push_back(Color(dark * 1.3f, dark * 0.95f, dark * 0.6f));
 		sc.push_back(Color(dark * 1.25f, dark * 0.9f, dark * 0.55f));
 		sc.push_back(Color(dark, dark * 0.72f, dark * 0.45f));
@@ -514,23 +543,6 @@ void PlantGenerator::_build_mushrooms() {
 		default:
 			break;
 	}
-	if (tuft) {
-		// The fused base: one tough, dark mass the stalks rise from, against the wood on its -X
-		// side (VegetationField3D turns wood feeders so +X faces out of the log).
-		LocalVector<Transform3D> bf;
-		bf.push_back(Transform3D(mushroom_frame(Vector3(0, 1, 0)), Vector3(-0.004f, -0.012f, 0.0f)));
-		LocalVector<Vector2> bp;
-		LocalVector<Color> bc;
-		const float br = spread * 0.75f;
-		for (int i = 0; i <= 5; i++) {
-			const float t = float(i) / 5;
-			bp.push_back(Vector2(br * Math::lerp(1.0f, 0.25f, t * t), 0.03f * t));
-			const float g = Math::lerp(0.24f, 0.42f, t);
-			bc.push_back(Color(g, g * 0.82f, g * 0.6f));
-		}
-		_begin_organ(Vector3());
-		_add_lathe(SURFACE_STEM, bf, bp, bc, 14, 0.18f, 3, _rand(0.0f, Math::TAU), 0.0f);
-	}
 	for (int i = 0; i < count; i++) {
 		const float age = _rand(0.1f, 1.0f);
 		const MushroomForm m = _mushroom_form(age);
@@ -539,13 +551,24 @@ void PlantGenerator::_build_mushrooms() {
 		float tilt = _rand(0.0f, 0.12f);
 		float y = 0.0f;
 		if (tuft) {
-			// From the fused base, mostly out of the wood's side (+X), the outer stalks leaning
-			// out low and curving back up to their caps (they push past each other).
+			// The fused base: the stalks all come from one point in the wood, mostly out of its
+			// side (+X), the outer ones leaning out low and curving back up to their caps; their
+			// swollen feet (the form's bulb) merge into one tough, dark mass where they meet.
 			a = _rand(-0.6f, 0.6f) * Math::PI;
-			d = spread * Math::sqrt(_rand(0.0f, 1.0f)) * Math::lerp(0.5f, 1.0f, 0.5f + 0.5f * Math::cos(a));
-			tilt = 0.3f + 0.7f * d / spread + _rand(0.0f, 0.15f);
-			y = 0.012f;
+			const float reach = Math::sqrt(_rand(0.0f, 1.0f)) * Math::lerp(0.5f, 1.0f, 0.5f + 0.5f * Math::cos(a));
+			d = spread * 0.22f * reach;
+			tilt = 0.35f + 0.75f * reach + _rand(0.0f, 0.15f);
+			y = 0.004f;
 		}
 		_add_mushroom(Transform3D(Basis(), Vector3(Math::cos(a) * d, y, Math::sin(a) * d)), m, tilt, a);
+	}
+	if (tuft) {
+		// Aborted primordia: a few small knobs crowded in the fused base, as in real clumps.
+		const int buttons = int(_rand(2.0f, 5.99f));
+		for (int i = 0; i < buttons; i++) {
+			const MushroomForm m = _mushroom_form(_rand(0.0f, 0.06f));
+			const float a = _rand(-0.5f, 0.5f) * Math::PI;
+			_add_mushroom(Transform3D(Basis(), Vector3(Math::cos(a) * spread * 0.2f, 0.002f, Math::sin(a) * spread * 0.2f)), m, _rand(0.4f, 0.9f), a);
+		}
 	}
 }

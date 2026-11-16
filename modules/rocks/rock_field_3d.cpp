@@ -346,6 +346,7 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 			lib.bottom.push_back(j.meta.get("rock_bottom", -0.5));
 			lib.hulls.push_back(j.meta.get("rock_hull", PackedVector3Array()));
 			lib.potholes.push_back(j.meta.get("rock_potholes", PackedFloat32Array()));
+			lib.caves.push_back(j.meta.get("rock_cave", Transform3D(Basis().scaled(Vector3()), Vector3())));
 			// Cap samples: the mesh's vertices thinned to one per 0.06-unit voxel (normals averaged).
 			LocalVector<Vector3> cp, cn;
 			{
@@ -1379,9 +1380,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						continue;
 					}
 					cave_made = true;
-					// The portal block stands on the foot in front of the wall (a heightfield cannot open a hole into
-					// its own slope), its back and top against the cliff, the opening facing out; a few fallen blocks
-					// on the floor at the entrance.
+					// The portal block is set into the slope: its front stands at the foot and its back and top are
+					// buried in the wall as it rises, the opening facing out. The terrain inside the passage is cut away (TerrainGenerator3D.add_hole; the
+					// block's rock hides the hole's edge, as a static mesh cave entrance does over a landscape hole);
+					// a few fallen blocks lie on the floor at the entrance.
 					const uint32_t key = _library_key(type, RockGenerator::FAMILY_CAVE_MOUTH, 0);
 					Library *lib = _ensure_library(key);
 					if (!lib) {
@@ -1395,6 +1397,28 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					o2.normalize(); // out, away from the cliff
 					const Vector3 out(o2.x, 0, o2.y), up(0, 1, 0);
 					const Vector3 strike(-o2.y, 0, o2.x); // so that strike x out = up
+					// Where the wall rises from the foot: the first point back toward it 1 m above the foot.
+					real_t g = gen->get_height(s.p);
+					real_t back = -1.0;
+					for (real_t t = 0.0; t <= 14.0; t += 0.5) {
+						if (gen->get_height(s.p - out * t) > g + 1.0) {
+							back = MAX(t - 1.0, real_t(0.0));
+							break;
+						}
+					}
+					if (back < 0.0) {
+						continue;
+					}
+					const Vector3 base = s.p - out * back;
+					for (int j = -2; j <= 2; j++) {
+						g = MIN(g, gen->get_height(base + strike * real_t(j) * 1.5));
+					}
+					// The wall's own normal a few metres up; the block leans back with it (up to 25 degrees), so its front
+					// lies along the face and its sides and top go into the hill, the passage running down into it.
+					Vector3 wall_n = ground_normal(gen, base.x - out.x * 5.0, base.z - out.z * 5.0, 5.0);
+					const real_t lean = MIN(Math::acos(CLAMP(Vector2(wall_n.x, wall_n.z).length(), real_t(0.0), real_t(1.0))), Math::deg_to_rad(real_t(25.0)));
+					const Vector3 out_t = (out * Math::cos(lean) + up * Math::sin(lean)).normalized();
+					const Vector3 up_t = strike.cross(out_t).normalized();
 					Stone st;
 					st.layer = p_layer;
 					st.library = key;
@@ -1402,16 +1426,41 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const AABB box = lib->meshes[st.variant]->get_aabb();
 					const real_t height = 6.0 + 6.0 * rng.randf();
 					st.scale = height / MAX(real_t(box.size.z), real_t(0.5));
-					st.basis = Basis(strike, out, up).scaled_local(Vector3(st.scale, st.scale, st.scale));
-					const Vector3 front = s.p + out * 1.0;
-					const Vector3 org = front - out * real_t((box.position.y + box.size.y) * st.scale);
-					real_t g = gen->get_height(front);
-					for (int j = -2; j <= 2; j++) {
-						g = MIN(g, gen->get_height(front + strike * (real_t(j) * 0.2 * real_t(box.size.x) * st.scale)));
+					st.basis = Basis(strike, out_t, up_t).scaled_local(Vector3(st.scale, st.scale, st.scale));
+					// The passage's floor at its mouth sits on the foot where the wall rises, the front 0.3 m out of it.
+					const Transform3D cave = (st.variant < int(lib->caves.size())) ? lib->caves[st.variant] : Transform3D(Basis().scaled(Vector3()), Vector3());
+					const bool has_cave = cave.basis.determinant() != 0.0f;
+					const Vector3 mouth_local = has_cave ? cave.xform(Vector3(0, 1, -1)) : Vector3(0.5f * (box.position.x + box.get_end().x), box.get_end().y, box.position.z);
+					// Far enough out that no ground stands in front of the opening: across its width and height the
+					// wall must lie behind the front (the hole takes the ground inside the passage, not in front of it).
+					Vector3 mouth = Vector3(base.x, g, base.z) + out * 0.3;
+					if (has_cave) {
+						const Basis hb = st.basis * cave.basis;
+						const real_t hw = hb.get_column(0).length(), hh = 2.0 * hb.get_column(2).length();
+						real_t push = 0.0;
+						for (int iu = -2; iu <= 2; iu++) {
+							for (int iv = 1; iv <= 4; iv++) {
+								const Vector3 p = mouth + strike * (hw * real_t(iu) * 0.45) + up_t * (hh * real_t(iv) * 0.24);
+								real_t t = 0.0;
+								while (t < 12.0 && gen->get_height(p + out * t) > p.y) {
+									t += 0.25;
+								}
+								push = MAX(push, t);
+							}
+						}
+						mouth += out * push;
 					}
-					st.position = Vector3(org.x, g - 0.05 * height - box.position.z * st.scale, org.z);
+					st.position = mouth - st.basis.xform(mouth_local) - up * (0.02 * height);
 					st.ground = g;
 					r_stones.push_back(st);
+					if (has_cave) {
+						const Transform3D hb = Transform3D(st.basis, st.position) * cave;
+						if (gen->add_hole(hb)) {
+							hole_rects.push_back(Rect2(hb.origin.x, hb.origin.z, 0, 0).grow(hb.basis.get_scale().length()));
+							_terrain3d_hole(hb);
+						}
+					}
+					const Vector3 front = mouth;
 					// Breakdown: 3 to 7 blocks fallen from the roof and the hood, on the floor in front of the entrance.
 					const uint32_t bkey = _library_key(type, RockGenerator::FAMILY_ROCKFALL, 0);
 					Library *blib = _ensure_library(bkey);
@@ -1665,6 +1714,16 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	const Rect2 rect(p_key.y * cs, p_key.z * cs, cs, cs);
 	LocalVector<Stone> stones;
 	_place(layer, rect, rf_hash3(p_key.x, p_key.y, p_key.z, uint32_t(seed) * 2654435761u), stones);
+	// Nothing lies on ground a cave mouth opened (TerrainGenerator3D holes); the cave's own blocks are landforms.
+	if (layer != LAYER_LANDFORM) {
+		if (const TerrainGenerator3D *hg = _get_generator(); hg && hg->has_holes_in(rect.grow(8.0))) {
+			for (int i = int(stones.size()) - 1; i >= 0; i--) {
+				if (hg->is_hole(stones[i].position)) {
+					stones.remove_at(i);
+				}
+			}
+		}
+	}
 	if (!broken_stones.is_empty()) {
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
 			if (broken_stones.has(Vector3i((stones[i].position * 100.0f).round()))) {
@@ -1836,6 +1895,36 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	}
 	cells.insert(p_key, cell);
 	close_dirty = true;
+	// Holes this cell opened: the cells of other layers already built over them are built again without the stones
+	// that lay there.
+	if (!hole_rects.is_empty()) {
+		LocalVector<Rect2> rects;
+		rects.resize(hole_rects.size());
+		for (uint32_t i = 0; i < hole_rects.size(); i++) {
+			rects[i] = hole_rects[i];
+		}
+		hole_rects.clear();
+		LocalVector<Vector3i> again;
+		for (const KeyValue<Vector3i, Cell> &kv : cells) {
+			if (kv.key.x == LAYER_LANDFORM) {
+				continue;
+			}
+			const real_t ks = _cell_size(Layer(kv.key.x));
+			const Rect2 kr(kv.key.y * ks, kv.key.z * ks, ks, ks);
+			for (const Rect2 &r : rects) {
+				if (kr.intersects(r.grow(8.0))) {
+					again.push_back(kv.key);
+					break;
+				}
+			}
+		}
+		for (const Vector3i &k : again) {
+			stone_count -= cells[k].stones;
+			_free_cell(cells[k]);
+			cells.erase(k);
+			_build_cell(k);
+		}
+	}
 }
 
 void RockField3D::_update_streaming(bool p_all) {
@@ -2349,6 +2438,70 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 		emit_signal(SNAME("rockfall"), xf.origin, mass);
 	}
 	return node;
+}
+
+/* Terrain3D */
+
+// A hole in a Terrain3D's control map over a cave's box (Terrain3D 1.x, called by name so the engine builds without
+// it): every vertex whose ground lies in the box gets the hole bit (Terrain3DData.set_control_hole), then the control
+// map goes to the GPU and the collision is updated. The ground tested is the generator's, which the Terrain3D's heights
+// are taken from.
+void RockField3D::_terrain3d_hole(const Transform3D &p_box) {
+	if (terrain3d_path.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	Node *t3d = get_node_or_null(terrain3d_path);
+	const TerrainGenerator3D *gen = _get_generator();
+	if (!t3d || !gen || !t3d->has_method("get_data")) {
+		return;
+	}
+	Object *data = Object::cast_to<Object>(t3d->call("get_data"));
+	if (!data || !data->has_method("set_control_hole")) {
+		return;
+	}
+	const real_t step = MAX(real_t(t3d->get("vertex_spacing")), real_t(0.05));
+	Vector2 lo(1e30f, 1e30f), hi(-1e30f, -1e30f);
+	for (int k = 0; k < 8; k++) {
+		const Vector3 c = p_box.xform(Vector3((k & 1) ? 1 : -1, (k & 2) ? 1 : -1, (k & 4) ? 1 : -1));
+		lo = lo.min(Vector2(c.x, c.z));
+		hi = hi.max(Vector2(c.x, c.z));
+	}
+	const Transform3D inv = p_box.affine_inverse();
+	int written = 0;
+	for (real_t z = Math::floor(lo.y / step) * step; z <= hi.y; z += step) {
+		for (real_t x = Math::floor(lo.x / step) * step; x <= hi.x; x += step) {
+			const Vector3 p(x, gen->get_height(Vector3(x, 0, z)), z);
+			const Vector3 l = inv.xform(p);
+			if (Math::abs(l.x) <= 1.0f && Math::abs(l.y) <= 1.0f && Math::abs(l.z) <= 1.0f) {
+				data->call("set_control_hole", p, true);
+				written++;
+			}
+		}
+	}
+	if (written == 0) {
+		return;
+	}
+	if (data->has_method("update_maps")) {
+		data->call("update_maps", 1); // Terrain3DRegion.TYPE_CONTROL
+	}
+	Object *col = t3d->has_method("get_collision") ? Object::cast_to<Object>(t3d->call("get_collision")) : nullptr;
+	if (col && col->has_method("update")) {
+		col->call("update");
+	}
+}
+
+// Writes every cave hole the generator holds into the Terrain3D (for one set after the caves were placed); returns how
+// many holes.
+int RockField3D::write_terrain3d_holes() {
+	const TerrainGenerator3D *gen = _get_generator();
+	if (!gen) {
+		return 0;
+	}
+	const TypedArray<Transform3D> holes = gen->get_holes();
+	for (int i = 0; i < holes.size(); i++) {
+		_terrain3d_hole(holes[i]);
+	}
+	return holes.size();
 }
 
 /* Live rockfall */
@@ -3065,6 +3218,9 @@ void RockField3D::_notification(int p_what) {
 void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_generator", "path"), &RockField3D::set_generator);
 	ClassDB::bind_method(D_METHOD("get_generator"), &RockField3D::get_generator);
+	ClassDB::bind_method(D_METHOD("set_terrain3d", "path"), &RockField3D::set_terrain3d);
+	ClassDB::bind_method(D_METHOD("get_terrain3d"), &RockField3D::get_terrain3d);
+	ClassDB::bind_method(D_METHOD("write_terrain3d_holes"), &RockField3D::write_terrain3d_holes);
 	ClassDB::bind_method(D_METHOD("set_follow_target", "path"), &RockField3D::set_follow_target);
 	ClassDB::bind_method(D_METHOD("get_follow_target"), &RockField3D::get_follow_target);
 	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &RockField3D::set_seed);
@@ -3163,6 +3319,7 @@ void RockField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "generator", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainGenerator3D"), "set_generator", "get_generator");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_target", "get_follow_target");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain3d"), "set_terrain3d", "get_terrain3d");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_GROUP("Geology", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rock_type", PROPERTY_HINT_ENUM, "Granite,Limestone,Sandstone,Basalt,Slate"), "set_rock_type", "get_rock_type");

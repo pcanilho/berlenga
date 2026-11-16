@@ -32,6 +32,7 @@
 #pragma once
 
 #include "plant_species.h"
+#include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
 
 #include "core/templates/hash_map.h"
@@ -188,6 +189,7 @@ class VegetationField3D : public Node3D {
 		VegetationObstacles obstacles; // Rocks the plants keep out of (a copy, for the worker threads).
 		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
 		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
+		VegetationHoles holes; // Openings in the ground (cave mouths): no plant there (a copy).
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -285,6 +287,10 @@ class VegetationField3D : public Node3D {
 	LocalVector<StreamJob *> stream_jobs;
 	PlaceSetup stream_setup;
 	bool stream_setup_valid = false;
+	ObjectID hole_source; // The generator whose holes_changed this field follows.
+	Rect2 holes_dirty; // Ground opened or closed since the streamed tiles were placed (no area: none).
+	void _follow_holes(TerrainDataMap3D *p_map);
+	void _on_holes_changed(const Rect2 &p_rect);
 	bool stream_maps_dirty = false;
 	double stream_maps_wait = 0.0;
 	Vector2 stream_maps_centre = Vector2(1e30f, 1e30f);

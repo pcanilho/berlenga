@@ -11,10 +11,15 @@ extends Node3D
 #                         a wheel's sinkage, traction and resistance against Bekker, Wong and Janosi-Hanamoto
 #                         a 4x4 on dry sand, damp sand and firm ground; an aired-down tyre; a bogged car
 #                         walker footing: effort by print depth, sliding on a slope past the repose
+#   --test=grains       sand thrown out of the ground and landing again (needs the PhysX build and a GPU):
+#                         a kick digs its volume and lands it downrange; volume kept end to end
+#                         a 4x4 floored on dry sand throws its tread's sand behind it
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
+#   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
+#   --cam=x,y,z,tx,ty,tz camera for --view=roost
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
@@ -28,10 +33,12 @@ var kind := "soil"
 var raster := false
 var test := false
 var soil_test := false
+var grains_test := false
 var out := ""
 var spp := 16
 var gpu := true
 var bounces := 3
+var cam_arg := PackedFloat32Array()
 var fails := 0
 var height: Node3D
 var surface: GroundSurface3D
@@ -47,10 +54,19 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--test": test = true
 		elif a == "--test=soil": soil_test = true
+		elif a == "--test=grains": grains_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--gpu=0": gpu = false
+		elif a.begins_with("--cam="):
+			for v in a.substr(6).split(","):
+				cam_arg.append(float(v))
+	if grains_test:
+		await _run_grains_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if soil_test:
 		await _run_soil_tests()
 		print("RESULT: %d failed" % fails)
@@ -63,6 +79,9 @@ func _ready() -> void:
 		return
 	if view == "ruts":
 		await _build_ruts()
+		return
+	if view == "roost":
+		await _build_roost()
 		return
 	await _build_trail()
 
@@ -440,6 +459,102 @@ func _run_soil_tests() -> void:
 	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
 
 
+# The field's sand above (+) or below (-) the undisturbed ground, m3.
+func _field_net() -> float:
+	surface.sync_deformation()
+	var v := surface.get_moved_volume()
+	return v.y - v.x
+
+
+func _make_grains(follow: Node3D) -> PhysXGroundGrains3D:
+	var g := PhysXGroundGrains3D.new()
+	add_child(g)
+	g.ground_surface = g.get_path_to(surface)
+	if follow:
+		g.follow_target = g.get_path_to(follow)
+	return g
+
+
+func _run_grains_tests() -> void:
+	# A kick: a 15 cm disc of dry sand, 5 cm deep, thrown at (2, 3, 0) m/s. In a vacuum it lands 1.2 m away
+	# after 0.6 s (thrown grains fly drag-free; the clump spreads a little).
+	await _soil_scene("dry_sand")
+	var g := _make_grains(null)
+	for i in 5:
+		await get_tree().physics_frame
+	var net0 := _field_net()
+	var dug := g.kick(Vector3(0, 0, 0), 0.15, 0.05, Vector3(2, 3, 0))
+	var disc := PI * 0.15 * 0.15 * 0.05
+	_check("a kick digs its disc", dug > 0.5 * disc and dug < 1.5 * disc, "%.2f l (disc %.2f l)" % [dug * 1000.0, disc * 1000.0])
+	_check("the dug sand leaves the field", absf((net0 - _field_net()) - dug) < 0.02 * dug, "field %.2f l down" % ((net0 - _field_net()) * 1000.0))
+	var worst := 0.0
+	var peak := 0
+	for i in 90:
+		await get_tree().physics_frame
+		peak = maxi(peak, g.get_airborne_count())
+		var gap := absf(g.get_dug_volume() - g.get_airborne_volume() - g.get_deposited_volume())
+		worst = maxf(worst, gap)
+	_check("the kick flies as grains", peak > 50, "%d grains at most" % peak)
+	_check("volume kept in flight: dug = in the air + landed", worst < 0.01 * dug, "worst gap %.4f l" % (worst * 1000.0))
+	for i in 240:
+		await get_tree().physics_frame
+		if g.get_airborne_count() == 0:
+			break
+	surface.sync_deformation()
+	_check("everything lands", g.get_airborne_count() == 0, "%d grains still up" % g.get_airborne_count())
+	_check("volume kept end to end", absf(g.get_deposited_volume() - dug) < 0.02 * dug and absf(_field_net() - net0) < 0.03 * dug,
+			"landed %.2f l of %.2f l; field net %.3f l" % [g.get_deposited_volume() * 1000.0, dug * 1000.0, (_field_net() - net0) * 1000.0])
+	var near := 0.0
+	var far := 0.0
+	for x in 41:
+		var px := -1.0 + x * 0.1
+		for z in 11:
+			var q := Vector3(px, 0, (z - 5) * 0.1)
+			var r := surface.get_rim_at(q)
+			if px > 0.6 and px < 2.2:
+				far += r
+			elif absf(px) < 0.4:
+				near += r
+	# Where it came down: the centroid of the new rim, against the ballistic 1.22 m.
+	var mass := 0.0
+	var cx := 0.0
+	for x in 41:
+		var px := 0.4 + x * 0.05
+		for z in 21:
+			var r := surface.get_rim_at(Vector3(px, 0, (z - 10) * 0.05))
+			mass += r
+			cx += r * px
+	cx /= maxf(mass, 1e-6)
+	_check("it lands where a thrown body would (1.22 m, drag-free)", absf(cx - 1.22) < 0.25, "centre of the landed sand at %.2f m" % cx)
+	g.queue_free()
+
+	# A 4x4 floored on dry sand with aired-down tyres: the spinning wheels throw sand behind them.
+	await _soil_scene("dry_sand")
+	var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+	for c in car.get_children():
+		if c is PhysXVehicleWheel3D:
+			c.tire_pressure = 60.0
+	surface.follow_target = surface.get_path_to(car)
+	g = _make_grains(car)
+	var behind := [0.0, 0]
+	var probe := func() -> void:
+		var f := car.get_forward()
+		for q in g.get_airborne_positions():
+			behind[0] += (q - car.global_position).dot(f)
+			behind[1] += 1
+	get_tree().physics_frame.connect(probe)
+	var res: Array = await _drive(car, 2.0, 1.0)
+	get_tree().physics_frame.disconnect(probe)
+	var along: float = behind[0] / maxi(behind[1], 1)
+	print("  floored: %.1f m, slip %.2f, dug %.1f l, in the air %d grains" % [res[0], res[2], g.get_dug_volume() * 1000.0, g.get_airborne_count()])
+	_check("spinning wheels throw sand", g.get_dug_volume() > 0.001 and g.get_airborne_count() + int(g.get_deposited_volume() > 0.0) > 0,
+			"%.1f l thrown" % (g.get_dug_volume() * 1000.0))
+	_check("it is thrown behind the car", along < -0.5, "grains %.1f m along the car's heading on average" % along)
+	var thrown_gap := absf(g.get_dug_volume() - g.get_airborne_volume() - g.get_deposited_volume())
+	_check("volume kept under the car", thrown_gap < 0.01 * maxf(g.get_dug_volume(), 1e-6), "gap %.4f l" % (thrown_gap * 1000.0))
+	print("grains: MPM step %.2f ms (CPU side; GPU time on the PC queue), field on the %s" % [g.get_mpm_step_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
+
+
 func _ground_material(kind_name: String) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	match kind_name:
@@ -680,6 +795,63 @@ func _build_ruts() -> void:
 	surface.sync_deformation()
 	get_window().size = full
 	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car_end, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+func _make_env() -> Environment:
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-24.0, 150.0, 0.0)
+	sun.directional_shadow_max_distance = 40.0
+	add_child(sun)
+	return env
+
+
+# Sand stage 2: a 4x4 floored from rest on dry sand. The spinning wheels dig in and throw their tread's sand
+# back as grains (PhysXGroundGrains3D) that land behind it. The frame is taken mid-spray, looking across the
+# sand behind the rear wheels.
+func _build_roost() -> void:
+	kind = "dry_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	var car := _make_car(1500.0, 700.0, Vector3(0.0, _undisturbed(Vector3.ZERO) + 0.9, 0.0))
+	surface.follow_target = surface.get_path_to(car)
+	var grains := _make_grains(car)
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([3.0, 0.7, -1.6, 0.4, 0.45, -3.6])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	for i in 30:
+		await get_tree().physics_frame
+	car.throttle = 1.0
+	for i in 100:
+		await get_tree().physics_frame
+	get_window().size = full
+	print("roost: %.1f l thrown, %d grains in the air, field on the %s" % [grains.get_dug_volume() * 1000.0, grains.get_airborne_count(), "GPU" if surface.is_gpu_active() else "CPU"])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()

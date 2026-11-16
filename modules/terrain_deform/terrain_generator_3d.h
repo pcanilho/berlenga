@@ -34,6 +34,7 @@
 #include "climate_recipe.h"
 
 #include "core/templates/local_vector.h"
+#include "core/variant/typed_array.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
@@ -442,6 +443,14 @@ private:
 	void _bake_detail_keep();
 	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
 
+	// Holes (cave mouths): oriented boxes, the unit cube [-1, 1]^3 through `box`.
+	struct Hole {
+		Transform3D box;
+		Transform3D inv;
+		Rect2 rect; // plan bounds
+	};
+	LocalVector<Hole> holes;
+
 protected:
 	static void _bind_methods();
 
@@ -704,6 +713,15 @@ public:
 	// Generated ground (bicubic between grid nodes, plus height_offset, plus the detail filter); NaN outside or
 	// before generate().
 	real_t get_height(const Vector3 &p_global_position) const;
+	// Holes: where the ground is open (a cave mouth's passage). The heights stay as they are; is_hole() says
+	// whether the ground at a point's x, z lies inside a hole, and Landscape3D leaves those samples out of its mesh
+	// and collision. p_box maps the unit cube [-1, 1]^3 onto the hole. Holes go when the terrain is generated again.
+	bool add_hole(const Transform3D &p_box);
+	void clear_holes();
+	bool is_hole(const Vector3 &p_global_position) const;
+	bool has_holes_in(const Rect2 &p_rect) const;
+	int get_hole_count() const { return int(holes.size()); }
+	TypedArray<Transform3D> get_holes() const;
 	// The simulated ground without the detail filter.
 	real_t get_base_height(const Vector3 &p_global_position) const;
 	real_t get_drainage_area(const Vector3 &p_global_position) const;

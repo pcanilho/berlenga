@@ -79,3 +79,34 @@ dark brown fibrous scales crowd, slightly viscid when damp. Built:
 - Plants beside a log (ferns, banked leaves, honey fungus) only where its underside is within
   15 cm of the ground: a windthrown beech propped on its root plate lies 1.5 m up at that end, and
   clumps had come up in the open under it.
+
+## Honey fungus close-up, docs rounds 2 and 3 (16 Nov)
+
+Docs' close-up faults and what real clumps show (Kibby 2017; Phillips 2006; First Nature and
+Galloway Wild Foods field descriptions): clumps burst from cracks in the bark, often well up a
+stump or log side, not from the litter beside it; stalks converge to one point and fuse in a
+swollen, darker base, among small aborted primordia (buttons); caps honey yellow to tawny olive,
+varying cap to cap with age and moisture, with innate radial fibrils, small dark erect scales
+crowded at the centre and thinning out, a paler often striate margin, and a moist, slightly
+greasy sheen. Built:
+- Wood feeders root up the log's side, about 20 cm over the litter (at most the log's widest
+  girth), tipped 15 degrees out of the bark (VegetationField3D::WOOD_FEEDER_HEIGHT, _LEAN_DEG).
+- No separate base mesh: each stalk starts within 8 mm of the clump's centre with a swollen foot
+  (the form's bulb), so the feet merge into one mass; 2 to 5 small buttons in the base.
+- Caps: petal colour less orange (0.62, 0.47, 0.24); the brown centre reaches about half the cap;
+  each cap its own shade from honey yellow to tawny olive; radial fibrils as vertex streaks on 32
+  to 64 sectors; on half the caps a darker damp band inside the rim (hygrophanous drying from the
+  centre); roughness 0.22 for the greasy sheen; scales dark brown (lighter ones read as pale grit from above) and kept to the inner 65%.
+- Leaf litter lying underside up shows as a paler colour with its face still up: a litter leaf drawn
+  from its back face read black or flat in close-ups.
+
+## Cave mouths (16 Nov)
+
+TerrainGenerator3D.add_hole() cuts the ground away behind a cave mouth (Landscape3D drops the
+quads). VegetationField3D and GrassField3D find the generator through the data map (its geology
+source, else its height source) and keep a copy of the hole boxes (vegetation_holes.h, read by the
+placement workers): no stem in an opening or within the obstacle margin of its edge, no log over
+one. On holes_changed a streaming field places again the tiles near the change (once no tile is
+being placed), a whole field populates again, and the grass rebuilds its tiles there nearest first
+with the old ones drawn until then. The far cover map is left as it is: the terrain is not drawn
+in the opening, so it never shows there.

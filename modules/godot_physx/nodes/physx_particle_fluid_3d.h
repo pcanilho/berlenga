@@ -119,6 +119,15 @@ private:
 	SolverBackend _resolved_solver() const;
 
 protected:
+	// For PhysXGroundGrains3D: the solver, built and configured for emission (null without a device).
+	MPMFluidSolver *_mpm_ready_for_emit();
+	// Granular: grains thrown through the air fly ballistic (the settling damping fades out above ~1 m/s).
+	bool mpm_free_flight = false;
+	// Granular stepped on the physics tick rather than per frame: for grains whose landing the physics step
+	// checks (ground grains), so they keep pace with the bodies throwing them.
+	bool mpm_physics_tick = false;
+	// The mesh each MPM particle is drawn with (a small sphere; ground grains draw sand clumps).
+	virtual Ref<Mesh> _make_mpm_particle_mesh();
 	bool _mpm_configured = false;
 	bool _mpm_emit_mode = false;
 	bool spawned = false;

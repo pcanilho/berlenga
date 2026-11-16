@@ -182,6 +182,12 @@
 				Looses a random built cliff block within [param radius] of [param position] now, as [member live_rockfall] does, and returns its [PhysXDestructible3D] (null if there is none, or without the godot_physx module). Its fracture is built at once if it is not ready, which can take tens of milliseconds, so call it sparingly.
 			</description>
 		</method>
+		<method name="write_terrain3d_holes">
+			<return type="int" />
+			<description>
+				Writes every cave hole of the generator (see [method TerrainGenerator3D.add_hole]) into the [member terrain3d] node's control map, for a Terrain3D set after the caves were placed. Returns how many holes.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="break_density" type="float" setter="set_break_density" getter="get_break_density" default="2650.0">
@@ -223,8 +229,8 @@
 		<member name="coast_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="900.0">
 			How far round the follow target sea stacks, arches and platforms are built.
 		</member>
-		<member name="cave_mouths" type="bool" setter="set_cave_mouths" getter="is_cave_mouths" default="false">
-			The landform layer stands a cave mouth (RockGenerator [code]FAMILY_CAVE_MOUTH[/code]: a limestone outcrop with a passage opening into it, fallen blocks at its entrance) at the foot of some bare limestone cliffs. Off by default: a heightfield cannot open the hole behind it, so the portal stands in front of the wall as a block of its own.
+		<member name="cave_mouths" type="bool" setter="set_cave_mouths" getter="is_cave_mouths" default="true">
+			The landform layer stands a cave mouth (RockGenerator [code]FAMILY_CAVE_MOUTH[/code]: a limestone outcrop with a passage opening into it, fallen blocks at its entrance) at the foot of some bare limestone cliffs. The block is set into the face, leaning back with it up to 25 degrees, and its passage opens through the ground: it adds a hole to the [member generator] ([method TerrainGenerator3D.add_hole]) that [Landscape3D] leaves out of its mesh and collision (and a [member terrain3d] out of its control map), and stones of the other layers are not placed in it.
 		</member>
 		<member name="coast_collision" type="bool" setter="set_coast_collision" getter="is_coast_collision" default="true">
 			Coast forms (stacks, arches, platforms) get collision at any distance, whatever [member collision_enabled] says, so a sea measuring its floor by ray casts (PhysXWaterSurface3D seabed_from_floor) sees them as shore: foam, run-up and wave bending round them. The field asks the generator's sea to remeasure its floor after building coast forms.
@@ -357,6 +363,9 @@
 		</member>
 		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="true">
 			Builds and frees cells round the follow target as it moves, within [member build_budget_msec] a frame.
+		</member>
+		<member name="terrain3d" type="NodePath" setter="set_terrain3d" getter="get_terrain3d" default="NodePath(&quot;&quot;)">
+			An optional Terrain3D node (the addon, used by name, so the engine builds without it) whose heights come from the [member generator]. Each cave mouth's hole is also written into its control map ([code]Terrain3DData.set_control_hole[/code] on every vertex whose ground lies in the passage, then [code]update_maps[/code] and its collision update), so the cave opens on a Terrain3D ground as it does on a [Landscape3D].
 		</member>
 		<member name="tor_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how often a crest gets a tor or an outcrop.

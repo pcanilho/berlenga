@@ -303,6 +303,8 @@ private:
 		Color cap_centre = Color(1, 1, 1); // Tint at the centre against the margin.
 		Color cap_margin = Color(1, 1, 1);
 		float cap_fade = 0.0f; // How far the centre colour reaches out (0: the margin colour from mid-cap).
+		float fibrils = 0.0f; // Radial innate fibrils: darker streaks running out from the centre (0: none).
+		float moist_band = 0.0f; // Hygrophanous: a darker, wetter-looking band inside the margin as the cap dries from the centre.
 	};
 	MushroomForm _mushroom_form(float p_age);
 	void _build_mushrooms();

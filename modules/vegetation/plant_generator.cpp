@@ -5138,7 +5138,7 @@ void PlantGenerator::apply_preset_colors() {
 		case PRESET_HONEY_FUNGUS:
 			// Tawny honey caps; whitish gills going cream; stalks pale yellow under the ring,
 			// the foot darkened in _mushroom_form().
-			petal_color = Color(0.72f, 0.5f, 0.2f);
+			petal_color = Color(0.62f, 0.47f, 0.24f); // Honey to tawny, less orange than a chanterelle.
 			centre_color = Color(0.9f, 0.84f, 0.68f);
 			stem_color = Color(0.8f, 0.66f, 0.4f);
 			break;
@@ -5417,7 +5417,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		} else if (is_mushroom(preset)) {
 			// Thick flesh: no light through. Caps with a slight sheen (moist skin), matt stalks and gills.
 			// Honey fungus caps are a little viscid when damp: glossier.
-			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.3f : 0.45f) : 0.85f, false);
+			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.22f : 0.45f) : 0.85f, false);
 		} else if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
 			// One texture set per preset, colour and variant (three per preset): shared by the
 			// plants of a meadow, so a thousand dandelions cost three textures.

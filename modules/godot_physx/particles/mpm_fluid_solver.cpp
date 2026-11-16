@@ -774,6 +774,23 @@ void MPMFluidSolverGPU::rt_emit(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 	}
 }
 
+void MPMFluidSolverGPU::rt_kill(Ref<MPMFluidSolverGPU> p_self, PackedInt32Array p_slots) {
+	if (rd == nullptr || !built.is_set() || buf_particles.is_null()) {
+		return;
+	}
+	if (local && _submitted) {
+		_local_reap();
+	}
+	const float dead = 1.0f;
+	const int stride = FLOATS_PER_PARTICLE * (int)sizeof(float);
+	for (int i = 0; i < p_slots.size(); i++) {
+		const int slot = p_slots[i];
+		if (slot >= 0 && slot < capacity) {
+			rd->buffer_update(buf_particles, slot * stride + 7 * (int)sizeof(float), sizeof(float), &dead); // v.w
+		}
+	}
+}
+
 void MPMFluidSolverGPU::rt_read_positions(Ref<MPMFluidSolverGPU> p_self, int p_count) {
 	if (rd == nullptr || !built.is_set() || buf_particles.is_null()) {
 		pos_ready.set();
@@ -1106,7 +1123,7 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(80, bmax.x);
 	put_f(84, bmax.y);
 	put_f(88, bmax.z);
-	put_f(92, settings.granular ? 1.0f : 0.0f);
+	put_f(92, settings.granular ? (settings.granular_free_flight ? 2.0f : 1.0f) : 0.0f);
 	put_f(96, (float)p_ncol);
 	put_f(100, settings.collider_friction);
 	put_f(104, surf_iso_density);
@@ -1244,6 +1261,18 @@ void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 
 	write_head = (write_head + n) % capacity;
 	pcount = MIN(pcount + n, capacity);
+}
+
+void MPMFluidSolver::kill(const LocalVector<int> &p_slots) {
+	if (!is_available() || p_slots.is_empty()) {
+		return;
+	}
+	PackedInt32Array slots;
+	slots.resize(p_slots.size());
+	for (uint32_t i = 0; i < p_slots.size(); i++) {
+		slots.write[i] = p_slots[i];
+	}
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_kill).bind(gpu, slots));
 }
 
 int MPMFluidSolver::get_baked_field(const Ref<Texture3D> &p_texture, float p_voxel, Vector3i &r_size, bool &r_hollow) {

@@ -292,6 +292,8 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.mask_rect = density_mask_rect;
 	}
 	r_setup.obstacles = obstacle_grid;
+	_follow_holes(map);
+	r_setup.holes.read(VegetationHoles::source_of(map));
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -923,6 +925,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (p_setup.obstacles.blocks(xz, om)) {
 							continue;
 						}
+					}
+					// Openings in the ground (cave mouths): the terrain is cut away there, so no stem
+					// stands in one or at its edge, and no log lies over it.
+					if (!p_setup.holes.is_empty() && p_setup.holes.at(Vector3(xz.x, map->get_height_at(Vector3(xz.x, 0.0f, xz.y)), xz.y), is_log ? ps.deadwood_reach : OBSTACLE_MARGIN)) {
+						continue;
 					}
 					// Stems: ground plants keep out of the trunks' feet (flare and root ridges), this
 					// field's and the canopy field's; other woody species keep their footprints.
@@ -2549,6 +2556,18 @@ void VegetationField3D::_stream_update(double p_delta) {
 	// Tiles past the radius go; species past their range leave the scene, those within it join,
 	// nearest first, while the frame's budget lasts.
 	LocalVector<Vector2i> gone;
+	// Ground opened or closed (cave mouths): once no tile is being placed (the workers read the
+	// setup), the setup takes the new holes and the tiles near them are placed again.
+	if (holes_dirty.has_area() && stream_jobs.is_empty()) {
+		stream_setup.holes.read(VegetationHoles::source_of(stream_setup.map));
+		const Rect2 near = holes_dirty.grow(stream_setup.deadwood_reach + stream_setup.max_footprint + OBSTACLE_MARGIN);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				gone.push_back(kv.key);
+			}
+		}
+		holes_dirty = Rect2();
+	}
 	struct Pending {
 		float d;
 		Vector2i tile;
@@ -2558,7 +2577,9 @@ void VegetationField3D::_stream_update(double p_delta) {
 	for (KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
 		const float d = _tile_distance(kv.key, ts, centre);
 		if (d > stream_radius + ts * 1.5f) {
-			gone.push_back(kv.key);
+			if (!gone.has(kv.key)) {
+				gone.push_back(kv.key);
+			}
 			continue;
 		}
 		for (int s = 0; s < species_count; s++) {
@@ -2612,7 +2633,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs) {
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area()) {
 		const int r = int(Math::ceil(stream_radius / ts)) + 1;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
@@ -2813,6 +2834,32 @@ void VegetationField3D::_on_map_baked() {
 	}
 }
 
+// The generator's holes (TerrainGenerator3D.add_hole()), followed once found through the data map.
+void VegetationField3D::_follow_holes(TerrainDataMap3D *p_map) {
+	TerrainGenerator3D *gen = VegetationHoles::source_of(p_map);
+	if (!gen || gen->get_instance_id() == hole_source) {
+		return;
+	}
+	const Callable on_holes = callable_mp(this, &VegetationField3D::_on_holes_changed);
+	if (Object *old = ObjectDB::get_instance(hole_source)) {
+		if (old->is_connected(SNAME("holes_changed"), on_holes)) {
+			old->disconnect(SNAME("holes_changed"), on_holes);
+		}
+	}
+	hole_source = gen->get_instance_id();
+	gen->connect(SNAME("holes_changed"), on_holes);
+}
+
+void VegetationField3D::_on_holes_changed(const Rect2 &p_rect) {
+	if (streaming) {
+		if (stream_setup_valid) {
+			holes_dirty = holes_dirty.has_area() ? holes_dirty.merge(p_rect) : p_rect;
+		}
+	} else if (plant_count > 0 || populate_on_ready) {
+		queue_populate();
+	}
+}
+
 void VegetationField3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
@@ -2823,6 +2870,7 @@ void VegetationField3D::_notification(int p_what) {
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
 				map->connect(SNAME("baked"), callable_mp(this, &VegetationField3D::_on_map_baked));
+				_follow_holes(map);
 				if (map->is_baked() && populate_on_ready && !streaming) {
 					queue_populate();
 				}

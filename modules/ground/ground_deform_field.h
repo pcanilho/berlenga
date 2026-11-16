@@ -89,6 +89,8 @@ public:
 	class StampSink {
 	public:
 		virtual void stamp(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) = 0;
+		// add_amount's stamp: dig (p_depth > 0) or deposit (p_depth < 0) a set depth over a disc.
+		virtual void amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) {}
 		virtual ~StampSink() {}
 	};
 	class Columns {
@@ -136,6 +138,10 @@ public:
 
 	// Presses down to p_bottom within the footprint (a bowl when p_round, an oriented box when
 	// p_box), and p_sink below the undisturbed surface. Returns the volume moved, m3.
+	// Grains leaving (p_depth > 0: dug, rim first) or landing (p_depth < 0: dent first) over a disc of
+	// p_radius, p_depth deep (sand stage 2). Returns the volume, m3 (0 when a stamp sink takes it).
+	float amount_scale(Vector3 p_position, float p_radius) const;
+	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth);
 	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity = Vector2());
 	// Bodies in p_groups press along the path they moved since the last call.
 	void press_bodies(SceneTree *p_tree, const PackedStringArray &p_groups, const Columns &p_columns, float p_character_mass, float p_character_area, float p_contact_tolerance, double p_delta);

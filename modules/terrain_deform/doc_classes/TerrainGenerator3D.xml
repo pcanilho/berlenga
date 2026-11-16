@@ -13,6 +13,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_hole">
+			<return type="bool" />
+			<param index="0" name="box" type="Transform3D" />
+			<description>
+				Opens the ground inside an oriented box (the unit cube [code][-1, 1][/code] on each axis through [param box]), for a cave mouth's passage: the heights stay, [method is_hole] answers true where the ground lies inside it, and [Landscape3D] leaves those samples out of its mesh and collision. A box equal to one already added is ignored (returns false). Emits [signal holes_changed]. Holes are dropped when the terrain is generated again.
+			</description>
+		</method>
 		<method name="bake">
 			<return type="int" />
 			<description>
@@ -32,6 +39,12 @@
 			<param index="0" name="parent" type="Node" />
 			<description>
 				Creates the water of the last [method generate] under [param parent] and returns the nodes: a [code]PhysXWaterSurface3D[/code] (by class name, when the PhysX module is in the build) for the sea, at sea level over the generated rectangle with [code]seabed_from_floor[/code], [code]shore_waves[/code], [code]open_sea_beyond[/code] and [code]follow_weather[/code] on and three [code]wave_cascades[/code], and one per lake at its level with [code]surface_mesh[/code] set to the lake's outline and [code]follow_weather[/code] on. Without the PhysX module, plain [MeshInstance3D] sheets. Call it after the ground is written (the water reads its seabed through physics) and before [method build_river_paths], which then sets each river's [code]mouth_target[/code] to the sea or lake it ends in.
+			</description>
+		</method>
+		<method name="clear_holes">
+			<return type="void" />
+			<description>
+				Removes every hole.
 			</description>
 		</method>
 		<method name="clear_result">
@@ -134,6 +147,18 @@
 			<return type="Image" />
 			<description>
 				Generated heights per grid node, [constant Image.FORMAT_RF], metres.
+			</description>
+		</method>
+		<method name="get_hole_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many holes there are.
+			</description>
+		</method>
+		<method name="get_holes" qualifiers="const">
+			<return type="Transform3D[]" />
+			<description>
+				The hole boxes, as given to [method add_hole].
 			</description>
 		</method>
 		<method name="get_inflow_cells" qualifiers="const">
@@ -431,6 +456,13 @@
 			<return type="bool" />
 			<description>
 				Whether the last [method generate] made any sea.
+			</description>
+		</method>
+		<method name="is_hole" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Whether the ground at [param global_position]'s x and z lies inside a hole.
 			</description>
 		</method>
 		<method name="preview">
@@ -744,6 +776,12 @@
 		</member>
 	</members>
 	<signals>
+		<signal name="holes_changed">
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Holes were added or removed over [param rect] (x and z).
+			</description>
+		</signal>
 		<signal name="changing">
 			<description>
 				Emitted when [method generate] or [method clear_result] starts, before any result is replaced. Work that reads the ground on other threads (a [Landscape3D] streaming its heights) finishes here.

@@ -640,6 +640,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	LocalVector<Transform3D> xforms;
 	LocalVector<Color> customs;
 	const bool rocks = _tile_has_obstacles(x0, z0);
+	const bool holed = !holes.is_empty() && holes.any_in(Rect2(x0, z0, tile_size, tile_size).grow(OBSTACLE_MARGIN));
 	for (int iz = iz0; iz < iz1; iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
@@ -654,6 +655,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			const float x = (ix + unit(hj, 0)) * cell;
 			const float z = (iz + unit(hj, 8)) * cell;
 			if (rocks && obstacle_grid.blocks(Vector2(x, z), OBSTACLE_MARGIN)) {
+				continue;
+			}
+			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
 				continue;
 			}
 			const Vector3 p(x, ground_y, z);
@@ -741,6 +745,7 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 
 	LocalVector<float> cand;
 	const bool rocks = _tile_has_obstacles(x0, z0);
+	const bool holed = !holes.is_empty() && holes.any_in(Rect2(x0, z0, tile_size, tile_size).grow(OBSTACLE_MARGIN));
 	for (int iz = iz0; iz < iz1; iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const float rank = blue_rank(ix, iz);
@@ -751,6 +756,12 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 				// The blade's root as the shader places it (the same hash), kept out of the rocks.
 				const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
 				if (obstacle_grid.blocks(Vector2((ix + unit(hj, 0)) * cell, (iz + unit(hj, 8)) * cell), OBSTACLE_MARGIN)) {
+					continue;
+				}
+			}
+			if (holed) {
+				const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
+				if (_blade_in_hole(p_map, (ix + unit(hj, 0)) * cell, (iz + unit(hj, 8)) * cell, ground_y)) {
 					continue;
 				}
 			}
@@ -1720,6 +1731,9 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	if (map && !map->is_baked()) {
 		return; // Wait for the map.
 	}
+	if (map && hole_source.is_null()) {
+		_follow_holes(map);
+	}
 	if (!ground_baked) {
 		_bake_ground(map);
 	} else if (ground_job.active) {
@@ -2415,6 +2429,43 @@ void GrassField3D::set_canopy_field(const NodePath &p_path) {
 
 void GrassField3D::set_undergrowth_field(const NodePath &p_path) {
 	GRASS_SET_REBUILD(undergrowth_field, p_path)
+}
+
+// The generator's holes, followed once found through the data map: the tiles over a changed hole are
+// built again (nearest first, the old ones drawn until then).
+void GrassField3D::_follow_holes(TerrainDataMap3D *p_map) {
+	TerrainGenerator3D *gen = VegetationHoles::source_of(p_map);
+	if (!gen || gen->get_instance_id() == hole_source) {
+		return;
+	}
+	const Callable on_holes = callable_mp(this, &GrassField3D::_on_holes_changed);
+	if (Object *old = ObjectDB::get_instance(hole_source)) {
+		if (old->is_connected(SNAME("holes_changed"), on_holes)) {
+			old->disconnect(SNAME("holes_changed"), on_holes);
+		}
+	}
+	hole_source = gen->get_instance_id();
+	gen->connect(SNAME("holes_changed"), on_holes);
+	holes.read(gen);
+	if (!holes.is_empty()) {
+		generation++; // Holes cut before this field found them.
+	}
+}
+
+void GrassField3D::_on_holes_changed(const Rect2 &p_rect) {
+	holes.read(Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(hole_source)));
+	const Rect2 near = p_rect.grow(OBSTACLE_MARGIN);
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		if (Rect2(Vector2(kv.key) * tile_size, Vector2(tile_size, tile_size)).intersects(near)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+}
+
+// A blade's root in an opening of the ground or at its edge.
+bool GrassField3D::_blade_in_hole(const TerrainDataMap3D *p_map, float p_x, float p_z, float p_ground_y) const {
+	const float y = p_map ? p_map->get_height_at(Vector3(p_x, 0.0f, p_z)) : p_ground_y;
+	return holes.at(Vector3(p_x, y, p_z), OBSTACLE_MARGIN);
 }
 
 // Whether any rock reaches into a tile (so its blades need testing one by one).

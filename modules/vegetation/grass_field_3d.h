@@ -32,6 +32,7 @@
 #pragma once
 
 #include "plant_species.h"
+#include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
 
 #include "core/io/image.h"
@@ -63,6 +64,11 @@ class GrassField3D : public Node3D {
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	PackedVector4Array obstacles; // Rocks, (x, ground y, z, radius at the soil): no blade grows inside one.
 	VegetationObstacles obstacle_grid;
+	VegetationHoles holes; // Openings in the ground (cave mouths, the data map's generator): no blade there.
+	ObjectID hole_source;
+	void _follow_holes(TerrainDataMap3D *p_map);
+	void _on_holes_changed(const Rect2 &p_rect);
+	bool _blade_in_hole(const TerrainDataMap3D *p_map, float p_x, float p_z, float p_ground_y) const;
 	NodePath undergrowth_field; // A VegetationField3D whose bracken and bramble stands shade the sward out (PlantSpecies.sward_shade).
 	Ref<PlantSpecies> rules;
 	float density = 120.0f; // Blades per square metre, near the camera.

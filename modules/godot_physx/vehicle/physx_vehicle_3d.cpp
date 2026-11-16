@@ -202,6 +202,27 @@ public:
 			if (sw.sinkage > 0.002f) {
 				ground->press_wheel(center, Vector2(width, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z));
 			}
+			// A wheel turning faster than it travels shears its tread through the sand and throws it back
+			// (roost): reported for a grains node to lift out of the field (sand stage 2). The grains leave
+			// the rear of the contact at the tread's speed over the ground, rising as the tread turns up.
+			const float slip_speed = (v.wheelRigidBody1dStates[i].rotationSpeed * wp.radius) - v_lng;
+			if (Math::abs(slip_speed) > 0.5f) {
+				GroundSurface3D::Spray spray;
+				const PxVec3 back = lng * (slip_speed > 0.0f ? -1.0f : 1.0f);
+				const PxVec3 from = contact + back * (0.5f * probe.contact_length);
+				const PxVec3 up = n;
+				// Sand slides on the rubber and leaves slower than the tread, at ~30 degrees from the rear of a
+				// sunken contact; past ~8 m/s of slip the throw stops growing (the sand shears off the lugs).
+				const float throw_speed = MIN(Math::abs(slip_speed), 8.0f);
+				const PxVec3 vel = lng * v_lng + back * (throw_speed * 0.7f) + up * (throw_speed * 0.45f);
+				spray.position = Vector3(from.x, from.y - sw.sinkage, from.z);
+				spray.velocity = Vector3(vel.x, vel.y, vel.z);
+				spray.width = width;
+				spray.slip_speed = Math::abs(slip_speed);
+				spray.reach_center = Vector3(contact.x, contact.y, contact.z);
+				spray.reach_radius = 0.5f * MAX(width, probe.contact_length) + 0.1f;
+				ground->add_spray(spray);
+			}
 			sw.last_print = at;
 			sw.printed = true;
 		}
