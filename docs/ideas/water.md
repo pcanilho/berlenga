@@ -3011,3 +3011,47 @@ below the lake; with `level_from_flows` and 3 m3/s of `catchment_inflow` the lak
 sill (outlet passing 3.04). Approach flow 2, 5 and 10 m from the sill: 14, 2.4 and 0.5 cm/s. Not yet: lakes
 filling or draining over time (the steady level is applied at once), and a chain of lakes settles only
 through the 1 cm rebuild loop between each pair.
+
+## Buoyancy from shapes with densities (16 Nov, Fab idea 3)
+
+`PhysXBuoyancy3D` floats a body on six probe points sharing a footprint area and a hull height: right
+for a box-like hull, wrong for anything else (a ball, a log, a ship whose air inside is what floats it),
+and the body's mass is set by hand, so whether it floats is a tuning accident.
+
+**What others do.**
+- *Pontoons* (Unreal Water's `BuoyancyComponent`): spheres placed on the hull, each pushed up by the
+  water it displaces (the submerged cap of the sphere), with drag per pontoon. Simple and stable; the
+  designer places them.
+- *Voxels* (common in Unity water assets, and Habrador's "make a realistic boat" series): the hull's volume
+  cut into small cells; each cell's submerged share comes from the water height at its centre, so a long
+  hull feels the waves along its length and a tilted body is righted by its own geometry.
+- *Exact waterline* (Kerner 2015, "Water interaction model for boats in video games", Gamasutra; Just
+  Cause 3): every hull triangle clipped against the water, pressure integrated over the wet part, plus
+  slamming and viscous terms. The best for hero boats; heavy for debris.
+- *Planing* (Savitsky 1964): lift on a fast hull rising with speed squared. For speedboats; not now.
+
+**Plan.** A `shapes` mode beside the probe points: the body's collision shapes are its volume.
+- Spheres are pontoons: the exact submerged cap, `pi x^2 (3R - x) / 3` for a depth x into the sphere,
+  pushed at its centroid.
+- Boxes, cylinders and capsules are cut into cells (up to `max_cells` a body, 32 by default, more along
+  the long axis), each the exact share of the shape's volume; a cell's submerged share is its depth into
+  the water at its centre over its vertical extent, clamped. Cells in one column share a water sample.
+- Other shapes: their bounding box at three quarters' fill, as now.
+- Each `CollisionShape3D` may carry a density (`buoyancy_density` metadata, kg/m3): wood about 500, ice
+  917, steel 7850, 0 for air (it displaces water but weighs nothing, so a steel shell around an air box
+  floats). With `mass_from_densities`, the body's mass and centre of mass come from them; otherwise the
+  shapes share the body's mass. Then a log floats with half its volume out, a ball of ice with a tenth,
+  and a steel block sinks, with no tuning.
+- Drag per wet cell, on the cell's frontal area (its volume to the two thirds), against the flow, as now.
+- Later: the exact waterline for hero hulls (Kerner), planing lift (Savitsky), ragdoll bones' shapes.
+
+**Built (16 Nov).** `volume_mode` Shapes on `PhysXBuoyancy3D`, with `max_cells`, `mass_from_densities`,
+`default_density`, and two damping terms the first runs showed were missing: a body dropped 1 m dived metres
+under (the probe mode's linear drag is tuned for floating, not diving), so **form drag** `0.5 rho Cd A |v| v`
+(`drag_coefficient`, 1), and floating bodies bobbed for over 15 s, so **wave radiation damping** (`wave_damping`,
+0.2 of critical for the waterline stiffness `rho g A_wp`, spread over the waterline; Faltinsen 1990 gives 0.1
+to 0.3 for barge-like hulls). Bench `docs/bench/buoyancy --report` after 14 s on calm water (`--still`):
+wood box 0.500 submerged (expect 0.500), ice ball 0.920 (0.917), log 0.600 (0.600), cork capsule 0.240
+(0.240), steel hull (a 2 cm steel shell round a 4 x 1 x 1.6 m air box, 2763 kg) 0.409 (0.409), steel block
+sinks. With the bodies dimpling the water, within 3% (their own dimple lowers them a little); in 6 m/s wind
+waves within 4%. The probe mode is unchanged and stays the default.
