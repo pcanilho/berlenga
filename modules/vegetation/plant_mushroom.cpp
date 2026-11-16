@@ -193,26 +193,34 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.cap_margin = Color(1.15f, 1.15f, 1.15f);
 			break;
 		case PRESET_HONEY_FUNGUS:
-			// Caps 3 to 10 cm, honey-yellow to brown with dark, hairy scales at the centre; a
-			// cottony ring; stalks fused at the base in a tuft.
-			m.cap_r = _rand(0.02f, 0.045f) * Math::lerp(0.55f, 1.0f, open);
-			m.cap_h = m.cap_r * Math::lerp(0.65f, 0.2f, open);
+			// Armillaria mellea (Phillips 2006; Kibby 2017): caps 3 to 15 cm, convex then flat with
+			// a low boss, tawny honey, darker to the centre where small, erect, dark brown fibrous
+			// scales crowd; the margin paler and finely lined. Stalks 6 to 15 cm, tough and fibrous,
+			// curved, often tapering to the foot, fused with their neighbours at the base in a dense
+			// clump on wood; pale yellow above a thick cottony ring, darkening to olive brown at the
+			// foot.
+			m.cap_r = _rand(0.02f, 0.05f) * Math::lerp(0.55f, 1.0f, open);
+			m.cap_h = m.cap_r * Math::lerp(0.65f, 0.18f, open);
 			m.cap_thick = m.cap_r * 0.2f;
 			m.dome = Math::lerp(0.8f, 0.45f, open);
-			m.umbo = Math::lerp(0.05f, 0.2f, open);
+			m.umbo = Math::lerp(0.05f, 0.18f, open);
 			m.curl = m.cap_r * Math::lerp(0.2f, 0.04f, open);
-			m.wave = 0.03f;
+			m.wave = Math::lerp(0.02f, 0.05f, open);
+			m.wave_k = int(_rand(3.0f, 5.99f));
 			m.gills = 40;
 			m.gill_depth = m.cap_r * 0.12f;
 			m.decurrent = m.cap_r * 0.15f;
-			m.stalk_h = m.cap_r * _rand(1.8f, 3.0f);
-			m.stalk_r = m.cap_r * 0.14f;
-			m.stalk_base = 0.8f;
+			m.stalk_h = m.cap_r * _rand(2.2f, 3.6f);
+			m.stalk_r = m.cap_r * 0.15f;
+			m.stalk_base = 0.75f;
+			m.stalk_wave = _rand(0.3f, 0.6f);
 			m.ring = 0.8f;
-			m.ring_w = m.stalk_r * 1.1f;
+			m.ring_w = m.stalk_r * 1.2f;
 			m.scales = 1.0f;
-			m.cap_centre = Color(0.6f, 0.55f, 0.5f);
-			m.cap_margin = Color(1.1f, 1.1f, 1.05f);
+			m.stalk_foot = Color(0.42f, 0.34f, 0.26f);
+			m.ring_tint = Color(1.0f, 0.96f, 0.78f); // Cottony white with a yellow edge.
+			m.cap_centre = Color(0.42f, 0.32f, 0.24f);
+			m.cap_margin = Color(1.15f, 1.15f, 1.1f);
 			break;
 		default:
 			break;
@@ -234,6 +242,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 	const int segs = 10;
 	const float sink = 0.01f;
 	const float bend = _rand(-0.25f, 0.25f);
+	const float sway_phase = _rand(0.0f, Math::TAU);
 	// A stalk pushed out of a tuft curves back up towards the light: it leaves the base leaning and
 	// rises to its cap, giving back most of the lean over its length.
 	const float upright = p_tilt > 0.15f ? p_tilt * 0.75f : 0.0f;
@@ -257,9 +266,13 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 			}
 			rz.push_back(Vector2(r, 0.0f));
 			const float ao = Math::lerp(0.55f, 1.0f, Math::smoothstep(0.0f, 0.35f, t)); // Soil-stained foot.
-			tint.push_back(Color(ao, ao * 0.97f, ao * 0.92f));
+			// The foot's own colour, up to below the ring.
+			const Color foot = p_m.stalk_foot.lerp(Color(1, 1, 1), Math::smoothstep(0.0f, 0.7f, t));
+			tint.push_back(Color(ao * foot.r, ao * 0.97f * foot.g, ao * 0.92f * foot.b));
 			if (i < segs) {
-				f = Basis(lean_axis, upright / segs) * Basis(f.get_column(0), bend / segs) * f;
+				// A fused tuft's stalks sway a little as they push past each other.
+				const float sway = p_m.stalk_wave * Math::cos(t * Math::TAU + sway_phase) / segs;
+				f = Basis(lean_axis, upright / segs) * Basis(f.get_column(0), bend / segs + sway) * f;
 				f.orthonormalize();
 				p += f.get_column(2) * (len / segs);
 			}
@@ -311,17 +324,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		Builder &pb = builders[SURFACE_PETAL];
 		const int from = pb.verts.size();
 		_add_lathe(SURFACE_PETAL, cf, p, c, cap_sectors, p_m.wave, p_m.wave_k, phase, 0.3f);
-		if (p_m.scales > 0.0f) {
-			// Scales: dark, hairy flecks dense at the centre, thinning out to the margin.
-			Color *cw = pb.colors.ptrw();
-			for (int i = from; i < pb.verts.size(); i++) {
-				const int ring = (i - from) / cap_sectors;
-				const float x = 1.0f - float(MAX(ring - 1, 0)) / prof;
-				if (rng.randf() < p_m.scales * 0.45f * (1.0f - Math::smoothstep(0.2f, 0.75f, x))) {
-					cw[i] *= Color(0.45f, 0.38f, 0.32f);
-				}
-			}
-		}
+		(void)from;
 	}
 	// Underside (centre surface): from the stalk out to the margin's lower edge. With a tube
 	// layer, a thick cushion whose lower face is the pores.
@@ -401,7 +404,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		for (int i = 0; i <= 4; i++) {
 			const float s = float(i) / 4;
 			p.push_back(Vector2(r0 + p_m.ring_w * Math::sin(s * Math::PI * 0.5f), -p_m.ring_w * 1.4f * s * s));
-			c.push_back(Color(1, 1, 1).lerp(Color(0.8f, 0.8f, 0.78f), s));
+			c.push_back(p_m.ring_tint.lerp(p_m.ring_tint * Color(0.8f, 0.8f, 0.78f), s));
 		}
 		_add_lathe(SURFACE_CENTRE, rf, p, c, 16, 0.08f, 7, phase, 0.0f);
 	}
@@ -436,6 +439,42 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		wc.push_back(Color(0.95f, 0.95f, 0.92f));
 		_add_lathe(SURFACE_CENTRE, one, wp, wc, 6, 0.0f, 1, 0.0f, 1.0f);
 	}
+	// Scales (honey fungus): small, erect, dark brown fibrous tufts crowded at the centre and
+	// thinning out to the margin, each a short pointed cone leaning out from the centre.
+	const int scale_n = int(p_m.scales * Math::lerp(90.0f, 220.0f, MIN(R / 0.05f, 1.0f)));
+	for (int w = 0; w < scale_n; w++) {
+		const float x = 0.75f * Math::pow(_rand(0.0f, 1.0f), 1.8f);
+		const float a = _rand(0.0f, Math::TAU);
+		const float z = z0 + top_z(x) + curl_z(x);
+		const Vector3 p = cap_point(x, a, z);
+		const float x2 = MIN(x + 0.03f, 1.0f);
+		const Vector3 pn = cap_point(x2, a, z0 + top_z(x2) + curl_z(x2));
+		const Vector3 pt = cap_point(x, a + 0.03f, z);
+		Vector3 n = (pn - p).cross(pt - p);
+		if (n.dot(cbo.get_column(2)) < 0.0f) {
+			n = -n;
+		}
+		if (n.length_squared() < 1e-12f) {
+			n = cbo.get_column(2);
+		}
+		n.normalize();
+		const Vector3 out = (pn - p).normalized();
+		const float r = R * _rand(0.008f, 0.017f) * Math::lerp(1.2f, 0.6f, x);
+		// Raised a little and tipped outward, as the fibrils lift from the cap.
+		const Basis sf = mushroom_frame((n + out * 0.6f).normalized());
+		LocalVector<Transform3D> one;
+		one.push_back(Transform3D(sf, p - n * r * 0.4f));
+		LocalVector<Vector2> sp;
+		sp.push_back(Vector2(r, 0.0f));
+		sp.push_back(Vector2(r * 0.55f, r * 0.9f));
+		sp.push_back(Vector2(0.0f, r * 1.7f));
+		LocalVector<Color> sc;
+		const float dark = _rand(0.3f, 0.48f);
+		sc.push_back(Color(dark * 1.25f, dark, dark * 0.75f));
+		sc.push_back(Color(dark * 1.2f, dark * 0.95f, dark * 0.7f));
+		sc.push_back(Color(dark, dark * 0.8f, dark * 0.6f));
+		_add_lathe(SURFACE_CENTRE, one, sp, sc, 5, 0.0f, 1, 0.0f, 1.0f);
+	}
 }
 
 // A group: one to a few fruit bodies of mixed ages (a flush spans a week or two), or the honey
@@ -466,24 +505,45 @@ void PlantGenerator::_build_mushrooms() {
 			spread = 0.3f;
 			break;
 		case PRESET_HONEY_FUNGUS:
-			count = int(_rand(6.0f, 15.99f));
-			spread = 0.05f;
+			count = int(_rand(8.0f, 18.99f));
+			spread = 0.035f;
 			tuft = true;
 			break;
 		default:
 			break;
 	}
+	if (tuft) {
+		// The fused base: one tough, dark mass the stalks rise from, against the wood on its -X
+		// side (VegetationField3D turns wood feeders so +X faces out of the log).
+		LocalVector<Transform3D> bf;
+		bf.push_back(Transform3D(mushroom_frame(Vector3(0, 1, 0)), Vector3(-0.004f, -0.012f, 0.0f)));
+		LocalVector<Vector2> bp;
+		LocalVector<Color> bc;
+		const float br = spread * 0.75f;
+		for (int i = 0; i <= 5; i++) {
+			const float t = float(i) / 5;
+			bp.push_back(Vector2(br * Math::lerp(1.0f, 0.25f, t * t), 0.03f * t));
+			const float g = Math::lerp(0.24f, 0.42f, t);
+			bc.push_back(Color(g, g * 0.82f, g * 0.6f));
+		}
+		_begin_organ(Vector3());
+		_add_lathe(SURFACE_STEM, bf, bp, bc, 14, 0.18f, 3, _rand(0.0f, Math::TAU), 0.0f);
+	}
 	for (int i = 0; i < count; i++) {
 		const float age = _rand(0.1f, 1.0f);
 		const MushroomForm m = _mushroom_form(age);
 		float d = i == 0 ? 0.0f : spread * Math::sqrt(_rand(0.15f, 1.0f));
-		const float a = _rand(0.0f, Math::TAU);
+		float a = _rand(0.0f, Math::TAU);
 		float tilt = _rand(0.0f, 0.12f);
+		float y = 0.0f;
 		if (tuft) {
-			// From a common base, the outer stalks curving out (they push past each other).
-			d = spread * Math::sqrt(_rand(0.0f, 1.0f));
-			tilt = 0.15f + 0.6f * d / spread;
+			// From the fused base, mostly out of the wood's side (+X), the outer stalks leaning
+			// out low and curving back up to their caps (they push past each other).
+			a = _rand(-0.6f, 0.6f) * Math::PI;
+			d = spread * Math::sqrt(_rand(0.0f, 1.0f)) * Math::lerp(0.5f, 1.0f, 0.5f + 0.5f * Math::cos(a));
+			tilt = 0.3f + 0.7f * d / spread + _rand(0.0f, 0.15f);
+			y = 0.012f;
 		}
-		_add_mushroom(Transform3D(Basis(), Vector3(Math::cos(a) * d, 0.0f, Math::sin(a) * d)), m, tilt, a);
+		_add_mushroom(Transform3D(Basis(), Vector3(Math::cos(a) * d, y, Math::sin(a) * d)), m, tilt, a);
 	}
 }

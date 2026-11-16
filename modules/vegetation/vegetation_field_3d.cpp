@@ -732,7 +732,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 				}
 				const float shift = float(tile_hash(tx, tz, p_setup.seed, s) & 0xFFFFFF) / float(0x1000000);
 				for (uint32_t i = 0; i < pat.points.size(); i++) {
-					const Vector2 xz = Vector2(tx * ts, tz * ts) + pat.points[i];
+					Vector2 xz = Vector2(tx * ts, tz * ts) + pat.points[i];
 					if (!rect.has_point(xz) || (!in_core && !reach_rect.has_point(xz))) {
 						continue;
 					}
@@ -742,7 +742,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (rank >= max_keep) {
 						continue;
 					}
-					const Vector3 p3(xz.x, 0.0f, xz.y);
+					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
 					// Patches (clonal stands), except that a rock's foot is a patch of its own
 					// for species that gather there: the patch weight is lifted towards 1 there.
@@ -844,6 +844,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					} else if (dw_near) {
 						suit = 0.0f;
+					}
+					// Wood feeders (BESIDE with a thinnest wood, honey fungus) come up from the wood
+					// itself: their foot moves onto the log's side where it meets the ground, the
+					// plant turned to face out of it (+X away from the wood).
+					Vector2 wood_out;
+					if (dw_rule == PlantSpecies::DEADWOOD_BESIDE && suit > 0.0f && sp->get_deadwood_min_radius() > 0.0f && hit.across != Vector2()) {
+						xz -= hit.across * (hit.side + WOOD_FEEDER_INSET);
+						p3 = Vector3(xz.x, 0.0f, xz.y);
+						wood_out = hit.across;
 					}
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
@@ -1018,7 +1027,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (axis.length_squared() > 1e-10f) {
 						b = Basis(axis.normalized(), Math::acos(CLAMP(up.y, -1.0f, 1.0f)));
 					}
-					const float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
+					float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
+					if (wood_out != Vector2()) {
+						yaw = Math::atan2(-wood_out.y, wood_out.x);
+					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (margin > 0.0f && sp->get_margin_lean() > 0.0f && margin_out != Vector2()) {
 						// Tip the plant's axis towards the open, about the horizontal axis across it.

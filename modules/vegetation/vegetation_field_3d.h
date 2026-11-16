@@ -82,6 +82,7 @@ class VegetationField3D : public Node3D {
 		Vector2 across; // Unit direction from the axis to the point, across the ground.
 	};
 	static constexpr float DEADWOOD_CELL = 4.0f;
+	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
 	LocalVector<Deadwood> deadwood;
 	HashMap<Vector2i, LocalVector<int>> deadwood_grid;

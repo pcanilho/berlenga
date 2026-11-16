@@ -59,3 +59,20 @@ on logs) are part of the tree meshes (trees module); everything coming up from t
 - Warts: small raised patches on the fly agaric's cap.
 - Surfaces: cap on the petal surface, gills, warts and ring on the centre surface, stalk on the
   stem surface; plain colours (no leaf texture), no light response, no wind.
+
+## Honey fungus clumps from the wood (16 Nov)
+
+A docs review read the first tufts as separate biscuits on straight white stalks in the litter.
+Armillaria mellea (Phillips, "Mushrooms", 2006; Kibby, "Mushrooms and Toadstools of Britain and
+Europe", 2017) fruits in dense clumps on stumps, logs and roots: stalks tough and fibrous, curved,
+fused at a common base, pale yellow above a thick cottony ring (white with a yellow edge) and
+darkening to olive brown at the foot; caps tawny honey, darker to the centre where small, erect,
+dark brown fibrous scales crowd, slightly viscid when damp. Built:
+- One fused base (a dark lumpy lathe) the stalks rise from, on its -X side against the wood; the
+  stalks spread over the outer half, lean out low and curve back up, with a little sway each.
+- Scales as geometry: 90 to 220 small pointed cones per cap, crowded at the centre and leaning out,
+  in place of the darkened vertex speckle; caps darker to the centre and glossier (roughness 0.3).
+- Stalk tint from the brown foot to pale yellow under the ring; a cream-yellow ring.
+- VegetationField3D moves a wood feeder (DEADWOOD_BESIDE with a deadwood_min_radius) onto the
+  log's side where it meets the ground, 1.5 cm into the bark and moss, and turns it to face out of
+  the wood, so the clump comes up from the log rather than beside it. Band 0.4 m (was 0.8).

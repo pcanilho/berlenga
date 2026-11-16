@@ -297,6 +297,9 @@ private:
 		int warts = 0;
 		float wart_r = 0.004f;
 		float scales = 0.0f; // Dark scales on the cap (honey fungus), 0 to 1.
+		Color stalk_foot = Color(1, 1, 1); // Stalk tint at its foot (honey fungus darkens to brown).
+		Color ring_tint = Color(1, 1, 1); // The ring's tint.
+		float stalk_wave = 0.0f; // Sideways sway of the stalk's axis (rad over its length), fused tufts.
 		Color cap_centre = Color(1, 1, 1); // Tint at the centre against the margin.
 		Color cap_margin = Color(1, 1, 1);
 	};
