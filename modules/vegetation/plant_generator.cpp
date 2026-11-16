@@ -5417,7 +5417,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		} else if (is_mushroom(preset)) {
 			// Thick flesh: no light through. Caps with a slight sheen (moist skin), matt stalks and gills.
 			// Honey fungus caps are a little viscid when damp: a little glossier, without the tight highlights of a smooth skin (they read as plastic in sun).
-			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.42f : 0.45f) : 0.85f, false);
+			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.5f : 0.45f) : 0.85f, false);
 		} else if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
 			// One texture set per preset, colour and variant (three per preset): shared by the
 			// plants of a meadow, so a thousand dandelions cost three textures.

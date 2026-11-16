@@ -365,6 +365,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 					ps.deadwood_reach = MAX(ps.deadwood_reach, reach * smax);
 				}
 				ps.deadwood_axes.push_back(axis);
+				ps.deadwood_features.push_back(m.is_valid() && m->has_meta(SNAME("tree_deadwood_features")) ? PackedFloat32Array(m->get_meta(SNAME("tree_deadwood_features"))) : PackedFloat32Array());
 				ps.deadwood_pits.push_back(m.is_valid() && m->has_meta(SNAME("tree_root_pit")) ? PackedFloat32Array(m->get_meta(SNAME("tree_root_pit"))) : PackedFloat32Array());
 			}
 		}
@@ -554,7 +555,7 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 			}
 			for (int idx : *bucket) {
 				const auto &d = p_logs[idx];
-				if (d.pit || d.radius < p_min_radius) {
+				if (d.pit || d.feature >= 0 || d.radius < p_min_radius) {
 					continue;
 				}
 				const Vector2 a(d.a.x, d.a.z), ab = Vector2(d.b.x, d.b.z) - a;
@@ -587,6 +588,49 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 	return found;
 }
 
+// The nearest feature (Deadwood.feature: a crack or bark edge on a log's surface) to a point, across
+// the ground within p_reach, at p_low to p_high over p_ground and facing out sideways (not the top);
+// r_any: whether there are features in reach at all.
+template <typename Grid, typename Logs>
+bool deadwood_feature_nearest(const Grid &p_grid, const Logs &p_logs, const Vector3 &p_pos, float p_reach, float p_low, float p_high, float p_ground, float p_cell, Vector3 &r_point, Vector3 &r_normal, bool &r_any, float &r_best) {
+	bool found = false;
+	const int cx0 = int(Math::floor((p_pos.x - p_reach) / p_cell)), cx1 = int(Math::floor((p_pos.x + p_reach) / p_cell));
+	const int cz0 = int(Math::floor((p_pos.z - p_reach) / p_cell)), cz1 = int(Math::floor((p_pos.z + p_reach) / p_cell));
+	for (int cz = cz0; cz <= cz1; cz++) {
+		for (int cx = cx0; cx <= cx1; cx++) {
+			const auto *bucket = p_grid.getptr(Vector2i(cx, cz));
+			if (!bucket) {
+				continue;
+			}
+			for (int idx : *bucket) {
+				const auto &d = p_logs[idx];
+				if (d.feature < 0) {
+					continue;
+				}
+				const float dist = Vector2(d.a.x - p_pos.x, d.a.z - p_pos.z).length();
+				if (dist > p_reach) {
+					continue;
+				}
+				r_any = true;
+				const Vector3 n = (d.b - d.a).normalized();
+				const float over = d.a.y - p_ground;
+				if (over < p_low || over > p_high || n.y > 0.75f || Vector2(n.x, n.z).length_squared() < 0.04f) {
+					continue;
+				}
+				// Nearest, and a check a little before a peel edge (a crack splits the wood open).
+				const float score = dist + (d.feature == 1 ? 0.0f : 0.05f);
+				if (score < r_best) {
+					r_best = score;
+					r_point = d.a;
+					r_normal = n;
+					found = true;
+				}
+			}
+		}
+	}
+	return found;
+}
+
 // Whether the point lies in a root pit (Deadwood.pit) of the list.
 template <typename Grid, typename Logs>
 bool deadwood_pit(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_xz, float p_cell) {
@@ -612,7 +656,11 @@ bool VegetationField3D::_pit_at(const Vector2 &p_xz) const {
 
 int VegetationField3D::get_deadwood_count() const {
 	RWLockRead guard(crown_lock);
-	return deadwood.size();
+	int n = 0;
+	for (const Deadwood &d : deadwood) {
+		n += d.feature < 0 ? 1 : 0; // Logs and pits, not the places on them.
+	}
+	return n;
 }
 
 // The placed log whose side is nearest the point, within reach: side (m from its side across the
@@ -634,6 +682,12 @@ Dictionary VegetationField3D::get_deadwood_at(const Vector3 &p_global_position, 
 bool VegetationField3D::_deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit, float p_min_radius) const {
 	RWLockRead guard(crown_lock);
 	return deadwood_nearest(deadwood_grid, deadwood, p_xz, p_reach, DEADWOOD_CELL, r_hit, p_min_radius);
+}
+
+bool VegetationField3D::_deadwood_feature_at(const Vector3 &p_pos, float p_reach, float p_low, float p_high, float p_ground, Vector3 &r_point, Vector3 &r_normal, bool &r_any) const {
+	RWLockRead guard(crown_lock);
+	float best = 1e9f;
+	return deadwood_feature_nearest(deadwood_grid, deadwood, p_pos, p_reach, p_low, p_high, p_ground, DEADWOOD_CELL, r_point, r_normal, r_any, best);
 }
 
 // The placed logs, for other fields' plants (canopy_field) and get_deadwood_at().
@@ -870,6 +924,38 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						p3 = Vector3(xz.x, 0.0f, xz.y);
 						wood_out = hit.across;
 						wood_y = hit.axis_y - dy;
+						// Where the log carries its cracks and bark edges (tree_deadwood_features), the
+						// clump bursts from the nearest one low on its side instead: from a drying check
+						// or where the bark has peeled from the wood. None there on a log that has them:
+						// no clump.
+						Vector3 fp, fn;
+						bool any = false;
+						float best = 1e9f;
+						const Vector3 at(xz.x, wood_y, xz.y);
+						const float lo = 0.02f, hi = WOOD_FEEDER_HEIGHT + 0.12f;
+						bool got = deadwood_feature_nearest(local_deadwood_grid, local_deadwood, at, WOOD_FEEDER_REACH, lo, hi, ground, DEADWOOD_CELL, fp, fn, any, best);
+						if (p_setup.other) {
+							Vector3 op, on;
+							bool oany = false;
+							if (p_setup.other->_deadwood_feature_at(at, WOOD_FEEDER_REACH, lo, hi, ground, op, on, oany)) {
+								const float od = Vector2(op.x - at.x, op.z - at.z).length();
+								if (!got || od < best) {
+									fp = op;
+									fn = on;
+									got = true;
+								}
+							}
+							any = any || oany;
+						}
+						if (got) {
+							const Vector2 out2 = Vector2(fn.x, fn.z).normalized();
+							xz = Vector2(fp.x, fp.z) - out2 * WOOD_FEEDER_INSET;
+							p3 = Vector3(xz.x, 0.0f, xz.y);
+							wood_out = out2;
+							wood_y = fp.y;
+						} else if (any) {
+							suit = 0.0f;
+						}
 					}
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
@@ -1106,6 +1192,23 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							deadwood_insert(local_deadwood_grid, log, local_deadwood.size() - 1, DEADWOOD_CELL);
 							if (out) {
 								out->deadwood.push_back(log);
+							}
+						}
+						// Its cracks and bark edges (tree_deadwood_features), where wood feeders root.
+						if (variant < int(ps.deadwood_features.size())) {
+							const PackedFloat32Array &fa = ps.deadwood_features[variant];
+							const Basis nb = world.basis.inverse().transposed();
+							for (int f = 0; f + 7 < fa.size(); f += 8) {
+								Deadwood d;
+								d.feature = int8_t(fa[f]);
+								d.a = world.xform(Vector3(fa[f + 1], fa[f + 2], fa[f + 3]));
+								d.b = d.a + nb.xform(Vector3(fa[f + 4], fa[f + 5], fa[f + 6])).normalized() * 0.01f; // Kept short: the grid takes the a-b span.
+								d.radius = 0.0f;
+								local_deadwood.push_back(d);
+								deadwood_insert(local_deadwood_grid, d, local_deadwood.size() - 1, DEADWOOD_CELL);
+								if (out) {
+									out->deadwood.push_back(d);
+								}
 							}
 						}
 						// An uprooted tree's pit (cx, cy, cz, radius, depth in mesh space): bare soil.

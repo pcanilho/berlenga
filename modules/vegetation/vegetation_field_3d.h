@@ -73,6 +73,7 @@ class VegetationField3D : public Node3D {
 		Vector3 a, b;
 		float radius = 0.0f;
 		bool pit = false; // An uprooted tree's root pit (mesh meta tree_root_pit): a disc of bare soil of this radius round a, not wood.
+		int8_t feature = -1; // A place on a log's surface (tree_deadwood_features: 0 peel edge, 1 drying check): a the point, b - a its outward normal (1 cm); not wood.
 	};
 	// The log nearest a point, as seen from above.
 	struct DeadwoodHit {
@@ -87,6 +88,7 @@ class VegetationField3D : public Node3D {
 	static constexpr float DEADWOOD_BESIDE_GAP = 0.15f; // Plants beside a log only where its underside is within this of the ground.
 	static constexpr float WOOD_FEEDER_HEIGHT = 0.2f; // How far up a log's side a wood feeder roots (at most its axis).
 	static constexpr float WOOD_FEEDER_LEAN_DEG = 15.0f; // How far a wood feeder tips out of the bark.
+	static constexpr float WOOD_FEEDER_REACH = 0.6f; // How far along a log a wood feeder looks for a crack or bark edge to root in.
 	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
 	LocalVector<Deadwood> deadwood;
@@ -94,6 +96,10 @@ class VegetationField3D : public Node3D {
 	float deadwood_max_radius = 0.0f;
 	// The nearest log within reach of its side, this field's own (under crown_lock).
 	bool _deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit, float p_min_radius = 0.0f) const;
+	// The nearest crack or bark edge on a log's side (tree_deadwood_features) to a point, within reach
+	// across the ground, between p_low and p_high over the ground there; p_any: whether the logs there
+	// carry features at all.
+	bool _deadwood_feature_at(const Vector3 &p_pos, float p_reach, float p_low, float p_high, float p_ground, Vector3 &r_point, Vector3 &r_normal, bool &r_any) const;
 	// Whether the point lies in a placed root pit, this field's own (under crown_lock).
 	bool _pit_at(const Vector2 &p_xz) const;
 	// A placed crown that shades the ground under it.
@@ -165,6 +171,7 @@ class VegetationField3D : public Node3D {
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
 		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, widest reach, then optionally the reach profile (mesh space); empty if not deadwood.
+		LocalVector<PackedFloat32Array> deadwood_features; // Per variant: tree_deadwood_features (8 floats a record: kind, point, normal, half width; mesh space).
 		LocalVector<PackedFloat32Array> deadwood_pits; // Per variant: the root pit (tree_root_pit: centre, radius, depth in mesh space) of an uprooted tree; empty if none.
 		float deadwood_reach = 0.0f; // How far its logs reach from the plant's origin (times its largest scale); 0: not deadwood.
 	};
