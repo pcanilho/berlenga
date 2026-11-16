@@ -548,6 +548,8 @@ public:
 	real_t get_talus_angle() const { return talus_angle; }
 	void set_talus_reach(real_t p_value) { talus_reach = MAX(p_value, real_t(1.0)); }
 	real_t get_talus_reach() const { return talus_reach; }
+	// The sea build_water() made (null: none), for nodes that change its floor (RockField3D's coast forms).
+	Node *get_sea_node() const { return ObjectDB::get_instance<Node>(sea_node); }
 	void set_glacial_enabled(bool p_enable) { glacial_enabled = p_enable; }
 	bool is_glacial_enabled() const { return glacial_enabled; }
 	void set_glacial_ela(real_t p_value) { glacial_ela = p_value; }

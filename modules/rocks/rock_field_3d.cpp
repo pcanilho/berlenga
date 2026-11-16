@@ -1370,11 +1370,19 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	// Collision for the stones big enough to stand on or trip over, near the target.
 	const Vector3 tp = _target_position();
 	const Vector2 cc = rect.get_center();
-	if (collision_enabled && Vector2(tp.x, tp.z).distance_to(cc) < collision_radius + cs * 0.71) {
+	// Coast forms at any distance (whatever collision_enabled says): the sea measures its floor by ray casts and turns
+	// a cell whose floor stands out of the water into shore, so a stack gets its foam and run-up (water's
+	// seabed_from_floor); remeasured once the cells are built.
+	const bool near = collision_enabled && Vector2(tp.x, tp.z).distance_to(cc) < collision_radius + cs * 0.71;
+	const bool coast = coast_collision && layer == LAYER_COAST;
+	if (near || coast) {
 		StaticBody3D *body = nullptr;
 		for (uint32_t si = 0; si < stones.size(); si++) {
 			const Stone &st = stones[si];
 			if (2.0f * st.scale < collision_min_size) {
+				continue;
+			}
+			if (!near && key_family(st.library) < RockGenerator::FAMILY_SEA_STACK) {
 				continue;
 			}
 			const Library *lib = libraries.getptr(st.library);
@@ -1409,6 +1417,7 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 					CollisionShape3D *cs3 = memnew(CollisionShape3D);
 					cs3->set_shape(shape);
 					body->add_child(cs3);
+					coast_seabed_dirty = true;
 				}
 				continue;
 			}
@@ -1494,6 +1503,7 @@ void RockField3D::_update_streaming(bool p_all) {
 		}
 		_build_cell(w.key);
 	}
+	_remeasure_sea();
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	_update_close_up(p_all);
 	_update_breakable();
@@ -1974,6 +1984,7 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 			}
 		}
 	}
+	_remeasure_sea();
 	return built;
 }
 
@@ -2309,6 +2320,23 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 	}
 }
 
+void RockField3D::_remeasure_sea() {
+	if (!coast_seabed_dirty || !is_inside_tree()) {
+		return;
+	}
+	coast_seabed_dirty = false;
+	TerrainGenerator3D *gen = _get_generator();
+	Node *sea = gen ? gen->get_sea_node() : nullptr;
+	if (sea && sea->has_method("remeasure_seabed") && bool(sea->get("seabed_from_floor"))) {
+		sea->call("remeasure_seabed");
+	}
+}
+
+void RockField3D::set_coast_collision(bool p_enabled) {
+	coast_collision = p_enabled;
+	rebuild();
+}
+
 void RockField3D::set_ground_blend(bool p_enabled) {
 	ground_blend = p_enabled;
 	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
@@ -2426,6 +2454,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_variants"), &RockField3D::get_variants);
 	ClassDB::bind_method(D_METHOD("set_detail", "detail"), &RockField3D::set_detail);
 	ClassDB::bind_method(D_METHOD("get_detail"), &RockField3D::get_detail);
+	ClassDB::bind_method(D_METHOD("set_coast_collision", "enabled"), &RockField3D::set_coast_collision);
+	ClassDB::bind_method(D_METHOD("is_coast_collision"), &RockField3D::is_coast_collision);
 	ClassDB::bind_method(D_METHOD("set_ground_blend", "enabled"), &RockField3D::set_ground_blend);
 	ClassDB::bind_method(D_METHOD("is_ground_blend"), &RockField3D::is_ground_blend);
 	ClassDB::bind_method(D_METHOD("set_ground_blend_height", "height"), &RockField3D::set_ground_blend_height);
@@ -2524,6 +2554,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_min_size", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_collision_min_size", "get_collision_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_collision_radius", "get_collision_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "coast_collision"), "set_coast_collision", "is_coast_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
 	ADD_GROUP("Streaming", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");

@@ -144,6 +144,10 @@ private:
 	real_t moss_cover = 0.4;
 	// Ground blending: the stone's foot eased into the ground under it (docs/ideas/rocks.md).
 	bool ground_blend = true;
+	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
+	bool coast_collision = true;
+	bool coast_seabed_dirty = false;
+	void _remeasure_sea();
 	real_t ground_blend_height = 0.25;
 	Ref<ShaderMaterial> ground_material;
 	void _apply_ground(const Ref<ShaderMaterial> &p_material) const;
@@ -248,6 +252,8 @@ public:
 	real_t get_lichen_cover() const { return lichen_cover; }
 	void set_moss_cover(real_t p_cover);
 	real_t get_moss_cover() const { return moss_cover; }
+	void set_coast_collision(bool p_enabled);
+	bool is_coast_collision() const { return coast_collision; }
 	void set_ground_blend(bool p_enabled);
 	bool is_ground_blend() const { return ground_blend; }
 	void set_ground_blend_height(real_t p_height);

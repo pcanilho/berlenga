@@ -355,3 +355,20 @@ terrain_geology_map) gives rock, scree, soil, alluvium and sand per pixel, colou
 TerrainMaterial3D layers (colour times the mean of its albedo texture), which RockField3D.ground_material hands to the
 rock material; (3) a band of `ground_blend_height` (scaled by the stone's size), cavities first (Mishkinis height
 blend on the stone's cavity map), with noise, upward faces more; (4) the normal eased to the ground plane's.
+
+#### Third review (16 Nov): natural silhouettes
+
+Docs: crisp, but both forms read as masonry (a ruined chimney of rectangular courses; a doorway with a lintel). The
+references (Old Harry Rocks and Durdle Door in chalk and limestone, the Twelve Apostles in limestone) differ by
+outline more than by surface:
+- Stack: now built from 6 to 9 joint faces at uneven azimuths and distances (an irregular polygon in plan, not a
+  box), each a few degrees off upright, the whole leaning 2 to 7 degrees one way and narrowing upward; one to three
+  dominant steep joint faces at any azimuth cut into one side, deeper toward the top; the top two or three oblique
+  breaks. Beds vary much more in thickness (0.2 to 2.6 x the mean, most thin) and their recess varies around the
+  stack (0.3 to 1.7 x), so ledges run part way round and stop. An open joint only on about two stacks in three,
+  off-centre and a little oblique. Below the notch's roof the beds are planed back alike (the lips there read as a
+  plinth); the notch is shallower (0.18c).
+- Arch: the opening is widest at the waterline (flare 0.45 to 0.85 x its half-width) and closes to a rounded head
+  that leans to one side; above the springing its outline steps where roof blocks fell; its edges are ragged. The
+  deck sags over the span (a quarter to a half of the rock above the opening, never thinner than 0.4c) and dips
+  along the ridge.
