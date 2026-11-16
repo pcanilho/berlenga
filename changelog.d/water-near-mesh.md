@@ -1,0 +1,1 @@
+- Water: `PhysXWaterSurface3D.near_mesh_step`. Off by default; at 0.03 the open sea mesh is finest at the camera (3 cm, growing 5% a ring to the horizon) instead of an even core, and the short ripples become displaced geometry close up.

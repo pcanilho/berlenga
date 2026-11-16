@@ -2782,3 +2782,52 @@ unresolved slope is put back.
   `--view=storm_low`, raster before/after and path traced (8 spp on the cloud CPU, no denoiser:
   noisy, but the lace, grain and plume all show; denoised PT frames go on the PC list). Cost: one
   128^2 FFT a step and a few Voronoi lookups where there is foam; GPU timing on the PC list.
+
+## Camera-centred water mesh, displaced ripples (15 Nov, research for Paulo)
+
+Paulo asked for more geometry on the ocean and water bodies. Today the open sea (`render_extent` past the
+simulated square) draws `_build_extended_plane`: a uniform core of `ocean_grid_resolution * mesh_detail`
+cells over the simulated square (40 m / 64 = 62 cm between vertices at defaults), then square rings 15%
+further apart each. The core follows the camera smoothly (no snapping, see `_update_mesh_offset`). Nothing
+near the camera is finer than 62 cm, so the short waves only exist in the per-pixel normal: crests and chop
+have no silhouette closer than that, and the path tracer (which traces the mesh) sees them flat.
+
+What others do:
+- Geometry clipmaps (Losasso and Hoppe 2004; GPU Gems 2 ch. 2, Asirvatham and Hoppe): nested square rings
+  around the viewer, each twice the spacing of the one inside it, snapped to its own grid, with a geomorph
+  band at each ring's outer edge so vertices slide onto the coarser ring's positions (no T-junction cracks,
+  no pops).
+- Crest (Unity, Huw Bowles, "Crest: novel ocean rendering techniques", SIGGRAPH 2017/2019): the same
+  nested LOD rings, spacing doubling per LOD, geomorphing, and each ring samples only the wave cascades its
+  vertex spacing can carry (shape LODs matched to geometry LODs).
+- Unreal Water (UE5): a quadtree of water tiles with LOD by distance; Sea of Thieves (Rare, "The Technical
+  Art of Sea of Thieves", SIGGRAPH 2018): FFT on a camera-centred, LOD'd grid.
+- Projected grid (Johanson 2004): a screen-space grid projected onto the sea; uniform in screen space but
+  swims badly and is poor for path tracing (it only covers the view).
+
+Choice: keep the existing smooth-following radial mesh (its seamless, crack-free single grid already avoids
+the clipmap's stitching and the projected grid's view dependence) and replace its uniform core with
+geometric spacing from the camera: the step starts at `near_mesh_step` (3 cm) at the camera and grows 5% per
+ring to the horizon. That is the clipmap's spacing law (spacing proportional to distance) as one continuous
+grid: no LOD seams or geomorph bands to tune. At 3 cm and 5% growth a 2 km reach takes about 166 rings
+(about 110k vertices), against about 23k today: a few hundred kB of vertex buffer, cheap on any GPU.
+Swimming (vertices sliding over the waves as the camera moves) stays below what the eye sees as long as the
+waves a ring carries are at least four of its steps long, which the next point enforces.
+
+Displaced ripples: the detail cascade (#304, normals only) also produces height and displacement. The vertex
+shader adds them where the local step can carry them, with the same log-band share as the fragment's normal
+(Bruneton, Neyret and Holzschuch 2010), using the vertex step at that distance instead of the pixel
+footprint, so the geometry gains the ripples near the camera and hands them back to the normal and the
+roughness further out. Under path tracing the hit re-runs the vertex shader on the rest pose, so the traced
+surface carries them too.
+
+Lakes (a `surface_mesh` footprint mesh) stay on their even grid for now; the same spacing law for them needs
+the footprint clipped per frame (stage 2).
+
+### Built (16 Nov): `near_mesh_step`, off by default
+Raster at 100% crop (storm_glitter from 1.4 and 2 m): almost no visible change. The waves shorter than the
+old core's 31 to 62 cm are millimetres high, and the per-pixel normal already shows them; the near mesh moves
+the glints a little, no more. Cost: about five times the vertices (110k against 23k); on the cloud's software
+renderer a raster frame took 115 s against 75 s, a PT frame 548 s against 431 s. So it ships off; 0.03 for
+cameras right at the water (a swimmer, a boat's rail), and GPU and PT checks on the PC list.
+
