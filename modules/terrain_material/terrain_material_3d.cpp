@@ -508,7 +508,26 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 		float x2 = min((wv.x / r) * (wv.x / r), 1.0);
 		hgt += scree * ks * (1.0 - x2) * sqrt(1.0 - x2) * 0.08 * tm_rock_detail_scale; // flat at the rim: no edge to alias
 		// 0.958 is the stones' mean shade (measured over the cells), so the mean stays 1.
-		shade = mix(shade, mix(1.0, mix(0.78, 1.0, smoothstep(0.0, 0.5, dome)) * (0.92 + 0.16 * wv.z) / 0.958, ks), scree);
+		float st_shade = mix(0.78, 1.0, smoothstep(0.0, 0.5, dome)) * (0.92 + 0.16 * wv.z) / 0.958;
+		// Between the stones, a matrix of gravel and fines (talus is poorly sorted: Fuller-like grading, each size
+		// filling the gaps of the next, so the clasts stand in a finer bed). Gravel: a second octave of rounded
+		// cells 3 to 10 cm, dipped in the bed; fines: grain roughness under a centimetre. Each fades by frequency
+		// clamping as the pixel grows, and the gap share comes from the stones' own profile.
+		float gap = smoothstep(0.55, 1.0, x2);
+		float kg = tm_rd_clamp(wmax, 0.08);
+		float gs = 1.0;
+		if (kg > 0.0 && gap > 0.0) {
+			vec3 gv = tm_rd_worley(p / (0.065 * tm_rock_detail_scale) + 17.0);
+			float gr = 0.5 + 0.35 * gv.z;
+			float gx2 = min((gv.x / gr) * (gv.x / gr), 1.0);
+			float kf = tm_rd_clamp(wmax, 0.02);
+			float fines = kf * (tm_rd_noise(p * (60.0 / tm_rock_detail_scale)) - 0.5) * 0.004 * tm_rock_detail_scale;
+			hgt += scree * gap * (kg * ((1.0 - gx2) * sqrt(1.0 - gx2) * 0.018 - 0.01) * tm_rock_detail_scale + fines);
+			// Gravel tops lighter, the fines between them darker (shadowed pores); 0.915 is the mean over the cells,
+			// so the matrix keeps the ground's mean shade.
+			gs = mix(1.0, mix(0.86, 1.06, smoothstep(0.3, 1.0, 1.0 - gx2)) * (0.95 + 0.1 * gv.z) / 0.915, kg);
+		}
+		shade = mix(shade, mix(1.0, st_shade * mix(1.0, gs, gap), ks), scree);
 	}
 	return vec2(hgt, shade);
 }
@@ -520,7 +539,7 @@ vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, v
 		return sn; // every feature has faded to its mean (shade 1, flat)
 	}
 	// The difference step grows with the pixel, so it never samples across an edge the pixel cannot resolve.
-	float e = max(0.03, 0.5 * wmax * tm_rock_detail_scale);
+	float e = max(0.006, 0.5 * wmax * tm_rock_detail_scale); // fine enough for the gravel up close
 	vec2 h0 = tm_rd_height(p, face, scree, dx, dy);
 	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, dx, dy).x;
 	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, dx, dy).x;
@@ -579,7 +598,10 @@ void fragment() {
 	// Sand under the sea, and on land where the generator made a beach (its geology's soil channel is -1..0 there);
 	// without a generator, on anything below beach_height. A low coastal plain behind the beach keeps its soil.
 	float sand = beach_sand >= 0.0 ? max(beach_sand, 1.0 - smoothstep(-0.2, 0.3, wp.y - tm_sea_level)) : 1.0 - smoothstep(tm_beach_height * 0.6, tm_beach_height, wp.y - tm_sea_level);
-	sand *= 1.0 - steep;
+	// Sand the generator laid (beaches, dunes) holds up to the cliff slope: dune faces stand at the angle of repose
+	// (34 degrees, 45 under marram), past the rock slope.
+	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y), beach_sand) : steep;
+	sand *= 1.0 - sand_steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;
 	}

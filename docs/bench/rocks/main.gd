@@ -230,6 +230,18 @@ func _world() -> void:
 	var t0 := Time.get_ticks_msec()
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
+	# Heavy generator options are on by default; this bench keeps its own fast choices.
+	gen.glacial_enabled = false
+	gen.glacial_converged = false
+	gen.tile_erosion_enabled = false
+	gen.strata_enabled = false
+	gen.guide_preview = false
+	gen.dunes_enabled = false
+	gen.deposition = 0.0
+	gen.moraine_age = 0.0
+	gen.scree_age = 0.0
+	gen.meander_age = 0.0
+	gen.outwash_age = 0.0
 	gen.size = Vector2(WORLD, WORLD)
 	gen.cell_size = 8.0
 	gen.seed = int(args.get("seed", "5"))
@@ -272,6 +284,7 @@ func _world() -> void:
 	tm.use_generator(gen)
 	tm.update_shader()
 	var land := Landscape3D.new()
+	land.cliff_relief = 0.0 # on by default; this bench measures without it
 	land.name = "Landscape"
 	add_child(land)
 	land.material = tm

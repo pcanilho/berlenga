@@ -35,6 +35,7 @@
 
 #include "terrain_coast.h"
 #include "terrain_deformer_3d.h"
+#include "terrain_dunes.h"
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_glacial.h"
@@ -2551,6 +2552,7 @@ bool TerrainGenerator3D::generate() {
 	_bake_spray();
 	_publish_globals();
 	_erode_tiles();
+	_build_dunes();
 	// After the tiles: the sky is read from the final ground.
 	_bake_sky();
 	_publish_globals();
@@ -2914,7 +2916,11 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 			}
 		}
 	}
-	return lip_buckets.is_empty() ? g : _apply_lips(p_x, p_z, g);
+	g = lip_buckets.is_empty() ? g : _apply_lips(p_x, p_z, g);
+	if (!dune_sand.is_empty()) {
+		g += _dune_sample(dune_sand, p_x, p_z);
+	}
+	return g;
 }
 
 void TerrainGenerator3D::_bucket_channels() {
@@ -3041,6 +3047,337 @@ float TerrainGenerator3D::_tile_sample(const LocalVector<float> &p_grid, real_t 
 	const real_t a = Math::lerp(real_t(g[z0 * tile_nx + x0]), real_t(g[z0 * tile_nx + x0 + 1]), fx);
 	const real_t b = Math::lerp(real_t(g[(z0 + 1) * tile_nx + x0]), real_t(g[(z0 + 1) * tile_nx + x0 + 1]), fx);
 	return float(Math::lerp(a, b, fz));
+}
+
+float TerrainGenerator3D::_dune_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const {
+	if (dune_nx < 2 || dune_nz < 2 || p_grid.size() != uint32_t(dune_nx * dune_nz)) {
+		return 0.0f;
+	}
+	const real_t gx = (p_x - dune_origin.x) / dune_grid_cell;
+	const real_t gz = (p_z - dune_origin.y) / dune_grid_cell;
+	if (gx < 0.0 || gz < 0.0 || gx > real_t(dune_nx - 1) || gz > real_t(dune_nz - 1)) {
+		return 0.0f;
+	}
+	const int x0 = MIN(int(gx), dune_nx - 2);
+	const int z0 = MIN(int(gz), dune_nz - 2);
+	const real_t fx = gx - x0;
+	const real_t fz = gz - z0;
+	const float *g = p_grid.ptr();
+	const real_t a = Math::lerp(real_t(g[z0 * dune_nx + x0]), real_t(g[z0 * dune_nx + x0 + 1]), fx);
+	const real_t b = Math::lerp(real_t(g[(z0 + 1) * dune_nx + x0]), real_t(g[(z0 + 1) * dune_nx + x0 + 1]), fx);
+	return float(Math::lerp(a, b, fz));
+}
+
+// Coastal dunes: the beaches feed wind-blown sand inland over a belt behind them, on a grid of dune_cell (terrain_dunes.h:
+// Werner's slabs as expected amounts, with marram). The grid is cut into tiles with aprons, each run on its own (in
+// parallel; the result does not depend on the threads) with the wind blowing up its own beaches on average, turned by
+// dune_wind_angle, and blended across the aprons. The sea, lakes and river channels take the sand that lands on them.
+// The sand is added to the ground in _ground.
+struct TerrainGenerator3D::DuneJob {
+	const TerrainGenerator3D *gen;
+	Vector2 lo; // the grid's first node
+	double dc; // cell, m
+	int w, h; // the whole grid
+	int tiles_x;
+	int core, apron; // cells
+	float rate; // m of sand a step on the dry beach face
+	const float *to_face; // per node of the result, m to the nearest beach face
+	const uint8_t *face; // per node of the result
+	LocalVector<LocalVector<float>> *results; // per tile: sand, plants interleaved (empty: no beach in reach)
+};
+
+void TerrainGenerator3D::_dune_tile(void *p_job, uint32_t p_tile) {
+	DuneJob *job = static_cast<DuneJob *>(p_job);
+	const TerrainGenerator3D *gen = job->gen;
+	const int tx = int(p_tile) % job->tiles_x;
+	const int tz = int(p_tile) / job->tiles_x;
+	const int x0 = MAX(tx * job->core - job->apron, 0);
+	const int z0 = MAX(tz * job->core - job->apron, 0);
+	const int x1 = MIN((tx + 1) * job->core + job->apron, job->w - 1);
+	const int z1 = MIN((tz + 1) * job->core + job->apron, job->h - 1);
+	const int nx = gen->nx, ny = gen->ny;
+	const Vector2 rp = gen->result_rect.position;
+	const double cs = gen->cell_size;
+	// The wind: up the beach faces within the tile and its apron.
+	double wx = 0.0, wz = 0.0;
+	{
+		const int cx0 = CLAMP(int(Math::floor((job->lo.x + x0 * job->dc - rp.x) / cs)), 1, nx - 2);
+		const int cx1 = CLAMP(int(Math::ceil((job->lo.x + x1 * job->dc - rp.x) / cs)), 1, nx - 2);
+		const int cz0 = CLAMP(int(Math::floor((job->lo.y + z0 * job->dc - rp.y) / cs)), 1, ny - 2);
+		const int cz1 = CLAMP(int(Math::ceil((job->lo.y + z1 * job->dc - rp.y) / cs)), 1, ny - 2);
+		for (int z = cz0; z <= cz1; z++) {
+			for (int x = cx0; x <= cx1; x++) {
+				const int i = z * nx + x;
+				if (job->face[i]) {
+					wx += double(gen->heights[i + 1]) - double(gen->heights[i - 1]);
+					wz += double(gen->heights[i + nx]) - double(gen->heights[i - nx]);
+				}
+			}
+		}
+	}
+	const double wl = Math::sqrt(wx * wx + wz * wz);
+	if (wl <= 0.0) {
+		return;
+	}
+	const double turn = Math::deg_to_rad(double(gen->dune_wind_angle));
+	const double ux = wx / wl, uz = wz / wl;
+	TerrainDunes d;
+	d.wind_x = ux * Math::cos(turn) - uz * Math::sin(turn);
+	d.wind_z = ux * Math::sin(turn) + uz * Math::cos(turn);
+	d.w = x1 - x0 + 1;
+	d.h = z1 - z0 + 1;
+	d.cell = job->dc;
+	const int m = d.w * d.h;
+	d.base.resize(m);
+	d.inside.assign(m, 0);
+	d.water.assign(m, 0);
+	d.supply.assign(m, 0.0f);
+	d.plant_ok.assign(m, 0.0f);
+	const uint32_t s = uint32_t(gen->seed) * 0x9E3779B1u + 0x2545F491u;
+	LocalVector<float> to_face;
+	to_face.resize(nx * ny);
+	memcpy(to_face.ptr(), job->to_face, sizeof(float) * nx * ny);
+	bool fed = false;
+	for (int z = 0; z < d.h; z++) {
+		for (int x = 0; x < d.w; x++) {
+			const int i = z * d.w + x;
+			const real_t px = job->lo.x + (x0 + x) * job->dc, pz = job->lo.y + (z0 + z) * job->dc;
+			const float g = gen->_ground(px, pz);
+			d.base[i] = Math::is_nan(g) ? gen->result_min : g;
+			const int cx = CLAMP(int(Math::round((px - rp.x) / cs)), 0, nx - 1);
+			const int cz = CLAMP(int(Math::round((pz - rp.y) / cs)), 0, ny - 1);
+			if (gen->water_body[cz * nx + cx] != 0 || !(g > gen->sea_level + 0.2f) || (!gen->chan_buckets.is_empty() && gen->_apply_channels(px, pz, 1.0e6f) < 1.0e6f - 0.5f)) {
+				d.water[i] = 1;
+				d.inside[i] = 1;
+				continue;
+			}
+			float bch = gen->_sample(gen->beach, px, pz);
+			bch = Math::is_nan(bch) ? 0.0f : bch;
+			const float tf = gen->_sample(to_face, px, pz);
+			if (!(tf <= gen->dune_belt_width) && bch <= 0.0f) {
+				continue;
+			}
+			d.inside[i] = 1;
+			if (bch > 0.5f && g > gen->sea_level + 0.6f) {
+				d.supply[i] = job->rate * CLAMP((bch - 0.5f) * 4.0f, 0.0f, 1.0f);
+				fed = fed || d.supply[i] > 0.0f;
+			}
+			// Marram grows behind the beach face (salt spray and swash keep it off the face), patchily.
+			// Gaps in it, where blowouts can open.
+			const double pt = CLAMP((TerrainErosionFilter::fbm(s, px, pz, 40.0, 3) + 0.25) / 0.4, 0.0, 1.0);
+			const double patch = pt * pt * (3.0 - 2.0 * pt);
+			const double back = CLAMP(1.0 - 2.0 * double(bch), 0.0, 1.0);
+			d.plant_ok[i] = float(double(gen->dune_vegetation) * back * patch);
+		}
+	}
+	if (!fed) {
+		return;
+	}
+	// Run on the box of the belt within the tile only (two cells beyond it): the rest has no sand.
+	int ix0 = d.w, iz0 = d.h, ix1 = -1, iz1 = -1;
+	for (int i = 0; i < m; i++) {
+		if (d.inside[i] && !d.water[i]) {
+			ix0 = MIN(ix0, i % d.w);
+			iz0 = MIN(iz0, i / d.w);
+			ix1 = MAX(ix1, i % d.w);
+			iz1 = MAX(iz1, i / d.w);
+		}
+	}
+	ix0 = MAX(ix0 - 2, 0);
+	iz0 = MAX(iz0 - 2, 0);
+	ix1 = MIN(ix1 + 2, d.w - 1);
+	iz1 = MIN(iz1 + 2, d.h - 1);
+	TerrainDunes c;
+	c.wind_x = d.wind_x;
+	c.wind_z = d.wind_z;
+	c.cell = d.cell;
+	c.w = ix1 - ix0 + 1;
+	c.h = iz1 - iz0 + 1;
+	if (c.w < 4 || c.h < 4) {
+		return;
+	}
+	const int cm = c.w * c.h;
+	c.base.resize(cm);
+	c.inside.resize(cm);
+	c.water.resize(cm);
+	c.supply.resize(cm);
+	c.plant_ok.resize(cm);
+	for (int z = 0; z < c.h; z++) {
+		for (int x = 0; x < c.w; x++) {
+			const int j = (z + iz0) * d.w + x + ix0, k = z * c.w + x;
+			c.base[k] = d.base[j];
+			c.inside[k] = d.inside[j];
+			c.water[k] = d.water[j];
+			c.supply[k] = d.supply[j];
+			c.plant_ok[k] = d.plant_ok[j];
+		}
+	}
+	c.run(gen->dune_steps);
+	LocalVector<float> &out = (*job->results)[p_tile];
+	out.resize(m * 2);
+	memset(out.ptr(), 0, sizeof(float) * m * 2);
+	for (int z = 0; z < c.h; z++) {
+		for (int x = 0; x < c.w; x++) {
+			const int j = (z + iz0) * d.w + x + ix0, k = z * c.w + x;
+			out[j * 2 + 0] = c.sand[k];
+			out[j * 2 + 1] = c.plants[k];
+		}
+	}
+}
+
+void TerrainGenerator3D::_build_dunes() {
+	dune_sand.clear();
+	dune_plants.clear();
+	dune_cover.clear();
+	dune_nx = dune_nz = 0;
+	last_dune_msec = 0.0;
+	last_dune_volume = 0.0;
+	last_dune_max = 0.0;
+	const int n = nx * ny;
+	if (!dunes_enabled || dune_steps <= 0 || dune_supply <= 0.0 || nx < 3 || ny < 3 || beach.size() != uint32_t(n) || water_body.size() != uint32_t(n)) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	// The belt: land within dune_belt_width of a beach face.
+	std::vector<uint8_t> face(n, 0);
+	bool any = false;
+	for (int i = 0; i < n; i++) {
+		face[i] = beach[i] > 0.5f && water_body[i] == 0;
+		any = any || face[i];
+	}
+	if (!any) {
+		return;
+	}
+	std::vector<double> to_face;
+	TerrainCoast::distance(nx, ny, cell_size, face.data(), to_face);
+	LocalVector<float> to_face_f;
+	to_face_f.resize(n);
+	for (int i = 0; i < n; i++) {
+		to_face_f[i] = float(MIN(to_face[i], 1.0e9));
+	}
+	const double belt = double(dune_belt_width) + cell_size;
+	int bx0 = nx, bz0 = ny, bx1 = -1, bz1 = -1;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const int i = z * nx + x;
+			if (to_face[i] <= belt && water_body[i] == 0) {
+				bx0 = MIN(bx0, x);
+				bz0 = MIN(bz0, z);
+				bx1 = MAX(bx1, x);
+				bz1 = MAX(bz1, z);
+			}
+		}
+	}
+	if (bx1 < bx0) {
+		return;
+	}
+	// The grid: the belt's box, a cell beyond it on every side; coarser if it would pass sixteen million nodes.
+	const Vector2 lo = result_rect.position + Vector2(MAX(bx0 - 1, 0), MAX(bz0 - 1, 0)) * cell_size;
+	const Vector2 hi = result_rect.position + Vector2(MIN(bx1 + 1, nx - 1), MIN(bz1 + 1, ny - 1)) * cell_size;
+	double dc = MAX(double(dune_cell), 0.5);
+	while (((hi.x - lo.x) / dc + 1.0) * ((hi.y - lo.y) / dc + 1.0) > 1.6e7) {
+		dc *= 1.25;
+	}
+	const int w = int((hi.x - lo.x) / dc) + 1;
+	const int h = int((hi.y - lo.y) / dc) + 1;
+	if (w < 8 || h < 8) {
+		return;
+	}
+	// Tiles of 512 m with 128 m aprons (a slab travels some 70 m in a step; dunes reach past the apron only as a
+	// blend).
+	const int core = MAX(int(Math::round(512.0 / dc)), 16);
+	const int apron = MAX(int(Math::round(128.0 / dc)), 4);
+	const int tiles_x = (w + core - 1) / core;
+	const int tiles_z = (h + core - 1) / core;
+	LocalVector<LocalVector<float>> results;
+	results.resize(tiles_x * tiles_z);
+	DuneJob job{ this, lo, dc, w, h, tiles_x, core, apron, float(double(dune_supply) / (double(dune_steps) * MAX(double(beach_width), 10.0))), to_face_f.ptr(), face.data(), &results };
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_dune_tile, &job, tiles_x * tiles_z, -1, true, SNAME("TerrainGenerator3D dunes"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	// Blend the tiles: full weight in a tile's core, falling to nothing across the outer half of its apron (the
+	// grid's edges are no tile border).
+	const int m = w * h;
+	LocalVector<float> acc_s, acc_v, wsum;
+	acc_s.resize(m);
+	acc_v.resize(m);
+	wsum.resize(m);
+	memset(acc_s.ptr(), 0, sizeof(float) * m);
+	memset(acc_v.ptr(), 0, sizeof(float) * m);
+	memset(wsum.ptr(), 0, sizeof(float) * m);
+	bool sand_any = false;
+	for (int t = 0; t < tiles_x * tiles_z; t++) {
+		const int tx = t % tiles_x, tz = t / tiles_x;
+		const int x0 = MAX(tx * core - apron, 0), z0 = MAX(tz * core - apron, 0);
+		const int x1 = MIN((tx + 1) * core + apron, w - 1), z1 = MIN((tz + 1) * core + apron, h - 1);
+		const int tw = x1 - x0 + 1;
+		const LocalVector<float> &r = results[t];
+		sand_any = sand_any || !r.is_empty();
+		auto ramp = [&](int p_i, int p_lo, int p_hi, int p_end) -> float {
+			const float a = p_lo == 0 ? 1.0f : CLAMP(float(p_i - p_lo) / (0.5f * apron) - 0.5f, 0.0f, 1.0f);
+			const float b = p_hi == p_end ? 1.0f : CLAMP(float(p_hi - p_i) / (0.5f * apron) - 0.5f, 0.0f, 1.0f);
+			return MIN(a, b);
+		};
+		for (int z = z0; z <= z1; z++) {
+			const float wz = ramp(z, z0, z1, h - 1);
+			for (int x = x0; x <= x1; x++) {
+				const float wt = MIN(wz, ramp(x, x0, x1, w - 1));
+				if (wt <= 0.0f) {
+					continue;
+				}
+				const int i = z * w + x;
+				wsum[i] += wt;
+				if (!r.is_empty()) {
+					const int k = (z - z0) * tw + (x - x0);
+					acc_s[i] += wt * r[k * 2 + 0];
+					acc_v[i] += wt * r[k * 2 + 1];
+				}
+			}
+		}
+	}
+	if (!sand_any) {
+		last_dune_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+		return;
+	}
+	dune_sand.resize(m);
+	dune_plants.resize(m);
+	double vol = 0.0, mx = 0.0;
+	for (int i = 0; i < m; i++) {
+		const float inv = wsum[i] > 0.0f ? 1.0f / wsum[i] : 0.0f;
+		// Fade the sand out over the grid's last cells so the ground has no step at its edge.
+		const int x = i % w, z = i / w;
+		const int edge = MIN(MIN(x, w - 1 - x), MIN(z, h - 1 - z));
+		const float keep = CLAMP(float(edge) / 4.0f, 0.0f, 1.0f);
+		dune_sand[i] = acc_s[i] * inv * keep;
+		dune_plants[i] = acc_v[i] * inv;
+		vol += double(dune_sand[i]) * dc * dc;
+		mx = MAX(mx, double(dune_sand[i]));
+	}
+	dune_nx = w;
+	dune_nz = h;
+	dune_origin = lo;
+	dune_grid_cell = dc;
+	// The geology's sand: loose sand at the surface where it lies 20 cm or more, less under the marram.
+	dune_cover.resize(n);
+	for (int i = 0; i < n; i++) {
+		const real_t px = result_rect.position.x + (i % nx) * cell_size, pz = result_rect.position.y + (i / nx) * cell_size;
+		const float sd = _dune_sample(dune_sand, px, pz);
+		dune_cover[i] = CLAMP(sd / 0.2f, 0.0f, 1.0f) * (1.0f - 0.5f * CLAMP(_dune_sample(dune_plants, px, pz), 0.0f, 1.0f));
+	}
+	Ref<Image> geo = get_geology_image();
+	if (geology_texture.is_valid() && geo.is_valid() && geology_texture->get_width() == nx && geology_texture->get_height() == ny) {
+		geology_texture->update(geo);
+	}
+	last_dune_volume = vol;
+	last_dune_max = mx;
+	last_dune_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	print_verbose(vformat("TerrainGenerator3D: dunes on %dx%d at %.1f m in %d tiles, %.0f m3, highest %.1f m, %.0f ms.", w, h, dc, tiles_x * tiles_z, vol, mx, last_dune_msec));
+}
+
+Rect2 TerrainGenerator3D::get_dune_rect() const {
+	if (dune_sand.is_empty()) {
+		return Rect2();
+	}
+	return Rect2(dune_origin, Vector2(dune_nx - 1, dune_nz - 1) * dune_grid_cell);
 }
 
 // One tile: its core plus an apron on every side, eroded on its own (seeded by its index) so the result does not
@@ -3989,7 +4326,9 @@ Ref<Image> TerrainGenerator3D::get_geology_image() const {
 	for (int i = 0; i < n; i++) {
 		// Sand where the coast made a beach, as a negative soil depth (-1 on the beach face, fading to 0 behind it),
 		// so materials put sand on beaches and not on every low coastal plain.
-		w[i * 4 + 0] = (beach.size() == uint32_t(n) && beach[i] > 0.0f) ? -beach[i] : soil[i];
+		// Dune sand counts as beach sand.
+		const float sand = MAX(beach.size() == uint32_t(n) ? beach[i] : 0.0f, dune_cover.size() == uint32_t(n) ? dune_cover[i] : 0.0f);
+		w[i * 4 + 0] = sand > 0.0f ? -sand : soil[i];
 		w[i * 4 + 1] = rock[i];
 		// Moraine till (moraine_age) as a negative talus, -1..0, where it is more than the scree: unsorted stony
 		// debris under a thin soil, which the material shows as soil with stones through it.
@@ -7190,6 +7529,26 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beach_width"), &TerrainGenerator3D::get_beach_width);
 	ClassDB::bind_method(D_METHOD("set_beach_slope", "slope"), &TerrainGenerator3D::set_beach_slope);
 	ClassDB::bind_method(D_METHOD("get_beach_slope"), &TerrainGenerator3D::get_beach_slope);
+	ClassDB::bind_method(D_METHOD("set_dunes_enabled", "enable"), &TerrainGenerator3D::set_dunes_enabled);
+	ClassDB::bind_method(D_METHOD("is_dunes_enabled"), &TerrainGenerator3D::is_dunes_enabled);
+	ClassDB::bind_method(D_METHOD("set_dune_belt_width", "width"), &TerrainGenerator3D::set_dune_belt_width);
+	ClassDB::bind_method(D_METHOD("get_dune_belt_width"), &TerrainGenerator3D::get_dune_belt_width);
+	ClassDB::bind_method(D_METHOD("set_dune_cell", "cell"), &TerrainGenerator3D::set_dune_cell);
+	ClassDB::bind_method(D_METHOD("get_dune_cell"), &TerrainGenerator3D::get_dune_cell);
+	ClassDB::bind_method(D_METHOD("set_dune_supply", "supply"), &TerrainGenerator3D::set_dune_supply);
+	ClassDB::bind_method(D_METHOD("get_dune_supply"), &TerrainGenerator3D::get_dune_supply);
+	ClassDB::bind_method(D_METHOD("set_dune_steps", "steps"), &TerrainGenerator3D::set_dune_steps);
+	ClassDB::bind_method(D_METHOD("get_dune_steps"), &TerrainGenerator3D::get_dune_steps);
+	ClassDB::bind_method(D_METHOD("set_dune_wind_angle", "degrees"), &TerrainGenerator3D::set_dune_wind_angle);
+	ClassDB::bind_method(D_METHOD("get_dune_wind_angle"), &TerrainGenerator3D::get_dune_wind_angle);
+	ClassDB::bind_method(D_METHOD("set_dune_vegetation", "amount"), &TerrainGenerator3D::set_dune_vegetation);
+	ClassDB::bind_method(D_METHOD("get_dune_vegetation"), &TerrainGenerator3D::get_dune_vegetation);
+	ClassDB::bind_method(D_METHOD("get_dune_height", "global_position"), &TerrainGenerator3D::get_dune_height);
+	ClassDB::bind_method(D_METHOD("get_dune_stability", "global_position"), &TerrainGenerator3D::get_dune_stability);
+	ClassDB::bind_method(D_METHOD("get_dune_rect"), &TerrainGenerator3D::get_dune_rect);
+	ClassDB::bind_method(D_METHOD("get_last_dune_msec"), &TerrainGenerator3D::get_last_dune_msec);
+	ClassDB::bind_method(D_METHOD("get_last_dune_volume"), &TerrainGenerator3D::get_last_dune_volume);
+	ClassDB::bind_method(D_METHOD("get_last_dune_max"), &TerrainGenerator3D::get_last_dune_max);
 	ClassDB::bind_method(D_METHOD("set_lake_count", "count"), &TerrainGenerator3D::set_lake_count);
 	ClassDB::bind_method(D_METHOD("get_lake_count"), &TerrainGenerator3D::get_lake_count);
 	ClassDB::bind_method(D_METHOD("get_boulders", "rect", "density"), &TerrainGenerator3D::get_boulders, DEFVAL(1.0));
@@ -7408,6 +7767,14 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_sea_depth", PROPERTY_HINT_RANGE, "0.1,1000,0.1,or_greater,suffix:m"), "set_max_sea_depth", "get_max_sea_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_width", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m"), "set_beach_width", "get_beach_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_slope", PROPERTY_HINT_RANGE, "0.001,1,0.001"), "set_beach_slope", "get_beach_slope");
+	ADD_SUBGROUP("Dunes", "dune");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dunes_enabled"), "set_dunes_enabled", "is_dunes_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dune_belt_width", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_dune_belt_width", "get_dune_belt_width");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dune_cell", PROPERTY_HINT_RANGE, "0.5,16,0.1,suffix:m"), "set_dune_cell", "get_dune_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dune_supply", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m³/m"), "set_dune_supply", "get_dune_supply");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "dune_steps", PROPERTY_HINT_RANGE, "0,20000,1,or_greater"), "set_dune_steps", "get_dune_steps");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dune_wind_angle", PROPERTY_HINT_RANGE, "-180,180,0.1,degrees"), "set_dune_wind_angle", "get_dune_wind_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dune_vegetation", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dune_vegetation", "get_dune_vegetation");
 	ADD_GROUP("Lakes", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "lake_count", PROPERTY_HINT_RANGE, "0,256,1"), "set_lake_count", "get_lake_count");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "lakes", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_lakes", "get_lakes");

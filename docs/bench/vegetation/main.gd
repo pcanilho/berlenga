@@ -444,6 +444,18 @@ func _checks() -> void:
 	# Holes (a cave mouth's opening, TerrainGenerator3D.add_hole()): no plant in one. The generator
 	# is found as the map's geology source; it needs no terrain of its own for its boxes.
 	var hgen := TerrainGenerator3D.new()
+	# Heavy generator options are on by default; this bench keeps its own fast choices.
+	hgen.glacial_enabled = false
+	hgen.glacial_converged = false
+	hgen.tile_erosion_enabled = false
+	hgen.strata_enabled = false
+	hgen.guide_preview = false
+	hgen.dunes_enabled = false
+	hgen.deposition = 0.0
+	hgen.moraine_age = 0.0
+	hgen.scree_age = 0.0
+	hgen.meander_age = 0.0
+	hgen.outwash_age = 0.0
 	hgen.name = "HoleGen"
 	add_child(hgen)
 	dm.geology_source = dm.get_path_to(hgen)

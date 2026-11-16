@@ -61,3 +61,27 @@ dune, so they belong to TerrainGenerator3D. Paulo picked "hand dunes to the terr
 2. Desert dune fields (barchan, transverse, linear, star by wind regime and supply), on their own grid over a
    sand-sea region, with nebkha round shrubs.
 3. Both, coastal first (one model, two settings: the same transport with vegetation on or off).
+
+## Built: coastal dune belt (16 Nov, option 3, coastal first)
+
+- `modules/terrain_deform/terrain_dunes.h`: Werner's slabs moved as expected amounts (Nilles 2024), in a fixed order
+  so a seed gives the same dunes everywhere. Each step: the dry beach adds sand; every sandy cell out of the wind
+  shadow (15 degrees behind a crest) lifts a slab, less under marram; the slab hops downwind and settles a share at
+  each landing (more on sand, all in the shadow, more among plants), split bilinearly; slopes past the repose (34
+  degrees, 45 under full cover) avalanche over eight neighbours. The wind speeds up over ground standing above its
+  surroundings (Jackson and Hunt 1975, as Paris 2019 warp it), lifting more and hopping further, which caps the
+  crests. Marram follows Maun's burial response on the deposition averaged over about 30 steps: best under gentle
+  burial, dying under heavy burial or erosion (DECAL's rule).
+- TerrainGenerator3D `dunes_enabled` (off): the belt is land within `dune_belt_width` of a beach face, on its own
+  `dune_cell` grid; supply from the dry beach (`dune_supply` m3 per metre of beach over the run); the wind blows up
+  the beaches on average, turned by `dune_wind_angle`; the sea, lakes and river channels swallow sand; marram grows
+  behind the beach face in patches (`dune_vegetation`). The sand adds to the ground in `_ground` and to the
+  geology's beach sand. `get_dune_height`, `get_dune_stability` (0 bare, 1 fixed) for plants.
+- Tiles of 512 m with 128 m aprons run in parallel (WorkerThreadPool), each with the wind up its own beaches and on
+  the box of its belt only, blended across the aprons; the result does not depend on the thread count.
+- Bench: `--dunes[=steps]`, `--dune-supply`, `--dune-belt`, `--dune-cell`, `--dune-wind`, `--dune-veg`,
+  `--dune-map=path.png[,x0,z0,size]` (top view: bare sand tan, marram green).
+- Cost: about 0.13 us per cell and step on one core. The hanging-valley coast (4 km, 1500 steps at 2 m) takes 53 s
+  on the 4 cloud cores; expect a few seconds on a 16-core desktop. Tuning: full marram stops 90% of the lift; less
+  lets most of the sand run off inland as a film, more grows spires.
+- Next: desert dune fields (bare sand seas, wind regimes: barchan, transverse, linear, star; nebkha round shrubs).
