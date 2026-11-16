@@ -3588,7 +3588,7 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 	}
 	// Spawning: a few candidate points a tick in front of the camera. The folding share they find (smoothed over about
 	// a second) sets how many sheets the sea keeps in the air, all crest_sheet_amount from a gale's share of folds
-	// (about 1% of the fold weight in front of the camera); new sheets start at the folds found, the strong ones far more often (weight squared).
+	// (a third of a percent of the fold weight in front of the camera, as the bench storm shows at 22 m/s); new sheets start at the folds found, the strong ones far more often (weight squared).
 	constexpr int CANDIDATES = 32;
 	constexpr float NEAR = 8.0f;
 	constexpr float FAR = 30.0f;
@@ -3622,7 +3622,7 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 			}
 		}
 		sheet_fold_share = Math::lerp(sheet_fold_share, sum / CANDIDATES, MIN(p_dt / 1.0f, 1.0f));
-		const float target = crest_sheet_amount * MIN(sheet_fold_share * 80.0f, 1.0f) * wind_f;
+		const float target = crest_sheet_amount * MIN(sheet_fold_share * 300.0f, 1.0f) * wind_f;
 		sheet_spawn += target / mean_life * p_dt;
 		while (sheet_spawn >= 1.0f && !folds.is_empty() && (int)sheets.size() < crest_sheet_amount) {
 			sheet_spawn -= 1.0f;
@@ -3675,8 +3675,8 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 	}
 	// The mesh in the node's space (it may sit anywhere); the sheets are kept in the world.
 	const Transform3D to_local = get_global_transform().affine_inverse();
-	constexpr int ROWS = 8;
-	constexpr int COLS = 6;
+	constexpr int ROWS = 12;
+	constexpr int COLS = 8;
 	const float crest_speed = 0.35f * wind_speed; // the short breaking crests' phase speed, roughly
 	const float wind_near = 0.6f * wind_speed; // the wind a metre or two above the water, for the drag
 	const float drag_t = 0.6f;

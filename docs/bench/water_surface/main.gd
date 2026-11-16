@@ -20,6 +20,7 @@ extends Node3D
 #   --view=storm_roller 1.75 m up, across the wind at the front face of spilling crests, low side sun (20 degrees)
 #   --view=storm_plume 4 m up, steeply down on a fresh whitecap and its turquoise bubble plume (as storm_foam)
 #   --view=storm_foam  13 m/s deep sea from 8 m up, 25 degrees down, sun to the side (--sun-pitch=20): whitecaps ageing to lace
+#   --view=storm_sheets 22 m/s, 4 m up across the wind: the torn spray sheets in profile (with --node=crest_sheets:true)
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
@@ -451,6 +452,11 @@ func _ready() -> void:
 			pass # follows the boat (_process)
 		"storm":
 			cam.look_at_from_position(Vector3(0, 7.0, 0.0), Vector3(-15.0, 2.0, -80.0))
+		"storm_sheets":
+			# 4 m up in the gale, looking across the wind a little down: torn spray sheets (--node=crest_sheets:true)
+			# blow across the frame in profile, against the wave faces behind.
+			var wds := Vector2(-0.3, 1.0).normalized()
+			cam.look_at_from_position(Vector3(0, 4.0, 0.0), Vector3(wds.y * 30.0, 0.0, -wds.x * 30.0))
 		"storm_low":
 			# Low, looking downwind: the streaks run off toward the horizon, the crests' spume blows away from us.
 			var wd := Vector2(-0.3, 1.0).normalized()
