@@ -303,6 +303,7 @@ varying float v_foam;
 varying vec2 v_rest_xz;
 // 1 on the breaking lips' sheet (vertex colour alpha 0), whose vertices are already in place.
 varying float v_lip;
+varying float v_roller; // the roller's raise at the vertex, as a share of its cap (0 off it)
 
 // The camera under water (raster; the path tracer starts its camera rays in the water instead). Set by
 // PhysXWaterSurface3D while the camera is near the water: whether it is under the surface, and the light
@@ -1027,6 +1028,10 @@ float roller_band(vec2 world_xz, out float r_crest) {
 	return smoothstep(0.3, 0.75, m / 5.0);
 }
 
+// The roller on a breaking crest at world_xz: a rounded band of churned white water riding the crest's
+// front where it breaks, on average about half the crest's height above its mean (a fifth of the wave's
+// height; Duncan 1981: 0.1 to 0.3), eased toward 40 cm, lumpy and boiling, leaning forward along the waves'
+// travel.
 // r_grad: the slope of the roller's churn (the band and the crest vary slowly).
 float roller_height_grad(vec2 world_xz, out vec2 r_grad, out float r_fold) {
 	r_grad = vec2(0.0);
@@ -1056,16 +1061,6 @@ float roller_height_grad(vec2 world_xz, out vec2 r_grad, out float r_fold) {
 	r_grad = (1.0 - e * e) * k * 0.8 * (0.7 * 0.55 * foam_noise_grad(q1) + 0.3 * 0.55 * 2.1 * foam_noise_grad(q2))
 			+ b * roller_strength * (0.006 * 0.55 * 14.0 * foam_noise_grad(q3) + 0.0025 * 0.55 * 35.0 * foam_noise_grad(q4));
 	return cap * e;
-}
-
-// The roller on a breaking crest at world_xz: a rounded band of churned white water riding the crest's
-// front where it breaks, on average about half the crest's height above its mean (a fifth of the wave's
-// height; Duncan 1981: 0.1 to 0.3), eased toward 40 cm, lumpy and boiling, leaning forward along the waves'
-// travel.
-float roller_height(vec2 world_xz) {
-	vec2 g;
-	float f;
-	return roller_height_grad(world_xz, g, f);
 }
 
 float foam_at(vec2 world_xz) {
@@ -1311,6 +1306,7 @@ void fragment() {
 #else
 
 void vertex() {
+	v_roller = 0.0;
 #if defined(BREAKER_LIP)
 	// UV.x is the lip's white water (UV.y unused); the vertex is where it is drawn.
 	v_lip = 1.0;
@@ -1337,7 +1333,10 @@ void vertex() {
 	vec3 so = surface_offset(world_pos.xz);
 	VERTEX += so;
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
-		float rh = roller_height(world_pos.xz);
+		vec2 rg;
+		float rb;
+		float rh = roller_height_grad(world_pos.xz, rg, rb);
+		v_roller = rh / (0.4 * roller_strength); // the raise's share of its cap
 		// Raised, and thrown a little ahead of the crest.
 		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.25, rh, roller_dir.y * rh * 0.25, 0.0)).xyz;
 	}
@@ -1430,14 +1429,16 @@ void fragment() {
 			water_roughness = sqrt(sqrt(a * a + detail_variance * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
-		if (roller_strength > 0.0 && foam > 0.05) {
+		// Wherever the band rises (the vertices' share, interpolated), not only under foam: an aged lace hole
+		// lifted onto the band's face showed as a dark notch with a hard rim.
+		if (roller_strength > 0.0 && (foam > 0.05 || v_roller > 0.005)) {
 			// The roller's churn per pixel (its lumps are finer than the mesh): its analytic slope.
 			vec2 g;
 			float fold;
 			roller_height_grad(v_rest_xz, g, fold);
 			world_normal = normalize(world_normal - vec3(g.x, 0.0, g.y));
 			// The roller is fresh, churning foam right through: no aged lace holes in it.
-			foam = max(foam, smoothstep(0.15, 0.6, fold));
+			foam = max(foam, max(smoothstep(0.15, 0.6, fold), smoothstep(0.02, 0.2, v_roller)));
 		}
 		if (foam > 0.01) {
 			// The foam's bubbles tilt the normal under it: its grain catches the light.
