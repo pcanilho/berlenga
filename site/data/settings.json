@@ -1304,11 +1304,15 @@
    "name": "Caves",
    "settings": [
     "CaveNetwork3D.build_meshes()",
+    "follow_target",
+    "speleothems",
+    "scallops",
+    "add_sea_cave()",
     "RockField3D.cave_mouths",
     "terrain3d"
    ],
    "note": "",
-   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening; the entrances are cut into the terrain, also on Terrain3D.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1463,6 +1467,17 @@
    ],
    "note": "",
    "what": "sharp patch edges, torn lobed holes and bubble relief, up close and at range.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Crest glow",
+   "settings": [
+    "crest_glow"
+   ],
+   "note": "",
+   "what": "low sun shines through thin wave crests in the water's own colour, in raster; path tracing already scatters through them.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"

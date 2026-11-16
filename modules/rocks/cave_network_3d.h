@@ -61,6 +61,7 @@ public:
 		PASSAGE_KEYHOLE, // a tube with a vadose trench cut in its floor, just above the water table
 		PASSAGE_CANYON, // vadose: tall and narrow, well above the water table
 		PASSAGE_SHAFT, // vertical
+		PASSAGE_SEA, // a sea cave: a tall arch quarried by waves along a joint, floored below low water
 		PASSAGE_MAX,
 	};
 
@@ -81,6 +82,8 @@ public:
 		LocalVector<Vector3> keys;
 		AABB bounds;
 		bool holed = false; // the landscape has its hole over this cave's patch
+		bool sea = false;
+		LocalVector<Vector3> blowholes; // where a sea cave's roof shaft opens at the ground
 	};
 
 private:
@@ -93,6 +96,12 @@ private:
 		Node3D *node = nullptr;
 		int triangles = 0;
 		bool pinned = false; // an entrance patch chunk: kept while the landscape's hole is open
+		Vector<Transform3D> spel[3]; // speleothems: stalactites, stalagmites, columns (unit shapes placed)
+	};
+	enum {
+		SPEL_STALACTITE,
+		SPEL_STALAGMITE,
+		SPEL_COLUMN,
 	};
 	struct FieldSource {
 		LocalVector<const Segment *> segments;
@@ -106,6 +115,10 @@ private:
 	real_t chunk_size = 16.0;
 	real_t patch_radius = 14.0;
 	real_t roughness = 1.0;
+	real_t scallops = 1.0; // Worley dish hollows on the walls (0 off)
+	real_t speleothems = 1.0; // drip formations: density (0 none)
+	Ref<ArrayMesh> spel_mesh[3];
+	Ref<StandardMaterial3D> spel_material;
 	bool collision = true;
 	Ref<Material> wall_material;
 	Ref<Material> ground_material;
@@ -143,6 +156,8 @@ private:
 	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr) const;
 	void _gather(const AABB &p_box, FieldSource &r_src) const;
 	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const;
+	void _place_speleothems(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const LocalVector<Vector3> &p_roof, Chunk &r_chunk) const;
+	Ref<ArrayMesh> _spel_mesh(int p_kind);
 	static void _mesh_job(void *p_data, uint32_t p_index);
 	Ref<Material> _wall_material();
 	void _wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashSet<Vector3i> &r_pinned, bool p_all_patches = false) const;
@@ -157,6 +172,10 @@ protected:
 
 public:
 	int add_cave(const Vector3 &p_entrance, const Vector3 &p_out);
+	int add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out);
+	Array find_sea_entrances(const Rect2 &p_rect, int p_max = 4) const;
+	bool is_sea_cave(int p_cave) const;
+	PackedVector3Array get_blowholes(int p_cave) const;
 	void clear_caves();
 	int get_cave_count() const { return int(caves.size()); }
 	const Cave *get_cave(int p_index) const { return p_index >= 0 && p_index < int(caves.size()) ? &caves[p_index] : nullptr; }
@@ -178,6 +197,11 @@ public:
 	void set_roughness(real_t p_value) { roughness = CLAMP(p_value, real_t(0.0), real_t(4.0)); }
 	real_t get_roughness() const { return roughness; }
 	void set_collision(bool p_enable) { collision = p_enable; }
+	void set_scallops(real_t p_amount) { scallops = MAX(p_amount, 0.0); }
+	real_t get_scallops() const { return scallops; }
+	void set_speleothems(real_t p_amount) { speleothems = MAX(p_amount, 0.0); }
+	real_t get_speleothems() const { return speleothems; }
+	int get_speleothem_count() const;
 	void set_follow_target(const NodePath &p_path);
 	NodePath get_follow_target() const { return follow_target; }
 	void set_stream_radius(real_t p_metres) { stream_radius = MAX(p_metres, 8.0); }

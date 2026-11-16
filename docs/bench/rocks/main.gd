@@ -421,12 +421,13 @@ func _caves(cam: Camera3D) -> void:
 		net.gamma = float(args["gamma"])
 	var r := gen.get_world_rect()
 	var t0 := Time.get_ticks_msec()
-	var found: Array = net.find_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1)
+	var sea_caves := args.has("sea-caves")
+	var found: Array = net.find_sea_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1) if sea_caves else net.find_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1)
 	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
-	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9)]
-	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft"]
+	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9), Color(0.2, 0.9, 0.3)]
+	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft", "sea"]
 	for e in found:
-		var id := net.add_cave(e["position"], e["out"])
+		var id := net.add_sea_cave(e["position"], e["out"]) if sea_caves else net.add_cave(e["position"], e["out"])
 		if id < 0:
 			print("  entrance at %s: no network" % [e["position"]])
 			continue
@@ -499,8 +500,9 @@ func _caves(cam: Camera3D) -> void:
 			cm.albedo_color = Color(0.2, 1.0, 0.3)
 			ci.material_override = cm
 			add_child(ci)
-		if id == 0 and args.has("cave-mesh"):
+		if args.has("cave-mesh"):
 			mi.visible = false
+		if id == 0 and args.has("cave-mesh"):
 			var land_m: Landscape3D = get_node("Landscape")
 			net.ground_material = land_m.material
 			if args.has("cell"):
@@ -517,6 +519,7 @@ func _caves(cam: Camera3D) -> void:
 					for si in m.get_surface_count():
 						tri[m.surface_get_name(si)] += m.surface_get_array_index_len(si) / 3
 			print("  surfaces: %d wall triangles, %d ground triangles; holes %d, landscape quads %d" % [tri["walls"], tri["ground"], gen.get_hole_count(), land_m.get_hole_quad_count()])
+			print("  speleothems: %d" % net.get_speleothem_count())
 			for c in get_children():
 				if c is MeshInstance3D and c.material_override is StandardMaterial3D and (c.material_override as StandardMaterial3D).no_depth_test:
 					c.visible = false
@@ -552,6 +555,44 @@ func _caves(cam: Camera3D) -> void:
 					if dd < best:
 						best = dd
 						tgt = p
+				if float(args.get("in", "4")) > 10.0:
+					# Deep in: walk the passage graph from the entrance along its longest branch and stand on it.
+					var adj := {}
+					for sg in segs:
+						var ka: Vector3 = (sg["a"] as Vector3).snapped(Vector3(0.01, 0.01, 0.01))
+						var kb: Vector3 = (sg["b"] as Vector3).snapped(Vector3(0.01, 0.01, 0.01))
+						if not adj.has(ka): adj[ka] = []
+						if not adj.has(kb): adj[kb] = []
+						adj[ka].append(kb)
+						adj[kb].append(ka)
+					var root: Vector3 = (segs[0]["a"] as Vector3).snapped(Vector3(0.01, 0.01, 0.01))
+					var dist := {root: 0.0}
+					var parent := {}
+					var queue := [root]
+					while not queue.is_empty():
+						var cur: Vector3 = queue.pop_front()
+						for nb in adj.get(cur, []):
+							if not dist.has(nb):
+								dist[nb] = dist[cur] + cur.distance_to(nb)
+								parent[nb] = cur
+								queue.append(nb)
+					var far: Vector3 = root
+					for k in dist:
+						if dist[k] > dist[far]:
+							far = k
+					var chain := [far]
+					while parent.has(chain[-1]):
+						chain.append(parent[chain[-1]])
+					chain.reverse()
+					var want_d := float(args["in"])
+					for i in chain.size():
+						if dist[chain[i]] >= want_d:
+							eye = chain[i] + Vector3(0, float(args.get("eye-up", "0.3")), 0)
+							for j in range(i, chain.size()):
+								if dist[chain[j]] >= want_d + 7.0:
+									tgt = chain[j]
+									break
+							break
 				cam.position = eye
 				cam.look_at(tgt + Vector3(0, 0.5, 0))
 				if args.has("lamp"):
@@ -561,6 +602,41 @@ func _caves(cam: Camera3D) -> void:
 					lamp.light_energy = 6.0
 					lamp.shadow_enabled = true
 					cam.add_child(lamp)
+			elif args.get("cave-view", "outside") == "spel":
+				# Where the speleothems are thickest: from open air a few metres off their middle, a lamp at the camera.
+				var best_n := 0
+				var centre := pos
+				for ch in net.get_children():
+					var n_here := 0
+					var sum := Vector3()
+					for mmi in ch.get_children():
+						if mmi is MultiMeshInstance3D:
+							var smm: MultiMesh = mmi.multimesh
+							for ii in smm.instance_count:
+								sum += smm.get_instance_transform(ii).origin
+								n_here += 1
+					if n_here > best_n:
+						best_n = n_here
+						centre = sum / n_here
+				var eye_s := centre
+				var best_air := 0.0
+				for ii in 400:
+					var cand := centre + Vector3(randf_range(-7, 7), randf_range(-2, 3), randf_range(-7, 7))
+					var air := -net.get_rock_distance(cand)
+					var score := minf(air, 2.0) + 0.1 * cand.distance_to(centre)
+					if air > 0.8 and score > best_air:
+						best_air = score
+						eye_s = cand
+				cam.position = eye_s
+				cam.look_at(centre + Vector3(0, 0.3, 0))
+				cam.fov = 70.0
+				var lamp_s := SpotLight3D.new()
+				lamp_s.spot_range = 40.0
+				lamp_s.spot_angle = 45.0
+				lamp_s.light_energy = 6.0
+				lamp_s.shadow_enabled = true
+				cam.add_child(lamp_s)
+				print("  speleothem view: %d in the chunk round %s, camera %s" % [best_n, centre, eye_s])
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)
 				cam.look_at(pos, f)
@@ -1130,6 +1206,20 @@ func _test() -> void:
 					tri[m.surface_get_name(si)] += m.surface_get_array_index_len(si) / 3
 		var in_air := net.get_rock_distance(pos + Vector3(0, 1.2, 0) - (e["out"] as Vector3) * 3.0)
 		var in_rock := net.get_rock_distance(pos + Vector3(0, -6.0, 0) + (e["out"] as Vector3) * 8.0)
+		print("  speleothems near the entrance: %d" % net.get_speleothem_count())
+		# Every stalactite hangs from rock: rock 0.25 m over its base, air 0.3 m under it.
+		var hung := 0
+		var loose := 0
+		for ch in net.get_children():
+			for mmi in ch.get_children():
+				if mmi is MultiMeshInstance3D and mmi.name == "Stalactites":
+					for ii in (mmi.multimesh as MultiMesh).instance_count:
+						var o: Vector3 = (mmi.multimesh as MultiMesh).get_instance_transform(ii).origin
+						if net.get_rock_distance(o + Vector3(0, 0.25, 0)) > 0.0 and net.get_rock_distance(o - Vector3(0, 0.3, 0)) < 0.0:
+							hung += 1
+						else:
+							loose += 1
+		print("  stalactites hung from the roof: %d, loose %d" % [hung, loose])
 		check(made > 0 and tri["walls"] > 0 and tri["ground"] > 0 and gen.get_hole_count() > holes_before and in_air < 0.0 and in_rock > 0.0, "cave meshes: %d chunks, %d wall and %d ground triangles in %.0f ms; the landscape opened (%d holes); %.2f m into the air in the entrance, %.2f m into the rock under the foot" % [made, tri["walls"], tri["ground"], net.get_last_mesh_msec(), gen.get_hole_count() - holes_before, -in_air, in_rock])
 		# Streaming: a target 30 m into the cave gets the chunks round it on workers; moved 400 m away it keeps only
 		# the entrance patch (pinned while the landscape is open there).
@@ -1155,6 +1245,28 @@ func _test() -> void:
 		check(near_chunks > far_chunks and far_chunks > 0, "cave streaming: %d chunks round a target 30 m in (%d ms with frames running), %d left (the entrance patch) with it 400 m away" % [near_chunks, stream_ms, far_chunks])
 		net.follow_target = NodePath()
 		walker.queue_free()
+	# Sea caves: mouths at cliffs over the sea, the floor at the mouth under the sea, rock round the passage.
+	var sea_ents: Array = net.find_sea_entrances(gen.get_world_rect(), 4)
+	if sea_ents.is_empty():
+		check(true, "sea caves: no sea cliff in this world (counted, not required)")
+	else:
+		net.clear_caves()
+		var sid := -1
+		for se in sea_ents:
+			sid = net.add_sea_cave(se["position"], se["out"])
+			if sid >= 0:
+				break
+		var ssegs: Array = net.get_segments(sid) if sid >= 0 else []
+		var sea_y := gen.get_sea_level()
+		var mouth_floor := INF
+		var thin := 0
+		for sg in ssegs:
+			if int(sg["type"]) == CaveNetwork3D.PASSAGE_SEA:
+				var m: Vector3 = (sg["a"] + sg["b"]) * 0.5
+				mouth_floor = minf(mouth_floor, m.y - 1.25 * float(sg["radius_a"]))
+				if gen.get_height(m) < m.y + 0.6 * float(sg["radius_a"]) + 2.0:
+					thin += 1
+		check(sid >= 0 and net.is_sea_cave(sid) and ssegs.size() >= 3 and mouth_floor < sea_y and thin <= 3, "sea caves: %d mouths; %d segments, floor %.1f m under the sea at the mouth, %d blowholes, %d segments under thin rock" % [sea_ents.size(), ssegs.size(), sea_y - mouth_floor, net.get_blowholes(maxi(sid, 0)).size(), thin])
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))

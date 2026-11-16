@@ -1161,6 +1161,34 @@ and slope at the root collar) lets surface roots drape over stones and down bank
 tree line, the krummholz skirt. Stands at the tree line and on coasts set exposure from height
 and distance to the sea.
 
+As built, part 1 (16 Nov): `wind_exposure` (0-1) and `krummholz` (0-1); the wind blows toward
+the mesh's +X and the mesh carries meta `tree_wind_flag` (Vector2: exposure, krummholz), the
+species meta `wind_flag`, so placement turns +X down the prevailing wind instead of a random yaw.
+- Flagging is done on the grown tree (`_wind_flag`, as Plastic Trees adapt a grown skeleton):
+  above the shelter height (0.6 m, 1 m for krummholz) each limb facing the wind is killed (a dead
+  stub 40 cm long stays) with a chance rising with exposure and height, and the rest are turned
+  downwind about the stem by up to 80% of their bearing. Killing buds during growth instead
+  starved the crown and left a bare whip leader standing 30 m over a low crown.
+- Exposed stems stay short: the leader's shoots shorten with exposure above 1 m (a spruce at
+  exposure 0.9 is 14.6 m at the age a sheltered one is 33.9 m).
+- Krummholz: shoots above a lumpy dome (0.9-5 m high by krummholz, falling to a third at the
+  rim 2.5-9 m out) run on level under the snow's surface, the leader is killed back at it, the
+  crown cone is off, branch buds live down to 2 cm over the ground (layering), more basal stems.
+- Forms FORM_FLAGGED (exposure 0.6-0.95 over the variants) and FORM_KRUMMHOLZ (0.8-1) in
+  STAND_SUBALPINE past its closed forest: flagged spruce at -2.3 to -0.8 C annual mean, mats at
+  -3.2 to -1.7 C.
+- Open: the krummholz pine still reads as a table on a thick stem; mats need a look in the
+  showcase valley's tree line.
+
+As built, part 2 (16 Nov): `ground_slope` (radians, the ground falling toward +Z) and
+`bank_erosion` (0-1); meta `tree_ground_slope` (Vector2: slope, erosion) so placement turns +Z
+downhill and picks the variant nearest the terrain's slope. The collar and roots are built for
+level ground and then sheared onto the slope near the soil (`_bank_shear`, fading out over the
+lower stem; normals and tangents by the shear's Jacobian), every surface alike. Downhill roots
+run 40-90% longer down the face, uphill ones a third shorter into it; erosion lifts the downhill
+roots off the slope in an arch fixed at the stem and the tip. Bench: `--set=ground_slope:R` tilts
+the ground plane to match. Open: roots over stones; root tips are blunt on flat ground too.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
