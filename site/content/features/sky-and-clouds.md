@@ -28,6 +28,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
   *Clouds that never repeat: seen from above over 24 km, the 3 km grid is gone.*
 
+- **Evolving clouds** (`cloud_evolution`, `cloud_lifetime`, `cloud_churn`): clouds form, clear and reshape over time instead of only drifting.
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
 

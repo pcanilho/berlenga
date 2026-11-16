@@ -2732,6 +2732,19 @@
    "topic": ""
   },
   {
+   "name": "Evolving clouds",
+   "settings": [
+    "cloud_evolution",
+    "cloud_lifetime",
+    "cloud_churn"
+   ],
+   "note": "",
+   "what": "clouds form, clear and reshape over time instead of only drifting.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
    "name": "Cloud reprojection",
    "settings": [
     "WeatherSkyMaterial.cloud_reprojection"
