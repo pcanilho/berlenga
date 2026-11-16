@@ -1263,15 +1263,17 @@ func _build_shore() -> void:
 	# The prints first, then the sea comes up over the lower ones.
 	for i in 30:
 		await get_tree().physics_frame
-	for k in 12:
-		var p := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.42 * k)
+	for k in 16:
+		var p := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.3 * k)
 		p.y = _undisturbed(p)
-		surface.press_box(p, Vector2(0.11, 0.29), 0.0, p.y, 0.03)
-	for i in 900:
+		surface.press_box(p, Vector2(0.11, 0.29), 0.0, p.y, 0.045)
+	# A few swashes only: prints at the top of the swash are softened, not yet gone.
+	for i in 300:
 		await get_tree().physics_frame
 		if OS.get_environment("SHORE_TRACE") != "" and i % 60 == 0:
 			var q := Vector3(0.0, _undisturbed(Vector3(0, 0, 5)), 5.0)
-			print("t%d sat %.2f depth %.3f swash %s" % [i, surface.get_saturation_at(q), sea.call("sample_depth", q), str(sea.call("sample_swash", q))])
+			var pw := Vector3(-0.12, _undisturbed(Vector3(-0.12, 0, 0.66)), 0.66)
+			print("t%d sat %.2f depth %.3f swash %s | z0.66 print %.1f cm sat %.2f speed %.2f swash %s" % [i, surface.get_saturation_at(q), sea.call("sample_depth", q), str(sea.call("sample_swash", q)), surface.get_dent_at(pw) * 100.0, surface.get_saturation_at(pw), surface.get_water_speed_at(pw), str(sea.call("sample_swash", pw))])
 	var cam := Camera3D.new()
 	add_child(cam)
 	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.9, 0.9, 3.4, -0.1, 0.0, 1.2])

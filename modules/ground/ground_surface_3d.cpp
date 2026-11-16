@@ -928,8 +928,8 @@ void GroundSurface3D::_wet_publish(const LocalVector<float> *p_depth) {
 		for (int i = 0; i < n * n; i++) {
 			const float s = pore[i];
 			d[i * 4 + 0] = Math::smoothstep(0.03f, 0.4f, s);
-			// A film of water stands on sand at saturation, and over it while the water runs.
-			d[i * 4 + 1] = (*p_depth)[i] > 0.001f ? 1.0f : 0.5f * Math::smoothstep(0.9f, 1.0f, s);
+			// A film of water stands on sand at saturation (under water the water's own surface shows instead).
+			d[i * 4 + 1] = 0.35f * Math::smoothstep(0.95f, 1.0f, s);
 		}
 		// Texel centres on the lattice's vertices.
 		float *r = d + n * n * 4;
