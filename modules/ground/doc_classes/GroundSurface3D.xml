@@ -42,6 +42,14 @@
 				Takes [param depth] m of sand out of a disc of [param radius] at [param position], any rim there first. Returns the volume, m3 ([code]0[/code] off soft ground). For grains leaving the ground ([PhysXGroundGrains3D]).
 			</description>
 		</method>
+		<method name="get_blown_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="x" type="float" />
+			<param index="1" name="z" type="float" />
+			<description>
+				The share of the sand at world [param x], [param z] the wind can move (0 to 1): dry sand on open ground 1; damp sand, litter and sand sheltered by plants ([member wind_shelters]) less.
+			</description>
+		</method>
 		<method name="get_cached_tile_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -59,6 +67,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How far the ground at [param position] is pressed below its undisturbed height, in metres.
+			</description>
+		</method>
+		<method name="get_deposition_rate_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How fast wind-blown sand is piling up at [param position], in m/s (negative where the wind is taking it away): where the saltation flux falls, among plants ([member wind_shelters]) or onto damp sand, the sand it carried lands. A gale over a grass tuft piles about 2 cm an hour on its windward edge.
 			</description>
 		</method>
 		<method name="get_footing_at" qualifiers="const">
@@ -147,6 +162,20 @@
 				How many saltation steps the ripples have taken since [member wind_ripples] was turned on, not counting the field grown in the background.
 			</description>
 		</method>
+		<method name="get_sand_deposit_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The wind-blown sand written to the ground at [param position] since that part of the ground came into the field, in m: plants can be buried by it, or grow up through it as marram does.
+			</description>
+		</method>
+		<method name="get_sand_flux_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The saltation flux over [param position], in kg of sand per metre across the wind per second, along the wind (x, z). Open dry sand carries the Lettau and Lettau flux for the wind; it falls to nothing over about a metre among plants.
+			</description>
+		</method>
 		<method name="get_saturation_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -201,6 +230,12 @@
 			<param index="6" name="slip_angle" type="float" default="0.0" />
 			<description>
 				The soil under a wheel at [param position]: [param load] N on a wheel of [param radius] and [param width] m, a tyre at [param inflation] kPa ([code]0[/code]: rigid), at [param slip] and [param slip_angle] (radians). Returns [code]soft[/code], [code]static_sinkage[/code], [code]sinkage[/code] (m, with slip sinkage), [code]contact_length[/code] (m), [code]compaction[/code], [code]bulldozing[/code], [code]resistance[/code], [code]shear_limit[/code], [code]traction[/code] and [code]lateral[/code] (N).
+			</description>
+		</method>
+		<method name="get_wind_step_usec" qualifiers="const">
+			<return type="float" />
+			<description>
+				The time the last wind step (shelter, flux and deposition, twice a second) took, in microseconds.
 			</description>
 		</method>
 		<method name="is_gpu_active" qualifiers="const">
@@ -260,6 +295,13 @@
 			<param index="1" name="step" type="float" default="0.016666668" />
 			<description>
 				Runs slumping and ageing for [param seconds] at once, in steps of [param step].
+			</description>
+		</method>
+		<method name="shelter_ratio_for" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="lambda" type="float" />
+			<description>
+				The share of the wind's friction speed left on the sand among plants of frontal area index [param lambda] (plant frontal area per ground area, clamped to 0.5), by Raupach's 1993 drag partition: 1 on open ground, about 0.22 at marram's 0.3, which stops saltation in any gale.
 			</description>
 		</method>
 		<method name="sync_deformation">
@@ -384,6 +426,9 @@
 		</member>
 		<member name="wind_ripples" type="bool" setter="set_wind_ripples" getter="is_wind_ripples" default="false">
 			If [code]true[/code], wind over dry sand grows ripples (Nishimori and Ouchi 1993) over [member ripple_extent] round the follow point: about 11 cm apart and 6 mm high at 8 m/s, crests across the wind, none under about 6 m/s (Bagnold's threshold), on damp sand or under litter (damp sand keeps the ripples it has). Prints wipe them and they grow back; a wind shift turns them. The patch's middle is meshed at the ripple cell, so the crests are real geometry the path tracer sees. [GroundStreamers3D] draws the grains in the air. Off by default until its cost is measured.
+		</member>
+		<member name="wind_shelters" type="NodePath[]" setter="set_wind_shelters" getter="get_wind_shelters" default="[]">
+			Nodes whose plants shelter the sand from the wind, such as a vegetation field: any node with [code]sample_lateral_cover(position)[/code] returning the frontal area index there (0 bare; about 0.05 to 0.3 for dune grass), sampled on a 1 m grid twice a second on the main thread. Sheltered sand moves less (ripples, streamers, prints filled), and sand blown in drops among the plants and builds mounds round them ([method get_deposition_rate_at]).
 		</member>
 	</members>
 	<constants>

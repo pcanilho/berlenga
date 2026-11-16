@@ -47,6 +47,7 @@ var soil_test := false
 var grains_test := false
 var wind_test := false
 var water_test := false
+var shelter_test := false
 var out := ""
 var spp := 16
 var gpu := true
@@ -71,6 +72,7 @@ func _ready() -> void:
 		elif a == "--test=grains": grains_test = true
 		elif a == "--test=wind": wind_test = true
 		elif a == "--test=water": water_test = true
+		elif a == "--test=shelter": shelter_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -79,6 +81,11 @@ func _ready() -> void:
 		elif a.begins_with("--cam="):
 			for v in a.substr(6).split(","):
 				cam_arg.append(float(v))
+	if shelter_test:
+		await _run_shelter_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if water_test:
 		await _run_water_tests()
 		print("RESULT: %d failed" % fails)
@@ -607,6 +614,55 @@ func _run_wind_tests() -> void:
 	_check("damp sand gives the wind nothing", float(surface.get_material_at(o)["blown"]) == 0.0, "blown share %.2f at moisture 0.4" % float(surface.get_material_at(o)["blown"]))
 	surface.moisture = 0.0
 	await _run_streamer_tests()
+
+
+# Dune grass (sand trapping by plants), with a stand-in for the vegetation module: a 2 m tuft of lambda 0.3 in a
+# 12 m/s wind over dry sand.
+func _run_shelter_tests() -> void:
+	await _soil_scene("dry_sand")
+	var r0 := GroundSurface3D.shelter_ratio_for(0.0)
+	var r1 := GroundSurface3D.shelter_ratio_for(0.3)
+	var u10 := 12.0
+	var ustar := 0.4 * u10 / log(10.0 / 1e-4)
+	_check("Raupach drag partition: open sand keeps all its stress, marram cover (lambda 0.3) stops saltation", r0 == 1.0 and ustar * r1 < 0.2, "u*s/u* %.2f at 0.3: %.3f m/s against the 0.2 m/s threshold" % [r1, ustar * r1])
+	_check("lambda clamped at 0.5", GroundSurface3D.shelter_ratio_for(5.0) == GroundSurface3D.shelter_ratio_for(0.5), "%.3f" % GroundSurface3D.shelter_ratio_for(5.0))
+	var grass := Node3D.new()
+	grass.set_script(load("res://shelter_fake.gd"))
+	add_child(grass)
+	surface.wind_shelters = [surface.get_path_to(grass)]
+	surface.wind_override = Vector2(u10, 0.0)
+	for i in 70:
+		await get_tree().physics_frame
+	var up := Vector3(-4.0, 0, 0)
+	var edge := Vector3(-0.75, 0, 0)
+	var inside := Vector3(0.5, 0, 0)
+	var q_up := surface.get_sand_flux_at(up)
+	var q_in := surface.get_sand_flux_at(inside).length()
+	var q_open: float = 2.6 * (1.2 / 9.81) * ustar * ustar * (ustar - 0.2)
+	_check("open sand upwind carries the saturated flux, along the wind (Lettau and Lettau)", absf(q_up.length() - q_open) < 0.05 * q_open and q_up.x > 0.0, "%.4f kg/m/s, expected %.4f" % [q_up.length(), q_open])
+	_check("the flux dies out inside the tuft (saturation length about 1 m)", q_in < 0.4 * q_open, "%.4f kg/m/s 1.25 m in" % q_in)
+	var d_edge := surface.get_deposition_rate_at(edge)
+	var d_up := surface.get_deposition_rate_at(up)
+	print("  deposition: %.2f mm/h on the tuft's windward edge, %.3f mm/h upwind" % [d_edge * 3.6e6, d_up * 3.6e6])
+	_check("sand lands at the tuft's windward edge, at Q / (rho l) (1 to 40 mm/h in a gale)", d_edge * 3.6e6 > 1.0 and d_edge * 3.6e6 < 40.0, "%.2f mm/h" % (d_edge * 3.6e6))
+	_check("none on open sand in equilibrium", absf(d_up) < 0.02 * d_edge, "%.4f mm/h" % (d_up * 3.6e6))
+	_check("the streamers thin among the grass (the wind's share of the sand)", surface.get_blown_at(inside.x, inside.z) < 0.2 * surface.get_blown_at(up.x, up.z), "%.2f inside, %.2f outside" % [surface.get_blown_at(inside.x, inside.z), surface.get_blown_at(up.x, up.z)])
+	# Two hours of gale (time scaled): a mound builds in the tuft.
+	var h0 := surface.get_surface_height_at(edge)
+	surface.ripple_time_scale = 1200.0
+	for i in 360:
+		await get_tree().physics_frame
+	surface.ripple_time_scale = 1.0
+	surface.sync_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	var dep := surface.get_sand_deposit_at(edge)
+	var rise := surface.get_surface_height_at(edge) - h0
+	print("  after %.1f h: %.1f mm deposited at the edge, the surface %.1f mm higher; %.1f mm upwind" % [6.0 * 1200.0 / 3600.0, dep * 1000.0, rise * 1000.0, surface.get_sand_deposit_at(up) * 1000.0])
+	_check("a mound builds round the grass (nebkha)", dep > 0.005 and rise > 0.5 * dep, "%.1f mm deposited, %.1f mm risen" % [dep * 1000.0, rise * 1000.0])
+	_check("open sand gets none", surface.get_sand_deposit_at(up) == 0.0, "%.1f mm" % (surface.get_sand_deposit_at(up) * 1000.0))
+	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
+	surface.wind_override = Vector2.ZERO
 
 
 # Sand and water (stage 4), with a stand-in for the water module.

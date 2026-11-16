@@ -411,3 +411,18 @@ wetness:
 
 GPU timings for the ground field, the MPM domains and ripples; denoised PT shots of a truck
 digging in, a kicked spray, a ripple field at low sun.
+
+### Dune grass (sand trapping by plants)
+
+Built for the vegetation module's dune grass. Plants take a share of the wind's stress: Raupach's (1993) drag
+partition gives the friction speed left on the sand, u*s/u* = 1 / sqrt((1 - m sigma lambda)(1 + m beta lambda)),
+m 0.5, sigma 1, beta 150 (grass, Wolfe and Nickling 1996), lambda the frontal area index from `wind_shelters`
+(VegetationField3D answers `sample_lateral_cover`, clamped at 0.5). At marram's 0.3 the surface keeps 0.22 of
+u*, under the threshold in any gale. The flux each cell can carry is the Lettau and Lettau flux at that u*
+times its blown share; the flux carried relaxes to it over the saturation length (1 m, Andreotti et al. 2010),
+swept downwind cell by cell, and where it falls the sand lands (Exner, dh/dt = -dQ/dx / 1600 kg/m3), written
+to the field in 2 mm steps. A 12 m/s wind piles about 2 cm an hour on a tuft's windward edge: the nebkha.
+Sheltered sand also loses its ripples' and streamers' share and keeps its prints. Reads for vegetation:
+`get_sand_flux_at`, `get_deposition_rate_at`, `get_sand_deposit_at`. Bench `--test=shelter`. Not modelled:
+the lee eddy's scour and the wake's reduced flux past the plants (Okin 2008); the sand dropped on damp sand
+downwind of dry sand comes from the same rule.

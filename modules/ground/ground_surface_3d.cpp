@@ -271,6 +271,19 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		water_speed.clear();
 		cell_water.clear();
 	}
+	// The sand the wind piled moves with it; the shelter and flux are measured again within half a second.
+	if (keep && (int)sand_dep.size() == p_n * p_n) {
+		_shift_lattice(sand_dep, ground_origin, p_origin, p_n, 1);
+		_shift_lattice(sand_dep_pending, ground_origin, p_origin, p_n, 1);
+	} else {
+		sand_dep.clear();
+		sand_dep_pending.clear();
+	}
+	shelter_ratio.clear();
+	shelter_flux.clear();
+	sand_flux.clear();
+	sand_dep_rate.clear();
+	wind_order.clear();
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
@@ -942,6 +955,218 @@ void GroundSurface3D::_wet_publish(const LocalVector<float> *p_depth) {
 	}
 }
 
+// Dune grass and other plants on sand (docs/ideas/sand.md). Twice a second: the frontal area index lambda of the
+// plants over each lattice cell, from the wind_shelters on a 1 m grid; Raupach's (1993) drag partition gives the
+// friction speed left on the sand between them, and with it the saltation flux the cell can carry (its capacity,
+// GroundRipples::saltation_flux, times the share of its sand the wind can move). The flux carried relaxes to that
+// capacity over the saturation length (about 1 m for dune sand, Andreotti et al. 2010), cell by cell downwind;
+// where it falls the sand it drops is the deposition, dh/dt = -dQ/dx / bulk density (Exner), written to the
+// ground in 2 mm steps. Sand blowing in from upwind of the patch is taken as saturated over its own cell.
+float GroundSurface3D::shelter_ratio_for(float p_lambda) {
+	const float lambda = CLAMP(p_lambda, 0.0f, 0.5f);
+	// m 0.5, sigma 1 (basal to frontal area), beta 150 (element to surface drag, grass: Wolfe and Nickling 1996).
+	const float m = 0.5f;
+	return 1.0f / Math::sqrt(MAX((1.0f - m * lambda) * (1.0f + m * 150.0f * lambda), 1e-3f));
+}
+
+float GroundSurface3D::_shelter_flux_at(float p_x, float p_z) const {
+	const int n = ground_n;
+	if ((int)shelter_flux.size() != n * n || n <= 0) {
+		return 1.0f;
+	}
+	const int x = int(Math::round(p_x / ground_spacing)) - ground_origin.x;
+	const int z = int(Math::round(p_z / ground_spacing)) - ground_origin.y;
+	return x >= 0 && z >= 0 && x < n && z < n ? shelter_flux[z * n + x] : 1.0f;
+}
+
+float GroundSurface3D::_lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || (int)p_values.size() != n * n) {
+		return 0.0f;
+	}
+	const int x = int(Math::round(p_position.x / ground_spacing)) - ground_origin.x;
+	const int z = int(Math::round(p_position.z / ground_spacing)) - ground_origin.y;
+	return x >= 0 && z >= 0 && x < n && z < n ? p_values[z * n + x] : 0.0f;
+}
+
+Vector2 GroundSurface3D::get_sand_flux_at(const Vector3 &p_position) const {
+	return sand_flux_dir * _lattice_value(sand_flux, p_position);
+}
+
+float GroundSurface3D::get_deposition_rate_at(const Vector3 &p_position) const {
+	return _lattice_value(sand_dep_rate, p_position);
+}
+
+float GroundSurface3D::get_sand_deposit_at(const Vector3 &p_position) const {
+	return _lattice_value(sand_dep, p_position);
+}
+
+void GroundSurface3D::_wind_update(double p_delta) {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)cells.size() != n * n) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const int nn = n * n;
+	if ((int)sand_dep.size() != nn) {
+		sand_dep.resize(nn);
+		sand_dep_pending.resize(nn);
+		for (int i = 0; i < nn; i++) {
+			sand_dep[i] = 0.0f;
+			sand_dep_pending[i] = 0.0f;
+		}
+	}
+	const bool fresh = (int)shelter_flux.size() != nn;
+	shelter_ratio.resize(nn);
+	shelter_flux.resize(nn);
+	sand_flux.resize(nn);
+	sand_dep_rate.resize(nn);
+	if (fresh) {
+		for (int i = 0; i < nn; i++) {
+			shelter_ratio[i] = 1.0f;
+			shelter_flux[i] = 1.0f;
+			sand_flux[i] = 0.0f;
+			sand_dep_rate[i] = 0.0f;
+		}
+	}
+	// The plants' frontal area index, on a 1 m grid (the shelters answer on the main thread only, as here).
+	LocalVector<Node *> sources;
+	if (is_inside_tree()) {
+		for (int k = 0; k < wind_shelters.size(); k++) {
+			Node *src = get_node_or_null(wind_shelters[k]);
+			if (src) {
+				sources.push_back(src);
+			}
+		}
+	}
+	static const StringName s_cover = "sample_lateral_cover";
+	const int step = MAX(1, (int)Math::round(1.0f / ground_spacing));
+	const int gn = (n - 1) / step + 2;
+	LocalVector<float> g_lambda;
+	g_lambda.resize(gn * gn);
+	for (int i = 0; i < gn * gn; i++) {
+		g_lambda[i] = 0.0f;
+	}
+	if (!sources.is_empty()) {
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const int lx = MIN(gx * step, n - 1);
+				const int lz = MIN(gz * step, n - 1);
+				const Vector3 p((ground_origin.x + lx) * ground_spacing, ground[lz * n + lx], (ground_origin.y + lz) * ground_spacing);
+				float lambda = 0.0f;
+				for (Node *src : sources) {
+					if (src->has_method(s_cover)) {
+						const float v = src->call(s_cover, p);
+						if (Math::is_finite(v)) {
+							lambda += MAX(v, 0.0f); // frontal areas add
+						}
+					}
+				}
+				g_lambda[gz * gn + gx] = MIN(lambda, 0.5f);
+			}
+		}
+	}
+	const Vector2 wind = _wind_10m();
+	const float speed = wind.length();
+	const float ustar = GroundRipples::friction_speed(speed);
+	const float q_open = GroundRipples::saltation_flux(ustar);
+	bool shelter_changed = false;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float fx = float(x) / step;
+			const float fz = float(z) / step;
+			const int x0 = MIN((int)fx, gn - 2);
+			const int z0 = MIN((int)fz, gn - 2);
+			const float tx = fx - x0;
+			const float tz = fz - z0;
+			const float lambda = Math::lerp(Math::lerp(g_lambda[z0 * gn + x0], g_lambda[z0 * gn + x0 + 1], tx), Math::lerp(g_lambda[(z0 + 1) * gn + x0], g_lambda[(z0 + 1) * gn + x0 + 1], tx), tz);
+			const float r = shelter_ratio_for(lambda);
+			// The flux factor at a reference gale (u* 0.5 m/s), so the share does not jump with the wind.
+			const float f = GroundRipples::saltation_flux(0.5f * r) / GroundRipples::saltation_flux(0.5f);
+			if (Math::abs(f - shelter_flux[i]) > 0.02f) {
+				shelter_changed = true;
+			}
+			shelter_ratio[i] = r;
+			shelter_flux[i] = f;
+		}
+	}
+	if (shelter_changed) {
+		gpu_cells_dirty = true;
+	}
+	if (q_open <= 0.0f) {
+		for (int i = 0; i < nn; i++) {
+			sand_flux[i] = 0.0f;
+			sand_dep_rate[i] = 0.0f;
+		}
+		wind_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+		return;
+	}
+	const Vector2 dir = wind / speed;
+	sand_flux_dir = dir;
+	// Cells in downwind order (sorted again when the wind turns).
+	if ((int)wind_order.size() != nn || wind_order_dir.dot(dir) < 0.996f) {
+		wind_order.resize(nn);
+		LocalVector<Pair<float, int>> keys;
+		keys.resize(nn);
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				keys[z * n + x] = Pair<float, int>(x * dir.x + z * dir.y, z * n + x);
+			}
+		}
+		struct ByKey {
+			bool operator()(const Pair<float, int> &a, const Pair<float, int> &b) const { return a.first < b.first; }
+		};
+		keys.sort_custom<ByKey>();
+		for (int i = 0; i < nn; i++) {
+			wind_order[i] = keys[i].second;
+		}
+		wind_order_dir = dir;
+	}
+	const float l_sat = 1.0f; // m
+	const float relax = Math::exp(-ground_spacing / l_sat);
+	const float rho = 1600.0f; // kg/m3, dry sand's bulk density
+	const float dt = float(p_delta) * ripple_time_scale;
+	for (int k = 0; k < nn; k++) {
+		const int i = wind_order[k];
+		const int x = i % n;
+		const int z = i / n;
+		const Cell &c = cells[i];
+		const float supply = c.deformable ? c.blown : 0.0f;
+		const float cap = GroundRipples::saltation_flux(ustar * shelter_ratio[i]) * supply;
+		// The flux arriving: from one cell upwind, or saturated over open sand of this kind at the patch's edge.
+		const float ux = x - dir.x;
+		const float uz = z - dir.y;
+		float q_up;
+		if (ux < 0.0f || uz < 0.0f || ux > n - 1 || uz > n - 1) {
+			q_up = q_open * supply;
+		} else {
+			const int ax = MIN((int)ux, n - 2);
+			const int az = MIN((int)uz, n - 2);
+			const float bx = ux - ax;
+			const float bz = uz - az;
+			q_up = Math::lerp(Math::lerp(sand_flux[az * n + ax], sand_flux[az * n + ax + 1], bx), Math::lerp(sand_flux[(az + 1) * n + ax], sand_flux[(az + 1) * n + ax + 1], bx), bz);
+		}
+		const float q = cap + (q_up - cap) * relax;
+		sand_flux[i] = q;
+		const float rate = (q_up - q) / (rho * ground_spacing);
+		sand_dep_rate[i] = rate;
+		if (rate > 0.0f && c.deformable) {
+			sand_dep_pending[i] += rate * dt;
+		}
+		if (sand_dep_pending[i] >= 0.002f && field.valid) {
+			// The cell's volume, over a disc a little wider than the cell so the steps blend.
+			const float d = sand_dep_pending[i];
+			const float rad = 0.6f * ground_spacing;
+			const Vector3 at((ground_origin.x + x) * ground_spacing, ground[i], (ground_origin.y + z) * ground_spacing);
+			deposit(at, rad, d * ground_spacing * ground_spacing / (Math::PI * rad * rad));
+			sand_dep[i] += d;
+			sand_dep_pending[i] = 0.0f;
+		}
+	}
+	wind_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+}
+
 void GroundSurface3D::set_water_coupling(bool p_enabled) {
 	water_coupling = p_enabled;
 	if (!p_enabled) {
@@ -1030,7 +1255,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float x = (ripples.origin.x + bx + 0.5f * b) * ripples.cell;
 				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
-				const float m = c.deformable ? c.blown : 0.0f;
+				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) : 0.0f;
 				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
 					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
@@ -1260,7 +1485,7 @@ void GroundSurface3D::_age(double p_delta) {
 					}
 					if (drift > 0.0f || soften > 0.0f) {
 						const Cell &c = _cell_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t);
-						const float keep = Math::exp(-(drift * c.blown + soften) * dt_h);
+						const float keep = Math::exp(-(drift * c.blown * _shelter_flux_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t) + soften) * dt_h);
 						dn *= keep;
 						rm *= keep;
 					}
@@ -1397,6 +1622,11 @@ void GroundSurface3D::_notification(int p_what) {
 			if (water_accum >= 0.5) {
 				_water_update(water_accum);
 				water_accum = 0.0;
+			}
+			wind_accum += delta;
+			if (wind_accum >= 0.5) {
+				_wind_update(wind_accum);
+				wind_accum = 0.0;
 			}
 			const bool on_gpu = _gpu_on();
 			if (!on_gpu && gpu_host.gpu.is_valid()) {
@@ -1774,7 +2004,7 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 		w[i * 8 + 3] = c.max_dent;
 		w[i * 8 + 4] = c.darken;
 		w[i * 8 + 5] = c.gloss;
-		w[i * 8 + 6] = c.blown;
+		w[i * 8 + 6] = c.blown * ((int)shelter_flux.size() == n * n ? shelter_flux[i] : 1.0f);
 		w[i * 8 + 7] = c.deformable ? 1.0f : 0.0f;
 	}
 	return out;
@@ -2218,6 +2448,14 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_saturation_at", "position"), &GroundSurface3D::get_saturation_at);
 	ClassDB::bind_method(D_METHOD("get_water_speed_at", "position"), &GroundSurface3D::get_water_speed_at);
 	ClassDB::bind_method(D_METHOD("get_water_step_usec"), &GroundSurface3D::get_water_step_usec);
+	ClassDB::bind_method(D_METHOD("set_wind_shelters", "shelters"), &GroundSurface3D::set_wind_shelters);
+	ClassDB::bind_method(D_METHOD("get_wind_shelters"), &GroundSurface3D::get_wind_shelters);
+	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("shelter_ratio_for", "lambda"), &GroundSurface3D::shelter_ratio_for);
+	ClassDB::bind_method(D_METHOD("get_blown_at", "x", "z"), &GroundSurface3D::get_blown_at);
+	ClassDB::bind_method(D_METHOD("get_sand_flux_at", "position"), &GroundSurface3D::get_sand_flux_at);
+	ClassDB::bind_method(D_METHOD("get_deposition_rate_at", "position"), &GroundSurface3D::get_deposition_rate_at);
+	ClassDB::bind_method(D_METHOD("get_sand_deposit_at", "position"), &GroundSurface3D::get_sand_deposit_at);
+	ClassDB::bind_method(D_METHOD("get_wind_step_usec"), &GroundSurface3D::get_wind_step_usec);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("bed_load", "water_speed"), &GroundSurface3D::bed_load);
 	ClassDB::bind_method(D_METHOD("set_ripple_extent", "extent"), &GroundSurface3D::set_ripple_extent);
 	ClassDB::bind_method(D_METHOD("get_ripple_extent"), &GroundSurface3D::get_ripple_extent);
@@ -2299,6 +2537,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_GROUP("Water", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_coupling"), "set_water_coupling", "is_water_coupling");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_spacing", PROPERTY_HINT_RANGE, "0.01,1,0.005,suffix:m"), "set_detail_spacing", "get_detail_spacing");
