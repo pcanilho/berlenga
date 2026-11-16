@@ -1501,6 +1501,8 @@
     "gradually_varied_flow",
     "bend_superelevation",
     "standing_waves",
+    "source_lake",
+    "level_from_flows",
     "carve",
     "obstacle_collision_mask",
     "live_flow",
