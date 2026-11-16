@@ -256,6 +256,27 @@ herbs' far colours, the turf's brightness (1.07), the AgX tonemap (bench ratios 
 the bake's sky and sun (about 3%; the bake now copies the scene's sky, ambient and sun energy
 anyway, and bakes again when the sun's energy moves by 30%).
 
+**Live-view match (16 Nov).** After those fixes the valley scene still showed the ring past the
+band about 1.5x lighter (linear) than the full blades, while the bench at the same sun, eye height
+and terrain material matched within 6%. Scene frames ruled out the light tint (`get_light_at()`
+1.04 to 1.06 there), fog, the shadow distance, the azimuth lobes (factor 1.04) and the albedo (an
+unshaded frame is flat across the band): it is lighting the scene gives the far terrain and not
+the blades, or the blades and not the terrain. **Its cause is still unknown.** The fix compensates
+for it without explaining it: `GrassField3D.far_match_view` (on by default) reads the frame back
+asynchronously (`RenderingDevice.texture_get_data_async`, no stall), compares ground points in the
+same direction from the camera where the blades stand full and just past the band (box means
+about 1/60 of the frame high and three times as wide, the ratio of the sums' luminance over 12 to 48 pairs (brightness only: the bake's hue holds, and
+the blue channel is too small to read well),
+since one box of blades varies too much with clumps and gaps; pairs dropped where either
+side is bluer than it is green, as sky, haze or water, or where the two differ by more than 2.5x,
+as something in front; the whole look dropped when the pairs' interquartile spread passes 80%),
+and scales the published far colour's brightness and `grass_ground_far_scale` until they agree within 3%: at
+most five rounds of at most 0.8x to 1.25x each, factor 0.5 to 1.5 overall, again when the sun
+moves 8 degrees or the camera a field's width. It is a calibration like an auto exposure, so whatever the
+real cause turns out to be, finding it should let the factor settle back near 1. Candidates for
+that search: the blades' normals and their specular under the scene's sky (the bench's sky is
+plainer), and the terrain material's far texture LOD under the scene's camera height.
+
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).

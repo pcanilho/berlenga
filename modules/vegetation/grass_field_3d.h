@@ -183,6 +183,28 @@ class GrassField3D : public Node3D {
 	void _far_bake_start();
 	void _far_bake_step();
 	void _far_bake_free();
+
+	// Live-view match (far_match_view): reads the frame back (async, no stall) at pairs of ground
+	// points straddling the fade band in the same direction from the camera, and scales the far
+	// colour until the full blades and the far ground beyond agree on screen.
+	bool far_match_view = true;
+	Color far_view_scale = Color(1, 1, 1, 1);
+	int far_view_state = 0; // 0 idle, 1 waiting for frames, 2 readback in flight.
+	int far_view_wait = 0;
+	int far_view_round = 0;
+	int far_view_misses = 0;
+	float far_view_elevation = -1000.0f; // The sun elevation it last matched under.
+	Vector3 far_view_camera; // Where it last matched from.
+	Vector2 far_view_size; // The viewport's visible size when the pixels were picked.
+	PackedVector2Array far_view_px; // Pairs: inside the band, past it.
+	double far_view_msec = 0.0; // The last readback's sampling cost on the thread it lands on.
+	Color far_view_ratio = Color(1, 1, 1, 1);
+	int far_view_pairs = 0;
+	void _far_view_step(class Camera3D *p_cam);
+	void _far_view_start(int p_wait);
+	void _far_view_issue(RID p_viewport_texture);
+	void _far_view_on_data(const PackedByteArray &p_data, int p_width, int p_height, int p_format);
+	void _far_view_apply(const Color &p_ratio, int p_pairs);
 	Color _far_color_hand() const;
 
 	void _ensure_resources();
@@ -247,6 +269,8 @@ public:
 	bool is_far_color_baked() const { return far_baked; }
 	PackedColorArray get_far_color_lobes() const;
 	Dictionary get_far_published() const;
+	void set_far_match_view(bool p_enabled);
+	bool is_far_match_view() const { return far_match_view; }
 	void set_sun_light(const NodePath &p_path);
 	NodePath get_sun_light() const { return sun_light; }
 	void set_base_color(const Color &p_color);

@@ -1267,6 +1267,9 @@ void GrassField3D::_far_bake_step() {
 	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s), sun azimuth lobes %s %s; by sun elevation 12/30/50/72 degrees %s %s %s %s.", get_name(), far_color_baked, _far_color_hand(), far_lobe1, far_lobe2, far_elev_color[0], far_elev_color[1], far_elev_color[2], far_elev_color[3]));
 	if (fade_owner == this) {
 		_publish_far();
+		far_view_round = 0;
+		far_view_misses = 0;
+		_far_view_start(20);
 	} else if (under_owner == this) {
 		_publish_under();
 	}
@@ -1304,6 +1307,11 @@ void GrassField3D::_publish_far() {
 		const Color ref = far_color_baked;
 		scale = Color(ref.r > 0.0f ? far.r / ref.r : 1.0f, ref.g > 0.0f ? far.g / ref.g : 1.0f, ref.b > 0.0f ? far.b / ref.b : 1.0f, 1.0f);
 	}
+	// The live-view match, on both: the cover map's colour reaches the terrain through the scale.
+	far *= far_view_scale;
+	scale *= far_view_scale;
+	far.a = 1.0f;
+	scale.a = 1.0f;
 	published_far_elevation = sun_elevation_deg;
 	// a: the share of the ground this sward covers (its patches), the rest the undercoat's.
 	rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, _cover_share()));
@@ -1330,6 +1338,10 @@ void GrassField3D::_publish_under() {
 	if (far_baked) {
 		Color l1, l2;
 		_far_at_elevation(fade_owner ? fade_owner->sun_elevation_deg : sun_elevation_deg, far, l1, l2);
+	}
+	if (fade_owner) {
+		far *= fade_owner->far_view_scale; // The main field's live-view match holds for its light.
+		far.a = 1.0f;
 	}
 	rs->global_shader_parameter_set("grass_ground_under", fade_band);
 	rs->global_shader_parameter_set("grass_ground_under_far", Vector4(far.r, far.g, far.b, 1.0f));
@@ -1363,7 +1375,263 @@ Dictionary GrassField3D::get_far_published() const {
 	d["sun_elevation"] = sun_elevation_deg;
 	d["cover_share"] = _cover_share();
 	d["baked"] = far_baked;
+	d["view_scale"] = far_view_scale;
+	d["view_ratio"] = far_view_ratio;
+	d["view_pairs"] = far_view_pairs;
+	d["view_round"] = far_view_round;
+	d["view_state"] = far_view_state;
+	d["view_msec"] = far_view_msec;
 	return d;
+}
+
+// Live-view match (docs/ideas/vegetation-lod-streaming.md, "Live-view match"). The bake matches the
+// blades on a plain plane under the scene's sky and sun; a scene can still light its terrain's far
+// cover differently from the blades (seen as a lighter ring past the band), for reasons the bake
+// does not model. This compares the two where the player sees them: pairs of ground points in the
+// same direction from the camera, one where the blades stand full and one just past the band, read
+// from the frame (asynchronously: the copy lands a frame or two later, without stalling the GPU),
+// and scales the published far colour until they agree. A few rounds, again when the sun has moved
+// far or the camera has gone a field's width.
+void GrassField3D::set_far_match_view(bool p_enabled) {
+	if (far_match_view == p_enabled) {
+		return;
+	}
+	far_match_view = p_enabled;
+	if (!p_enabled) {
+		far_view_scale = Color(1, 1, 1, 1);
+		far_view_round = 0;
+		if (far_view_state == 1) {
+			far_view_state = 0;
+		}
+	}
+	if (fade_owner == this && is_inside_tree()) {
+		_publish_far();
+		if (p_enabled && far_baked) {
+			_far_view_start(20);
+		}
+	}
+}
+
+void GrassField3D::_far_view_start(int p_wait) {
+	if (!far_match_view || far_view_state == 2) {
+		return;
+	}
+	far_view_state = 1;
+	far_view_wait = p_wait;
+}
+
+void GrassField3D::_far_view_step(Camera3D *p_cam) {
+	if (!far_match_view || !far_baked || far_bake_vp || far_view_state == 2) {
+		return;
+	}
+	if (far_view_state == 0) {
+		// Again once the sun has moved well away or the camera has gone a field's width.
+		if (far_view_elevation > -999.0f && (Math::abs(sun_elevation_deg - far_view_elevation) > 8.0f || p_cam->get_global_position().distance_to(far_view_camera) > radius)) {
+			far_view_round = 0;
+			far_view_misses = 0;
+			_far_view_start(20);
+		}
+		return;
+	}
+	if (--far_view_wait > 0) {
+		return;
+	}
+	Viewport *vp = get_viewport();
+	if (!vp || vp->get_texture().is_null()) {
+		return;
+	}
+	const Vector2 size = vp->get_visible_rect().size;
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	const float base_y = get_global_position().y;
+	const Vector2 c(fade_band.x, fade_band.y);
+	const float r_full = (fade_band.z - fade_band.w) * 0.92f; // Blades still all there.
+	const float r_out = fade_band.z + MAX(3.0f, fade_band.z * 0.08f); // Only the far ground.
+	const Vector3 fwd = -p_cam->get_global_transform().basis.get_column(Vector3::AXIS_Z);
+	Vector2 f2(fwd.x, fwd.z);
+	if (f2.length() < 0.05f) {
+		const Vector3 up = p_cam->get_global_transform().basis.get_column(Vector3::AXIS_Y);
+		f2 = Vector2(up.x, up.z); // Looking straight down: the top of the frame.
+	}
+	const float a0 = Math::atan2(f2.y, f2.x);
+	far_view_px.clear();
+	const int dirs = 24;
+	for (int i = 0; i < dirs; i++) {
+		const float a = a0 + (float(i) / float(dirs - 1) - 0.5f) * 1.6f;
+		const Vector2 d(Math::cos(a), Math::sin(a));
+		for (int k = 0; k < 2; k++) {
+			Vector2 px[2];
+			bool ok = true;
+			for (int j = 0; j < 2 && ok; j++) {
+				const float r = j == 0 ? r_full * (1.0f - 0.15f * float(k)) : r_out + 0.06f * fade_band.z * float(k);
+				const Vector2 xz = c + d * r;
+				Vector3 p(xz.x, base_y, xz.y);
+				if (map) {
+					p.y = map->get_height_at(p);
+				}
+				if (p_cam->is_position_behind(p)) {
+					ok = false;
+					break;
+				}
+				px[j] = p_cam->unproject_position(p);
+				ok = px[j].x >= 4.0f && px[j].y >= 4.0f && px[j].x < size.x - 4.0f && px[j].y < size.y - 4.0f;
+			}
+			if (ok && px[0].distance_to(px[1]) > 6.0f) {
+				far_view_px.push_back(px[0]);
+				far_view_px.push_back(px[1]);
+			}
+		}
+	}
+	far_view_camera = p_cam->get_global_position();
+	far_view_size = size;
+	if (far_view_px.size() < 24) {
+		_far_view_apply(Color(1, 1, 1, 1), far_view_px.size() / 2); // Not enough of the band in view.
+		return;
+	}
+	far_view_state = 2;
+	RenderingServer::get_singleton()->call_on_render_thread(callable_mp(this, &GrassField3D::_far_view_issue).bind(vp->get_texture()->get_rid()));
+}
+
+// On the render thread: copy the frame as it stands (the last one drawn) and hand it back later.
+void GrassField3D::_far_view_issue(RID p_viewport_texture) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs->get_rendering_device();
+	const RID tex = rd ? rs->texture_get_rd_texture(p_viewport_texture) : RID();
+	if (!tex.is_valid() || !rd->texture_is_valid(tex)) {
+		callable_mp(this, &GrassField3D::_far_view_apply).call_deferred(Color(1, 1, 1, 1), 0);
+		return;
+	}
+	const RD::TextureFormat tf = rd->texture_get_format(tex);
+	const Error err = rd->texture_get_data_async(tex, 0, callable_mp(this, &GrassField3D::_far_view_on_data).bind(int(tf.width), int(tf.height), int(tf.format)));
+	if (err != OK) {
+		callable_mp(this, &GrassField3D::_far_view_apply).call_deferred(Color(1, 1, 1, 1), 0);
+	}
+}
+
+// When the copy lands: the median over the pairs of (blades)/(far ground), per channel, in linear.
+void GrassField3D::_far_view_on_data(const PackedByteArray &p_data, int p_width, int p_height, int p_format) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	int bpp = 0;
+	bool half = false, bgr = false, srgb = true;
+	switch (p_format) {
+		case RD::DATA_FORMAT_R8G8B8A8_UNORM:
+		case RD::DATA_FORMAT_R8G8B8A8_SRGB:
+			bpp = 4;
+			break;
+		case RD::DATA_FORMAT_B8G8R8A8_UNORM:
+		case RD::DATA_FORMAT_B8G8R8A8_SRGB:
+			bpp = 4;
+			bgr = true;
+			break;
+		case RD::DATA_FORMAT_R16G16B16A16_SFLOAT:
+			bpp = 8;
+			half = true;
+			srgb = false; // HDR 2D: linear already.
+			break;
+		default:
+			break;
+	}
+	if (bpp == 0 || p_width <= 0 || p_height <= 0 || p_data.size() < int64_t(p_width) * p_height * bpp || far_view_size.x <= 0.0f) {
+		callable_mp(this, &GrassField3D::_far_view_apply).call_deferred(Color(1, 1, 1, 1), 0);
+		return;
+	}
+	const uint8_t *data = p_data.ptr();
+	const Vector2 to_px(float(p_width) / far_view_size.x, float(p_height) / far_view_size.y);
+	const int half_box = MAX(2, p_height / 120); // About 1/60 of the frame high, three times as wide: many blades.
+	auto box = [&](const Vector2 &p_at) -> Color {
+		const int cx = int(p_at.x * to_px.x), cy = int(p_at.y * to_px.y);
+		Color sum(0, 0, 0, 0);
+		int n = 0;
+		for (int y = MAX(cy - half_box, 0); y <= MIN(cy + half_box, p_height - 1); y++) {
+			for (int x = MAX(cx - 3 * half_box, 0); x <= MIN(cx + 3 * half_box, p_width - 1); x++) {
+				const uint8_t *px = data + (int64_t(y) * p_width + x) * bpp;
+				Color col;
+				if (half) {
+					const uint16_t *h = reinterpret_cast<const uint16_t *>(px);
+					col = Color(Math::half_to_float(h[0]), Math::half_to_float(h[1]), Math::half_to_float(h[2]), 1.0f);
+				} else {
+					col = Color(px[bgr ? 2 : 0] / 255.0f, px[1] / 255.0f, px[bgr ? 0 : 2] / 255.0f, 1.0f);
+				}
+				if (srgb) {
+					col = col.srgb_to_linear();
+				}
+				sum += col;
+				n++;
+			}
+		}
+		return n ? sum / float(n) : Color();
+	};
+	// The ratio of the sums over the pairs kept (both sides share the same headings, so the sun's
+	// azimuth cancels); a single box of blades varies too much with clumps and gaps to use alone.
+	Color sum_in(0, 0, 0, 0), sum_out(0, 0, 0, 0);
+	LocalVector<float> lum_ratios;
+	const bool debug = OS::get_singleton()->get_environment("GRASS_VIEW_DEBUG") != ""; // Print each pair.
+	for (int i = 0; i + 1 < far_view_px.size(); i += 2) {
+		const Color in = box(far_view_px[i]);
+		const Color out = box(far_view_px[i + 1]);
+		const float lin = in.r + in.g + in.b, lout = out.r + out.g + out.b;
+		if (debug) {
+			print_line(vformat("VIEWPAIR in %s %s out %s %s", far_view_px[i], in, far_view_px[i + 1], out));
+		}
+		if (lin < 1e-4f || lout < 1e-4f || lin / lout < 0.4f || lin / lout > 2.5f) {
+			continue; // Something standing in front of one of them.
+		}
+		if (in.b > 0.9f * in.g || out.b > 0.9f * out.g) {
+			continue; // Sky, haze or water: grass and soil are always less blue than green.
+		}
+		sum_in += in;
+		sum_out += out;
+		lum_ratios.push_back(lin / lout);
+	}
+	int pairs = lum_ratios.size();
+	Color med(1, 1, 1, 1);
+	if (pairs > 0) {
+		// Brightness only: the bake's hue holds, and the blue channel is too small to read well.
+		const float yin = sum_in.r * 0.2126f + sum_in.g * 0.7152f + sum_in.b * 0.0722f;
+		const float yout = sum_out.r * 0.2126f + sum_out.g * 0.7152f + sum_out.b * 0.0722f;
+		const float k = yin / MAX(yout, 1e-5f);
+		med = Color(k, k, k, 1.0f);
+		lum_ratios.sort();
+		const float spread = (lum_ratios[(pairs * 3) / 4] - lum_ratios[pairs / 4]) / MAX(lum_ratios[pairs / 2], 1e-4f);
+		if (spread > 0.8f) {
+			pairs = 0; // The pairs disagree too much to trust (a mixed view): look again later.
+		}
+	}
+	far_view_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	callable_mp(this, &GrassField3D::_far_view_apply).call_deferred(med, pairs);
+}
+
+void GrassField3D::_far_view_apply(const Color &p_ratio, int p_pairs) {
+	far_view_state = 0;
+	far_view_pairs = p_pairs;
+	if (p_pairs < 12) {
+		// Too little of the band in view: look again in a while, then wait for the camera to move.
+		if (++far_view_misses < 10) {
+			_far_view_start(60);
+		} else {
+			far_view_elevation = sun_elevation_deg;
+		}
+		return;
+	}
+	far_view_misses = 0;
+	far_view_ratio = p_ratio;
+	far_view_round++;
+	const bool close = Math::abs(p_ratio.r - 1.0f) < 0.03f && Math::abs(p_ratio.g - 1.0f) < 0.03f && Math::abs(p_ratio.b - 1.0f) < 0.03f;
+	if (!close) {
+		// The frame is tone mapped, so the step is not exact: take it, then look again.
+		far_view_scale.r = CLAMP(far_view_scale.r * CLAMP(p_ratio.r, 0.8f, 1.25f), 0.5f, 1.5f);
+		far_view_scale.g = CLAMP(far_view_scale.g * CLAMP(p_ratio.g, 0.8f, 1.25f), 0.5f, 1.5f);
+		far_view_scale.b = CLAMP(far_view_scale.b * CLAMP(p_ratio.b, 0.8f, 1.25f), 0.5f, 1.5f);
+		if (fade_owner == this) {
+			_publish_far();
+		}
+	}
+	far_view_elevation = sun_elevation_deg;
+	print_verbose(vformat("GrassField3D \"%s\": live-view far match round %d: blades/far %s over %d pairs, scale now %s (%.2f ms).", get_name(), far_view_round, p_ratio, p_pairs, far_view_scale, far_view_msec));
+	if (!close && far_view_round < 5) {
+		_far_view_start(20);
+	} else {
+		far_view_round = 0;
+	}
 }
 
 PackedColorArray GrassField3D::get_far_color_lobes() const {
@@ -2109,6 +2377,7 @@ void GrassField3D::_notification(int p_what) {
 				update_at(cam->get_global_position());
 				if (fade_owner == this) {
 					_publish_sun_view(cam->get_global_position());
+					_far_view_step(cam);
 				}
 			}
 			if (trample_enabled && !trample.is_empty()) {
@@ -2350,6 +2619,8 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
 	ClassDB::bind_method(D_METHOD("get_far_color_lobes"), &GrassField3D::get_far_color_lobes);
 	ClassDB::bind_method(D_METHOD("get_far_published"), &GrassField3D::get_far_published);
+	ClassDB::bind_method(D_METHOD("set_far_match_view", "enabled"), &GrassField3D::set_far_match_view);
+	ClassDB::bind_method(D_METHOD("is_far_match_view"), &GrassField3D::is_far_match_view);
 	GRASS_BIND(set_sun_light, get_sun_light, "path")
 	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
@@ -2424,6 +2695,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_tint"), "set_ground_tint", "get_ground_tint");
 	ADD_GROUP("Range", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "1,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "fallback_wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_fallback_wind", "get_fallback_wind");
