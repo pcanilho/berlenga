@@ -3184,3 +3184,11 @@ is under a pixel and the edge softens again. Fix: after the foam is read, its ed
 pixel's own scale (fwidth of the foam, as signed-distance text is sharpened), keeping 0.8 of the soft value.
 Bench `--view=storm_foam_close`: 1.5 m above gale foam, riding the sea, low side sun.
 Check: off/on pair at whitecap distance (storm_foam) and close (storm_plume), PT frame.
+
+Docs review 2: straight seams and polygonal patches up close, plus near-round holes. Ruled out by bench tests:
+detail waves, breaker lips, underwater passes, spray, wave shadows, depth order (depth_prepass_alpha,
+depth_draw_always), mesh folds (a Jacobian limiter), the shadow map and the sun share (light() split into its terms).
+Cause: each hole's radius came from the nearest Voronoi cell only (Worley's F1 with a per-cell value), and a hole
+wider than its cell was cut along the straight bisector to the next cell. Fix: every feature of the 3x3
+neighbourhood carves its own hole (the usual fix for per-cell radii; a radius under one cell keeps the 3x3 search
+exact), min'd together, with the edge wandered by lobe noise in proportion to the radius at all three scales.
