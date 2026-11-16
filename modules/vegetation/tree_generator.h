@@ -108,6 +108,9 @@ public:
 		STAND_NORTHERN_HARDWOOD, // Sugar maple, American beech, yellow birch, hemlock in cool ravines.
 		STAND_EASTERN_OAK, // Red and white oak with red maple; mountain laurel and witch-hazel beneath.
 		STAND_PINE_HEMLOCK, // White pine and hemlock, paper birch in openings.
+		STAND_COPPICE_STANDARDS, // Hazel coppice in coupes of different ages under oak and ash standards.
+		STAND_WOOD_PASTURE, // Grazed: lapsed beech and oak pollards, open-grown oaks, thorn and holly.
+		STAND_POLLARD_ROW, // Willow pollards along water, placed by the scene along its lines.
 		STAND_MAX,
 	};
 
@@ -422,6 +425,10 @@ private:
 	int deadwood_stem = -1;
 	Vector3 deadwood_a, deadwood_b;
 	float deadwood_profile[DEADWOOD_SAMPLES] = {};
+	// The stem's centreline, DEADWOOD_SAMPLES points evenly along it by arc length (mesh space),
+	// and the girth measured round each (to the outside of the moss).
+	Vector3 deadwood_line[DEADWOOD_SAMPLES];
+	float deadwood_girth[DEADWOOD_SAMPLES] = {};
 	HashSet<int> hanger_bases; // First nodes of snapped limbs left hanging in the crown (_break_limbs()).
 	// Old-tree features (docs/ideas/trees.md 5e): tree-related microhabitats of veteran trees.
 	float veteran = 0.0f;
@@ -647,6 +654,10 @@ private:
 		FORM_BRANCH, // A shed limb on the ground (coarse woody debris under the logs' size).
 		FORM_STICKS, // Small shed branches, 1-4 cm, scattered densely between the plants.
 		FORM_UNDERSTORY, // A shrub grown in a stand's shade: taller, thinner, fewer leaves.
+		FORM_COPPICE, // Cut to a stool on a cycle: a grown coupe, 4-9 years since the cut.
+		FORM_COPPICE_YOUNG, // A coupe cut 1-3 years ago: a stool of short rods.
+		FORM_POLLARD, // Cut at head height: willow on a short cycle, others lapsed for decades.
+		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
 	// One variant's state in a stand species: seed, decay and climber.

@@ -303,6 +303,7 @@ varying float v_foam;
 varying vec2 v_rest_xz;
 // 1 on the breaking lips' sheet (vertex colour alpha 0), whose vertices are already in place.
 varying float v_lip;
+varying float v_roller; // the roller's raise at the vertex, as a share of its cap (0 off it)
 
 // The camera under water (raster; the path tracer starts its camera rays in the water instead). Set by
 // PhysXWaterSurface3D while the camera is near the water: whether it is under the surface, and the light
@@ -316,6 +317,14 @@ uniform vec3 underwater_sun_irradiance = vec3(0.0);
 uniform vec3 underwater_sky_radiance = vec3(0.0);
 // How dark the thin line where the surface crosses the lens is (0 none).
 uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
+// Lamps under the water (up to four omni or spot lights, set by PhysXWaterSurface3D): position and range;
+// the spot's direction of travel and the cosine of its cone (-2 for an omni light); pi x energy x colour and
+// the falloff exponent (Light3D attenuation); the spot's rim exponent.
+uniform int uw_lamp_count = 0;
+uniform vec4 uw_lamp_pos[4];
+uniform vec4 uw_lamp_dir[4];
+uniform vec4 uw_lamp_color[4];
+uniform float uw_lamp_rim[4];
 // Raster reflections from above (water_raster_reflections.h).
 )";
 const char *WATER_SHADER_SRC_TAIL = R"(
@@ -1008,49 +1017,58 @@ float roller_crest(vec2 world_xz) {
 	return max(h_short, 0.0) + max(h_long, 0.0);
 }
 
-// r_grad: the slope of the roller's churn (its fine part; the fold and the crest vary slowly).
-float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out vec2 r_grad, out float r_fold) {
-	r_grad = vec2(0.0);
-	r_fold = 0.0;
-	if (roller_strength <= 0.0 || wave_cascade_count < 2 || foam_crest_threshold < -50.0 || crest <= 0.0) {
-		return 0.0;
+// Where the roller rides and how high its crest stands, blurred over a couple of metres: five taps 1.2 m
+// apart, centred a little behind (upwind of) the point. The fold and the fresh foam are sharp at a point;
+// followed pointwise on a mesh 60 cm apart they raised one or two vertices into a cone (a snow-capped peak).
+// Broad, the band rises over several vertices, rounded, and is lower at its front where it spills down
+// the face. Fresh dense persistent foam marks it: it starts with the fold and lasts while the wave keeps
+// breaking (Duncan 1981), fading as the foam drains.
+float roller_band(vec2 world_xz, out float r_crest) {
+	vec2 c = world_xz - roller_dir * 0.4;
+	float m = 0.0;
+	float cr = 0.0;
+	for (int i = 0; i < 5; i++) {
+		vec2 o = i == 0 ? vec2(0.0) : vec2(i == 1 ? 1.2 : (i == 2 ? -1.2 : 0.0), i == 3 ? 1.2 : (i == 4 ? -1.2 : 0.0));
+		m += ocean_foam_all(c + o);
+		cr += roller_crest(c + o);
 	}
-	float s = -choppiness;
-	float jacobian = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * disp.b * disp.b;
-	// Over a wide band of the fold, so the mound rises gently (a fold that went from none to full within a
-	// mesh cell made cliffs the foam smeared down).
-	float b = smoothstep(0.0, 1.0, (foam_crest_threshold - jacobian) / 0.5);
-	// The fold lasts a fraction of a second, a spilling roller several (it rides the crest while the wave
-	// keeps breaking; Duncan 1981). Fresh, dense persistent foam on the crest keeps it going after the fold
-	// has passed: it fades as that foam drains, and with the crest height as the foam slides off the back.
-	b = max(b, smoothstep(0.45, 0.85, ocean_foam_all(world_xz)));
-	r_fold = b;
-	if (b <= 0.0) {
-		return 0.0;
-	}
-	// Churned: octaves boiling over a second or two, drifting with the crest; the finest (bubbly, a few cm)
-	// only in the slope, the mesh being coarser.
-	vec2 q = world_xz * 1.1 - roller_dir * water_time * 1.2;
-	vec2 q1 = q + vec2(0.0, water_time * 0.7);
-	vec2 q2 = q * 2.3 - vec2(water_time * 1.1, 3.0);
-	vec2 q3 = q * 7.1 + vec2(water_time * 2.3, -water_time * 1.7);
-	vec2 q4 = q * 17.3 - vec2(water_time * 3.1, 5.0);
-	float churn = 0.6 * foam_value_noise(q1) + 0.4 * foam_value_noise(q2);
-	float k = roller_strength * 0.5 * crest * sqrt(b);
-	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2))
-			+ crest * sqrt(b) * roller_strength * (0.012 * 1.1 * 7.1 * foam_noise_grad(q3) + 0.005 * 1.1 * 17.3 * foam_noise_grad(q4));
-	return k * (0.45 + 0.9 * churn);
+	r_crest = cr / 5.0;
+	return smoothstep(0.3, 0.75, m / 5.0);
 }
 
-// The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
-// Jacobian test, or fresh dense foam just after it), a mass of churned white water rides the crest's front:
-// on average about half the crest's height above its mean, a fifth of the wave's height (Duncan 1981: the
-// roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy and boiling, leaning forward along
-// the waves' travel.
-float roller_height(vec2 world_xz, vec4 der, vec3 disp, float crest) {
-	vec2 g;
-	float f;
-	return roller_height_grad(world_xz, der, disp, crest, g, f);
+// The roller on a breaking crest at world_xz: a rounded band of churned white water riding the crest's
+// front where it breaks, on average about half the crest's height above its mean (a fifth of the wave's
+// height; Duncan 1981: 0.1 to 0.3), eased toward 40 cm, lumpy and boiling, leaning forward along the waves'
+// travel.
+// r_grad: the slope of the roller's churn (the band and the crest vary slowly).
+float roller_height_grad(vec2 world_xz, out vec2 r_grad, out float r_fold) {
+	r_grad = vec2(0.0);
+	r_fold = 0.0;
+	if (roller_strength <= 0.0 || wave_cascade_count < 2 || foam_crest_threshold < -50.0) {
+		return 0.0;
+	}
+	float crest;
+	float b = roller_band(world_xz, crest);
+	r_fold = b;
+	if (b <= 0.0 || crest <= 0.0) {
+		return 0.0;
+	}
+	// Churned into lobes a couple of metres across (rounded at the mesh's spacing), boiling and drifting with
+	// the crest; the finer octaves (bubbly, down to a few cm) only in the slope.
+	vec2 q = world_xz * 0.55 - roller_dir * water_time * 0.6;
+	vec2 q1 = q + vec2(0.0, water_time * 0.35);
+	vec2 q2 = q * 2.1 - vec2(water_time * 0.5, 3.0);
+	vec2 q3 = q * 14.0 + vec2(water_time * 2.3, -water_time * 1.7);
+	vec2 q4 = q * 35.0 - vec2(water_time * 3.1, 5.0);
+	float churn = 0.7 * foam_value_noise(q1) + 0.3 * foam_value_noise(q2);
+	float k = roller_strength * 0.5 * crest * sqrt(b);
+	// Eased toward 40 cm: on a gale's metres-high crests the full share would stand far above the band's width.
+	float cap = 0.4 * roller_strength;
+	float raw = k * (0.5 + 0.8 * churn);
+	float e = tanh(raw / cap);
+	r_grad = (1.0 - e * e) * k * 0.8 * (0.7 * 0.55 * foam_noise_grad(q1) + 0.3 * 0.55 * 2.1 * foam_noise_grad(q2))
+			+ b * roller_strength * (0.006 * 0.55 * 14.0 * foam_noise_grad(q3) + 0.0025 * 0.55 * 35.0 * foam_noise_grad(q4));
+	return cap * e;
 }
 
 float foam_at(vec2 world_xz) {
@@ -1192,6 +1210,57 @@ vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 	return ss * (sun + sky);
 }
 
+// Lamp beams (docs/ideas/water.md "Lamp beams under water"): each lamp's single scattering along the view ray
+// from p0 along d for len, marched in 12 jittered steps over the stretch inside the lamp's range: the light's
+// irradiance by Godot's own falloff and cone, the phase, and the water's extinction on both legs.
+vec3 uw_lamps(vec3 p0, vec3 d, float len, float jitter) {
+	vec3 total = vec3(0.0);
+	vec3 st = uw_sigma_t();
+	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	for (int i = 0; i < min(uw_lamp_count, 4); i++) {
+		vec3 c = uw_lamp_pos[i].xyz;
+		float range = uw_lamp_pos[i].w;
+		vec3 oc = p0 - c;
+		float b = dot(oc, d);
+		float disc = b * b - (dot(oc, oc) - range * range);
+		if (disc <= 0.0) {
+			continue;
+		}
+		float sq = sqrt(disc);
+		float t0 = max(-b - sq, 0.0);
+		float t1 = min(-b + sq, len);
+		if (t1 <= t0) {
+			continue;
+		}
+		const int STEPS = 12;
+		float dt = (t1 - t0) / float(STEPS);
+		vec3 sum = vec3(0.0);
+		for (int k = 0; k < STEPS; k++) {
+			float t = t0 + (float(k) + jitter) * dt;
+			vec3 l = p0 + d * t - c;
+			float r = max(length(l), 1e-3);
+			l /= r;
+			float nd = r / range;
+			nd *= nd;
+			nd *= nd;
+			nd = max(1.0 - nd, 0.0);
+			float att = nd * nd * pow(r, -uw_lamp_color[i].w);
+			float cutoff = uw_lamp_dir[i].w;
+			if (cutoff > -1.5) {
+				float scos = dot(l, uw_lamp_dir[i].xyz);
+				if (scos <= cutoff) {
+					continue;
+				}
+				float rim = max(1e-4, (1.0 - scos) / max(1.0 - cutoff, 1e-4));
+				att *= 1.0 - pow(rim, uw_lamp_rim[i]);
+			}
+			sum += att * uw_hg(dot(l, -d), pathtraced_scattering_anisotropy) * exp(-st * (r + t)) * dt;
+		}
+		total += uw_lamp_color[i].rgb * sum;
+	}
+	return ss * total;
+}
+
 // Interleaved gradient noise (Jimenez 2014), a new pattern each frame.
 float uw_jitter(vec2 frag, float time) {
 	frag += 5.588238 * floor(time * 60.0);
@@ -1288,7 +1357,8 @@ void fragment() {
 			scene *= uw_light_at_depth(max(surface_height_world(p_o.xz, base_y) - p_o.y, 0.0));
 		}
 		float seg = min(len, to_surface);
-		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter_shadowed(p_near, z0, d, seg, uw_jitter(FRAGCOORD.xy, TIME))) * (1.0 - meniscus);
+		float jit = uw_jitter(FRAGCOORD.xy, TIME);
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter_shadowed(p_near, z0, d, seg, jit) + uw_lamps(p_near, d, seg, jit)) * (1.0 - meniscus);
 		ALPHA = 1.0;
 	}
 #endif
@@ -1296,6 +1366,7 @@ void fragment() {
 #else
 
 void vertex() {
+	v_roller = 0.0;
 #if defined(BREAKER_LIP)
 	// UV.x is the lip's white water (UV.y unused); the vertex is where it is drawn.
 	v_lip = 1.0;
@@ -1322,9 +1393,12 @@ void vertex() {
 	vec3 so = surface_offset(world_pos.xz);
 	VERTEX += so;
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
-		float rh = roller_height(world_pos.xz, ocean_deriv_all(world_pos.xz), ocean_disp_all(world_pos.xz).rgb, roller_crest(world_pos.xz));
+		vec2 rg;
+		float rb;
+		float rh = roller_height_grad(world_pos.xz, rg, rb);
+		v_roller = rh / (0.4 * roller_strength); // the raise's share of its cap
 		// Raised, and thrown a little ahead of the crest.
-		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.4, rh, roller_dir.y * rh * 0.4, 0.0)).xyz;
+		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.25, rh, roller_dir.y * rh * 0.25, 0.0)).xyz;
 	}
 	if (detail_geometry && mesh_near_step > 0.0) {
 		// The detail waves the step can carry without swimming (four steps a wavelength): the same share of
@@ -1415,14 +1489,16 @@ void fragment() {
 			water_roughness = sqrt(sqrt(a * a + detail_variance * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
-		if (roller_strength > 0.0 && foam > 0.05) {
+		// Wherever the band rises (the vertices' share, interpolated), not only under foam: an aged lace hole
+		// lifted onto the band's face showed as a dark notch with a hard rim.
+		if (roller_strength > 0.0 && (foam > 0.05 || v_roller > 0.005)) {
 			// The roller's churn per pixel (its lumps are finer than the mesh): its analytic slope.
 			vec2 g;
 			float fold;
-			roller_height_grad(v_rest_xz, der, disp, roller_crest(v_rest_xz), g, fold);
+			roller_height_grad(v_rest_xz, g, fold);
 			world_normal = normalize(world_normal - vec3(g.x, 0.0, g.y));
 			// The roller is fresh, churning foam right through: no aged lace holes in it.
-			foam = max(foam, smoothstep(0.15, 0.6, fold));
+			foam = max(foam, max(smoothstep(0.15, 0.6, fold), smoothstep(0.02, 0.2, v_roller)));
 		}
 		if (foam > 0.01) {
 			// The foam's bubbles tilt the normal under it: its grain catches the light.
@@ -1504,7 +1580,8 @@ void fragment() {
 	// Foam from below: a lit, rough layer that lets little through.
 	surf = mix(surf, foam_color.rgb * (underwater_sky_radiance + underwater_sun_irradiance * sun_visibility(p_w) / PI) * 0.5, foam * 0.85);
 	float z_cam = max(MODEL_MATRIX[3].y + water_level - cam.y, 0.0);
-	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter_shadowed(cam, z_cam, d, dist, uw_jitter(FRAGCOORD.xy, TIME));
+	float jit = uw_jitter(FRAGCOORD.xy, TIME);
+	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter_shadowed(cam, z_cam, d, dist, jit) + uw_lamps(cam, d, dist, jit);
 	ALPHA = 1.0;
 #else
 	// unshaded + a small self-contained, bounded normal-based shading term --
@@ -1971,6 +2048,14 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
 	ClassDB::bind_method(D_METHOD("set_inflow", "owner", "at", "direction", "width", "discharge"), &PhysXWaterSurface3D::set_inflow);
 	ClassDB::bind_method(D_METHOD("clear_inflow", "owner"), &PhysXWaterSurface3D::clear_inflow);
+	ClassDB::bind_method(D_METHOD("set_outflow", "owner", "at", "direction", "width", "crest", "coefficient"), &PhysXWaterSurface3D::set_outflow);
+	ClassDB::bind_method(D_METHOD("clear_outflow", "owner"), &PhysXWaterSurface3D::clear_outflow);
+	ClassDB::bind_static_method("PhysXWaterSurface3D", D_METHOD("weir_discharge", "coefficient", "width", "head"), &PhysXWaterSurface3D::weir_discharge);
+	ClassDB::bind_method(D_METHOD("set_level_from_flows", "enabled"), &PhysXWaterSurface3D::set_level_from_flows);
+	ClassDB::bind_method(D_METHOD("get_level_from_flows"), &PhysXWaterSurface3D::get_level_from_flows);
+	ClassDB::bind_method(D_METHOD("set_catchment_inflow", "discharge"), &PhysXWaterSurface3D::set_catchment_inflow);
+	ClassDB::bind_method(D_METHOD("get_catchment_inflow"), &PhysXWaterSurface3D::get_catchment_inflow);
+	ClassDB::bind_method(D_METHOD("get_outflow_discharge"), &PhysXWaterSurface3D::get_outflow_discharge);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
@@ -1995,6 +2080,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "grid_resolution"), "set_grid_resolution", "get_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "depth"), "set_depth", "get_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "level_from_flows"), "set_level_from_flows", "get_level_from_flows");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "catchment_inflow", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m³/s"), "set_catchment_inflow", "get_catchment_inflow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "step_mode", PROPERTY_HINT_ENUM, "Per Tick,Per Frame"), "set_step_mode", "get_step_mode");
@@ -3932,6 +4019,7 @@ void PhysXWaterSurface3D::set_inflow(int64_t p_owner, const Vector3 &p_at, const
 	if (!found) {
 		inflows.push_back(f);
 	}
+	_settle_level();
 	_bake_plumes();
 }
 
@@ -3939,8 +4027,123 @@ void PhysXWaterSurface3D::clear_inflow(int64_t p_owner) {
 	for (uint32_t k = 0; k < inflows.size(); k++) {
 		if (inflows[k].owner == p_owner) {
 			inflows.remove_at(k);
+			_settle_level();
 			_bake_plumes();
 			return;
+		}
+	}
+}
+
+float PhysXWaterSurface3D::weir_discharge(float p_coefficient, float p_width, float p_head) {
+	if (!(p_head > 0.0f) || !(p_width > 0.0f)) {
+		return 0.0f;
+	}
+	// Critical depth (two thirds of the head) over the crest: Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2).
+	return p_coefficient * 0.5443311f * p_width * Math::sqrt(9.81f) * p_head * Math::sqrt(p_head);
+}
+
+void PhysXWaterSurface3D::set_outflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_crest, float p_coefficient) {
+	Outflow f;
+	f.owner = p_owner;
+	f.at = p_at;
+	f.direction = Vector3(p_direction.x, 0.0f, p_direction.z).normalized();
+	f.width = MAX(p_width, 0.1f);
+	f.crest = p_crest;
+	f.coefficient = MAX(p_coefficient, 0.0f);
+	bool found = false;
+	for (Outflow &e : outflows) {
+		if (e.owner == p_owner) {
+			if (e.at.distance_to(f.at) < 0.05f && e.direction.dot(f.direction) > 0.999f && Math::abs(e.width - f.width) < 1e-3f && Math::abs(e.crest - f.crest) < 1e-3f && Math::abs(e.coefficient - f.coefficient) < 1e-4f) {
+				return; // unchanged (each rebuild of the river registers again)
+			}
+			e = f;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		outflows.push_back(f);
+	}
+	_settle_level();
+	_bake_plumes();
+}
+
+void PhysXWaterSurface3D::clear_outflow(int64_t p_owner) {
+	for (uint32_t k = 0; k < outflows.size(); k++) {
+		if (outflows[k].owner == p_owner) {
+			outflows.remove_at(k);
+			_bake_plumes();
+			return;
+		}
+	}
+}
+
+void PhysXWaterSurface3D::set_level_from_flows(bool p_enabled) {
+	level_from_flows = p_enabled;
+	_settle_level();
+}
+
+void PhysXWaterSurface3D::set_catchment_inflow(float p_discharge) {
+	catchment_inflow = MAX(p_discharge, 0.0f);
+	_settle_level();
+}
+
+float PhysXWaterSurface3D::get_outflow_discharge() const {
+	const float level = (is_inside_tree() ? get_global_position().y : 0.0f) + water_level;
+	float q = 0.0f;
+	for (const Outflow &f : outflows) {
+		q += weir_discharge(f.coefficient, f.width, level - f.crest);
+	}
+	return q;
+}
+
+// The level budget (docs/ideas/water.md "Lake outlets"): steady state, where the outlets pass what flows in.
+// A lake takes hours to days to settle, so it holds the settled level rather than creeping during play.
+// When the level moves (over a centimetre) the rivers leaving and entering it rebuild on the new level.
+void PhysXWaterSurface3D::_settle_level() {
+	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	float q_in = catchment_inflow;
+	for (const Inflow &f : inflows) {
+		q_in += f.discharge;
+	}
+	float lo = Math::INF;
+	for (const Outflow &f : outflows) {
+		lo = MIN(lo, f.crest);
+	}
+	float hi = lo + 1.0f;
+	auto q_out = [&](float p_level) -> float {
+		float q = 0.0f;
+		for (const Outflow &f : outflows) {
+			q += weir_discharge(f.coefficient, f.width, p_level - f.crest);
+		}
+		return q;
+	};
+	while (q_out(hi) < q_in && hi < lo + 100.0f) {
+		hi = lo + 2.0f * (hi - lo);
+	}
+	for (int it = 0; it < 40; it++) {
+		const float mid = 0.5f * (lo + hi);
+		if (q_out(mid) < q_in) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	const float level = 0.5f * (lo + hi) - get_global_position().y;
+	if (Math::abs(level - water_level) < 0.01f) {
+		return;
+	}
+	set_water_level(level);
+	for (const Outflow &f : outflows) {
+		if (Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner))) {
+			o->call_deferred(SNAME("rebuild"));
+		}
+	}
+	for (const Inflow &f : inflows) {
+		if (Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner))) {
+			o->call_deferred(SNAME("rebuild"));
 		}
 	}
 }
@@ -3955,7 +4158,7 @@ void PhysXWaterSurface3D::clear_inflow(int64_t p_owner) {
 void PhysXWaterSurface3D::_bake_plumes() {
 	const int n = grid_resolution;
 	plume_cells.clear();
-	if (inflows.is_empty() || n < 4) {
+	if ((inflows.is_empty() && outflows.is_empty()) || n < 4) {
 		_update_flow_material();
 		return;
 	}
@@ -4000,6 +4203,36 @@ void PhysXWaterSurface3D::_bake_plumes() {
 				const float u = um * Math::exp(-0.693f * r * r) * wear * (along < 0.0f ? 1.0f + along / (0.5f * f.width) : 1.0f);
 				// Spreading: a little outward with the growing width.
 				out[z * n + x] += dir * u + perp * (u * 0.1f * CLAMP(r, -2.0f, 2.0f) * 0.5f);
+			}
+		}
+	}
+	// Outlets: the water converges on each sill as a sink in a half plane, Q / (pi r h) at distance r (potential
+	// flow), up to the speed over the sill (critical depth, two thirds of the head).
+	const float level_y = get_global_position().y + water_level;
+	for (const Outflow &f : outflows) {
+		const float head = level_y - f.crest;
+		const float q = weir_discharge(f.coefficient, f.width, head);
+		if (q <= 0.0f) {
+			continue;
+		}
+		const float u_sill = q / (f.width * MAX(head * 2.0f / 3.0f, 0.02f));
+		const Vector2 dir(f.direction.x, f.direction.z);
+		const float reach = 40.0f * f.width;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const float h = depth_at_cell(x, z);
+				if (!(h > 0.05f)) {
+					continue;
+				}
+				const Vector2 p(grid_center.x + (x + 0.5f - 0.5f * n) * dx - f.at.x, grid_center.y + (z + 0.5f - 0.5f * n) * dz - f.at.z);
+				const float r = p.length();
+				if (r > reach || r < 1e-3f) {
+					continue;
+				}
+				// Only the lake side of the sill draws (the half plane behind it), fading in across the line.
+				const float behind = CLAMP(-p.dot(dir) / (0.5f * f.width) + 0.5f, 0.0f, 1.0f);
+				const float u = MIN(q / ((float)Math::PI * MAX(r, 0.5f * f.width) * h), u_sill) * behind * (1.0f - r / reach);
+				out[z * n + x] -= p / r * u;
 			}
 		}
 	}
@@ -4907,6 +5140,87 @@ void PhysXWaterSurface3D::_update_underwater() {
 		m->set_shader_parameter("underwater_sun_irradiance", water_light_sun_irradiance);
 		m->set_shader_parameter("underwater_sky_radiance", water_light_sky);
 		m->set_shader_parameter("underwater_meniscus", underwater_meniscus);
+	}
+	if (--underwater_lamp_scan <= 0) {
+		underwater_lamp_scan = 30; // about half a second
+		_scan_underwater_lamps(cp, level);
+	}
+	_update_underwater_lamps();
+}
+
+// The omni and spot lights under the surface nearest the camera (at most four), from the scene tree.
+void PhysXWaterSurface3D::_scan_underwater_lamps(const Vector3 &p_camera, float p_level) {
+	underwater_lamps.clear();
+	if (!is_inside_tree()) {
+		return;
+	}
+	struct Found {
+		ObjectID id;
+		float dist;
+		bool operator<(const Found &p_other) const { return dist < p_other.dist; }
+	};
+	LocalVector<Found> found;
+	LocalVector<Node *> stack;
+	stack.push_back(get_tree()->get_root());
+	while (!stack.is_empty()) {
+		Node *n = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		for (int i = 0; i < n->get_child_count(); i++) {
+			stack.push_back(n->get_child(i));
+		}
+		Light3D *light = Object::cast_to<Light3D>(n);
+		if (light == nullptr || (Object::cast_to<OmniLight3D>(n) == nullptr && Object::cast_to<SpotLight3D>(n) == nullptr) || !light->is_visible_in_tree()) {
+			continue;
+		}
+		const Vector3 p = light->get_global_position();
+		const float range = light->get_param(Light3D::PARAM_RANGE);
+		const float dist = p.distance_to(p_camera);
+		if (dist > range + 150.0f || p.y >= p_level || !is_wet(p)) {
+			continue;
+		}
+		found.push_back({ light->get_instance_id(), dist });
+	}
+	found.sort();
+	for (uint32_t i = 0; i < MIN(found.size(), 4u); i++) {
+		underwater_lamps.push_back(found[i].id);
+	}
+}
+
+void PhysXWaterSurface3D::_update_underwater_lamps() {
+	PackedVector4Array pos;
+	PackedVector4Array dir;
+	PackedVector4Array color;
+	PackedFloat32Array rim;
+	pos.resize(4);
+	dir.resize(4);
+	color.resize(4);
+	rim.resize(4);
+	int count = 0;
+	for (const ObjectID &id : underwater_lamps) {
+		Light3D *light = ObjectDB::get_instance<Light3D>(id);
+		if (light == nullptr || !light->is_inside_tree() || !light->is_visible_in_tree() || count >= 4) {
+			continue;
+		}
+		const Transform3D xf = light->get_global_transform();
+		pos.set(count, Vector4(xf.origin.x, xf.origin.y, xf.origin.z, light->get_param(Light3D::PARAM_RANGE)));
+		const Vector3 travel = -xf.basis.get_column(2).normalized();
+		const bool spot = Object::cast_to<SpotLight3D>(light) != nullptr;
+		const float cutoff = spot ? Math::cos(Math::deg_to_rad(light->get_param(Light3D::PARAM_SPOT_ANGLE))) : -2.0f;
+		dir.set(count, Vector4(travel.x, travel.y, travel.z, cutoff));
+		const Color c = light->get_color().srgb_to_linear() * light->get_param(Light3D::PARAM_ENERGY) * Math::PI;
+		color.set(count, Vector4(c.r, c.g, c.b, light->get_param(Light3D::PARAM_ATTENUATION)));
+		rim.set(count, spot ? light->get_param(Light3D::PARAM_SPOT_ATTENUATION) : 1.0f);
+		count++;
+	}
+	for (Ref<ShaderMaterial> m : { underwater_fog_material, underwater_surface_material }) {
+		if (m.is_null()) {
+			continue;
+		}
+		m->set_shader_parameter("uw_lamp_count", count);
+		m->set_shader_parameter("uw_lamp_pos", pos);
+		m->set_shader_parameter("uw_lamp_dir", dir);
+		m->set_shader_parameter("uw_lamp_color", color);
+		m->set_shader_parameter("uw_lamp_rim", rim);
 	}
 }
 

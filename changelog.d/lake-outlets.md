@@ -1,0 +1,1 @@
+- Water: a river leaving a lake (`source_lake`) carries what the lake passes over its outlet sill, the lake's water drifts towards the outlet, and with `level_from_flows` the lake settles at the level where its outlets pass what flows in.

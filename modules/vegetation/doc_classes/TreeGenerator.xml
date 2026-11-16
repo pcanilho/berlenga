@@ -499,7 +499,16 @@
 		<constant name="STAND_PINE_HEMLOCK" value="9" enum="Stand">
 			Eastern white pine over hemlock, with red maple, and paper birch in openings.
 		</constant>
-		<constant name="STAND_MAX" value="10" enum="Stand">
+		<constant name="STAND_COPPICE_STANDARDS" value="10" enum="Stand">
+			Coppice with standards: hazel coppice in coupes of two ages (grown, and cut one to three years ago) under widely spaced oak and ash standards.
+		</constant>
+		<constant name="STAND_WOOD_PASTURE" value="11" enum="Stand">
+			Wood pasture: lapsed beech and oak pollards and open-grown oaks with hawthorn and holly; grazed, so no underwood or saplings.
+		</constant>
+		<constant name="STAND_POLLARD_ROW" value="12" enum="Stand">
+			Willow pollards, still worked on a five to eight year cycle, with black alder. Placed by the scene along its own lines, like [constant STAND_HEDGEROW].
+		</constant>
+		<constant name="STAND_MAX" value="13" enum="Stand">
 			Number of stand types.
 		</constant>
 		<constant name="REGION_EUROPE" value="0" enum="Region">

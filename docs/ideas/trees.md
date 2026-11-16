@@ -500,6 +500,10 @@ anywhere on the lying stem, N (12), then the reach at N points evenly from a to 
 and moss as built (15 Nov): it takes in the butt, a root plate and the stem's own bends off the
 straight line, which the first node's radius (the old 7th float) missed by up to half a metre.
 A reader of the first 7 floats keeps out of all the wood.
+Appended (16 Nov, vegetation's request; 8 + 5N floats): N points along the stem's own
+centreline by arc length, each x, y, z and the girth round it to the outside of the moss. The
+chord reach counts a bent stick's bow as girth (a 3 cm, 3.5 m stick read as a 21 cm log), so
+honey fungus and on-log plants lined thin sticks; spans between centreline points do not.
 
 ### 5c. Moss on bark (as built, 11 Nov)
 
@@ -1022,6 +1026,21 @@ mistletoe and brooms, which read from far.
   - *Cost* (LOD 0 crown parts, seed 1): hazel in flower 75k to 255k (closed in autumn 98k),
     rowan in fruit 384k, ash with keys 281k, birch with brooms 82k. LOD 1 on keeps only
     mistletoe and brooms, as before.
+- **Rowan, round 3 (16 Nov, after the docs review declined a close-up).** Real rowan (Raspe et
+  al. 2000, *Sorbus aucuparia*, J. Ecol.; Rich et al. 2010):
+  - *Corymb*: a flat-topped dome of 90-160 berries (elder 150-240, smaller) on a red stalk that
+    branches three times (peduncle, 5-7 rays, branchlets, pedicels), each stalk bowing under the
+    weight; berries sit on a sunflower spiral over the dome, each with its dark calyx star. At
+    most 80 heads a tree. Rowan in fruit, crown parts 675k (was 384k), elder 859k.
+  - *Leaflets*: lanceolate, about 3.5:1 (half-width 0.15 of the length; ash 0.19, elder 0.24),
+    a three-step lens instead of a diamond, so pinnate near leaves double (rowan 7.1M to 14.2M
+    near triangles; LOD 1 on unchanged). Lighter fbm and secondary veins in the leaf texture
+    break the two flat greens. Not done: *teeth*, as geometry 64M triangles on one rowan, so
+    they wait for an alpha-cut leaflet texture; *pale underside*, which needs a back-face
+    colour the path tracer also follows.
+  - *Winter buds* on every shoot tip under 1 cm (days 200 to 105, half size in early autumn):
+    per species length, width and colour (beech a long copper spindle, rowan dark purple and
+    conical, ash black, oak clustered), at most two per tip; oak 750k, rowan 254k.
 
 ## 6. What the games at Paulo's bar do
 
@@ -1443,6 +1462,27 @@ canopy trees, then open-grown trees in gaps, then shrubs under their shade limit
 `make_woodland()` joins the woodland stands with every canopy tree first; later stands' trees
 take only gaps earlier crowns leave, so overlapping belts form ecotones instead of stacking.
 Bench: `docs/bench/trees -- --stands --test | --map= | --region= | --plot=N`.
+
+**Worked stands (16 Nov; Paulo picked crown details, then stands, then bark stories).** Three
+managed woods that read as made by people (Rackham 2006, *Woodlands*; Peterken 1993; Read 2000,
+*Veteran Trees*):
+- *Coppice with standards* (`STAND_COPPICE_STANDARDS`): open-grown oak standards (short bole,
+  spreading crown; the drawn-up forest form read as lollipops) at a third of a high forest's
+  density and 2.2x its spacing (ash too on wet ground), over hazel coppice in coupes:
+  two hazel forms (`FORM_COPPICE` cut 4 years to a cycle ago, `FORM_COPPICE_YOUNG` 1-3 years)
+  in 40 m patches that alternate, so the wood shows cut and grown panels side by side. Some
+  hawthorn. Deadwood a third of an unmanaged oakwood's: the wood is worked.
+- *Wood pasture* (`STAND_WOOD_PASTURE`): ancient beech and oak pollards (`FORM_POLLARD`, cut at
+  2.2-2.7 m, lapsed 40-100 years, 140-200 years old, veteran 0.6-0.9; older beech pollards
+  died back to a few shoots on a bare head) and open-grown oaks, at 3x a
+  forest's spacing (a tree every 20-30 m; at forest spacing the crowns closed into a wood), with open-grown hawthorn and holly; grazed, so no saplings; fallen limbs and an
+  occasional log.
+- *Pollard row* (`STAND_POLLARD_ROW`): working willow pollards 5 m apart along a ditch (cut at
+  2.0-2.4 m every 5-8 years), a few open alders. Placed by the scene along its lines, like a
+  hedgerow.
+Each new form is its own cached variant (`form` in the cache key). Bench: `--stands --plot=10`,
+`11`, `12`; `--stands --test` checks pollards in pasture and rows, no pasture saplings, both
+coupe ages and coppice stools outnumbering standards more than 4 to 1.
 
 **Foliage through the crown.** Open-grown trees keep leaves down to the lower branches: a weaker,
 deeper shadow (strength 0.08 over 4 cells) and a third of the old shedding. Short shoots (spurs)

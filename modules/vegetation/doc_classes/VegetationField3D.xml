@@ -99,6 +99,13 @@
 				Canopy shade at [param global_position], from 0 (open sky) to 1 (dense crown), from the plants of species with [member PlantSpecies.canopy_radius] placed by the last [method populate]. Each crown stops [member PlantSpecies.canopy_opacity] of the light under its core, fading out a little past its rim; overlapping crowns multiply their transmission. Species with a [member PlantSpecies.shade_range] are placed by it, so list canopy species first in the [Biome].
 			</description>
 		</method>
+		<method name="get_light_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The light plants grow in at [param global_position]: the open sky left by [method get_shade_at] times how sunny the slope is against the map's mean (the [TerrainDataMap3D] climate's shortwave; 1 without climate), from 0.3 to 1.5. Leaves and grass blades are tinted by it (darker and bluer in shade, paler in full sun), and the far cover map's grass colours take the same tint.
+			</description>
+		</method>
 		<method name="get_litter_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />

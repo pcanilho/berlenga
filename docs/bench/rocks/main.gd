@@ -12,6 +12,13 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch
+#   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
+#   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
+#   --wind=m/s            with --water: the sea's wind speed (and some swell)
+#   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
+#   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
+#   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
 #   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
@@ -20,7 +27,7 @@ extends Node3D
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast"]
 const WORLD := 2048.0
 
@@ -79,6 +86,12 @@ func _ready() -> void:
 			if n is DirectionalLight3D:
 				(n as DirectionalLight3D).rotation_degrees = Vector3(-float(sv[0]), float(sv[1]) if sv.size() > 1 else -50.0, 0)
 	if out != "":
+		# Single captures have no TAA to smooth the soft-low shadow kernel's per-pixel rotation (a dot
+		# grid in penumbras): the high filter instead.
+		# --shadow-filter=N overrides it (0 hard .. 5 soft ultra).
+		var q := int(args.get("shadow-filter", str(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)))
+		RenderingServer.directional_soft_shadow_filter_set_quality(q)
+		RenderingServer.positional_soft_shadow_filter_set_quality(q)
 		_render_later()
 
 
@@ -243,12 +256,25 @@ func _world() -> void:
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)
-	land.collision_enabled = false
+	land.collision_enabled = args.has("water") # the sea's seabed_from_floor measures the bed through it
 	land.camera = land.get_path_to(cam)
 	land.rebuild()
 	land.load_all_heights()
 	if args.has("water"):
-		gen.build_water(self)
+		var waters: Array = gen.build_water(self)
+		if args.has("sea-res"):
+			# The sea's shallow-water grid is 16 m cells on a 2 km world: too coarse for water round a stack.
+			for w in waters:
+				if w is Node and (w as Node).name == "Sea":
+					w.set("grid_resolution", int(args["sea-res"]))
+		if args.has("wind"):
+			# --wind=m/s: a rougher sea with some swell, so the foot of a stack has waves and foam on it.
+			for w in waters:
+				if w is Node and (w as Node).name == "Sea":
+					w.set("follow_weather", false)
+					w.set("wind_speed", float(args["wind"]))
+					w.set("swell", 0.5)
+					w.set("shore_wave_height", 1.4)
 	var focus := Node3D.new()
 	focus.name = "Focus"
 	add_child(focus)
@@ -263,6 +289,11 @@ func _world() -> void:
 		add_child(rocks)
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
+		rocks.ground_material = tm # the stones' feet blend into these layers
+		if args.has("no-ground-blend"):
+			rocks.ground_blend = false
+		if args.has("water"):
+			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
@@ -276,7 +307,23 @@ func _world() -> void:
 		cam.position.y = maxf(cam.position.y, spot.y + dist * 0.9)
 	if args.has("top"):
 		cam.position = spot + Vector3(0, float(args["top"]) if args["top"] != "1" else 30.0, 0.5)
-	cam.look_at(spot + Vector3(0, 0.3, 0))
+	var look := spot + Vector3(0, 0.3, 0)
+	if view == "coast" and args.has("seaward"):
+		# --seaward: from the land side looking out, the form against sea and sky with the cliff behind the camera.
+		var land_dir := Vector3.ZERO
+		var top := -INF
+		for i in 16:
+			var d := Vector3(cos(TAU * i / 16.0), 0, sin(TAU * i / 16.0))
+			var hgt := gen.get_height(spot + d * 50.0)
+			if hgt > top:
+				top = hgt
+				land_dir = d
+		var side := land_dir.cross(Vector3.UP) * float(args.get("side", "0.35"))
+		cam.position = spot + (land_dir + side).normalized() * dist
+		var sea_y := gen.get_sea_level() if gen.has_sea_result() else spot.y
+		cam.position.y = maxf(gen.get_height(cam.position) + 2.0, sea_y + float(args.get("cam-height", "6")))
+		look = Vector3(spot.x, sea_y + float(args.get("look-height", "8")), spot.z)
+	cam.look_at(look)
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:
@@ -495,6 +542,18 @@ func _densest(layer: int) -> Vector3:
 		print("scree: fullest talus %.2f at %s (%d ms)" % [bt, bp, Time.get_ticks_msec() - t0])
 		return bp
 	var stones: Array = rocks.get_stones(layer, Rect2(-800, -800, 1600, 1600))
+	if layer == RockField3D.LAYER_COAST:
+		# The coast: frame the stack or arch itself (the biggest form), its foot at the water.
+		var best := {}
+		for s in stones:
+			var fams := [RockGenerator.FAMILY_SEA_STACK, RockGenerator.FAMILY_SEA_ARCH]
+			if args.has("form"):
+				fams = [RockGenerator.FAMILY_SEA_ARCH if args["form"] == "arch" else RockGenerator.FAMILY_SEA_STACK]
+			if int(s["family"]) in fams and (best.is_empty() or float(s["scale"]) > float(best["scale"])):
+				best = s
+		if not best.is_empty():
+			print("coast form: family %d at %s" % [best["family"], best["position"]])
+			return best["position"]
 	var cells := {}
 	var sums := {}
 	for s in stones:
@@ -747,6 +806,15 @@ func _test() -> void:
 				var ps := _piece_stats(node, Transform3D(big["basis"], big["position"]))
 				var grown: AABB = (ps["stone_box"] as AABB).grow(0.02 * (ps["stone_box"] as AABB).size.length())
 				check(absf(ps["volume"] / ps["stone_volume"] - 1.0) < 0.05 and grown.encloses(ps["box"]), "pieces are the stone: volume %.3f of %.3f m3, all inside its box (%s in %s)" % [ps["volume"], ps["stone_volume"], (ps["box"] as AABB).size, (ps["stone_box"] as AABB).size])
+			# A hit on a stone whose shape is already fractured (what break_prepare_radius does ahead of the player on a
+			# worker): only the swap for the pieces, no fracture on the main thread.
+			rocks.restore_broken()
+			var bp: Vector3 = big["position"]
+			rocks.build_area(Rect2(bp.x - 40, bp.z - 40, 80, 80)) # restore_broken drops the cells; build them again
+			var pt := Time.get_ticks_usec()
+			var again: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
+			var ms := (Time.get_ticks_usec() - pt) / 1000.0
+			check(again != null and ms < 16.0, "break_stone on a prepared shape: %.1f ms (under a 60 Hz frame)" % ms)
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.
@@ -770,7 +838,7 @@ func _render_later() -> void:
 		await get_tree().process_frame
 	while args.has("plants") and rocks and not plants_ready:
 		await get_tree().process_frame
-	var frames := 8 if raster else 12
+	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
 	for i in frames:
 		if i == frames - 4:

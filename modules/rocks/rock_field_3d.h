@@ -142,6 +142,15 @@ private:
 	real_t detail = 1.0;
 	real_t lichen_cover = 0.5;
 	real_t moss_cover = 0.4;
+	// Ground blending: the stone's foot eased into the ground under it (docs/ideas/rocks.md).
+	bool ground_blend = true;
+	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
+	bool coast_collision = true;
+	bool coast_seabed_dirty = false;
+	void _remeasure_sea();
+	real_t ground_blend_height = 0.25;
+	Ref<ShaderMaterial> ground_material;
+	void _apply_ground(const Ref<ShaderMaterial> &p_material) const;
 	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true };
 	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0 };
@@ -243,6 +252,14 @@ public:
 	real_t get_lichen_cover() const { return lichen_cover; }
 	void set_moss_cover(real_t p_cover);
 	real_t get_moss_cover() const { return moss_cover; }
+	void set_coast_collision(bool p_enabled);
+	bool is_coast_collision() const { return coast_collision; }
+	void set_ground_blend(bool p_enabled);
+	bool is_ground_blend() const { return ground_blend; }
+	void set_ground_blend_height(real_t p_height);
+	real_t get_ground_blend_height() const { return ground_blend_height; }
+	void set_ground_material(const Ref<ShaderMaterial> &p_material);
+	Ref<ShaderMaterial> get_ground_material() const { return ground_material; }
 	void set_layer_enabled(int p_layer, bool p_enabled);
 	bool is_layer_enabled(int p_layer) const;
 	void set_layer_density(int p_layer, real_t p_density);

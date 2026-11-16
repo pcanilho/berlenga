@@ -23,6 +23,13 @@
 				Removes the inflow [param owner] registered with [method set_inflow].
 			</description>
 		</method>
+		<method name="clear_outflow">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Removes the outlet registered by [param owner] (see [method set_outflow]).
+			</description>
+		</method>
 		<method name="clear_sphere">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -100,6 +107,12 @@
 			<return type="float" />
 			<description>
 				The foam threshold in use: [member foam_threshold], or with [member whitecap_auto] on, the threshold steered to the wind's whitecap cover.
+			</description>
+		</method>
+		<method name="get_outflow_discharge" qualifiers="const">
+			<return type="float" />
+			<description>
+				What the outlets pass at the current level (m³/s).
 			</description>
 		</method>
 		<method name="get_wave_cascade_size" qualifiers="const">
@@ -189,6 +202,18 @@
 				A river flowing in at [param at] (world, its mouth) heading along [param direction], [param width] metres wide and carrying [param discharge] m³/s. Its outflow spreads as a turbulent plane jet (Rajaratnam): a core about three widths long at the mouth speed, then slowing as the square root of the distance while it widens, worn down by the bed in shallow water. The plume is added to the flow over the simulated square, so the waves, foam and floating bodies ride it; the live water does not simulate it. [PhysXRiver3D] calls this for its [member PhysXRiver3D.mouth_target]; [param owner] identifies the inflow.
 			</description>
 		</method>
+		<method name="set_outflow">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="at" type="Vector3" />
+			<param index="2" name="direction" type="Vector3" />
+			<param index="3" name="width" type="float" />
+			<param index="4" name="crest" type="float" />
+			<param index="5" name="coefficient" type="float" />
+			<description>
+				A river leaving this water at [param at] (world, its sill, whose top is at world height [param crest]) along [param direction] (out of the lake). The water drains over the sill as a broad-crested weir [param width] wide ([method weir_discharge]) and converges on it as a sink in a half plane, [code]Q / (pi r h)[/code] at distance r and depth h, added to the flow like the inflows' plumes (floating bodies and foam drift to the outlet). Called by [PhysXRiver3D] ([member PhysXRiver3D.source_lake]).
+			</description>
+		</method>
 		<method name="set_sea_state">
 			<return type="void" />
 			<param index="0" name="wind_speed" type="float" />
@@ -218,8 +243,20 @@
 				A persistent body proxy that pushes the ripple layer's surface down near [param world_pos]'s XZ, proportional to [param radius] and [param strength]. Call once per physics tick while a body is in the water (e.g. from its own [code]_physics_process[/code]), keyed by any id stable for that body's lifetime -- [code]get_instance_id()[/code] works well. Call [method clear_sphere] with the same id when the body leaves.
 			</description>
 		</method>
+		<method name="weir_discharge" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="coefficient" type="float" />
+			<param index="1" name="width" type="float" />
+			<param index="2" name="head" type="float" />
+			<description>
+				The discharge (m³/s) over a broad-crested weir [param width] wide under [param head] metres of water: [code]Cd (2/3)^(3/2) b sqrt(g) H^(3/2)[/code] (critical depth on the crest; Henderson 1966).
+			</description>
+		</method>
 	</methods>
 	<members>
+		<member name="catchment_inflow" type="float" setter="set_catchment_inflow" getter="get_catchment_inflow" default="0.0">
+			With [member level_from_flows]: water reaching the lake besides the rivers flowing in (rain and springs of its catchment), m³/s.
+		</member>
 		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="false">
 			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. Clear water ([code]clear_water[/code] in the material) lights the bed it shows with it in the rasterizer: the sun's share of the bed's light is scaled by the map's ratio (the path tracer finds its own caustics). See [method get_caustics_texture]. Off by default: the pass draws every frame, and caustics only show over a floor seen through fairly shallow water (a pool, a beach, a lake shore), so turn it on where you have one.
 		</member>
@@ -273,6 +310,9 @@
 		</member>
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
+		</member>
+		<member name="level_from_flows" type="bool" setter="set_level_from_flows" getter="get_level_from_flows" default="false">
+			The level settles where the outlets ([method set_outflow]) pass what flows in (the rivers' inflows plus [member catchment_inflow]): the steady state, since a lake takes hours to days to settle. When it moves by more than a centimetre, [member water_level] changes and the rivers leaving and entering rebuild on the new level.
 		</member>
 		<member name="mesh_detail" type="int" setter="set_mesh_detail" getter="get_mesh_detail" default="1">
 			Rendered mesh cells per [member ocean_grid_resolution] cell (1 to 4). A curling breaker needs cells of about a tenth of the wave's height to fold over cleanly; the vertex and path tracing costs grow with the square of this.

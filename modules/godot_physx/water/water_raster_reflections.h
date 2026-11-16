@@ -223,7 +223,12 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 		vec4 b = inv_proj * vec4(uv * 2.0 - 1.0, d0, 1.0);
 		len0 = distance((inv_view * vec4(b.xyz / b.w, 1.0)).xyz, p_s);
 	}
-	float z0 = z_bed >= 0.0 ? z_bed : max(-v.y, 0.0) * min(len0, 1e3);
+	// The known bed, but never deeper than the bed the screen shows straight through: the bed map is the
+	// simulated grid's (metres a cell, or a constant depth where nothing was measured), and a refracted probe
+	// sent to its deeper bed missed and fell back to that whole depth of water, as dark hard-edged blotches
+	// over shallow sand.
+	float z_screen = max(-v.y, 0.0) * min(len0, 1e3);
+	float z0 = z_bed >= 0.0 ? min(z_bed, len0 < 1e4 ? z_screen : 1e3) : z_screen;
 	float len_r = min(z0 / max(-t.y, 0.05), 60.0);
 	// Given up: the straight-through colour, but the refracted ray's path to the same depth (the straight
 	// ray's own, longer at a glancing view, would change the tint in a step where the offset is given up).
@@ -252,7 +257,7 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	// The known bed's path, unless something stands nearer on it (a rock, a hull): the screen's depth jumps
 	// from pixel to pixel where waves bend the offset, the bed's does not.
 	if (z_bed >= 0.0) {
-		len = min(len, z_bed / max(-t.y, 0.05) + 0.25);
+		len = min(len, z0 / max(-t.y, 0.05) + 0.25);
 	}
 	vec3 st = max(p_ab, vec3(0.0)) + max(p_sc, vec3(0.0));
 	float mu = max(-p_sun_dir.y, 0.05);

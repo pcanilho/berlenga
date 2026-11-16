@@ -1138,10 +1138,13 @@
    "name": "Ground contact and aspect",
    "settings": [
     "contact_height",
-    "aspect_strength"
+    "aspect_strength",
+    "ground_blend",
+    "ground_blend_height",
+    "ground_material"
    ],
    "note": "",
-   "what": "stones blend into the ground with a soil band at their foot and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
+   "what": "stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
@@ -1183,7 +1186,7 @@
     "LAYER_COAST"
    ],
    "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts.",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1470,6 +1473,18 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Buoyancy from shapes",
+   "settings": [
+    "volume_mode",
+    "mass_from_densities"
+   ],
+   "note": "",
+   "what": "bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Bodies push water",
    "settings": [
     "PhysXWaterPusher3D"
@@ -1500,6 +1515,9 @@
     "max_slope",
     "gradually_varied_flow",
     "bend_superelevation",
+    "standing_waves",
+    "source_lake",
+    "level_from_flows",
     "carve",
     "obstacle_collision_mask",
     "live_flow",
@@ -1561,7 +1579,7 @@
     "underwater_enabled"
    ],
    "note": "",
-   "what": "fog, scattering, Snell's window, image split at the water line.",
+   "what": "fog, scattering, Snell's window, image split at the water line. In raster, omni and spot lights glow and scatter in the water, as under path tracing.",
    "page": "water",
    "title": "Water",
    "topic": "Under water"
@@ -1852,7 +1870,7 @@
     "PlantGenerator.make_stones()"
    ],
    "note": "",
-   "what": "moss grows on the tops of generated stones, and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
+   "what": "moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2127,6 +2145,19 @@
    ],
    "note": "",
    "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Crown parts",
+   "settings": [
+    "fruit_cover",
+    "mistletoe",
+    "witches_brooms"
+   ],
+   "note": "",
+   "what": "cones, catkins with bract scales, ash keys in bunches and berries on stalks in season; mistletoe on its hosts and witches' brooms as twig nests on birches.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2696,6 +2727,19 @@
    "settings": [],
    "note": "always on",
    "what": "shape noise read at two scales with an irrational ratio.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Evolving clouds",
+   "settings": [
+    "cloud_evolution",
+    "cloud_lifetime",
+    "cloud_churn"
+   ],
+   "note": "",
+   "what": "clouds form, clear and reshape over time instead of only drifting.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

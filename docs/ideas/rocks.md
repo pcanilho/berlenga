@@ -270,3 +270,105 @@ Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (k
 - Glossy crystals (quartz and a third of the feldspars, the cleavage faces) tilt up to about 45 degrees with
   roughness 0.12: under a low sun a scatter of them flash, raster and path traced alike. A true glint BRDF
   (Chermain et al. 2020) is the next round.
+- Granite reads less like a mosaic: the crystal map is looked up through a small warp (ragged grain boundaries),
+  the quartz class fades over the last tenth of a cell, and each crystal carries its own cloud (altered feldspar
+  blotchy, quartz glassy and even).
+- Sea rock carries the shore zones (Stephenson and Stephenson 1949; Lewis 1964): wet barnacle crust and weed
+  below high water, the black Verrucaria band through the splash zone (shader `sea_level`, `tide_range`; the field
+  sets the sea level from its generator). Stacks are one mass (tiers sunk deep, barely shifted); the wave-cut
+  platform's blocks touch across wandering joints and step down seaward in low ledges.
+- Bench: `--sea-res=N` sets the sea's simulated grid; at the default 16 m cells the water left the stack's foot dry.
+- A prepared stone breaks in about 12 ms (it was 87): the Blast asset is authored on the worker with the fracture,
+  each piece gets a small collision hull there (its convex hull thinned to 64 points by farthest-point sampling,
+  `PhysXBlastAsset.chunk_hulls`), and PhysXDestructible3D keeps indexed chunk meshes indexed instead of unrolling
+  them to a soup. Bench test: break, restore, break the same shape again.
+- Close-up memory: 46.8 MB for the 16 shapes near the bench target. A second tier at 3x cells beyond 4 m saved only
+  7 MB (most of those shapes have a stone within 4 m), so it was not kept. Left: compressed vertex attributes
+  (about half), to measure with the GPU.
+- Shore zones only on stones the sea reaches (coast, and shore stones on the sea's own water): flagged in the
+  instance film (+2); by height alone they darkened inland stones near sea level.
+
+### Coast forms as bedrock (16 Nov, docs review)
+
+Docs declined stacks built of stood-up blocks, an arch of two piers and a lintel, and a platform of flagstones. Real
+forms (Trenhaile 1987; Sunamura 1992; Kennedy 2014 on shore platforms) are one mass each: a stack is a jointed
+column banded by harder and softer beds, undercut by the wave-cut notch at the waterline, opening down its joints
+from the top; an arch is a headland wall the waves cut through along a joint; a platform is a bench of bedrock cut
+flush at the cliff foot, crossed by joint sets opened into grooves, stepping down seaward, with pools. Paris et al.
+2020 (Modeling rocky scenery using implicit blocks) build such scenery the same way: a jointed volume with implicit
+cuts. Here three RockGenerator families do it on the field grid after the rounding:
+- `FAMILY_SEA_STACK`: big off-axis cuts (an irregular polygon in plan), beds of uneven thickness each weathered back by
+  its own amount with a sharp step between them, the notch a fifth up the solid (the field stands it with the notch at
+  sea level), a taper, low-frequency relief, one or two open joints from the top;
+- `FAMILY_SEA_ARCH`: the same wall with an elliptic opening from the bed through most of its height;
+- `FAMILY_SEA_PLATFORM`: a thin bench with vertical cuts for an irregular edge, two joint sets (the cross set stops and
+  starts), seaward ledges and 3 to 6 pools; set 0.6 m above mean sea level, its landward edge sunk into the cliff foot.
+Coast forms get trimesh collision (an arch's opening stays open) and are not breakable or close-up shapes.
+
+#### Second review (16 Nov): crisp beds, open joints, shore bands
+
+Docs declined the stack and arch again: rounded "melted cushions" banded at even heights, a groove for a joint, no
+tidal bands, a pale plinth at the waterline. Causes and fixes:
+- The beds were a field offset blended over ~3 cells per bed (0.5 m beds at 0.5 m cells), plus 0.14c fbm bulges: all
+  rounded. Now bed boundaries fall at random intervals (0.3 to 1.9 x a mean of ~1.5 m), half the beds soft (recessed
+  0.12 to 0.24c, never two soft in a row) and the rest hard, the step between beds eased over 1.5 cells only, so a
+  hard bed's lip overhangs the soft one below with an arris. Hard lips break back where a block fell out. The fbm
+  bulges are gone; faces get quantised block relief (facets meeting in edges) instead. Stack resolution 160 -> 256,
+  arch 180 -> 224. No spheroidal rounding on coast forms.
+- One or two of the big side cuts are recent falls, flagged fresh (pale scar face, beds hardly recessed).
+- Joints are planar slots (a slab removed down to 0.55c from the surface, tapering shut at the tip) instead of a
+  smooth groove: a dark gap with flat walls.
+- Notch: sloping floor up to a sharp visor; below it the foot stays worn back, so clear water does not show a wider
+  plinth under the surface (the pale rim was that, plus the pale barnacle colour).
+- Arch: taller (span/height ~1.6), legs wider than the opening, a round-headed opening whose ceiling steps in blocks a
+  fifth of the thickness high (roof blocks fall one by one), walls upright below the spring.
+- Shore bands never showed on coast forms: the sea flag tested the stone's ground against the sea, and a coast form's
+  ground is 50 m below it. Coast forms are now always flagged when there is a sea. The barnacle band is a dull
+  grey-brown crust specked with pale shells, weed below, and the black splash band reaches up to 3x the tide range.
+- Fallen blocks at a stack's foot are rockfall fragments (slabs, wedges, rods), not cliff blocks.
+- Bench: `--wind=m/s` (sea wind and some swell), `--seaward` (camera on the land side looking out).
+Water does not yet see the forms (rock collision is off with --water, or the sea's seabed probe takes a stack for the
+bed), so no foam rings a stack's foot: a water-side hook would be needed.
+
+## Ground blending (round 3, 16 Nov)
+
+A stone dropped on terrain shows a hard seam: its rind meets the soil with no transition, and on a slope the
+contact band (one ground height per stone) sits wrong on both sides. What engines do:
+- **CryEngine / KCD2 "terrain layer blend"**: objects (rocks especially) blend toward the terrain layer under them
+  over a height band, with a noise and height-map term, and take the terrain normal there.
+- **Unreal Runtime Virtual Texturing** (Fortnite, Valley of the Ancient): the landscape renders its final albedo,
+  normal and roughness into a virtual texture; rock materials sample it near the ground and blend by height above the
+  landscape (also read from the RVT) and by a noise mask.
+- **Far Cry 5** (McAuley, GDC 2018 "Terrain Rendering in Far Cry 5"): objects read the terrain's height and albedo
+  and blend over a depth band; the blend follows the terrain's real height under each pixel.
+- **Frostbite / Battlefront** (Andersson; DICE terrain blending): a mesh blend band with height-based (Mishkinis
+  2013) layering, so hollows fill with ground first and the proud parts of the stone stay clean.
+- **Unity HDRP / MicroSplat "terrain blending"**: same idea with a distance-to-terrain from a height map and a
+  per-object blend height.
+Common pieces: (1) the terrain's height under each pixel, (2) the terrain's surface (albedo, roughness, normal) at
+that point, (3) a band blend modulated by the stone's own relief (height blend) and noise, (4) the normal pulled to
+the terrain's in the band so lighting agrees across the seam.
+
+Here, without a virtual texture: (1) a ground plane per stone (height at its foot and the slope there, packed in
+INSTANCE_CUSTOM.w with the random), so the band follows a slope; (2) the generator's geology map (global
+terrain_geology_map) gives rock, scree, soil, alluvium and sand per pixel, coloured from the landscape's
+TerrainMaterial3D layers (colour times the mean of its albedo texture), which RockField3D.ground_material hands to the
+rock material; (3) a band of `ground_blend_height` (scaled by the stone's size), cavities first (Mishkinis height
+blend on the stone's cavity map), with noise, upward faces more; (4) the normal eased to the ground plane's.
+
+#### Third review (16 Nov): natural silhouettes
+
+Docs: crisp, but both forms read as masonry (a ruined chimney of rectangular courses; a doorway with a lintel). The
+references (Old Harry Rocks and Durdle Door in chalk and limestone, the Twelve Apostles in limestone) differ by
+outline more than by surface:
+- Stack: now built from 6 to 9 joint faces at uneven azimuths and distances (an irregular polygon in plan, not a
+  box), each a few degrees off upright, the whole leaning 2 to 7 degrees one way and narrowing upward; one to three
+  dominant steep joint faces at any azimuth cut into one side, deeper toward the top; the top two or three oblique
+  breaks. Beds vary much more in thickness (0.2 to 2.6 x the mean, most thin) and their recess varies around the
+  stack (0.3 to 1.7 x), so ledges run part way round and stop. An open joint only on about two stacks in three,
+  off-centre and a little oblique. Below the notch's roof the beds are planed back alike (the lips there read as a
+  plinth); the notch is shallower (0.18c).
+- Arch: the opening is widest at the waterline (flare 0.45 to 0.85 x its half-width) and closes to a rounded head
+  that leans to one side; above the springing its outline steps where roof blocks fell; its edges are ragged. The
+  deck sags over the span (a quarter to a half of the rock above the opening, never thinner than 0.4c) and dips
+  along the ridge.

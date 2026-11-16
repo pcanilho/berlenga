@@ -272,17 +272,40 @@ Vector2 rotate_lattice(Vector2 p_p) {
 	return Vector2(0.8f * p_p.x - 0.6f * p_p.y, 0.6f * p_p.x + 0.8f * p_p.y);
 }
 
-float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale) {
+// Clouds that form and clear (docs/ideas/weather.md, step 3e): each octave of the cover noise moves through
+// time as a stack of independent slices, blended by smoothstep from one to the next. The blend keeps the noise's
+// spread (Heitz and Neyret 2018, variance-preserving blending: divide by the length of the weights), so the sky
+// does not grow flatter halfway between slices and cover still means share of sky. Octave o turns over in
+// lifetime * 2.03^(-2o/3): smaller eddies live shorter (Kolmogorov, t ~ l^(2/3)).
+constexpr float EVOLVE_OCTAVE_RATE = 1.6031f; // 2.03^(2/3)
+
+Vector2 evolve_slice_offset(int p_slice, int p_octave) {
+	return Vector2(hash2(p_slice, 7 + p_octave), hash2(p_slice, 13 + p_octave)) * 4096.0f;
+}
+
+float evolving_value_noise(Vector2 p_q, float p_time, int p_octave) {
+	const float k = Math::floor(p_time);
+	const int ki = int(k);
+	const float w = smoothstep(0.0f, 1.0f, p_time - k);
+	const float a = value_noise(p_q + evolve_slice_offset(ki, p_octave)) - 0.5f;
+	const float b = value_noise(p_q + evolve_slice_offset(ki + 1, p_octave)) - 0.5f;
+	const float len = Math::sqrt((1.0f - w) * (1.0f - w) + w * w);
+	return CLAMP(0.5f + (a * (1.0f - w) + b * w) / len, 0.0f, 1.0f);
+}
+
+float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve) {
 	const Vector2 p = (p_xz - p_drift) / MAX(p_scale, 1.0f);
 	float v = 0.0f;
 	float amp = 0.5f;
-	float freq = 1.0f;
 	float norm = 0.0f;
+	float rate = 1.0f;
 	Vector2 q = rotate_lattice(p);
 	for (int o = 0; o < 4; o++) {
-		v += amp * value_noise(q + Vector2(17.1f * o, 31.7f * o));
+		const Vector2 qo = q + Vector2(17.1f * o, 31.7f * o);
+		v += amp * (p_evolve < 0.0f ? value_noise(qo) : evolving_value_noise(qo, p_evolve * rate + 0.37f * o, o));
 		norm += amp;
 		amp *= 0.5f;
+		rate *= EVOLVE_OCTAVE_RATE;
 		q = rotate_lattice(q) * 2.03f;
 	}
 	return v / norm;
@@ -306,7 +329,7 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 	float cover = p_state.cover;
 	float t = p_state.type;
 	if (p_state.variation > 0.0f) {
-		cover = CLAMP(cover + (cover_noise(p_xz, p_state.drift, p_state.cover_scale) - 0.5f) * 2.0f * p_state.variation, 0.0f, 1.0f);
+		cover = CLAMP(cover + (cover_noise(p_xz, p_state.drift, p_state.cover_scale, p_state.evolve) - 0.5f) * 2.0f * p_state.variation, 0.0f, 1.0f);
 	}
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
@@ -356,7 +379,10 @@ float shape_at(const State &p_state, const Vector3 &p_pos) {
 	const Vector2 a = rotate_shape_a(p);
 	const Vector2 b = rotate_shape_b(p);
 	const Vector<float> &noise = shape_noise();
-	return even_sum(sample_tiled(noise, SHAPE_SIZE, Vector3(a.x, y, a.y)), sample_tiled(noise, SHAPE_SIZE, Vector3(b.x, y * SHAPE_SECOND + 0.53f, b.y)));
+	// The second read slides against the first (step 3e), so their sum, the clouds, change shape. A slide across
+	// keeps the share of sky: each read still averages over the whole tile's area (rising through the tile did
+	// not, since one height slice of a 128^3 tile differs from the next and the whole sky pulsed with it).
+	return even_sum(sample_tiled(noise, SHAPE_SIZE, Vector3(a.x, y, a.y)), sample_tiled(noise, SHAPE_SIZE, Vector3(b.x + p_state.shift.x, y * SHAPE_SECOND + 0.53f, b.y + p_state.shift.y)));
 }
 
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
@@ -435,6 +461,10 @@ uniform float cloud_variation = 0.35;
 uniform float cloud_cover_scale = 6000.0;
 uniform float cloud_shape_scale = 3000.0;
 uniform vec2 cloud_drift = vec2(0.0);
+// Step 3e: the cover noise's time in lifetimes (below 0: frozen), how far the shape's second read has slid
+// (xy) and the detail noise risen (z), in texture units, wrapped.
+uniform float cloud_evolve = -1.0;
+uniform vec3 cloud_churn = vec3(0.0);
 uniform int cloud_storm_count = 0;
 uniform vec4 cloud_storms[8];
 
@@ -462,16 +492,32 @@ vec2 wc_rotate(vec2 p) {
 	return vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
 }
 
+vec2 wc_slice_offset(int k, int o) {
+	return vec2(wc_hash2(k, 7 + o), wc_hash2(k, 13 + o)) * 4096.0;
+}
+
+float wc_evolving_value_noise(vec2 q, float t, int o) {
+	float k = floor(t);
+	int ki = int(k);
+	float w = smoothstep(0.0, 1.0, t - k);
+	float a = wc_value_noise(q + wc_slice_offset(ki, o)) - 0.5;
+	float b = wc_value_noise(q + wc_slice_offset(ki + 1, o)) - 0.5;
+	return clamp(0.5 + (a * (1.0 - w) + b * w) / sqrt((1.0 - w) * (1.0 - w) + w * w), 0.0, 1.0);
+}
+
 float wc_cover_noise(vec2 xz) {
 	vec2 p = (xz - cloud_drift) / max(cloud_cover_scale, 1.0);
 	float v = 0.0;
 	float amp = 0.5;
 	float norm = 0.0;
+	float rate = 1.0;
 	vec2 q = wc_rotate(p);
 	for (int o = 0; o < 4; o++) {
-		v += amp * wc_value_noise(q + vec2(17.1, 31.7) * float(o));
+		vec2 qo = q + vec2(17.1, 31.7) * float(o);
+		v += amp * (cloud_evolve < 0.0 ? wc_value_noise(qo) : wc_evolving_value_noise(qo, cloud_evolve * rate + 0.37 * float(o), o));
 		norm += amp;
 		amp *= 0.5;
+		rate *= 1.6031;
 		q = wc_rotate(q) * 2.03;
 	}
 	return v / norm;
@@ -488,7 +534,7 @@ float wc_shape(vec3 p, float p_step) {
 	vec2 b = wc_rotate(wc_rotate(xz)) * 0.618034 + vec2(0.37, 0.71);
 	float lod = log2(p_step / (cloud_shape_scale / 128.0));
 	float na = textureLod(cloud_shape, vec3(a.x, y, a.y), max(lod, 0.0)).r;
-	float nb = textureLod(cloud_shape, vec3(b.x, y * 0.618034 + 0.53, b.y), max(lod + log2(0.618034), 0.0)).r;
+	float nb = textureLod(cloud_shape, vec3(b.x + cloud_churn.x, y * 0.618034 + 0.53, b.y + cloud_churn.y), max(lod + log2(0.618034), 0.0)).r;
 	float s = na + nb;
 	return s < 1.0 ? 0.5 * s * s : 1.0 - 0.5 * (2.0 - s) * (2.0 - s);
 }
@@ -535,7 +581,7 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	if (p_detail && shape > 0.0) {
 		// Erode the edges with the detail noise, wispy below and billowing higher up (Nubis 2017).
 		vec2 sxz = wc_rotate(p.xz - cloud_drift);
-		vec3 qd = vec3(sxz.x, p.y, sxz.y) / cloud_shape_scale * 8.0;
+		vec3 qd = vec3(sxz.x, p.y, sxz.y) / cloud_shape_scale * 8.0 - vec3(0.0, cloud_churn.z, 0.0);
 		float d = textureLod(cloud_detail, qd, max(log2(p_step / (texel * 0.25)), 0.0)).r;
 		float e = 0.45 * mix(d, 1.0 - d, clamp(h * 4.0, 0.0, 1.0));
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);

@@ -767,7 +767,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 					float shade = 0.0f;
-					if ((shade_rule || conifer_rule || range > 0.0f) && suit > 0.0f) {
+					const bool damp_rule = sp->is_stone_top() && sp->get_stone_top_damp() != 0.0f;
+					if ((shade_rule || conifer_rule || damp_rule || range > 0.0f) && suit > 0.0f) {
 						float conifer = 0.0f;
 						shade = crown_shade(local_crown_grid, local_crowns, crown_reach, CROWN_CELL, xz, &conifer);
 						if (p_setup.other) {
@@ -858,6 +859,24 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							on_top = true;
 							top_cap = p_setup.stone_tops.items[ti];
 							top_normal = ti < p_setup.stone_top_normals.size() ? p_setup.stone_top_normals[ti] : Vector3();
+							if (damp_rule) {
+								// How damp the top stays: tilted to the pole (north) it is shaded, low
+								// over the ground it keeps the ground's humidity, beside taller stones
+								// (on the sun's side most) or under a canopy it is out of the sun. High,
+								// open, sun-facing tops dry out: hoary, yellow-olive cushions there
+								// (Racomitrium, Grimmia), deep green ones in the damp. The measure is
+								// the cap's, not the plant's, so a top reads as one or the other.
+								const float aspect = top_normal.y > 0.1f ? -top_normal.z : 0.0f;
+								const float low = 1.0f - Math::smoothstep(STONE_TOP_LOW, STONE_TOP_HIGH, float(top_cap.y) - map->get_height_at(Vector3(top_cap.x, 0.0f, top_cap.z)));
+								const float shelter = p_setup.stone_tops.shelter(Vector2(top_cap.x, top_cap.z), float(top_cap.y), STONE_TOP_SHELTER_REACH);
+								const float wet = 1.0f * aspect + 0.5f * low + 0.7f * shelter + 0.6f * shade;
+								// One or the other per stone (a little jitter per cap, so the split is not a
+								// contour line across the field).
+								const uint32_t ch = hash_murmur3_one_float(float(top_cap.x), hash_murmur3_one_float(float(top_cap.z)));
+								const float jitter = 0.1f * (float(ch & 0xffff) / 65535.0f - 0.5f);
+								const float damp = wet + jitter >= STONE_TOP_DAMP_SPLIT ? 1.0f : 0.0f;
+								suit *= sp->stone_top_damp_weight(damp);
+							}
 						} else {
 							suit = 0.0f;
 						}
@@ -1021,12 +1040,21 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// measured to the outside of the moss): one piece per span, so plants beside
 						// and on the log follow its real width and bends instead of the widest reach.
 						// Older 7-float meshes are one piece of that radius.
+						// Newer meshes add the stem's centreline: N points (x, y, z, girth to the outside
+						// of the moss) along it, so a bent stick or branch is its own thin wood, not a
+						// fat straight piece over its chord (whose reach takes the bend).
 						const int n = ax.size() >= 8 ? int(ax[7]) : 0;
 						const bool profile = n >= 2 && ax.size() >= 8 + n;
+						const bool centreline = profile && ax.size() >= 8 + 5 * n;
 						const int pieces = profile ? n - 1 : 1;
 						for (int k = 0; k < pieces; k++) {
 							Deadwood log = { la, lb, ax[6] * scale };
-							if (profile) {
+							if (centreline) {
+								const int c = 8 + n + 4 * k;
+								log.a = world.xform(Vector3(ax[c], ax[c + 1], ax[c + 2]));
+								log.b = world.xform(Vector3(ax[c + 4], ax[c + 5], ax[c + 6]));
+								log.radius = MAX(0.5f * (ax[c + 3] + ax[c + 7]) * scale - DEADWOOD_MOSS_LIFT, 0.01f);
+							} else if (profile) {
 								log.a = la.lerp(lb, float(k) / float(pieces));
 								log.b = la.lerp(lb, float(k + 1) / float(pieces));
 								log.radius = MAX(0.5f * (ax[8 + k] + ax[9 + k]) * scale - DEADWOOD_MOSS_LIFT, 0.01f);
@@ -1647,6 +1675,10 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		// undercoat that fills the gaps between them reads as the undercoat there, not bare soil.
 		float bare = 1.0f;
 		Vector3 grass;
+		// The light the blades grew in (GrassField3D tints them by it, VegetationLight): the far
+		// colours are measured on open flat ground, so they take the same tint here. Without it a
+		// meadow in a valley's shade read lighter and yellower past its blades.
+		const float light = (1.0f - closure) * VegetationLight::exposure(map, setup.sun_mean, xz.x, xz.y);
 		for (uint32_t l = 0; l < job.grass.size(); l++) {
 			float gl = 0.0f;
 			for (const Vector3 &q : subs) {
@@ -1656,7 +1688,9 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 				gl *= job.grass[l]->rule_weight(PlantSpecies::RULE_SHADE, closure);
 			}
 			const Color &fc = job.grass_far[l];
-			grass += Vector3(fc.r, fc.g, fc.b) * (gl * bare);
+			float fr = fc.r, fg = fc.g, fb = fc.b;
+			VegetationLight::tint(fr, fg, fb, light);
+			grass += Vector3(fr, fg, fb) * (gl * bare);
 			bare *= 1.0f - gl;
 		}
 		const float g = 1.0f - bare;
@@ -2319,6 +2353,12 @@ float VegetationField3D::get_shade_at(const Vector3 &p_global_position) const {
 	return _shade_at(Vector2(p_global_position.x, p_global_position.z));
 }
 
+float VegetationField3D::get_light_at(const Vector3 &p_global_position) const {
+	const TerrainDataMap3D *map = data_map.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	const float exposure = map && map->is_baked() ? VegetationLight::exposure(map, VegetationLight::sun_mean(map), p_global_position.x, p_global_position.z) : 1.0f;
+	return (1.0f - get_shade_at(p_global_position)) * exposure;
+}
+
 float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
 	float conifer = 0.0f;
@@ -2839,6 +2879,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_near_radius"), &VegetationField3D::get_near_radius);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
+	ClassDB::bind_method(D_METHOD("get_light_at", "global_position"), &VegetationField3D::get_light_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);

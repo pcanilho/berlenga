@@ -243,6 +243,19 @@ offset of the bench's region, which lies on a slope facing the camera (seen well
 degree view the bake assumes): the far colour has no view-elevation term yet. Cost: one extra
 dot product and a few multiplies in the ground shader where the blades have thinned away.
 
+**Far cover and the light the blades grew in (16 Nov).** A lime band at the tall sward's edge in a
+valley scene: the terrain's far cover map took over at 40 m about 1.3x lighter and yellower than
+the blades. The bake measures the far colour on open flat ground (light 1), but the blades are
+tinted by the light they grew in (VegetationLight: canopy shade times the slope's shortwave
+against the map's mean, after Lichtenthaler et al. 2007): darker and bluer in shade, so a valley
+floor under high ridges reads darker than the bake. The cover map now gives each grass layer's far
+colour the same tint at the texel's light (crown closure and `exposure()`), so the far plain
+follows the blades; on open flat ground it is unchanged. `VegetationField3D.get_light_at()` reads
+that light from scripts. Ruled out on the way, each by a bench or scene frame: the undercoat, the
+herbs' far colours, the turf's brightness (1.07), the AgX tonemap (bench ratios within 3%) and
+the bake's sky and sun (about 3%; the bake now copies the scene's sky, ambient and sun energy
+anyway, and bakes again when the sun's energy moves by 30%).
+
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).

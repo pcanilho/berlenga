@@ -1074,15 +1074,47 @@ void GrassField3D::_far_bake_start() {
 	vp->set_update_mode(SubViewport::UPDATE_ALWAYS);
 	add_child(vp, false, INTERNAL_MODE_BACK);
 
+	// The scene's own sky light and sun strength: the blades shadow each other from the sun but not
+	// from the sky (the raster has no ambient occlusion inside the sward), so the colour they need
+	// on the far ground depends on how the light splits between the two. A stock sky under a
+	// brighter sun and a weather sky made the far ground too light (a lime band where the blades
+	// end). The sky material is shared, so the bake's sky follows the bake's own sun.
+	Ref<Environment> scene_env;
+	if (get_world_3d().is_valid()) {
+		scene_env = get_world_3d()->get_environment();
+		if (scene_env.is_null()) {
+			scene_env = get_world_3d()->get_fallback_environment();
+		}
+	}
 	Ref<Environment> env;
 	env.instantiate();
 	Ref<Sky> sky;
 	sky.instantiate();
-	sky->set_material(memnew(ProceduralSkyMaterial));
+	Ref<Material> sky_mat;
+	if (scene_env.is_valid() && scene_env->get_sky().is_valid()) {
+		sky_mat = scene_env->get_sky()->get_material();
+		sky->set_radiance_size(scene_env->get_sky()->get_radiance_size());
+	}
+	if (sky_mat.is_null()) {
+		sky_mat = Ref<Material>(memnew(ProceduralSkyMaterial));
+	}
+	sky->set_material(sky_mat);
 	sky->set_process_mode(Sky::PROCESS_MODE_QUALITY);
 	env->set_background(Environment::BG_SKY);
 	env->set_sky(sky);
 	env->set_ambient_source(Environment::AMBIENT_SOURCE_SKY);
+	if (scene_env.is_valid()) {
+		env->set_sky_rotation(scene_env->get_sky_rotation());
+		env->set_ambient_source(scene_env->get_ambient_source());
+		env->set_ambient_light_color(scene_env->get_ambient_light_color());
+		env->set_ambient_light_energy(scene_env->get_ambient_light_energy());
+		env->set_ambient_light_sky_contribution(scene_env->get_ambient_light_sky_contribution());
+		if (scene_env->get_background() != Environment::BG_SKY) {
+			env->set_background(scene_env->get_background());
+			env->set_bg_color(scene_env->get_bg_color());
+			env->set_bg_energy_multiplier(scene_env->get_bg_energy_multiplier());
+		}
+	}
 	env->set_tonemapper(Environment::TONE_MAPPER_LINEAR);
 	WorldEnvironment *we = memnew(WorldEnvironment);
 	we->set_environment(env);
@@ -1104,6 +1136,12 @@ void GrassField3D::_far_bake_start() {
 	vp->add_child(ground);
 
 	DirectionalLight3D *sun = memnew(DirectionalLight3D);
+	far_bake_sun_energy = 1.0f;
+	if (DirectionalLight3D *scene_sun = _get_sun()) {
+		far_bake_sun_energy = MAX(scene_sun->get_param(Light3D::PARAM_ENERGY), 0.01f);
+		sun->set_param(Light3D::PARAM_ENERGY, far_bake_sun_energy);
+		sun->set_color(scene_sun->get_color());
+	}
 	sun->set_shadow(true);
 	sun->set_shadow_mode(DirectionalLight3D::SHADOW_ORTHOGONAL);
 	sun->set_param(Light3D::PARAM_SHADOW_MAX_DISTANCE, FAR_BAKE_CAM_DIST + z_hi);
@@ -1308,6 +1346,26 @@ void GrassField3D::_drop_under() {
 	}
 }
 
+Dictionary GrassField3D::get_far_published() const {
+	Dictionary d;
+	Color far = get_far_color();
+	Color l1, l2, scale(1, 1, 1, 1);
+	if (far_baked) {
+		_far_at_elevation(sun_elevation_deg, far, l1, l2);
+		const Color ref = far_color_baked;
+		scale = Color(ref.r > 0.0f ? far.r / ref.r : 1.0f, ref.g > 0.0f ? far.g / ref.g : 1.0f, ref.b > 0.0f ? far.b / ref.b : 1.0f, 1.0f);
+	}
+	d["far"] = far;
+	d["lobe1"] = l1;
+	d["lobe2"] = l2;
+	d["scale"] = scale;
+	d["sun"] = published_sun;
+	d["sun_elevation"] = sun_elevation_deg;
+	d["cover_share"] = _cover_share();
+	d["baked"] = far_baked;
+	return d;
+}
+
 PackedColorArray GrassField3D::get_far_color_lobes() const {
 	PackedColorArray r;
 	r.push_back(far_baked ? far_lobe1 : Color(0, 0, 0, 0));
@@ -1366,6 +1424,12 @@ void GrassField3D::_publish_sun_view(const Vector3 &p_camera) {
 			sun_v = Vector4(d.x / h, d.z / h, strength, 0.0f);
 		}
 		sun_elevation_deg = Math::rad_to_deg(Math::asin(CLAMP(up, -1.0f, 1.0f)));
+		// The far colour depends on how the light splits between sun and sky: bake it again once
+		// the sun's strength has moved well away from the one it was baked under.
+		const float ratio = sun->get_param(Light3D::PARAM_ENERGY) / far_bake_sun_energy;
+		if (far_baked && !far_bake_vp && !far_bake_queued && (ratio > 1.3f || ratio < 1.0f / 1.3f)) {
+			_queue_far_bake();
+		}
 	}
 	if (far_baked && Math::abs(sun_elevation_deg - published_far_elevation) > 0.5f) {
 		_publish_far(); // The sun has climbed or sunk: the far colour that matches the blades now.
@@ -2285,6 +2349,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
 	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
 	ClassDB::bind_method(D_METHOD("get_far_color_lobes"), &GrassField3D::get_far_color_lobes);
+	ClassDB::bind_method(D_METHOD("get_far_published"), &GrassField3D::get_far_published);
 	GRASS_BIND(set_sun_light, get_sun_light, "path")
 	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")

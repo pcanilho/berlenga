@@ -144,6 +144,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *River live flow: the wake swings behind the rock.*
 
 - **Live water** (`PhysXLiveWater3D`, `streaming`): water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.
+- **Buoyancy from shapes** (PhysXBuoyancy3D `volume_mode`, `mass_from_densities`): bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.
 - **Bodies push water** (`PhysXWaterPusher3D`): legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
 
@@ -158,6 +159,8 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *Rivers: the cascade and the white water below it.*
 
   - Pools behind bumps, draws down before steps and ends fast reaches in a hydraulic jump; the surface banks up round bends (`gradually_varied_flow`, `bend_superelevation`, on by default).
+  - A train of smooth standing waves below a weak hydraulic jump, and cross-waves where fast water narrows (`standing_waves`).
+  - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
@@ -196,7 +199,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 ## Under water
 
-- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
+- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line. In raster, omni and spot lights glow and scatter in the water, as under path tracing.
 
   ![Under water near crates, raster vs path traced](media/underwater.jpg)
 

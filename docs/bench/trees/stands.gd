@@ -36,7 +36,8 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("d35400"), Color("c0392b"), Color("a04000"), Color("b7950b"), Color("4d6b5a"), Color("17332a"), Color("a6acaf"),
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
-		"northern hardwood", "eastern oak", "pine-hemlock", "woodland", "NA woodland"]
+		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row",
+		"woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -170,8 +171,22 @@ func _stand_checks() -> void:
 				if nm.ends_with("(%s)" % k):
 					regen[k] += n
 		print("  %d plants in %d ms (meshes and placement)" % [f.get_plant_count(), Time.get_ticks_msec() - t])
+		var cut := {"coppice": 0, "young coppice": 0, "pollard": 0}
+		for s in sps.size():
+			for k in cut:
+				if String(sps[s].resource_name).ends_with("(%s)" % k):
+					cut[k] += f.get_placements(s).size()
 		if i == TreeGenerator.STAND_HEDGEROW:
 			_check(f.get_plant_count() > 0 and open_count == f.get_plant_count(), "hedgerow: shrubs and open-grown standards only (%d)" % open_count)
+		elif i == TreeGenerator.STAND_WOOD_PASTURE:
+			_check(cut.pollard > 0 and regen.sapling == 0 and regen.log > 0, "wood pasture: %d lapsed pollards, no saplings (grazed), %d logs" % [cut.pollard, regen.log])
+		elif i == TreeGenerator.STAND_POLLARD_ROW:
+			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
+		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
+			# Standards are open-grown (spreading crowns over the underwood).
+			_check(open_count > 0 and stand_count == 0, "coppice with standards: %d open-grown standards" % open_count)
+			_check(cut.coppice > 0 and cut["young coppice"] > 0 and cut.coppice + cut["young coppice"] > 4 * open_count, "coppice with standards: %d grown and %d young coppice stools under %d standards" % [cut.coppice, cut["young coppice"], open_count])
+			_check(regen.sapling > 0 and regen.log > 0 and regen.snag + regen.log < open_count, "coppice with standards: %d saplings, %d snags, %d logs" % [regen.sapling, regen.snag, regen.log])
 		else:
 			_check(stand_count > 0, "%s: stand-grown trees form the canopy (%d stand-grown, %d gap and shrub)" % [STAND_NAMES[i], stand_count, open_count])
 			_check(regen.sapling > 0 and regen.snag > 0 and regen.log > 0 and regen.snag + regen.log < stand_count and regen["fallen branch"] > 0 and regen.sticks > regen["fallen branch"], "%s: %d saplings, %d snags, %d logs, %d fallen branches, %d sticks" % [STAND_NAMES[i], regen.sapling, regen.snag, regen.log, regen["fallen branch"], regen.sticks])
@@ -427,7 +442,7 @@ func _wind_lod_check(frames: int, view: String = "eye") -> void:
 func _draw_maps(path: String) -> void:
 	var px := 320
 	var cols := 4
-	var rows := 3
+	var rows := (TreeGenerator.STAND_MAX + 2 + cols - 1) / cols
 	var img := Image.create(px * cols, px * rows, false, Image.FORMAT_RGB8)
 	img.fill(Color(0.93, 0.92, 0.88))
 	for i in TreeGenerator.STAND_MAX + 2:

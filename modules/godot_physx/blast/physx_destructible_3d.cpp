@@ -714,56 +714,41 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 	// (normals inward).
 	chunk_surfaces.resize(chunk_points.size());
 	// Chunks authored with their own shading data (PhysXBlastAsset.chunk_meshes): their smooth normals, tangents,
-	// colours and UVs, unrolled to the same triangle soup.
+	// colours and UVs, kept indexed as authored.
 	const Array meshes = blast_asset.is_valid() ? blast_asset->get_chunk_meshes() : Array();
 	if (meshes.size() == (int)chunk_points.size()) {
 		for (uint32_t c = 0; c < chunk_points.size(); c++) {
 			const Array arrays = meshes[c];
 			ChunkSurface surface;
 			surface.vertices = chunk_points[c];
-			const int n = surface.vertices.size();
 			if (arrays.size() == RSE::ARRAY_MAX) {
-				const PackedInt32Array indices = arrays[RSE::ARRAY_INDEX];
+				// The chunk's own indexed arrays as they are: no unrolling to a soup (three times the vertices).
+				const PackedVector3Array src_v = arrays[RSE::ARRAY_VERTEX];
+				const int vcount = src_v.size();
 				const PackedVector3Array src_n = arrays[RSE::ARRAY_NORMAL];
 				const PackedFloat32Array src_t = arrays[RSE::ARRAY_TANGENT];
 				const PackedColorArray src_c = arrays[RSE::ARRAY_COLOR];
 				const PackedVector2Array src_uv = arrays[RSE::ARRAY_TEX_UV];
 				const PackedVector2Array src_uv2 = arrays[RSE::ARRAY_TEX_UV2];
-				const int vcount = PackedVector3Array(arrays[RSE::ARRAY_VERTEX]).size();
-				auto at = [&](int i) { return indices.is_empty() ? i : indices[i]; };
-				if (src_n.size() == vcount) {
-					surface.normals.resize(n);
-					for (int i = 0; i < n; i++) {
-						surface.normals.write[i] = src_n[at(i)];
+				if (vcount > 0 && src_n.size() == vcount) {
+					surface.vertices = src_v;
+					surface.normals = src_n;
+					surface.indices = arrays[RSE::ARRAY_INDEX];
+					if (src_t.size() == vcount * 4) {
+						surface.tangents = src_t;
 					}
-				}
-				if (src_t.size() == vcount * 4) {
-					surface.tangents.resize(n * 4);
-					for (int i = 0; i < n; i++) {
-						for (int k = 0; k < 4; k++) {
-							surface.tangents.write[i * 4 + k] = src_t[at(i) * 4 + k];
-						}
+					if (src_c.size() == vcount) {
+						surface.colors = src_c;
 					}
-				}
-				if (src_c.size() == vcount) {
-					surface.colors.resize(n);
-					for (int i = 0; i < n; i++) {
-						surface.colors.write[i] = src_c[at(i)];
+					if (src_uv.size() == vcount) {
+						surface.uv = src_uv;
 					}
-				}
-				if (src_uv.size() == vcount) {
-					surface.uv.resize(n);
-					for (int i = 0; i < n; i++) {
-						surface.uv.write[i] = src_uv[at(i)];
-					}
-				}
-				if (src_uv2.size() == vcount) {
-					surface.uv2.resize(n);
-					for (int i = 0; i < n; i++) {
-						surface.uv2.write[i] = src_uv2[at(i)];
+					if (src_uv2.size() == vcount) {
+						surface.uv2 = src_uv2;
 					}
 				}
 			}
+			const int n = surface.vertices.size();
 			if (surface.normals.size() != n) {
 				surface.normals.resize(n);
 				for (int t = 0; t + 2 < n; t += 3) {
@@ -813,6 +798,11 @@ RID PhysXDestructible3D::_chunk_shape(uint32_t p_chunk) {
 		// Bodies carry no scale (the physics server keeps poses rigid), while every piece is drawn scaled by
 		// spawn_scale: scale the hull the same way, or a scaled destructible collides at its unscaled size.
 		PackedVector3Array points = chunk_points[p_chunk];
+		// Hulls the asset carries (few points, cooked fast) over every triangle corner of the render soup.
+		const Array hulls = blast_asset.is_valid() ? blast_asset->get_chunk_hulls() : Array();
+		if (hulls.size() == (int)chunk_points.size() && PackedVector3Array(hulls[p_chunk]).size() >= 4) {
+			points = hulls[p_chunk];
+		}
 		if (!spawn_scale.is_equal_approx(Vector3(1, 1, 1))) {
 			Vector3 *w = points.ptrw();
 			for (int i = 0; i < points.size(); i++) {
@@ -1079,6 +1069,42 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		arrays.resize(RSE::ARRAY_MAX);
 		arrays[RSE::ARRAY_VERTEX] = vertices;
 		arrays[RSE::ARRAY_NORMAL] = normals;
+		// Indexed when any chunk is (a soup chunk gets the identity index), each chunk's index offset by its start.
+		bool any_indexed = false;
+		int index_count = 0;
+		for (uint32_t ci : p_chunk_indices) {
+			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+				if (cs.slot == slot) {
+					any_indexed = any_indexed || !cs.indices.is_empty();
+					index_count += cs.indices.is_empty() ? cs.vertices.size() : cs.indices.size();
+				}
+			}
+		}
+		if (any_indexed) {
+			PackedInt32Array indices;
+			indices.resize(index_count);
+			int32_t *iw = indices.ptrw();
+			int ia = 0, base = 0;
+			for (uint32_t ci : p_chunk_indices) {
+				for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+					if (cs.slot != slot) {
+						continue;
+					}
+					if (cs.indices.is_empty()) {
+						for (int i = 0; i < cs.vertices.size(); i++) {
+							iw[ia++] = base + i;
+						}
+					} else {
+						const int32_t *src = cs.indices.ptr();
+						for (int i = 0; i < cs.indices.size(); i++) {
+							iw[ia++] = base + src[i];
+						}
+					}
+					base += cs.vertices.size();
+				}
+			}
+			arrays[RSE::ARRAY_INDEX] = indices;
+		}
 		// Shading data from chunk_meshes, when every chunk of this slot carries it.
 		bool has_t = true, has_c = true, has_uv = true, has_uv2 = true;
 		for (uint32_t ci : p_chunk_indices) {

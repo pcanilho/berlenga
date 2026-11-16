@@ -2914,3 +2914,204 @@ wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers nea
 - Fresh right through: the roller fills the foam to solid (no lace holes); two more churn octaves (about
   13 and 5 cm) in the per-pixel slope give it a bubbly, broken surface.
 - Spume sheets only from a near-gale (14 to 20 m/s, Beaufort 7 to 8), at two thirds of their old opacity.
+- Eased toward 40 cm (16 Nov, later): measured from the local mean, a gale's metres-high crests raised the
+  full share as a faceted white peak over a few 60 cm mesh cells. The height now eases toward 40 cm
+  (`0.4 tanh(h / 0.4)`, per `roller_strength`): a lumpy churning band on the crest that reads at 1.75 m in
+  the `storm_roller` view, without the peak.
+- Rounded band (16 Nov, docs review of #312): the lumps still ended in cones, as the fold and the fresh foam
+  are sharp at a point and the mesh raised one or two vertices under it. The roller's extent and crest are
+  now blurred over five taps 1.2 m apart, centred 0.4 m upwind (lower at the front, where it spills), and
+  its geometric churn is in lobes about 2 m across; the fine churn stays in the slope only. Forward throw
+  0.25 of the height (was 0.4). Cost: ten more foam and height lookups per open-sea vertex, and per pixel
+  under foam.
+- Solid where it rises (16 Nov, docs review of #313): an aged lace hole lifted onto the band's face showed as a
+  dark notch with a hard rim, since the fill only ran where foam was already above 5%. The fill is now tied
+  to the vertex raise (a varying, as a share of the 40 cm cap): wherever the band rises, it is white.
+
+## River standing waves (16 Nov, Fab idea 1 stage 2)
+
+Stage 1 gave the river a hydraulic profile (`gradually_varied_flow`): backwater, drawdown, supercritical
+reaches and jump toes with their Froude number. Stage 2 adds the standing surface patterns that profile
+implies. Both are stationary in the world (the water moves, the pattern stays), so they are baked once per
+rebuild.
+
+- **Undular jumps** (Fr1 from 1 to 1.7; Chanson and Montes 1995, Chanson 2009 "Current knowledge in
+  hydraulic jumps"): no roller, a train of smooth stationary waves downstream of the toe, five to ten of
+  them, decaying. Their wavelength is the one whose phase speed equals the current downstream: from linear
+  dispersion `U2^2 = (g/k) tanh(k h2)`, that is `Fr2^2 kh = tanh(kh)` (Lemoine 1948's linear theory, the
+  classic estimate for undular jumps and Favre waves). First crest height grows with Fr1; we take
+  `0.4 (y2 - y1)`, capped at 0.3 y2, decaying over about four wavelengths. Above Fr1 1.7 the roller
+  (stage 1) carries most of the energy away and only a weak tail (a third) is left. Wavelengths are
+  1 to 5 m, finer than the river's 1 m sections, so the train is evaluated in the shader from per-vertex
+  parameters (amplitude, wavenumber, toe position, decay): height in the vertex stage, slope per pixel.
+- **Cross-waves in supercritical flow** (Ippen 1951, Ippen and Dawson 1951 "Design of channel
+  contractions"; the shallow-water analogue of supersonic flow): a wall that turns into fast flow by a small
+  angle theta raises the depth along a front at the Mach angle `sin beta = 1/Fr`, by
+  `dy/y = Fr^2 theta / sqrt(Fr^2 - 1)` in linear theory, and the front reflects off the far wall. Along
+  each characteristic the disturbance is carried unchanged, so the depth at a point is the sum of the wall
+  angles where the characteristics through it left the walls: from each wall directly and after one to
+  three reflections (each reflection losing a fifth). Width changes of the channel set the wall angles.
+  This makes the diamond patterns of fast water in narrowing and widening channels. Baked into the mesh
+  heights at section spacing (their period along the river, `2B / tan beta`, is several metres). The
+  section mean is subtracted so the 1D profile stays as stage 1 solved it.
+- **Froude overlay**: a debug view colouring the water by its Froude number (blue subcritical, green
+  near critical, red supercritical, white at jump toes), for tuning rivers in the editor.
+- Built (16 Nov), `standing_waves` (on by default). On the river bench the jump below the step (Fr1 1.64)
+  gets a train about 10 cm high and 1.8 m long (bench view `train`). Two fixes from the first look: waves
+  shorter than six sections were raised in the mesh as faceted terraces, so they are now in the per-pixel
+  slope only (the mesh carries them from six sections a wavelength, fully past that), fading at the banks;
+  and the crests were ruler straight, so they now bow downstream mid-channel by a quarter wavelength at the
+  banks, as in photographs of undular jumps. Bodies still ride the full train (`sample_height`).
+  Cross-waves with `--narrows` (5 m to 3.5 m below the step) reach about 10 cm in the Fr 1.7 to 2.4 water,
+  but that water is white from the step on this bench, so they show only in clear fast water (a smooth
+  chute). `get_section()` gives `wave_amplitude`, `wave_length` and `cross_waves`.
+- Later: V-shaped wakes behind rocks in fast water (the same characteristics from each obstacle), cross-
+  waves in supercritical bends (Knapp 1951: they double the outer bank's superelevation).
+
+## Lake outlets (16 Nov, Fab idea 2)
+
+Step 4e left a lake's outlet river drawing its own `discharge` from nowhere: the lake did not drain
+towards it, and its level did not answer to what flows in.
+
+**What the hydraulics says.**
+- A lake drains over the highest point of its outlet channel, the sill, as a **broad-crested weir**: the
+  water speeds up to critical depth (two thirds of the head) over the crest, so the discharge follows
+  from the head alone, `Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)` with H the lake level above the sill and b
+  the crest width (Henderson 1966, Open Channel Flow, ch. 6; Bos 1976, Discharge Measurement
+  Structures). Cd is about 0.85 for a rough natural sill (1.0 for a smooth long crest). A 6 m wide sill
+  under 30 cm of head passes about 1.4 m3/s; under 60 cm, about 4.
+- **Level budget.** In steady state a lake's level sits where its outlets pass what flows in (rivers,
+  plus the rain and seepage of its catchment): `sum Q_out(level) = Q_in`. Because Q grows as H^(3/2), a
+  lake is self-levelling: doubling the inflow raises it by only 1.59 times the head (a flood raises a
+  big lake a few tens of centimetres). Its time to settle is the volume between the two levels over the
+  change in flow: hours for a small lake, days for a large one, so a steady level per inflow is right for
+  a game (no level that creeps during play).
+- **Approach flow.** Towards the outlet the lake's water converges as a sink in a half plane: speed
+  `Q / (pi r h)` at distance r, depth h, until it reaches the river's speed at the sill. It is slow
+  (a few cm/s 20 m out) but it is what carries leaves, foam and floaters to the outlet, and the
+  surface lines bunching towards the lip are the visual cue of an outlet.
+
+**Plan.**
+- `PhysXRiver3D.source_lake` (a `PhysXWaterSurface3D`): the river's discharge comes from the lake head
+  over its sill (the highest bed in its first 12 m, or `outlet_crest` if set), with `outlet_coefficient`
+  (0.85). No head, no flow.
+- The river registers its outlet with the lake (`set_outflow`): the lake adds the half-plane sink to its
+  flow texture next to the inflow plumes, so waves, foam and floaters drift to the outlet.
+- `PhysXWaterSurface3D.level_from_flows` (off): the lake's level settles where its outlets pass its
+  inflows plus `catchment_inflow` (m3/s); the outlet rivers rebuild when it moves more than a centimetre.
+
+**Built (16 Nov).** As planned, plus the **drowned sill**: the weir law assumes the water goes critical on
+the crest, which holds only if the channel below can carry it away (steep enough). On a mild channel the
+normal depth stands above critical, the sill is drowned, and the discharge is the one whose energy at the
+sill (normal depth plus velocity head, over the real cross-section) the lake's level just reaches. The lake
+drains by the same law (the weir coefficient scaled by the share the channel lets through), so its level
+budget and approach flow agree with the river. On the river bench (`--outlet`, `--view=outlet`, a basin above
+a 5 m sill on a 0.5% channel): a 0.30 m head passes 1.2 m3/s free but 0.41 drowned, and the river starts 2 cm
+below the lake; with `level_from_flows` and 3 m3/s of `catchment_inflow` the lake settles 0.79 m above the
+sill (outlet passing 3.04). Approach flow 2, 5 and 10 m from the sill: 14, 2.4 and 0.5 cm/s. Not yet: lakes
+filling or draining over time (the steady level is applied at once), and a chain of lakes settles only
+through the 1 cm rebuild loop between each pair.
+
+## Buoyancy from shapes with densities (16 Nov, Fab idea 3)
+
+`PhysXBuoyancy3D` floats a body on six probe points sharing a footprint area and a hull height: right
+for a box-like hull, wrong for anything else (a ball, a log, a ship whose air inside is what floats it),
+and the body's mass is set by hand, so whether it floats is a tuning accident.
+
+**What others do.**
+- *Pontoons* (Unreal Water's `BuoyancyComponent`): spheres placed on the hull, each pushed up by the
+  water it displaces (the submerged cap of the sphere), with drag per pontoon. Simple and stable; the
+  designer places them.
+- *Voxels* (common in Unity water assets, and Habrador's "make a realistic boat" series): the hull's volume
+  cut into small cells; each cell's submerged share comes from the water height at its centre, so a long
+  hull feels the waves along its length and a tilted body is righted by its own geometry.
+- *Exact waterline* (Kerner 2015, "Water interaction model for boats in video games", Gamasutra; Just
+  Cause 3): every hull triangle clipped against the water, pressure integrated over the wet part, plus
+  slamming and viscous terms. The best for hero boats; heavy for debris.
+- *Planing* (Savitsky 1964): lift on a fast hull rising with speed squared. For speedboats; not now.
+
+**Plan.** A `shapes` mode beside the probe points: the body's collision shapes are its volume.
+- Spheres are pontoons: the exact submerged cap, `pi x^2 (3R - x) / 3` for a depth x into the sphere,
+  pushed at its centroid.
+- Boxes, cylinders and capsules are cut into cells (up to `max_cells` a body, 32 by default, more along
+  the long axis), each the exact share of the shape's volume; a cell's submerged share is its depth into
+  the water at its centre over its vertical extent, clamped. Cells in one column share a water sample.
+- Other shapes: their bounding box at three quarters' fill, as now.
+- Each `CollisionShape3D` may carry a density (`buoyancy_density` metadata, kg/m3): wood about 500, ice
+  917, steel 7850, 0 for air (it displaces water but weighs nothing, so a steel shell around an air box
+  floats). With `mass_from_densities`, the body's mass and centre of mass come from them; otherwise the
+  shapes share the body's mass. Then a log floats with half its volume out, a ball of ice with a tenth,
+  and a steel block sinks, with no tuning.
+- Drag per wet cell, on the cell's frontal area (its volume to the two thirds), against the flow, as now.
+- Later: the exact waterline for hero hulls (Kerner), planing lift (Savitsky), ragdoll bones' shapes.
+
+**Built (16 Nov).** `volume_mode` Shapes on `PhysXBuoyancy3D`, with `max_cells`, `mass_from_densities`,
+`default_density`, and two damping terms the first runs showed were missing: a body dropped 1 m dived metres
+under (the probe mode's linear drag is tuned for floating, not diving), so **form drag** `0.5 rho Cd A |v| v`
+(`drag_coefficient`, 1), and floating bodies bobbed for over 15 s, so **wave radiation damping** (`wave_damping`,
+0.2 of critical for the waterline stiffness `rho g A_wp`, spread over the waterline; Faltinsen 1990 gives 0.1
+to 0.3 for barge-like hulls). Bench `docs/bench/buoyancy --report` after 14 s on calm water (`--still`):
+wood box 0.500 submerged (expect 0.500), ice ball 0.920 (0.917), log 0.600 (0.600), cork capsule 0.240
+(0.240), steel hull (a 2 cm steel shell round a 4 x 1 x 1.6 m air box, 2763 kg) 0.409 (0.409), steel block
+sinks. With the bodies dimpling the water, within 3% (their own dimple lowers them a little); in 6 m/s wind
+waves within 4%. The probe mode is unchanged and stays the default.
+
+## Lamp beams under water, raster (16 Nov, Fab idea 4)
+
+The path tracer scatters every light in the water: a diver's torch or a submerged lamp draws a beam in the
+murk. The raster underwater pass scatters only the sun and the sky, so lamps under the water light what they
+hit but leave the water between dark.
+
+**What others do.**
+- Froxel volumetric fog (Wronski 2014, Assassin's Creed IV; Hillaire 2015, Frostbite): every light injected
+  into a camera-aligned 3D grid, integrated along the view. Godot's Volumetric Fog is this, but its medium is
+  grey (one density, one albedo), and water absorbs strongly per channel (red is gone within metres), which is
+  why the underwater medium is our own pass (see "Shadows in the water").
+- Analytic in-scattering of a point light (the "airlight" integral): without extinction the single scattering
+  along a ray past a point light has a closed form in arctangents (Macklin 2010, "Faster fog"); with
+  extinction, Sun, Ramamoorthi, Narasimhan and Nayar 2005 ("A practical analytic single scattering model")
+  tabulate it. Water's extinction is too strong to drop, and spot cones and the Henyey-Greenstein phase
+  break the closed forms.
+- Ray marching per light inside its range (Unity HDRP's and many engines' local volumetric lights; Crest's
+  underwater lights): a few jittered samples on the part of the ray inside the light's sphere, each taking the
+  light's attenuation, its cone, the phase, and the water's extinction both ways. Cheap for a handful of lamps.
+
+**Plan.** The underwater pass takes up to four lamps: the `OmniLight3D` and `SpotLight3D` nodes under the
+surface nearest the camera, found every half second. For each, the view ray is clipped to the light's range
+sphere and marched in 12 jittered steps; each step adds `sigma_s HG(cos) E exp(-sigma_t (r + t))`, E the
+light's irradiance there by Godot's own falloff (`(1 - (r/range)^4)^2 r^-decay`, pi x energy x colour, the
+spot's cone and rim), so the beam matches what the lamp lights on surfaces. No lamp shadows in the medium yet
+(a rock does not cut a beam).
+
+**Built (16 Nov).** As planned (`uw_lamps()` in the underwater fog and underside passes; the node keeps the four
+nearest lamps under the surface, rescanning the tree every 30 frames while the camera is under). Bench
+`docs/bench/water_surface --view=submerged --lamps --sun-energy=0.15`: an omni lamp now glows in the water and a
+spot's lit patch on the floor sits under a faint cone, as in the path-traced frame; the path tracer's halo is
+wider (it scatters more than once; raster is single scattering). A spot seen side-on stays faint in both: the
+water's phase (Henyey-Greenstein, g 0.85) sends little light sideways. Cost: 12 steps a lamp a pixel, only
+where the ray crosses the lamp's range. Not yet: lamp shadows in the medium, lamps seen through the surface
+from above.
+
+## Waterfall sheets near black in shade, path traced (16 Nov, bug)
+
+The big fall's sheet read nearly black in deep shade under path tracing (a tenth of the rock beside it) and white
+in sun. Reproduced on the valley's 336 m fall from below (`--time=16.5 --cam=620,-60,-1380 --look=545,112,-1470`):
+sheet 1.0, rock 9.1 (sRGB mean); raster 44.
+
+- **Cause.** The contact sheet's traced material wrote a fractional ALPHA, so the tracer took it as a blended
+  layer (a transparency peel): such a layer is shaded with its direct light and goes on to indirect light only
+  with a chance, which in shade, with no sun on it, left it close to black. The mist, the bounce count (2 or 6)
+  and the falling clumps made no difference; making the sheet opaque did.
+- **Fix: stochastic transparency** (Enderton et al. 2010), as the falling clumps already do: each 2.5 cm cell of
+  the sheet is water or nothing, with the cover as the chance (`ALPHA_SCISSOR_THRESHOLD`), so the sheet is an
+  opaque surface lit by the sky and bounces like the rock beside it; the samples of a pixel average to the same
+  cover, wet rock included. Same frame after: sheet 45, rock 9.1 (raster 44).
+- **Also wrong, fixed with it.** The sheet and the river's falling ribbon wrote IOR and ABSORPTION, making each
+  the boundary of a medium: a path that went in through the water and left through one of the sheet's gaps
+  (threads, tongues, wet rock) never left the water, and every later segment was absorbed as if under water. Both
+  are thin walls now (thin-walled transmission, as BaseMaterial3D's Transmission with thin_walled on): straight
+  through, tinted by `exp(-absorption * thickness)` (`film_thickness`, `sheet_thickness`, 0.1 m). A film
+  centimetres deep bends a ray by less than its own thickness, so the refraction was invisible anyway. On the
+  river bench's fall in shade (`--falls --view=fallfront --sun=-35,180`) the sheet matches, and a cyan glow along
+  its lip, light trapped in the medium, is gone.
+- The river bench takes `--fall-run=M` (a sloping face) and `--sun=P,Y`.

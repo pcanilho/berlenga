@@ -89,6 +89,13 @@ public:
 		float jump = 0.0f; // > 0 at a hydraulic jump's toe: the upstream Froude number Fr1
 		float jump_foam = 0.0f; // 0..1 white water in a jump's roller
 		float tilt = 0.0f; // surface rise per m towards the left bank (bend superelevation)
+		LocalVector<float> wave_at; // standing cross-wave height per cross sample (supercritical flow), m
+		// An undular jump's (or a roller's tail) stationary wave train passing here: amplitude (m), wavenumber
+		// (rad/m), the toe's arc length and the decay length (m); the shader draws it (finer than the sections).
+		float wave_amp = 0.0f;
+		float wave_k = 0.0f;
+		float wave_s0 = 0.0f;
+		float wave_decay = 1.0f;
 	};
 	// A free overfall: the water leaves the lip and falls clear of the ground.
 	struct Fall {
@@ -117,6 +124,7 @@ private:
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
 	bool bend_superelevation = true; // the surface banks up against the outside of bends
+	bool standing_waves = true; // undular jump trains and supercritical cross-waves
 	bool snap_to_ground = true;
 	uint32_t ground_collision_mask = 1;
 	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
@@ -165,6 +173,21 @@ private:
 	// Joins: where the river ends (a lake, the sea, or another river), and the
 	// rivers flowing into this one.
 	NodePath mouth_target;
+	// Lake outlets (docs/ideas/water.md "Lake outlets"): a river leaving a lake takes its discharge from the
+	// lake's head over its sill (a broad-crested weir).
+	NodePath source_lake;
+	float outlet_coefficient = 0.85f; // the weir's discharge coefficient (0.85 rough natural sill, 1 smooth crest)
+	float outlet_discharge = -1.0f; // m^3/s from the lake at the last build (< 0 without a lake)
+	float outlet_head = 0.0f; // m, the lake above the sill at the last build
+	ObjectID source_id; // the lake this river last registered its outlet with
+	float outlet_free = 0.0f; // m^3/s the sill would pass with free flow over it (critical depth on the crest)
+	float outlet_crest = 0.0f; // world height of the sill
+	float outlet_crest_s = 0.0f; // its arc length
+	float outlet_level = 0.0f; // the lake's world level
+	Vector3 outlet_at; // world, the sill's centre
+	Vector3 outlet_dir; // world, downstream
+	float outlet_width = 1.0f;
+	void _register_outlet();
 	float mouth_blend = 6.0f; // m past the shoreline over which the ribbon fades into the water it joins
 	struct Tributary {
 		ObjectID river;
@@ -202,6 +225,7 @@ private:
 	void _build_fall_effects();
 	void _on_curve_changed();
 	void _solve_flow(float p_ds);
+	void _solve_standing_waves();
 	bool _strip_at(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
 	float _psi_at(const Vector3 &p_world, float &r_depth) const;
 	void _live_fields(PackedFloat32Array &r_depth, PackedFloat32Array &r_flux) const;
@@ -212,6 +236,9 @@ private:
 	Node *_mouth_node() const;
 	void _register_mouth();
 	void _unregister_mouth();
+	Node *_source_node() const;
+	void _measure_outlet(PhysicsDirectSpaceState3D *p_space, const Ref<Curve3D> &p_curve, float p_ds);
+	void _unregister_outlet();
 	void _on_target_rebuilt();
 	Vector2 _live_velocity_at(const Vector3 &p_world) const;
 	float _live_height_at(const Vector3 &p_world) const;
@@ -243,6 +270,8 @@ public:
 	bool get_gradually_varied_flow() const { return gradually_varied_flow; }
 	void set_bend_superelevation(bool p_enabled);
 	bool get_bend_superelevation() const { return bend_superelevation; }
+	void set_standing_waves(bool p_enabled);
+	bool get_standing_waves() const { return standing_waves; }
 	void set_snap_to_ground(bool p_snap);
 	bool get_snap_to_ground() const { return snap_to_ground; }
 	void set_ground_collision_mask(uint32_t p_mask);
@@ -302,6 +331,12 @@ public:
 	void clear_sphere(int p_owner);
 	void set_mouth_target(const NodePath &p_path);
 	NodePath get_mouth_target() const { return mouth_target; }
+	void set_source_lake(const NodePath &p_path);
+	NodePath get_source_lake() const { return source_lake; }
+	void set_outlet_coefficient(float p_coefficient);
+	float get_outlet_coefficient() const { return outlet_coefficient; }
+	float get_outlet_discharge() const { return MAX(outlet_discharge, 0.0f); }
+	float get_outlet_head() const { return outlet_head; }
 	void set_mouth_blend(float p_blend);
 	float get_mouth_blend() const { return mouth_blend; }
 	// A river joining this one at p_world (its mouth) adds p_discharge downstream of there.

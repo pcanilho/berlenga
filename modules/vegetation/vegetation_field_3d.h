@@ -370,6 +370,10 @@ public:
 	// Obstacles keep plants this far past their edge: a ground plant's stem off the rock's foot.
 	static constexpr float OBSTACLE_MARGIN = 0.03f;
 	static constexpr float STONE_TOP_OVERHANG = 0.015f; // How far a plant on a stone top may reach past its cap.
+	static constexpr float STONE_TOP_LOW = 0.05f; // A stone top this high over the ground is as damp as it ...
+	static constexpr float STONE_TOP_HIGH = 0.8f; // ... and this high, as dry as the open air.
+	static constexpr float STONE_TOP_SHELTER_REACH = 2.0f; // How far taller stones shelter a stone top.
+	static constexpr float STONE_TOP_DAMP_SPLIT = 0.45f; // A stone top this wet or more is damp (stone_top_damp).
 	static constexpr float STONE_TOP_SINK = 0.003f; // Metres a plant on a stone top sits into it (the cap is not a true dome).
 	// How far a ground plant's leaves may reach in over a rock's foot; a plant reaching farther is
 	// made smaller and leans away from the rock, down to ROCK_FIT_MIN of its size, or not placed.
@@ -424,6 +428,7 @@ public:
 	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
+	float get_light_at(const Vector3 &p_global_position) const;
 	float get_stand_shade_at(const Vector3 &p_global_position) const;
 	float get_sward_shade_at(const Vector3 &p_global_position) const;
 	// The undergrowth's own litter under its stands (PlantSpecies.litter_color): rgb colour, a cover.

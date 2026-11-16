@@ -1,0 +1,1 @@
+- Water: open-sea rollers ease toward 40 cm, so gale crests carry a lumpy churning band instead of a faceted white peak.

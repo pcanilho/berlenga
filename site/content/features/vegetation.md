@@ -94,11 +94,15 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
 - **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
 - **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
-- **Plants on and between stones** (`PlantSpecies.stone_top`, `PlantSpecies.stone_gap`, `PlantGenerator.make_stones()`): moss grows on the tops of generated stones, and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.
+- **Plants on and between stones** (`PlantSpecies.stone_top`, `PlantSpecies.stone_gap`, `PlantGenerator.make_stones()`): moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.
 
   ![A dense block field from 2 m up, without and with stone plants, raster](media/vegetation-stones.jpg)
 
   *Plants on and between stones: moss cushions on the block tops, a fern and small plants in the gaps.*
+
+  ![Scree blocks at a low side sun, moss on a shaded low stone and on sunlit high tops, raster](media/vegetation-stone-moss.jpg)
+
+  *Stone-top moss: green cushions on the low stone in shade, yellow-olive ones on the sunlit tops.*
 
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
 - **Woodland mushrooms** (`PlantGenerator`, `PlantSpecies.patch_ring`): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows beside deadwood, clouded agaric in fairy-ring arcs.

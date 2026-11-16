@@ -104,6 +104,7 @@ private:
 	// margin_lean degrees. Bracken's advancing front (Watt 1947).
 	float rock_foot = 0.0f; // How much more it grows at a rock's foot (obstacles): sheltered, moist ground.
 	float stone_gap = 0.0f; // 0..1: how strictly it keeps to the gaps between stones (obstacles); 1: nowhere else.
+	float stone_top_damp = 0.0f; // -1..1, stone_top species: +1 keeps to damp, shaded tops, -1 to dry, sunlit ones.
 	float margin_width = 0.0f;
 	float margin_scale = 1.0f;
 	float margin_lean = 0.0f;
@@ -228,6 +229,12 @@ public:
 	bool is_floating() const { return floating; }
 	void set_stone_top(bool p_on) { stone_top = p_on; emit_changed(); }
 	bool is_stone_top() const { return stone_top; }
+	void set_stone_top_damp(float p_amount) { stone_top_damp = CLAMP(p_amount, -1.0f, 1.0f); emit_changed(); }
+	float get_stone_top_damp() const { return stone_top_damp; }
+	// The weight of a stone top whose dampness is p_damp (0 dry and sunlit .. 1 damp and shaded).
+	float stone_top_damp_weight(float p_damp) const {
+		return stone_top_damp >= 0.0f ? Math::lerp(1.0f, p_damp, stone_top_damp) : Math::lerp(1.0f, 1.0f - p_damp, -stone_top_damp);
+	}
 
 	void set_deadwood_rule(DeadwoodRule p_rule) { deadwood_rule = p_rule; }
 	DeadwoodRule get_deadwood_rule() const { return deadwood_rule; }

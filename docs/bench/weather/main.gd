@@ -10,7 +10,8 @@ extends Node3D
 #                       the cost of one map update
 #                       clouds: the ground share in cloud shadow against cover, the optical depth of the
 #                       thickest column, the baked shadow against a direct march, the bake's cost, and the
-#                       shadow following the clouds as they drift
+#                       shadow following the clouds as they drift, and clouds forming and clearing over time
+#                       (share of sky held, how much of the ground changes after 1, 5 and 15 minutes)
 #                       wind near the ground: a forest's profile against Cionco's, the lee of a wall against
 #                       distance, gust patches (spread and size), the shader code against get_wind_at(), and
 #                       the shelter bake's cost
@@ -37,6 +38,8 @@ extends Node3D
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --no-reprojection  clouds view: every half resolution pixel every frame (WeatherSkyMaterial.cloud_reprojection off)
 #   --pan=D           clouds view: the camera turns D degrees a second (reprojection under motion)
+#   --cloud-time=S    clouds views: the clouds have evolved S seconds (the drift stays), for time-lapse strips
+#   --frozen          clouds views: cloud_evolution off (shapes only slide, as before step 3e)
 #
 # Run with --fixed-fps 30 so raster and path traced frames match.
 
@@ -60,6 +63,8 @@ var light_scale := 1.0
 var thunder_out := ""
 var reprojection := true
 var pan := 0.0
+var cloud_time := -1.0
+var frozen := false
 var pan_cam: Camera3D
 var n := 0
 var env: Environment
@@ -74,6 +79,8 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--no-reprojection": reprojection = false
 		elif a.begins_with("--pan="): pan = float(a.substr(6))
+		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
+		elif a == "--frozen": frozen = true
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a == "--test=lightning": test = true; only_lightning = true
@@ -274,6 +281,7 @@ func _run_tests() -> void:
 		await get_tree().physics_frame
 
 	await _cloud_tests()
+	await _cloud_evolution_tests()
 	await _shelter_tests()
 
 
@@ -363,6 +371,101 @@ func _cloud_tests() -> void:
 	c.queue_free()
 	sun.queue_free()
 
+
+
+# Clouds that form and clear (step 3e): the share of the ground in cloud shadow must hold over time (no pulsing),
+# while the pattern itself changes: the share of points whose shadow state differs after a lag.
+func _cloud_evolution_tests() -> void:
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-90, 0, 0)
+	add_child(sun)
+	var c := _new_map()
+	c.cloud_cover = 0.4
+	c.cloud_type = 0.6
+	c.cloud_variation = 0.35
+	c.cloud_evolution = true
+	c.sun_light = c.get_path_to(sun)
+	c.cloud_shadow_extent = 8192.0
+	c.cloud_shadow_resolution = 256
+	c.snap_to_settings()
+	await get_tree().physics_frame
+	var states := {}
+	var line := "evolving clouds (cover 0.4, variation 0.35, lifetime %.0f s, churn %.1f m/s): shadow share at minute" % [c.cloud_lifetime, c.cloud_churn]
+	var times := [0.0, 60.0, 300.0, 450.0, 900.0, 1350.0, 1800.0, 2700.0, 3600.0]
+	var lo := 1.0
+	var hi := 0.0
+	for t in times:
+		c.set_cloud_time(t)
+		c.update_cloud_shadow()
+		var st := PackedByteArray()
+		st.resize(4096)
+		var shaded := 0
+		for i in 64:
+			for j in 64:
+				var v: float = c.get_sun_visibility_at(Vector3(-3000 + i * 95.0, 0, -3000 + j * 95.0))
+				st[i * 64 + j] = 1 if v < 0.5 else 0
+				shaded += st[i * 64 + j]
+		states[t] = st
+		lo = minf(lo, shaded / 4096.0)
+		hi = maxf(hi, shaded / 4096.0)
+		line += " %.0f: %.0f%%," % [t / 60.0, shaded / 40.96]
+	print(line)
+	print("  share range over the hour: %.0f%% to %.0f%%" % [lo * 100.0, hi * 100.0])
+	var l2 := "  ground whose shadow changed since minute 0, after:"
+	for t in [60.0, 300.0, 900.0, 3600.0]:
+		var diff := 0
+		for k in 4096:
+			if states[t][k] != states[0.0][k]:
+				diff += 1
+		l2 += " %.0f min %.0f%%," % [t / 60.0, diff / 40.96]
+	print(l2)
+	# The whole sky: the cover's share over 64 km (ten cover-noise cells across), so a patch forming or clearing in
+	# the window above cannot hide a pulse of the whole field.
+	for cfg in [[900.0, 1.5], [900.0, 0.0], [0.0, 1.5]]:
+		c.cloud_lifetime = cfg[0]
+		c.cloud_churn = cfg[1]
+		var l3 := "  cloud at 1950 m over 64 km (share of points), lifetime %.0f s, churn %.1f m/s, at minute:" % [cfg[0], cfg[1]]
+		var shares := PackedFloat32Array()
+		for t in [0.0, 225.0, 450.0, 675.0, 900.0, 1800.0, 2700.0, 3600.0]:
+			c.set_cloud_time(t)
+			var above := 0
+			for i in 96:
+				for j in 96:
+					if c.get_cloud_density_at(Vector3(-32000 + i * 667.0, 1950.0, -32000 + j * 667.0)) > 0.0:
+						above += 1
+			shares.append(above / 9216.0)
+			l3 += " %.0f: %.1f%%," % [t / 60.0, above / 92.16]
+		print(l3)
+	c.cloud_lifetime = 900.0
+	c.cloud_churn = 1.5
+	# Control: frozen clouds, the same window moved to eight other places (how much a 64 km window's share
+	# varies by itself, from place to place).
+	c.cloud_evolution = false
+	var l4 := "  control, frozen, the window elsewhere:"
+	for k in 8:
+		var above2 := 0
+		for i in 96:
+			for j in 96:
+				if c.get_cloud_density_at(Vector3(-32000 + i * 667.0 + 70000.0 * (k + 1), 1950.0, -32000 + j * 667.0)) > 0.0:
+					above2 += 1
+		l4 += " %.1f%%," % (above2 / 92.16)
+	print(l4)
+	c.cloud_evolution = true
+	# Off: nothing changes with cloud time.
+	c.cloud_evolution = false
+	c.set_cloud_time(0.0)
+	var f0 := []
+	for i in 32:
+		f0.append(c.get_cloud_density_at(Vector3(-3000 + i * 190.0, 2200.0, 500.0)))
+	c.set_cloud_time(3600.0)
+	var same := true
+	for i in 32:
+		if absf(c.get_cloud_density_at(Vector3(-3000 + i * 190.0, 2200.0, 500.0)) - f0[i]) > 1e-6:
+			same = false
+	print("  cloud_evolution off: density unchanged after an hour of cloud time: %s" % same)
+	c.queue_free()
+	sun.queue_free()
+	await get_tree().physics_frame
 
 func _shelter_tests() -> void:
 	var m := _new_map()
@@ -914,6 +1017,9 @@ func _build_clouds() -> void:
 	weather.cloud_shadow_resolution = 256
 	add_child(weather)
 	weather.sun_light = weather.get_path_to(sun)
+	weather.cloud_evolution = not frozen
+	if cloud_time >= 0.0:
+		weather.set_cloud_time(cloud_time)
 	if view == "clouds_wide":
 		# The landscape bench's clear weather.
 		weather.extent = 8192.0

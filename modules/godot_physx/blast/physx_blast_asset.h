@@ -70,8 +70,14 @@ public:
 	void set_chunk_meshes(const Array &p_meshes) { chunk_meshes = p_meshes; }
 	Array get_chunk_meshes() const { return chunk_meshes; }
 
+	// Optional collision hulls, one PackedVector3Array per chunk (its convex hull's points, few of them), so a
+	// destructible cooks small hulls instead of every render triangle's corners. Empty: hulls from chunk_points.
+	void set_chunk_hulls(const Array &p_hulls) { chunk_hulls = p_hulls; }
+	Array get_chunk_hulls() const { return chunk_hulls; }
+
 private:
 	PackedByteArray asset_bytes;
 	Array chunk_points;
 	Array chunk_meshes;
+	Array chunk_hulls;
 };

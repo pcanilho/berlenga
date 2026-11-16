@@ -447,6 +447,8 @@ private:
 		PackedFloat32Array tangents;
 		PackedColorArray colors;
 		PackedVector2Array uv, uv2;
+		// Indexed chunk_meshes keep their index (a third of the vertices to copy and upload); empty: a soup.
+		PackedInt32Array indices;
 	};
 	LocalVector<LocalVector<ChunkSurface>> chunk_surfaces;
 	void _compute_chunk_surfaces();

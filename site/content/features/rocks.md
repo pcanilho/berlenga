@@ -19,7 +19,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Close-up detail: the same granite face gains crystal relief, pits, hairline cracks and a broken top edge.*
 
-- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`): stones blend into the ground with a soil band at their foot and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
+- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_blend`, `ground_blend_height`, `ground_material`): stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
 
 ## Placement
 
@@ -30,4 +30,4 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Breakable stones: the block breaks into a pile of angular pieces where it stood.*
 
-- **Tors and coasts** (`layer_enabled`: `LAYER_TOR`, `LAYER_COAST`): tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts.
+- **Tors and coasts** (`layer_enabled`: `LAYER_TOR`, `LAYER_COAST`): tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.
