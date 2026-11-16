@@ -42,9 +42,11 @@
 #include "modules/terrain_deform/terrain_erosion_filter.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
+#include "scene/resources/multimesh.h"
 
 TerrainGenerator3D *CaveNetwork3D::_get_generator() const {
 	if (generator_path.is_empty() || !is_inside_tree()) {
@@ -641,6 +643,206 @@ Array CaveNetwork3D::find_entrances(const Rect2 &p_rect, int p_max) const {
 }
 
 
+// Sea caves (docs/ideas/rocks.md, stage 3; Moore 1954, Trenhaile, "Coastal Dynamics and Landforms"): waves quarry a
+// joint or fault at the foot of a cliff over water deep enough to keep their energy (the coast layer's 0.8 to 12 m).
+// The cave is short (under about 100 m), straight along its joint, widest and tallest at the mouth, floored below the
+// low water so the sea runs in, often ending in a chamber where the joint crosses another; where the roof of that
+// chamber is thin, a shaft breaks through to the cliff top (a blowhole).
+Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
+	Array out;
+	const TerrainGenerator3D *gen = _get_generator();
+	ERR_FAIL_NULL_V(gen, out);
+	if (!gen->has_sea_result()) {
+		return out;
+	}
+	const real_t sea = gen->get_sea_level();
+
+	struct Found {
+		Vector3 p, out;
+		real_t score;
+	};
+	LocalVector<Found> found;
+	RandomPCG rng(uint32_t(seed) * 2654435761u + 77u);
+	auto H = [&](real_t p_x, real_t p_z) -> real_t { return gen->get_height(Vector3(p_x, 0, p_z)); };
+	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 8.0) {
+		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 8.0) {
+			const real_t h = H(x, z);
+			if (!Math::is_finite(h) || h < sea + 8.0) {
+				continue; // a cliff at least 8 m over the sea
+			}
+
+			const real_t e = 4.0;
+			Vector3 n(H(x - e, z) - H(x + e, z), 2.0 * e, H(x, z - e) - H(x, z + e));
+			if (!n.is_finite()) {
+				continue;
+			}
+			n.normalize();
+			if (n.y >= 0.8f) {
+				continue;
+			}
+			const Vector2 dn = Vector2(n.x, n.z).normalized();
+			// Seaward from the cliff: the first point under the sea, then the depth there.
+			Vector2 m(x, z);
+			bool wet = false;
+			for (real_t t = 0.0; t < 60.0; t += 1.0) {
+				const Vector2 q = Vector2(x, z) + dn * t;
+				if (H(q.x, q.y) < sea - 0.5) {
+					m = q;
+					wet = true;
+					break;
+				}
+			}
+			if (!wet) {
+				continue;
+			}
+
+			const Vector2 off = m + dn * 4.0;
+			const real_t depth = sea - H(off.x, off.y);
+			if (depth < 0.3 || depth > 25.0) {
+				continue;
+			}
+
+			// The mouth: back from the waterline to where the cliff face rises 2 m above the sea.
+			Vector2 mouth = m;
+			for (real_t t = 0.0; t < 20.0; t += 0.5) {
+				const Vector2 q = m - dn * t;
+				if (H(q.x, q.y) > sea + 2.0) {
+					mouth = q + dn * 1.0;
+					break;
+				}
+			}
+			// The cliff behind must stand: 10 m in, the ground at least 8 m over the sea.
+			const Vector2 back = mouth - dn * 10.0;
+			if (H(back.x, back.y) < sea + 8.0) {
+				continue;
+			}
+			found.push_back({ Vector3(mouth.x, sea, mouth.y), Vector3(dn.x, 0, dn.y), real_t(H(back.x, back.y) - sea) + real_t(4.0 * rng.randf()) });
+		}
+	}
+	struct More {
+		_FORCE_INLINE_ bool operator()(const Found &p_a, const Found &p_b) const { return p_a.score > p_b.score; }
+	};
+	found.sort_custom<More>();
+	LocalVector<Vector3> taken;
+	for (const Found &fd : found) {
+		if (out.size() >= p_max) {
+			break;
+		}
+		bool far = true;
+		for (const Vector3 &t : taken) {
+			far = far && Vector2(t.x - fd.p.x, t.z - fd.p.z).length() > 80.0f;
+		}
+		if (!far) {
+			continue;
+		}
+		taken.push_back(fd.p);
+		Dictionary d;
+		d["position"] = fd.p;
+		d["out"] = fd.out;
+		out.push_back(d);
+	}
+	return out;
+}
+
+int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out) {
+	TerrainGenerator3D *gen = _get_generator();
+	ERR_FAIL_NULL_V(gen, -1);
+	const real_t sea = gen->has_sea_result() ? gen->get_sea_level() : p_entrance.y;
+	RandomPCG rng(uint32_t(seed) * 2654435761u ^ uint32_t(int(Math::floor(p_entrance.x)) * 73856093) ^ uint32_t(int(Math::floor(p_entrance.z)) * 19349663) ^ 0x5eau);
+	Cave c;
+	c.sea = true;
+	c.entrance = p_entrance;
+	c.out = Vector3(p_out.x, 0, p_out.z).normalized();
+	const Vector3 f = -c.out;
+	// The joint: the facing turned by up to 15 degrees, held for the whole cave (sea caves are straight).
+	const Vector3 dir = Basis(Vector3(0, 1, 0), real_t((rng.randf() - 0.5) * Math::deg_to_rad(30.0))).xform(f);
+	const Vector3 side = dir.cross(Vector3(0, 1, 0)).normalized();
+	const real_t length = 35.0 + 60.0 * rng.randf();
+	const real_t r_mouth = 2.6 + 1.6 * rng.randf();
+	const uint32_t ws = rng.rand();
+	Vector3 prev = p_entrance + c.out * 2.0;
+	real_t prev_r = r_mouth * 1.15;
+	for (real_t t = 3.0; t <= length; t += 3.0) {
+		const real_t u = t / length;
+		// The floor (passage line minus 1.25 r) at 1.5 m below the sea at the mouth, rising to the high water at the back;
+		// a slight wander along the joint.
+		const real_t r = Math::lerp(r_mouth, real_t(1.3), Math::pow(u, real_t(0.7)));
+		const real_t floor_y = sea + Math::lerp(real_t(-1.5), real_t(0.6), u * u);
+		Vector3 p = p_entrance + dir * t + side * real_t((TerrainErosionFilter::fbm(ws, t, 0.0, 30.0, 2) - 0.5) * 3.0);
+		p.y = floor_y + 1.25 * r;
+		// Rock over the roof and to both sides: stop where it gets too thin (the cave would break out of the cliff).
+		const real_t roof = p.y + 0.6 * r;
+		// (Not in the first metres: the mouth is in the cliff face, under its patch.)
+		const bool roof_thin = t > 6.0 && gen->get_height(p) - roof < 3.0;
+		const bool side_thin = t > 10.0 && (gen->get_height(p + side * (0.75 * r + 3.0)) < roof + 2.0 || gen->get_height(p - side * (0.75 * r + 3.0)) < roof + 2.0);
+		if (roof_thin || side_thin) {
+			break;
+		}
+		Segment sg;
+		sg.a = prev;
+		sg.b = p;
+		sg.ra = float(prev_r);
+		sg.rb = float(r);
+		sg.type = PASSAGE_SEA;
+		c.segments.push_back(sg);
+		prev = p;
+		prev_r = r;
+	}
+	ERR_FAIL_COND_V_MSG(c.segments.size() < 3, -1, "CaveNetwork3D: too little cliff behind this sea cave mouth.");
+	// A chamber at the back where the joint meets another, half the time.
+	const Vector3 end = c.segments[c.segments.size() - 1].b;
+	if (rng.randf() < 0.5) {
+		Chamber ch;
+		const real_t rx = 3.5 + 3.5 * rng.randf();
+		ch.radii = Vector3(rx, MIN(rx * 0.8, MAX(gen->get_height(end) - end.y - 4.0, real_t(2.5))), rx * 0.8);
+		ch.center = end + dir * (rx * 0.5);
+		ch.center.y = sea + 0.4 + 0.55 * ch.radii.y; // the flat floor (0.55 of its height down) at high water
+		ch.yaw = rng.randf() * Math::TAU;
+		c.chambers.push_back(ch);
+		// The blowhole: where the cover over the chamber is under 25 m, a shaft up to the cliff top.
+		const Vector3 top = ch.center + Vector3(0, ch.radii.y * 0.8, 0);
+		const real_t ground = gen->get_height(top);
+		if (ground - top.y < 25.0) {
+			Segment sh;
+			sh.a = top;
+			sh.b = Vector3(top.x, ground + 2.0, top.z);
+			sh.ra = 0.9f + 0.5f * rng.randf();
+			sh.rb = sh.ra * 1.3f; // wider where it opens
+			sh.type = PASSAGE_SHAFT;
+			c.segments.push_back(sh);
+			c.blowholes.push_back(Vector3(top.x, ground, top.z));
+		}
+	}
+	c.keys.push_back(p_entrance);
+	c.bounds = AABB(p_entrance, Vector3());
+	for (const Segment &sg : c.segments) {
+		c.bounds.expand_to(sg.a);
+		c.bounds.expand_to(sg.b);
+	}
+	for (const Chamber &ch : c.chambers) {
+		c.bounds.expand_to(ch.center + ch.radii);
+		c.bounds.expand_to(ch.center - ch.radii);
+	}
+	_stream_finish(true);
+	streamed = false;
+	caves.push_back(c);
+	return int(caves.size()) - 1;
+}
+
+bool CaveNetwork3D::is_sea_cave(int p_cave) const {
+	ERR_FAIL_INDEX_V(p_cave, int(caves.size()), false);
+	return caves[p_cave].sea;
+}
+
+PackedVector3Array CaveNetwork3D::get_blowholes(int p_cave) const {
+	PackedVector3Array out;
+	ERR_FAIL_INDEX_V(p_cave, int(caves.size()), out);
+	for (const Vector3 &b : caves[p_cave].blowholes) {
+		out.push_back(b);
+	}
+	return out;
+}
+
 /* Meshes */
 
 namespace {
@@ -666,6 +868,30 @@ float cave_noise(const Vector3 &p_p, uint32_t p_seed) {
 		}
 	}
 	return Math::lerp(Math::lerp(c[0][0], c[0][1], ty), Math::lerp(c[1][0], c[1][1], ty), tz);
+}
+
+// Worley (cellular) noise: the distance to the nearest and second nearest feature points, one per unit cell.
+// Dissolution scallops are such cells: dish-shaped hollows with sharp ridges between them (Curl 1974).
+void cave_worley(const Vector3 &p_p, uint32_t p_seed, float &r_f1, float &r_f2) {
+	const int ix = int(Math::floor(p_p.x)), iy = int(Math::floor(p_p.y)), iz = int(Math::floor(p_p.z));
+	r_f1 = 9.0f;
+	r_f2 = 9.0f;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				const Vector3 f(ix + x + cave_hash(ix + x, iy + y, iz + z, p_seed), iy + y + cave_hash(ix + x, iy + y, iz + z, p_seed + 1u), iz + z + cave_hash(ix + x, iy + y, iz + z, p_seed + 2u));
+				const float d = (f - p_p).length_squared();
+				if (d < r_f1) {
+					r_f2 = r_f1;
+					r_f1 = d;
+				} else if (d < r_f2) {
+					r_f2 = d;
+				}
+			}
+		}
+	}
+	r_f1 = Math::sqrt(r_f1);
+	r_f2 = Math::sqrt(r_f2);
 }
 
 float cave_fbm(const Vector3 &p_p, uint32_t p_seed, int p_octaves) {
@@ -717,6 +943,10 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 		case CaveNetwork3D::PASSAGE_SHAFT:
 			r_floor = -1e9;
 			return Math::sqrt(u * u + v * v) - r;
+		case CaveNetwork3D::PASSAGE_SEA:
+			// Straight walls up a joint, an arched roof; the floor is bare rock and boulders, no fill.
+			r_floor = -1.25 * r;
+			return MIN(cave_box(u, v, 0.75 * r, -1.3 * r, 0.6 * r, 0.25 * r), cave_ellipse(u, v, 0.75 * r, 0.9 * r, 0.6 * r));
 		case CaveNetwork3D::PASSAGE_TUBE:
 		default:
 			r_floor = -0.55 * r;
@@ -771,6 +1001,14 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 	if (roughness > 0.0 && d < 2.5) {
 		const uint32_t ns = uint32_t(seed) * 2654435761u + 3u;
 		d += roughness * (0.35 * (cave_fbm(p_p / 2.2f, ns, 3) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.7f, ns + 7u, 2) - 0.5f));
+		if (scallops > 0.0) {
+			// Scallops: hollows 1.2 m across (the big ones of slow phreatic flow; small fast-flow scallops are below
+			// the mesh cell), deepest in the middle of each cell, ridges where two cells meet.
+			float f1, f2;
+			cave_worley(p_p / 1.2f, ns + 11u, f1, f2);
+			const float ridge = CLAMP((f2 - f1) / 0.6f, 0.0f, 1.0f);
+			d -= scallops * 0.14 * ridge * (2.0f - ridge);
+		}
 	}
 	return d;
 }
@@ -1007,6 +1245,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	}
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
+	LocalVector<Vector3> roof; // wall vertices under a roof (facing down), in this chunk only
 	for (int sfc = 0; sfc < 2; sfc++) {
 		if (tris[sfc].is_empty()) {
 			continue;
@@ -1027,6 +1266,9 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 				remap.insert(vi, pv.size());
 				pv.push_back(p);
 				pn.push_back(n);
+				if (sfc == 0 && n.y < -0.8f && p.x >= O.x && p.y >= O.y && p.z >= O.z && p.x < O.x + chunk_size && p.y < O.y + chunk_size && p.z < O.z + chunk_size) {
+					roof.push_back(p);
+				}
 				pi.push_back(pv.size() - 1);
 			} else {
 				pi.push_back(*m);
@@ -1042,6 +1284,67 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 		r_chunk.triangles += pi.size() / 3;
 	}
 	r_chunk.mesh = mesh;
+	if (speleothems > 0.0 && !roof.is_empty()) {
+		_place_speleothems(src, gen, roof, r_chunk);
+	}
+}
+
+// Speleothems (docs/ideas/rocks.md, stage 3; the placement rule of Franke and Müller 2022): calcite is laid down
+// where water seeping through the roof drips into air. A drip point needs a roof facing down, water above (thin
+// cover feeds more drips: the seepage of the soil and epikarst), a free fall under it, and darkness (none in the
+// first metres from the entrance, where air exchange dries the walls). Under the stalactite grows a stalagmite where
+// the drop lands; where the two would meet, a column.
+void CaveNetwork3D::_place_speleothems(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const LocalVector<Vector3> &p_roof, Chunk &r_chunk) const {
+	auto F = [&](const Vector3 &q) { return p_gen ? _rock(p_src, p_gen, q) : _air(p_src, q); };
+	const uint32_t ns = uint32_t(seed) * 2246822519u + 29u;
+	for (const Vector3 &p : p_roof) {
+		const int qx = int(Math::floor(p.x * 4.0f)), qy = int(Math::floor(p.y * 4.0f)), qz = int(Math::floor(p.z * 4.0f));
+		const float pick = cave_hash(qx, qy, qz, ns);
+		// About one drip point per 6 m² of roof at full seepage.
+		const real_t cover = p_gen ? p_gen->get_height(p) - p.y : 20.0;
+		const real_t seep = CLAMP(1.15 - cover / 45.0, 0.15, 1.0);
+		if (pick > 0.06f * speleothems * seep) {
+			continue;
+		}
+		bool lit = false;
+		for (const Cave &cv : caves) {
+			// Near a mouth the air exchange dries the walls; sea caves have none at all (spray and waves).
+			lit = lit || cv.entrance.distance_to(p) < 14.0 || (cv.sea && cv.bounds.grow(2.0).has_point(p));
+		}
+		if (lit) {
+			continue;
+		}
+		// The free fall: down from the roof to the floor (rock again).
+		real_t gap = 0.0;
+		for (real_t y = 0.15; y < 16.0; y += 0.15) {
+			if (F(p - Vector3(0, y, 0)) > 0.0) {
+				gap = y;
+				break;
+			}
+		}
+		if (gap < 0.6) {
+			continue;
+		}
+		const float r1 = cave_hash(qx, qy, qz, ns + 1u), r2 = cave_hash(qx, qy, qz, ns + 2u), r3 = cave_hash(qx, qy, qz, ns + 3u);
+		const real_t yaw = r3 * Math::TAU;
+		// Lengths follow a power law (many short, few long), as surveys of stalactite populations find.
+		real_t len = MIN(0.12 + 1.6 * Math::pow(r1, 2.2f), 0.5 * gap);
+		real_t mite = MIN(0.08 + 1.1 * Math::pow(r2, 2.0f), 0.4 * gap);
+		const Vector3 top = p + Vector3(0, 0.08, 0); // into the roof a little, so the base is buried
+		const Vector3 foot = p - Vector3(0, gap + 0.06, 0);
+		if (len + mite > 0.85 * gap && gap < 5.0) {
+			// A column: one shape from floor to roof.
+			const real_t rad = 0.16 + 0.22 * r2;
+			r_chunk.spel[SPEL_COLUMN].push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw).scaled(Vector3(rad, gap + 0.14, rad)), foot));
+			continue;
+		}
+		const real_t rad = 0.05 + 0.16 * len; // stalactites taper from a base about a sixth of their length
+		r_chunk.spel[SPEL_STALACTITE].push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw).scaled(Vector3(rad, len + 0.08, rad)), top));
+		if (r2 < 0.65f) {
+			const real_t mrad = 0.1 + 0.3 * mite; // stalagmites are blunter and wider (the drop splashes)
+			r_chunk.spel[SPEL_STALAGMITE].push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw + 1.0).scaled(Vector3(mrad, mite + 0.06, mrad)), foot));
+		}
+	}
 }
 
 struct CaveMeshJob {
@@ -1169,6 +1472,83 @@ void CaveNetwork3D::_wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashS
 	}
 }
 
+// The unit speleothem shapes, turned (a lathe) with growth rings and an uneven, slightly flattened section:
+// a stalactite from its base (y 0, radius 1) down to a point at y -1; a stalagmite from y 0 up to a rounded top at
+// y 1; a column from y 0 to 1, flared at both ends where its stalactite and stalagmite were.
+Ref<ArrayMesh> CaveNetwork3D::_spel_mesh(int p_kind) {
+	if (spel_mesh[p_kind].is_valid()) {
+		return spel_mesh[p_kind];
+	}
+	const int R = 16, H = 40;
+	PackedVector3Array pv, pn;
+	PackedInt32Array pi;
+	auto radius = [p_kind](real_t t, real_t a) -> real_t {
+		// t 0 at the base (roof or floor), 1 at the tip (or the other end of a column).
+		// Growth rings, soft (a coarse ring pattern shades as bands), and a lobed section that twists slowly.
+		const real_t rings = 1.0 + 0.025 * Math::sin(t * 23.0 + a) + 0.015 * Math::sin(t * 61.0 + 2.0 * a);
+		const real_t lobes = 1.0 + 0.1 * Math::sin(a * 3.0 + t * 3.0) + 0.05 * Math::sin(a * 5.0 + 1.3 + t * 2.0);
+		real_t r;
+		if (p_kind == SPEL_STALACTITE) {
+			r = Math::pow(1.0 - t, 1.5) * (1.0 + 0.5 * Math::pow(1.0 - t, 8.0)); // a flared base, a long taper
+		} else if (p_kind == SPEL_STALAGMITE) {
+			r = Math::pow(MAX(1.0 - t * t * t, 0.0), 0.45) * (1.0 + 0.35 * Math::pow(1.0 - t, 6.0)); // blunt, rounded
+		} else {
+			const double m = Math::abs(2.0 * t - 1.0);
+			r = 0.55 + 0.45 * Math::pow(m, 3.0) + 0.25 * Math::pow(m, 12.0); // waisted, flared at both ends
+		}
+		return r * rings * lobes;
+	};
+	const real_t dir = p_kind == SPEL_STALACTITE ? -1.0 : 1.0;
+	for (int j = 0; j <= H; j++) {
+		const real_t t = real_t(j) / H;
+		for (int i = 0; i < R; i++) {
+			const real_t a = Math::TAU * i / R;
+			const real_t r = radius(t, a);
+			pv.push_back(Vector3(Math::cos(a) * r, dir * t, Math::sin(a) * r * 0.85));
+		}
+	}
+	// Normals from the neighbours on the grid.
+	for (int j = 0; j <= H; j++) {
+		for (int i = 0; i < R; i++) {
+			const Vector3 du = pv[j * R + (i + 1) % R] - pv[j * R + (i + R - 1) % R];
+			const Vector3 dv = pv[MIN(j + 1, H) * R + i] - pv[MAX(j - 1, 0) * R + i];
+			Vector3 n = du.cross(dv) * dir;
+			const Vector3 out = Vector3(pv[j * R + i].x, 0, pv[j * R + i].z);
+			if (n.dot(out) < 0.0) {
+				n = -n;
+			}
+			pn.push_back(n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, dir, 0));
+		}
+	}
+	for (int j = 0; j < H; j++) {
+		for (int i = 0; i < R; i++) {
+			const int a = j * R + i, b = j * R + (i + 1) % R, c = (j + 1) * R + i, d = (j + 1) * R + (i + 1) % R;
+			// Clockwise seen from outside (Godot's front faces).
+			if (dir > 0.0) {
+				pi.append_array({ a, b, c, b, d, c });
+			} else {
+				pi.append_array({ a, c, b, b, c, d });
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = pv;
+	arrays[Mesh::ARRAY_NORMAL] = pn;
+	arrays[Mesh::ARRAY_INDEX] = pi;
+	spel_mesh[p_kind].instantiate();
+	spel_mesh[p_kind]->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	if (spel_material.is_null()) {
+		// Wet calcite: pale cream, smooth, glossy where water runs.
+		spel_material.instantiate();
+		spel_material->set_albedo(Color(0.80, 0.75, 0.66));
+		spel_material->set_roughness(0.32);
+		spel_material->set_specular(0.6);
+	}
+	spel_mesh[p_kind]->surface_set_material(0, spel_material);
+	return spel_mesh[p_kind];
+}
+
 void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	if (p_chunk.mesh.is_null()) {
 		return;
@@ -1201,6 +1581,23 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 		body->add_child(cs);
 		mi->add_child(body);
 	}
+	for (int k = 0; k < 3; k++) {
+		if (p_chunk.spel[k].is_empty()) {
+			continue;
+		}
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_mesh(_spel_mesh(k));
+		mm->set_instance_count(int(p_chunk.spel[k].size()));
+		for (uint32_t i = 0; i < p_chunk.spel[k].size(); i++) {
+			mm->set_instance_transform(int(i), p_chunk.spel[k][i]);
+		}
+		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+		mmi->set_name(k == SPEL_STALACTITE ? "Stalactites" : (k == SPEL_STALAGMITE ? "Stalagmites" : "Columns"));
+		mmi->set_multimesh(mm);
+		mi->add_child(mmi);
+	}
 	p_chunk.node = mi;
 }
 
@@ -1218,6 +1615,12 @@ void CaveNetwork3D::_open_holes() {
 		const Vector3 o = Vector3(cv.out.x, 0, cv.out.z).normalized();
 		const Basis b(Vector3(-o.z, 0, o.x) * hr, Vector3(0, 500.0, 0), o * hr);
 		gen->add_hole(Transform3D(b, cv.entrance + Vector3(0, 490.0, 0)));
+		for (const Vector3 &bh : cv.blowholes) {
+			// The blowhole's mouth: a round-ish box a little inside the shaft's top, so the shaft's own wall meets the
+			// ground's edge.
+			const real_t br = 0.9;
+			gen->add_hole(Transform3D(Basis().scaled(Vector3(br, 6.0, br)), bh));
+		}
 		cv.holed = true;
 	}
 }
@@ -1386,6 +1789,16 @@ void CaveNetwork3D::clear_meshes() {
 	chunks.clear();
 }
 
+int CaveNetwork3D::get_speleothem_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		for (int k = 0; k < 3; k++) {
+			n += kv.value.node ? int(kv.value.spel[k].size()) : 0;
+		}
+	}
+	return n;
+}
+
 int CaveNetwork3D::get_mesh_chunk_count() const {
 	int n = 0;
 	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
@@ -1405,6 +1818,10 @@ int CaveNetwork3D::get_mesh_triangle_count() const {
 void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_cave", "entrance", "out"), &CaveNetwork3D::add_cave);
 	ClassDB::bind_method(D_METHOD("clear_caves"), &CaveNetwork3D::clear_caves);
+	ClassDB::bind_method(D_METHOD("add_sea_cave", "entrance", "out"), &CaveNetwork3D::add_sea_cave);
+	ClassDB::bind_method(D_METHOD("find_sea_entrances", "rect", "max"), &CaveNetwork3D::find_sea_entrances, DEFVAL(4));
+	ClassDB::bind_method(D_METHOD("is_sea_cave", "cave"), &CaveNetwork3D::is_sea_cave);
+	ClassDB::bind_method(D_METHOD("get_blowholes", "cave"), &CaveNetwork3D::get_blowholes);
 	ClassDB::bind_method(D_METHOD("get_cave_count"), &CaveNetwork3D::get_cave_count);
 	ClassDB::bind_method(D_METHOD("get_segments", "cave"), &CaveNetwork3D::get_segments);
 	ClassDB::bind_method(D_METHOD("get_chambers", "cave"), &CaveNetwork3D::get_chambers);
@@ -1417,6 +1834,11 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_meshes"), &CaveNetwork3D::clear_meshes);
 	ClassDB::bind_method(D_METHOD("get_mesh_chunk_count"), &CaveNetwork3D::get_mesh_chunk_count);
 	ClassDB::bind_method(D_METHOD("is_streaming"), &CaveNetwork3D::is_streaming);
+	ClassDB::bind_method(D_METHOD("get_speleothem_count"), &CaveNetwork3D::get_speleothem_count);
+	ClassDB::bind_method(D_METHOD("set_scallops", "amount"), &CaveNetwork3D::set_scallops);
+	ClassDB::bind_method(D_METHOD("get_scallops"), &CaveNetwork3D::get_scallops);
+	ClassDB::bind_method(D_METHOD("set_speleothems", "amount"), &CaveNetwork3D::set_speleothems);
+	ClassDB::bind_method(D_METHOD("get_speleothems"), &CaveNetwork3D::get_speleothems);
 	ClassDB::bind_method(D_METHOD("set_follow_target", "path"), &CaveNetwork3D::set_follow_target);
 	ClassDB::bind_method(D_METHOD("get_follow_target"), &CaveNetwork3D::get_follow_target);
 	ClassDB::bind_method(D_METHOD("set_stream_radius", "metres"), &CaveNetwork3D::set_stream_radius);
@@ -1477,6 +1899,8 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_cell", PROPERTY_HINT_RANGE, "0.05,4,0.01,suffix:m"), "set_mesh_cell", "get_mesh_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_radius", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_patch_radius", "get_patch_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_roughness", "get_roughness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scallops", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_scallops", "get_scallops");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "speleothems", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_speleothems", "get_speleothems");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision"), "set_collision", "has_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "wall_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_wall_material", "get_wall_material");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_ground_material", "get_ground_material");
@@ -1490,5 +1914,6 @@ void CaveNetwork3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(PASSAGE_KEYHOLE);
 	BIND_ENUM_CONSTANT(PASSAGE_CANYON);
 	BIND_ENUM_CONSTANT(PASSAGE_SHAFT);
+	BIND_ENUM_CONSTANT(PASSAGE_SEA);
 	BIND_ENUM_CONSTANT(PASSAGE_MAX);
 }

@@ -3227,3 +3227,16 @@ Longuet-Higgins' cos^2s), so crests are short: they bend, and a breaker peels an
 Fix: the baked phase wanders by up to about a fifth of a wave, slowly along the crest (1.5 wavelengths) and more
 slowly across it (4 wavelengths); the gradient (direction of travel) follows it, and the CPU lip sheets and
 sample_height read the same baked phase, so the lips stay on their crests.
+
+## Crest glow (raster, 16 Nov; Paulo's pick 2 of 3)
+
+Research: Atlas (GDC 2019, "Wakes, Explosions and Lighting: Interactive Water Simulation in Atlas") approximates
+light scattered through a crest as k1 H <L,-V>^4 (0.5 - 0.5 L.N)^3 + k2 <V,N>^2; Crest and Sea of Thieves use the
+same shape of term (a forward lobe toward the sun, weighted by how far the face turns from it and by height).
+The path tracer already scatters through crests, so this is raster only.
+Built: light() adds LIGHT_COLOR * ATTENUATION * colour * <L,-V>^4 (0.5 - 0.5 L.N)^3 for the sun, not through the
+wave self-shadow (the light crosses the crest on purpose). The colour is the water's single-scattering albedo
+(pathtraced_scattering / sigma_t, so it matches what the path tracer scatters) times crest_glow, the height above
+still water (smoothstep 0..1.5 m, from the vertex), the open water's share (no foam, sand, swash or lips).
+The k2 <V,N>^2 term is left out: the open water's body light (sun_body) already carries it.
+Bench: water_surface --view=storm_sun --sun-pitch=10 (into a low sun); crest_glow:0 for off.

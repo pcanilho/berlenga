@@ -1,0 +1,1 @@
+- Water: crest glow in raster: sunlight through thin wave crests toward a low sun, in the water's own scattering colour (`crest_glow`, on).
