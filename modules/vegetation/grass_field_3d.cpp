@@ -1346,6 +1346,26 @@ void GrassField3D::_drop_under() {
 	}
 }
 
+Dictionary GrassField3D::get_far_published() const {
+	Dictionary d;
+	Color far = get_far_color();
+	Color l1, l2, scale(1, 1, 1, 1);
+	if (far_baked) {
+		_far_at_elevation(sun_elevation_deg, far, l1, l2);
+		const Color ref = far_color_baked;
+		scale = Color(ref.r > 0.0f ? far.r / ref.r : 1.0f, ref.g > 0.0f ? far.g / ref.g : 1.0f, ref.b > 0.0f ? far.b / ref.b : 1.0f, 1.0f);
+	}
+	d["far"] = far;
+	d["lobe1"] = l1;
+	d["lobe2"] = l2;
+	d["scale"] = scale;
+	d["sun"] = published_sun;
+	d["sun_elevation"] = sun_elevation_deg;
+	d["cover_share"] = _cover_share();
+	d["baked"] = far_baked;
+	return d;
+}
+
 PackedColorArray GrassField3D::get_far_color_lobes() const {
 	PackedColorArray r;
 	r.push_back(far_baked ? far_lobe1 : Color(0, 0, 0, 0));
@@ -2329,6 +2349,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
 	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
 	ClassDB::bind_method(D_METHOD("get_far_color_lobes"), &GrassField3D::get_far_color_lobes);
+	ClassDB::bind_method(D_METHOD("get_far_published"), &GrassField3D::get_far_published);
 	GRASS_BIND(set_sun_light, get_sun_light, "path")
 	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")

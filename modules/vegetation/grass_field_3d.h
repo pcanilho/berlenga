@@ -246,6 +246,7 @@ public:
 	Color get_far_color() const;
 	bool is_far_color_baked() const { return far_baked; }
 	PackedColorArray get_far_color_lobes() const;
+	Dictionary get_far_published() const;
 	void set_sun_light(const NodePath &p_path);
 	NodePath get_sun_light() const { return sun_light; }
 	void set_base_color(const Color &p_color);

@@ -22,6 +22,12 @@
 				How the far colour changes with the sun's azimuth from the view, [code]phi[/code]: two colours [code]l1[/code], [code]l2[/code], per channel, for the factor [code]1 + l1 cos(phi) + l2 cos(2 phi)[/code] the ground under far grass takes ([code]phi[/code] 0: the sun behind the viewer, where a sward is brightest). Fitted to the render of the blades with the sun at four headings; zero before that.
 			</description>
 		</method>
+		<method name="get_far_published" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				What this field publishes for the far ground at the current sun: [code]far[/code] (the far colour at the sun's elevation), [code]lobe1[/code] and [code]lobe2[/code] (its azimuth lobes there), [code]scale[/code] (that colour over the far cover map's, the global [code]grass_ground_far_scale[/code]), [code]sun[/code] (heading x, z and azimuth strength, the global [code]grass_ground_sun[/code]), [code]sun_elevation[/code] in degrees, [code]cover_share[/code] and [code]baked[/code]. For checking a scene's far blend, since global shader parameters cannot be read back at runtime.
+			</description>
+		</method>
 		<method name="get_effective_dryness" qualifiers="const">
 			<return type="float" />
 			<description>
