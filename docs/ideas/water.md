@@ -2924,3 +2924,6 @@ wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers nea
   its geometric churn is in lobes about 2 m across; the fine churn stays in the slope only. Forward throw
   0.25 of the height (was 0.4). Cost: ten more foam and height lookups per open-sea vertex, and per pixel
   under foam.
+- Solid where it rises (16 Nov, docs review of #313): an aged lace hole lifted onto the band's face showed as a
+  dark notch with a hard rim, since the fill only ran where foam was already above 5%. The fill is now tied
+  to the vertex raise (a varying, as a share of the 40 cm cap): wherever the band rises, it is white.
