@@ -8361,7 +8361,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		Vector4i part;
 		moss.begin(part);
 		// Shoots per square metre: about one tuft per 2 cm square, thinner on thin wood.
-		const float density = 3600.0f * CLAMP(p_r / 0.12f, 0.4f, 1.0f);
+		const float density = 3000.0f * CLAMP(p_r / 0.12f, 0.4f, 1.0f);
 		const Vector3 comb = Vector3(0.3f, -1.0f, 0.2f).normalized(); // Shoots lean downhill a little.
 		for (int q : tris) {
 			const int i0 = moss.indices[q], i1 = moss.indices[q + 1], i2 = moss.indices[q + 2];
@@ -8418,9 +8418,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// Shaded as the cushion's surface, bent a little toward the blade's own face.
 					const Vector3 sn = (nn * 0.7f + face * 0.3f).normalized();
 					const int base_i = moss.verts.size();
-					const Vector3 vp[5] = { p - across, p + across, mid - across * 0.7f, mid + across * 0.7f, tip };
-					const Color vc[5] = { root_c, root_c, base.lerp(tip_c, 0.5f), base.lerp(tip_c, 0.5f), tip_c };
-					for (int j = 0; j < 5; j++) {
+					// One triangle a blade (each face), its tip bent over: a blade with a joint
+					// cost three times the triangles for a bend under a millimetre at 40 cm.
+					const Vector3 vp[3] = { p - across, p + across, tip };
+					const Color vc[3] = { root_c, root_c, tip_c };
+					for (int j = 0; j < 3; j++) {
 						moss.verts.push_back(vp[j]);
 						moss.normals.push_back(sn);
 						moss.uvs.push_back(uv);
@@ -8430,17 +8432,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						moss.tangents.push_back(across.z / w);
 						moss.tangents.push_back(1.0f);
 					}
-					// Both faces (the moss material culls back faces); counter-clockwise from the
-					// front as the shell's, which is flipped with it.
-					static const int TRI[9] = { 0, 1, 2, 1, 3, 2, 2, 3, 4 };
-					for (int j = 0; j < 9; j += 3) {
-						moss.indices.push_back(base_i + TRI[j]);
-						moss.indices.push_back(base_i + TRI[j + 1]);
-						moss.indices.push_back(base_i + TRI[j + 2]);
-						moss.indices.push_back(base_i + TRI[j]);
-						moss.indices.push_back(base_i + TRI[j + 2]);
-						moss.indices.push_back(base_i + TRI[j + 1]);
-					}
+					// Both faces (the moss material culls back faces).
+					moss.indices.push_back(base_i);
+					moss.indices.push_back(base_i + 1);
+					moss.indices.push_back(base_i + 2);
+					moss.indices.push_back(base_i);
+					moss.indices.push_back(base_i + 2);
+					moss.indices.push_back(base_i + 1);
 				}
 			}
 		}
