@@ -804,8 +804,13 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	const uint32_t ws = rng.rand();
 	// The floor at the mouth: 1.5 m under the sea off a cliff in the water; level with the beach where one runs in
 	// front (no step up out of the cave).
+	// The beach is read just in front of the face (its berm runs up to the cliff toe), so the floor neither steps
+	// down into the cave nor up out of it.
 	const Vector3 front = p_entrance + c.out * 5.0;
-	const real_t mouth_floor = MAX(sea - real_t(1.5), MIN(gen->get_height(front) - real_t(0.3), sea + real_t(0.5)));
+	const real_t toe = MIN(gen->get_height(p_entrance + c.out * 2.5), gen->get_height(front) + real_t(1.5));
+	const real_t mouth_floor = MAX(sea - real_t(1.5), toe - real_t(0.3));
+	// The back at high water, or a little under a high beach (sand drifts in and slopes down the passage).
+	const real_t back_floor = MAX(sea + real_t(0.6), mouth_floor - real_t(1.0));
 	// The passage starts out in front of the face, so the toe of the cliff is cut level with the floor outside.
 	real_t prev_r = r_mouth * 1.15;
 	Vector3 prev = front;
@@ -815,7 +820,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 		// The floor (passage line minus 1.25 r) at 1.5 m below the sea at the mouth, rising to the high water at the back;
 		// a slight wander along the joint.
 		const real_t r = Math::lerp(r_mouth, real_t(1.3), Math::pow(u, real_t(0.7))) * real_t(0.8 + 0.45 * TerrainErosionFilter::fbm(ws + 3u, t, 7.0, 14.0, 2));
-		const real_t floor_y = Math::lerp(mouth_floor, sea + real_t(0.6), u * u);
+		const real_t floor_y = Math::lerp(mouth_floor, back_floor, u * u);
 		Vector3 p = p_entrance + dir * t + side * real_t((TerrainErosionFilter::fbm(ws, t, 0.0, 30.0, 2) - 0.5) * 3.0);
 		p.y = floor_y + 1.25 * r;
 		// Rock over the roof and to both sides: stop where it gets too thin (the cave would break out of the cliff).
@@ -844,7 +849,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 		const real_t rx = 3.5 + 3.5 * rng.randf();
 		ch.radii = Vector3(rx, MIN(rx * 0.8, MAX(gen->get_height(end) - end.y - 4.0, real_t(2.5))), rx * 0.8);
 		ch.center = end + dir * (rx * 0.5);
-		ch.center.y = sea + 0.4 + 0.55 * ch.radii.y; // the flat floor (0.55 of its height down) at high water
+		ch.center.y = back_floor - 0.2 + 0.55 * ch.radii.y; // the flat floor (0.55 of its height down) at the passage's back
 		ch.yaw = rng.randf() * Math::TAU;
 		c.chambers.push_back(ch);
 		// The blowhole: where the cover over the chamber is under 25 m, a shaft up to the cliff top.
@@ -1098,6 +1103,13 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		}
 		f = g;
 	}
+	// Where the cave breaks out of the ground (a mouth's rim, a sea cave's cliff face) the two surfaces meet in a
+	// knife edge of rock; a smooth union (polynomial smooth min, Quilez) rounds it into a worn lip over half a metre.
+	const real_t kr = 0.5;
+	const real_t hd = kr - Math::abs(cave - g);
+	if (hd > 0.0) {
+		f -= hd * hd / (4.0 * kr);
+	}
 	// Fallen blocks: rounded boxes added to the rock, set into the floor with a small smooth blend.
 	for (const Block *bk : p_src.blocks) {
 		const Vector3 q = bk->inv.xform(p_p);
@@ -1290,7 +1302,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 					for (int k = 0; k < 4; k++) {
 						gq += vert_ground[vi[k]];
 					}
-					const bool is_ground = gq >= 3;
+					const bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
 					if (is_ground) {
 						// The patch is a square along the entrance's facing, the landscape's hole the same square 1.5 m
 						// smaller, so the two overlap all round.
@@ -1593,6 +1605,8 @@ Ref<Material> CaveNetwork3D::_wall_material() {
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 uniform vec3 rock_color = vec3(0.30, 0.29, 0.26);
 uniform vec3 sediment_color = vec3(0.13, 0.10, 0.07);
+uniform vec3 sand_color = vec3(0.4, 0.3, 0.17);
+uniform float sea_level = -1e9;
 varying vec3 w_pos;
 varying vec3 w_nrm;
 float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -1623,11 +1637,14 @@ float joints(vec3 p) {
 }
 // The surface relief the 0.3 m mesh cannot carry: spalls and dissolution pits (fbm at 0.3 m and 8 cm), a fine grain
 // (2 cm), bedding steps, and the joints as grooves.
-float relief(vec3 p) {
+// p_joint masks the joints (none on sediment floors: the fill buries them); p_near (1 within a few metres of the eye,
+// 0 past 8 m) adds the centimetre octaves only where the pixels resolve them, so far walls do not shimmer.
+float relief(vec3 p, float p_joint, float p_near) {
 	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0) + 0.08 * vn(p * 48.0);
+	h += p_near * (0.2 * vn(p * 26.0 + 2.0) + 0.04 * vn(p * 90.0 + 9.0));
 	float bed = fract(p.y / 1.1 + 0.4 * fbm(p * 0.6));
 	h += 0.3 * smoothstep(0.0, 0.08, bed) * (1.0 - bed);
-	h -= 0.9 * joints(p);
+	h -= 0.9 * p_joint * joints(p);
 	return h;
 }
 void fragment() {
@@ -1640,10 +1657,16 @@ void fragment() {
 	col = mix(col, col * 1.35 + 0.03, shells * 0.6);
 	// Beds: darker bands every half metre or so.
 	col *= 0.85 + 0.15 * smoothstep(0.3, 0.7, sin(w_pos.y * 11.0 + 3.0 * m) * 0.5 + 0.5);
-	float crack = joints(w_pos);
-	col *= 1.0 - 0.18 * crack; // a little dirt in the grooves; their shading is the bump's
 	float floor_w = smoothstep(0.55, 0.85, w_nrm.y);
-	col = mix(col, sediment_color * (0.8 + 0.4 * fine) * (0.85 + 0.3 * grain), floor_w);
+	// Joints stop at the floor: its sediment fills over them.
+	float joint_w = 1.0 - smoothstep(0.3, 0.6, w_nrm.y);
+	float crack = joints(w_pos) * joint_w;
+	col *= 1.0 - 0.18 * crack; // a little dirt in the grooves; their shading is the bump's
+	// The floor's fill: brown cave earth, or beach sand where the sea carries it in (a few metres over the sea, the
+	// same sand as the beach outside, so a sea cave's floor runs on from the shore with no seam).
+	float sandy = (1.0 - smoothstep(3.5, 5.0, w_pos.y - sea_level)) * smoothstep(0.82, 0.95, w_nrm.y);
+	vec3 fill = mix(sediment_color, sand_color, sandy) * (0.8 + 0.4 * fine) * (0.85 + 0.3 * grain);
+	col = mix(col, fill, floor_w);
 	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler calcite in vertical streaks
 	// (noise stretched along the fall line).
 	float wall = 1.0 - abs(w_nrm.y);
@@ -1661,15 +1684,19 @@ void fragment() {
 	SPECULAR = 0.4;
 	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it and
 	// under puddles.
-	float e = 0.01;
-	float h0 = relief(w_pos);
-	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0)) - h0, relief(w_pos + vec3(0, e, 0)) - h0, relief(w_pos + vec3(0, 0, e)) - h0) / e;
+	float e = 0.005;
+	float near = 1.0 - smoothstep(3.0, 8.0, length(VERTEX));
+	float h0 = relief(w_pos, joint_w, near);
+	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), joint_w, near) - h0, relief(w_pos + vec3(0, e, 0), joint_w, near) - h0, relief(w_pos + vec3(0, 0, e), joint_w, near) - h0) / e;
 	vec3 n = normalize(w_nrm);
 	g -= n * dot(g, n);
-	float amount = 0.03 * (1.0 - 0.7 * streak) * (1.0 - 0.8 * puddle);
+	// Sand and mud are smoother than the rock; flowstone and puddles smoother still.
+	float amount = mix(mix(0.05, 0.1, near), 0.025, floor_w) * (1.0 - 0.7 * streak) * (1.0 - 0.8 * puddle);
 	vec3 nb = normalize(n - amount * g);
 	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
-	AO = 1.0 - 0.3 * crack;
+	// Cavity occlusion from the same relief: its pits and grooves darker, so the near wall reads as rough stone.
+	float cav = smoothstep(0.25, 0.75, h0);
+	AO = (1.0 - 0.3 * crack) * mix(0.55, 1.0, cav);
 }
 )");
 	default_wall.instantiate();
@@ -1682,6 +1709,14 @@ void fragment() {
 			const Color lin = Color(rc).srgb_to_linear();
 			default_wall->set_shader_parameter("rock_color", Vector3(lin.r, lin.g, lin.b));
 		}
+		const Variant sc = gm->get_shader_parameter("tm_sand_color");
+		if (sc.get_type() == Variant::COLOR) {
+			const Color lin = Color(sc).srgb_to_linear();
+			default_wall->set_shader_parameter("sand_color", Vector3(lin.r, lin.g, lin.b) * 0.85);
+		}
+	}
+	if (const TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
+		default_wall->set_shader_parameter("sea_level", float(gen->get_sea_level()));
 	}
 	return default_wall;
 }
