@@ -317,6 +317,14 @@ uniform vec3 underwater_sun_irradiance = vec3(0.0);
 uniform vec3 underwater_sky_radiance = vec3(0.0);
 // How dark the thin line where the surface crosses the lens is (0 none).
 uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
+// Lamps under the water (up to four omni or spot lights, set by PhysXWaterSurface3D): position and range;
+// the spot's direction of travel and the cosine of its cone (-2 for an omni light); pi x energy x colour and
+// the falloff exponent (Light3D attenuation); the spot's rim exponent.
+uniform int uw_lamp_count = 0;
+uniform vec4 uw_lamp_pos[4];
+uniform vec4 uw_lamp_dir[4];
+uniform vec4 uw_lamp_color[4];
+uniform float uw_lamp_rim[4];
 // Raster reflections from above (water_raster_reflections.h).
 )";
 const char *WATER_SHADER_SRC_TAIL = R"(
@@ -1202,6 +1210,57 @@ vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 	return ss * (sun + sky);
 }
 
+// Lamp beams (docs/ideas/water.md "Lamp beams under water"): each lamp's single scattering along the view ray
+// from p0 along d for len, marched in 12 jittered steps over the stretch inside the lamp's range: the light's
+// irradiance by Godot's own falloff and cone, the phase, and the water's extinction on both legs.
+vec3 uw_lamps(vec3 p0, vec3 d, float len, float jitter) {
+	vec3 total = vec3(0.0);
+	vec3 st = uw_sigma_t();
+	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	for (int i = 0; i < min(uw_lamp_count, 4); i++) {
+		vec3 c = uw_lamp_pos[i].xyz;
+		float range = uw_lamp_pos[i].w;
+		vec3 oc = p0 - c;
+		float b = dot(oc, d);
+		float disc = b * b - (dot(oc, oc) - range * range);
+		if (disc <= 0.0) {
+			continue;
+		}
+		float sq = sqrt(disc);
+		float t0 = max(-b - sq, 0.0);
+		float t1 = min(-b + sq, len);
+		if (t1 <= t0) {
+			continue;
+		}
+		const int STEPS = 12;
+		float dt = (t1 - t0) / float(STEPS);
+		vec3 sum = vec3(0.0);
+		for (int k = 0; k < STEPS; k++) {
+			float t = t0 + (float(k) + jitter) * dt;
+			vec3 l = p0 + d * t - c;
+			float r = max(length(l), 1e-3);
+			l /= r;
+			float nd = r / range;
+			nd *= nd;
+			nd *= nd;
+			nd = max(1.0 - nd, 0.0);
+			float att = nd * nd * pow(r, -uw_lamp_color[i].w);
+			float cutoff = uw_lamp_dir[i].w;
+			if (cutoff > -1.5) {
+				float scos = dot(l, uw_lamp_dir[i].xyz);
+				if (scos <= cutoff) {
+					continue;
+				}
+				float rim = max(1e-4, (1.0 - scos) / max(1.0 - cutoff, 1e-4));
+				att *= 1.0 - pow(rim, uw_lamp_rim[i]);
+			}
+			sum += att * uw_hg(dot(l, -d), pathtraced_scattering_anisotropy) * exp(-st * (r + t)) * dt;
+		}
+		total += uw_lamp_color[i].rgb * sum;
+	}
+	return ss * total;
+}
+
 // Interleaved gradient noise (Jimenez 2014), a new pattern each frame.
 float uw_jitter(vec2 frag, float time) {
 	frag += 5.588238 * floor(time * 60.0);
@@ -1298,7 +1357,8 @@ void fragment() {
 			scene *= uw_light_at_depth(max(surface_height_world(p_o.xz, base_y) - p_o.y, 0.0));
 		}
 		float seg = min(len, to_surface);
-		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter_shadowed(p_near, z0, d, seg, uw_jitter(FRAGCOORD.xy, TIME))) * (1.0 - meniscus);
+		float jit = uw_jitter(FRAGCOORD.xy, TIME);
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter_shadowed(p_near, z0, d, seg, jit) + uw_lamps(p_near, d, seg, jit)) * (1.0 - meniscus);
 		ALPHA = 1.0;
 	}
 #endif
@@ -1520,7 +1580,8 @@ void fragment() {
 	// Foam from below: a lit, rough layer that lets little through.
 	surf = mix(surf, foam_color.rgb * (underwater_sky_radiance + underwater_sun_irradiance * sun_visibility(p_w) / PI) * 0.5, foam * 0.85);
 	float z_cam = max(MODEL_MATRIX[3].y + water_level - cam.y, 0.0);
-	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter_shadowed(cam, z_cam, d, dist, uw_jitter(FRAGCOORD.xy, TIME));
+	float jit = uw_jitter(FRAGCOORD.xy, TIME);
+	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter_shadowed(cam, z_cam, d, dist, jit) + uw_lamps(cam, d, dist, jit);
 	ALPHA = 1.0;
 #else
 	// unshaded + a small self-contained, bounded normal-based shading term --
@@ -5079,6 +5140,87 @@ void PhysXWaterSurface3D::_update_underwater() {
 		m->set_shader_parameter("underwater_sun_irradiance", water_light_sun_irradiance);
 		m->set_shader_parameter("underwater_sky_radiance", water_light_sky);
 		m->set_shader_parameter("underwater_meniscus", underwater_meniscus);
+	}
+	if (--underwater_lamp_scan <= 0) {
+		underwater_lamp_scan = 30; // about half a second
+		_scan_underwater_lamps(cp, level);
+	}
+	_update_underwater_lamps();
+}
+
+// The omni and spot lights under the surface nearest the camera (at most four), from the scene tree.
+void PhysXWaterSurface3D::_scan_underwater_lamps(const Vector3 &p_camera, float p_level) {
+	underwater_lamps.clear();
+	if (!is_inside_tree()) {
+		return;
+	}
+	struct Found {
+		ObjectID id;
+		float dist;
+		bool operator<(const Found &p_other) const { return dist < p_other.dist; }
+	};
+	LocalVector<Found> found;
+	LocalVector<Node *> stack;
+	stack.push_back(get_tree()->get_root());
+	while (!stack.is_empty()) {
+		Node *n = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		for (int i = 0; i < n->get_child_count(); i++) {
+			stack.push_back(n->get_child(i));
+		}
+		Light3D *light = Object::cast_to<Light3D>(n);
+		if (light == nullptr || (Object::cast_to<OmniLight3D>(n) == nullptr && Object::cast_to<SpotLight3D>(n) == nullptr) || !light->is_visible_in_tree()) {
+			continue;
+		}
+		const Vector3 p = light->get_global_position();
+		const float range = light->get_param(Light3D::PARAM_RANGE);
+		const float dist = p.distance_to(p_camera);
+		if (dist > range + 150.0f || p.y >= p_level || !is_wet(p)) {
+			continue;
+		}
+		found.push_back({ light->get_instance_id(), dist });
+	}
+	found.sort();
+	for (uint32_t i = 0; i < MIN(found.size(), 4u); i++) {
+		underwater_lamps.push_back(found[i].id);
+	}
+}
+
+void PhysXWaterSurface3D::_update_underwater_lamps() {
+	PackedVector4Array pos;
+	PackedVector4Array dir;
+	PackedVector4Array color;
+	PackedFloat32Array rim;
+	pos.resize(4);
+	dir.resize(4);
+	color.resize(4);
+	rim.resize(4);
+	int count = 0;
+	for (const ObjectID &id : underwater_lamps) {
+		Light3D *light = ObjectDB::get_instance<Light3D>(id);
+		if (light == nullptr || !light->is_inside_tree() || !light->is_visible_in_tree() || count >= 4) {
+			continue;
+		}
+		const Transform3D xf = light->get_global_transform();
+		pos.set(count, Vector4(xf.origin.x, xf.origin.y, xf.origin.z, light->get_param(Light3D::PARAM_RANGE)));
+		const Vector3 travel = -xf.basis.get_column(2).normalized();
+		const bool spot = Object::cast_to<SpotLight3D>(light) != nullptr;
+		const float cutoff = spot ? Math::cos(Math::deg_to_rad(light->get_param(Light3D::PARAM_SPOT_ANGLE))) : -2.0f;
+		dir.set(count, Vector4(travel.x, travel.y, travel.z, cutoff));
+		const Color c = light->get_color().srgb_to_linear() * light->get_param(Light3D::PARAM_ENERGY) * Math::PI;
+		color.set(count, Vector4(c.r, c.g, c.b, light->get_param(Light3D::PARAM_ATTENUATION)));
+		rim.set(count, spot ? light->get_param(Light3D::PARAM_SPOT_ATTENUATION) : 1.0f);
+		count++;
+	}
+	for (Ref<ShaderMaterial> m : { underwater_fog_material, underwater_surface_material }) {
+		if (m.is_null()) {
+			continue;
+		}
+		m->set_shader_parameter("uw_lamp_count", count);
+		m->set_shader_parameter("uw_lamp_pos", pos);
+		m->set_shader_parameter("uw_lamp_dir", dir);
+		m->set_shader_parameter("uw_lamp_color", color);
+		m->set_shader_parameter("uw_lamp_rim", rim);
 	}
 }
 

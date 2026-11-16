@@ -3055,3 +3055,39 @@ wood box 0.500 submerged (expect 0.500), ice ball 0.920 (0.917), log 0.600 (0.60
 (0.240), steel hull (a 2 cm steel shell round a 4 x 1 x 1.6 m air box, 2763 kg) 0.409 (0.409), steel block
 sinks. With the bodies dimpling the water, within 3% (their own dimple lowers them a little); in 6 m/s wind
 waves within 4%. The probe mode is unchanged and stays the default.
+
+## Lamp beams under water, raster (16 Nov, Fab idea 4)
+
+The path tracer scatters every light in the water: a diver's torch or a submerged lamp draws a beam in the
+murk. The raster underwater pass scatters only the sun and the sky, so lamps under the water light what they
+hit but leave the water between dark.
+
+**What others do.**
+- Froxel volumetric fog (Wronski 2014, Assassin's Creed IV; Hillaire 2015, Frostbite): every light injected
+  into a camera-aligned 3D grid, integrated along the view. Godot's Volumetric Fog is this, but its medium is
+  grey (one density, one albedo), and water absorbs strongly per channel (red is gone within metres), which is
+  why the underwater medium is our own pass (see "Shadows in the water").
+- Analytic in-scattering of a point light (the "airlight" integral): without extinction the single scattering
+  along a ray past a point light has a closed form in arctangents (Macklin 2010, "Faster fog"); with
+  extinction, Sun, Ramamoorthi, Narasimhan and Nayar 2005 ("A practical analytic single scattering model")
+  tabulate it. Water's extinction is too strong to drop, and spot cones and the Henyey-Greenstein phase
+  break the closed forms.
+- Ray marching per light inside its range (Unity HDRP's and many engines' local volumetric lights; Crest's
+  underwater lights): a few jittered samples on the part of the ray inside the light's sphere, each taking the
+  light's attenuation, its cone, the phase, and the water's extinction both ways. Cheap for a handful of lamps.
+
+**Plan.** The underwater pass takes up to four lamps: the `OmniLight3D` and `SpotLight3D` nodes under the
+surface nearest the camera, found every half second. For each, the view ray is clipped to the light's range
+sphere and marched in 12 jittered steps; each step adds `sigma_s HG(cos) E exp(-sigma_t (r + t))`, E the
+light's irradiance there by Godot's own falloff (`(1 - (r/range)^4)^2 r^-decay`, pi x energy x colour, the
+spot's cone and rim), so the beam matches what the lamp lights on surfaces. No lamp shadows in the medium yet
+(a rock does not cut a beam).
+
+**Built (16 Nov).** As planned (`uw_lamps()` in the underwater fog and underside passes; the node keeps the four
+nearest lamps under the surface, rescanning the tree every 30 frames while the camera is under). Bench
+`docs/bench/water_surface --view=submerged --lamps --sun-energy=0.15`: an omni lamp now glows in the water and a
+spot's lit patch on the floor sits under a faint cone, as in the path-traced frame; the path tracer's halo is
+wider (it scatters more than once; raster is single scattering). A spot seen side-on stays faint in both: the
+water's phase (Henyey-Greenstein, g 0.85) sends little light sideways. Cost: 12 steps a lamp a pixel, only
+where the ray crosses the lamp's range. Not yet: lamp shadows in the medium, lamps seen through the surface
+from above.

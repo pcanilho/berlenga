@@ -731,6 +731,12 @@ private:
 	Ref<ShaderMaterial> underwater_fog_material;
 	Ref<ShaderMaterial> underwater_surface_material;
 	LocalVector<StringName> underwater_shared_params; // uniforms the passes copy from water_material
+	// Lamps under the water (docs/ideas/water.md "Lamp beams under water"): the nearest omni and spot lights
+	// below the surface, found every half second while the camera is under, scattered into beams.
+	LocalVector<ObjectID> underwater_lamps;
+	int underwater_lamp_scan = 0;
+	void _scan_underwater_lamps(const Vector3 &p_camera, float p_level);
+	void _update_underwater_lamps();
 	RID underwater_sky_baked;
 	int underwater_sky_rebake = 0;
 	Color underwater_sky_radiance;
