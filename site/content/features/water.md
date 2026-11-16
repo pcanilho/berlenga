@@ -199,7 +199,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 ## Under water
 
-- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
+- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line. In raster, omni and spot lights glow and scatter in the water, as under path tracing.
 
   ![Under water near crates, raster vs path traced](media/underwater.jpg)
 
