@@ -252,6 +252,9 @@ private:
 		// Bark only: per vertex, the relief's offset (metres, 0 on plate tops, negative in furrows)
 		// and its scale, so lost bark can sink to the furrow floor; vertices without one read 0.
 		LocalVector<Vector2> relief_off;
+		// Bark only: per vertex, bare wood where a living stem was wounded (section 5p); vertices
+		// without one read 0. _peel_bark takes the larger of it and dead wood's peeling.
+		LocalVector<float> wound;
 		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
@@ -346,6 +349,35 @@ private:
 	float _bare_amount() const;
 	float _bare_at(const Vector3 &p_pos, const Vector3 &p_normal, const Vector3 &p_axis, float p_ground) const;
 	void _peel_bark(Builder &r_bark);
+	// Bark stories (section 5p): wounds on the main stem, planned per tree before the mesh.
+	enum WoundKind : uint8_t {
+		WOUND_LIGHTNING,
+		WOUND_FROST,
+		WOUND_DEER,
+		WOUND_SQUIRREL,
+	};
+	struct Wound {
+		WoundKind kind = WOUND_LIGHTNING;
+		float s0 = 0.0f, s1 = 0.0f; // Along the stem, metres from its foot (squirrel: centre, half height).
+		float az0 = 0.0f; // Round the stem (radians) at s0.
+		float twist = 0.0f; // Radians per metre up the stem (the grain's spiral).
+		float half_w = 0.0f; // Half width across the stem, metres.
+		float age = 0.0f; // Years since the wound.
+		uint32_t salt = 0;
+	};
+	LocalVector<Wound> wounds;
+	// The main stem's surface after wounding, for the resin (max radius per 2 cm along and 96
+	// steps round), and its centreline.
+	LocalVector<float> wound_surf;
+	LocalVector<Vector3> wound_pts;
+	LocalVector<float> wound_rad;
+	LocalVector<float> wound_arc;
+	void _plan_wounds();
+	bool _wounds_resin() const;
+	// Offset out from the stem (metres), bare wood 0..1 and darkening 0..1 at s along the main
+	// stem and az round it, on a stem of radius p_r; p_only: one wound (-1 all).
+	Vector3 _wound_at(float p_s, float p_az, float p_r, int p_only = -1) const;
+	void _grow_resin(Builder &r_resin);
 	// Slots: the Climber kinds, then CLIMBER_MAX for ivy's adult leaves (trees.md 5i).
 	static Array _plant_climber_leaves(int p_slot);
 	static Array plant_climber_cache[CLIMBER_MAX + 1];
@@ -517,6 +549,7 @@ public:
 	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
+	float bark_wounds = 0.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
 	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
@@ -744,6 +777,8 @@ public:
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	void set_bark_wounds(float p_wounds) { bark_wounds = MAX(p_wounds, 0.0f); }
+	float get_bark_wounds() const { return bark_wounds; }
 	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }
 	float get_fungi_cover() const { return fungi_cover; }
 	void set_fruit_cover(float p_cover) { fruit_cover = MAX(p_cover, 0.0f); }
