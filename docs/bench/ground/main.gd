@@ -27,6 +27,8 @@ extends Node3D
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
 #   --view=swash        boot prints in sand, the nearer ones after a minute under flowing water (sand stage 4)
+#   --view=grains       dry sand from 40 cm under a low sun behind the camera: grain colours and glints (sand_glints;
+#                       --glints=0 for the A/B)
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
@@ -122,6 +124,9 @@ func _ready() -> void:
 		return
 	if view == "swash":
 		await _build_swash()
+		return
+	if view == "grains":
+		await _build_grains()
 		return
 	if view == "shore":
 		await _build_shore()
@@ -1213,6 +1218,34 @@ func _build_swash() -> void:
 	for i in 10:
 		await get_tree().physics_frame
 	print("swash: prints %.1f cm deep washed, %.1f cm kept" % [surface.get_dent_at(Vector3(-1.6, 0, 0.12)) * 100.0, surface.get_dent_at(Vector3(1.55, 0, -0.12)) * 100.0])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand glints: loose dry sand seen from 40 cm, a low sun behind the camera and to one side, so single grains'
+# colours and the faces that mirror the sun read.
+func _build_grains() -> void:
+	kind = "dry_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.0, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(-22.0, 30.0, 0.0)
+	for i in 40:
+		await get_tree().physics_frame
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 0.4, 0.35, 0.0, 0.0, -0.15])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
