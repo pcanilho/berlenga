@@ -150,20 +150,20 @@ private:
 	int light_search_countdown = 0;
 
 	// Light scattering: point / spot lights glowing in the gas (a pass of its
-	// own after Flow's, see FlowScatterRD). Off by default: it marches every
-	// pixel the gas covers once more, with a short march toward each light.
-	bool light_scattering = false;
+	// own after Flow's, see FlowScatterRD). It marches every pixel the gas
+	// covers once more, with a short march toward each light.
+	bool light_scattering = true;
 	// Ambient and sky light in the gas, through the same pass (see FlowScatterRD::Params::ambient).
-	// Off: Flow's grey ambient floor under its sun lighting, as before.
-	bool ambient_scattering = false;
+	// Off: Flow's grey ambient floor under its sun lighting.
+	bool ambient_scattering = true;
 	// The directional lights through the same pass, with their shadow cascades (see
 	// FlowScatterRD::Params::directional_count). Off: Flow's colormap carries the first one.
-	bool sun_scattering = false;
+	bool sun_scattering = true;
 	// The gas shadows the scene from the first directional light: a volumetric shadow map over the grid
 	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
-	bool cast_shadows = false;
+	bool cast_shadows = true;
 	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
-	bool scattering_temporal = false;
+	bool scattering_temporal = true;
 	int scattering_max_lights = 4;
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
