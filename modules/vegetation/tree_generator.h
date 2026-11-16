@@ -553,6 +553,16 @@ public:
 	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
+	// Exposure to a prevailing wind blowing toward +X (trees.md 5q): ice and sand kill the windward
+	// buds above the shelter height (flagged crowns); krummholz 0..1 turns it into the low mat of
+	// the tree line. Placement turns the mesh's +X down the prevailing wind (meta tree_wind_flag).
+	float wind_exposure = 0.0f;
+	float krummholz = 0.0f;
+	// A tree on a bank (trees.md 5q): the ground falls toward +Z at this slope (radians), and
+	// bank_erosion 0..1 has washed the soil from its downhill roots, which arch exposed down the
+	// face. Placement turns +Z downhill (meta tree_ground_slope).
+	float ground_slope = 0.0f;
+	float bank_erosion = 0.0f;
 	float bark_wounds = 1.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
@@ -671,6 +681,8 @@ private:
 	const BarkSet &_moss_set();
 	static BarkKind _bark_kind(Preset p_preset);
 	static float _bark_headroom(BarkKind p_kind);
+	void _wind_flag();
+	void _bank_shear(Builder &r_b) const;
 	const BarkSet &_bark_set(BarkKind p_kind);
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
@@ -702,6 +714,8 @@ private:
 		FORM_COPPICE, // Cut to a stool on a cycle: a grown coupe, 4-9 years since the cut.
 		FORM_COPPICE_YOUNG, // A coupe cut 1-3 years ago: a stool of short rods.
 		FORM_POLLARD, // Cut at head height: willow on a short cycle, others lapsed for decades.
+		FORM_FLAGGED, // Open-grown in a hard prevailing wind: limbs on the lee side (section 5q).
+		FORM_KRUMMHOLZ, // The tree line's low wind- and snow-shorn mat (section 5q).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -782,6 +796,14 @@ public:
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
+	float get_ground_slope() const { return ground_slope; }
+	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_bank_erosion() const { return bank_erosion; }
+	void set_wind_exposure(float p_v) { wind_exposure = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_wind_exposure() const { return wind_exposure; }
+	void set_krummholz(float p_v) { krummholz = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_krummholz() const { return krummholz; }
 	void set_bark_wounds(float p_wounds) { bark_wounds = MAX(p_wounds, 0.0f); }
 	float get_bark_wounds() const { return bark_wounds; }
 	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }

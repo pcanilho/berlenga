@@ -342,6 +342,10 @@ func _build_scene() -> void:
 	gm.albedo_color = Color(0.2, 0.19, 0.13)
 	gm.roughness = 0.95
 	ground.material_override = gm
+	# --set=ground_slope:R: the ground falls toward +Z at that slope, as the trees on a bank are
+	# built (trees.md 5q).
+	if overrides.has("ground_slope"):
+		ground.rotation.x = float(overrides["ground_slope"])
 	add_child(ground)
 	if litter and xs.size() > 0:
 		_add_litter(Vector3(xs[0], 0, 0))

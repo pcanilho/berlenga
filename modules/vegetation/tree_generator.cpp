@@ -987,6 +987,10 @@ float TreeGenerator::_nurse_scrub_height() const {
 	return Math::lerp(3.0f, 4.5f, u / 0.67f);
 }
 
+namespace {
+float moss_noise(const Vector3 &p_p, uint32_t p_salt);
+} // namespace
+
 void TreeGenerator::_grow_year(int p_year) {
 	_build_shadow_grid(p_year);
 	const float a = params[PARAM_SHADOW_STRENGTH];
@@ -1006,7 +1010,9 @@ void TreeGenerator::_grow_year(int p_year) {
 		b.light = CLAMP(1.0f + a - _shadow_at(p), 0.0f, 1.0f);
 		// Branch buds lying on the ground die (contact, snow press, browsing), so lower limbs do not
 		// keep spreading along the ground; stems and basal sprouts are exempt.
-		if (b.node != 0 && n.order > 0 && p.y < 0.3f) {
+		// A krummholz mat spreads along the ground and roots where its limbs touch (layering;
+		// Marr 1977): only buds in the soil die.
+		if (b.node != 0 && n.order > 0 && p.y < (krummholz > 0.0f ? Math::lerp(0.3f, 0.02f, krummholz) : 0.3f)) {
 			b.alive = false;
 			continue;
 		}
@@ -1104,7 +1110,8 @@ void TreeGenerator::_grow_year(int p_year) {
 	// the leader's tip (Kantola and Makela 2004: Norway spruce branch length grows with depth in
 	// the crown, the whole crown keeping a near-constant shape). Shoots that would leave the cone
 	// wait for the leader to rise, so young branches near the top grow at full rate but stay short.
-	const float cone = params[PARAM_CROWN_CONE];
+	// A krummholz mat has no leader to set a cone: its limbs spread at the snow's surface.
+	const float cone = krummholz > 0.0f ? 0.0f : params[PARAM_CROWN_CONE];
 	float top = 0.0f;
 	const Vector3 root = nodes[0].start;
 	if (cone > 0.0f) {
@@ -1128,6 +1135,12 @@ void TreeGenerator::_grow_year(int p_year) {
 			// regrowth; Rackham 2006).
 			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= 4) {
 				buds[bi].vigor *= 1.6f;
+			}
+			if (wind_exposure > 0.0f && buds[bi].terminal && on.order == 0) {
+				// Exposed trees stay short: the leader's shoots are shortened by the wind's drying
+				// and loading (Holtmeier 2009), most of all at the tree line.
+				const float above = Math::smoothstep(0.5f, 3.0f, on.end().y - root.y);
+				buds[bi].vigor *= 1.0f - (0.45f + 0.4f * krummholz) * wind_exposure * above;
 			}
 		}
 		// Stochastic rounding: a bud with vigor 0.4 grows one internode four years in ten, so weak
@@ -1183,6 +1196,11 @@ void TreeGenerator::_grow_year(int p_year) {
 		// the tree collapsed to a pole; scaling the shoot length alone keeps every bud and needle
 		// and only draws the branches in.
 		float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f) * Math::pow(params[PARAM_LATERAL_EXTENSION], float(MIN(order, 2)));
+		if (wind_exposure > 0.0f && order == 0) {
+			// Exposed stems stay short (Holtmeier 2009): the wind's drying and load shorten the
+			// leader's shoots, a flagged spruce at the tree line 3-8 m after a century.
+			len *= 1.0f - 0.75f * wind_exposure * Math::smoothstep(1.0f, 6.0f, from.end().y - root.y);
+		}
 		// Height growth has a ceiling (the largest annual leader shoots: about 0.6 m for beech and
 		// maple, 0.8-1 m for spruce, larch, birch and white pine; Burns and Honkala 1990; Schutt et
 		// al., Enzyklopadie der Holzgewachse). Without it a stand-grown tree, its sides shaded,
@@ -1198,10 +1216,15 @@ void TreeGenerator::_grow_year(int p_year) {
 		Vector3 dir = bud.dir;
 		int parent = bud.node;
 		float roll = _rand(0.0f, Math::TAU);
+		float krumm_cap = 0.0f;
 		for (int k = 0; k < count; k++) {
 			if (k > 0 || !bud.terminal) {
 				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] + Vector3(0, grav, 0) * 0.5f;
 				d += _random_unit() * Math::sin(noise);
+				if (krummholz > 0.0f && order > 0) {
+					// Mat branches press down under the snow and spread (krummholz, trees.md 5q).
+					d.y -= 0.12f * krummholz;
+				}
 				dir = d.length_squared() > 1e-8f ? d.normalized() : dir;
 			} else {
 				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] * 0.5f + Vector3(0, grav, 0) * 0.3f + _random_unit() * Math::sin(noise) * 0.5f;
@@ -1212,6 +1235,30 @@ void TreeGenerator::_grow_year(int p_year) {
 			// envelope is cut back, as a hedge trimmer does each year.
 			if (envelope.size.x > 0.0f && !envelope.has_point(pos + dir * len)) {
 				break;
+			}
+			// Krummholz (trees.md 5q): what rises above the snowpack is killed back each winter,
+			// so the tree grows as a mat about a metre deep.
+			if (krummholz > 0.0f) {
+				// The mat is a low dome a few metres across (Marr 1977; Holtmeier 2009), its top
+				// the snowpack's lumpy surface; shoots past its rim die back.
+				const Vector3 q = pos + dir * len;
+				const float rim = Math::lerp(9.0f, 2.5f, krummholz);
+				const float rq = Vector2(q.x - root.x, q.z - root.z).length() / rim;
+				if (rq > 1.0f) {
+					break;
+				}
+				krumm_cap = Math::lerp(5.0f, 0.9f, krummholz) * (1.0f - 0.65f * rq * rq) * (0.75f + 0.5f * moss_noise(q * 0.8f, 0x6b72756du));
+			}
+			if (krummholz > 0.0f && (pos + dir * len).y - root.y > krumm_cap) {
+				if (order == 0) {
+					break; // The leader is killed back at the snow's surface every winter.
+				}
+				// Turned aside under the snow's surface: the shoot runs on outward, level.
+				Vector3 hd(dir.x, 0.0f, dir.z);
+				if (hd.length_squared() < 0.04f) {
+					hd = Vector3(Math::cos(roll), 0.0f, Math::sin(roll));
+				}
+				dir = (hd.normalized() + Vector3(0.0f, -0.08f, 0.0f)).normalized();
 			}
 			const int idx = _add_node(parent, pos, dir, len, order, p_year, main);
 			nodes[idx].pole = pole;
@@ -1343,6 +1390,89 @@ void TreeGenerator::_compute_radii() {
 // Branches sag under their own weight and their leaves: Euler-Bernoulli bending per internode,
 // angle = moment * length / (E * I), I = pi r^4 / 4, with the moment of the whole subtree about
 // the internode's base. Thin shoots of pendulous species droop on top of that.
+// Wind-flagging (trees.md 5q; Holtmeier 2009, Mountain Timberlines; Yoshino 1973): above the
+// snow and the shelter of the ground, wind-driven ice and sand abrade the shoots facing the wind
+// and drying kills them, so a flagged tree keeps its limbs on the lee side, swept downwind, and
+// on the windward side only dead stubs. Done on the grown tree (as Pirk et al.'s Plastic Trees
+// adapt a grown skeleton): killing buds during growth starved the crown into a bare whip. The wind
+// blows toward +X.
+void TreeGenerator::_wind_flag() {
+	if (wind_exposure <= 0.0f || nodes.size() < 3) {
+		return;
+	}
+	const int count = int(nodes.size());
+	const float ground = nodes[0].start.y;
+	const float shelter = Math::lerp(0.6f, 1.0f, krummholz);
+	// Each limb's primary branch: the first node off a stem.
+	LocalVector<int> prim;
+	prim.resize(count);
+	for (int i = 0; i < count; i++) {
+		const Node &n = nodes[i];
+		prim[i] = -1;
+		if (i == 0 || n.order == 0 || n.parent < 0) {
+			continue;
+		}
+		prim[i] = nodes[n.parent].order == 0 ? i : prim[n.parent];
+	}
+	RandomPCG fr;
+	fr.seed(uint64_t(seed) * 0x9e3779b9u + 0x666c6167u);
+	LocalVector<float> turn; // Rotation about the vertical toward +X; NaN: windward, killed.
+	LocalVector<Vector3> pivot;
+	turn.resize(count);
+	pivot.resize(count);
+	for (int i = 0; i < count; i++) {
+		turn[i] = 0.0f;
+		if (prim[i] != i || nodes[i].removed) {
+			continue;
+		}
+		const Node &n = nodes[i];
+		pivot[i] = n.start;
+		const float above = Math::smoothstep(shelter, shelter + 1.5f, n.start.y - ground);
+		Vector3 h(n.dir.x, 0.0f, n.dir.z);
+		if (h.length_squared() < 1e-6f || above <= 0.0f) {
+			continue;
+		}
+		h.normalize();
+		const float windward = -h.x;
+		const float kill = wind_exposure * above * Math::smoothstep(-0.6f, 0.25f, windward) * (0.6f + 0.4f * wind_exposure);
+		if (fr.randf() < kill) {
+			turn[i] = NAN;
+			continue;
+		}
+		// Swept downwind: the limb's bearing turned toward +X by up to about half the way.
+		const float az = Math::atan2(h.z, h.x);
+		turn[i] = -az * 0.8f * wind_exposure * above;
+	}
+	for (int i = 0; i < count; i++) {
+		const int p = prim[i];
+		if (p < 0 || nodes[i].removed) {
+			continue;
+		}
+		Node &n = nodes[i];
+		const float t = turn[p];
+		if (Math::is_nan(t)) {
+			// A dead stub a hand to a forearm long where the limb left the stem.
+			if (n.start.distance_to(pivot[p]) < 0.4f) {
+				n.dead = true;
+				n.leafy = false;
+			} else {
+				n.removed = true;
+			}
+			continue;
+		}
+		if (t != 0.0f) {
+			const Basis r(Vector3(0, 1, 0), t);
+			n.start = pivot[p] + r.xform(n.start - pivot[p]);
+			n.dir = r.xform(n.dir);
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node >= 0 && b.node < count && (nodes[b.node].removed || nodes[b.node].dead)) {
+			b.alive = false;
+		}
+	}
+}
+
 void TreeGenerator::_bend_under_gravity() {
 	const int count = int(nodes.size());
 	LocalVector<float> mass;
@@ -8315,6 +8445,82 @@ static const struct {
 	{ 0.8f, 0.04f, 0.08f },
 };
 
+// A tree on a bank (trees.md 5q): the ground under it falls toward +Z at ground_slope. The root
+// collar and roots are built for level ground and then sheared onto the slope near the soil
+// (fading out over the lower stem), so the downhill roots run down the face and the uphill ones
+// into it; the stem's foot swells downhill as on real slopes. bank_erosion lifts the downhill
+// roots off the slope in an arch, fixed at the stem and at their tips: the soil washed out from
+// under them (Gartner 2007, exposed roots on eroding banks). Normals and tangents follow the
+// shear's Jacobian.
+void TreeGenerator::_bank_shear(Builder &r_b) const {
+	if (ground_slope <= 0.0f || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
+		return;
+	}
+	const float ts = Math::tan(ground_slope);
+	const Vector3 ax = nodes[0].start;
+	const float tr = MAX(foot_roots.trunk_r, 0.05f);
+	float reach = tr * 3.0f;
+	if (foot_roots.on) {
+		for (const float l : foot_roots.len) {
+			reach = MAX(reach, tr + l + 0.5f * tr);
+		}
+	}
+	const float top = tr * 1.5f;
+	auto disp = [&](const Vector3 &p) -> float {
+		const float hh = p.y - ax.y;
+		const float w = 1.0f - Math::smoothstep(top, top + 3.0f * tr + 0.3f, hh);
+		if (w <= 0.0f) {
+			return 0.0f;
+		}
+		const float dz = p.z - ax.z;
+		float dy = -ts * dz;
+		if (dz > 0.0f && bank_erosion > 0.0f) {
+			const float d = Vector2(p.x - ax.x, dz).length();
+			const float a = CLAMP((d - tr) / MAX(reach - tr, 0.05f), 0.0f, 1.0f);
+			const float arch = 4.0f * a * (1.0f - a);
+			dy *= 1.0f - bank_erosion * 0.6f * arch * Math::smoothstep(0.0f, 0.5f, dz / MAX(d, 1e-3f));
+		}
+		return dy * w;
+	};
+	const int nv = r_b.verts.size();
+	Vector3 *vw = r_b.verts.ptrw();
+	Vector3 *nw = r_b.normals.size() == nv ? r_b.normals.ptrw() : nullptr;
+	float *tw = (r_b.use_tangents && r_b.tangents.size() >= nv * 4) ? r_b.tangents.ptrw() : nullptr;
+	const float e = 0.005f;
+	for (int v = 0; v < nv; v++) {
+		const Vector3 p = vw[v];
+		const float dy = disp(p);
+		if (dy == 0.0f) {
+			continue;
+		}
+		const float gx = (disp(p + Vector3(e, 0, 0)) - disp(p - Vector3(e, 0, 0))) / (2.0f * e);
+		const float gy = (disp(p + Vector3(0, e, 0)) - disp(p - Vector3(0, e, 0))) / (2.0f * e);
+		const float gz = (disp(p + Vector3(0, 0, e)) - disp(p - Vector3(0, 0, e))) / (2.0f * e);
+		vw[v].y += dy;
+		if (nw) {
+			const Vector3 n = nw[v];
+			const float my = n.y / MAX(1.0f + gy, 0.05f);
+			const Vector3 m(n.x - gx * my, my, n.z - gz * my);
+			if (m.length_squared() > 1e-12f) {
+				nw[v] = m.normalized();
+			}
+		}
+		if (tw) {
+			tw[v * 4 + 1] += gx * tw[v * 4] + gy * tw[v * 4 + 1] + gz * tw[v * 4 + 2];
+			Vector3 t(tw[v * 4], tw[v * 4 + 1], tw[v * 4 + 2]);
+			if (nw) {
+				t -= nw[v] * nw[v].dot(t);
+			}
+			if (t.length_squared() > 1e-12f) {
+				t.normalize();
+				tw[v * 4] = t.x;
+				tw[v * 4 + 1] = t.y;
+				tw[v * 4 + 2] = t.z;
+			}
+		}
+	}
+}
+
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder bark;
 	wood_b = Builder();
@@ -9172,6 +9378,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (f.kind == VET_BASAL_HOLLOW && Math::abs(Math::angle_difference(az, f.azimuth)) < f.half_w / MAX(0.05f, trunk_r) + 0.35f) {
 				len = 0.0f;
 			}
+		}
+		if (ground_slope > 0.0f) {
+			// On a bank the downhill roots run on down the face as anchors and stay thick, the
+			// uphill ones short into the slope (trees.md 5q; Stokes 2002, root anchorage on slopes).
+			const float down = Math::sin(az);
+			len *= 1.0f + (0.4f + 0.5f * bank_erosion) * MIN(1.0f, ground_slope / 0.6f) * MAX(down, 0.0f) - 0.35f * MAX(-down, 0.0f);
 		}
 		root_az.push_back(az);
 		root_len.push_back(roots_on ? len : 0.0f);
@@ -11382,6 +11594,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	_grow_resin(resin);
 	Builder *builders[10] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts, &resin };
 	for (int s = 0; s < 10; s++) {
+		_bank_shear(*builders[s]);
+	}
+	for (int s = 0; s < 10; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -12256,6 +12471,13 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		cut_cycle = p_preset == PRESET_HAZEL ? 8 : 10;
 		cut_since = p_form == FORM_COPPICE_YOUNG ? 1 + int((h >> 8) % 3) : 4 + int((h >> 8) % MAX(cut_cycle - 3, 1));
 		params[PARAM_YEARS] = float(40 + int((h >> 16) % 50));
+	} else if (p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ) {
+		// Exposure varies over the variants: a flagged tree from half its limbs gone to a few
+		// lee limbs on a short stem; krummholz mats with and without a flag stem.
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f;
+		wind_exposure = p_form == FORM_FLAGGED ? Math::lerp(0.6f, 0.95f, t) : 1.0f;
+		krummholz = p_form == FORM_KRUMMHOLZ ? Math::lerp(0.8f, 1.0f, t) : 0.0f;
 	} else if (p_form == FORM_POLLARD) {
 		// Pollards: willow still worked, cut every 5-8 years; beech, oak and the rest lapsed, last
 		// cut 40-150 years ago, their old poles now trunks (Read, Pollards, 2000).
@@ -12329,6 +12551,10 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
 	bark_wounds = p_from.bark_wounds;
+	wind_exposure = p_from.wind_exposure;
+	ground_slope = p_from.ground_slope;
+	bank_erosion = p_from.bank_erosion;
+	krummholz = p_from.krummholz;
 	fungi_cover = p_from.fungi_cover;
 	fruit_cover = p_from.fruit_cover;
 	mistletoe = p_from.mistletoe;
@@ -12432,7 +12658,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD;
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ;
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -12475,6 +12701,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const int saved_cut_cycle = cut_cycle;
 		const int saved_cut_since = cut_since;
 		const float saved_veteran = veteran;
+		const float saved_exposure = wind_exposure;
+		const float saved_krummholz = krummholz;
 		if (p_form == FORM_SAPLING) {
 			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
@@ -12484,7 +12712,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const LeafKind leaf_kind = LEAF_FORMS[p_preset].kind;
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && params[PARAM_NEEDLES] <= 0.5f &&
 				(leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -12521,12 +12749,14 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		cut_cycle = saved_cut_cycle;
 		cut_since = saved_cut_since;
 		veteran = saved_veteran;
+		wind_exposure = saved_exposure;
+		krummholz = saved_krummholz;
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
 		// One full-needle variant for the near range (the field repeats it over the variants):
 		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
 		// close. GPU memory and path tracing cost of it are not yet measured.
-		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY)) {
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ)) {
 			needle_sprays = false;
 			skip_lods = true;
 			seed = saved_seed * 31;
@@ -12554,7 +12784,12 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		sp->set_meta("deadwood", true);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)" };
+	if (p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ) {
+		// Placement turns each instance's +X down the prevailing wind instead of a random yaw
+		// (the meshes carry tree_wind_flag; trees.md 5q).
+		sp->set_meta("wind_flag", true);
+	}
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -12804,6 +13039,20 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(canopy(PRESET_NORWAY_SPRUCE, 0.8f, 50.0f, 0.6f, true, false), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(open(PRESET_LARCH, 0.4f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(open(PRESET_ROWAN, 0.4f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			// Past the closed forest (the timberline) to the tree species line: wind-flagged
+			// spruce in the open, then krummholz mats in the lee of rocks and hollows, where snow
+			// lies (Holtmeier 2009; Korner 2012). Beyond the stand's habitat range on purpose:
+			// this is where it fails.
+			Ref<PlantSpecies> flagged = _stand_species(PRESET_NORWAY_SPRUCE, false, p_variants, FORM_FLAGGED);
+			flagged->set_density(0.3f);
+			flagged->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-2.3f, -0.8f));
+			flagged->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 0.5f);
+			list.push_back(flagged);
+			Ref<PlantSpecies> mat = _stand_species(PRESET_NORWAY_SPRUCE, false, p_variants, FORM_KRUMMHOLZ);
+			mat->set_density(0.35f);
+			mat->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-3.2f, -1.7f));
+			mat->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 0.5f);
+			list.push_back(mat);
 		} break;
 		case STAND_PINE_HEATH: {
 			lead = PRESET_SCOTS_PINE;
@@ -13129,7 +13378,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
 	for (int y = 1; y <= years; y++) {
 		// A cut tree's sprouts are its poles, from the head or the stool: no more stems from the base.
-		if (params[PARAM_BASAL_SPROUTS] > 0.0f && rng.randf() < params[PARAM_BASAL_SPROUTS] && last_cut < 0) {
+		// A krummholz mat thickens from the base and from limbs that root where they touch the
+		// ground (layering), so it stands on many stems.
+		const float sprouts = MAX(params[PARAM_BASAL_SPROUTS], 0.06f * krummholz);
+		if (sprouts > 0.0f && rng.randf() < sprouts && last_cut < 0) {
 			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
 		}
 		_grow_year(y);
@@ -13315,6 +13567,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		}
 	}
 	_bend_under_gravity();
+	_wind_flag();
 	_prune_collisions();
 	for (const int r : thinned_stubs) {
 		if (r < int(nodes.size()) && !nodes[r].removed) {
@@ -13429,6 +13682,14 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		}
 	}
 	Ref<ArrayMesh> mesh = _build_mesh();
+	if (wind_exposure > 0.0f && mesh.is_valid()) {
+		// Placement turns the mesh's +X down the prevailing wind (trees.md 5q).
+		mesh->set_meta(SNAME("tree_wind_flag"), Vector2(wind_exposure, krummholz));
+	}
+	if (ground_slope > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
+		// Placement turns the mesh's +Z downhill and picks the variant nearest the ground's slope.
+		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(ground_slope, bank_erosion));
+	}
 	if (deadwood_stem >= 0) {
 		// Layout (trees.md 5b): a (3), b (3), the widest reach from the axis anywhere along it
 		// (a reader of the first 7 floats keeps out of all the wood), the sample count N, then
@@ -13541,6 +13802,14 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
+	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
+	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
+	ClassDB::bind_method(D_METHOD("set_bank_erosion", "erosion"), &TreeGenerator::set_bank_erosion);
+	ClassDB::bind_method(D_METHOD("get_bank_erosion"), &TreeGenerator::get_bank_erosion);
+	ClassDB::bind_method(D_METHOD("set_wind_exposure", "exposure"), &TreeGenerator::set_wind_exposure);
+	ClassDB::bind_method(D_METHOD("get_wind_exposure"), &TreeGenerator::get_wind_exposure);
+	ClassDB::bind_method(D_METHOD("set_krummholz", "krummholz"), &TreeGenerator::set_krummholz);
+	ClassDB::bind_method(D_METHOD("get_krummholz"), &TreeGenerator::get_krummholz);
 	ClassDB::bind_method(D_METHOD("set_bark_wounds", "wounds"), &TreeGenerator::set_bark_wounds);
 	ClassDB::bind_method(D_METHOD("get_bark_wounds"), &TreeGenerator::get_bark_wounds);
 	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
@@ -13641,6 +13910,10 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_exposure", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wind_exposure", "get_wind_exposure");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mistletoe", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_mistletoe", "get_mistletoe");
