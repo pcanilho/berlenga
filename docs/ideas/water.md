@@ -3091,3 +3091,20 @@ wider (it scatters more than once; raster is single scattering). A spot seen sid
 water's phase (Henyey-Greenstein, g 0.85) sends little light sideways. Cost: 12 steps a lamp a pixel, only
 where the ray crosses the lamp's range. Not yet: lamp shadows in the medium, lamps seen through the surface
 from above.
+
+## Waterfall sheets near black in shade, path traced (16 Nov, bug)
+
+The big fall's contact sheet read nearly black in deep shade under path tracing (darker than the rock beside it)
+and white in sun. The sheet wrote IOR and ABSORPTION, which makes a traced surface the boundary of a medium: a
+ray entering through its front face is inside water until it leaves through a back face of the same medium. A
+contact sheet is one surface a few centimetres off the rock, full of gaps (threads, tongues, wet rock), so a path
+that went in through the water, bounced off the rock and came back out through a gap never left the water, and
+every later segment, out to the sky hundreds of metres away, was absorbed as if under water. In sun the direct
+light at the first hit kept the white foam white; in shade nearly all the light comes along those long paths.
+The river's falling ribbon had the same setup.
+
+- Both sheets are traced as thin walls (thin-walled transmission, as BaseMaterial3D's Transmission with
+  thin_walled on): straight through, tinted by `exp(-absorption * thickness)` for the water a ray crosses
+  (`film_thickness` and `sheet_thickness`, 0.1 m). A film centimetres deep bends a ray by less than its own
+  thickness, so the refraction the medium gave was invisible anyway.
+- The river bench takes `--fall-run=M` (a sloping face) and `--sun=P,Y` (`--sun=-35,180` puts the fall's face in shade).

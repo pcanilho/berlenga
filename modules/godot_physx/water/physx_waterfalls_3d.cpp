@@ -241,6 +241,8 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform vec4 wet_color : source_color = vec4(0.02, 0.025, 0.03, 0.4);
 uniform float wet_margin = 0.6;
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
+// The water a ray crosses in the film (in and back out), for its tint under path tracing (m).
+uniform float film_thickness = 0.1;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
 uniform float streak_scale = 3.0;
 uniform float streak_rate = 5.0;
@@ -313,9 +315,12 @@ void fragment() {
 	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.6;
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
+	// A thin film (thin-walled transmission): straight through, tinted by a few centimetres of water. The sheet is
+	// one surface with gaps (threads, tongues, wet rock), so as the boundary of a medium (IOR and ABSORPTION) a path
+	// that went in through the water and came back out through a gap never left it, and every later segment, out to
+	// the sky, was absorbed as if under water: the sheet went near black wherever the sky lit it more than the sun.
 	TRANSMISSION = water > 0.5 ? 1.0 - foam : 0.0;
-	IOR = 1.33;
-	ABSORPTION = pathtraced_absorption;
+	ALBEDO *= water > 0.5 ? mix(exp(-pathtraced_absorption * film_thickness), vec3(1.0), foam) : vec3(1.0);
 	ALPHA = cover;
 #else
 	// Clear water a few millimetres deep over rock shows the rock darkened (the water fills its pores and cuts the
