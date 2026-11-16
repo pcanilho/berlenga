@@ -1209,7 +1209,7 @@
     "LAYER_LANDFORM"
    ],
    "note": "",
-   "what": "hoodoo rows on bare soft slopes and limestone pavement on flat limestone benches.",
+   "what": "hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1341,6 +1341,17 @@
    ],
    "note": "",
    "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Torn spray sheets",
+   "settings": [
+    "crest_sheets"
+   ],
+   "note": "",
+   "what": "in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
