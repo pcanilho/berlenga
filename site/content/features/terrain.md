@@ -178,4 +178,6 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Wet sand: the band the sea has soaked turns glossy and catches the sun.*
 
+- **Runoff channels** (`GroundSurface3D.runoff_channels`, off by default): water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.
+
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.

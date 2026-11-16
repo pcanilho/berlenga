@@ -1167,6 +1167,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Runoff channels",
+   "settings": [
+    "GroundSurface3D.runoff_channels"
+   ],
+   "note": "",
+   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Terrain deformation",
    "settings": [
     "TerrainDeformer3D",
