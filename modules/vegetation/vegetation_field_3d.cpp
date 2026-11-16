@@ -767,7 +767,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 					float shade = 0.0f;
-					if ((shade_rule || conifer_rule || range > 0.0f) && suit > 0.0f) {
+					const bool damp_rule = sp->is_stone_top() && sp->get_stone_top_damp() != 0.0f;
+					if ((shade_rule || conifer_rule || damp_rule || range > 0.0f) && suit > 0.0f) {
 						float conifer = 0.0f;
 						shade = crown_shade(local_crown_grid, local_crowns, crown_reach, CROWN_CELL, xz, &conifer);
 						if (p_setup.other) {
@@ -858,6 +859,16 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							on_top = true;
 							top_cap = p_setup.stone_tops.items[ti];
 							top_normal = ti < p_setup.stone_top_normals.size() ? p_setup.stone_top_normals[ti] : Vector3();
+							if (damp_rule) {
+								// How damp the top stays: tilted to the pole (north) it is shaded, low
+								// over the ground it keeps the ground's humidity, under a canopy it is
+								// out of the sun. High, sun-facing tops dry out: hoary, yellow-olive
+								// cushions there (Racomitrium, Grimmia), deep green ones in the damp.
+								const float aspect = top_normal.y > 0.1f ? -top_normal.z : 0.0f;
+								const float low = 1.0f - Math::smoothstep(STONE_TOP_LOW, STONE_TOP_HIGH, float(top_cap.y) - map->get_height_at(p3));
+								const float damp = CLAMP(0.35f + 1.5f * aspect + 0.45f * low + 0.6f * shade, 0.0f, 1.0f);
+								suit *= sp->stone_top_damp_weight(damp);
+							}
 						} else {
 							suit = 0.0f;
 						}

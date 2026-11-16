@@ -6018,6 +6018,7 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		float gap, rock_foot, visibility;
 		float water_max = 0.0f; // > 0: within this distance of water.
 		bool top = false; // On the stones' tops (VegetationField3D.stone_tops).
+		float damp = 0.0f; // PlantSpecies.stone_top_damp; < 0 also the dry, yellow-olive colours.
 	};
 	LocalVector<StoneSpec> set;
 	switch (p_stand) {
@@ -6029,7 +6030,8 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 					{ P::PRESET_SAXIFRAGE, 0.25f, 0.06f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_SPLEENWORT, 0.25f, 0.05f, 0.4f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
 					{ P::PRESET_THRIFT, 0.3f, 0.05f, 0.3f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
-					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.8f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true } });
+					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.8f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 1.0f },
+					{ P::PRESET_MOSS, 0.1f, 0.0f, 0.8f, 0.6f, 0.9f, 0.0f, 0.0f, 15.0f, 0.0f, true, -1.0f } });
 			break;
 		case STONES_RIVER:
 			// River and stream gravels: saxifrage and stonecrop on the bars, sedges and rushes at the
@@ -6040,7 +6042,8 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 					{ P::PRESET_SEDGE, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 0.5f, 2.0f, 25.0f, 6.0f },
 					{ P::PRESET_RUSH, 0.6f, 0.15f, 0.4f, 0.8f, 1.1f, 0.5f, 1.5f, 30.0f, 4.0f },
 					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f },
-					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.9f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true } });
+					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.9f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.6f },
+					{ P::PRESET_MOSS, 0.11f, 0.0f, 0.35f, 0.6f, 0.9f, 0.0f, 0.0f, 15.0f, 0.0f, true, -1.0f } });
 			break;
 		case STONES_SHORE:
 			// Shingle above the strandline (Scott 1963): thrift and stonecrop in the stable gaps,
@@ -6060,6 +6063,11 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		gen->set_textures(p_textures);
 		gen->set_preset(f.preset);
 		gen->apply_preset_colors();
+		if (f.top && f.damp < 0.0f) {
+			// Sun-dried tops: hoary, yellow-olive cushions (Racomitrium, Grimmia), smaller and sparser.
+			gen->set_leaf_color(Color(0.46f, 0.43f, 0.2f));
+			gen->set_centre_color(Color(0.34f, 0.31f, 0.14f));
+		}
 		gen->set_seed(seed_base);
 		gen->set_season(p_season);
 		Ref<PlantSpecies> sp;
@@ -6079,6 +6087,7 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		if (f.top) {
 			// Moss cushions on the stones' tops, more on the damp river stones; set on the cap's curve.
 			sp->set_stone_top(true);
+			sp->set_stone_top_damp(f.damp);
 			sp->set_align_to_ground(1.0f);
 		}
 		sp->set_visibility_range(f.visibility);
