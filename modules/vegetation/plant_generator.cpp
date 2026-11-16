@@ -6065,8 +6065,8 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		gen->apply_preset_colors();
 		if (f.top && f.damp < 0.0f) {
 			// Sun-dried tops: hoary, yellow-olive cushions (Racomitrium, Grimmia), smaller and sparser.
-			gen->set_leaf_color(Color(0.46f, 0.43f, 0.2f));
-			gen->set_centre_color(Color(0.34f, 0.31f, 0.14f));
+			gen->set_leaf_color(Color(0.44f, 0.42f, 0.25f));
+			gen->set_centre_color(Color(0.32f, 0.3f, 0.17f));
 		}
 		gen->set_seed(seed_base);
 		gen->set_season(p_season);
