@@ -128,6 +128,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_impact_damage_scale"), &PhysXDestructible3D::get_impact_damage_scale);
 	ClassDB::bind_method(D_METHOD("set_impact_radius", "radius"), &PhysXDestructible3D::set_impact_radius);
 	ClassDB::bind_method(D_METHOD("get_impact_radius"), &PhysXDestructible3D::get_impact_radius);
+	ClassDB::bind_method(D_METHOD("set_buried_below_y", "y"), &PhysXDestructible3D::set_buried_below_y);
+	ClassDB::bind_method(D_METHOD("get_buried_below_y"), &PhysXDestructible3D::get_buried_below_y);
 	ClassDB::bind_method(D_METHOD("set_kill_y", "y"), &PhysXDestructible3D::set_kill_y);
 	ClassDB::bind_method(D_METHOD("get_kill_y"), &PhysXDestructible3D::get_kill_y);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
@@ -172,6 +174,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buried_below_y", PROPERTY_HINT_RANGE, "-10000,10000,0.01,or_less,or_greater,suffix:m"), "set_buried_below_y", "get_buried_below_y");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
 	ClassDB::bind_method(D_METHOD("set_piece_lifetime", "seconds"), &PhysXDestructible3D::set_piece_lifetime);
 	ClassDB::bind_method(D_METHOD("get_piece_lifetime"), &PhysXDestructible3D::get_piece_lifetime);
@@ -807,7 +810,16 @@ RID PhysXDestructible3D::_chunk_shape(uint32_t p_chunk) {
 	if (!chunk_shapes[p_chunk].is_valid()) {
 		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 		chunk_shapes[p_chunk] = ps->convex_polygon_shape_create();
-		ps->shape_set_data(chunk_shapes[p_chunk], chunk_points[p_chunk]);
+		// Bodies carry no scale (the physics server keeps poses rigid), while every piece is drawn scaled by
+		// spawn_scale: scale the hull the same way, or a scaled destructible collides at its unscaled size.
+		PackedVector3Array points = chunk_points[p_chunk];
+		if (!spawn_scale.is_equal_approx(Vector3(1, 1, 1))) {
+			Vector3 *w = points.ptrw();
+			for (int i = 0; i < points.size(); i++) {
+				w[i] *= spawn_scale;
+			}
+		}
+		ps->shape_set_data(chunk_shapes[p_chunk], points);
 	}
 	return chunk_shapes[p_chunk];
 }
@@ -1493,6 +1505,19 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 		spawn_linear += (dir + Vector3(0, 0.3, 0)).normalized() * shatter_speed * falloff;
 	}
 
+	// Buried: its middle below buried_below_y, it stays in the ground.
+	if (buried_below_y > -1.0e8f) {
+		Vector3 middle;
+		for (uint32_t ci : visible) {
+			middle += _chunk_centroid_local(ci);
+		}
+		middle = Transform3D(piece_transform.basis.orthonormalized().scaled_local(spawn_scale), piece_transform.origin).xform(middle / real_t(visible.size()));
+		if (middle.y < buried_below_y) {
+			child_mode = PhysicsServer3D::BODY_MODE_STATIC;
+			spawn_linear = Vector3();
+			piece_angular = Vector3();
+		}
+	}
 	const int piece_idx = _spawn_piece(visible, piece_transform, spawn_linear, true, child_mode, p_actor);
 	if (piece_idx < 0) {
 		return 0;

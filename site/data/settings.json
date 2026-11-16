@@ -1129,7 +1129,7 @@
     "close_up_radius"
    ],
    "note": "",
-   "what": "stones near the camera get real geometry for their grain: crystals, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.",
+   "what": "stones near the camera get real geometry for their grain: crystals whose cleavage faces glint in low sun, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
@@ -2127,6 +2127,19 @@
    ],
    "note": "",
    "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Crown parts",
+   "settings": [
+    "fruit_cover",
+    "mistletoe",
+    "witches_brooms"
+   ],
+   "note": "",
+   "what": "cones, catkins with bract scales, ash keys in bunches and berries on stalks in season; mistletoe on its hosts and witches' brooms as twig nests on birches.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

@@ -291,6 +291,51 @@ func _world() -> void:
 			_break_near(spot, land)
 
 
+# The pieces against the stone: their total volume and the box round them as drawn (each chunk through its
+# piece's pose and the node's scale), against the intact chunk at the stone's own transform.
+func _piece_stats(node: Node, stone_xf: Transform3D) -> Dictionary:
+	var asset: Resource = node.get("blast_asset")
+	var pts: Array = asset.get("chunk_points")
+	var s := (node as Node3D).global_transform.basis.get_scale()
+	var p0: PackedVector3Array = pts[0]
+	var whole := 0.0
+	var src := AABB(stone_xf * p0[0], Vector3.ZERO)
+	for t in range(0, p0.size(), 3):
+		whole += p0[t].dot(p0[t + 1].cross(p0[t + 2]))
+		src = src.expand(stone_xf * p0[t]).expand(stone_xf * p0[t + 1]).expand(stone_xf * p0[t + 2])
+	whole = absf(whole) / 6.0 * absf(stone_xf.basis.determinant())
+	var vol := 0.0
+	var box := AABB()
+	var first := true
+	for i in node.get_piece_count():
+		var pose: Transform3D = node.get_piece_transform(i)
+		var xf := Transform3D(pose.basis.orthonormalized().scaled_local(s), pose.origin)
+		var cp: PackedVector3Array = pts[node.get_piece_chunk(i)]
+		var v := 0.0
+		for t in range(0, cp.size(), 3):
+			v += cp[t].dot(cp[t + 1].cross(cp[t + 2]))
+			for k in 3:
+				var q := xf * cp[t + k]
+				if first:
+					box = AABB(q, Vector3.ZERO)
+					first = false
+				box = box.expand(q)
+		vol += absf(v) / 6.0 * absf(xf.basis.determinant())
+	return {"volume": vol, "stone_volume": whole, "box": box, "stone_box": src}
+
+
+func _report_pieces(node: Node, stone_xf: Transform3D) -> void:
+	if node == null:
+		return
+	var st := _piece_stats(node, stone_xf)
+	var ys := []
+	for i in node.get_piece_count():
+		var o: Vector3 = node.get_piece_transform(i).origin
+		ys.append("%.1f" % (o.y - gen.get_height(o)))
+	print("piece heights above ground: ", ys)
+	print("pieces: %d, volume %.3f m3 against the stone's %.3f m3, spread %s against the stone's %s" % [node.get_piece_count(), st["volume"], st["stone_volume"], (st["box"] as AABB).size, (st["stone_box"] as AABB).size])
+
+
 # --break[=frames]: break the biggest stone near the spot (RockField3D.break_stone) and let the pieces fall for that
 # many physics ticks (default 120) before the shot; --break-cam=dist frames the pieces from that far.
 func _break_near(spot: Vector3, land: Landscape3D) -> void:
@@ -300,11 +345,22 @@ func _break_near(spot: Vector3, land: Landscape3D) -> void:
 	rocks.collision_enabled = true
 	rocks.rebuild()
 	rocks.build_area(Rect2(spot.x - 40, spot.z - 40, 80, 80))
-	var near: Array = rocks.get_stones(LAYERS.find(args.get("view", "scree")), Rect2(spot.x - 8, spot.z - 8, 16, 16))
+	var near: Array = rocks.get_stones(LAYERS.find(args.get("view", "scree")), Rect2(spot.x - 14, spot.z - 14, 28, 28))
+	# A block of about 1.1 to 1.6 m on flat ground; the stones touching it are taken away (broken and freed before
+	# anything is drawn, in both shots), so the before reads as one rock and the after as its pieces.
 	var big: Dictionary = {}
 	for st in near:
-		if big.is_empty() or float(st["scale"]) > float(big["scale"]):
+		var sc0: float = st["scale"]
+		var p: Vector3 = st["position"]
+		var flat := absf(gen.get_height(p + Vector3(1.5, 0, 0)) - gen.get_height(p - Vector3(1.5, 0, 0))) < 0.3 and absf(gen.get_height(p + Vector3(0, 0, 1.5)) - gen.get_height(p - Vector3(0, 0, 1.5))) < 0.3
+		if flat and sc0 >= 0.55 and sc0 <= 0.8 and (big.is_empty() or sc0 > float(big["scale"])):
 			big = st
+	if not big.is_empty():
+		for o in near:
+			if o != big and (o["position"] as Vector3).distance_to(big["position"]) < (float(o["scale"]) + float(big["scale"])) * 1.4 + 0.3:
+				var gone: Node = rocks.break_stone(o["position"], 0.0, 0.05)
+				if gone:
+					gone.free()
 	if big.is_empty():
 		print("no stone to break near the spot")
 		return
@@ -326,6 +382,7 @@ func _break_near(spot: Vector3, land: Landscape3D) -> void:
 	for i in ticks:
 		await get_tree().physics_frame
 	RenderingServer.render_loop_enabled = true
+	_report_pieces(node, Transform3D(big["basis"], at))
 	breaking = false
 
 
@@ -662,6 +719,16 @@ func _test() -> void:
 	check(shapes > 0, "collision hulls near the follow target: %d" % shapes)
 	# Close-up shapes for the stones within close_up_radius of the follow target.
 	check(rocks.get_close_up_shape_count() > 0, "close-up shapes near the follow target: %d shapes, %d triangles, %.1f MB" % [rocks.get_close_up_shape_count(), rocks.get_close_up_triangle_count(), close_bytes / 1048576.0])
+	# Close-up shapes by family and size octave (what drives their count and memory).
+	var hist := {}
+	for l in [RockField3D.LAYER_ROCKFALL, RockField3D.LAYER_SCREE, RockField3D.LAYER_GLACIAL]:
+		for st in rocks.get_stones(l, Rect2(scree_at.x - 12, scree_at.z - 12, 24, 24)):
+			if (st["position"] as Vector3).distance_to(scree_at) < 8.0 + float(st["scale"]) * 1.5:
+				var fam: int = st["family"]
+				var b := roundi(log(float(st["scale"]) / [0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0][fam]) / log(2.0))
+				var k := "%s %+d" % [FAMILIES[fam], b]
+				hist[k] = hist.get(k, 0) + 1
+	print("near stones by family and octave: ", hist)
 	# Breaking a stone near the target: it is swapped for its pieces (PhysX Blast) and stays broken.
 	check(rocks.is_breaking_supported(), "breaking supported (PhysX Blast in this build)")
 	if rocks.is_breaking_supported():
@@ -676,6 +743,10 @@ func _test() -> void:
 			var node: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
 			var pieces: int = node.get_piece_count() if node else 0
 			check(node != null and pieces > 3 and rocks.get_broken_count() == 1, "break_stone: a %.2f m stone into %d pieces in %d ms (shape fractured on demand)" % [2.0 * float(big["scale"]), pieces, Time.get_ticks_msec() - bt])
+			if node:
+				var ps := _piece_stats(node, Transform3D(big["basis"], big["position"]))
+				var grown: AABB = (ps["stone_box"] as AABB).grow(0.02 * (ps["stone_box"] as AABB).size.length())
+				check(absf(ps["volume"] / ps["stone_volume"] - 1.0) < 0.05 and grown.encloses(ps["box"]), "pieces are the stone: volume %.3f of %.3f m3, all inside its box (%s in %s)" % [ps["volume"], ps["stone_volume"], (ps["box"] as AABB).size, (ps["stone_box"] as AABB).size])
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.
