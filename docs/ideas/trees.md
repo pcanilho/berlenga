@@ -1108,7 +1108,7 @@ mistletoe and brooms, which read from far.
 
 What a living stem records of its life, each a few per stand, all modelled on the stem's own
 tubes (bark pushed out or sunk, normals from the same field), so they hold under path tracing.
-`bark_wounds` (0-4) scales how often each appears; 0 (the default while they are tuned) turns them off. Living and
+`bark_wounds` (0-4, default 1) scales how often each appears; 0 turns them off. Living and
 newly dead standing trees only.
 
 - **Lightning scars**: a strip of bark blown off down the stem, a few centimetres to a hand

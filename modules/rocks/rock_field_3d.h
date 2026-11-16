@@ -155,7 +155,7 @@ private:
 	bool ground_blend = false;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
-	bool cave_mouths = true; // portal blocks set into limestone cliff feet, their passages opened as terrain holes
+	bool cave_mouths = false; // portal blocks set into limestone cliff feet, their passages opened as terrain holes; off until the entrance is meshed with the cave behind it
 	bool mineral_glints = false;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
@@ -249,9 +249,14 @@ private:
 	void _ensure_libraries(const LocalVector<uint32_t> &p_keys);
 	void _prepare_rivers();
 	RockGenerator::RockType _type_at(const TerrainGenerator3D *p_gen, const Vector3 &p_pos) const;
+
+public:
+	RockGenerator::RockType get_rock_type_at(const Vector3 &p_position) const { return _type_at(_get_generator(), p_position); }
+
+private:
 	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones);
 	void _rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const;
-	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type);
+	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, bool p_cliff = false);
 	void _build_cell(const Vector3i &p_key);
 	void _free_cell(Cell &r_cell);
 	void _update_streaming(bool p_all);

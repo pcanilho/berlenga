@@ -33,6 +33,9 @@
 
 #include "ground_deform_field.h"
 #include "ground_deform_gpu.h"
+#include "ground_ripples.h"
+
+#include "core/object/worker_thread_pool.h"
 #include "ground_terramechanics.h"
 #include "ground_height_query.h"
 
@@ -73,6 +76,7 @@ public:
 		float gloss = 1.0f; // roughness factor where freshly turned
 		float litter = 0.0f; // m of litter on top
 		float sand = 0.0f; // share of sand
+		float blown = 0.0f; // share the wind moves: dry, bare sand (damp grains hold, Belly 1964)
 		// Soil strength (docs/ideas/sand.md, stage 1; Wong 2008, table 2.2).
 		float cohesion = 1.0f; // kPa
 		float tan_phi = 0.53f; // internal friction
@@ -137,6 +141,39 @@ private:
 	float drying_time = 900.0f; // s
 	float sand_drift_rate = 2.0f; // per hour at 10 m/s
 	float rain_smoothing = 0.02f; // per hour per mm/h
+	Vector2 wind_override; // m/s at 10 m; zero: the weather map's
+
+	// Wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the field, its own
+	// finer ring of the patch. Off by default until its cost is measured.
+	bool wind_ripples = false;
+	float ripple_time_scale = 1.0f;
+	float ripple_extent = 4.0f; // m, the square of real ripple geometry round the follow point
+	GroundRipples ripples;
+	double ripple_q_accum = 0.0;
+	bool ripple_dirty = false;
+	bool ripple_published = false;
+	double ripple_mask_accum = 1e9;
+	LocalVector<float> ripple_show; // sand share the ripples show on (the texture's second channel)
+	LocalVector<float> ripple_seen; // the field's surface change at each of its texels over the window
+	Vector2i ripple_seen_origin;
+	Ref<Image> ripple_image;
+	Ref<ImageTexture> ripple_texture;
+	WorkerThreadPool::TaskID ripple_task = WorkerThreadPool::INVALID_TASK_ID;
+	LocalVector<float> ripple_grown;
+	Vector2 ripple_grow_wind;
+	int ripple_steps = 0;
+	static void _ripple_grow_task(void *p_self);
+	void _ripples_update(double p_delta);
+	void _ripples_publish();
+	Vector2 _wind_10m() const;
+
+public:
+	// For the streamers (GroundStreamers3D): the 10 m wind over the field and the share of sand the wind can
+	// move at a place.
+	Vector2 get_wind_10m() const { return _wind_10m(); }
+	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown; }
+
+private:
 
 	GroundDeformField field;
 	struct Columns : public GroundDeformField::Columns {
@@ -298,6 +335,22 @@ public:
 	float get_terrain_margin() const { return terrain_margin; }
 	void set_skirt_fade(float p_m);
 	float get_skirt_fade() const { return skirt_fade; }
+	void set_wind_override(const Vector2 &p_wind) { wind_override = p_wind; }
+	Vector2 get_wind_override() const { return wind_override; }
+	void set_wind_ripples(bool p_enabled);
+	bool is_wind_ripples() const { return wind_ripples; }
+	void set_ripple_extent(float p_extent) { ripple_extent = CLAMP(p_extent, 1.0f, 16.0f); }
+	float get_ripple_extent() const { return ripple_extent; }
+	void set_ripple_time_scale(float p_scale) { ripple_time_scale = MAX(p_scale, 0.0f); }
+	float get_ripple_time_scale() const { return ripple_time_scale; }
+	// The ripple layer's height at a world position, m about its mean (0 off the layer); tests and tools.
+	float get_ripple_at(const Vector3 &p_position) const { return ripples.sample(p_position.x, p_position.z); }
+	bool is_ripples_ready() const { return wind_ripples && ripples.tmpl_ready; }
+	int get_ripple_steps() const { return ripple_steps; }
+	PackedFloat32Array get_ripple_heights() const;
+	Vector2 get_ripple_origin() const { return Vector2(ripples.origin) * ripples.cell; }
+	float get_ripple_cell() const { return ripples.cell; }
+	int get_ripple_size() const { return ripples.n; }
 	void set_drying_time(float p_s) { drying_time = MAX(p_s, 1.0f); }
 	float get_drying_time() const { return drying_time; }
 	void set_sand_drift_rate(float p_rate) { sand_drift_rate = MAX(p_rate, 0.0f); }

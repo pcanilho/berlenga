@@ -1,2 +1,0 @@
-### Changed
-- PhysXFlow3D raster smoke: the sun's smoke shadow is a volumetric shadow map (optical depth over 32 depth slices). `cast_shadows` reads it at each surface's depth, and `sun_scattering` lights the smoke from it with one fetch per sample instead of a 4-step march, so the whole plume self-shadows, not only the 4 m nearest. The quarter-resolution scattering upsamples with a wider joint bilateral filter, so the texel grid no longer shows at thin edges.

@@ -218,11 +218,11 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.ring_w = m.stalk_r * 1.2f;
 			m.scales = 1.0f;
 			m.stalk_foot = Color(0.36f, 0.27f, 0.18f);
-			m.ring_tint = Color(1.0f, 0.96f, 0.78f); // Cottony white with a yellow edge.
-			m.cap_centre = Color(0.4f, 0.27f, 0.2f); // Dark tawny brown over the boss.
+			m.ring_tint = Color(0.95f, 0.85f, 0.6f); // Cottony, cream to yellowish (a pure white read as a blob in sun).
+			m.cap_centre = Color(0.32f, 0.22f, 0.16f); // Dark tawny brown over the boss.
 			m.cap_margin = Color(1.22f, 1.25f, 1.3f); // Pale honey yellow at the rim.
 			m.cap_fade = 1.0f; // The brown reaches well out: about half the cap.
-			m.fibrils = 0.3f;
+			m.fibrils = 0.45f;
 			m.moist_band = rng.randf() < 0.5f ? _rand(0.1f, 0.25f) : 0.0f; // Some caps still damp at the rim.
 			m.bulb = 0.55f; // The foot swells where it fuses with its neighbours.
 			{
@@ -500,7 +500,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		sp.push_back(Vector2(0.0f, r * 1.7f));
 		LocalVector<Color> sc;
 		// Dark brown fibrils (the centre surface is pale, so these factors stay low: lit from above, lighter ones read as pale grit).
-		const float dark = _rand(0.07f, 0.13f);
+		const float dark = _rand(0.04f, 0.08f);
 		sc.push_back(Color(dark * 1.3f, dark * 0.95f, dark * 0.6f));
 		sc.push_back(Color(dark * 1.25f, dark * 0.9f, dark * 0.55f));
 		sc.push_back(Color(dark, dark * 0.72f, dark * 0.45f));

@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="CaveNetwork3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Grows cave networks into the rock under a [TerrainGenerator3D], from entrances at cliff feet.
+	</brief_description>
+	<description>
+		Each cave follows Paris, Peytavie, Guérin, Collon and Galin, "Synthesizing Geologically Coherent Cave Networks" (Computer Graphics Forum 40(7), 2021).
+		Its key points are the entrance and sinks under closed hollows on the ground above. Points are sampled in the rock, more densely on the bedding planes and the water table, and joined to their nearest neighbours. Each edge costs the line integral of the medium: low along a bedding plane, a joint plane or the water table, low straight up or level, high when inclined.
+		The least-cost paths between key points are kept by a gamma-skeleton. Side passages branch off as dead ends, every chain wanders by [member tortuosity], and some junctions open into breakdown chambers.
+		Each passage takes a type from its height above the water table: a tube or bedding-plane passage at or below it, a keyhole just above it, a canyon well above it, and a shaft where it goes straight down.
+		The network is data for now (see [method get_segments]). The meshes and the entrance join to the terrain come next (docs/ideas/rocks.md).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_cave">
+			<return type="int" />
+			<param index="0" name="entrance" type="Vector3" />
+			<param index="1" name="out" type="Vector3" />
+			<description>
+				Grows a cave from [param entrance] (the mouth's floor at the cliff foot) into the rock behind it ([param out] points away from the cliff). Returns its index, or -1 when there is too little rock behind the entrance. The same entrance and [member seed] always give the same cave.
+			</description>
+		</method>
+		<method name="clear_caves">
+			<return type="void" />
+			<description>
+				Forgets every cave.
+			</description>
+		</method>
+		<method name="find_entrances" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<param index="1" name="max" type="int" default="8" />
+			<description>
+				Cliff feet inside [param rect] where a cave could open. A foot qualifies when a wall of 50 to 76 degrees rises at least 8 m within 12 m of level ground with no water. When [member rock_field] is set, the rock there must also be limestone. Entrances are at least 150 m apart, steepest walls first, and at most [param max] are returned. Each is a [Dictionary] with [code]position[/code] (the mouth's floor) and [code]out[/code] (away from the cliff).
+			</description>
+		</method>
+		<method name="get_cave_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many caves have been grown.
+			</description>
+		</method>
+		<method name="get_chambers" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				The cave's breakdown chambers. Each is a [Dictionary] with [code]center[/code], [code]radii[/code] (x and z across, y up) and [code]yaw[/code].
+			</description>
+		</method>
+		<method name="get_key_points" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				The cave's key points: the start of its passage behind the entrance, then its sinks.
+			</description>
+		</method>
+		<method name="get_last_build_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long the last [method add_cave] took, in milliseconds.
+			</description>
+		</method>
+		<method name="get_last_sample_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many points in the rock the last cave was grown through.
+			</description>
+		</method>
+		<method name="get_segments" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				The cave's passages as straight pieces. Each is a [Dictionary] with [code]a[/code], [code]b[/code], [code]radius_a[/code], [code]radius_b[/code] (half widths in metres) and [code]type[/code] (a [enum PassageType]).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bedding_spacing" type="float" setter="set_bedding_spacing" getter="get_bedding_spacing" default="12.0">
+			Metres between the inception horizons: the bedding planes that passages favour. One passes through the entrance. They dip as the generator's strata do (else 1 to 4 degrees), wandering by a metre or two.
+		</member>
+		<member name="cave_length" type="float" setter="set_cave_length" getter="get_cave_length" default="250.0">
+			How far behind the entrance the network may reach, in metres.
+		</member>
+		<member name="chamber_chance" type="float" setter="set_chamber_chance" getter="get_chamber_chance" default="0.35">
+			The share of junctions that open into a breakdown chamber, 4 to 12 m across and kept under its cover of rock.
+		</member>
+		<member name="cover" type="float" setter="set_cover" getter="get_cover" default="4.0">
+			The least rock over a passage, in metres. It grows by 0.08 m per metre from the entrance, up to 15 m more.
+		</member>
+		<member name="gamma" type="float" setter="set_gamma" getter="get_gamma" default="2.0">
+			The gamma-skeleton's exponent. Two key points are linked unless a third lies in their lune. 2 gives branchwork caves (the Gabriel graph). Lower values link more pairs, toward mazes.
+		</member>
+		<member name="generator" type="NodePath" setter="set_generator" getter="get_generator" default="NodePath(&quot;&quot;)">
+			The [TerrainGenerator3D] whose ground the caves lie under.
+		</member>
+		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
+			An optional [RockField3D] that says what the rock is: [method find_entrances] then keeps to limestone.
+		</member>
+		<member name="sample_spacing" type="float" setter="set_sample_spacing" getter="get_sample_spacing" default="7.0">
+			Metres between the points sampled in the rock. Smaller spacing gives finer paths and a slower build.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			The seed. Each cave also takes its entrance's position into its own seed.
+		</member>
+		<member name="side_passages" type="int" setter="set_side_passages" getter="get_side_passages" default="6">
+			How many dead-end side passages are tried, each joined to the network by its least-cost path.
+		</member>
+		<member name="tortuosity" type="float" setter="set_tortuosity" getter="get_tortuosity" default="0.4">
+			How far passages wander off their paths: from a few centimetres at 0 to 4 m at 1.
+		</member>
+	</members>
+	<constants>
+		<constant name="PASSAGE_ENTRANCE" value="0" enum="PassageType">
+			The first metres from the mouth in.
+		</constant>
+		<constant name="PASSAGE_TUBE" value="1" enum="PassageType">
+			Phreatic tube, round to elliptical, at or below the water table.
+		</constant>
+		<constant name="PASSAGE_BED" value="2" enum="PassageType">
+			Phreatic passage along a bedding plane, wide and low.
+		</constant>
+		<constant name="PASSAGE_KEYHOLE" value="3" enum="PassageType">
+			A tube with a vadose trench cut in its floor, just above the water table.
+		</constant>
+		<constant name="PASSAGE_CANYON" value="4" enum="PassageType">
+			Vadose canyon, tall and narrow, well above the water table.
+		</constant>
+		<constant name="PASSAGE_SHAFT" value="5" enum="PassageType">
+			A vertical shaft.
+		</constant>
+		<constant name="PASSAGE_MAX" value="6" enum="PassageType">
+			The number of passage types.
+		</constant>
+	</constants>
+</class>

@@ -9,6 +9,7 @@ def configure(env):
 
 def get_doc_classes():
     return [
+        "GroundStreamers3D",
         "GroundSurface3D",
     ]
 

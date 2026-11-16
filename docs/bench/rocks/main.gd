@@ -359,7 +359,17 @@ func _world() -> void:
 				best_d = hb.origin.distance_to(form_stone["position"])
 				mouth = hb * Vector3(0, 1, -1)
 		var d := float(args.get("dist", "14"))
-		cam.position = mouth + (o + side).normalized() * d
+		# Out from the face, turned up to 70 degrees either way toward the lowest ground (a mouth in a gully looks
+		# out along it, not into the far bank).
+		var best_dir := (o + side).normalized()
+		var best_g := 1e9
+		for k in range(-7, 8):
+			var dir := (o + side).normalized().rotated(Vector3.UP, deg_to_rad(10.0 * k))
+			var g := gen.get_height(mouth + dir * d) + 0.02 * absf(k)
+			if g < best_g:
+				best_g = g
+				best_dir = dir
+		cam.position = mouth + best_dir * d
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
 	cam.look_at(look)
@@ -379,7 +389,7 @@ func _world() -> void:
 			if args.has("hole-dump"):
 				for h in gen.get_holes():
 					var hb: Transform3D = h
-					if hb.origin.distance_to(spot) < 60.0:
+					if hb.origin.distance_to(spot) < float(args.get("hole-radius", "60")):
 						print("  hole at %s, half extents %.1f %.1f %.1f" % [hb.origin, hb.basis.x.length(), hb.basis.y.length(), hb.basis.z.length()])
 				for st in rocks.get_stones(RockField3D.LAYER_LANDFORM, Rect2(spot.x - 60, spot.z - 60, 120, 120)):
 					if int(st["family"]) == RockGenerator.FAMILY_CAVE_MOUTH:
@@ -392,6 +402,108 @@ func _world() -> void:
 			_fall_near(spot, land)
 		if args.has("live"):
 			_live_falls(spot, land)
+	if args.has("caves"):
+		_caves(cam)
+
+
+# Cave networks (CaveNetwork3D, docs/ideas/rocks.md "Real caves"): grown from the first entrances found in the
+# world, the skeleton drawn through the ground (colour by passage type) from above and in front.
+func _caves(cam: Camera3D) -> void:
+	var net := CaveNetwork3D.new()
+	net.name = "Caves"
+	add_child(net)
+	net.generator = net.get_path_to(gen)
+	if rocks:
+		net.rock_field = net.get_path_to(rocks)
+	if args.has("cave-length"):
+		net.cave_length = float(args["cave-length"])
+	if args.has("gamma"):
+		net.gamma = float(args["gamma"])
+	var r := gen.get_world_rect()
+	var t0 := Time.get_ticks_msec()
+	var found: Array = net.find_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1)
+	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
+	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9)]
+	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft"]
+	for e in found:
+		var id := net.add_cave(e["position"], e["out"])
+		if id < 0:
+			print("  entrance at %s: no network" % [e["position"]])
+			continue
+		var segs := net.get_segments(id)
+		var counts := {}
+		var length := 0.0
+		var lo := 1e9
+		var hi := -1e9
+		for sg in segs:
+			var nm: String = names[int(sg["type"])]
+			var l: float = (sg["a"] as Vector3).distance_to(sg["b"])
+			counts[nm] = counts.get(nm, 0.0) + l
+			length += l
+			lo = minf(lo, minf(sg["a"].y, sg["b"].y))
+			hi = maxf(hi, maxf(sg["a"].y, sg["b"].y))
+		var per := []
+		for k in counts:
+			per.append("%s %.0f m" % [k, counts[k]])
+		print("  cave at %s out %s: %d segments, %.0f m of passage (%s), %d chambers, %d key points, %.0f m deep to %.0f m up; %d samples, %.0f ms" % [e["position"], e["out"], segs.size(), length, ", ".join(per), net.get_chambers(id).size(), net.get_key_points(id).size(), e["position"].y - lo, hi - e["position"].y, net.get_last_sample_count(), net.get_last_build_msec()])
+		# Every passage must stay under the ground with some rock over it.
+		var out_of_rock := 0
+		for sg in segs:
+			if int(sg["type"]) == CaveNetwork3D.PASSAGE_ENTRANCE:
+				continue
+			var m: Vector3 = (sg["a"] + sg["b"]) * 0.5
+			if m.y > gen.get_height(m) - 1.0:
+				out_of_rock += 1
+		print("  %d segments with under 1 m of rock over them" % out_of_rock)
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_colors = true
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 1.0
+		cyl.bottom_radius = 1.0
+		cyl.height = 1.0
+		cyl.radial_segments = 6
+		cyl.rings = 1
+		mm.mesh = cyl
+		mm.instance_count = segs.size()
+		for i in segs.size():
+			var a: Vector3 = segs[i]["a"]
+			var b: Vector3 = segs[i]["b"]
+			var y := (b - a)
+			var l := y.length()
+			var yn := y / maxf(l, 1e-4)
+			var x := yn.cross(Vector3.UP if absf(yn.y) < 0.9 else Vector3.RIGHT).normalized()
+			var z := x.cross(yn)
+			var rr := 0.5 * (float(segs[i]["radius_a"]) + float(segs[i]["radius_b"]))
+			mm.set_instance_transform(i, Transform3D(Basis(x * rr, y, z * rr), (a + b) * 0.5))
+			mm.set_instance_color(i, colours[int(segs[i]["type"])])
+		var mi := MultiMeshInstance3D.new()
+		mi.multimesh = mm
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.vertex_color_use_as_albedo = true
+		mat.no_depth_test = true
+		mat.render_priority = 1
+		mi.material_override = mat
+		add_child(mi)
+		for ch in net.get_chambers(id):
+			var sm := SphereMesh.new()
+			sm.radius = 1.0
+			sm.height = 2.0
+			var ci := MeshInstance3D.new()
+			ci.mesh = sm
+			ci.scale = ch["radii"]
+			ci.position = ch["center"]
+			var cm := mat.duplicate()
+			cm.vertex_color_use_as_albedo = false
+			cm.albedo_color = Color(0.2, 1.0, 0.3)
+			ci.material_override = cm
+			add_child(ci)
+		if id == 0:
+			var o: Vector3 = e["out"]
+			var c: Vector3 = e["position"] - o * net.cave_length * 0.45
+			cam.position = c + o * net.cave_length * 0.9 + Vector3(0, net.cave_length * 0.7, 0)
+			cam.look_at(c)
 
 
 # The pieces against the stone: their total volume and the box round them as drawn (each chunk through its
@@ -909,6 +1021,30 @@ func _test() -> void:
 		check(t3.holes > 0 and t3.map_updates.has(1) and t3.collision_updates > 0, "Terrain3D holes: %d holes, %d control-map vertices, map updates %s, %d collision updates" % [written, t3.holes, t3.map_updates.slice(0, 3), t3.collision_updates])
 		rocks.terrain3d = NodePath()
 		t3.queue_free()
+	# Cave networks (CaveNetwork3D): an entrance found at a limestone cliff foot grows a network that stays in the rock
+	# and joins its key points; the same seed gives the same cave.
+	var net := CaveNetwork3D.new()
+	add_child(net)
+	net.generator = net.get_path_to(gen)
+	net.rock_field = net.get_path_to(rocks)
+	var ents: Array = net.find_entrances(gen.get_world_rect(), 2)
+	if ents.is_empty():
+		check(true, "caves: no limestone cliff foot in this world (counted, not required)")
+	else:
+		var e: Dictionary = ents[0]
+		var id := net.add_cave(e["position"], e["out"])
+		var segs: Array = net.get_segments(id) if id >= 0 else []
+		var length := 0.0
+		var shallow := 0
+		for sg in segs:
+			length += (sg["a"] as Vector3).distance_to(sg["b"])
+			var m: Vector3 = (sg["a"] + sg["b"]) * 0.5
+			if int(sg["type"]) != CaveNetwork3D.PASSAGE_ENTRANCE and m.y > gen.get_height(m) - 1.0:
+				shallow += 1
+		check(id >= 0 and segs.size() > 10 and shallow == 0, "caves: %d entrances; a network of %d segments, %.0f m, %d chambers, %d key points in %.0f ms, %d under 1 m of rock" % [ents.size(), segs.size(), length, net.get_chambers(maxi(id, 0)).size(), net.get_key_points(maxi(id, 0)).size(), net.get_last_build_msec(), shallow])
+		var id2 := net.add_cave(e["position"], e["out"])
+		check(id2 >= 0 and net.get_segments(id2).size() == segs.size(), "caves: the same entrance grows the same network (%d and %d segments)" % [segs.size(), net.get_segments(maxi(id2, 0)).size()])
+	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
 	var overlaps := 0

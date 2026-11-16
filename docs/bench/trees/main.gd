@@ -510,6 +510,11 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
 		cam.look_at(Vector3(xs[xs.size() - 1], 0.3, 0))
 		cam.fov = 50.0
+		if OS.has_environment("CAM"): # "dx,y,z,lx,ly,lz,fov" from the log's x.
+			var cv := OS.get_environment("CAM").split_floats(",")
+			cam.position = Vector3(xs[xs.size() - 1] + cv[0], cv[1], cv[2])
+			cam.look_at(Vector3(xs[xs.size() - 1] + cv[3], cv[4], cv[5]))
+			cam.fov = cv[6]
 	elif view == "fork":
 		# Where the first limbs leave the stem: the junctions (trees.md 2d).
 		var cb: float = first_info.crown_base

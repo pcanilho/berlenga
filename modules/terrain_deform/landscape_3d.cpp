@@ -1422,12 +1422,24 @@ void Landscape3D::_refresh_holes(const Rect2 &p_rect) {
 				whi = whi.max(Vector2(c.x, c.z));
 			}
 			if (gen->has_holes_in(Rect2(wlo, whi - wlo).grow(spacing))) {
-				// One flag per quad, from the hole test at its centre.
+				// One flag per quad: a hole where the ground across the quad (from its lowest corner to its highest, at
+				// its centre) passes through a hole box. On a steep wall the centre's height alone can lie above or
+				// below a passage the wall crosses.
 				f.resize(chunk_quads * chunk_quads);
 				for (int j = 0; j < chunk_quads; j++) {
 					for (int i = 0; i < chunk_quads; i++) {
 						const Vector3 w = gt.xform(Vector3(origin.x + (cx * chunk_quads + i + 0.5f) * spacing, 0, origin.y + (cz * chunk_quads + j + 0.5f) * spacing));
-						const bool h = gen->is_hole(w);
+						bool h = false;
+						if (gen->has_holes_in(Rect2(w.x, w.z, 0, 0).grow(spacing))) {
+							real_t ylo = 1e30, yhi = -1e30;
+							for (int k = 0; k < 4; k++) {
+								const Vector3 cw3 = gt.xform(Vector3(origin.x + (cx * chunk_quads + i + (k & 1)) * spacing, 0, origin.y + (cz * chunk_quads + j + ((k >> 1) & 1)) * spacing));
+								const real_t hy = gen->get_height(cw3);
+								ylo = MIN(ylo, hy);
+								yhi = MAX(yhi, hy);
+							}
+							h = gen->is_hole_span(w.x, w.z, ylo, yhi);
+						}
 						f[j * chunk_quads + i] = h ? 1 : 0;
 						any = any || h;
 					}

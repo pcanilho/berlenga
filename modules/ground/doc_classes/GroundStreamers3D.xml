@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GroundStreamers3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Sand blowing over dry ground: the saltating grains as particles.
+	</brief_description>
+	<description>
+		When the wind over a [GroundSurface3D] passes Bagnold's threshold (about 6 m/s at 10 m), grains leave dry sand and hop downwind in a layer a few centimetres deep: GPU particles in a square of [member extent] round the camera (or [member follow_target]), traced by the path tracer like any particles. The amount follows the same saltation flux as the surface's wind ripples ([member GroundSurface3D.wind_ripples]): the sand in the air is the flux over the grains' speed, and each particle stands for as many grains as that needs, drawn with their summed cross-section, so the sheet is as dense to the eye as the real one. Hop heights are exponential with a 4 cm mean and a hop runs about 11 times its height. Near the threshold the sand moves in streamers, ribbons about 20 cm wide and a few metres long carried downwind by the gusts, merging into a continuous sheet at twice the threshold friction speed. Damp sand, litter, soil and rock give the wind nothing (the surface's [code]blown[/code] share, see [method GroundSurface3D.get_material_at]).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="airborne_mass" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="flux" type="float" />
+			<description>
+				The mass of sand in the air over a square metre, kg, for a saltation flux of [param flux] kg/m/s.
+			</description>
+		</method>
+		<method name="get_active_ratio" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of [member max_grains] flying this frame.
+			</description>
+		</method>
+		<method name="get_coverage" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of the ground under streamers this frame: [code]1.0[/code] is a continuous sheet.
+			</description>
+		</method>
+		<method name="get_flux" qualifiers="const">
+			<return type="float" />
+			<description>
+				The saltation flux this frame, kg per metre across the wind per second, times [member strength]. [code]0.0[/code] under the threshold.
+			</description>
+		</method>
+		<method name="get_grains_per_particle" qualifiers="const">
+			<return type="float" />
+			<description>
+				How many real grains each particle stands for this frame.
+			</description>
+		</method>
+		<method name="get_wind" qualifiers="const">
+			<return type="float" />
+			<description>
+				The 10 m wind speed over the surface this frame, m/s.
+			</description>
+		</method>
+		<method name="grain_speed" qualifiers="static">
+			<return type="float" />
+			<description>
+				The mean speed of saltating grains, m/s (at the top of a mean hop).
+			</description>
+		</method>
+		<method name="streamer_coverage" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="friction_speed" type="float" />
+			<description>
+				The share of the ground under streamers at a [param friction_speed] (m/s): none under the threshold, 15% at it, a continuous sheet at twice it.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="10.0">
+			Width of the square round the follow point the grains fly in, m.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the square follows. Empty: the camera.
+		</member>
+		<member name="grain_color" type="Color" setter="set_grain_color" getter="get_grain_color" default="Color(0.78, 0.68, 0.5, 1)">
+			The grains' albedo.
+		</member>
+		<member name="grain_size" type="float" setter="set_grain_size" getter="get_grain_size" default="0.25">
+			The grains' diameter, mm (fine sand is 0.1 to 0.3).
+		</member>
+		<member name="ground_surface" type="NodePath" setter="set_ground_surface" getter="get_ground_surface" default="NodePath(&quot;&quot;)">
+			The [GroundSurface3D] the grains leave and land on. Empty: the active one.
+		</member>
+		<member name="max_grains" type="int" setter="set_max_grains" getter="get_max_grains" default="40000">
+			Particles in the square. Each stands for many grains; more particles make a finer, smoother sheet for the same amount of sand.
+		</member>
+		<member name="streak_time" type="float" setter="set_streak_time" getter="get_streak_time" default="0.016666668">
+			The exposure the grains' streaks show, s.
+		</member>
+		<member name="strength" type="float" setter="set_strength" getter="get_strength" default="1.0">
+			Scales the saltation flux.
+		</member>
+	</members>
+</class>

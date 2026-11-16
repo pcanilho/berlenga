@@ -1,1 +1,0 @@
-- Water: open-sea rollers are solid white wherever they rise, with no dark holes on their face.

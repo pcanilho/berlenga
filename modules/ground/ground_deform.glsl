@@ -68,7 +68,7 @@ layout(set = 0, binding = 4, std430) restrict readonly buffer Ground {
 };
 layout(set = 0, binding = 5, std430) restrict readonly buffer Cover {
 	// Snow: per cover cell, two: (swe mm, density, crust thickness, crust burial), (new snow m, cover ground m, 0, 0).
-	// Ground: per lattice point, two: (rim share, tan repose, slumping rate, deepest dent), (darken, gloss, sand, deformable).
+	// Ground: per lattice point, two: (rim share, tan repose, slumping rate, deepest dent), (darken, gloss, blown sand, deformable).
 	vec4 cover_cells[];
 };
 struct Stamp {
@@ -845,7 +845,7 @@ void main() {
 		}
 		vec2 wp = texel_world(x, z);
 		vec4 m1 = ground_cell(wp, 1);
-		float keep = exp(-(params.kind.w * m1.z * (1.0 - smoothstep(0.1, 0.4, 1.0 - m1.y)) + params.age.x) * params.age.y);
+		float keep = exp(-(params.kind.w * m1.z + params.age.x) * params.age.y);
 		st.x *= keep;
 		st.y *= keep;
 		st.w *= params.kind.z;

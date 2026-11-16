@@ -1,1 +1,0 @@
-- Physics: floating bodies can take their volume from their collision shapes and their mass from per-shape densities (`volume_mode` Shapes), so wood, ice and steel hulls float at their real drafts without tuning.

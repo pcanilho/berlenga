@@ -3255,6 +3255,39 @@ bool TerrainGenerator3D::is_hole(const Vector3 &p_global_position) const {
 	return false;
 }
 
+// A ground column from p_y0 to p_y1 at (x, z) inside a hole: for a heightfield cell whose ground spans those heights
+// (a steep wall rises metres across one quad, so its centre's height alone can miss a hole the wall passes through).
+bool TerrainGenerator3D::is_hole_span(real_t p_x, real_t p_z, real_t p_y0, real_t p_y1) const {
+	const Vector2 q(p_x, p_z);
+	for (const Hole &h : holes) {
+		if (!h.rect.has_point(q)) {
+			continue;
+		}
+		// The segment from (q, y0) to (q, y1) against the box (slab test in the box's unit frame).
+		const Vector3 a = h.inv.xform(Vector3(p_x, p_y0, p_z)), b = h.inv.xform(Vector3(p_x, p_y1, p_z));
+		const Vector3 d = b - a;
+		real_t t0 = 0.0, t1 = 1.0;
+		bool miss = false;
+		for (int k = 0; k < 3 && !miss; k++) {
+			if (Math::abs(d[k]) < 1e-9f) {
+				miss = Math::abs(a[k]) > 1.0f;
+				continue;
+			}
+			real_t ta = (-1.0f - a[k]) / d[k], tb = (1.0f - a[k]) / d[k];
+			if (ta > tb) {
+				SWAP(ta, tb);
+			}
+			t0 = MAX(t0, ta);
+			t1 = MIN(t1, tb);
+			miss = t0 > t1;
+		}
+		if (!miss) {
+			return true;
+		}
+	}
+	return false;
+}
+
 TypedArray<Transform3D> TerrainGenerator3D::get_holes() const {
 	TypedArray<Transform3D> out;
 	for (const Hole &h : holes) {

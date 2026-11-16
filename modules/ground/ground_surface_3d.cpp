@@ -117,6 +117,9 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	c.wheel_kc = lerp_log(soil.wheel_kc, sand.wheel_kc, s);
 	c.wheel_kphi = lerp_log(soil.wheel_kphi, sand.wheel_kphi, s);
 	c.sand = s;
+	// Wind moves only dry sand: a few percent of water binds the grains and the threshold climbs out of reach
+	// (Belly 1964; McKenna Neuman and Nickling 1989).
+	c.blown = s * (1.0f - Math::smoothstep(0.05f, 0.2f, m));
 	// Leaf litter on top: compresses to a third under a boot, pushes little aside, and shows the darker
 	// soil where it is pressed through.
 	c.litter = MAX(p_litter, 0.0f);
@@ -126,6 +129,7 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		c.rim_share = Math::lerp(c.rim_share, 0.1f, lw);
 		c.darken = MAX(c.darken, 0.45f * lw);
 		c.tan_repose = MAX(c.tan_repose, Math::lerp(c.tan_repose, Math::tan(Math::deg_to_rad(60.0f)), lw));
+		c.blown *= 1.0f - lw;
 	}
 	return c;
 }
@@ -350,22 +354,140 @@ void GroundSurface3D::_build_mesh() {
 			tangents.set(i * 4 + 3, 1.0f);
 		}
 	}
-	PackedInt32Array idx;
-	idx.resize((n - 1) * (n - 1) * 6);
-	int k = 0;
+	// Wind ripples (stage 3): the middle of the patch is a finer grid at the ripple layer's cell, so the
+	// geometry holds the crests for both renderers. The coarse quads round that hole fan from their outer
+	// edge to the fine vertices on their inner one, so the two grids meet without cracks.
+	int hole_lo = -1;
+	int hole_hi = -1;
+	int fine_k = 0;
+	int fine_m = 0;
+	if (wind_ripples) {
+		const float w = 0.5f * ripples.n * ripples.cell;
+		for (int i = 0; i < n; i++) {
+			if (Math::abs(c[i] + w) < 1e-3f) {
+				hole_lo = i;
+			}
+			if (Math::abs(c[i] - w) < 1e-3f) {
+				hole_hi = i;
+			}
+		}
+		fine_k = (int)Math::round(detail_spacing / ripples.cell);
+		if (hole_lo < 0 || hole_hi <= hole_lo || fine_k < 2 || (hole_hi - hole_lo) * fine_k != ripples.n) {
+			hole_lo = hole_hi = -1; // the grids do not line up (spacings changed): no fine ring
+		} else {
+			fine_m = ripples.n + 1;
+		}
+	}
+	const int fine_base = n * n;
+	if (fine_m > 0) {
+		const float w = 0.5f * ripples.n * ripples.cell;
+		verts.resize(fine_base + fine_m * fine_m);
+		normals.resize(fine_base + fine_m * fine_m);
+		tangents.resize((fine_base + fine_m * fine_m) * 4);
+		uvs.resize(fine_base + fine_m * fine_m);
+		for (int z = 0; z < fine_m; z++) {
+			for (int xi = 0; xi < fine_m; xi++) {
+				const int i = fine_base + z * fine_m + xi;
+				const Vector3 p(-w + xi * ripples.cell, 0.0f, -w + z * ripples.cell);
+				verts.set(i, p);
+				normals.set(i, Vector3(0, 1, 0));
+				uvs.set(i, Vector2(p.x, p.z));
+				tangents.set(i * 4 + 0, 1.0f);
+				tangents.set(i * 4 + 1, 0.0f);
+				tangents.set(i * 4 + 2, 0.0f);
+				tangents.set(i * 4 + 3, 1.0f);
+			}
+		}
+	}
+	auto fine = [&](int p_x, int p_z) { return fine_base + p_z * fine_m + p_x; };
+	LocalVector<int> tri;
+	// Wound like the grid's (a, b, d) triangles: the normal of the xz winding points down y.
+	auto add_tri = [&](int p_a, int p_b, int p_c) {
+		const Vector3 va = verts[p_a];
+		const Vector3 vb = verts[p_b];
+		const Vector3 vc = verts[p_c];
+		if ((vb - va).cross(vc - va).y > 0.0f) {
+			SWAP(p_b, p_c);
+		}
+		tri.push_back(p_a);
+		tri.push_back(p_b);
+		tri.push_back(p_c);
+	};
+	const bool hole = fine_m > 0;
 	for (int z = 0; z < n - 1; z++) {
 		for (int xi = 0; xi < n - 1; xi++) {
+			const bool in_x = hole && xi >= hole_lo && xi < hole_hi;
+			const bool in_z = hole && z >= hole_lo && z < hole_hi;
+			if (in_x && in_z) {
+				continue; // the fine grid's
+			}
 			const int a = z * n + xi;
 			const int b = a + 1;
 			const int d = a + n;
 			const int e = d + 1;
-			idx.set(k++, a);
-			idx.set(k++, b);
-			idx.set(k++, d);
-			idx.set(k++, b);
-			idx.set(k++, e);
-			idx.set(k++, d);
+			// A quad on the hole's edge: a fan from its outer edge to the fine vertices on its inner one.
+			int inner_side = -1; // 0: -z edge on the hole, 1: +z, 2: -x, 3: +x
+			if (in_x && z == hole_lo - 1) {
+				inner_side = 1;
+			} else if (in_x && z == hole_hi) {
+				inner_side = 0;
+			} else if (in_z && xi == hole_lo - 1) {
+				inner_side = 3;
+			} else if (in_z && xi == hole_hi) {
+				inner_side = 2;
+			}
+			if (inner_side < 0) {
+				add_tri(a, b, d);
+				add_tri(b, e, d);
+				continue;
+			}
+			int o0, o1;
+			LocalVector<int> f;
+			if (inner_side <= 1) {
+				const int fz = inner_side == 1 ? 0 : fine_m - 1;
+				o0 = inner_side == 1 ? a : d;
+				o1 = inner_side == 1 ? b : e;
+				for (int k = 0; k <= fine_k; k++) {
+					f.push_back(fine((xi - hole_lo) * fine_k + k, fz));
+				}
+			} else {
+				const int fx = inner_side == 3 ? 0 : fine_m - 1;
+				o0 = inner_side == 3 ? a : b;
+				o1 = inner_side == 3 ? d : e;
+				for (int k = 0; k <= fine_k; k++) {
+					f.push_back(fine(fx, (z - hole_lo) * fine_k + k));
+				}
+			}
+			const int mid = fine_k / 2;
+			for (int k = 0; k < mid; k++) {
+				add_tri(o0, f[k], f[k + 1]);
+			}
+			add_tri(o0, f[mid], o1);
+			for (int k = mid; k < fine_k; k++) {
+				add_tri(o1, f[k], f[k + 1]);
+			}
 		}
+	}
+	if (hole) {
+		for (int z = 0; z < fine_m - 1; z++) {
+			for (int xi = 0; xi < fine_m - 1; xi++) {
+				const int a = fine(xi, z);
+				const int b = a + 1;
+				const int d = a + fine_m;
+				const int e = d + 1;
+				tri.push_back(a);
+				tri.push_back(b);
+				tri.push_back(d);
+				tri.push_back(b);
+				tri.push_back(e);
+				tri.push_back(d);
+			}
+		}
+	}
+	PackedInt32Array idx;
+	idx.resize(tri.size());
+	for (uint32_t k = 0; k < tri.size(); k++) {
+		idx.set(k, tri[k]);
 	}
 	Array arrays;
 	arrays.resize(Mesh::ARRAY_MAX);
@@ -516,6 +638,211 @@ void GroundSurface3D::_upload() {
 	}
 }
 
+Vector2 GroundSurface3D::_wind_10m() const {
+	if (wind_override != Vector2()) {
+		return wind_override;
+	}
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (!wm) {
+		return Vector2();
+	}
+	const Vector3 w = wm->get_wind_at(Vector3(center.x, _ground_at(center.x, center.y), center.y), 10.0f);
+	return Vector2(w.x, w.z);
+}
+
+void GroundSurface3D::set_wind_ripples(bool p_enabled) {
+	if (wind_ripples == p_enabled) {
+		return;
+	}
+	wind_ripples = p_enabled;
+	mesh_dirty = true;
+	ripples.valid = false;
+	ripple_seen.clear();
+	ripple_mask_accum = 1e9;
+	if (is_inside_tree()) {
+		_ensure_children();
+	}
+	if (!wind_ripples) {
+		_ripples_publish();
+	}
+}
+
+PackedFloat32Array GroundSurface3D::get_ripple_heights() const {
+	PackedFloat32Array out;
+	out.resize(ripples.h.size());
+	for (uint32_t i = 0; i < ripples.h.size(); i++) {
+		out.set(i, ripples.h[i]);
+	}
+	return out;
+}
+
+void GroundSurface3D::_ripple_grow_task(void *p_self) {
+	GroundSurface3D *self = (GroundSurface3D *)p_self;
+	GroundRipples::grow(self->ripple_grown, self->ripples.n, self->ripples, self->ripple_grow_wind, 500, 7);
+}
+
+// Saltation flux from GroundRipples::saltation_flux. The ripple layer steps when q of sand a cell has moved
+// since its last step (q = Q / (bulk density * hop)), a few times a second at most.
+void GroundSurface3D::_ripples_update(double p_delta) {
+	if (!wind_ripples || !field.valid) {
+		return;
+	}
+	// The ripple cell divides the patch's detail spacing, so the fine ring's vertices sit on its cells.
+	const int k = MAX((int)Math::round(detail_spacing / 0.0125f), 1);
+	const float cell = detail_spacing / k;
+	const int nr = 2 * (int)Math::round(0.5f * ripple_extent / detail_spacing) * k;
+	if (ripples.cell != cell || ripples.n != nr) {
+		ripples.cell = cell;
+		ripples.n = nr;
+		ripples.valid = false;
+		ripples.tmpl_ready = false;
+		mesh_dirty = true;
+	}
+	Vector2 wind = _wind_10m();
+	const float speed = wind.length();
+	const Vector2 dir = speed > 0.1f ? wind / speed : Vector2(1.0f, 0.0f);
+	// A grown field for the cells that come in, in the background; again when the wind turns past 35 degrees.
+	if (ripple_task != WorkerThreadPool::INVALID_TASK_ID) {
+		if (WorkerThreadPool::get_singleton()->is_task_completed(ripple_task)) {
+			WorkerThreadPool::get_singleton()->wait_for_task_completion(ripple_task);
+			ripple_task = WorkerThreadPool::INVALID_TASK_ID;
+			const bool first = !ripples.tmpl_ready;
+			ripples.tmpl = ripple_grown;
+			ripples.tmpl_wind = ripple_grow_wind;
+			ripples.tmpl_ready = true;
+			if (first) {
+				ripples.valid = false; // the whole window from it
+			}
+		}
+	} else if (!ripples.tmpl_ready || (speed > 0.1f && ripples.tmpl_wind.dot(dir) < 0.82f)) {
+		ripple_grow_wind = dir;
+		ripple_task = WorkerThreadPool::get_singleton()->add_native_task(&GroundSurface3D::_ripple_grow_task, this, false, "Ground ripples");
+	}
+	const float w = 0.5f * ripples.n * ripples.cell;
+	const Vector2i want((int)Math::round((center.x - w) / ripples.cell), (int)Math::round((center.y - w) / ripples.cell));
+	if (!ripples.valid || want != ripples.origin) {
+		ripples.move_to(want);
+		ripple_dirty = true;
+		ripple_mask_accum = 1e9;
+	}
+	// What moves: dry sand. What shows them: sand, wet or dry (damp sand keeps the ripples the wind left), not
+	// under litter. Both in 20 cm blocks, every two seconds.
+	ripple_mask_accum += p_delta;
+	if (ripple_mask_accum >= 2.0) {
+		ripple_mask_accum = 0.0;
+		ripple_show.resize(ripples.n * ripples.n);
+		const int b = 16;
+		for (int bz = 0; bz < ripples.n; bz += b) {
+			for (int bx = 0; bx < ripples.n; bx += b) {
+				const float x = (ripples.origin.x + bx + 0.5f * b) * ripples.cell;
+				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
+				const Cell &c = _cell_at(x, z);
+				const float m = c.deformable ? c.blown : 0.0f;
+				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
+				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
+					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
+						ripples.mask[z2 * ripples.n + x2] = m;
+						ripple_show[z2 * ripples.n + x2] = show;
+					}
+				}
+			}
+		}
+		ripple_dirty = true;
+	}
+	// Where the field's surface changed (a print, a rut, sand landing), the ripples there are gone; they grow
+	// back as the wind works the new surface.
+	{
+		const float t = field.texel();
+		const int fx0 = (int)Math::floor(ripples.origin.x * ripples.cell / t);
+		const int fz0 = (int)Math::floor(ripples.origin.y * ripples.cell / t);
+		const int fn = (int)Math::ceil(ripples.n * ripples.cell / t) + 1;
+		const bool fresh = (int)ripple_seen.size() != fn * fn || ripple_seen_origin != Vector2i(fx0, fz0);
+		if (fresh) {
+			ripple_seen.resize(fn * fn);
+			ripple_seen_origin = Vector2i(fx0, fz0);
+		}
+		const int per = (int)Math::round(t / ripples.cell);
+		for (int z = 0; z < fn; z++) {
+			for (int x = 0; x < fn; x++) {
+				const float wx = (fx0 + x + 0.5f) * t;
+				const float wz = (fz0 + z + 0.5f) * t;
+				const float v = field.sample(field.rim, wx, wz) - field.sample(field.dent, wx, wz);
+				float &seen = ripple_seen[z * fn + x];
+				if (!fresh && Math::abs(v - seen) > 0.001f) {
+					// The texel and a cell round it.
+					const int cx0 = (int)Math::floor((fx0 + x) * t / ripples.cell) - ripples.origin.x - 1;
+					const int cz0 = (int)Math::floor((fz0 + z) * t / ripples.cell) - ripples.origin.y - 1;
+					for (int cz = MAX(cz0, 0); cz < MIN(cz0 + per + 2, ripples.n); cz++) {
+						for (int cx = MAX(cx0, 0); cx < MIN(cx0 + per + 2, ripples.n); cx++) {
+							ripples.h[cz * ripples.n + cx] = 0.0f;
+						}
+					}
+					ripple_dirty = true;
+				}
+				seen = v;
+			}
+		}
+	}
+	// Saltation drives the ripples.
+	const float ustar = GroundRipples::friction_speed(speed);
+	if (ustar > GroundRipples::SAND_USTAR_T && ripples.tmpl_ready) {
+		const float flux = GroundRipples::saltation_flux(ustar);
+		ripple_q_accum += flux / (1600.0f * ripples.hop) * ripple_time_scale * p_delta;
+		int steps = 0;
+		while (ripple_q_accum >= 0.05 * ripples.q_ref && steps < 4) {
+			const float q = MIN((float)ripple_q_accum, ripples.q_ref);
+			ripples.step(q, dir);
+			ripple_q_accum -= q;
+			ripple_steps++;
+			steps++;
+			ripple_dirty = true;
+		}
+		if (steps == 4) {
+			ripple_q_accum = MIN(ripple_q_accum, (double)ripples.q_ref); // past the budget: time slows, no backlog
+		}
+	}
+	if (ripple_dirty) {
+		ripple_dirty = false;
+		const int nn = ripples.n * ripples.n;
+		Vector<uint8_t> data;
+		data.resize(nn * 8);
+		float *d = (float *)data.ptrw();
+		for (int i = 0; i < nn; i++) {
+			d[i * 2 + 0] = ripples.h[i];
+			d[i * 2 + 1] = (int)ripple_show.size() == nn ? ripple_show[i] : 0.0f;
+		}
+		if (ripple_image.is_valid() && ripple_image->get_width() == ripples.n && ripple_texture.is_valid()) {
+			ripple_image->set_data(ripples.n, ripples.n, false, Image::FORMAT_RGF, data);
+			ripple_texture->update(ripple_image);
+		} else {
+			ripple_image = Image::create_from_data(ripples.n, ripples.n, false, Image::FORMAT_RGF, data);
+			ripple_texture = ImageTexture::create_from_image(ripple_image);
+			ripple_published = false;
+		}
+		_ripples_publish();
+	}
+	if (mesh_dirty) {
+		_build_mesh();
+	}
+}
+
+void GroundSurface3D::_ripples_publish() {
+	if (active != this) {
+		return;
+	}
+	if (!wind_ripples || ripple_texture.is_null() || !ripples.valid) {
+		_set_global("ground_ripple_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		ripple_published = false;
+		return;
+	}
+	if (!ripple_published) {
+		_set_global("ground_ripple_map", ripple_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	}
+	// Texel centres on the cells (and so on the fine ring's vertices).
+	_set_global("ground_ripple_rect", Vector4((ripples.origin.x - 0.5f) * ripples.cell, (ripples.origin.y - 0.5f) * ripples.cell, ripples.n * ripples.cell, ripples.cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	ripple_published = true;
+}
+
 // Every second: turned ground dries, wind fills dry sand prints, rain softens soil prints.
 void GroundSurface3D::_age(double p_delta) {
 	if (!field.valid) {
@@ -525,10 +852,9 @@ void GroundSurface3D::_age(double p_delta) {
 	const float dt_h = dt / 3600.0f;
 	const WeatherMap3D *wm = WeatherMap3D::get_active();
 	const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
-	float wind = 0.0f;
+	const float wind = _wind_10m().length();
 	float rain = 0.0f;
 	if (wm) {
-		wind = wm->get_wind_at(at, 10.0f).length();
 		rain = wm->get_rain_at(at);
 	}
 	// Sand moves above about 5 m/s at 10 m (Bagnold's threshold for fine dry sand).
@@ -555,7 +881,7 @@ void GroundSurface3D::_age(double p_delta) {
 					}
 					if (drift > 0.0f || soften > 0.0f) {
 						const Cell &c = _cell_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t);
-						const float keep = Math::exp(-(drift * c.sand * (1.0f - Math::smoothstep(0.1f, 0.4f, 1.0f - c.gloss)) + soften) * dt_h);
+						const float keep = Math::exp(-(drift * c.blown + soften) * dt_h);
 						dn *= keep;
 						rm *= keep;
 					}
@@ -656,8 +982,14 @@ void GroundSurface3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			set_physics_process_internal(false);
 			_gpu_release();
+			if (ripple_task != WorkerThreadPool::INVALID_TASK_ID) {
+				WorkerThreadPool::get_singleton()->wait_for_task_completion(ripple_task);
+				ripple_task = WorkerThreadPool::INVALID_TASK_ID;
+			}
 			if (active == this) {
 				_set_global("ground_deform_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+				_set_global("ground_ripple_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+				ripple_published = false;
 				active = nullptr;
 			}
 			globals_published = false;
@@ -732,6 +1064,7 @@ void GroundSurface3D::_notification(int p_what) {
 			if (field.dirty && !on_gpu) {
 				_upload();
 			}
+			_ripples_update(delta);
 			_publish();
 			step_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 		} break;
@@ -1049,7 +1382,7 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 		w[i * 8 + 3] = c.max_dent;
 		w[i * 8 + 4] = c.darken;
 		w[i * 8 + 5] = c.gloss;
-		w[i * 8 + 6] = c.sand;
+		w[i * 8 + 6] = c.blown;
 		w[i * 8 + 7] = c.deformable ? 1.0f : 0.0f;
 	}
 	return out;
@@ -1081,10 +1414,9 @@ PackedByteArray GroundSurface3D::_gpu_params(double p_delta, double p_age, doubl
 	float soften = 0.0f;
 	if (p_age > 0.0) {
 		const WeatherMap3D *wm = WeatherMap3D::get_active();
+		drift = sand_drift_rate * MAX(_wind_10m().length() - 5.0f, 0.0f) / 5.0f;
 		if (wm) {
 			const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
-			const float wind = wm->get_wind_at(at, 10.0f).length();
-			drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f;
 			soften = rain_smoothing * wm->get_rain_at(at);
 		}
 	}
@@ -1287,6 +1619,7 @@ Dictionary GroundSurface3D::get_material_at(Vector3 p_position) const {
 	d["max_dent"] = c.max_dent;
 	d["litter"] = c.litter;
 	d["sand"] = c.sand;
+	d["blown"] = c.blown;
 	d["deformable"] = c.deformable;
 	return d;
 }
@@ -1482,6 +1815,21 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_skirt_fade"), &GroundSurface3D::get_skirt_fade);
 	ClassDB::bind_method(D_METHOD("set_drying_time", "seconds"), &GroundSurface3D::set_drying_time);
 	ClassDB::bind_method(D_METHOD("get_drying_time"), &GroundSurface3D::get_drying_time);
+	ClassDB::bind_method(D_METHOD("set_wind_override", "wind"), &GroundSurface3D::set_wind_override);
+	ClassDB::bind_method(D_METHOD("get_wind_override"), &GroundSurface3D::get_wind_override);
+	ClassDB::bind_method(D_METHOD("set_wind_ripples", "enabled"), &GroundSurface3D::set_wind_ripples);
+	ClassDB::bind_method(D_METHOD("is_wind_ripples"), &GroundSurface3D::is_wind_ripples);
+	ClassDB::bind_method(D_METHOD("set_ripple_extent", "extent"), &GroundSurface3D::set_ripple_extent);
+	ClassDB::bind_method(D_METHOD("get_ripple_extent"), &GroundSurface3D::get_ripple_extent);
+	ClassDB::bind_method(D_METHOD("set_ripple_time_scale", "scale"), &GroundSurface3D::set_ripple_time_scale);
+	ClassDB::bind_method(D_METHOD("get_ripple_time_scale"), &GroundSurface3D::get_ripple_time_scale);
+	ClassDB::bind_method(D_METHOD("get_ripple_at", "position"), &GroundSurface3D::get_ripple_at);
+	ClassDB::bind_method(D_METHOD("is_ripples_ready"), &GroundSurface3D::is_ripples_ready);
+	ClassDB::bind_method(D_METHOD("get_ripple_steps"), &GroundSurface3D::get_ripple_steps);
+	ClassDB::bind_method(D_METHOD("get_ripple_heights"), &GroundSurface3D::get_ripple_heights);
+	ClassDB::bind_method(D_METHOD("get_ripple_origin"), &GroundSurface3D::get_ripple_origin);
+	ClassDB::bind_method(D_METHOD("get_ripple_cell"), &GroundSurface3D::get_ripple_cell);
+	ClassDB::bind_method(D_METHOD("get_ripple_size"), &GroundSurface3D::get_ripple_size);
 	ClassDB::bind_method(D_METHOD("set_sand_drift_rate", "rate"), &GroundSurface3D::set_sand_drift_rate);
 	ClassDB::bind_method(D_METHOD("get_sand_drift_rate"), &GroundSurface3D::get_sand_drift_rate);
 	ClassDB::bind_method(D_METHOD("set_rain_smoothing", "rate"), &GroundSurface3D::set_rain_smoothing);
@@ -1543,6 +1891,11 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drying_time", PROPERTY_HINT_RANGE, "1,86400,1,suffix:s"), "set_drying_time", "get_drying_time");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_drift_rate", PROPERTY_HINT_RANGE, "0,100,0.1"), "set_sand_drift_rate", "get_sand_drift_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rain_smoothing", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_rain_smoothing", "get_rain_smoothing");
+	ADD_GROUP("Wind", "");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_override", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind_override", "get_wind_override");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_extent", PROPERTY_HINT_RANGE, "1,16,0.25,suffix:m"), "set_ripple_extent", "get_ripple_extent");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_time_scale", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater"), "set_ripple_time_scale", "get_ripple_time_scale");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_spacing", PROPERTY_HINT_RANGE, "0.01,1,0.005,suffix:m"), "set_detail_spacing", "get_detail_spacing");

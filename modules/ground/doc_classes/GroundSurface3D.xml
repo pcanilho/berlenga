@@ -81,7 +81,7 @@
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The rules at [param position]: [code]n[/code], [code]kc[/code], [code]kphi[/code] (Bekker), [code]rim_share[/code], [code]repose[/code] (degrees), [code]rate[/code] (slumping share per second), [code]max_dent[/code], [code]litter[/code] (m), [code]sand[/code] (share) and [code]deformable[/code].
+				The rules at [param position]: [code]n[/code], [code]kc[/code], [code]kphi[/code] (Bekker), [code]rim_share[/code], [code]repose[/code] (degrees), [code]rate[/code] (slumping share per second), [code]max_dent[/code], [code]litter[/code] (m), [code]sand[/code] (share), [code]blown[/code] (the share the wind moves: dry, bare sand) and [code]deformable[/code].
 			</description>
 		</method>
 		<method name="get_moved_volume" qualifiers="const">
@@ -101,6 +101,43 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How much material is piled on the ground at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_ripple_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The wind ripple height at [param position] over the ripple layer's mean, in metres; [code]0.0[/code] outside the ripple window or with [member wind_ripples] off.
+			</description>
+		</method>
+		<method name="get_ripple_cell" qualifiers="const">
+			<return type="float" />
+			<description>
+				The ripple layer's cell size in metres: [member detail_spacing] divided down to about 1.25 cm, so the patch's fine vertices sit on its cells.
+			</description>
+		</method>
+		<method name="get_ripple_heights" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				The ripple layer's heights, [method get_ripple_size] squared, row by row along Z from [method get_ripple_origin]. For tests and tools.
+			</description>
+		</method>
+		<method name="get_ripple_origin" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The world XZ of the ripple window's corner, in metres.
+			</description>
+		</method>
+		<method name="get_ripple_size" qualifiers="const">
+			<return type="int" />
+			<description>
+				The ripple window's width in cells (it spans [member ripple_extent]).
+			</description>
+		</method>
+		<method name="get_ripple_steps" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many saltation steps the ripples have taken since [member wind_ripples] was turned on, not counting the field grown in the background.
 			</description>
 		</method>
 		<method name="get_sinkage_at" qualifiers="const">
@@ -143,6 +180,12 @@
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
+			</description>
+		</method>
+		<method name="is_ripples_ready" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] once the first ripple field grown in the background has filled the window.
 			</description>
 		</method>
 		<method name="press">
@@ -272,6 +315,12 @@
 		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.
 		</member>
+		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">
+			Width of the square of real ripple geometry round the follow point, m. The patch's middle is meshed at the ripple cell over it, so its vertex count grows as its square (4 m: about 100,000 vertices). The ripples fade out over its outer 15%.
+		</member>
+		<member name="ripple_time_scale" type="float" setter="set_ripple_time_scale" getter="get_ripple_time_scale" default="1.0">
+			Speeds up the ripples' growth over real time; [code]1.0[/code] is real time, when ripples take minutes to re-form. For scenes and time-lapses.
+		</member>
 		<member name="rock_from_geology" type="bool" setter="set_rock_from_geology" getter="is_rock_from_geology" default="true">
 			If [code]true[/code] and the height source is a [code]TerrainGenerator3D[/code], bare rock (exposure over one half) does not print.
 		</member>
@@ -295,6 +344,12 @@
 		</member>
 		<member name="type_map_rect" type="Rect2" setter="set_type_map_rect" getter="get_type_map_rect" default="Rect2(0, 0, 0, 0)">
 			The world XZ rectangle [member type_map] covers.
+		</member>
+		<member name="wind_override" type="Vector2" setter="set_wind_override" getter="get_wind_override" default="Vector2(0, 0)">
+			The 10 m wind over the ground in m/s, as world XZ. [code]Vector2(0, 0)[/code] reads it from the [code]WeatherMap3D[/code].
+		</member>
+		<member name="wind_ripples" type="bool" setter="set_wind_ripples" getter="is_wind_ripples" default="false">
+			If [code]true[/code], wind over dry sand grows ripples (Nishimori and Ouchi 1993) over [member ripple_extent] round the follow point: about 11 cm apart and 6 mm high at 8 m/s, crests across the wind, none under about 6 m/s (Bagnold's threshold), on damp sand or under litter (damp sand keeps the ripples it has). Prints wipe them and they grow back; a wind shift turns them. The patch's middle is meshed at the ripple cell, so the crests are real geometry the path tracer sees. [GroundStreamers3D] draws the grains in the air. Off by default until its cost is measured.
 		</member>
 	</members>
 	<constants>

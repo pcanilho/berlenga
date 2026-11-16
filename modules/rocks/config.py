@@ -11,6 +11,7 @@ def get_doc_classes():
     return [
         "RockGenerator",
         "RockField3D",
+        "CaveNetwork3D",
     ]
 
 

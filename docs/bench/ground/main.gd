@@ -14,12 +14,17 @@ extends Node3D
 #   --test=grains       sand thrown out of the ground and landing again (needs the PhysX build and a GPU):
 #                         a kick digs its volume and lands it downrange; volume kept end to end
 #                         a 4x4 floored on dry sand throws its tread's sand behind it
+#   --test=wind         wind ripples (stage 3): wavelength and height along the wind, crests across it,
+#                         a wind shift turns them, none under the threshold or when damp, a print wipes
+#                         them and they grow back, the layer keeps its sand; blowing grains: speed, hop,
+#                         streamer cover, flux at 12 m/s, none under the threshold, drawn
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
-#   --cam=x,y,z,tx,ty,tz camera for --view=roost
+#   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
+#   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
@@ -34,11 +39,13 @@ var raster := false
 var test := false
 var soil_test := false
 var grains_test := false
+var wind_test := false
 var out := ""
 var spp := 16
 var gpu := true
 var bounces := 3
 var cam_arg := PackedFloat32Array()
+var wind_arg := 9.0
 var fails := 0
 var height: Node3D
 var surface: GroundSurface3D
@@ -55,13 +62,20 @@ func _ready() -> void:
 		elif a == "--test": test = true
 		elif a == "--test=soil": soil_test = true
 		elif a == "--test=grains": grains_test = true
+		elif a == "--test=wind": wind_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--gpu=0": gpu = false
+		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--cam="):
 			for v in a.substr(6).split(","):
 				cam_arg.append(float(v))
+	if wind_test:
+		await _run_wind_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if grains_test:
 		await _run_grains_tests()
 		print("RESULT: %d failed" % fails)
@@ -82,6 +96,9 @@ func _ready() -> void:
 		return
 	if view == "roost":
 		await _build_roost()
+		return
+	if view == "ripples":
+		await _build_ripples()
 		return
 	await _build_trail()
 
@@ -457,6 +474,172 @@ func _run_soil_tests() -> void:
 	_check("wheels print ruts", results["damp_sand"][3] > 0.01 and results["dry_sand_aired"][3] > 0.03, "damp %.1f cm, dry aired down %.1f cm" % [results["damp_sand"][3] * 100.0, results["dry_sand_aired"][3] * 100.0])
 	_check("firm ground: no sinkage", results["firm"][1] == 0.0, "%.2f cm" % (results["firm"][1] * 100.0))
 	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
+
+
+# Ripple statistics over the layer (or a square of it): [wavelength along x, along z (m, from zero
+# crossings), slope energy along x over z, peak to peak (m), rms (m), mean (m)].
+func _ripple_stats(from_x := 0, from_z := 0, size := -1) -> Array:
+	var h := surface.get_ripple_heights()
+	var n := surface.get_ripple_size()
+	var c := surface.get_ripple_cell()
+	if size < 0:
+		size = n
+	var mean := 0.0
+	var lo := 1e9
+	var hi := -1e9
+	for z in range(from_z, from_z + size):
+		for x in range(from_x, from_x + size):
+			var v := h[z * n + x]
+			mean += v
+			lo = minf(lo, v)
+			hi = maxf(hi, v)
+	mean /= float(size * size)
+	var rms := 0.0
+	var ex := 0.0
+	var ez := 0.0
+	var zx := 0
+	var zz := 0
+	for z in range(from_z, from_z + size - 1):
+		for x in range(from_x, from_x + size - 1):
+			var v := h[z * n + x] - mean
+			var vx := h[z * n + x + 1] - mean
+			var vz := h[(z + 1) * n + x] - mean
+			rms += v * v
+			ex += (vx - v) * (vx - v)
+			ez += (vz - v) * (vz - v)
+			if (v < 0.0) != (vx < 0.0): zx += 1
+			if (v < 0.0) != (vz < 0.0): zz += 1
+	var rows := float(size - 1)
+	var len := (size - 1) * c
+	var lx := 2.0 * len * rows / maxf(zx, 1.0)
+	var lz := 2.0 * len * rows / maxf(zz, 1.0)
+	return [lx, lz, ex / maxf(ez, 1e-12), hi - lo, sqrt(rms / (rows * rows)), mean]
+
+
+func _run_wind_tests() -> void:
+	await _soil_scene("dry_sand")
+	surface.wind_override = Vector2(8.0, 0.0)
+	surface.wind_ripples = true
+	var t0 := Time.get_ticks_msec()
+	while not surface.is_ripples_ready() and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().physics_frame
+	for i in 3:
+		await get_tree().physics_frame
+	var grow_s := (Time.get_ticks_msec() - t0) / 1000.0
+	var st := _ripple_stats()
+	print("  grown in %.1f s (a worker); 8 m/s along x: wavelength %.1f cm along, %.1f cm across, slope energy %.0fx along, %.1f mm peak to peak" % [grow_s, st[0] * 100.0, st[1] * 100.0, st[2], st[3] * 1000.0])
+	_check("ripples 5 to 15 cm long along the wind (Bagnold 1941; Andreotti 2006)", st[0] > 0.05 and st[0] < 0.15, "%.1f cm" % (st[0] * 100.0))
+	_check("crests across the wind", st[2] > 4.0 and st[1] > 3.0 * st[0], "slope energy along / across %.1f, crests %.0f cm long between turns" % [st[2], st[1] * 100.0])
+	_check("ripple index about 15 (7 mm at 11 cm)", st[3] > 0.003 and st[3] < 0.012, "%.1f mm peak to peak" % (st[3] * 1000.0))
+	# At real time the wind moves a cell's sand by q: a step every few seconds at 8 m/s.
+	var s0 := surface.get_ripple_steps()
+	for i in 600:
+		await get_tree().physics_frame
+	var real_steps := surface.get_ripple_steps() - s0
+	print("  real time at 8 m/s: %d steps in 10 s" % real_steps)
+	# Under the threshold (4 m/s at 10 m): nothing moves.
+	surface.wind_override = Vector2(4.0, 0.0)
+	s0 = surface.get_ripple_steps()
+	surface.ripple_time_scale = 1000.0
+	for i in 60:
+		await get_tree().physics_frame
+	_check("under the threshold nothing moves", surface.get_ripple_steps() == s0, "%d steps at 4 m/s" % (surface.get_ripple_steps() - s0))
+	# The layer keeps its sand: the mean stays where it was over many steps.
+	var mean0: float = _ripple_stats()[5]
+	# A print in the middle wipes the ripples under it.
+	var o := Vector3(0, 0, 0)
+	surface.press_box(o, Vector2(0.3, 0.6), 0.0, 0.0, 0.05)
+	surface.sync_deformation()
+	surface.wind_override = Vector2(0.0, 0.0)
+	for i in 5:
+		await get_tree().physics_frame
+	var org := surface.get_ripple_origin()
+	var cell := surface.get_ripple_cell()
+	var ci := int((o.x - org.x) / cell) - 8
+	var cj := int((o.z - org.y) / cell) - 8
+	var wiped: float = _ripple_stats(ci, cj, 16)[4]
+	var around: float = _ripple_stats(ci - 60, cj, 16)[4]
+	_check("a print wipes the ripples under it", wiped < 0.2 * around, "rms %.2f mm in the print, %.2f mm beside it" % [wiped * 1000.0, around * 1000.0])
+	# The wind turns 90 degrees and blows hard for a while (time scaled): the ripples grow back over the print
+	# and turn across the new wind.
+	surface.wind_override = Vector2(0.0, 9.0)
+	surface.ripple_time_scale = 3000.0
+	s0 = surface.get_ripple_steps()
+	for i in 240:
+		await get_tree().physics_frame
+	var st2 := _ripple_stats()
+	var back: float = _ripple_stats(ci, cj, 16)[4]
+	print("  after %d steps at 9 m/s along z: wavelength %.1f cm along z, slope energy along x / z %.2f" % [surface.get_ripple_steps() - s0, st2[1] * 100.0, st2[2]])
+	_check("they grow back over the print", back > 0.5 * around, "rms %.2f mm in the print" % (back * 1000.0))
+	_check("a wind shift turns them across the new wind", st2[2] < 0.5, "slope energy along x / z %.2f" % st2[2])
+	_check("the layer keeps its sand (the mean holds)", absf(st2[5] - mean0) < 2e-5, "mean %.4f mm, was %.4f mm (the print's ripples wiped)" % [st2[5] * 1000.0, mean0 * 1000.0])
+	# Damp sand holds: no saltation.
+	surface.moisture = 0.4
+	for i in 130:
+		await get_tree().physics_frame
+	var h0 := surface.get_ripple_heights()
+	for i in 60:
+		await get_tree().physics_frame
+	var h1 := surface.get_ripple_heights()
+	var diff := 0.0
+	for i in h0.size():
+		diff = maxf(diff, absf(h1[i] - h0[i]))
+	_check("damp sand holds its ripples (cohesion stops saltation)", diff < 1e-4, "largest change %.3f mm" % (diff * 1000.0))
+	_check("damp sand gives the wind nothing", float(surface.get_material_at(o)["blown"]) == 0.0, "blown share %.2f at moisture 0.4" % float(surface.get_material_at(o)["blown"]))
+	surface.moisture = 0.0
+	await _run_streamer_tests()
+
+
+# Streamers (stage 3): the saltating grains as particles.
+func _run_streamer_tests() -> void:
+	var v := GroundStreamers3D.grain_speed()
+	_check("grains fly at 1 to 4 m/s (Namikas 2003)", v > 1.0 and v < 4.0, "%.2f m/s at the mean hop's top" % v)
+	# A hop of h at the shader's speed: its length over its height.
+	var h := 0.04
+	var hop := 0.8 * 0.2 / 0.4 * log(h / 1e-4) * 2.0 * sqrt(2.0 * h / 9.81)
+	_check("a hop runs 10 to 15 times its height (Bagnold 1941)", hop / h > 9.0 and hop / h < 16.0, "%.0f cm hop at 4 cm, %.1fx" % [hop * 100.0, hop / h])
+	var ut := 0.2
+	_check("streamers near the threshold, a sheet at twice it (Baas and Sherman 2005)", GroundStreamers3D.streamer_coverage(ut * 1.05) < 0.25 and GroundStreamers3D.streamer_coverage(ut * 2.0) >= 1.0, "coverage %.2f at 1.05 u*t, %.2f at 1.5, %.2f at 2" % [GroundStreamers3D.streamer_coverage(ut * 1.05), GroundStreamers3D.streamer_coverage(ut * 1.5), GroundStreamers3D.streamer_coverage(ut * 2.0)])
+	var st := GroundStreamers3D.new()
+	add_child(st)
+	_make_env()
+	# Low over the sand, looking along it: grains in the air show against the sky above the horizon.
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = Vector3(0.0, _undisturbed(Vector3.ZERO) + 0.1, 2.5)
+	cam.look_at(Vector3(0.0, _undisturbed(Vector3.ZERO) + 0.1, -10.0))
+	surface.wind_override = Vector2(4.0, 0.0)
+	for i in 30:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var calm := get_viewport().get_texture().get_image()
+	_check("no grains under the threshold", st.get_flux() == 0.0, "flux %.4f kg/m/s at 4 m/s" % st.get_flux())
+	surface.wind_override = Vector2(12.0, 0.0)
+	for i in 180:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var windy := get_viewport().get_texture().get_image()
+	if OS.has_environment("STREAMER_DUMP"):
+		calm.save_png(OS.get_environment("STREAMER_DUMP") + "_calm.png")
+		windy.save_png(OS.get_environment("STREAMER_DUMP") + "_windy.png")
+	var q := st.get_flux()
+	var m := GroundStreamers3D.airborne_mass(q)
+	print("  12 m/s: flux %.1f g/m/s, %.2f g of sand in the air over a square metre, coverage %.2f, %d grains a particle, %.0f%% of the particles flying" % [q * 1000.0, m * 1000.0, st.get_coverage(), int(st.get_grains_per_particle()), st.get_active_ratio() * 100.0])
+	_check("blowing sand at 12 m/s (field fluxes 5 to 50 g/m/s, Sherman 1998)", q > 0.005 and q < 0.05, "%.1f g/m/s" % (q * 1000.0))
+	# Round the horizon: the grains within a few metres, against the far sand and the sky.
+	var diff := 0.0
+	var n := 0
+	var w := calm.get_width()
+	var hh := calm.get_height()
+	for y in range(int(hh * 0.4), int(hh * 0.6), 2):
+		for x in range(0, w, 2):
+			diff += absf(windy.get_pixel(x, y).get_luminance() - calm.get_pixel(x, y).get_luminance())
+			n += 1
+	diff /= maxf(n, 1)
+	_check("the grains are drawn", diff > 0.002, "mean change %.4f round the horizon" % diff)
+	st.queue_free()
+	cam.queue_free()
+	print("ground step %.2f ms (with ripples)" % surface.get_step_time_msec())
 
 
 # The field's sand above (+) or below (-) the undisturbed ground, m3.
@@ -852,6 +1035,42 @@ func _build_roost() -> void:
 		await get_tree().physics_frame
 	get_window().size = full
 	print("roost: %.1f l thrown, %d grains in the air, field on the %s" % [grains.get_dug_volume() * 1000.0, grains.get_airborne_count(), "GPU" if surface.is_gpu_active() else "CPU"])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Sand stage 3: wind ripples on dry sand under a low sun, sand blowing over them. --wind=m/s (default 9).
+func _build_ripples() -> void:
+	kind = "dry_sand"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.0, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	var sun: DirectionalLight3D = null
+	for c in get_children():
+		if c is DirectionalLight3D:
+			sun = c
+	sun.rotation_degrees = Vector3(-9.0, 120.0, 0.0)
+	surface.wind_override = Vector2(wind_arg, 0.0)
+	surface.ripple_extent = 8.0
+	surface.wind_ripples = true
+	var st := GroundStreamers3D.new()
+	add_child(st)
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 0.55, 2.2, -0.3, 0.0, -1.0])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	var t0 := Time.get_ticks_msec()
+	while not surface.is_ripples_ready() and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().physics_frame
+	for i in 90:
+		await get_tree().physics_frame
+	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()

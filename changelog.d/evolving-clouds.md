@@ -1,1 +1,0 @@
-- Weather: clouds form, swell and clear over time and reshape, in raster, path tracing and cloud shadows (`cloud_evolution`, off by default; `cloud_lifetime`, `cloud_churn`).
