@@ -21,6 +21,7 @@ extends Node3D
 #   --day=D          the season of day D from a WeatherMap3D: the sward's greenness, flowering,
 #                    ferns (docs/ideas/vegetation-seasons.md)
 #   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
+#   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -74,6 +75,7 @@ var dm: TerrainDataMap3D
 var grass: GrassField3D
 var season_day := 0
 var drought := false
+var frost := false
 var season_map: WeatherMap3D
 var bench_season := {}
 var cam: Camera3D
@@ -206,6 +208,7 @@ func _ready() -> void:
 			forest = true
 		elif a.begins_with("--day="): season_day = int(a.substr(6))
 		elif a == "--drought": drought = true
+		elif a == "--frost": frost = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -222,6 +225,14 @@ func _ready() -> void:
 			rc.precipitation_seasonality = 0.9
 			rc.precipitation_peak_month = 0
 			season_map.climate = rc
+		if frost:
+			var rf := ClimateRecipe.new()
+			rf.temperature_january = -8.0
+			rf.temperature_july = 18.0
+			rf.precipitation = 120.0 # A dry continental winter: hard frost on bare ground, no snow to hide it.
+			rf.precipitation_seasonality = 0.9
+			rf.precipitation_peak_month = 6
+			season_map.climate = rf
 		season_map.season_day = season_day
 		add_child(season_map)
 		bench_season = season_map.get_season()
