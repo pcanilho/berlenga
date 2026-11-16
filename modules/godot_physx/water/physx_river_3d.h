@@ -180,6 +180,14 @@ private:
 	float outlet_discharge = -1.0f; // m^3/s from the lake at the last build (< 0 without a lake)
 	float outlet_head = 0.0f; // m, the lake above the sill at the last build
 	ObjectID source_id; // the lake this river last registered its outlet with
+	float outlet_free = 0.0f; // m^3/s the sill would pass with free flow over it (critical depth on the crest)
+	float outlet_crest = 0.0f; // world height of the sill
+	float outlet_crest_s = 0.0f; // its arc length
+	float outlet_level = 0.0f; // the lake's world level
+	Vector3 outlet_at; // world, the sill's centre
+	Vector3 outlet_dir; // world, downstream
+	float outlet_width = 1.0f;
+	void _register_outlet();
 	float mouth_blend = 6.0f; // m past the shoreline over which the ribbon fades into the water it joins
 	struct Tributary {
 		ObjectID river;

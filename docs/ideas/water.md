@@ -2999,3 +2999,15 @@ towards it, and its level did not answer to what flows in.
   flow texture next to the inflow plumes, so waves, foam and floaters drift to the outlet.
 - `PhysXWaterSurface3D.level_from_flows` (off): the lake's level settles where its outlets pass its
   inflows plus `catchment_inflow` (m3/s); the outlet rivers rebuild when it moves more than a centimetre.
+
+**Built (16 Nov).** As planned, plus the **drowned sill**: the weir law assumes the water goes critical on
+the crest, which holds only if the channel below can carry it away (steep enough). On a mild channel the
+normal depth stands above critical, the sill is drowned, and the discharge is the one whose energy at the
+sill (normal depth plus velocity head, over the real cross-section) the lake's level just reaches. The lake
+drains by the same law (the weir coefficient scaled by the share the channel lets through), so its level
+budget and approach flow agree with the river. On the river bench (`--outlet`, `--view=outlet`, a basin above
+a 5 m sill on a 0.5% channel): a 0.30 m head passes 1.2 m3/s free but 0.41 drowned, and the river starts 2 cm
+below the lake; with `level_from_flows` and 3 m3/s of `catchment_inflow` the lake settles 0.79 m above the
+sill (outlet passing 3.04). Approach flow 2, 5 and 10 m from the sill: 14, 2.4 and 0.5 cm/s. Not yet: lakes
+filling or draining over time (the steady level is applied at once), and a chain of lakes settles only
+through the 1 cm rebuild loop between each pair.

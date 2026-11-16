@@ -483,6 +483,9 @@ String PhysXRiver3D::get_fall_shader_code() {
 namespace {
 float cross_value(const PhysXRiver3D::Section &p_sec, const LocalVector<float> &p_values, float p_n, float p_margin, int p_m) {
 	const float half = 0.5f * p_sec.width + p_margin;
+	if (!Math::is_finite(p_n)) {
+		return p_values[0];
+	}
 	const float u = CLAMP((p_n + half) / (2.0f * half) * p_m, 0.0f, (float)p_m);
 	const int j = MIN((int)u, p_m - 1);
 	return Math::lerp(p_values[j], p_values[j + 1], u - j);
@@ -749,18 +752,34 @@ void PhysXRiver3D::_measure_outlet(PhysicsDirectSpaceState3D *p_space, const Ref
 	if (!Math::is_finite(crest)) {
 		crest = xf.xform(at_local).y; // no ground found: the curve's own height is the sill
 	}
-	const float level = lake->get_global_position().y + lake->get_water_level();
-	const float width = widths.is_empty() ? default_width : _point_value(widths, 0, default_width);
-	outlet_head = MAX(level - crest, 0.0f);
-	outlet_discharge = PhysXWaterSurface3D::weir_discharge(outlet_coefficient, width, outlet_head);
+	outlet_level = lake->get_global_position().y + lake->get_water_level();
+	outlet_width = widths.is_empty() ? default_width : _point_value(widths, 0, default_width);
+	outlet_crest = crest;
+	outlet_crest_s = crest_s;
+	outlet_head = MAX(outlet_level - crest, 0.0f);
+	outlet_free = PhysXWaterSurface3D::weir_discharge(outlet_coefficient, outlet_width, outlet_head);
+	outlet_discharge = outlet_free; // drowned by the channel below, if it is too slow to carry it (in _build)
 	Vector3 ahead = p_curve->sample_baked(MIN(crest_s + 1.0f, length), true) - p_curve->sample_baked(MAX(crest_s - 1.0f, 0.0f), true);
 	ahead.y = 0.0f;
-	const Vector3 dir = xf.basis.xform(ahead.length_squared() > 1e-8f ? ahead.normalized() : Vector3(1, 0, 0));
+	outlet_dir = xf.basis.xform(ahead.length_squared() > 1e-8f ? ahead.normalized() : Vector3(1, 0, 0));
+	outlet_at = xf.xform(at_local);
 	if (source_id.is_valid() && source_id != lake->get_instance_id()) {
 		_unregister_outlet();
 	}
+}
+
+// Registered after the build, with the discharge the channel let through: the lake drains by the same law (its
+// coefficient scaled by the share the channel lets through), so its level budget and its approach flow agree with
+// the river.
+void PhysXRiver3D::_register_outlet() {
+	PhysXWaterSurface3D *lake = Object::cast_to<PhysXWaterSurface3D>(_source_node());
+	if (lake == nullptr || outlet_discharge < 0.0f) {
+		_unregister_outlet();
+		return;
+	}
+	const float share = outlet_free > 1e-6f ? outlet_discharge / outlet_free : 1.0f;
 	source_id = lake->get_instance_id();
-	lake->set_outflow((int64_t)(uint64_t)get_instance_id(), xf.xform(at_local), dir, width, crest, outlet_coefficient);
+	lake->set_outflow((int64_t)(uint64_t)get_instance_id(), outlet_at, outlet_dir, outlet_width, outlet_crest, outlet_coefficient * share);
 }
 
 void PhysXRiver3D::_unregister_outlet() {
@@ -953,6 +972,13 @@ bool PhysXRiver3D::_strip_at(const Vector3 &p_world, int &r_section, float &r_t,
 	const int count = (int)sections.size();
 	const Ref<Curve3D> c = get_curve();
 	if (count < 2 || c.is_null() || !is_inside_tree()) {
+		return false;
+	}
+	if (!p_world.is_finite()) {
+		// A body that has left the world (it would index the cross-section with NaN).
+		r_section = 0;
+		r_t = 0.0f;
+		r_n = 0.0f;
 		return false;
 	}
 	const Vector3 local = get_global_transform().affine_inverse().xform(p_world);
@@ -1739,6 +1765,52 @@ void PhysXRiver3D::_build() {
 		bed_slope[i] = used > 0 ? MAX(drop / used, 1e-4f) : max_slope;
 	}
 
+	// A lake outlet is drowned when the channel below is too slow to carry what a free sill would pass: its
+	// normal depth stands above critical on the crest, and the discharge is the one whose energy at the sill
+	// (normal depth plus velocity head) the lake's level just reaches (Henderson 1966, ch. 6).
+	if (outlet_discharge > 0.0f) {
+		const float to_local = get_global_transform().origin.y;
+		const float level = outlet_level - to_local;
+		const int ic = CLAMP((int)Math::round(outlet_crest_s / ds), 0, count - 1);
+		const float dn = (sections[ic].width + 2.0f * bank_margin) / m;
+		auto energy = [&](float p_q) -> float {
+			const float target = p_q / Math::sqrt(bed_slope[ic]);
+			float lo = 0.0f;
+			float hi = 20.0f;
+			for (int it = 0; it < 30; it++) {
+				const float mid = 0.5f * (lo + hi);
+				if (conveyance_at(ic, bed[ic] + mid, mid) < target) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			const float d = 0.5f * (lo + hi);
+			float area = 0.0f;
+			for (int j = 0; j <= m; j++) {
+				area += dn * MAX(depth_at(ic, j, bed[ic] + d, d), 0.0f);
+			}
+			const float u = p_q / MAX(area, 1e-3f);
+			return bed[ic] + d + u * u / (2.0f * GRAVITY);
+		};
+		if (energy(outlet_discharge) > level) {
+			float lo = 0.0f;
+			float hi = outlet_discharge;
+			for (int it = 0; it < 24; it++) {
+				const float mid = 0.5f * (lo + hi);
+				if (energy(mid) <= level) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			outlet_discharge = lo;
+			for (int i = 0; i < count; i++) {
+				sections[i].discharge = get_discharge_at(sections[i].s);
+			}
+		}
+	}
+
 	// Surface: the normal depth over the real cross-section where the river
 	// follows the ground (or the given depth), the path itself otherwise; then
 	// never uphill.
@@ -2251,6 +2323,7 @@ void PhysXRiver3D::_build() {
 	_build_fall_effects();
 	live_fields_dirty = true;
 	_register_mouth();
+	_register_outlet();
 	emit_signal(SNAME("rebuilt"));
 	update_configuration_warnings();
 	if (carve) {
@@ -3371,7 +3444,7 @@ Array PhysXRiver3D::get_waterfalls() const {
 bool PhysXRiver3D::_locate(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const {
 	const int count = (int)sections.size();
 	const Ref<Curve3D> c = get_curve();
-	if (count < 2 || c.is_null() || !is_inside_tree()) {
+	if (count < 2 || c.is_null() || !is_inside_tree() || !p_world.is_finite()) {
 		return false;
 	}
 	Vector3 local = get_global_transform().affine_inverse().xform(p_world);
