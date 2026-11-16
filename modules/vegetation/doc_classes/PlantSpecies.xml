@@ -125,6 +125,9 @@
 		<member name="floating" type="bool" setter="set_floating" getter="is_floating" default="false">
 			If [code]true[/code], plants sit level on the water surface ([method TerrainDataMap3D.get_water_depth_at] above the ground), as water lilies do. Pair it with a [member water_depth_range] that starts above zero.
 		</member>
+		<member name="follow_flow" type="bool" setter="set_follow_flow" getter="is_follow_flow" default="false">
+			If [code]true[/code], each plant is turned so its +X axis points downhill, the way water runs over the ground there, instead of a random yaw: aquatic mosses trail downstream.
+		</member>
 		<member name="footprint" type="float" setter="set_footprint" getter="get_footprint" default="0.5">
 			Radius in metres that later species in the [Biome] keep clear of (a trunk and its shade). 0 leaves room for anything.
 		</member>
@@ -250,6 +253,9 @@
 		</member>
 		<member name="stone_top_damp" type="float" setter="set_stone_top_damp" getter="get_stone_top_damp" default="0.0">
 			For a [member stone_top] species: whether it keeps to damp or to dry stone tops. Each top is damp (1) or dry (0), the whole stone alike: damp where [code]1.0 * a + 0.5 * low + 0.7 * shelter + 0.6 * shade[/code] reaches 0.45 (give or take 0.05 per stone), measured at its cap: a how far the cap tilts to the north (-Z), low 1 for a top 5 cm or less over the ground falling to 0 at 0.8 m, shelter how steeply taller stone tops within 2 m rise over it (as a tangent, full at 45 degrees; stones to the south count fully, those to the north half), shade the canopy's shade. Its suitability is multiplied by [code]lerp(1, damp, stone_top_damp)[/code] when positive and [code]lerp(1, 1 - damp, -stone_top_damp)[/code] when negative, so green cushions keep to the low, shaded, north-tilted tops and dry ones to the high, sunlit ones. [method PlantGenerator.make_stones] pairs a green moss (positive) with a smaller, sparser, yellow-olive one (-1).
+		</member>
+		<member name="stone_top_water" type="Vector2" setter="set_stone_top_water" getter="get_stone_top_water" default="Vector2(0, 0)">
+			For a [member stone_top] species: the band of the top's height over the water surface, in metres, that it keeps to (fading over 4 cm past each end); off while [code]x &gt;= y[/code]. The water surface over a top is the ground under it plus the map's water depth there; a top on dry ground counts as its height over the ground plus a quarter of its distance to the water. Aquatic mosses take a band from under the water to just over it (with a [member water_depth_range] that reaches under water, since the bed under the stone is), and dry-ground mosses one from above the flood line.
 		</member>
 		<member name="stone_top" type="bool" setter="set_stone_top" getter="is_stone_top" default="false">
 			If [code]true[/code], the species grows only on the tops of stones ([member VegetationField3D.stone_tops]), set on the stone's cap and tilted with its curve: moss cushions on boulders and scree. A plant reaching more than 1.5 cm past its cap grows smaller to fit (down to 45% of its size), or is not placed. Its other rules still apply at the stone's place.

@@ -268,6 +268,41 @@ Put to Paulo as a card; nothing built yet.
 - **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
   instead of the colour bake; off by default until the PC measures cost.
 
+## Waterside and wet-stone plants (built 16 Nov)
+
+Picked by Paulo on 16 Nov (first of the round; the research is in "Next round candidates (16 Nov)").
+
+- Five presets, real geometry (plant_waterside.cpp): `PRESET_MARSH_MARIGOLD` (kidney-shaped glossy
+  blades on arching stalks, golden cups March to May, then follicle stars), `PRESET_MEADOWSWEET`
+  (reddish stems to about 1 m, pinnate leaves with the small leaflets between the pairs, frothy
+  cream cymes June to September, brown stalks all winter), `PRESET_BUTTERBUR` (lilac-pink spikes
+  March to May before the leaves, then round blades 30 to 50 cm across on stalks to 75 cm, dying
+  back in autumn; the spikes lengthen and go white in fruit), `PRESET_RIVER_MOSS` (Platyhypnidium
+  and Fontinalis: dark leafy shoots along +X, still in the wind), `PRESET_LIVERWORT`
+  (Conocephalum: glossy forked ribbons with a darker midline groove, on the opaque centre surface).
+- Big blades are discs, not strips (`_add_disc_leaf`): a sinus where the stalk meets the blade,
+  the margin drooping and waving, a fine saw of teeth, the leaf texture mapped inside its round
+  outline. A 40 cm butterbur blade as a three-column strip could not droop or wave.
+- `PlantSpecies.stone_top_water` (Vector2, m): a stone-top species keeps to tops whose height over
+  the water is in the band. Over the water is the bed under the stone plus the map's water depth;
+  on the bank, the top's height over the ground plus a quarter of its distance to the water. River
+  stones: aquatic moss -0.6 to 0.1 m (with a `water_depth_range` reaching under water), liverworts
+  0.03 to 0.4 m on damp tops, green moss above 0.12 m, the dry olive moss above 0.3 m.
+- `PlantSpecies.follow_flow`: turned so +X runs down the fall line (water runs downhill), with a
+  little scatter; random on level ground.
+- Plants on a stone's top and plants on the ground round it no longer crowd each other's
+  footprints (sedges at the stones' feet were keeping moss off the tops).
+- `PlantGenerator.make_banks(BANKS_STREAM | BANKS_LAKE | BANKS_FALLS)`: marsh marigold -0.15 to
+  1.2 m from the water, butterbur colonies 0 to 4 m (streams only: it needs moving water's
+  gravel), meadowsweet 0.6 to 7 m; at falls liverworts where spray reaches 0.3 and marsh marigold.
+  All in clonal patches, none colouring the far ground.
+- Benches: vegetation `--stones=stream` (rock-generator cobbles across the river's edge, clear
+  water, the stream's banks; `VEG_STREAM_BANK=1` looks along the bank) and the check "stone tops
+  by water"; plants bench size checks, butterbur flowering before its leaves, the bank sets.
+- Next: aquatic moss on the stones' upstream faces as well as their tops (a cap-only placement
+  leaves one clump per cobble); reading the live water's height (PhysXRiver3D) instead of the
+  baked map once rivers move.
+
 ## Plants between stones (built 15 Nov)
 
 Crevice flora (chasmophytes) root in the fine soil caught between stones and in rock cracks: the

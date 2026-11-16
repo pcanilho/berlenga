@@ -989,6 +989,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 								const float damp = wet + jitter >= STONE_TOP_DAMP_SPLIT ? 1.0f : 0.0f;
 								suit *= sp->stone_top_damp_weight(damp);
 							}
+							if (sp->has_stone_top_water()) {
+								// The top's height over the water: in a stream the surface is the bed under
+								// the stone plus the map's water depth there; on the bank, its height over the
+								// ground plus a quarter of the way to the water (banks rise about 1 in 4), so
+								// a stone at the edge sits in the splash and flood band and one up the bank
+								// does not. Aquatic mosses keep under and just over the surface, dry-ground
+								// mosses above the flood line (Scarlett and O'Hare 2006).
+								const Vector3 cap3(top_cap.x, 0.0f, top_cap.z);
+								const float bed = map->get_height_at(cap3);
+								const float depth = map->get_water_depth_at(cap3);
+								const float over = depth > 0.0f ? float(top_cap.y) - (bed + depth) : float(top_cap.y) - bed + 0.25f * MAX(map->get_water_distance_at(cap3), 0.0f);
+								suit *= sp->stone_top_water_weight(over);
+							}
 						} else {
 							suit = 0.0f;
 						}
@@ -1033,7 +1046,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 							for (int idx : *bucket) {
 								const Placed &o = placed[idx];
-								if (o.species == s || (o.deadwood && dw_near)) {
+								if (o.species == s || (o.deadwood && dw_near) || o.top != on_top) {
 									continue;
 								}
 								const float min_d = fp + o.footprint;
@@ -1082,7 +1095,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
-					placed.push_back({ xz, fp, s, is_log });
+					placed.push_back({ xz, fp, s, is_log, on_top });
 					grid[gc].push_back(placed.size() - 1);
 					scale *= rock_fit;
 					// A stand's margin: smaller plants leaning out to the open (PlantSpecies.margin_*).
@@ -1141,6 +1154,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
 					if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
+					} else if (sp->is_follow_flow() && slope > 1e-3f) {
+						// Downstream: water runs downhill, so +X along the fall line (a little scatter,
+						// as shoots splay in the eddies behind a stone).
+						const Vector2 down(Math::sin(aspect), Math::cos(aspect));
+						yaw = Math::atan2(-down.y, down.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.5f;
 					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (wood_out != Vector2()) {

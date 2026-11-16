@@ -67,6 +67,7 @@ class VegetationField3D : public Node3D {
 		float footprint = 0.0f;
 		int species = 0;
 		bool deadwood = false; // A log: plants on and beside it ignore its footprint.
+		bool top = false; // On a stone's top: plants on the ground round the stone and on its top do not crowd each other.
 	};
 	// A placed log (a species marked "deadwood" whose meshes carry tree_deadwood_axis), in world space.
 	struct Deadwood {

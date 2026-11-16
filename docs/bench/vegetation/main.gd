@@ -22,7 +22,7 @@ var raster := false
 var spp := 16
 var out := ""
 var deadwood_view := false
-var stone_view := "" # --stones=scree|river|shore: plants between stones (PlantGenerator.make_stones).
+var stone_view := "" # --stones=scree|river|shore|stream: plants between stones (PlantGenerator.make_stones).
 var stone_plants := true # --stones-off: the same stones, no plants.
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
@@ -909,6 +909,37 @@ func _deadwood_checks() -> void:
 		else:
 			off_cap += 1
 	_check("stone tops: plants only on the stones' caps, set down on them", on_cap > 3 and off_cap == 0, [on_cap, off_cap])
+	# Stone tops by their height over the water (PlantSpecies.stone_top_water): a row of stones
+	# across the river's edge; aquatic moss only on those under or just over the surface.
+	var wcaps := PackedVector4Array()
+	for i in 24:
+		var wx := -2.0 + i * 0.5
+		var wz := -5.0
+		wcaps.append(Vector4(wx, dm.get_height_at(Vector3(wx, 0, wz)) + 0.12, wz, 0.15))
+	ground.obstacles = PackedVector4Array()
+	ground.stone_tops = wcaps
+	cover.stone_top_water = Vector2(-0.6, 0.1)
+	cover.water_depth_range = Vector2(0, 3) # The bed under the stone is under water.
+	ground.populate()
+	var wet_on := 0
+	var dry_on := 0
+	var wet_caps := 0
+	for cp in wcaps:
+		var q := Vector3(cp.x, 0, cp.z)
+		var dep := dm.get_water_depth_at(q)
+		var over: float = cp.y - (dm.get_height_at(q) + dep) if dep > 0.0 else cp.y - dm.get_height_at(q) + 0.25 * maxf(dm.get_water_distance_at(q), 0.0)
+		var k := 0
+		for p in ground.get_placements(0):
+			if Vector2(p.x - cp.x, p.z - cp.z).length() < cp.w + 0.02:
+				k += 1
+		if over < 0.1:
+			wet_caps += 1
+			wet_on += k
+		elif over > 0.14:
+			dry_on += k
+	_check("stone tops by water: aquatic moss on stones under or just over the river, none up the bank", wet_caps > 3 and wet_on > 3 and dry_on == 0, [wet_caps, wet_on, dry_on])
+	cover.stone_top_water = Vector2()
+	cover.water_depth_range = Vector2()
 	cover.stone_top = false
 	ground.stone_tops = PackedVector4Array()
 	ground.obstacles = PackedVector4Array()
@@ -1140,6 +1171,7 @@ func _build_view() -> void:
 			st.set_normal(Vector3.UP)
 			st.add_vertex(q[k])
 	var rv := MeshInstance3D.new()
+	rv.name = "RiverWater"
 	rv.mesh = st.commit()
 	rv.material_override = wmat
 	add_child(rv)
@@ -1186,6 +1218,11 @@ func _ground_mesh() -> Mesh:
 func _stones_view() -> void:
 	field.queue_free()
 	var at := Vector3(20, height(20, 0), 0) # Dry ground on the valley side, clear of the river.
+	var stream := stone_view == "stream"
+	if stream:
+		# --stones=stream: the same patch across the river's east edge (about 5.6 m from its middle),
+		# stones under the water, at its edge and up the bank, with the stream's bank plants.
+		at = Vector3(4.0, height(4.0, -5.0), -5.0)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 11
 	var stones := []
@@ -1202,7 +1239,24 @@ func _stones_view() -> void:
 	var noise := FastNoiseLite.new()
 	noise.frequency = 2.2
 	var meshes := []
-	for v in 4:
+	if stream:
+		# Real stream cobbles from the rock generator, a little flattened (cobbles lie flat).
+		for v in 4:
+			var rg := RockGenerator.new()
+			rg.family = RockGenerator.FAMILY_COBBLE
+			rg.seed = 30 + v
+			meshes.append(rg.generate())
+		# Clear water, so the stones' wet tops and their moss show through it.
+		var river_water := get_node_or_null("RiverWater") as MeshInstance3D
+		if river_water:
+			var clear := StandardMaterial3D.new()
+			clear.albedo_color = Color(0.25, 0.32, 0.3, 0.35)
+			clear.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			clear.roughness = 0.05
+			clear.metallic_specular = 0.5
+			clear.cull_mode = BaseMaterial3D.CULL_DISABLED
+			river_water.material_override = clear
+	for v in (0 if stream else 4):
 		var sm := SphereMesh.new()
 		sm.radius = 1.0
 		sm.height = 2.0
@@ -1230,8 +1284,19 @@ func _stones_view() -> void:
 		var o: Vector4 = stones[i]
 		var mi := MeshInstance3D.new()
 		mi.mesh = meshes[i % 4]
-		var mat := StandardMaterial3D.new()
 		var g := rng.randf_range(0.36, 0.5)
+		if stream:
+			# A cobble's mesh at its own size: scaled so its widest is the stone's diameter, flattened
+			# to lie on its broad face, sunk a third into the bed; its top from its bounds.
+			var bb: AABB = mi.mesh.get_aabb()
+			var k := 2.0 * o.w / maxf(bb.size.x, bb.size.z)
+			var ky := k * 0.75
+			mi.transform = Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(k, ky, k)), Vector3(o.x, o.y - bb.position.y * ky - bb.size.y * ky * 0.33, o.z))
+			add_child(mi)
+			obstacles.append(Vector4(o.x, o.y, o.z, o.w * 0.95))
+			tops.append(Vector4(o.x, o.y + bb.size.y * ky * 0.67 - 0.005, o.z, o.w * 0.5))
+			continue
+		var mat := StandardMaterial3D.new()
 		mat.albedo_color = Color(g, g * 0.98, g * 0.93)
 		mat.roughness = 0.85
 		mi.material_override = mat
@@ -1239,14 +1304,21 @@ func _stones_view() -> void:
 		add_child(mi)
 		obstacles.append(Vector4(o.x, o.y, o.z, o.w * 0.95))
 		tops.append(Vector4(o.x, o.y + o.w * 0.62 * 1.25, o.z, o.w * 0.5))
-	var stand: int = {"scree": PlantGenerator.STONES_SCREE, "river": PlantGenerator.STONES_RIVER, "shore": PlantGenerator.STONES_SHORE}.get(stone_view, PlantGenerator.STONES_SCREE)
+	var stand: int = {"scree": PlantGenerator.STONES_SCREE, "river": PlantGenerator.STONES_RIVER, "stream": PlantGenerator.STONES_RIVER, "shore": PlantGenerator.STONES_SHORE}.get(stone_view, PlantGenerator.STONES_SCREE)
 	var veg := VegetationField3D.new()
 	veg.name = "Stones"
 	veg.populate_on_ready = false
 	var b := Biome.new()
 	var stone_set: Array[PlantSpecies] = []
-	for sp in PlantGenerator.make_stones(stand, 3, true, {"forcing": 900.0, "day_of_year": 175}):
+	var stone_season := {"forcing": 900.0, "day_of_year": 175}
+	if OS.get_environment("VEG_STONES_FORCING") != "":
+		stone_season["forcing"] = float(OS.get_environment("VEG_STONES_FORCING"))
+		stone_season["day_of_year"] = int(OS.get_environment("VEG_STONES_DAY"))
+	for sp in PlantGenerator.make_stones(stand, 3, true, stone_season):
 		stone_set.append(sp as PlantSpecies)
+	if stream:
+		for sp in PlantGenerator.make_banks(PlantGenerator.BANKS_STREAM, 3, true, stone_season):
+			stone_set.append(sp as PlantSpecies)
 	b.species = stone_set
 	veg.biome = b
 	veg.obstacles = obstacles
@@ -1258,13 +1330,27 @@ func _stones_view() -> void:
 	for i in b.species.size():
 		counts.append(veg.get_placements(i).size())
 	print("VEG_STONES stand=%s stones=%d plants=%s" % [stone_view, stones.size(), str(counts)])
+	if stream:
+		var wet := 0
+		for cp in tops:
+			var q := Vector3(cp.x, 0, cp.z)
+			var dep := dm.get_water_depth_at(q)
+			if dep > 0.0 and cp.y - (dm.get_height_at(q) + dep) < 0.1:
+				wet += 1
+		print("VEG_STONES wet tops %d of %d" % [wet, tops.size()])
 	veg.visible = stone_plants
 	var cam := Camera3D.new()
 	add_child(cam)
 	cam.position = at + Vector3(1.2, 1.1, 1.5)
+	if stream:
+		cam.position = at + Vector3(1.1, 0.55, 0.8) # From the bank, looking down over the edge.
 	cam.fov = 50.0
 	cam.near = 0.05
 	cam.look_at(at + Vector3(0, 0.05, 0))
+	if stream and OS.get_environment("VEG_STREAM_BANK") != "":
+		# Along the bank: marsh marigold at the water's edge, butterbur and meadowsweet behind.
+		cam.position = at + Vector3(4.2, 1.5, 7.0)
+		cam.look_at(at + Vector3(2.2, 0.4, 0.0))
 	cam.current = true
 
 # --deadwood --out=path.png: a beech stand from TreeGenerator (trees, logs, fallen branches,

@@ -113,6 +113,12 @@ public:
 		PRESET_STONECROP,
 		PRESET_SAXIFRAGE,
 		PRESET_THRIFT,
+		// Waterside and wet-stone plants (docs/ideas/vegetation.md, "Waterside and wet-stone plants").
+		PRESET_MARSH_MARIGOLD,
+		PRESET_MEADOWSWEET,
+		PRESET_BUTTERBUR,
+		PRESET_RIVER_MOSS,
+		PRESET_LIVERWORT,
 		PRESET_MAX,
 	};
 
@@ -264,6 +270,16 @@ private:
 	void _build_stonecrop();
 	void _build_saxifrage();
 	void _build_thrift();
+	// Waterside plants (plant_waterside.cpp).
+	// A broad, round blade as a disc (big leaves: the strip of _add_leaf cannot droop and wave).
+	// Frame: z from the stalk's top along the blade, y its upper face; the stalk meets it in the
+	// sinus between the basal lobes. p_cleft: half-angle of the sinus (radians).
+	void _add_disc_leaf(const Transform3D &p_at, float p_radius, float p_cleft, float p_droop, float p_wave, int p_teeth, float p_wind_base, int p_rings, int p_sectors);
+	void _build_marsh_marigold();
+	void _build_meadowsweet();
+	void _build_butterbur();
+	void _build_river_moss();
+	void _build_liverwort();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -431,9 +447,19 @@ public:
 		STONES_MAX,
 	};
 	static TypedArray<Resource> make_stones(StoneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+
+	// Waterside and wet-stone plants (docs/ideas/vegetation.md, "Waterside and wet-stone plants").
+	enum BankStand {
+		BANKS_STREAM, // Upland and lowland streams: tall herbs on the banks, aquatic moss on the stones.
+		BANKS_LAKE, // Still water: marsh marigold and meadowsweet at the edge, no current.
+		BANKS_FALLS, // Waterfall spray zones: liverworts and mosses on the wet rock.
+		BANKS_MAX,
+	};
+	static TypedArray<Resource> make_banks(BankStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
 VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);
 VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
+VARIANT_ENUM_CAST(PlantGenerator::BankStand);

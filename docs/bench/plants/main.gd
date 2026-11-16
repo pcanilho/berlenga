@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -344,6 +344,7 @@ func _checks() -> void:
 		_check("floor set %d" % st, ok, set.size())
 	_mushroom_checks()
 	_stone_checks()
+	_bank_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -375,6 +376,71 @@ func _stone_checks() -> void:
 			if (sp as PlantSpecies).stone_gap >= 1.0:
 				gaps += 1
 		_check("stone set %d: species with meshes, crevice plants kept to the gaps" % st, ok and gaps >= 2, [set.size(), gaps])
+
+# Waterside and wet-stone plants (docs/ideas/vegetation.md): sizes from the floras in midsummer,
+# the spring look (butterbur flowers before its leaves), the bank sets.
+func _bank_checks() -> void:
+	var P := PlantGenerator
+	var summer := {"forcing": 1000.0, "day_of_year": 190, "senescence": 0.0}
+	# Height range and the most width, in July.
+	var sizes := {P.PRESET_MARSH_MARIGOLD: [0.06, 0.5, 0.7], P.PRESET_MEADOWSWEET: [0.5, 1.4, 1.0], P.PRESET_BUTTERBUR: [0.3, 1.3, 2.0], P.PRESET_RIVER_MOSS: [0.002, 0.06, 0.4], P.PRESET_LIVERWORT: [0.001, 0.03, 0.4]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		g.season = summer
+		var ok := true
+		var info := []
+		for sd in 4:
+			g.seed = sd
+			var m := g.generate()
+			var bb := m.get_aabb()
+			ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 30000
+			info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 30k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	# River moss trails downstream: along +X far more than across.
+	var rm := PlantGenerator.new()
+	rm.preset = P.PRESET_RIVER_MOSS
+	var rb := rm.generate().get_aabb()
+	_check("river_moss: shoots trail along +X (downstream)", rb.end.x > 2.0 * absf(rb.position.x) and rb.size.x > rb.size.z * 0.9, [rb.position, rb.end])
+	# Butterbur in April: flower spikes, the leaves barely up; in July big leaves, no spikes.
+	var bg := PlantGenerator.new()
+	bg.preset = P.PRESET_BUTTERBUR
+	bg.apply_preset_colors()
+	var spring_petals := 0
+	var summer_petals := 0
+	var spring_w := 0.0
+	var summer_w := 0.0
+	for sd in 4:
+		bg.seed = sd
+		bg.season = {"forcing": 180.0, "day_of_year": 105, "senescence": 0.0}
+		var m := bg.generate()
+		spring_petals += _surface_tris(m, "petal")
+		spring_w = maxf(spring_w, m.get_aabb().size.x)
+		bg.season = summer
+		m = bg.generate()
+		summer_petals += _surface_tris(m, "petal")
+		summer_w = maxf(summer_w, m.get_aabb().size.x)
+	_check("butterbur: spikes in April before the leaves, big leaves and no spikes in July", spring_petals > 500 and summer_petals == 0 and summer_w > 2.0 * spring_w, [spring_petals, summer_petals, spring_w, summer_w])
+	for st in P.BANKS_MAX:
+		var set := P.make_banks(st, 1, false)
+		var ok := set.size() >= 2
+		for sp in set:
+			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and (sp as PlantSpecies).has_meta("banks")
+		_check("bank set %d: species with meshes, placed by the water" % st, ok, [set.size()])
+	var river := P.make_stones(P.STONES_RIVER, 1, false)
+	var aquatic := 0
+	for sp in river:
+		var s := sp as PlantSpecies
+		if s.stone_top and s.stone_top_water.x < 0.0 and s.follow_flow and s.water_depth_range.y > 0.5:
+			aquatic += 1
+	_check("river stones: an aquatic moss on the tops under the water, trailing downstream", aquatic == 1, aquatic)
+
+func _surface_tris(m: Mesh, name: String) -> int:
+	for si in m.get_surface_count():
+		if m.surface_get_name(si) == name:
+			return (m.surface_get_arrays(si)[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+	return 0
 
 # Woodland-floor mushrooms (docs/ideas/mushrooms.md): real undersides, plausible sizes, the
 # season, the floor sets.

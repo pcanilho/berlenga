@@ -105,6 +105,10 @@ private:
 	float rock_foot = 0.0f; // How much more it grows at a rock's foot (obstacles): sheltered, moist ground.
 	float stone_gap = 0.0f; // 0..1: how strictly it keeps to the gaps between stones (obstacles); 1: nowhere else.
 	float stone_top_damp = 0.0f; // -1..1, stone_top species: +1 keeps to damp, shaded tops, -1 to dry, sunlit ones.
+	// stone_top species: the band of the top's height over the water surface (m) it keeps to; off
+	// while x >= y. Aquatic mosses under and just over the water, dry mosses above the flood line.
+	Vector2 stone_top_water = Vector2();
+	bool follow_flow = false; // Turned so its +X points downstream (downhill), not a random yaw.
 	float margin_width = 0.0f;
 	float margin_scale = 1.0f;
 	float margin_lean = 0.0f;
@@ -232,6 +236,25 @@ public:
 	bool is_stone_top() const { return stone_top; }
 	void set_stone_top_damp(float p_amount) { stone_top_damp = CLAMP(p_amount, -1.0f, 1.0f); emit_changed(); }
 	float get_stone_top_damp() const { return stone_top_damp; }
+	void set_stone_top_water(const Vector2 &p_band) {
+		stone_top_water = p_band;
+		emit_changed();
+	}
+	Vector2 get_stone_top_water() const { return stone_top_water; }
+	bool has_stone_top_water() const { return stone_top_water.x < stone_top_water.y; }
+	// The weight of a stone top p_h metres over the water: 1 inside the band, fading over 4 cm.
+	float stone_top_water_weight(float p_h) const {
+		if (!has_stone_top_water()) {
+			return 1.0f;
+		}
+		const float fade = 0.04f;
+		return Math::smoothstep(stone_top_water.x - fade, stone_top_water.x, p_h) * (1.0f - Math::smoothstep(stone_top_water.y, stone_top_water.y + fade, p_h));
+	}
+	void set_follow_flow(bool p_on) {
+		follow_flow = p_on;
+		emit_changed();
+	}
+	bool is_follow_flow() const { return follow_flow; }
 	// The weight of a stone top whose dampness is p_damp (0 dry and sunlit .. 1 damp and shaded).
 	float stone_top_damp_weight(float p_damp) const {
 		return stone_top_damp >= 0.0f ? Math::lerp(1.0f, p_damp, stone_top_damp) : Math::lerp(1.0f, 1.0f - p_damp, -stone_top_damp);
