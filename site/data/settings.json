@@ -1852,7 +1852,7 @@
     "PlantGenerator.make_stones()"
    ],
    "note": "",
-   "what": "moss grows on the tops of generated stones, and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
+   "what": "moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

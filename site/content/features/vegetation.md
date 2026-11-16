@@ -94,7 +94,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
 - **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
 - **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
-- **Plants on and between stones** (`PlantSpecies.stone_top`, `PlantSpecies.stone_gap`, `PlantGenerator.make_stones()`): moss grows on the tops of generated stones, and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.
+- **Plants on and between stones** (`PlantSpecies.stone_top`, `PlantSpecies.stone_gap`, `PlantGenerator.make_stones()`): moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.
 
   ![A dense block field from 2 m up, without and with stone plants, raster](media/vegetation-stones.jpg)
 
