@@ -687,6 +687,30 @@ default until the PC measures its cost):
 3. **Detail and sea caves**: speleothems, breakdown, sediment floors, sea caves and blowholes. Shafts open holes.
    Water handed to the water thread.
 
+### Caves: second research pass (16 Nov): newer papers, itch.io and Unreal tools
+
+Paulo asked whether itch.io gems and newer work had been checked. They had not. What they add:
+- **Franke and Müller, "Procedural generation of 3D karst caves with speleothems"**, Computers & Graphics 102
+  (2022). A karst density field on chunked voxels, passages by phenomenological dissolution, Marching Cubes.
+  Speleothems are placed where the local conditions suit them (drip water through the roof, a free fall below) and
+  grown as calcite deposits. Microforms are covered too. **Take for stage 3**: their placement rule for drip points.
+- **Douda, "Cave Networks Generation"**, CTU Prague thesis (2024). Shortest paths, primitive sweeping, Marching
+  Cubes, with stalactites and cave lakes. The same method we follow (Paris 2021), so it confirms the choice. Cave
+  lakes go with the sea caves to the water thread.
+- **"Modelling and animation of stalactite growth for virtual caves"** (Eurographics digital library): could not be
+  fetched. Read it before stage 3's stalactites.
+- **ProcGrotto** (itch.io, PROCJAM 2024): Perlin worms turned into a distance field, joined by a smooth minimum,
+  warped by Simplex and **Worley** noise, Marching Cubes per chunk, triplanar texturing. Same structure as ours.
+  **Take for stage 3**: Worley (cellular) noise for the wall relief, since real dissolution scallops are cells
+  (their length is set by the flow speed, Curl 1974).
+- **Instant Organic Caves** (itch.io and Fab, Unreal 5.7, MIT on GitHub): Perlin noise, a 3D cellular automaton,
+  Laplacian smoothing. Blobby game caves with no geology. Not taken.
+- **Terra Works** (Fab, Nov 2026): 30 cave schemes under an Unreal landscape. No method published.
+- Cellular automaton and hex-graph generators on itch.io (Evans, Serra) build rooms for levels, not natural caves.
+
+So nothing found beats Paris 2021 for the network, and surface nets matches or betters the Marching Cubes the
+others use (fewer slivers, smoother walls). Stage 3 takes the Franke and Müller drip-point rule and Worley scallops.
+
 ### Caves stage 1: the network (16 Nov)
 
 CaveNetwork3D (modules/rocks) grows a network from an entrance (`find_entrances`, `add_cave`). The method is Paris et
