@@ -876,8 +876,11 @@ management).
   1.9; knuckles 1.2 plus 0.06 per cut; the stem flaring over its last half metre), end full-girth
   in their callus knob, and the knuckles reach out to the swollen head's surface carrying their
   stubs and poles. Each knuckle runs on into its thickest pole. A pollard head carries 4 plus 2
-  per cut (up to 14) burrs round it (the old-tree burls of 5e); a stool's lobes are at least
-  0.4 of their length thick, fused into a low mound.
+  per cut (up to 14) burrs round it (the old-tree burls of 5e, each a cluster of knobs, most with
+  a few water shoots); a stool's lobes are at least 0.4 of their length thick, fused into a low
+  mound. Whatever the species' bark, the head itself is knobbly geometry (rings every 4 cm; broad
+  and fine noise knobs, ridged-noise fissures darkened in their floors) with a green film of
+  algae and moss in its hollows and on its tops.
 - **Fixed after the first docs shots (15 Nov).** Later cuts used to leave a stub and sprout from
   its tip, so cut after cut stacked swollen stubs into stepped "telescopes" with dark lips under
   them; the poles left their knuckle as forks from a capped end and sat in round sockets; the
@@ -889,6 +892,66 @@ management).
 - **Cost.** A cut tree is smaller than an uncut one of the same age: willow pollard (cut every
   10 years) 1.1M bark and 1.3M leaf triangles against 5.7M and 8.0M uncut; generation 1.3 s
   against 5.3 s. Hazel coppice regrown 6 years: 91k bark.
+- **Modelled, not painted (16 Nov, after the third docs review).** The reviews kept finding the
+  relief painted: soft clay lumps, fissures as dark lines, poles as smooth pipes plunged into the
+  head, a willow head too small with twiggy poles. Now:
+  - *Burrs.* Hard-edged knobs on a jittered 3D grid, each a spherical cap with a near-vertical
+    foot (profile (1 - d^2)^0.25), present where a cluster noise is high, so they gather into
+    burrs (each knob a dormant bud's trace that swelled; Read 2000). Crevices round them are
+    darkened. Cells 0.12 of the head's radius (3.5-7 cm). The old smooth burl lumps under them
+    are half as tall. Ridged-noise fissures cut 0.14 of the head's radius deep.
+  - *Mesh.* Over the head the rings are 1.3 cm apart and the stem has up to 256 sides; the
+    knuckles round it share its knobs (fading up each pole within a pole's radius) at 1.6 cm.
+    A knuckle and the pole it runs on into are built as two tubes crossing over three rings,
+    so the pole keeps 12-32 sides. Over the head's top the knobs push out from its centre, not
+    sideways from the ring's: sideways they smeared into radial pleats round the cap. The
+    bark's own furrows are three-quarters closed over on the head (they crossed the knobs as
+    long pleats).
+  - *Poles.* Displaced, on a near tube however thin: shallow flutes along them on the tube's
+    own frame (none on rods under 3 cm, which are round), a faint raised girdle scar at each
+    year's start, and rings of buckled bark ("elephant skin") over 2.5 radii where a pole
+    leaves its knuckle, which swells 1.3 times there as a branch collar (laterals too).
+  - *Stools.* The same knobs (5 cm cells) and fissures over a coppice stool's lobes, fading up
+    the rods' first centimetres.
+  - *Willow.* A pollard willow's withies grow unbranched for six years after a cut (osier and
+    pollard willow, Rackham 2006), five to nine from each seat. Two bugs thinned them: the
+    knuckles were shed as shaded limbs, taking every withy on them, and young poles self-thinned
+    after five years; now the knuckles are never shed and poles not before a cutting cycle.
+  - *Boles.* The pipe model sizes wood by the crown it carries, so a pollard's bole stopped
+    thickening at its first cut (a willow of 80 years stood on a 12 cm stem). It now lays a ring
+    a year (willow 3 mm of radius, others 1.5 mm; Read 2000), and the head swells 1.2 plus 0.05
+    per cut (up to 1.5; knuckles 1.15 plus 0.04, up to 1.35) over that.
+  - *Water shoots* start on the burr they break from: from the plain stem's radius they started
+    inside it, so only those on small burrs showed.
+  - *Hazel* has its own bark family (`BARK_LENTICELLED`): glossy, dense pale raised lenticels,
+    the thin skin peeling in short paler strips (Vaucher 2003), and grey-brown, not the red-brown
+    that read as plastic pipe.
+  - *Cost* (LOD 0 bark triangles, bench trio, seed 1): willow pollard 42k to 116k (it is now a
+    real pollard, with four times the withies), lapsed beech 887k to 902k, hazel stool 386k to
+    660k (the stool's knobs, and more rods now that young poles are not thinned). LOD 1 and on
+    keep the plain tubes.
+- **Fourth review (16 Nov).** Willow passed; fixes for the rest:
+  - *Withy tips* ended in combs of side twigs (the leaf twig spray of an ordinary shoot). A
+    rod within six years of its cut now carries only its leaves on stubs, no twig spray.
+  - *Collar folds* were even full rings, a corrugated hose. Each fold now wobbles in phase,
+    runs part of the way round (a patch mask) and varies in depth, a soft fold above a sharp
+    crease.
+  - *Thick poles* carry branch scars: a low callus lip round a dark pit with a chevron of
+    wrinkled bark above (beech's "Chinese moustache"; Vaucher 2003), in half-metre cells a
+    quarter of the way round.
+  - *Rods* (under 8 cm) swell a little at their nodes, alternate sides every 12-20 cm, the
+    scar darker: hazel and willow rods are never straight pipes. Hazel's lenticels are fewer,
+    larger and paler, so they still read as a speckle at a few metres.
+  - *Head.* The smooth burl lumps are halved again (0.07 of the head's radius) and a burl on a
+    pollard head gets its own cluster of finer knobs, so no smooth or waxy bulge is left.
+  - *Hazel stool.* The pale pinwheels were not the saw faces: each stool knuckle closed with a
+    bark dome, its bark converging to a point. A knuckle now ends in the first cut, sloping
+    outward as coppice is cut, under a callus lip rolled over its rim (Shigo 1985), the face
+    sunk and rotted dark with moss in its hollow. Sawn stub faces follow the tube's own end.
+    Coppice rods get an algae film up their foot and pale crust lichen patches.
+  - *Pollard knuckles* whose poles are all gone close in a broad dome on eight rings, knobbed
+    like the head: on three, the last fan of long triangles shaded as a dark pinwheel.
+  - *Cost* (LOD 0 bark): willow 112k, beech 905k, hazel 668k.
 - **Not yet.** Stands do not cut anything yet: coppice-with-standards (a hazel understory
   coppiced under oak) and pollard rows along rivers are the natural next step.
 
@@ -914,6 +977,35 @@ Citizen's forests are now small visible stories, not the growth model:
    wounds, dead lower branches kept on shaded conifers.
 4. **Hard places.** Exposed roots over banks and rocks (roots draped over a stone or a cut bank),
    wind-flagged and krummholz trees at the treeline and on coasts.
+
+### 5n. Crown parts (15 Nov; Paulo picked "all three": crown details first)
+
+As built (`fruit_cover`, `mistletoe`, `witches_brooms`; surface "crown_parts", vertex colour,
+two-sided, no snow): small shapes placed many times, the way Unreal 5.7's vegetation assemblies
+instance parts, merged into one surface. LOD 0 carries all of it; the coarser LODs keep only the
+mistletoe and brooms, which read from far.
+
+- **Cones** of spiral scales (137.5 degrees), ovoid or cylindrical, open or closed: Scots pine
+  (1-3 at upper shoot tips, 4-7 cm, bent back, grey-tipped scales), Norway spruce (pendant 10-16 cm
+  at the top), larch (2-3.5 cm upright along the shoots, kept for years), hemlock (2 cm), white pine
+  (10-16 cm, slender), alder's woody fruit cones (1.5 cm, in clusters).
+- **Catkins**: hazel (1-3, 2.5 cm closed from August, 6 cm yellow and hanging from late January to
+  April), birch (from late summer, opening in April), alder (3-5, purple, opening February).
+- **Keys**: ash (bunches of 10-28 twisted keys, buff in winter, hanging August to April), maples
+  (paired keys, spread wider on sycamore; fall by late autumn, a fifth left).
+- **Berries**: holly and yew (female trees only, by seed), haws, rowan and elder clusters, each in
+  its months.
+- **Mistletoe** (Viscum album; Phoradendron in North America, darker, broader leaves): on hosts in
+  the upper outer crown, a ball of yellow-green stems forking every year (4-8 years old), paired
+  strap leaves at the ends, white berries from late October to February. Host chance per tree:
+  lime 0.5, hawthorn 0.35, willow 0.3, rowan 0.25, maples, birch, alder, red oak 0.15.
+- **Witches' brooms** (Taphrina betulina) on 45% of birches: a swelling on a limb and 50-120 thin
+  dark shoots from it.
+- **Budget**: about 360 clusters at most per tree, so a 20 m crown does not carry tens of
+  thousands. Cost: lime with three mistletoe balls 11k triangles; hazel in catkin 75k; ash with
+  keys 53k; spruce cones 9k (against millions of bark and leaf triangles).
+- Fixed with it: a birch's thin shoots and leaf twigs took the trunk's white and read as frosted
+  sprays; they are dark red-brown now, turning white from 1-3 cm.
 
 ## 6. What the games at Paulo's bar do
 

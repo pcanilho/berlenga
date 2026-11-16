@@ -2782,3 +2782,135 @@ unresolved slope is put back.
   `--view=storm_low`, raster before/after and path traced (8 spp on the cloud CPU, no denoiser:
   noisy, but the lace, grain and plume all show; denoised PT frames go on the PC list). Cost: one
   128^2 FFT a step and a few Voronoi lookups where there is foam; GPU timing on the PC list.
+
+## Camera-centred water mesh, displaced ripples (15 Nov, research for Paulo)
+
+Paulo asked for more geometry on the ocean and water bodies. Today the open sea (`render_extent` past the
+simulated square) draws `_build_extended_plane`: a uniform core of `ocean_grid_resolution * mesh_detail`
+cells over the simulated square (40 m / 64 = 62 cm between vertices at defaults), then square rings 15%
+further apart each. The core follows the camera smoothly (no snapping, see `_update_mesh_offset`). Nothing
+near the camera is finer than 62 cm, so the short waves only exist in the per-pixel normal: crests and chop
+have no silhouette closer than that, and the path tracer (which traces the mesh) sees them flat.
+
+What others do:
+- Geometry clipmaps (Losasso and Hoppe 2004; GPU Gems 2 ch. 2, Asirvatham and Hoppe): nested square rings
+  around the viewer, each twice the spacing of the one inside it, snapped to its own grid, with a geomorph
+  band at each ring's outer edge so vertices slide onto the coarser ring's positions (no T-junction cracks,
+  no pops).
+- Crest (Unity, Huw Bowles, "Crest: novel ocean rendering techniques", SIGGRAPH 2017/2019): the same
+  nested LOD rings, spacing doubling per LOD, geomorphing, and each ring samples only the wave cascades its
+  vertex spacing can carry (shape LODs matched to geometry LODs).
+- Unreal Water (UE5): a quadtree of water tiles with LOD by distance; Sea of Thieves (Rare, "The Technical
+  Art of Sea of Thieves", SIGGRAPH 2018): FFT on a camera-centred, LOD'd grid.
+- Projected grid (Johanson 2004): a screen-space grid projected onto the sea; uniform in screen space but
+  swims badly and is poor for path tracing (it only covers the view).
+
+Choice: keep the existing smooth-following radial mesh (its seamless, crack-free single grid already avoids
+the clipmap's stitching and the projected grid's view dependence) and replace its uniform core with
+geometric spacing from the camera: the step starts at `near_mesh_step` (3 cm) at the camera and grows 5% per
+ring to the horizon. That is the clipmap's spacing law (spacing proportional to distance) as one continuous
+grid: no LOD seams or geomorph bands to tune. At 3 cm and 5% growth a 2 km reach takes about 166 rings
+(about 110k vertices), against about 23k today: a few hundred kB of vertex buffer, cheap on any GPU.
+Swimming (vertices sliding over the waves as the camera moves) stays below what the eye sees as long as the
+waves a ring carries are at least four of its steps long, which the next point enforces.
+
+Displaced ripples: the detail cascade (#304, normals only) also produces height and displacement. The vertex
+shader adds them where the local step can carry them, with the same log-band share as the fragment's normal
+(Bruneton, Neyret and Holzschuch 2010), using the vertex step at that distance instead of the pixel
+footprint, so the geometry gains the ripples near the camera and hands them back to the normal and the
+roughness further out. Under path tracing the hit re-runs the vertex shader on the rest pose, so the traced
+surface carries them too.
+
+Lakes (a `surface_mesh` footprint mesh) stay on their even grid for now; the same spacing law for them needs
+the footprint clipped per frame (stage 2).
+
+### Built (16 Nov): `near_mesh_step`, off by default
+Raster at 100% crop (storm_glitter from 1.4 and 2 m): almost no visible change. The waves shorter than the
+old core's 31 to 62 cm are millimetres high, and the per-pixel normal already shows them; the near mesh moves
+the glints a little, no more. Cost: about five times the vertices (110k against 23k); on the cloud's software
+renderer a raster frame took 115 s against 75 s, a PT frame 548 s against 431 s. So it ships off; 0.03 for
+cameras right at the water (a swimmer, a boat's rail), and GPU and PT checks on the PC list.
+
+### Revised (16 Nov): never coarser than the core, about 1.5 to 2 times the vertices
+The near rings now grow 8% each only until they reach the even core's spacing (domain / grid resolution),
+keep that spacing out to the core's edge, then grow 15% as before: finer near the camera, nowhere coarser
+than without it. Count at defaults (40 m, 64 cells): 42k vertices against 22k for a 3 km sea, 48k against
+27k for 8 km. A water-level scout (eye 1 m, 5 m/s, crests against a low sun, a box cutting the surface)
+showed no visible difference either, so it stays off by default.
+
+Coverage: only the open sea mesh. Lakes (`surface_mesh` footprint) use an even grid over the footprint;
+the same law would need the camera-following mesh with the footprint as a wet mask (discarding outside it)
+or a per-frame re-mesh of the footprint. Rivers (`PhysXRiver3D`) build their own ribbon at the section
+spacing, and `PhysXLiveWater3D` draws one vertex per simulation cell (its `cell_size`), so their geometry
+is set by their simulations. For all of them the visible gap is the same as the sea's: not triangle density
+but crest shape (see "Sharper crests and breaking lips").
+
+
+## Sharper crests and breaking lips on the open sea (16 Nov, research for Paulo)
+
+The finer mesh (#307, #308) showed that triangle density is not what the reference water has over ours: the
+waves finer than our mesh are millimetres high. The difference is crest shape. Real wind seas have sharp,
+tall crests and flat troughs, and at whitecap steepness the crest spills or plunges. Ours are linear FFT
+waves with one global `choppiness`.
+
+What others do:
+- Tessendorf FFT seas (Sea of Thieves, Black Flag, Crest, Atlas) all start from the same linear waves and get
+  the sharp look from horizontal (choppy) displacement, raised per sea state (Black Flag keys choppiness to
+  the Beaufort level). Crest and Sea of Thieves add no breaking geometry in deep water: whitecaps are foam
+  and spray. Black Flag adds spray sheets and particle splashes where crests fold.
+- Second-order Stokes waves (Stokes 1847; Fenton 1985): each wave's crest is raised and its trough
+  flattened by about (k a^2 / 2) cos 2 theta. In an FFT sea the second-order correction (the "bound
+  harmonics"; Tick 1959, Creamer et al. 1989 transform) can be approximated from the summed slope:
+  crests up by about a quarter of the local steepness squared times the wavelength. Measured ocean crests
+  are about 10 to 20% higher than linear theory at Hs-scale steepness (Forristall 2000).
+- Breaking in deep water: a crest breaks once its steepness passes about 0.14 (ak about 0.44; the Stokes
+  limit) or its particle speed reaches the crest speed (Barthelemy et al. 2018). Most deep water breakers
+  spill (a turbulent roller rides down the front face); plunging lips in deep water are rare and short
+  (Duncan 1981, Melville 1982).
+- Procedural breakers in graphics: Thürey et al. 2007 (a parametric curl along a wave front, for shallow
+  water), Mihalef et al. 2004, Jeschke and Wojtan's water wave packets (2017) for detail, and the Fournier
+  and Reeves 1986 crest skew we use on shore breakers (`shore_wave_curl`, step 5c, already plunges with a
+  folded lip mesh).
+- Spray sheets: Black Flag and Uncharted 4 tear camera-facing particle sheets off folding crests; our
+  `crest_spray` already finds those points (the Jacobian test on the CPU readback) and throws droplets and
+  spume puffs from them.
+
+Options, cheapest first:
+1. Crest sharpening (shader only): a second-order Stokes lift from the summed slope (crests higher, troughs
+   flatter), and choppiness raised locally where the sea is steep rather than everywhere. Cost: a few ALU
+   per vertex, no textures. One PR.
+2. Spilling rollers: where a crest folds, a turbulent roller of white water riding down its front face,
+   as a displaced bulge with churned foam and a short rough lip, from the same Jacobian. Shader plus the
+   foam pass. One or two PRs.
+3. Plunging lips and spray sheets on storm crests: lip ribbons along the folding crest lines found on the
+   CPU (the shore breaker's lip mesh, reused), falling over and tearing into spray sheets. The biggest
+   visual change in a gale and the most work (several PRs, a particle system per crest).
+
+### Built (16 Nov): crests checked, spilling rollers (`roller_strength`, on)
+- Crest sharpening: not needed as a separate term. The choppy FFT displaces points horizontally, a
+  first-order Lagrangian (Gerstner) surface, whose Eulerian profile already carries the second-order Stokes
+  crest-up, trough-flat shape (`a cos(kx) + (k a^2 / 2) cos(2kx)` up to a mean shift). Adding a Stokes lift
+  on top would double it. Steeper seas remain `choppiness` and `wave_amplitude` (the Black Flag approach).
+- Rollers: where the summed displacement folds (the crest foam's Jacobian test), the crest gains a mass of
+  churned white water as geometry, a quarter of the crest's height at full fold (Duncan 1981: rollers are
+  0.1 to 0.3 of the wave height), boiling with two drifting noise octaves and thrown a little ahead along
+  the wind. The vertex stage raises it (so the path tracer sees it); per pixel its churn's slope is
+  analytic (value-noise gradient; screen derivatives gave 2x2 blocks). Material uniform `roller_strength`
+  (1; 0 = off). Cost: one more derivative and displacement lookup set per vertex on the open sea.
+
+### Revised (16 Nov): rollers from the docs review
+The first rollers read as snow on rocks from 8 m up: a smooth white mound with the aged lace's dark holes
+in it, the foam smeared down its steep sides, and the crest spume as pasted puffs. A low view across the
+wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers near the camera at all.
+- Height from the local mean: the crest was measured from mean sea level, so the chop breaking in a swell
+  trough (in a gale, hundreds of metres of sea at once) got none. The chop's crest (the two shortest
+  cascades) and the swell's are now counted each from its own mean (`roller_crest`), at half that height
+  on average (about a fifth of the wave's height, inside Duncan's 0.1 to 0.3).
+- Lasting: the fold lasts a fraction of a second, a spilling roller several seconds. Fresh dense persistent
+  foam on the crest keeps the roller going after the fold; it fades as that foam drains and as the foam
+  slides off the crest.
+- Gentle sides: the fold weight ramps over a wider band with a smooth step, so the mound no longer rises
+  within one mesh cell (the cliffs the foam smeared down).
+- Fresh right through: the roller fills the foam to solid (no lace holes); two more churn octaves (about
+  13 and 5 cm) in the per-pixel slope give it a bubbly, broken surface.
+- Spume sheets only from a near-gale (14 to 20 m/s, Beaufort 7 to 8), at two thirds of their old opacity.

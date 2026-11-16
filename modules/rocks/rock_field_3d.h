@@ -33,6 +33,7 @@
 #include "rock_generator.h"
 
 #include "core/object/worker_thread_pool.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -119,6 +120,8 @@ private:
 		LocalVector<Color> custom;
 		LocalVector<real_t> reach; // m: how far out the stone's surface reaches from its origin
 		LocalVector<bool> near; // drawn by the close-up instance instead
+		LocalVector<bool> broken; // replaced by a breakable copy (break_stone)
+		LocalVector<Node *> shapes; // its CollisionShape3D, or null
 	};
 
 	struct Cell {
@@ -169,6 +172,25 @@ private:
 	HashMap<uint64_t, MultiMeshInstance3D *> close_instances; // (library << 16 | variant)
 	Vector3 close_target;
 	bool close_dirty = true;
+	// Breaking (break_stone): each shape's fracture into rough pieces, built on a worker as stones come near (or at
+	// the first hit), as a PhysXBlastAsset; the broken stones by position, so they stay broken when cells rebuild.
+	struct Fracture {
+		Ref<Resource> asset;
+		float volume = 0.0f; // the shape's volume in its own units
+		uint8_t state = 0; // 0 none, 1 building, 2 ready, 3 failed
+		void *job = nullptr;
+		WorkerThreadPool::TaskID task = 0;
+	};
+	HashMap<uint64_t, Fracture> fractures; // (library << 16 | variant)
+	HashSet<Vector3i> broken_stones; // cm
+	LocalVector<ObjectID> breakables;
+	int break_pieces = 10;
+	real_t break_prepare_radius = 6.0;
+	real_t break_density = 2650.0;
+	void _start_fracture(uint64_t p_key);
+	bool _finish_fracture(uint64_t p_key, bool p_wait);
+	void _update_breakable();
+
 	struct CloseJob {
 		uint32_t library = 0;
 		int variant = 0;
@@ -253,6 +275,19 @@ public:
 	int get_close_up_triangle_count() const;
 	void set_streaming(bool p_streaming);
 	bool is_streaming() const { return streaming; }
+
+	// Breaking stones (PhysX Blast; needs the godot_physx module). break_stone swaps the stone nearest p_position
+	// (within its reach) for a PhysXDestructible3D of its pieces and applies p_damage there; returns that node.
+	void set_break_pieces(int p_pieces) { break_pieces = CLAMP(p_pieces, 2, 48); fractures.clear(); }
+	int get_break_pieces() const { return break_pieces; }
+	void set_break_prepare_radius(real_t p_radius) { break_prepare_radius = MAX(p_radius, real_t(0.0)); }
+	real_t get_break_prepare_radius() const { return break_prepare_radius; }
+	void set_break_density(real_t p_density) { break_density = MAX(p_density, real_t(1.0)); }
+	real_t get_break_density() const { return break_density; }
+	Node *break_stone(const Vector3 &p_position, real_t p_damage = 10.0, real_t p_radius = 1.0);
+	void restore_broken();
+	int get_broken_count() const { return broken_stones.size(); }
+	bool is_breaking_supported() const;
 
 	// Drop every built cell and the river cache (after the generator ran again); streaming builds them anew.
 	void rebuild();

@@ -225,9 +225,35 @@ to 12 m deep with land 8 m above the water within 50 m get a stack (wall blocks 
 so the joints read as grooves, a broader foot, fallen blocks round it) or an arch (two piers and a lintel), and a
 jointed rock pavement on the cliff foot with tops just above the water line (Trenhaile 1987; Sunamura 1992).
 
+Breaking (16 Nov): Blast's own Voronoi cut gives flat cell walls (its noise option only covers slicing and cutout)
+and pieces drawn with flat normals and no UVs, which reads as glass, not rock. Instead RockGenerator splits the stone
+itself (`fracture_pieces`): Voronoi cells of sites spread by best-candidate sampling (Mitchell 1991), taken in
+domain-warped space so the walls wander like a real fracture surface (the same idea as the noise on cuts in Houdini's
+RBD Material Fracture and Chaos), stretched 1.8 to 2.6 times across the bedding of sandstone, limestone and slate so
+they split into slabs. Each piece is the stone's field cut by its cell (both cells read the same wall, so they fit
+exactly), meshed by surface nets like the stone, so the old surface keeps its marks and the walls are fresh breaks;
+bonds come from the grid edges crossing each wall. `PhysXBlastAuthoring.build_prefractured` turns these into a Blast
+asset (root plus support leaves, our bonds) and keeps the meshes (`PhysXBlastAsset.chunk_meshes`), so
+`PhysXDestructible3D` draws pieces with their normals, colours and UVs. `RockField3D.break_stone(position, damage,
+radius)` swaps the nearest stone for a destructible copy (its own material copy with the stone's instance data in
+`rock_instance`, so it shades the same), turns its hull off and keeps it broken across rebuilds; shapes near the target
+are fractured ahead on a worker (`break_prepare_radius`). Granite rockfall: 10 pieces filling the stone to 1%, 29
+bonds, 88k triangles, 0.3 s per shape.
+
+Docs review of the break (16 Nov): the break faces showed the crystal map blown up to 5 to 10 cm, because the
+marks were laid out at the family's typical size and the stone (a scree-family block of 1.3 m) was four times that.
+Now the shader lays mineral maps out at the stone's real size in whole octaves from its family's size, and close-up
+and fracture shapes are made per octave (`marks_scale`), so relief and colour still share one map (crystals within
+41% of true size; granites vary more). Close-ups keep to stones within an octave of their family's size. Breaks
+are near planar walls (gentle warp) with rk_relief on them as fresh faces (granite facets, hackle risers of 3 to 6
+mm, conchoidal ripples) on a grid up to 1.6 times finer than the stone's; crystals get their own facet normal in the
+shader (Chermain et al. 2020 is the next step for glints). Biotite share 7%, its pits half as deep; flakes 3 to 7
+mm. Cost: fractured granite shape 138k triangles, 2.2 s on a worker; close-ups near the bench target 16 shapes,
+1.6M triangles, 47 MB (8 MB before, when every size shared one shape).
+
 ## Sources
 
-Domokos et al. PNAS 2020 (arXiv 1912.04628); Paris et al. Visual Computer 2020 (hal-02926218);
+Domokos et al. PNAS 2020 (arXiv 1912.04628); Mitchell SIGGRAPH 1991 (best-candidate sampling); NVIDIA Blast SDK docs (NvBlastCreateAsset, bonds); SideFX RBD Material Fracture docs; Paris et al. Visual Computer 2020 (hal-02926218);
 Domokos et al. PLOS ONE 2014 (PMC3922984); Novák-Szabó et al. Sci. Adv. 2018; Szabó et al.
 Nat. Commun. 2015; Havasi-Tóth and Fehér arXiv 2310.06932; Peytavie et al. CGF 2009; Dorsey et
 al. SIGGRAPH 1999; Evans and Hungr 1993; Kirkby and Statham 1975; Priest 1993; Epic "PCG in

@@ -1165,6 +1165,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Breakable stones",
+   "settings": [
+    "RockField3D.break_stone"
+   ],
+   "note": "",
+   "what": "stones split into pieces along rough rock breaks, and layered rock into slabs.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Tors and coasts",
    "settings": [
     "layer_enabled",
@@ -1304,6 +1315,17 @@
    ],
    "note": "",
    "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Spilling rollers",
+   "settings": [
+    "roller_strength"
+   ],
+   "note": "",
+   "what": "breaking crests carry a raised, churning roller of white water.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -2037,7 +2059,7 @@
     "cut_since"
    ],
    "note": "",
-   "what": "trees cut back on a cycle regrow straight poles from a swollen head or a ground stool; lapsed pollards carry big limbs.",
+   "what": "trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -2729,10 +2751,11 @@
    "settings": [
     "ambient_scattering",
     "sun_scattering",
-    "cast_shadows"
+    "cast_shadows",
+    "scattering_temporal"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene.",
+   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

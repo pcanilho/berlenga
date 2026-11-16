@@ -1,0 +1,1 @@
+- Water: breaking crests on the open sea carry a raised, churning roller of white water (material uniform `roller_strength`, 1 by default; 0 turns it off).

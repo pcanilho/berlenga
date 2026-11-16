@@ -35,6 +35,7 @@
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
+#include "servers/rendering/rendering_server_globals.h"
 
 namespace {
 
@@ -52,13 +53,14 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 albedo; // rgb; w: strength
 	vec4 misc; // x: sigma per meter per unit smoke, y: anisotropy, z: shadow reach (m), w: 1 = sample light shadows
 	ivec4 size; // xy: the frame; zw: the scattering texture (the frame / res.x)
-	ivec4 res; // x: frame pixels per scattering texel, each way
+	ivec4 res; // x: frame pixels per scattering texel, each way; y: frame index (jitter); z: 1 = temporal blending, w: 1 = a history to blend
 	vec4 ambient; // rgb: ambient color (linear, * energy); w: sky contribution
 	vec4 sky; // xy: the sky octmap's uv border; z: its last mip; w: 1 = ambient light on, plus sky energy * 2 (see below)
 	vec4 sky_xform[3]; // rows: world direction -> sky direction
 	mat4 world_to_view; // meters -> the view space Godot's directional light buffer is in
 	mat4 view_to_world;
 	ivec4 sun; // x: directional lights to use (0: none); y: 1 = sample their shadow cascades
+	mat4 prev_view_projection; // world meters -> the previous frame's clip space (temporal blending)
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane).
@@ -395,7 +397,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 
 	float transmittance = 1.0;
 	vec3 sum = vec3(0.0);
-	float t = t0 + step_len * ign(vec2(px));
+	// The first step's offset: interleaved gradient noise (Jimenez 2014), moved every frame when the
+	// result is blended over time, so the step pattern averages out instead of showing as bands.
+	float t = t0 + step_len * ign(vec2(px) + (p.res.z != 0 ? 5.588238 * float(p.res.y & 63) : 0.0));
 	for (int i = 0; i < p.counts.w && t < t1; i++) {
 		vec3 pos = cam + dir * t;
 		float smoke;
@@ -547,15 +551,30 @@ void main() {
 	float od = 0.0;
 	float front = 1.0;
 	float back = 0.0;
-	for (int i = 0; i < steps; i++) {
+	// Fixed steps along the light, jumping over the blocks Flow's sparse table holds no gas in (the
+	// view march does the same): the samples taken are the ones that can see gas.
+	vec3 ro = base * upm;
+	vec3 rd = box.axis_w.xyz * upm;
+	vec3 rd_inv = 1.0 / rd;
+	int i = 0;
+	while (i < steps) {
 		float w = (float(i) + 0.5) / float(steps);
 		float smoke;
-		smoke_at((base + box.axis_w.xyz * w) * upm, cell_inv, a, smoke);
+		if (!smoke_at(ro + rd * w, cell_inv, a, smoke)) {
+			// An empty block: on to the first sample past where the column leaves it.
+			vec3 bmin = vec3(a.location.xyz) * p.block_size.xyz;
+			float b0;
+			float b1;
+			intersect_box(ro, rd_inv, bmin, bmin + p.block_size.xyz, b0, b1);
+			i = max(i + 1, int(ceil(b1 * float(steps) - 0.5)));
+			continue;
+		}
 		if (smoke > 0.001) {
 			front = min(front, w);
 			back = max(back, w);
 			od += smoke;
 		}
+		i++;
 	}
 	float transmittance = exp(-od * p.misc.x * ds);
 	if (back < front) {
@@ -577,6 +596,59 @@ void main() {
 	imageStore(scatter_img, px, vec4(march(px, frame_px, depth), scene_distance(frame_px, depth)));
 }
 #endif
+)";
+
+// Temporal blending of the scattered light at the scattering resolution (as Frostbite's and Godot's
+// volumetric fog keep a history): this frame's texel over its reprojected history, the history clamped
+// to this frame's 3x3 neighbourhood (Karis 2014) and dropped where the scene distance moved.
+const char *TEMPORAL_SHADER = R"(
+#[compute]
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+@PARAMS_BLOCK@
+layout(set = 0, binding = 2) uniform sampler2D depth_tex;
+layout(set = 0, binding = 3, rgba16f) uniform restrict readonly image2D scatter_img;
+layout(set = 0, binding = 6) uniform sampler2D history_tex;
+layout(set = 0, binding = 7, rgba16f) uniform restrict writeonly image2D history_out;
+
+const float HISTORY_WEIGHT = 0.9;
+
+void main() {
+	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 low = p.size.zw;
+	if (px.x >= low.x || px.y >= low.y) {
+		return;
+	}
+	vec4 cur = imageLoad(scatter_img, px);
+	vec4 result = cur;
+	if (p.res.w != 0) {
+		vec3 mn = cur.rgb;
+		vec3 mx = cur.rgb;
+		for (int j = -1; j <= 1; j++) {
+			for (int i = -1; i <= 1; i++) {
+				vec3 c = imageLoad(scatter_img, clamp(px + ivec2(i, j), ivec2(0), low - 1)).rgb;
+				mn = min(mn, c);
+				mx = max(mx, c);
+			}
+		}
+		int r = p.res.x;
+		ivec2 frame_px = min(px * r + r / 2, p.size.xy - 1);
+		float depth = max(texelFetch(depth_tex, frame_px, 0).r, 1e-7);
+		vec2 uv = (vec2(frame_px) + 0.5) / vec2(p.size.xy);
+		vec4 h = p.inv_view_projection * vec4(uv * 2.0 - 1.0, depth, 1.0);
+		vec4 prev = p.prev_view_projection * vec4(h.xyz / h.w, 1.0);
+		vec2 prev_uv = prev.xy / prev.w * 0.5 + 0.5;
+		if (prev.w > 0.0 && all(greaterThanEqual(prev_uv, vec2(0.0))) && all(lessThanEqual(prev_uv, vec2(1.0)))) {
+			vec4 hist = textureLod(history_tex, prev_uv, 0.0);
+			float moved = abs(hist.a - cur.a) / max(cur.a, 0.01);
+			if (moved < 0.1) {
+				result.rgb = mix(cur.rgb, clamp(hist.rgb, mn, mx), HISTORY_WEIGHT);
+			}
+		}
+	}
+	imageStore(history_out, px, result);
+}
 )";
 
 // Adds the scattered light to the frame. At a reduced scattering resolution
@@ -640,7 +712,7 @@ void main() {
 // sizeof(LightStorage::DirectionalLightData) (private there): the std140 struct in the shader above.
 constexpr uint32_t DIRECTIONAL_LIGHT_DATA_SIZE = 560;
 
-constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8 + 4 * 5 + 16 * 2 + 4;
+constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8 + 4 * 5 + 16 * 2 + 4 + 16;
 
 RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name, bool p_sky_array = false, bool p_shadow_pass = false) {
 	Ref<RDShaderFile> file;
@@ -682,6 +754,10 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 	shadow_pipeline = p_rd->compute_pipeline_create(shadow_shader);
 	ERR_FAIL_COND_V(!shadow_pipeline.is_valid(), false);
 	shadow_box_buffer = p_rd->uniform_buffer_create(sizeof(float) * 20);
+	temporal_shader = compile(p_rd, TEMPORAL_SHADER, "temporal");
+	ERR_FAIL_COND_V(!temporal_shader.is_valid(), false);
+	temporal_pipeline = p_rd->compute_pipeline_create(temporal_shader);
+	ERR_FAIL_COND_V(!temporal_pipeline.is_valid(), false);
 	upsample_shader = compile(p_rd, UPSAMPLE_SHADER, "upsample");
 	ERR_FAIL_COND_V(!upsample_shader.is_valid(), false);
 	upsample_pipeline = p_rd->compute_pipeline_create(upsample_shader);
@@ -735,6 +811,36 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 		scatter_size = low;
 	}
 
+	// Temporal blending: once a frame (a second view in the same frame marches without it), over the
+	// history of the previous frame at the same scattering resolution.
+	const uint64_t frame = RSG::rasterizer->get_frame_number();
+	const bool temporal = p_params.temporal && scatter && frame != temporal_frame;
+	if (temporal) {
+		if (!history[0].is_valid() || history_size != low) {
+			for (RID &h : history) {
+				if (h.is_valid()) {
+					p_rd->free_rid(h);
+				}
+				RD::TextureFormat tf;
+				tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+				tf.width = low.x;
+				tf.height = low.y;
+				tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+				h = p_rd->texture_create(tf, RD::TextureView());
+				ERR_FAIL_COND(!h.is_valid());
+			}
+			history_size = low;
+			history_valid = false;
+		}
+		if (frame != temporal_frame + 1) {
+			history_valid = false; // skipped a frame: the history is stale
+		}
+	} else if (p_params.temporal == false || !scatter) {
+		history_valid = false;
+	}
+	const bool blend = temporal && history_valid;
+	const Projection view_projection = p_params.inv_view_projection.inverse();
+
 	uint32_t words[PARAMS_WORDS] = {};
 	float *f = reinterpret_cast<float *>(words);
 	int32_t *iw = reinterpret_cast<int32_t *>(words);
@@ -780,7 +886,9 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	iw[w++] = low.x;
 	iw[w++] = low.y;
 	iw[w++] = res;
-	w += 3;
+	iw[w++] = (int32_t)(frame & 0x7fffffff);
+	iw[w++] = temporal ? 1 : 0;
+	iw[w++] = blend ? 1 : 0;
 	RendererRD::TextureStorage *ts = RendererRD::TextureStorage::get_singleton();
 	RID sky = p_params.sky_radiance;
 	if (sky.is_valid() && (!p_rd->texture_is_valid(sky) || (p_rd->texture_get_format(sky).texture_type == RD::TEXTURE_TYPE_2D_ARRAY) != sky_array)) {
@@ -819,6 +927,11 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	iw[w++] = sun ? MIN(p_params.directional_count, (int)RendererSceneRender::MAX_DIRECTIONAL_LIGHTS) : 0;
 	iw[w++] = (sun && p_params.directional_shadows && p_params.directional_shadow_atlas.is_valid()) ? 1 : 0;
 	w += 2;
+	for (int c = 0; c < 4; c++) {
+		for (int r = 0; r < 4; r++) {
+			f[w++] = (float)(blend ? prev_view_projection : view_projection).columns[c][r];
+		}
+	}
 	ERR_FAIL_COND(w != PARAMS_WORDS);
 	p_rd->buffer_update(params_buffer, 0, sizeof(words), words);
 	if (count > 0) {
@@ -851,9 +964,27 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	}
 	const RID set = p_rd->uniform_set_create(uniforms, shader, 0);
 	ERR_FAIL_COND(!set.is_valid());
+	RID resolved = scatter_texture;
+	RID temporal_set;
+	if (temporal) {
+		const RID prev = history[history_index];
+		resolved = history[history_index ^ 1];
+		LocalVector<RD::Uniform> tu;
+		tu.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ point_sampler, p_depth })));
+		tu.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, scatter_texture));
+		tu.push_back(RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 5, params_buffer));
+		tu.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 6, Vector<RID>({ linear_sampler, prev })));
+		tu.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 7, resolved));
+		temporal_set = p_rd->uniform_set_create(tu, temporal_shader, 0);
+		ERR_FAIL_COND(!temporal_set.is_valid());
+		history_index ^= 1;
+		history_valid = true;
+		temporal_frame = frame;
+		prev_view_projection = view_projection;
+	}
 	LocalVector<RD::Uniform> up;
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ point_sampler, p_depth })));
-	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, scatter_texture));
+	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, resolved));
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, p_color));
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 5, params_buffer));
 	const RID up_set = p_rd->uniform_set_create(up, upsample_shader, 0);
@@ -863,6 +994,13 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	p_rd->compute_list_bind_uniform_set(list, set, 0);
 	p_rd->compute_list_dispatch(list, (low.x + 7) / 8, (low.y + 7) / 8, 1);
 	p_rd->compute_list_end();
+	if (temporal_set.is_valid()) {
+		list = p_rd->compute_list_begin();
+		p_rd->compute_list_bind_compute_pipeline(list, temporal_pipeline);
+		p_rd->compute_list_bind_uniform_set(list, temporal_set, 0);
+		p_rd->compute_list_dispatch(list, (low.x + 7) / 8, (low.y + 7) / 8, 1);
+		p_rd->compute_list_end();
+	}
 	list = p_rd->compute_list_begin();
 	p_rd->compute_list_bind_compute_pipeline(list, upsample_pipeline);
 	p_rd->compute_list_bind_uniform_set(list, up_set, 0);
@@ -870,6 +1008,9 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	p_rd->compute_list_end();
 	p_rd->free_rid(set);
 	p_rd->free_rid(up_set);
+	if (temporal_set.is_valid()) {
+		p_rd->free_rid(temporal_set);
+	}
 }
 
 // The gas's Beer shadow map from the sun: the grid's box seen along the light, a texel per column of
@@ -939,7 +1080,6 @@ void FlowScatterRD::_run_shadow(RenderingDevice *p_rd, const FlowBackend::Scatte
 	p_rd->compute_list_dispatch(list, (res + 7) / 8, (res + 7) / 8, 1);
 	p_rd->compute_list_end();
 	p_rd->free_rid(set);
-
 	// World -> (u, v, depth) in 0..1.
 	Transform3D xf;
 	xf.basis.rows[0] = u_axis / size.x;
@@ -954,7 +1094,7 @@ void FlowScatterRD::free(RenderingDevice *p_rd) {
 	if (p_rd == nullptr) {
 		return;
 	}
-	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &sky_sampler, &params_buffer, &lights_buffer, &directional_dummy, &shadow_pipeline, &shadow_shader, &shadow_box_buffer, &shadow_texture }) {
+	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &sky_sampler, &params_buffer, &lights_buffer, &directional_dummy, &shadow_pipeline, &shadow_shader, &shadow_box_buffer, &shadow_texture, &temporal_pipeline, &temporal_shader, &history[0], &history[1] }) {
 		if (r->is_valid()) {
 			p_rd->free_rid(*r);
 			*r = RID();

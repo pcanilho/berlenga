@@ -278,7 +278,8 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_ROOT_FLARE] = 0.2f;
 			p[PARAM_LEAF_SIZE] = 0.1f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 28;
-			bark_color = Color(0.36f, 0.27f, 0.2f);
+			// Grey-brown: the old red-brown read as plastic pipe on a coppice stool's rods.
+			bark_color = Color(0.43f, 0.36f, 0.3f);
 			leaf_color = Color(0.17f, 0.3f, 0.08f);
 			break;
 		case PRESET_HAWTHORN: // Crataegus monogyna: small, dense, twiggy, crooked.
@@ -740,6 +741,11 @@ Vector3 TreeGenerator::_bud_direction(const Vector3 &p_axis, float p_roll) {
 }
 
 void TreeGenerator::_add_lateral_buds(int p_node, float &r_roll, bool p_end_of_shoot) {
+	// A willow pollard's withies grow unbranched, long straight rods, for their first years
+	// (trees.md 5l; osier and pollard willow, Rackham 2006).
+	if (preset == PRESET_WHITE_WILLOW && cut_height > 0.5f && nodes[p_node].pole && nodes[p_node].born - last_cut_year <= 6) {
+		return;
+	}
 	const Vector3 axis = nodes[p_node].dir;
 	int count = 0;
 	float step = 0.0f;
@@ -1263,6 +1269,13 @@ void TreeGenerator::_shed(int p_year) {
 	for (int i = 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
 		if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.born > p_year - 2) {
+			continue;
+		}
+		// A cut tree's young poles are fed by the whole root system: on a worked tree they are
+		// cut again before they thin out among themselves (Rackham 2006).
+		// The knuckles round the head are its own wood, not shaded limbs: shed, they took
+		// every pole on them.
+		if ((n.pole && p_year - last_cut_year <= MAX(5, cut_cycle)) || (cut_height > 0.0f && n.order == 0 && n.born == 0)) {
 			continue;
 		}
 		const bool under_scrub = scrub > 0.0f && nodes[n.parent].order == 0 && n.start.y - nodes[0].start.y < scrub;
@@ -2302,9 +2315,12 @@ void TreeGenerator::_add_spray(Builder &r_b, const Vector3 &p_base, const Vector
 // Bark families by species (docs/ideas/trees.md section 2a).
 TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 	switch (p_preset) {
+		case PRESET_HAZEL:
+			// Glossy grey-brown with dense pale lenticels and thin skin peeling in strips
+			// (Corylus avellana; Vaucher, Tree Bark, 2003).
+			return BARK_LENTICELLED;
 		case PRESET_BEECH:
 		case PRESET_AMERICAN_BEECH:
-		case PRESET_HAZEL:
 		case PRESET_ROWAN:
 		case PRESET_HOLLY:
 		case PRESET_BOX:
@@ -2457,6 +2473,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 12, 9, 0.06f, 0.006f, 0.0015f, 0.45f, 0.14f }, // Scaly: small overlapping scales.
 		{ 5, 4, 0.03f, 0.003f, 0.001f, 0.6f, 0.0f }, // Flaking: shallow edges, colour mosaic.
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
+		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -2525,6 +2542,35 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					a = Color(1.08f + 0.12f * t, 0.9f + 0.06f * t, 0.74f - 0.08f * t) * shade;
 					height -= L.depth * 0.5f * open;
 				}
+			}
+			if (p_kind == BARK_LENTICELLED) {
+				// Thin outer skin peeling in short strips along the stem, the fresh bark under
+				// it paler and coppery; glossy elsewhere.
+				const float strip = bark_fbm(u, v, 10, 3, 3, salt + 81u);
+				const float peel = Math::smoothstep(0.18f, 0.26f, strip);
+				a = a * Math::lerp(1.0f, 1.25f, peel);
+				a.r *= Math::lerp(1.0f, 1.08f, peel);
+				height -= 0.0004f * peel;
+				r = Math::lerp(0.55f, 0.7f, peel) + 0.05f * fibre;
+				// Lenticels: dense short pale dashes across the stem, a little raised.
+				// Fewer and larger than the fine scale would give: at a few metres they still
+				// read as the rods' pale speckle rather than mip away to a flat tone.
+				const int cu = 11, cv = 24;
+				const float lx = u * cu, ly = v * cv;
+				const int ix = int(lx), iy = int(ly);
+				const float on = bark_hash(ix, iy, salt + 61u);
+				if (on > 0.4f) {
+					const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
+					const float cy = 0.5f + 0.4f * (bark_hash(ix, iy, salt + 67u) - 0.5f);
+					const float len = 0.18f + 0.2f * bark_hash(ix, iy, salt + 65u);
+					const float dx = (lx - ix - cx) / len, dy = (ly - iy - cy) / 0.16f;
+					const float m = 1.0f - Math::smoothstep(0.55f, 1.0f, dx * dx + dy * dy);
+					a = a.lerp(Color(2.1f, 1.95f, 1.65f), 0.85f * m);
+					height += m * 0.00015f;
+					r = Math::lerp(r, 0.75f, m);
+				}
+				const float tone = 1.0f + L.mottle * bark_fbm(u, v, 3, 6, 3, salt + 71u) * 2.0f;
+				a = a * tone;
 			}
 			if (p_kind == BARK_SMOOTH || p_kind == BARK_PAPERY) {
 				// Lenticels: short dashes across the stem (long and dark on birch).
@@ -3219,7 +3265,9 @@ void TreeGenerator::_cut_back(bool p_first, int p_year) {
 		if (nodes[i].removed) {
 			continue;
 		}
-		const int n_buds = p_first ? 1 + int(rng.randf() < 0.4f) : 1 + int(rng.randf() < 0.3f);
+		// A willow's head bears a dense fan of withies, five to nine from every seat.
+		const bool osier = preset == PRESET_WHITE_WILLOW && !coppice;
+		const int n_buds = osier ? 5 + int(rng.rand() % 5) : (p_first ? 1 + int(rng.randf() < 0.4f) : 1 + int(rng.randf() < 0.3f));
 		for (int q = 0; q < n_buds; q++) {
 			// Out along the knuckle or stub, else any bearing.
 			Vector3 out = nodes[i].dir;
@@ -3738,7 +3786,11 @@ void TreeGenerator::_saw_face(const Vector3 &p_end, const Vector3 &p_dir, float 
 	const Color fresh = Color(0.8f, 0.7f, 0.52f).srgb_to_linear();
 	const Color grey = Color(0.5f, 0.48f, 0.43f).srgb_to_linear();
 	const Color wood = fresh.lerp(grey, age);
+	// Past 1, the face is rotting: dark brown-black, crumbled, with moss and algae in its hollows.
+	const float rot = CLAMP(p_age - 1.0f, 0.0f, 1.0f);
 	const Color heart = wood.lerp(Color(0.3f, 0.24f, 0.17f).srgb_to_linear(), 0.25f + 0.45f * age);
+	const Color rotten = Color(0.17f, 0.13f, 0.1f).srgb_to_linear();
+	const Color green = Color(0.2f, 0.25f, 0.12f).srgb_to_linear();
 	const Color rim = bark_color.srgb_to_linear().lerp(Color(0.1f, 0.08f, 0.06f), 0.4f);
 	// Annual rings: about one per 3 mm of radius for a fast coppice pole, offset by the seed.
 	const float rings = MAX(3.0f, p_r / 0.003f);
@@ -3755,18 +3807,27 @@ void TreeGenerator::_saw_face(const Vector3 &p_end, const Vector3 &p_dir, float 
 		Color c = i == 0 ? rim : wood.lerp(heart, (1.0f - rho) * (1.0f - rho)) * (0.86f + 0.14f * band);
 		for (int k = 0; k < sectors; k++) {
 			const float a = float(Math::TAU) * k / sectors;
-			const float hh = i == 0 ? 0.0f : p_r * (0.05f + 0.03f * (1.0f - rho) + 0.01f * (sr.randf() - 0.5f));
+			float hh = i == 0 ? 0.0f : p_r * (0.05f + 0.03f * (1.0f - rho) + 0.01f * (sr.randf() - 0.5f));
+			Color ck = c;
+			if (rot > 0.0f && i > 0) {
+				// Rot hollows the heart first and leaves the outer rings standing.
+				const float n = sr.randf();
+				hh -= rot * p_r * (0.18f * (1.0f - rho * rho) + 0.08f * n);
+				ck = c.lerp(rotten, rot * (0.55f + 0.35f * n)).lerp(green, rot * 0.5f * MAX(0.0f, sr.randf() - 0.4f));
+			}
 			w.verts.push_back(p_end + (td * Math::cos(a) + sd * Math::sin(a)) * (p_r * rho) + g * hh);
 			w.normals.push_back(g);
-			w.uvs.push_back(Vector2(float(k) / sectors * 2.0f, rho * 0.3f));
-			w.colors.push_back(c);
+			// Planar across the face: the wood texture's fibres lie as parallel saw marks. Polar,
+			// they fanned out from the pith as a pale pinwheel.
+			w.uvs.push_back(Vector2(Math::cos(a), Math::sin(a)) * (p_r * rho / 0.15f) + Vector2(phase, 0.0f));
+			w.colors.push_back(ck);
 		}
 	}
 	const int fc = w.verts.size();
-	w.verts.push_back(p_end + g * (p_r * 0.09f));
+	w.verts.push_back(p_end + g * (p_r * (0.09f - 0.22f * rot)));
 	w.normals.push_back(g);
-	w.uvs.push_back(Vector2(0.5f, 0.0f));
-	w.colors.push_back(heart);
+	w.uvs.push_back(Vector2(phase, 0.0f));
+	w.colors.push_back(heart.lerp(rotten, rot));
 	for (int i = 0; i + 1 < nr; i++) {
 		for (int k = 0; k < sectors; k++) {
 			const int k1 = (k + 1) % sectors;
@@ -3785,7 +3846,645 @@ void TreeGenerator::_saw_face(const Vector3 &p_end, const Vector3 &p_dir, float 
 		w.indices.push_back(fc);
 		w.indices.push_back(f0 + (nr - 1) * sectors + (k + 1) % sectors);
 	}
+	if (rot > 0.0f) {
+		// The rotted hollow's own shading: normals from its faces, kept facing out of the face.
+		Vector3 *nw = w.normals.ptrw();
+		const Vector3 *vw = w.verts.ptr();
+		for (int v = f0; v < w.verts.size(); v++) {
+			nw[v] = Vector3();
+		}
+		for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+			const int ia = w.indices[i], ib = w.indices[i + 1], ic = w.indices[i + 2];
+			Vector3 fn = (vw[ib] - vw[ia]).cross(vw[ic] - vw[ia]);
+			if (fn.dot(g) < 0.0f) {
+				fn = -fn;
+			}
+			nw[ia] += fn;
+			nw[ib] += fn;
+			nw[ic] += fn;
+		}
+		for (int v = f0; v < w.verts.size(); v++) {
+			nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : g;
+		}
+	}
 	w.end(part, p_r);
+}
+
+// Crown parts (trees.md 5n): what a crown carries besides its leaves, as geometry. Cones (pine,
+// spruce, larch, hemlock, alder), catkins (hazel, birch, alder), seed keys (ash, maples), berries
+// (holly, hawthorn, rowan, yew, elder), mistletoe balls on its hosts (Viscum album in Europe,
+// Phoradendron in eastern North America) and witches' brooms on birches (Taphrina betulina).
+// Seasons from the shared season state's day of year: catkins form in late summer, hang closed
+// through winter and open before the leaves; keys and haws hang on into winter; cones persist.
+// Built like Unreal 5.7's procedural vegetation assemblies, in that each part is a small fixed
+// shape placed many times, but merged into one surface here: LOD 0 carries all of it, the coarser
+// levels only the mistletoe and brooms, which read from far.
+int TreeGenerator::_grow_crown_parts(Builder &r_b) {
+	r_b = Builder();
+	if (nodes.size() < 2 || fallen || fallen_branch || decay_class >= 2 || (fruit_cover <= 0.0f && mistletoe <= 0.0f && witches_brooms <= 0.0f)) {
+		return 0;
+	}
+	RandomPCG cr;
+	cr.seed(uint64_t(seed) * 0x2545F4914F6CDD1Dull + uint64_t(preset) * 977u + 0x63726f77u);
+	const float base_y = nodes[0].start.y;
+	const float tall = MAX(height, 0.5f);
+	const float day = season.get("day_of_year", 182.0f);
+	// Inside [p_from, p_to] on the year's wheel (the span may run over New Year).
+	auto in_days = [&](float p_from, float p_to) {
+		return p_from <= p_to ? (day >= p_from && day <= p_to) : (day >= p_from || day <= p_to);
+	};
+	auto lin = [](float r, float g, float b) { return Color(r, g, b).srgb_to_linear(); };
+	auto bone_of = [&](int p_node) { return p_node >= 0 && p_node < int(node_bone.size()) ? node_bone[p_node] : 0; };
+	auto perp = [](const Vector3 &p_d) {
+		const Vector3 ref = Math::abs(p_d.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+		return p_d.cross(ref).normalized();
+	};
+	auto vert = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		r_b.verts.push_back(p_p);
+		r_b.normals.push_back(Vector3());
+		r_b.uvs.push_back(p_uv);
+		r_b.colors.push_back(p_c);
+		return int(r_b.verts.size()) - 1;
+	};
+	auto tri = [&](int a, int b, int c) {
+		r_b.indices.push_back(a);
+		r_b.indices.push_back(b);
+		r_b.indices.push_back(c);
+	};
+	// Face normals, averaged, for a finished part (all parts are seen from both sides).
+	auto close_part = [&](Vector4i &p_part, float p_size) {
+		Vector3 *nw = r_b.normals.ptrw();
+		const Vector3 *vw = r_b.verts.ptr();
+		for (int64_t i = p_part.x; i + 2 < r_b.indices.size(); i += 3) {
+			const int a = r_b.indices[i], b = r_b.indices[i + 1], c = r_b.indices[i + 2];
+			const Vector3 fn = (vw[b] - vw[a]).cross(vw[c] - vw[a]);
+			nw[a] += fn;
+			nw[b] += fn;
+			nw[c] += fn;
+		}
+		for (int v = p_part.z; v < r_b.verts.size(); v++) {
+			nw[v] = nw[v].length_squared() > 1e-24f ? nw[v].normalized() : Vector3(0, 1, 0);
+		}
+		r_b.end(p_part, p_size);
+	};
+	// A tube along a polyline, p_sides round, closed at its end.
+	auto tube = [&](const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_r, int p_sides, const LocalVector<Color> &p_c) {
+		const int n = int(p_pts.size());
+		Vector3 side = perp((p_pts[1] - p_pts[0]).normalized());
+		const int v0 = r_b.verts.size();
+		for (int i = 0; i < n; i++) {
+			const Vector3 d = (p_pts[MIN(i + 1, n - 1)] - p_pts[MAX(i - 1, 0)]).normalized();
+			side = (side - d * side.dot(d)).normalized();
+			const Vector3 up = d.cross(side);
+			for (int k = 0; k < p_sides; k++) {
+				const float a = float(Math::TAU) * k / p_sides;
+				vert(p_pts[i] + (side * Math::cos(a) + up * Math::sin(a)) * p_r[i], Vector2(float(k) / p_sides, float(i) / n), p_c[i]);
+			}
+		}
+		for (int i = 0; i + 1 < n; i++) {
+			for (int k = 0; k < p_sides; k++) {
+				const int k1 = (k + 1) % p_sides;
+				// Wound so the face normals (close_part) point out of the tube.
+				tri(v0 + i * p_sides + k, v0 + i * p_sides + k1, v0 + (i + 1) * p_sides + k);
+				tri(v0 + i * p_sides + k1, v0 + (i + 1) * p_sides + k1, v0 + (i + 1) * p_sides + k);
+			}
+		}
+		const int tip = vert(p_pts[n - 1] + (p_pts[n - 1] - p_pts[n - 2]).normalized() * p_r[n - 1] * 0.5f, Vector2(0.5f, 1.0f), p_c[n - 1]);
+		for (int k = 0; k < p_sides; k++) {
+			tri(v0 + (n - 1) * p_sides + k, v0 + (n - 1) * p_sides + (k + 1) % p_sides, tip);
+		}
+	};
+	// A berry or seed: a small ball (an octahedron split once).
+	auto ball = [&](const Vector3 &p_c, float p_r, const Color &p_col) {
+		const Vector3 ax[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+		const int faces[8][3] = { { 0, 2, 4 }, { 2, 1, 4 }, { 1, 3, 4 }, { 3, 0, 4 }, { 2, 0, 5 }, { 1, 2, 5 }, { 3, 1, 5 }, { 0, 3, 5 } };
+		for (int f = 0; f < 8; f++) {
+			const Vector3 a = ax[faces[f][0]], b = ax[faces[f][1]], c = ax[faces[f][2]];
+			const Vector3 ab = (a + b).normalized(), bc = (b + c).normalized(), ca = (c + a).normalized();
+			const int ia = vert(p_c + a * p_r, Vector2(), p_col), ib = vert(p_c + b * p_r, Vector2(), p_col), ic = vert(p_c + c * p_r, Vector2(), p_col);
+			const int iab = vert(p_c + ab * p_r, Vector2(), p_col), ibc = vert(p_c + bc * p_r, Vector2(), p_col), ica = vert(p_c + ca * p_r, Vector2(), p_col);
+			tri(ia, iab, ica);
+			tri(iab, ib, ibc);
+			tri(ica, ibc, ic);
+			tri(iab, ibc, ica);
+		}
+	};
+	// A flat blade (key wing, mistletoe leaf): p_len along p_dir, its width profile over five
+	// stations, turned by p_twist (radians) from base to tip, colour from base to tip.
+	auto blade = [&](const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_width, float p_len, float p_w, const float *p_prof, float p_twist, float p_fold, const Color &p_c0, const Color &p_c1) {
+		const int v0 = r_b.verts.size();
+		const Vector3 nrm = p_dir.cross(p_width).normalized();
+		for (int i = 0; i < 5; i++) {
+			const float t = i / 4.0f;
+			const Vector3 wd = p_width.rotated(p_dir, p_twist * t);
+			const Vector3 c = p_at + p_dir * (p_len * t);
+			const float w = p_w * p_prof[i] * 0.5f;
+			const Color col = p_c0.lerp(p_c1, t);
+			vert(c - wd * w + nrm * (p_fold * w), Vector2(0.0f, t), col);
+			vert(c + wd * w + nrm * (p_fold * w), Vector2(1.0f, t), col);
+		}
+		for (int i = 0; i < 4; i++) {
+			const int a = v0 + i * 2;
+			tri(a, a + 2, a + 1);
+			tri(a + 1, a + 2, a + 3);
+		}
+	};
+	// A cone of spiral scales (phyllotaxis 137.5 degrees): p_axis from the stalk to the tip, a
+	// profile fat at the base (ovoid, pines) or even (cylindrical, spruce); open cones' scales
+	// stand out from the axis, closed ones lie along it.
+	auto cone = [&](const Vector3 &p_base, const Vector3 &p_axis, float p_len, float p_r, int p_scales, bool p_cyl, float p_open, const Color &p_in, const Color &p_out) {
+		const Vector3 s0 = perp(p_axis);
+		const Vector3 s1 = p_axis.cross(s0);
+		const float tilt = Math::deg_to_rad(Math::lerp(25.0f, 70.0f, p_open));
+		for (int i = 0; i < p_scales; i++) {
+			const float t = (i + 0.5f) / p_scales;
+			const float prof = p_cyl ? Math::smoothstep(0.0f, 0.12f, t) * (1.0f - 0.7f * Math::smoothstep(0.75f, 1.0f, t)) : Math::pow(MAX(Math::sin(float(Math::PI) * CLAMP(t * 0.85f + 0.1f, 0.0f, 1.0f)), 0.0f), 0.7f);
+			const float a = i * 2.39996f;
+			const Vector3 rad = s0 * Math::cos(a) + s1 * Math::sin(a);
+			const Vector3 root = p_base + p_axis * (p_len * t * 0.92f) + rad * (p_r * 0.25f * prof);
+			const Vector3 d = (rad * Math::sin(tilt) + p_axis * Math::cos(tilt)).normalized();
+			const float sl = p_r * (0.35f + 0.9f * prof);
+			const float sw = p_r * (0.45f + 0.5f * prof);
+			const Vector3 w = d.cross(rad).normalized();
+			const int ia = vert(root, Vector2(0.5f, 0.0f), p_in);
+			const int il = vert(root + d * (sl * 0.55f) - w * (sw * 0.5f) + rad * (sl * 0.08f), Vector2(0.0f, 0.55f), p_in.lerp(p_out, 0.5f));
+			const int ir = vert(root + d * (sl * 0.55f) + w * (sw * 0.5f) + rad * (sl * 0.08f), Vector2(1.0f, 0.55f), p_in.lerp(p_out, 0.5f));
+			const int it = vert(root + d * sl + rad * (sl * 0.12f), Vector2(0.5f, 1.0f), p_out);
+			tri(ia, il, ir);
+			tri(il, it, ir);
+		}
+		// The core under the scales and the stalk.
+		LocalVector<Vector3> cp;
+		LocalVector<float> cr2;
+		LocalVector<Color> cc;
+		for (int k = 0; k < 4; k++) {
+			cp.push_back(p_base + p_axis * (p_len * (k / 3.0f) * 0.95f - (k == 0 ? p_r * 0.3f : 0.0f)));
+			cr2.push_back(p_r * (k == 0 ? 0.12f : 0.3f * (1.0f - 0.5f * k / 3.0f)));
+			cc.push_back(p_in);
+		}
+		tube(cp, cr2, 4, cc);
+	};
+	// A catkin: a tube of tight scales hanging from the shoot, curving under its weight.
+	auto catkin = [&](const Vector3 &p_at, const Vector3 &p_dir, float p_len, float p_r, const Color &p_a, const Color &p_b, float p_hang) {
+		LocalVector<Vector3> cp;
+		LocalVector<float> rr;
+		LocalVector<Color> cc;
+		Vector3 pos = p_at;
+		Vector3 d = p_dir;
+		const int n = 8;
+		for (int k = 0; k <= n; k++) {
+			const float t = float(k) / n;
+			cp.push_back(pos);
+			rr.push_back(p_r * (k == 0 ? 0.45f : (0.85f + 0.15f * Math::sin(t * float(Math::PI))) * (1.0f - 0.55f * Math::smoothstep(0.7f, 1.0f, t))));
+			cc.push_back((k & 1) ? p_a : p_b);
+			d = d.lerp(Vector3(0, -1, 0), p_hang).normalized();
+			pos += d * (p_len / n);
+		}
+		tube(cp, rr, 6, cc);
+	};
+
+	// Shoot tips: where cones, catkins, keys and berries hang.
+	struct Tip {
+		int node;
+		float f; // Height in the crown, 0 base, 1 top.
+	};
+	LocalVector<Tip> tips;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.dead || n.order < 1 || n.radius > 0.02f || (n.main >= 0 && !nodes[n.main].removed)) {
+			continue;
+		}
+		tips.push_back({ i, CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f) });
+	}
+	const LeafSeason ls = _leaf_season(preset, season);
+	int big_end = 0;
+	// Mistletoe and brooms first: the coarser LODs keep the index range before big_end.
+	{
+		float host = 0.0f;
+		switch (preset) {
+			case PRESET_LIME:
+				host = 0.5f;
+				break;
+			case PRESET_HAWTHORN:
+				host = 0.35f;
+				break;
+			case PRESET_WHITE_WILLOW:
+				host = 0.3f;
+				break;
+			case PRESET_ROWAN:
+				host = 0.25f;
+				break;
+			case PRESET_SYCAMORE_MAPLE:
+			case PRESET_BIRCH:
+			case PRESET_RED_MAPLE:
+			case PRESET_RED_OAK:
+			case PRESET_BLACK_ALDER:
+				host = 0.15f;
+				break;
+			default:
+				break;
+		}
+		const bool american = preset == PRESET_RED_MAPLE || preset == PRESET_RED_OAK;
+		if (host > 0.0f && mistletoe > 0.0f && cr.randf() < MIN(host * mistletoe, 0.95f) && tall > 4.0f) {
+			// Hosts: limbs 1.5-8 cm in the upper, outer crown, where thrushes perch and wipe the
+			// seeds off their bills.
+			LocalVector<int> seats;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &n = nodes[i];
+				if (!n.removed && !n.dead && n.order >= 1 && n.radius > 0.015f && n.radius < 0.08f && n.end().y - base_y > crown_base + 0.35f * (tall - crown_base)) {
+					seats.push_back(i);
+				}
+			}
+			const int balls = MIN(int(seats.size()), 1 + int(cr.randf() * 7.0f * MIN(mistletoe, 2.0f)));
+			const Color stem_c = american ? lin(0.42f, 0.5f, 0.2f) : lin(0.5f, 0.56f, 0.22f);
+			const Color leaf0 = american ? lin(0.3f, 0.42f, 0.14f) : lin(0.44f, 0.52f, 0.17f);
+			const Color leaf1 = american ? lin(0.34f, 0.46f, 0.16f) : lin(0.58f, 0.62f, 0.22f);
+			const Color berry = american ? lin(0.92f, 0.92f, 0.86f) : lin(0.93f, 0.94f, 0.88f);
+			const bool berries = in_days(300.0f, 60.0f);
+			for (int b = 0; b < balls && !seats.is_empty(); b++) {
+				const int si = int(cr.rand() % seats.size());
+				const int at_node = seats[si];
+				seats.remove_at_unordered(si);
+				const Node &hn = nodes[at_node];
+				const float u = cr.randf();
+				const Vector3 at = hn.start + hn.dir * (hn.length * u);
+				r_b.bone = bone_of(at_node);
+				Vector4i part;
+				r_b.begin(part);
+				// A ball grows one fork a year: 4-8 years.
+				const int levels = 4 + int(cr.randf() * 4.0f);
+				struct Seg {
+					Vector3 p, d;
+					int level;
+					float roll;
+				};
+				LocalVector<Seg> stack;
+				const int first = 3 + int(cr.randf() * 4.0f);
+				for (int k = 0; k < first; k++) {
+					Vector3 d = Vector3(cr.randf() - 0.5f, cr.randf() * 0.8f - 0.1f, cr.randf() - 0.5f).normalized();
+					stack.push_back({ at, d, 0, cr.randf() * float(Math::TAU) });
+				}
+				float reach = 0.0f;
+				while (!stack.is_empty()) {
+					const Seg sg = stack[stack.size() - 1];
+					stack.resize(stack.size() - 1);
+					const float len = Math::lerp(0.035f, 0.06f, cr.randf()) * (sg.level == 0 ? 0.7f : 1.0f);
+					const float r = 0.0035f * (1.0f - 0.08f * sg.level) + 0.0015f * (levels - sg.level) / levels;
+					// Stems swing up a little toward the light.
+					const Vector3 d = (sg.d + Vector3(0, 0.15f, 0)).normalized();
+					const Vector3 e = sg.p + d * len;
+					reach = MAX(reach, e.distance_to(at));
+					LocalVector<Vector3> cp;
+					LocalVector<float> rr;
+					LocalVector<Color> cc;
+					cp.push_back(sg.p);
+					cp.push_back(e);
+					rr.push_back(r);
+					rr.push_back(r * 0.9f);
+					cc.push_back(stem_c);
+					cc.push_back(stem_c);
+					tube(cp, rr, 4, cc);
+					const Vector3 side = perp(d).rotated(d, sg.roll);
+					if (sg.level + 1 < levels) {
+						// Forks in two (now and then three), each plane turned a quarter from the last.
+						const float spread = Math::deg_to_rad(Math::lerp(28.0f, 42.0f, cr.randf()));
+						stack.push_back({ e, d.rotated(side, spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						stack.push_back({ e, d.rotated(side, -spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						if (cr.randf() < 0.12f) {
+							stack.push_back({ e, d, sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						}
+						if (berries && sg.level + 2 >= levels && cr.randf() < 0.35f) {
+							ball(e + side.cross(d) * 0.004f, 0.0045f, berry);
+						}
+					} else {
+						// A pair of leathery, strap-shaped leaves at the end of each shoot.
+						static const float prof[5] = { 0.3f, 0.8f, 1.0f, 0.85f, 0.35f };
+						for (int q = 0; q < 2; q++) {
+							const Vector3 ld = d.rotated(side, (q ? 1.0f : -1.0f) * Math::deg_to_rad(Math::lerp(20.0f, 40.0f, cr.randf())));
+							const float ll = (american ? 0.035f : 0.045f) * Math::lerp(0.8f, 1.2f, cr.randf());
+							blade(e, ld, side.cross(ld).normalized(), ll, ll * (american ? 0.45f : 0.28f), prof, 0.3f * (cr.randf() - 0.5f), 0.15f, leaf0, leaf1);
+						}
+					}
+				}
+				close_part(part, MAX(reach, 0.2f));
+			}
+		}
+		const bool birchy = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
+		if (birchy && witches_brooms > 0.0f && cr.randf() < MIN(0.45f * witches_brooms, 0.95f) && tall > 5.0f) {
+			LocalVector<int> seats;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &n = nodes[i];
+				if (!n.removed && !n.dead && n.order >= 1 && n.radius > 0.02f && n.radius < 0.1f && n.end().y - base_y > crown_base) {
+					seats.push_back(i);
+				}
+			}
+			const int brooms = MIN(int(seats.size()), 1 + int(cr.randf() * 4.0f * MIN(witches_brooms, 2.0f)));
+			const Color twig_c = lin(0.27f, 0.15f, 0.11f);
+			const Color knob_c = bark_color.srgb_to_linear() * 0.6f;
+			for (int b = 0; b < brooms && !seats.is_empty(); b++) {
+				const int si = int(cr.rand() % seats.size());
+				const int at_node = seats[si];
+				seats.remove_at_unordered(si);
+				const Node &hn = nodes[at_node];
+				const Vector3 at = hn.start + hn.dir * (hn.length * cr.randf());
+				r_b.bone = bone_of(at_node);
+				Vector4i part;
+				r_b.begin(part);
+				// The infection's swelling, then a dense nest of thin upright shoots from it.
+				ball(at, hn.radius * 1.6f, knob_c);
+				const int twigs = 50 + int(cr.randf() * 70.0f);
+				const Vector3 out = (hn.dir.cross(Vector3(0, 1, 0)).cross(hn.dir)).normalized();
+				float reach = 0.0f;
+				for (int t = 0; t < twigs; t++) {
+					Vector3 d = (out * 0.5f + Vector3(0, 1, 0) + Vector3(cr.randf() - 0.5f, cr.randf() * 0.4f - 0.2f, cr.randf() - 0.5f) * 1.6f).normalized();
+					const float len = Math::lerp(0.12f, 0.45f, cr.randf() * cr.randf() + 0.2f);
+					LocalVector<Vector3> cp;
+					LocalVector<float> rr;
+					LocalVector<Color> cc;
+					Vector3 p = at + d * (hn.radius * 1.2f);
+					for (int k = 0; k < 4; k++) {
+						cp.push_back(p);
+						rr.push_back(Math::lerp(0.0028f, 0.0008f, k / 3.0f));
+						cc.push_back(twig_c);
+						d = (d + Vector3(cr.randf() - 0.5f, 0.1f, cr.randf() - 0.5f) * 0.25f).normalized();
+						p += d * (len / 3.0f);
+					}
+					reach = MAX(reach, p.distance_to(at));
+					tube(cp, rr, 3, cc);
+				}
+				close_part(part, MAX(reach, 0.2f));
+			}
+		}
+		big_end = r_b.indices.size();
+	}
+	if (fruit_cover <= 0.0f || tips.is_empty()) {
+		return big_end;
+	}
+	// Per species: what hangs at the tips, how many tips carry it (in the part of the crown it
+	// keeps to), and how many in a cluster.
+	enum Kind {
+		NONE,
+		CONE_PINE,
+		CONE_SPRUCE,
+		CONE_LARCH,
+		CONE_HEMLOCK,
+		CONE_WHITE_PINE,
+		CATKIN_HAZEL,
+		CATKIN_BIRCH,
+		CATKIN_ALDER,
+		KEYS_ASH,
+		KEYS_MAPLE,
+		BERRY_HOLLY,
+		BERRY_HAW,
+		BERRY_ROWAN,
+		BERRY_YEW,
+		BERRY_ELDER,
+	};
+	Kind kind = NONE;
+	float share = 0.0f, low = 0.0f; // Share of the tips above `low` (0-1 up the crown).
+	switch (preset) {
+		case PRESET_SCOTS_PINE:
+			kind = CONE_PINE, share = 0.12f, low = 0.45f;
+			break;
+		case PRESET_NORWAY_SPRUCE:
+			kind = CONE_SPRUCE, share = 0.15f, low = 0.7f;
+			break;
+		case PRESET_LARCH:
+			kind = CONE_LARCH, share = 0.3f, low = 0.2f;
+			break;
+		case PRESET_HEMLOCK:
+			kind = CONE_HEMLOCK, share = 0.2f, low = 0.3f;
+			break;
+		case PRESET_WHITE_PINE:
+			kind = CONE_WHITE_PINE, share = 0.08f, low = 0.6f;
+			break;
+		case PRESET_HAZEL:
+		case PRESET_WITCH_HAZEL:
+			kind = preset == PRESET_HAZEL ? CATKIN_HAZEL : NONE, share = 0.45f, low = 0.2f;
+			break;
+		case PRESET_BIRCH:
+		case PRESET_PAPER_BIRCH:
+		case PRESET_YELLOW_BIRCH:
+			kind = CATKIN_BIRCH, share = 0.35f, low = 0.3f;
+			break;
+		case PRESET_BLACK_ALDER:
+			kind = CATKIN_ALDER, share = 0.35f, low = 0.25f;
+			break;
+		case PRESET_ASH:
+			kind = KEYS_ASH, share = 0.1f, low = 0.4f;
+			break;
+		case PRESET_SYCAMORE_MAPLE:
+		case PRESET_SUGAR_MAPLE:
+		case PRESET_RED_MAPLE:
+			kind = KEYS_MAPLE, share = 0.1f, low = 0.3f;
+			break;
+		case PRESET_HOLLY:
+			kind = BERRY_HOLLY, share = 0.3f, low = 0.0f;
+			break;
+		case PRESET_HAWTHORN:
+			kind = BERRY_HAW, share = 0.35f, low = 0.2f;
+			break;
+		case PRESET_ROWAN:
+			kind = BERRY_ROWAN, share = 0.12f, low = 0.3f;
+			break;
+		case PRESET_YEW:
+			kind = BERRY_YEW, share = 0.25f, low = 0.0f;
+			break;
+		case PRESET_ELDER:
+			kind = BERRY_ELDER, share = 0.15f, low = 0.2f;
+			break;
+		default:
+			break;
+	}
+	// Dioecious species: only the female trees fruit (holly, yew), by seed.
+	if ((kind == BERRY_HOLLY || kind == BERRY_YEW) && (uint32_t(seed) * 2654435761u >> 16) % 2 == 1) {
+		kind = NONE;
+	}
+	// In season (day of year): keys hang from late summer into spring (ash) or fall by early
+	// winter (maples, a few left); berries ripen in autumn and the birds strip them by midwinter
+	// (holly and haws keep longest); catkins form in late summer, open in late winter and drop.
+	float present = 1.0f;
+	switch (kind) {
+		case KEYS_ASH:
+			present = in_days(200.0f, 120.0f) ? 1.0f : 0.0f;
+			break;
+		case KEYS_MAPLE:
+			present = in_days(180.0f, 320.0f) ? 1.0f : (in_days(320.0f, 60.0f) ? 0.2f : 0.0f);
+			break;
+		case BERRY_HOLLY:
+			present = in_days(270.0f, 75.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_HAW:
+			present = in_days(250.0f, 30.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_ROWAN:
+			present = in_days(220.0f, 300.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_YEW:
+			present = in_days(240.0f, 320.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_ELDER:
+			present = in_days(225.0f, 270.0f) ? 1.0f : 0.0f;
+			break;
+		case CATKIN_HAZEL:
+			present = in_days(210.0f, 100.0f) ? 1.0f : 0.0f;
+			break;
+		case CATKIN_BIRCH:
+			present = in_days(220.0f, 135.0f) ? 1.0f : 0.0f;
+			break;
+		default:
+			break;
+	}
+	if (kind == NONE || present <= 0.0f) {
+		return big_end;
+	}
+	// A budget of clusters, so a big crown carries a few hundred, not tens of thousands.
+	int eligible = 0;
+	for (const Tip &t : tips) {
+		eligible += t.f >= low ? 1 : 0;
+	}
+	const float budget = 360.0f * fruit_cover;
+	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
+	// Catkins open before the leaves: hazel from late January, alder February, birch April.
+	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
+	for (const Tip &t : tips) {
+		if (t.f < low || cr.randf() >= p) {
+			continue;
+		}
+		const Node &n = nodes[t.node];
+		const Vector3 at = n.end();
+		const Vector3 d = n.dir;
+		r_b.bone = bone_of(t.node);
+		Vector4i part;
+		r_b.begin(part);
+		const Vector3 sd = perp(d);
+		float size = 0.05f;
+		switch (kind) {
+			case CONE_PINE: {
+				// One to three, ovoid, 4-7 cm, bent back on the shoot; grey-tipped scales.
+				const int k = 1 + int(cr.randf() * cr.randf() * 3.0f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 ax = (d * 0.2f + Vector3(0, -1, 0) + sd.rotated(d, q * 2.1f) * 0.6f).normalized();
+					const float len = Math::lerp(0.04f, 0.065f, cr.randf());
+					const float op = cr.randf() < 0.6f ? Math::lerp(0.5f, 1.0f, cr.randf()) : 0.0f;
+					cone(at - d * 0.02f * q, ax, len, len * 0.32f * (1.0f + 0.4f * op), 56, false, op, lin(0.36f, 0.25f, 0.15f), op > 0.0f ? lin(0.52f, 0.47f, 0.38f) : lin(0.42f, 0.36f, 0.22f));
+				}
+				size = 0.07f;
+			} break;
+			case CONE_WHITE_PINE: {
+				const Vector3 ax = (d * 0.1f + Vector3(0, -1, 0)).normalized();
+				const float len = Math::lerp(0.1f, 0.16f, cr.randf());
+				cone(at, ax, len, len * 0.14f, 70, true, Math::lerp(0.4f, 0.8f, cr.randf()), lin(0.4f, 0.28f, 0.16f), lin(0.6f, 0.5f, 0.36f));
+				size = len;
+			} break;
+			case CONE_SPRUCE: {
+				// Long pendant cylinders, 10-16 cm, at the very top of the crown.
+				const int k = 1 + int(cr.randf() * 2.5f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 ax = (Vector3(0, -1, 0) + sd.rotated(d, q * 2.4f) * 0.25f).normalized();
+					const float len = Math::lerp(0.1f, 0.16f, cr.randf());
+					cone(at - d * 0.03f * q, ax, len, len * 0.17f, 96, true, Math::lerp(0.0f, 0.4f, cr.randf()), lin(0.42f, 0.27f, 0.14f), lin(0.56f, 0.4f, 0.24f));
+				}
+				size = 0.15f;
+			} break;
+			case CONE_LARCH: {
+				// Small upright cones, 2-3.5 cm, kept for years along the branch.
+				const int k = 1 + int(cr.randf() * 3.0f);
+				for (int q = 0; q < k; q++) {
+					const float u = cr.randf();
+					const Vector3 base = n.start + n.dir * (n.length * u) + sd.rotated(d, q * 2.0f) * 0.004f;
+					const Vector3 ax = (Vector3(0, 1, 0) + sd.rotated(d, q * 2.0f) * 0.2f).normalized();
+					const float len = Math::lerp(0.02f, 0.035f, cr.randf());
+					cone(base, ax, len, len * 0.42f, 28, false, 0.85f, lin(0.38f, 0.27f, 0.17f), lin(0.55f, 0.43f, 0.3f));
+				}
+				size = 0.04f;
+			} break;
+			case CONE_HEMLOCK: {
+				const Vector3 ax = (d * 0.3f + Vector3(0, -1, 0)).normalized();
+				const float len = Math::lerp(0.015f, 0.025f, cr.randf());
+				cone(at, ax, len, len * 0.4f, 22, false, 0.8f, lin(0.4f, 0.29f, 0.18f), lin(0.58f, 0.47f, 0.33f));
+				size = 0.03f;
+			} break;
+			case CATKIN_HAZEL:
+			case CATKIN_BIRCH:
+			case CATKIN_ALDER: {
+				const int k = kind == CATKIN_ALDER ? 3 + int(cr.randf() * 3.0f) : 1 + int(cr.randf() * (kind == CATKIN_HAZEL ? 3.0f : 2.0f));
+				const float len0 = kind == CATKIN_HAZEL ? 0.025f : (kind == CATKIN_BIRCH ? 0.025f : 0.03f);
+				const float len1 = kind == CATKIN_HAZEL ? 0.065f : (kind == CATKIN_BIRCH ? 0.06f : 0.08f);
+				const float len = (open_catkin ? len1 : len0) * Math::lerp(0.85f, 1.15f, cr.randf());
+				Color a, b;
+				if (open_catkin) {
+					a = kind == CATKIN_HAZEL ? lin(0.85f, 0.75f, 0.3f) : (kind == CATKIN_BIRCH ? lin(0.72f, 0.6f, 0.3f) : lin(0.55f, 0.32f, 0.2f));
+					b = kind == CATKIN_HAZEL ? lin(0.7f, 0.62f, 0.25f) : (kind == CATKIN_BIRCH ? lin(0.56f, 0.44f, 0.24f) : lin(0.42f, 0.24f, 0.17f));
+				} else {
+					a = kind == CATKIN_HAZEL ? lin(0.52f, 0.42f, 0.28f) : (kind == CATKIN_BIRCH ? lin(0.42f, 0.28f, 0.2f) : lin(0.4f, 0.22f, 0.2f));
+					b = a * 0.8f;
+				}
+				for (int q = 0; q < k; q++) {
+					const Vector3 cd = (d * 0.5f + sd.rotated(d, q * 2.3f) * 0.5f + Vector3(0, open_catkin ? -0.6f : 0.0f, 0)).normalized();
+					catkin(at + cd * 0.004f, cd, len, open_catkin ? 0.0045f : 0.0035f, a, b, open_catkin ? 0.35f : 0.12f);
+				}
+				if (kind == CATKIN_ALDER) {
+					// Last year's woody fruit cones, 1.5 cm, in clusters behind the catkins.
+					const int c = 2 + int(cr.randf() * 4.0f);
+					for (int q = 0; q < c; q++) {
+						const Vector3 ax = (Vector3(0, -1, 0) + sd.rotated(d, q * 1.7f) * 0.6f).normalized();
+						cone(n.start + n.dir * (n.length * 0.5f) + ax * 0.01f, ax, 0.016f, 0.0065f, 18, false, 0.7f, lin(0.25f, 0.16f, 0.1f), lin(0.36f, 0.26f, 0.17f));
+					}
+				}
+				size = len;
+			} break;
+			case KEYS_ASH:
+			case KEYS_MAPLE: {
+				// Ash: bunches of single twisted keys on stalks, buff-brown in winter. Maples:
+				// paired keys, wings spread, green to straw.
+				const bool ash = kind == KEYS_ASH;
+				const int k = ash ? 10 + int(cr.randf() * 18.0f) : 3 + int(cr.randf() * 5.0f);
+				const bool ripe = !in_days(130.0f, 230.0f);
+				const Color c0 = ripe ? lin(0.5f, 0.38f, 0.22f) : lin(0.45f, 0.55f, 0.22f);
+				const Color c1 = ripe ? lin(0.66f, 0.55f, 0.36f) : lin(0.58f, 0.65f, 0.3f);
+				static const float key_prof[5] = { 0.35f, 0.6f, 0.9f, 1.0f, 0.55f };
+				const Vector3 hub = at + Vector3(0, -0.02f, 0);
+				for (int q = 0; q < k; q++) {
+					const Vector3 kd = (Vector3(0, -1, 0) + Vector3(cr.randf() - 0.5f, 0.0f, cr.randf() - 0.5f) * 1.2f).normalized();
+					const Vector3 st = hub + kd * Math::lerp(0.01f, 0.03f, cr.randf());
+					if (ash) {
+						blade(st, kd, perp(kd).rotated(kd, cr.randf() * 3.0f), 0.035f, 0.008f, key_prof, Math::lerp(0.5f, 1.2f, cr.randf()), 0.05f, c0 * 0.8f, c1);
+					} else {
+						const Vector3 w = perp(kd).rotated(kd, cr.randf() * 3.0f);
+						const float spread = Math::deg_to_rad(preset == PRESET_SUGAR_MAPLE ? 30.0f : 45.0f);
+						for (int h = 0; h < 2; h++) {
+							const Vector3 wd = kd.rotated(w.cross(kd).normalized(), (h ? 1.0f : -1.0f) * spread);
+							blade(st, wd, w, 0.04f, 0.012f, key_prof, 0.2f, 0.1f, c0 * 0.75f, c1);
+						}
+						ball(st, 0.004f, c0 * 0.8f);
+					}
+				}
+				size = 0.08f;
+			} break;
+			case BERRY_HOLLY:
+			case BERRY_HAW:
+			case BERRY_ROWAN:
+			case BERRY_YEW:
+			case BERRY_ELDER: {
+				const int k = kind == BERRY_ROWAN ? 15 + int(cr.randf() * 20.0f) : (kind == BERRY_ELDER ? 25 + int(cr.randf() * 30.0f) : 2 + int(cr.randf() * 5.0f));
+				const float br = kind == BERRY_ELDER ? 0.0028f : (kind == BERRY_ROWAN ? 0.0045f : (kind == BERRY_YEW ? 0.004f : 0.005f));
+				const Color c = kind == BERRY_ELDER ? lin(0.08f, 0.05f, 0.08f) : (kind == BERRY_ROWAN ? lin(0.88f, 0.35f, 0.08f) : (kind == BERRY_HAW ? lin(0.55f, 0.08f, 0.06f) : lin(0.75f, 0.06f, 0.05f)));
+				const float spread = kind == BERRY_ROWAN || kind == BERRY_ELDER ? 0.045f : 0.012f;
+				const Vector3 hub = kind == BERRY_HOLLY || kind == BERRY_YEW ? n.start + n.dir * (n.length * 0.6f) : at + Vector3(0, -0.015f, 0);
+				for (int q = 0; q < k; q++) {
+					const Vector3 o = Vector3(cr.randf() - 0.5f, (cr.randf() - 0.8f) * 0.6f, cr.randf() - 0.5f) * (2.0f * spread);
+					ball(hub + o, br * Math::lerp(0.85f, 1.15f, cr.randf()), c * Math::lerp(0.85f, 1.1f, cr.randf()));
+				}
+				size = spread * 2.0f;
+			} break;
+			default:
+				break;
+		}
+		close_part(part, size);
+	}
+	(void)ls;
+	return big_end;
 }
 
 void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
@@ -7152,8 +7851,77 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			soil_tint(r_b, p_part, 1.0f);
 		}
 	};
+	// Cut trees (trees.md 5l) carry their history as modelled wood, not paint: the callus over
+	// every cut builds hard-edged knobs, clustered into burrs (each knob a dormant bud's trace
+	// that swelled; Read 2000, Veteran Trees), and the poles carry the girdle scars of each
+	// year's bud scales, shallow fluting, and folds of bark where they leave the head.
+	// The pollard head's centre, for the knuckles round it.
+	Vector3 head_c;
+	if (head_r > 0.0f && veteran_stem >= 0) {
+		head_c = Vector3(nodes[veteran_stem].start.x, head_y0 + 1.2f * head_r, nodes[veteran_stem].start.z);
+		for (int i = veteran_stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+			head_c.x = nodes[i].end().x;
+			head_c.z = nodes[i].end().z;
+		}
+	}
+	auto hash3 = [](int p_x, int p_y, int p_z, uint32_t p_salt) -> float {
+		uint32_t h = uint32_t(p_x) * 73856093u ^ uint32_t(p_y) * 19349663u ^ uint32_t(p_z) * 83492791u ^ p_salt;
+		h ^= h >> 13;
+		h *= 0x5bd1e995u;
+		h ^= h >> 15;
+		return float(h & 0xffffffu) / float(0x1000000);
+	};
+	// Knobs as spherical caps on a jittered grid, each with a steep foot (the cap's profile is
+	// (1 - d^2)^0.3, near vertical at its edge), present where a cluster noise is high: burrs, not
+	// a melted swelling. r_crease is the crevice between and around them.
+	auto callus_knobs = [&](const Vector3 &p_p, float p_cell, float p_gate_scale, float p_gate, uint32_t p_salt, float &r_crease) -> float {
+		const Vector3 g = p_p / p_cell;
+		const int ix = int(Math::floor(g.x)), iy = int(Math::floor(g.y)), iz = int(Math::floor(g.z));
+		float best = 0.0f, near = 0.0f;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dy = -1; dy <= 1; dy++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int cx = ix + dx, cy = iy + dy, cz = iz + dz;
+					const Vector3 cell_c = Vector3(cx + 0.5f, cy + 0.5f, cz + 0.5f) * p_cell;
+					const float pres = moss_noise(cell_c / p_gate_scale, p_salt);
+					if (pres < p_gate) {
+						continue;
+					}
+					const Vector3 c = (Vector3(cx, cy, cz) + Vector3(0.2f + 0.6f * hash3(cx, cy, cz, p_salt + 1u), 0.2f + 0.6f * hash3(cx, cy, cz, p_salt + 2u), 0.2f + 0.6f * hash3(cx, cy, cz, p_salt + 3u))) * p_cell;
+					const float rk = p_cell * Math::lerp(0.5f, 0.85f, hash3(cx, cy, cz, p_salt + 4u)) * Math::lerp(0.75f, 1.0f, Math::smoothstep(p_gate, p_gate + 0.2f, pres));
+					const float d = p_p.distance_to(c) / rk;
+					if (d < 1.0f) {
+						best = MAX(best, rk * 0.85f * Math::pow(1.0f - d * d, 0.25f));
+					}
+					near = MAX(near, 1.0f - Math::smoothstep(1.0f, 1.4f, d));
+				}
+			}
+		}
+		r_crease = near * (1.0f - Math::smoothstep(0.0f, 0.2f * p_cell, best));
+		return best;
+	};
+	// Per chain, set before its tubes are deformed (p_features 3): the year boundaries up a pole
+	// (girdle scars), and where a pole leaves its knuckle (base point, heading, radius).
+	LocalVector<Vector3> cut_scars;
+	Vector3 cut_j, cut_jdir;
+	float cut_jr = 0.0f;
+	int knob_cap_from = INT_MAX; // A pollard knuckle's closing dome: from this ring the head's knobs cover it.
+	int s_chain_salt = 0; // The chain's first node, salting its branch scars.
+	float cut_arc0 = 0.0f; // Distance up the chain to the tube's first ring, when it is built in pieces.
+	const bool cut_tree = cut_height > 0.0f && !cut_heads.is_empty() && decay_class == 0 && !fallen && !fallen_branch;
+	// A coppice stool's height over the soil: its knobs cover everything below it.
+	float stool_top = -1.0f;
+	float stool_r = 0.0f;
+	if (cut_tree && cut_height <= 0.5f) {
+		for (const int i : bolling) {
+			if (!nodes[i].removed) {
+				stool_top = MAX(stool_top, nodes[i].end().y - vet_base_y + 0.5f * nodes[i].radius);
+				stool_r = MAX(stool_r, nodes[i].radius);
+			}
+		}
+	}
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
-		if (veteran_features.is_empty() || !p_features) {
+		if ((veteran_features.is_empty() && p_features != 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
 			return;
 		}
 		Vector3 *vv = r_b.verts.ptrw();
@@ -7162,6 +7930,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		LocalVector<float> touched;
 		touched.resize(p_part.w);
 		bool any = false;
+		// Distance up the chain, ring by ring.
+		LocalVector<float> arc;
+		arc.resize(p_pts.size());
+		for (uint32_t q = 0; q < p_pts.size(); q++) {
+			arc[q] = q > 0 ? arc[q - 1] + p_pts[q].distance_to(p_pts[q - 1]) : cut_arc0;
+		}
 		for (int i = 0; i < p_part.w; i++) {
 			touched[i] = 0.0f;
 			const int v = p_part.z + i;
@@ -7173,7 +7947,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// normals swing by tens of degrees, so vertices at the hollow's edge fell in or out of
 			// it at random and folded into pale blades across the opening.
 			Vector3 n = vv[v] - p_pts[ring];
-			n.y = 0.0f;
+			if (p_features == 3) {
+				// Square to the chain's own axis: poles lean and bend.
+				const Vector3 ax = p_pts[MIN(ring + 1, int(p_pts.size()) - 1)] - p_pts[MAX(ring - 1, 0)];
+				if (ax.length_squared() > 1e-10f) {
+					const Vector3 an = ax.normalized();
+					n -= an * n.dot(an);
+				}
+			} else {
+				n.y = 0.0f;
+			}
 			if (n.length_squared() < 1e-8f) {
 				continue;
 			}
@@ -7185,8 +7968,183 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float dark = 1.0f;
 			float rot = 0.0f;
 			float w_any = 0.0f;
+			float algae = 0.0f;
+			float pale = 0.0f; // Crust lichen on a coppice rod.
+			float head_win = 0.0f;
+			float hoff = 0.0f; // Pushed along hdir: over the head's top, out from its centre.
+			Vector3 hdir = n;
+			if ((p_features == 2 || p_features == 3) && head_r > 0.0f && p_pts[ring].y > head_y0) {
+				head_win = Math::smoothstep(head_y0, head_y0 + 0.5f * head_r, p_pts[ring].y);
+				if (p_features == 3) {
+					// The knuckles round the head share its knobs, which fade up each pole.
+					head_win *= 1.0f - Math::smoothstep(1.5f * head_r, 1.9f * head_r, (p_pts[ring] + n * r).distance_to(head_c));
+					if (cut_jr > 0.0f) {
+						head_win *= 1.0f - Math::smoothstep(0.0f, 1.2f * cut_jr, (p_pts[ring] - cut_j).dot(cut_jdir));
+					}
+				}
+			}
+			if (p_features == 3 && head_r > 0.0f && int(ring) >= knob_cap_from) {
+				// The callus dome over a knuckle whose poles are gone: knobbed like the head. Plain,
+				// its bark converged to the apex as a pinwheel.
+				head_win = MAX(head_win, CLAMP(0.5f * float(int(ring) - knob_cap_from), 0.0f, 1.0f));
+			}
+			if (head_win > 0.0f) {
+				// A pollard's head (trees.md 5l): broad swellings of the callus of every cut, split
+				// by deep fissures where they met, and over them clusters of hard-edged knobs, the
+				// burrs (Read 2000), whatever the bark's own texture. All modelled: the head's
+				// rings are about a centimetre apart each way.
+				const float win = head_win;
+				// The surface point itself, and out from the head's centre over its top: pushed
+				// sideways from the ring's centre, the rounded top's knobs smeared into radial
+				// pleats round its pole.
+				// From the ring's centre at the ring's radius, so the bark, its relief and the moss
+				// shell sample the same point.
+				const Vector3 hp = p_pts[ring] + (vv[v] - p_pts[ring]).normalized() * r;
+				const Vector3 from_c = hp - head_c;
+				if (from_c.length_squared() > 1e-8f) {
+					hdir = n.lerp(from_c.normalized(), Math::smoothstep(head_c.y, head_c.y + 0.6f * head_r, hp.y)).normalized();
+				}
+				const float k1 = moss_noise(hp * (1.0f / (0.32f * head_r)), 0x6b6e6231u) - 0.5f;
+				const float ridge = 1.0f - Math::abs(2.0f * moss_noise(hp * Vector3(1.0f / (0.22f * head_r), 1.0f / (0.7f * head_r), 1.0f / (0.22f * head_r)), 0x6b6e6233u) - 1.0f);
+				const float fis = Math::smoothstep(0.8f, 0.97f, ridge);
+				float crease = 0.0f;
+				const float kn = callus_knobs(hp, CLAMP(0.12f * head_r, 0.035f, 0.07f), 0.45f * head_r, 0.38f, 0x6b6e6234u, crease);
+				hoff += win * (head_r * (0.07f * k1 - 0.14f * fis) + kn * (1.0f - fis));
+				// The bark's own furrows mostly closed over by the callus: at full depth they
+				// crossed the knobs as long pleats.
+				hoff -= 0.75f * win * (vv[v].distance_to(p_pts[ring]) - r);
+				dark = MIN(dark, Math::lerp(1.0f, 0.42f, win * fis));
+				dark = MIN(dark, Math::lerp(1.0f, 0.45f, win * crease));
+				// Green algae (Desmococcus) and moss film where water lingers between the knobs
+				// and on their tops; drier, paler grey on the bulges' flanks.
+				algae = win * CLAMP(0.35f + 1.6f * (-k1) + 0.5f * n.y + 0.3f * fis + 0.3f * crease, 0.0f, 0.85f);
+				w_any = 1.0f;
+			}
+			if (p_features == 3) {
+				const Vector3 hp = p_pts[ring] + n * r;
+				if (stool_top > 0.0f && h < stool_top + 0.06f) {
+					// A coppice stool: the same knobs and fissures over the stool's lobes, fading
+					// up the stems' first few centimetres.
+					const float win = 1.0f - Math::smoothstep(stool_top - 0.05f, stool_top + 0.05f, h);
+					const float k1 = moss_noise(hp * (1.0f / MAX(0.5f * stool_r, 0.05f)), 0x73746c31u) - 0.5f;
+					const float ridge = 1.0f - Math::abs(2.0f * moss_noise(hp * (1.0f / MAX(0.35f * stool_r, 0.04f)), 0x73746c32u) - 1.0f);
+					const float fis = Math::smoothstep(0.8f, 0.97f, ridge);
+					float crease = 0.0f;
+					const float kn = callus_knobs(hp, 0.05f, 0.15f, 0.4f, 0x73746c33u, crease);
+					off += win * (MIN(r, 0.12f) * (0.25f * k1 - 0.3f * fis) + kn * (1.0f - fis));
+					dark = MIN(dark, Math::lerp(1.0f, 0.45f, win * fis));
+					dark = MIN(dark, Math::lerp(1.0f, 0.62f, win * crease));
+					algae = MAX(algae, win * CLAMP(0.2f + 1.2f * (-k1) + 0.3f * crease, 0.0f, 0.6f));
+					w_any = 1.0f;
+				}
+				// Up the pole: shallow, wavering flutes along it, a few round it (as on hornbeam
+				// and old hazel rods), read on the tube's own frame so they follow its bends.
+				const int col = i % (p_sides + 1);
+				const float th = float(Math::TAU) * float(col % p_sides) / float(p_sides);
+				const float along = arc[ring];
+				const float flute = moss_noise(Vector3(1.4f * Math::cos(th), 1.4f * Math::sin(th), along / MAX(8.0f * r, 0.15f)), 0x666c7574u) - 0.5f;
+				// Rods and withies are round, if not perfectly: a faint unevenness. A pole fattening
+				// into a limb grows its flutes.
+				const float thick = Math::smoothstep(0.03f, 0.08f, r);
+				off += 0.35f * r * flute * thick;
+				off += 0.07f * r * (1.0f - thick) * (moss_noise(hp * (1.0f / MAX(1.5f * r, 0.01f)), 0x726f6475u) - 0.5f);
+				if (thick < 1.0f) {
+					// A rod's nodes: every 12-20 cm a bud or a shed side shoot left a low swelling
+					// on one side, the rod kinking a little there (hazel and willow rods are never
+					// straight tubes; Rackham 2006), its scar darker.
+					const float cell_l = 0.16f;
+					const int ia = int(Math::floor(along / cell_l));
+					float bump = 0.0f;
+					for (int da = -1; da <= 1; da++) {
+						const int ca = ia + da;
+						const uint32_t salt = uint32_t(s_chain_salt) * 131u + 5u;
+						const float ac = (ca + 0.25f + 0.5f * hash3(ca, 1, 11, salt)) * cell_l;
+						// Alternate sides, as hazel's buds are alternate.
+						const float tc = float(Math::TAU) * (0.5f * float(ca & 1) + 0.3f * hash3(ca, 2, 12, salt));
+						const float dl = (along - ac) / MAX(1.2f * r, 0.008f);
+						const float dw = Math::angle_difference(tc, th) / 1.1f;
+						bump = MAX(bump, Math::exp(-(dl * dl + dw * dw)) * (0.6f + 0.4f * hash3(ca, 3, 13, salt)));
+					}
+					off += (1.0f - thick) * r * 0.16f * bump;
+					dark = MIN(dark, Math::lerp(1.0f, 0.78f, (1.0f - thick) * Math::smoothstep(0.75f, 0.95f, bump)));
+				}
+				if (thick > 0.0f) {
+					// Branch scars on a thick pole: the twigs it shed as it grew, each a low ring of
+					// callus round a darker hollow, the bark wrinkled into a chevron above it (the
+					// "Chinese moustache" of beech; Vaucher 2003). Cells half a metre along and a
+					// quarter of the way round.
+					const float cell_l = 0.5f;
+					const int ia = int(Math::floor(along / cell_l)), it = int(Math::floor(th / (float(Math::TAU) * 0.25f)));
+					float lip = 0.0f, pit = 0.0f, chev = 0.0f;
+					for (int da = -1; da <= 1; da++) {
+						for (int dt = -1; dt <= 1; dt++) {
+							const int ca = ia + da, ct = (it + dt + 4) % 4;
+							const uint32_t salt = uint32_t(s_chain_salt) * 31u;
+							if (hash3(ca, ct, 7, salt) > 0.45f) {
+								continue;
+							}
+							const float ac = (ca + 0.2f + 0.6f * hash3(ca, ct, 8, salt)) * cell_l;
+							const float tc = (ct + 0.2f + 0.6f * hash3(ca, ct, 9, salt)) * float(Math::TAU) * 0.25f;
+							const float rs = r * Math::lerp(0.18f, 0.35f, hash3(ca, ct, 10, salt));
+							const float dl = along - ac, dw = Math::angle_difference(tc, th) * r;
+							const float q = Math::sqrt(dl * dl + dw * dw) / rs;
+							lip = MAX(lip, Math::exp(-(q - 1.0f) * (q - 1.0f) * 6.0f));
+							pit = MAX(pit, 1.0f - Math::smoothstep(0.5f, 0.95f, q));
+							// The chevron: two short creases running up and out from above the scar.
+							if (dl > 0.0f && dl < 3.0f * rs) {
+								const float v = Math::abs(dw) - 0.9f * dl;
+								chev = MAX(chev, Math::exp(-v * v / (0.04f * rs * rs)) * (1.0f - dl / (3.0f * rs)) * Math::smoothstep(0.3f * rs, 0.8f * rs, Math::abs(dw)));
+							}
+						}
+					}
+					off += thick * r * (0.07f * lip - 0.05f * pit - 0.025f * chev);
+					dark = MIN(dark, Math::lerp(1.0f, 0.55f, thick * pit));
+					dark = MIN(dark, Math::lerp(1.0f, 0.8f, thick * chev));
+				}
+				if (cut_height <= 0.5f) {
+					// A coppice rod is not one flat colour: a green film of algae up its shaded
+					// foot, pale crust lichen in patches, coppery young bark up top (hazel).
+					const float low = 1.0f - Math::smoothstep(0.2f, 1.4f, h);
+					algae = MAX(algae, 0.45f * low * Math::smoothstep(0.35f, 0.7f, moss_noise(hp * 3.0f, 0x72616c67u)));
+					pale = 0.7f * Math::smoothstep(0.56f, 0.7f, moss_noise(hp * Vector3(14.0f, 5.0f, 14.0f), 0x72636c6eu)) * (1.0f - 0.6f * Math::smoothstep(1.0f, 2.5f, h));
+				}
+				// Girdle scars: each year's bud-scale scar, a raised ring with a slight waist above.
+				float scar = 0.0f;
+				const float sw = MAX(0.2f * r, 0.004f);
+				for (const Vector3 &sp : cut_scars) {
+					const float d = p_pts[ring].distance_to(sp);
+					if (d < 4.0f * sw) {
+						const float a = d / sw;
+						scar = MAX(scar, Math::exp(-a * a));
+						off -= 0.012f * r * Math::exp(-(a - 2.0f) * (a - 2.0f));
+					}
+				}
+				// Faint: a hazel rod's or a withy's scars are low rings, not a bamboo's nodes.
+				off += 0.03f * r * scar;
+				dark = MIN(dark, Math::lerp(1.0f, 0.92f, scar));
+				if (cut_jr > 0.0f) {
+					// Folds of bark round the pole's base, where it swells out of the head: the
+					// stretched bark buckles in rings (the "elephant skin" of beech and hornbeam).
+					const float dc = (p_pts[ring] - cut_j).dot(cut_jdir);
+					if (dc > 0.0f && dc < 2.5f * cut_jr) {
+						// Irregular and partial: the folds wander in spacing, die out round the
+						// pole, and are deepest in patches (on the crotch side most of all).
+						const float fade = 1.0f - dc / (2.5f * cut_jr);
+						const float wob = 1.6f * (moss_noise(hp * (1.0f / MAX(0.7f * cut_jr, 0.02f)), 0x666f6c64u) - 0.5f);
+						const float patch = Math::smoothstep(0.4f, 0.62f, moss_noise(hp * (1.0f / MAX(0.9f * cut_jr, 0.02f)), 0x666f6c65u));
+						const float depth = Math::lerp(0.5f, 1.3f, moss_noise(hp * (1.0f / MAX(0.4f * cut_jr, 0.02f)), 0x666f6c66u));
+						const float fold = Math::sin(float(Math::TAU) * (dc / (0.32f * cut_jr) + wob));
+						// Sharp creases between soft rolls.
+						const float crease = 1.0f - Math::abs(fold);
+						const float shape = 0.6f * fold - 0.8f * crease * crease * crease;
+						off += 0.04f * cut_jr * fade * patch * depth * shape;
+						dark = MIN(dark, Math::lerp(1.0f, 0.75f, fade * patch * crease * crease * crease));
+					}
+				}
+				w_any = 1.0f;
+			}
 			for (const VeteranFeature &f : veteran_features) {
-				if (!p_features) {
+				if (p_features == 3) {
 					break;
 				}
 				// A basal hollow is the main stem's alone: the forks around it took a second dent
@@ -7213,9 +8171,20 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// on the tube's rings came out as crumpled facets, not a rounded burl.
 					const float k0 = 1.0f - MIN(e * e, 1.0f);
 					const float k = k0 * k0;
-					const float lump = 0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 1.5f, 0x6275726cu);
+					// A burr is a cluster of knobs (each a bud trace that swelled), not one dome.
+					const Vector3 bp = p_pts[ring] + n * r;
+					const float lump = (0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 1.5f, 0x6275726cu)) *
+							(0.7f + 0.6f * moss_noise(bp * (2.5f / MAX(f.half_w, 0.02f)), 0x6b6e6f62u));
 					// Sized by the stem, not the root flare's swollen radius.
 					off += f.amount * MIN(r, vet_r_stem) * k * lump;
+					if (head_r > 0.0f && k > 0.0f) {
+						// On a pollard's head every burr is crowded with knobs: a bare dome read as
+						// a smooth bulge on the head's outline.
+						float crease = 0.0f;
+						const float kn = callus_knobs(bp, CLAMP(0.1f * head_r, 0.03f, 0.06f), 0.3f * head_r, 0.2f, 0x6b6e6235u, crease);
+						off += Math::sqrt(k) * kn;
+						dark = MIN(dark, Math::lerp(1.0f, 0.5f, Math::sqrt(k) * crease));
+					}
 					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
 				} else {
 					// A hollow: deep inside, the floor rough; a callus lip of new wood around it.
@@ -7244,9 +8213,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// No moss on the rotten wall: the shell sinks under the bark past the rim.
 					off -= 0.08f * rot;
 				}
-				vv[v] += n * off;
+				vv[v] += n * off + hdir * hoff;
 				if (p_colour) {
-					const Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
+					Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
+					c = c.lerp(Color(0.13f, 0.16f, 0.07f, c.a), algae);
+					c = c.lerp(Color(0.3f, 0.31f, 0.27f, c.a), pale);
 					cc[v] = Color(c.r * dark, c.g * dark, c.b * dark, c.a);
 				}
 				touched[i] = 1.0f;
@@ -7389,6 +8360,31 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	LocalVector<Vector3> pts;
 	LocalVector<float> rad;
 	LocalVector<int> chain;
+	// Extra rings along a tube wherever p_step (metres at a point, given its radius) asks for
+	// them; the radius is interpolated.
+	auto densify = [&](LocalVector<Vector3> &r_p, LocalVector<float> &r_r, auto p_step) {
+		LocalVector<Vector3> dp;
+		LocalVector<float> dr;
+		for (int i = 0; i < int(r_p.size()); i++) {
+			dp.push_back(r_p[i]);
+			dr.push_back(r_r[i]);
+			if (i + 1 < int(r_p.size())) {
+				const Vector3 mid = r_p[i].lerp(r_p[i + 1], 0.5f);
+				const float st = MIN(MIN(p_step(r_p[i], r_r[i]), p_step(r_p[i + 1], r_r[i + 1])), p_step(mid, 0.5f * (r_r[i] + r_r[i + 1])));
+				const float len = r_p[i].distance_to(r_p[i + 1]);
+				if (st < len) {
+					const int steps = MIN(int(Math::ceil(len / MAX(st, 0.002f))), 400);
+					for (int k = 1; k < steps; k++) {
+						const float f = float(k) / steps;
+						dp.push_back(r_p[i].lerp(r_p[i + 1], f));
+						dr.push_back(Math::lerp(r_r[i], r_r[i + 1], f));
+					}
+				}
+			}
+		}
+		r_p = dp;
+		r_r = dr;
+	};
 	// The lying stem's own bark and moss (deadwood interface): vertex ranges for _measure_lying().
 	int dw_v0 = -1, dw_v1 = -1, dw_m0 = -1, dw_m1 = -1;
 	for (int s = 1; s < int(nodes.size()); s++) {
@@ -7464,8 +8460,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float ratio = r0 / rp;
 			// No swell on steep limbs: weld() leaves them as crotches, where a swollen base would
 			// poke out of the parent's bark.
-			const float swell = 0.2f * CLAMP(ratio * 2.5f, 0.2f, 1.0f) * (1.0f - Math::smoothstep(0.35f, 0.6f, ratio)) *
+			float swell = 0.2f * CLAMP(ratio * 2.5f, 0.2f, 1.0f) * (1.0f - Math::smoothstep(0.35f, 0.6f, ratio)) *
 					Math::smoothstep(0.45f, 0.6f, first.dir.cross(par.dir).length());
+			if (first.pole && bolling.has(first.parent)) {
+				// A pole swells where it leaves its knuckle (trees.md 5l): its base is a socket of
+				// callus, whatever its angle; the knuckle is fat enough to take it.
+				swell = 0.3f;
+			}
 			const float seg = pts[0].distance_to(pts[1]);
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -7540,15 +8541,98 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// rolls over a stub; Shigo 1985), or under the splinters of a break.
 		Vector3 rim_pt = pts[pts.size() - 1];
 		float rim_r = rad[rad.size() - 1];
+		int cap_n = 3; // Rings closing the end.
 		if (rim_r >= 0.006f && pts.size() >= 2) {
 			const Vector3 dir_end = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
-			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]);
+			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]) || _coppice_lobe(chain[chain.size() - 1]);
 			const float cap_len = broken ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
 			const float ks[3] = { 0.4f, 0.75f, 1.0f };
 			const float rs[3] = { 0.93f, 0.68f, 0.0f };
-			for (int k = 0; k < 3; k++) {
-				pts.push_back(rim_pt + dir_end * (rim_r * cap_len * ks[k]));
-				rad.push_back(rim_r * rs[k]);
+			// A coppice lobe's old cut: the callus has rolled over its rim and stands proud of the
+			// sunken face (Shigo 1985), a lip round a dark, rotted centre.
+			const float roll_k[3] = { 0.1f, 0.18f, 0.24f };
+			const float roll_r[3] = { 1.05f, 0.88f, 0.6f };
+			const bool lobe = _coppice_lobe(chain[chain.size() - 1]);
+			const int ce = chain[chain.size() - 1];
+			if (!broken && cut_height > 0.5f && cut_heads.has(ce)) {
+				// A pollard knuckle whose poles are all gone: a broad callus dome, knobbed like
+				// the head (veteran_deform). On three rings its last fan of long triangles shaded
+				// as a dark pinwheel.
+				cap_n = 8;
+				for (int k = 1; k <= cap_n; k++) {
+					const float t = float(k) / cap_n * float(Math::PI) * 0.5f;
+					pts.push_back(rim_pt + dir_end * (rim_r * 0.55f * Math::sin(t)));
+					rad.push_back(rim_r * (k == cap_n ? 0.0f : Math::cos(t)));
+				}
+			} else {
+				for (int k = 0; k < 3; k++) {
+					pts.push_back(rim_pt + dir_end * (rim_r * (lobe ? roll_k[k] : cap_len * ks[k])));
+					rad.push_back(rim_r * (lobe ? roll_r[k] : rs[k]));
+				}
+			}
+		}
+		if (head_r > 0.0f && s == veteran_stem) {
+			// Rings every 4 cm over a pollard's head, for its knobs and fissures (veteran_deform).
+			LocalVector<Vector3> dp;
+			LocalVector<float> dr;
+			for (int i = 0; i < int(pts.size()); i++) {
+				dp.push_back(pts[i]);
+				dr.push_back(rad[i]);
+				if (i + 1 < int(pts.size()) && MAX(pts[i].y, pts[i + 1].y) > head_y0) {
+					const int steps = int(Math::ceil(pts[i].distance_to(pts[i + 1]) / 0.04f));
+					for (int k = 1; k < steps; k++) {
+						const float f = float(k) / steps;
+						dp.push_back(pts[i].lerp(pts[i + 1], f));
+						dr.push_back(Math::lerp(rad[i], rad[i + 1], f));
+					}
+				}
+			}
+			pts = dp;
+			rad = dr;
+		}
+		// A cut tree's poles and stool (trees.md 5l): their year boundaries, and the swollen base
+		// where a pole leaves its knuckle, with rings enough for the flare to be round.
+		cut_scars.clear();
+		cut_jr = 0.0f;
+		s_chain_salt = s;
+		const bool head_chain = cut_tree && head_r > 0.0f && s != veteran_stem && first.start.distance_to(head_c) < 1.9f * head_r;
+		const bool stool_chain = cut_tree && stool_top > 0.0f && first.start.y - vet_base_y < stool_top;
+		const bool cut_chain = cut_tree && (first.pole || bolling.has(s) || head_chain || stool_chain);
+		if (cut_chain) {
+			for (int c = 1; c < int(chain.size()); c++) {
+				const Node &a = nodes[chain[c - 1]], &b = nodes[chain[c]];
+				if (a.pole && b.pole && a.born != b.born) {
+					cut_scars.push_back(b.start);
+				}
+			}
+			if (first.pole && first.parent > 0 && bolling.has(first.parent)) {
+				cut_j = first.start;
+				cut_jdir = first.dir;
+				cut_jr = first.radius;
+			} else {
+				for (int c = 0; c + 1 < int(chain.size()); c++) {
+					const Node &b = nodes[chain[c + 1]];
+					if (bolling.has(chain[c]) && !bolling.has(chain[c + 1]) && b.pole) {
+						cut_j = b.start;
+						cut_jdir = b.dir;
+						cut_jr = b.radius;
+						break;
+					}
+				}
+				if (cut_jr > 0.0f) {
+					// The knuckle's own continuation: swell the pole's first radii out of it, as the
+					// branch collar does for a lateral one.
+					densify(pts, rad, [&](const Vector3 &p_p, float) {
+						const float d = (p_p - cut_j).dot(cut_jdir);
+						return d > -0.5f * cut_jr && d < 3.0f * cut_jr ? 0.3f * cut_jr : 1e9f;
+					});
+					for (uint32_t i = 0; i < pts.size(); i++) {
+						const float d = (pts[i] - cut_j).dot(cut_jdir);
+						if (d >= -1e-4f && d < 4.0f * cut_jr && pts[i].distance_to(cut_j) < 5.0f * cut_jr) {
+							rad[i] *= 1.0f + 0.3f * Math::exp(-MAX(d, 0.0f) / (0.8f * cut_jr));
+						}
+					}
+				}
 			}
 		}
 		if (collar) {
@@ -7688,6 +8772,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// as linear, beech came out near 0.45 albedo and birch 0.74, about twice real bark (beech
 		// about 0.15 to 0.2, birch about 0.5), and logs and trunks rendered almost white.
 		Color col = bark_color;
+		if (preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH) {
+			// A birch's white (or yellow) bark comes with girth: its twigs and thin shoots are dark
+			// red-brown and glossy, turning pale from about 2-4 cm (Rushforth, Trees of Britain and
+			// Europe). Thin shoots took the trunk's white and read as frosted sprays.
+			col = Color(0.3f, 0.18f, 0.14f).lerp(col, Math::smoothstep(0.008f, 0.03f, r0));
+		}
 		if (first.dead) {
 			col = col.lerp(Color(0.42f, 0.4f, 0.37f), 0.6f);
 		}
@@ -7697,10 +8787,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bark.bone = node_bone[s];
 		const BarkSet &bs = _bark_set(_bark_kind(preset));
 		const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
-		const bool near_tube = bark_relief > 0.0f && r0 >= RELIEF_MIN_RADIUS;
+		// A cut tree's poles and stool get a near tube however thin, for their modelled relief.
+		const bool near_tube = bark_relief > 0.0f && (r0 >= RELIEF_MIN_RADIUS || (cut_chain && r0 >= 0.012f));
 		// Displaced only where that shows (a millimetre or more nearer the relief than a smooth
 		// tube); otherwise LOD 0 gets a smooth tube with sides for a millimetre of chord error.
-		const bool relief = near_tube && bs.relief_gain * scale >= 0.001f;
+		// A knuckle's chain runs on into its pole, as thin as a withy: the map's relief, set by
+		// the knuckle's girth, would furrow it; the knuckle takes the head's knobs instead.
+		const bool relief = near_tube && r0 >= RELIEF_MIN_RADIUS && !(cut_chain && s != veteran_stem && (bolling.has(s) || first.pole)) && bs.relief_gain * scale >= 0.001f;
+		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : 0));
 		// A mesh without LODs (the near variants) carries the near tube alone.
 		if (!(near_tube && skip_lods)) {
 			Vector4i part;
@@ -7746,221 +8840,365 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			};
 			LocalVector<Vector3> rp;
 			LocalVector<float> rr;
-			make_rings(0.05f, rp, rr);
-			const int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
-			if (near_tube) {
-				// The bark's own grid. The moss shell reads the bark's displacement at its vertices,
-				// so under a shell the two share one grid; elsewhere a displaced tube takes rings as
-				// far apart as its pattern allows along the stem (bs.relief_along), and a smooth one
-				// sides for a millimetre of chord error and rings every 10 cm.
-				LocalVector<Vector3> bp;
-				LocalVector<float> br;
-				int bsides = rsides;
-				if (moss_shell) {
-					// Smooth bark too: on a coarser bark grid the shell's edge, where it meets the
-					// bark, ran straight along the bark's long triangles.
-					bp = rp;
-					br = rr;
-				} else if (relief) {
-					make_rings(MAX(0.05f, bs.relief_along), bp, br);
-				} else {
-					make_rings(0.1f, bp, br);
-					bsides = CLAMP(int(Math::ceil(float(Math::PI) / Math::acos(1.0f - 0.001f / MAX(r0, 0.001f)))), 24, rsides);
+			if (vf == 3) {
+				// A pole's rings come from cut_step below, by its girth.
+				rp = pts;
+				rr = rad;
+			} else {
+				make_rings(0.05f, rp, rr);
+			}
+			int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
+			if (vf == 3) {
+				// Enough sides for the flutes, a few round a pole.
+				rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.01f)), 12, 32);
+			}
+			// A cut tree's modelled wood: rings about a centimetre apart over a pollard's head and
+			// a stool, closer over a girdle scar and the folds at a pole's base; as many sides.
+			const bool knobbly = (head_r > 0.0f && (s == veteran_stem || head_chain)) || stool_chain;
+			auto cut_step = [&](const Vector3 &p_p, float p_r) -> float {
+				float st = 1e9f;
+				if (head_r > 0.0f && (s == veteran_stem || head_chain) && p_p.y > head_y0 && (s == veteran_stem || (p_p.distance_to(head_c) < 2.0f * head_r && (cut_jr <= 0.0f || (p_p - cut_j).dot(cut_jdir) < 1.4f * cut_jr)))) {
+					st = s == veteran_stem ? 0.013f : 0.016f;
 				}
-				Vector4i part;
-				bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
-				bark.begin(part);
-				_tube(bark, bp, br, bsides, 0.0f, col, relief ? bs.height.ptr() : nullptr, relief ? scale : 0.0f, girth_r, !(fallen || fallen_branch));
-				bark.end(part, r0);
-				if (collar) {
-					root_collar(bark, part, bsides, bp, br, false);
+				if (stool_chain && p_p.y - vet_base_y < stool_top + 0.08f) {
+					st = MIN(st, 0.018f);
 				}
-				moss_tint(bark, part);
-				lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : br[0]), uint32_t(s));
-				end_grain(bark, part, bp, bsides, girth_r, col);
-				if (collar) {
-					soil_tint(bark, part, 1.0f);
+				if (vf == 3) {
+					// Thick poles every 5 cm, for their branch scars.
+					st = MIN(st, p_r > 0.05f ? 0.05f : CLAMP(4.0f * p_r, 0.05f, 0.2f));
+					const float sw = MAX(0.2f * p_r, 0.004f);
+					for (const Vector3 &sp : cut_scars) {
+						if (p_p.distance_to(sp) < 3.0f * sw && p_r > 0.006f) {
+							st = MIN(st, sw);
+						}
+					}
+					if (cut_jr > 0.0f) {
+						const float dc = (p_p - cut_j).dot(cut_jdir);
+						if (dc > -0.2f * cut_jr && dc < 2.7f * cut_jr) {
+							st = MIN(st, 0.07f * cut_jr);
+						}
+					}
 				}
-				if (rigged) {
-					_skin_stem(bark, part, s, bp, bsides);
+				return st;
+			};
+			if (vf == 3 && rp.size() > uint32_t(cap_n) + 2) {
+				// Resampled along the chain at the step asked for: a hazel rod's internodes are a
+				// few centimetres, and a ring at each of them doubled its triangles for nothing.
+				LocalVector<Vector3> qp;
+				LocalVector<float> qr;
+				qp.push_back(rp[0]);
+				qr.push_back(rr[0]);
+				float since = 0.0f;
+				const uint32_t body = rp.size() - cap_n; // The last rings close the end (a cap).
+				for (uint32_t i = 0; i + 1 < body; i++) {
+					const float len = rp[i].distance_to(rp[i + 1]);
+					float t = 0.0f;
+					while (len > 1e-6f) {
+						const Vector3 at = rp[i].lerp(rp[i + 1], t / len);
+						const float want = cut_step(at, Math::lerp(rr[i], rr[i + 1], t / len));
+						const float need = want - since;
+						if (t + need >= len) {
+							since += len - t;
+							break;
+						}
+						t += need;
+						since = 0.0f;
+						qp.push_back(rp[i].lerp(rp[i + 1], t / len));
+						qr.push_back(Math::lerp(rr[i], rr[i + 1], t / len));
+					}
 				}
-				if (s == veteran_stem || vet_share[s]) {
-					veteran_deform(bark, part, bp, br, bsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
+				if (qp[qp.size() - 1].distance_to(rp[body - 1]) < 0.3f * MAX(cut_step(rp[body - 1], rr[body - 1]), 0.01f) && qp.size() > 1) {
+					qp.resize(qp.size() - 1);
+					qr.resize(qr.size() - 1);
 				}
-				if (!stem && !hanger && junction_weld) {
-					weld(bark, part, s, bp, br, bsides);
+				for (uint32_t i = body - 1; i < rp.size(); i++) {
+					qp.push_back(rp[i]);
+					qr.push_back(rr[i]);
+				}
+				rp = qp;
+				rr = qr;
+			} else if (vf >= 2 && cut_tree) {
+				densify(rp, rr, cut_step);
+			}
+			// A knuckle or stool lobe runs on into its pole: the knobs need a centimetre between
+			// sides, the pole a fraction of that. The chain is built in two tubes, crossing over
+			// three rings past where the knobs have faded, each with its own sides.
+			int split = -1;
+			if (knobbly && s != veteran_stem && cut_jr > 0.0f) {
+				for (uint32_t i = 0; i < rp.size(); i++) {
+					if ((rp[i] - cut_j).dot(cut_jdir) > 1.6f * cut_jr && i >= 3 && i + 3 < rp.size()) {
+						split = int(i);
+						break;
+					}
 				}
 			}
-			if (moss_shell) {
-				// The moss shell (section 5c): the same displaced tube, lifted by the moss's depth
-				// where the weight is high and sunk below the bark where it fades, so the moss edge
-				// needs no alpha; quads wholly under the bark are dropped. Cushions thin out on
-				// thin limbs.
-				const float depth = 0.018f * CLAMP(r0 / 0.15f, 0.35f, 1.0f);
-				Vector4i part;
-				moss.bone = node_bone[s];
-				moss.begin(part);
-				_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
-				moss.end(part, r0);
-				if (collar) {
-					root_collar(moss, part, rsides, rp, rr, false);
-				}
-				if (s == veteran_stem || vet_share[s]) {
-					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
-				}
-				// The bark's own displacement under each shell vertex (as the relief tube has it).
-				const Vector<uint8_t> bh_buf = bs.height->get_data();
-				const float *bh = reinterpret_cast<const float *>(bh_buf.ptr());
-				const int bn = bs.height->get_width();
-				auto bark_disp = [&](const Vector2 &p_uv) -> float {
-					if (!relief) {
-						return 0.0f;
+			LocalVector<Vector3> full_rp;
+			LocalVector<float> full_rr;
+			full_rp = rp;
+			full_rr = rr;
+			const int pieces = split > 0 ? 2 : 1;
+			cut_arc0 = 0.0f;
+			for (int piece = 0; piece < pieces; piece++) {
+				if (split > 0) {
+					// Piece 0 to three rings past the split, sinking inside piece 1 over the last two;
+					// piece 1 from one ring before it, starting inside piece 0.
+					rp.clear();
+					rr.clear();
+					const int a = piece == 0 ? 0 : split - 1, b = piece == 0 ? split + 2 : int(full_rp.size()) - 1;
+					for (int i = a; i <= b; i++) {
+						rp.push_back(full_rp[i]);
+						float f = 1.0f;
+						if (piece == 0) {
+							f = i == split + 1 ? 0.9f : (i == split + 2 ? 0.75f : 1.0f);
+						} else if (i == split - 1) {
+							f = 0.9f;
+						}
+						rr.push_back(full_rr[i] * f);
 					}
-					const float x = (p_uv.x - Math::floor(p_uv.x)) * bn - 0.5f, y = (p_uv.y - Math::floor(p_uv.y)) * bn - 0.5f;
-					const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
-					const float fx = x - x0, fy = y - y0;
-					auto at = [&](int i, int j) { return bh[((j % bn + bn) % bn) * bn + ((i % bn + bn) % bn)]; };
-					return scale * Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
-				};
-				// Moss fills the furrows first, then grows over the plates (Barkman 1958): the moss
-				// surface rises from the furrow floor to above the plate tops as its weight grows,
-				// and wherever it is below the bark it stays hidden under it.
-				const float floor_d = relief ? -0.045f * scale : -0.004f; // Below the deepest furrow (3 cm plus grain).
-				if (rigged) {
-					_skin_stem(moss, part, s, rp, rsides);
-				}
-				LocalVector<float> wv;
-				wv.resize(part.w);
-				// The weight before its clamp, and how much it changes from one vertex to the next:
-				// on heavily mossed wood (logs) the weight crossed the whole ramp between two
-				// vertices, so the edge could only fall on the grid and drew it as stairs. The ramp
-				// is widened to span at least two and a half vertices, so the surface crosses the
-				// bark at the weight's own contour, between vertices.
-				const int ring = rsides + 1;
-				LocalVector<float> raw;
-				raw.resize(part.w);
-				// No moss on a log's broken butt face (the closed cap's rings).
-				const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
-				for (int i = 0; i < part.w; i++) {
-					raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
-					if (cap_end > 0.0f && i / ring < int(rp.size()) && rp[i / ring].distance_to(rp[0]) < cap_end) {
-						raw[i] = -1.0f;
+					cut_arc0 = 0.0f;
+					for (int i = 1; i <= a; i++) {
+						cut_arc0 += full_rp[i].distance_to(full_rp[i - 1]);
+					}
+					if (piece == 1) {
+						tube_carry_nrm = tube_last_nrm;
 					}
 				}
-				for (int i = 0; i < part.w; i++) {
-					const int v = part.z + i;
-					const Vector3 n = moss.normals[v];
-					const float w = CLAMP(raw[i], 0.0f, 1.0f);
-					float step = 0.0f;
-					if (part.w % ring == 0) {
-						const int rs = i / ring, sd = i % ring;
-						const int nb[4] = { rs > 0 ? i - ring : -1, i + ring < part.w ? i + ring : -1, rs * ring + (sd + rsides - 1) % rsides, rs * ring + (sd + 1) % rsides };
-						for (int k = 0; k < 4; k++) {
-							if (nb[k] >= 0) {
-								step = MAX(step, Math::abs(raw[nb[k]] - raw[i]));
+				if (knobbly) {
+					float rmax = 0.0f;
+					for (uint32_t i = 0; i < rr.size(); i++) {
+						rmax = MAX(rmax, rr[i]);
+					}
+					rsides = piece == 1 ? CLAMP(int(Math::ceil(Math::TAU * rr[1] / 0.01f)), 12, 32) : CLAMP(int(Math::ceil(Math::TAU * rmax * (s == veteran_stem ? 1.3f / 0.013f : (head_chain ? 1.2f / 0.016f : 1.15f / 0.018f)))), 24, s == veteran_stem ? 256 : 128);
+				}
+				if (near_tube) {
+					// The bark's own grid. The moss shell reads the bark's displacement at its vertices,
+					// so under a shell the two share one grid; elsewhere a displaced tube takes rings as
+					// far apart as its pattern allows along the stem (bs.relief_along), and a smooth one
+					// sides for a millimetre of chord error and rings every 10 cm.
+					LocalVector<Vector3> bp;
+					LocalVector<float> br;
+					int bsides = rsides;
+					if (moss_shell || split > 0 || vf == 3) {
+						// Smooth bark too: on a coarser bark grid the shell's edge, where it meets the
+						// bark, ran straight along the bark's long triangles.
+						bp = rp;
+						br = rr;
+					} else if (relief) {
+						make_rings(MAX(0.05f, bs.relief_along), bp, br);
+					} else {
+						make_rings(0.1f, bp, br);
+						bsides = CLAMP(int(Math::ceil(float(Math::PI) / Math::acos(1.0f - 0.001f / MAX(r0, 0.001f)))), 24, rsides);
+					}
+					if (!moss_shell && split < 0 && vf == 2 && cut_tree) {
+						densify(bp, br, cut_step);
+					}
+					if (knobbly) {
+						bsides = rsides;
+					}
+					Vector4i part;
+					bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
+					bark.begin(part);
+					_tube(bark, bp, br, bsides, 0.0f, col, relief ? bs.height.ptr() : nullptr, relief ? scale : 0.0f, girth_r, !(fallen || fallen_branch));
+					bark.end(part, r0);
+					if (collar) {
+						root_collar(bark, part, bsides, bp, br, false);
+					}
+					moss_tint(bark, part);
+					lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : br[0]), uint32_t(s));
+					end_grain(bark, part, bp, bsides, girth_r, col);
+					if (collar) {
+						soil_tint(bark, part, 1.0f);
+					}
+					if (rigged) {
+						_skin_stem(bark, part, s, bp, bsides);
+					}
+					knob_cap_from = INT_MAX;
+					if (vf == 3 && piece == pieces - 1 && head_chain && cut_height > 0.5f && bp.size() > 6) {
+						const int ce = chain[chain.size() - 1];
+						if (cut_heads.has(ce) && !cut_stubs.has(ce) && !broken_ends.has(ce) && ce != broken_tip) {
+							knob_cap_from = int(bp.size()) - cap_n - 3;
+						}
+					}
+					if (vf) {
+						veteran_deform(bark, part, bp, br, bsides, true, vf);
+					}
+					if (!stem && !hanger && junction_weld) {
+						weld(bark, part, s, bp, br, bsides);
+					}
+				}
+				if (moss_shell) {
+					// The moss shell (section 5c): the same displaced tube, lifted by the moss's depth
+					// where the weight is high and sunk below the bark where it fades, so the moss edge
+					// needs no alpha; quads wholly under the bark are dropped. Cushions thin out on
+					// thin limbs.
+					const float depth = 0.018f * CLAMP(r0 / 0.15f, 0.35f, 1.0f);
+					Vector4i part;
+					moss.bone = node_bone[s];
+					moss.begin(part);
+					_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
+					moss.end(part, r0);
+					if (collar) {
+						root_collar(moss, part, rsides, rp, rr, false);
+					}
+					if (vf) {
+						veteran_deform(moss, part, rp, rr, rsides, false, vf);
+					}
+					// The bark's own displacement under each shell vertex (as the relief tube has it).
+					const Vector<uint8_t> bh_buf = bs.height->get_data();
+					const float *bh = reinterpret_cast<const float *>(bh_buf.ptr());
+					const int bn = bs.height->get_width();
+					auto bark_disp = [&](const Vector2 &p_uv) -> float {
+						if (!relief) {
+							return 0.0f;
+						}
+						const float x = (p_uv.x - Math::floor(p_uv.x)) * bn - 0.5f, y = (p_uv.y - Math::floor(p_uv.y)) * bn - 0.5f;
+						const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
+						const float fx = x - x0, fy = y - y0;
+						auto at = [&](int i, int j) { return bh[((j % bn + bn) % bn) * bn + ((i % bn + bn) % bn)]; };
+						return scale * Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
+					};
+					// Moss fills the furrows first, then grows over the plates (Barkman 1958): the moss
+					// surface rises from the furrow floor to above the plate tops as its weight grows,
+					// and wherever it is below the bark it stays hidden under it.
+					const float floor_d = relief ? -0.045f * scale : -0.004f; // Below the deepest furrow (3 cm plus grain).
+					if (rigged) {
+						_skin_stem(moss, part, s, rp, rsides);
+					}
+					LocalVector<float> wv;
+					wv.resize(part.w);
+					// The weight before its clamp, and how much it changes from one vertex to the next:
+					// on heavily mossed wood (logs) the weight crossed the whole ramp between two
+					// vertices, so the edge could only fall on the grid and drew it as stairs. The ramp
+					// is widened to span at least two and a half vertices, so the surface crosses the
+					// bark at the weight's own contour, between vertices.
+					const int ring = rsides + 1;
+					LocalVector<float> raw;
+					raw.resize(part.w);
+					// No moss on a log's broken butt face (the closed cap's rings).
+					const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
+					for (int i = 0; i < part.w; i++) {
+						raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
+						if (cap_end > 0.0f && i / ring < int(rp.size()) && rp[i / ring].distance_to(rp[0]) < cap_end) {
+							raw[i] = -1.0f;
+						}
+					}
+					for (int i = 0; i < part.w; i++) {
+						const int v = part.z + i;
+						const Vector3 n = moss.normals[v];
+						const float w = CLAMP(raw[i], 0.0f, 1.0f);
+						float step = 0.0f;
+						if (part.w % ring == 0) {
+							const int rs = i / ring, sd = i % ring;
+							const int nb[4] = { rs > 0 ? i - ring : -1, i + ring < part.w ? i + ring : -1, rs * ring + (sd + rsides - 1) % rsides, rs * ring + (sd + 1) % rsides };
+							for (int k = 0; k < 4; k++) {
+								if (nb[k] >= 0) {
+									step = MAX(step, Math::abs(raw[nb[k]] - raw[i]));
+								}
 							}
 						}
+						// Hummocks a hand across: the vertices are 2.5 cm apart, so the texture's 4 cm
+						// cushions stay in the normal map and the geometry carries only what it resolves.
+						const float hummock = moss_noise(moss.verts[v] * 9.0f, 0x6d6f7376u);
+						// A narrow ramp: the moss edge is a contour of the smooth weight that only dips into
+						// the furrows just ahead of it; a wide one shows the 2.5 cm vertex grid as blocks
+						// where furrows are partly filled.
+						// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
+						const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
+						float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
+						// As the relief tube has it: faded out at a standing stem's soil line.
+						const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
+						// Shown where the fill stands above the bark; wv carries the margin.
+						if (collar && raw[i] > 0.3f) {
+							// The foot sleeve covers the bark down to the soil: on the roots' flanks it
+							// broke into tongues with the bark between them standing in a crevice under
+							// the shell's free edge, black under the path tracer.
+							const float hh = moss.verts[v].y - ground_y;
+							if (hh > -0.04f && hh < 0.25f) {
+								fill = MAX(fill, under + 0.004f);
+							}
+						}
+						wv[i] = fill - under;
+						// Below the bark the shell keeps its own depth rather than hugging the bark's
+						// underside: the edge then falls where the fill crosses the bark between two
+						// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
+						// of the 2.5 cm grid.
+						moss.verts.write[v] = moss.verts[v] + n * fill;
+						// Wetter, deeper moss is darker; thin moss on dry faces yellower.
+						const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
+						moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
 					}
-					// Hummocks a hand across: the vertices are 2.5 cm apart, so the texture's 4 cm
-					// cushions stay in the normal map and the geometry carries only what it resolves.
-					const float hummock = moss_noise(moss.verts[v] * 9.0f, 0x6d6f7376u);
-					// A narrow ramp: the moss edge is a contour of the smooth weight that only dips into
-					// the furrows just ahead of it; a wide one shows the 2.5 cm vertex grid as blocks
-					// where furrows are partly filled.
-					// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
-					const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
-					float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
-					// As the relief tube has it: faded out at a standing stem's soil line.
-					const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
-					// Shown where the fill stands above the bark; wv carries the margin.
-					if (collar && raw[i] > 0.3f) {
-						// The foot sleeve covers the bark down to the soil: on the roots' flanks it
-						// broke into tongues with the bark between them standing in a crevice under
-						// the shell's free edge, black under the path tracer.
-						const float hh = moss.verts[v].y - ground_y;
-						if (hh > -0.04f && hh < 0.25f) {
-							fill = MAX(fill, under + 0.004f);
+					if (collar) {
+						soil_tint(moss, part, 0.7f);
+					}
+					// Keep quads (two triangles each) with any corner showing.
+					int at = part.x;
+					int32_t *iw = moss.indices.ptrw();
+					for (int q = part.x; q + 5 < part.x + part.y; q += 6) {
+						bool show = false;
+						for (int k = 0; k < 6 && !show; k++) {
+							show = wv[iw[q + k] - part.z] > 0.0f;
+						}
+						if (show) {
+							for (int k = 0; k < 6; k++) {
+								iw[at + k] = iw[q + k];
+							}
+							at += 6;
 						}
 					}
-					wv[i] = fill - under;
-					// Below the bark the shell keeps its own depth rather than hugging the bark's
-					// underside: the edge then falls where the fill crosses the bark between two
-					// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
-					// of the 2.5 cm grid.
-					moss.verts.write[v] = moss.verts[v] + n * fill;
-					// Wetter, deeper moss is darker; thin moss on dry faces yellower.
-					const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
-					moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
-				}
-				if (collar) {
-					soil_tint(moss, part, 0.7f);
-				}
-				// Keep quads (two triangles each) with any corner showing.
-				int at = part.x;
-				int32_t *iw = moss.indices.ptrw();
-				for (int q = part.x; q + 5 < part.x + part.y; q += 6) {
-					bool show = false;
-					for (int k = 0; k < 6 && !show; k++) {
-						show = wv[iw[q + k] - part.z] > 0.0f;
+					const int kept = at - part.x;
+					// Compact the part's vertices to those still referenced.
+					LocalVector<int> remap;
+					remap.resize(part.w);
+					for (int i = 0; i < part.w; i++) {
+						remap[i] = -1;
 					}
-					if (show) {
-						for (int k = 0; k < 6; k++) {
-							iw[at + k] = iw[q + k];
+					// Mark, then number in vertex order, so the in-place copy below only moves down.
+					for (int q = part.x; q < at; q++) {
+						remap[iw[q] - part.z] = 0;
+					}
+					int nv = 0;
+					for (int i = 0; i < part.w; i++) {
+						if (remap[i] == 0) {
+							remap[i] = nv++;
 						}
-						at += 6;
 					}
-				}
-				const int kept = at - part.x;
-				// Compact the part's vertices to those still referenced.
-				LocalVector<int> remap;
-				remap.resize(part.w);
-				for (int i = 0; i < part.w; i++) {
-					remap[i] = -1;
-				}
-				// Mark, then number in vertex order, so the in-place copy below only moves down.
-				for (int q = part.x; q < at; q++) {
-					remap[iw[q] - part.z] = 0;
-				}
-				int nv = 0;
-				for (int i = 0; i < part.w; i++) {
-					if (remap[i] == 0) {
-						remap[i] = nv++;
+					for (int i = 0; i < part.w; i++) {
+						if (remap[i] < 0) {
+							continue;
+						}
+						const int from = part.z + i, to = part.z + remap[i];
+						moss.verts.write[to] = moss.verts[from];
+						moss.normals.write[to] = moss.normals[from];
+						moss.uvs.write[to] = moss.uvs[from];
+						moss.colors.write[to] = moss.colors[from];
+						for (int c = 0; c < 4; c++) {
+							moss.tangents.write[to * 4 + c] = moss.tangents[from * 4 + c];
+							moss.bones.write[to * 4 + c] = moss.bones[from * 4 + c];
+							moss.weights.write[to * 4 + c] = moss.weights[from * 4 + c];
+						}
 					}
-				}
-				for (int i = 0; i < part.w; i++) {
-					if (remap[i] < 0) {
-						continue;
+					for (int q = part.x; q < at; q++) {
+						iw[q] = part.z + remap[iw[q] - part.z];
 					}
-					const int from = part.z + i, to = part.z + remap[i];
-					moss.verts.write[to] = moss.verts[from];
-					moss.normals.write[to] = moss.normals[from];
-					moss.uvs.write[to] = moss.uvs[from];
-					moss.colors.write[to] = moss.colors[from];
-					for (int c = 0; c < 4; c++) {
-						moss.tangents.write[to * 4 + c] = moss.tangents[from * 4 + c];
-						moss.bones.write[to * 4 + c] = moss.bones[from * 4 + c];
-						moss.weights.write[to * 4 + c] = moss.weights[from * 4 + c];
+					moss.indices.resize(at);
+					moss.verts.resize(part.z + nv);
+					moss.normals.resize(part.z + nv);
+					moss.uvs.resize(part.z + nv);
+					moss.colors.resize(part.z + nv);
+					moss.tangents.resize((part.z + nv) * 4);
+					moss.bones.resize((part.z + nv) * 4);
+					moss.weights.resize((part.z + nv) * 4);
+					if (kept > 0) {
+						moss.parts[moss.parts.size() - 1] = Vector4i(part.x, kept, part.z, nv);
+					} else {
+						moss.parts.resize(moss.parts.size() - 1);
+						moss.part_size.resize(moss.part_size.size() - 1);
+						moss.part_role.resize(moss.part_role.size() - 1);
 					}
-				}
-				for (int q = part.x; q < at; q++) {
-					iw[q] = part.z + remap[iw[q] - part.z];
-				}
-				moss.indices.resize(at);
-				moss.verts.resize(part.z + nv);
-				moss.normals.resize(part.z + nv);
-				moss.uvs.resize(part.z + nv);
-				moss.colors.resize(part.z + nv);
-				moss.tangents.resize((part.z + nv) * 4);
-				moss.bones.resize((part.z + nv) * 4);
-				moss.weights.resize((part.z + nv) * 4);
-				if (kept > 0) {
-					moss.parts[moss.parts.size() - 1] = Vector4i(part.x, kept, part.z, nv);
-				} else {
-					moss.parts.resize(moss.parts.size() - 1);
-					moss.part_size.resize(moss.part_size.size() - 1);
-					moss.part_role.resize(moss.part_role.size() - 1);
 				}
 			}
+			cut_arc0 = 0.0f;
+			tube_carry_nrm = Vector3();
 		}
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
@@ -7973,7 +9211,18 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A sawn stub (trees.md 5l): weathered by the years since the cut.
 			wood_b.bone = node_bone[chain_end];
 			const float since_cut = float(CLAMP(int(params[PARAM_YEARS]), 1, 300) - cut_stubs[chain_end]);
-			_saw_face(rim_pt, nodes[chain_end].dir, rim_r, since_cut / 6.0f + (decay_class > 0 ? 1.0f : 0.0f), uint32_t(chain_end) * 2246822519u + uint32_t(seed));
+			// Square to the tube's own end, which gravity bent off the node's heading: tilted,
+			// the face let the tube's closing cap show through as a pinwheel of bark.
+			const Vector3 to_end = pts[pts.size() - 1] - rim_pt;
+			const Vector3 face_dir = to_end.length_squared() > 1e-10f ? to_end.normalized() : nodes[chain_end].dir;
+			_saw_face(rim_pt, face_dir, rim_r, since_cut / 6.0f + (decay_class > 0 ? 1.0f : 0.0f), uint32_t(chain_end) * 2246822519u + uint32_t(seed));
+		} else if (_coppice_lobe(chain_end) && rim_r >= 0.006f && pts.size() >= 2) {
+			// A coppice stool's lobe ends in the first cut, made sloping outward so rain runs off
+			// (Rackham 2006), long weathered grey. Closed by a bark dome, the converging bark read
+			// as a pale pinwheel on the stool's side.
+			wood_b.bone = node_bone[chain_end];
+			const Vector3 g = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
+			_saw_face(rim_pt + g * (0.17f * rim_r), g, 0.8f * rim_r, 1.7f, uint32_t(chain_end) * 2246822519u + uint32_t(seed));
 		}
 		if (hanger && pts.size() >= 2) {
 			// The hanger's own half of the break, facing back up at the stub.
@@ -8058,7 +9307,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						Vector3 bp, bo;
 						float br;
 						int bb;
-						stem_at(f.h + (er.randf() - 0.5f) * 0.3f, f.azimuth + (er.randf() - 0.5f) * 0.6f, bp, bo, br, bb);
+						const float sh = f.h + (er.randf() - 0.5f) * (head_r > 0.0f ? 0.12f : 0.3f);
+						const float sa = f.azimuth + (er.randf() - 0.5f) * (head_r > 0.0f ? 0.3f : 0.6f);
+						stem_at(sh, sa, bp, bo, br, bb);
+						// Out of the burr they break from: from the plain stem's radius they started
+						// inside a pollard head's burrs, and only those on its small ones showed.
+						for (const VeteranFeature &g : veteran_features) {
+							if (g.kind == VET_BURL && Math::abs(g.h - f.h) < 1e-4f && Math::abs(g.azimuth - f.azimuth) < 1e-4f) {
+								const float dh = (sh - g.h) / g.half_h;
+								const float da = Math::angle_difference(g.azimuth, sa) * br / g.half_w;
+								const float k0 = 1.0f - MIN(dh * dh + da * da, 1.0f);
+								bp += bo * MAX(0.0f, g.amount * MIN(br, vet_r_stem) * k0 * k0 * 0.8f - 0.01f);
+							}
+						}
 						const Vector3 dir = (bo * 0.75f + Vector3(0, 0.65f, 0) + Vector3(er.randf() - 0.5f, er.randf() * 0.3f, er.randf() - 0.5f) * 0.4f).normalized();
 						const float age = er.randf();
 						const float len = Math::lerp(0.3f, 1.1f, age);
@@ -8144,6 +9405,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
+	// The year's shoots carry young bark: a birch's are dark red-brown, not its trunk's white.
+	const bool birch_twigs = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
+	const Color twig_col = (birch_twigs ? Color(0.3f, 0.18f, 0.14f) : bark_color).srgb_to_linear();
 	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE]));
 	const float size = params[PARAM_LEAF_SIZE];
 	RandomPCG lr;
@@ -8274,7 +9538,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					rad.push_back(br);
 					pts.push_back(b0 + bdir * blen);
 					rad.push_back(br * 0.6f);
-					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color.srgb_to_linear()); bark.end(part, rad[0]); }
+					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, twig_col); bark.end(part, rad[0]); }
 				}
 				if (needle_sprays) {
 					// One brush as two crossed alpha-cut sprays (the needle image is drawn from the
@@ -8342,7 +9606,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 tip = mid + tip_dir * (p_len * 0.5f);
 			pts.push_back(tip);
 			rad.push_back(p_r * 0.5f);
-			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color.srgb_to_linear()); bark.end(part, rad[0]); }
+			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, twig_col); bark.end(part, rad[0]); }
 			node_drag[i] += 1.5f * p_r * p_len * exposure;
 			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
 			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
@@ -8380,11 +9644,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// Elevation from -35 to +45 degrees off the shoot's side plane.
 			const float elev = Math::deg_to_rad(Math::lerp(-35.0f, 45.0f, lr.randf()));
 			const Vector3 tdir = (around * (0.8f * Math::cos(elev)) + n.dir * 0.5f + Vector3(0, Math::sin(elev), 0)).normalized();
-			const float tlen = n.length * (0.45f + 0.45f * lr.randf());
+			// A willow pollard's withies are one- to few-year rods, unbranched: their leaves sit
+			// on the rod itself, not on side twigs (which drew them as fishbone combs in winter).
+			const bool rod = preset == PRESET_WHITE_WILLOW && cut_height > 0.5f && n.pole && n.born - last_cut_year <= 6;
+			const float tlen = n.length * (0.45f + 0.45f * lr.randf()) * (rod ? 0.06f : 1.0f);
 			if (lr.randf() > keep_twig) {
 				continue;
 			}
-			if (lr.randf() < 0.4f && per_twig >= 4) {
+			if (!rod && lr.randf() < 0.4f && per_twig >= 4) {
 				// A forked twig: two shorter shoots sharing the leaves.
 				const Vector3 fork = tdir.cross(n.dir).normalized();
 				const Vector3 d1 = (tdir + fork * 0.45f).normalized();
@@ -8463,8 +9730,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	mesh.instantiate();
 	Builder fungi;
 	_grow_fungi(bark, fungi);
-	Builder *builders[8] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b };
-	for (int s = 0; s < 8; s++) {
+	Builder crown_parts;
+	const int crown_big_end = _grow_crown_parts(crown_parts);
+	Builder *builders[9] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts };
+	for (int s = 0; s < 9; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -8502,6 +9771,20 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _leaf_lods(b);
 			} else if (s == 3 || s == 6) {
 				lods = _leaf_lods(b, false);
+			} else if (s == 8) {
+				// Crown parts (5n): mistletoe balls and brooms are seen from far; cones, catkins
+				// and keys are centimetres across, LOD 0 only.
+				if (crown_big_end < b.indices.size()) {
+					PackedInt32Array keep;
+					if (crown_big_end > 0) {
+						keep = b.indices.slice(0, crown_big_end);
+					} else {
+						keep.push_back(0);
+						keep.push_back(0);
+						keep.push_back(0);
+					}
+					lods[TREE_LODS[0].error] = keep;
+				}
 			} else if (s == 5 || s == 7) {
 				// Broken wood: a few hundred triangles a break, seen from every distance; a root
 				// plate's soil a few thousand.
@@ -8598,7 +9881,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
 			// thread.
-			const char *names[8] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult", "soil" };
+			const char *names[9] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult", "soil", "crown_parts" };
 			int found = -1;
 			for (int i = 0; i < material_source->get_surface_count(); i++) {
 				if (material_source->surface_get_name(i) == names[s]) {
@@ -8651,6 +9934,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			mesh->surface_set_name(mesh->get_surface_count() - 1, s == 6 ? "climber_leaves_adult" : "climber_leaves");
+		} else if (s == 8) {
+			// Cones, catkins, keys, mistletoe and brooms (trees.md 5n): vertex colour, the form
+			// is geometry; thin scales, wings and leaves are seen from both sides.
+			m->set_roughness(0.7f);
+			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			// Millimetre twigs and scales caught snow on every upward face and read as frosted
+			// white sprays; snow on them is below what the snow cover resolves.
+			m->set_feature(BaseMaterial3D::FEATURE_SNOW, false);
+			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+			m->set_backlight(Color(0.12f, 0.14f, 0.05f));
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "crown_parts");
 		} else if (s == 7) {
 			// A root plate's soil and stones (trees.md 5k): vertex colour, the relief is geometry.
 			m->set_roughness(0.95f);
@@ -9214,6 +10508,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
 	fungi_cover = p_from.fungi_cover;
+	fruit_cover = p_from.fruit_cover;
+	mistletoe = p_from.mistletoe;
+	witches_brooms = p_from.witches_brooms;
 	limb_breakage = p_from.limb_breakage;
 	uprooted = p_from.uprooted;
 	cut_height = p_from.cut_height;
@@ -9913,6 +11210,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	const int years = CLAMP(int(params[PARAM_YEARS]), 1, 300);
 	int last_cut = -1;
+	int first_cut = -1;
 	int cuts = 0;
 	last_cut_year = -1000;
 	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
@@ -9928,9 +11226,25 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			const float top = _stem_top();
 			if (last_cut < 0 ? (y >= 8 && top > cut_height + 2.0f && y <= years - since) : (y - last_cut >= cut_cycle && y <= years - since)) {
 				_cut_back(last_cut < 0, y);
+				if (last_cut < 0) {
+					first_cut = y;
+				}
 				last_cut = y;
 				cuts++;
 				last_cut_year = y;
+			}
+			if (first_cut > 0 && cut_height > 0.5f) {
+				// The pipe model sizes wood by the crown it carries, and a pollard's crown is a
+				// few young poles: its bole stopped thickening at the first cut. It lays a ring a
+				// year all the same (2-3 mm on beech and oak, 5-6 mm on willow; Read 2000), so an
+				// old pollard is a broad bole under a broader head.
+				const float ring = preset == PRESET_WHITE_WILLOW ? 0.003f : 0.0015f;
+				for (Node &n : nodes) {
+					// The bole only: knuckles (born 0) swell with the head's callus instead.
+					if (!n.removed && n.order == 0 && n.born > 0 && n.born <= first_cut) {
+						n.radius += ring;
+					}
+				}
 			}
 		}
 		if (int(nodes.size()) >= MAX_NODES - 64) {
@@ -9953,11 +11267,13 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			if (!nodes[i].removed && !head.has(i)) {
 				head.insert(i);
 				// The stem's top swells most, the knuckles and stubs on it less.
-				// Each cut adds its roll of callus: an old pollard's head stands nearly twice the
-				// bole's girth.
+				// Each cut adds its roll of callus: an old pollard's head stands half as wide again as the
+				// bole.
 				const bool stem_top = nodes[i].order == 0 && nodes[i].parent > 0 && nodes[nodes[i].parent].order == 0 && nodes[nodes[i].parent].main == i && nodes[i].first_lateral >= 0;
 				const int seat_n = seat_cuts.has(i) ? seat_cuts[i] : 0;
-				nodes[i].radius *= stem_top ? MIN(1.35f + 0.12f * cuts, 1.9f) : MIN(1.2f + 0.06f * seat_n, 1.5f);
+				// The bole under it lays its annual rings too (generate()), so the head stands
+				// out from it by its callus alone.
+				nodes[i].radius *= stem_top ? MIN(1.2f + 0.05f * cuts, 1.5f) : MIN(1.15f + 0.04f * seat_n, 1.35f);
 				if (!stem_top && cut_height <= 0.5f && seat_n > 0) {
 					// A stool's lobes: the callus of every cut, fused into a low knobbly mound.
 					nodes[i].radius = MAX(nodes[i].radius, 0.4f * nodes[i].length);
@@ -10035,6 +11351,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	const Color living_leaf = leaf_color;
 	veteran_features.clear();
 	veteran_stem = -1;
+	head_r = 0.0f;
 	if (decay_class > 0) {
 		_apply_decay();
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
@@ -10064,8 +11381,15 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				const float hh = r_head * Math::lerp(0.18f, 0.32f, hr.randf());
 				const float h = cut_height + r_head * Math::lerp(-0.9f, 0.1f, hr.randf());
 				const float az = az0 + float(Math::TAU) * (k + 0.4f * (hr.randf() - 0.5f)) / knobs;
-				veteran_features.push_back({ VET_BURL, h, az, hh, hh * Math::lerp(0.8f, 1.3f, hr.randf()), Math::lerp(0.25f, 0.45f, hr.randf()) });
+				// Low: the knobs over them make the burr; a tall smooth dome read as clay.
+				veteran_features.push_back({ VET_BURL, h, az, hh, hh * Math::lerp(0.8f, 1.3f, hr.randf()), Math::lerp(0.12f, 0.25f, hr.randf()) });
+				if (hr.randf() < 0.6f) {
+					// Water shoots from the burr's dormant buds.
+					veteran_features.push_back({ VET_EPICORMIC, h, az, 0.0f, 0.0f, Math::lerp(2.0f, 5.0f, hr.randf()) });
+				}
 			}
+			head_y0 = nodes[0].start.y + cut_height - 1.4f * r_head;
+			head_r = r_head;
 		}
 	}
 	plate.on = false;
@@ -10181,6 +11505,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
+	ClassDB::bind_method(D_METHOD("set_fruit_cover", "cover"), &TreeGenerator::set_fruit_cover);
+	ClassDB::bind_method(D_METHOD("get_fruit_cover"), &TreeGenerator::get_fruit_cover);
+	ClassDB::bind_method(D_METHOD("set_mistletoe", "amount"), &TreeGenerator::set_mistletoe);
+	ClassDB::bind_method(D_METHOD("get_mistletoe"), &TreeGenerator::get_mistletoe);
+	ClassDB::bind_method(D_METHOD("set_witches_brooms", "amount"), &TreeGenerator::set_witches_brooms);
+	ClassDB::bind_method(D_METHOD("get_witches_brooms"), &TreeGenerator::get_witches_brooms);
 	ClassDB::bind_method(D_METHOD("get_fungi_cover"), &TreeGenerator::get_fungi_cover);
 	ClassDB::bind_method(D_METHOD("set_limb_breakage", "breakage"), &TreeGenerator::set_limb_breakage);
 	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
@@ -10272,6 +11602,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mistletoe", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_mistletoe", "get_mistletoe");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "witches_brooms", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_witches_brooms", "get_witches_brooms");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "limb_breakage", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_limb_breakage", "get_limb_breakage");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "compress_vertices"), "set_compress_vertices", "is_compress_vertices");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");

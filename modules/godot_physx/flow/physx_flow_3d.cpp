@@ -417,6 +417,7 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		params.shadow_reach = scattering_shadow_reach;
 		params.shadows = receive != 0;
 		params.resolution_divisor = scattering_resolution == SCATTERING_RESOLUTION_FULL ? 1 : (scattering_resolution == SCATTERING_RESOLUTION_HALF ? 2 : 4);
+		params.temporal = scattering_temporal;
 		if (ambient_scattering) {
 			_fill_scatter_ambient(params, p_environment);
 		}
@@ -1112,6 +1113,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_sun_scattering"), &PhysXFlow3D::is_sun_scattering);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enabled"), &PhysXFlow3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_cast_shadows"), &PhysXFlow3D::is_cast_shadows);
+	ClassDB::bind_method(D_METHOD("set_scattering_temporal", "enabled"), &PhysXFlow3D::set_scattering_temporal);
+	ClassDB::bind_method(D_METHOD("is_scattering_temporal"), &PhysXFlow3D::is_scattering_temporal);
 	ClassDB::bind_method(D_METHOD("set_scattering_max_lights", "count"), &PhysXFlow3D::set_scattering_max_lights);
 	ClassDB::bind_method(D_METHOD("get_scattering_max_lights"), &PhysXFlow3D::get_scattering_max_lights);
 	ClassDB::bind_method(D_METHOD("set_scattering_strength", "strength"), &PhysXFlow3D::set_scattering_strength);
@@ -1169,6 +1172,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_shadow_steps", PROPERTY_HINT_RANGE, "0,64,1"), "set_scattering_shadow_steps", "get_scattering_shadow_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_receive_shadows", PROPERTY_HINT_FLAGS, "Omni:1,Spot:2"), "set_scattering_receive_shadows", "get_scattering_receive_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_resolution", PROPERTY_HINT_ENUM, "Full,Half,Quarter"), "set_scattering_resolution", "get_scattering_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "scattering_temporal"), "set_scattering_temporal", "is_scattering_temporal");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_shadow_reach", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:m"), "set_scattering_shadow_reach", "get_scattering_shadow_reach");
 	BIND_ENUM_CONSTANT(SCATTERING_RESOLUTION_FULL);
 	BIND_ENUM_CONSTANT(SCATTERING_RESOLUTION_HALF);

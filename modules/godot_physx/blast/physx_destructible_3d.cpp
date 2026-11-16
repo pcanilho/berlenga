@@ -710,6 +710,70 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 	// and the wrong order cooked clean but rendered every face pitch-black
 	// (normals inward).
 	chunk_surfaces.resize(chunk_points.size());
+	// Chunks authored with their own shading data (PhysXBlastAsset.chunk_meshes): their smooth normals, tangents,
+	// colours and UVs, unrolled to the same triangle soup.
+	const Array meshes = blast_asset.is_valid() ? blast_asset->get_chunk_meshes() : Array();
+	if (meshes.size() == (int)chunk_points.size()) {
+		for (uint32_t c = 0; c < chunk_points.size(); c++) {
+			const Array arrays = meshes[c];
+			ChunkSurface surface;
+			surface.vertices = chunk_points[c];
+			const int n = surface.vertices.size();
+			if (arrays.size() == RSE::ARRAY_MAX) {
+				const PackedInt32Array indices = arrays[RSE::ARRAY_INDEX];
+				const PackedVector3Array src_n = arrays[RSE::ARRAY_NORMAL];
+				const PackedFloat32Array src_t = arrays[RSE::ARRAY_TANGENT];
+				const PackedColorArray src_c = arrays[RSE::ARRAY_COLOR];
+				const PackedVector2Array src_uv = arrays[RSE::ARRAY_TEX_UV];
+				const PackedVector2Array src_uv2 = arrays[RSE::ARRAY_TEX_UV2];
+				const int vcount = PackedVector3Array(arrays[RSE::ARRAY_VERTEX]).size();
+				auto at = [&](int i) { return indices.is_empty() ? i : indices[i]; };
+				if (src_n.size() == vcount) {
+					surface.normals.resize(n);
+					for (int i = 0; i < n; i++) {
+						surface.normals.write[i] = src_n[at(i)];
+					}
+				}
+				if (src_t.size() == vcount * 4) {
+					surface.tangents.resize(n * 4);
+					for (int i = 0; i < n; i++) {
+						for (int k = 0; k < 4; k++) {
+							surface.tangents.write[i * 4 + k] = src_t[at(i) * 4 + k];
+						}
+					}
+				}
+				if (src_c.size() == vcount) {
+					surface.colors.resize(n);
+					for (int i = 0; i < n; i++) {
+						surface.colors.write[i] = src_c[at(i)];
+					}
+				}
+				if (src_uv.size() == vcount) {
+					surface.uv.resize(n);
+					for (int i = 0; i < n; i++) {
+						surface.uv.write[i] = src_uv[at(i)];
+					}
+				}
+				if (src_uv2.size() == vcount) {
+					surface.uv2.resize(n);
+					for (int i = 0; i < n; i++) {
+						surface.uv2.write[i] = src_uv2[at(i)];
+					}
+				}
+			}
+			if (surface.normals.size() != n) {
+				surface.normals.resize(n);
+				for (int t = 0; t + 2 < n; t += 3) {
+					const Vector3 a = surface.vertices[t], b = surface.vertices[t + 1], c3 = surface.vertices[t + 2];
+					const Vector3 fn = (c3 - a).cross(b - a).normalized();
+					surface.normals.write[t] = surface.normals.write[t + 1] = surface.normals.write[t + 2] = fn;
+				}
+			}
+			chunk_surfaces[c].clear();
+			chunk_surfaces[c].push_back(surface);
+		}
+		return;
+	}
 	for (uint32_t c = 0; c < chunk_points.size(); c++) {
 		const PackedVector3Array &points = chunk_points[c];
 		const int tri_count = points.size() / 3;
@@ -1003,6 +1067,54 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		arrays.resize(RSE::ARRAY_MAX);
 		arrays[RSE::ARRAY_VERTEX] = vertices;
 		arrays[RSE::ARRAY_NORMAL] = normals;
+		// Shading data from chunk_meshes, when every chunk of this slot carries it.
+		bool has_t = true, has_c = true, has_uv = true, has_uv2 = true;
+		for (uint32_t ci : p_chunk_indices) {
+			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+				if (cs.slot == slot) {
+					has_t = has_t && cs.tangents.size() == cs.vertices.size() * 4;
+					has_c = has_c && cs.colors.size() == cs.vertices.size();
+					has_uv = has_uv && cs.uv.size() == cs.vertices.size();
+					has_uv2 = has_uv2 && cs.uv2.size() == cs.vertices.size();
+				}
+			}
+		}
+		if (has_t || has_c || has_uv || has_uv2) {
+			PackedFloat32Array tangents;
+			PackedColorArray colors;
+			PackedVector2Array uv, uv2;
+			for (uint32_t ci : p_chunk_indices) {
+				for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+					if (cs.slot != slot) {
+						continue;
+					}
+					if (has_t) {
+						tangents.append_array(cs.tangents);
+					}
+					if (has_c) {
+						colors.append_array(cs.colors);
+					}
+					if (has_uv) {
+						uv.append_array(cs.uv);
+					}
+					if (has_uv2) {
+						uv2.append_array(cs.uv2);
+					}
+				}
+			}
+			if (has_t) {
+				arrays[RSE::ARRAY_TANGENT] = tangents;
+			}
+			if (has_c) {
+				arrays[RSE::ARRAY_COLOR] = colors;
+			}
+			if (has_uv) {
+				arrays[RSE::ARRAY_TEX_UV] = uv;
+			}
+			if (has_uv2) {
+				arrays[RSE::ARRAY_TEX_UV2] = uv2;
+			}
+		}
 		rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 	}
 
