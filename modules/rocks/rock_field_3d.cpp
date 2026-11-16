@@ -45,6 +45,7 @@
 #include <cmath>
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/main/viewport.h"
+#include "scene/resources/3d/concave_polygon_shape_3d.h"
 #include "scene/resources/3d/convex_polygon_shape_3d.h"
 #include "scene/resources/3d/importer_mesh.h"
 #include "scene/resources/multimesh.h"
@@ -1098,115 +1099,86 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				break;
 			}
 			const real_t level = gen->get_water_level(sp.p);
-			auto pillar = [&](const Vector3 &p_at, float p_width, real_t p_top, real_t p_yaw) {
-				// Tier on tier of wall blocks from the bed up to p_top, narrowing a little upwards; the bed under it.
-				real_t y = gen->get_height(p_at) - p_width * 0.15f;
-				Vector3 centre = p_at;
-				int tiers = 0;
-				while (y < p_top - 0.5 && tiers < 12) {
-					Stone st;
-					st.layer = p_layer;
-					st.library = key;
-					st.variant = pick_variant(lib);
-					const Vector3 ax = lib->axes[st.variant];
-					const float w = p_width * Math::pow(0.92f, float(tiers)) * (0.85f + 0.3f * rng.randf());
-					// Stood on end: the block's long axis up, so a stack is a few tall joint-bounded columns, each
-					// sunk deep into the one below so the joints read as grooves in one mass, not a pile.
-					st.scale = w * 0.5f;
-					Basis b = Basis(Vector3(0, 1, 0), p_yaw + (rng.randf() - 0.5f) * 0.12f) * Basis(Vector3(0, 0, 1), Math::PI * 0.5 + (rng.randf() - 0.5f) * 0.06);
-					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
-					const real_t half_up = ax.x * st.scale;
-					st.position = Vector3(centre.x, y + half_up, centre.z);
-					st.ground = y - 50.0;
-					st.footprint = 0.0f;
-					r_stones.push_back(st);
-					if (tiers < 2) {
-						// The foot is broader: a second column beside the first, a little lower.
-						Stone st2 = st;
-						st2.variant = pick_variant(lib);
-						const Vector3 side = Vector3(Math::cos(p_yaw + 1.5708f), 0, Math::sin(p_yaw + 1.5708f)) * w * (0.22f + 0.12f * rng.randf()); // close enough to read as one mass
-						st2.position += side - Vector3(0, half_up * (0.15f + 0.2f * rng.randf()), 0);
-						r_stones.push_back(st2);
-					}
-					// Deep into the one below (a stack is one mass split by bedding joints, its rounded block ends must
-					// not read as necks), barely shifted.
-					y = st.position.y + half_up * 0.1;
-					centre += Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * w * 0.05f;
-					tiers++;
-				}
-				return y;
-			};
 			if (!p_rect.has_point(Vector2(sp.p.x, sp.p.z)) || rng.randf() > 0.6f * float(density)) {
 				break;
 			}
 			const real_t yaw = Math::atan2(sp.to_land.z, sp.to_land.x);
 			const Vector3 strike(-sp.to_land.z, 0, sp.to_land.x);
+			// Each form is one shape of its own family (RockGenerator FAMILY_SEA_*): one mass of bedrock, not a pile.
+			const real_t bed = gen->get_height(sp.p);
 			if (rng.randf() < 0.3f) {
-				// An arch: two piers along the coast and a lintel block over the gap between them.
-				const float w = 4.0f + 3.0f * rng.randf();
-				const float gap = w * (0.7f + 0.5f * rng.randf());
-				const real_t top = level + 6.0 + 10.0 * rng.randf();
-				const real_t t1 = pillar(sp.p - strike * (gap * 0.5f + w * 0.5f), w, top, yaw);
-				const real_t t2 = pillar(sp.p + strike * (gap * 0.5f + w * 0.5f), w, top, yaw);
-				Stone st;
-				st.layer = p_layer;
-				st.library = key;
-				st.variant = pick_variant(lib);
-				const Vector3 ax = lib->axes[st.variant];
-				// The lintel's long axis spans both piers.
-				st.scale = (gap + 1.6f * w) / MAX(2.0f * ax.x, 0.5f);
-				Basis b(Vector3(0, 1, 0), Math::atan2(-strike.z, strike.x));
-				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
-				st.position = Vector3(sp.p.x, MIN(t1, t2) - lib->bottom[st.variant] * st.scale - 0.1 * ax.y * st.scale, sp.p.z);
-				st.ground = st.position.y - 50.0;
-				st.footprint = 0.0f;
-				r_stones.push_back(st);
-			} else {
-				// A stack: 5 to 12 m across, standing 8 to 30 m above the water.
-				const float w = 5.0f + 7.0f * rng.randf();
-				pillar(sp.p, w, level + 8.0 + 22.0 * rng.randf() * rng.randf(), yaw);
-				// Fallen blocks at its foot.
-				for (int k = 0; k < 3; k++) {
+				// An arch, 14 to 26 m along the coast, its opening facing the sea, its feet sunk in the bed.
+				const uint32_t ak = _library_key(type, RockGenerator::FAMILY_SEA_ARCH, 0);
+				if (Library *al = _ensure_library(ak)) {
 					Stone st;
 					st.layer = p_layer;
-					st.library = key;
-					st.variant = pick_variant(lib);
-					st.scale = w * (0.12f + 0.12f * rng.randf());
-					const Vector3 at = sp.p + Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f).normalized() * w * (0.8f + 0.5f * rng.randf());
-					_rest(gen, st, *lib, at, rng.randf() * Math::TAU, 0.2, Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(20.0f) * rng.randf(), 0.6);
+					st.library = ak;
+					st.variant = pick_variant(al);
+					const Vector3 ax = al->axes[st.variant];
+					st.scale = (14.0f + 12.0f * rng.randf()) / MAX(2.0f * ax.x, 0.5f);
+					// x along the strike, z (through the opening) to the land.
+					Basis b(Vector3(strike.x, 0, strike.z), Vector3(0, 1, 0), Vector3(-sp.to_land.x, 0, -sp.to_land.z)); // right-handed
+					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+					st.position = Vector3(sp.p.x, bed - 0.6 - al->bottom[st.variant] * st.scale, sp.p.z);
+					st.ground = bed - 50.0;
 					r_stones.push_back(st);
 				}
+			} else {
+				// A stack: the notch (about a fifth up the column) at the waterline, so 15 to 30 m tall and at least
+				// tall enough to stand on the bed with its notch at the sea; its fallen blocks at its foot.
+				const uint32_t sk = _library_key(type, RockGenerator::FAMILY_SEA_STACK, 0);
+				if (Library *sl = _ensure_library(sk)) {
+					Stone st;
+					st.layer = p_layer;
+					st.library = sk;
+					st.variant = pick_variant(sl);
+					const Vector3 ax = sl->axes[st.variant];
+					const AABB box = sl->meshes[st.variant]->get_aabb(); // its x: the column's length, foot to top
+					const real_t depth = level - bed;
+					const real_t height = MAX(real_t(15.0 + 15.0 * rng.randf() * rng.randf()), (depth + 0.8) / 0.22);
+					st.scale = height / MAX(real_t(box.size.x), real_t(0.5));
+					// Stood on end: the column's x up, its notch (a fifth up from its foot) at the sea.
+					Basis b = Basis(Vector3(0, 1, 0), yaw + rng.randf() * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5);
+					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
+					st.position = Vector3(sp.p.x, level - 0.22 * height - box.position.x * st.scale, sp.p.z);
+					st.ground = bed - 50.0;
+					r_stones.push_back(st);
+					const float w = 2.0f * ax.z * st.scale;
+					for (int k = 0; k < 3; k++) {
+						Stone fb;
+						fb.layer = p_layer;
+						fb.library = key;
+						fb.variant = pick_variant(lib);
+						fb.scale = w * (0.08f + 0.08f * rng.randf());
+						const Vector3 at = sp.p + Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f).normalized() * w * (0.8f + 0.5f * rng.randf());
+						_rest(gen, fb, *lib, at, rng.randf() * Math::TAU, 0.2, Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(20.0f) * rng.randf(), 0.6);
+						r_stones.push_back(fb);
+					}
+				}
 			}
-			// The platform: a jointed rock pavement at the cliff foot, blocks on a grid along the joint sets with
-			// narrow open joints between them, tops a little above the water line, set deep into the bed.
-			const Vector3 shore_dir = sp.to_land;
-			// Not tiles: the blocks touch across joints that wander (each block jittered and turned a little, sizes
-			// mixed), and the beds step down seaward in low ledges, each row a bed at its own height.
-			const float joint = 2.2f + 1.2f * rng.randf();
-			float ledge[8];
-			for (int r = 0; r < 8; r++) {
-				ledge[r] = (r == 0 ? 0.35f : ledge[r - 1]) - (rng.randf() < 0.45f ? 0.08f + 0.12f * rng.randf() : 0.0f);
-			}
-			for (int k = 0; k < 64; k++) {
-				const int gi = k % 8 - 4, gj = k / 8;
-				const Vector3 jitter = (shore_dir * (rng.randf() - 0.5f) + strike * (rng.randf() - 0.5f)) * joint * 0.25f;
-				const Vector3 at = sp.p + shore_dir * (6.0f + float(gj) * joint * 1.05f) + strike * (float(gi) * joint * 1.05f + (gj & 1) * joint * 0.3f) + jitter;
-				const real_t h = gen->get_height(at);
-				if (h > level + 0.8 || h < level - 1.5 || rng.randf() < 0.2f) {
-					continue;
+			// The wave-cut platform: one bench of bedrock cut flush at the cliff foot, its top a little above low
+			// water, reaching seaward; the cliff's own rock, joints and pools carved in it. Found by walking from the
+			// form toward the land until the ground rises out of the sea: the platform's landward edge sinks into it.
+			const uint32_t pk = _library_key(type, RockGenerator::FAMILY_SEA_PLATFORM, 0);
+			if (Library *pl = _ensure_library(pk)) {
+				Vector3 foot = sp.p;
+				for (real_t r = 0.0; r < 60.0; r += 1.0) {
+					foot = sp.p + sp.to_land * r;
+					if (gen->get_height(foot) > level + 1.0) {
+						break;
+					}
 				}
 				Stone st;
 				st.layer = p_layer;
-				st.library = key;
-				st.variant = pick_variant(lib);
-				const Vector3 ax = lib->axes[st.variant];
-				st.scale = joint * 0.62f / MAX(ax.x, 1.0f) * (0.85f + 0.35f * rng.randf());
-				Basis b(Vector3(0, 1, 0), yaw + (rng.randf() - 0.5f) * 0.3f);
+				st.library = pk;
+				st.variant = pick_variant(pl);
+				const Vector3 ax = pl->axes[st.variant];
+				st.scale = (28.0f + 14.0f * rng.randf()) / MAX(2.0f * ax.x, 0.5f);
+				Basis b(Vector3(strike.x, 0, strike.z), Vector3(0, 1, 0), Vector3(-sp.to_land.x, 0, -sp.to_land.z)); // right-handed
 				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
-				const real_t top = level + 0.1 + ledge[gj] + 0.08 * rng.randf();
-				st.position = Vector3(at.x, top - ax.y * st.scale, at.z);
-				st.ground = h;
-				st.footprint = MAX(ax.x, ax.z) * st.scale * 0.85f;
+				const Vector3 at = foot - sp.to_land * (ax.z * st.scale * 0.75f);
+				st.position = Vector3(at.x, level + 0.6 - ax.y * st.scale, at.z); // above mean sea level: bare at low tide
+				st.ground = gen->get_height(at);
 				st.film = 0.6f;
 				r_stones.push_back(st);
 			}
@@ -1400,10 +1372,32 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 				body->set_as_top_level(true);
 				body->set_global_transform(Transform3D());
 			}
+			const Transform3D xf(st.basis, st.position);
+			if (key_family(st.library) >= RockGenerator::FAMILY_SEA_STACK) {
+				// A coast form is not convex (an arch's opening, a stack's notch, a platform's pools): its own
+				// triangles. Not breakable (no shape registered for it).
+				if (st.variant < lib->meshes.size() && lib->meshes[st.variant].is_valid()) {
+					Ref<ArrayMesh> m = lib->meshes[st.variant];
+					Vector<Vector3> faces;
+					const Array arrays = m->surface_get_arrays(0);
+					const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+					const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
+					faces.resize(idx.size());
+					for (int k = 0; k < idx.size(); k++) {
+						faces.write[k] = xf.xform(v[idx[k]]);
+					}
+					Ref<ConcavePolygonShape3D> shape;
+					shape.instantiate();
+					shape->set_faces(faces);
+					CollisionShape3D *cs3 = memnew(CollisionShape3D);
+					cs3->set_shape(shape);
+					body->add_child(cs3);
+				}
+				continue;
+			}
 			const PackedVector3Array &hull = lib->hulls[st.variant];
 			Vector<Vector3> pts;
 			pts.resize(hull.size());
-			const Transform3D xf(st.basis, st.position);
 			for (int k = 0; k < hull.size(); k++) {
 				pts.write[k] = xf.xform(hull[k]);
 			}
@@ -1542,8 +1536,8 @@ void RockField3D::_update_close_up(bool p_wait) {
 			}
 			// Cobbles and pebbles: the base grid already holds their fabric at millimetres.
 			const RockGenerator::Family fam = key_family(grp.library);
-			if (fam == RockGenerator::FAMILY_COBBLE || fam == RockGenerator::FAMILY_PEBBLE) {
-				continue;
+			if (fam == RockGenerator::FAMILY_COBBLE || fam == RockGenerator::FAMILY_PEBBLE || fam >= RockGenerator::FAMILY_SEA_STACK) {
+				continue; // coast forms: tens of metres of bedrock, their base grid is the detail they can hold
 			}
 			const real_t fam_mpu = RockGenerator::get_family_metres_per_unit(fam);
 			bool changed = false;
@@ -1813,6 +1807,9 @@ Node *RockField3D::break_stone(const Vector3 &p_position, real_t p_damage, real_
 		}
 		for (uint32_t g = 0; g < kv.value.groups.size(); g++) {
 			const Group &grp = kv.value.groups[g];
+			if (key_family(grp.library) >= RockGenerator::FAMILY_SEA_STACK) {
+				continue; // bedrock, not a stone to break
+			}
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
 				if (grp.broken[k]) {
 					continue;

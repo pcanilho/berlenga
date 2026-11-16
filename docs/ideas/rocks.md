@@ -287,3 +287,20 @@ Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (k
   (about half), to measure with the GPU.
 - Shore zones only on stones the sea reaches (coast, and shore stones on the sea's own water): flagged in the
   instance film (+2); by height alone they darkened inland stones near sea level.
+
+### Coast forms as bedrock (16 Nov, docs review)
+
+Docs declined stacks built of stood-up blocks, an arch of two piers and a lintel, and a platform of flagstones. Real
+forms (Trenhaile 1987; Sunamura 1992; Kennedy 2014 on shore platforms) are one mass each: a stack is a jointed
+column banded by harder and softer beds, undercut by the wave-cut notch at the waterline, opening down its joints
+from the top; an arch is a headland wall the waves cut through along a joint; a platform is a bench of bedrock cut
+flush at the cliff foot, crossed by joint sets opened into grooves, stepping down seaward, with pools. Paris et al.
+2020 (Modeling rocky scenery using implicit blocks) build such scenery the same way: a jointed volume with implicit
+cuts. Here three RockGenerator families do it on the field grid after the rounding:
+- `FAMILY_SEA_STACK`: big off-axis cuts (an irregular polygon in plan), beds of uneven thickness each weathered back by
+  its own amount with a sharp step between them, the notch a fifth up the solid (the field stands it with the notch at
+  sea level), a taper, low-frequency relief, one or two open joints from the top;
+- `FAMILY_SEA_ARCH`: the same wall with an elliptic opening from the bed through most of its height;
+- `FAMILY_SEA_PLATFORM`: a thin bench with vertical cuts for an irregular edge, two joint sets (the cross set stops and
+  starts), seaward ledges and 3 to 6 pools; set 0.6 m above mean sea level, its landward edge sunk into the cliff foot.
+Coast forms get trimesh collision (an arch's opening stays open) and are not breakable or close-up shapes.

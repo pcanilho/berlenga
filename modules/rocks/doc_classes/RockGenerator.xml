@@ -132,7 +132,16 @@
 		<constant name="FAMILY_CORESTONE" value="6" enum="Family">
 			Tor blocks: joint blocks rounded in place by deep weathering (woolsack edges, flat sheeting faces), most with a weathering pan on top.
 		</constant>
-		<constant name="FAMILY_MAX" value="7" enum="Family">
+		<constant name="FAMILY_SEA_STACK" value="7" enum="Family">
+			A sea stack: one jointed column of bedrock (its x axis up once stood on end), banded by harder and softer beds, notched about a fifth of the way up where the sea works its foot, with open vertical joints from the top.
+		</constant>
+		<constant name="FAMILY_SEA_ARCH" value="8" enum="Family">
+			A sea arch: a bedded wall of bedrock (x the span, y up) with the opening the waves cut through it from the bed up through most of its height.
+		</constant>
+		<constant name="FAMILY_SEA_PLATFORM" value="9" enum="Family">
+			A wave-cut platform: a thin bench of bedrock (x along the shore, z out to sea) with two joint sets opened into grooves, low ledges stepping down seaward and a few rock pools.
+		</constant>
+		<constant name="FAMILY_MAX" value="10" enum="Family">
 			Number of families.
 		</constant>
 	</constants>
