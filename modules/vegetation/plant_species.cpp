@@ -374,11 +374,14 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_deadwood_min_radius"), &PlantSpecies::get_deadwood_min_radius);
 	ClassDB::bind_method(D_METHOD("set_deadwood_uphill", "uphill"), &PlantSpecies::set_deadwood_uphill);
 	ClassDB::bind_method(D_METHOD("is_deadwood_uphill"), &PlantSpecies::is_deadwood_uphill);
+	ClassDB::bind_method(D_METHOD("set_deadwood_from_wood", "from_wood"), &PlantSpecies::set_deadwood_from_wood);
+	ClassDB::bind_method(D_METHOD("is_deadwood_from_wood"), &PlantSpecies::is_deadwood_from_wood);
 	ADD_GROUP("Deadwood", "deadwood_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deadwood_rule", PROPERTY_HINT_ENUM, "Avoid,On,Beside,Ignore"), "set_deadwood_rule", "get_deadwood_rule");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deadwood_band", PROPERTY_HINT_RANGE, "0.01,5,0.01,suffix:m"), "set_deadwood_band", "get_deadwood_band");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deadwood_min_radius", PROPERTY_HINT_RANGE, "0,1,0.005,suffix:m"), "set_deadwood_min_radius", "get_deadwood_min_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deadwood_uphill"), "set_deadwood_uphill", "is_deadwood_uphill");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deadwood_from_wood"), "set_deadwood_from_wood", "is_deadwood_from_wood");
 	ADD_GROUP("Patches", "patch_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_scale", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_patch_scale", "get_patch_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");

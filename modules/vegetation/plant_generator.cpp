@@ -5134,7 +5134,7 @@ void PlantGenerator::apply_preset_colors() {
 			// the foot darkened in _mushroom_form().
 			petal_color = Color(0.72f, 0.5f, 0.2f);
 			centre_color = Color(0.9f, 0.84f, 0.68f);
-			stem_color = Color(0.86f, 0.76f, 0.52f);
+			stem_color = Color(0.8f, 0.66f, 0.4f);
 			break;
 		case PRESET_PARSLEY_FERN:
 			leaf_color = Color(0.19f, 0.4f, 0.08f); // Bright, fresh green against grey stone.
@@ -5629,7 +5629,9 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	const FloorSpec sorrel = { P::PRESET_WOOD_SORREL, 0.25f, 0.1f, 0.9f, 0.9f, 1.2f, 3.0f, 0.35f, 0.55f, 1.0f, 0.15f, 0.0f, 1.0f, 18.0f };
 	const FloorSpec moss = { P::PRESET_MOSS, 0.3f, 0.0f, 0.6f, 0.8f, 1.6f, 4.0f, 0.3f, 0.6f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
 	const FloorSpec twigs = { P::PRESET_TWIGS, 0.55f, 0.0f, 0.7f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
-	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.2f, 0.0f, 0.6f, 1.2f, 1.8f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
+	// Scale 1 to 1.35 keeps a beech leaf at 6 to 11 cm (about 1.5 times was hand-size); spacing
+	// closer to keep the cover.
+	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.17f, 0.0f, 0.6f, 1.0f, 1.35f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
 	const FloorSpec needles = { P::PRESET_NEEDLE_LITTER, 0.35f, 0.0f, 0.8f, 0.8f, 1.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.5f, 1.0f, 15.0f };
 	// Broad-leaved herbs of the lighter floor (Ellenberg light 4 to 6): violets in half shade,
 	// herb Robert in rides, gaps and edges.
@@ -6000,6 +6002,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				// Ferns and banked leaves by any fallen wood; honey fungus by logs and stumps only,
 				// whose rotting wood feeds it.
 				sp->set_deadwood_min_radius(f.preset == P::PRESET_HONEY_FUNGUS ? 0.12f : 0.0f);
+				sp->set_deadwood_from_wood(f.preset == P::PRESET_HONEY_FUNGUS);
 			}
 			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
 		}

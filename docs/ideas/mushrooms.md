@@ -73,6 +73,9 @@ dark brown fibrous scales crowd, slightly viscid when damp. Built:
 - Scales as geometry: 90 to 220 small pointed cones per cap, crowded at the centre and leaning out,
   in place of the darkened vertex speckle; caps darker to the centre and glossier (roughness 0.3).
 - Stalk tint from the brown foot to pale yellow under the ring; a cream-yellow ring.
-- VegetationField3D moves a wood feeder (DEADWOOD_BESIDE with a deadwood_min_radius) onto the
+- VegetationField3D moves a wood feeder (PlantSpecies.deadwood_from_wood) onto the
   log's side where it meets the ground, 1.5 cm into the bark and moss, and turns it to face out of
   the wood, so the clump comes up from the log rather than beside it. Band 0.4 m (was 0.8).
+- Plants beside a log (ferns, banked leaves, honey fungus) only where its underside is within
+  15 cm of the ground: a windthrown beech propped on its root plate lies 1.5 m up at that end, and
+  clumps had come up in the open under it.

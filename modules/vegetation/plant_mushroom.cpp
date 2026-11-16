@@ -217,7 +217,7 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.ring = 0.8f;
 			m.ring_w = m.stalk_r * 1.2f;
 			m.scales = 1.0f;
-			m.stalk_foot = Color(0.42f, 0.34f, 0.26f);
+			m.stalk_foot = Color(0.36f, 0.27f, 0.18f);
 			m.ring_tint = Color(1.0f, 0.96f, 0.78f); // Cottony white with a yellow edge.
 			m.cap_centre = Color(0.42f, 0.32f, 0.24f);
 			m.cap_margin = Color(1.15f, 1.15f, 1.1f);
@@ -267,7 +267,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 			rz.push_back(Vector2(r, 0.0f));
 			const float ao = Math::lerp(0.55f, 1.0f, Math::smoothstep(0.0f, 0.35f, t)); // Soil-stained foot.
 			// The foot's own colour, up to below the ring.
-			const Color foot = p_m.stalk_foot.lerp(Color(1, 1, 1), Math::smoothstep(0.0f, 0.7f, t));
+			const Color foot = p_m.stalk_foot.lerp(Color(1, 1, 1), Math::smoothstep(0.05f, 0.75f, t));
 			tint.push_back(Color(ao * foot.r, ao * 0.97f * foot.g, ao * 0.92f * foot.b));
 			if (i < segs) {
 				// A fused tuft's stalks sway a little as they push past each other.
@@ -459,7 +459,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		}
 		n.normalize();
 		const Vector3 out = (pn - p).normalized();
-		const float r = R * _rand(0.008f, 0.017f) * Math::lerp(1.2f, 0.6f, x);
+		const float r = R * _rand(0.02f, 0.038f) * Math::lerp(1.2f, 0.6f, x);
 		// Raised a little and tipped outward, as the fibrils lift from the cap.
 		const Basis sf = mushroom_frame((n + out * 0.6f).normalized());
 		LocalVector<Transform3D> one;

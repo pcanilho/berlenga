@@ -104,6 +104,9 @@
 		<member name="deadwood_band" type="float" setter="set_deadwood_band" getter="get_deadwood_band" default="0.6">
 			With [constant DEADWOOD_BESIDE]: how far from a log's side the species grows, in metres, thinning out across the band.
 		</member>
+		<member name="deadwood_from_wood" type="bool" setter="set_deadwood_from_wood" getter="is_deadwood_from_wood" default="false">
+			With [constant DEADWOOD_BESIDE]: the plant comes up out of the wood itself, as wood-decay fungi do (honey fungus). Its foot moves onto the log's side where it meets the ground, a little into the bark, and it turns so its +X faces out of the wood.
+		</member>
 		<member name="deadwood_min_radius" type="float" setter="set_deadwood_min_radius" getter="get_deadwood_min_radius" default="0.08">
 			With [constant DEADWOOD_ON]: the thinnest log it grows on (radius, metres). Thickness stands for decay: thin branches stay bare, thick rotting trunks carry seedlings. With [constant DEADWOOD_BESIDE]: the thinnest log it grows beside (0: by any fallen wood).
 		</member>

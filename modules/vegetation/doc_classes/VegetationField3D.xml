@@ -43,8 +43,9 @@
 			<return type="Dictionary" />
 			<param index="0" name="global_position" type="Vector3" />
 			<param index="1" name="reach" type="float" default="0.0" />
+			<param index="2" name="min_radius" type="float" default="0.0" />
 			<description>
-				The placed log whose side is nearest the point, seen from above, if it is within [param reach] metres: [code]side[/code] (metres from its side, negative under it), [code]radius[/code], [code]top[/code] (the height of its upper surface over the point) and [code]normal[/code]. Empty when none is that close. Logs are the placed plants of species with the meta [code]deadwood[/code] whose meshes carry [code]tree_deadwood_axis[/code] (see [member PlantSpecies.deadwood_rule]).
+				The placed log whose side is nearest the point, seen from above, if it is within [param reach] metres, past any thinner than [param min_radius]: [code]side[/code] (metres from its side, negative under it), [code]radius[/code], [code]top[/code] (the height of its upper surface over the point), [code]normal[/code] and [code]across[/code] (the level unit direction from its axis to the point). Empty when none is that close. Logs are the placed plants of species with the meta [code]deadwood[/code] whose meshes carry [code]tree_deadwood_axis[/code] (see [member PlantSpecies.deadwood_rule]).
 			</description>
 		</method>
 		<method name="get_deadwood_count" qualifiers="const">
