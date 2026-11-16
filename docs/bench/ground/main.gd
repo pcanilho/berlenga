@@ -24,6 +24,8 @@ extends Node3D
 #   --test=shelter      dune grass (wind_shelters): Raupach drag partition, flux dies among the plants, sand lands
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
+#   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
+#                         on the outside; dust: none from damp sand, a plume from dry, Stokes settling, wind drift
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
@@ -57,6 +59,7 @@ var wind_test := false
 var water_test := false
 var shelter_test := false
 var runoff_test := false
+var drift_test := false
 var out := ""
 var spp := 16
 var gpu := true
@@ -83,6 +86,7 @@ func _ready() -> void:
 		elif a == "--test=water": water_test = true
 		elif a == "--test=shelter": shelter_test = true
 		elif a == "--test=runoff": runoff_test = true
+		elif a == "--test=drift": drift_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -93,6 +97,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if shelter_test:
 		await _run_shelter_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if drift_test:
+		await _run_drift_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -1542,3 +1551,112 @@ func _save_frame() -> void:
 	if not out.is_empty():
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
+
+
+func _make_dust(follow: Node3D) -> GroundDust3D:
+	var d := GroundDust3D.new()
+	add_child(d)
+	d.ground_surface = d.get_path_to(surface)
+	if follow:
+		d.follow_target = d.get_path_to(follow)
+	return d
+
+
+# The dust's centre of mass (x, height over the ground, z) and its mass, from a lattice over its grid.
+func _dust_centroid(d: GroundDust3D, around: Vector3) -> Vector4:
+	var e := d.extent
+	var h := d.cell_size
+	var m := 0.0
+	var acc := Vector3()
+	for iz in int(e.z / h):
+		for iy in int(e.y / h):
+			for ix in int(e.x / h):
+				var p := around + Vector3((ix + 0.5) * h - e.x * 0.5, (iy + 0.5) * h - 1.0, (iz + 0.5) * h - e.z * 0.5)
+				var c := d.get_concentration_at(p)
+				if c > 0.0:
+					m += c
+					acc += p * c
+	if m <= 0.0:
+		return Vector4()
+	acc /= m
+	return Vector4(acc.x, acc.y, acc.z, m * h * h * h)
+
+
+# Drifting on sand (docs/ideas/sand.md): a 1500 kg 4x4 on 60 kPa tyres up to speed on dry sand, then slid through
+# a full-lock turn; and the dust on its own.
+func _run_drift_tests() -> void:
+	# Dust physics: Stokes settling and a puff carried by the wind, then settling to the ground.
+	await _soil_scene("dry_sand")
+	var d := _make_dust(null)
+	for i in 3:
+		await get_tree().physics_frame
+	var ws := d.get_settling_speed()
+	_check("Stokes settling of 15 um silt", absf(ws - 0.0180) < 0.001, "%.4f m/s" % ws)
+	d.diffusivity = 0.0
+	d.add_dust(Vector3(0, 2.0, 0), Vector3(), 1.0)
+	var c0 := _dust_centroid(d, Vector3.ZERO)
+	for i in 300:
+		await get_tree().physics_frame
+	var c1 := _dust_centroid(d, Vector3.ZERO)
+	var fall := (c0.y - c1.y) / 5.0
+	_check("a still puff sinks at its settling speed", absf(fall - ws) < 0.3 * ws, "%.4f m/s over 5 s (%.4f)" % [fall, ws])
+	surface.wind_override = Vector2(6.0, 0.0)
+	d.clear()
+	d.diffusivity = 0.3
+	d.add_dust(Vector3(0, 1.5, 0), Vector3(), 1.0)
+	for i in 120:
+		await get_tree().physics_frame
+	var c2 := _dust_centroid(d, Vector3.ZERO)
+	_check("the wind carries a puff downwind", c2.x > 3.0 and absf(c2.z) < 0.3, "%.2f m in 2 s at 6 m/s (10 m)" % c2.x)
+	surface.wind_override = Vector2()
+	d.clear()
+	d.grain_diameter = 60.0
+	d.add_dust(Vector3(0, 1.0, 0), Vector3(), 1.0)
+	for i in 240:
+		await get_tree().physics_frame
+	_check("coarse dust settles out to the ground", d.get_deposited_mass() > 0.35 * d.get_emitted_mass(), "%.2f of %.2f kg on the ground after 4 s at 60 um (%.2f m/s)" % [d.get_deposited_mass(), d.get_emitted_mass(), d.get_settling_speed()])
+
+	# The slide.
+	var results := {}
+	for k in ["dry_sand", "damp_sand"]:
+		await _soil_scene(k)
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		for c in car.get_children():
+			if c is PhysXVehicleWheel3D:
+				c.tire_pressure = 60.0
+		surface.follow_target = surface.get_path_to(car)
+		var dust := _make_dust(car)
+		for i in 30:
+			await get_tree().physics_frame
+		car.throttle = 1.0
+		for i in 240:
+			await get_tree().physics_frame
+			surface.take_sprays()
+		car.steer = 1.0
+		var side_throw := 0.0
+		var side_force := 0.0
+		var plume_top := 0.0
+		var prev := car.global_position
+		for i in 90:
+			await get_tree().physics_frame
+			var right := car.global_basis.x
+			var cv := (car.global_position - prev) * 60.0
+			prev = car.global_position
+			for s in surface.take_sprays():
+				var v: Vector3 = s["velocity"] - cv
+				side_throw = maxf(side_throw, absf(v.dot(right)))
+			for w in 4:
+				side_force = maxf(side_force, car.get_wheel_soil_side_force(w))
+		var behind := car.global_position - car.global_basis.z * 3.0
+		var g := surface.get_ground_height_at(behind)
+		for y in 10:
+			if dust.get_concentration_at(Vector3(behind.x, g + 0.25 + y * 0.25, behind.z)) > 1e-5:
+				plume_top = 0.25 + y * 0.25
+		results[k] = [side_throw, side_force, dust.get_emitted_mass(), plume_top]
+		print("  %s: side throw %.1f m/s, sidewall %.0f N, dust %.2f kg, plume to %.2f m" % [k, side_throw, side_force, dust.get_emitted_mass(), plume_top])
+		car.queue_free()
+		dust.queue_free()
+	_check("a sliding wheel throws sand sideways", results["dry_sand"][0] > 1.0, "%.1f m/s across the car" % results["dry_sand"][0])
+	_check("the sand pushes back on a sliding sidewall (Ishigami et al. 2007)", results["dry_sand"][1] > 100.0, "%.0f N" % results["dry_sand"][1])
+	_check("dry sand raises a dust plume about as tall as the car", results["dry_sand"][2] > 0.1 and results["dry_sand"][3] >= 1.0, "%.2f kg, to %.2f m" % [results["dry_sand"][2], results["dry_sand"][3]])
+	_check("damp sand raises no dust", results["damp_sand"][2] == 0.0, "%.3f kg" % results["damp_sand"][2])

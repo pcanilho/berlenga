@@ -474,3 +474,35 @@ rills cut 9 mm (99th percentile) against a 2 mm median in 84 minutes, about 100 
 above the waterline, net volume within 1%, 10 ms a step on the CPU (twice a second), 0.5 ms with no water.
 `--view=rills` (--runoff=0 for the A/B). Not modelled yet: headward sapping at rill heads, the rills' braided
 rhomboid fans, a finer near field (rills are 2 grid cells wide at 12.5 cm), water drawn in the rills.
+
+### Drifting on sand (Paulo, 16 Nov 2026)
+
+Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.
+- **Sideways slip throws and shoves sand.** Spray only came from spinning wheels (longitudinal slip). Now the
+  contact's sliding velocity over the ground, longitudinal slip plus side slip, drives the throw direction
+  and speed, the usual way game tyre emitters are driven (rate and direction from the contact's slip velocity),
+  and as the physics has it: a sliding tread drags the sand
+  with it. The same velocity drives the press's bow wave, so a sliding wheel heaps a berm on the outside
+  of the turn, and the print is stamped along the travel at the width the tyre sweeps across it
+  (`width |cos a| + contact length |sin a|`), so a drift leaves a wide scuffed track.
+- **Side bulldozing.** A wheel sliding sideways in loose soil pushes a wedge of soil with its sidewall; on
+  loose soil that is a large share of the lateral force (Ishigami, Miwa, Nagatani, Yoshida 2007,
+  "Terramechanics-based model for steering maneuver of planetary exploration rovers on loose soil", J. Field
+  Robotics: Hegedus bulldozing on the side face). Added against the side slip, Bekker's bulldozing on a face
+  one contact length long and the sinkage deep, eased in over 0.3 m/s: sand scrubs a drift down.
+- **Dust.** The silt and fine sand in dry sand (tens of microns) leaves the tread as a plume, rides the wind and
+  settles at its Stokes speed, w = (rho_p - rho_a) g d^2 / (18 mu): 0.13 m/s at 40 um. Emission follows the
+  unpaved-road form, linear in vehicle speed (Gillies et al. 2005, Atmospheric Environment 39), times the
+  share of the ground the wind could move (dry, bare sand; damp sand gives none), plus the sand thrown by
+  slip. Transport is the standard Eulerian dispersion model: advection by the wind and the plume's own decaying
+  jet, eddy diffusion, gravitational settling, deposition at the ground. A small grid follows the vehicle
+  (`GroundDust3D`, CPU, about 40k cells) and is drawn as a FogVolume density texture, so raster volumetric
+  fog and the path tracer's camera segments both see it. NVIDIA Flow (the fork's smoke) was the other
+  candidate, but its libraries load only on Windows.
+- **Built (16 Nov 2026).** Vehicle: contact slide velocity drives bow, throw and dust; prints laid along the
+  travel; side bulldozing (`get_wheel_soil_side_force`). `GroundSurface3D.dust_emission` (0.02, tuned for the
+  look: a sliding 1500 kg 4x4 lifts a few kg a second, far above unpaved-road PM10 data, because the plume is
+  modelled as 15 um silt alone, which settles at 1.8 cm/s and lingers for a minute). `GroundDust3D` (48 x 16 x
+  48 cells at 0.5 m, trailing its target). `--test=drift` (8 checks): Stokes 0.0180 m/s, a still puff sinks at
+  it, wind carries a puff, 60 um dust settles out, sideways throw 3.1 m/s, sidewall 475 N, plume to 2.5 m on
+  dry sand, none on damp. Raster and path-traced frames match (the path tracer sees it on camera rays only).

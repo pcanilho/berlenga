@@ -70,6 +70,7 @@ struct PhysXVehicleSoilWheel {
 	float sinkage = 0.0f; // m, smoothed
 	float already = 0.0f; // m, the rut already pressed ahead of the wheel
 	float resistance = 0.0f; // N, the last substep's
+	float side_bulldozing = 0.0f; // N, the sidewall's push against a side slide, the last substep's
 	float traction = 0.0f; // N, the soil's limit at the last substep's slip
 	float base_long_stiff = -1.0f; // the tyre's own, restored off the soil
 	float spin_sum = 0.0f; // rad/s, summed over the step's substeps
@@ -191,37 +192,67 @@ public:
 			}
 			any_soft = true;
 			// The rut: the contact patch, stretched over the travel since the last print so a fast wheel
-			// leaves no gaps.
+			// leaves no gaps. Laid along the travel, at the width the tyre sweeps across it: rolling, its own
+			// width; sliding sideways in a drift, up to its contact length (a wide scuff).
+			const float v_lat = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL];
 			const PxVec3 omega_r = lng * (v.wheelRigidBody1dStates[i].rotationSpeed * wp.radius);
-			const PxVec3 slip_vel = lng * v_lng - omega_r;
+			// The contact's sliding velocity over the ground: the tread's longitudinal slip and the side slip.
+			// It drives the press's bow wave (a berm heaped on the side the wheel slides toward) and the throw.
+			const PxVec3 slip_vel = lng * v_lng - omega_r + lat * v_lat;
 			const Vector3 travel = sw.printed ? at - sw.last_print : Vector3();
 			const float travel_len = travel.length();
-			const Vector3 center = sw.printed && travel_len < 2.0f ? at - travel * 0.5f : at;
-			const float length = MAX(probe.contact_length, sw.printed && travel_len < 2.0f ? travel_len + probe.contact_length : 0.0f);
-			const float yaw = Math::atan2(-lat.z, lat.x);
+			const bool along = sw.printed && travel_len < 2.0f && travel_len > 1e-3f;
+			const Vector3 center = along ? at - travel * 0.5f : at;
+			const Vector3 lng_v(lng.x, lng.y, lng.z);
+			const Vector3 lat_v(lat.x, lat.y, lat.z);
+			float across = width;
+			float length = probe.contact_length;
+			float yaw = Math::atan2(-lat.z, lat.x);
+			if (along) {
+				const Vector3 dir = travel / travel_len;
+				const float c = Math::abs(dir.dot(lng_v));
+				const float sn = Math::abs(dir.dot(lat_v));
+				across = width * c + probe.contact_length * sn;
+				length = travel_len + probe.contact_length * c + width * sn;
+				const Vector3 side = dir.cross(Vector3(n.x, n.y, n.z)).normalized();
+				yaw = Math::atan2(-side.z, side.x);
+			}
 			if (sw.sinkage > 0.002f) {
-				ground->press_wheel(center, Vector2(width, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z));
+				ground->press_wheel(center, Vector2(across, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z));
 			}
 			// A wheel turning faster than it travels shears its tread through the sand and throws it back
-			// (roost): reported for a grains node to lift out of the field (sand stage 2). The grains leave
-			// the rear of the contact at the tread's speed over the ground, rising as the tread turns up.
-			const float slip_speed = (v.wheelRigidBody1dStates[i].rotationSpeed * wp.radius) - v_lng;
-			if (Math::abs(slip_speed) > 0.5f) {
+			// (roost); one sliding sideways drags and shoves sand out of the side of the turn: reported for a
+			// grains node to lift out of the field (sand stage 2). The grains leave the edge of the contact
+			// the tread slides toward, at about the sliding speed, rising as the tread turns up.
+			const PxVec3 slide = slip_vel - n * n.dot(slip_vel);
+			const float slip_speed = slide.magnitude();
+			if (slip_speed > 0.5f) {
 				GroundSurface3D::Spray spray;
-				const PxVec3 back = lng * (slip_speed > 0.0f ? -1.0f : 1.0f);
-				const PxVec3 from = contact + back * (0.5f * probe.contact_length);
+				const PxVec3 back = slide / slip_speed;
+				const float reach = 0.5f * (Math::abs(back.dot(lng)) * probe.contact_length + Math::abs(back.dot(lat)) * width);
+				const PxVec3 from = contact + back * reach;
 				const PxVec3 up = n;
 				// Sand slides on the rubber and leaves slower than the tread, at ~30 degrees from the rear of a
 				// sunken contact; past ~8 m/s of slip the throw stops growing (the sand shears off the lugs).
-				const float throw_speed = MIN(Math::abs(slip_speed), 8.0f);
+				const float throw_speed = MIN(slip_speed, 8.0f);
 				const PxVec3 vel = lng * v_lng + back * (throw_speed * 0.7f) + up * (throw_speed * 0.45f);
 				spray.position = Vector3(from.x, from.y - sw.sinkage, from.z);
 				spray.velocity = Vector3(vel.x, vel.y, vel.z);
 				spray.width = width;
-				spray.slip_speed = Math::abs(slip_speed);
+				spray.slip_speed = slip_speed;
 				spray.reach_center = Vector3(contact.x, contact.y, contact.z);
 				spray.reach_radius = 0.5f * MAX(width, probe.contact_length) + 0.1f;
 				ground->add_spray(spray);
+			}
+			// Dust: the fines of dry, bare sand lifted by a tyre rolling and sliding over it (Gillies et al. 2005:
+			// emission linear in speed), carried off by a dust node if there is one.
+			const float ground_speed = Math::sqrt(v_lng * v_lng + v_lat * v_lat);
+			if (ground_speed + slip_speed > 0.5f) {
+				const PxVec3 cv = lng * v_lng + lat * v_lat;
+				// The car's wake stirs the plume up to about its own height: an upward jet growing with speed, which
+				// the air slows within the dust node's jet_time.
+				const PxVec3 jet = (slip_speed > 0.5f ? slide * (0.5f / slip_speed) * MIN(slip_speed, 8.0f) : PxVec3(0.0f)) + cv * 0.3f + n * (0.3f + 0.2f * ground_speed + 0.1f * slip_speed);
+				ground->add_dust(Vector3(contact.x, contact.y - sw.sinkage + 0.05f, contact.z), Vector3(jet.x, jet.y, jet.z), width * (ground_speed + 2.0f * slip_speed));
 			}
 			sw.last_print = at;
 			sw.printed = true;
@@ -244,6 +275,7 @@ public:
 			sw.spin_n++;
 			if (!sw.soft || !v.roadGeomStates[i].hitState) {
 				sw.resistance = 0.0f;
+				sw.side_bulldozing = 0.0f;
 				sw.traction = 0.0f;
 				continue;
 			}
@@ -269,6 +301,19 @@ public:
 				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
 				f.forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
 				f.torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
+			// Side bulldozing: a wheel sliding sideways through loose soil shoves a wedge of it with its sidewall
+			// (Ishigami et al. 2007, Hegedus' bulldozing on the side face): Bekker's bulldozing on a face one
+			// contact length long and the sinkage deep, against the side slip, eased in over 0.3 m/s.
+			const float v_lat = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL];
+			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, sw.sinkage, 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
+			if (side != 0.0f) {
+				const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
+				const PxVec3 dF = lat * -side;
+				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+				f.forces[PxVehicleTireDirectionModes::eLATERAL] += dF;
+				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm.cross(dF);
+			}
+			sw.side_bulldozing = Math::abs(side);
 			}
 			sw.resistance = Math::abs(r);
 			sw.traction = ws.traction;
@@ -638,6 +683,11 @@ real_t PhysXVehicle3D::get_wheel_soil_resistance(int p_wheel) const {
 	const int i = _soil_slot(p_wheel);
 	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].resistance;
 }
+real_t PhysXVehicle3D::get_wheel_soil_side_force(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].side_bulldozing;
+}
+
 
 real_t PhysXVehicle3D::get_wheel_soil_traction(int p_wheel) const {
 	const int i = _soil_slot(p_wheel);
@@ -957,6 +1007,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_forward"), &PhysXVehicle3D::get_forward);
 	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &PhysXVehicle3D::get_wheel_jounce);
 	ClassDB::bind_method(D_METHOD("get_wheel_sinkage", "wheel"), &PhysXVehicle3D::get_wheel_sinkage);
+	ClassDB::bind_method(D_METHOD("get_wheel_soil_side_force", "wheel"), &PhysXVehicle3D::get_wheel_soil_side_force);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_resistance", "wheel"), &PhysXVehicle3D::get_wheel_soil_resistance);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_traction", "wheel"), &PhysXVehicle3D::get_wheel_soil_traction);
 	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);
