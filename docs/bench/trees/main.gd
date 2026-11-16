@@ -293,9 +293,9 @@ func _build_scene() -> void:
 		rows = [0, 1, 2, 3, 4, 5, 6]
 	if pollards:
 		presets = []
-		# Willow pollard cut 3 years ago; beech last cut 60 years ago, its poles grown on into
+		# Willow pollard cut every 6 years for 80, 3 years ago; beech last cut 60 years ago, its poles grown on into
 		# limbs; hazel stool cut on an 8-year cycle, 3 years since the last.
-		var trio := [[12, 2.2, 8, 4, 60], [1, 2.5, 14, 60, 160, 0.7], [5, 0.15, 8, 5, 60]]
+		var trio := [[12, 2.2, 6, 3, 80], [1, 2.5, 14, 60, 160, 0.7], [5, 0.15, 8, 5, 60]]
 		for i in trio.size():
 			var t: Array = trio[i]
 			overrides["cut_height"] = t[1]
@@ -305,7 +305,7 @@ func _build_scene() -> void:
 			# A lapsed beech pollard of 160 years is a veteran (burls, hollows, epicormic shoots),
 			# its smooth bark well grown with crust lichens.
 			overrides["veteran"] = t[5] if t.size() > 5 else 0.0
-			overrides["lichen_cover"] = 1.8 if t.size() > 5 else 1.0
+			overrides["lichen_cover"] = 1.2 if t.size() > 5 else 1.0
 			var d := _gen(t[0], false, seed)
 			xs.append(5.0 * i)
 			_place(d.mesh, Vector3(5.0 * i - (0.8 if i == 2 else 0.0), 0, 3.0 if i == 2 else 0.0))

@@ -892,6 +892,44 @@ management).
 - **Cost.** A cut tree is smaller than an uncut one of the same age: willow pollard (cut every
   10 years) 1.1M bark and 1.3M leaf triangles against 5.7M and 8.0M uncut; generation 1.3 s
   against 5.3 s. Hazel coppice regrown 6 years: 91k bark.
+- **Modelled, not painted (16 Nov, after the third docs review).** The reviews kept finding the
+  relief painted: soft clay lumps, fissures as dark lines, poles as smooth pipes plunged into the
+  head, a willow head too small with twiggy poles. Now:
+  - *Burrs.* Hard-edged knobs on a jittered 3D grid, each a spherical cap with a near-vertical
+    foot (profile (1 - d^2)^0.25), present where a cluster noise is high, so they gather into
+    burrs (each knob a dormant bud's trace that swelled; Read 2000). Crevices round them are
+    darkened. Cells 0.12 of the head's radius (3.5-7 cm). The old smooth burl lumps under them
+    are half as tall. Ridged-noise fissures cut 0.14 of the head's radius deep.
+  - *Mesh.* Over the head the rings are 1.3 cm apart and the stem has up to 256 sides; the
+    knuckles round it share its knobs (fading up each pole within a pole's radius) at 1.6 cm.
+    A knuckle and the pole it runs on into are built as two tubes crossing over three rings,
+    so the pole keeps 12-32 sides. Over the head's top the knobs push out from its centre, not
+    sideways from the ring's: sideways they smeared into radial pleats round the cap. The
+    bark's own furrows are three-quarters closed over on the head (they crossed the knobs as
+    long pleats).
+  - *Poles.* Displaced, on a near tube however thin: shallow flutes along them on the tube's
+    own frame (none on rods under 3 cm, which are round), a faint raised girdle scar at each
+    year's start, and rings of buckled bark ("elephant skin") over 2.5 radii where a pole
+    leaves its knuckle, which swells 1.3 times there as a branch collar (laterals too).
+  - *Stools.* The same knobs (5 cm cells) and fissures over a coppice stool's lobes, fading up
+    the rods' first centimetres.
+  - *Willow.* A pollard willow's withies grow unbranched for six years after a cut (osier and
+    pollard willow, Rackham 2006), five to nine from each seat. Two bugs thinned them: the
+    knuckles were shed as shaded limbs, taking every withy on them, and young poles self-thinned
+    after five years; now the knuckles are never shed and poles not before a cutting cycle.
+  - *Boles.* The pipe model sizes wood by the crown it carries, so a pollard's bole stopped
+    thickening at its first cut (a willow of 80 years stood on a 12 cm stem). It now lays a ring
+    a year (willow 3 mm of radius, others 1.5 mm; Read 2000), and the head swells 1.2 plus 0.05
+    per cut (up to 1.5; knuckles 1.15 plus 0.04, up to 1.35) over that.
+  - *Water shoots* start on the burr they break from: from the plain stem's radius they started
+    inside it, so only those on small burrs showed.
+  - *Hazel* has its own bark family (`BARK_LENTICELLED`): glossy, dense pale raised lenticels,
+    the thin skin peeling in short paler strips (Vaucher 2003), and grey-brown, not the red-brown
+    that read as plastic pipe.
+  - *Cost* (LOD 0 bark triangles, bench trio, seed 1): willow pollard 42k to 116k (it is now a
+    real pollard, with four times the withies), lapsed beech 887k to 902k, hazel stool 386k to
+    660k (the stool's knobs, and more rods now that young poles are not thinned). LOD 1 and on
+    keep the plain tubes.
 - **Not yet.** Stands do not cut anything yet: coppice-with-standards (a hazel understory
   coppiced under oak) and pollard rows along rivers are the natural next step.
 

@@ -601,6 +601,7 @@ private:
 		BARK_SCALY,
 		BARK_FLAKING,
 		BARK_PAPERY,
+		BARK_LENTICELLED, // Hazel: glossy, pale lenticels, thin peeling skin.
 		BARK_MAX,
 	};
 	struct BarkSet {

@@ -278,7 +278,8 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_ROOT_FLARE] = 0.2f;
 			p[PARAM_LEAF_SIZE] = 0.1f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 28;
-			bark_color = Color(0.36f, 0.27f, 0.2f);
+			// Grey-brown: the old red-brown read as plastic pipe on a coppice stool's rods.
+			bark_color = Color(0.43f, 0.36f, 0.3f);
 			leaf_color = Color(0.17f, 0.3f, 0.08f);
 			break;
 		case PRESET_HAWTHORN: // Crataegus monogyna: small, dense, twiggy, crooked.
@@ -740,6 +741,11 @@ Vector3 TreeGenerator::_bud_direction(const Vector3 &p_axis, float p_roll) {
 }
 
 void TreeGenerator::_add_lateral_buds(int p_node, float &r_roll, bool p_end_of_shoot) {
+	// A willow pollard's withies grow unbranched, long straight rods, for their first years
+	// (trees.md 5l; osier and pollard willow, Rackham 2006).
+	if (preset == PRESET_WHITE_WILLOW && cut_height > 0.5f && nodes[p_node].pole && nodes[p_node].born - last_cut_year <= 6) {
+		return;
+	}
 	const Vector3 axis = nodes[p_node].dir;
 	int count = 0;
 	float step = 0.0f;
@@ -1263,6 +1269,13 @@ void TreeGenerator::_shed(int p_year) {
 	for (int i = 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
 		if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.born > p_year - 2) {
+			continue;
+		}
+		// A cut tree's young poles are fed by the whole root system: on a worked tree they are
+		// cut again before they thin out among themselves (Rackham 2006).
+		// The knuckles round the head are its own wood, not shaded limbs: shed, they took
+		// every pole on them.
+		if ((n.pole && p_year - last_cut_year <= MAX(5, cut_cycle)) || (cut_height > 0.0f && n.order == 0 && n.born == 0)) {
 			continue;
 		}
 		const bool under_scrub = scrub > 0.0f && nodes[n.parent].order == 0 && n.start.y - nodes[0].start.y < scrub;
@@ -2302,9 +2315,12 @@ void TreeGenerator::_add_spray(Builder &r_b, const Vector3 &p_base, const Vector
 // Bark families by species (docs/ideas/trees.md section 2a).
 TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 	switch (p_preset) {
+		case PRESET_HAZEL:
+			// Glossy grey-brown with dense pale lenticels and thin skin peeling in strips
+			// (Corylus avellana; Vaucher, Tree Bark, 2003).
+			return BARK_LENTICELLED;
 		case PRESET_BEECH:
 		case PRESET_AMERICAN_BEECH:
-		case PRESET_HAZEL:
 		case PRESET_ROWAN:
 		case PRESET_HOLLY:
 		case PRESET_BOX:
@@ -2457,6 +2473,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 12, 9, 0.06f, 0.006f, 0.0015f, 0.45f, 0.14f }, // Scaly: small overlapping scales.
 		{ 5, 4, 0.03f, 0.003f, 0.001f, 0.6f, 0.0f }, // Flaking: shallow edges, colour mosaic.
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
+		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -2525,6 +2542,33 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					a = Color(1.08f + 0.12f * t, 0.9f + 0.06f * t, 0.74f - 0.08f * t) * shade;
 					height -= L.depth * 0.5f * open;
 				}
+			}
+			if (p_kind == BARK_LENTICELLED) {
+				// Thin outer skin peeling in short strips along the stem, the fresh bark under
+				// it paler and coppery; glossy elsewhere.
+				const float strip = bark_fbm(u, v, 10, 3, 3, salt + 81u);
+				const float peel = Math::smoothstep(0.18f, 0.26f, strip);
+				a = a * Math::lerp(1.0f, 1.25f, peel);
+				a.r *= Math::lerp(1.0f, 1.08f, peel);
+				height -= 0.0004f * peel;
+				r = Math::lerp(0.55f, 0.7f, peel) + 0.05f * fibre;
+				// Lenticels: dense short pale dashes across the stem, a little raised.
+				const int cu = 16, cv = 34;
+				const float lx = u * cu, ly = v * cv;
+				const int ix = int(lx), iy = int(ly);
+				const float on = bark_hash(ix, iy, salt + 61u);
+				if (on > 0.45f) {
+					const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
+					const float cy = 0.5f + 0.4f * (bark_hash(ix, iy, salt + 67u) - 0.5f);
+					const float len = 0.14f + 0.14f * bark_hash(ix, iy, salt + 65u);
+					const float dx = (lx - ix - cx) / len, dy = (ly - iy - cy) / 0.12f;
+					const float m = 1.0f - Math::smoothstep(0.55f, 1.0f, dx * dx + dy * dy);
+					a = a.lerp(Color(1.9f, 1.75f, 1.5f), 0.75f * m);
+					height += m * 0.00015f;
+					r = Math::lerp(r, 0.75f, m);
+				}
+				const float tone = 1.0f + L.mottle * bark_fbm(u, v, 3, 6, 3, salt + 71u) * 2.0f;
+				a = a * tone;
 			}
 			if (p_kind == BARK_SMOOTH || p_kind == BARK_PAPERY) {
 				// Lenticels: short dashes across the stem (long and dark on birch).
@@ -3219,7 +3263,9 @@ void TreeGenerator::_cut_back(bool p_first, int p_year) {
 		if (nodes[i].removed) {
 			continue;
 		}
-		const int n_buds = p_first ? 1 + int(rng.randf() < 0.4f) : 1 + int(rng.randf() < 0.3f);
+		// A willow's head bears a dense fan of withies, five to nine from every seat.
+		const bool osier = preset == PRESET_WHITE_WILLOW && !coppice;
+		const int n_buds = osier ? 5 + int(rng.rand() % 5) : (p_first ? 1 + int(rng.randf() < 0.4f) : 1 + int(rng.randf() < 0.3f));
 		for (int q = 0; q < n_buds; q++) {
 			// Out along the knuckle or stub, else any bearing.
 			Vector3 out = nodes[i].dir;
@@ -7769,8 +7815,75 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			soil_tint(r_b, p_part, 1.0f);
 		}
 	};
+	// Cut trees (trees.md 5l) carry their history as modelled wood, not paint: the callus over
+	// every cut builds hard-edged knobs, clustered into burrs (each knob a dormant bud's trace
+	// that swelled; Read 2000, Veteran Trees), and the poles carry the girdle scars of each
+	// year's bud scales, shallow fluting, and folds of bark where they leave the head.
+	// The pollard head's centre, for the knuckles round it.
+	Vector3 head_c;
+	if (head_r > 0.0f && veteran_stem >= 0) {
+		head_c = Vector3(nodes[veteran_stem].start.x, head_y0 + 1.2f * head_r, nodes[veteran_stem].start.z);
+		for (int i = veteran_stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+			head_c.x = nodes[i].end().x;
+			head_c.z = nodes[i].end().z;
+		}
+	}
+	auto hash3 = [](int p_x, int p_y, int p_z, uint32_t p_salt) -> float {
+		uint32_t h = uint32_t(p_x) * 73856093u ^ uint32_t(p_y) * 19349663u ^ uint32_t(p_z) * 83492791u ^ p_salt;
+		h ^= h >> 13;
+		h *= 0x5bd1e995u;
+		h ^= h >> 15;
+		return float(h & 0xffffffu) / float(0x1000000);
+	};
+	// Knobs as spherical caps on a jittered grid, each with a steep foot (the cap's profile is
+	// (1 - d^2)^0.3, near vertical at its edge), present where a cluster noise is high: burrs, not
+	// a melted swelling. r_crease is the crevice between and around them.
+	auto callus_knobs = [&](const Vector3 &p_p, float p_cell, float p_gate_scale, float p_gate, uint32_t p_salt, float &r_crease) -> float {
+		const Vector3 g = p_p / p_cell;
+		const int ix = int(Math::floor(g.x)), iy = int(Math::floor(g.y)), iz = int(Math::floor(g.z));
+		float best = 0.0f, near = 0.0f;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dy = -1; dy <= 1; dy++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int cx = ix + dx, cy = iy + dy, cz = iz + dz;
+					const Vector3 cell_c = Vector3(cx + 0.5f, cy + 0.5f, cz + 0.5f) * p_cell;
+					const float pres = moss_noise(cell_c / p_gate_scale, p_salt);
+					if (pres < p_gate) {
+						continue;
+					}
+					const Vector3 c = (Vector3(cx, cy, cz) + Vector3(0.2f + 0.6f * hash3(cx, cy, cz, p_salt + 1u), 0.2f + 0.6f * hash3(cx, cy, cz, p_salt + 2u), 0.2f + 0.6f * hash3(cx, cy, cz, p_salt + 3u))) * p_cell;
+					const float rk = p_cell * Math::lerp(0.5f, 0.85f, hash3(cx, cy, cz, p_salt + 4u)) * Math::lerp(0.75f, 1.0f, Math::smoothstep(p_gate, p_gate + 0.2f, pres));
+					const float d = p_p.distance_to(c) / rk;
+					if (d < 1.0f) {
+						best = MAX(best, rk * 0.85f * Math::pow(1.0f - d * d, 0.25f));
+					}
+					near = MAX(near, 1.0f - Math::smoothstep(1.0f, 1.4f, d));
+				}
+			}
+		}
+		r_crease = near * (1.0f - Math::smoothstep(0.0f, 0.2f * p_cell, best));
+		return best;
+	};
+	// Per chain, set before its tubes are deformed (p_features 3): the year boundaries up a pole
+	// (girdle scars), and where a pole leaves its knuckle (base point, heading, radius).
+	LocalVector<Vector3> cut_scars;
+	Vector3 cut_j, cut_jdir;
+	float cut_jr = 0.0f;
+	float cut_arc0 = 0.0f; // Distance up the chain to the tube's first ring, when it is built in pieces.
+	const bool cut_tree = cut_height > 0.0f && !cut_heads.is_empty() && decay_class == 0 && !fallen && !fallen_branch;
+	// A coppice stool's height over the soil: its knobs cover everything below it.
+	float stool_top = -1.0f;
+	float stool_r = 0.0f;
+	if (cut_tree && cut_height <= 0.5f) {
+		for (const int i : bolling) {
+			if (!nodes[i].removed) {
+				stool_top = MAX(stool_top, nodes[i].end().y - vet_base_y + 0.5f * nodes[i].radius);
+				stool_r = MAX(stool_r, nodes[i].radius);
+			}
+		}
+	}
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
-		if (veteran_features.is_empty() || !p_features) {
+		if ((veteran_features.is_empty() && p_features != 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
 			return;
 		}
 		Vector3 *vv = r_b.verts.ptrw();
@@ -7779,6 +7892,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		LocalVector<float> touched;
 		touched.resize(p_part.w);
 		bool any = false;
+		// Distance up the chain, ring by ring.
+		LocalVector<float> arc;
+		arc.resize(p_pts.size());
+		for (uint32_t q = 0; q < p_pts.size(); q++) {
+			arc[q] = q > 0 ? arc[q - 1] + p_pts[q].distance_to(p_pts[q - 1]) : cut_arc0;
+		}
 		for (int i = 0; i < p_part.w; i++) {
 			touched[i] = 0.0f;
 			const int v = p_part.z + i;
@@ -7790,7 +7909,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// normals swing by tens of degrees, so vertices at the hollow's edge fell in or out of
 			// it at random and folded into pale blades across the opening.
 			Vector3 n = vv[v] - p_pts[ring];
-			n.y = 0.0f;
+			if (p_features == 3) {
+				// Square to the chain's own axis: poles lean and bend.
+				const Vector3 ax = p_pts[MIN(ring + 1, int(p_pts.size()) - 1)] - p_pts[MAX(ring - 1, 0)];
+				if (ax.length_squared() > 1e-10f) {
+					const Vector3 an = ax.normalized();
+					n -= an * n.dot(an);
+				}
+			} else {
+				n.y = 0.0f;
+			}
 			if (n.length_squared() < 1e-8f) {
 				continue;
 			}
@@ -7803,25 +7931,106 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float rot = 0.0f;
 			float w_any = 0.0f;
 			float algae = 0.0f;
-			if (p_features == 2 && head_r > 0.0f && p_pts[ring].y > head_y0) {
-				// A pollard's head (trees.md 5l): knobbly with the callus of every cut and split
-				// by deep fissures where the swellings met (Read 2000), whatever the bark's own
-				// texture; broad knobs, a finer second order, and ridged noise for the fissures.
-				const float win = Math::smoothstep(head_y0, head_y0 + 0.5f * head_r, p_pts[ring].y);
-				const Vector3 hp = p_pts[ring] + n * r;
-				const float k1 = moss_noise(hp * (1.0f / (0.3f * head_r)), 0x6b6e6231u) - 0.5f;
-				const float k2 = moss_noise(hp * (1.0f / (0.1f * head_r)), 0x6b6e6232u) - 0.5f;
+			float head_win = 0.0f;
+			float hoff = 0.0f; // Pushed along hdir: over the head's top, out from its centre.
+			Vector3 hdir = n;
+			if ((p_features == 2 || p_features == 3) && head_r > 0.0f && p_pts[ring].y > head_y0) {
+				head_win = Math::smoothstep(head_y0, head_y0 + 0.5f * head_r, p_pts[ring].y);
+				if (p_features == 3) {
+					// The knuckles round the head share its knobs, which fade up each pole.
+					head_win *= 1.0f - Math::smoothstep(1.15f * head_r, 1.5f * head_r, (p_pts[ring] + n * r).distance_to(head_c));
+					if (cut_jr > 0.0f) {
+						head_win *= 1.0f - Math::smoothstep(0.0f, 1.2f * cut_jr, (p_pts[ring] - cut_j).dot(cut_jdir));
+					}
+				}
+			}
+			if (head_win > 0.0f) {
+				// A pollard's head (trees.md 5l): broad swellings of the callus of every cut, split
+				// by deep fissures where they met, and over them clusters of hard-edged knobs, the
+				// burrs (Read 2000), whatever the bark's own texture. All modelled: the head's
+				// rings are about a centimetre apart each way.
+				const float win = head_win;
+				// The surface point itself, and out from the head's centre over its top: pushed
+				// sideways from the ring's centre, the rounded top's knobs smeared into radial
+				// pleats round its pole.
+				// From the ring's centre at the ring's radius, so the bark, its relief and the moss
+				// shell sample the same point.
+				const Vector3 hp = p_pts[ring] + (vv[v] - p_pts[ring]).normalized() * r;
+				const Vector3 from_c = hp - head_c;
+				if (from_c.length_squared() > 1e-8f) {
+					hdir = n.lerp(from_c.normalized(), Math::smoothstep(head_c.y, head_c.y + 0.6f * head_r, hp.y)).normalized();
+				}
+				const float k1 = moss_noise(hp * (1.0f / (0.32f * head_r)), 0x6b6e6231u) - 0.5f;
 				const float ridge = 1.0f - Math::abs(2.0f * moss_noise(hp * Vector3(1.0f / (0.22f * head_r), 1.0f / (0.7f * head_r), 1.0f / (0.22f * head_r)), 0x6b6e6233u) - 1.0f);
-				const float fis = Math::smoothstep(0.75f, 0.97f, ridge);
-				off += win * head_r * (0.22f * k1 + 0.08f * k2 - 0.09f * fis);
-				dark = MIN(dark, Math::lerp(1.0f, 0.5f, win * fis));
+				const float fis = Math::smoothstep(0.8f, 0.97f, ridge);
+				float crease = 0.0f;
+				const float kn = callus_knobs(hp, CLAMP(0.12f * head_r, 0.035f, 0.07f), 0.45f * head_r, 0.44f, 0x6b6e6234u, crease);
+				hoff += win * (head_r * (0.12f * k1 - 0.14f * fis) + kn * (1.0f - fis));
+				// The bark's own furrows mostly closed over by the callus: at full depth they
+				// crossed the knobs as long pleats.
+				hoff -= 0.75f * win * (vv[v].distance_to(p_pts[ring]) - r);
+				dark = MIN(dark, Math::lerp(1.0f, 0.42f, win * fis));
+				dark = MIN(dark, Math::lerp(1.0f, 0.45f, win * crease));
 				// Green algae (Desmococcus) and moss film where water lingers between the knobs
 				// and on their tops; drier, paler grey on the bulges' flanks.
-				algae = win * CLAMP(0.35f + 1.6f * (-k1) + 0.5f * n.y + 0.3f * fis, 0.0f, 0.85f);
+				algae = win * CLAMP(0.35f + 1.6f * (-k1) + 0.5f * n.y + 0.3f * fis + 0.3f * crease, 0.0f, 0.85f);
+				w_any = 1.0f;
+			}
+			if (p_features == 3) {
+				const Vector3 hp = p_pts[ring] + n * r;
+				if (stool_top > 0.0f && h < stool_top + 0.06f) {
+					// A coppice stool: the same knobs and fissures over the stool's lobes, fading
+					// up the stems' first few centimetres.
+					const float win = 1.0f - Math::smoothstep(stool_top - 0.05f, stool_top + 0.05f, h);
+					const float k1 = moss_noise(hp * (1.0f / MAX(0.5f * stool_r, 0.05f)), 0x73746c31u) - 0.5f;
+					const float ridge = 1.0f - Math::abs(2.0f * moss_noise(hp * (1.0f / MAX(0.35f * stool_r, 0.04f)), 0x73746c32u) - 1.0f);
+					const float fis = Math::smoothstep(0.8f, 0.97f, ridge);
+					float crease = 0.0f;
+					const float kn = callus_knobs(hp, 0.05f, 0.15f, 0.4f, 0x73746c33u, crease);
+					off += win * (MIN(r, 0.12f) * (0.25f * k1 - 0.3f * fis) + kn * (1.0f - fis));
+					dark = MIN(dark, Math::lerp(1.0f, 0.45f, win * fis));
+					dark = MIN(dark, Math::lerp(1.0f, 0.62f, win * crease));
+					algae = MAX(algae, win * CLAMP(0.2f + 1.2f * (-k1) + 0.3f * crease, 0.0f, 0.6f));
+					w_any = 1.0f;
+				}
+				// Up the pole: shallow, wavering flutes along it, a few round it (as on hornbeam
+				// and old hazel rods), read on the tube's own frame so they follow its bends.
+				const int col = i % (p_sides + 1);
+				const float th = float(Math::TAU) * float(col % p_sides) / float(p_sides);
+				const float along = arc[ring];
+				const float flute = moss_noise(Vector3(1.4f * Math::cos(th), 1.4f * Math::sin(th), along / MAX(8.0f * r, 0.15f)), 0x666c7574u) - 0.5f;
+				// Rods and withies are round; a pole fattening into a limb grows its flutes.
+				off += 0.28f * r * flute * Math::smoothstep(0.03f, 0.08f, r);
+				// Girdle scars: each year's bud-scale scar, a raised ring with a slight waist above.
+				float scar = 0.0f;
+				const float sw = MAX(0.2f * r, 0.004f);
+				for (const Vector3 &sp : cut_scars) {
+					const float d = p_pts[ring].distance_to(sp);
+					if (d < 4.0f * sw) {
+						const float a = d / sw;
+						scar = MAX(scar, Math::exp(-a * a));
+						off -= 0.012f * r * Math::exp(-(a - 2.0f) * (a - 2.0f));
+					}
+				}
+				// Faint: a hazel rod's or a withy's scars are low rings, not a bamboo's nodes.
+				off += 0.03f * r * scar;
+				dark = MIN(dark, Math::lerp(1.0f, 0.92f, scar));
+				if (cut_jr > 0.0f) {
+					// Folds of bark round the pole's base, where it swells out of the head: the
+					// stretched bark buckles in rings (the "elephant skin" of beech and hornbeam).
+					const float dc = (p_pts[ring] - cut_j).dot(cut_jdir);
+					if (dc > 0.0f && dc < 2.5f * cut_jr) {
+						const float fade = 1.0f - dc / (2.5f * cut_jr);
+						const float wob = 0.6f * (moss_noise(hp * (1.0f / MAX(cut_jr, 0.02f)), 0x666f6c64u) - 0.5f);
+						const float fold = Math::sin(float(Math::TAU) * (dc / (0.3f * cut_jr) + wob));
+						off += 0.035f * cut_jr * fade * fold;
+						dark = MIN(dark, Math::lerp(1.0f, 0.85f, fade * MAX(0.0f, -fold)));
+					}
+				}
 				w_any = 1.0f;
 			}
 			for (const VeteranFeature &f : veteran_features) {
-				if (!p_features) {
+				if (p_features == 3) {
 					break;
 				}
 				// A basal hollow is the main stem's alone: the forks around it took a second dent
@@ -7882,7 +8091,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// No moss on the rotten wall: the shell sinks under the bark past the rim.
 					off -= 0.08f * rot;
 				}
-				vv[v] += n * off;
+				vv[v] += n * off + hdir * hoff;
 				if (p_colour) {
 					Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
 					c = c.lerp(Color(0.13f, 0.16f, 0.07f, c.a), algae);
@@ -8028,6 +8237,31 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	LocalVector<Vector3> pts;
 	LocalVector<float> rad;
 	LocalVector<int> chain;
+	// Extra rings along a tube wherever p_step (metres at a point, given its radius) asks for
+	// them; the radius is interpolated.
+	auto densify = [&](LocalVector<Vector3> &r_p, LocalVector<float> &r_r, auto p_step) {
+		LocalVector<Vector3> dp;
+		LocalVector<float> dr;
+		for (int i = 0; i < int(r_p.size()); i++) {
+			dp.push_back(r_p[i]);
+			dr.push_back(r_r[i]);
+			if (i + 1 < int(r_p.size())) {
+				const Vector3 mid = r_p[i].lerp(r_p[i + 1], 0.5f);
+				const float st = MIN(MIN(p_step(r_p[i], r_r[i]), p_step(r_p[i + 1], r_r[i + 1])), p_step(mid, 0.5f * (r_r[i] + r_r[i + 1])));
+				const float len = r_p[i].distance_to(r_p[i + 1]);
+				if (st < len) {
+					const int steps = MIN(int(Math::ceil(len / MAX(st, 0.002f))), 400);
+					for (int k = 1; k < steps; k++) {
+						const float f = float(k) / steps;
+						dp.push_back(r_p[i].lerp(r_p[i + 1], f));
+						dr.push_back(Math::lerp(r_r[i], r_r[i + 1], f));
+					}
+				}
+			}
+		}
+		r_p = dp;
+		r_r = dr;
+	};
 	// The lying stem's own bark and moss (deadwood interface): vertex ranges for _measure_lying().
 	int dw_v0 = -1, dw_v1 = -1, dw_m0 = -1, dw_m1 = -1;
 	for (int s = 1; s < int(nodes.size()); s++) {
@@ -8103,8 +8337,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float ratio = r0 / rp;
 			// No swell on steep limbs: weld() leaves them as crotches, where a swollen base would
 			// poke out of the parent's bark.
-			const float swell = 0.2f * CLAMP(ratio * 2.5f, 0.2f, 1.0f) * (1.0f - Math::smoothstep(0.35f, 0.6f, ratio)) *
+			float swell = 0.2f * CLAMP(ratio * 2.5f, 0.2f, 1.0f) * (1.0f - Math::smoothstep(0.35f, 0.6f, ratio)) *
 					Math::smoothstep(0.45f, 0.6f, first.dir.cross(par.dir).length());
+			if (first.pole && bolling.has(first.parent)) {
+				// A pole swells where it leaves its knuckle (trees.md 5l): its base is a socket of
+				// callus, whatever its angle; the knuckle is fat enough to take it.
+				swell = 0.3f;
+			}
 			const float seg = pts[0].distance_to(pts[1]);
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -8208,6 +8447,50 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			pts = dp;
 			rad = dr;
+		}
+		// A cut tree's poles and stool (trees.md 5l): their year boundaries, and the swollen base
+		// where a pole leaves its knuckle, with rings enough for the flare to be round.
+		cut_scars.clear();
+		cut_jr = 0.0f;
+		const bool head_chain = cut_tree && head_r > 0.0f && s != veteran_stem && first.start.distance_to(head_c) < 1.6f * head_r;
+		const bool stool_chain = cut_tree && stool_top > 0.0f && first.start.y - vet_base_y < stool_top;
+		const bool cut_chain = cut_tree && (first.pole || bolling.has(s) || head_chain || stool_chain);
+		if (cut_chain) {
+			for (int c = 1; c < int(chain.size()); c++) {
+				const Node &a = nodes[chain[c - 1]], &b = nodes[chain[c]];
+				if (a.pole && b.pole && a.born != b.born) {
+					cut_scars.push_back(b.start);
+				}
+			}
+			if (first.pole && first.parent > 0 && bolling.has(first.parent)) {
+				cut_j = first.start;
+				cut_jdir = first.dir;
+				cut_jr = first.radius;
+			} else {
+				for (int c = 0; c + 1 < int(chain.size()); c++) {
+					const Node &b = nodes[chain[c + 1]];
+					if (bolling.has(chain[c]) && !bolling.has(chain[c + 1]) && b.pole) {
+						cut_j = b.start;
+						cut_jdir = b.dir;
+						cut_jr = b.radius;
+						break;
+					}
+				}
+				if (cut_jr > 0.0f) {
+					// The knuckle's own continuation: swell the pole's first radii out of it, as the
+					// branch collar does for a lateral one.
+					densify(pts, rad, [&](const Vector3 &p_p, float) {
+						const float d = (p_p - cut_j).dot(cut_jdir);
+						return d > -0.5f * cut_jr && d < 3.0f * cut_jr ? 0.3f * cut_jr : 1e9f;
+					});
+					for (uint32_t i = 0; i < pts.size(); i++) {
+						const float d = (pts[i] - cut_j).dot(cut_jdir);
+						if (d >= -1e-4f && d < 4.0f * cut_jr && pts[i].distance_to(cut_j) < 5.0f * cut_jr) {
+							rad[i] *= 1.0f + 0.3f * Math::exp(-MAX(d, 0.0f) / (0.8f * cut_jr));
+						}
+					}
+				}
+			}
 		}
 		if (collar) {
 			// Sink the base below the ground line, deeper on a leaning stem: the base ring lies
@@ -8361,10 +8644,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bark.bone = node_bone[s];
 		const BarkSet &bs = _bark_set(_bark_kind(preset));
 		const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
-		const bool near_tube = bark_relief > 0.0f && r0 >= RELIEF_MIN_RADIUS;
+		// A cut tree's poles and stool get a near tube however thin, for their modelled relief.
+		const bool near_tube = bark_relief > 0.0f && (r0 >= RELIEF_MIN_RADIUS || (cut_chain && r0 >= 0.012f));
 		// Displaced only where that shows (a millimetre or more nearer the relief than a smooth
 		// tube); otherwise LOD 0 gets a smooth tube with sides for a millimetre of chord error.
-		const bool relief = near_tube && bs.relief_gain * scale >= 0.001f;
+		// A knuckle's chain runs on into its pole, as thin as a withy: the map's relief, set by
+		// the knuckle's girth, would furrow it; the knuckle takes the head's knobs instead.
+		const bool relief = near_tube && r0 >= RELIEF_MIN_RADIUS && !(cut_chain && s != veteran_stem && (bolling.has(s) || first.pole)) && bs.relief_gain * scale >= 0.001f;
+		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : 0));
 		// A mesh without LODs (the near variants) carries the near tube alone.
 		if (!(near_tube && skip_lods)) {
 			Vector4i part;
@@ -8410,221 +8697,357 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			};
 			LocalVector<Vector3> rp;
 			LocalVector<float> rr;
-			make_rings(0.05f, rp, rr);
-			const int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
-			if (near_tube) {
-				// The bark's own grid. The moss shell reads the bark's displacement at its vertices,
-				// so under a shell the two share one grid; elsewhere a displaced tube takes rings as
-				// far apart as its pattern allows along the stem (bs.relief_along), and a smooth one
-				// sides for a millimetre of chord error and rings every 10 cm.
-				LocalVector<Vector3> bp;
-				LocalVector<float> br;
-				int bsides = rsides;
-				if (moss_shell) {
-					// Smooth bark too: on a coarser bark grid the shell's edge, where it meets the
-					// bark, ran straight along the bark's long triangles.
-					bp = rp;
-					br = rr;
-				} else if (relief) {
-					make_rings(MAX(0.05f, bs.relief_along), bp, br);
-				} else {
-					make_rings(0.1f, bp, br);
-					bsides = CLAMP(int(Math::ceil(float(Math::PI) / Math::acos(1.0f - 0.001f / MAX(r0, 0.001f)))), 24, rsides);
+			if (vf == 3) {
+				// A pole's rings come from cut_step below, by its girth.
+				rp = pts;
+				rr = rad;
+			} else {
+				make_rings(0.05f, rp, rr);
+			}
+			int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
+			if (vf == 3) {
+				// Enough sides for the flutes, a few round a pole.
+				rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.01f)), 12, 32);
+			}
+			// A cut tree's modelled wood: rings about a centimetre apart over a pollard's head and
+			// a stool, closer over a girdle scar and the folds at a pole's base; as many sides.
+			const bool knobbly = (head_r > 0.0f && (s == veteran_stem || head_chain)) || stool_chain;
+			auto cut_step = [&](const Vector3 &p_p, float p_r) -> float {
+				float st = 1e9f;
+				if (head_r > 0.0f && (s == veteran_stem || head_chain) && p_p.y > head_y0 && (s == veteran_stem || (p_p.distance_to(head_c) < 1.6f * head_r && (cut_jr <= 0.0f || (p_p - cut_j).dot(cut_jdir) < 1.4f * cut_jr)))) {
+					st = s == veteran_stem ? 0.013f : 0.016f;
 				}
-				Vector4i part;
-				bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
-				bark.begin(part);
-				_tube(bark, bp, br, bsides, 0.0f, col, relief ? bs.height.ptr() : nullptr, relief ? scale : 0.0f, girth_r, !(fallen || fallen_branch));
-				bark.end(part, r0);
-				if (collar) {
-					root_collar(bark, part, bsides, bp, br, false);
+				if (stool_chain && p_p.y - vet_base_y < stool_top + 0.08f) {
+					st = MIN(st, 0.018f);
 				}
-				moss_tint(bark, part);
-				lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : br[0]), uint32_t(s));
-				end_grain(bark, part, bp, bsides, girth_r, col);
-				if (collar) {
-					soil_tint(bark, part, 1.0f);
+				if (vf == 3) {
+					st = MIN(st, CLAMP(4.0f * p_r, 0.05f, 0.2f));
+					const float sw = MAX(0.2f * p_r, 0.004f);
+					for (const Vector3 &sp : cut_scars) {
+						if (p_p.distance_to(sp) < 3.0f * sw && p_r > 0.006f) {
+							st = MIN(st, sw);
+						}
+					}
+					if (cut_jr > 0.0f) {
+						const float dc = (p_p - cut_j).dot(cut_jdir);
+						if (dc > -0.2f * cut_jr && dc < 2.7f * cut_jr) {
+							st = MIN(st, 0.07f * cut_jr);
+						}
+					}
 				}
-				if (rigged) {
-					_skin_stem(bark, part, s, bp, bsides);
+				return st;
+			};
+			if (vf == 3 && rp.size() > 5) {
+				// Resampled along the chain at the step asked for: a hazel rod's internodes are a
+				// few centimetres, and a ring at each of them doubled its triangles for nothing.
+				LocalVector<Vector3> qp;
+				LocalVector<float> qr;
+				qp.push_back(rp[0]);
+				qr.push_back(rr[0]);
+				float since = 0.0f;
+				const uint32_t body = rp.size() - 3; // The last three rings close the end (a cap).
+				for (uint32_t i = 0; i + 1 < body; i++) {
+					const float len = rp[i].distance_to(rp[i + 1]);
+					float t = 0.0f;
+					while (len > 1e-6f) {
+						const Vector3 at = rp[i].lerp(rp[i + 1], t / len);
+						const float want = cut_step(at, Math::lerp(rr[i], rr[i + 1], t / len));
+						const float need = want - since;
+						if (t + need >= len) {
+							since += len - t;
+							break;
+						}
+						t += need;
+						since = 0.0f;
+						qp.push_back(rp[i].lerp(rp[i + 1], t / len));
+						qr.push_back(Math::lerp(rr[i], rr[i + 1], t / len));
+					}
 				}
-				if (s == veteran_stem || vet_share[s]) {
-					veteran_deform(bark, part, bp, br, bsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
+				if (qp[qp.size() - 1].distance_to(rp[body - 1]) < 0.3f * MAX(cut_step(rp[body - 1], rr[body - 1]), 0.01f) && qp.size() > 1) {
+					qp.resize(qp.size() - 1);
+					qr.resize(qr.size() - 1);
 				}
-				if (!stem && !hanger && junction_weld) {
-					weld(bark, part, s, bp, br, bsides);
+				for (uint32_t i = body - 1; i < rp.size(); i++) {
+					qp.push_back(rp[i]);
+					qr.push_back(rr[i]);
+				}
+				rp = qp;
+				rr = qr;
+			} else if (vf >= 2 && cut_tree) {
+				densify(rp, rr, cut_step);
+			}
+			// A knuckle or stool lobe runs on into its pole: the knobs need a centimetre between
+			// sides, the pole a fraction of that. The chain is built in two tubes, crossing over
+			// three rings past where the knobs have faded, each with its own sides.
+			int split = -1;
+			if (knobbly && s != veteran_stem && cut_jr > 0.0f) {
+				for (uint32_t i = 0; i < rp.size(); i++) {
+					if ((rp[i] - cut_j).dot(cut_jdir) > 1.6f * cut_jr && i >= 3 && i + 3 < rp.size()) {
+						split = int(i);
+						break;
+					}
 				}
 			}
-			if (moss_shell) {
-				// The moss shell (section 5c): the same displaced tube, lifted by the moss's depth
-				// where the weight is high and sunk below the bark where it fades, so the moss edge
-				// needs no alpha; quads wholly under the bark are dropped. Cushions thin out on
-				// thin limbs.
-				const float depth = 0.018f * CLAMP(r0 / 0.15f, 0.35f, 1.0f);
-				Vector4i part;
-				moss.bone = node_bone[s];
-				moss.begin(part);
-				_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
-				moss.end(part, r0);
-				if (collar) {
-					root_collar(moss, part, rsides, rp, rr, false);
-				}
-				if (s == veteran_stem || vet_share[s]) {
-					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
-				}
-				// The bark's own displacement under each shell vertex (as the relief tube has it).
-				const Vector<uint8_t> bh_buf = bs.height->get_data();
-				const float *bh = reinterpret_cast<const float *>(bh_buf.ptr());
-				const int bn = bs.height->get_width();
-				auto bark_disp = [&](const Vector2 &p_uv) -> float {
-					if (!relief) {
-						return 0.0f;
+			LocalVector<Vector3> full_rp;
+			LocalVector<float> full_rr;
+			full_rp = rp;
+			full_rr = rr;
+			const int pieces = split > 0 ? 2 : 1;
+			cut_arc0 = 0.0f;
+			for (int piece = 0; piece < pieces; piece++) {
+				if (split > 0) {
+					// Piece 0 to three rings past the split, sinking inside piece 1 over the last two;
+					// piece 1 from one ring before it, starting inside piece 0.
+					rp.clear();
+					rr.clear();
+					const int a = piece == 0 ? 0 : split - 1, b = piece == 0 ? split + 2 : int(full_rp.size()) - 1;
+					for (int i = a; i <= b; i++) {
+						rp.push_back(full_rp[i]);
+						float f = 1.0f;
+						if (piece == 0) {
+							f = i == split + 1 ? 0.9f : (i == split + 2 ? 0.75f : 1.0f);
+						} else if (i == split - 1) {
+							f = 0.9f;
+						}
+						rr.push_back(full_rr[i] * f);
 					}
-					const float x = (p_uv.x - Math::floor(p_uv.x)) * bn - 0.5f, y = (p_uv.y - Math::floor(p_uv.y)) * bn - 0.5f;
-					const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
-					const float fx = x - x0, fy = y - y0;
-					auto at = [&](int i, int j) { return bh[((j % bn + bn) % bn) * bn + ((i % bn + bn) % bn)]; };
-					return scale * Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
-				};
-				// Moss fills the furrows first, then grows over the plates (Barkman 1958): the moss
-				// surface rises from the furrow floor to above the plate tops as its weight grows,
-				// and wherever it is below the bark it stays hidden under it.
-				const float floor_d = relief ? -0.045f * scale : -0.004f; // Below the deepest furrow (3 cm plus grain).
-				if (rigged) {
-					_skin_stem(moss, part, s, rp, rsides);
-				}
-				LocalVector<float> wv;
-				wv.resize(part.w);
-				// The weight before its clamp, and how much it changes from one vertex to the next:
-				// on heavily mossed wood (logs) the weight crossed the whole ramp between two
-				// vertices, so the edge could only fall on the grid and drew it as stairs. The ramp
-				// is widened to span at least two and a half vertices, so the surface crosses the
-				// bark at the weight's own contour, between vertices.
-				const int ring = rsides + 1;
-				LocalVector<float> raw;
-				raw.resize(part.w);
-				// No moss on a log's broken butt face (the closed cap's rings).
-				const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
-				for (int i = 0; i < part.w; i++) {
-					raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
-					if (cap_end > 0.0f && i / ring < int(rp.size()) && rp[i / ring].distance_to(rp[0]) < cap_end) {
-						raw[i] = -1.0f;
+					cut_arc0 = 0.0f;
+					for (int i = 1; i <= a; i++) {
+						cut_arc0 += full_rp[i].distance_to(full_rp[i - 1]);
+					}
+					if (piece == 1) {
+						tube_carry_nrm = tube_last_nrm;
 					}
 				}
-				for (int i = 0; i < part.w; i++) {
-					const int v = part.z + i;
-					const Vector3 n = moss.normals[v];
-					const float w = CLAMP(raw[i], 0.0f, 1.0f);
-					float step = 0.0f;
-					if (part.w % ring == 0) {
-						const int rs = i / ring, sd = i % ring;
-						const int nb[4] = { rs > 0 ? i - ring : -1, i + ring < part.w ? i + ring : -1, rs * ring + (sd + rsides - 1) % rsides, rs * ring + (sd + 1) % rsides };
-						for (int k = 0; k < 4; k++) {
-							if (nb[k] >= 0) {
-								step = MAX(step, Math::abs(raw[nb[k]] - raw[i]));
+				if (knobbly) {
+					float rmax = 0.0f;
+					for (uint32_t i = 0; i < rr.size(); i++) {
+						rmax = MAX(rmax, rr[i]);
+					}
+					rsides = piece == 1 ? CLAMP(int(Math::ceil(Math::TAU * rr[1] / 0.01f)), 12, 32) : CLAMP(int(Math::ceil(Math::TAU * rmax * (s == veteran_stem ? 1.3f / 0.013f : (head_chain ? 1.2f / 0.016f : 1.15f / 0.018f)))), 24, s == veteran_stem ? 256 : 128);
+				}
+				if (near_tube) {
+					// The bark's own grid. The moss shell reads the bark's displacement at its vertices,
+					// so under a shell the two share one grid; elsewhere a displaced tube takes rings as
+					// far apart as its pattern allows along the stem (bs.relief_along), and a smooth one
+					// sides for a millimetre of chord error and rings every 10 cm.
+					LocalVector<Vector3> bp;
+					LocalVector<float> br;
+					int bsides = rsides;
+					if (moss_shell || split > 0 || vf == 3) {
+						// Smooth bark too: on a coarser bark grid the shell's edge, where it meets the
+						// bark, ran straight along the bark's long triangles.
+						bp = rp;
+						br = rr;
+					} else if (relief) {
+						make_rings(MAX(0.05f, bs.relief_along), bp, br);
+					} else {
+						make_rings(0.1f, bp, br);
+						bsides = CLAMP(int(Math::ceil(float(Math::PI) / Math::acos(1.0f - 0.001f / MAX(r0, 0.001f)))), 24, rsides);
+					}
+					if (!moss_shell && split < 0 && vf == 2 && cut_tree) {
+						densify(bp, br, cut_step);
+					}
+					if (knobbly) {
+						bsides = rsides;
+					}
+					Vector4i part;
+					bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
+					bark.begin(part);
+					_tube(bark, bp, br, bsides, 0.0f, col, relief ? bs.height.ptr() : nullptr, relief ? scale : 0.0f, girth_r, !(fallen || fallen_branch));
+					bark.end(part, r0);
+					if (collar) {
+						root_collar(bark, part, bsides, bp, br, false);
+					}
+					moss_tint(bark, part);
+					lichen_tint(bark, part, r0, float(Math::TAU) * (girth_r > 0.0f ? girth_r : br[0]), uint32_t(s));
+					end_grain(bark, part, bp, bsides, girth_r, col);
+					if (collar) {
+						soil_tint(bark, part, 1.0f);
+					}
+					if (rigged) {
+						_skin_stem(bark, part, s, bp, bsides);
+					}
+					if (vf) {
+						veteran_deform(bark, part, bp, br, bsides, true, vf);
+					}
+					if (!stem && !hanger && junction_weld) {
+						weld(bark, part, s, bp, br, bsides);
+					}
+				}
+				if (moss_shell) {
+					// The moss shell (section 5c): the same displaced tube, lifted by the moss's depth
+					// where the weight is high and sunk below the bark where it fades, so the moss edge
+					// needs no alpha; quads wholly under the bark are dropped. Cushions thin out on
+					// thin limbs.
+					const float depth = 0.018f * CLAMP(r0 / 0.15f, 0.35f, 1.0f);
+					Vector4i part;
+					moss.bone = node_bone[s];
+					moss.begin(part);
+					_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
+					moss.end(part, r0);
+					if (collar) {
+						root_collar(moss, part, rsides, rp, rr, false);
+					}
+					if (vf) {
+						veteran_deform(moss, part, rp, rr, rsides, false, vf);
+					}
+					// The bark's own displacement under each shell vertex (as the relief tube has it).
+					const Vector<uint8_t> bh_buf = bs.height->get_data();
+					const float *bh = reinterpret_cast<const float *>(bh_buf.ptr());
+					const int bn = bs.height->get_width();
+					auto bark_disp = [&](const Vector2 &p_uv) -> float {
+						if (!relief) {
+							return 0.0f;
+						}
+						const float x = (p_uv.x - Math::floor(p_uv.x)) * bn - 0.5f, y = (p_uv.y - Math::floor(p_uv.y)) * bn - 0.5f;
+						const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
+						const float fx = x - x0, fy = y - y0;
+						auto at = [&](int i, int j) { return bh[((j % bn + bn) % bn) * bn + ((i % bn + bn) % bn)]; };
+						return scale * Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
+					};
+					// Moss fills the furrows first, then grows over the plates (Barkman 1958): the moss
+					// surface rises from the furrow floor to above the plate tops as its weight grows,
+					// and wherever it is below the bark it stays hidden under it.
+					const float floor_d = relief ? -0.045f * scale : -0.004f; // Below the deepest furrow (3 cm plus grain).
+					if (rigged) {
+						_skin_stem(moss, part, s, rp, rsides);
+					}
+					LocalVector<float> wv;
+					wv.resize(part.w);
+					// The weight before its clamp, and how much it changes from one vertex to the next:
+					// on heavily mossed wood (logs) the weight crossed the whole ramp between two
+					// vertices, so the edge could only fall on the grid and drew it as stairs. The ramp
+					// is widened to span at least two and a half vertices, so the surface crosses the
+					// bark at the weight's own contour, between vertices.
+					const int ring = rsides + 1;
+					LocalVector<float> raw;
+					raw.resize(part.w);
+					// No moss on a log's broken butt face (the closed cap's rings).
+					const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
+					for (int i = 0; i < part.w; i++) {
+						raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
+						if (cap_end > 0.0f && i / ring < int(rp.size()) && rp[i / ring].distance_to(rp[0]) < cap_end) {
+							raw[i] = -1.0f;
+						}
+					}
+					for (int i = 0; i < part.w; i++) {
+						const int v = part.z + i;
+						const Vector3 n = moss.normals[v];
+						const float w = CLAMP(raw[i], 0.0f, 1.0f);
+						float step = 0.0f;
+						if (part.w % ring == 0) {
+							const int rs = i / ring, sd = i % ring;
+							const int nb[4] = { rs > 0 ? i - ring : -1, i + ring < part.w ? i + ring : -1, rs * ring + (sd + rsides - 1) % rsides, rs * ring + (sd + 1) % rsides };
+							for (int k = 0; k < 4; k++) {
+								if (nb[k] >= 0) {
+									step = MAX(step, Math::abs(raw[nb[k]] - raw[i]));
+								}
 							}
 						}
+						// Hummocks a hand across: the vertices are 2.5 cm apart, so the texture's 4 cm
+						// cushions stay in the normal map and the geometry carries only what it resolves.
+						const float hummock = moss_noise(moss.verts[v] * 9.0f, 0x6d6f7376u);
+						// A narrow ramp: the moss edge is a contour of the smooth weight that only dips into
+						// the furrows just ahead of it; a wide one shows the 2.5 cm vertex grid as blocks
+						// where furrows are partly filled.
+						// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
+						const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
+						float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
+						// As the relief tube has it: faded out at a standing stem's soil line.
+						const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
+						// Shown where the fill stands above the bark; wv carries the margin.
+						if (collar && raw[i] > 0.3f) {
+							// The foot sleeve covers the bark down to the soil: on the roots' flanks it
+							// broke into tongues with the bark between them standing in a crevice under
+							// the shell's free edge, black under the path tracer.
+							const float hh = moss.verts[v].y - ground_y;
+							if (hh > -0.04f && hh < 0.25f) {
+								fill = MAX(fill, under + 0.004f);
+							}
+						}
+						wv[i] = fill - under;
+						// Below the bark the shell keeps its own depth rather than hugging the bark's
+						// underside: the edge then falls where the fill crosses the bark between two
+						// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
+						// of the 2.5 cm grid.
+						moss.verts.write[v] = moss.verts[v] + n * fill;
+						// Wetter, deeper moss is darker; thin moss on dry faces yellower.
+						const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
+						moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
 					}
-					// Hummocks a hand across: the vertices are 2.5 cm apart, so the texture's 4 cm
-					// cushions stay in the normal map and the geometry carries only what it resolves.
-					const float hummock = moss_noise(moss.verts[v] * 9.0f, 0x6d6f7376u);
-					// A narrow ramp: the moss edge is a contour of the smooth weight that only dips into
-					// the furrows just ahead of it; a wide one shows the 2.5 cm vertex grid as blocks
-					// where furrows are partly filled.
-					// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
-					const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
-					float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
-					// As the relief tube has it: faded out at a standing stem's soil line.
-					const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
-					// Shown where the fill stands above the bark; wv carries the margin.
-					if (collar && raw[i] > 0.3f) {
-						// The foot sleeve covers the bark down to the soil: on the roots' flanks it
-						// broke into tongues with the bark between them standing in a crevice under
-						// the shell's free edge, black under the path tracer.
-						const float hh = moss.verts[v].y - ground_y;
-						if (hh > -0.04f && hh < 0.25f) {
-							fill = MAX(fill, under + 0.004f);
+					if (collar) {
+						soil_tint(moss, part, 0.7f);
+					}
+					// Keep quads (two triangles each) with any corner showing.
+					int at = part.x;
+					int32_t *iw = moss.indices.ptrw();
+					for (int q = part.x; q + 5 < part.x + part.y; q += 6) {
+						bool show = false;
+						for (int k = 0; k < 6 && !show; k++) {
+							show = wv[iw[q + k] - part.z] > 0.0f;
+						}
+						if (show) {
+							for (int k = 0; k < 6; k++) {
+								iw[at + k] = iw[q + k];
+							}
+							at += 6;
 						}
 					}
-					wv[i] = fill - under;
-					// Below the bark the shell keeps its own depth rather than hugging the bark's
-					// underside: the edge then falls where the fill crosses the bark between two
-					// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
-					// of the 2.5 cm grid.
-					moss.verts.write[v] = moss.verts[v] + n * fill;
-					// Wetter, deeper moss is darker; thin moss on dry faces yellower.
-					const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
-					moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
-				}
-				if (collar) {
-					soil_tint(moss, part, 0.7f);
-				}
-				// Keep quads (two triangles each) with any corner showing.
-				int at = part.x;
-				int32_t *iw = moss.indices.ptrw();
-				for (int q = part.x; q + 5 < part.x + part.y; q += 6) {
-					bool show = false;
-					for (int k = 0; k < 6 && !show; k++) {
-						show = wv[iw[q + k] - part.z] > 0.0f;
+					const int kept = at - part.x;
+					// Compact the part's vertices to those still referenced.
+					LocalVector<int> remap;
+					remap.resize(part.w);
+					for (int i = 0; i < part.w; i++) {
+						remap[i] = -1;
 					}
-					if (show) {
-						for (int k = 0; k < 6; k++) {
-							iw[at + k] = iw[q + k];
+					// Mark, then number in vertex order, so the in-place copy below only moves down.
+					for (int q = part.x; q < at; q++) {
+						remap[iw[q] - part.z] = 0;
+					}
+					int nv = 0;
+					for (int i = 0; i < part.w; i++) {
+						if (remap[i] == 0) {
+							remap[i] = nv++;
 						}
-						at += 6;
 					}
-				}
-				const int kept = at - part.x;
-				// Compact the part's vertices to those still referenced.
-				LocalVector<int> remap;
-				remap.resize(part.w);
-				for (int i = 0; i < part.w; i++) {
-					remap[i] = -1;
-				}
-				// Mark, then number in vertex order, so the in-place copy below only moves down.
-				for (int q = part.x; q < at; q++) {
-					remap[iw[q] - part.z] = 0;
-				}
-				int nv = 0;
-				for (int i = 0; i < part.w; i++) {
-					if (remap[i] == 0) {
-						remap[i] = nv++;
+					for (int i = 0; i < part.w; i++) {
+						if (remap[i] < 0) {
+							continue;
+						}
+						const int from = part.z + i, to = part.z + remap[i];
+						moss.verts.write[to] = moss.verts[from];
+						moss.normals.write[to] = moss.normals[from];
+						moss.uvs.write[to] = moss.uvs[from];
+						moss.colors.write[to] = moss.colors[from];
+						for (int c = 0; c < 4; c++) {
+							moss.tangents.write[to * 4 + c] = moss.tangents[from * 4 + c];
+							moss.bones.write[to * 4 + c] = moss.bones[from * 4 + c];
+							moss.weights.write[to * 4 + c] = moss.weights[from * 4 + c];
+						}
 					}
-				}
-				for (int i = 0; i < part.w; i++) {
-					if (remap[i] < 0) {
-						continue;
+					for (int q = part.x; q < at; q++) {
+						iw[q] = part.z + remap[iw[q] - part.z];
 					}
-					const int from = part.z + i, to = part.z + remap[i];
-					moss.verts.write[to] = moss.verts[from];
-					moss.normals.write[to] = moss.normals[from];
-					moss.uvs.write[to] = moss.uvs[from];
-					moss.colors.write[to] = moss.colors[from];
-					for (int c = 0; c < 4; c++) {
-						moss.tangents.write[to * 4 + c] = moss.tangents[from * 4 + c];
-						moss.bones.write[to * 4 + c] = moss.bones[from * 4 + c];
-						moss.weights.write[to * 4 + c] = moss.weights[from * 4 + c];
+					moss.indices.resize(at);
+					moss.verts.resize(part.z + nv);
+					moss.normals.resize(part.z + nv);
+					moss.uvs.resize(part.z + nv);
+					moss.colors.resize(part.z + nv);
+					moss.tangents.resize((part.z + nv) * 4);
+					moss.bones.resize((part.z + nv) * 4);
+					moss.weights.resize((part.z + nv) * 4);
+					if (kept > 0) {
+						moss.parts[moss.parts.size() - 1] = Vector4i(part.x, kept, part.z, nv);
+					} else {
+						moss.parts.resize(moss.parts.size() - 1);
+						moss.part_size.resize(moss.part_size.size() - 1);
+						moss.part_role.resize(moss.part_role.size() - 1);
 					}
-				}
-				for (int q = part.x; q < at; q++) {
-					iw[q] = part.z + remap[iw[q] - part.z];
-				}
-				moss.indices.resize(at);
-				moss.verts.resize(part.z + nv);
-				moss.normals.resize(part.z + nv);
-				moss.uvs.resize(part.z + nv);
-				moss.colors.resize(part.z + nv);
-				moss.tangents.resize((part.z + nv) * 4);
-				moss.bones.resize((part.z + nv) * 4);
-				moss.weights.resize((part.z + nv) * 4);
-				if (kept > 0) {
-					moss.parts[moss.parts.size() - 1] = Vector4i(part.x, kept, part.z, nv);
-				} else {
-					moss.parts.resize(moss.parts.size() - 1);
-					moss.part_size.resize(moss.part_size.size() - 1);
-					moss.part_role.resize(moss.part_role.size() - 1);
 				}
 			}
+			cut_arc0 = 0.0f;
+			tube_carry_nrm = Vector3();
 		}
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
@@ -8722,7 +9145,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						Vector3 bp, bo;
 						float br;
 						int bb;
-						stem_at(f.h + (er.randf() - 0.5f) * 0.3f, f.azimuth + (er.randf() - 0.5f) * 0.6f, bp, bo, br, bb);
+						const float sh = f.h + (er.randf() - 0.5f) * (head_r > 0.0f ? 0.12f : 0.3f);
+						const float sa = f.azimuth + (er.randf() - 0.5f) * (head_r > 0.0f ? 0.3f : 0.6f);
+						stem_at(sh, sa, bp, bo, br, bb);
+						// Out of the burr they break from: from the plain stem's radius they started
+						// inside a pollard head's burrs, and only those on its small ones showed.
+						for (const VeteranFeature &g : veteran_features) {
+							if (g.kind == VET_BURL && Math::abs(g.h - f.h) < 1e-4f && Math::abs(g.azimuth - f.azimuth) < 1e-4f) {
+								const float dh = (sh - g.h) / g.half_h;
+								const float da = Math::angle_difference(g.azimuth, sa) * br / g.half_w;
+								const float k0 = 1.0f - MIN(dh * dh + da * da, 1.0f);
+								bp += bo * MAX(0.0f, g.amount * MIN(br, vet_r_stem) * k0 * k0 * 0.8f - 0.01f);
+							}
+						}
 						const Vector3 dir = (bo * 0.75f + Vector3(0, 0.65f, 0) + Vector3(er.randf() - 0.5f, er.randf() * 0.3f, er.randf() - 0.5f) * 0.4f).normalized();
 						const float age = er.randf();
 						const float len = Math::lerp(0.3f, 1.1f, age);
@@ -10610,6 +11045,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	const int years = CLAMP(int(params[PARAM_YEARS]), 1, 300);
 	int last_cut = -1;
+	int first_cut = -1;
 	int cuts = 0;
 	last_cut_year = -1000;
 	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
@@ -10625,9 +11061,25 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			const float top = _stem_top();
 			if (last_cut < 0 ? (y >= 8 && top > cut_height + 2.0f && y <= years - since) : (y - last_cut >= cut_cycle && y <= years - since)) {
 				_cut_back(last_cut < 0, y);
+				if (last_cut < 0) {
+					first_cut = y;
+				}
 				last_cut = y;
 				cuts++;
 				last_cut_year = y;
+			}
+			if (first_cut > 0 && cut_height > 0.5f) {
+				// The pipe model sizes wood by the crown it carries, and a pollard's crown is a
+				// few young poles: its bole stopped thickening at the first cut. It lays a ring a
+				// year all the same (2-3 mm on beech and oak, 5-6 mm on willow; Read 2000), so an
+				// old pollard is a broad bole under a broader head.
+				const float ring = preset == PRESET_WHITE_WILLOW ? 0.003f : 0.0015f;
+				for (Node &n : nodes) {
+					// The bole only: knuckles (born 0) swell with the head's callus instead.
+					if (!n.removed && n.order == 0 && n.born > 0 && n.born <= first_cut) {
+						n.radius += ring;
+					}
+				}
 			}
 		}
 		if (int(nodes.size()) >= MAX_NODES - 64) {
@@ -10650,11 +11102,13 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			if (!nodes[i].removed && !head.has(i)) {
 				head.insert(i);
 				// The stem's top swells most, the knuckles and stubs on it less.
-				// Each cut adds its roll of callus: an old pollard's head stands nearly twice the
-				// bole's girth.
+				// Each cut adds its roll of callus: an old pollard's head stands half as wide again as the
+				// bole.
 				const bool stem_top = nodes[i].order == 0 && nodes[i].parent > 0 && nodes[nodes[i].parent].order == 0 && nodes[nodes[i].parent].main == i && nodes[i].first_lateral >= 0;
 				const int seat_n = seat_cuts.has(i) ? seat_cuts[i] : 0;
-				nodes[i].radius *= stem_top ? MIN(1.35f + 0.12f * cuts, 1.9f) : MIN(1.2f + 0.06f * seat_n, 1.5f);
+				// The bole under it lays its annual rings too (generate()), so the head stands
+				// out from it by its callus alone.
+				nodes[i].radius *= stem_top ? MIN(1.2f + 0.05f * cuts, 1.5f) : MIN(1.15f + 0.04f * seat_n, 1.35f);
 				if (!stem_top && cut_height <= 0.5f && seat_n > 0) {
 					// A stool's lobes: the callus of every cut, fused into a low knobbly mound.
 					nodes[i].radius = MAX(nodes[i].radius, 0.4f * nodes[i].length);
@@ -10762,7 +11216,8 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				const float hh = r_head * Math::lerp(0.18f, 0.32f, hr.randf());
 				const float h = cut_height + r_head * Math::lerp(-0.9f, 0.1f, hr.randf());
 				const float az = az0 + float(Math::TAU) * (k + 0.4f * (hr.randf() - 0.5f)) / knobs;
-				veteran_features.push_back({ VET_BURL, h, az, hh, hh * Math::lerp(0.8f, 1.3f, hr.randf()), Math::lerp(0.25f, 0.45f, hr.randf()) });
+				// Low: the knobs over them make the burr; a tall smooth dome read as clay.
+				veteran_features.push_back({ VET_BURL, h, az, hh, hh * Math::lerp(0.8f, 1.3f, hr.randf()), Math::lerp(0.12f, 0.25f, hr.randf()) });
 				if (hr.randf() < 0.6f) {
 					// Water shoots from the burr's dormant buds.
 					veteran_features.push_back({ VET_EPICORMIC, h, az, 0.0f, 0.0f, Math::lerp(2.0f, 5.0f, hr.randf()) });
