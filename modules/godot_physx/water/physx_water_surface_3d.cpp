@@ -132,6 +132,10 @@ uniform float choppiness = 1.0;
 // The foam pass's Jacobian threshold (PhysXWaterSurface3D::foam_threshold),
 // for whitecaps where the cascades together fold the surface (very low: off).
 uniform float foam_crest_threshold = -100.0;
+// Spilling rollers (docs/ideas/water.md "Sharper crests and breaking lips"): the turbulent white water riding
+// a breaking crest, raised as geometry, as a share of the crest's height.
+uniform float roller_strength : hint_range(0.0, 2.0, 0.01) = 1.0;
+uniform vec2 roller_dir = vec2(0.0, 1.0); // the waves' (the wind's) direction
 // Ocean slopes and displacement derivatives (dh/dx, dh/dz, dDx/dx, dDz/dz),
 // straight from the FFT, for exact per-pixel normals and foam.
 uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_enable;
@@ -975,6 +979,54 @@ float bubbles_under(vec2 world_xz, vec3 d, vec3 n) {
 	return smoothstep(0.12, 0.6, b / 3.0) * smoothstep(0.15, 0.4, -d.y);
 }
 
+// The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
+// Jacobian test), a mass of churned white water rides the crest's front, about a fifth to a third of the
+// crest's height (Duncan 1981: the roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy
+// and boiling, leaning forward along the waves' travel.
+// Value noise's gradient (Quilez), for the roller's churn.
+vec2 foam_noise_grad(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 du = 6.0 * f * (1.0 - f);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	float a = foam_hash(i);
+	float b = foam_hash(i + vec2(1.0, 0.0));
+	float c = foam_hash(i + vec2(0.0, 1.0));
+	float d = foam_hash(i + vec2(1.0, 1.0));
+	return du * (vec2(b - a, c - a) + (a - b - c + d) * u.yx);
+}
+
+// r_grad: the slope of the roller's churn (its fine part; the fold and the crest vary slowly).
+float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out vec2 r_grad) {
+	r_grad = vec2(0.0);
+	if (roller_strength <= 0.0 || wave_cascade_count < 2 || foam_crest_threshold < -50.0 || crest <= 0.0) {
+		return 0.0;
+	}
+	float s = -choppiness;
+	float jacobian = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * disp.b * disp.b;
+	float b = clamp((foam_crest_threshold - jacobian) / 0.35, 0.0, 1.0);
+	if (b <= 0.0) {
+		return 0.0;
+	}
+	// Churned: two octaves boiling over a second or two, drifting with the crest.
+	vec2 q = world_xz * 1.1 - roller_dir * water_time * 1.2;
+	vec2 q1 = q + vec2(0.0, water_time * 0.7);
+	vec2 q2 = q * 2.3 - vec2(water_time * 1.1, 3.0);
+	float churn = 0.6 * foam_value_noise(q1) + 0.4 * foam_value_noise(q2);
+	float k = roller_strength * 0.25 * crest * sqrt(b);
+	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2));
+	return k * (0.45 + 0.9 * churn);
+}
+
+// The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
+// Jacobian test), a mass of churned white water rides the crest's front, about a fifth to a third of the
+// crest's height (Duncan 1981: the roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy
+// and boiling, leaning forward along the waves' travel.
+float roller_height(vec2 world_xz, vec4 der, vec3 disp, float crest) {
+	vec2 g;
+	return roller_height_grad(world_xz, der, disp, crest, g);
+}
+
 float foam_at(vec2 world_xz) {
 	return foam_at_with(world_xz, ocean_deriv_all(world_xz), ocean_disp_all(world_xz).rgb);
 }
@@ -1241,7 +1293,13 @@ void vertex() {
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_rest_xz = world_pos.xz;
-	VERTEX += surface_offset(world_pos.xz);
+	vec3 so = surface_offset(world_pos.xz);
+	VERTEX += so;
+	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
+		float rh = roller_height(world_pos.xz, ocean_deriv_all(world_pos.xz), ocean_disp_all(world_pos.xz).rgb, max(ocean_height_all(world_pos.xz).r, 0.0));
+		// Raised, and thrown a little ahead of the crest.
+		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.4, rh, roller_dir.y * rh * 0.4, 0.0)).xyz;
+	}
 	if (detail_geometry && mesh_near_step > 0.0) {
 		// The detail waves the step can carry without swimming (four steps a wavelength): the same share of
 		// the band as the pixel's normal shows (docs/ideas/water.md "Camera-centred water mesh").
@@ -1331,6 +1389,12 @@ void fragment() {
 			water_roughness = sqrt(sqrt(a * a + detail_variance * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
+		if (roller_strength > 0.0 && foam > 0.05) {
+			// The roller's churn per pixel (its lumps are finer than the mesh): its analytic slope.
+			vec2 g;
+			roller_height_grad(v_rest_xz, der, disp, max(ocean_height_all(v_rest_xz).r, 0.0), g);
+			world_normal = normalize(world_normal - vec3(g.x, 0.0, g.y));
+		}
 		if (foam > 0.01) {
 			// The foam's bubbles tilt the normal under it: its grain catches the light.
 			vec2 fw = fwidth(v_rest_xz);
@@ -3693,6 +3757,7 @@ void PhysXWaterSurface3D::_update_foam_streaks() {
 	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
 	water_material->set_shader_parameter("foam_streaks", Math::smoothstep(14.0f, 22.0f, wind_speed));
 	water_material->set_shader_parameter("foam_streak_dir", wd);
+	water_material->set_shader_parameter("roller_dir", wd);
 }
 
 void PhysXWaterSurface3D::_reinit_spectrum() {
