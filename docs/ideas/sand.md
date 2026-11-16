@@ -11,8 +11,8 @@ real sand, the way snow does, and whether PhysX helps.
   a pit in dry sand slumps to 33 degree walls in 3 s, one in damp sand keeps 61. Wind slowly fills
   prints (`sand_drift_rate`). It is CPU only: 2 ms per physics step while dry sand settles under a
   walker. Bodies stand on the undisturbed collider; the print forms under them.
-- **Snow got further.** `SnowSurface3D` has the same field on the GPU (`SnowDeformGPU`, 1.52 ms to
-  0.04 ms of main thread), a bow wave in front of ploughing bodies, crusts, and a two-way link with
+- **Snow got further.** `SnowSurface3D` has the same field on the GPU (`GroundDeformGPU` since stage 0,
+  1.52 ms to 0.04 ms of main thread), a bow wave in front of ploughing bodies, crusts, and a two-way link with
   the world tier. Sand has none of these yet.
 - **PhysX module.** `PhysXGranular3D`: a GPU MPM volume (Drucker-Prager, friction angle,
   cohesion, density) that piles, holds a slope and gets ploughed, drawn as a sphere per particle.
@@ -140,6 +140,33 @@ for collision and queries, `gpu_simulation` on with the CPU path as fallback. Ex
 settling step to under 0.1 ms of main thread, and a field large enough (64 m or more) for vehicles
 at speed. Same checks, bit-close on both paths. Pure performance; every later stage leans on it.
 
+**Built (16 Nov 2026).** The snow's GPU field moved to the ground module and now serves both:
+`modules/ground/ground_deform.glsl` and `GroundDeformGPU` (render thread), plus `GroundDeformGPUHost` (the
+main-thread side both nodes share: the stamps, the cache slots, the tile moves and the read back; the
+snow's copy of that code went). `params.kind.x` picks the owner's columns:
+- Ground columns come from the material lattice (rim share, repose slope, slumping rate, deepest dent,
+  darkening, gloss, sand share, deformable; 32 bytes a point, nearest point as on the CPU), with the CPU's
+  edge margin.
+- The fourth channel of each texel, unused by snow, holds the turned-ground freshness. The cache and the
+  read back carry it (two words a texel for the ground, one for snow).
+- Slumping takes the giving column's rim, then its dent down to the deepest, at the material's rate.
+  Slow material (mud) moves on every tenth of a second by the time saved up, which matches the CPU's tile
+  wait. A texel that still moves keeps the slumping it owes, as the CPU's tile marks do; the read back
+  carries what is owed, so the node keeps the slumping passes running while any texel owes some.
+- Ageing (`_age`: drying, wind filling dry sand, rain softening soil) is one pass a second.
+- The blit writes the turned-ground albedo and roughness factors, so the material and the path tracer's
+  rt_params read the GPU texture directly (`ground_deform_map` is a `Texture2DRD`).
+- `GroundSurface3D.gpu_simulation` (on), `is_gpu_active()`, `sync_deformation()`; queries read the copy
+  read back at 15 Hz. The CPU path stays the fallback (Compatibility, headless).
+
+Results (cloud, lavapipe): all 14 ground checks pass on both paths with the same numbers (dry sand pit
+62 to 33 degrees in 3 s, damp sand keeps 61, mud 63 after 10 s and 25 after 15 minutes, volume kept to
+0.001 l, turned ground dries). All 105 snow checks pass on both paths after the move, with the snow
+numbers recorded before (crust test: rim 0.0156 of 0.3285 m3). Trail view in dry sand: main-thread
+physics step 2.07 ms on the CPU path, 0.01 ms on the GPU path; moved volume 0.156741 against 0.156739 m3;
+the path-traced frames of both paths differ by 0.0002 of 255 on average (max 7, a few pixels). GPU time
+is on the PC queue.
+
 ### Stage 1: bodies feel the sand (terramechanics, SCM style)
 
 - **Per wheel**, a sand contact read from the field under the contact patch: Bekker sinkage from
@@ -153,10 +180,43 @@ at speed. Same checks, bit-close on both paths. Pure performance; every later st
 - **Characters**: sinkage slows the stride (energy cost of walking on sand is 1.6 to 2.5 times
   that on firm ground; Lejeune et al. 1998, J. Exp. Biol.); on a face steeper than the repose
   angle the footing slides down with the grains (the print slumps under it). Exposed as
-  `get_sand_drag_at()` and a slide vector; the game decides how a controller uses them.
+  `get_footing_at()` (effort and a slide vector); the game decides how a controller uses them.
 - **Rigid bodies** (crates, rocks dropped on a beach) sink by Bekker and get a resistance force
   while moving through the field (the snow bow wave's ploughing term, sand values).
 - Collision stays the undisturbed collider plus sinkage, as now, so nothing new to trace.
+
+**Built (16 Nov 2026).** `modules/ground/ground_terramechanics.*` holds the soil maths (Bekker static
+sinkage with Wong's elastic-tyre mode, Lyasko slip sinkage, compaction and bulldozing for the new depth only,
+Janosi-Hanamoto traction); `GroundSurface3D.get_soil()` reads the material lattice. Each cell now carries
+shear values (c, phi, K, gamma; Wong table 2.2) and its own pressure-sinkage for tyres: Bekker's values depend
+on the plate size they were measured with, and damp sand under a tyre bears as packed LETE sand (n 0.79,
+kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they were.
+- **Vehicles** (`PhysXVehicle3D.soft_soil`, on; `PhysXVehicleWheel3D.tire_pressure`, 200 kPa): two
+  components in the PxVehicle2 sequence. After the road query, each wheel's road plane drops by its sinkage
+  (settling over 0.1 s; slip sinkage builds over a contact length of travel, so a wheel spinning in place
+  digs in over seconds), the rut is pressed along the travel, and the tyre's friction is set to the soil's
+  shear limit and its longitudinal stiffness to the Janosi-Hanamoto initial slope. In each substep the
+  motion resistance acts at the axle against the travel (no wheel torque: a towed wheel's soil reaction
+  passes through its axle). Not built as a force clamp: PhysX's wheel integration rings at walking pace
+  (its own note on `PxVehicleTireSlipParams`), so on soft soil the active slip floor is 3 m/s, the
+  stiffness is kept within what a substep integrates stably, and slip is averaged over the substeps.
+  Diagnostics: `get_wheel_sinkage/slip/soil_resistance/soil_traction`, `is_wheel_on_soft_soil`.
+- **Walkers**: `get_footing_at(position, mass, area)` returns effort (Lejeune 1998 fit to print depth) and
+  a slide acceleration on faces past repose less 3 degrees (Pouliquen 1999); the game's controller uses it.
+- **Rigid bodies** in `deform_groups` plough (`ploughing`, on): compaction and bulldozing at their width.
+- `--test=soil` (17 checks, GPU and CPU paths): rigid wheel 7.7 cm in dry sand (Bekker 7.7), Rc 874 N
+  (Bekker 874), 50 kPa tyre 4.5 cm, slip sinkage x2.0 at 50%, Janosi share 0.37 at 10% and 0.93 at 80%,
+  second pass in the rut 0 N, walking effort 2.11 dry and 1.30 damp, 3.9 m/s2 slide on a 50 degree face.
+  A 1500 kg 4x4 at half throttle for 4 s: 20.5 m firm, 5.3 m damp sand (2 cm ruts), 0.3 m dry sand at
+  200 kPa (12 cm), 1.2 m aired down to 60 kPa (6.4 cm); floored on dry sand the wheels spin (slip 0.94) and
+  dig to 13 cm. A 300 kg stone block shoved at 3 m/s stops in 1.15 m against 1.41 m.
+- Known: motion resistance follows Bekker (damp sand 0.13 to 0.23 of the load, dry 0.5 at road pressure),
+  inside Wong's 0.15 to 0.3 for sand except loose dry sand at road pressure, where cars do bog. Floored on
+  damp sand the wheels dig in too, which real packed sand likely resists better. Light crates barely sink,
+  so they barely plough.
+- `--view=ruts` renders a 4x4's S-curve through the ground; the PT frame matches raster detail. Found while
+  building it: turning `RenderingServer.render_loop_enabled` off with a GPU ground field running crashes
+  (an index out of bounds); not chased yet.
 
 ### Stage 2: grains that move (hybrid height field and MPM, Holz 2009)
 

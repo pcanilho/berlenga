@@ -1402,6 +1402,7 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 	cam.fov = 45.0
 	cam.near = 0.05
 	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.06, tuft.z))
+	print("VEG_MUSHROOMS camera eye %s look %s fov 45" % [str(cam.position), str(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.06, tuft.z))])
 	# Low side light: the sun 22 degrees up, across the view from the open side, so the caps' scales
 	# and the stalks' curves throw shadows.
 	for ch in get_children():

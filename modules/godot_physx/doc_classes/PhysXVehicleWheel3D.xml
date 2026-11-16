@@ -40,6 +40,9 @@
 		<member name="tire_longitudinal_stiffness" type="float" setter="set_tire_longitudinal_stiffness" getter="get_tire_longitudinal_stiffness" default="20000.0">
 			How much forward/backward (acceleration or braking) force the tire develops per unit of longitudinal slip. Higher values put down power more directly for the same throttle/brake input, at the cost of feeling less forgiving/more twitchy.
 		</member>
+		<member name="tire_pressure" type="float" setter="set_tire_pressure" getter="get_tire_pressure" default="200.0">
+			The tyre's inflation pressure, in kPa. Only on soft ground ([member PhysXVehicle3D.soft_soil]): below the pressure a rigid wheel would put on the soil, the tyre flattens and sinks less, so airing down gets a car through dry sand.
+		</member>
 		<member name="tire_rest_grip" type="float" setter="set_tire_rest_grip" getter="get_tire_rest_grip" default="0.9">
 			Grip at zero wheel slip, as a fraction of [member tire_friction]. Lower than [code]1.0[/code] so grip still ramps up toward the peak at ~10% slip rather than starting there.
 		</member>

@@ -1089,7 +1089,20 @@
     "BaseMaterial3D.ground_deform_enabled"
    ],
    "note": "",
-   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose.",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`, on by default).",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Soft ground",
+   "settings": [
+    "soft_soil",
+    "tire_pressure",
+    "ploughing"
+   ],
+   "note": "",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1788,6 +1801,17 @@
    "topic": "Grass"
   },
   {
+   "name": "Grass edge match",
+   "settings": [
+    "GrassField3D.far_match_view"
+   ],
+   "note": "",
+   "what": "after each bake the ground past the grass is matched to the blades in view, so there is no brightness step where the blades end.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Grass under undergrowth",
    "settings": [
     "GrassField3D.undergrowth_field",
@@ -2178,7 +2202,7 @@
     "bark_relief"
    ],
    "note": "",
-   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.",
+   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark carries stemflow tracks, low algae and crust lichen.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2304,7 +2328,7 @@
     "uprooted"
    ],
    "note": "",
-   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Windthrown trees lie with their root plate on edge, holding soil, stones and torn roots, the butt held off the ground.",
+   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"

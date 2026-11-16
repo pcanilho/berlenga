@@ -37,7 +37,7 @@
 
 #include "core/templates/hash_map.h"
 #include "modules/ground/ground_deform_field.h"
-#include "snow_deform_gpu.h"
+#include "modules/ground/ground_deform_gpu.h"
 #include "scene/resources/texture_rd.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -125,29 +125,10 @@ class SnowSurface3D : public Node3D {
 		SnowSurface3D *surface = nullptr;
 		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
 	};
-	struct GPUSlot {
-		int slot = 0;
-		uint64_t used = 0;
-	};
-	Ref<SnowDeformGPU> gpu;
 	GPUSink gpu_sink;
-	Ref<Texture2DRD> gpu_texture;
-	uint64_t gpu_texture_serial = 0;
-	PackedByteArray gpu_stamps;
-	PackedByteArray gpu_stores;
-	PackedByteArray gpu_shift;
-	HashMap<Vector2i, GPUSlot> gpu_cache; // world tile -> cache slot
-	LocalVector<int> gpu_free_slots;
-	int gpu_slots = 0;
-	uint64_t gpu_cache_clock = 0;
-	LocalVector<float> gpu_tile_stamped; // per field tile: time of the last stamp
-	double gpu_time = 0.0;
-	double gpu_slump_until = -1.0;
-	int gpu_n = 0;
-	bool gpu_reset = true;
+	GroundDeformGPUHost gpu_host;
 	bool gpu_ground_dirty = true;
 	bool gpu_cover_dirty = true;
-	bool gpu_changed = true; // since the last read back
 	int gpu_cover_n = 0;
 	bool gpu_cover_valid = false;
 	float gpu_relax_keep = 1.0f;
@@ -295,7 +276,7 @@ public:
 	float get_dent_at(Vector3 p_position) const;
 	float get_rim_at(Vector3 p_position) const;
 	Vector2 get_moved_volume() const; // m3: (dent, rim) over the live field
-	int get_cached_tile_count() const { return _gpu_on() ? gpu_cache.size() : field.cached_tile_count(); }
+	int get_cached_tile_count() const { return _gpu_on() ? gpu_host.cache.size() : field.cached_tile_count(); }
 	Rect2 get_deform_rect() const;
 	double get_step_time_msec() const { return step_msec; }
 	Ref<ShaderMaterial> get_surface_material() const { return material; }

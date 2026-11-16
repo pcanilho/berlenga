@@ -179,6 +179,15 @@ public:
 	// underlying Vehicle4W uses internally).
 	real_t get_wheel_jounce(int p_wheel) const;
 	real_t get_wheel_separation(int p_wheel) const;
+	// Soft soil (docs/ideas/sand.md, stage 1): on a GroundSurface3D's soft material the wheels sink, print ruts
+	// and feel the soil's traction limit and motion resistance. Per wheel: sinkage m, resistance and traction N.
+	void set_soft_soil(bool p_enabled);
+	bool is_soft_soil() const { return soft_soil; }
+	real_t get_wheel_sinkage(int p_wheel) const;
+	real_t get_wheel_soil_resistance(int p_wheel) const;
+	real_t get_wheel_soil_traction(int p_wheel) const;
+	real_t get_wheel_slip(int p_wheel) const;
+	bool is_wheel_on_soft_soil(int p_wheel) const;
 	Vector3 get_actor_position() const;
 
 	PackedStringArray get_configuration_warnings() const override;
@@ -207,6 +216,7 @@ private:
 	real_t front_anti_roll_stiffness = 0.0f;
 	real_t rear_anti_roll_stiffness = 0.0f;
 	real_t tire_force_point = 0.0f;
+	bool soft_soil = true;
 
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;
@@ -228,6 +238,7 @@ private:
 	// later" convention GodotPhysXBody3D's own shape/mode-change path already
 	// uses. No-op if not yet built.
 	void _rebuild_if_live();
+	int _soil_slot(int p_wheel) const;
 	void _chassis_material(real_t &r_friction, real_t &r_bounce) const;
 	void _chassis_material_changed();
 	bool _build();

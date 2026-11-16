@@ -25,7 +25,7 @@
 		<method name="get_far_published" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
-				What this field publishes for the far ground at the current sun: [code]far[/code] (the far colour at the sun's elevation), [code]lobe1[/code] and [code]lobe2[/code] (its azimuth lobes there), [code]scale[/code] (that colour over the far cover map's, the global [code]grass_ground_far_scale[/code]), [code]sun[/code] (heading x, z and azimuth strength, the global [code]grass_ground_sun[/code]), [code]sun_elevation[/code] in degrees, [code]cover_share[/code] and [code]baked[/code]. For checking a scene's far blend, since global shader parameters cannot be read back at runtime.
+				What this field publishes for the far ground at the current sun: [code]far[/code] (the far colour at the sun's elevation), [code]lobe1[/code] and [code]lobe2[/code] (its azimuth lobes there), [code]scale[/code] (that colour over the far cover map's, the global [code]grass_ground_far_scale[/code]), [code]sun[/code] (heading x, z and azimuth strength, the global [code]grass_ground_sun[/code]), [code]sun_elevation[/code] in degrees, [code]cover_share[/code] and [code]baked[/code], and the live-view match ([member far_match_view]): [code]view_scale[/code] (the factor on both colours), [code]view_ratio[/code] (blades over far ground on screen at the last look), [code]view_pairs[/code], [code]view_round[/code], [code]view_state[/code] (0 idle, 1 waiting, 2 reading) and [code]view_msec[/code] (the last look's sampling time). For checking a scene's far blend, since global shader parameters cannot be read back at runtime.
 			</description>
 		</method>
 		<method name="get_effective_dryness" qualifiers="const">
@@ -160,6 +160,9 @@
 		</member>
 		<member name="dryness" type="float" setter="set_dryness" getter="get_dryness" default="0.2">
 			Fraction of blades with dry tips. A third of those are dead from the root (thatch).
+		</member>
+		<member name="far_match_view" type="bool" setter="set_far_match_view" getter="is_far_match_view" default="true">
+			If [code]true[/code], the widest field checks its far colour against the frame: once the far colour is baked, and again when the sun's elevation moves more than 8 degrees or the camera travels more than [member radius], it reads the frame back asynchronously and compares pairs of ground points in the same direction from the camera, one where the blades stand full and one just past the fade band, then scales the published far colour's brightness (and [code]grass_ground_far_scale[/code]) until they agree within 3% (at most five rounds, factor 0.5 to 1.5; pixels that read as sky, haze or water are left out). This takes up lighting the bake's plain ground plane does not reproduce, so the field ends without a lighter or darker ring.
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.

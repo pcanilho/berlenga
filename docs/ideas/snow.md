@@ -1032,7 +1032,8 @@ and the CPU gets a copy back for collision and queries.
   (each cell's update is independent; drift and slides are stencils).
 
 **Built.** `modules/snow/snow_deform.glsl` (one compute shader, a pass per push constant) and
-`SnowDeformGPU` (the render-thread side); `SnowSurface3D.gpu_simulation` (on by default),
+`SnowDeformGPU` (the render-thread side; both moved to the ground module on 16 Nov 2026 as
+`ground_deform.glsl` and `GroundDeformGPU`, shared with `GroundSurface3D`, docs/ideas/sand.md stage 0); `SnowSurface3D.gpu_simulation` (on by default),
 `is_gpu_active()`, `sync_deformation()`. Pressing runs every stamp of a step in order inside one
 workgroup, so the sums (volume moved, pushed, deepest, the rim weights) are exact tree reductions with no
 float atomics. Slumping uses the CPU's step, half the largest excess (Jacobi with the same share is

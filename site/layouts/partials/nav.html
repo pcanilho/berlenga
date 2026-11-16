@@ -2,6 +2,7 @@
 <ul>
   <li><a href="{{ "" | relURL }}" {{ if $cur.IsHome }}class="on"{{ end }}>Overview</a></li>
   {{ with site.GetPage "/getting-started" }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
+  {{ with site.GetPage "/whats-new" }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
 </ul>
 {{ with site.GetPage "/features" }}{{ $pages := .Pages.ByWeight }}
 {{ range slice "Rendering" "World" "Simulation" "Engine" }}{{ $g := . }}

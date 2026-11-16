@@ -137,10 +137,45 @@
 				[code]0[/code] when wheel [param wheel] can reach the ground within its suspension travel. A negative value means the wheel is penetrating the ground even at full compression -- [member PhysXVehicleWheel3D.suspension_travel] is too short for the current ride height. [param wheel] uses the same child-index convention as [method get_wheel_jounce].
 			</description>
 		</method>
+		<method name="get_wheel_sinkage" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				How far wheel [param wheel] has sunk into soft ground, in metres ([code]0[/code] off soft ground). Wheel index as in [method get_wheel_jounce]. See [member soft_soil].
+			</description>
+		</method>
+		<method name="get_wheel_slip" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				Wheel [param wheel]'s slip as terramechanics measures it, [code]-1[/code] (locked, skidding) to [code]1[/code] (spinning in place), on soft ground; [code]0[/code] elsewhere.
+			</description>
+		</method>
+		<method name="get_wheel_soil_resistance" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The motion resistance the soft ground puts on wheel [param wheel] (compaction and bulldozing of the soil it moves into), in newtons.
+			</description>
+		</method>
+		<method name="get_wheel_soil_traction" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The traction the soft ground under wheel [param wheel] can give at its current slip (Janosi-Hanamoto), in newtons.
+			</description>
+		</method>
 		<method name="is_sleeping" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns whether the underlying PhysX vehicle actor is currently sleeping.
+			</description>
+		</method>
+		<method name="is_wheel_on_soft_soil" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				Returns [code]true[/code] when wheel [param wheel] stands on a [GroundSurface3D]'s soft material.
 			</description>
 		</method>
 		<method name="remove_collision_exception_with">
@@ -311,6 +346,9 @@
 		</member>
 		<member name="reverse_gear_ratio" type="float" setter="set_reverse_gear_ratio" getter="get_reverse_gear_ratio" default="4.0">
 			The reverse gear's ratio, as a positive number. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="soft_soil" type="bool" setter="set_soft_soil" getter="is_soft_soil" default="true">
+			On a [GroundSurface3D]'s soft material (sand, soil, mud) the wheels sink by their load and tyre pressure, print ruts, get their grip from the soil's shear strength and feel its motion resistance (Bekker and Wong terramechanics). A spinning wheel digs itself in. Off firm ground nothing changes. See [member PhysXVehicleWheel3D.tire_pressure].
 		</member>
 		<member name="steer" type="float" setter="set_steer" getter="get_steer" default="0.0">
 			Steering input, [code]-1[/code] to [code]1[/code]. Scales up to [member max_steer_angle] on the front (steering) axle, modified by [member ackermann_strength]. Set every physics tick from script.

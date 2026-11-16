@@ -21,6 +21,7 @@ extends Node3D
 #   --day=D          the season of day D from a WeatherMap3D: the sward's greenness, flowering,
 #                    ferns (docs/ideas/vegetation-seasons.md)
 #   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
+#   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -57,6 +58,7 @@ extends Node3D
 #                    in as TerrainMaterial3D's far blend does, instead of grass_ground()'s far sward
 #   --far-match      the default view twice, the blades out to 22-32 m and then the ground's far
 #                    colour there instead (radius 10 m): prints both mean colours and their ratio
+#                    (GRASS_VIEW_MATCH=0: without the live-view far match; GRASS_DIAG=viewtime: per-frame times)
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -73,6 +75,7 @@ var dm: TerrainDataMap3D
 var grass: GrassField3D
 var season_day := 0
 var drought := false
+var frost := false
 var season_map: WeatherMap3D
 var bench_season := {}
 var cam: Camera3D
@@ -205,6 +208,7 @@ func _ready() -> void:
 			forest = true
 		elif a.begins_with("--day="): season_day = int(a.substr(6))
 		elif a == "--drought": drought = true
+		elif a == "--frost": frost = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -221,6 +225,14 @@ func _ready() -> void:
 			rc.precipitation_seasonality = 0.9
 			rc.precipitation_peak_month = 0
 			season_map.climate = rc
+		if frost:
+			var rf := ClimateRecipe.new()
+			rf.temperature_january = -8.0
+			rf.temperature_july = 18.0
+			rf.precipitation = 120.0 # A dry continental winter: hard frost on bare ground, no snow to hide it.
+			rf.precipitation_seasonality = 0.9
+			rf.precipitation_peak_month = 6
+			season_map.climate = rf
 		season_map.season_day = season_day
 		add_child(season_map)
 		bench_season = season_map.get_season()
@@ -252,6 +264,7 @@ func _ready() -> void:
 	grass = GrassField3D.new()
 	grass.name = "Grass"
 	grass.fallback_wind = wind
+	grass.far_match_view = OS.get_environment("GRASS_VIEW_MATCH") != "0" # 0: without the live-view far match.
 	if OS.get_environment("GRASS_RADIUS") != "":
 		grass.radius = float(OS.get_environment("GRASS_RADIUS")) # Which level of detail the far-match region sees.
 	if grazed:
@@ -1794,6 +1807,11 @@ func _process(dt: float) -> void:
 					cam.look_at(l)
 	if trample and n > 2:
 		_move(dt)
+	# GRASS_DIAG=viewtime: each frame's time and the live-view match's state, to see the readback
+	# land without a hitch.
+	if OS.get_environment("GRASS_DIAG").contains("viewtime") and n > 5:
+		var pv: Dictionary = grass.get_far_published()
+		print("GRASS_VIEWTIME n=%d dt_ms=%.1f state=%d round=%d scale=%s" % [n, dt * 1000.0, pv["view_state"], pv["view_round"], str(pv["view_scale"])])
 	if n == frames - 30 and not test:
 		t_frames = Time.get_ticks_usec()
 	if test and n == frames:
@@ -1851,6 +1869,8 @@ func _process(dt: float) -> void:
 		var b := _region_mean()
 		get_viewport().get_texture().get_image().save_png("user://far_match_b.png")
 		print("GRASS_FAR_MATCH blades=%s far_ground=%s ratio=%s" % [str(far_a), str(b), str(Color(far_a.r / b.r, far_a.g / b.g, far_a.b / b.b))])
+		var pub: Dictionary = grass.get_far_published()
+		print("GRASS_FAR_VIEW scale=%s ratio=%s pairs=%d state=%d msec=%.2f" % [str(pub["view_scale"]), str(pub["view_ratio"]), pub["view_pairs"], pub["view_state"], pub["view_msec"]])
 		# The earlier hand-matched colour, for comparison.
 		var bl := grass.base_color.srgb_to_linear()
 		var tl := grass.tip_color.srgb_to_linear()

@@ -23,7 +23,7 @@
       <thead><tr><th>Feature</th><th>Setting</th><th>Page</th></tr></thead>
       <tbody>
       {{ range $d.features }}
-        {{ $href := (site.GetPage (printf "/features/%s" .page)).RelPermalink }}{{ with .topic }}{{ $href = printf "%s#%s" $href (anchorize .) }}{{ end }}
+        {{ $href := (site.GetPage (printf "/features/%s" .page)).RelPermalink }}{{ $href = printf "%s#%s" $href (anchorize .name) }}
         {{ $id := anchorize (printf "%s-%s" .page .name) }}
         <tr id="{{ $id }}">
           <td data-label="Feature"><a href="{{ $href }}"><strong>{{ .name }}</strong></a><a class="anchor" href="#{{ $id }}" aria-label="Link to this setting">#</a>{{ with .what }}<span class="set-what">{{ . | markdownify }}</span>{{ end }}</td>

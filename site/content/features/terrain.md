@@ -156,7 +156,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Landscape3D collision** (`collision_enabled`, `collision_radius`, `collision_target`): full-detail heightfield tiles follow the player and match the drawn triangles.
 
-- **Footprints in ground** (`GroundSurface3D`, `BaseMaterial3D.ground_deform_enabled`): prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose.
+- **Footprints in ground** (`GroundSurface3D`, `BaseMaterial3D.ground_deform_enabled`): prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`, on by default).
+- **Soft ground** (PhysXVehicle3D `soft_soil`, on by default; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`, on by default): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.
 
   ![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](media/ground-footprints.jpg)
 

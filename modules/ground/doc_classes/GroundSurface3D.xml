@@ -36,6 +36,15 @@
 				How far the ground at [param position] is pressed below its undisturbed height, in metres.
 			</description>
 		</method>
+		<method name="get_footing_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mass" type="float" default="75.0" />
+			<param index="2" name="area" type="float" default="0.035" />
+			<description>
+				The footing at [param position] for a walker of [param mass] kg on [param area] m² of boot: [code]soft[/code], [code]sinkage[/code] (m), [code]effort[/code] (the work of walking against firm ground, 2.1 on dry sand), [code]speed_scale[/code] (its inverse) and [code]slide[/code] (an acceleration down a face steeper than the material holds, m/s²). The game decides how a controller uses them.
+			</description>
+		</method>
 		<method name="get_fresh_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -99,6 +108,25 @@
 				The printed ground height at [param position]: the undisturbed ground plus the rim minus the dent.
 			</description>
 		</method>
+		<method name="get_wheel_soil" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="load" type="float" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="width" type="float" />
+			<param index="4" name="inflation" type="float" default="200.0" />
+			<param index="5" name="slip" type="float" default="0.0" />
+			<param index="6" name="slip_angle" type="float" default="0.0" />
+			<description>
+				The soil under a wheel at [param position]: [param load] N on a wheel of [param radius] and [param width] m, a tyre at [param inflation] kPa ([code]0[/code]: rigid), at [param slip] and [param slip_angle] (radians). Returns [code]soft[/code], [code]static_sinkage[/code], [code]sinkage[/code] (m, with slip sinkage), [code]contact_length[/code] (m), [code]compaction[/code], [code]bulldozing[/code], [code]resistance[/code], [code]shear_limit[/code], [code]traction[/code] and [code]lateral[/code] (N).
+			</description>
+		</method>
+		<method name="is_gpu_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
+			</description>
+		</method>
 		<method name="press">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -121,6 +149,17 @@
 				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a boot, a crate. Returns the volume moved, in m³.
 			</description>
 		</method>
+		<method name="press_wheel">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="size" type="Vector2" />
+			<param index="2" name="yaw" type="float" />
+			<param index="3" name="sinkage" type="float" />
+			<param index="4" name="velocity" type="Vector2" default="Vector2(0, 0)" />
+			<description>
+				Presses a wheel's rut: a flat print [param size] wide (x) and long (z), turned by [param yaw], [param sinkage] m deep, the soil thrown along [param velocity]. Returns the volume moved on the CPU field ([code]0[/code] on the GPU, where it is a stamp).
+			</description>
+		</method>
 		<method name="refresh_ground">
 			<return type="void" />
 			<description>
@@ -133,6 +172,12 @@
 			<param index="1" name="step" type="float" default="0.016666668" />
 			<description>
 				Runs slumping and ageing for [param seconds] at once, in steps of [param step].
+			</description>
+		</method>
+		<method name="sync_deformation">
+			<return type="void" />
+			<description>
+				On the GPU path, waits for the field and reads it back now, so [method get_dent_at], [method get_rim_at], [method get_fresh_at], [method get_surface_height_at] and [method get_moved_volume] show everything pressed so far. It stalls the GPU: for tests and tools, not every frame. Does nothing on the CPU path.
 			</description>
 		</method>
 	</methods>
@@ -164,6 +209,9 @@
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.
 		</member>
+		<member name="gpu_simulation" type="bool" setter="set_gpu_simulation" getter="is_gpu_simulation" default="true">
+			Runs the field (pressing, slumping, ageing, the turned-ground tint and the tile cache) in compute shaders where there is a [RenderingDevice]; the texture the ground materials sample is written there directly. The queries use a copy read back at 15 Hz. Off, or on the Compatibility renderer, the field runs on the CPU. Turning it over starts the field empty.
+		</member>
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			The physics layers a downward ray finds the ground on when [member height_source] gives no height.
 		</member>
@@ -193,6 +241,9 @@
 		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.
+		</member>
+		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
+			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.
 		</member>
 		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.

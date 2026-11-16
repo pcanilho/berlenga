@@ -297,3 +297,22 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .side .navgroup summary.group:hover{opacity:.9}
 .navgroup ul{margin:0 0 6px 12px;padding-left:8px;border-left:1px solid var(--line)}
 .navgroup li a{padding-left:10px}
+
+/* Per-feature links */
+.prose li.feat{scroll-margin-top:84px}
+.prose li.feat{position:relative}
+.prose li.feat>.anchor{position:absolute;left:-2.4em;top:0;margin:0;width:1.2em;text-align:right}
+@media (max-width:700px){.prose li.feat>.anchor{display:none}}
+.prose li.feat:hover .anchor,.prose li.feat:target .anchor{opacity:1}
+.prose li.feat:target strong:first-child{background:var(--code);border-radius:3px;box-shadow:0 0 0 3px var(--code)}
+
+/* What's new */
+.whatsnew .wn{margin-top:28px}
+.whatsnew .wn h2{scroll-margin-top:84px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.whatsnew .wn-date{font-size:.8em;font-weight:400;color:var(--muted)}
+.whatsnew .wn-meta{margin:2px 0 10px;color:var(--muted);font-size:.92em}
+.whatsnew .wn-kind{margin:14px 0 6px;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;color:var(--text);opacity:.6}
+.whatsnew .wn-list{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:4px 18px}
+.whatsnew .wn-list li{margin:0;padding:3px 0}
+.whatsnew .wn-page{color:var(--muted);font-size:.86em;margin-left:4px}
+.whatsnew .wn-meta a{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent) 35%,transparent);text-underline-offset:2px}

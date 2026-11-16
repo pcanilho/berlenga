@@ -419,6 +419,7 @@ private:
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
 	int broken_tip = -1; // Stem node whose end is a broken top.
 	HashSet<int> broken_ends; // Limbs that rubbed on thicker wood and snapped (_prune_collisions()).
+	LocalVector<int> thinned_stubs; // A lapsed pollard's poles that died in the self-thinning.
 	// The lying stem of a log or fallen limb (deadwood interface): its first node, axis ends and
 	// reach from the axis along it; see _measure_lying().
 	static constexpr int DEADWOOD_SAMPLES = 12;
