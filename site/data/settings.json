@@ -2751,10 +2751,11 @@
    "settings": [
     "ambient_scattering",
     "sun_scattering",
-    "cast_shadows"
+    "cast_shadows",
+    "scattering_temporal"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene.",
+   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
