@@ -382,7 +382,16 @@ public:
 				if (rt_force_opaque) {
 					return false;
 				}
-				return rt_force_transparent || uses_alpha_pass();
+				if (rt_force_transparent) {
+					return true;
+				}
+				// Alpha to coverage is raster's MSAA edge on an alpha cut: the path tracer cuts at the
+				// threshold in the any-hit (_rt_uses_alpha_scissor) and shades the rest as opaque.
+				// Peeled as transparent, such leaves and needles lost their indirect light and
+				// shaded black where the sun did not reach.
+				const bool has_read_screen_alpha = uses_screen_texture || uses_depth_texture || uses_normal_texture;
+				const bool has_alpha = (uses_alpha && !uses_alpha_clip) || has_read_screen_alpha || uses_blend_alpha;
+				return has_alpha || depth_draw == DEPTH_DRAW_DISABLED || depth_test != DEPTH_TEST_ENABLED;
 			}
 			if (rt->force_opaque) {
 				return false;
@@ -391,7 +400,7 @@ public:
 				return true;
 			}
 			// Screen/depth reads are shimmed in RT; they do not force transparency.
-			bool has_base_alpha = rt->uses_alpha && (!rt->uses_alpha_clip || rt->uses_alpha_antialiasing);
+			bool has_base_alpha = rt->uses_alpha && !rt->uses_alpha_clip; // Alpha to coverage: a cut, as above.
 			bool has_blend_alpha = rt->uses_blend_alpha;
 			bool has_alpha = has_base_alpha || has_blend_alpha;
 			bool no_depth_draw = rt->depth_draw == DEPTH_DRAW_DISABLED;

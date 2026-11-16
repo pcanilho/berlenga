@@ -70,6 +70,7 @@ public:
 		LAYER_CLIFF,
 		LAYER_TOR,
 		LAYER_COAST,
+		LAYER_LANDFORM, // hoodoos, limestone pavement (docs/ideas/rocks.md, landforms)
 		LAYER_MAX,
 	};
 
@@ -143,17 +144,18 @@ private:
 	real_t lichen_cover = 0.5;
 	real_t moss_cover = 0.4;
 	// Ground blending: the stone's foot eased into the ground under it (docs/ideas/rocks.md).
-	bool ground_blend = true;
+	bool ground_blend = false;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
+	bool mineral_glints = false;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
 	real_t ground_blend_height = 0.25;
 	Ref<ShaderMaterial> ground_material;
 	void _apply_ground(const Ref<ShaderMaterial> &p_material) const;
-	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true };
-	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0 };
+	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true, true };
+	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
+	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0 };
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
 	real_t river_min_area = 2.0e5;
 	int max_stones_per_cell = 12000;
@@ -252,6 +254,8 @@ public:
 	real_t get_lichen_cover() const { return lichen_cover; }
 	void set_moss_cover(real_t p_cover);
 	real_t get_moss_cover() const { return moss_cover; }
+	void set_mineral_glints(bool p_enabled);
+	bool is_mineral_glints() const { return mineral_glints; }
 	void set_coast_collision(bool p_enabled);
 	bool is_coast_collision() const { return coast_collision; }
 	void set_ground_blend(bool p_enabled);

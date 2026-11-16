@@ -432,16 +432,20 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		if (receive != 0 && p_shadow_atlas.is_valid() && RendererRD::LightStorage::get_singleton()->owns_shadow_atlas(p_shadow_atlas)) {
 			atlas = RendererRD::LightStorage::get_singleton()->shadow_atlas_get_texture(p_shadow_atlas);
 		}
+		// The sun's volumetric shadow map: the gas shadows the scene through it (cast_shadows), and the
+		// scattering pass lights the gas from the sun through it (sun_scattering).
 		FlowScatterRD::ShadowMap shadow;
 		RID shadow_rid;
-		if (cast_shadows && p_first_view) {
+		bool shadow_casts = false;
+		if ((cast_shadows || sun_scattering) && p_first_view) {
 			MutexLock lock(scatter_mutex);
 			shadow_rid = shadow_light;
+			shadow_casts = cast_shadows && shadow_light_casts;
 			shadow.to_light = shadow_to_light;
 		}
 		shadow.enabled = shadow_rid.is_valid();
 		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, atlas, p_size, &shadow);
-		if (shadow.enabled && shadow.texture.is_valid()) {
+		if (shadow_casts && shadow.texture.is_valid()) {
 			// The opaque pass reads it from the next frame on (Forward+ only).
 			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow);
 		}
@@ -670,8 +674,9 @@ void PhysXFlow3D::_gather_light(Vector3 &r_direction, Color &r_color, Color &r_a
 	}
 	{
 		MutexLock lock(scatter_mutex);
-		const bool lit = light != nullptr && light->is_visible_in_tree() && light->has_shadow();
-		shadow_light = lit ? light->get_light_rid() : RID();
+		const bool visible = light != nullptr && light->is_visible_in_tree();
+		shadow_light = visible ? light->get_light_rid() : RID();
+		shadow_light_casts = visible && light->has_shadow();
 		shadow_to_light = r_direction;
 	}
 	r_ambient = Color(0.25, 0.27, 0.3);

@@ -734,10 +734,11 @@ func _deadwood_checks() -> void:
 				near_stem += 1
 	var honey_by := 0
 	for p in ground.get_placements(3):
-		var h: Dictionary = wood.get_deadwood_at(p, 0.85)
-		if not h.is_empty() and h["side"] >= 0.0 and h["side"] < 0.85:
+		# Out of the wood's side, its foot 1.5 cm into the bark (PlantSpecies.deadwood_from_wood).
+		var h: Dictionary = wood.get_deadwood_at(p, 0.85, 0.12)
+		if not h.is_empty() and h["side"] >= -0.03 and h["side"] < 0.01:
 			honey_by += 1
-	_check("deadwood: honey fungus tufts beside the logs", ground.get_placements(3).size() > 0 and honey_by == ground.get_placements(3).size(), [ground.get_placements(3).size(), honey_by, nlogs])
+	_check("deadwood: honey fungus clumps come up from the logs' side", ground.get_placements(3).size() > 0 and honey_by == ground.get_placements(3).size(), [ground.get_placements(3).size(), honey_by, nlogs])
 	# Root pits stay bare soil: no ground cover inside one, and it grows round it.
 	var pits := []
 	for mmi in wood.find_children("*", "MultiMeshInstance3D", true, false):
@@ -1084,7 +1085,7 @@ func _stream_checks() -> void:
 
 func _build_view() -> void:
 	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color(0.36, 0.32, 0.22)
+	gm.albedo_color = Color(0.17, 0.12, 0.08) # Woodland humus, dark brown.
 	gm.roughness = 0.95
 	var mi := MeshInstance3D.new()
 	mi.mesh = _ground_mesh()
@@ -1356,10 +1357,9 @@ func _deadwood_view() -> void:
 		_hide_mushrooms(ground, floor_set)
 	_render_later()
 
-# --mushrooms[=off]: the honey fungus tuft nearest the log in view, from 1 m at knee height, with a
-# birch 3.5 m behind it and a fly agaric group under the birch (the beech stand has no birch, so the
-# two are set by hand; everything else is make_floor's). --mushrooms=off hides every mushroom and
-# keeps the rest, placements and camera the same.
+# --mushrooms[=off]: a honey fungus clump coming up from a log's side (make_floor's), from 40 cm out
+# and 15 cm up under a low side sun. --mushrooms=off hides every mushroom and keeps the rest,
+# placements and camera the same.
 func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies], cam: Camera3D, at: Vector3, logs: PackedVector3Array) -> void:
 	var honey := -1
 	for i in floor_set.size():
@@ -1378,68 +1378,40 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 	var hit := {}
 	if honey >= 0:
 		for p in ground.get_placements(honey):
-			var h: Dictionary = wood.get_deadwood_at(p, 1.0)
-			# Clear of the bark (a log's moss and flare reach past its radius), still at its edge.
-			var sd: float = h["side"] if not h.is_empty() else 1e9
-			if not h.is_empty() and h["radius"] >= 0.12 and absf(sd - 0.22) < best:
-				best = absf(sd - 0.22)
+			var h: Dictionary = wood.get_deadwood_at(p, 1.0, 0.12)
+			# Clumps come up from the log's side: the one on a trunk nearest 30 cm thick (not a
+			# root plate's girth).
+			if not h.is_empty() and h["radius"] >= 0.12 and absf(float(h["radius"]) - 0.3) < best:
+				best = absf(float(h["radius"]) - 0.3)
 				tuft = p
 				hit = h
-	print("VEG_MUSHROOMS honey tufts %d, nearest %.2f m from a log's side at %s" % [ground.get_placements(honey).size() if honey >= 0 else 0, best, str(tuft)])
-	# Half a metre from the tuft, a little lower than the knee, looking slightly down along the log:
-	# the tuft in the lower middle at the wood's edge, the birch and its fly agarics behind.
-	# Away from the log: the gradient of the distance to its side (its normal is only set over it).
+	print("VEG_MUSHROOMS honey tufts %d, %.2f m off a 30 cm trunk at %s" % [ground.get_placements(honey).size() if honey >= 0 else 0, best, str(tuft)])
+	# Out of the log: from its axis to the clump's foot, on wood as thick as the clumps take.
 	var away := Vector3(1, 0, 0)
-	if not hit.is_empty():
-		var sx: Dictionary = wood.get_deadwood_at(tuft + Vector3(0.05, 0, 0), 1.2)
-		var sz: Dictionary = wood.get_deadwood_at(tuft + Vector3(0, 0, 0.05), 1.2)
-		if not sx.is_empty() and not sz.is_empty():
-			away = Vector3(float(sx["side"]) - float(hit["side"]), 0, float(sz["side"]) - float(hit["side"]))
-	if away.length() < 0.005:
-		away = Vector3(1, 0, 0)
+	var h0: Dictionary = wood.get_deadwood_at(tuft, 1.2, 0.12)
+	if not h0.is_empty() and (h0["across"] as Vector3).length() > 0.5:
+		away = h0["across"]
 	away = away.normalized()
 	print("VEG_MUSHROOMS away from the log %s" % str(away))
 	var side := Vector3(-away.z, 0, away.x)
-	# Along the log from its open side: the tuft at the wood's edge, the log running off on one side.
-	var dir := (side - away * 0.6).normalized()
-	var eye := tuft - dir * 0.5 + away * 0.2
-	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.36, eye.z)
-	var look := side
-	cam.fov = 50.0
-	cam.near = 0.15 # Keeps a frond right at the lens out of the frame.
-	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.2, tuft.z) + dir * 0.35)
-	# Light: the sun from behind the camera and a little to the open side, 35 degrees up, so the tuft
-	# is lit; the floor lifted a stop. Both halves of the pair.
+	# About 40 cm out from the clump and a little to one side, low (15 cm up), looking at it with the
+	# log's bark behind: the clump fills about a third of the frame.
+	var dir := (-away * 0.85 + side * 0.5).normalized()
+	var eye := tuft - dir * 0.4
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.15, eye.z)
+	cam.fov = 45.0
+	cam.near = 0.05
+	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.06, tuft.z))
+	# Low side light: the sun 22 degrees up, across the view from the open side, so the caps' scales
+	# and the stalks' curves throw shadows.
 	for ch in get_children():
 		if ch is DirectionalLight3D:
-			var ld := (dir - away * 0.3).normalized() * cos(deg_to_rad(35.0)) + Vector3(0, -sin(deg_to_rad(35.0)), 0)
+			var ld := (side * 0.9 - away * 0.4).normalized() * cos(deg_to_rad(22.0)) + Vector3(0, -sin(deg_to_rad(22.0)), 0)
 			(ch as DirectionalLight3D).global_transform = Transform3D(Basis.looking_at(ld, Vector3.UP), Vector3())
+			(ch as DirectionalLight3D).directional_shadow_max_distance = 20.0
+			(ch as DirectionalLight3D).light_angular_distance = 0.5
 		elif ch is WorldEnvironment:
-			(ch as WorldEnvironment).environment.tonemap_exposure = 1.6
-	var extra: Array[Node3D] = []
-	var tg := TreeGenerator.new()
-	tg.preset = TreeGenerator.PRESET_BIRCH
-	tg.seed = 3
-	var birch := MeshInstance3D.new()
-	birch.mesh = tg.generate()
-	var bp := tuft + look * 2.6 + away * 0.6
-	birch.position = Vector3(bp.x, height(bp.x, bp.z) - 0.05, bp.z)
-	add_child(birch)
-	var pg := PlantGenerator.new()
-	pg.preset = PlantGenerator.PRESET_FLY_AGARIC
-	pg.apply_preset_colors()
-	for k in 3:
-		pg.seed = 7 + k
-		var fa := MeshInstance3D.new()
-		fa.mesh = pg.generate()
-		var fp := tuft + look * (1.6 + 0.2 * k) + away * (0.05 + 0.3 * k)
-		fa.position = Vector3(fp.x, height(fp.x, fp.z), fp.z)
-		fa.rotation.y = 1.3 * k
-		add_child(fa)
-		extra.push_back(fa)
-	if mushroom_view == 2:
-		for n in extra:
-			n.visible = false
+			(ch as WorldEnvironment).environment.tonemap_exposure = 1.4
 
 # --mushrooms=off: hide the floor's mushroom MultiMeshes once the tiles round the camera are in.
 func _hide_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies]) -> void:

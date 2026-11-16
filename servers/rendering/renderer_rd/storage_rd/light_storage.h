@@ -246,16 +246,16 @@ private:
 
 	uint32_t max_directional_lights;
 
-	// A directional light's shadow through participating media (a Beer shadow map: per texel, the
-	// transmittance through the whole volume and the depths where the medium begins and ends along the
-	// light), fed each frame by whoever renders the medium. One at a time; it lapses unless renewed.
+	// A directional light's shadow through participating media (a volumetric shadow map: a light-space
+	// 3D texture of the optical depth from the light's side), fed each frame by whoever renders the
+	// medium. One at a time; it lapses unless renewed.
 	struct VolumeShadow {
 		RID light; // the directional light (base RID)
-		RID texture; // RGBA16F: r transmittance, g front depth, b back depth (0..1 along the light)
+		RID texture; // 3D, R16F: optical depth from the light's side, over u, v and depth
 		Transform3D world_to_shadow; // world -> (u, v, depth) in 0..1
 		uint64_t frame = 0;
 	} volume_shadow;
-	RID volume_shadow_white;
+	RID volume_shadow_empty;
 	DirectionalLightData *directional_lights = nullptr;
 	RID directional_light_buffer;
 

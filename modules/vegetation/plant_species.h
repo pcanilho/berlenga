@@ -133,6 +133,7 @@ private:
 	float deadwood_band = 0.6f; // Metres from the log's side (DEADWOOD_BESIDE).
 	float deadwood_min_radius = 0.08f; // The thinnest log it grows on (DEADWOOD_ON), metres.
 	bool deadwood_uphill = false; // DEADWOOD_BESIDE on the uphill side only (trapped leaves).
+	bool deadwood_from_wood = false; // DEADWOOD_BESIDE: comes up out of the wood's side (wood-decay fungi), facing out.
 
 protected:
 	static void _bind_methods();
@@ -244,6 +245,8 @@ public:
 	float get_deadwood_min_radius() const { return deadwood_min_radius; }
 	void set_deadwood_uphill(bool p_uphill) { deadwood_uphill = p_uphill; }
 	bool is_deadwood_uphill() const { return deadwood_uphill; }
+	void set_deadwood_from_wood(bool p_from) { deadwood_from_wood = p_from; }
+	bool is_deadwood_from_wood() const { return deadwood_from_wood; }
 
 	void set_rule_range(Rule p_rule, const Vector2 &p_range);
 	Vector2 get_rule_range(Rule p_rule) const;

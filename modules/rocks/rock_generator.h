@@ -69,6 +69,8 @@ public:
 		FAMILY_SEA_STACK, // a sea stack: one jointed column (x up when stood on end), bedded, notched at the waterline
 		FAMILY_SEA_ARCH, // a sea arch: a bedded wall with the opening the waves cut through it (x the span, y up)
 		FAMILY_SEA_PLATFORM, // a wave-cut platform: a flat bench of bedrock (x along the shore), jointed, with pools
+		FAMILY_HOODOO, // a hoodoo: a beaded column of soft bedded rock (x up when stood on end) under a wider caprock
+		FAMILY_PAVEMENT, // limestone pavement: a flat slab of bedrock cut into clints by deep grykes, with pans
 		FAMILY_MAX,
 	};
 

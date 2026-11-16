@@ -78,10 +78,13 @@ class VegetationField3D : public Node3D {
 		float side = 1e9f; // Metres from the log's side across the ground; negative under it.
 		float radius = 0.0f;
 		float top = 0.0f; // Height of the log's upper surface over the point (under it).
+		float axis_y = 0.0f; // Height of the log's axis at the nearest point along it.
 		Vector3 normal = Vector3(0, 1, 0); // The surface's normal there.
 		Vector2 across; // Unit direction from the axis to the point, across the ground.
 	};
 	static constexpr float DEADWOOD_CELL = 4.0f;
+	static constexpr float DEADWOOD_BESIDE_GAP = 0.15f; // Plants beside a log only where its underside is within this of the ground.
+	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
 	LocalVector<Deadwood> deadwood;
 	HashMap<Vector2i, LocalVector<int>> deadwood_grid;
@@ -425,7 +428,7 @@ public:
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
 	int get_deadwood_count() const;
-	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f) const;
+	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f, float p_min_radius = 0.0f) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
 	float get_light_at(const Vector3 &p_global_position) const;

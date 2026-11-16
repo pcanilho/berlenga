@@ -1294,8 +1294,8 @@ vec3 encode24(vec3 v) {
 }
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
-// Directional light p_index through the participating media in its volume shadow (a Beer shadow map), at
-// view-space p_vertex: no shadow in front of the medium, all of it behind, linear in depth between.
+// Directional light p_index through the participating media in its volume shadow (a volumetric shadow
+// map of optical depth from the light's side), at view-space p_vertex.
 float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 	vec4 u = directional_lights.data[p_index].volume_shadow_u;
 	if (u == vec4(0.0)) {
@@ -1303,15 +1303,12 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 	}
 	vec4 v4 = vec4(p_vertex, 1.0);
 	vec3 uvw = vec3(dot(v4, u), dot(v4, directional_lights.data[p_index].volume_shadow_v), dot(v4, directional_lights.data[p_index].volume_shadow_w));
-	if (any(lessThan(uvw.xy, vec2(0.0))) || any(greaterThan(uvw.xy, vec2(1.0)))) {
+	if (any(lessThan(uvw.xy, vec2(0.0))) || any(greaterThan(uvw.xy, vec2(1.0))) || uvw.z < 0.0) {
 		return 1.0;
 	}
-	vec4 m = textureLod(sampler2D(volume_shadow_texture, SAMPLER_LINEAR_CLAMP), uvw.xy, 0.0);
-	if (m.r >= 0.999) {
-		return 1.0;
-	}
-	float through = clamp((uvw.z - m.g) / max(m.b - m.g, 1e-4), 0.0, 1.0);
-	return mix(1.0, m.r, through);
+	// Past the box, all of the medium: its last slice.
+	float optical_depth = textureLod(sampler3D(volume_shadow_texture, SAMPLER_LINEAR_CLAMP), vec3(uvw.xy, min(uvw.z, 1.0)), 0.0).r;
+	return exp(-optical_depth);
 }
 
 void fragment_shader(in SceneData scene_data) {

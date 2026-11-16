@@ -569,6 +569,7 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 				r_hit.radius = d.radius;
 				r_hit.across = dist > 1e-5f ? off / dist : Vector2();
 				const Vector3 c = d.a.lerp(d.b, t);
+				r_hit.axis_y = c.y;
 				const float h = d.radius * d.radius - dist * dist;
 				if (h > 0.0f) {
 					const float up = Math::sqrt(h);
@@ -615,14 +616,15 @@ int VegetationField3D::get_deadwood_count() const {
 // The placed log whose side is nearest the point, within reach: side (m from its side across the
 // ground, negative under it), radius, top (height of its upper surface there) and normal; empty
 // when there is none.
-Dictionary VegetationField3D::get_deadwood_at(const Vector3 &p_global_position, float p_reach) const {
+Dictionary VegetationField3D::get_deadwood_at(const Vector3 &p_global_position, float p_reach, float p_min_radius) const {
 	DeadwoodHit hit;
 	Dictionary d;
-	if (_deadwood_at(Vector2(p_global_position.x, p_global_position.z), MAX(p_reach, 0.0f), hit)) {
+	if (_deadwood_at(Vector2(p_global_position.x, p_global_position.z), MAX(p_reach, 0.0f), hit, MAX(p_min_radius, 0.0f))) {
 		d["side"] = hit.side;
 		d["radius"] = hit.radius;
 		d["top"] = hit.top;
 		d["normal"] = hit.normal;
+		d["across"] = Vector3(hit.across.x, 0.0f, hit.across.y);
 	}
 	return d;
 }
@@ -732,7 +734,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 				}
 				const float shift = float(tile_hash(tx, tz, p_setup.seed, s) & 0xFFFFFF) / float(0x1000000);
 				for (uint32_t i = 0; i < pat.points.size(); i++) {
-					const Vector2 xz = Vector2(tx * ts, tz * ts) + pat.points[i];
+					Vector2 xz = Vector2(tx * ts, tz * ts) + pat.points[i];
 					if (!rect.has_point(xz) || (!in_core && !reach_rect.has_point(xz))) {
 						continue;
 					}
@@ -742,7 +744,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (rank >= max_keep) {
 						continue;
 					}
-					const Vector3 p3(xz.x, 0.0f, xz.y);
+					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
 					// Patches (clonal stands), except that a rock's foot is a patch of its own
 					// for species that gather there: the patch weight is lifted towards 1 there.
@@ -832,6 +834,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							if (hit.side < 0.0f || hit.radius < sp->get_deadwood_min_radius()) {
 								suit = 0.0f;
 							}
+							// Only by wood lying on the ground: a trunk held up by its root plate or
+							// branches has open ground under it, not a foot to grow along.
+							if (hit.axis_y - hit.radius - map->get_height_at(p3) > DEADWOOD_BESIDE_GAP) {
+								suit = 0.0f;
+							}
 							suit *= 1.0f - CLAMP(hit.side / dw_band, 0.0f, 1.0f);
 							if (sp->is_deadwood_uphill() && suit > 0.0f) {
 								// Leaves creeping downhill stop against its uphill side.
@@ -844,6 +851,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					} else if (dw_near) {
 						suit = 0.0f;
+					}
+					// Wood feeders (PlantSpecies.deadwood_from_wood, honey fungus) come up from the wood
+					// itself: their foot moves onto the log's side where it meets the ground, the
+					// plant turned to face out of it (+X away from the wood).
+					Vector2 wood_out;
+					if (dw_rule == PlantSpecies::DEADWOOD_BESIDE && suit > 0.0f && sp->is_deadwood_from_wood() && hit.across != Vector2()) {
+						xz -= hit.across * (hit.side + WOOD_FEEDER_INSET);
+						p3 = Vector3(xz.x, 0.0f, xz.y);
+						wood_out = hit.across;
 					}
 					// Rocks as nurse objects: shelter and the rain running off them make their foot
 					// moister, so species that like it gather there (PlantSpecies.rock_foot).
@@ -1018,7 +1034,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (axis.length_squared() > 1e-10f) {
 						b = Basis(axis.normalized(), Math::acos(CLAMP(up.y, -1.0f, 1.0f)));
 					}
-					const float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
+					float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
+					if (wood_out != Vector2()) {
+						yaw = Math::atan2(-wood_out.y, wood_out.x);
+					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (margin > 0.0f && sp->get_margin_lean() > 0.0f && margin_out != Vector2()) {
 						// Tip the plant's axis towards the open, about the horizontal axis across it.
@@ -2874,7 +2893,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
-	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach", "min_radius"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f), DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_sward_shade_at", "global_position"), &VegetationField3D::get_sward_shade_at);
 	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_near_radius"), &VegetationField3D::get_near_radius);

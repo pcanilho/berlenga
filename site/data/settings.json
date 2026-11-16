@@ -1135,6 +1135,17 @@
    "topic": "Shapes"
   },
   {
+   "name": "Mineral glints",
+   "settings": [
+    "RockField3D.mineral_glints"
+   ],
+   "note": "",
+   "what": "glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Ground contact and aspect",
    "settings": [
     "contact_height",
@@ -1187,6 +1198,18 @@
    ],
    "note": "",
    "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Landforms",
+   "settings": [
+    "layer_enabled",
+    "LAYER_LANDFORM"
+   ],
+   "note": "",
+   "what": "hoodoo rows on bare soft slopes and limestone pavement on flat limestone benches.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -2064,7 +2087,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "ten stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "thirteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -2157,7 +2180,7 @@
     "witches_brooms"
    ],
    "note": "",
-   "what": "cones, catkins with bract scales, ash keys in bunches and berries on stalks in season; mistletoe on its hosts and witches' brooms as twig nests on birches.",
+   "what": "cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

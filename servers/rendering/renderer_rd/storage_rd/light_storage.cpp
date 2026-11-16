@@ -443,10 +443,10 @@ RID LightStorage::directional_volume_shadow_get_texture() {
 	if (volume_shadow.texture.is_valid() && RD::get_singleton()->texture_is_valid(volume_shadow.texture)) {
 		return volume_shadow.texture;
 	}
-	if (!volume_shadow_white.is_valid()) {
-		volume_shadow_white = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
+	if (!volume_shadow_empty.is_valid()) {
+		volume_shadow_empty = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK);
 	}
-	return volume_shadow_white;
+	return volume_shadow_empty;
 }
 
 void LightStorage::light_directional_set_projector_rect(RID p_light, const Rect2 &p_rect) {
@@ -926,7 +926,7 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 					}
 				}
 
-				// Volume shadow: view space -> (u, v, depth) of its Beer shadow map, while it is current.
+				// Volume shadow: view space -> (u, v, depth) of its volumetric shadow map, while it is current.
 				for (int k = 0; k < 4; k++) {
 					light_data.volume_shadow_u[k] = 0.0;
 					light_data.volume_shadow_v[k] = 0.0;

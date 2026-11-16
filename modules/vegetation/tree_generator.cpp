@@ -2236,9 +2236,10 @@ void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const
 			// Half-width over length: rowan's leaflets are narrow (about 3:1 to 4:1), ash's a
 			// little broader, elder's broadest.
 			const float hwr = preset == PRESET_ROWAN ? 0.15f : (preset == PRESET_ELDER ? 0.24f : 0.19f);
-			// Three rows: a pointed lanceolate lens. Teeth as geometry (ten rows) made a near rowan
-			// 64M leaf triangles against 3.5M; they wait for an alpha-cut leaflet texture.
+			// Three rows, a quarter wider than the leaflet: the leaflet texture cuts the
+			// lanceolate outline and its teeth from it (_leaflet_texture).
 			const int steps = 3;
+			const float hull = hwr * LEAFLET_HULL;
 			// Leaflets of 2 x hwr l x l x 0.656 each share the slots' area.
 			const float leaflet = Math::sqrt(slot_area / (float(form.count) * 2.0f * 0.656f * hwr));
 			const float rachis = leaflet * 0.6f * float(pairs + 1);
@@ -2247,11 +2248,11 @@ void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const
 				const Vector3 at = start + along * (rachis * t) + n * (-0.15f * rachis * t * t);
 				for (int sgn = -1; sgn <= 1; sgn += 2) {
 					const Vector3 dir = (side * float(sgn) * 0.85f + along * 0.5f).normalized();
-					_add_blade(r_b, at, dir, n.cross(dir).normalized(), n, leaflet, leaflet * hwr, steps, 0, 0.0f, p_color, false, 0.8f);
+					_add_blade(r_b, at, dir, n.cross(dir).normalized(), n, leaflet, leaflet * hull, steps, 0, 0.0f, p_color, false, 1.0f);
 				}
 			}
 			const Vector3 tip = start + along * rachis + n * (-0.15f * rachis);
-			_add_blade(r_b, tip, along, side, n, leaflet, leaflet * hwr, steps, 0, 0.0f, p_color, false, 0.8f);
+			_add_blade(r_b, tip, along, side, n, leaflet, leaflet * hull, steps, 0, 0.0f, p_color, false, 1.0f);
 		} break;
 		case LEAF_DIGITATE: {
 			const int k = form.count;
@@ -2326,10 +2327,12 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 		case PRESET_HAZEL:
 			// Glossy grey-brown with dense pale lenticels and thin skin peeling in strips
 			// (Corylus avellana; Vaucher, Tree Bark, 2003).
+		case PRESET_ROWAN:
+			// Rowan too: smooth, grey to purplish, with pale lenticels drawn out across the stem
+			// (Raspe et al. 2000); a plain smooth bark read as bare grey tubes up close.
 			return BARK_LENTICELLED;
 		case PRESET_BEECH:
 		case PRESET_AMERICAN_BEECH:
-		case PRESET_ROWAN:
 		case PRESET_HOLLY:
 		case PRESET_BOX:
 		case PRESET_RED_MAPLE:
@@ -6255,6 +6258,61 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 // and fading there, a slightly darker margin band and fine mottling (after the pinnate
 // patterns of Runions et al., Modeling and Visualization of Leaf Venation Patterns, 2005). One
 // texture serves every blade, lobe and leaflet.
+// A pinnate leaflet (rowan, ash, elder): lanceolate with a sharply toothed margin, cut by alpha
+// from a blade a quarter wider than the leaflet (trees.md 5n). Teeth as geometry cost 64M
+// triangles on one near rowan; as alpha they cost nothing but the cut. The blade's UVs run 0-1
+// across at every row and its base and tip rows are single vertices, so with p_shape 1 the
+// lateral offset is d x 0.866 x 1.25 of the leaflet's half-width everywhere (d = |2u - 1|) and
+// the outline is set in that measure. Serrate teeth point to the apex: along the margin from
+// the base each rises slowly to its tip and drops back sharply (Ellis et al., Manual of Leaf
+// Architecture, 2009). RGB is the venation factor (as _leaf_texture), A the cut.
+Ref<Texture2D> TreeGenerator::_leaflet_texture() {
+	if (leaflet_texture.is_valid()) {
+		return leaflet_texture;
+	}
+	const int w = 128, h = 512;
+	const float lat = 0.866f * LEAFLET_HULL; // Lateral offset per unit d, in leaflet half-widths.
+	Vector<uint8_t> px;
+	px.resize(w * h * 4);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const float u = (x + 0.5f) / w, v = (y + 0.5f) / h;
+			const float d = Math::abs(u - 0.5f) * 2.0f;
+			const float xl = d * lat; // Offset from the midrib in half-widths.
+			// Lanceolate: widest a little below the middle, an acuminate tip.
+			const float half = Math::sin(float(Math::PI) * Math::pow(v, 0.85f)) * (1.0f - 0.25f * Math::smoothstep(0.6f, 1.0f, v));
+			// Teeth on the upper three quarters, about 22 a side, a tenth of the half-width deep.
+			const float s = v * 22.0f - Math::floor(v * 22.0f);
+			const float teeth = Math::smoothstep(0.12f, 0.3f, v) * (1.0f - Math::smoothstep(0.93f, 1.0f, v));
+			const float edge = half * (1.0f - 0.11f * teeth * (1.0f - Math::pow(s, 0.6f)));
+			// Antialiased over a texel across.
+			const float aa = lat * 2.0f / w;
+			const float a = CLAMP((edge - xl) / aa + 0.5f, 0.0f, 1.0f);
+			float f = 0.74f + 0.06f * (bark_fbm(u, v, 8, 32, 3, 709u) * 2.0f);
+			// Midrib, pale and raised, thinning to the tip.
+			const float mid_w = Math::lerp(0.07f, 0.02f, v);
+			f = Math::lerp(f, 1.0f, CLAMP(1.6f - 1.2f * xl / mid_w, 0.0f, 1.0f));
+			// Secondaries: about 14 a side, curving forward and looping short of the margin.
+			const float rel = edge > 0.0f ? xl / edge : 1.0f;
+			const float phase = (v - 0.22f * rel) * 14.0f;
+			const float line = Math::abs(phase - Math::round(phase));
+			const float sec = CLAMP(1.4f - line / 0.07f, 0.0f, 1.0f) * (1.0f - Math::smoothstep(0.75f, 0.92f, rel)) * (xl > mid_w ? 1.0f : 0.0f);
+			f = Math::lerp(f, 0.94f, sec * 0.85f);
+			// Between the veins the lamina puckers slightly darker; the margin band too.
+			f *= 1.0f - 0.05f * (1.0f - sec) * Math::smoothstep(0.2f, 0.6f, rel);
+			f *= 1.0f - 0.1f * Math::smoothstep(0.88f, 1.0f, rel);
+			const uint8_t b = uint8_t(Math::round(CLAMP(Color(f, f, f).linear_to_srgb().r, 0.0f, 1.0f) * 255.0f));
+			uint8_t *o = px.ptrw() + (y * w + x) * 4;
+			o[0] = o[1] = o[2] = b;
+			o[3] = uint8_t(Math::round(a * 255.0f));
+		}
+	}
+	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGBA8, px);
+	img->generate_mipmaps();
+	leaflet_texture = ImageTexture::create_from_image(img);
+	return leaflet_texture;
+}
+
 Ref<Texture2D> TreeGenerator::_leaf_texture() {
 	if (leaf_texture.is_valid()) {
 		return leaf_texture;
@@ -10359,8 +10417,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			} else if (!needles) {
 				// Venation; the factor averages about 0.85, so the albedo lifts it back to the
 				// species' leaf colour on average.
-				m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaf_texture());
-				m->set_albedo(Color(1.17f, 1.17f, 1.17f));
+				if (species_leaf_forms && LEAF_FORMS[preset].kind == LEAF_PINNATE) {
+					// Leaflets cut by alpha (outline and teeth). Alpha to coverage keeps the cut's
+					// edge smooth and the far mips' partial coverage.
+					m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaflet_texture());
+					m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_SCISSOR);
+					m->set_alpha_scissor_threshold(0.5f);
+					m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+					// Its venation factor averages about 0.78.
+					m->set_albedo(Color(1.28f, 1.28f, 1.28f));
+				} else {
+					m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaf_texture());
+					m->set_albedo(Color(1.17f, 1.17f, 1.17f));
+				}
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
@@ -10620,7 +10689,40 @@ vec3 plant_wind(vec3 wp, float h) {
 	}
 )";
 	code = code.insert(vx + String("void vertex() {").length(), body);
-	code = code.insert(vx, uniforms + wind + "\n");
+	// The underside: paler and greyer than the top on nearly every broadleaf (a thinner cuticle,
+	// spongy mesophyll and often hairs; rowan grey-green and downy, white willow silvery: Stace
+	// 2019). Seen from below a crown is mostly undersides. The path tracer follows FRONT_FACING.
+	float leaf_underside = 0.2f;
+	switch (preset) {
+		case PRESET_ROWAN:
+			leaf_underside = 0.5f;
+			break;
+		case PRESET_WHITE_WILLOW:
+			leaf_underside = 0.75f;
+			break;
+		case PRESET_SYCAMORE_MAPLE:
+		case PRESET_LIME:
+			leaf_underside = 0.35f;
+			break;
+		case PRESET_BEECH:
+		case PRESET_AMERICAN_BEECH:
+		case PRESET_BLACK_ALDER:
+		case PRESET_ELDER:
+			leaf_underside = 0.12f;
+			break;
+		default:
+			break;
+	}
+	const String albedo_line = "ALBEDO = albedo.rgb * albedo_tex.rgb;";
+	const int al = code.find(albedo_line);
+	if (al >= 0 && leaf_underside > 0.0f) {
+		code = code.insert(al + albedo_line.length(), R"(
+	if (!FRONT_FACING) {
+		float leaf_lum = dot(ALBEDO, vec3(0.299, 0.587, 0.114));
+		ALBEDO = mix(ALBEDO, vec3(leaf_lum) * vec3(0.93, 1.04, 0.9) * 1.2, leaf_underside);
+	})");
+	}
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because
@@ -10657,6 +10759,7 @@ vec3 plant_wind(vec3 wp, float h) {
 	}
 	m->set_shader_parameter("flutter_amount", leaf_flutter);
 	m->set_shader_parameter("flutter_size", p_leaf_size);
+	m->set_shader_parameter("leaf_underside", leaf_underside);
 	return m;
 }
 
@@ -10921,6 +11024,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	climber_cover = p_from.climber_cover;
 	species_leaf_forms = p_from.species_leaf_forms;
 	leaf_texture = p_from.leaf_texture;
+	leaflet_texture = p_from.leaflet_texture;
 	spray_texture = p_from.spray_texture;
 	for (int i = 0; i < BARK_MAX; i++) {
 		bark_sets[i] = p_from.bark_sets[i];

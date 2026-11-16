@@ -77,7 +77,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -90,7 +90,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -117,7 +117,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -147,7 +147,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f };
 	return w[family];
 }
 
@@ -782,7 +782,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	} else if (family == FAMILY_SEA_PLATFORM) {
 		a = 3.0f; // x: along the cliff foot; z: out to sea; y: a thin bench
 		c = 0.12f + 0.04f * rng.randf();
+	} else if (family == FAMILY_HOODOO) {
+		a = 2.6f + 1.4f * rng.randf(); // x: the column's height when stood on end, 3 to 6 times its width
+		c = 0.7f + 0.2f * rng.randf();
+	} else if (family == FAMILY_PAVEMENT) {
+		a = 2.0f; // a square-ish patch of pavement; y: the slab's depth (the grykes' depth)
+		c = 0.16f + 0.06f * rng.randf();
 	}
+	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT;
+	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO; // stood on end in the field: beds cross x
 	// Fresh fragments spread over the Zingg classes rather than sitting near the cube: talus and rockfall hold many
 	// slabs and blades, rods and wedges as well as blocks (Domokos et al. 2020 give the mean, not the spread).
 	int fragment_form = 0; // 0 block, 1 slab, 2 rod, 3 wedge
@@ -803,20 +811,22 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const Vector3 r(rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f);
 		return (p_axis + r * Math::tan(Math::deg_to_rad(p_degrees))).normalized();
 	};
-	if (family == FAMILY_SEA_STACK) {
+	if (family == FAMILY_SEA_STACK || family == FAMILY_HOODOO) {
 		// A stack is what is left of a headland between joints at all angles (Old Harry, the Twelve Apostles): in plan
 		// an irregular polygon of 6 to 9 joint faces at uneven azimuths and distances, each a few degrees off upright,
 		// the whole leaning a little one way and narrowing upward; the foot square across, the top two or three
 		// oblique breaks, ragged rather than flat.
-		const int sides = 6 + int(rng.randf() * 3.99f);
-		float th[10];
+		const bool hoodoo = family == FAMILY_HOODOO; // nearly upright, the neck carved later under its cap
+		// A hoodoo is rounded by rain wash rather than cut by joints: more, shorter faces, all at much the same reach.
+		const int sides = hoodoo ? 11 + int(rng.randf() * 4.99f) : 6 + int(rng.randf() * 3.99f);
+		float th[16];
 		float acc = rng.randf() * float(Math::TAU);
 		for (int k = 0; k < sides; k++) {
 			th[k] = acc;
 			acc += float(Math::TAU) / sides * (0.45f + 1.1f * rng.randf());
 		}
-		const float lean = 0.04f + 0.08f * rng.randf(), lean_az = rng.randf() * float(Math::TAU);
-		const float taper = 0.05f + 0.08f * rng.randf();
+		const float lean = (hoodoo ? 0.01f + 0.03f * rng.randf() : 0.04f + 0.08f * rng.randf()), lean_az = rng.randf() * float(Math::TAU);
+		const float taper = hoodoo ? 0.02f + 0.03f * rng.randf() : 0.05f + 0.08f * rng.randf();
 		for (int k = 0; k < sides; k++) {
 			const float cy = Math::cos(th[k]), sz = Math::sin(th[k]);
 			// Leaning toward lean_az tilts the faces on that side out, the far side in; all of them in for the taper.
@@ -824,17 +834,17 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			Vector3 n(tilt, cy, sz);
 			n.normalize();
 			const float radius = Math::sqrt(c * c * cy * cy + sz * sz);
-			planes.push_back({ n, radius * (0.72f + 0.28f * rng.randf()) * n.dot(Vector3(0, cy, sz)), false });
+			planes.push_back({ n, radius * (hoodoo ? 0.88f + 0.12f * rng.randf() : 0.72f + 0.28f * rng.randf()) * n.dot(Vector3(0, cy, sz)), false });
 		}
 		planes.push_back({ jitter_dir(Vector3(-1, 0, 0), 3.0f), a, false });
 		const int tops = 2 + int(rng.randf() * 1.99f);
 		for (int k = 0; k < tops; k++) {
 			const float az = rng.randf() * float(Math::TAU);
-			const float slope = 0.15f + 0.6f * rng.randf();
+			const float slope = hoodoo ? 0.05f + 0.15f * rng.randf() : 0.15f + 0.6f * rng.randf(); // a caprock stays nearly flat
 			const Vector3 n = Vector3(1.0f, slope * Math::cos(az), slope * Math::sin(az)).normalized();
 			planes.push_back({ n, n.x * a * (0.82f + 0.16f * rng.randf()), k > 0 && rng.randf() < 0.5f });
 		}
-	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM) {
+	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT) {
 		// Columnar basalt: a 5 to 7-sided prism (contraction joints, mean six; Goehring 2009) along x, cut across.
 		const int sides = CLAMP(int(Math::round(6.0f + rng.randfn(0.0f, 0.8f))), 5, 7);
 		const float phase = rng.randf() * float(Math::TAU);
@@ -891,7 +901,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 	}
 	// A platform's edge follows the joints and the sea's reach, not a rectangle: a few vertical cuts across corners.
-	if (family == FAMILY_SEA_PLATFORM) {
+	if (family == FAMILY_SEA_PLATFORM || family == FAMILY_PAVEMENT) {
 		for (int k = 0; k < 5; k++) {
 			const float th = rng.randf() * float(Math::TAU);
 			const Vector3 n(Math::cos(th), 0.0f, Math::sin(th));
@@ -900,7 +910,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 	}
 	// Secondary fractures: corner and edge cuts, fresh faces where the block broke when it fell or was struck.
-	const int cuts = family == FAMILY_SEA_PLATFORM ? 0 : int(lith.extra_cuts * (family == FAMILY_ROCKFALL || family == FAMILY_SCREE ? 3.0f : 1.0f) * (0.5f + rng.randf()) + 0.5f);
+	const int cuts = (family == FAMILY_SEA_PLATFORM || landform) ? 0 : int(lith.extra_cuts * (family == FAMILY_ROCKFALL || family == FAMILY_SCREE ? 3.0f : 1.0f) * (0.5f + rng.randf()) + 0.5f);
 	for (int k = 0; k < cuts; k++) {
 		const Vector3 corner(a * (rng.randf() < 0.5f ? -1.0f : 1.0f), c * (rng.randf() < 0.5f ? -1.0f : 1.0f), rng.randf() < 0.5f ? -1.0f : 1.0f);
 		const Vector3 n = jitter_dir(corner.normalized(), 25.0f);
@@ -926,7 +936,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f, true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1031,7 +1041,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f }; // coast forms: sharp arrises
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -1310,6 +1320,122 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 	}
+	// Landforms (docs/ideas/rocks.md, round 3):
+	// - hoodoo: soft bedded rock beaded by its softer beds (deep, uneven recesses), narrowing to a neck under a harder
+	//   caprock that stands wider and overhangs (Bryce Canyon; frost wedging opens the joints that free the column);
+	// - pavement: a limestone slab dissolved along two joint sets into clints between deep, narrow grykes, the clint
+	//   edges rounded by solution, shallow pans (kamenitza) on their tops (Williams 1966; Goldie 2005).
+	if (landform) {
+		float x_lo = 1e9f, x_hi = -1e9f, y_top = -1e9f;
+		for (int z = 0; z < fine.nz; z++) {
+			for (int y = 0; y < fine.ny; y++) {
+				for (int x = 0; x < fine.nx; x++) {
+					if (fine.v[fine.idx(x, y, z)] < 0.0f) {
+						const Vector3 q = fine.pos(x, y, z);
+						x_lo = MIN(x_lo, q.x);
+						x_hi = MAX(x_hi, q.x);
+						y_top = MAX(y_top, q.y);
+					}
+				}
+			}
+		}
+		const float span = MAX(x_hi - x_lo, 0.01f);
+		// Hoodoo profile (Bryce, Drumheller): a few bulges and necks up the column where harder and softer beds alternate,
+		// each a smooth swell rather than a step, since rain wash rounds them; fine bedding over it only as faint lines.
+		LocalVector<float> knot_at, knot_rec;
+		const float cap_t = 0.87f + 0.07f * rng.randf(); // where the caprock starts, as a share of the height: a thin cap
+		if (family == FAMILY_HOODOO) {
+			float b = x_lo - 0.3f;
+			bool soft = rng.randf() < 0.5f;
+			while (b < x_hi + 0.6f) {
+				knot_at.push_back(b);
+				knot_rec.push_back((soft ? 0.12f + 0.14f * rng.randf() : 0.03f * rng.randf()) * c);
+				soft = rng.randf() < 0.75f ? !soft : soft;
+				b += 0.45f + 0.5f * rng.randf();
+			}
+		}
+		// Pavement: two joint sets 60 to 90 degrees apart, clints 0.5 to 3 m (at 4 m a unit, 0.12 to 0.75), grykes
+		// 0.1 to 0.5 m wide (at least two and a half cells) and most of the slab deep; pans on the tops.
+		const float js1 = 0.2f + 0.25f * rng.randf(), js2 = js1 * (1.4f + 1.4f * rng.randf()); // the cross set wider apart
+		const float th1 = rng.randf() * float(Math::PI), th2 = th1 + float(Math::PI) * (0.35f + 0.15f * rng.randf());
+		const Vector3 j1(Math::cos(th1), 0, Math::sin(th1)), j2(Math::cos(th2), 0, Math::sin(th2));
+		const float gw = MAX(0.025f, 2.5f * h);
+		LocalVector<RockScoop> pans;
+		if (family == FAMILY_PAVEMENT) {
+			const int count = 6 + int(rng.randf() * 8.0f);
+			for (int k = 0; k < count; k++) {
+				const float r = 0.08f + 0.12f * rng.randf();
+				const float depth = (0.15f + 0.2f * rng.randf()) * c;
+				const float big = r * 2.5f; // flat-floored: a large shallow sphere
+				pans.push_back({ Vector3((rng.randf() - 0.5f) * 1.8f * a, y_top + big - depth, (rng.randf() - 0.5f) * 1.8f), big });
+			}
+		}
+		for (int z = 0; z < fine.nz; z++) {
+			for (int y = 0; y < fine.ny; y++) {
+				for (int x = 0; x < fine.nx; x++) {
+					const Vector3 p = fine.pos(x, y, z);
+					float &v = fine.v[fine.idx(x, y, z)];
+					if (v > 0.5f * c) {
+						continue;
+					}
+					const float v0 = v;
+					if (family == FAMILY_HOODOO) {
+						const float t = (p.x - x_lo) / span;
+						const float q = p.x + 0.12f * (rk_noise(p * 0.9f, nseed + 111u) - 0.5f); // beds not quite level
+						int i = 0;
+						while (i + 2 < int(knot_at.size()) && knot_at[i + 1] <= q) {
+							i++;
+						}
+						const float f = Math::smoothstep(knot_at[i], knot_at[i + 1], q);
+						const float r = knot_rec[i] + (knot_rec[i + 1] - knot_rec[i]) * f;
+						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t);
+						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
+						v += r * (0.8f + 0.4f * rk_noise(p * 1.2f, nseed + 112u)) * (1.0f - cap);
+						v += 0.1f * c * Math::smoothstep(cap_t - 0.3f, cap_t - 0.03f, t) * (1.0f - cap);
+						v += 0.14f * c * t * (1.0f - cap); // wider at the foot, where the debris apron feeds it
+						// The cap barely wider than the neck's foot, its rim and top rounded off and uneven.
+						v -= 0.02f * c * cap;
+						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t);
+						v += 0.18f * c * dome * dome;
+						v += 0.08f * c * cap * (rk_fbm(p * 1.6f, nseed + 125u, 3) - 0.5f);
+						// Faint bedding: thin hard ribs 0.06 to 0.1 apart standing out a little.
+						const float bed = q / (0.07f + 0.02f * rk_noise(Vector3(p.x * 0.3f, 0.0f, 0.0f), nseed + 119u));
+						v += 0.012f * c * (Math::abs(bed - Math::round(bed)) * 2.0f - 0.5f) * (1.0f - cap);
+						// Rills: rain runs down the sides and fluted them, grooves along the column.
+						v += 0.07f * c * (rk_noise(Vector3(p.x * 0.35f, p.y * 4.0f, p.z * 4.0f), nseed + 120u) - 0.5f);
+						v += 0.05f * c * (rk_fbm(p * 2.2f, nseed + 113u, 3) - 0.5f);
+					} else {
+						const float top = p.y - (y_top - 0.9f * 2.0f * c); // grykes most of the way down
+						const float wob = 0.06f * (rk_noise(p * 1.7f, nseed + 114u) - 0.5f) + 0.25f * (rk_noise(p * 0.6f, nseed + 118u) - 0.5f) * js1; // joints wander and their spacing varies
+						int set = 0;
+						for (const Vector3 &jn : { j1, j2 }) {
+							const float js = set == 0 ? js1 : js2;
+							// Each joint wanders on its own and the spacing swings by half either way, so clints differ in width.
+							const float qq = (jn.dot(p) + wob + 0.45f * js * (rk_noise(p * (0.5f / js), nseed + 121u + set) - 0.5f) * 2.0f) / js;
+							const float d = Math::abs(qq - Math::round(qq)) * js;
+							// The cross set stops and starts: clints longer one way.
+							const float run = set == 0 ? 1.0f : Math::smoothstep(0.35f, 0.45f, rk_noise(Vector3(Math::round(qq) * 3.7f, jn.cross(Vector3(0, 1, 0)).dot(p) * 1.5f, 0.0f), nseed + 115u)) * (rk_noise(p * 0.8f, nseed + 122u) > 0.4f ? 1.0f : 0.0f);
+							const float w = gw * (0.8f + 0.6f * rk_noise(p * 2.3f, nseed + 116u + set));
+							if (run > 0.5f) {
+								v = MAX(v, MIN(MIN(0.5f * w - d, top), v0 + 2.0f * c));
+							}
+							// Solution rounds the clint's edge into the gryke.
+							v += 0.12f * c * MAX(0.0f, 1.0f - d / (2.0f * w)) * run * Math::smoothstep(y_top - 0.5f * c, y_top, p.y);
+							set++;
+						}
+						// Rillenkarren and runnels: shallow grooves down the clint tops, and the tops a little domed.
+						const float top_w = Math::smoothstep(y_top - 0.4f * c, y_top, p.y);
+						v += 0.05f * c * top_w * (rk_noise(Vector3(p.x * 6.0f, 0.0f, p.z * 0.8f), nseed + 123u) - 0.5f);
+						v += 0.08f * c * top_w * (rk_fbm(p * 0.9f, nseed + 124u, 2) - 0.5f);
+						for (const RockScoop &pn : pans) {
+							v = MAX(v, pn.r - (p - pn.c).length());
+						}
+						v += 0.04f * c * (rk_fbm(p * 3.0f, nseed + 117u, 3) - 0.5f);
+					}
+				}
+			}
+		}
+	}
 	// Where the surface is a fresh break (lighter, no rind, no lichen): from the fracture, worn away by the transport.
 	RockGrid fresh_grid;
 	fresh_grid.init(half_box, h_flow);
@@ -1418,7 +1544,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Grain-scale roughness (grus on granite, sand grains on sandstone).
 		phi += lith.grain * float(detail) * 0.45f * hb * rk_fbm(p / (2.2f * hb), nseed, 2) * worn;
 		// Lumps a few voxels wide: no rock face is a plane.
-		phi += float(detail) * ((fresh_family || coast_form) ? 0.45f : 1.1f) * hb * rk_fbm(p * 2.6f, nseed + 5u, 3) * (0.5f + 0.5f * worn);
+		phi += float(detail) * ((fresh_family || coast_form || landform) ? 0.45f : 1.1f) * hb * rk_fbm(p * 2.6f, nseed + 5u, 3) * (0.5f + 0.5f * worn);
 		// Solution pits on the upper faces (karren on limestone; Ford and Williams 2007) or gas vesicles (basalt).
 		if (lith.pits > 0.0f) {
 			const bool karst = !lith.columnar;
@@ -1431,12 +1557,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Bedding laminae etched out by weathering (differential erosion of the softer laminae), slightly cross-bedded.
 		if (lith.laminae > 0.0f) {
 			const float lam = MAX(0.07f, min_period);
-			const float s = (p.y + bed_tilt * p.x + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
+			const float s = ((upright ? p.x + bed_tilt * p.z : p.y + bed_tilt * p.x) + 0.02f * rk_fbm(p * 3.0f, nseed + 31u, 2)) / lam;
 			const float groove = Math::pow(0.5f + 0.5f * Math::cos(s * float(Math::TAU)), 6.0f);
 			// Laminae differ: most barely etched, a few soft ones weathered back deep.
 			const float lamina = rk_hash(uint32_t(int(Math::floor(s + 0.5f)) + 4096) ^ nseed) / 4294967295.0f;
 			const float strength = 0.25f + 0.75f * lamina * lamina;
-			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * hb * (1.0f - Math::abs(n.y)) * worn;
+			phi += lith.laminae * float(detail) * (0.3f + 0.7f * weather) * groove * strength * 1.1f * hb * (1.0f - Math::abs(upright ? n.x : n.y)) * worn;
 		}
 		// Slaty cleavage: plates stepping back at the edges.
 		if (lith.cleavage > 0.0f) {
@@ -1521,7 +1647,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			n = dir_local(n);
 			out_verts.write[k] = q;
 			out_normals.write[k] = n;
-			out_colors.write[k] = Color(cavity, fr, 0.0f, 1.0f);
+			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : 0.0f, 1.0f); // b: the beds cross the long axis
 			out_uv.write[k] = Vector2(q.x, q.z);
 			out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
 			const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
@@ -1944,6 +2070,8 @@ uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
 uniform vec3 ground_alluvium = vec3(0.064, 0.06, 0.022);
 uniform vec3 ground_sand = vec3(0.448, 0.342, 0.181);
 uniform float ground_alluvium_area = 5.5;
+// Mineral glints (docs/ideas/rocks.md): the glossy crystals past the distance where they are drawn one by one.
+uniform bool mineral_glints = false;
 // The sea's mean level (none below -1e4) and its tidal range in metres: stones reaching it carry the shore zones.
 uniform float sea_level = -100000.0;
 uniform float tide_range = 2.0;
@@ -1959,6 +2087,40 @@ varying float v_scale;
 varying vec3 v_origin;
 varying vec2 v_slope;
 varying float v_random;
+
+// Glints of crystals smaller than the pixel, counted per cell of the pixel's footprint (Zirr and Kaplanyan 2016;
+// Deliot and Belcour 2023, reduced to one facet per cell, as snow_glint() does for ice): a cell holding n crystals
+// has a glossy one with chance min(share n, 1), covering share / chance of it, its normal GGX-tilted (alpha 0.6:
+// cleavage planes up to about 45 degrees off the face). Returns the facet (world) and its weight (0: none).
+vec4 rk_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_grain, float p_share) {
+	float level = floor(max(log2(max(p_footprint, p_grain) / p_grain), 0.0));
+	if (level > 5.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = p_grain * exp2(level);
+	ivec3 q = ivec3(floor(p_pos / cell));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (uint(level) * 2654435761u) ^ 0x5bd1e995u;
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(p_share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.36 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	return vec4(normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st), p_share / chance / sqrt(max(p_share * grains, 1.0)));
+}
 
 float rk_hash3(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
@@ -2063,7 +2225,9 @@ void fragment() {
 	// Mineral colour: broad mottling, bands along the beds, specks of the dark (or light) mineral.
 	vec3 col = base_color * (0.82 + 0.36 * rk_fbm3(mp * 1.7));
 	col *= 0.9 + 0.2 * rk_noise3(vec3(seed));
-	float bands = 0.5 + 0.5 * sin(6.2831853 * (lp.y * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
+	// Beds lie across the short axis of a lying stone, across the long one of an upright form (COLOR.b).
+	float bed_q = mix(lp.y, lp.x, step(0.5, COLOR.b));
+	float bands = 0.5 + 0.5 * sin(6.2831853 * (bed_q * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
 	col = mix(col, band_color, band_contrast * smoothstep(0.3, 0.9, bands));
 	// Mineral maps at the stone's real size, in octave steps from its family's typical size (UV2.y), the steps
 	// the close-up shapes are carved at (RockGenerator.get_marks_metres_per_unit), so relief and colour share one map.
@@ -2083,11 +2247,13 @@ void fragment() {
 	float near_grain = 1.0 - smoothstep(0.5 * speck_size, 2.0 * speck_size, footprint);
 	float speck_mix = speck_share;
 	float crystal_gloss = 0.0;
+	float resolved = 0.0; // how far the crystals are drawn one by one (1: all)
 	vec3 facet = vec3(0.0); // crystal facet tilt, in the stone's frame
 	if (crystal_map) {
 		// In the stone's frame at its own size (see mpu_marks), as the geometry was carved.
 		vec3 mg = lp * mpu_marks;
 		float near_crystal = 1.0 - smoothstep(0.006, 0.03, footprint);
+		resolved = near_crystal;
 		float quartz = 0.3;
 		speck_mix = 0.07;
 		if (near_crystal > 0.0) {
@@ -2160,6 +2326,7 @@ void fragment() {
 
 	// Ground contact: soil splashed up and damp where the stone sits in it.
 	float contact = 0.0;
+	float ground_cover = 0.0;
 	if (v_custom.z > 0.0) {
 		// The ground under this point: the plane through the stone's foot along the slope there.
 		float above = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
@@ -2190,6 +2357,7 @@ void fragment() {
 			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;
+			ground_cover = gb;
 		}
 	}
 	col *= mix(0.55, 1.0, cavity);
@@ -2248,11 +2416,66 @@ void fragment() {
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);
 	snow_cover_apply(sw, snow_s.y, snow_s.z, col, rough, metallic, specular);
 
+	vec3 n_view = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+	NORMAL = n_view;
+	// Mineral glints (Chermain et al. 2020; Deliot and Belcour 2023): past the distance where the crystals are drawn
+	// one by one, the glossy ones (quartz, feldspar cleavage; on other rocks quartz and mica grains) still flash.
+	// Crusts, moss, a water film, snow and the ground's dust cover them; the weathered rind dulls them.
+	float glint_ok = (1.0 - lic) * (1.0 - moss) * (1.0 - sw) * (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - ground_cover) * mix(0.35, 1.0, fresh) * (1.0 - resolved);
+	if (mineral_glints && glint_ok > 0.0) {
+		// Crystal size in metres on this stone (the marks' map is laid out at mpu_marks, the stone drawn at v_scale).
+		float gd = crystal_map ? 0.018 * v_scale / max(mpu_marks, 1e-4) : 2.0 * speck_size;
+		float gshare = crystal_map ? 0.45 : 0.12;
+		if (IN_PATH_TRACER) {
+			// Exact: the facet of the crystal each sample lands on (the path tracer's samples count the footprint's
+			// crystals themselves, at any distance and bounce), in the base specular only (the diffuse keeps NORMAL).
+			ivec3 q = ivec3(floor(v_world / gd));
+			uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ 0x2545f491u;
+			h ^= h >> 16u;
+			h *= 0x7feb352du;
+			h ^= h >> 15u;
+			h *= 0x846ca68bu;
+			h ^= h >> 16u;
+			if (float(h & 0x3ffu) / 1023.0 < gshare) {
+				float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+				float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+				float tan2 = 0.36 * r1 / max(1.0 - r1, 1e-3);
+				float ct = inversesqrt(1.0 + tan2);
+				float st = sqrt(max(1.0 - ct * ct, 0.0));
+				vec3 t = normalize(cross(wn, abs(wn.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+				vec3 b = cross(wn, t);
+				float phi = 6.2831853 * r2;
+				vec3 f = normalize(wn * ct + (t * cos(phi) + b * sin(phi)) * st);
+				SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(normalize(mix(wn, f, glint_ok)), 0.0)).xyz);
+				rough = mix(rough, 0.12, glint_ok);
+			}
+		} else {
+			// Raster: the counted facet as a second, near-mirror lobe (the coat's, which takes NORMAL before NORMAL_MAP
+			// as its normal), weighted by the share of the pixel it covers; NORMAL_MAP is solved to land back on the
+			// stone's own normal, so its shading is unchanged. Quartz and feldspar F0 about 0.045: the coat's 0.04.
+			vec4 g = rk_glint(v_world, wn, footprint, gd, gshare);
+			float gw = g.w * glint_ok;
+			if (gw > 0.0) {
+				vec3 f = normalize((VIEW_MATRIX * vec4(g.xyz, 0.0)).xyz);
+				vec3 t = normalize(cross(f, abs(f.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+				vec3 b = cross(f, t);
+				vec3 k = vec3(dot(n_view, t), dot(n_view, b), dot(n_view, f));
+				if (k.z > 0.05) {
+					NORMAL = f;
+					TANGENT = t;
+					BINORMAL = b;
+					NORMAL_MAP = vec3(k.xy * 0.5 + 0.5, 1.0);
+					NORMAL_MAP_DEPTH = 1.0;
+					CLEARCOAT = 0.6 * min(gw, 1.0); // (its ambient term sees no per-facet occlusion: held under the full coat)
+					CLEARCOAT_ROUGHNESS = 0.3;
+				}
+			}
+		}
+	}
 	ALBEDO = col;
 	ROUGHNESS = rough;
 	METALLIC = metallic;
 	SPECULAR = specular;
-	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 }
 )";
 	return c;
@@ -2356,5 +2579,7 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_SEA_STACK);
 	BIND_ENUM_CONSTANT(FAMILY_SEA_ARCH);
 	BIND_ENUM_CONSTANT(FAMILY_SEA_PLATFORM);
+	BIND_ENUM_CONSTANT(FAMILY_HOODOO);
+	BIND_ENUM_CONSTANT(FAMILY_PAVEMENT);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }

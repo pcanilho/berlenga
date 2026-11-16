@@ -1034,10 +1034,24 @@ mistletoe and brooms, which read from far.
     most 80 heads a tree. Rowan in fruit, crown parts 675k (was 384k), elder 859k.
   - *Leaflets*: lanceolate, about 3.5:1 (half-width 0.15 of the length; ash 0.19, elder 0.24),
     a three-step lens instead of a diamond, so pinnate near leaves double (rowan 7.1M to 14.2M
-    near triangles; LOD 1 on unchanged). Lighter fbm and secondary veins in the leaf texture
-    break the two flat greens. Not done: *teeth*, as geometry 64M triangles on one rowan, so
-    they wait for an alpha-cut leaflet texture; *pale underside*, which needs a back-face
-    colour the path tracer also follows.
+    near triangles; LOD 1 on unchanged).
+  - *Leaflet texture* (16 Nov, second docs review): leaflets were flat untextured quads. The
+    blade is now a quarter wider than the leaflet and an RGBA texture cuts it (alpha scissor
+    with alpha to coverage): a smooth lanceolate outline, widest below the middle with an
+    acuminate tip, and about 22 serrate teeth a side on the upper three quarters, each rising
+    slowly toward the apex and dropping back sharply (Ellis et al., Manual of Leaf Architecture,
+    2009). Teeth as geometry had cost 64M triangles; as alpha, no triangles. RGB carries a pale
+    raised midrib and about 14 looping secondaries, the lamina darker between them. Ash and
+    elder share it. Raster leaves stay opaque on every other species.
+    Under the path tracer the cut first shaded half of each near leaflet black: alpha to
+    coverage put the material in the transparent class, peeled as a layer without its
+    indirect light. The tracer now treats alpha to coverage as the alpha test it is (any-hit
+    at the threshold, opaque shading); spruce sprays render unchanged.
+  - *Undersides*: the flutter shader mixes back faces (FRONT_FACING, which the path tracer
+    follows) toward a paler grey-green: rowan 0.5, white willow 0.75, lime and sycamore 0.35,
+    beech, alder and elder 0.12, others 0.2. A crown seen from below is mostly undersides.
+  - *Bark*: rowan takes the lenticelled family (hazel's), grey with pale lenticels; plain smooth
+    bark read as bare grey tubes at half a metre.
   - *Winter buds* on every shoot tip under 1 cm (days 200 to 105, half size in early autumn):
     per species length, width and colour (beech a long copper spindle, rowan dark purple and
     conical, ash black, oak clustered), at most two per tip; oak 750k, rowan 254k.

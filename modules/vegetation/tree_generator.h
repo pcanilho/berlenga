@@ -422,6 +422,8 @@ private:
 	// The lying stem of a log or fallen limb (deadwood interface): its first node, axis ends and
 	// reach from the axis along it; see _measure_lying().
 	static constexpr int DEADWOOD_SAMPLES = 12;
+	// A pinnate leaflet's blade over the leaflet's own half-width: the texture cuts the rest.
+	static constexpr float LEAFLET_HULL = 1.25f;
 	int deadwood_stem = -1;
 	Vector3 deadwood_a, deadwood_b;
 	float deadwood_profile[DEADWOOD_SAMPLES] = {};
@@ -598,6 +600,8 @@ private:
 	uint32_t compound_slot = 0;
 	Ref<Texture2D> leaf_texture;
 	Ref<Texture2D> _leaf_texture();
+	Ref<Texture2D> leaflet_texture;
+	Ref<Texture2D> _leaflet_texture();
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
 	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
