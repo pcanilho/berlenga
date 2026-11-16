@@ -1203,6 +1203,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Landforms",
+   "settings": [
+    "layer_enabled",
+    "LAYER_LANDFORM"
+   ],
+   "note": "",
+   "what": "hoodoo rows on bare soft slopes and limestone pavement on flat limestone benches.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Shadows on water",
    "settings": [
     "wave_shadows"
