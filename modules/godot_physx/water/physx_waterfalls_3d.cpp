@@ -321,7 +321,11 @@ void fragment() {
 	// the sky, was absorbed as if under water: the sheet went near black wherever the sky lit it more than the sun.
 	TRANSMISSION = water > 0.5 ? 1.0 - foam : 0.0;
 	ALBEDO *= water > 0.5 ? mix(exp(-pathtraced_absorption * film_thickness), vec3(1.0), foam) : vec3(1.0);
-	ALPHA = cover;
+	// Stochastic transparency (Enderton et al. 2010), as the falling clumps: each texel is the sheet or nothing,
+	// with the cover as the chance, so the sheet is traced as an opaque surface (lit by bounces and the sky like
+	// the rock) rather than as a blended layer.
+	ALPHA = f_hash(floor(vec2(UV.y, UV2.y) * 40.0)) < cover ? 1.0 : 0.0;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
 	// Clear water a few millimetres deep over rock shows the rock darkened (the water fills its pores and cuts the
 	// diffuse reflection, Lekner and Dorf 1988), not a pale water colour: blended over the rock, water_color's
