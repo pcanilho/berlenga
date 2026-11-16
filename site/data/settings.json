@@ -3061,6 +3061,18 @@
    "topic": ""
   },
   {
+   "name": "Particle fluid surface",
+   "settings": [
+    "PhysXParticleFluid3D.render_mode",
+    "foam_enabled"
+   ],
+   "note": "",
+   "what": "particle fluids draw as a real isosurface mesh that casts shadows, shows in reflections and is path traced, with foam; Screen Space is the lighter alternative.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Cloth tearing",
    "settings": [
     "PhysXCloth3D.tear_factor",
