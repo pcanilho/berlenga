@@ -510,6 +510,26 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
 		cam.look_at(Vector3(xs[xs.size() - 1], 0.3, 0))
 		cam.fov = 50.0
+		# env LOGCAM="t,dist,height,side,fov": framed on the log itself, at fraction t from its
+		# base along its axis (tree_deadwood_axis), dist metres off to one side (side +1/-1) and
+		# height above the ground, looking at the log's top there.
+		var lm: Mesh = null
+		for c in get_children():
+			if c is MeshInstance3D and (c as MeshInstance3D).mesh != null and (c as MeshInstance3D).mesh.has_meta("tree_deadwood_axis"):
+				lm = (c as MeshInstance3D).mesh
+				if OS.has_environment("LOGCAM"):
+					var lc := OS.get_environment("LOGCAM").split_floats(",")
+					var ax: PackedFloat32Array = lm.get_meta("tree_deadwood_axis")
+					var o: Vector3 = (c as Node3D).global_position
+					var pa := o + Vector3(ax[0], ax[1], ax[2])
+					var pb := o + Vector3(ax[3], ax[4], ax[5])
+					var at := pa.lerp(pb, lc[0])
+					var dir := (pb - pa).normalized()
+					var side := Vector3(-dir.z, 0, dir.x).normalized() * lc[3]
+					var tgt := at + Vector3(0, ax[6] * 0.5, 0)
+					cam.position = at + side * lc[1] + Vector3(0, lc[2], 0)
+					cam.look_at(tgt)
+					cam.fov = lc[4]
 		if OS.has_environment("CAM"): # "dx,y,z,lx,ly,lz,fov" from the log's x.
 			var cv := OS.get_environment("CAM").split_floats(",")
 			cam.position = Vector3(xs[xs.size() - 1] + cv[0], cv[1], cv[2])
