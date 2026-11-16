@@ -218,10 +218,13 @@ private:
 	bool gpu_simulation = true;
 	struct GPUSink : public GroundDeformField::StampSink {
 		GroundSurface3D *surface = nullptr;
+		bool is_near = false; // the near field's sink (the main one forwards to it)
+		GPUSink *next = nullptr;
 		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
-		void amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) override;
+		void amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f) override;
 	};
 	GPUSink gpu_sink;
+	GPUSink near_sink;
 	GroundDeformGPUHost gpu_host;
 	bool gpu_ground_dirty = true;
 	bool gpu_cells_dirty = true;
@@ -229,9 +232,32 @@ private:
 	double gpu_readback_accum = 0.0;
 	bool _gpu_on() const;
 	void _gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync);
+	void _gpu_submit_field(GroundDeformGPUHost &r_host, const GroundDeformField &p_field, bool &r_ground_dirty, bool &r_cells_dirty, double &r_slow_accum, int p_passes, float p_edge_margin, double p_delta, double p_age, bool p_readback, bool p_sync);
 	void _gpu_take();
 	void _gpu_release();
-	PackedByteArray _gpu_params(double p_delta, double p_age, double p_slow) const;
+	PackedByteArray _gpu_params(const GroundDeformField &p_field, float p_edge_margin, double p_delta, double p_age, double p_slow) const;
+
+	// The finer near field (docs/ideas/mud.md, stage 0): a second, smaller field at a quarter of the texel
+	// (8 m at 1.5625 cm), centred on the main one, pressed with the same stamps and slumped with the same rules
+	// (more passes, so a slope moves as far in a second). The material and the path tracer use it inside its
+	// square, blended into the main field over its last half metre; the patch gains a matching fine ring. Tiles it
+	// has never held start as the main field's copy. GPU path only.
+	bool near_field = true;
+	float near_extent = 8.0f;
+	int near_resolution = 512;
+	GroundDeformField near_fld;
+	GroundDeformGPUHost near_host;
+	bool near_ground_dirty = true;
+	bool near_cells_dirty = true;
+	double near_slow_accum = 0.0;
+	static constexpr float NEAR_BLEND = 0.5f; // m over which the near field fades into the main one
+	bool _near_on() const;
+	void _near_follow();
+	void _near_seed(Vector2i p_origin);
+	void _near_release();
+	int _near_passes() const;
+	bool _near_inside(float p_x, float p_z) const;
+	void _publish_near();
 	PackedByteArray _gpu_cells() const;
 
 	int ground_n = 0;
@@ -258,6 +284,22 @@ private:
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
+	// The far pore water (docs/ideas/mud.md, stage 0): the same balance on a lattice FAR_STEP times coarser with as
+	// many cells, centred on the patch, so wet ground carries on past it over the terrain with no edge. A
+	// FAR_PHASES-th of its rows is sampled each water step; inside the fine lattice it copies the fine one.
+	static constexpr int FAR_STEP = 4;
+	static constexpr int FAR_PHASES = 8;
+	LocalVector<float> far_pore;
+	LocalVector<float> far_table;
+	LocalVector<float> far_ground;
+	Vector2i far_origin;
+	int far_n = 0;
+	int far_phase = 0;
+	double far_age[FAR_PHASES] = {};
+	void _far_update(double p_delta, const LocalVector<Node *> &p_sources, const class WeatherMap3D *p_weather);
+	float _far_pore_at(float p_x, float p_z) const;
+	float _pore_step(float p_s, float p_depth, float p_contact, float p_dt, float &r_table) const;
+	static float _value_noise(float p_x, float p_z);
 	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film,
 	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
 	Vector<uint8_t> wet_data;
@@ -379,6 +421,7 @@ public:
 	Dictionary get_footing_at(Vector3 p_position, float p_mass = 75.0f, float p_area = 0.035f) const;
 	// Grains leaving the ground (dig) or landing on it (deposit): a set depth over a disc; the volume, m3.
 	float dig(Vector3 p_position, float p_radius, float p_depth);
+	float _amount(Vector3 p_position, float p_radius, float p_depth, float p_cell);
 	float deposit(Vector3 p_position, float p_radius, float p_depth);
 	// Sand thrown by spinning wheels since the last call (press_wheel with slip): Array of Dictionaries
 	// (position, velocity, width, slip_speed, reach_center, reach_radius). For a grains node to dig and spawn (sand stage 2).
@@ -433,6 +476,15 @@ public:
 	Vector2 get_wind_override() const { return wind_override; }
 	void set_wind_ripples(bool p_enabled);
 	bool is_wind_ripples() const { return wind_ripples; }
+	void set_near_field(bool p_enabled);
+	bool is_near_field() const { return near_field; }
+	void set_near_extent(float p_extent);
+	float get_near_extent() const { return near_extent; }
+	void set_near_resolution(int p_resolution);
+	int get_near_resolution() const { return near_resolution; }
+	Rect2 get_near_rect() const;
+	Vector2 get_near_moved_volume() const { return is_near_active() ? near_fld.moved_volume() : Vector2(); }
+	bool is_near_active() const { return _near_on() && near_fld.valid; }
 	void set_water_sources(const TypedArray<NodePath> &p_sources) { water_sources = p_sources; }
 	TypedArray<NodePath> get_water_sources() const { return water_sources; }
 	void set_water_coupling(bool p_enabled);

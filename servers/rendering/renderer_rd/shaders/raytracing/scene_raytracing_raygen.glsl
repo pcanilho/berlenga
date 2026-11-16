@@ -2052,27 +2052,63 @@ void main() {
 	float g_wet = 0.0; // the ground's pore water (sand stage 4), as wetness, and its standing-water sheen
 	float g_sheen = 0.0;
 	float g_grain = 0.0; // the share of loose dry sand showing its grains (sand_glints)
-	if (rt_material_ground_deform(mat)) {
+	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
+	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
 		if (wmap_g != 0u) {
-			// The ground_wet_at() lines of material.cpp: the lattice's rows, then a row with its rect.
+			// The ground_wet_at() lines of material.cpp: the fine lattice's rows, the far lattice's rows, then a
+			// row with their rects; the fine block fades into the far one by its weight (A).
 			ivec2 gts = textureSize(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), 0);
 			vec4 grect = texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(0, gts.y - 1), 0);
-			vec2 guv = ((h.hit_pos + rt_origin.xyz).xz - grect.xy) / max(grect.z, 1e-3);
-			if (abs(grect.w - 2.5) < 0.01 && grect.z > 0.0 && all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
-				vec3 gw = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, guv.y * float(gts.y - 1) / float(gts.y)), 0.0).rgb;
+			vec4 frect = gts.x > 1 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(1, gts.y - 1), 0) : vec4(0.0);
+			bool gfar = abs(frect.w - 3.5) < 0.01;
+			float grows = float(gfar ? (gts.y - 1) / 2 : gts.y - 1);
+			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
+			if (abs(grect.w - 2.5) < 0.01) {
+				vec4 gwn = vec4(0.0);
+				vec4 gwf = vec4(0.0);
+				for (int gb = 0; gb < (gfar ? 2 : 1); gb++) {
+					vec4 rr = gb == 0 ? grect : frect;
+					vec2 guv = (gxz - rr.xy) / max(rr.z, 1e-3);
+					if (rr.z > 0.0 && all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gb) * grows;
+						vec4 s = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+						if (gb == 0) {
+							gwn = s;
+						} else {
+							gwf = s;
+						}
+					}
+				}
+				vec3 gw = vec3(mix(gwf.xy, gwn.xy, gwn.w), gwn.z * gwn.w);
 				g_grain = clamp(gw.z, 0.0, 1.0);
 				float gup = smoothstep(-0.6, 0.2, h.geometry_normal.y);
 				g_wet = clamp(gw.x, 0.0, 1.0) * gup;
 				g_sheen = clamp(gw.y, 0.0, 1.0) * smoothstep(0.7, 0.95, h.geometry_normal.y);
+				if (!rt_material_ground_deform(mat)) {
+					g_grain = 0.0;
+				}
 			}
 		}
+	}
+	if (rt_material_ground_deform(mat)) {
 		uint gmap = uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP));
 		if (gmap != 0u) {
 			vec3 gpos = h.hit_pos + rt_origin.xyz;
 			vec2 guv = (gpos.xz - vec2(get_rt_param(RT_PARAM_GROUND_DEFORM_X), get_rt_param(RT_PARAM_GROUND_DEFORM_Z))) / max(get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE), 1e-3);
 			if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
 				vec4 g = textureLod(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 0.0);
+				// The finer near field inside its square (material.cpp ground_deform_near_weight()).
+				uint nmap = uint(get_rt_param(RT_PARAM_GROUND_NEAR_MAP));
+				float nsize = get_rt_param(RT_PARAM_GROUND_NEAR_SIZE);
+				if (nmap != 0u && nsize > 0.0) {
+					vec2 n0 = vec2(get_rt_param(RT_PARAM_GROUND_NEAR_X), get_rt_param(RT_PARAM_GROUND_NEAR_Z));
+					vec2 ne = min(gpos.xz - n0, n0 + nsize - gpos.xz);
+					float nw = smoothstep(0.0, 0.5, min(ne.x, ne.y));
+					if (nw > 0.0) {
+						g = mix(g, textureLod(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), (gpos.xz - n0) / nsize, 0.0), nw);
+					}
+				}
 				m.albedo *= g.b;
 				m.roughness = clamp(m.roughness * g.a, 0.0, 1.0);
 			}

@@ -261,7 +261,9 @@ struct alignas(16) RT_MaterialData {
 		uint32_t snow_from_weather : 1; // Cover = amount times the snow map's (RT_PARAM_SNOW_*).
 		// GroundSurface3D's patch (docs/ideas/ground-deform.md): turned-ground tint from RT_PARAM_GROUND_DEFORM_*.
 		uint32_t ground_deform : 1;
-		uint32_t unused : 2;
+		// The terrain round the patch: only the ground's pore water (the far lattice) from RT_PARAM_GROUND_WET_MAP.
+		uint32_t ground_terrain : 1;
+		uint32_t unused : 1;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;

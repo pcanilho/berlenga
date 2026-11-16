@@ -119,6 +119,18 @@
 				The volume pressed down (x) and piled into rims (y) over the live field, in m³. Their difference is what was compacted.
 			</description>
 		</method>
+		<method name="get_near_moved_volume" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				As [method get_moved_volume], over the near field ([member near_field]); zero when it is not active.
+			</description>
+		</method>
+		<method name="get_near_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The near field's square in world XZ, or an empty rect when it is not active.
+			</description>
+		</method>
 		<method name="get_patch_material" qualifiers="const">
 			<return type="Material" />
 			<description>
@@ -265,6 +277,12 @@
 				The time the last wind step (shelter, flux and deposition, twice a second) took, in microseconds.
 			</description>
 		</method>
+		<method name="is_near_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] when the near field ([member near_field]) is running (it needs the field on the GPU).
+			</description>
+		</method>
 		<method name="is_gpu_active" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -404,6 +422,15 @@
 		</member>
 		<member name="moisture" type="float" setter="set_moisture" getter="get_moisture" default="-1.0">
 			The ground's moisture from 0 (dry) to 1 (soaked); -1 takes the [code]WeatherMap3D[/code] wetness.
+		</member>
+		<member name="near_extent" type="float" setter="set_near_extent" getter="get_near_extent" default="8.0">
+			The near field's side, in metres, centred on the field. A multiple of twice the [member detail_spacing], so the patch's fine ring lines up with its grid.
+		</member>
+		<member name="near_field" type="bool" setter="set_near_field" getter="is_near_field" default="true">
+			A finer field in the middle of the deformation field ([member near_extent] at [member near_resolution] texels, by default 8 m at 1.5625 cm against 6.25 cm), pressed and slumped with the same rules and used inside its square by the material and the path tracer, so tread, boot and rill edges are sharp geometry. The patch gains a matching fine ring. Tiles it has never held start from the main field. Needs [member gpu_simulation].
+		</member>
+		<member name="near_resolution" type="int" setter="set_near_resolution" getter="get_near_resolution" default="512">
+			The near field's texels per side (a multiple of 64).
 		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.

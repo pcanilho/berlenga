@@ -104,7 +104,7 @@ bool GroundDeformGPU::take_field(PackedByteArray &r_packed, Vector2i &r_origin) 
 	return true;
 }
 
-void GroundDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center) {
+void GroundDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center, const PackedByteArray &p_uploads) {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs || !rd || failed) {
 		return;
@@ -116,7 +116,8 @@ void GroundDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArra
 	d.push_back(p_dims.slots);
 	d.push_back(p_dims.coll_w);
 	d.push_back(p_dims.stride);
-	rs->call_on_render_thread(callable_mp(this, &GroundDeformGPU::rt_step).bind(d, p_flags, p_params, p_ground, p_cover, p_stamps, p_stores, p_shift, p_origin, p_collision_center));
+	d.push_back(MAX(p_dims.slump_passes, 1));
+	rs->call_on_render_thread(callable_mp(this, &GroundDeformGPU::rt_step).bind(d, p_flags, p_params, p_ground, p_cover, p_stamps, p_stores, p_shift, p_origin, p_collision_center, p_uploads));
 	if (p_flags & STEP_SYNC) {
 		rs->sync();
 	}
@@ -264,9 +265,9 @@ void GroundDeformGPU::_dispatch(int64_t p_list, int p_mode, int p_count, int p_g
 	rd->compute_list_add_barrier(p_list);
 }
 
-void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center) {
+void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center, const PackedByteArray &p_uploads) {
 	_rt_compile();
-	if (failed || p_dims.size() < 6 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
+	if (failed || p_dims.size() < 7 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
 		return;
 	}
 	Dims d;
@@ -276,6 +277,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	d.slots = p_dims[3];
 	d.coll_w = p_dims[4];
 	d.stride = p_dims[5];
+	d.slump_passes = p_dims[6];
 	_rt_ensure(d);
 	const int n = d.n;
 	const int field_groups = (n * n + WG - 1) / WG;
@@ -299,6 +301,17 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 			_rt_make_sets();
 		}
 		rd->buffer_update(buf_stamps, 0, stamp_count * STAMP_BYTES, p_stamps.ptr());
+	}
+	{
+		const int tile_bytes = TILE * TILE * 4 * d.stride;
+		const int rec = 4 + tile_bytes;
+		for (int at = 0; at + rec <= p_uploads.size(); at += rec) {
+			int32_t slot;
+			memcpy(&slot, p_uploads.ptr() + at, 4);
+			if (slot >= 0 && slot < d.slots) {
+				rd->buffer_update(buf_cache, slot * tile_bytes, tile_bytes, p_uploads.ptr() + at + 4);
+			}
+		}
 	}
 	const int store_count = p_stores.size() / 16;
 	const int shift_count = p_shift.size() / 16;
@@ -335,9 +348,11 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		_dispatch(cl, MODE_STAMPS, stamp_count, 1);
 	}
 	if (p_flags & STEP_SLUMP) {
-		_dispatch(cl, MODE_SLUMP_GIVE, 0, field_groups);
-		_dispatch(cl, MODE_SLUMP_TAKE, 0, field_groups);
-		cur = 1 - cur;
+		for (int k = 0; k < MAX(d.slump_passes, 1); k++) {
+			_dispatch(cl, MODE_SLUMP_GIVE, 0, field_groups);
+			_dispatch(cl, MODE_SLUMP_TAKE, 0, field_groups);
+			cur = 1 - cur;
+		}
 	}
 	if (p_flags & STEP_BLIT) {
 		_dispatch(cl, MODE_BLIT, 0, field_groups);
@@ -428,6 +443,7 @@ void GroundDeformGPUHost::release() {
 	stamps.clear();
 	stores.clear();
 	shift.clear();
+	uploads.clear();
 }
 
 void GroundDeformGPUHost::clear_cache() {
@@ -599,6 +615,47 @@ void GroundDeformGPUHost::shift_to(const GroundDeformField &p_field, Vector2i p_
 	}
 	n = fn;
 	changed = true;
+}
+
+void GroundDeformGPUHost::seed_tile(Vector2i p_tile, const uint32_t *p_data, int p_stride, int p_max_cached_tiles) {
+	const int want_slots = MAX(p_max_cached_tiles, 1);
+	if (slots != want_slots) {
+		clear_cache();
+		slots = want_slots;
+		for (int i = slots - 1; i >= 0; i--) {
+			free_slots.push_back(i);
+		}
+	}
+	if (cache.has(p_tile)) {
+		return;
+	}
+	int slot = -1;
+	if (free_slots.size() > 0) {
+		slot = free_slots[free_slots.size() - 1];
+		free_slots.remove_at(free_slots.size() - 1);
+	} else {
+		Vector2i oldest;
+		uint64_t best = UINT64_MAX;
+		for (const KeyValue<Vector2i, Slot> &kv : cache) {
+			if (kv.value.used < best) {
+				best = kv.value.used;
+				oldest = kv.key;
+			}
+		}
+		if (best == UINT64_MAX) {
+			return;
+		}
+		slot = cache[oldest].slot;
+		cache.erase(oldest);
+	}
+	cache.insert(p_tile, Slot{ slot, ++cache_clock });
+	const int T = GroundDeformField::TILE;
+	const int bytes = T * T * 4 * p_stride;
+	const int at = uploads.size();
+	uploads.resize(at + 4 + bytes);
+	const int32_t s = slot;
+	memcpy(uploads.ptrw() + at, &s, 4);
+	memcpy(uploads.ptrw() + at + 4, p_data, bytes);
 }
 
 bool GroundDeformGPUHost::take_texture() {
