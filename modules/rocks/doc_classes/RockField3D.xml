@@ -260,6 +260,9 @@
 		<member name="max_stones_per_cell" type="int" setter="set_max_stones_per_cell" getter="get_max_stones_per_cell" default="12000">
 			Caps the stones of one cell of one layer.
 		</member>
+		<member name="mineral_glints" type="bool" setter="set_mineral_glints" getter="is_mineral_glints" default="true">
+			Glossy crystals smaller than a pixel still flash: quartz and feldspar cleavage on granite, quartz and mica grains on the other rocks, counted per cell of the pixel's footprint in raster and the exact crystal's facet under the path tracer. Lichen, moss, a water film, snow and the ground's dust cover them; the weathered rind dulls them.
+		</member>
 		<member name="min_size" type="float" setter="set_min_size" getter="get_min_size" default="0.08">
 			Smallest b-axis diameter placed in metres. Smaller stones stay in the terrain material.
 		</member>

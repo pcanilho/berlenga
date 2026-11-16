@@ -146,6 +146,7 @@ private:
 	bool ground_blend = true;
 	// Coast forms (stacks, arches, platforms) get collision at any distance, so the sea's floor probe sees them.
 	bool coast_collision = true;
+	bool mineral_glints = true;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
 	real_t ground_blend_height = 0.25;
@@ -252,6 +253,8 @@ public:
 	real_t get_lichen_cover() const { return lichen_cover; }
 	void set_moss_cover(real_t p_cover);
 	real_t get_moss_cover() const { return moss_cover; }
+	void set_mineral_glints(bool p_enabled);
+	bool is_mineral_glints() const { return mineral_glints; }
 	void set_coast_collision(bool p_enabled);
 	bool is_coast_collision() const { return coast_collision; }
 	void set_ground_blend(bool p_enabled);

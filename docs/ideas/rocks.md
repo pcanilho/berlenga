@@ -372,3 +372,30 @@ outline more than by surface:
   that leans to one side; above the springing its outline steps where roof blocks fell; its edges are ragged. The
   deck sags over the span (a quarter to a half of the rock above the opening, never thinner than 0.4c) and dips
   along the ridge.
+
+## Mineral glints (round 3, 16 Nov)
+
+The close-up crystals (granite's quartz and feldspar cleavage, tilted up to ~45 degrees, rough 0.12) flash only while
+a pixel is finer than a crystal (footprint under ~3 cm): past that the crystal map fades to the mean and the sparkle
+is gone, though a sunlit granite boulder at 10 to 50 m visibly glitters. Published models:
+- **Jakob et al. 2014** (discrete stochastic microfacets) and **Yan et al. 2014/2016** (position-normal
+  distributions): the references; offline.
+- **Zirr and Kaplanyan 2016** (real-time glints): counts facets per pixel footprint with a binomial law per cell of
+  a multiscale grid.
+- **Chermain et al. 2020** (Procedural physically based BRDF for real-time rendering of glints, Pacific Graphics):
+  multiscale procedural microfacet slopes from a dictionary of 1D distributions, converging to the smooth GGX as the
+  footprint grows; energy-conserving, filtered over the footprint.
+- **Deliot and Belcour 2023** (Real-time rendering of glinty appearances using distributed binomial laws on
+  anisotropic grids, HPG): the same convergence with no dictionary, cheaper; Unity's take.
+The engine already has the reduced Deliot and Belcour counting for snow (snow_glint: one facet per footprint cell,
+weight share / chance / sqrt(share n), a coat lobe in raster) and an exact facet per grain under the path tracer
+(SPECULAR_NORMAL). Minerals use the same: Chermain's convergence argument with Deliot and Belcour's counting, so it
+is one technique engine-wide.
+- Raster, past the resolved crystals: rk_glint() counts crystals (1.8 cm on granite, share 0.45 glossy: quartz plus a
+  third of feldspars; 2 x speck size, share 0.12 on the other rocks: quartz and mica grains) per footprint cell up
+  to 32 crystals a cell, the facet GGX-tilted (alpha 0.6), drawn in the clear-coat lobe (F0 0.04, minerals about
+  0.045) with NORMAL_MAP solved back onto the stone's normal so its own shading is unchanged.
+- Path tracer: the facet of the crystal each sample hits, in the base specular only (SPECULAR_NORMAL), rough 0.12;
+  its samples count the footprint's crystals themselves.
+- Covered by lichen, moss, water film, snow and the ground's dust; dulled to 35% on the weathered rind.
+- `RockField3D.mineral_glints` (on); bench `--no-glints`.

@@ -292,6 +292,8 @@ func _world() -> void:
 		rocks.ground_material = tm # the stones' feet blend into these layers
 		if args.has("no-ground-blend"):
 			rocks.ground_blend = false
+		if args.has("no-glints"):
+			rocks.mineral_glints = false
 		if args.has("water"):
 			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")
