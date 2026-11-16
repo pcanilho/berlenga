@@ -2845,3 +2845,43 @@ spacing, and `PhysXLiveWater3D` draws one vertex per simulation cell (its `cell_
 is set by their simulations. For all of them the visible gap is the same as the sea's: not triangle density
 but crest shape (see "Sharper crests and breaking lips").
 
+
+## Sharper crests and breaking lips on the open sea (16 Nov, research for Paulo)
+
+The finer mesh (#307, #308) showed that triangle density is not what the reference water has over ours: the
+waves finer than our mesh are millimetres high. The difference is crest shape. Real wind seas have sharp,
+tall crests and flat troughs, and at whitecap steepness the crest spills or plunges. Ours are linear FFT
+waves with one global `choppiness`.
+
+What others do:
+- Tessendorf FFT seas (Sea of Thieves, Black Flag, Crest, Atlas) all start from the same linear waves and get
+  the sharp look from horizontal (choppy) displacement, raised per sea state (Black Flag keys choppiness to
+  the Beaufort level). Crest and Sea of Thieves add no breaking geometry in deep water: whitecaps are foam
+  and spray. Black Flag adds spray sheets and particle splashes where crests fold.
+- Second-order Stokes waves (Stokes 1847; Fenton 1985): each wave's crest is raised and its trough
+  flattened by about (k a^2 / 2) cos 2 theta. In an FFT sea the second-order correction (the "bound
+  harmonics"; Tick 1959, Creamer et al. 1989 transform) can be approximated from the summed slope:
+  crests up by about a quarter of the local steepness squared times the wavelength. Measured ocean crests
+  are about 10 to 20% higher than linear theory at Hs-scale steepness (Forristall 2000).
+- Breaking in deep water: a crest breaks once its steepness passes about 0.14 (ak about 0.44; the Stokes
+  limit) or its particle speed reaches the crest speed (Barthelemy et al. 2018). Most deep water breakers
+  spill (a turbulent roller rides down the front face); plunging lips in deep water are rare and short
+  (Duncan 1981, Melville 1982).
+- Procedural breakers in graphics: Thürey et al. 2007 (a parametric curl along a wave front, for shallow
+  water), Mihalef et al. 2004, Jeschke and Wojtan's water wave packets (2017) for detail, and the Fournier
+  and Reeves 1986 crest skew we use on shore breakers (`shore_wave_curl`, step 5c, already plunges with a
+  folded lip mesh).
+- Spray sheets: Black Flag and Uncharted 4 tear camera-facing particle sheets off folding crests; our
+  `crest_spray` already finds those points (the Jacobian test on the CPU readback) and throws droplets and
+  spume puffs from them.
+
+Options, cheapest first:
+1. Crest sharpening (shader only): a second-order Stokes lift from the summed slope (crests higher, troughs
+   flatter), and choppiness raised locally where the sea is steep rather than everywhere. Cost: a few ALU
+   per vertex, no textures. One PR.
+2. Spilling rollers: where a crest folds, a turbulent roller of white water riding down its front face,
+   as a displaced bulge with churned foam and a short rough lip, from the same Jacobian. Shader plus the
+   foam pass. One or two PRs.
+3. Plunging lips and spray sheets on storm crests: lip ribbons along the folding crest lines found on the
+   CPU (the shore breaker's lip mesh, reused), falling over and tearing into spray sheets. The biggest
+   visual change in a gale and the most work (several PRs, a particle system per crest).
