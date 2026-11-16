@@ -34,7 +34,7 @@
 		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="1024">
 			How many clumps the strands are clustered into for the thick strands (see [member cards_enabled]). Each clump is drawn as one strip and simulated as one strand.
 		</member>
-		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
+		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="true">
 			If [code]true[/code], the strands are clustered into clumps when the hair is built (shared by every node with the same groom and settings), and far hair is drawn as thick strands (Huang et al., EGSR 2025): each clump one strip facing the camera, as wide as the clump's cross-section seen from there, as opaque as its strands' total width, and shaded as the clump (its fibres shadowing and masking one another), so its colour matches the strands. The switch is per segment: a stretch of strands whose clump is at most 2 pixels across draws as that clump's thick strand, so the hair hands over a few clumps at a time as it recedes and a zoomed-in camera keeps the strands. Once every clump is that thin, only the guides and the clumps are simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
 		</member>
 		<member name="cast_hair_shadows" type="bool" setter="set_cast_hair_shadows" getter="is_casting_hair_shadows" default="true">
