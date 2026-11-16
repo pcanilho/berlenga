@@ -255,6 +255,9 @@ private:
 		// Bark only: per vertex, bare wood where a living stem was wounded (section 5p); vertices
 		// without one read 0. _peel_bark takes the larger of it and dead wood's peeling.
 		LocalVector<float> wound;
+		// Bark only: vertices added after the parts were closed (a log's peel edge, section 5o),
+		// each with the part whose UV2 map it takes.
+		LocalVector<Vector2i> extra_part;
 		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
@@ -349,6 +352,7 @@ private:
 	float _bare_amount() const;
 	float _bare_at(const Vector3 &p_pos, const Vector3 &p_normal, const Vector3 &p_axis, float p_ground) const;
 	void _peel_bark(Builder &r_bark);
+	void _split_peel_edge(Builder &r_b, const LocalVector<Vector3> &p_orig, const LocalVector<float> &p_bare, const LocalVector<float> &p_depth, const LocalVector<uint8_t> &p_skip);
 	// Bark stories (section 5p): wounds on the main stem, planned per tree before the mesh.
 	enum WoundKind : uint8_t {
 		WOUND_LIGHTNING,
@@ -378,6 +382,7 @@ private:
 	// Offset out from the stem (metres), bare wood 0..1 and darkening 0..1 at s along the main
 	// stem and az round it, on a stem of radius p_r; p_only: one wound (-1 all).
 	Vector3 _wound_at(float p_s, float p_az, float p_r, int p_only = -1) const;
+	void _grow_checks();
 	void _grow_resin(Builder &r_resin);
 	// Where a lying stem's features are, for plants that root at them (vegetation's honey
 	// fungus): peel edges and checks, 8 floats each (mesh meta "tree_deadwood_features").
@@ -415,11 +420,11 @@ private:
 	float forest_spacing = 4.0f;
 	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
 	bool needle_sprays = false;
-	float near_needle_range = 0.0f; // Metres; > 0 gives placed conifers a full-needle near mesh.
+	float near_needle_range = 30.0f; // Metres; > 0 gives placed conifers a full-needle near mesh (on by default: every feature on, the desktop tunes cost).
 	// Leaf detail near, on demand (docs/ideas/trees.md 8b): metres; > 0 gives placed trees with
 	// lobed or compound leaves a far mesh of simple leaves, and their species a near_mesh_source
 	// that builds the full-leaf mesh when a tree first comes within this range.
-	float near_leaf_range = 0.0f;
+	float near_leaf_range = 60.0f; // On by default (every feature on; the desktop tunes cost).
 	bool far_leaves = false; // _add_leaf(): species leaves as their simple twins only.
 	bool skip_lods = false;
 	float bark_relief = 1.0f; // Scales the displaced bark of LOD 0; 0 = plain tubes only.

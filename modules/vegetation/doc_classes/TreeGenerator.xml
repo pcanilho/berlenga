@@ -296,10 +296,10 @@
 		<member name="max_shoot" type="float" setter="set_param" getter="get_param" default="2.0">
 			Most internodes one bud can grow in a year.
 		</member>
-		<member name="near_leaf_range" type="float" setter="set_near_leaf_range" getter="get_near_leaf_range" default="0.0">
+		<member name="near_leaf_range" type="float" setter="set_near_leaf_range" getter="get_near_leaf_range" default="60.0">
 			Metres. Above 0, placed trees and shrubs with lobed or compound leaves (oak, maples, ash, rowan, elder, hawthorn, horse chestnut) keep only simple leaves of the same area in their meshes, and their species get a [member PlantSpecies.near_mesh_source] that builds the full-leaf mesh of a variant when a tree first comes within this range, then frees it when none is near. Lobes and leaflets are under a pixel beyond about 60 m. Keep this generator or the species alive while the field draws them.
 		</member>
-		<member name="near_needle_range" type="float" setter="set_near_needle_range" getter="get_near_needle_range" default="0.0">
+		<member name="near_needle_range" type="float" setter="set_near_needle_range" getter="get_near_needle_range" default="30.0">
 			Above 0, conifer species from [method make_species], [method make_stand] and [method make_woodland] also carry one full-needle mesh as [code]near_meshes[/code], drawn by [VegetationField3D] within this many metres (about 30 suits), with needle sprays beyond. A full-needle spruce is about 30M vertices, so only one variant is made.
 		</member>
 		<member name="needle_sprays" type="bool" setter="set_needle_sprays" getter="get_needle_sprays" default="false">

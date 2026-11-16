@@ -5936,6 +5936,22 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 	}
 	const float *tr = r_bark.tangents.ptr();
 	HashSet<Vector3i> edge_cells;
+	// A log's peel edge is cut as a step (trees.md 5o): bark the thickness it is, standing over
+	// the wood, never a slope across the 2.5 cm grid that read as a decal's edge. Vertices sink
+	// fully or not at all, and the triangles the edge crosses are split along it below.
+	const bool step_edge = (fallen || fallen_branch) && amount > 0.0f;
+	LocalVector<Vector3> orig;
+	LocalVector<float> bare_v, depth_v;
+	if (step_edge) {
+		orig.resize(nv);
+		bare_v.resize(nv);
+		depth_v.resize(nv);
+		for (int v = 0; v < nv; v++) {
+			orig[v] = vw[v];
+			bare_v[v] = 0.0f;
+			depth_v[v] = 0.0f;
+		}
+	}
 	for (int v = 0; v < nv; v++) {
 		const float lw = CLAMP(1.0f - cw[v].a, 0.0f, 1.0f);
 		float bare = 0.0f;
@@ -5974,15 +5990,250 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 			const float r = radius[v];
 			// Thin bark on smooth tubes (beech, birch, young stems): a few millimetres. A deeper
 			// step stood the moss shell, built on the bark, out of the sunk wood as a ledge.
-			float depth = MIN(0.25f * r, 0.002f + 0.008f * r);
+			// On logs the edge is a cut step, the moss held clear of it: a beech's bark is 5-10 mm.
+			float depth = step_edge ? MIN(0.25f * r, 0.003f + 0.015f * r) : MIN(0.25f * r, 0.002f + 0.008f * r);
 			if (v < int(r_bark.relief_off.size()) && r_bark.relief_off[v].y > 0.0f) {
 				// Displaced bark: the wood lies at the furrow floor (what was bark above it is gone).
 				depth = MAX(0.0f, r_bark.relief_off[v].x - 0.9f * floor_k * r_bark.relief_off[v].y) + 0.002f;
 			}
-			vw[v] -= nr[v] * (depth * Math::smoothstep(0.1f, 0.9f, bare));
+			if (step_edge && !skip[v]) {
+				bare_v[v] = bare;
+				depth_v[v] = depth;
+				vw[v] -= nr[v] * (bare >= 0.5f ? depth : 0.0f);
+			} else {
+				vw[v] -= nr[v] * (depth * Math::smoothstep(0.1f, 0.9f, bare));
+			}
 			cw[v].a = 0.5f - 0.5f * bare;
 		} else {
 			cw[v].a = 0.5f + 0.5f * lw;
+		}
+	}
+	if (step_edge) {
+		_split_peel_edge(r_bark, orig, bare_v, depth_v, skip);
+	}
+}
+
+// The peel edge as geometry (trees.md 5o): each bark triangle the edge (bare 0.5) crosses is cut
+// along it into a bark piece at the surface and a wood piece at the wood's depth, with a wall of
+// the bark's thickness between them, inner bark (phloem, red-brown) under the darker cork. Cut
+// points are interpolated from the two corners of their edge in a fixed order, so neighbouring
+// triangles share them exactly. New vertices are appended; each part keeps its index range.
+void TreeGenerator::_split_peel_edge(Builder &r_b, const LocalVector<Vector3> &p_orig, const LocalVector<float> &p_bare, const LocalVector<float> &p_depth, const LocalVector<uint8_t> &p_skip) {
+	const int nv0 = r_b.verts.size();
+	const bool tang = r_b.use_tangents && r_b.tangents.size() >= nv0 * 4;
+	const bool has_relief = int(r_b.relief_off.size()) >= nv0;
+	const bool has_wound = int(r_b.wound.size()) >= nv0;
+	const bool has_bones = r_b.bones.size() >= nv0 * 4 && r_b.weights.size() >= nv0 * 4;
+	// Which part each triangle and vertex is in.
+	LocalVector<int> vert_part;
+	vert_part.resize(nv0);
+	for (int v = 0; v < nv0; v++) {
+		vert_part[v] = -1;
+	}
+	for (uint32_t i = 0; i < r_b.parts.size(); i++) {
+		const Vector4i &pt = r_b.parts[i];
+		for (int v = pt.z; v < pt.z + pt.w && v < nv0; v++) {
+			vert_part[v] = i;
+		}
+	}
+	auto add_vert = [&](int p_a, int p_b, float p_t, bool p_sunk, int p_side, int p_part) -> int {
+		// p_side: the corner whose colour and alpha the vertex takes (its side of the edge).
+		const int at = r_b.verts.size();
+		const Vector3 n = r_b.normals[p_a].lerp(r_b.normals[p_b], p_t).normalized();
+		const float d = Math::lerp(p_depth[p_a], p_depth[p_b], p_t);
+		r_b.verts.push_back(p_orig[p_a].lerp(p_orig[p_b], p_t) - n * (p_sunk ? d : 0.0f));
+		r_b.normals.push_back(n);
+		r_b.uvs.push_back(r_b.uvs[p_a].lerp(r_b.uvs[p_b], p_t));
+		Color c = r_b.colors[p_a].lerp(r_b.colors[p_b], p_t);
+		c.a = r_b.colors[p_side].a;
+		r_b.colors.push_back(c);
+		if (tang) {
+			for (int k = 0; k < 4; k++) {
+				r_b.tangents.push_back(Math::lerp(r_b.tangents[p_a * 4 + k], r_b.tangents[p_b * 4 + k], p_t));
+			}
+		}
+		if (has_bones) {
+			const int src = p_t < 0.5f ? p_a : p_b;
+			for (int k = 0; k < 4; k++) {
+				r_b.bones.push_back(r_b.bones[src * 4 + k]);
+				r_b.weights.push_back(r_b.weights[src * 4 + k]);
+			}
+		}
+		if (has_relief) {
+			r_b.relief_off.push_back(r_b.relief_off[p_a].lerp(r_b.relief_off[p_b], p_t));
+		}
+		if (has_wound) {
+			r_b.wound.push_back(Math::lerp(r_b.wound[p_a], r_b.wound[p_b], p_t));
+		}
+		if (p_part >= 0) {
+			r_b.extra_part.push_back(Vector2i(at, p_part));
+		}
+		return at;
+	};
+	// One cut point per (edge, level): shared by the two triangles on that edge.
+	HashMap<uint64_t, int> cuts;
+	auto cut = [&](int p_a, int p_b, bool p_sunk, int p_part) -> int {
+		const int a = MIN(p_a, p_b), b = MAX(p_a, p_b);
+		const uint64_t key = (uint64_t(a) << 33) | (uint64_t(b) << 1) | (p_sunk ? 1u : 0u);
+		if (const int *f = cuts.getptr(key)) {
+			return *f;
+		}
+		const float t = CLAMP((0.5f - p_bare[a]) / (p_bare[b] - p_bare[a]), 0.0f, 1.0f);
+		const int bark_corner = p_bare[a] < 0.5f ? a : b;
+		const int wood_corner = p_bare[a] < 0.5f ? b : a;
+		const int v = add_vert(a, b, t, p_sunk, p_sunk ? wood_corner : bark_corner, p_part);
+		cuts.insert(key, v);
+		return v;
+	};
+	const Color phloem = Color(0.36f, 0.2f, 0.12f).srgb_to_linear();
+	PackedInt32Array out;
+	out.resize(r_b.indices.size());
+	int n_out = 0;
+	auto emit = [&](int a, int b, int c) {
+		if (n_out + 3 > out.size()) {
+			out.resize(MAX(out.size() * 2, n_out + 3));
+		}
+		int32_t *ow = out.ptrw();
+		ow[n_out++] = a;
+		ow[n_out++] = b;
+		ow[n_out++] = c;
+	};
+	// Triangles in index order; parts' index ranges are remapped as they grow.
+	LocalVector<int> tri_part;
+	tri_part.resize(r_b.indices.size() / 3);
+	for (uint32_t i = 0; i < tri_part.size(); i++) {
+		tri_part[i] = -1;
+	}
+	for (uint32_t i = 0; i < r_b.parts.size(); i++) {
+		const Vector4i &pt = r_b.parts[i];
+		for (int q = pt.x / 3; q < (pt.x + pt.y) / 3 && q < int(tri_part.size()); q++) {
+			tri_part[q] = i;
+		}
+	}
+	LocalVector<Vector2i> new_range;
+	new_range.resize(r_b.parts.size());
+	for (uint32_t i = 0; i < new_range.size(); i++) {
+		new_range[i] = Vector2i(-1, 0);
+	}
+	const int32_t *iw = r_b.indices.ptr();
+	const int nidx = r_b.indices.size();
+	for (int q = 0; q + 2 < nidx; q += 3) {
+		const int part = tri_part[q / 3];
+		if (part >= 0 && new_range[part].x < 0) {
+			new_range[part].x = n_out;
+		}
+		const int i0 = iw[q], i1 = iw[q + 1], i2 = iw[q + 2];
+		const int c[3] = { i0, i1, i2 };
+		bool ok = i0 < nv0 && i1 < nv0 && i2 < nv0 && !p_skip[i0] && !p_skip[i1] && !p_skip[i2];
+		int nb = 0;
+		if (ok) {
+			for (int k = 0; k < 3; k++) {
+				nb += p_bare[c[k]] >= 0.5f ? 1 : 0;
+			}
+		}
+		if (!ok || nb == 0 || nb == 3) {
+			emit(i0, i1, i2);
+			if (part >= 0) {
+				new_range[part].y = n_out - new_range[part].x;
+			}
+			continue;
+		}
+		// The lone corner (the one on its own side), kept in winding order: L, P, Q.
+		int li = 0;
+		for (int k = 0; k < 3; k++) {
+			if ((p_bare[c[k]] >= 0.5f) == (nb == 1)) {
+				li = k;
+			}
+		}
+		const int L = c[li], P = c[(li + 1) % 3], Q = c[(li + 2) % 3];
+		const int vp = vert_part[L];
+		const bool lone_wood = nb == 1;
+		// Cut points on L-P (X) and L-Q (Y), at the surface (bark side) and sunk (wood side).
+		const int Xs = cut(L, P, false, vp), Ys = cut(L, Q, false, vp);
+		const int Xw = cut(L, P, true, vp), Yw = cut(L, Q, true, vp);
+		const int Xl = lone_wood ? Xw : Xs, Yl = lone_wood ? Yw : Ys;
+		const int Xo = lone_wood ? Xs : Xw, Yo = lone_wood ? Ys : Yw;
+		emit(L, Xl, Yl);
+		emit(Xo, P, Q);
+		emit(Xo, Q, Yo);
+		// The wall: from the surface cut down to the sunk one, both ways round so either winding
+		// shows (the bark material culls back faces). Its own vertices carry the phloem colour.
+		auto wall_vert = [&](int p_src) -> int {
+			const int at = r_b.verts.size();
+			r_b.verts.push_back(r_b.verts[p_src]);
+			r_b.normals.push_back(r_b.normals[p_src]);
+			r_b.uvs.push_back(r_b.uvs[p_src]);
+			Color cc = phloem;
+			cc.a = 0.5f; // Bark, no lichen.
+			r_b.colors.push_back(cc);
+			if (tang) {
+				for (int k = 0; k < 4; k++) {
+					r_b.tangents.push_back(r_b.tangents[p_src * 4 + k]);
+				}
+			}
+			if (has_bones) {
+				for (int k = 0; k < 4; k++) {
+					r_b.bones.push_back(r_b.bones[p_src * 4 + k]);
+					r_b.weights.push_back(r_b.weights[p_src * 4 + k]);
+				}
+			}
+			if (has_relief) {
+				r_b.relief_off.push_back(r_b.relief_off[p_src]);
+			}
+			if (has_wound) {
+				r_b.wound.push_back(0.0f);
+			}
+			if (vp >= 0) {
+				r_b.extra_part.push_back(Vector2i(at, vp));
+			}
+			return at;
+		};
+		const int a = wall_vert(Xs), b = wall_vert(Ys), cw = wall_vert(Yw), d = wall_vert(Xw);
+		// The wall faces the wood side: from the bark toward where the bark is gone.
+		const Vector3 mid = (r_b.verts[a] + r_b.verts[b]) * 0.5f;
+		const Vector3 wood_dir = (lone_wood ? p_orig[L] : (p_orig[P] + p_orig[Q]) * 0.5f) - mid;
+		const Vector3 along = r_b.verts[b] - r_b.verts[a];
+		const Vector3 sn = r_b.normals[a];
+		Vector3 wn = along.cross(sn);
+		if (wn.dot(wood_dir) < 0.0f) {
+			wn = -wn;
+		}
+		wn = (wn.normalized() + sn * 0.2f).normalized();
+		for (int v : { a, b, cw, d }) {
+			r_b.normals.write[v] = wn;
+			if (tang) {
+				const Vector3 t = along.normalized();
+				r_b.tangents.write[v * 4] = t.x;
+				r_b.tangents.write[v * 4 + 1] = t.y;
+				r_b.tangents.write[v * 4 + 2] = t.z;
+				r_b.tangents.write[v * 4 + 3] = 1.0f;
+			}
+		}
+		// The bottom edge darker: cut fibres in the step's shadow.
+		r_b.colors.write[cw] = Color(phloem.r * 0.6f, phloem.g * 0.6f, phloem.b * 0.6f, 0.5f);
+		r_b.colors.write[d] = r_b.colors[cw];
+		// Godot's front faces wind clockwise: (v2 - v0) x (v1 - v0) along the facing.
+		const Vector3 fn = (r_b.verts[cw] - r_b.verts[a]).cross(r_b.verts[b] - r_b.verts[a]);
+		if (fn.dot(wn) >= 0.0f) {
+			emit(a, b, cw);
+			emit(a, cw, d);
+		} else {
+			emit(a, cw, b);
+			emit(a, d, cw);
+		}
+		if (part >= 0) {
+			new_range[part].y = n_out - new_range[part].x;
+		}
+	}
+	if (cuts.is_empty()) {
+		return;
+	}
+	out.resize(n_out);
+	r_b.indices = out;
+	for (uint32_t i = 0; i < r_b.parts.size(); i++) {
+		if (new_range[i].x >= 0) {
+			r_b.parts[i].x = new_range[i].x;
+			r_b.parts[i].y = new_range[i].y;
 		}
 	}
 }
@@ -6336,6 +6587,116 @@ Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) c
 		off -= groove;
 	}
 	return Vector3(off, bare, dark);
+}
+
+// Drying checks as geometry (trees.md 5o): the stem's 2.5 cm grid can only sink a soft trough
+// along a check, which reads as a groove drawn on the wood, never a split. Each check gets its
+// own walls: two faces of split wood from the lips at the check's half width down to a V floor
+// below the trough, a centimetre along the grain, following the same wandering line as the
+// trough (_wound_at). Split wood inside is less weathered than the face, darkening with depth
+// (no light reaches the floor). Wood surface, "wood" material: fibres along the log.
+void TreeGenerator::_grow_checks() {
+	if (wounds.is_empty() || wound_pts.size() < 2 || wound_surf.is_empty() || !(fallen || fallen_branch)) {
+		return;
+	}
+	const int na = 96;
+	const int ns = int(wound_surf.size()) / na;
+	const float ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
+	auto radius_at = [&](float p_s) {
+		int i = 0;
+		while (i + 2 < int(wound_arc.size()) && wound_arc[i + 1] < p_s) {
+			i++;
+		}
+		const float t = CLAMP((p_s - wound_arc[i]) / MAX(wound_arc[i + 1] - wound_arc[i], 1e-6f), 0.0f, 1.0f);
+		return Math::lerp(wound_rad[i], wound_rad[i + 1], t);
+	};
+	auto surf_at = [&](float p_s, float p_az) {
+		const int is = CLAMP(int(p_s / 0.02f), 0, ns - 1);
+		const int ia = ((int(Math::floor((p_az + float(Math::PI)) / float(Math::TAU) * na)) % na) + na) % na;
+		const float m = wound_surf[is * na + ia];
+		return m > 0.0f ? m : radius_at(p_s);
+	};
+	static const float GREY[5] = { 0.0f, 0.3f, 0.6f, 0.85f, 1.0f };
+	const float old = GREY[CLAMP(decay_class, 0, 4)];
+	// Inside a check the wood is fresher than the weathered face: buff to grey-brown, then dark.
+	const Color inner = Color(0.62f, 0.54f, 0.42f).srgb_to_linear().lerp(Color(0.44f, 0.4f, 0.35f).srgb_to_linear(), old);
+	const Color deep = Color(0.07f, 0.06f, 0.05f);
+	Builder &w = wood_b;
+	for (int wi = 0; wi < int(wounds.size()); wi++) {
+		const Wound &wd = wounds[wi];
+		if (wd.kind != WOUND_CHECK || wd.half_w < 0.0015f) {
+			continue;
+		}
+		const float salt = float(wd.salt & 0xffff) * 0.01f;
+		Vector4i part;
+		w.begin(part);
+		const int first = w.verts.size();
+		const float step = 0.01f;
+		const int n = MAX(2, int((wd.s1 - wd.s0) / step) + 1);
+		const int across = 4; // Lip, mid wall, floor, mid wall, lip: 5 columns.
+		for (int i = 0; i < n; i++) {
+			const float sv = Math::lerp(wd.s0, wd.s1, float(i) / (n - 1));
+			const float r = radius_at(sv);
+			const float e = Math::smoothstep(wd.s0, wd.s0 + 0.25f, sv) * Math::smoothstep(wd.s1, wd.s1 - 0.25f, sv);
+			// The trough's own centre line (as _wound_at), so the walls sit in it.
+			const float azc = wd.az0 + wd.twist * (sv - wd.s0) + 0.02f * (moss_noise(Vector3(sv * 4.0f, 0.9f, salt), wd.salt) - 0.5f) / MAX(r, 0.05f);
+			const float hw = wd.half_w * (0.5f + 0.5f * e) * Math::smoothstep(0.0f, 0.35f, e);
+			const float depth = wd.age * e + 0.008f * e;
+			// The face either side, read just outside the trough's shoulder.
+			const float da = (wd.half_w + 0.026f) / MAX(r, 0.02f);
+			float top = MIN(surf_at(sv, azc - da), surf_at(sv, azc + da));
+			{
+				Vector3 out, ax;
+				const Vector3 p = stem_point(wound_pts, wound_arc, sv, azc, top, out, ax);
+				const float bare = _bare_at(p, out, ax, ground);
+				if (bare >= 0.5f) {
+					// Where the bark is off the wood face lies the bark's thickness in (_peel_bark).
+					top -= MIN(0.25f * r, 0.003f + 0.015f * r);
+				}
+			}
+			top -= 0.001f;
+			for (int k = 0; k <= across; k++) {
+				const float t = float(k) / across * 2.0f - 1.0f; // -1 lip, 0 floor, 1 lip.
+				const float at = Math::abs(t);
+				// A V a little rounded at the floor; the lips eased so they do not stand as fins.
+				const float rr = top - depth * (1.0f - at * at * (0.7f + 0.3f * at));
+				const float x = t * hw;
+				Vector3 out, ax;
+				const Vector3 p = stem_point(wound_pts, wound_arc, sv, azc + x / MAX(rr, 0.02f), rr, out, ax);
+				w.verts.push_back(p);
+				// Each wall faces across the check: the wall on the -x side faces +x (round the stem).
+				const Vector3 tang = ax.cross(out).normalized();
+				const float side = t < 0.0f ? 1.0f : (t > 0.0f ? -1.0f : 0.0f);
+				w.normals.push_back((tang * side + out * 0.35f).normalized());
+				w.uvs.push_back(Vector2(t * hw / 0.15f + 0.37f * float(wi), sv / 0.15f));
+				const float dk = 1.0f - at; // 0 at the lips, 1 at the floor.
+				Color c = inner.lerp(deep, Math::smoothstep(0.15f, 0.95f, dk));
+				c = c * (0.85f + 0.3f * moss_noise(Vector3(sv * 9.0f, t, salt), wd.salt + 5u));
+				c.a = 1.0f;
+				w.colors.push_back(c);
+			}
+		}
+		const int cols = across + 1;
+		for (int i = 0; i + 1 < n; i++) {
+			for (int k = 0; k < across; k++) {
+				const int a = first + i * cols + k, b = a + 1, c2 = a + cols, d = c2 + 1;
+				// Clockwise front (Godot) facing the opening: out of the stem.
+				auto tri = [&](int p0, int p1, int p2) {
+					const Vector3 fn = (w.verts[p2] - w.verts[p0]).cross(w.verts[p1] - w.verts[p0]);
+					const Vector3 want = w.normals[p0] + w.normals[p1] + w.normals[p2];
+					if (fn.dot(want) < 0.0f) {
+						SWAP(p1, p2);
+					}
+					w.indices.push_back(p0);
+					w.indices.push_back(p1);
+					w.indices.push_back(p2);
+				};
+				tri(a, c2, b);
+				tri(b, c2, d);
+			}
+		}
+		w.end(part, wd.half_w);
+	}
 }
 
 // Resin (trees.md 5p): conifers flood a wound with resin, which wells from its edges and runs
@@ -11213,6 +11574,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
 					for (int i = 0; i < part.w; i++) {
 						raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
+						if (raw[i] > 0.15f && raw[i] < 0.85f) {
+							// A ragged margin (trees.md 5c): a moss carpet's edge is lobed and torn, a
+							// few centimetres in and out, never the weight's smooth contour (which drew
+							// cushions as round discs).
+							const Vector3 &mp = moss.verts[part.z + i];
+							raw[i] += 0.17f * (moss_noise(mp * 13.0f, 0x6d6f7377u) - 0.5f) + 0.08f * (moss_noise(mp * 31.0f, 0x6d6f7378u) - 0.5f);
+						}
 						if (cap_end > 0.0f && i / ring < int(rp.size()) && rp[i / ring].distance_to(rp[0]) < cap_end) {
 							raw[i] = -1.0f;
 						}
@@ -11239,7 +11607,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						// where furrows are partly filled.
 						// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
 						const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
-						float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
+						// Thin at the margin and thickening inward over a wide band of the weight: a
+						// cushion's edge is a few millimetres of shoots creeping over the bark, its crown
+						// well inside (a cliff of the full depth at the edge read as a cut-out shell).
+						const float thick = Math::lerp(0.15f, 1.0f, Math::smoothstep(0.5f, 0.85f, raw[i]));
+						float fill = Math::lerp(floor_d, depth * thick * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
 						// As the relief tube has it: faded out at a standing stem's soil line.
 						const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
 						// Shown where the fill stands above the bark; wv carries the margin.
@@ -11870,6 +12242,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	_grow_fungi(bark, fungi);
 	Builder crown_parts;
 	const int crown_big_end = _grow_crown_parts(crown_parts);
+	_grow_checks();
 	Builder resin;
 	_grow_resin(resin);
 	Builder *builders[10] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts, &resin };
@@ -12007,6 +12380,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const Vector4i &pt = b.parts[i];
 				for (int v = pt.z; v < pt.z + pt.w; v++) {
 					u2[v] = Vector2(b.uvs[v].x * m.x + m.z, b.uvs[v].y * m.y + m.w);
+				}
+			}
+			for (const Vector2i &ep : b.extra_part) {
+				const Vector4 &m = b.part_uv2[ep.y];
+				if (m.x > 0.0f && ep.x < uv2.size()) {
+					u2[ep.x] = Vector2(b.uvs[ep.x].x * m.x + m.z, b.uvs[ep.x].y * m.y + m.w);
 				}
 			}
 			arrays[Mesh::ARRAY_TEX_UV2] = uv2;
