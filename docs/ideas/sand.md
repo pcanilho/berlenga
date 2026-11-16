@@ -287,6 +287,47 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
 - **Dunes** are a terrain-generation job (Paris 2019 / Nilles 2024 on the terrain generator's
   heights), passed to the terrain thread through the coordinator, not built here.
 
+**Built: ripples (16 Nov 2026).** `modules/ground/ground_ripples.*`, driven by `GroundSurface3D`
+(`wind_ripples`, off by default until its cost is measured on the PC):
+
+- Nishimori and Ouchi's 1993 lattice: each step lifts a saltation load from every cell and drops it a hop
+  downwind, the hop growing with the cell's height over the mean (L = L0 + b hs tanh(h / hs); L0 8 cm, b 3,
+  hs 3 mm), so crests throw further and the pattern selects its own wavelength; reptation creeps a share of
+  each landing on (scaled by the step's flux), then the slopes relax. 1.25 cm cells over `ripple_extent`
+  (4 m, 320 squared, by default; 8 m is four times the vertices). At 8 m/s it settles near 11 cm and 6 to 7 mm crest to trough, crests across the wind,
+  within the 5 to 15 cm and 0.5 to 1 cm of field ripples.
+- Flux from the weather map's 10 m wind (`wind_override` for scenes): a log-law friction speed (z0 0.1 mm),
+  Bagnold's threshold 0.2 m/s, Lettau and Lettau's flux. Nothing moves under the threshold. Real time is
+  slow (a few steps in 10 s), so a field grown on a worker (500 steps, about 2 s) fills cells entering the
+  window, regrown when the wind turns past 35 degrees; `ripple_time_scale` speeds the rest.
+- Only dry, bare sand moves (`Cell.blown`: sand times dryness, damp grains hold from 5% to 20% moisture,
+  Belly 1964; litter stops it). Damp sand keeps the ripples it has: they show wherever there is sand. The same share now sets how fast wind fills prints on the GPU and CPU paths
+  (it read a roughness factor before, so damp sand drifted as dry sand did).
+- A print, a rut or landed sand wipes the ripples on it (the field's surface changing by over 1 mm), and the
+  wind grows them back over it; the layer's mean holds, so no sand is made.
+- Shading: the ripple map (`ground_ripple_map`, height and sand share) is a global the ground patch reads in
+  its vertex stage; the patch is meshed over the window at the ripple cell, so the crests are real geometry and
+  the path tracer, which reruns the vertex stage, sees them. They fade out over the window's outer 15%.
+- Limits: the profile is near symmetric (field ripples have a gentle stoss and a steeper lee); Anderson's
+  1987 impact erosion would skew it but killed the instability here. A slight upwind drift of the pattern.
+- Past the window the sand is smooth. Next: the grown field (it is periodic) as a tiled normal on the rest
+  of the patch, raster and path tracer (the path tracer shades BaseMaterial3D itself, so it needs an rt
+  param for the map).
+
+**Built: streamers (16 Nov 2026).** `GroundStreamers3D` (nothing blows without one in the scene):
+
+- The saltating grains as GPU particles in a square round the camera, traced like the snow's. The amount
+  follows the ripples' flux: the sand in the air over a square metre is Q over the grains' speed (5 g at
+  12 m/s), and each particle stands for as many 0.25 mm grains as that needs (a few hundred), drawn with
+  their summed cross-section (a sub-pixel streak keeps its light, as the snow's do).
+- Hops: exponential heights with a 4 cm mean, about the same at any wind (Namikas 2003; Kok et al. 2012),
+  at 80% of the threshold's log-law wind at the hop's top (2.4 m/s), so a hop runs about 11 times its height.
+- Streamers (Baas and Sherman 2005): ribbons about 20 cm wide and 2 to 3 m long, carried downwind at the
+  20 cm wind and turning over in a couple of seconds; 15% of the ground at the threshold, a continuous sheet
+  at twice the threshold friction speed (Stout and Zobeck 1997 for the intermittency). The particles fly
+  only inside them, at the density that keeps the mean flux.
+- Over damp sand, litter, soil or rock nothing flies (the same `blown` share).
+
 ### Stage 4: sand and water (Su et al. 2023)
 
 The sand layer and water inside it from Su 2023 on the near field: swash smoothing prints,

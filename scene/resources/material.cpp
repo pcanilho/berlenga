@@ -633,6 +633,9 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_skirt", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// And its wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the patch.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -3760,6 +3763,8 @@ global uniform vec4 ground_deform_rect; // x, z, size, texel (m); size 0 = none
 global uniform sampler2D ground_deform_height; // the ground, m
 global uniform vec4 ground_deform_height_rect;
 global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
+global uniform sampler2D ground_ripple_map; // wind ripples: height (m), share of sand they show on
+global uniform vec4 ground_ripple_rect; // x, z, size, cell (m); size 0 = none
 )";
 	if (p_patch_uniform) {
 		code += "uniform bool ground_deform_patch = false;\n";
@@ -3778,6 +3783,20 @@ float ground_deform_surface(vec2 p_xz) {
 	vec4 d = ground_deform_sample(p_xz);
 	return textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r + d.g - d.r;
 }
+// Wind ripples on the patch's middle (GroundSurface3D wind_ripples): m, faded out over the layer's last 0.4 m.
+float ground_ripple(vec2 p_xz) {
+	if (ground_ripple_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (p_xz - ground_ripple_rect.xy) / ground_ripple_rect.z;
+	vec2 e = min(uv, 1.0 - uv) * ground_ripple_rect.z;
+	if (min(e.x, e.y) <= 0.0) {
+		return 0.0;
+	}
+	vec2 r = textureLod(ground_ripple_map, uv, 0.0).rg;
+	// Faded in over the outer 15% of the window, so its edge does not show as a line.
+	return r.x * r.y * smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y));
+}
 // The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
 float ground_deform_lowered(vec2 p_xz) {
 	vec2 e = min(p_xz - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - p_xz);
@@ -3793,13 +3812,20 @@ void ground_deform_vertex(mat4 p_model, inout vec3 r_vertex, inout vec3 r_normal
 		// The deformed surface, its normal and tangents by central differences over one field texel. Where
 		// the terrain is not lowered (the field's outer margin) the patch tucks 5 cm under it.
 		float e = max(ground_deform_rect.w, 1e-3);
-		float hx = ground_deform_surface(w.xz + vec2(e, 0.0)) - ground_deform_surface(w.xz - vec2(e, 0.0));
-		float hz = ground_deform_surface(w.xz + vec2(0.0, e)) - ground_deform_surface(w.xz - vec2(0.0, e));
+		vec2 slope = vec2(ground_deform_surface(w.xz + vec2(e, 0.0)) - ground_deform_surface(w.xz - vec2(e, 0.0)),
+				ground_deform_surface(w.xz + vec2(0.0, e)) - ground_deform_surface(w.xz - vec2(0.0, e))) / (2.0 * e);
 		w.y = ground_deform_surface(w.xz) - 0.05 * (1.0 - ground_deform_lowered(w.xz));
+		// Ripples, their slope over their own cell.
+		if (ground_ripple_rect.z > 0.0) {
+			float er = max(ground_ripple_rect.w, 1e-3);
+			w.y += ground_ripple(w.xz);
+			slope += vec2(ground_ripple(w.xz + vec2(er, 0.0)) - ground_ripple(w.xz - vec2(er, 0.0)),
+					ground_ripple(w.xz + vec2(0.0, er)) - ground_ripple(w.xz - vec2(0.0, er))) / (2.0 * er);
+		}
 		mat3 n_to_model = transpose(mat3(p_model));
-		r_normal = normalize(n_to_model * normalize(vec3(-hx, 2.0 * e, -hz)));
-		r_tangent = normalize(n_to_model * normalize(vec3(2.0 * e, hx, 0.0)));
-		r_binormal = normalize(n_to_model * normalize(vec3(0.0, hz, 2.0 * e)));
+		r_normal = normalize(n_to_model * normalize(vec3(-slope.x, 1.0, -slope.y)));
+		r_tangent = normalize(n_to_model * normalize(vec3(1.0, slope.x, 0.0)));
+		r_binormal = normalize(n_to_model * normalize(vec3(0.0, slope.y, 1.0)));
 	} else {
 		w.y -= ground_deform_skirt.x * ground_deform_lowered(w.xz);
 	}
