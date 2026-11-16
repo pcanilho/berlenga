@@ -2897,3 +2897,20 @@ Options, cheapest first:
   the wind. The vertex stage raises it (so the path tracer sees it); per pixel its churn's slope is
   analytic (value-noise gradient; screen derivatives gave 2x2 blocks). Material uniform `roller_strength`
   (1; 0 = off). Cost: one more derivative and displacement lookup set per vertex on the open sea.
+
+### Revised (16 Nov): rollers from the docs review
+The first rollers read as snow on rocks from 8 m up: a smooth white mound with the aged lace's dark holes
+in it, the foam smeared down its steep sides, and the crest spume as pasted puffs. A low view across the
+wind (bench `storm_roller`, 1.75 m) showed a second fault: almost no rollers near the camera at all.
+- Height from the local mean: the crest was measured from mean sea level, so the chop breaking in a swell
+  trough (in a gale, hundreds of metres of sea at once) got none. The chop's crest (the two shortest
+  cascades) and the swell's are now counted each from its own mean (`roller_crest`), at half that height
+  on average (about a fifth of the wave's height, inside Duncan's 0.1 to 0.3).
+- Lasting: the fold lasts a fraction of a second, a spilling roller several seconds. Fresh dense persistent
+  foam on the crest keeps the roller going after the fold; it fades as that foam drains and as the foam
+  slides off the crest.
+- Gentle sides: the fold weight ramps over a wider band with a smooth step, so the mound no longer rises
+  within one mesh cell (the cliffs the foam smeared down).
+- Fresh right through: the roller fills the foam to solid (no lace holes); two more churn octaves (about
+  13 and 5 cm) in the per-pixel slope give it a bubbly, broken surface.
+- Spume sheets only from a near-gale (14 to 20 m/s, Beaufort 7 to 8), at two thirds of their old opacity.

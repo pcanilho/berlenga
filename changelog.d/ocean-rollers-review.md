@@ -1,0 +1,1 @@
+- Water: open-sea rollers now form on whitecaps riding the swell's troughs too and last while the crest's foam is fresh; they rise gently, stay solid white and churn finely; crest spume only from a near-gale.
