@@ -1187,7 +1187,33 @@ level ground and then sheared onto the slope near the soil (`_bank_shear`, fadin
 lower stem; normals and tangents by the shear's Jacobian), every surface alike. Downhill roots
 run 40-90% longer down the face, uphill ones a third shorter into it; erosion lifts the downhill
 roots off the slope in an arch fixed at the stem and the tip. Bench: `--set=ground_slope:R` tilts
-the ground plane to match. Open: roots over stones; root tips are blunt on flat ground too.
+the ground plane to match. Open: root tips are blunt on flat ground too.
+
+As built, part 3 (16 Nov): `root_stone` (metres, 0 none) sets a boulder of that half length
+beside the stem on its +Z side, a fifth sunk, its inner edge under the stem's foot; the root
+nearest +Z is turned onto it, lengthened to run past it and straightened. The boulder is a
+RockGenerator mesh (glacial family, a 128-cell grid: about 43k triangles and 0.25 s a stone;
+its close-up mode carried finer grain but cost 5 s and 230k triangles, drawn at every distance
+since the soil surface has no LODs), found by class name so the vegetation
+module keeps no build dependency on rocks; without the rocks module a noise ellipsoid stands in.
+It is fitted to the planned extents (long axis along x, short axis up), coloured by vertex (the
+rock's cavity term darkening the hollows, lichen crusts on upper faces, soil stain at the foot)
+and drawn with the soil surface. The roots drape over it as roots grow over rock: near the soil
+every surface is lifted by the rock's own top above the ground, read from a 32 x 32 grid over
+its footprint (dilated one cell so a root never cuts a face), fading out above the root collar.
+The drape runs before the bank shear, so a stone on a bank is sheared with the ground. The mesh
+carries meta `tree_root_stone` (PackedFloat32Array: centre xyz, half extents xyz, mesh space
+before any bank shear) so rocks and the floor keep clear of it.
+
+Bank forms, part 4 (16 Nov), as the vegetation side asked (placement e015a841 picks the variant
+nearest the ground's slope and turns +Z downhill; a level variant stays randomly turned):
+FORM_BANK steps its variants through slopes 0, 0.35, 0.6 and 0.85 rad (0, 20, 34, 49 degrees),
+erosion 0.3-0.9 rising with the slope, and one steep variant in eight over a boulder (0.35-0.6
+m). Bank species are generated with at least four variants so every slope step exists.
+- STAND_RIPARIAN: bank alder (density 0.5, within 12 m of water) and bank white willow (0.3,
+  within 8 m), open-grown, up to canopy shade 0.55.
+- STAND_BEECH: ravine sycamore on gorge sides past 25 degrees (density 0.4), after the
+  Tilio-Acerion ravine woods of sycamore, ash and lime on steep stony slopes (Ellenberg 1988).
 
 ## 6. What the games at Paulo's bar do
 

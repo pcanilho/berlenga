@@ -18,6 +18,13 @@
 				The bed load of fine sand (0.25 mm) under water flowing at [param water_speed] m/s (depth-averaged), m² per second per metre across the flow: Meyer-Peter and Mueller (1948). [code]0.0[/code] under the Shields threshold, about 0.25 m/s.
 			</description>
 		</method>
+		<method name="bed_load_shear" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="shear_stress" type="float" />
+			<description>
+				The bed load of fine sand (0.25 mm) under a bed shear stress of [param shear_stress] Pa, m² per second per metre across the flow: Meyer-Peter and Mueller (1948). [code]0.0[/code] under the Shields threshold, about 0.19 Pa. Runoff takes its shear from the sheet of water, rho g h S.
+			</description>
+		</method>
 		<method name="clear_deformation">
 			<return type="void" />
 			<description>
@@ -160,6 +167,26 @@
 			<return type="int" />
 			<description>
 				How many saltation steps the ripples have taken since [member wind_ripples] was turned on, not counting the field grown in the background.
+			</description>
+		</method>
+		<method name="get_runoff_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				With [member runoff_channels] on, the water running over the ground at [param position]: its depth in metres and speed in m/s. [code]Vector2(0, 0)[/code] where none runs.
+			</description>
+		</method>
+		<method name="get_runoff_cut_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				With [member runoff_channels] on, the metres of ground the runoff has cut away at [param position] (negative where it laid sand down), since the field last moved.
+			</description>
+		</method>
+		<method name="get_runoff_step_usec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Microseconds the last runoff step took on the CPU (twice a second).
 			</description>
 		</method>
 		<method name="get_sand_deposit_at" qualifiers="const">
@@ -392,6 +419,12 @@
 		</member>
 		<member name="rock_from_geology" type="bool" setter="set_rock_from_geology" getter="is_rock_from_geology" default="true">
 			If [code]true[/code] and the height source is a [code]TerrainGenerator3D[/code], bare rock (exposure over one half) does not print.
+		</member>
+		<member name="runoff_channels" type="bool" setter="set_runoff_channels" getter="is_runoff_channels" default="false">
+			If [code]true[/code], water runs over the ground and cuts it: soaked sand on a slope seeps where the water table a falling tide or a lake left still meets the surface, and rain runs off where the ground cannot take it. The water gathers downhill into sheets and rills, carries sand and lays it down where it slows and at the water's edge, so a beach face grows the branching rills of low tide. It also keeps the sand above a high water table soaked through its capillary fringe. Reads the [member water_sources] and the weather map's rain. Off until its GPU cost is measured.
+		</member>
+		<member name="runoff_time_scale" type="float" setter="set_runoff_time_scale" getter="get_runoff_time_scale" default="1.0">
+			Speeds up the runoff's cutting and the water table's fall, for previews and benches.
 		</member>
 		<member name="sand_drift_rate" type="float" setter="set_sand_drift_rate" getter="get_sand_drift_rate" default="2.0">
 			How fast wind fills dry sand prints: the share lost per hour at 10 m/s, from nothing at 5 m/s (Bagnold's threshold).

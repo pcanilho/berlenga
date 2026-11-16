@@ -58,9 +58,12 @@ GroundSurface3D *GroundSurface3D::active = nullptr;
 // q = 8 sqrt((s - 1) g d^3) (theta - 0.047)^1.5, the Shields number from the bed shear of a depth-averaged
 // speed with a drag coefficient of 0.003 (tau = rho Cd u^2).
 float GroundSurface3D::bed_load(float p_water_speed) {
+	return bed_load_shear(1000.0f * 0.003f * p_water_speed * p_water_speed);
+}
+
+float GroundSurface3D::bed_load_shear(float p_tau) {
 	const float d = 0.00025f;
-	const float tau = 1000.0f * 0.003f * p_water_speed * p_water_speed;
-	const float theta = tau / (1650.0f * 9.81f * d);
+	const float theta = p_tau / (1650.0f * 9.81f * d);
 	if (theta <= 0.047f) {
 		return 0.0f;
 	}
@@ -266,7 +269,16 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		_shift_lattice(pore, ground_origin, p_origin, p_n, 1);
 		_shift_lattice(water_speed, ground_origin, p_origin, p_n, 1);
 		_shift_lattice(cell_water, ground_origin, p_origin, p_n, 2);
+		if ((int)water_table.size() == p_n * p_n) {
+			_shift_lattice(water_table, ground_origin, p_origin, p_n, 1);
+			for (int i = 0; i < p_n * p_n; i++) {
+				if (water_table[i] == 0.0f) {
+					water_table[i] = 10.0f; // new cells: none (shifted in as 0)
+				}
+			}
+		}
 	} else {
+		water_table.clear();
 		pore.clear();
 		water_speed.clear();
 		cell_water.clear();
@@ -861,8 +873,14 @@ void GroundSurface3D::_water_update(double p_delta) {
 	const float evap = 1e-7f / (0.4f * 0.02f); // saturation per s
 	const float fc = 0.15f;
 	bool changed = false;
-	LocalVector<float> cell_depth;
+	LocalVector<float> &cell_depth = water_depth;
 	cell_depth.resize(n * n);
+	if ((int)water_table.size() != n * n) {
+		water_table.resize(n * n);
+		for (int i = 0; i < n * n; i++) {
+			water_table[i] = 10.0f; // none near the surface
+		}
+	}
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
@@ -888,6 +906,17 @@ void GroundSurface3D::_water_update(double p_delta) {
 			}
 			// Where the water has been (the weather map's contact wetness, drying with the weather), at least that wet.
 			s = MAX(s, CLAMP(contact, 0.0f, 1.0f));
+			if (runoff_channels) {
+				// The beach's water table (runoff_channels), as its depth under the surface (negative: a head above
+				// it): a sea or lake fills the sand to its own level; once the water goes the table falls slowly, the
+				// beach draining through its body to the sea (Boussinesq: k h tan(beta) / (n_e l), k 1e-4 m/s, aquifer
+				// 2 m, porosity 0.3, over a 6 m face: about 1e-5 m/s, a few cm an hour). So the table falls behind a
+				// falling tide and leaves the lower beach seeping for hours (the decoupled exit point, Turner 1993).
+				// The capillary fringe (15 cm in fine sand) keeps the top soaked above it.
+				float &tab = water_table[i];
+				tab = depth > 0.1f ? MIN(tab, -depth) : MIN(tab + 1e-5f * dt * runoff_time_scale, 10.0f);
+				s = MAX(s, 1.0f - 0.6f * MAX(tab, 0.0f) / 0.15f);
+			}
 			pore[i] = s;
 			water_speed[i] = depth > 0.001f ? bil(g_speed) : 0.0f;
 			// Rebuilt when its water changed enough to matter.
@@ -1001,6 +1030,248 @@ float GroundSurface3D::get_deposition_rate_at(const Vector3 &p_position) const {
 
 float GroundSurface3D::get_sand_deposit_at(const Vector3 &p_position) const {
 	return _lattice_value(sand_dep, p_position);
+}
+
+// Runoff channels (docs/ideas/sand.md). Twice a second, on a grid of twice the deform field's texel over the field:
+// - Sources. Soaked sand on a slope seeps where its water table meets the surface (a seepage face, Turner 1993):
+//   Darcy outflow k sin(beta), k 1e-4 m/s, while the table a falling tide left (_water_update) is within 2 cm. Rain
+//   runs off where the ground cannot take it: all of it on saturated sand, the excess over k elsewhere (k from
+//   1e-6 m/s on soil to 1e-4 on sand).
+// - Routing. Cells in falling height order pass their discharge downhill to all lower neighbours, weighted by
+//   slope^1.1 (multiple flow directions, Freeman 1991), so sheet flow spreads on a plane and gathers in hollows.
+//   Water reaching standing water (the sea, a river) leaves the grid.
+// - Flow. Manning sheet flow (n 0.025): depth h = (n q / sqrt(S))^0.6 for unit discharge q, bed shear rho g h S.
+// - Sand. Meyer-Peter and Mueller bed load at that shear is the capacity; a cell carrying less picks the
+//   difference up, one carrying more lays it down (transport-limited Exner, porosity 0.4). Where flow gathers
+//   it cuts deeper, gathers more and cuts on: rills (Schorghofer et al. 2004). The field's own slumping keeps
+//   their walls at the angle of repose. Cuts and fills go to the field in 1 mm steps.
+void GroundSurface3D::_runoff_update(double p_delta) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	if (!ground_valid || !field.valid || ground_n < 2 || (int)cells.size() != ground_n * ground_n) {
+		return;
+	}
+	const int rn = field.resolution / 2;
+	const float c = field.texel() * 2.0f;
+	const Vector2i origin(field.origin.x / 2, field.origin.y / 2);
+	const int nn = rn * rn;
+	if (rn != runoff_n || origin != runoff_origin || (int)runoff_depth.size() != nn) {
+		// The field moved (in whole tiles): start over; what was cut is already in the field.
+		runoff_n = rn;
+		runoff_origin = origin;
+		runoff_depth.resize(nn);
+		runoff_speed.resize(nn);
+		runoff_pending.resize(nn);
+		runoff_cut.resize(nn);
+		for (int i = 0; i < nn; i++) {
+			runoff_depth[i] = 0.0f;
+			runoff_speed[i] = 0.0f;
+			runoff_pending[i] = 0.0f;
+			runoff_cut[i] = 0.0f;
+		}
+	}
+	const int n = ground_n;
+	const bool wet = water_coupling && (int)pore.size() == n * n && (int)water_depth.size() == n * n;
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const Vector2 mid = field.rect().get_center();
+	const float rain = wm ? MAX(wm->get_rain_at(Vector3(mid.x, _ground_at(mid.x, mid.y), mid.y)), 0.0f) / 3.6e6f : 0.0f; // m/s
+	auto lattice = [&](float p_x, float p_z) {
+		const int x = CLAMP(int(Math::round(p_x / ground_spacing)) - ground_origin.x, 0, n - 1);
+		const int z = CLAMP(int(Math::round(p_z / ground_spacing)) - ground_origin.y, 0, n - 1);
+		return z * n + x;
+	};
+	// Sources first: with none, nothing runs and the grid costs nothing.
+	LocalVector<float> src;
+	src.resize(nn);
+	LocalVector<uint8_t> sink;
+	sink.resize(nn);
+	float total = 0.0f;
+	for (int z = 0; z < rn; z++) {
+		for (int x = 0; x < rn; x++) {
+			const int i = z * rn + x;
+			const float wx = (origin.x + x + 0.5f) * c;
+			const float wz = (origin.y + z + 0.5f) * c;
+			const int li = lattice(wx, wz);
+			const Cell &cell = cells[li];
+			const float s = wet ? pore[li] : 0.0f;
+			sink[i] = wet && water_depth[li] > 0.002f;
+			float r = 0.0f;
+			if (!sink[i]) {
+				const float tab = (int)water_table.size() == n * n ? water_table[li] : 10.0f;
+				if (tab < 0.02f && cell.sand > 0.0f) {
+					const float lx = CLAMP(li % n, 1, n - 2);
+					const float lz = CLAMP(li / n, 1, n - 2);
+					const int l = int(lz) * n + int(lx);
+					const float gx = (ground[l + 1] - ground[l - 1]) / (2.0f * ground_spacing);
+					const float gz = (ground[l + n] - ground[l - n]) / (2.0f * ground_spacing);
+					const float g2 = gx * gx + gz * gz;
+					r += 1e-4f * Math::sqrt(g2 / (1.0f + g2)) * MIN(1.0f - tab / 0.02f, 1.0f) * cell.sand;
+				}
+				if (rain > 0.0f) {
+					const float k = Math::exp(Math::lerp(Math::log(1e-6f), Math::log(1e-4f), CLAMP(cell.sand, 0.0f, 1.0f)));
+					r += s >= 0.95f ? rain : MAX(rain - k, 0.0f);
+				}
+			}
+			src[i] = r;
+			total += r;
+		}
+	}
+	if (total <= 0.0f) {
+		for (int i = 0; i < nn; i++) {
+			runoff_depth[i] = 0.0f;
+			runoff_speed[i] = 0.0f;
+		}
+		runoff_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+		return;
+	}
+	LocalVector<float> h;
+	h.resize(nn);
+	LocalVector<Pair<float, int>> order;
+	order.resize(nn);
+	for (int z = 0; z < rn; z++) {
+		for (int x = 0; x < rn; x++) {
+			const int i = z * rn + x;
+			const float wx = (origin.x + x + 0.5f) * c;
+			const float wz = (origin.y + z + 0.5f) * c;
+			h[i] = _ground_at(wx, wz) + field.rim_at(wx, wz) - field.dent_at(wx, wz);
+			order[i] = Pair<float, int>(-h[i], i);
+		}
+	}
+	struct ByKey {
+		bool operator()(const Pair<float, int> &a, const Pair<float, int> &b) const { return a.first < b.first; }
+	};
+	order.sort_custom<ByKey>();
+	static const int DX[8] = { 1, -1, 0, 0, 1, 1, -1, -1 };
+	static const int DZ[8] = { 0, 0, 1, -1, 1, -1, 1, -1 };
+	static const float DL[8] = { 1.0f, 1.0f, 1.0f, 1.0f, (float)Math::SQRT2, (float)Math::SQRT2, (float)Math::SQRT2, (float)Math::SQRT2 };
+	LocalVector<float> q_in; // m3/s of water arriving
+	LocalVector<float> s_in; // m3/s of sand (solid) arriving
+	q_in.resize(nn);
+	s_in.resize(nn);
+	for (int i = 0; i < nn; i++) {
+		q_in[i] = 0.0f;
+		s_in[i] = 0.0f;
+	}
+	const float dt = float(p_delta) * runoff_time_scale;
+	const float solid = 1.0f - 0.4f;
+	for (int k = 0; k < nn; k++) {
+		const int i = order[k].second;
+		const int x = i % rn;
+		const int z = i / rn;
+		const float q = q_in[i] + src[i] * c * c;
+		const float sand_in = s_in[i];
+		runoff_depth[i] = 0.0f;
+		runoff_speed[i] = 0.0f;
+		if (q <= 0.0f) {
+			continue;
+		}
+		float w[8];
+		float wsum = 0.0f;
+		float slope = 0.0f;
+		if (!sink[i]) {
+			for (int d = 0; d < 8; d++) {
+				const int jx = x + DX[d];
+				const int jz = z + DZ[d];
+				w[d] = 0.0f;
+				if (jx < 0 || jz < 0 || jx >= rn || jz >= rn) {
+					continue;
+				}
+				const float drop = (h[i] - h[jz * rn + jx]) / (DL[d] * c);
+				if (drop > 0.0f) {
+					w[d] = Math::pow(drop, 1.1f) * DL[d];
+					wsum += w[d];
+					slope = MAX(slope, drop);
+				}
+			}
+		}
+		if (wsum <= 0.0f) {
+			// Standing water or a hollow: the water stops (into the sea, or soaking in) and lays its sand down.
+			runoff_pending[i] -= sand_in * dt / (solid * c * c);
+			continue;
+		}
+		const float unit = q / c;
+		const float depth = Math::pow(0.025f * unit / Math::sqrt(slope), 0.6f);
+		runoff_depth[i] = depth;
+		runoff_speed[i] = unit / MAX(depth, 1e-6f);
+		const float wx = (origin.x + x + 0.5f) * c;
+		const float wz = (origin.y + z + 0.5f) * c;
+		const Cell &cell = _cell_at(wx, wz);
+		const float loose = cell.deformable ? CLAMP(cell.sand, 0.0f, 1.0f) : 0.0f;
+		const float cap = bed_load_shear(1000.0f * 9.81f * depth * MIN(slope, 1.0f)) * c;
+		float sand_out = sand_in;
+		if (sand_in < cap * loose) {
+			sand_out = cap * loose;
+		} else if (sand_in > cap) {
+			sand_out = cap;
+		}
+		runoff_pending[i] += (sand_out - sand_in) * dt / (solid * c * c);
+		for (int d = 0; d < 8; d++) {
+			if (w[d] > 0.0f) {
+				const int j = (z + DZ[d]) * rn + x + DX[d];
+				q_in[j] += q * w[d] / wsum;
+				s_in[j] += sand_out * w[d] / wsum;
+			}
+		}
+	}
+	// To the field, a cell's volume over a disc a little wider than the cell, so the steps blend.
+	const float rad = 0.6f * c;
+	const float spread = c * c / (Math::PI * rad * rad);
+	int writes = 0;
+	for (int i = 0; i < nn && writes < 4096; i++) {
+		const float p = runoff_pending[i];
+		if (Math::abs(p) < 0.001f) {
+			continue;
+		}
+		const float wx = (origin.x + i % rn + 0.5f) * c;
+		const float wz = (origin.y + i / rn + 0.5f) * c;
+		const Vector3 at(wx, _ground_at(wx, wz), wz);
+		const float d = CLAMP(p, -0.01f, 0.01f);
+		if (d > 0.0f) {
+			dig(at, rad, d * spread);
+		} else {
+			deposit(at, rad, -d * spread);
+		}
+		runoff_cut[i] += d;
+		runoff_pending[i] -= d;
+		writes++;
+	}
+	runoff_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+}
+
+void GroundSurface3D::set_runoff_channels(bool p_enabled) {
+	runoff_channels = p_enabled;
+	if (!p_enabled) {
+		runoff_n = 0;
+		runoff_depth.clear();
+		runoff_speed.clear();
+		runoff_pending.clear();
+		runoff_cut.clear();
+	}
+}
+
+Vector2 GroundSurface3D::get_runoff_at(const Vector3 &p_position) const {
+	if (runoff_n <= 0 || (int)runoff_depth.size() != runoff_n * runoff_n) {
+		return Vector2();
+	}
+	const float c = field.texel() * 2.0f;
+	const int x = int(Math::floor(p_position.x / c)) - runoff_origin.x;
+	const int z = int(Math::floor(p_position.z / c)) - runoff_origin.y;
+	if (x < 0 || z < 0 || x >= runoff_n || z >= runoff_n) {
+		return Vector2();
+	}
+	return Vector2(runoff_depth[z * runoff_n + x], runoff_speed[z * runoff_n + x]);
+}
+
+float GroundSurface3D::get_runoff_cut_at(const Vector3 &p_position) const {
+	if (runoff_n <= 0 || (int)runoff_cut.size() != runoff_n * runoff_n) {
+		return 0.0f;
+	}
+	const float c = field.texel() * 2.0f;
+	const int x = int(Math::floor(p_position.x / c)) - runoff_origin.x;
+	const int z = int(Math::floor(p_position.z / c)) - runoff_origin.y;
+	if (x < 0 || z < 0 || x >= runoff_n || z >= runoff_n) {
+		return 0.0f;
+	}
+	return runoff_cut[z * runoff_n + x] + runoff_pending[z * runoff_n + x];
 }
 
 void GroundSurface3D::_wind_update(double p_delta) {
@@ -1634,6 +1905,13 @@ void GroundSurface3D::_notification(int p_what) {
 			if (wind_accum >= 0.5) {
 				_wind_update(wind_accum);
 				wind_accum = 0.0;
+			}
+			if (runoff_channels) {
+				runoff_accum += delta;
+				if (runoff_accum >= 0.5) {
+					_runoff_update(runoff_accum);
+					runoff_accum = 0.0;
+				}
 			}
 			const bool on_gpu = _gpu_on();
 			if (!on_gpu && gpu_host.gpu.is_valid()) {
@@ -2466,6 +2744,14 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sand_deposit_at", "position"), &GroundSurface3D::get_sand_deposit_at);
 	ClassDB::bind_method(D_METHOD("get_wind_step_usec"), &GroundSurface3D::get_wind_step_usec);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("bed_load", "water_speed"), &GroundSurface3D::bed_load);
+	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("bed_load_shear", "shear_stress"), &GroundSurface3D::bed_load_shear);
+	ClassDB::bind_method(D_METHOD("set_runoff_channels", "enabled"), &GroundSurface3D::set_runoff_channels);
+	ClassDB::bind_method(D_METHOD("is_runoff_channels"), &GroundSurface3D::is_runoff_channels);
+	ClassDB::bind_method(D_METHOD("set_runoff_time_scale", "scale"), &GroundSurface3D::set_runoff_time_scale);
+	ClassDB::bind_method(D_METHOD("get_runoff_time_scale"), &GroundSurface3D::get_runoff_time_scale);
+	ClassDB::bind_method(D_METHOD("get_runoff_at", "position"), &GroundSurface3D::get_runoff_at);
+	ClassDB::bind_method(D_METHOD("get_runoff_cut_at", "position"), &GroundSurface3D::get_runoff_cut_at);
+	ClassDB::bind_method(D_METHOD("get_runoff_step_usec"), &GroundSurface3D::get_runoff_step_usec);
 	ClassDB::bind_method(D_METHOD("set_ripple_extent", "extent"), &GroundSurface3D::set_ripple_extent);
 	ClassDB::bind_method(D_METHOD("get_ripple_extent"), &GroundSurface3D::get_ripple_extent);
 	ClassDB::bind_method(D_METHOD("set_ripple_time_scale", "scale"), &GroundSurface3D::set_ripple_time_scale);
@@ -2547,6 +2833,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_coupling"), "set_water_coupling", "is_water_coupling");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_glints"), "set_sand_glints", "is_sand_glints");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_channels"), "set_runoff_channels", "is_runoff_channels");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");

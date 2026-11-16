@@ -246,6 +246,7 @@ func _physics_process(_d: float) -> void:
 		await _stream_checks()
 		await _lazy_near_checks()
 		_deadwood_checks()
+		await _place_form_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -286,6 +287,85 @@ func _min_spacing(pts: PackedVector3Array, r: float) -> float:
 					if j != i:
 						best = minf(best, Vector2(pts[i].x, pts[i].z).distance_to(Vector2(pts[j].x, pts[j].z)))
 	return best
+
+# Trees shaped by their place (trees module, 627a91de): wind-flagged species turned with mesh +X
+# downwind; bank forms (mesh meta tree_ground_slope) picked by the ground's slope, +Z downhill.
+func _place_form_checks() -> void:
+	var box := BoxMesh.new()
+	box.size = Vector3(0.4, 1.0, 0.2)
+	var flag := PlantSpecies.new()
+	flag.meshes = [box]
+	flag.spacing = 6.0
+	flag.footprint = 0.0
+	flag.set_meta("wind_flag", true)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.litter_wind = Vector2(0.3, 0.4)
+	var b := Biome.new()
+	b.species = [flag]
+	f.biome = b
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var wind := Vector2(0.6, 0.8)
+	var n := 0
+	var off := 0
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D:
+			for i in ch.multimesh.instance_count:
+				var x: Vector3 = ch.multimesh.get_instance_transform(i).basis.x
+				n += 1
+				if Vector2(x.x, x.z).normalized().dot(wind) < cos(0.2):
+					off += 1
+	_check("wind-flagged trees: mesh +X down the prevailing wind", n > 20 and off == 0, [n, off])
+	f.queue_free()
+	# Bank forms grown on 0, 0.15 and 0.3 rad of slope.
+	var meshes: Array[Mesh] = []
+	for k in 3:
+		var m := BoxMesh.new()
+		m.size = Vector3(0.3, 1.0, 0.3)
+		var am := ArrayMesh.new()
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, m.get_mesh_arrays())
+		am.set_meta("tree_ground_slope", Vector2(0.15 * k, 0.2))
+		meshes.append(am)
+	var bank := PlantSpecies.new()
+	bank.meshes = meshes
+	bank.spacing = 6.0
+	bank.footprint = 0.0
+	var fb := VegetationField3D.new()
+	fb.populate_on_ready = false
+	var bb := Biome.new()
+	bb.species = [bank]
+	fb.biome = bb
+	add_child(fb)
+	fb.data_map = fb.get_path_to(dm)
+	fb.populate()
+	var total := 0
+	var wrong_variant := 0
+	var wrong_turn := 0
+	for ch in fb.get_children(true):
+		if not ch is MultiMeshInstance3D:
+			continue
+		var vm: Mesh = ch.multimesh.mesh
+		var vs: float = Vector2(vm.get_meta("tree_ground_slope")).x
+		for i in ch.multimesh.instance_count:
+			var t: Transform3D = ch.multimesh.get_instance_transform(i)
+			var p := fb.global_transform * t.origin
+			var sl := dm.get_slope_at(p)
+			total += 1
+			var best := 1e9
+			for k in 3:
+				best = minf(best, absf(0.15 * k - sl))
+			if absf(vs - sl) > best + 1e-3:
+				wrong_variant += 1
+			var asp := dm.get_aspect_at(p)
+			if vs > 0.0 and sl > 0.02:
+				var z := t.basis.z
+				if Vector2(z.x, z.z).normalized().dot(Vector2(sin(asp), cos(asp))) < 0.98:
+					wrong_turn += 1
+	_check("bank trees: the variant grown on the nearest slope, its ground falling (+Z) downhill", total > 20 and wrong_variant == 0 and wrong_turn == 0, [total, wrong_variant, wrong_turn])
+	fb.queue_free()
+	await get_tree().process_frame
 
 func _checks() -> void:
 	var trees := field.get_placements(0)

@@ -786,3 +786,29 @@ the rock field rebuilds cells when the terrain's holes change.
     a terrain hole, see `get_blowholes`.
   - No speleothems in sea caves (spray and waves).
   - The water inside comes from the sea itself: the sea reads the cave floor through its terrain holes (#330).
+
+### Caves stage 3b: docs review rework (16 Nov)
+
+The review asked for irregular, fused formations seated in the rock, wall texture with real relief, and sea caves
+that are not round tubes.
+- **Drip points from the field**, not the mesh. They sit on a jittered 0.6 m grid, mostly along joint lines 3.5 m
+  apart, so formations stand in rows and curtains. Chambers get twice the density. Each grid column is walked down
+  on a fixed global step, so every chunk finds the same drips.
+- **Flowstone**: a mound under each standing form and a boss round each hanging one, added to the rock with a
+  smooth maximum, so the forms rise out of the floor and roof. The mesher passes the coating to the wall shader
+  (vertex red), which turns it to wet calcite.
+- **Shapes**:
+  - Stalactites follow the universal carrot of Short, Baygents and Goldstein (Physics of Fluids 2005): a flared base
+    tapering to a soda-straw drip tip.
+  - Stalagmites are candles with spread feet; columns are waisted.
+  - Curtains are folded sheets 2 to 3 cm thick along inclined roofs, with drip tips on their lower edge.
+  - Four variants per kind: lumpy (3D noise, not lathe rings), bent, and some fused twins and triplets.
+  - The calcite shader gives wet tips and wet, muddy feet.
+- **Walls**: the shader bumps the normal with relief the 0.3 m mesh cannot hold (spalls, pits, bedding steps). It
+  also draws two vertical joint sets and the beds as broken crack lines, and flowstone streaks down the fall line.
+  Floors are uneven (ripples, mud banks).
+- **Sea cave section**: cut along a joint and its beds, with straight sides stepped at each bed, a gabled roof and
+  a dipping joint. The width varies along the passage.
+- **Fallen blocks** (rounded, spalled boxes): breakdown slabs in chambers and boulders in sea caves.
+- **Water**: the bench coast is a beach, so its sea cave floors stand dry above the water at this tide. The sea fills
+  caves at plunging cliffs, where it reads the cave floor through the terrain hole (#330, `terrain_source`).

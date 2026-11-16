@@ -282,6 +282,10 @@ func _world() -> void:
 	land.load_all_heights()
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
+		for w in waters:
+			# Seabed rays through terrain holes (cave mouths) land on the cave floors.
+			if w is Node and (w as Node).name == "Sea" and "terrain_source" in w:
+				w.set("terrain_source", (w as Node).get_path_to(gen))
 		if args.has("sea-res"):
 			# The sea's shallow-water grid is 16 m cells on a 2 km world: too coarse for water round a stack.
 			for w in waters:
@@ -519,7 +523,13 @@ func _caves(cam: Camera3D) -> void:
 					for si in m.get_surface_count():
 						tri[m.surface_get_name(si)] += m.surface_get_array_index_len(si) / 3
 			print("  surfaces: %d wall triangles, %d ground triangles; holes %d, landscape quads %d" % [tri["walls"], tri["ground"], gen.get_hole_count(), land_m.get_hole_quad_count()])
-			print("  speleothems: %d" % net.get_speleothem_count())
+			var kinds := {}
+			for ch in net.get_children():
+				for mmi in ch.get_children():
+					if mmi is MultiMeshInstance3D:
+						var kn: String = String(mmi.name).split(" ")[0]
+						kinds[kn] = kinds.get(kn, 0) + (mmi.multimesh as MultiMesh).instance_count
+			print("  speleothems: %d %s" % [net.get_speleothem_count(), kinds])
 			for c in get_children():
 				if c is MeshInstance3D and c.material_override is StandardMaterial3D and (c.material_override as StandardMaterial3D).no_depth_test:
 					c.visible = false
@@ -595,6 +605,9 @@ func _caves(cam: Camera3D) -> void:
 							break
 				cam.position = eye
 				cam.look_at(tgt + Vector3(0, 0.5, 0))
+				if args.has("look-out"):
+					# From inside back out through the mouth (a sea cave onto the lit sea).
+					cam.look_at(pos + Vector3(0, float(args.get("look-height", "1.0")), 0) + o * 6.0)
 				if args.has("lamp"):
 					var lamp := SpotLight3D.new()
 					lamp.spot_range = 40.0
@@ -602,7 +615,7 @@ func _caves(cam: Camera3D) -> void:
 					lamp.light_energy = 6.0
 					lamp.shadow_enabled = true
 					cam.add_child(lamp)
-			elif args.get("cave-view", "outside") == "spel":
+			elif args.get("cave-view", "outside") in ["spel", "chamber"]:
 				# Where the speleothems are thickest: from open air a few metres off their middle, a lamp at the camera.
 				var best_n := 0
 				var centre := pos
@@ -618,24 +631,39 @@ func _caves(cam: Camera3D) -> void:
 					if n_here > best_n:
 						best_n = n_here
 						centre = sum / n_here
+				if args.get("cave-view", "") == "chamber" and not net.get_chambers(0).is_empty():
+					# The first chamber: its centre, a metre over its floor.
+					var chm: Dictionary = net.get_chambers(0)[0]
+					centre = (chm["center"] as Vector3) - Vector3(0, 0.55 * (chm["radii"] as Vector3).y - 1.0, 0)
 				var eye_s := centre
-				var best_air := 0.0
-				for ii in 400:
-					var cand := centre + Vector3(randf_range(-7, 7), randf_range(-2, 3), randf_range(-7, 7))
+				var best_air := -1.0
+				seed(7)
+				for ii in 600:
+					var cand := centre + Vector3(randf_range(-6, 6), randf_range(-1.5, 2.5), randf_range(-6, 6))
+					var dd := cand.distance_to(centre)
+					if dd < 4.0 or dd > 6.5:
+						continue
 					var air := -net.get_rock_distance(cand)
-					var score := minf(air, 2.0) + 0.1 * cand.distance_to(centre)
+					var score := minf(air, 1.5)
 					if air > 0.8 and score > best_air:
 						best_air = score
 						eye_s = cand
 				cam.position = eye_s
-				cam.look_at(centre + Vector3(0, 0.3, 0))
-				cam.fov = 70.0
-				var lamp_s := SpotLight3D.new()
-				lamp_s.spot_range = 40.0
-				lamp_s.spot_angle = 45.0
-				lamp_s.light_energy = 6.0
+				cam.look_at(centre + Vector3(0, 0.5, 0))
+				cam.fov = 65.0
+				# One lamp off to the side (a caver standing beside the camera), so the forms model in side light.
+				var side_dir := (centre - eye_s).cross(Vector3.UP).normalized()
+				var lamp_s := OmniLight3D.new()
+				lamp_s.omni_range = 18.0
+				lamp_s.light_energy = float(args.get("lamp-energy", "3.0"))
 				lamp_s.shadow_enabled = true
-				cam.add_child(lamp_s)
+				add_child(lamp_s)
+				var lp := eye_s + side_dir * 2.5 + Vector3(0, 0.6, 0)
+				for k in 8:
+					if net.get_rock_distance(lp) < -0.4:
+						break
+					lp = lp.lerp(eye_s, 0.3)
+				lamp_s.global_position = lp
 				print("  speleothem view: %d in the chunk round %s, camera %s" % [best_n, centre, eye_s])
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)

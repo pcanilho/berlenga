@@ -438,3 +438,32 @@ is published per lattice cell in the wet map's B channel (sand, not litter, defo
 glints out. The path tracer applies the same functions on camera rays (pixel footprint) and others (ray cone).
 The standing film on saturated sand now also hides the sand's relief: the normal map's depth falls by 85% and
 roughness goes to 0.2 at 60% (Lagarde's accumulated water), raster and path traced.
+A second, coarser layer (1.2 mm, beach shell grit) joined the 0.25 mm one so grains read from 30 to 50 cm
+(65c4727c); bench `--view=grains`.
+
+### Runoff channels (built 16 Nov 2026)
+
+`runoff_channels` (off until its GPU cost is measured). The rills a beach grows at low tide and the gullies
+rain cuts in soft ground. Research: beach rills are seepage erosion below the water table's exit point, which a
+falling tide leaves behind (Turner 1993; Horn 2002 on beach groundwater); channelisation of an erodible bed by
+sheet flow is a flow-concentration instability (Smith and Bretherton 1972; Schorghofer et al. 2004, rhomboid
+and rill patterns); landscape models route that flow with multiple flow directions (Freeman 1991; Quinn 1991)
+and move sediment transport-limited with an Exner balance (Tucker and Hancock 2010).
+
+- Water table: per lattice cell, its depth under the surface. A sea or lake (water deeper than 10 cm) sets it at
+  its own level (a head above the sand); once exposed it falls about 1e-5 m/s (Boussinesq drainage, k 1e-4 m/s,
+  2 m aquifer, porosity 0.3, 6 m face), so the lower beach keeps seeping for hours after the tide. The 15 cm
+  capillary fringe keeps the sand above a high table soaked (the wet band of a real beach at low tide).
+- Sources: seepage k sin(beta) where the table is within 2 cm of the surface; rain where saturated, else its
+  excess over the ground's k (1e-6 m/s soil to 1e-4 m/s sand).
+- Routing: a grid of twice the field's texel (12.5 cm) over the field, cells in falling height order, each
+  passing water and sand to every lower neighbour weighted by slope^1.1. Standing water and hollows end the flow.
+- Flow: Manning sheet flow, n 0.025, h = (n q / sqrt(S))^0.6; shear rho g h S.
+- Sand: Meyer-Peter and Mueller bed load at that shear (`bed_load_shear`) is the capacity; transport-limited
+  Exner, porosity 0.4, to the field in 1 mm steps. The field's slumping keeps rill walls at repose.
+
+Bench `--test=runoff` (beach 1 in 12, tide from 0.6 to 0.1 m, time x120): seepage sheets of 0.3 mm at 5 cm/s,
+rills cut 9 mm (99th percentile) against a 2 mm median in 84 minutes, about 100 l laid at the foot of the face
+above the waterline, net volume within 1%, 10 ms a step on the CPU (twice a second), 0.5 ms with no water.
+`--view=rills` (--runoff=0 for the A/B). Not modelled yet: headward sapping at rill heads, the rills' braided
+rhomboid fans, a finer near field (rills are 2 grid cells wide at 12.5 cm), water drawn in the rills.

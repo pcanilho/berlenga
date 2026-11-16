@@ -1167,6 +1167,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Runoff channels",
+   "settings": [
+    "GroundSurface3D.runoff_channels"
+   ],
+   "note": "",
+   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Terrain deformation",
    "settings": [
     "TerrainDeformer3D",
@@ -2309,6 +2320,20 @@
    ],
    "note": "",
    "what": "many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Wind-shaped and bank trees",
+   "settings": [
+    "wind_exposure",
+    "krummholz",
+    "ground_slope",
+    "bank_erosion"
+   ],
+   "note": "",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on banks lean their roots downhill, with eroded roots arching off the face.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

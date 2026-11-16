@@ -268,6 +268,15 @@ Put to Paulo as a card; nothing built yet.
 - **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
   instead of the colour bake; off by default until the PC measures cost.
 
+## Trees shaped by their place: placement (16 Nov)
+
+For the trees module's hard places (627a91de). A species with meta `wind_flag` is turned with mesh
++X down the prevailing wind (`litter_wind`, else the weather map's wind; 0.3 rad of scatter)
+instead of a random yaw. A species whose meshes carry meta `tree_ground_slope` (slope in radians,
+erosion) takes, at each spot, the variant grown on the slope nearest the ground's (ties broken by
+the plant's random number) and is turned so mesh +Z runs downhill. Bench checks "wind-flagged
+trees" and "bank trees".
+
 ## Far plants as volume (built 16 Nov, off by default)
 
 Picked by Paulo on 16 Nov (fourth of the round). Sources: Unreal 5.7's Nanite Foliage, which

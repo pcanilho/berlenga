@@ -21,12 +21,17 @@ extends Node3D
 #   --test=water        sand and water (stage 4): bed load against the Shields threshold, pore water filling
 #                         under water and draining after, a damp wall holding where dry and saturated slump,
 #                         a print rounded off under flowing water and kept under slow water, volume kept
+#   --test=shelter      dune grass (wind_shelters): Raupach drag partition, flux dies among the plants, sand lands
+#   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
+#                         and lays the sand at the waterline; volume kept; cost of the step
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
 #   --view=swash        boot prints in sand, the nearer ones after a minute under flowing water (sand stage 4)
+#   --view=rills        runoff channels: a beach face 3 hours after a falling tide (scaled), the seepage's rills
+#                         and the sand they laid at the foot; --runoff=0 for the A/B
 #   --view=grains       dry sand from 40 cm under a low sun behind the camera: grain colours and glints (sand_glints;
 #                       --glints=0 for the A/B)
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
@@ -50,6 +55,7 @@ var grains_test := false
 var wind_test := false
 var water_test := false
 var shelter_test := false
+var runoff_test := false
 var out := ""
 var spp := 16
 var gpu := true
@@ -75,6 +81,7 @@ func _ready() -> void:
 		elif a == "--test=wind": wind_test = true
 		elif a == "--test=water": water_test = true
 		elif a == "--test=shelter": shelter_test = true
+		elif a == "--test=runoff": runoff_test = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -85,6 +92,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if shelter_test:
 		await _run_shelter_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if runoff_test:
+		await _run_runoff_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -127,6 +139,9 @@ func _ready() -> void:
 		return
 	if view == "grains":
 		await _build_grains()
+		return
+	if view == "rills":
+		await _build_rills()
 		return
 	if view == "shore":
 		await _build_shore()
@@ -670,6 +685,92 @@ func _run_shelter_tests() -> void:
 	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
 	surface.wind_override = Vector2.ZERO
 
+
+# Runoff channels: a falling tide leaves the beach soaked; the water seeping out of it runs down the face and cuts
+# rills before the sand drains (time scaled for the sand moved, the draining in real time).
+func _runoff_beach(scale: float) -> Node3D:
+	await _setup("beach", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply("dry_sand")
+	get_node("Probe").position = Vector3(0, 0, 4)
+	var sea := Node3D.new()
+	sea.set_script(load("res://tide_fake.gd"))
+	add_child(sea)
+	sea.level = 0.6 # high water at z = 7.2
+	surface.water_sources = [surface.get_path_to(sea)]
+	surface.runoff_channels = true
+	surface.runoff_time_scale = scale
+	for i in 900: # soaked under the tide
+		await get_tree().physics_frame
+	sea.level = 0.1 # low water at z = 1.2
+	return sea
+
+
+func _run_runoff_tests() -> void:
+	var tc := 0.047 * 1650.0 * 9.81 * 0.00025
+	_check("no bed load under the Shields threshold, by shear (Shields 1936)", GroundSurface3D.bed_load_shear(0.9 * tc) == 0.0 and GroundSurface3D.bed_load_shear(1.2 * tc) > 0.0, "critical shear %.2f Pa" % tc)
+	var t_film := 1000.0 * 9.81 * 0.0007 / 12.0
+	_check("a 0.7 mm seepage film on a 1 in 12 beach moves fine sand (rho g h S)", GroundSurface3D.bed_load_shear(t_film) > 0.0, "%.2f Pa, %.6f m2/s" % [t_film, GroundSurface3D.bed_load_shear(t_film)])
+	await _runoff_beach(120.0)
+	for i in 120:
+		await get_tree().physics_frame
+	var face := Vector3(0.3, 0, 4.0)
+	var r: Vector2 = surface.get_runoff_at(face)
+	print("  2 s after the tide: saturation %.2f, sheet %.2f mm at %.2f m/s on the face" % [surface.get_saturation_at(face), r.x * 1000.0, r.y])
+	_check("the soaked face seeps and water runs down it", r.x > 0.0 and r.y > 0.0, "%.2f mm, %.2f m/s" % [r.x * 1000.0, r.y])
+	_check("none above the tide's reach", surface.get_runoff_at(Vector3(0, 0, 11.0)).x == 0.0, "%.2f mm" % (surface.get_runoff_at(Vector3(0, 0, 11.0)).x * 1000.0))
+	var peak_us := 0.0
+	for i in 2400: # 40 s
+		await get_tree().physics_frame
+		peak_us = maxf(peak_us, surface.get_runoff_step_usec())
+	surface.sync_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	# Across the face at three heights: rills cut where the flow gathered, not an even lowering.
+	var cuts := PackedFloat32Array()
+	var total := 0.0
+	var moved := 0.0
+	var fan := 0.0
+	var z := 0.0
+	while z < 8.0:
+		var x := -6.0
+		while x < 6.0:
+			var c := surface.get_runoff_cut_at(Vector3(x, 0, z))
+			total += c
+			moved += absf(c)
+			if z < 2.25:
+				fan += c
+			if z > 2.5 and z < 6.0:
+				cuts.append(c)
+			x += 0.125
+		z += 0.125
+	if OS.get_environment("RUNOFF_TRACE") == "1":
+		var zz := -1.0
+		while zz < 9.0:
+			var row := 0.0
+			var xx := -6.0
+			while xx < 6.0:
+				row += surface.get_runoff_cut_at(Vector3(xx, 0, zz))
+				xx += 0.125
+			print("    z %.2f: mean %.2f mm" % [zz, row / 96.0 * 1000.0])
+			zz += 0.25
+	var sorted := cuts.duplicate()
+	sorted.sort()
+	var top := sorted[int(sorted.size() * 0.99)]
+	var median := sorted[sorted.size() / 2]
+	var deepest := surface.get_surface_height_at(Vector3(0, 0, 4)) # for the print
+	print("  after %.0f min (scaled): cut %.1f mm at the 99th percentile, median %.2f mm; %.0f l moved; laid at the waterline %.0f l" % [42.0 * 120.0 / 60.0, top * 1000.0, median * 1000.0, moved * 0.125 * 0.125 * 500.0, -fan * 0.125 * 0.125 * 1000.0])
+	_check("rills cut into the face (several mm)", top > 0.003, "%.1f mm" % (top * 1000.0))
+	_check("the cuts gather into channels, the face between them barely lowered", median < 0.25 * top, "median %.2f mm against %.1f mm" % [median * 1000.0, top * 1000.0])
+	_check("the sand they carry is laid down at the foot of the face, above the waterline", fan < 0.0, "%.1f l" % (-fan * 0.125 * 0.125 * 1000.0))
+	_check("sand is kept: what is cut is laid down", absf(total) < 0.3 * moved, "net %.1f l of %.1f l moved" % [total * 0.125 * 0.125 * 1000.0, moved * 0.125 * 0.125 * 500.0])
+	_check("the runoff step fits a frame budget on the CPU", peak_us < 40000.0, "%.1f ms at most, twice a second" % (peak_us / 1000.0))
+	# Dry sand with no water and no rain: no sources, so the step returns at once.
+	await _setup("beach", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply("dry_sand")
+	surface.runoff_channels = true
+	for i in 120:
+		await get_tree().physics_frame
+	_check("dry sand runs nothing and costs little", surface.get_runoff_at(face).x == 0.0 and surface.get_runoff_step_usec() < 2000.0, "%.2f mm, %.2f ms" % [surface.get_runoff_at(face).x * 1000.0, surface.get_runoff_step_usec() / 1000.0])
 
 # Sand and water (stage 4), with a stand-in for the water module.
 func _run_water_tests() -> void:
@@ -1241,6 +1342,35 @@ func _build_grains() -> void:
 	var cam := Camera3D.new()
 	add_child(cam)
 	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 0.4, 0.35, 0.0, 0.0, -0.15])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
+# Runoff channels: the --test=runoff beach after about 3 hours of seepage (scaled), seen from the waterline's side
+# looking up the face, a low sun across it so the rills' walls shade.
+func _build_rills() -> void:
+	var on := not OS.get_cmdline_user_args().has("--runoff=0")
+	await _runoff_beach(270.0)
+	surface.runoff_channels = on
+	var mat := _ground_material("dry_sand")
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(-14.0, 75.0, 0.0)
+	for i in 2400:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.6, 0.9, 0.9, -0.4, 0.0, 4.0])
 	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
 	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
 	cam.fov = 50.0

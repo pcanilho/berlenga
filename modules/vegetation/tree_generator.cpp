@@ -8445,6 +8445,237 @@ static const struct {
 	{ 0.8f, 0.04f, 0.08f },
 };
 
+// The stone the roots drape over (trees.md 5q): an ellipsoid pushed out by noise folded into
+// facets, as the root plate's stones, in the soil surface; sunk so a third of it shows.
+// The stone (trees.md 5q): a RockGenerator boulder when the rocks module is built in (looked up
+// by name, so vegetation does not depend on it), glacial family: subrounded, its faces and
+// fractures real geometry. Fitted to the planned half extents and kept as vertices for the
+// roots' drape: the top of the actual rock on a grid, so roots lie on its faces and never cut
+// through a corner an ellipsoid would miss.
+void TreeGenerator::_plan_root_stone_rock() {
+	stone.verts.clear();
+	stone.normals.clear();
+	stone.cavity.clear();
+	stone.indices.clear();
+	stone.top.clear();
+	stone.gn = 0;
+	if (!ClassDB::class_exists(SNAME("RockGenerator"))) {
+		return;
+	}
+	Object *obj = ClassDB::instantiate(SNAME("RockGenerator"));
+	if (!obj) {
+		return;
+	}
+	obj->set(SNAME("family"), 2); // FAMILY_GLACIAL
+	obj->set(SNAME("seed"), int(uint32_t(seed) * 2654435761u >> 1));
+	obj->set(SNAME("lods"), false);
+	// The family's base grid (96 cells) at 128: fractures and grain as geometry at a root's
+	// scale. Close-up (3 mm cells) cost 5 s and 230k triangles a stone, drawn at every distance.
+	obj->set(SNAME("close_up"), false);
+	obj->set(SNAME("resolution"), 128);
+	Ref<ArrayMesh> rock = obj->call(SNAME("generate"));
+	memdelete(obj);
+	if (rock.is_null() || rock->get_surface_count() == 0) {
+		return;
+	}
+	const Array a = rock->surface_get_arrays(0);
+	const PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
+	const PackedVector3Array n = a[Mesh::ARRAY_NORMAL];
+	const PackedColorArray col = a[Mesh::ARRAY_COLOR];
+	const PackedInt32Array idx = a[Mesh::ARRAY_INDEX];
+	if (v.is_empty() || idx.is_empty() || n.size() != v.size()) {
+		return;
+	}
+	AABB box(v[0], Vector3());
+	for (const Vector3 &p : v) {
+		box.expand_to(p);
+	}
+	// The rock's longest axis along x, its shortest up, as the planned extents.
+	Vector3 sz = box.size;
+	int ax[3] = { 0, 1, 2 };
+	for (int i = 0; i < 2; i++) {
+		for (int j = 0; j < 2 - i; j++) {
+			if (sz[ax[j]] < sz[ax[j + 1]]) {
+				SWAP(ax[j], ax[j + 1]);
+			}
+		}
+	}
+	// Largest -> x, middle -> z, smallest -> y.
+	const int from_x = ax[0], from_z = ax[1], from_y = ax[2];
+	const Vector3 mid = box.get_center();
+	const Vector3 s(stone.r.x / MAX(0.5f * sz[from_x], 1e-4f), stone.r.y / MAX(0.5f * sz[from_y], 1e-4f), stone.r.z / MAX(0.5f * sz[from_z], 1e-4f));
+	// An odd permutation of the axes mirrors the rock: flip z then, so the winding holds.
+	const bool odd = (from_x == 0 && from_y == 2) || (from_x == 2 && from_y == 1) || (from_x == 1 && from_y == 0);
+	const float zf = odd ? -1.0f : 1.0f;
+	const int nv = v.size();
+	stone.verts.resize(nv);
+	stone.normals.resize(nv);
+	stone.cavity.resize(nv);
+	for (int i = 0; i < nv; i++) {
+		const Vector3 q = v[i] - mid;
+		const Vector3 m(q[from_x], q[from_y], zf * q[from_z]);
+		stone.verts.write[i] = stone.c + m * s;
+		const Vector3 nn(n[i][from_x], n[i][from_y], zf * n[i][from_z]);
+		stone.normals.write[i] = Vector3(nn.x / s.x, nn.y / s.y, nn.z / s.z).normalized();
+		stone.cavity.write[i] = i < col.size() ? col[i].r : 1.0f;
+	}
+	// The soil builder winds counter-clockwise seen from outside (flipped for Godot later): by the
+	// signed volume, whichever way the rock came wound.
+	double vol = 0.0;
+	for (int i = 0; i + 2 < idx.size(); i += 3) {
+		const Vector3 a0 = stone.verts[idx[i]] - stone.c, a1 = stone.verts[idx[i + 1]] - stone.c, a2 = stone.verts[idx[i + 2]] - stone.c;
+		vol += a0.dot(a1.cross(a2));
+	}
+	const bool swap = vol < 0.0;
+	stone.indices.resize(idx.size());
+	for (int i = 0; i + 2 < idx.size(); i += 3) {
+		stone.indices.write[i] = idx[i];
+		stone.indices.write[i + 1] = idx[swap ? i + 2 : i + 1];
+		stone.indices.write[i + 2] = idx[swap ? i + 1 : i + 2];
+	}
+	// The top above the ground on a grid, then one cell of dilation so a root crossing a cell
+	// edge never dips into a face.
+	const int gn = 32;
+	LocalVector<float> t;
+	t.resize(gn * gn);
+	for (float &x : t) {
+		x = 0.0f;
+	}
+	for (int i = 0; i < nv; i++) {
+		const Vector3 &p = stone.verts[i];
+		const int gx = CLAMP(int((p.x - stone.c.x + stone.r.x) / (2.0f * stone.r.x) * gn), 0, gn - 1);
+		const int gz = CLAMP(int((p.z - stone.c.z + stone.r.z) / (2.0f * stone.r.z) * gn), 0, gn - 1);
+		t[gz * gn + gx] = MAX(t[gz * gn + gx], p.y - stone.ground);
+	}
+	stone.top.resize(gn * gn);
+	for (int z = 0; z < gn; z++) {
+		for (int x = 0; x < gn; x++) {
+			float m = 0.0f;
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int xx = x + dx, zz = z + dz;
+					if (xx >= 0 && zz >= 0 && xx < gn && zz < gn) {
+						m = MAX(m, t[zz * gn + xx]);
+					}
+				}
+			}
+			stone.top[z * gn + x] = m;
+		}
+	}
+	stone.gn = gn;
+}
+
+// The stone's top above the ground at (x, z): the rock's grid when there is one (bilinear on
+// cell centres), else the planned ellipsoid.
+float TreeGenerator::_root_stone_top(float p_x, float p_z) const {
+	const float dx = (p_x - stone.c.x) / stone.r.x, dz = (p_z - stone.c.z) / stone.r.z;
+	if (stone.gn > 0) {
+		const int gn = stone.gn;
+		const float fx = (dx * 0.5f + 0.5f) * gn - 0.5f, fz = (dz * 0.5f + 0.5f) * gn - 0.5f;
+		if (fx < -1.0f || fz < -1.0f || fx > gn || fz > gn) {
+			return 0.0f;
+		}
+		const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
+		const float ux = fx - x0, uz = fz - z0;
+		auto at = [&](int x, int z) -> float {
+			return (x < 0 || z < 0 || x >= gn || z >= gn) ? 0.0f : stone.top[z * gn + x];
+		};
+		const float a = Math::lerp(at(x0, z0), at(x0 + 1, z0), ux);
+		const float b = Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), ux);
+		return Math::lerp(a, b, uz);
+	}
+	const float q = dx * dx + dz * dz;
+	if (q >= 1.0f) {
+		return 0.0f;
+	}
+	return MAX(stone.c.y + stone.r.y * Math::sqrt(1.0f - q) - stone.ground, 0.0f);
+}
+
+void TreeGenerator::_build_root_stone(Builder &r_b) const {
+	Vector4i part;
+	r_b.begin(part);
+	if (!stone.verts.is_empty()) {
+		const int first = r_b.verts.size();
+		const uint32_t ls = uint32_t(seed) * 2654435761u + 0x73746f6eu;
+		// Weathered granite grey (darker than the bench's first pale ellipsoid), the hollows
+		// darker, pale lichen crusts on the upper faces, soil stain at the foot.
+		const Color base = Color(0.33f, 0.32f, 0.3f).srgb_to_linear();
+		const Color soil_c = Color(0.27f, 0.22f, 0.17f).srgb_to_linear();
+		const Color lichen_c = Color(0.62f, 0.63f, 0.55f).srgb_to_linear();
+		for (int i = 0; i < stone.verts.size(); i++) {
+			const Vector3 &p = stone.verts[i];
+			const Vector3 &nn = stone.normals[i];
+			const float mott = 0.8f + 0.4f * moss_noise(p * 3.0f, ls) + 0.15f * (moss_noise(p * 17.0f, ls + 5u) - 0.5f);
+			const float cav = 0.55f + 0.45f * CLAMP(stone.cavity[i], 0.0f, 1.0f);
+			Color c = base;
+			c = Color(c.r * mott * cav, c.g * mott * cav, c.b * mott * cav);
+			const float lich = Math::smoothstep(0.58f, 0.7f, moss_noise(p * 7.0f, ls + 21u)) * Math::smoothstep(0.0f, 0.5f, nn.y);
+			c = c.lerp(lichen_c * cav, 0.75f * lich);
+			c = c.lerp(soil_c, 1.0f - Math::smoothstep(stone.ground - 0.02f, stone.ground + 0.07f, p.y));
+			r_b.verts.push_back(p);
+			r_b.normals.push_back(nn);
+			r_b.uvs.push_back(Vector2(p.x, p.z) * 4.0f);
+			r_b.colors.push_back(c);
+		}
+		for (int i = 0; i < stone.indices.size(); i++) {
+			r_b.indices.push_back(first + stone.indices[i]);
+		}
+		r_b.end(part, stone.r.x);
+		return;
+	}
+	const int rings = 22, segs = 44;
+	const int first = r_b.verts.size();
+	const uint32_t ls = uint32_t(seed) * 2654435761u + 0x73746f6eu;
+	const Color base = Color(0.4f, 0.39f, 0.36f).srgb_to_linear();
+	for (int i = 0; i <= rings; i++) {
+		const float th = float(Math::PI) * float(i) / rings;
+		for (int j = 0; j < segs; j++) {
+			const float ph = float(Math::TAU) * float(j) / segs;
+			const Vector3 u(Math::sin(th) * Math::cos(ph), Math::cos(th), Math::sin(th) * Math::sin(ph));
+			const float nz = moss_noise(u * 1.6f + Vector3(3.1f, 7.7f, 1.3f), ls);
+			const float nz2 = moss_noise(u * 4.3f + Vector3(5.3f, 2.1f, 9.4f), ls + 7u);
+			const float nz3 = moss_noise(u * 11.0f + Vector3(1.7f, 4.2f, 8.8f), ls + 13u);
+			float j_amt = (nz - 0.5f) + 0.45f * (nz2 - 0.5f) + 0.15f * (nz3 - 0.5f);
+			// Folded toward a few planes: a weathered block's faces and edges, not a pebble.
+			j_amt = Math::lerp(j_amt, Math::round(j_amt * 3.0f) / 3.0f, 0.65f);
+			const Vector3 lp = stone.c + u * stone.r * (1.0f + 0.5f * j_amt);
+			// Grey with darker weathering and pale lichen crusts in patches.
+			const float lich = Math::smoothstep(0.6f, 0.72f, moss_noise(lp * 9.0f, ls + 21u)) * Math::smoothstep(-0.2f, 0.4f, u.y);
+			const float shade = (0.78f + 0.22f * u.y) * (0.7f + 0.45f * nz2) * (0.85f + 0.25f * nz3) * (1.0f + 0.35f * lich);
+			// Lichen-grey above, soil-stained low down.
+			Color c = base.lerp(Color(0.3f, 0.25f, 0.19f).srgb_to_linear(), 1.0f - Math::smoothstep(stone.ground - 0.02f, stone.ground + 0.08f, lp.y));
+			c = Color(c.r * shade, c.g * shade, c.b * shade);
+			r_b.verts.push_back(lp);
+			r_b.normals.push_back(u);
+			r_b.uvs.push_back(Vector2(lp.x, lp.z) * 4.0f);
+			r_b.colors.push_back(c);
+		}
+	}
+	for (int i = 0; i < rings; i++) {
+		for (int j = 0; j < segs; j++) {
+			const int a0 = first + i * segs + j, a1 = first + i * segs + (j + 1) % segs;
+			const int b0 = a0 + segs, b1 = a1 + segs;
+			// Counter-clockwise seen from outside, as the root plate (flipped for Godot with it).
+			auto tri = [&](int a, int b, int c) {
+				const Vector3 n = (r_b.verts[b] - r_b.verts[a]).cross(r_b.verts[c] - r_b.verts[a]);
+				if (n.dot(r_b.verts[a] - stone.c) < 0.0f) {
+					SWAP(b, c);
+				}
+				r_b.indices.push_back(a);
+				r_b.indices.push_back(b);
+				r_b.indices.push_back(c);
+			};
+			if (i > 0) {
+				tri(a0, b0, a1);
+			}
+			if (i + 1 < rings) {
+				tri(a1, b0, b1);
+			}
+		}
+	}
+	r_b.end(part, stone.r.x);
+}
+
 // A tree on a bank (trees.md 5q): the ground under it falls toward +Z at ground_slope. The root
 // collar and roots are built for level ground and then sheared onto the slope near the soil
 // (fading out over the lower stem), so the downhill roots run down the face and the uphill ones
@@ -8452,8 +8683,9 @@ static const struct {
 // roots off the slope in an arch, fixed at the stem and at their tips: the soil washed out from
 // under them (Gartner 2007, exposed roots on eroding banks). Normals and tangents follow the
 // shear's Jacobian.
-void TreeGenerator::_bank_shear(Builder &r_b) const {
-	if (ground_slope <= 0.0f || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
+void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
+	const bool drape = p_drape && stone.on;
+	if ((ground_slope <= 0.0f && !drape) || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
 		return;
 	}
 	const float ts = Math::tan(ground_slope);
@@ -8466,7 +8698,25 @@ void TreeGenerator::_bank_shear(Builder &r_b) const {
 		}
 	}
 	const float top = tr * 1.5f;
-	auto disp = [&](const Vector3 &p) -> float {
+	// Roots over the stone (trees.md 5q): near the soil every surface is lifted by the stone's
+	// height above the ground there, so roots and the stem's foot lie over it as roots grow over
+	// rock (thickening against it, never through it).
+	auto lift = [&](const Vector3 &p) -> float {
+		if (!drape) {
+			return 0.0f;
+		}
+		const float top = _root_stone_top(p.x, p.z);
+		if (top <= 0.0f) {
+			return 0.0f;
+		}
+		const float hh = p.y - stone.ground;
+		const float w = 1.0f - Math::smoothstep(stone.root_top, stone.root_top * 2.5f + 0.1f, hh);
+		return MAX(top, 0.0f) * w;
+	};
+	auto shear = [&](const Vector3 &p) -> float {
+		if (ground_slope <= 0.0f) {
+			return 0.0f;
+		}
 		const float hh = p.y - ax.y;
 		const float w = 1.0f - Math::smoothstep(top, top + 3.0f * tr + 0.3f, hh);
 		if (w <= 0.0f) {
@@ -8481,6 +8731,10 @@ void TreeGenerator::_bank_shear(Builder &r_b) const {
 			dy *= 1.0f - bank_erosion * 0.6f * arch * Math::smoothstep(0.0f, 0.5f, dz / MAX(d, 1e-3f));
 		}
 		return dy * w;
+	};
+	auto disp = [&](const Vector3 &p) -> float {
+		const float l = lift(p);
+		return l + shear(p + Vector3(0.0f, l, 0.0f));
 	};
 	const int nv = r_b.verts.size();
 	Vector3 *vw = r_b.verts.ptrw();
@@ -9390,6 +9644,31 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// Roots wander round stones and older roots rather than run out as straight spokes.
 		root_bend.push_back(Math::lerp(-0.45f, 0.45f, root_rng.randf()));
 	}
+	// The stone the roots drape over (trees.md 5q): on the stem's +Z side, its inner edge just
+	// under the stem's foot; the root nearest it turned onto it and run on past it.
+	stone = RootStone();
+	if (root_stone > 0.0f && roots_on && !fallen && !fallen_branch && !nodes.is_empty()) {
+		const float R = root_stone;
+		stone.on = true;
+		stone.r = Vector3(R, 0.6f * R, 0.85f * R);
+		stone.ground = ground_y;
+		stone.c = Vector3(nodes[0].start.x, ground_y - 0.2f * R, nodes[0].start.z + trunk_r + 0.7f * stone.r.z);
+		int best = -1;
+		float best_da = 1e9f;
+		for (int k = 0; k < int(root_az.size()); k++) {
+			const float da = Math::abs(Math::angle_difference(root_az[k], float(Math::PI) * 0.5f));
+			if (da < best_da) {
+				best_da = da;
+				best = k;
+			}
+		}
+		if (best >= 0) {
+			root_az[best] = float(Math::PI) * 0.5f;
+			root_len[best] = MAX(root_len[best], 0.7f * stone.r.z * 2.0f + 0.5f * trunk_r);
+			root_bend[best] *= 0.3f;
+		}
+		_plan_root_stone_rock();
+	}
 	// The root collar and the roots as one surface (trees.md 5d, root weld). Above the roots the
 	// flare and ridges push the bark out sideways. From about a stem radius above the soil down
 	// through the sunk base, the stem's own rings are swept out into the roots: on a root's
@@ -9399,6 +9678,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// mesh with no crease. Normals are then rebuilt from the displaced mesh. Bark, relief tube and
 	// moss shell take the same map (bearing from the axis, not the normals, so they agree).
 	const float root_top = trunk_r * 1.2f * MIN(1.0f, 0.5f + flare);
+	stone.root_top = root_top;
 	const float root_sink = 0.3f;
 	// Each root's radius where it leaves the flare; round or a little wider than tall in section
 	// (Eis 1974: laterals are oval near the stem), sinking into the soil while still thick.
@@ -11593,8 +11873,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder resin;
 	_grow_resin(resin);
 	Builder *builders[10] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts, &resin };
+	if (stone.on) {
+		_build_root_stone(soil_b);
+	}
 	for (int s = 0; s < 10; s++) {
-		_bank_shear(*builders[s]);
+		// The stone itself is not draped over itself; it is sheared with the ground.
+		_bank_shear(*builders[s], s != 7);
 	}
 	for (int s = 0; s < 10; s++) {
 		Builder &b = *builders[s];
@@ -12478,6 +12762,18 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		const float t = float((h >> 8) & 255u) / 255.0f;
 		wind_exposure = p_form == FORM_FLAGGED ? Math::lerp(0.6f, 0.95f, t) : 1.0f;
 		krummholz = p_form == FORM_KRUMMHOLZ ? Math::lerp(0.8f, 1.0f, t) : 0.0f;
+	} else if (p_form == FORM_BANK) {
+		// Bank trees (trees.md 5q): the variants step through slopes so placement can pick the
+		// nearest (0, 20, 34 and 49 degrees), a level one among them so gentle ground still gets
+		// a sensible tree. The steeper the bank the more of the soil has washed from under the
+		// downhill roots (Gartner 2007); one steep variant in eight stands over a boulder, as on
+		// stony stream banks and gorge sides.
+		static const float slopes[4] = { 0.0f, 0.35f, 0.6f, 0.85f };
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f;
+		ground_slope = slopes[p_variant % 4];
+		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
+		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
 	} else if (p_form == FORM_POLLARD) {
 		// Pollards: willow still worked, cut every 5-8 years; beech, oak and the rest lapsed, last
 		// cut 40-150 years ago, their old poles now trunks (Read, Pollards, 2000).
@@ -12553,6 +12849,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	bark_wounds = p_from.bark_wounds;
 	wind_exposure = p_from.wind_exposure;
 	ground_slope = p_from.ground_slope;
+	root_stone = p_from.root_stone;
 	bank_erosion = p_from.bank_erosion;
 	krummholz = p_from.krummholz;
 	fungi_cover = p_from.fungi_cover;
@@ -12658,7 +12955,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ;
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK;
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -12703,6 +13000,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_veteran = veteran;
 		const float saved_exposure = wind_exposure;
 		const float saved_krummholz = krummholz;
+		const float saved_slope = ground_slope;
+		const float saved_erosion = bank_erosion;
+		const float saved_stone = root_stone;
 		if (p_form == FORM_SAPLING) {
 			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
@@ -12712,7 +13012,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const LeafKind leaf_kind = LEAF_FORMS[p_preset].kind;
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && params[PARAM_NEEDLES] <= 0.5f &&
 				(leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -12751,6 +13051,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		veteran = saved_veteran;
 		wind_exposure = saved_exposure;
 		krummholz = saved_krummholz;
+		ground_slope = saved_slope;
+		bank_erosion = saved_erosion;
+		root_stone = saved_stone;
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
 		// One full-needle variant for the near range (the field repeats it over the variants):
@@ -12789,7 +13092,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -12989,6 +13292,15 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			canopy(PRESET_SYCAMORE_MAPLE, 0.6f, 60.0f, 0.8f, true, false);
 			canopy(PRESET_ASH, 0.5f, 60.0f, 0.8f, true, false);
 			open(PRESET_BEECH, 0.3f);
+			// Ravine woods on the gorge sides (Tilio-Acerion: sycamore, ash and lime on steep,
+			// unstable, stony slopes; Ellenberg 1988): sycamore bank trees past about 25 degrees.
+			Ref<PlantSpecies> ravine = _stand_species(PRESET_SYCAMORE_MAPLE, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			ravine->set_density(0.4f);
+			ravine->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(25.0f, 90.0f));
+			ravine->set_rule_fade(PlantSpecies::RULE_SLOPE, 6.0f);
+			ravine->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
+			ravine->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+			list.push_back(ravine);
 			// Holly and yew are what does grow under beech (Taxo-Fagetum, Ilici-Fagetum).
 			shrub(PRESET_HOLLY, 0.5f);
 			Ref<PlantSpecies> yew = shrub(PRESET_YEW, 0.25f);
@@ -13069,6 +13381,22 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			canopy(PRESET_BLACK_ALDER, 1.0f, 0.0f, 0.0f, false, true);
 			open(PRESET_WHITE_WILLOW, 0.6f);
 			open(PRESET_BLACK_ALDER, 0.4f);
+			// On the banks themselves, alder and willow lean out over the water with their roots
+			// washed bare (trees.md 5q). Placement picks each tree's slope variant.
+			Ref<PlantSpecies> alder_bank = _stand_species(PRESET_BLACK_ALDER, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			alder_bank->set_density(0.5f);
+			alder_bank->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 12.0f));
+			alder_bank->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 6.0f);
+			alder_bank->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
+			alder_bank->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+			list.push_back(alder_bank);
+			Ref<PlantSpecies> willow_bank = _stand_species(PRESET_WHITE_WILLOW, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			willow_bank->set_density(0.3f);
+			willow_bank->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 8.0f));
+			willow_bank->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 4.0f);
+			willow_bank->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
+			willow_bank->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+			list.push_back(willow_bank);
 			clip(shrub(PRESET_ELDER, 0.4f), PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 40.0f), 16.0f);
 		} break;
 		case STAND_HEDGEROW: {
@@ -13690,6 +14018,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// Placement turns the mesh's +Z downhill and picks the variant nearest the ground's slope.
 		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(ground_slope, bank_erosion));
 	}
+	if (stone.on && mesh.is_valid()) {
+		// The stone's centre and half extents (mesh space, before any bank shear), for rocks and
+		// the floor to keep clear of it.
+		mesh->set_meta(SNAME("tree_root_stone"), PackedFloat32Array({ stone.c.x, stone.c.y, stone.c.z, stone.r.x, stone.r.y, stone.r.z }));
+	}
 	if (deadwood_stem >= 0) {
 		// Layout (trees.md 5b): a (3), b (3), the widest reach from the axis anywhere along it
 		// (a reader of the first 7 floats keeps out of all the wood), the sample count N, then
@@ -13802,6 +14135,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
+	ClassDB::bind_method(D_METHOD("set_root_stone", "radius"), &TreeGenerator::set_root_stone);
+	ClassDB::bind_method(D_METHOD("get_root_stone"), &TreeGenerator::get_root_stone);
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_bank_erosion", "erosion"), &TreeGenerator::set_bank_erosion);
@@ -13914,6 +14249,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_stone", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_root_stone", "get_root_stone");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mistletoe", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_mistletoe", "get_mistletoe");
