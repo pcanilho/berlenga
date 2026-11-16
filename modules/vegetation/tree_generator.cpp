@@ -1092,7 +1092,13 @@ void TreeGenerator::_grow_year(int p_year) {
 	// Shoot growth: a bud with vigor v grows floor(v) internodes, bending toward the light and
 	// away from (or toward) gravity, with lateral buds set by the phyllotaxis.
 	const int bud_count = int(buds.size());
-	const float base_len = _internode_length(p_year);
+	// Cutting rejuvenates (Read 2000; Rackham 2006): the poles of a pollard or a stool grow like
+	// a young tree's shoots, on a root system already grown. Aged by the tree's own years, a
+	// lapsed beech pollard's poles made internodes a tenth of a young tree's and after sixty
+	// years stood a 10 m crown on a 2.5 m head. Once lapsed (a cycle past the last cut; worked
+	// rods keep their tuned growth) they age from the last cut, ten years on.
+	const bool lapsed = cut_height > 0.0f && last_cut_year > 0 && p_year - last_cut_year > cut_cycle;
+	const float base_len = _internode_length(lapsed ? MIN(p_year, p_year - last_cut_year + 10) : p_year);
 	const float noise = Math::deg_to_rad(params[PARAM_DIRECTION_NOISE]);
 	// Crown cone of excurrent trees: a branch reaches out at most crown_cone times its depth below
 	// the leader's tip (Kantola and Makela 2004: Norway spruce branch length grows with depth in
@@ -1275,7 +1281,7 @@ void TreeGenerator::_shed(int p_year) {
 		// cut again before they thin out among themselves (Rackham 2006).
 		// The knuckles round the head are its own wood, not shaded limbs: shed, they took
 		// every pole on them.
-		if ((n.pole && p_year - last_cut_year <= MAX(5, cut_cycle)) || (cut_height > 0.0f && n.order == 0 && n.born == 0)) {
+		if ((n.pole && (p_year - last_cut_year <= MAX(5, cut_cycle))) || (cut_height > 0.0f && n.order == 0 && n.born == 0)) {
 			continue;
 		}
 		const bool under_scrub = scrub > 0.0f && nodes[n.parent].order == 0 && n.start.y - nodes[0].start.y < scrub;
@@ -11110,7 +11116,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	if (p_form == FORM_OPEN && p_stand_grown) {
 		p_form = FORM_STAND;
 	}
-	p_stand_grown = p_form != FORM_OPEN;
+	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
+	// grew 22 m whips with a crown at the top).
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD;
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -11833,6 +11841,63 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 					// The bole only: knuckles (born 0) swell with the head's callus instead.
 					if (!n.removed && n.order == 0 && n.born > 0 && n.born <= first_cut) {
 						n.radius += ring;
+					}
+				}
+			}
+		}
+		if (cut_height > 0.5f && last_cut > 0 && y == last_cut + cut_cycle + 2 && y > years - since && preset != PRESET_WHITE_WILLOW) {
+			// A lapsed pollard self-thins (Read 2000; Lonsdale, Ancient and other veteran trees,
+			// 2013): a few poles take the lead and grow on into the limbs of a new crown, the
+			// rest die back to stubs. Left all to compete, dozens of poles shared the head's
+			// vigour and after sixty years made a 10 m crown of whips.
+			LocalVector<Pair<int, int>> rank; // (subtree nodes, first node)
+			LocalVector<int> st;
+			for (const int r : sprout_roots) {
+				if (r < 0 || r >= int(nodes.size()) || nodes[r].removed || nodes[r].dead) {
+					continue;
+				}
+				int count = 0;
+				st.clear();
+				st.push_back(r);
+				while (!st.is_empty()) {
+					const int j = st[st.size() - 1];
+					st.resize(st.size() - 1);
+					if (nodes[j].removed) {
+						continue;
+					}
+					count++;
+					if (nodes[j].main >= 0) {
+						st.push_back(nodes[j].main);
+					}
+					for (int c = nodes[j].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+						st.push_back(c);
+					}
+				}
+				rank.push_back(Pair<int, int>(-count, r));
+			}
+			rank.sort_custom<PairSort<int, int>>();
+			const int keep = 5 + int(uint32_t(seed) * 2246822519u % 4u);
+			for (uint32_t k = keep; k < rank.size(); k++) {
+				// The loser dies where it stands: a dead stub of its first internode, the rest gone.
+				const int r = rank[k].second;
+				nodes[r].dead = true;
+				nodes[r].leafy = false;
+				st.clear();
+				if (nodes[r].main >= 0) {
+					st.push_back(nodes[r].main);
+				}
+				for (int c = nodes[r].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+					st.push_back(c);
+				}
+				while (!st.is_empty()) {
+					const int j = st[st.size() - 1];
+					st.resize(st.size() - 1);
+					nodes[j].removed = true;
+					if (nodes[j].main >= 0) {
+						st.push_back(nodes[j].main);
+					}
+					for (int c = nodes[j].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+						st.push_back(c);
 					}
 				}
 			}
