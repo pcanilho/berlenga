@@ -391,6 +391,15 @@ func _ready() -> void:
 			for k in range(0, cv.point_count, 2):
 				var p: Vector3 = rv.global_transform * cv.get_point_position(k)
 				_log("  surf %d (%.0f, %.0f) ground %.2f surface %.2f depth %.2f" % [k, p.x, p.z, gen.get_height(p), rv.sample_height(p), rv.sample_depth(p)])
+	if args.has("height-line"):
+		# --height-line=x0,z0,x1,z1,n: the ground along a line (generator and drawn landscape), for steps and bands.
+		var hl: PackedStringArray = args["height-line"].split(",")
+		var a0 := Vector2(float(hl[0]), float(hl[1]))
+		var a1 := Vector2(float(hl[2]), float(hl[3]))
+		var hn := int(hl[4])
+		for k in hn + 1:
+			var q := a0.lerp(a1, float(k) / hn)
+			_log("  line %.2f (%.2f, %.2f) gen %.3f drawn %.3f" % [a0.distance_to(q), q.x, q.y, gen.get_height(Vector3(q.x, 0, q.y)), height_at(q.x, q.y)])
 	if args.has("probe-pixel"):
 		# --probe-pixel=x,y: what is drawn there (the ground under it, and every visual whose box covers it).
 		var pp: PackedStringArray = args["probe-pixel"].split(",")
