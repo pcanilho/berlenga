@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  snow_deform_gpu.h                                                     */
+/*  ground_deform_gpu.h                                                   */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -33,19 +33,24 @@
 
 #include "core/object/ref_counted.h"
 #include "core/os/mutex.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
 #include "core/templates/safe_refcount.h"
 #include "core/variant/variant.h"
+#include "scene/resources/texture_rd.h"
 
 class RenderingDevice;
 
-// The render-thread side of SnowSurface3D's print field on the GPU (docs/ideas/snow.md, follow-up 13).
-// The node builds one frame of work on the main thread (parameters, the stamps of the bodies that
+class GroundDeformField;
+
+// The render-thread side of the print field on the GPU, for SnowSurface3D (docs/ideas/snow.md, follow-up 13)
+// and GroundSurface3D (docs/ideas/sand.md, stage 0). The node builds one frame of work on the main thread (parameters, the stamps of the bodies that
 // pressed, tiles moving in and out of the cache) and posts it here with step(); results come back
 // asynchronously (the collision heights and a packed copy of the field) and the node takes them with
 // take_*().
-class SnowDeformGPU : public RefCounted {
-	GDSOFTCLASS(SnowDeformGPU, RefCounted);
+class GroundDeformGPU : public RefCounted {
+	GDSOFTCLASS(GroundDeformGPU, RefCounted);
 
 public:
 	enum Flags {
@@ -61,7 +66,7 @@ public:
 		STEP_COVER = 1 << 9, // new cover cells
 		STEP_SYNC = 1 << 10, // read back now, blocking (tests)
 	};
-	static constexpr int PARAMS_BYTES = 192;
+	static constexpr int PARAMS_BYTES = 224;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -72,23 +77,26 @@ public:
 		int cn = 0;
 		int slots = 0;
 		int coll_w = 0;
+		int stride = 1; // uints per texel in the cache and the read back: 1 (dent, rim), 2 (and fresh)
 	};
 
 	static bool is_available();
 
-	SnowDeformGPU();
-	~SnowDeformGPU();
+	GroundDeformGPU();
+	~GroundDeformGPU();
 	// Frees the GPU objects (on the render thread, waiting for it). Call before dropping the last reference.
 	void shutdown();
 
 	// Main thread. Posts the work to the render thread.
 	void step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center);
-	// The texture the material samples (RGBA16F: dent, rim, 1, 1), once built; invalid before.
+	// The texture the material samples (RGBA16F: dent, rim, 1, 1 for snow; dent, rim, albedo and roughness
+	// factors for the ground), once built; invalid before.
 	RID get_texture() const;
 	uint64_t get_texture_serial() const { return texture_serial.get(); }
 	// The latest collision heights (already divided by the spacing) and the centre they were taken at.
 	bool take_collision(PackedFloat32Array &r_heights, Vector2 &r_center);
-	// The latest packed field (half floats dent, rim per texel) and the origin it was taken at.
+	// The latest packed field (half floats dent, rim per texel, then fresh and 0 with a stride of 2) and the
+	// origin it was taken at.
 	bool take_field(PackedByteArray &r_packed, Vector2i &r_origin);
 
 private:
@@ -135,4 +143,50 @@ private:
 	void rt_on_collision(const PackedByteArray &p_data, Vector2 p_center);
 	void rt_on_field(const PackedByteArray &p_data, Vector2i p_origin);
 	void rt_free();
+};
+
+// The main-thread side, shared by SnowSurface3D and GroundSurface3D: the stamps of a frame, the slots of the
+// tile cache on the GPU, the tile moves when the field follows the camera, and the read back into the CPU
+// copy of the field.
+class GroundDeformGPUHost {
+public:
+	static constexpr int STAMP_FLOATS = 16;
+	struct Slot {
+		int slot = 0;
+		uint64_t used = 0;
+	};
+	Ref<GroundDeformGPU> gpu;
+	Ref<Texture2DRD> texture;
+	uint64_t texture_serial = 0;
+	PackedByteArray stamps;
+	PackedByteArray stores;
+	PackedByteArray shift;
+	HashMap<Vector2i, Slot> cache; // world tile -> cache slot
+	LocalVector<int> free_slots;
+	int slots = 0;
+	uint64_t cache_clock = 0;
+	LocalVector<float> tile_stamped; // per field tile: time of the last stamp
+	double time = 0.0;
+	double slump_until = -1.0;
+	int n = 0;
+	bool reset = true;
+	bool changed = true; // since the last read back
+
+	// Drops the GPU objects and everything that refers to them.
+	void release();
+	// Forgets the cache (the field starts over).
+	void clear_cache();
+	// Queues a press (GroundDeformField::press's arguments) as a stamp over p_x0..p_x1, p_z0..p_z1 (field
+	// texels); p_d is the stamp's last four floats (crack, flags, seed, extra).
+	void add_stamp(GroundDeformField &r_field, const float p_v[12], const float p_d[4], int p_x0, int p_x1, int p_z0, int p_z1);
+	// The stamp's texel bounds for a footprint reaching p_span around p_position; false when outside.
+	static bool stamp_bounds(const GroundDeformField &p_field, Vector3 p_position, float p_span, int &r_x0, int &r_x1, int &r_z0, int &r_z1);
+	// The field is about to move to p_origin: tiles leaving with prints go to the cache, tiles coming in are
+	// read from the old field or the cache, and stamps not yet sent move with the texels.
+	void shift_to(const GroundDeformField &p_field, Vector2i p_origin, int p_resolution, int p_max_cached_tiles);
+	// Takes a new texture RID; true when it changed.
+	bool take_texture();
+	// Copies the latest read back into the field's CPU arrays (and fresh, with p_stride 2; then r_owed gets the
+	// most slumping any texel still owes, seconds).
+	bool take_field(GroundDeformField &r_field, int p_stride, float *r_owed = nullptr);
 };

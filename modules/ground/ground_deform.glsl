@@ -1,10 +1,11 @@
 #[compute]
 #version 450
 
-// The snow print field on the GPU (docs/ideas/snow.md, follow-up 13). The same maths as
-// GroundDeformField (modules/ground) and SnowSurface3D's columns, slumping and relaxing, on a field of
-// (dent, rim, slumping owed, unused) per texel. One shader, one pipeline: the push constant says which
-// pass runs.
+// The print field on the GPU, for snow (docs/ideas/snow.md, follow-up 13) and bare ground: sand, soil, mud
+// and litter (docs/ideas/sand.md, stage 0). The same maths as GroundDeformField and the owners' columns,
+// slumping and relaxing (SnowSurface3D) or ageing (GroundSurface3D), on a field of (dent, rim, slumping
+// owed, fresh) per texel (fresh: ground only). One shader, one pipeline: the push constant says which pass
+// runs, params.kind.x which owner.
 
 #define MODE_STAMPS 0
 #define MODE_SLUMP_GIVE 1
@@ -47,6 +48,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 bow; // bow speed, gain, reach, unused
 	vec4 crust_consts; // crack length, plate size, crack sectors, unused
 	ivec4 shift; // texel offset of the old field in the new one's tiles: old tile index = new tile index + shift.xy
+	vec4 kind; // 1 for the ground (else snow), slow slumping seconds this step, fresh kept by ageing, sand drift per hour
+	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, unused
 }
 params;
 
@@ -63,7 +66,9 @@ layout(set = 0, binding = 4, std430) restrict readonly buffer Ground {
 	float ground_h[];
 };
 layout(set = 0, binding = 5, std430) restrict readonly buffer Cover {
-	vec4 cover_cells[]; // per cell, two: (swe mm, density, crust thickness, crust burial), (new snow m, cover ground m, 0, 0)
+	// Snow: per cover cell, two: (swe mm, density, crust thickness, crust burial), (new snow m, cover ground m, 0, 0).
+	// Ground: per lattice point, two: (rim share, tan repose, slumping rate, deepest dent), (darken, gloss, sand, deformable).
+	vec4 cover_cells[];
 };
 struct Stamp {
 	vec4 a; // position x, y, z, radius
@@ -90,6 +95,15 @@ layout(set = 0, binding = 11, std430) restrict writeonly buffer Packed {
 };
 
 const float SWE_MIN = 0.01;
+
+bool is_ground() {
+	return params.kind.x > 0.5;
+}
+
+// uints per texel in the cache and the read back: (dent, rim), then (fresh, 0) for the ground.
+int stride() {
+	return is_ground() ? 2 : 1;
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // Columns (SnowSurface3D::SnowColumns and SnowCover3D's lookups)
@@ -167,6 +181,30 @@ struct Column {
 	bool deformable;
 };
 
+// GroundSurface3D::_cell_at: the nearest lattice point's material.
+vec4 ground_cell(vec2 p, int part) {
+	int n = params.res.w;
+	if (n < 1) {
+		return vec4(0.0);
+	}
+	int x = int(round(p.x / params.ground.z)) - int(params.ground.x);
+	int z = int(round(p.y / params.ground.z)) - int(params.ground.y);
+	if (x < 0 || z < 0 || x >= n || z >= n) {
+		return vec4(0.0);
+	}
+	return cover_cells[(z * n + x) * 2 + part];
+}
+
+bool ground_deformable(vec2 p) {
+	if (ground_cell(p, 1).w < 0.5) {
+		return false;
+	}
+	// Only where the terrain is fully lowered under the patch.
+	vec4 r = params.mesh_rect;
+	float edge = min(min(p.x - r.x, r.x + r.z - p.x), min(p.y - r.y, r.y + r.w - p.y));
+	return edge >= params.age.z;
+}
+
 Column column_at(vec2 p, uint flags) {
 	Column c;
 	c.surface = 0.0;
@@ -174,6 +212,17 @@ Column column_at(vec2 p, uint flags) {
 	c.rim_share = 0.3;
 	c.crust = 0.0;
 	c.deformable = false;
+	if (is_ground()) {
+		if (!ground_deformable(p)) {
+			return c;
+		}
+		vec4 m = ground_cell(p, 0);
+		c.deformable = true;
+		c.surface = ground_at(p);
+		c.max_dent = m.w;
+		c.rim_share = m.x;
+		return c;
+	}
 	vec4 pk = pack_at(p);
 	float depth = pk.x;
 	if (depth < params.snow.z) {
@@ -236,10 +285,6 @@ vec3 reduce3(float a, float b, float c) {
 	return r;
 }
 
-void mark(int i) {
-	state[i].z = max(state[i].z, params.relax.z);
-}
-
 void run_stamp(Stamp s) {
 	uint t = gl_LocalInvocationIndex;
 	int n = fn();
@@ -256,6 +301,8 @@ void run_stamp(Stamp s) {
 	float crack = s.d.x;
 	uint flags = uint(s.d.y);
 	uint seed = floatBitsToUint(s.d.z);
+	bool ground = is_ground();
+	float settle = ground ? s.d.w : params.relax.z; // seconds of slumping a pressed texel owes
 	bool box = (flags & STAMP_BOX) != 0u;
 	bool round_ = (flags & STAMP_ROUND) != 0u;
 	int x0 = s.e.x;
@@ -362,7 +409,10 @@ void run_stamp(Stamp s) {
 		float take = min(st.y, delta);
 		st.y -= take;
 		st.x += delta - take;
-		st.z = max(st.z, params.relax.z);
+		st.z = max(st.z, settle);
+		if (ground) {
+			st.w = 1.0;
+		}
 		state[i] = st;
 		moved += delta * area;
 		pushed += ((delta - take) * c.rim_share + take * mix(c.rim_share, 1.0, bow)) * area;
@@ -419,7 +469,10 @@ void run_stamp(Stamp s) {
 			float take = min(st.y, delta);
 			st.y -= take;
 			st.x += delta - take;
-			st.z = max(st.z, params.relax.z);
+			st.z = max(st.z, settle);
+			if (ground) {
+				st.w = 1.0;
+			}
 			state[i] = st;
 		}
 		memoryBarrierBuffer();
@@ -480,7 +533,10 @@ void run_stamp(Stamp s) {
 				int i = z * n + x;
 				vec4 st = state[i];
 				st.y += pushed * wgt / (wsum * area);
-				st.z = max(st.z, params.relax.z);
+				st.z = max(st.z, settle);
+				if (ground) {
+					st.w = max(st.w, wgt);
+				}
 				state[i] = st;
 			}
 		}
@@ -496,8 +552,32 @@ void run_stamp(Stamp s) {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Slumping (GroundDeformField::slump with SnowSurface3D's loose snow: rim only, crusts stay), as two gather
-// passes: each texel works out what it gives, then each texel takes its neighbours' shares.
+// Slumping (GroundDeformField::slump), as two gather passes: each texel works out what it gives, then each
+// texel takes its neighbours' shares. Snow: SnowSurface3D's loose snow, rim only, crusts stay, at once.
+// Ground: the material's repose, rate and deepest dent per lattice point; a column gives its rim, then
+// goes down to its deepest dent. Slow material (mud creeping back) only moves on the steps the CPU marks
+// slow, by the seconds saved up since (GroundDeformField's tile wait).
+
+// The repose slope, share per second and deepest dent at p; false where nothing moves.
+bool slump_params(vec2 p, out float tan_r, out float rate, out float max_dent) {
+	if (!is_ground()) {
+		tan_r = params.relax.w;
+		rate = 1e3;
+		max_dent = 0.0;
+		return true;
+	}
+	tan_r = 0.0;
+	rate = 0.0;
+	max_dent = 0.0;
+	if (ground_cell(p, 1).w < 0.5) {
+		return false;
+	}
+	vec4 m = ground_cell(p, 0);
+	tan_r = m.y;
+	rate = m.z;
+	max_dent = m.w;
+	return true;
+}
 
 const ivec2 DIRS[8] = ivec2[8](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1), ivec2(1, 1), ivec2(1, -1), ivec2(-1, 1), ivec2(-1, -1));
 
@@ -513,15 +593,31 @@ void slump_give(int x, int z) {
 		return;
 	}
 	vec4 st = state[i];
-	if (st.z <= 0.0 || st.y <= 0.0) {
+	if (st.z <= 0.0) {
 		return;
 	}
 	vec2 wp = texel_world(x, z);
-	if (pack_at(wp).z > 0.0) {
+	float tan_r;
+	float rate;
+	float max_dent;
+	if (!slump_params(wp, tan_r, rate, max_dent)) {
+		return;
+	}
+	if (st.y <= 0.0 && st.x >= max_dent) {
+		return; // nothing here can move
+	}
+	float dt = params.field.w;
+	if (is_ground()) {
+		if (rate * dt < 0.05) {
+			dt = params.kind.y; // slow: only on the CPU's slow steps
+		}
+	} else if (pack_at(wp).z > 0.0) {
 		return; // plates of a broken crust are slabs, not loose snow
 	}
+	if (dt <= 0.0) {
+		return;
+	}
 	float tx = texel();
-	float tan_r = params.relax.w;
 	float gi = ground_at(wp);
 	float si = gi + st.y - st.x;
 	float sum = 0.0;
@@ -540,12 +636,13 @@ void slump_give(int x, int z) {
 	if (big <= 1e-5) {
 		return;
 	}
-	float share = min(1.0, 1e3 * params.field.w);
-	float move = min(0.5 * big * share, st.y);
+	float share = min(1.0, rate * dt);
+	float move = min(0.5 * big * share, st.y + max(max_dent - st.x, 0.0));
 	if (move <= 1e-6) {
 		return;
 	}
-	give[i] = vec2(move, sum);
+	// A negative sum: settled to a tenth of a millimetre (the texel's owed slumping then runs out).
+	give[i] = vec2(move, big >= 1e-4 ? sum : -sum);
 }
 
 void slump_take(int x, int z) {
@@ -555,13 +652,16 @@ void slump_take(int x, int z) {
 	float dt = params.field.w;
 	vec4 outv = st;
 	vec2 own = give[i];
-	outv.y -= own.x;
-	outv.z = max(st.z - dt, 0.0);
+	float own_rim = min(st.y, own.x);
+	outv.y -= own_rim;
+	outv.x += own.x - own_rim;
+	// The ground keeps a moving texel's owed slumping (GroundDeformField marks the tiles it moves into with
+	// what it still owes): only settled texels run down. Snow's loose rim always runs down.
+	outv.z = (is_ground() && own.x > 0.0 && own.y > 0.0) ? st.z : max(st.z - dt, 0.0);
 	vec2 wp = texel_world(x, z);
 	float gj = ground_at(wp);
 	float sj = gj + st.y - st.x;
 	float tx = texel();
-	float tan_r = params.relax.w;
 	for (int k = 0; k < 8; k++) {
 		ivec2 q = ivec2(x, z) - DIRS[k]; // the neighbour whose direction k points here
 		if (q.x < 1 || q.y < 1 || q.x >= n - 1 || q.y >= n - 1) {
@@ -573,14 +673,19 @@ void slump_take(int x, int z) {
 			continue;
 		}
 		vec4 sq = state[qi];
-		float gi = ground_at(texel_world(q.x, q.y));
+		vec2 qp = texel_world(q.x, q.y);
+		float tan_r;
+		float q_rate;
+		float q_max;
+		slump_params(qp, tan_r, q_rate, q_max);
+		float gi = ground_at(qp);
 		float si = gi + sq.y - sq.x;
 		float dist = k < 4 ? tx : tx * 1.41421356;
 		float e = (si - sj) - max(tan_r * dist, gi - gj);
 		if (e <= 0.0) {
 			continue;
 		}
-		float add = g.x * e / g.y;
+		float add = g.x * e / abs(g.y);
 		float fill = min(outv.x, add);
 		outv.x -= fill;
 		outv.y += add - fill;
@@ -656,7 +761,11 @@ void main() {
 		int x = o.x * TILE + k % TILE;
 		int z = o.y * TILE + k / TILE;
 		vec4 st = state[z * n + x];
-		cache[o.z * TILE * TILE + k] = packHalf2x16(st.xy);
+		int sw = stride();
+		cache[(o.z * TILE * TILE + k) * sw] = packHalf2x16(st.xy);
+		if (sw == 2) {
+			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, 0.0));
+		}
 		return;
 	}
 	if (gid >= uint(n * n)) {
@@ -669,6 +778,22 @@ void main() {
 		slump_give(x, z);
 	} else if (push.mode == MODE_SLUMP_TAKE) {
 		slump_take(x, z);
+	} else if (push.mode == MODE_RELAX && is_ground()) {
+		// GroundSurface3D::_age: turned ground dries, wind fills dry sand prints, rain softens soil prints.
+		vec4 st = state[i];
+		if (st.x <= 0.0 && st.y <= 0.0 && st.w <= 0.0) {
+			return;
+		}
+		vec2 wp = texel_world(x, z);
+		vec4 m1 = ground_cell(wp, 1);
+		float keep = exp(-(params.kind.w * m1.z * (1.0 - smoothstep(0.1, 0.4, 1.0 - m1.y)) + params.age.x) * params.age.y);
+		st.x *= keep;
+		st.y *= keep;
+		st.w *= params.kind.z;
+		st.x = st.x < 1e-4 ? 0.0 : st.x;
+		st.y = st.y < 1e-4 ? 0.0 : st.y;
+		st.w = st.w < 0.01 ? 0.0 : st.w;
+		state[i] = st;
 	} else if (push.mode == MODE_RELAX) {
 		vec4 st = state[i];
 		if (st.x <= 0.0 && st.y <= 0.0) {
@@ -687,7 +812,13 @@ void main() {
 		state[i] = st;
 	} else if (push.mode == MODE_BLIT) {
 		vec4 st = state[i];
-		imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, 1.0, 1.0));
+		vec2 tint = vec2(1.0);
+		if (is_ground() && st.w > 0.0) {
+			// Freshly turned ground: darker (damp grains from below) and glossier when wet.
+			vec4 m1 = ground_cell(texel_world(x, z), 1);
+			tint = vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
+		}
+		imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
 	} else if (push.mode == MODE_SHIFT) {
 		// state is the old field, state_out the new one. tile_ops[new tile] = (kind, index): kind 1 an old
 		// tile's index, 2 a cache slot, 0 empty.
@@ -702,11 +833,20 @@ void main() {
 			int oz = (o.y / nt) * TILE + lz;
 			v = state[oz * n + ox];
 		} else if (o.x == 2) {
-			v.xy = unpackHalf2x16(cache[o.y * TILE * TILE + lz * TILE + lx]);
+			int sw = stride();
+			int ci = (o.y * TILE * TILE + lz * TILE + lx) * sw;
+			v.xy = unpackHalf2x16(cache[ci]);
+			if (sw == 2) {
+				v.w = unpackHalf2x16(cache[ci + 1]).x;
+			}
 		}
 		state_out[i] = v;
 	} else if (push.mode == MODE_PACK) {
 		vec4 st = state[i];
-		packed[i] = packHalf2x16(st.xy);
+		int sw = stride();
+		packed[i * sw] = packHalf2x16(st.xy);
+		if (sw == 2) {
+			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
+		}
 	}
 }

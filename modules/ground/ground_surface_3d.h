@@ -32,6 +32,7 @@
 #pragma once
 
 #include "ground_deform_field.h"
+#include "ground_deform_gpu.h"
 #include "ground_height_query.h"
 
 #include "scene/3d/node_3d.h"
@@ -116,6 +117,26 @@ private:
 	};
 
 	// The ground lattice over the field, one sample every ground_spacing, and its cells.
+	// The field on the GPU (docs/ideas/sand.md, stage 0): the same maths as the CPU path, which stays as the
+	// fallback where there is no RenderingDevice. The CPU field is then the copy read back for queries.
+	bool gpu_simulation = true;
+	struct GPUSink : public GroundDeformField::StampSink {
+		GroundSurface3D *surface = nullptr;
+		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
+	};
+	GPUSink gpu_sink;
+	GroundDeformGPUHost gpu_host;
+	bool gpu_ground_dirty = true;
+	bool gpu_cells_dirty = true;
+	double gpu_slow_accum = 0.0;
+	double gpu_readback_accum = 0.0;
+	bool _gpu_on() const;
+	void _gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync);
+	void _gpu_take();
+	void _gpu_release();
+	PackedByteArray _gpu_params(double p_delta, double p_age, double p_slow) const;
+	PackedByteArray _gpu_cells() const;
+
 	int ground_n = 0;
 	Vector2i ground_origin;
 	bool ground_valid = false;
@@ -186,6 +207,12 @@ public:
 	void set_type_map_rect(const Rect2 &p_rect);
 	Rect2 get_type_map_rect() const { return type_map_rect; }
 
+	void set_gpu_simulation(bool p_enabled);
+	bool is_gpu_simulation() const { return gpu_simulation; }
+	bool is_gpu_active() const { return _gpu_on(); }
+	// Waits for the GPU field and reads it back now (tests and tools; it stalls the GPU).
+	void sync_deformation();
+
 	void set_deform_extent(float p_extent);
 	float get_deform_extent() const { return deform_extent; }
 	void set_deform_resolution(int p_resolution);
@@ -243,7 +270,7 @@ public:
 	Dictionary get_material_at(Vector3 p_position) const;
 	Vector2 get_moved_volume() const;
 	Rect2 get_deform_rect() const;
-	int get_cached_tile_count() const { return field.cached_tile_count(); }
+	int get_cached_tile_count() const { return _gpu_on() ? gpu_host.cache.size() : field.cached_tile_count(); }
 	double get_step_time_msec() const { return step_msec; }
 	Ref<Material> get_patch_material() const { return patch_material; }
 	PackedStringArray get_configuration_warnings() const override;

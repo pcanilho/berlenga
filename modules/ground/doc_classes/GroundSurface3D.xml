@@ -121,6 +121,12 @@
 				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a boot, a crate. Returns the volume moved, in m³.
 			</description>
 		</method>
+		<method name="is_gpu_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
+			</description>
+		</method>
 		<method name="refresh_ground">
 			<return type="void" />
 			<description>
@@ -133,6 +139,12 @@
 			<param index="1" name="step" type="float" default="0.016666668" />
 			<description>
 				Runs slumping and ageing for [param seconds] at once, in steps of [param step].
+			</description>
+		</method>
+		<method name="sync_deformation">
+			<return type="void" />
+			<description>
+				On the GPU path, waits for the field and reads it back now, so [method get_dent_at], [method get_rim_at], [method get_fresh_at], [method get_surface_height_at] and [method get_moved_volume] show everything pressed so far. It stalls the GPU: for tests and tools, not every frame. Does nothing on the CPU path.
 			</description>
 		</method>
 	</methods>
@@ -163,6 +175,9 @@
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.
+		</member>
+		<member name="gpu_simulation" type="bool" setter="set_gpu_simulation" getter="is_gpu_simulation" default="true">
+			Runs the field (pressing, slumping, ageing, the turned-ground tint and the tile cache) in compute shaders where there is a [RenderingDevice]; the texture the ground materials sample is written there directly. The queries use a copy read back at 15 Hz. Off, or on the Compatibility renderer, the field runs on the CPU. Turning it over starts the field empty.
 		</member>
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			The physics layers a downward ray finds the ground on when [member height_source] gives no height.
