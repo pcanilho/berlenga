@@ -1,1 +1,0 @@
-- Water: `PhysXWaterSurface3D.detail_waves`. The sea gets its short ripples down to about 8 cm, handed to the roughness where a pixel cannot show them; whitecaps age into a lace of bubble-wall strands with their own grain and highlights; a turquoise bubble plume glows under fresh foam.

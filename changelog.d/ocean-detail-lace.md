@@ -1,1 +1,0 @@
-- Water: ageing foam tears into irregular lace with visible bubble clumps; the bubble plume shows only under fresh breaking; crest self-shadowing of the sun glitter no longer leaves a dotted pattern on still frames.
