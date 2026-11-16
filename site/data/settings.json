@@ -1138,10 +1138,13 @@
    "name": "Ground contact and aspect",
    "settings": [
     "contact_height",
-    "aspect_strength"
+    "aspect_strength",
+    "ground_blend",
+    "ground_blend_height",
+    "ground_material"
    ],
    "note": "",
-   "what": "stones blend into the ground with a soil band at their foot and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
+   "what": "stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band, and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
@@ -1576,7 +1579,7 @@
     "underwater_enabled"
    ],
    "note": "",
-   "what": "fog, scattering, Snell's window, image split at the water line.",
+   "what": "fog, scattering, Snell's window, image split at the water line. In raster, omni and spot lights glow and scatter in the water, as under path tracing.",
    "page": "water",
    "title": "Water",
    "topic": "Under water"
