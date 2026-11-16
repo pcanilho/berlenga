@@ -78,7 +78,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Snow on hair: flakes settle through the outer strands.*
 
-- **Grey and sun-bleached hair** (`grey_ratio`, `sun_bleaching`, off by default): single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.
+- **Grey and sun-bleached hair** (`grey_ratio`, `sun_bleaching`; 0 is none): single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.
 
   ![The same strand hair plain and with grey strands, raster](media/hair-grey.jpg)
 
