@@ -1263,6 +1263,7 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type) {
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("lichen_cover", lichen_cover);
 	m->set_shader_parameter("moss_cover", moss_cover);
+	_apply_ground(m);
 	if (TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
 		m->set_shader_parameter("sea_level", float(gen->get_sea_level())); // the shore zones of sea stones
 	}
@@ -1332,7 +1333,19 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 				const real_t level = sea_gen->get_water_level(st.position);
 				at_sea = !Math::is_nan(level) && Math::abs(level - sea) < 0.5;
 			}
-			const Color cd(st.ground, st.film + (at_sea ? 2.0f : 0.0f), st.scale, rng.randf());
+			// w: the random (6 bits) and the ground's slope under the stone (8 bits a component, -2..2), so the
+			// shader's contact and ground-blend band follow a slope: ground(x) = x + slope . (p.xz - origin.xz).
+			Vector2 slope;
+			if (sea_gen && st.ground > st.position.y - 30.0) {
+				const real_t r = CLAMP(st.scale * MAX(ax.x, ax.z) * 0.6, 0.2, 4.0);
+				const Vector3 o = st.position;
+				slope.x = (sea_gen->get_height(o + Vector3(r, 0, 0)) - sea_gen->get_height(o - Vector3(r, 0, 0))) / (2.0 * r);
+				slope.y = (sea_gen->get_height(o + Vector3(0, 0, r)) - sea_gen->get_height(o - Vector3(0, 0, r))) / (2.0 * r);
+			}
+			const int qx = CLAMP(int(Math::round((slope.x + 2.0f) / 4.0f * 255.0f)), 0, 255);
+			const int qz = CLAMP(int(Math::round((slope.y + 2.0f) / 4.0f * 255.0f)), 0, 255);
+			const int rq = MIN(int(rng.randf() * 64.0f), 63);
+			const Color cd(st.ground, st.film + (at_sea ? 2.0f : 0.0f), st.scale, float(rq + 64 * (qx + 256 * qz)));
 			mm->set_instance_transform(int(k), xf);
 			mm->set_instance_custom_data(int(k), cd);
 			grp.xforms.push_back(xf);
@@ -2249,6 +2262,74 @@ void RockField3D::set_lichen_cover(real_t p_cover) {
 	}
 }
 
+// The ground's layer colours for the blend band: a TerrainMaterial3D's tm_<layer>_color times the mean of its albedo
+// texture (the texture's detail averages out over the band), as linear albedo. Without a ground material, the
+// terrain material's own defaults.
+void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
+	static const char *names[5] = { "rock", "scree", "soil", "alluvium", "sand" };
+	static const Color defaults[5] = { Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46) };
+	p_material->set_shader_parameter("ground_blend", ground_blend);
+	p_material->set_shader_parameter("ground_blend_height", ground_blend_height);
+	for (int i = 0; i < 5; i++) {
+		Color c = defaults[i];
+		if (ground_material.is_valid()) {
+			const Variant v = ground_material->get_shader_parameter(StringName(String("tm_") + names[i] + "_color"));
+			if (v.get_type() == Variant::COLOR) {
+				c = v;
+			}
+			const Ref<Texture2D> tex = ground_material->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_tex"));
+			if (tex.is_valid()) {
+				Ref<Image> img = tex->get_image();
+				if (img.is_valid() && !img->is_empty()) {
+					img = img->duplicate();
+					if (img->is_compressed()) {
+						img->decompress();
+					}
+					if (!img->is_compressed()) {
+						img->convert(Image::FORMAT_RGBA8);
+						img->resize(8, 8, Image::INTERPOLATE_BILINEAR);
+						Color sum(0, 0, 0, 0);
+						for (int y = 0; y < 8; y++) {
+							for (int x = 0; x < 8; x++) {
+								sum += img->get_pixel(x, y).srgb_to_linear();
+							}
+						}
+						const Color mean = (sum / 64.0f).linear_to_srgb();
+						c = Color(c.r * mean.r, c.g * mean.g, c.b * mean.b);
+					}
+				}
+			}
+			const Variant aa = ground_material->get_shader_parameter("tm_alluvium_area");
+			if (aa.get_type() == Variant::FLOAT) {
+				p_material->set_shader_parameter("ground_alluvium_area", aa);
+			}
+		}
+		const Color lin = c.srgb_to_linear();
+		p_material->set_shader_parameter(StringName(String("ground_") + names[i]), Vector3(lin.r, lin.g, lin.b));
+	}
+}
+
+void RockField3D::set_ground_blend(bool p_enabled) {
+	ground_blend = p_enabled;
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		_apply_ground(kv.value);
+	}
+}
+
+void RockField3D::set_ground_blend_height(real_t p_height) {
+	ground_blend_height = MAX(p_height, real_t(0.0));
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		_apply_ground(kv.value);
+	}
+}
+
+void RockField3D::set_ground_material(const Ref<ShaderMaterial> &p_material) {
+	ground_material = p_material;
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		_apply_ground(kv.value);
+	}
+}
+
 void RockField3D::set_moss_cover(real_t p_cover) {
 	moss_cover = CLAMP(p_cover, real_t(0.0), real_t(1.0));
 	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
@@ -2345,6 +2426,12 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_variants"), &RockField3D::get_variants);
 	ClassDB::bind_method(D_METHOD("set_detail", "detail"), &RockField3D::set_detail);
 	ClassDB::bind_method(D_METHOD("get_detail"), &RockField3D::get_detail);
+	ClassDB::bind_method(D_METHOD("set_ground_blend", "enabled"), &RockField3D::set_ground_blend);
+	ClassDB::bind_method(D_METHOD("is_ground_blend"), &RockField3D::is_ground_blend);
+	ClassDB::bind_method(D_METHOD("set_ground_blend_height", "height"), &RockField3D::set_ground_blend_height);
+	ClassDB::bind_method(D_METHOD("get_ground_blend_height"), &RockField3D::get_ground_blend_height);
+	ClassDB::bind_method(D_METHOD("set_ground_material", "material"), &RockField3D::set_ground_material);
+	ClassDB::bind_method(D_METHOD("get_ground_material"), &RockField3D::get_ground_material);
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &RockField3D::set_lichen_cover);
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &RockField3D::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &RockField3D::set_moss_cover);
@@ -2416,6 +2503,9 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_detail", "get_detail");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_moss_cover", "get_moss_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_blend"), "set_ground_blend", "is_ground_blend");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_blend_height", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_ground_blend_height", "get_ground_blend_height");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_ground_material", "get_ground_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_stones_per_cell", PROPERTY_HINT_RANGE, "1,100000,1"), "set_max_stones_per_cell", "get_max_stones_per_cell");

@@ -242,6 +242,15 @@
 		<member name="glacial_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="300.0">
 			How far round the follow target glacial boulders are built.
 		</member>
+		<member name="ground_blend" type="bool" setter="set_ground_blend" getter="is_ground_blend" default="true">
+			Eases each stone's foot into the ground under it: over a band of [member ground_blend_height] the stone takes the ground layer's colour and roughness (the hollows first, the proud parts last, with a thinning dust above) and its normal turns toward the ground's, following the slope under the stone. The layer comes from the generator's geology, coloured as [member ground_material]'s layers.
+		</member>
+		<member name="ground_blend_height" type="float" setter="set_ground_blend_height" getter="get_ground_blend_height" default="0.25">
+			The ground-blend band's height in metres for a 1 m stone; it grows with the square root of the stone's size.
+		</member>
+		<member name="ground_material" type="ShaderMaterial" setter="set_ground_material" getter="get_ground_material">
+			The landscape's [TerrainMaterial3D]: the ground blend takes each layer's colour times the mean of its albedo texture. Without one, the terrain material's default colours.
+		</member>
 		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="0.5">
 			Lichen crust on upper faces, from 0 to 1.
 		</member>

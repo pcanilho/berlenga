@@ -329,3 +329,29 @@ tidal bands, a pale plinth at the waterline. Causes and fixes:
 - Bench: `--wind=m/s` (sea wind and some swell), `--seaward` (camera on the land side looking out).
 Water does not yet see the forms (rock collision is off with --water, or the sea's seabed probe takes a stack for the
 bed), so no foam rings a stack's foot: a water-side hook would be needed.
+
+## Ground blending (round 3, 16 Nov)
+
+A stone dropped on terrain shows a hard seam: its rind meets the soil with no transition, and on a slope the
+contact band (one ground height per stone) sits wrong on both sides. What engines do:
+- **CryEngine / KCD2 "terrain layer blend"**: objects (rocks especially) blend toward the terrain layer under them
+  over a height band, with a noise and height-map term, and take the terrain normal there.
+- **Unreal Runtime Virtual Texturing** (Fortnite, Valley of the Ancient): the landscape renders its final albedo,
+  normal and roughness into a virtual texture; rock materials sample it near the ground and blend by height above the
+  landscape (also read from the RVT) and by a noise mask.
+- **Far Cry 5** (McAuley, GDC 2018 "Terrain Rendering in Far Cry 5"): objects read the terrain's height and albedo
+  and blend over a depth band; the blend follows the terrain's real height under each pixel.
+- **Frostbite / Battlefront** (Andersson; DICE terrain blending): a mesh blend band with height-based (Mishkinis
+  2013) layering, so hollows fill with ground first and the proud parts of the stone stay clean.
+- **Unity HDRP / MicroSplat "terrain blending"**: same idea with a distance-to-terrain from a height map and a
+  per-object blend height.
+Common pieces: (1) the terrain's height under each pixel, (2) the terrain's surface (albedo, roughness, normal) at
+that point, (3) a band blend modulated by the stone's own relief (height blend) and noise, (4) the normal pulled to
+the terrain's in the band so lighting agrees across the seam.
+
+Here, without a virtual texture: (1) a ground plane per stone (height at its foot and the slope there, packed in
+INSTANCE_CUSTOM.w with the random), so the band follows a slope; (2) the generator's geology map (global
+terrain_geology_map) gives rock, scree, soil, alluvium and sand per pixel, coloured from the landscape's
+TerrainMaterial3D layers (colour times the mean of its albedo texture), which RockField3D.ground_material hands to the
+rock material; (3) a band of `ground_blend_height` (scaled by the stone's size), cavities first (Mishkinis height
+blend on the stone's cavity map), with noise, upward faces more; (4) the normal eased to the ground plane's.

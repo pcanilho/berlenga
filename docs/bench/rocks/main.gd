@@ -14,6 +14,7 @@ extends Node3D
 #   --no-rocks            with --world: no rocks at all
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
+#   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
@@ -288,6 +289,9 @@ func _world() -> void:
 		add_child(rocks)
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
+		rocks.ground_material = tm # the stones' feet blend into these layers
+		if args.has("no-ground-blend"):
+			rocks.ground_blend = false
 		if args.has("water"):
 			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")

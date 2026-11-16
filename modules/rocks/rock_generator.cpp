@@ -30,6 +30,8 @@
 
 #include "rock_generator.h"
 
+#include "modules/terrain_deform/terrain_generator_3d.h"
+
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -1851,8 +1853,10 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 // local y; one unit = half the b axis), so they stay on the stone; the weathered rind and fresh breaks (COLOR.g),
 // cavities (COLOR.r); lichen on the open, lit faces, moss on the tops and in the hollows; wetness and snow from the
 // engine's weather lines; a contact band where it meets the ground. INSTANCE_CUSTOM: x ground height (world),
-// y water film (river bed, swash zone), z metres per unit, w a random 0..1 per stone.
+// y water film (river bed, swash zone), z metres per unit, w a random 0..63 plus 64 x the ground's slope under the
+// stone (two 8-bit components, -2..2).
 )";
+	c += TerrainGenerator3D::get_geology_shader_code();
 	c += BaseMaterial3D::get_wetness_shader_code();
 	c += BaseMaterial3D::get_snow_shader_code();
 	c += R"(
@@ -1882,6 +1886,16 @@ uniform vec3 pole_direction = vec3(0.0, 0.0, -1.0);
 uniform float aspect_strength = 1.0;
 uniform vec3 contact_color = vec3(0.07, 0.055, 0.04);
 uniform float contact_height = 0.08;
+// Ground blending (docs/ideas/rocks.md): the foot eased into the ground's own surface over a band this high (metres,
+// grown with the stone's size), the ground's layer from the generator's geology, coloured as the landscape's layers.
+uniform bool ground_blend = false;
+uniform float ground_blend_height = 0.25;
+uniform vec3 ground_rock = vec3(0.107, 0.1, 0.089);
+uniform vec3 ground_scree = vec3(0.141, 0.133, 0.114);
+uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
+uniform vec3 ground_alluvium = vec3(0.064, 0.06, 0.022);
+uniform vec3 ground_sand = vec3(0.448, 0.342, 0.181);
+uniform float ground_alluvium_area = 5.5;
 // The sea's mean level (none below -1e4) and its tidal range in metres: stones reaching it carry the shore zones.
 uniform float sea_level = -100000.0;
 uniform float tide_range = 2.0;
@@ -1894,6 +1908,9 @@ uniform vec4 rock_instance = vec4(0.0);
 varying vec3 v_world;
 varying vec4 v_custom;
 varying float v_scale;
+varying vec3 v_origin;
+varying vec2 v_slope;
+varying float v_random;
 
 float rk_hash3(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
@@ -1980,11 +1997,16 @@ void vertex() {
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_custom = INSTANCE_CUSTOM.z > 0.0 ? INSTANCE_CUSTOM : rock_instance;
 	v_scale = v_custom.z > 0.0 ? v_custom.z : length(MODEL_MATRIX[0].xyz);
+	v_origin = MODEL_MATRIX[3].xyz;
+	float packed = v_custom.w;
+	v_random = packed < 1.0 ? packed : mod(packed, 64.0) / 64.0;
+	float q = floor(packed / 64.0);
+	v_slope = packed >= 64.0 ? vec2(mod(q, 256.0), floor(q / 256.0)) / 255.0 * 4.0 - 2.0 : vec2(0.0);
 }
 
 void fragment() {
 	vec3 lp = vec3(UV.x, UV2.x, UV.y);
-	float seed = v_custom.w * 61.7;
+	float seed = v_random * 61.7;
 	vec3 mp = lp * v_scale + seed; // metres along the stone
 	float cavity = COLOR.r;
 	float fresh = COLOR.g;
@@ -2091,9 +2113,36 @@ void fragment() {
 	// Ground contact: soil splashed up and damp where the stone sits in it.
 	float contact = 0.0;
 	if (v_custom.z > 0.0) {
-		float above = v_world.y - v_custom.x;
+		// The ground under this point: the plane through the stone's foot along the slope there.
+		float above = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
 		contact = 1.0 - smoothstep(0.0, contact_height * max(v_scale, 0.25), above);
 		col = mix(col, contact_color, 0.6 * contact);
+		// Ground blending (CryEngine's terrain layer blend, UE runtime virtual texture blending, Far Cry 5): over a
+		// band above the ground the stone takes the ground's surface, the hollows first and the proud parts last
+		// (height blend on the cavity map, Mishkinis 2013), its edge broken by noise, more on faces turned up (soil
+		// and sand settle there), and the shading normal eased to the ground's so the seam lights alike.
+		if (ground_blend && above < ground_blend_height * 2.5 * sqrt(max(v_scale, 0.25))) {
+			float band = ground_blend_height * sqrt(max(v_scale, 0.25));
+			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
+			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.
+			float gb = max(1.0 - smoothstep(0.45, 0.7, edge), 0.4 * (1.0 - smoothstep(0.7, 1.8, edge)) * smoothstep(0.3, 0.6, rk_fbm3(mp * 7.0 + 5.0)));
+			vec3 gcol = ground_soil;
+			if (terrain_geology_rect.z > 0.0) {
+				vec4 g = terrain_geology(v_world);
+				float rock_w = clamp(g.y, 0.0, 1.0);
+				float scree_w = clamp(g.z, 0.0, 1.0) * (1.0 - rock_w) + 0.45 * clamp(-g.z, 0.0, 1.0) * (1.0 - rock_w);
+				float rest = max(1.0 - rock_w - scree_w, 0.0);
+				float alluv = smoothstep(ground_alluvium_area, ground_alluvium_area + 1.0, g.w);
+				gcol = ground_rock * rock_w + ground_scree * scree_w + mix(ground_soil, ground_alluvium, alluv) * rest;
+				gcol = mix(gcol, ground_sand, clamp(-g.x, 0.0, 1.0));
+			}
+			gcol *= 0.75 + 0.5 * rk_fbm3(mp * 9.0 + 4.0);
+			col = mix(col, gcol, gb);
+			rough = mix(rough, 0.95, gb);
+			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
+			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
+			fresh *= 1.0 - gb;
+		}
 	}
 	col *= mix(0.55, 1.0, cavity);
 
