@@ -113,6 +113,9 @@ uniform float edge_foam : hint_range(0.0, 1.0, 0.01) = 0.35;
 // ruts, tufts): up to this much depth (m), fixed to the ground, so the line
 // runs in and out of little bays and points instead of following the mesh.
 uniform float edge_relief : hint_range(0.0, 0.3, 0.005) = 0.05;
+// Debug: colour the water by its Froude number (blue subcritical, green critical, red supercritical, white
+// at jump toes).
+uniform bool froude_overlay = false;
 // The live window (set by PhysXRiver3D while live_flow runs): a square of
 // shallow-water simulation round the camera. Height is the disturbance on the
 // river's own surface; flow is the total velocity (rg, world xz, m/s) with the
@@ -140,6 +143,8 @@ varying vec3 v_world;
 varying vec2 v_flow;
 varying vec4 v_info;
 varying vec3 v_normal;
+varying vec4 v_wave; // undular train: amplitude, wavenumber, toe arc length, decay length
+varying float v_s;
 
 float r_hash(vec2 p) {
 	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -201,6 +206,17 @@ void vertex() {
 	v_flow = (MODEL_MATRIX * vec4(UV2.x, 0.0, UV2.y, 0.0)).xz;
 	v_info = COLOR;
 	v_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	v_wave = CUSTOM0;
+	v_s = UV.x;
+	{
+		float x = UV.x - CUSTOM0.z;
+		if (CUSTOM0.x > 0.0 && x > 0.0) {
+			// Height only where the mesh can carry it (the slope is drawn per pixel below).
+			float h = CUSTOM0.x * sin(CUSTOM0.y * x) * exp(-x / CUSTOM0.w) * min(x * CUSTOM0.y / PI, 1.0);
+			VERTEX.y += h;
+			v_world.y += h;
+		}
+	}
 	vec2 cuv;
 	float live = live_weight(v_world.xz, cuv);
 	if (live > 0.0) {
@@ -256,6 +272,15 @@ void fragment() {
 		n_mesh = -n_mesh;
 	}
 	slope += live_slope * smoothstep(0.0, 0.15, depth);
+	{
+		// The undular train's slope along the current (stationary waves: d/ds of a sin(kx) e^(-x/L)).
+		float x = v_s - v_wave.z;
+		if (v_wave.x > 0.0 && x > 0.0 && speed > 1e-3) {
+			float e = exp(-x / v_wave.w) * min(x * v_wave.y / PI, 1.0);
+			float dh = v_wave.x * e * (v_wave.y * cos(v_wave.y * x) - sin(v_wave.y * x) / v_wave.w);
+			slope += flow / speed * dh * smoothstep(0.0, 0.2, depth);
+		}
+	}
 	vec3 world_normal = normalize(n_mesh - vec3(slope.x, 0.0, slope.y));
 
 	// White water, broken into lace that rides the current.
@@ -335,6 +360,14 @@ void fragment() {
 	SPECULAR = 0.25 * foam;
 	METALLIC = 0.0;
 	ALPHA = refl.a;
+	if (froude_overlay) {
+		float fr = v_info.a * 4.0;
+		vec3 c = fr < 1.0 ? mix(vec3(0.05, 0.15, 0.9), vec3(0.1, 0.85, 0.2), smoothstep(0.3, 1.0, fr)) : mix(vec3(0.1, 0.85, 0.2), vec3(0.95, 0.1, 0.05), smoothstep(1.0, 2.5, fr));
+		c = v_info.a > 0.99 ? vec3(1.0) : c;
+		EMISSION = c * 0.8;
+		ALBEDO = vec3(0.0);
+		ALPHA = max(edge, 0.85 * step(0.01, edge));
+	}
 #endif
 }
 
@@ -466,6 +499,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_gradually_varied_flow"), &PhysXRiver3D::get_gradually_varied_flow);
 	ClassDB::bind_method(D_METHOD("set_bend_superelevation", "enabled"), &PhysXRiver3D::set_bend_superelevation);
 	ClassDB::bind_method(D_METHOD("get_bend_superelevation"), &PhysXRiver3D::get_bend_superelevation);
+	ClassDB::bind_method(D_METHOD("set_standing_waves", "enabled"), &PhysXRiver3D::set_standing_waves);
+	ClassDB::bind_method(D_METHOD("get_standing_waves"), &PhysXRiver3D::get_standing_waves);
 	ClassDB::bind_method(D_METHOD("get_max_slope"), &PhysXRiver3D::get_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snap_to_ground", "snap"), &PhysXRiver3D::set_snap_to_ground);
 	ClassDB::bind_method(D_METHOD("get_snap_to_ground"), &PhysXRiver3D::get_snap_to_ground);
@@ -560,6 +595,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bend_superelevation"), "set_bend_superelevation", "get_bend_superelevation");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_waves"), "set_standing_waves", "get_standing_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
 	ADD_GROUP("Mouth", "mouth_");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mouth_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_mouth_target", "get_mouth_target");
@@ -614,6 +650,7 @@ RIVER_SETTER(roughness, float, roughness, CLAMP(p_value, 0.005f, 0.5f))
 RIVER_SETTER(max_slope, float, max_slope, MAX(p_value, 0.001f))
 RIVER_SETTER(gradually_varied_flow, bool, gradually_varied_flow, p_value)
 RIVER_SETTER(bend_superelevation, bool, bend_superelevation, p_value)
+RIVER_SETTER(standing_waves, bool, standing_waves, p_value)
 RIVER_SETTER(snap_to_ground, bool, snap_to_ground, p_value)
 RIVER_SETTER(ground_collision_mask, uint32_t, ground_collision_mask, p_value)
 RIVER_SETTER(obstacle_collision_mask, uint32_t, obstacle_collision_mask, p_value)
@@ -2118,6 +2155,7 @@ void PhysXRiver3D::_build() {
 		sec.foam = carried_foam;
 	}
 	_solve_flow(ds);
+	_solve_standing_waves();
 	_build_mesh();
 	_build_fall_effects();
 	live_fields_dirty = true;
@@ -2472,6 +2510,161 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 	}
 }
 
+// Standing waves (docs/ideas/water.md "River standing waves"), baked from the solved profile.
+void PhysXRiver3D::_solve_standing_waves() {
+	const int count = (int)sections.size();
+	const int m = cross_segments;
+	LocalVector<float> mean_depth;
+	mean_depth.resize(count);
+	for (int i = 0; i < count; i++) {
+		Section &sec = sections[i];
+		sec.wave_at.resize(m + 1);
+		for (int j = 0; j <= m; j++) {
+			sec.wave_at[j] = 0.0f;
+		}
+		sec.wave_amp = 0.0f;
+		sec.wave_k = 0.0f;
+		sec.wave_s0 = 0.0f;
+		sec.wave_decay = 1.0f;
+		float area = 0.0f;
+		float wet = 0.0f;
+		const float dn = (sec.width + 2.0f * bank_margin) / m;
+		for (int j = 0; j <= m; j++) {
+			if (sec.depth[j] > 0.0f) {
+				area += sec.depth[j] * dn;
+				wet += dn;
+			}
+		}
+		mean_depth[i] = wet > 1e-4f ? area / wet : 0.0f;
+	}
+	if (!standing_waves || !gradually_varied_flow || count < 3) {
+		return;
+	}
+	// Undular jumps: the stationary train below each toe.
+	for (int i = 1; i < count; i++) {
+		const float fr1 = sections[i].jump;
+		if (fr1 <= 1.0f) {
+			continue;
+		}
+		const int down = MIN(i + 2, count - 1);
+		const float y1 = mean_depth[i - 1];
+		const float y2 = mean_depth[down];
+		const float u2 = sections[down].speed;
+		if (y2 < 0.02f || y2 <= y1) {
+			continue;
+		}
+		const float fr2 = u2 / Math::sqrt(GRAVITY * y2);
+		if (fr2 >= 0.98f) {
+			continue;
+		}
+		// Fr2^2 x = tanh(x), x = k y2 (stationary: the phase speed equals the current).
+		const float f2 = fr2 * fr2;
+		float lo = 1e-3f;
+		float hi = 1.0f / MAX(f2, 1e-3f) + 1.0f;
+		for (int it = 0; it < 40; it++) {
+			const float x = 0.5f * (lo + hi);
+			if (f2 * x < Math::tanh(x)) {
+				lo = x;
+			} else {
+				hi = x;
+			}
+		}
+		const float k = MAX(0.5f * (lo + hi), 0.15f) / y2;
+		const float wavelength = (float)Math::TAU / k;
+		// Undular below Fr1 1.7 (Chanson and Montes 1995); above it the roller takes most of the energy.
+		const float share = fr1 <= 1.7f ? 1.0f : 0.33f;
+		const float amp = MIN(0.4f * (y2 - y1), 0.3f * y2) * share;
+		const float decay = (fr1 <= 1.7f ? 4.0f : 2.0f) * wavelength;
+		const float s0 = sections[i].s;
+		for (int q = i; q < count; q++) {
+			Section &sec = sections[q];
+			const float x = sec.s - s0;
+			if (x > 5.0f * decay || (q > i && (sec.jump > 0.0f || sec.cascade || sec.fall_drop))) {
+				break;
+			}
+			if (amp * Math::exp(-x / decay) > sec.wave_amp * Math::exp(-(sec.s - sec.wave_s0) / sec.wave_decay)) {
+				sec.wave_amp = amp;
+				sec.wave_k = k;
+				sec.wave_s0 = s0;
+				sec.wave_decay = decay;
+			}
+		}
+	}
+	// Cross-waves in supercritical flow (Ippen 1951): each wall's angle into the flow, carried along the
+	// characteristics at the Mach angle, directly and after up to three reflections.
+	LocalVector<float> theta;
+	theta.resize(count);
+	for (int i = 0; i < count; i++) {
+		const int a = MAX(i - 2, 0);
+		const int b = MIN(i + 2, count - 1);
+		const float ds = sections[b].s - sections[a].s;
+		// Each wall moves in by half the narrowing: positive turns into the flow.
+		theta[i] = ds > 1e-4f ? -0.5f * (sections[b].width - sections[a].width) / ds : 0.0f;
+		if (sections[i].cascade || sections[i].fall_drop || sections[i].froude < 1.0f) {
+			theta[i] = 0.0f;
+		}
+	}
+	auto theta_at = [&](int p_from, float p_s) -> float {
+		// Walk upstream from p_from to arc length p_s; the characteristic stops at subcritical water or a step.
+		int q = p_from;
+		while (q > 0 && sections[q].s > p_s) {
+			if (sections[q].froude < 1.0f || sections[q].cascade || sections[q].fall_drop || sections[q].jump > 0.0f) {
+				return 0.0f;
+			}
+			q--;
+		}
+		if (sections[q].s > p_s) {
+			return 0.0f;
+		}
+		const float span = sections[q + 1].s - sections[q].s;
+		const float t = span > 1e-5f ? (p_s - sections[q].s) / span : 0.0f;
+		return Math::lerp(theta[q], theta[q + 1], CLAMP(t, 0.0f, 1.0f));
+	};
+	for (int i = 1; i < count; i++) {
+		Section &sec = sections[i];
+		const float fr = sec.froude;
+		if (fr < 1.05f || sec.cascade || sec.fall_drop || mean_depth[i] < 0.02f) {
+			continue;
+		}
+		const float f2 = fr * fr;
+		// Linear gain, eased in from Fr 1.05 to 1.25 where linear theory breaks down near critical.
+		const float gain = mean_depth[i] * f2 / Math::sqrt(f2 - 1.0f) * CLAMP((fr - 1.05f) / 0.2f, 0.0f, 1.0f);
+		const float tan_b = 1.0f / Math::sqrt(f2 - 1.0f); // tan(asin(1/Fr))
+		const float w = sec.width;
+		const float half = 0.5f * w + bank_margin;
+		float sum = 0.0f;
+		int wet = 0;
+		for (int j = 0; j <= m; j++) {
+			const float n = -half + 2.0f * half * j / m;
+			if (sec.depth[j] <= 0.0f) {
+				continue;
+			}
+			const float d_left = CLAMP(0.5f * w - n, 0.0f, w);
+			const float d_right = w - d_left;
+			const float travel[2][4] = { { d_left, 2.0f * w - d_left, 2.0f * w + d_left, 4.0f * w - d_left }, { d_right, 2.0f * w - d_right, 2.0f * w + d_right, 4.0f * w - d_right } };
+			float h = 0.0f;
+			for (int side = 0; side < 2; side++) {
+				float loss = 1.0f;
+				for (int r = 0; r < 4; r++) {
+					h += loss * theta_at(i, sec.s - travel[side][r] / tan_b);
+					loss *= 0.8f;
+				}
+			}
+			h = CLAMP(gain * h, -0.4f * mean_depth[i], 0.4f * mean_depth[i]);
+			sec.wave_at[j] = h;
+			sum += h;
+			wet++;
+		}
+		// Keep the solved 1D profile: only the pattern across.
+		const float mean = wet > 0 ? sum / wet : 0.0f;
+		for (int j = 0; j <= m; j++) {
+			if (sec.depth[j] > 0.0f) {
+				sec.wave_at[j] -= mean;
+			}
+		}
+	}
+}
+
 void PhysXRiver3D::_build_mesh() {
 	if (mesh_instance == nullptr) {
 		mesh_instance = memnew(MeshInstance3D);
@@ -2506,6 +2699,8 @@ void PhysXRiver3D::_build_mesh() {
 	uvs.resize(count * row);
 	uv2s.resize(count * row);
 	colors.resize(count * row);
+	PackedFloat32Array custom0;
+	custom0.resize(count * row * 4);
 	for (int i = 0; i < count; i++) {
 		const Section &sec = sections[i];
 		const float half = 0.5f * sec.width + bank_margin;
@@ -2513,7 +2708,12 @@ void PhysXRiver3D::_build_mesh() {
 		for (int j = 0; j <= m; j++) {
 			const int k = i * row + j;
 			const float n = -half + 2.0f * half * j / m;
-			verts.set(k, sec.centre + sec.side * n + Vector3(0.0f, sec.tilt * n, 0.0f));
+			const float wave = j < (int)sec.wave_at.size() ? sec.wave_at[j] : 0.0f;
+			verts.set(k, sec.centre + sec.side * n + Vector3(0.0f, sec.tilt * n + wave, 0.0f));
+			custom0.set(k * 4 + 0, sec.wave_amp);
+			custom0.set(k * 4 + 1, sec.wave_k);
+			custom0.set(k * 4 + 2, sec.wave_s0);
+			custom0.set(k * 4 + 3, sec.wave_decay);
 			uvs.set(k, Vector2(sec.s, n));
 			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
 			uv2s.set(k, Vector2(v.x, v.z));
@@ -2524,7 +2724,8 @@ void PhysXRiver3D::_build_mesh() {
 			const bool spills = sec.depth[n < 0.0f ? 0 : m] > 0.0f;
 			const float fade_from = spills ? 0.65f * half : 0.5f * sec.width;
 			const float width_fade = (1.0f - CLAMP((Math::abs(n) - fade_from) / MAX(half - fade_from, 1e-3f), 0.0f, 1.0f)) * sec.mouth_fade;
-			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, 1.0f));
+			// Alpha: the Froude number over 4 (the Froude overlay), up to 0.98; 1 marks a jump's toe.
+			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, sec.jump > 0.0f ? 1.0f : CLAMP(sec.froude * 0.25f, 0.0f, 0.98f)));
 		}
 	}
 	for (int i = 0; i < count; i++) {
@@ -2572,10 +2773,11 @@ void PhysXRiver3D::_build_mesh() {
 	arrays[Mesh::ARRAY_TEX_UV] = uvs;
 	arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
 	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_CUSTOM0] = custom0;
 	arrays[Mesh::ARRAY_INDEX] = indices;
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT);
 	mesh_instance->set_mesh(mesh);
 }
 
@@ -3128,7 +3330,19 @@ float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
 	if (d <= 0.0f) {
 		return -Math::INF;
 	}
-	const float local_y = Math::lerp(sections[i].surface + sections[i].tilt * n, sections[i + 1].surface + sections[i + 1].tilt * n, t);
+	float local_y = Math::lerp(sections[i].surface + sections[i].tilt * n, sections[i + 1].surface + sections[i + 1].tilt * n, t);
+	if (!sections[i].wave_at.is_empty() && !sections[i + 1].wave_at.is_empty()) {
+		local_y += Math::lerp(cross_value(sections[i], sections[i].wave_at, n, bank_margin, cross_segments), cross_value(sections[i + 1], sections[i + 1].wave_at, n, bank_margin, cross_segments), t);
+	}
+	{
+		// The undular train, as the shader draws it.
+		const Section &a = sections[i];
+		const float s = Math::lerp(a.s, sections[i + 1].s, t);
+		const float x = s - a.wave_s0;
+		if (a.wave_amp > 0.0f && x > 0.0f) {
+			local_y += a.wave_amp * Math::sin(a.wave_k * x) * Math::exp(-x / a.wave_decay) * MIN(x * a.wave_k / (float)Math::PI, 1.0f);
+		}
+	}
 	const Transform3D xf = get_global_transform();
 	const Vector3 local = xf.affine_inverse().xform(p_world_pos);
 	return xf.xform(Vector3(local.x, local_y, local.z)).y + _live_height_at(p_world_pos);
