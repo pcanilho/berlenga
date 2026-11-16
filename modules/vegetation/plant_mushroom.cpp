@@ -219,8 +219,9 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.scales = 1.0f;
 			m.stalk_foot = Color(0.36f, 0.27f, 0.18f);
 			m.ring_tint = Color(1.0f, 0.96f, 0.78f); // Cottony white with a yellow edge.
-			m.cap_centre = Color(0.42f, 0.32f, 0.24f);
-			m.cap_margin = Color(1.15f, 1.15f, 1.1f);
+			m.cap_centre = Color(0.4f, 0.27f, 0.2f); // Dark tawny brown over the boss.
+			m.cap_margin = Color(1.22f, 1.25f, 1.3f); // Pale honey yellow at the rim.
+			m.cap_fade = 1.0f; // The brown reaches well out: about half the cap.
 			break;
 		default:
 			break;
@@ -318,7 +319,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		for (int i = 0; i <= prof; i++) {
 			const float x = 1.0f - float(i) / prof;
 			p.push_back(Vector2(R * x, z0 + top_z(x) + curl_z(x)));
-			Color t = p_m.cap_centre.lerp(p_m.cap_margin, Math::smoothstep(0.0f, 0.9f, x));
+			Color t = p_m.cap_centre.lerp(p_m.cap_margin, Math::smoothstep(0.0f, 0.9f, Math::pow(x, 1.0f + p_m.cap_fade)));
 			c.push_back(t);
 		}
 		Builder &pb = builders[SURFACE_PETAL];
@@ -443,7 +444,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 	// thinning out to the margin, each a short pointed cone leaning out from the centre.
 	const int scale_n = int(p_m.scales * Math::lerp(90.0f, 220.0f, MIN(R / 0.05f, 1.0f)));
 	for (int w = 0; w < scale_n; w++) {
-		const float x = 0.75f * Math::pow(_rand(0.0f, 1.0f), 1.8f);
+		const float x = 0.65f * Math::pow(_rand(0.0f, 1.0f), 2.4f);
 		const float a = _rand(0.0f, Math::TAU);
 		const float z = z0 + top_z(x) + curl_z(x);
 		const Vector3 p = cap_point(x, a, z);
@@ -469,10 +470,11 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 		sp.push_back(Vector2(r * 0.55f, r * 0.9f));
 		sp.push_back(Vector2(0.0f, r * 1.7f));
 		LocalVector<Color> sc;
-		const float dark = _rand(0.3f, 0.48f);
-		sc.push_back(Color(dark * 1.25f, dark, dark * 0.75f));
-		sc.push_back(Color(dark * 1.2f, dark * 0.95f, dark * 0.7f));
-		sc.push_back(Color(dark, dark * 0.8f, dark * 0.6f));
+		// Dark brown fibrils (the centre surface is pale, so these factors stay low).
+		const float dark = _rand(0.16f, 0.28f);
+		sc.push_back(Color(dark * 1.3f, dark * 0.95f, dark * 0.6f));
+		sc.push_back(Color(dark * 1.25f, dark * 0.9f, dark * 0.55f));
+		sc.push_back(Color(dark, dark * 0.72f, dark * 0.45f));
 		_add_lathe(SURFACE_CENTRE, one, sp, sc, 5, 0.0f, 1, 0.0f, 1.0f);
 	}
 }

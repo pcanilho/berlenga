@@ -1097,6 +1097,36 @@ mistletoe and brooms, which read from far.
   burrs 2.5-4.5 cm instead of 3.5-7 cm and the bark's furrows half closed rather than three
   quarters (the head had read as melted wax); coppice stool fissures and creases lighter.
 
+### 5p. Bark stories (16 Nov; Paulo's third pick)
+
+What a living stem records of its life, each a few per stand, all modelled on the stem's own
+tubes (bark pushed out or sunk, normals from the same field), so they hold under path tracing.
+`bark_wounds` (0-4) scales how often each appears; 0 (the default while they are tuned) turns them off. Living and
+newly dead standing trees only.
+
+- **Lightning scars**: a strip of bark blown off down the stem, a few centimetres to a hand
+  wide, spiralling with the grain from high in the crown to the ground, broken where the bark
+  held, often with a split down the wood (Taylor 1974, *Lightning effects on the forest
+  complex*; Minko 1975). Tall trees, oaks and conifers most.
+- **Frost cracks**: a radial split up the lower stem of thin-barked broadleaves (oak, lime,
+  beech, ash, maples, horse chestnut), opened again each hard winter, the callus either side
+  building into frost ribs, raised lips a few centimetres high (Kubler 1988, *Frost cracks in
+  stems of trees*; Shigo 1989). Stems over about 25 cm across.
+- **Deer stripping**: red and sika deer peel bark upward with their lower incisors from smooth
+  pole-stage stems at 0.5-1.8 m, leaving bare patches whose top edges end in torn tongues
+  (Gill 1992, *A review of damage by mammals in north temperate forests*; Welch and Scott 1998).
+  Ash, beech, spruce, rowan, willow, sycamore, lime, larch; stems under about 30 cm across.
+- **Squirrel stripping**: grey squirrels strip patches on the upper stem and main limbs of beech,
+  sycamore, oak, birch and larch of 10-40 years, at the crown base (Mayle et al. 2004, Forestry
+  Commission Practice Note 4).
+- **Callus**: every wound older than a couple of years is rimmed by woundwood rolls growing in
+  from its edges, about 3 mm a year in width (Shigo 1989; Neely 1988, *Closure of wounds*).
+- **Resin runs** (conifers): resin wells from a wound's edges and runs down the bark in drips
+  and beads, amber when fresh, crusted whitish when old. Modelled as small glossy tubes and
+  beads on a "resin" surface (LOD 0 and path tracing only).
+- **Dead lower branches** on shaded conifers already come from `dead_branch_keep` (spruce 0.7,
+  fir 0.5).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

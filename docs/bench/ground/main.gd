@@ -240,6 +240,18 @@ func _run_tests() -> void:
 	surface.sync_deformation()
 	var auto_dent := surface.get_dent_at(Vector3(1.0, 0, 1.0)) - surface.get_rim_at(Vector3(1.0, 0, 1.0))
 	_check("a body in ground_deform prints", auto_dent > 0.01, "%.1f cm under the boot" % (auto_dent * 100.0))
+	# With the render loop off the GPU field gets no frames: its read backs wait (one in flight), nothing
+	# overruns, and prints made meanwhile show once it is back on.
+	RenderingServer.render_loop_enabled = false
+	for i in 120:
+		foot.global_position = Vector3(1.0 + i * 0.02, 0.03, 2.0)
+		await get_tree().physics_frame
+	RenderingServer.render_loop_enabled = true
+	for i in 3:
+		await get_tree().process_frame
+	surface.sync_deformation()
+	var late := surface.get_dent_at(Vector3(2.0, 0, 2.0)) - surface.get_rim_at(Vector3(2.0, 0, 2.0))
+	_check("render loop off for 2 s: no crash, prints kept", late > 0.01, "%.1f cm under the boot's path" % (late * 100.0))
 	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
 
 

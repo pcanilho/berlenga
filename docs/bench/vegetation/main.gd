@@ -736,9 +736,10 @@ func _deadwood_checks() -> void:
 	for p in ground.get_placements(3):
 		# Out of the wood's side, its foot 1.5 cm into the bark (PlantSpecies.deadwood_from_wood).
 		var h: Dictionary = wood.get_deadwood_at(p, 0.85, 0.12)
-		if not h.is_empty() and h["side"] >= -0.03 and h["side"] < 0.01:
+		# Up the side to a crack about 20 cm over the litter (or the log's widest girth).
+		if not h.is_empty() and h["side"] >= -0.12 and h["side"] < 0.01 and p.y > height(p.x, p.z) + 0.05:
 			honey_by += 1
-	_check("deadwood: honey fungus clumps come up from the logs' side", ground.get_placements(3).size() > 0 and honey_by == ground.get_placements(3).size(), [ground.get_placements(3).size(), honey_by, nlogs])
+	_check("deadwood: honey fungus clumps come up from the logs' side, above the litter", ground.get_placements(3).size() > 0 and honey_by == ground.get_placements(3).size(), [ground.get_placements(3).size(), honey_by, nlogs])
 	# Root pits stay bare soil: no ground cover inside one, and it grows round it.
 	var pits := []
 	for mmi in wood.find_children("*", "MultiMeshInstance3D", true, false):
@@ -1398,11 +1399,13 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 	# log's bark behind: the clump fills about a third of the frame.
 	var dir := (-away * 0.85 + side * 0.5).normalized()
 	var eye := tuft - dir * 0.4
-	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.15, eye.z)
+	# The clump roots up the log's side (tuft.y): level with its foot, so the stalks show
+	# coming out of the bark under the caps.
+	cam.position = Vector3(eye.x, tuft.y + 0.02, eye.z)
 	cam.fov = 45.0
 	cam.near = 0.05
-	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.06, tuft.z))
-	print("VEG_MUSHROOMS camera eye %s look %s fov 45" % [str(cam.position), str(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.06, tuft.z))])
+	cam.look_at(tuft + Vector3(0, 0.04, 0))
+	print("VEG_MUSHROOMS camera eye %s look %s fov 45" % [str(cam.position), str(tuft + Vector3(0, 0.04, 0))])
 	# Low side light: the sun 22 degrees up, across the view from the open side, so the caps' scales
 	# and the stalks' curves throw shadows.
 	for ch in get_children():
@@ -1412,7 +1415,7 @@ func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies],
 			(ch as DirectionalLight3D).directional_shadow_max_distance = 20.0
 			(ch as DirectionalLight3D).light_angular_distance = 0.5
 		elif ch is WorldEnvironment:
-			(ch as WorldEnvironment).environment.tonemap_exposure = 1.4
+			(ch as WorldEnvironment).environment.tonemap_exposure = 2.4 # Most of a stop over the floor views: the shade under a log.
 
 # --mushrooms=off: hide the floor's mushroom MultiMeshes once the tiles round the camera are in.
 func _hide_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies]) -> void:

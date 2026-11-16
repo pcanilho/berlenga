@@ -1,0 +1,1 @@
+- Water: crisp sea foam: patches have sharp, ragged edges and a lit thickness on their rims (`foam_crisp`, `foam_relief` shader parameters); the thin haze old foam leaves is kept.

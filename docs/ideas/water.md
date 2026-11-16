@@ -3149,3 +3149,38 @@ sheet 1.0, rock 9.1 (sRGB mean); raster 44.
   river bench's fall in shade (`--falls --view=fallfront --sun=-35,180`) the sheet matches, and a cyan glow along
   its lip, light trapped in the medium, is gone.
 - The river bench takes `--fall-run=M` (a sloping face) and `--sun=P,Y`.
+
+## Crisp foam on the open sea (16 Nov, Paulo's pick: "all three, crispy foam first")
+
+Paulo asked whether the sea surface could be better, and for "crispy foam". Next to Sea of Thieves, Black
+Flag, Atlas and Crest our foam reads soft: a blobby outline (the foam amount comes from a low-resolution
+texture, bilinear), a translucent fringe (thin foam fades in over amounts 0.02 to 0.35), and a grey, noisy
+fill (the bubble grain darkens it to about 0.6). The holes and strands themselves are already sharp.
+
+What the references do:
+- **Threshold the amount against a fine pattern** (Sea of Thieves, Ang SIGGRAPH 2018; Atlas, GDC 2019;
+  Unreal's water foam mask): the simulation says how much foam, a high-frequency pattern says where, and a
+  narrow step between them gives a hard, pixel-sharp edge whatever the simulation's resolution.
+- **Foam has thickness** (Crest "foam 3D lighting"): a normal from the foam's gradient, so the rims of
+  patches and holes catch the sun on one side and darken on the other. It reads as a raised white skin on
+  the water, which is most of what "crisp" means at a distance.
+- **White, not grey**: the grain is a small modulation on a bright sheet.
+
+Plan (shader only, no new textures):
+1. `foam_crisp` (0 to 1, default 1): the outline is a threshold of the amount roughened by fine noise,
+   with a step about a pixel wide (from the footprint), so edges are crisp and ragged, not blobby; thin foam
+   is a sparse but opaque web rather than a translucent haze; the grain darkens at most 20 %.
+2. `foam_relief` (0 to 1, default 0.5): the foam's screen-space gradient (dFdx/dFdy of the coverage, solved
+   for world xz) tilts the normal as a 3 cm thick skin, so rims light up toward the sun.
+Cost: two extra noise reads per foam pixel and two derivatives; no extra texture reads.
+
+Built (16 Nov): a hard threshold of the amount (first try) lost the faint haze and scattered specks over clear
+water; a threshold spread evenly over 0 to 1 (per cell) kept the share but turned thin foam into square flakes.
+Kept: the density stepped against a ragged threshold near 0.32 for the patches' edges, max'd with 0.8 of the
+soft density so the haze stays. Relief from screen derivatives as planned.
+
+Docs review: at normal viewing distance off and on were near identical: past a few metres the structure's detail
+is under a pixel and the edge softens again. Fix: after the foam is read, its edge is stepped once more at the
+pixel's own scale (fwidth of the foam, as signed-distance text is sharpened), keeping 0.8 of the soft value.
+Bench `--view=storm_foam_close`: 1.5 m above gale foam, riding the sea, low side sun.
+Check: off/on pair at whitecap distance (storm_foam) and close (storm_plume), PT frame.
