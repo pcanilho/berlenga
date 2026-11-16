@@ -66,6 +66,9 @@ public:
 		FAMILY_PEBBLE, // beach stones, rounded and flattened by the swash
 		FAMILY_CLIFF_BLOCK, // large jointed blocks set into cliff faces
 		FAMILY_CORESTONE, // tor blocks: joint blocks rounded in place by deep weathering, flat sheeting faces
+		FAMILY_SEA_STACK, // a sea stack: one jointed column (x up when stood on end), bedded, notched at the waterline
+		FAMILY_SEA_ARCH, // a sea arch: a bedded wall with the opening the waves cut through it (x the span, y up)
+		FAMILY_SEA_PLATFORM, // a wave-cut platform: a flat bench of bedrock (x along the shore), jointed, with pools
 		FAMILY_MAX,
 	};
 
