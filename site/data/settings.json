@@ -1998,10 +1998,11 @@
    "name": "Woodland mushrooms",
    "settings": [
     "PlantGenerator",
-    "PlantSpecies.patch_ring"
+    "PlantSpecies.patch_ring",
+    "PlantSpecies.deadwood_from_wood"
    ],
    "note": "",
-   "what": "fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows beside deadwood, clouded agaric in fairy-ring arcs.",
+   "what": "fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows in clumps out of the side of deadwood, clouded agaric in fairy-ring arcs.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

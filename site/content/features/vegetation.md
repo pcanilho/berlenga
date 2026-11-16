@@ -106,7 +106,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Stone-top moss: green cushions on the low stone in shade, yellow-olive ones on the sunlit tops.*
 
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
-- **Woodland mushrooms** (`PlantGenerator`, `PlantSpecies.patch_ring`): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows beside deadwood, clouded agaric in fairy-ring arcs.
+- **Woodland mushrooms** (`PlantGenerator`, `PlantSpecies.patch_ring`, `PlantSpecies.deadwood_from_wood`): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows in clumps out of the side of deadwood, clouded agaric in fairy-ring arcs.
 - **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 
