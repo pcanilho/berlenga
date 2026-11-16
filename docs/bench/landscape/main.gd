@@ -34,6 +34,7 @@ extends Node3D
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
+#   --source-lakes        rivers that start at a lake take their discharge from its outlet (PhysXRiver3D.source_lake)
 #   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
 #   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
@@ -1472,6 +1473,15 @@ func _build_water() -> void:
 			if absf(l.global_position.y + l.water_level - lake_level) < absf(lake.global_position.y + lake.water_level - lake_level):
 				lake = l
 	rivers = gen.build_river_paths(self, float(args.get("min-area", "1500000")))
+	if args.has("source-lakes"):
+		for r in rivers:
+			var p0: Vector3 = r.global_transform * r.curve.get_point_position(0)
+			for l in lakes:
+				var lv: float = l.global_position.y + l.water_level
+				if absf(p0.y - lv) < 4.0 and Vector2(p0.x - l.global_position.x, p0.z - l.global_position.z).length() < 600.0:
+					r.source_lake = r.get_path_to(l)
+					_log("source lake: %s from %s at %s" % [r.name, l.name, p0])
+					break
 	_log("water + %d rivers built in %d ms (%d lakes)" % [rivers.size(), Time.get_ticks_msec() - t, lakes.size()])
 	# Contact falls (cascades and horsetails down steep rock) from the generator's fall records.
 	if ClassDB.class_exists("PhysXWaterfalls3D"):
