@@ -239,6 +239,8 @@ private:
 	LocalVector<float> pore; // saturation of the top 2 cm, 0..1, per lattice cell
 	LocalVector<float> water_speed; // m/s of water over the cell, 0 dry
 	LocalVector<float> cell_water; // the saturation and speed the cell was last built with (2 per cell)
+	LocalVector<float> water_depth; // m of water over the cell (the last water update's)
+	LocalVector<float> water_table; // m from the surface down to the water table a sea or lake left (runoff_channels)
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
@@ -265,6 +267,19 @@ private:
 	double wind_accum = 0.0;
 	float wind_usec = 0.0f;
 	void _wind_update(double p_delta);
+	// Runoff channels (docs/ideas/sand.md): water seeping out of soaked sand and rain the ground cannot take run
+	// downhill as sheet flow on a grid of twice the field's texel, gather and carry sand, cutting rills.
+	bool runoff_channels = false;
+	float runoff_time_scale = 1.0f;
+	Vector2i runoff_origin;
+	int runoff_n = 0;
+	LocalVector<float> runoff_depth; // m of flowing water per runoff cell
+	LocalVector<float> runoff_speed; // m/s
+	LocalVector<float> runoff_pending; // m owed to the ground, + cut, - laid down, written in 1 mm steps
+	LocalVector<float> runoff_cut; // m cut (+) or laid down (-) since the cell came in
+	double runoff_accum = 0.0;
+	float runoff_usec = 0.0f;
+	void _runoff_update(double p_delta);
 	float _shelter_flux_at(float p_x, float p_z) const;
 	float _lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const;
 	void _shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride);
@@ -407,6 +422,15 @@ public:
 	float get_water_step_usec() const { return water_usec; }
 	void set_sand_glints(bool p_enabled) { sand_glints = p_enabled; }
 	bool is_sand_glints() const { return sand_glints; }
+	void set_runoff_channels(bool p_enabled);
+	bool is_runoff_channels() const { return runoff_channels; }
+	void set_runoff_time_scale(float p_scale) { runoff_time_scale = MAX(p_scale, 0.0f); }
+	float get_runoff_time_scale() const { return runoff_time_scale; }
+	Vector2 get_runoff_at(const Vector3 &p_position) const; // (depth m, speed m/s)
+	float get_runoff_cut_at(const Vector3 &p_position) const;
+	float get_runoff_step_usec() const { return runoff_usec; }
+	// Bed load of fine sand under a bed shear stress (Pa): Meyer-Peter and Mueller, m2/s.
+	static float bed_load_shear(float p_tau);
 	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }
 	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
 	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
