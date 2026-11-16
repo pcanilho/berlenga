@@ -2314,6 +2314,20 @@
    "topic": "Growth"
   },
   {
+   "name": "Wind-shaped and bank trees",
+   "settings": [
+    "wind_exposure",
+    "krummholz",
+    "ground_slope",
+    "bank_erosion"
+   ],
+   "note": "",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on banks lean their roots downhill, with eroded roots arching off the face.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Clearings",
    "settings": [
     "mask_channel"
