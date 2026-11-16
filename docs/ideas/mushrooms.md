@@ -110,3 +110,13 @@ one. On holes_changed a streaming field places again the tiles near the change (
 being placed), a whole field populates again, and the grass rebuilds its tiles there nearest first
 with the old ones drawn until then. The far cover map is left as it is: the terrain is not drawn
 in the opening, so it never shows there.
+
+## Honey fungus as model quality (16 Nov, docs round 4)
+
+Docs read the caps as glazed bread rolls with pleated rims, the scales as loose dots, and the clump
+as sitting on the bare wood. Armillaria caps are thin-fleshed: convex with an in-rolled margin when
+young, flattening to a low umbo with a thin, wavy, finely lined margin; the scales are fibrillose
+tufts. Built: cap height, flesh and curl by age (flesh 10% of the radius young, 6% old), wavier
+margins only on old caps, hair-like scale filaments lying out from the centre with their tips
+lifted, fibrils one streak per sector (two-sector streaks read as pleats), roughness 0.5. Clumps
+root at trees' tree_deadwood_features (drying checks first, then peel edges) low on the log's side.
