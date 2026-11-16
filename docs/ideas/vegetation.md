@@ -268,6 +268,34 @@ Put to Paulo as a card; nothing built yet.
 - **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
   instead of the colour bake; off by default until the PC measures cost.
 
+## Dune grass that traps sand (built 16 Nov)
+
+Picked by Paulo on 16 Nov (third of the round). Sources: Maun (1998), "Adaptations of plants to
+burial in coastal sand dunes"; Hesp (2002), foredunes and blowouts; Huiskes (1979), Biological
+Flora of the British Isles: Ammophila arenaria; Raupach (1992, 1993) drag partition and Wolfe and
+Nickling (1996) for the frontal area index; Rodwell vol. 5 (SD4 to SD8) for the sets; Stace (2019).
+
+- The sand side is the ground module's (docs/ideas/sand.md, "Dune grass"; 96500d57): a
+  GroundSurface3D lists shelter nodes in `wind_shelters` and asks each
+  `sample_lateral_cover(position)` for lambda, the frontal area per square metre of ground.
+  VegetationField3D answers it: each placed plant's frontal area (`PlantSpecies.wind_frontal_area`
+  times its scale squared; negative, the default, takes 0.4 of its first mesh's height times its
+  mean width, a grass tuft's optical porosity being about 0.6) spread bilinearly over a 1 m grid,
+  rebuilt only when plants change (populate, streamed tiles in or out), read bilinearly, at most
+  0.5. Streamed and populated fields give the same answer (bench check "sand shelter").
+- Three presets, real geometry (plant_dunes.cpp): `PRESET_MARRAM` (45 to 70 rolled, stiff leaves,
+  a third dead and flopped; dense pale panicles with spikelets breaking their outline),
+  `PRESET_LYME_GRASS` (broad flat glaucous leaves, stout spikes), `PRESET_SEA_HOLLY` (spiny
+  holly-like blades: `_add_disc_leaf` gained a saw depth, five to seven sharp points between
+  rounded notches; a low-branching stiff bush, blue heads in spiny ruffs).
+- `PlantGenerator.make_dunes(DUNES_EMBRYO | DUNES_MOBILE | DUNES_FIXED)` by distance to the water
+  (2 to 30 m, 5 to 120 m, 80 to 400 m) and slope under 34 degrees, grasses in clonal patches.
+- Burial: marram grows up through burial (Maun 1998), so a tuft's base sinking into the sand the
+  ground deposits is the right look (nebkha: a hummock round the tuft). Raising plants with the
+  deposit is not done; at the ground's 2 cm an hour it would not show in a session.
+- Next: a bench view with a GroundSurface3D and a marram field under a gale (the ground bench is
+  the sand thread's); the dune landforms themselves are the terrain thread's.
+
 ## Bog and moor plants (built 16 Nov)
 
 Picked by Paulo on 16 Nov (second of the round). Sources: Rydin and Jeglum, The Biology of

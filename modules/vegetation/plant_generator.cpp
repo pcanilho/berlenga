@@ -429,6 +429,15 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_SUNDEW:
 			r_phenology = { 800.0f, 1300.0f, 200.0f, true }; // June to August.
 			return true;
+		case PRESET_MARRAM:
+			r_phenology = { 950.0f, 1450.0f, -1.0f, true }; // July and August; bleached panicles all winter.
+			return true;
+		case PRESET_LYME_GRASS:
+			r_phenology = { 750.0f, 1350.0f, -1.0f, true }; // June to August; straw spikes stand.
+			return true;
+		case PRESET_SEA_HOLLY:
+			r_phenology = { 1000.0f, 1650.0f, -1.0f, true }; // July to September; the heads brown on the stems.
+			return true;
 		default:
 			return false;
 	}
@@ -4062,6 +4071,24 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.0f;
 			t.spots = 0.6f; // The tentacles' bases, red dots over the blade.
 			break;
+		case PRESET_MARRAM:
+		case PRESET_LYME_GRASS:
+			l.shape = LEAF_LINEAR;
+			t.aspect = preset == PRESET_MARRAM ? 0.03f : 0.05f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = preset == PRESET_MARRAM ? 5 : 9; // Marram's rolled leaf shows its ribs.
+			t.vein = leaf_color.lerp(Color(0.8f, 0.78f, 0.62f), 0.3f);
+			t.yellowing = 0.25f; // Straw tips.
+			t.spots = 0.1f;
+			break;
+		case PRESET_SEA_HOLLY:
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.venation = VENATION_PALMATE;
+			t.vein = Color(0.88f, 0.92f, 0.9f); // The white veins and spiny margin.
+			t.yellowing = 0.0f;
+			t.spots = 0.0f;
+			break;
 		case PRESET_LIVERWORT:
 			l.shape = LEAF_SPATULATE;
 			t.aspect = 0.35f;
@@ -5338,6 +5365,21 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.55f, 0.08f, 0.06f); // The tentacles.
 			centre_color = Color(0.85f, 0.82f, 0.78f); // The dew drops.
 			break;
+		case PRESET_MARRAM:
+			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.
+			stem_color = Color(0.4f, 0.42f, 0.28f);
+			centre_color = Color(0.72f, 0.68f, 0.52f); // Pale straw panicles.
+			break;
+		case PRESET_LYME_GRASS:
+			leaf_color = Color(0.42f, 0.54f, 0.58f); // Glaucous blue-grey.
+			stem_color = Color(0.42f, 0.5f, 0.48f);
+			centre_color = Color(0.5f, 0.56f, 0.5f);
+			break;
+		case PRESET_SEA_HOLLY:
+			leaf_color = Color(0.42f, 0.53f, 0.55f); // Waxy glaucous blue-green.
+			stem_color = Color(0.5f, 0.6f, 0.64f);
+			centre_color = Color(0.42f, 0.52f, 0.78f); // Powder-blue heads.
+			break;
 		case PRESET_LIVERWORT:
 			leaf_color = Color(0.1f, 0.26f, 0.06f);
 			stem_color = Color(0.08f, 0.2f, 0.05f);
@@ -5527,6 +5569,15 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_SUNDEW:
 			_build_sundew();
 			break;
+		case PRESET_MARRAM:
+			_build_marram();
+			break;
+		case PRESET_LYME_GRASS:
+			_build_lyme_grass();
+			break;
+		case PRESET_SEA_HOLLY:
+			_build_sea_holly();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -5571,6 +5622,12 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_RIVER_MOSS:
 			leaf_rough = 0.45f;
+			break;
+		case PRESET_LYME_GRASS:
+			leaf_rough = 0.5f; // Waxy bloom.
+			break;
+		case PRESET_SEA_HOLLY:
+			leaf_rough = 0.35f; // Leathery and waxy.
 			break;
 		default:
 			break;
@@ -5659,7 +5716,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -6460,9 +6517,13 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_COTTONGRASS);
 	BIND_ENUM_CONSTANT(PRESET_BOG_ASPHODEL);
 	BIND_ENUM_CONSTANT(PRESET_SUNDEW);
+	BIND_ENUM_CONSTANT(PRESET_MARRAM);
+	BIND_ENUM_CONSTANT(PRESET_LYME_GRASS);
+	BIND_ENUM_CONSTANT(PRESET_SEA_HOLLY);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
@@ -6494,5 +6555,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(BOG_BLANKET);
 	BIND_ENUM_CONSTANT(BOG_VALLEY);
 	BIND_ENUM_CONSTANT(BOG_MAX);
+	BIND_ENUM_CONSTANT(DUNES_EMBRYO);
+	BIND_ENUM_CONSTANT(DUNES_MOBILE);
+	BIND_ENUM_CONSTANT(DUNES_FIXED);
+	BIND_ENUM_CONSTANT(DUNES_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

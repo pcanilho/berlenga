@@ -241,6 +241,8 @@ void VegetationField3D::_clear_generated() {
 	impostor_meshes.clear();
 	set_process_internal(false);
 	placements.clear();
+	shelter_static.clear();
+	shelter_dirty = true;
 	plant_count = 0;
 }
 
@@ -348,6 +350,15 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 		ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
 		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
+		ps.frontal = ps.sp->get_wind_frontal_area();
+		if (ps.frontal < 0.0f) {
+			ps.frontal = 0.0f;
+			if (ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
+				// A tuft's leaves hide about 0.4 of its outline (optical porosity 0.6, grasses).
+				const AABB bb = ps.meshes[0]->get_aabb();
+				ps.frontal = 0.4f * MAX(bb.get_end().y, 0.0f) * 0.5f * (bb.size.x + bb.size.z);
+			}
+		}
 		const Color far_srgb = ps.sp->get_far_color();
 		ps.far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
 		// Fallen wood from the trees module: each mesh's axis (docs/ideas/forest-floor.md, 6.6).
@@ -1260,6 +1271,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						out->far.push_back({ xz, ps.far_color, float(ps.far_color.a * Math::PI * rr * rr), range });
 					}
 					out->species[s].positions.push_back(world.origin);
+					if (ps.frontal > 0.0f) {
+						out->shelter.push_back(Vector3(world.origin.x, world.origin.z, ps.frontal * scale * scale));
+					}
 					out->count++;
 				}
 			}
@@ -2111,6 +2125,10 @@ Error VegetationField3D::populate() {
 	LocalVector<const LocalVector<Deadwood> *> deadwood_lists;
 	for (const TileOut &t : outs) {
 		plant_count += t.count;
+		for (const Vector3 &v : t.shelter) {
+			shelter_static.push_back(v);
+		}
+		shelter_dirty = true;
 		crown_lists.push_back(&t.crowns);
 		far_lists.push_back(&t.far);
 		deadwood_lists.push_back(&t.deadwood);
@@ -2188,6 +2206,58 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const 
 // from where the species grow: each one with a sward_shade weighs it by its density there (its
 // rules, patches and the canopy's shade, as placement sees them), so a grass tile reads the same
 // value whenever it is built. Main thread (it looks up the data map and canopy field nodes).
+// The plants' frontal area index for sand blown by the wind (docs/ideas/vegetation.md, "Dune grass"):
+// each plant's frontal area spread bilinearly over the 1 m grid's nodes, per square metre: Raupach's
+// (1993) lambda, which GroundSurface3D turns into the share of the wind's stress the sand keeps.
+void VegetationField3D::_build_shelter() const {
+	shelter_grid.clear();
+	const float inv = 1.0f / SHELTER_CELL;
+	const float per_m2 = inv * inv;
+	auto splat = [&](const Vector3 &p_v) {
+		const float fx = p_v.x * inv;
+		const float fz = p_v.y * inv;
+		const int x0 = int(Math::floor(fx));
+		const int z0 = int(Math::floor(fz));
+		const float tx = fx - x0;
+		const float tz = fz - z0;
+		const float a = p_v.z * per_m2;
+		shelter_grid[Vector2i(x0, z0)] += a * (1.0f - tx) * (1.0f - tz);
+		shelter_grid[Vector2i(x0 + 1, z0)] += a * tx * (1.0f - tz);
+		shelter_grid[Vector2i(x0, z0 + 1)] += a * (1.0f - tx) * tz;
+		shelter_grid[Vector2i(x0 + 1, z0 + 1)] += a * tx * tz;
+	};
+	for (const Vector3 &v : shelter_static) {
+		splat(v);
+	}
+	for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+		for (const Vector3 &v : kv.value->out.shelter) {
+			splat(v);
+		}
+	}
+	shelter_dirty = false;
+}
+
+float VegetationField3D::sample_lateral_cover(const Vector3 &p_position) const {
+	if (shelter_dirty) {
+		_build_shelter();
+	}
+	if (shelter_grid.is_empty()) {
+		return 0.0f;
+	}
+	const float fx = p_position.x / SHELTER_CELL;
+	const float fz = p_position.z / SHELTER_CELL;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	auto at = [&](int p_x, int p_z) {
+		const float *v = shelter_grid.getptr(Vector2i(p_x, p_z));
+		return v ? *v : 0.0f;
+	};
+	const float l = Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+	return MIN(l, 0.5f); // Past 0.5 the drag partition no longer holds; the sand is still.
+}
+
 void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacles = p_obstacles;
 	obstacle_grid.build(obstacles);
@@ -2669,6 +2739,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			stream_tiles.insert(job->tile, t);
 			plant_count += t->out.count;
 			stream_maps_dirty = true;
+			shelter_dirty = true;
 		}
 		memdelete(job);
 		stream_jobs.remove_at_unordered(i);
@@ -2731,6 +2802,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		stream_tiles.erase(key);
 		stream_maps_dirty = true;
+		shelter_dirty = true;
 	}
 	pending.sort();
 	for (const Pending &p : pending) {
@@ -3055,6 +3127,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
+	ClassDB::bind_method(D_METHOD("sample_lateral_cover", "position"), &VegetationField3D::sample_lateral_cover);
 	ClassDB::bind_method(D_METHOD("get_obstacles"), &VegetationField3D::get_obstacles);
 	ClassDB::bind_method(D_METHOD("set_stone_tops", "tops"), &VegetationField3D::set_stone_tops);
 	ClassDB::bind_method(D_METHOD("get_stone_tops"), &VegetationField3D::get_stone_tops);

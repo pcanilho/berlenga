@@ -1096,6 +1096,23 @@ func _stream_checks() -> void:
 		if ch is MultiMeshInstance3D and ch.multimesh.mesh == field.biome.species[0].meshes[0]:
 			drawn += ch.multimesh.instance_count
 	_check("streaming: tiles around the centre match populate() exactly", ok and drawn == sf.get_placements(0).size(), [frames, sf.get_stream_tile_count(), counts, drawn])
+	# Sand shelter (GroundSurface3D.wind_shelters): the plants' frontal area index, the same from
+	# streamed tiles as from populate(), none where no plant stands.
+	var lam := []
+	var same := true
+	var pos := 0
+	for p in full[0]:
+		if Vector2(p.x, p.z).distance_to(Vector2(-60, -50)) < 25.0 and lam.size() < 40:
+			var a: float = field.sample_lateral_cover(p)
+			var b: float = sf.sample_lateral_cover(p)
+			lam.append(a)
+			same = same and absf(a - b) < 1e-4
+			if a > 0.0:
+				pos += 1
+	var mx := 0.0
+	for v in lam:
+		mx = maxf(mx, v)
+	_check("sand shelter: plants' frontal area index at their feet, 0 to 0.5, streamed same as populated, 0 far off", lam.size() > 10 and pos == lam.size() and mx <= 0.5 and same and field.sample_lateral_cover(Vector3(5000, 0, 5000)) == 0.0, [lam.size(), pos, snappedf(mx, 0.001), same])
 	target.global_position = Vector3(80, 0, 70)
 	frames = await _stream_wait(sf)
 	ok = frames >= 0

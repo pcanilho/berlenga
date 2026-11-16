@@ -109,6 +109,7 @@ private:
 	// while x >= y. Aquatic mosses under and just over the water, dry mosses above the flood line.
 	Vector2 stone_top_water = Vector2();
 	bool follow_flow = false; // Turned so its +X points downstream (downhill), not a random yaw.
+	float wind_frontal_area = -1.0f; // m2 a plant shows the wind at scale 1 (sand shelter); negative: from its mesh bounds.
 	float margin_width = 0.0f;
 	float margin_scale = 1.0f;
 	float margin_lean = 0.0f;
@@ -255,6 +256,11 @@ public:
 		emit_changed();
 	}
 	bool is_follow_flow() const { return follow_flow; }
+	void set_wind_frontal_area(float p_area) {
+		wind_frontal_area = p_area;
+		emit_changed();
+	}
+	float get_wind_frontal_area() const { return wind_frontal_area; }
 	// The weight of a stone top whose dampness is p_damp (0 dry and sunlit .. 1 damp and shaded).
 	float stone_top_damp_weight(float p_damp) const {
 		return stone_top_damp >= 0.0f ? Math::lerp(1.0f, p_damp, stone_top_damp) : Math::lerp(1.0f, 1.0f - p_damp, -stone_top_damp);

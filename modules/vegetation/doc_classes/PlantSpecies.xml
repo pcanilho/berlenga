@@ -299,6 +299,9 @@
 		<member name="wetness_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
 			Topographic wetness index range: about 4 to 7 on hillsides, 10 and above where water collects.
 		</member>
+		<member name="wind_frontal_area" type="float" setter="set_wind_frontal_area" getter="get_wind_frontal_area" default="-1.0">
+			Square metres one plant at scale 1 shows the wind, for the shelter it gives blowing sand ([method VegetationField3D.sample_lateral_cover]). Negative: 0.4 of its first mesh's height times its mean width (a grass tuft's leaves block about that share of its outline). 0: no shelter.
+		</member>
 	</members>
 	<constants>
 		<constant name="RULE_SLOPE" value="0" enum="Rule">

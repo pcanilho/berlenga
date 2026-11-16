@@ -147,6 +147,13 @@
 				Populates at the end of the frame, once.
 			</description>
 		</method>
+		<method name="sample_lateral_cover" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the placed plants' frontal area index at a global point: the area they show the wind ([member PlantSpecies.wind_frontal_area] times each plant's scale squared) per square metre of ground, spread over a 1 m grid, at most 0.5. Put this field in [code]GroundSurface3D.wind_shelters[/code] and its plants shelter blowing sand and trap it (Raupach's drag partition): dune grass builds hummocks round itself.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="density_mask" type="Texture2D" setter="set_density_mask" getter="get_density_mask">

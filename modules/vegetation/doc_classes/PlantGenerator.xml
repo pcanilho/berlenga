@@ -64,6 +64,16 @@
 				Returns the plants of a bog as [PlantSpecies]: sphagnum hummocks and lawns, cotton grass, bog asphodel and sundew, with heather on the hummocks of a blanket bog. They keep to wet, nearly level ground ([constant PlantSpecies.RULE_WETNESS], [constant PlantSpecies.RULE_SLOPE]) and share one patch noise per stand, the hummock species in its patches and the hollow species outside them ([member PlantSpecies.patch_invert]), so hummocks and hollows sort themselves. They do not colour the far ground. Each species has the meta [code]bog[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering, the cotton and the autumn colours.
 			</description>
 		</method>
+		<method name="make_dunes" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.DuneStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of a sand dune zone as [PlantSpecies], placed by distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) on slopes under dry sand's angle of repose: lyme grass and a little marram on the embryo dunes of the strandline, marram tussocks with lyme grass and sea holly on the mobile foredunes, thinning marram with a dry sward and moss on the fixed dunes behind. Grasses grow in clonal patches. Put the [VegetationField3D] in [code]GroundSurface3D.wind_shelters[/code] and the plants shelter the sand and trap it ([method VegetationField3D.sample_lateral_cover]). They do not colour the far ground. Each species has the meta [code]dunes[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering.
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -361,7 +371,16 @@
 		<constant name="PRESET_SUNDEW" value="58" enum="Preset">
 			Round-leaved sundew ([i]Drosera rotundifolia[/i]): a flat rosette 2 to 5 cm across of red, round leaves fringed with glandular hairs, each tipped with a glistening drop; small white flowers on a slender stem in July.
 		</constant>
-		<constant name="PRESET_MAX" value="59" enum="Preset">
+		<constant name="PRESET_MARRAM" value="59" enum="Preset">
+			Marram ([i]Ammophila arenaria[/i]): dense, stiff tussocks of grey-green leaves 45 to 85 cm rolled tight into spines, a third of them dead and straw-coloured; pale, dense, spike-like panicles on stems to a metre in July and August, standing bleached through winter. The grass that builds foredunes by trapping blown sand.
+		</constant>
+		<constant name="PRESET_LYME_GRASS" value="60" enum="Preset">
+			Lyme grass ([i]Leymus arenarius[/i]): loose tufts of broad, flat, glaucous blue-grey leaves 30 to 60 cm, arching; stout spikes 15 to 28 cm, June to August. The pioneer of the embryo dunes on the strandline.
+		</constant>
+		<constant name="PRESET_SEA_HOLLY" value="61" enum="Preset">
+			Sea holly ([i]Eryngium maritimum[/i]): a stiff, waxy, glaucous plant 20 to 40 cm of spiny, holly-like leaves, branching low, with round powder-blue flower heads in ruffs of spiny bracts from July to September.
+		</constant>
+		<constant name="PRESET_MAX" value="62" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -429,6 +448,18 @@
 		</constant>
 		<constant name="BOG_MAX" value="2" enum="BogStand">
 			Number of bog stand types.
+		</constant>
+		<constant name="DUNES_EMBRYO" value="0" enum="DuneStand">
+			Embryo dunes on the strandline, 2 to 30 m from the water: lyme grass, a little marram, sea holly.
+		</constant>
+		<constant name="DUNES_MOBILE" value="1" enum="DuneStand">
+			Mobile (yellow) foredunes, 5 to 120 m from the water: marram tussocks with bare sand between, lyme grass on the seaward foot, sea holly.
+		</constant>
+		<constant name="DUNES_FIXED" value="2" enum="DuneStand">
+			Fixed (grey) dunes, 80 to 400 m from the water: thinning marram, a dry sward, moss, a little sea holly.
+		</constant>
+		<constant name="DUNES_MAX" value="3" enum="DuneStand">
+			Number of dune stand types.
 		</constant>
 	</constants>
 </class>

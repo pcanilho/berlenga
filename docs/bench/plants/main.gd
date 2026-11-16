@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -346,6 +346,7 @@ func _checks() -> void:
 	_stone_checks()
 	_bank_checks()
 	_bog_checks()
+	_dune_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -483,6 +484,38 @@ func _bog_checks() -> void:
 				else:
 					hum += 1
 		_check("bog set %d: wet, gentle ground; species on hummocks and in hollows" % st, ok and hum >= 1 and hol >= 1, [set.size(), hum, hol])
+
+# Dune plants (docs/ideas/vegetation.md, "Dune grass"): sizes, the dune sets by distance to the water.
+func _dune_checks() -> void:
+	var P := PlantGenerator
+	var summer := {"forcing": 1200.0, "day_of_year": 210, "senescence": 0.0}
+	var sizes := {P.PRESET_MARRAM: [0.4, 1.4, 1.5], P.PRESET_LYME_GRASS: [0.25, 1.3, 1.3], P.PRESET_SEA_HOLLY: [0.12, 0.7, 0.7]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		g.season = summer
+		var ok := true
+		var info := []
+		for sd in 4:
+			g.seed = sd
+			var m := g.generate()
+			var bb := m.get_aabb()
+			ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 30000
+			info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.0f to %.0f cm tall, under %.0f cm across, under 30k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	var near := []
+	for st in P.DUNES_MAX:
+		var set := P.make_dunes(st, 1, false)
+		var ok := set.size() >= 3
+		var lo := 1e9
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("dunes") and s.water_distance_range.x > 0.0 and s.slope_range.y <= 36.0 and s.wind_frontal_area < 0.0
+			lo = minf(lo, s.water_distance_range.x)
+		near.append(lo)
+		_check("dune set %d: on land by the water, gentle enough for sand, sheltering it" % st, ok, [set.size(), lo])
+	_check("dune sets run inland: embryo, mobile, fixed", near[0] < near[1] + 0.01 and near[1] < near[2], near)
 
 func _surface_tris(m: Mesh, name: String) -> int:
 	for si in m.get_surface_count():

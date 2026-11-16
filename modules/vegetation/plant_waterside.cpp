@@ -63,7 +63,7 @@ Transform3D ws_base(float p_azimuth, float p_elevation, const Vector3 &p_at = Ve
 }
 } // namespace
 
-void PlantGenerator::_add_disc_leaf(const Transform3D &p_at, float p_radius, float p_cleft, float p_droop, float p_wave, int p_teeth, float p_wind_base, int p_rings, int p_sectors) {
+void PlantGenerator::_add_disc_leaf(const Transform3D &p_at, float p_radius, float p_cleft, float p_droop, float p_wave, int p_teeth, float p_wind_base, int p_rings, int p_sectors, float p_saw) {
 	Builder &b = builders[SURFACE_LEAF];
 	_begin_organ(p_at.origin);
 	const Basis f = p_at.basis.orthonormalized();
@@ -79,8 +79,9 @@ void PlantGenerator::_add_disc_leaf(const Transform3D &p_at, float p_radius, flo
 		const float u = float(r) / p_rings;
 		for (int k = 0; k <= p_sectors; k++) {
 			const float a = a0 + span * k / p_sectors;
-			// Teeth: a small saw round the margin, the basal lobes rounded.
-			const float saw = p_teeth > 0 ? 1.0f - 0.035f * Math::abs(Math::sin(0.5f * p_teeth * a)) : 1.0f;
+			// Teeth: a saw round the margin, sharp points between rounded notches; deep, they are
+			// spiny lobes (sea holly).
+			const float saw = p_teeth > 0 ? 1.0f - p_saw * Math::abs(Math::sin(0.5f * p_teeth * a)) : 1.0f;
 			const float rr = p_radius * u * saw * (1.0f + 0.04f * Math::sin(3.0f * a + ph));
 			const float lx = Math::cos(a) * rr;
 			const float lz = Math::sin(a) * rr;
