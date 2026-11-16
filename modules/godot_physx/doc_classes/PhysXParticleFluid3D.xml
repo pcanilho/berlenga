@@ -112,10 +112,10 @@
 			[PhysXGranular3D] only (hidden on the fluid). Number of dense grid cells along the box's X axis. [code]0[/code] derives it from [member particle_size] at roughly two cells per grain. The MPM fluid grid is block-sparse with a fixed cell size of [code]2 * particle_size[/code], so it ignores this.
 		</member>
 		<member name="mpm_stiffness" type="float" setter="set_mpm_stiffness" getter="get_mpm_stiffness" default="6000.0">
-			MPM solver only. Pressure stiffness of the weakly-compressible fluid. Higher values resist compression harder (less springy, more incompressible) but need more [member mpm_substeps] to stay stable.
+			MPM solver only. Pressure stiffness of the weakly-compressible fluid. Higher values resist compression harder (less springy, more incompressible) but need more substeps to stay stable: each step takes as many as this stiffness needs at the current [member particle_size] (at least [member mpm_substeps], at most 128), so a fine particle size costs more substeps. Past 128 the stiffness is lowered for that step and a warning is printed.
 		</member>
 		<member name="mpm_substeps" type="int" setter="set_mpm_substeps" getter="get_mpm_substeps" default="5">
-			MPM solver only. Simulation substeps per physics frame. More substeps are more stable and more expensive; the grid-density pressure model stays stable at low counts, so the default is deliberately small.
+			MPM solver only. The fewest simulation substeps per step. A step takes more when [member mpm_stiffness] needs them at the current [member particle_size] (up to 128), so raise this only for extra stability, for example with fast colliders.
 		</member>
 		<member name="particle_count" type="int" setter="set_particle_count" getter="get_particle_count" default="4096">
 			Capacity of the particle buffer. For [method spawn] this is also limited by how many fit in [member spawn_region_size] at [member particle_size] spacing; for [member emitting] it is the point at which the oldest particles start being recycled.

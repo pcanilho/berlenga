@@ -95,7 +95,10 @@ void PhysXParticleFluid3D::_mpm_surface_params(float &r_iso, float &r_kernel, fl
 			? MAX(mpm_domain_size.x / MAX(_mpm_resolved_grid_res(), 1), 0.001f) * 0.5f
 			: MAX(particle_size, 0.001f); // fluid: dx = 2 * particle_size, so spacing = particle_size
 	const float rel = particle_size / spacing;
-	r_kernel = CLAMP(particle_size, spacing * 2.0f, spacing * 6.0f); // scatter radius (meters)
+	// Scatter radius (meters). For the fluid, three particle spacings (1.5 grid cells): at two the
+	// surface followed single particles and crinkled into facets; SPH surface reconstruction takes
+	// 2-4 spacings (Zhu & Bridson 2005, Akinci et al. 2012).
+	r_kernel = _is_granular() ? CLAMP(particle_size, spacing * 2.0f, spacing * 6.0f) : spacing * 3.0f;
 	r_boost = CLAMP(rel * rel * rel, 1.0f, 24.0f);
 	r_iso = 0.5f; // fraction of the native packed kernel density (the solver resolves it)
 
@@ -107,7 +110,7 @@ void PhysXParticleFluid3D::_mpm_surface_params(float &r_iso, float &r_kernel, fl
 		// neighbors are needed to cross the surface, so the falling column
 		// fuses -- with no change to the scatter-loop cost, and the dense pool
 		// (well above any threshold) barely moves.
-		r_iso = 0.18f;
+		r_iso = 0.35f; // was 0.18 with a two-spacing kernel; the wider kernel fuses the column by itself
 	}
 }
 
@@ -172,6 +175,31 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 		rs->multimesh_set_mesh(multimesh, particle_mesh->get_rid());
 		rs->multimesh_set_visible_instances(multimesh, 0);
 	}
+}
+
+// The liquid's default look: clear water. Light passes through and bends (n 1.33), the surface reflects
+// 2% head-on (specular 0.354) and is otherwise fully present, so it shows the Fresnel reflection of a
+// real liquid surface rather than a see-through tint, and the water turns blue-green only with depth
+// (pure water's absorption, Pope & Fry 1997, as BaseMaterial3D's transmission_attenuation_color has it).
+// Only the outside is drawn: as a volume (not thin-walled) the surface refracts into the water behind it,
+// and drawn from inside too, every inner triangle edge showed through the stream as a facet.
+static Ref<StandardMaterial3D> make_clear_water_material() {
+	Ref<StandardMaterial3D> m;
+	m.instantiate();
+	m->set_albedo(Color(1, 1, 1));
+	m->set_roughness(0.03f);
+	m->set_specular(0.354f);
+	m->set_feature(BaseMaterial3D::FEATURE_TRANSMISSION, true);
+	m->set_transmission(1.0f);
+	m->set_transmission_thin_walled(false);
+	m->set_transmission_ior(1.33f);
+	m->set_transmission_attenuation_color(Color(0.70f, 0.94f, 0.99f));
+	m->set_transmission_attenuation_distance(1.0f);
+	// Splashes and puddles are a few centimetres thick: the raster refraction bends the view again
+	// where it leaves, as the path tracer does.
+	m->set_transmission_thickness(0.05f);
+	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	return m;
 }
 
 // Resolve a node to an MPM collider. Accepts a CollisionShape3D directly, a
@@ -669,19 +697,7 @@ void PhysXParticleFluid3D::_make_fluid() {
 			// translucent water material. The particle MultiMesh stays hidden.
 			array_mesh = rs->mesh_create();
 			if (water_material.is_null()) {
-				Ref<StandardMaterial3D> m;
-				m.instantiate();
-				m->set_albedo(Color(0.12, 0.42, 0.62, 0.6));
-				m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
-				m->set_metallic(0.1);
-				m->set_roughness(0.06);
-				m->set_feature(BaseMaterial3D::FEATURE_REFRACTION, true);
-				m->set_refraction(0.05);
-				// Marching-tetrahedra output is not guaranteed watertight; render
-				// both sides so a stray inward-facing triangle does not read as a
-				// hole, and so the surface is still there when viewed from under.
-				m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
-				water_material = m;
+				water_material = make_clear_water_material();
 			}
 			array_mesh_instance = rs->instance_create2(array_mesh, get_world_3d()->get_scenario());
 			rs->instance_set_transform(array_mesh_instance, Transform3D());
@@ -779,18 +795,7 @@ void PhysXParticleFluid3D::_make_fluid() {
 	if (pbd_surface) {
 		array_mesh = rs->mesh_create();
 		if (water_material.is_null()) {
-			Ref<StandardMaterial3D> m;
-			m.instantiate();
-			m->set_albedo(Color(0.12, 0.42, 0.62, 0.6));
-			m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
-			m->set_metallic(0.1);
-			m->set_roughness(0.06);
-			m->set_feature(BaseMaterial3D::FEATURE_REFRACTION, true);
-			m->set_refraction(0.05);
-			// Thin fluid features (a stream, a spreading splash) mesh as a thin
-			// shell; render both sides so they do not read as a hollow front face.
-			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
-			water_material = m;
+			water_material = make_clear_water_material();
 		}
 		array_mesh_instance = rs->instance_create2(array_mesh, get_world_3d()->get_scenario());
 		rs->instance_set_transform(array_mesh_instance, Transform3D());
@@ -964,6 +969,32 @@ void PhysXParticleFluid3D::spawn() {
 	_update_render();
 }
 
+// A uniformly random point in the unit sphere (rejection sampling), for the emission sphere: a cube
+// of jitter made the stream leave a round spout as a square column.
+static Vector3 _random_in_sphere() {
+	for (int k = 0; k < 16; k++) {
+		const Vector3 j(Math::randf() * 2.0f - 1.0f, Math::randf() * 2.0f - 1.0f, Math::randf() * 2.0f - 1.0f);
+		if (j.length_squared() <= 1.0f) {
+			return j;
+		}
+	}
+	return Vector3();
+}
+
+// The line a frame's emitted particles are spread along, so a whole batch does not spawn on top of
+// itself: the distance the flow covers this frame, or more where the rate holds more particles than
+// that stretch of the emission box takes at the fluid's own spacing (one particle_size apart), so the
+// stream leaves at the liquid's rest density whatever the rate. Packed denser, the pressure blows the
+// batch apart; the old fixed 4 ms per particle stretched a high rate into a sheet metres long instead.
+Vector3 PhysXParticleFluid3D::_emission_spread(const Vector3 &p_world_vel, double p_delta, int p_count) const {
+	const float speed = p_world_vel.length();
+	const Vector3 dir = speed > 1e-4f ? p_world_vel / speed : Vector3(0, -1, 0);
+	// The emission sphere's cross-section, at least one particle wide.
+	const float r = MAX(emission_radius, particle_size * 0.5f);
+	const float packed = (float)p_count * particle_size * particle_size * particle_size / ((float)Math::PI * r * r);
+	return dir * MAX(speed * (float)p_delta, packed);
+}
+
 void PhysXParticleFluid3D::_emit_step(double p_delta) {
 	_make_fluid();
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
@@ -981,17 +1012,13 @@ void PhysXParticleFluid3D::_emit_step(double p_delta) {
 	const Vector3 origin = xf.origin;
 	const Vector3 world_vel = xf.basis.xform(emission_velocity);
 
+	const Vector3 spread = _emission_spread(world_vel, p_delta, count);
 	Vector<Vector3> positions;
 	positions.resize(count);
 	Vector3 *w = positions.ptrw();
 	for (int i = 0; i < count; i++) {
-		// A jittered point in the emission sphere, nudged along the flow so a
-		// whole batch does not spawn on top of itself.
-		const Vector3 j(
-				Math::randf() * 2.0f - 1.0f,
-				Math::randf() * 2.0f - 1.0f,
-				Math::randf() * 2.0f - 1.0f);
-		w[i] = origin + j * emission_radius + world_vel * (0.004f * (float)i);
+		const Vector3 j = _random_in_sphere();
+		w[i] = origin + j * emission_radius + spread * ((float)i / (float)count);
 	}
 	server->particle_fluid_emit(fluid, positions, world_vel);
 	// What it emitted lives on after `emitting` goes false (a one-shot spill): keep rendering + re-meshing it. Without
@@ -1038,14 +1065,12 @@ void PhysXParticleFluid3D::_mpm_emit_step(double p_delta) {
 	const Transform3D xf = get_global_transform();
 	const Vector3 world_vel = xf.basis.xform(emission_velocity);
 
+	const Vector3 spread = _emission_spread(world_vel, p_delta, count);
 	LocalVector<MPMFluidSolver::EmittedParticle> batch;
 	batch.resize(count);
 	for (int i = 0; i < count; i++) {
-		const Vector3 j(
-				Math::randf() * 2.0f - 1.0f,
-				Math::randf() * 2.0f - 1.0f,
-				Math::randf() * 2.0f - 1.0f);
-		batch[i].position = xf.origin + j * emission_radius + world_vel * (0.004f * (float)i);
+		const Vector3 j = _random_in_sphere();
+		batch[i].position = xf.origin + j * emission_radius + spread * ((float)i / (float)count);
 		batch[i].velocity = world_vel;
 	}
 	mpm->emit(batch);
@@ -1278,8 +1303,7 @@ void PhysXParticleFluid3D::_update_surface_mesh() {
 // translucent surfaces into shadow maps only through a depth prepass that keeps the fully opaque
 // parts, so the surface would cast none at all. A second instance of the same mesh, drawn only into
 // shadow maps with the default opaque material, casts it (as a translucent surface's shadow is cast
-// in Unity and Unreal by default). The path tracer leaves shadow-only instances out and shades the
-// water itself.
+// in Unity and Unreal by default). The path tracer leaves the copy out and shades the water itself.
 void PhysXParticleFluid3D::_make_surface_shadow_instance() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (array_mesh_shadow_instance.is_valid()) {
@@ -1289,6 +1313,9 @@ void PhysXParticleFluid3D::_make_surface_shadow_instance() {
 	rs->instance_set_transform(array_mesh_shadow_instance, Transform3D());
 	rs->instance_set_custom_aabb(array_mesh_shadow_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
 	rs->instance_geometry_set_cast_shadows_setting(array_mesh_shadow_instance, RSE::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+	// Raster only: in the path tracer an opaque copy inside the water would block every shadow ray from
+	// within it, and the water came out black.
+	rs->instance_geometry_set_shadow_renderers(array_mesh_shadow_instance, RSE::SHADOW_RENDERER_RASTERIZER);
 	if (shadow_material.is_null()) {
 		Ref<StandardMaterial3D> m;
 		m.instantiate();

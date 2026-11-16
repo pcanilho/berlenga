@@ -330,7 +330,7 @@ private:
 	void _compute_scales();
 	void _recompute_surface_iso();
 	LocalVector<float> _seed_block(int &r_count) const;
-	void _pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes) const;
+	void _pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes, bool p_warn = true) const;
 	void _pack_colliders(const LocalVector<SphereCollider> &p_colliders, PackedByteArray &r_bytes) const;
 	// Run render work now (local device) or hand it to the render thread (shared).
 	void _dispatch(const Callable &p_call) const;
