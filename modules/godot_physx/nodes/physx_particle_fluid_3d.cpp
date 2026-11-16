@@ -40,6 +40,7 @@
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "scene/3d/gpu_particles_collision_3d.h"
 #include "scene/3d/physics/animatable_body_3d.h"
 #include "scene/3d/physics/collision_object_3d.h"
@@ -174,10 +175,11 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 }
 
 // Resolve a node to an MPM collider. Accepts a CollisionShape3D directly, a
-// CollisionObject3D (uses its first shape), or a GPUParticlesCollisionSDF3D with a
-// baked texture. Sphere, box, capsule, cylinder and infinite-plane map exactly; anything else
-// falls back to a bounding sphere (see mpm_collider_issue).
-static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver &p_solver, MPMFluidSolver::Collider &out) {
+// CollisionObject3D (its first shape, or the shape at p_shape_index, the index a space query
+// reports), or a GPUParticlesCollisionSDF3D with a baked texture. Sphere, box, capsule, cylinder
+// and infinite-plane map exactly; anything else falls back to a bounding sphere (see
+// mpm_collider_issue), or with p_exact_only is not resolved.
+static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver &p_solver, MPMFluidSolver::Collider &out, int p_shape_index = -1, bool p_exact_only = false) {
 	out.velocity = Vector3();
 
 	if (const GPUParticlesCollisionSDF3D *baked = Object::cast_to<GPUParticlesCollisionSDF3D>(p_node)) {
@@ -218,9 +220,14 @@ static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver &p_solver, MPMFl
 		List<uint32_t> owners;
 		co->get_shape_owners(&owners);
 		for (uint32_t owner : owners) {
-			if (co->shape_owner_get_shape_count(owner) > 0) {
-				xf = xf * co->shape_owner_get_transform(owner);
-				shape = co->shape_owner_get_shape(owner, 0);
+			const int count = co->shape_owner_get_shape_count(owner);
+			for (int i = 0; i < count && shape.is_null(); i++) {
+				if (p_shape_index < 0 || co->shape_owner_get_shape_index(owner, i) == p_shape_index) {
+					xf = xf * co->shape_owner_get_transform(owner);
+					shape = co->shape_owner_get_shape(owner, i);
+				}
+			}
+			if (shape.is_valid()) {
 				break;
 			}
 		}
@@ -267,6 +274,9 @@ static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver &p_solver, MPMFl
 		return true;
 	}
 
+	if (p_exact_only) {
+		return false;
+	}
 	// Fallback: bounding sphere from the visual bounds.
 	float radius = 0.5f;
 	if (VisualInstance3D *vi = Object::cast_to<VisualInstance3D>(p_node)) {
@@ -339,6 +349,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 	LocalVector<MPMFluidSolver::Collider> cols;
 	LocalVector<ColliderSource> col_src;
 	HashMap<ObjectID, Vector3> seen_pos;
+	HashSet<ObjectID> explicit_ids;
 	LocalVector<PhysXChunkEmitter3D *> chunk_emitters;
 
 	for (int i = 0; i < mpm_colliders.size() && (int)cols.size() < COLLIDER_BUDGET; i++) {
@@ -356,19 +367,22 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 		}
 
 		RigidBody3D *rb = Object::cast_to<RigidBody3D>(n);
+		const Vector3 origin = n->get_global_position();
 		if (rb != nullptr && !rb->is_freeze_enabled()) {
 			c.velocity = rb->get_linear_velocity();
 		} else if (p_delta > 0.0) {
 			const Vector3 *prev = _mpm_prev_pos.getptr(n->get_instance_id());
-			c.velocity = prev ? (c.position - *prev) / (float)p_delta : Vector3();
+			c.velocity = prev ? (origin - *prev) / (float)p_delta : Vector3();
 		}
-		seen_pos[n->get_instance_id()] = c.position;
+		seen_pos[n->get_instance_id()] = origin;
+		explicit_ids.insert(n->get_instance_id());
 		cols.push_back(c);
 		col_src.push_back(ColliderSource{ n, nullptr, -1 });
 	}
 
-	// Auto colliders: every non-static body overlapping the domain this step,
-	// nearest first, filling whatever the explicit list leaves of the budget.
+	// Auto colliders: every body shape overlapping the domain this step, nearest first, filling
+	// whatever the explicit list leaves of the budget. Each shape of a body is its own collider, so a
+	// basin built from several boxes in one StaticBody3D holds the fluid.
 	if (mpm_auto_colliders && (int)cols.size() < COLLIDER_BUDGET && is_inside_tree()) {
 		Ref<World3D> world = get_world_3d();
 		PhysicsDirectSpaceState3D *ss = world.is_valid() ? world->get_direct_space_state() : nullptr;
@@ -402,31 +416,31 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 				if (n == nullptr) {
 					continue;
 				}
-				// Skip immovable bodies (walls / floor -- list those once); keep
-				// AnimatableBody3D (moving platforms) and every dynamic body.
-				if (Object::cast_to<StaticBody3D>(n) != nullptr && Object::cast_to<AnimatableBody3D>(n) == nullptr) {
-					continue;
-				}
-				if (seen_pos.has(n->get_instance_id())) {
+				if (explicit_ids.has(n->get_instance_id())) {
 					continue; // already fed from the explicit list
 				}
+				// Static bodies (walls, a floor, a basin) only where their shape maps exactly: a
+				// mesh or heightmap there would collide as a rough sphere the fluid could not pass,
+				// so those take a baked GPUParticlesCollisionSDF3D listed in mpm_colliders instead.
+				const bool immovable = Object::cast_to<StaticBody3D>(n) != nullptr && Object::cast_to<AnimatableBody3D>(n) == nullptr;
 				MPMFluidSolver::Collider c;
-				if (!resolve_mpm_collider(n, *mpm, c)) {
+				if (!resolve_mpm_collider(n, *mpm, c, res[h].shape, immovable)) {
 					continue;
 				}
 				RigidBody3D *rb = Object::cast_to<RigidBody3D>(n);
+				const Vector3 origin = n->get_global_position();
 				if (rb != nullptr && !rb->is_freeze_enabled()) {
 					c.velocity = rb->get_linear_velocity();
-				} else if (p_delta > 0.0) {
+				} else if (!immovable && p_delta > 0.0) {
 					const Vector3 *prev = _mpm_prev_pos.getptr(n->get_instance_id());
-					c.velocity = prev ? (c.position - *prev) / (float)p_delta : Vector3();
+					c.velocity = prev ? (origin - *prev) / (float)p_delta : Vector3();
 				}
+				seen_pos[n->get_instance_id()] = origin;
 				acands.push_back(AutoCand{ c, n, (float)(c.position - dcentre).length_squared() });
 			}
 			acands.sort_custom<Closest>();
 			const int take = MIN((int)acands.size(), COLLIDER_BUDGET - (int)cols.size());
 			for (int i = 0; i < take; i++) {
-				seen_pos[acands[i].node->get_instance_id()] = acands[i].c.position;
 				cols.push_back(acands[i].c);
 				col_src.push_back(ColliderSource{ acands[i].node, nullptr, -1 });
 			}
@@ -673,6 +687,7 @@ void PhysXParticleFluid3D::_make_fluid() {
 			rs->instance_set_transform(array_mesh_instance, Transform3D());
 			rs->instance_set_custom_aabb(array_mesh_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
 			_apply_gi_mode(array_mesh_instance);
+			_make_surface_shadow_instance();
 		}
 
 		mpm = memnew(MPMFluidSolver);
@@ -781,6 +796,7 @@ void PhysXParticleFluid3D::_make_fluid() {
 		rs->instance_set_transform(array_mesh_instance, Transform3D());
 		rs->instance_set_custom_aabb(array_mesh_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
 		_apply_gi_mode(array_mesh_instance);
+		_make_surface_shadow_instance();
 
 		// Foam layer: a coarser isosurface over the diffuse particles, drawn as a
 		// whiter, rougher, less transparent skin sitting on the water. Its own
@@ -857,6 +873,10 @@ void PhysXParticleFluid3D::_free_fluid() {
 	}
 	foam_water_material.unref();
 
+	if (array_mesh_shadow_instance.is_valid()) {
+		rs->free_rid(array_mesh_shadow_instance);
+		array_mesh_shadow_instance = RID();
+	}
 	if (array_mesh_instance.is_valid()) {
 		rs->free_rid(array_mesh_instance);
 		array_mesh_instance = RID();
@@ -1252,6 +1272,30 @@ void PhysXParticleFluid3D::_update_surface_mesh() {
 			_commit_iso_mesh(foam_array_mesh, verts, normals, indices, foam_water_material, false, false, _effective_foam_size());
 		}
 	}
+}
+
+// The liquid's shadow in the raster renderer. Its water material is translucent, and Godot draws
+// translucent surfaces into shadow maps only through a depth prepass that keeps the fully opaque
+// parts, so the surface would cast none at all. A second instance of the same mesh, drawn only into
+// shadow maps with the default opaque material, casts it (as a translucent surface's shadow is cast
+// in Unity and Unreal by default). The path tracer leaves shadow-only instances out and shades the
+// water itself.
+void PhysXParticleFluid3D::_make_surface_shadow_instance() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (array_mesh_shadow_instance.is_valid()) {
+		rs->free_rid(array_mesh_shadow_instance);
+	}
+	array_mesh_shadow_instance = rs->instance_create2(array_mesh, get_world_3d()->get_scenario());
+	rs->instance_set_transform(array_mesh_shadow_instance, Transform3D());
+	rs->instance_set_custom_aabb(array_mesh_shadow_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+	rs->instance_geometry_set_cast_shadows_setting(array_mesh_shadow_instance, RSE::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+	if (shadow_material.is_null()) {
+		Ref<StandardMaterial3D> m;
+		m.instantiate();
+		m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+		shadow_material = m;
+	}
+	rs->instance_geometry_set_material_override(array_mesh_shadow_instance, shadow_material->get_rid());
 }
 
 void PhysXParticleFluid3D::_apply_gi_mode(RID p_instance) const {

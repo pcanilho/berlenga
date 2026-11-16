@@ -1,9 +1,9 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|room|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
-# --flow=property:value (a PhysXFlow3D property in the physx shot, e.g. --flow=ambient_scattering:1)
+# --flow=property:value (a PhysXFlow3D property in the physx shot, or a PhysXParticleFluid3D one in the fluid shot)
 # --sky (the physx shot under a procedural sky that is also its ambient light)
 # --sun=pitch,yaw (the physx shot's sun, in degrees)
 # --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
@@ -436,6 +436,46 @@ func shot_physx() -> void:
 
 # A small lit scene --far metres from the world origin on x and z (try 65536), for
 # rendering/pathtracing/relative_origin_grid on and off.
+# A block of PhysX particle fluid dropped onto a lit, slightly glossy floor next to a low step, at the default look,
+# so its shadow and its reflection both read. The floor and a low step are static boxes the fluid finds
+# by itself (mpm_auto_colliders).
+func shot_fluid() -> void:
+	if not ClassDB.class_exists("PhysXParticleFluid3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	var s := Sky.new()
+	s.sky_material = ProceduralSkyMaterial.new()
+	env.sky = s
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ssr_enabled = true
+	camera(Vector3(0.35, 0.6, 1.7), Vector3(-0.05, 0.18, 0), 45)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-30, 150, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.light_energy = 1.6
+	sun.shadow_enabled = true
+	add_child(sun)
+	var floor_mat := mat(Color(0.42, 0.43, 0.45), 0.15)
+	for b in [[Vector3(12, 0.2, 12), Vector3(0, -0.1, 0)], [Vector3(0.5, 0.1, 1.2), Vector3(0.55, 0.05, -0.2)]]:
+		var body := StaticBody3D.new()
+		var cs := CollisionShape3D.new()
+		var bs := BoxShape3D.new()
+		bs.size = b[0]
+		cs.shape = bs
+		body.add_child(cs)
+		body.position = b[1]
+		add_child(body)
+		box(b[0], b[1], floor_mat)
+	var fluid = ClassDB.instantiate("PhysXParticleFluid3D")
+	fluid.position = Vector3(-0.25, 0.95, 0.0)
+	fluid.particle_size = 0.025
+	fluid.particle_count = 60000
+	fluid.spawn_region_size = Vector3(0.45, 0.5, 0.45)
+	for k in flow_props:
+		fluid.set(k, flow_props[k])
+	add_child(fluid)
+
 func shot_far() -> void:
 	env.background_color = Color(0.25, 0.3, 0.4)
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
