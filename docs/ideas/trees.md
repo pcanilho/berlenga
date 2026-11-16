@@ -1134,6 +1134,24 @@ newly dead standing trees only.
 - **Dead lower branches** on shaded conifers already come from `dead_branch_keep` (spruce 0.7,
   fir 0.5).
 
+### 5q. Hard places (research, 16 Nov; on a card)
+
+The last item of 5m. Sources: Pirk et al., *Plastic Trees* (SIGGRAPH 2012: a grown tree adapts
+its skeleton to obstacles and light after the fact, bending and pruning branches); Palubicki et
+al. 2009 (self-organizing trees: buds compete for space and light, so a crown grows away from
+an obstacle); Li et al., *Rhizomorph* (2023: roots grown with soil and obstacles). In nature:
+roots over rock follow the stone surface and stay thick where exposed (they turn bark-covered,
+grey and ridged); trees on a cut bank or stream bank show their laterals arching down the face.
+Wind-flagged trees keep branches only on the lee side (ice and sand abrasion kill windward
+buds); krummholz is the low mat form at the tree line, a skirt of layered branches under the
+snow line and a few flagged stems above it.
+
+Plan (TreeGenerator only): an obstacle input (RockField3D.get_stones and the terrain height
+and slope at the root collar) lets surface roots drape over stones and down banks; a
+`prevailing_wind` direction and `exposure` turn on bud death on the windward side and, near the
+tree line, the krummholz skirt. Stands at the tree line and on coasts set exposure from height
+and distance to the sea.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
