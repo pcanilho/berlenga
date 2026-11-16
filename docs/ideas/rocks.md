@@ -259,3 +259,14 @@ Nat. Commun. 2015; Havasi-Tóth and Fehér arXiv 2310.06932; Peytavie et al. CGF
 al. SIGGRAPH 1999; Evans and Hungr 1993; Kirkby and Statham 1975; Priest 1993; Epic "PCG in
 Electric Dreams"; SideFX rock generator tutorials; GDC 2018 Far Cry 5 world generation; GDC 2017
 Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (karren); Benn and Evans 2010 (striae, faceted clasts); Migoń 2006 (granite landforms); Kulander et al. 1990 (fracture surfaces); Linton 1955 and Twidale 1982 (tors); Twidale and Corbin 1963 (gnammas); Trenhaile 1987, Sunamura 1992 (rock coasts); itch.io ROCKGEN 2024, rocks-bitch, mooham3d rockgen.
+
+### Docs review fixes (16 Nov)
+
+- Pieces were 1.5x the stone: the breakable copy was added before its transform, so it spawned at scale 1. Now
+  the transform is set first and hulls are scaled; the bench test checks pieces sum to the stone's volume and fit
+  its box (0.893 of 0.896 m3).
+- Pieces sunk in the ground stay put (`buried_below_y`), and the shatter impulse is 2.5 m/s, so a block breaks
+  into a pile where it stood instead of a spray.
+- Glossy crystals (quartz and a third of the feldspars, the cleavage faces) tilt up to about 45 degrees with
+  roughness 0.12: under a low sun a scatter of them flash, raster and path traced alike. A true glint BRDF
+  (Chermain et al. 2020) is the next round.

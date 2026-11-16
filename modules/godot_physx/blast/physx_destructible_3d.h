@@ -282,6 +282,12 @@ public:
 	// gap, missing the pile entirely) instead of accumulating forever.
 	// Default is low enough not to trigger on an ordinary scene; set it to
 	// match this scene's actual floor/void.
+	// Pieces whose middle starts below this world height stay where they are (static, no kick): the part of an
+	// object set into the ground (a half-buried stone), which would otherwise start inside the terrain and be
+	// pushed down through it. The default, far below anything, turns this off.
+	void set_buried_below_y(float p_y) { buried_below_y = p_y; }
+	float get_buried_below_y() const { return buried_below_y; }
+
 	void set_kill_y(float p_y) { kill_y = p_y; }
 	float get_kill_y() const { return kill_y; }
 
@@ -390,6 +396,7 @@ private:
 	float impact_damage_scale = 1.0f;
 	float impact_radius = 5.0f;
 	float kill_y = -1000.0f;
+	float buried_below_y = -1.0e9f;
 	float piece_lifetime = 0.0f;
 	float piece_shrink_time = 0.0f;
 	bool freeze_when_asleep = false;

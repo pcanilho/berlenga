@@ -101,6 +101,9 @@ public:
 		RID directional_buffer; // LightStorage::get_directional_light_buffer()
 		RID directional_shadow_atlas; // LightStorage::directional_shadow_get_texture()
 		Transform3D world_to_view; // meters
+		// Blend each frame's scattered light with the last frames' (reprojected, clamped to this
+		// frame's neighbourhood), moving the march's start offset every frame: no step banding.
+		bool temporal = false;
 	};
 
 	// The gas's shadow from the sun onto the scene (a Beer shadow map): asked for with enabled and
@@ -127,6 +130,15 @@ private:
 	// The scattered light at the scattering resolution (rgb) + scene distance (a).
 	RID scatter_texture;
 	Size2i scatter_size;
+	// Temporal blending: two history textures at the scattering resolution, used in turn.
+	RID temporal_shader;
+	RID temporal_pipeline;
+	RID history[2];
+	int history_index = 0;
+	Size2i history_size;
+	bool history_valid = false;
+	uint64_t temporal_frame = UINT64_MAX;
+	Projection prev_view_projection;
 	RID linear_sampler;
 	RID point_sampler;
 	RID shadow_sampler;

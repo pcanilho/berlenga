@@ -979,10 +979,6 @@ float bubbles_under(vec2 world_xz, vec3 d, vec3 n) {
 	return smoothstep(0.12, 0.6, b / 3.0) * smoothstep(0.15, 0.4, -d.y);
 }
 
-// The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
-// Jacobian test), a mass of churned white water rides the crest's front, about a fifth to a third of the
-// crest's height (Duncan 1981: the roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy
-// and boiling, leaning forward along the waves' travel.
 // Value noise's gradient (Quilez), for the roller's churn.
 vec2 foam_noise_grad(vec2 p) {
 	vec2 i = floor(p);
@@ -996,35 +992,65 @@ vec2 foam_noise_grad(vec2 p) {
 	return du * (vec2(b - a, c - a) + (a - b - c + d) * u.yx);
 }
 
+// The height of a breaking crest above its local mean, for its roller. A whitecap on the chop rides wherever
+// the long swell puts it: measured from mean sea level, the chop breaking in a swell trough (a few hundred
+// metres of the sea at once, in a gale) would get no roller. The chop's crest (the two shortest cascades,
+// up to a couple of hundred metres) and the swell's are counted each from its own mean.
+float roller_crest(vec2 world_xz) {
+	float h_short = ocean_tex(ocean_height_tex, world_xz).r + cascade_tex(cascade_height_1, cascade_domain_1, world_xz).r;
+	float h_long = 0.0;
+	if (wave_cascade_count > 2) {
+		h_long += cascade_tex(cascade_height_2, cascade_domain_2, world_xz).r;
+	}
+	if (wave_cascade_count > 3) {
+		h_long += cascade_tex(cascade_height_3, cascade_domain_3, world_xz).r;
+	}
+	return max(h_short, 0.0) + max(h_long, 0.0);
+}
+
 // r_grad: the slope of the roller's churn (its fine part; the fold and the crest vary slowly).
-float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out vec2 r_grad) {
+float roller_height_grad(vec2 world_xz, vec4 der, vec3 disp, float crest, out vec2 r_grad, out float r_fold) {
 	r_grad = vec2(0.0);
+	r_fold = 0.0;
 	if (roller_strength <= 0.0 || wave_cascade_count < 2 || foam_crest_threshold < -50.0 || crest <= 0.0) {
 		return 0.0;
 	}
 	float s = -choppiness;
 	float jacobian = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * disp.b * disp.b;
-	float b = clamp((foam_crest_threshold - jacobian) / 0.35, 0.0, 1.0);
+	// Over a wide band of the fold, so the mound rises gently (a fold that went from none to full within a
+	// mesh cell made cliffs the foam smeared down).
+	float b = smoothstep(0.0, 1.0, (foam_crest_threshold - jacobian) / 0.5);
+	// The fold lasts a fraction of a second, a spilling roller several (it rides the crest while the wave
+	// keeps breaking; Duncan 1981). Fresh, dense persistent foam on the crest keeps it going after the fold
+	// has passed: it fades as that foam drains, and with the crest height as the foam slides off the back.
+	b = max(b, smoothstep(0.45, 0.85, ocean_foam_all(world_xz)));
+	r_fold = b;
 	if (b <= 0.0) {
 		return 0.0;
 	}
-	// Churned: two octaves boiling over a second or two, drifting with the crest.
+	// Churned: octaves boiling over a second or two, drifting with the crest; the finest (bubbly, a few cm)
+	// only in the slope, the mesh being coarser.
 	vec2 q = world_xz * 1.1 - roller_dir * water_time * 1.2;
 	vec2 q1 = q + vec2(0.0, water_time * 0.7);
 	vec2 q2 = q * 2.3 - vec2(water_time * 1.1, 3.0);
+	vec2 q3 = q * 7.1 + vec2(water_time * 2.3, -water_time * 1.7);
+	vec2 q4 = q * 17.3 - vec2(water_time * 3.1, 5.0);
 	float churn = 0.6 * foam_value_noise(q1) + 0.4 * foam_value_noise(q2);
-	float k = roller_strength * 0.25 * crest * sqrt(b);
-	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2));
+	float k = roller_strength * 0.5 * crest * sqrt(b);
+	r_grad = k * 0.9 * (0.6 * 1.1 * foam_noise_grad(q1) + 0.4 * 1.1 * 2.3 * foam_noise_grad(q2))
+			+ crest * sqrt(b) * roller_strength * (0.012 * 1.1 * 7.1 * foam_noise_grad(q3) + 0.005 * 1.1 * 17.3 * foam_noise_grad(q4));
 	return k * (0.45 + 0.9 * churn);
 }
 
 // The roller on a breaking crest at world_xz: where the summed displacement folds (the crest foam's
-// Jacobian test), a mass of churned white water rides the crest's front, about a fifth to a third of the
-// crest's height (Duncan 1981: the roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy
-// and boiling, leaning forward along the waves' travel.
+// Jacobian test, or fresh dense foam just after it), a mass of churned white water rides the crest's front:
+// on average about half the crest's height above its mean, a fifth of the wave's height (Duncan 1981: the
+// roller of a spilling breaker is 0.1 to 0.3 of the wave height), lumpy and boiling, leaning forward along
+// the waves' travel.
 float roller_height(vec2 world_xz, vec4 der, vec3 disp, float crest) {
 	vec2 g;
-	return roller_height_grad(world_xz, der, disp, crest, g);
+	float f;
+	return roller_height_grad(world_xz, der, disp, crest, g, f);
 }
 
 float foam_at(vec2 world_xz) {
@@ -1296,7 +1322,7 @@ void vertex() {
 	vec3 so = surface_offset(world_pos.xz);
 	VERTEX += so;
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
-		float rh = roller_height(world_pos.xz, ocean_deriv_all(world_pos.xz), ocean_disp_all(world_pos.xz).rgb, max(ocean_height_all(world_pos.xz).r, 0.0));
+		float rh = roller_height(world_pos.xz, ocean_deriv_all(world_pos.xz), ocean_disp_all(world_pos.xz).rgb, roller_crest(world_pos.xz));
 		// Raised, and thrown a little ahead of the crest.
 		VERTEX += (inverse(MODEL_MATRIX) * vec4(roller_dir.x * rh * 0.4, rh, roller_dir.y * rh * 0.4, 0.0)).xyz;
 	}
@@ -1392,8 +1418,11 @@ void fragment() {
 		if (roller_strength > 0.0 && foam > 0.05) {
 			// The roller's churn per pixel (its lumps are finer than the mesh): its analytic slope.
 			vec2 g;
-			roller_height_grad(v_rest_xz, der, disp, max(ocean_height_all(v_rest_xz).r, 0.0), g);
+			float fold;
+			roller_height_grad(v_rest_xz, der, disp, roller_crest(v_rest_xz), g, fold);
 			world_normal = normalize(world_normal - vec3(g.x, 0.0, g.y));
+			// The roller is fresh, churning foam right through: no aged lace holes in it.
+			foam = max(foam, smoothstep(0.15, 0.6, fold));
 		}
 		if (foam > 0.01) {
 			// The foam's bubbles tilt the normal under it: its grain catches the light.
@@ -3538,7 +3567,8 @@ void PhysXWaterSurface3D::_update_crest_spray() {
 	if (crest_spume_node->get_amount() != spume_amount) {
 		crest_spume_node->set_amount(spume_amount);
 	}
-	crest_spume_node->set_amount_ratio(crest_spray_node->get_amount_ratio());
+	// Spume sheets need a near-gale (Beaufort 7 and up: "foam begins to be blown in streaks", spindrift from 8).
+	crest_spume_node->set_amount_ratio(crest_spray_node->get_amount_ratio() * Math::smoothstep(14.0f, 20.0f, wind_speed));
 	crest_spume_node->set_visibility_aabb(box.grow(0.6f * wind_speed * 2.0f + 6.0f));
 	crest_spume_node->set_emitting(true);
 }
@@ -3575,8 +3605,8 @@ void PhysXWaterSurface3D::_make_crest_spume() {
 	fade->set_color(0, Color(1, 1, 1, 0.0f));
 	fade->set_offset(1, 1.0f);
 	fade->set_color(1, Color(1, 1, 1, 0.0f));
-	fade->add_point(0.1f, Color(1, 1, 1, 0.6f));
-	fade->add_point(0.5f, Color(1, 1, 1, 0.3f));
+	fade->add_point(0.1f, Color(1, 1, 1, 0.4f));
+	fade->add_point(0.5f, Color(1, 1, 1, 0.2f));
 	Ref<GradientTexture1D> fade_tex;
 	fade_tex.instantiate();
 	fade_tex->set_gradient(fade);

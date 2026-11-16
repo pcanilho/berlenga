@@ -115,6 +115,9 @@
 		<member name="scattering_strength" type="float" setter="set_scattering_strength" getter="get_scattering_strength" default="1.0">
 			With [member light_scattering], a multiplier on the light the gas scatters. The glow is colored by [member smoke_color].
 		</member>
+		<member name="scattering_temporal" type="bool" setter="set_scattering_temporal" getter="is_scattering_temporal" default="false">
+			When enabled, the light scattering pass ([member light_scattering], [member ambient_scattering], [member sun_scattering]) moves its march's start offset every frame and blends the result with the previous frames, reprojected and clamped to the current frame's neighbourhood, as volumetric fog does. The step pattern then averages out instead of showing as bands at the gas's edges. History is dropped where the scene behind the gas moves, and when the pass runs for more than one view in a frame only the first view is blended.
+		</member>
 		<member name="shadow_steps" type="int" setter="set_shadow_steps" getter="get_shadow_steps" default="48">
 			How far the self-shadowing reaches toward the light, in steps of three quarters of a cell (48 is about 1.8 m at the default [member cell_size]). Too few for the gas's width leaves it lit almost evenly. [code]0[/code] turns self-shadowing off.
 		</member>

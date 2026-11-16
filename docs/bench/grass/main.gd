@@ -482,9 +482,11 @@ void fragment() {
 		grass.trample_recovery = 0.5
 
 	cam = Camera3D.new()
-	cam.position = Vector3(6, height(6, 20) + 1.7, 20)
+	# GRASS_EYE=h: the eye h metres up instead of 1.7 (with --far-match: the sward seen more steeply).
+	var eye_h := float(OS.get_environment("GRASS_EYE")) if OS.get_environment("GRASS_EYE") != "" else 1.7
+	cam.position = Vector3(6, height(6, 20) + eye_h, 20)
 	add_child(cam)
-	cam.look_at(Vector3(0, -0.5, -8))
+	cam.look_at(Vector3(0, -0.5 - 0.6 * (eye_h - 1.7), -8))
 	if (trample or close) and not test:
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)

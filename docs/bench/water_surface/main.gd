@@ -16,6 +16,7 @@ extends Node3D
 #                   toward the sun from 9 m up, through the crests; storm_low looks downwind from 3.5 m at 20 m/s
 #                   (the windrows run away from the viewer)
 #   --view=sea_level  eye 1 m above a moderate sea (5 m/s), into a low sun: near crests in silhouette
+#   --view=storm_roller 1.75 m up, across the wind at the front face of spilling crests, low side sun (20 degrees)
 #   --view=storm_plume 4 m up, steeply down on a fresh whitecap and its turquoise bubble plume (as storm_foam)
 #   --view=storm_foam  13 m/s deep sea from 8 m up, 25 degrees down, sun to the side (--sun-pitch=20): whitecaps ageing to lace
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
@@ -253,6 +254,10 @@ func _ready() -> void:
 	if view == "boat_sun":
 		# Low, ahead of the camera: the glitter path runs down the wake and lights up its waves.
 		sun.look_at_from_position(Vector3.ZERO, Vector3(36.0, -10.0, 28.0))
+	elif view == "storm_roller":
+		# 20 degrees up, from downwind: the light falls on the crests' front faces, side on to the camera.
+		var wdr := Vector2(-0.3, 1.0).normalized()
+		sun.look_at_from_position(Vector3.ZERO, Vector3(-wdr.x, -tan(deg_to_rad(20.0)), -wdr.y))
 	add_child(sun)
 
 	# Sand: a 200 m slab sloping down away from the camera, from dry beach out to about 9 m of water, with a few rocks.
@@ -327,7 +332,7 @@ func _ready() -> void:
 		water.set("render_extent", 3000.0)
 		if view == "storm_low":
 			water.set("wind_speed", 20.0)
-		elif view == "storm_foam" or view == "storm_plume":
+		elif view == "storm_foam" or view == "storm_plume" or view == "storm_roller":
 			water.set("wind_speed", 13.0) # Beaufort 6: whitecaps everywhere, no gale streaks yet
 		elif view == "storm_glitter":
 			water.set("wind_speed", 8.0)
@@ -443,6 +448,12 @@ func _ready() -> void:
 			var side_p := Vector3(to_sun_p.z, 0.0, -to_sun_p.x).normalized()
 			var right_p := side_p.cross(Vector3.UP)
 			cam.look_at_from_position(side_p * 4.0 - right_p * 0.5 + Vector3(0, 4.0, 0), side_p * 8.5 + right_p * 0.5)
+		"storm_roller":
+			# 1.75 m above the mean sea, looking across the wind: spilling crests stand in profile, their rollers
+			# against the darker wave faces behind.
+			var wdc := Vector2(-0.3, 1.0).normalized()
+			var across := Vector3(wdc.y, 0.0, -wdc.x)
+			cam.look_at_from_position(Vector3(0, 1.75, 0.0), across * 18.0 + Vector3(0, 0.2, 0))
 		"sea_level":
 			# Eye 1 m above the mean sea, looking across a moderate sea at the low sun: the near crests stand in
 			# silhouette against the sky and the glitter.
