@@ -268,6 +268,33 @@ Put to Paulo as a card; nothing built yet.
 - **Far plants as real volume.** Unreal 5.7 Nanite Foliage style aggregates for distant clumps
   instead of the colour bake; off by default until the PC measures cost.
 
+## Far plants as volume (built 16 Nov, off by default)
+
+Picked by Paulo on 16 Nov (fourth of the round). Sources: Unreal 5.7's Nanite Foliage, which
+voxelises distant foliage so a forest keeps its mass instead of thinning to cards (Epic docs
+"Nanite Foliage"; 80.lv on the voxel representation); Loubet and Neyret (2017), "Hybrid
+mesh-volume LoDs for all-scale pre-filtering of complex 3D assets" (geometry near, volume far);
+Neyret (1998) volumetric textures; Bako et al. (2023), "Deep Appearance Prefiltering".
+
+- Before: a species past its `visibility_range` leaves only the far colour on the ground (the
+  cover bake), so bracken, heather and tall herbs flatten into paint past 15 to 30 m, and the
+  silhouette of a fern bank against the slope is gone.
+- `VegetationField3D.far_volume` (off), `far_volume_range` (150 m), `far_volume_cell` (0.3 m):
+  per tile and species, each placed plant's mesh bounds fill an ellipsoid of leaf cover over its
+  foot; covers add on the voxel grid and a voxel is solid with probability 1 - exp(-cover)
+  (Beer-Lambert, a fixed hash: a thin stand stays porous and never flickers); the solid voxels'
+  faces open to the air make the mesh, corners jittered by a hash of their position (shared by all
+  faces there, so the shell stays closed) so it reads lumpy, not boxy; colour is the species' far
+  colour, darker three voxels down into the stand. Plain opaque geometry with vertex colour: the
+  path tracer sees exactly what raster draws. It crossfades in from 0.85 of the range (dither,
+  fade Self) as the plant shader thins the plants.
+- Bench: vegetation `--far-volume[=off]`, bracken and heather (25 and 18 m ranges) down the
+  256 m valley from eye height: 127 tile shells, 283k triangles for the whole map.
+- Not yet: coarser cells with distance (a second shell at 2x cell past half the range would
+  roughly quarter the triangles); per-voxel colour from the plants' real colours (it uses the
+  single far colour); shells in the cover map's far band. PC: GPU cost against the far colour
+  alone, and a denoised PT pair, before it can default on.
+
 ## Dune grass that traps sand (built 16 Nov)
 
 Picked by Paulo on 16 Nov (third of the round). Sources: Maun (1998), "Adaptations of plants to

@@ -24,6 +24,7 @@ var out := ""
 var deadwood_view := false
 var stone_view := "" # --stones=scree|river|shore|stream: plants between stones (PlantGenerator.make_stones).
 var stone_plants := true # --stones-off: the same stones, no plants.
+var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 without (--far-volume=off).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
@@ -66,6 +67,8 @@ func _ready() -> void:
 		elif a.begins_with("--stones="):
 			stone_view = a.substr(9)
 			size = 48.0
+		elif a.begins_with("--far-volume"):
+			far_volume_view = 2 if a == "--far-volume=off" else 1
 		elif a == "--stones-off":
 			stone_plants = false
 		elif a.begins_with("--mushrooms"):
@@ -229,9 +232,13 @@ func _physics_process(_d: float) -> void:
 		_stones_view()
 		_render_later()
 		return
+	if far_volume_view > 0:
+		_far_volume_setup()
 	var err := field.populate()
+	if far_volume_view > 0:
+		await _far_volume_stats()
 	var counts := []
-	for s in 3:
+	for s in mini(3, field.biome.species.size()):
 		counts.append(field.get_placements(s).size())
 	print("VEG_POPULATE err=%d plants=%d per_species=%s ms=%.1f" % [err, field.get_plant_count(), str(counts), field.get_populate_time_msec()])
 	if test:
@@ -1679,6 +1686,51 @@ func _frame_log_fungi(p_wood: Node, p_cam: Camera3D) -> void:
 	sun.look_at_from_position(sdir * 10.0, Vector3.ZERO)
 	print("VEG_DW_FUNGI_VIEW shelf kind %d at %s, tuft kind %d at %s" % [pick[4], str(pa), pick[5], str(pb)])
 	print("VEG_DW_CAM=%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f" % [eye.x, eye.y, eye.z, look.x, look.y, look.z, sdir.x, sdir.y, sdir.z])
+
+# --far-volume[=off] --out=path.png: bracken and heather down the valley with a 25 m range, from
+# the valley's upper end at eye height: past 25 m the plants as a voxel shell out to 160 m
+# (VegetationField3D.far_volume), or (=off) as nothing but bare ground.
+func _far_volume_setup() -> void:
+	var b := Biome.new()
+	var list: Array[PlantSpecies] = []
+	for spec in [[PlantGenerator.PRESET_BRACKEN, 1.1, 0.75, Color(0.16, 0.26, 0.07, 0.85), 25.0], [PlantGenerator.PRESET_HEATHER, 0.45, 0.9, Color(0.2, 0.17, 0.12, 0.7), 18.0]]:
+		var g := PlantGenerator.new()
+		g.preset = spec[0]
+		g.apply_preset_colors()
+		var sp := PlantSpecies.new()
+		var ms: Array[Mesh] = []
+		for m in g.generate_variants(3):
+			ms.append(m)
+		sp.meshes = ms
+		sp.spacing = spec[1]
+		sp.density = spec[2]
+		sp.far_color = spec[3]
+		sp.visibility_range = spec[4]
+		sp.scale_range = Vector2(0.8, 1.2)
+		sp.patch_scale = 12.0
+		sp.patch_cover = 0.55
+		sp.patch_seed = 3 + list.size()
+		sp.patch_invert = list.size() == 1
+		list.append(sp)
+	b.species = list
+	field.biome = b
+	field.far_volume = far_volume_view == 1
+	field.far_volume_range = 160.0
+	var cam_at := Vector3(0, height(0, 85) + 1.7, 85)
+	var cam := get_viewport().get_camera_3d()
+	cam.position = cam_at
+	cam.look_at(Vector3(0, height(0, -40) + 1.0, -40))
+	cam.far = 400.0
+
+func _far_volume_stats() -> void:
+	await get_tree().process_frame
+	var tris := 0
+	var cells := 0
+	for ch in field.get_children(true):
+		if ch is MultiMeshInstance3D and String(ch.name).begins_with("FarVolume"):
+			cells += 1
+			tris += (ch.multimesh.mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+	print("VEG_FAR_VOLUME cells=%d triangles=%d" % [cells, tris])
 
 func _render_later() -> void:
 	for i in (6 if raster else 10):

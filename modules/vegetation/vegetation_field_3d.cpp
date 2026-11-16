@@ -46,6 +46,7 @@
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "core/os/rw_lock.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
@@ -1482,6 +1483,186 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 			}
 		}
 	}
+	// Past the range: the plants as a voxel shell, so tall cover keeps its volume and silhouette
+	// instead of dropping to the ground's colour (far_volume, off by default).
+	if (far_volume && range > 0.0f && far_volume_range > range) {
+		const Ref<ArrayMesh> vol = _build_far_volume(p_setup, p_tile, p_species);
+		if (vol.is_valid()) {
+			Ref<MultiMesh> mm;
+			mm.instantiate();
+			mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+			mm->set_mesh(vol);
+			mm->set_instance_count(1);
+			mm->set_instance_transform(0, Transform3D());
+			MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+			mmi->set_name(vformat("FarVolume_%d_%d_%d", s, tx, tz));
+			mmi->set_multimesh(mm);
+			// Crossfades in while the plant shader thins the plants out, before their range.
+			mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+			mmi->set_visibility_range_begin(range * 0.85f);
+			mmi->set_visibility_range_begin_margin(range * 0.15f);
+			mmi->set_visibility_range_end(far_volume_range);
+			mmi->set_visibility_range_end_margin(far_volume_range * 0.1f);
+			add_child(mmi, false, INTERNAL_MODE_BACK);
+			r_nodes.push_back(mmi);
+		}
+	}
+}
+
+// Far plants as volume (docs/ideas/vegetation.md, "Far plants as volume"): the approach of Unreal
+// 5.7's voxelised Nanite foliage and of hybrid mesh-volume LoDs (Loubet and Neyret 2017), with
+// plain geometry so raster and path tracing see the same thing. Each plant's bounds fill an
+// ellipsoid of leaf cover over its foot; the cover sums on a voxel grid; a voxel is solid with
+// that probability (a fixed hash, so the shell is porous where the stand is thin and stable from
+// frame to frame); the solid voxels' faces open to the air are the mesh, their corners jittered by
+// a hash of their position (shared by every face meeting there) so the shell is lumpy, not boxy.
+// Colour: the species' far colour, darker down inside the stand.
+Ref<ArrayMesh> VegetationField3D::_build_far_volume(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species) const {
+	const PlaceSpecies &ps = p_setup.species[p_species];
+	if (ps.far_color.a <= 0.0f) {
+		return Ref<ArrayMesh>();
+	}
+	const TileOut::Species &so = p_tile.species[p_species];
+	const float cell = far_volume_cell;
+	const float inv = 1.0f / cell;
+	HashMap<Vector3i, float> cover;
+	for (int v = 0; v < int(so.xforms.size()); v++) {
+		const Ref<Mesh> &mesh = ps.meshes[v % ps.meshes.size()];
+		if (mesh.is_null()) {
+			continue;
+		}
+		const AABB bb = mesh->get_aabb();
+		const float height = bb.get_end().y;
+		const float half = 0.25f * (bb.size.x + bb.size.z);
+		if (height < cell * 0.5f) {
+			continue; // Too low to stand out of the ground: the far colour carries it.
+		}
+		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
+			const Vector3 o = p_setup.global_xf.xform(so.xforms[v][i].origin);
+			const float sc = so.customs[v][i].b;
+			const float ry = 0.5f * height * sc;
+			const float rxz = 0.8f * half * sc;
+			const Vector3 c = o + Vector3(0, ry, 0);
+			const Vector3i lo(int(Math::floor((c.x - rxz) * inv)), int(Math::floor(o.y * inv)), int(Math::floor((c.z - rxz) * inv)));
+			const Vector3i hi(int(Math::floor((c.x + rxz) * inv)), int(Math::floor((c.y + ry) * inv)), int(Math::floor((c.z + rxz) * inv)));
+			for (int z = lo.z; z <= hi.z; z++) {
+				for (int y = lo.y; y <= hi.y; y++) {
+					for (int x = lo.x; x <= hi.x; x++) {
+						const Vector3 p((x + 0.5f) * cell, (y + 0.5f) * cell, (z + 0.5f) * cell);
+						const float dx = (p.x - c.x) / MAX(rxz, 1e-3f);
+						const float dy = (p.y - c.y) / MAX(ry, 1e-3f);
+						const float dz = (p.z - c.z) / MAX(rxz, 1e-3f);
+						const float d2 = dx * dx + dy * dy + dz * dz;
+						if (d2 < 1.0f) {
+							cover[Vector3i(x, y, z)] += 0.45f * ps.far_color.a * (1.0f - d2);
+						}
+					}
+				}
+			}
+		}
+	}
+	if (cover.is_empty()) {
+		return Ref<ArrayMesh>();
+	}
+	auto hash01 = [](const Vector3i &p_k, uint32_t p_salt) {
+		uint32_t h = hash_murmur3_one_32(uint32_t(p_k.x), p_salt);
+		h = hash_murmur3_one_32(uint32_t(p_k.y), h);
+		h = hash_murmur3_one_32(uint32_t(p_k.z), h);
+		return float(hash_fmix32(h) & 0xffffff) / float(0x1000000);
+	};
+	HashSet<Vector3i> solid;
+	int top = INT32_MIN;
+	int bottom = INT32_MAX;
+	for (const KeyValue<Vector3i, float> &kv : cover) {
+		// Beer-Lambert: overlapping plants fill a voxel as their leaves would block a ray through it.
+		if (hash01(kv.key, 0x9e37u) < 1.0f - Math::exp(-kv.value)) {
+			solid.insert(kv.key);
+			top = MAX(top, kv.key.y);
+			bottom = MIN(bottom, kv.key.y);
+		}
+	}
+	if (solid.is_empty()) {
+		return Ref<ArrayMesh>();
+	}
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedColorArray colors;
+	PackedInt32Array indices;
+	const Vector3i dirs[6] = { Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1) };
+	const Color base = ps.far_color;
+	auto corner = [&](const Vector3i &p_c) {
+		const float j = 0.35f * cell;
+		return Vector3(p_c.x * cell + (hash01(p_c, 1u) - 0.5f) * j * 2.0f, p_c.y * cell + (hash01(p_c, 2u) - 0.5f) * j, p_c.z * cell + (hash01(p_c, 3u) - 0.5f) * j * 2.0f);
+	};
+	for (const Vector3i &k : solid) {
+		// Light falls off down into the stand (its own shade), as the plants' leaves do.
+		int depth = 0;
+		for (int up = 1; up <= 3 && solid.has(k + Vector3i(0, up, 0)); up++) {
+			depth = up;
+		}
+		const float shade = 1.0f - 0.15f * depth;
+		const Color col(base.r * shade, base.g * shade, base.b * shade, 1.0f);
+		for (int f = 0; f < 6; f++) {
+			const Vector3i d = dirs[f];
+			if (solid.has(k + d) || (d.y < 0 && k.y <= bottom)) {
+				continue; // Inside, or on the ground.
+			}
+			// The face's four corners, wound outward.
+			Vector3i a, b;
+			if (d.x != 0) {
+				a = Vector3i(0, 1, 0);
+				b = Vector3i(0, 0, 1);
+			} else if (d.y != 0) {
+				a = Vector3i(0, 0, 1);
+				b = Vector3i(1, 0, 0);
+			} else {
+				a = Vector3i(1, 0, 0);
+				b = Vector3i(0, 1, 0);
+			}
+			const Vector3i o = k + Vector3i(MAX(d.x, 0), MAX(d.y, 0), MAX(d.z, 0));
+			Vector3i q[4] = { o, o + a, o + a + b, o + b };
+			const bool flip = (d.x + d.y + d.z) < 0;
+			const int first = verts.size();
+			Vector3 pts[4];
+			for (int c = 0; c < 4; c++) {
+				pts[c] = corner(q[c]);
+			}
+			Vector3 n = (pts[1] - pts[0]).cross(pts[3] - pts[0]);
+			if (flip) {
+				n = -n;
+			}
+			n = n.normalized();
+			for (int c = 0; c < 4; c++) {
+				verts.push_back(pts[c]);
+				normals.push_back(n);
+				colors.push_back(col);
+			}
+			if (flip) {
+				indices.append_array(PackedInt32Array({ first, first + 1, first + 2, first, first + 2, first + 3 }));
+			} else {
+				indices.append_array(PackedInt32Array({ first, first + 2, first + 1, first, first + 3, first + 2 }));
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	Ref<StandardMaterial3D> mat = far_volume_material;
+	if (mat.is_null()) {
+		mat.instantiate();
+		mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+		mat->set_roughness(0.9f);
+		const_cast<VegetationField3D *>(this)->far_volume_material = mat;
+	}
+	mesh->surface_set_material(0, mat);
+	mesh->set_meta(SNAME("far_volume"), true);
+	return mesh;
 }
 
 // The maps from placed tiles (canopy, stand shade, forest floor, far colour), computed from the
@@ -3171,6 +3352,12 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cover_grass_layers", "paths"), &VegetationField3D::set_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("get_cover_grass_layers"), &VegetationField3D::get_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
+	ClassDB::bind_method(D_METHOD("set_far_volume", "enabled"), &VegetationField3D::set_far_volume);
+	ClassDB::bind_method(D_METHOD("is_far_volume"), &VegetationField3D::is_far_volume);
+	ClassDB::bind_method(D_METHOD("set_far_volume_range", "range"), &VegetationField3D::set_far_volume_range);
+	ClassDB::bind_method(D_METHOD("get_far_volume_range"), &VegetationField3D::get_far_volume_range);
+	ClassDB::bind_method(D_METHOD("set_far_volume_cell", "cell"), &VegetationField3D::set_far_volume_cell);
+	ClassDB::bind_method(D_METHOD("get_far_volume_cell"), &VegetationField3D::get_far_volume_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_cell"), &VegetationField3D::get_cover_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_texture"), &VegetationField3D::get_cover_texture);
 	ClassDB::bind_method(D_METHOD("set_streaming", "enable"), &VegetationField3D::set_streaming);
@@ -3207,6 +3394,10 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "cover_grass", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D"), "set_cover_grass", "get_cover_grass");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "cover_grass_layers", PROPERTY_HINT_ARRAY_TYPE, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D")), "set_cover_grass_layers", "get_cover_grass_layers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
+	ADD_GROUP("Far volume", "far_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_cell", PROPERTY_HINT_RANGE, "0.05,4,0.01,suffix:m"), "set_far_volume_cell", "get_far_volume_cell");
 	ADD_GROUP("Streaming", "stream");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "stream_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_stream_target", "get_stream_target");

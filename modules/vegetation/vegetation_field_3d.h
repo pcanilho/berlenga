@@ -41,6 +41,8 @@
 #include "core/templates/local_vector.h"
 #include "core/templates/safe_refcount.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/material.h"
+#include "scene/resources/mesh.h"
 
 class MultiMesh;
 class MultiMeshInstance3D;
@@ -251,6 +253,13 @@ class VegetationField3D : public Node3D {
 	NodePath cover_grass;
 	TypedArray<NodePath> cover_grass_layers; // More GrassField3D under cover_grass, top down (an undercoat).
 	float cover_cell = 4.0f;
+	// Plants past their range as real volume (docs/ideas/vegetation.md, "Far plants as volume"):
+	// a voxel shell per tile and species, from the range out to far_volume_range.
+	bool far_volume = false;
+	float far_volume_range = 150.0f;
+	float far_volume_cell = 0.3f;
+	Ref<StandardMaterial3D> far_volume_material;
+	Ref<ArrayMesh> _build_far_volume(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species) const;
 	Ref<Texture2D> cover_texture;
 	struct CoverJob {
 		const PlaceSetup *setup = nullptr;
@@ -432,6 +441,12 @@ public:
 	void set_cover_grass_layers(const TypedArray<NodePath> &p_paths);
 	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
+	void set_far_volume(bool p_on) { far_volume = p_on; }
+	bool is_far_volume() const { return far_volume; }
+	void set_far_volume_range(float p_range) { far_volume_range = MAX(p_range, 0.0f); }
+	float get_far_volume_range() const { return far_volume_range; }
+	void set_far_volume_cell(float p_cell) { far_volume_cell = CLAMP(p_cell, 0.05f, 4.0f); }
+	float get_far_volume_cell() const { return far_volume_cell; }
 	float get_cover_cell() const { return cover_cell; }
 	Ref<Texture2D> get_cover_texture() const { return cover_texture; }
 

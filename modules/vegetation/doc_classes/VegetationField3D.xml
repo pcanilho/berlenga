@@ -183,6 +183,15 @@
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
 		</member>
+		<member name="far_volume" type="bool" setter="set_far_volume" getter="is_far_volume" default="false">
+			If [code]true[/code], plants past their [member PlantSpecies.visibility_range] are drawn as real volume out to [member far_volume_range] instead of leaving only the ground's far colour: per tile and species, a voxel shell of the placed plants' leaf cover, porous where the stand is thin, lumpy rather than boxy, in the species' [member PlantSpecies.far_color], crossfading in as the plants thin out. Plain geometry, so path tracing sees the same shell. Plants lower than half a [member far_volume_cell] are left to the far colour. Off by default until its GPU cost is measured. Takes effect at the next [method populate] or streamed tile.
+		</member>
+		<member name="far_volume_cell" type="float" setter="set_far_volume_cell" getter="get_far_volume_cell" default="0.3">
+			The far volume's voxel size in metres. Smaller is finer and costs more triangles.
+		</member>
+		<member name="far_volume_range" type="float" setter="set_far_volume_range" getter="get_far_volume_range" default="150.0">
+			How far the far volume is drawn, in metres; past it only the ground's far colour remains.
+		</member>
 		<member name="litter_wind" type="Vector2" setter="set_litter_wind" getter="get_litter_wind" default="Vector2(0, 0)">
 			Downwind lean of the leaf drift ([method get_litter_at]): its direction is the way the leaf-fall wind blows toward (x, z), its length (up to [code]0.8[/code]) how much farther the drift reaches downwind and the less upwind. Zero: taken from the [member weather_map]'s wind at placement, half a lean at 10 m/s.
 		</member>
