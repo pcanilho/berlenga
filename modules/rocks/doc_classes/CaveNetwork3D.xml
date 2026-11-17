@@ -142,6 +142,30 @@
 				The cave's passages as straight pieces. Each is a [Dictionary] with [code]a[/code], [code]b[/code], [code]radius_a[/code], [code]radius_b[/code] (half widths in metres) and [code]type[/code] (a [enum PassageType]).
 			</description>
 		</method>
+		<method name="get_rimstone_pool_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many rimstone pools the meshed chunks hold.
+			</description>
+		</method>
+		<method name="get_rimstone_pools" qualifiers="const">
+			<return type="Array" />
+			<description>
+				Each meshed rimstone pool as a [Dictionary]: [code]center[/code] (its water level in y), [code]depth[/code] (metres) and [code]outline[/code] (a [PackedVector2Array] of x and z round the center).
+			</description>
+		</method>
+		<method name="get_rimstone_water_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many pools have live water now (the ones nearest the camera, see [member rimstone_water_max]).
+			</description>
+		</method>
+		<method name="get_sea_mist_node" qualifiers="const">
+			<return type="Node" />
+			<description>
+				The network's own sea-mist node (see [member sea_mist]), or [code]null[/code].
+			</description>
+		</method>
 		<method name="get_speleothem_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -193,6 +217,18 @@
 		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
 			An optional [RockField3D] that says what the rock is: [method find_entrances] then keeps to limestone.
 		</member>
+		<member name="rimstone" type="float" setter="set_rimstone" getter="get_rimstone" default="1.0">
+			How often a standing formation on a floor falling 2 to 20 degrees has a rimstone cascade below it. A cascade is 2 to 6 pools stepping down the fall line, each held by a sinuous dam with a level crest at the pool's spill level (Hammer, Dysthe, Jamtveit et al. 2007, 2010). Steeper floors give lower, closer dams. The dams are real geometry and the pool floors are coloured as calcite. 0: none.
+		</member>
+		<member name="rimstone_water" type="bool" setter="set_rimstone_water" getter="get_rimstone_water" default="true">
+			Still water in the rimstone pools nearest the camera: a [code]PhysXWaterSurface3D[/code] cut to each pool's outline, with no sky reflection or caustics underground, stepped once per frame. Without the PhysX module the water is a plain sheet.
+		</member>
+		<member name="rimstone_water_max" type="int" setter="set_rimstone_water_max" getter="get_rimstone_water_max" default="12">
+			How many of the nearest pools have live water. Each one is a ripple simulation of its own.
+		</member>
+		<member name="rimstone_water_radius" type="float" setter="set_rimstone_water_radius" getter="get_rimstone_water_radius" default="16.0">
+			How far from the camera pools have live water, in metres.
+		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="1.0">
 			How rough the walls are: noise at 2.2 m (dissolution hollows) and 0.7 m (spalls), up to 0.35 m and 0.12 m at 1.
 		</member>
@@ -201,6 +237,9 @@
 		</member>
 		<member name="scallops" type="float" setter="set_scallops" getter="get_scallops" default="1.0">
 			Dissolution scallops on the walls: dish-shaped hollows about 1.2 m across with sharp ridges between them, from Worley (cellular) noise. Real scallops are cells of this kind (Curl 1974), and these are the large ones that slow phreatic flow leaves. 0 turns them off.
+		</member>
+		<member name="sea_mist" type="bool" setter="set_sea_mist" getter="get_sea_mist" default="true">
+			When the network has sea caves, it makes its own [code]PhysXCaveMist3D[/code] (with the PhysX module built with Flow), which breathes cold mist out of their mouths with the swell.
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			The seed. Each cave also takes its entrance's position into its own seed.

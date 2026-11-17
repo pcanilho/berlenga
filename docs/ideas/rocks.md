@@ -929,8 +929,31 @@ What we build:
   degrees) under drip formations (the water comes from the roof). Each cascade is a run of pools down the fall line.
   Each pool's dam is a sinuous crescent across the slope, with a level crest whose height is set by the pool's
   spill level, a rounded section, and crenellations. The pool fills behind it to the crest.
-- The water is the fork's own still water (PhysXWaterSurface3D with a surface_mesh outline, as lakes use), one per
-  near pool, so it takes shadows, refraction and transmission like every other water body. Drips from the
-  stalactites above ring it (submit_impulse). Pools away from the target show a still plane of the same material.
+- The water is the fork's own still water (PhysXWaterSurface3D with a surface_mesh outline, as lakes use), so it
+  takes shadows, refraction and transmission like every other water body. Underground it has no sky reflection and
+  no caustics, and it steps once per drawn frame. Each surface is a ripple simulation of its own, so only the
+  `rimstone_water_max` (12) pools nearest the camera within `rimstone_water_radius` (16 m) get one. The rest show their
+  calcite-lined floor dry until the camera comes near.
+
+Built (17 Nov): `CaveNetwork3D.rimstone` (density, 1) and `rimstone_water`. The chunk owning a standing formation's
+foot fits a plane to the floor round its flowstone mound. Where that floor falls 2 to 20 degrees, the chunk walks
+2 to 6 pools down the fall line, steering with the local cross slope. Each pool's rim height is 9 cm on gentle
+floors, falling to 3 cm on steep ones. The pool length is height over slope, and the width is 1.6 to 2.8 times the
+length. The crest is bowed downstream and wanders. It runs out to each side until it meets floor rising above the
+level or a wall, so a level-bottomed passage gets dams wall to wall. A pool that would spill round an open end, or
+whose dam would stand over 25 cm, ends the cascade. The dam is a swept section: a rounded top 4 mm over the water,
+a lobed downstream face flaring with the drop, and a buried foot. The floor inside each pool is coloured as calcite.
+Bench: `--caves --cave-mesh --cave-view=rimstone [--pool-water=n | --no-pool-water]`. Cost: once the water surfaces shared one
+compiled shader (afead43f), each live pool costs about 50 MB and 30 ms a frame on lavapipe; the PC queue measures
+it on the GPU.
+
+Sea-cave mist, built (17 Nov): PhysXCaveMist3D (godot_physx, Flow). A CaveNetwork3D with sea caves makes one itself
+(`sea_mist`, on). Each of the 4 nearest sea-cave mouths whose floor the sea reaches gets an emitter: a low slab across
+the mouth's lower half, 2 m inside and 0.6 m over the water. The emitter pulses with the swell (the sea's
+`shore_wave_period`, else 10 s). Each cave runs on its own phase. On a surge the slab pushes mist out at up to
+`push_speed` (2 m/s); in the trough it draws a little air back. The mist is pale, heavy (`heaviness` 0.4) and
+evaporates (`evaporation` 0.25), and it never jets up, so it spills out level and sinks over the water. Bench:
+`--sea-caves --cave-mesh --water --mist-period=2.5 --settle=200`, run with `--fixed-fps 60` (Flow steps per drawn
+frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it is still to be framed (PC queue).
 - Sea-cave mouths: cold mist in PhysX Flow. Spray and saturated air pushed out of the cave by the swell, where the
   sea is in the mouth. A slow, heavy, pale Flow emitter at the mouth, pulsing with the swell, near the target only.
