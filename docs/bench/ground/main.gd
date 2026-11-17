@@ -49,6 +49,7 @@ extends Node3D
 #                       --glints=0 for the A/B)
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
+#                       --water=uniform:value sets one of the sea's shader uniforms (repeatable)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
@@ -1939,6 +1940,11 @@ func _build_shore() -> void:
 	sea.set("swash_run_up", 0.12)
 	sea.set("contact_wetness", true)
 	add_child(sea)
+	var wm: ShaderMaterial = sea.call("get_water_material")
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--water=") and wm:
+			var wkv := a.substr(8).split(":", true, 1)
+			wm.set_shader_parameter(wkv[0], str_to_var(wkv[1]))
 	surface.water_sources = [surface.get_path_to(sea)]
 	surface.water_coupling = not OS.get_cmdline_user_args().has("--coupling=0") # for an A/B of the look
 	# The prints first, then the sea comes up over the lower ones.
