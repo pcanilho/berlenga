@@ -3379,3 +3379,43 @@ gave a crackle of ±30% shading cells at 1 to 2 cm a pixel. The tilt is now a un
 Foam also damps the short waves under it: the film's surface elasticity acts as a slick does (Alpers and Hühnerfuss
 1989). So a foam sheet's normal blends toward the mesh's longer-wave normal by its cover. Before and after crop:
 fork/water/shore-foam/.
+
+## Rock contact foam (17 Nov, Paulo's pick: "Build a rock contact foam layer")
+
+**The gap.** A sea stack or a boulder standing in the sea has no white water at its foot (sea-stack frames,
+`fork/water/sea-stack/stack_fine_grid.png`). Shore foam comes from the ripple grid's depth, whose cells are metres
+wide on a large sea (16 m on the 2 km coast world), so a stack a few metres across never reaches it, and a steep
+face has no shallow band for the depth threshold to find.
+
+**How others do it.**
+- Crest (Unity): an `OceanDepthCache` renders chosen layers top-down, orthographically, into a sea-floor
+  heightfield around an island ("Camera Max Terrain Height", "Layers"); its foam simulation then adds foam in water
+  shallower than "Shoreline Foam Max Depth", scaled by "Shoreline Foam Strength", while "Foam Fade Rate" ages it.
+  Dynamic objects register a `SeaFloorDepthInput`. A depth threshold only: the band's width follows the slope, so a
+  vertical face gets almost none.
+- Unreal (Water plugin and most shipped oceans): foam from the distance to the nearest surface (the global
+  distance field, `DistanceToNearestSurface`), a band of a set width round anything that pierces the water, broken
+  up by a panning noise. The width holds on vertical faces, which is what a stack needs.
+- HDRP Water: foam generators placed by hand (boxes or textures), plus the simulation's own foam.
+- The physics: waves meeting a steep face reflect (a vertical wall doubles the amplitude at its foot, a standing
+  wave), and surge, collapse or plunge against it rather than spilling across a shallow band; the breaker type
+  follows the Iribarren number xi = tan(alpha) / sqrt(H / L0) (Battjes 1974), so beaches (gentle) spill over a
+  wide band and rock faces (steep) churn a narrow ring at the contact that grows as each crest arrives.
+
+**What we build (both ideas together, near the camera).**
+1. A contact map: a top-down height of every static body in `contact_foam_mask` over a square round the camera
+   (`contact_foam_extent`, 96 m at 0.25 m), measured by rays the way the seabed is (one coarse pass at 1 m, then
+   0.25 m only where the coarse pass found something near the waterline), re-centred when the camera has moved an
+   eighth of the square, and spread over several physics ticks so a move never stalls a frame.
+2. A distance transform (exact Euclidean, Felzenszwalb and Huttenlocher 2012, carrying the nearest seed) from every
+   cell standing above the water: the horizontal distance to the contact, as Unreal's distance-field foam.
+3. The face's steepness at that nearest contact (the drop beside it), so the ring is full on rock faces and
+   absent on beaches, which the shore foam already covers (Iribarren: surging and collapsing against steep faces,
+   spilling on gentle ones).
+4. Submerged rock tops within `contact_foam_depth` of the surface wash white as crests pass over them (Crest's
+   depth threshold, kept to rocks by the same steepness).
+5. In the water shader: a ring of `contact_foam_width` at the contact that widens as the local wave height rises
+   (the wash of each arriving crest), broken into lace by the foam's own noise, drifting slowly; it joins the foam
+   before the normal damping and the crisp step, so it shades, damps the chop and path traces as the other foam does.
+
+On by default (`contact_foam`), mask all layers; the rays skip anything not static, as the seabed's do.

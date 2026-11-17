@@ -276,6 +276,16 @@ uniform sampler2D shore_foam_tex : hint_default_black, filter_linear, repeat_dis
 // Shore foam is a thin sheet, not a whitecap: fainter, finer and lacier.
 uniform float shore_foam_strength : hint_range(0.0, 1.0) = 0.65;
 uniform float shore_foam_breakup : hint_range(0.0, 1.0) = 0.85;
+// Rock contact foam (docs/ideas/water.md "Rock contact foam"), set by PhysXWaterSurface3D from its contact map:
+// r = distance to where a body stands out of the water / 8 m, g = that face's steepness, b = wash over a rock
+// top under the surface.
+uniform sampler2D contact_foam_tex : hint_default_black, filter_linear, repeat_disable;
+uniform bool contact_foam_on = false;
+uniform vec2 contact_center = vec2(0.0);
+uniform float contact_extent = 96.0;
+uniform float contact_foam_width = 1.2;
+uniform float contact_foam_strength = 0.9;
+uniform float contact_wave_height = 1.0; // the sea's significant height (m), what the wash scales by
 // Churned, milky water over the shallows: tints toward shallow_color as the
 // ocean fade drops off near the shore (shallow_tint 0 = off). Its alpha also
 // replaces water_color's there.
@@ -319,6 +329,7 @@ uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
 varying vec3 v_world_normal;
 varying float v_foam;
 varying vec2 v_rest_xz;
+varying vec2 v_drawn_xz; // world xz after the chop moved the vertex
 // 1 on the breaking lips' sheet (vertex colour alpha 0), whose vertices are already in place.
 varying float v_lip;
 varying float v_roller; // the roller's raise at the vertex, as a share of its cap (0 off it)
@@ -1198,6 +1209,43 @@ float shore_foam_at(vec2 world_xz) {
 	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
 }
 
+// White water where the sea meets a steep face: a ring round each stack, boulder and cliff foot that widens as a
+// crest arrives (the wash) and draws back in the trough, churned solid at the rock and lacy at its outer edge,
+// plus a wash over rock tops just under the surface as the crests cross them.
+float contact_foam_at(vec2 world_xz) {
+	if (!contact_foam_on) {
+		return 0.0;
+	}
+	vec2 uv = (world_xz - contact_center) / contact_extent + 0.5;
+	vec2 edge = min(uv, 1.0 - uv);
+	float inside = smoothstep(0.0, 0.05, min(edge.x, edge.y));
+	if (inside <= 0.0) {
+		return 0.0;
+	}
+	vec3 c = texture(contact_foam_tex, uv).rgb;
+	if (c.g < 0.004 && c.b < 0.004) {
+		return 0.0;
+	}
+	float d = c.r * 8.0;
+	// The water's height here against the sea's: up at a crest, down in a trough.
+	float pump = smoothstep(-0.6, 1.0, ocean_height_all(world_xz).r / max(contact_wave_height * 0.5, 0.05));
+	float w = contact_foam_width * mix(0.45, 1.6, pump);
+	// Churned white against the rock, then the older foam the backwash spreads out to about three widths.
+	float core = 1.0 - smoothstep(0.1 * w, w, d);
+	float trail = 1.0 - smoothstep(w, 3.0 * w, d);
+	float a = c.g * max(core, 0.6 * trail);
+	a = max(a, c.b * smoothstep(0.25, 0.85, pump));
+	if (a <= 0.0) {
+		return 0.0;
+	}
+	// Lace, drifting slowly as the backwash stirs it: nearly solid at the rock, patches and holes further out.
+	vec2 q = world_xz * 1.3 + vec2(water_time * 0.09, -water_time * 0.06) + 57.0;
+	float ns = 0.55 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.3 - 11.0) + 0.15 * foam_value_noise(q * 5.1 + 7.0);
+	float breakup = mix(0.35, 1.0, smoothstep(0.0, 2.0 * w, d));
+	float g = clamp(a * (1.0 + breakup) - ns * breakup * 1.4, 0.0, 1.0);
+	return g * g * (3.0 - 2.0 * g) * contact_foam_strength * inside;
+}
+
 // Water depth (m) above the moving waterline: the still-water depth minus an
 // offset in [0, swash_reach] -- small under an arriving crest (the edge
 // reaches in), large between crests, jittered by slow noise. <= 0 is past
@@ -1472,6 +1520,7 @@ void vertex() {
 	// UV.x is the lip's white water (UV.y unused); the vertex is where it is drawn.
 	v_lip = 1.0;
 	v_rest_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+	v_drawn_xz = v_rest_xz;
 	v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	v_foam = UV.x;
 #else
@@ -1481,6 +1530,7 @@ void vertex() {
 		// custom copy of this shader: COLOR.r is its white water.
 		v_lip = 1.0;
 		v_rest_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+	v_drawn_xz = v_rest_xz;
 		v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 		v_foam = COLOR.r;
 	} else {
@@ -1491,6 +1541,7 @@ void vertex() {
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_rest_xz = world_pos.xz;
+	v_drawn_xz = v_rest_xz;
 	vec3 so = surface_offset(world_pos.xz);
 	if (mesh_open) {
 		// Only the waves this vertex step can carry (four steps a wavelength: the share of each cascade's band
@@ -1531,6 +1582,7 @@ void vertex() {
 		so -= lost * fade_r(world_pos.xz, cuv_g);
 	}
 	VERTEX += so;
+	v_drawn_xz = world_pos.xz + so.xz; // where the water is drawn: the rock contact foam sits there
 	// The chop's own crest height (the two shortest cascades, from their own mean, as roller_crest()): a crest thin
 	// enough to pass light is a wave of the chop, wherever the long swell under it puts it.
 	v_crest = ocean_tex(ocean_height_tex, world_pos.xz).r + (wave_cascade_count > 1 ? cascade_tex(cascade_height_1, cascade_domain_1, world_pos.xz).r : 0.0);
@@ -1607,7 +1659,7 @@ void fragment() {
 		float nl = length(v_world_normal);
 		world_normal = nl > 1e-3 ? v_world_normal / nl : vec3(0.0, 1.0, 0.0);
 	}
-	float foam = v_foam;
+	float foam = max(v_foam, contact_foam_at(v_drawn_xz));
 	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
 		// The pixel's longer side (along the view at grazing angles), so no band aliases there.
@@ -1618,7 +1670,7 @@ void fragment() {
 		// The normal takes the bands the pixel shows; the foam reads the whole surface (its crests break as they are).
 		vec4 der_n = ocean_deriv_filtered(v_rest_xz, footprint_px, der, hidden_var);
 		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
-		foam = foam_at_with(v_rest_xz, der, disp);
+		foam = max(foam_at_with(v_rest_xz, der, disp), contact_foam_at(v_drawn_xz));
 		der = der_n;
 		{
 			float a = pathtraced_roughness * pathtraced_roughness;
@@ -2206,6 +2258,22 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterSurface3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &PhysXWaterSurface3D::set_shore_foam_band);
 	ClassDB::bind_method(D_METHOD("get_shore_foam_band"), &PhysXWaterSurface3D::get_shore_foam_band);
+	ClassDB::bind_method(D_METHOD("set_contact_foam", "enabled"), &PhysXWaterSurface3D::set_contact_foam);
+	ClassDB::bind_method(D_METHOD("get_contact_foam"), &PhysXWaterSurface3D::get_contact_foam);
+	ClassDB::bind_method(D_METHOD("set_contact_foam_mask", "mask"), &PhysXWaterSurface3D::set_contact_foam_mask);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_mask"), &PhysXWaterSurface3D::get_contact_foam_mask);
+	ClassDB::bind_method(D_METHOD("set_contact_foam_width", "width"), &PhysXWaterSurface3D::set_contact_foam_width);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_width"), &PhysXWaterSurface3D::get_contact_foam_width);
+	ClassDB::bind_method(D_METHOD("set_contact_foam_strength", "strength"), &PhysXWaterSurface3D::set_contact_foam_strength);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_strength"), &PhysXWaterSurface3D::get_contact_foam_strength);
+	ClassDB::bind_method(D_METHOD("set_contact_foam_depth", "depth"), &PhysXWaterSurface3D::set_contact_foam_depth);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_depth"), &PhysXWaterSurface3D::get_contact_foam_depth);
+	ClassDB::bind_method(D_METHOD("set_contact_foam_extent", "extent"), &PhysXWaterSurface3D::set_contact_foam_extent);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_extent"), &PhysXWaterSurface3D::get_contact_foam_extent);
+	ClassDB::bind_method(D_METHOD("remeasure_contact_foam"), &PhysXWaterSurface3D::remeasure_contact_foam);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_cells"), &PhysXWaterSurface3D::get_contact_foam_cells);
+	ClassDB::bind_method(D_METHOD("get_contact_foam_rays"), &PhysXWaterSurface3D::get_contact_foam_rays);
+	ClassDB::bind_method(D_METHOD("is_contact_foam_ready"), &PhysXWaterSurface3D::is_contact_foam_ready);
 	ClassDB::bind_method(D_METHOD("set_open_sea_beyond", "open"), &PhysXWaterSurface3D::set_open_sea_beyond);
 	ClassDB::bind_method(D_METHOD("set_sea_state", "wind_speed", "wind_direction", "wave_amplitude", "fetch"), &PhysXWaterSurface3D::set_sea_state);
 	ClassDB::bind_method(D_METHOD("set_follow_weather", "enabled"), &PhysXWaterSurface3D::set_follow_weather);
@@ -2350,6 +2418,12 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_sheets"), "set_crest_sheets", "get_crest_sheets");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "crest_sheet_amount", PROPERTY_HINT_RANGE, "1,256,1"), "set_crest_sheet_amount", "get_crest_sheet_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_foam"), "set_contact_foam", "get_contact_foam");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "contact_foam_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_contact_foam_mask", "get_contact_foam_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_foam_width", PROPERTY_HINT_RANGE, "0,6,0.05,or_greater,suffix:m"), "set_contact_foam_width", "get_contact_foam_width");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_foam_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_contact_foam_strength", "get_contact_foam_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_foam_depth", PROPERTY_HINT_RANGE, "0,3,0.05,or_greater,suffix:m"), "set_contact_foam_depth", "get_contact_foam_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_foam_extent", PROPERTY_HINT_RANGE, "16,512,1,or_greater,suffix:m"), "set_contact_foam_extent", "get_contact_foam_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
@@ -5481,6 +5555,111 @@ void PhysXWaterSurface3D::set_open_sea_beyond(bool p_open) {
 	}
 }
 
+void PhysXWaterSurface3D::set_contact_foam(bool p_enabled) {
+	contact_foam = p_enabled;
+	contact_map.cancel();
+	contact_dirty = true;
+	_push_contact_foam();
+}
+
+void PhysXWaterSurface3D::set_contact_foam_mask(uint32_t p_mask) {
+	contact_foam_mask = p_mask;
+	remeasure_contact_foam();
+}
+
+void PhysXWaterSurface3D::set_contact_foam_width(float p_width) {
+	contact_foam_width = MAX(p_width, 0.0f);
+	_push_contact_foam();
+}
+
+void PhysXWaterSurface3D::set_contact_foam_strength(float p_strength) {
+	contact_foam_strength = CLAMP(p_strength, 0.0f, 1.0f);
+	_push_contact_foam();
+}
+
+void PhysXWaterSurface3D::set_contact_foam_depth(float p_depth) {
+	contact_foam_depth = MAX(p_depth, 0.0f);
+	remeasure_contact_foam();
+}
+
+void PhysXWaterSurface3D::set_contact_foam_extent(float p_extent) {
+	contact_foam_extent = MAX(p_extent, 8.0f);
+	remeasure_contact_foam();
+}
+
+void PhysXWaterSurface3D::remeasure_contact_foam() {
+	contact_map.cancel();
+	contact_dirty = true;
+}
+
+void PhysXWaterSurface3D::_push_contact_foam() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const bool on = contact_foam && contact_shown && contact_texture.is_valid();
+	water_material->set_shader_parameter("contact_foam_on", on);
+	if (!on) {
+		return;
+	}
+	water_material->set_shader_parameter("contact_foam_tex", contact_texture);
+	water_material->set_shader_parameter("contact_center", contact_map.get_center());
+	water_material->set_shader_parameter("contact_extent", contact_map.get_extent());
+	water_material->set_shader_parameter("contact_foam_width", contact_foam_width);
+	water_material->set_shader_parameter("contact_foam_strength", contact_foam_strength);
+	// The sea's significant height: fully developed (Pierson-Moskowitz, 0.21 U^2 / g) or fetch limited (JONSWAP,
+	// 0.0016 U sqrt(F / g)), whichever is lower.
+	const float u = MAX(wind_speed, 0.5f);
+	const float hs = MIN(0.21f * u * u / 9.81f, 0.0016f * u * Math::sqrt(get_effective_fetch() / 9.81f));
+	water_material->set_shader_parameter("contact_wave_height", MAX(hs, 0.1f));
+}
+
+void PhysXWaterSurface3D::_update_contact_foam() {
+	if (!contact_foam || !is_inside_tree()) {
+		return;
+	}
+	Viewport *vp = get_viewport();
+	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+	if (cam == nullptr) {
+		return;
+	}
+	const float level = get_global_position().y + water_level;
+	const Vector3 eye = cam->get_global_position();
+	// Re-centred in eighths of the square, a little ahead of the camera along its view (what it looks at).
+	Vector3 fwd = -cam->get_global_transform().basis.get_column(2);
+	fwd.y = 0.0f;
+	const float ahead = fwd.length() > 1e-3f ? contact_foam_extent * 0.2f : 0.0f;
+	const Vector2 focus = Vector2(eye.x, eye.z) + (ahead > 0.0f ? Vector2(fwd.x, fwd.z).normalized() * ahead : Vector2());
+	const float snap = contact_foam_extent / 8.0f;
+	const Vector2 c = (focus / snap).round() * snap;
+	if (water_time >= contact_settle_at && contact_settle_at > 0.0) {
+		contact_settle_at = -1.0;
+		contact_dirty = true;
+	}
+	if (!contact_map.is_busy()) {
+		if (!contact_dirty && contact_shown && c == contact_map.get_center()) {
+			return;
+		}
+		contact_dirty = false;
+		// 0.25 m cells.
+		const int res = CLAMP(int(Math::round(contact_foam_extent / 0.25f)), 64, 1024);
+		contact_map.begin(c, contact_foam_extent, res, level, contact_foam_depth, contact_foam_mask);
+	}
+	PhysicsDirectSpaceState3D *space = get_world_3d().is_valid() ? get_world_3d()->get_direct_space_state() : nullptr;
+	// A few thousand short rays a tick: a move never stalls a frame (the old map holds meanwhile).
+	if (!contact_map.step(space, contact_shown ? 4096 : 1 << 20)) {
+		return;
+	}
+	const int n = contact_map.get_resolution();
+	Ref<Image> img = Image::create_from_data(n, n, false, Image::FORMAT_RGBA8, contact_map.get_pixels());
+	if (contact_texture.is_valid() && contact_texture->get_width() == n && contact_texture->get_height() == n) {
+		contact_texture->update(img);
+	} else {
+		contact_texture = ImageTexture::create_from_image(img);
+	}
+	contact_shown = true;
+	_push_contact_foam();
+}
+
 void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
 	shore_foam_band = MAX(p_depth, 0.0f);
 	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
@@ -6375,6 +6554,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	if (!solver.has_device()) {
 		return;
 	}
+	_update_contact_foam();
 	// (Waits for a solver still being built, whose depth textures don't exist yet.)
 	if (seabed_remeasure_pending && solver.is_available()) {
 		seabed_remeasure_pending = false;
@@ -6529,6 +6709,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("ocean_foam_tex", ocean_foam_tex);
 		water_material->set_shader_parameter("shore_foam_tex", shore_foam_tex);
 		water_material->set_shader_parameter("swash_tex", swash_tex);
+		_push_contact_foam();
 	}
 	for (int i = 0; i < (int)extra_cascades.size(); i++) {
 		WaveCascade *c = extra_cascades[i];

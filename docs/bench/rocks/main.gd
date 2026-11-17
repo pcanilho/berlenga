@@ -340,7 +340,14 @@ func _world() -> void:
 		# the test keeps covering its holes. --cave-mouths shows it.
 		rocks.cave_mouths = args.has("cave-mouths") or args.has("test")
 		if args.has("water"):
-			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
+			# The rocks on their own physics layer: the sea's contact foam measures them, its seabed probe keeps to
+			# the land (it would take the rocks for the bed).
+			rocks.collision_layer = 2
+			for w in get_children():
+				if w is Node and (w as Node).name == "Sea" and "seabed_collision_mask" in w:
+					w.set("seabed_collision_mask", 1)
+					# --no-contact-foam: the sea without its rock contact foam, for a before/after pair.
+					w.set("contact_foam", not args.has("no-contact-foam"))
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
@@ -1496,10 +1503,13 @@ func _render_later() -> void:
 		await get_tree().process_frame
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
+	var tf := Time.get_ticks_msec()
 	for i in frames:
 		if i == frames - 4:
 			t0 = Time.get_ticks_usec()
 		await RenderingServer.frame_post_draw
+		if OS.is_stdout_verbose() or args.has("frame-log"):
+			print("frame %d at %d ms" % [i, Time.get_ticks_msec() - tf])
 	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
 		var ci: Image = rocks.get_contact_texture().get_image()
@@ -1509,6 +1519,9 @@ func _render_later() -> void:
 				if ci.get_pixel(x, y).r > 0.1:
 					lit += 1
 		print("ground contact: map drawn in %.1f ms, %.1f%% of the samples damp" % [rocks.get_last_contact_usec() / 1000.0, 100.0 * lit / float((ci.get_height() / 8) * (ci.get_width() / 8))])
+	var sea := get_node_or_null("Sea")
+	if sea and sea.has_method("get_contact_foam_cells"):
+		print("contact foam: ready %s, %d ring cells, %d rays" % [sea.is_contact_foam_ready(), sea.get_contact_foam_cells(), sea.get_contact_foam_rays()])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)
