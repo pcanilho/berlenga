@@ -33,13 +33,12 @@
 
 #include "ground_deform_field.h"
 #include "ground_deform_gpu.h"
+#include "ground_height_query.h"
 #include "ground_ripples.h"
+#include "ground_terramechanics.h"
 
 #include "core/object/worker_thread_pool.h"
 #include "core/variant/typed_array.h"
-#include "ground_terramechanics.h"
-#include "ground_height_query.h"
-
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
@@ -139,11 +138,14 @@ public:
 		float rate = 0.0f; // kg/s
 	};
 
-
 private:
 	LocalVector<Spray> sprays;
 	LocalVector<Dust> dust;
+	LocalVector<Dust> near_dust; // inside the claim (claim_dust): for a near-field dust node
 	uint64_t dust_frame = 0;
+	Vector3 dust_claim_center;
+	float dust_claim_radius = 0.0f;
+	uint64_t dust_claim_frame = 0;
 	float dust_emission = 0.06f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
 	uint64_t spray_frame = 0;
 	void _plough_bodies();
@@ -204,7 +206,6 @@ public:
 	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z); }
 
 private:
-
 	GroundDeformField field;
 	struct Columns : public GroundDeformField::Columns {
 		const GroundSurface3D *surface = nullptr;
@@ -429,6 +430,11 @@ public:
 	// of the ground there the wind could move (dry, bare sand; none from damp sand). Taken by GroundDust3D.
 	void add_dust(Vector3 p_position, Vector3 p_velocity, float p_strength);
 	void take_dust(LocalVector<Dust> &r_dust);
+	// A near-field dust node (PhysXGroundDust3D) claims the dust lifted within p_radius of p_center, renewed each
+	// physics frame; that dust goes to take_near_dust() instead of take_dust(). A claim not renewed for two
+	// frames lapses.
+	void claim_dust(Vector3 p_center, float p_radius);
+	void take_near_dust(LocalVector<Dust> &r_dust);
 	void set_dust_emission(float p_v) { dust_emission = MAX(p_v, 0.0f); }
 	float get_dust_emission() const { return dust_emission; }
 	Array take_sprays();
@@ -544,6 +550,9 @@ public:
 
 	float get_surface_height_at(Vector3 p_position) const;
 	float get_ground_height_at(Vector3 p_position) const;
+	// The deformed surface's height, under the name height sources share (GroundHeightQuery: a PhysXFlow3D's
+	// terrain floor), so gas rests on the ruts and berms.
+	float get_height(Vector3 p_position) const { return get_surface_height_at(p_position); }
 	float get_dent_at(Vector3 p_position) const;
 	float get_rim_at(Vector3 p_position) const;
 	float get_fresh_at(Vector3 p_position) const;

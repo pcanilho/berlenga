@@ -2617,6 +2617,7 @@ void GroundSurface3D::add_dust(Vector3 p_position, Vector3 p_velocity, float p_s
 	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
 	if (frame > dust_frame + 2) {
 		dust.clear();
+		near_dust.clear();
 	}
 	dust_frame = frame;
 	const float share = get_blown_at(p_position.x, p_position.z);
@@ -2627,12 +2628,29 @@ void GroundSurface3D::add_dust(Vector3 p_position, Vector3 p_velocity, float p_s
 	d.position = p_position;
 	d.velocity = p_velocity;
 	d.rate = dust_emission * share * p_strength;
+	if (frame <= dust_claim_frame + 2 && p_position.distance_squared_to(dust_claim_center) < dust_claim_radius * dust_claim_radius) {
+		if (near_dust.size() < 256) {
+			near_dust.push_back(d);
+		}
+		return;
+	}
 	dust.push_back(d);
 }
 
 void GroundSurface3D::take_dust(LocalVector<Dust> &r_dust) {
 	r_dust = dust;
 	dust.clear();
+}
+
+void GroundSurface3D::claim_dust(Vector3 p_center, float p_radius) {
+	dust_claim_center = p_center;
+	dust_claim_radius = MAX(p_radius, 0.0f);
+	dust_claim_frame = Engine::get_singleton()->get_physics_frames();
+}
+
+void GroundSurface3D::take_near_dust(LocalVector<Dust> &r_dust) {
+	r_dust = near_dust;
+	near_dust.clear();
 }
 
 Array GroundSurface3D::take_sprays() {
@@ -3217,6 +3235,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("refresh_ground"), &GroundSurface3D::refresh_ground);
 	ClassDB::bind_method(D_METHOD("get_surface_height_at", "position"), &GroundSurface3D::get_surface_height_at);
 	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &GroundSurface3D::get_ground_height_at);
+	ClassDB::bind_method(D_METHOD("get_height", "position"), &GroundSurface3D::get_height);
 	ClassDB::bind_method(D_METHOD("get_dent_at", "position"), &GroundSurface3D::get_dent_at);
 	ClassDB::bind_method(D_METHOD("get_rim_at", "position"), &GroundSurface3D::get_rim_at);
 	ClassDB::bind_method(D_METHOD("get_fresh_at", "position"), &GroundSurface3D::get_fresh_at);

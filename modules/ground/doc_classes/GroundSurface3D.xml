@@ -106,6 +106,13 @@
 				The undisturbed ground height at [param position], from the height source.
 			</description>
 		</method>
+		<method name="get_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Same as [method get_surface_height_at], under the name height sources share, so a [PhysXFlow3D]'s [code]terrain_path[/code] can point at this node and its gas rest on the ruts and berms.
+			</description>
+		</method>
 		<method name="get_material_at" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />

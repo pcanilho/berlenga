@@ -511,5 +511,13 @@ Asked: a fast slide through a sharp turn should throw sand, and dry sand should 
   20 x 64 at 0.5 m (32 x 10 x 32 m), `dust_emission` 0.06, a stronger upward jet with ground speed. Sideways
   throw now leaves as grains (side bulldozed volume), and `PhysXGroundGrains3D` no longer turns on MPM auto
   colliders, so grains land on the field instead of resting on its static collider.
-- **Next: Flow near field.** Paulo (17 Nov) wants the near dust in PhysX Flow: ground shadows by density, the car
-  body as a solid, scene wind, every wheel. Grid stays for distance and platforms without Flow.
+- **Flow near field (17 Nov 2026).** Paulo wants the near dust in PhysX Flow: ground shadows by density, the car
+  body as a solid, scene wind, every wheel. `PhysXGroundDust3D` claims the dust lifted within `near_range` (40 m)
+  of its target (`GroundSurface3D.claim_dust` / `take_near_dust`; the rest still goes to `GroundDust3D`) and feeds
+  its own PhysXFlow3D through a pool of sphere emitters, one per dusty wheel, coupled hard (a wheel crosses its
+  sphere in a tenth of a second), swelling (`expansion`, emitter divergence) and gusting (`turbulence`, the
+  wake's eddies) so the plume rolls. Heavy dust via `smoke_buoyancy` (`dust_heaviness`), the floor from the
+  deformed sand (`GroundSurface3D.get_height` for Flow's terrain floor), ground wind as an air-only box emitter at
+  0.75 u10. Flow now takes the shapes of bodies whose shapes live on their own PhysX actor (vehicles) from their
+  CollisionShape3D children, so the dust curls round the car. Raster and path-traced frames match in shape (the
+  path tracer's dust is browner and grainy without a denoiser). Open: the plume stays below ~1 m at 6 m/s.

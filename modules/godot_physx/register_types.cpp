@@ -47,6 +47,7 @@
 #include "flow/physx_flow_3d.h"
 #include "flow/physx_flow_emitter_3d.h"
 #include "flow/physx_flow_render_effect.h"
+#include "flow/physx_ground_dust_3d.h"
 #endif
 #include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
@@ -179,6 +180,9 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXFlowEmitter3D);
 		GDREGISTER_CLASS(PhysXFlowRenderEffect);
 		GDREGISTER_CLASS(PhysXFlowTracedEffect);
+#ifdef MODULE_GROUND_ENABLED
+		GDREGISTER_CLASS(PhysXGroundDust3D);
+#endif
 #endif
 	}
 
