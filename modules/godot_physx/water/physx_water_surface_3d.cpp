@@ -325,6 +325,8 @@ uniform vec4 wet_sand_color : source_color = vec4(0.16, 0.12, 0.07, 0.45);
 uniform float swash_wave_height = 0.3;
 // Thin bright foam rim just behind the moving edge.
 uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
+// How much the waves run at the edge (0 still water, 1 a sea): the rim is the swash's foam, so a still pool has none.
+uniform float shore_wave_activity : hint_range(0.0, 1.0) = 1.0;
 
 varying vec3 v_world_normal;
 varying float v_foam;
@@ -1880,7 +1882,7 @@ void fragment() {
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
-	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
+	rim *= shore_rim_strength * shore_wave_activity * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
 	foam = max(foam, rim * (1.0 - v_lip));
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
@@ -5605,6 +5607,24 @@ void PhysXWaterSurface3D::remeasure_contact_foam() {
 	contact_dirty = true;
 }
 
+void PhysXWaterSurface3D::_push_shore_wave_activity() {
+	if (water_material.is_null()) {
+		return;
+	}
+	// The wind sea's significant height (as _push_contact_foam()), scaled as the spectrum is: no wind, no swash,
+	// so no rim of foam along the edge. A still pool's whole surface sat inside the rim's band and drew as a
+	// white mottle.
+	float hs = 0.0f;
+	if (wind_speed > 0.0f) {
+		hs = MIN(0.21f * wind_speed * wind_speed / 9.81f, 0.0016f * wind_speed * Math::sqrt(get_effective_fetch() / 9.81f));
+	}
+	const float activity = Math::smoothstep(0.02f, 0.15f, hs * wave_amplitude);
+	if (activity != shore_wave_activity_sent) {
+		shore_wave_activity_sent = activity;
+		water_material->set_shader_parameter("shore_wave_activity", activity);
+	}
+}
+
 void PhysXWaterSurface3D::_push_contact_foam() {
 	if (water_material.is_null()) {
 		return;
@@ -5888,6 +5908,7 @@ void PhysXWaterSurface3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
 
 void PhysXWaterSurface3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 	water_material = p_material;
+	shore_wave_activity_sent = -1.0f;
 	if (mesh_instance != nullptr && water_material.is_valid()) {
 		mesh_instance->set_material_override(water_material);
 	}
@@ -6253,6 +6274,7 @@ void PhysXWaterSurface3D::_rebuild() {
 		m.instantiate();
 		m->set_shader(shader);
 		water_material = m;
+		shore_wave_activity_sent = -1.0f;
 	}
 	mesh_instance->set_material_override(water_material);
 
@@ -6567,6 +6589,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		return;
 	}
 	_update_contact_foam();
+	_push_shore_wave_activity();
 	// (Waits for a solver still being built, whose depth textures don't exist yet.)
 	if (seabed_remeasure_pending && solver.is_available()) {
 		seabed_remeasure_pending = false;
