@@ -1530,7 +1530,7 @@ void vertex() {
 		// custom copy of this shader: COLOR.r is its white water.
 		v_lip = 1.0;
 		v_rest_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
-	v_drawn_xz = v_rest_xz;
+		v_drawn_xz = v_rest_xz;
 		v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 		v_foam = COLOR.r;
 	} else {
@@ -5631,8 +5631,7 @@ void PhysXWaterSurface3D::_update_contact_foam() {
 	const Vector2 focus = Vector2(eye.x, eye.z) + (ahead > 0.0f ? Vector2(fwd.x, fwd.z).normalized() * ahead : Vector2());
 	const float snap = contact_foam_extent / 8.0f;
 	const Vector2 c = (focus / snap).round() * snap;
-	if (water_time >= contact_settle_at && contact_settle_at > 0.0) {
-		contact_settle_at = -1.0;
+	if (contact_settle_ticks > 0 && --contact_settle_ticks == 0) {
 		contact_dirty = true;
 	}
 	if (!contact_map.is_busy()) {

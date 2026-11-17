@@ -296,7 +296,8 @@ public:
 	// Cells of the last map with a contact ring on the water, and the rays it took (benches, tests).
 	int get_contact_foam_cells() const { return contact_map.get_contact_cells(); }
 	int get_contact_foam_rays() const { return contact_map.get_last_ray_count(); }
-	bool is_contact_foam_ready() const { return contact_shown; }
+	// True once the map is measured, including the second measure after the start (benches wait for it).
+	bool is_contact_foam_ready() const { return contact_shown && contact_settle_ticks == 0 && !contact_dirty && !contact_map.is_busy(); }
 	void set_open_sea_beyond(bool p_open);
 	// Wind / direction / height / fetch at once — ONE in-place spectrum update (no rebuild once built).
 	void set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
@@ -686,7 +687,7 @@ private:
 	Ref<ImageTexture> contact_texture;
 	bool contact_shown = false;
 	bool contact_dirty = true; // measure again at the next tick
-	double contact_settle_at = 2.0; // one more measure this long after the start (bodies built late)
+	int contact_settle_ticks = 30; // one more measure this many physics ticks after the start (bodies built late)
 	void _update_contact_foam();
 	void _push_contact_foam();
 	// Open water past the simulated square (render_extent > domain, no surface_mesh): true = it is open, deep sea

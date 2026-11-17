@@ -346,8 +346,10 @@ func _world() -> void:
 			for w in get_children():
 				if w is Node and (w as Node).name == "Sea" and "seabed_collision_mask" in w:
 					w.set("seabed_collision_mask", 1)
-					# --no-contact-foam: the sea without its rock contact foam, for a before/after pair.
-					w.set("contact_foam", not args.has("no-contact-foam"))
+					# --no-contact-foam: the sea without its rock contact foam, for a before/after pair (strength 0, so both
+					# frames wait for the map alike and show the same waves).
+					if args.has("no-contact-foam"):
+						w.set("contact_foam_strength", 0.0)
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
@@ -1500,6 +1502,11 @@ func _render_later() -> void:
 	while breaking:
 		await get_tree().process_frame
 	while args.has("plants") and rocks and not plants_ready:
+		await get_tree().process_frame
+	# The sea's rock contact foam is measured over the first ticks (and once more for bodies built late): a path-traced
+	# still must not start accumulating before it.
+	var sea_node := get_node_or_null("Sea")
+	while sea_node and sea_node.get("contact_foam") and not sea_node.is_contact_foam_ready():
 		await get_tree().process_frame
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
