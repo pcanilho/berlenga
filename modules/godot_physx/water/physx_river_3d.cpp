@@ -2850,9 +2850,7 @@ void PhysXRiver3D::_build_mesh() {
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (water_material.is_null()) {
-		Ref<Shader> shader;
-		shader.instantiate();
-		shader->set_code(river_shader_src());
+		Ref<Shader> shader = water_shared_shader(river_shader_src());
 		water_material.instantiate();
 		water_material->set_shader(shader);
 		_live_material();
@@ -3160,9 +3158,7 @@ void PhysXRiver3D::_build_fall_mesh() {
 		add_child(fall_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (fall_material.is_null()) {
-		Ref<Shader> shader;
-		shader.instantiate();
-		shader->set_code(FALL_SHADER_SRC);
+		Ref<Shader> shader = water_shared_shader(FALL_SHADER_SRC);
 		fall_material.instantiate();
 		fall_material->set_shader(shader);
 	}

@@ -2086,26 +2086,6 @@ void light() {
 )";
 
 // The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
-// One Shader per source for every surface: each Shader resource is compiled on its own (raster variants and the
-// path tracer's hit groups), so a scene of small pools paid for the whole water shader once per pool, about half a
-// gigabyte each on a CPU driver. The materials (each surface's uniforms) stay per surface. Held by the materials
-// only: the cache keeps ids, so the shader is freed with the last surface.
-static Ref<Shader> water_shared_shader(const String &p_code) {
-	static HashMap<String, ObjectID> cache;
-	const ObjectID *id = cache.getptr(p_code);
-	if (id != nullptr) {
-		Shader *existing = ObjectDB::get_instance<Shader>(*id);
-		if (existing != nullptr) {
-			return Ref<Shader>(existing);
-		}
-	}
-	Ref<Shader> shader;
-	shader.instantiate();
-	shader->set_code(p_code);
-	cache[p_code] = shader->get_instance_id();
-	return shader;
-}
-
 static const String &water_shader_src() {
 	static const String src = String(WATER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
 	return src;

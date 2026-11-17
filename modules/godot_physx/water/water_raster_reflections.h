@@ -34,7 +34,10 @@
 #include "core/object/object_id.h"
 #include "core/object/ref_counted.h"
 #include "core/templates/rid.h"
+#include "core/object/object.h"
+#include "core/templates/hash_map.h"
 #include "scene/resources/image_texture.h"
+#include "scene/resources/shader.h"
 
 class Node3D;
 class ShaderMaterial;
@@ -358,6 +361,26 @@ vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v
 }
 #endif
 )";
+
+// One Shader per source for every water node: each Shader resource is compiled on its own (raster variants and the
+// path tracer's hit groups), so a scene of small pools or many rivers paid for the whole water shader once per node,
+// about half a gigabyte each on a CPU driver. The materials (each node's uniforms) stay per node. Held by the
+// materials only: the cache keeps ids, so a shader is freed with the last node using it.
+inline Ref<Shader> water_shared_shader(const String &p_code) {
+	static HashMap<String, ObjectID> cache;
+	const ObjectID *id = cache.getptr(p_code);
+	if (id != nullptr) {
+		Shader *existing = ObjectDB::get_instance<Shader>(*id);
+		if (existing != nullptr) {
+			return Ref<Shader>(existing);
+		}
+	}
+	Ref<Shader> shader;
+	shader.instantiate();
+	shader->set_code(p_code);
+	cache[p_code] = shader->get_instance_id();
+	return shader;
+}
 
 // The CPU side: finds the sun and bakes the sky panorama, and sets the uniforms above on a material.
 // Call update() once a frame.
