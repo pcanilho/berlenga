@@ -146,6 +146,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *Plunging breakers: the sheet thrown off the crest, with spray along its thin edge.*
 
 - **Shore wetness** (`contact_wetness` on PhysXWaterSurface3D and PhysXRiver3D): sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.
+- **Rock contact foam** (`contact_foam`): white water rings where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and washes over rock tops just under the surface.
 
 ## Currents and rivers
 

@@ -1689,6 +1689,17 @@
    "topic": "Shore"
   },
   {
+   "name": "Rock contact foam",
+   "settings": [
+    "contact_foam"
+   ],
+   "note": "",
+   "what": "white water rings where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and washes over rock tops just under the surface.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
    "name": "Currents",
    "settings": [
     "current",
@@ -2275,7 +2286,7 @@
     "VegetationPollen3D"
    ],
    "note": "",
-   "what": "brushing plants in flower releases a puff of pollen or spores; each plant recharges, and wet plants stay still.",
+   "what": "brushing grasses and other wind-pollinated plants in flower releases a puff of pollen; each plant recharges, and wet plants stay still.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
