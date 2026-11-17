@@ -912,3 +912,25 @@ What we build:
   swell. The dust is heavier than air (negative smoke buoyancy), fades slowly, rests on the terrain floor (the
   generator's heights), curls round the moving pieces as solids, and drifts with the weather's wind.
 - RockField3D makes one itself when Flow is built in (`rockfall_dust`, on).
+
+## Cave rimstone pools and sea-cave mist (Paulo, 17 Nov: third of the three)
+
+Rimstone (gours). Water spreading thinly over a cave floor loses CO2 fastest where it speeds up and thins, over
+any slight rise, so calcite grows there first. The rise becomes a dam, and the dam holds a pool behind it (Hammer,
+Dysthe, Jamtveit et al. 2007 and 2010, "The dynamics of travertine terrace formation": growth set by the local
+flow thickness and speed gives self-organised terraces whatever the slope). Pools step down the floor in a cascade.
+Each rim is a few centimetres wide, rounded, sinuous and crenellated, and its crest is close to level (the water
+trims it). The pools are clear and still, often with a white crystal lining, and their levels step down the slope.
+Steeper floors give smaller, closer rims (microgours); gentle ones give wide shallow pools. In games, caves show
+these as flat decals or sculpted props. We build the dams as real geometry from the floor's slope and drip.
+
+What we build:
+- CaveNetwork3D places rimstone cascades on chamber and passage floors where the floor falls gently (2 to 20
+  degrees) under drip formations (the water comes from the roof). Each cascade is a run of pools down the fall line.
+  Each pool's dam is a sinuous crescent across the slope, with a level crest whose height is set by the pool's
+  spill level, a rounded section, and crenellations. The pool fills behind it to the crest.
+- The water is the fork's own still water (PhysXWaterSurface3D with a surface_mesh outline, as lakes use), one per
+  near pool, so it takes shadows, refraction and transmission like every other water body. Drips from the
+  stalactites above ring it (submit_impulse). Pools away from the target show a still plane of the same material.
+- Sea-cave mouths: cold mist in PhysX Flow. Spray and saturated air pushed out of the cave by the swell, where the
+  sea is in the mouth. A slow, heavy, pale Flow emitter at the mouth, pulsing with the swell, near the target only.
