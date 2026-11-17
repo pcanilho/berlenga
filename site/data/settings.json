@@ -1132,6 +1132,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Standing water",
+   "settings": [
+    "GroundSurface3D.standing_water"
+   ],
+   "note": "",
+   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Thrown sand",
    "settings": [
     "PhysXGroundGrains3D",
