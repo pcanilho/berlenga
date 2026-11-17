@@ -1,0 +1,1 @@
+- Water: every PhysXWaterSurface3D shares one compiled water shader (and its lip, underwater and crest sheet shaders) instead of compiling its own; each extra small pool now costs about 50 MB instead of about 490 MB on the CPU driver, and the GPU memory and compile time scale the same way.
