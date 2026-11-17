@@ -66,8 +66,9 @@ public:
 		STEP_COVER = 1 << 9, // new cover cells
 		STEP_SYNC = 1 << 10, // read back now, blocking (tests)
 		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
+		STEP_RUNOFF = 1 << 12, // runoff channels (ground): the water erodes and carries sand in each water substep
 	};
-	static constexpr int PARAMS_BYTES = 256;
+	static constexpr int PARAMS_BYTES = 272;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -82,6 +83,7 @@ public:
 		int slump_passes = 1; // slumping passes per step (a finer field needs more to move as far in a second)
 		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 3 ground (the third: water inputs)
 		int water_passes = 0; // pipe-model substeps this step (STEP_WATER)
+		int morph_passes = 1; // bed substeps a pipe-model substep (STEP_RUNOFF)
 	};
 
 	static bool is_available();

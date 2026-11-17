@@ -34,7 +34,6 @@
 #include "tree_generator.h"
 
 #include "core/config/engine.h"
-#include "core/config/project_settings.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -2103,10 +2102,6 @@ void TreeWind3D::_blast_swap(StormPart &r_part, RigidBody3D *p_body, const Vecto
 		return;
 	}
 	const Ref<Resource> asset = *found;
-	// Pieces that split start touching at the break; uncapped, PhysX throws them apart.
-	if (float(ProjectSettings::get_singleton()->get_setting("physics/physx_3d/simulation/max_depenetration_velocity", 0.0f)) <= 0.0f) {
-		WARN_PRINT_ONCE("TreeWind3D: set physics/physx_3d/simulation/max_depenetration_velocity (3 m/s) or broken trees fly apart when they split.");
-	}
 	Object *obj = ClassDB::instantiate("PhysXDestructible3D");
 	Node3D *node = Object::cast_to<Node3D>(obj);
 	if (!node) {

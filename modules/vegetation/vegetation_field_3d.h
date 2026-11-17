@@ -34,6 +34,7 @@
 #include "plant_species.h"
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
+#include "vegetation_paths.h"
 
 #include "core/object/worker_thread_pool.h"
 #include "core/os/rw_lock.h"
@@ -126,6 +127,8 @@ class VegetationField3D : public Node3D {
 	Rect2 density_mask_rect;
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
+	Array paths; // Worn paths (VegetationPaths): Dictionaries of points, width, passes a year.
+	VegetationPaths path_grid;
 	PackedVector4Array stone_tops; // (x, top y, z, cap radius): where stone_top species grow.
 	VegetationObstacles stone_top_grid;
 	PackedVector3Array stone_top_normals; // Optional, one per stone_tops entry: the cap's surface normal.
@@ -206,6 +209,7 @@ class VegetationField3D : public Node3D {
 		float litter_reach = 0.0f; // How far past a crown its litter can land.
 		float deadwood_reach = 0.0f; // The widest a log reaches from its origin plus the widest deadwood band of a species.
 		VegetationObstacles obstacles; // Rocks the plants keep out of (a copy, for the worker threads).
+		VegetationPaths paths; // Worn paths that thin and shorten the plants (a copy).
 		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
 		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
 		VegetationHoles holes; // Openings in the ground (cave mouths): no plant there (a copy).
@@ -442,6 +446,9 @@ public:
 	Rect2 get_density_mask_rect() const { return density_mask_rect; }
 	// Rocks on the ground, (x, ground y, z, radius at the soil): no plant grows inside one.
 	void set_obstacles(const PackedVector4Array &p_obstacles);
+	void set_paths(const Array &p_paths);
+	Array get_paths() const { return paths; }
+	float get_path_passes_at(const Vector3 &p_position) const { return path_grid.passes_at(Vector2(p_position.x, p_position.z)); }
 	// The placed plants' frontal area index (m2 shown to the wind per m2 of ground) at a point, for
 	// GroundSurface3D's sand shelter (its wind_shelters).
 	float sample_lateral_cover(const Vector3 &p_position) const;

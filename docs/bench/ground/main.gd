@@ -50,7 +50,7 @@ extends Node3D
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
 #   --view=swash        boot prints in sand, the nearer ones after a minute under flowing water (sand stage 4)
-#   --view=rills        runoff channels: a beach face 3 hours after a falling tide (scaled), the seepage's rills
+#   --view=rills        runoff channels: a beach face 84 minutes after a falling tide (scaled), the seepage's rills
 #                         and the sand they laid at the foot; --runoff=0 for the A/B
 #   --view=grains       dry sand from 40 cm under a low sun behind the camera: grain colours and glints (sand_glints;
 #                       --glints=0 for the A/B)
@@ -62,6 +62,7 @@ extends Node3D
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
+#   --pair              --view=bodymud: save the raster frame as <out>_raster.png, then the path traced one, from one run
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
 #   --gpu=0             the field on the CPU (default: compute shaders where there is a GPU; --headless
@@ -1048,6 +1049,18 @@ func _build_bodymud() -> void:
 	cam.look_at(xf * Vector3(c[3], c[4], c[5]))
 	cam.fov = 45.0
 	get_window().size = full
+	if "--pair" in OS.get_cmdline_user_args() and not out.is_empty():
+		# The same clods for both renderers: the raster frame first, then the path traced one, the bodies held still.
+		var pt_out := out
+		out = pt_out.get_basename() + "_raster.png"
+		env.pathtracing_enabled = false
+		await _save_frame()
+		get_tree().paused = true
+		out = pt_out
+		env.pathtracing_enabled = true
+		await _save_frame()
+		get_tree().quit()
+		return
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
@@ -1420,6 +1433,23 @@ func _runoff_beach(scale: float) -> Node3D:
 	return sea
 
 
+# RUNOFF_DUMP=path.png: the cut over the face from above (light cut, brown fill, 20 mm full scale), 1.5 cm texels.
+func _runoff_dump() -> void:
+	var dump := OS.get_environment("RUNOFF_DUMP")
+	if dump == "":
+		return
+	var img := Image.create(256, 448, false, Image.FORMAT_RGB8)
+	var deepest := 0.0
+	for py in 448:
+		for px in 256:
+			var cc := surface.get_runoff_cut_at(Vector3(-2.0 + px * 0.015625, 0, 7.5 - py * 0.015625))
+			deepest = maxf(deepest, cc)
+			var v := clampf(0.5 + cc / 0.02, 0.0, 1.0)
+			img.set_pixel(px, py, Color(v, v, v) if cc >= 0.0 else Color(v, v * 0.8, v * 0.5))
+	img.save_png(dump)
+	print("  runoff cut map saved, deepest %.1f mm" % (deepest * 1000.0))
+
+
 func _run_runoff_tests() -> void:
 	var tc := 0.047 * 1650.0 * 9.81 * 0.00025
 	_check("no bed load under the Shields threshold, by shear (Shields 1936)", GroundSurface3D.bed_load_shear(0.9 * tc) == 0.0 and GroundSurface3D.bed_load_shear(1.2 * tc) > 0.0, "critical shear %.2f Pa" % tc)
@@ -1462,12 +1492,15 @@ func _run_runoff_tests() -> void:
 		var zz := -1.0
 		while zz < 9.0:
 			var row := 0.0
+			var wrow := 0.0
 			var xx := -6.0
 			while xx < 6.0:
 				row += surface.get_runoff_cut_at(Vector3(xx, 0, zz))
+				wrow += surface.get_runoff_at(Vector3(xx, 0, zz)).x
 				xx += 0.125
-			print("    z %.2f: mean %.2f mm" % [zz, row / 96.0 * 1000.0])
+			print("    z %.2f: mean %.2f mm, water %.3f mm" % [zz, row / 96.0 * 1000.0, wrow / 96.0 * 1000.0])
 			zz += 0.25
+	_runoff_dump()
 	var sorted := cuts.duplicate()
 	sorted.sort()
 	var top := sorted[int(sorted.size() * 0.99)]
@@ -2165,11 +2198,12 @@ func _build_grains() -> void:
 	get_tree().quit()
 
 
-# Runoff channels: the --test=runoff beach after about 3 hours of seepage (scaled), seen from the waterline's side
-# looking up the face, a low sun across it so the rills' walls shade.
+# Runoff channels: the --test=runoff beach after 84 minutes of seepage (scaled, as the test), seen from 1.3 m above
+# the waterline's side looking up the face, a low sun across it so the rills' walls shade. RUNOFF_DUMP=path.png
+# also saves the cut from above.
 func _build_rills() -> void:
 	var on := not OS.get_cmdline_user_args().has("--runoff=0")
-	await _runoff_beach(270.0)
+	await _runoff_beach(120.0)
 	surface.runoff_channels = on
 	var mat := _ground_material("dry_sand")
 	surface.material = mat
@@ -2181,9 +2215,12 @@ func _build_rills() -> void:
 	for i in 2400:
 		await get_tree().physics_frame
 	surface.sync_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	_runoff_dump()
 	var cam := Camera3D.new()
 	add_child(cam)
-	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.6, 0.9, 0.9, -0.4, 0.0, 4.0])
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.4, 1.3, 1.4, 0.0, 0.0, 3.6])
 	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
 	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
 	cam.fov = 50.0

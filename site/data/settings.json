@@ -1193,7 +1193,7 @@
     "PhysXVehicle3D.add_mud_splat()"
    ],
    "note": "",
-   "what": "clods that hit a vehicle stick as splats and wash off in water.",
+   "what": "clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1297,7 +1297,7 @@
     "GroundSurface3D.runoff_channels"
    ],
    "note": "",
-   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.",
+   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1992,6 +1992,18 @@
    ],
    "note": "",
    "what": "a painted texture thins or clears any species per channel, for clearings and paths.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Worn paths",
+   "settings": [
+    "VegetationField3D.paths",
+    "GrassField3D.paths"
+   ],
+   "note": "",
+   "what": "along paths, plants and grass thin out and shorten by how well they resist trampling, leaving bare trodden soil.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"

@@ -230,6 +230,12 @@
 		<member name="wind_response" type="float" setter="set_wind_response" getter="get_wind_response" default="0.12">
 			How far blades bend for a given wind speed.
 		</member>
+		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
+			Worn paths, the same format as [member VegetationField3D.paths]. Along a path the sward thins and shortens by [member trample_resistance], and the ground tint shows the bare trodden soil. Changing it rebuilds the tiles.
+		</member>
+		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="300.0">
+			Walkers a year on a path that halve the sward's cover. Grasses resist trampling well (Cole 1995); 0 turns paths off for this field.
+		</member>
 	</members>
 	<signals>
 		<signal name="far_color_changed">

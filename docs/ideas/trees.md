@@ -865,9 +865,9 @@ microtopography; Schaetzl et al. 1989, Norman, Schaetzl and Small 1995).
   (Krisans et al. 2020: 0.5-1.5 m3 for spruce plates of 1.4-2 m radius); old trees' plates
   reach 3.6 m radius (7 m across).
 - **Depenetration.** Blast pieces that split start touching at the break, and PhysX by default
-  pushes overlapping bodies apart at any speed: limbs flew off at 30 m/s and through the ground.
-  A project using storms sets `physics/physx_3d/simulation/max_depenetration_velocity` to 3 m/s
-  (the trees bench does).
+  pushed overlapping bodies apart at any speed: limbs flew off at 30 m/s and through the ground.
+  `PhysXDestructible3D.max_depenetration_velocity` (3 m/s by default, from the PhysX thread) caps
+  it per piece.
 - **Crown crush.** While a fallen part rests propped (its centre of mass 1 m or more above
   what it rests on), the limb under it carries the share of its weight the foot does not; from
   that rest toward the foot, the first joint whose wood cannot carry that load's moment breaks,
@@ -1461,6 +1461,81 @@ past what their wood or roots hold; what breaks falls as PhysX bodies.
   0.35-0.95 m), as `tree_root_pit`.
 - **Bench.** `docs/bench/trees --storm` (storm.gd): a clip of a storm on a few trees, or checks
   with `--test`.
+
+### 5u. Gorse and broom (17 Nov; shrubs agreed with vegetation, Atlantic heath first)
+
+Woody shrubs over about 50 cm belong to the trees (forest-floor split); vegetation places them.
+Gorse and broom come first, then gum rockrose, kermes oak and lentisk, then the dwarf fan palm.
+
+**Research.**
+- **Gorse (Ulex europaeus).** A shrub to 2-2.5 m (4 m left to grow), erect to prostrate; main
+  stems erect or spreading, densely branched in younger parts but bare at the base when old (NZ
+  Flora, Webb et al. 1988; Trees and Shrubs Online, Sutton 2022). Adult leaves are rigid,
+  spine-like phyllodes 5-12 mm; the shoots end in rigid, deeply furrowed spines 15-30 mm
+  (primary to 4 cm), branched, with secondary spines to 12 mm at their base; young twigs and
+  spines glaucous green with grey hairs. Seedlings have three hairy leaflets. Flowers solitary
+  in the spine axils, clear to golden yellow, 13-20 mm, pea-shaped (banner 14-21 x 10-15 mm),
+  with a hairy greenish-yellow calyx of 11-16 mm nearly as long. Pods 10-20 mm, villous, dark
+  brown to black. In flower almost all year with a spring peak (TSO); in Britain the flush is
+  February to May. Active life 15-20 years; old plants lose vigour, grow top-heavy and keel over
+  under their own weight (BSBI Fermanagh); flowers from 2-3 years; resprouts after cutting and
+  fire. Frequent on maritime cliff tops and grey dunes.
+- **Broom (Cytisus scoparius).** A much-branched shrub to 2-2.5 m (3 m), erect, of straight
+  green twigs, about five-angled, silky when young; deciduous, but the green branches keep an
+  evergreen look in winter (Bean). Leaves trifoliate and stalked low on the shoot and on older
+  twigs, 1-2 leaflets and stalkless near the tip; leaflets 4-16 mm, elliptic to obovate; often
+  shed by summer, so the plant stands leafless most of the year (HerbiGuide). Flowers solitary
+  or paired from the joints of year-old shoots, golden yellow, 16-25 mm, calyx glabrous and a
+  quarter the corolla's length; May to June in Britain. Pods black, oblong, 15-60 mm, hairy on
+  the margins. Lives 10-15, up to 20 years; with age its branches lean outward and thin,
+  opening the centre (GOERT factsheet). Seeds from 2-3 years; regrows from the root crown.
+- **Cushions.** On exposed coasts salt wind kills buds on the windward and upper surface, so
+  heath shrubs grow as dense, clipped cushions (the krummholz mechanism, 5q-5s, at heath scale):
+  western gorse and kermes oak under 50 cm.
+
+**Plan.**
+- `PRESET_GORSE`, `PRESET_BROOM` in the growth model: many stems from the base, short
+  internodes, high basitony; gorse dense and rounded, broom erect and fastigiate.
+- **Spines as geometry.** Gorse's foliage is spines: each leaf slot carries a furrowed
+  three-sided spine tapering to a point, glaucous green, with 1-3 short side spines near its
+  base on the primary ones. Seedlings and the youngest age class keep a few trifoliate leaves.
+- **Green stems.** Broom's twigs stay green and five-angled for years, browning only on old
+  wood at the base; gorse's young shoots are green too. A twig colour per species blends
+  into the bark by twig age.
+- **Flowers and pods as geometry**, from the season dictionary (`day_of_year`): pea flowers (a
+  rounded banner over a boat of wings and keel, calyx below) along the shoots; gorse's flush
+  February to May with a few open all year, broom's May to June along the year-old switches;
+  then pods (gorse June to August, broom July to September, black, twisted open after).
+- **Age classes**: young (3-4 years, dense to the ground), mature (8-10), old (15-20: bare grey
+  dead stems in the centre, stems leaning out, gorse top-heavy).
+- **Forms**: a single bush; a thicket (several plants grown into one, wider than tall, flat
+  top); a wind-pruned cushion under 50 cm (gorse).
+- **For vegetation**: one static call per species returning a `PlantSpecies` with its meshes,
+  footprint, canopy radius and far colour and no climate or terrain rules (`apply_scrub_rules`
+  and placement stay with vegetation).
+
+**As built.**
+- `PRESET_GORSE` (31) and `PRESET_BROOM` (32): many basal stems with a wide spread; gorse with
+  weak negative lateral gravitropism and pipe exponent 2.8 so it rounds out instead of making a
+  small tree, broom erect with steep 28 degree branching.
+- Gorse foliage is spines only: each leaf slot draws a three-faced prism tapering to a browned
+  point, a third of them with 1-2 side spines. Broom keeps three-lobed leaves on green twigs.
+  Twigs blend green into bark by radius (gorse 2.5-6 mm, broom 6-16 mm).
+- Pea flowers (calyx, two wings, a three-station banner) and pods on the shoot tips, kept by
+  every LOD. `get_bloom(preset, day)`: gorse ramps up 20-60, down 120-160 with 4% all year;
+  broom 120-178. Pods follow (gorse 140-250, broom 165-290), ripening black and twisting open.
+  `get_leaf_season` adds `flowering` and `flower_color` for both.
+- Forms: `FORM_THICKET` (2.5 times the stems, envelope-clipped top 1.3 m gorse / 1.7 m broom)
+  and `FORM_OLD` (1.5-1.7 times the years, shaded centre shed and kept dead, stems leaning out).
+  The cushion is the krummholz cap at heath scale (0.47-0.54 m).
+- `TreeGenerator.make_shrub_species(preset, ShrubForm, variants, season)` for vegetation:
+  `SHRUB_YOUNG`, `SHRUB_MATURE`, `SHRUB_OLD`, `SHRUB_THICKET`, `SHRUB_CUSHION`, rules reset,
+  far colour gold by bloom. Bench: `-- --shrubs [--test]`.
+- **Cost (cloud, lavapipe build):** gorse is heavy because every spine is geometry: young 96k
+  triangles, mature ~2.0M, cushion 1.7M, thicket 2.5M, old 3.6M; broom mature 108k, old 500k.
+  Generation 0.5-6 s per plant. On the PC queue: GPU cost and a spine LOD (cards past ~15 m).
+- Raster vs path-traced 100% crop (gorse in flower, April): spines and flowers both present;
+  PT is darker inside the bush from occlusion, no detail lost.
 
 ## 6. What the games at Paulo's bar do
 

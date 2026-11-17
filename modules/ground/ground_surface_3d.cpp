@@ -590,6 +590,13 @@ float GroundSurface3D::_evaporation() const {
 
 // Pipe-model substeps for a step: the shallow-water wave (sqrt(g h), for water up to 20 cm) crossing half a
 // texel each, at most 4 (past that the water just moves slower).
+// Bed substeps a pipe-model substep for runoff channels: the transport is held to the bed's own wave crossing half
+// a texel a substep at the morphological factor (ground_deform.glsl), so the factor is split over substeps of 40 at
+// most, and a scaled run cuts the same whatever the factor (up to 32 substeps, a factor of 1280).
+int GroundSurface3D::_morph_passes() const {
+	return CLAMP(int(Math::ceil(runoff_time_scale / 40.0f)), 1, 32);
+}
+
 int GroundSurface3D::_water_passes(const GroundDeformField &p_field, double p_delta) const {
 	const float limit = 0.5f * p_field.texel() / Math::sqrt(9.81f * 0.2f);
 	return CLAMP(int(Math::ceil(float(p_delta) / limit)), 1, 4);
@@ -1793,8 +1800,41 @@ float GroundSurface3D::get_sand_deposit_at(const Vector3 &p_position) const {
 //   difference up, one carrying more lays it down (transport-limited Exner, porosity 0.4). Where flow gathers
 //   it cuts deeper, gathers more and cuts on: rills (Schorghofer et al. 2004). The field's own slumping keeps
 //   their walls at the angle of repose. Cuts and fills go to the field in 1 mm steps.
+// The seepage face's outflow at lattice cell p_i (m/s): where the table a falling tide left lies within 2 cm of the
+// surface, Darcy outflow k sin(beta), k 1e-4 m/s for fine sand (Turner 1993); none under standing water.
+float GroundSurface3D::_runoff_seep(int p_i) const {
+	const int n = ground_n;
+	if (!water_coupling || (int)water_table.size() != n * n || (int)water_depth.size() != n * n || (int)cells.size() != n * n) {
+		return 0.0f;
+	}
+	if (water_depth[p_i] > 0.002f) {
+		return 0.0f;
+	}
+	const float tab = water_table[p_i];
+	const Cell &cell = cells[p_i];
+	if (tab >= 0.02f || cell.sand <= 0.0f || !cell.deformable) {
+		return 0.0f;
+	}
+	const int lx = CLAMP(p_i % n, 1, n - 2);
+	const int lz = CLAMP(p_i / n, 1, n - 2);
+	const int l = lz * n + lx;
+	const float gx = (ground[l + 1] - ground[l - 1]) / (2.0f * ground_spacing);
+	const float gz = (ground[l + n] - ground[l - n]) / (2.0f * ground_spacing);
+	const float g2 = gx * gx + gz * gz;
+	return 1e-4f * Math::sqrt(g2 / (1.0f + g2)) * MIN(1.0f - tab / 0.02f, 1.0f) * cell.sand;
+}
+
 void GroundSurface3D::_runoff_update(double p_delta) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	if (_runoff_on_gpu()) {
+		// On the GPU the runoff is the standing water's own shallow water with sediment (ground_deform.glsl): here
+		// only its sources follow the water table, which moves with the tide.
+		gpu_cells_dirty = true;
+		near_cells_dirty = true;
+		runoff_n = 0;
+		runoff_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+		return;
+	}
 	if (!ground_valid || !field.valid || ground_n < 2 || (int)cells.size() != ground_n * ground_n) {
 		return;
 	}
@@ -1994,6 +2034,17 @@ void GroundSurface3D::set_runoff_channels(bool p_enabled) {
 }
 
 Vector2 GroundSurface3D::get_runoff_at(const Vector3 &p_position) const {
+	if (_runoff_on_gpu()) {
+		// The GPU's water depth, and the sheet's speed by Manning (n 0.025) on the ground's slope there.
+		const float d = get_standing_water_at(p_position);
+		if (d <= 0.0f) {
+			return Vector2();
+		}
+		const float e = 0.05f;
+		const float gx = (get_surface_height_at(p_position + Vector3(e, 0, 0)) - get_surface_height_at(p_position - Vector3(e, 0, 0))) / (2.0f * e);
+		const float gz = (get_surface_height_at(p_position + Vector3(0, 0, e)) - get_surface_height_at(p_position - Vector3(0, 0, e))) / (2.0f * e);
+		return Vector2(d, Math::pow(d, 2.0f / 3.0f) * Math::sqrt(Math::sqrt(gx * gx + gz * gz)) / 0.025f);
+	}
 	if (runoff_n <= 0 || (int)runoff_depth.size() != runoff_n * runoff_n) {
 		return Vector2();
 	}
@@ -2007,6 +2058,15 @@ Vector2 GroundSurface3D::get_runoff_at(const Vector3 &p_position) const {
 }
 
 float GroundSurface3D::get_runoff_cut_at(const Vector3 &p_position) const {
+	if (_runoff_on_gpu()) {
+		if (is_near_active() && _near_inside(p_position.x, p_position.z) && int(near_fld.water_cut.size()) == near_fld.resolution * near_fld.resolution) {
+			return near_fld.sample(near_fld.water_cut, p_position.x, p_position.z);
+		}
+		if (field.valid && int(field.water_cut.size()) == field.resolution * field.resolution) {
+			return field.sample(field.water_cut, p_position.x, p_position.z);
+		}
+		return 0.0f;
+	}
 	if (runoff_n <= 0 || (int)runoff_cut.size() != runoff_n * runoff_n) {
 		return 0.0f;
 	}
@@ -3095,6 +3155,8 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 	float *w = reinterpret_cast<float *>(out.ptrw());
 	const bool inputs = int(cell_inputs.size()) == n * n;
 	bool seep = false;
+	const bool runoff_gpu = _runoff_on_gpu();
+	bool runoff_any = false;
 	for (int i = 0; i < n * n; i++) {
 		const Cell &c = cells[i];
 		float *o = w + i * 12;
@@ -3110,10 +3172,13 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 		o[8] = inputs ? _water_conductivity(cell_inputs[i]) : 0.0f;
 		o[9] = inputs ? _water_table_depth(i) : 10.0f;
 		o[10] = inputs ? 1.0f - CLAMP(MAX(cell_inputs[i].moisture, (int)pore.size() == n * n ? pore[i] : 0.0f), 0.0f, 1.0f) : 0.0f;
-		o[11] = 0.0f;
+		// Runoff channels on the GPU: the seepage face's outflow, m/s; -1 under the sea or a lake (the runoff ends).
+		o[11] = runoff_gpu ? ((int)water_depth.size() == n * n && water_depth[i] > 0.002f ? -1.0f : _runoff_seep(i)) : 0.0f;
+		runoff_any = runoff_any || o[11] > 0.0f;
 		seep = seep || (c.deformable && o[9] < c.max_dent);
 	}
 	const_cast<GroundSurface3D *>(this)->water_seep = seep;
+	const_cast<GroundSurface3D *>(this)->runoff_seep_any = runoff_any;
 	return out;
 }
 
@@ -3154,7 +3219,7 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	put(12, soften, float(p_age) / 3600.0f, p_edge_margin, float(p_field.valid && &p_field == &near_fld ? _near_passes() : 1));
 	// Standing water: the rain, a pipe-model substep, damping, evaporation (rates sped up by runoff_time_scale);
 	// then the seepage length, the conductivity compaction keeps, on, the thinnest film kept once its source stops.
-	if (standing_water && p_delta > 0.0) {
+	if ((standing_water || _runoff_on_gpu()) && p_delta > 0.0) {
 		const WeatherMap3D *wm = WeatherMap3D::get_active();
 		const float rain = wm ? MAX(wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)), 0.0f) / 3.6e6f : 0.0f;
 		const int passes = _water_passes(p_field, p_delta);
@@ -3166,6 +3231,11 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 		put(13, rain * gain, sub, 2.0f, _evaporation() * gain);
 		// Compacted ruts drain slower: tyres cut the conductivity several fold (Horn et al. 1995): a third kept.
 		put(14, 0.02f, 1.0f / 3.0f, gain, 2e-5f);
+		if (_runoff_on_gpu()) {
+			// Runoff channels: on; the morphological factor (the sand moves runoff_time_scale times faster, the
+			// water at its own pace); 2 mm of bed roughness; the seepage landed in the substeps at its own rate.
+			put(15, 1.0f, runoff_time_scale / _morph_passes(), 0.002f, gain / MAX(runoff_time_scale, 1e-6f));
+		}
 	}
 	return b;
 }
@@ -3235,12 +3305,17 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	}
 	// Standing water runs while there is some, rain falls, or ground water can seep into a print.
 	int water_passes = 0;
-	if (standing_water && p_delta > 0.0) {
+	if ((standing_water || _runoff_on_gpu()) && p_delta > 0.0) {
 		const WeatherMap3D *wm = WeatherMap3D::get_active();
 		const bool rain = wm && wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) > 0.0f;
-		if (rain || water_seen > 0.0f || water_seep) {
+		const bool runoff = _runoff_on_gpu() && (rain || runoff_seep_any || water_seen > 0.0f);
+		if (runoff || (standing_water && (rain || water_seen > 0.0f || water_seep))) {
 			flags |= GroundDeformGPU::STEP_WATER;
 			water_passes = _water_passes(p_field, p_delta);
+		}
+		if (runoff) {
+			// The water cuts and fills the bed: the cuts' walls slump while it runs.
+			flags |= GroundDeformGPU::STEP_RUNOFF | GroundDeformGPU::STEP_SLUMP;
 		}
 	}
 	if (flags & (GroundDeformGPU::STEP_RESET | GroundDeformGPU::STEP_SHIFT | GroundDeformGPU::STEP_STAMPS | GroundDeformGPU::STEP_SLUMP | GroundDeformGPU::STEP_RELAX | GroundDeformGPU::STEP_COVER | GroundDeformGPU::STEP_WATER)) {
@@ -3264,6 +3339,7 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	d.slump_passes = p_passes;
 	d.cover_vec4s = 3;
 	d.water_passes = water_passes;
+	d.morph_passes = _morph_passes();
 	r_host.gpu->step(d, flags, _gpu_params(p_field, p_edge_margin, p_delta, p_age, slow), ground_bytes, cell_bytes, r_host.stamps, r_host.stores, r_host.shift, p_field.origin, Vector2(), r_host.uploads);
 	r_host.stamps.clear();
 	r_host.stores.clear();

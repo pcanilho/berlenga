@@ -17,6 +17,7 @@
 #define SCENE_DATA_FLAGS_PEEL_FRONT (1 << 11)
 #define SCENE_DATA_FLAGS_PEEL_BEHIND (1 << 12)
 #define SCENE_DATA_FLAGS_PEEL_ACTIVE (1 << 13)
+#define SCENE_DATA_FLAGS_PEEL_FRONT_COLOR (1 << 14)
 
 struct SceneData {
 	mat4 projection_matrix;

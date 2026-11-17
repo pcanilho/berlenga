@@ -42,6 +42,8 @@ extends Node3D
 #   --rocks=N        N boulders (lumpy weathered rocks) 3 to 10 m in front of the camera; the fields keep
 #                    out of them (obstacles) unless --rocks-through
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
+#   --path[=P]       a worn path winding away from the camera, P passes a year (default 1000; GrassField3D.paths,
+#                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
 #   --no-rock-foot   with --rocks: the floor species without PlantSpecies.rock_foot
 #   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
@@ -97,6 +99,7 @@ var no_floor := false
 var no_sward := false
 var undergrowth := ""
 var grazed := false # --grazed: the tall grass grazed short (upland pasture).
+var path_passes := 0.0 # --path: a worn path across the meadow, passes a year.
 var ug_dir := Vector3(0, 0, 1)
 var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
@@ -170,6 +173,8 @@ func _ready() -> void:
 		elif a == "--no-margin": no_margin = true
 		elif a == "--undergrowth-edge": ug_edge = true
 		elif a == "--grazed": grazed = true
+		elif a == "--path": path_passes = 1000.0
+		elif a.begins_with("--path="): path_passes = float(a.get_slice("=", 1))
 		elif a == "--no-rock-foot": no_rock_foot = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
@@ -356,6 +361,19 @@ func _ready() -> void:
 				g.rules = r
 				g.canopy_field = g.get_path_to(cover)
 				g.undergrowth_field = g.get_path_to(cover) # Thinned under the bracken and bramble stands.
+		if path_passes > 0.0:
+			# A footpath from beside the camera, bending away over the meadow: a line of points
+			# along a gentle S, 1.2 m trodden width.
+			var pts := PackedVector3Array()
+			for k in 40:
+				var t := k / 39.0
+				var z := lerpf(23.0, -40.0, t)
+				pts.append(Vector3(5.5 - 7.0 * t + 2.5 * sin(t * 5.0), 0.0, z))
+			var worn := [{"points": pts, "width": 1.2, "passes": path_passes}]
+			for g in [grass, under, turf]:
+				if g:
+					g.paths = worn
+			cover.paths = worn
 		if undergrowth != "" and not forest:
 			# One undergrowth species in the open meadow, in irregular stands (its patches).
 			var usp := PlantSpecies.new()
@@ -412,8 +430,9 @@ uniform float far_from = 1e9;
 // forest_floor_* globals): leaves, needles and moss by the stand above.
 void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-	vec3 a = vegetation_far(wp, grass_ground(wp, vec3(0.11, 0.12, 0.06)), CAMERA_POSITION_WORLD);
-	float spec = grass_ground_specular(wp, 0.5);
+	// Bare ground: a brown loam (worn paths show it), dull.
+	vec3 a = vegetation_far(wp, grass_ground(wp, vec3(0.13, 0.1, 0.065)), CAMERA_POSITION_WORLD);
+	float spec = grass_ground_specular(wp, 0.3);
 	float t = smoothstep(far_from, far_from + 2.0, length(wp - CAMERA_POSITION_WORLD));
 	vec2 cuv = (wp.xz - terrain_cover_rect.xy) / max(terrain_cover_rect.zw, vec2(1e-3));
 	if (terrain_cover_rect.z > 0.0 && t > 0.0 && all(greaterThanEqual(cuv, vec2(0.0))) && all(lessThanEqual(cuv, vec2(1.0)))) {
@@ -1673,6 +1692,50 @@ func _checks() -> void:
 						if cd.r < 0.0 or cd.r > 1.0 or absf(floorf(cd.g) - floorf(sp.visibility_range)) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
 							bad += 1
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
+	_path_checks()
+
+# Worn paths (GrassField3D.paths): a busy path across the sward 5 m in front of the camera thins
+# the blades on its trodden line and shortens the ones left, the same on the GPU and the CPU fill.
+func _path_checks() -> void:
+	var c := cam.global_position
+	var fwd := -cam.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var mid := c + fwd * 5.0
+	var side := Vector3(-fwd.z, 0.0, fwd.x)
+	grass.paths = [{"points": PackedVector3Array([mid - side * 20.0, mid + side * 20.0]), "width": 1.5, "passes": 1500.0}]
+	for gpu in [true, false]:
+		grass.gpu_fill = gpu
+		for i in 3:
+			grass.update_at(c)
+		var on := [0, 0.0]
+		var off := [0, 0.0]
+		for ch in grass.get_children(true):
+			if ch is MultiMeshInstance3D:
+				var mm: MultiMesh = ch.multimesh
+				var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+				for i in mm.instance_count:
+					var b := i * 16
+					if buf[b] == 0.0 and buf[b + 2] == 0.0:
+						continue
+					var p := Vector3(buf[b + 3], 0.0, buf[b + 11])
+					var along := (p - mid).dot(side)
+					if absf(along) > 8.0:
+						continue
+					var across := absf((p - mid).dot(fwd))
+					if across < 0.25:
+						on[0] += 1
+						on[1] += buf[b + 12]
+					elif across > 2.0 and across < 2.5:
+						off[0] += 1
+						off[1] += buf[b + 12]
+		var h_on: float = on[1] / maxf(on[0], 1)
+		var h_off: float = off[1] / maxf(off[0], 1)
+		_check("worn path (%s fill): blades thinned on the trodden line and shorter there" % ("GPU" if gpu else "CPU"), on[0] * 3 < off[0] and off[0] > 50 and (on[0] == 0 or h_on < h_off * 0.8), [on[0], off[0], snappedf(h_on, 0.001), snappedf(h_off, 0.001)])
+	grass.gpu_fill = true
+	grass.paths = []
+	for i in 3:
+		grass.update_at(c)
 
 func _place(node: Node3D, x: float, z: float, lift: float) -> void:
 	node.global_position = Vector3(x, height(x, z) + lift, z)

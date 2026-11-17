@@ -79,6 +79,7 @@ public:
 	static constexpr uint32_t PEEL_FRONT = 1 << 11; // SCENE_DATA_FLAGS_PEEL_FRONT
 	static constexpr uint32_t PEEL_BEHIND = 1 << 12; // SCENE_DATA_FLAGS_PEEL_BEHIND
 	static constexpr uint32_t PEEL_ACTIVE = 1 << 13; // SCENE_DATA_FLAGS_PEEL_ACTIVE
+	static constexpr uint32_t PEEL_FRONT_COLOR = 1 << 14; // SCENE_DATA_FLAGS_PEEL_FRONT_COLOR
 
 	Size2 shadow_atlas_pixel_size;
 	Size2 directional_shadow_pixel_size;
@@ -125,6 +126,7 @@ private:
 		SCENE_DATA_FLAGS_PEEL_FRONT = 1 << 11,
 		SCENE_DATA_FLAGS_PEEL_BEHIND = 1 << 12,
 		SCENE_DATA_FLAGS_PEEL_ACTIVE = 1 << 13, // the transparent pass, with a peeled screen copy
+		SCENE_DATA_FLAGS_PEEL_FRONT_COLOR = 1 << 14, // the front layer, in colour
 		SCENE_DATA_FLAGS_MAX
 	};
 

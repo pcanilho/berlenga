@@ -18,6 +18,12 @@
 				Sets the climate, terrain and water rules of the current [member preset] on [param species]: annual and January temperature, the dry end of precipitation and aridity, slope, soil depth, no growth in water, and for alder and willow the distance to water. Ranges have soft edges.
 			</description>
 		</method>
+		<method name="build_storm_plate" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="storm" type="PackedFloat32Array" />
+			<description>
+			</description>
+		</method>
 		<method name="clear_cache">
 			<return type="void" />
 			<description>
@@ -28,6 +34,21 @@
 			<return type="ArrayMesh" />
 			<description>
 				Grows the tree of the current [member preset], [member seed] and parameters, and returns its mesh. The same settings always give the same tree.
+			</description>
+		</method>
+		<method name="get_bloom" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
+			<param index="1" name="day_of_year" type="float" />
+			<description>
+			</description>
+		</method>
+		<method name="get_bloom" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
+			<param index="1" name="day_of_year" type="float" />
+			<description>
+				Share of the shrub's flowers open on [param day_of_year], 0 to 1: gorse flushes February to May and keeps a few flowers all year, broom flowers in late May and June. 0 for presets without a flowering season.
 			</description>
 		</method>
 		<method name="get_bole_height" qualifiers="const">
@@ -115,6 +136,19 @@
 				Leaves or needles of the last tree grown.
 			</description>
 		</method>
+		<method name="get_leaf_form" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
+			<description>
+			</description>
+		</method>
+		<method name="get_leaf_season" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
+			<param index="1" name="season" type="Dictionary" />
+			<description>
+			</description>
+		</method>
 		<method name="get_near_mesh_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -134,12 +168,41 @@
 				Branches shed while the last tree grew.
 			</description>
 		</method>
+		<method name="get_veteran_feature_count" qualifiers="const">
+			<return type="int" />
+			<description>
+			</description>
+		</method>
+		<method name="get_veteran_features" qualifiers="const">
+			<return type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="make_shrub_species" qualifiers="static">
+			<return type="PlantSpecies" />
+			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
+			<param index="1" name="form" type="int" enum="TreeGenerator.ShrubForm" default="1" />
+			<param index="2" name="variants" type="int" default="3" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+			</description>
+		</method>
 		<method name="make_species">
 			<return type="PlantSpecies" />
 			<param index="0" name="stand_grown" type="bool" />
 			<param index="1" name="variants" type="int" default="3" />
 			<description>
 				Returns a [PlantSpecies] of the current [member preset]: [param variants] meshes (seeds derived from [member seed]), the preset's habitat ([method apply_habitat]), canopy radius and opacity for shade, spacing and footprint. [param stand_grown] grows the trees as in a closed stand; otherwise they are open-grown and keep to light gaps through a shade rule. With [param variants] 0 the species has no meshes but is measured, for placement maps. Meshes are cached per preset and form.
+			</description>
+		</method>
+		<method name="make_shrub_species" qualifiers="static">
+			<return type="PlantSpecies" />
+			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
+			<param index="1" name="form" type="int" enum="TreeGenerator.ShrubForm" default="1" />
+			<param index="2" name="variants" type="int" default="3" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Grows [param variants] heath shrubs ([constant PRESET_GORSE], [constant PRESET_BROOM]) of one [param form] and returns them as a [PlantSpecies] with meshes, footprint, canopy radius and far colour, and no climate or terrain rules: the caller places it. [param season] is a [method WeatherMap3D.get_season] dictionary; its [code]day_of_year[/code] opens the flowers and ripens the pods, and the far colour turns gold in flower.
 			</description>
 		</method>
 		<method name="make_stand">
@@ -185,11 +248,19 @@
 		<member name="apical_dominance_old" type="float" setter="set_param" getter="get_param" default="0.49">
 			Borchert-Honda lambda once the tree reaches [member maturity]; decurrent broadleaves drop it to spread their crowns.
 		</member>
+		<member name="bank_erosion" type="float" setter="set_bank_erosion" getter="get_bank_erosion" default="0.0">
+		</member>
 		<member name="bark_chevrons" type="float" setter="set_bark_chevrons" getter="get_bark_chevrons" default="1.0">
 			Branch-scar chevrons ("Chinese moustaches") on beech and birch boles: a dark scar below each shed limb with two arms running down round the stem, longer and flatter the older the scar. Drawn as their own small mesh on the stem. Scales how many fill the clear bole; [code]0[/code] draws none.
 		</member>
 		<member name="bark_color" type="Color" setter="set_bark_color" getter="get_bark_color" default="Color(0.27, 0.24, 0.2, 1)">
 			Bark colour (vertex colour of the bark surface).
+		</member>
+		<member name="bark_peel" type="float" setter="set_bark_peel" getter="get_bark_peel" default="1.0">
+		</member>
+		<member name="bark_relief" type="float" setter="set_bark_relief" getter="get_bark_relief" default="1.0">
+		</member>
+		<member name="bark_wounds" type="float" setter="set_bark_wounds" getter="get_bark_wounds" default="1.0">
 		</member>
 		<member name="basal_sprouts" type="float" setter="set_param" getter="get_param" default="0.0">
 			Chance a year of a new stem sprouting from the base (coppice shrubs).
@@ -206,14 +277,19 @@
 		<member name="bud_light_min" type="float" setter="set_param" getter="get_param" default="0.0">
 			Light below which a bud dies.
 		</member>
+		<member name="climber" type="int" setter="set_climber" getter="get_climber" enum="TreeGenerator.Climber" default="0">
+		</member>
+		<member name="climber_cover" type="float" setter="set_climber_cover" getter="get_climber_cover" default="0.6">
+		</member>
+		<member name="climber_plant_leaves" type="bool" setter="set_climber_plant_leaves" getter="get_climber_plant_leaves" default="true">
+		</member>
 		<member name="collider_radius" type="float" setter="set_collider_radius" getter="get_collider_radius" default="0.08">
 			Wood thicker than this gets collision capsules ([method get_collision_capsules]); 0 turns them off.
 		</member>
+		<member name="compress_vertices" type="bool" setter="set_compress_vertices" getter="is_compress_vertices" default="true">
+		</member>
 		<member name="crown_cone" type="float" setter="set_param" getter="get_param" default="0.0">
 			Excurrent crown shape: a branch reaches out at most this many times its depth below the top of the tree, so spruce, fir, larch and pine keep a cone (Kantola and Makela 2004). Shoots that would leave the cone wait until the leader has grown. 0 turns it off.
-		</member>
-		<member name="dead_branch_keep" type="float" setter="set_param" getter="get_param" default="0.15">
-			Share of shed branches kept on the tree as dead wood.
 		</member>
 		<member name="cut_cycle" type="int" setter="set_cut_cycle" getter="get_cut_cycle" default="12">
 			Years between cuts when [member cut_height] is above 0.
@@ -223,6 +299,9 @@
 		</member>
 		<member name="cut_since" type="int" setter="set_cut_since" getter="get_cut_since" default="-1">
 			Years since the last cut: a few for a working pollard or coppice, decades for a lapsed one whose poles have grown into limbs. -1 picks a time within the last cycle.
+		</member>
+		<member name="dead_branch_keep" type="float" setter="set_param" getter="get_param" default="0.15">
+			Share of shed branches kept on the tree as dead wood.
 		</member>
 		<member name="decay_class" type="int" setter="set_decay_class" getter="get_decay_class" default="0">
 			0 for a living tree; 1 to 5 are the deadwood decay classes foresters use (Maser et al. 1979): 1 dead with twigs and bark, 2 twigs lost, 3 bark sloughing and the top snapped, 4 limb stubs on a stem broken lower, 5 a stump.
@@ -239,6 +318,8 @@
 		<member name="fallen" type="bool" setter="set_fallen" getter="is_fallen" default="false">
 			Lays the tree on the ground as a log along a random bearing; limbs that would reach into the ground break off, and on a decayed log ([member decay_class] 3 or more) so do the ones standing up.
 		</member>
+		<member name="fallen_branch" type="bool" setter="set_fallen_branch" getter="is_fallen_branch" default="false">
+		</member>
 		<member name="far_lod1" type="bool" setter="set_far_lod1" getter="get_far_lod1" default="true">
 			With [member near_leaf_range] above 0, every broadleaf species from [method make_species], [method make_stand] and [method make_woodland] gets far meshes that start at the first coarser leaf level (half the leaves, each grown to keep the crown's leaf area); the full leaves are only in the near mesh. The path tracer then sees the lighter crown beyond the near range, where it matches the full one within half a percent.
 		</member>
@@ -251,17 +332,25 @@
 		<member name="fruit_cover" type="float" setter="set_fruit_cover" getter="get_fruit_cover" default="1.0">
 			Cones, catkins, seed keys and berries hanging at the shoot tips in their season (read from [member season]'s day of year), as geometry in the [code]crown_parts[/code] surface, LOD 0 only. 1 is the species' natural amount; 0 none.
 		</member>
+		<member name="fungi_cover" type="float" setter="set_fungi_cover" getter="get_fungi_cover" default="1.0">
+		</member>
 		<member name="gravitropism" type="float" setter="set_param" getter="get_param" default="0.04">
 			Upward (positive) or downward (negative) bend of branch shoots.
 		</member>
 		<member name="gravity_bending" type="float" setter="set_param" getter="get_param" default="0.0">
 			Bending of branches under their own weight (Euler-Bernoulli).
 		</member>
+		<member name="ground_slope" type="float" setter="set_ground_slope" getter="get_ground_slope" default="0.0">
+		</member>
 		<member name="internode_length" type="float" setter="set_param" getter="get_param" default="0.45">
 			Shoot segment length in the first year, in metres; also the cell size of the shadow grid.
 		</member>
 		<member name="internode_length_age" type="float" setter="set_param" getter="get_param" default="0.985">
 			Factor per year on the internode length: shoots shorten as the tree ages.
+		</member>
+		<member name="junction_weld" type="bool" setter="set_junction_weld" getter="get_junction_weld" default="true">
+		</member>
+		<member name="krummholz" type="float" setter="set_krummholz" getter="get_krummholz" default="0.0">
 		</member>
 		<member name="lateral_extension" type="float" setter="set_param" getter="get_param" default="1.0">
 			Shoot length factor per branching order, up to order 2. It changes only how far branches reach, not how many buds or leaves they carry; below 1 it gives the narrow cone of open-grown spruce, fir and larch (Wilson 2000).
@@ -271,6 +360,8 @@
 		</member>
 		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.13, 0.25, 0.06, 1)">
 			Leaf or needle colour.
+		</member>
+		<member name="leaf_flutter" type="float" setter="set_leaf_flutter" getter="get_leaf_flutter" default="1.0">
 		</member>
 		<member name="leaf_size" type="float" setter="set_param" getter="get_param" default="0.11">
 			Leaf (or needle) length, in metres.
@@ -284,11 +375,10 @@
 		<member name="leaves_per_internode" type="float" setter="set_param" getter="get_param" default="32.0">
 			Leaves or needles per internode.
 		</member>
+		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="1.0">
+		</member>
 		<member name="limb_breakage" type="float" setter="set_limb_breakage" getter="get_limb_breakage" default="1.0">
 			Storm-broken limbs on living trees: limbs 5-22 cm thick snap partway out with a splintered end, more on tall and old trees ([member veteran]), and some stay hanging dead beside the break. 0 for none.
-		</member>
-		<member name="mistletoe" type="float" setter="set_mistletoe" getter="get_mistletoe" default="1.0">
-			Mistletoe balls (evergreen forked stems, paired leaves, white berries in winter) on host species (lime, hawthorn, willow, rowan, and less often maples, birches, alder and red oak): the chance a tree carries any and how many. 0 none.
 		</member>
 		<member name="mask_channel" type="int" setter="set_mask_channel" getter="get_mask_channel" default="-1">
 			Channel of [member VegetationField3D.density_mask] (0 red to 3 alpha) that every species from [method make_species], [method make_stand] and [method make_woodland] reads, so painted clearings and paths keep trees and woody shrubs out. -1 ignores the mask.
@@ -301,6 +391,11 @@
 		</member>
 		<member name="max_shoot" type="float" setter="set_param" getter="get_param" default="2.0">
 			Most internodes one bud can grow in a year.
+		</member>
+		<member name="mistletoe" type="float" setter="set_mistletoe" getter="get_mistletoe" default="1.0">
+			Mistletoe balls (evergreen forked stems, paired leaves, white berries in winter) on host species (lime, hawthorn, willow, rowan, and less often maples, birches, alder and red oak): the chance a tree carries any and how many. 0 none.
+		</member>
+		<member name="moss_cover" type="float" setter="set_moss_cover" getter="get_moss_cover" default="1.0">
 		</member>
 		<member name="near_leaf_range" type="float" setter="set_near_leaf_range" getter="get_near_leaf_range" default="60.0">
 			Metres. Above 0, placed trees and shrubs with lobed or compound leaves (oak, maples, ash, rowan, elder, hawthorn, horse chestnut) keep only simple leaves of the same area in their meshes, and their species get a [member PlantSpecies.near_mesh_source] that builds the full-leaf mesh of a variant when a tree first comes within this range, then frees it when none is near. Lobes and leaflets are under a pixel beyond about 60 m. Keep this generator or the species alive while the field draws them.
@@ -332,6 +427,10 @@
 		<member name="root_flare" type="float" setter="set_param" getter="get_param" default="0.7">
 			Widening of the trunk at the ground.
 		</member>
+		<member name="root_stone" type="float" setter="set_root_stone" getter="get_root_stone" default="0.0">
+		</member>
+		<member name="season" type="Dictionary" setter="set_season" getter="get_season" default="{}">
+		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Random seed of the tree.
 		</member>
@@ -347,14 +446,14 @@
 		<member name="shed_ratio" type="float" setter="set_param" getter="get_param" default="0.056">
 			Branches whose light per internode falls below this share of the tree's are shed.
 		</member>
-		<member name="storm_kit" type="bool" setter="set_storm_kit" getter="get_storm_kit" default="true">
-			With [member rigged], a standing living tree's mesh carries what [TreeWind3D] needs to break it in a storm or throw it by its roots: the wood's strength and the roots' anchorage for the species (meta [code]tree_storm[/code]), a fracture cap ([code]tree_fracture_cap[/code]) and the root plate it would lift ([code]tree_storm_plate[/code]), with unskinned twins of the surface materials ([code]tree_static_materials[/code]).
-		</member>
 		<member name="stem_spread" type="float" setter="set_param" getter="get_param" default="0.0">
 			Lean of the stems of a multi-stemmed shrub, in degrees.
 		</member>
 		<member name="stems" type="float" setter="set_param" getter="get_param" default="1.0">
 			Stems from the base (shrubs).
+		</member>
+		<member name="storm_kit" type="bool" setter="set_storm_kit" getter="get_storm_kit" default="true">
+			With [member rigged], a standing living tree's mesh carries what [TreeWind3D] needs to break it in a storm or throw it by its roots: the wood's strength and the roots' anchorage for the species (meta [code]tree_storm[/code]), a fracture cap ([code]tree_fracture_cap[/code]) and the root plate it would lift ([code]tree_storm_plate[/code]), with unskinned twins of the surface materials ([code]tree_static_materials[/code]).
 		</member>
 		<member name="tip_radius" type="float" setter="set_param" getter="get_param" default="0.004">
 			Radius of a shoot tip, in metres.
@@ -368,11 +467,15 @@
 		<member name="uprooted" type="bool" setter="set_uprooted" getter="is_uprooted" default="false">
 			With [member fallen]: the tree was thrown by its roots. The root plate (soil, stones and torn roots) stands on edge at the butt, which it holds up off the ground; the mesh carries meta [code]tree_root_pit[/code] (centre, radius, depth in mesh space) for the pit to dig in the terrain. From [member decay_class] 4 on the plate has rotted to a plain log.
 		</member>
+		<member name="veteran" type="float" setter="set_veteran" getter="get_veteran" default="0.0">
+		</member>
 		<member name="vigor" type="float" setter="set_param" getter="get_param" default="2.0">
 			Vigor per unit of light gathered.
 		</member>
 		<member name="whorl_buds" type="float" setter="set_param" getter="get_param" default="5.0">
 			Lateral buds per whorl ([constant PHYLLOTAXIS_WHORLED]).
+		</member>
+		<member name="wind_exposure" type="float" setter="set_wind_exposure" getter="get_wind_exposure" default="0.0">
 		</member>
 		<member name="witches_brooms" type="float" setter="set_witches_brooms" getter="get_witches_brooms" default="1.0">
 			Witches' brooms on birches: dense nests of thin upright shoots from a swollen point on a limb, the work of a fungus. The chance a birch carries any and how many. 0 none.
@@ -475,7 +578,25 @@
 		<constant name="PRESET_MOUNTAIN_LAUREL" value="30" enum="Preset">
 			Mountain laurel (Kalmia latifolia), an evergreen shrub that forms thickets in oak woods.
 		</constant>
-		<constant name="PRESET_MAX" value="31" enum="Preset">
+		<constant name="PRESET_GORSE" value="31" enum="Preset">
+			Gorse (Ulex europaeus), a dense, spiny heath shrub of Atlantic coasts and heaths, its leaves spines, golden in flower from late winter to spring.
+		</constant>
+		<constant name="PRESET_BROOM" value="32" enum="Preset">
+			Broom (Cytisus scoparius), an erect heath shrub of straight green switches with few small leaves, golden in flower in late spring.
+		</constant>
+		<constant name="SHRUB_YOUNG" value="0" enum="ShrubForm">
+		</constant>
+		<constant name="SHRUB_MATURE" value="1" enum="ShrubForm">
+		</constant>
+		<constant name="SHRUB_OLD" value="2" enum="ShrubForm">
+		</constant>
+		<constant name="SHRUB_THICKET" value="3" enum="ShrubForm">
+		</constant>
+		<constant name="SHRUB_CUSHION" value="4" enum="ShrubForm">
+		</constant>
+		<constant name="SHRUB_MAX" value="5" enum="ShrubForm">
+		</constant>
+		<constant name="PRESET_MAX" value="33" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
@@ -492,6 +613,28 @@
 		</constant>
 		<constant name="STAND_PINE_HEATH" value="4" enum="Stand">
 			Scots pine on dry ground (under about 750 mm), with birch and rowan.
+		</constant>
+		<constant name="LEAF_SIMPLE" value="0" enum="LeafKind">
+		</constant>
+		<constant name="LEAF_LOBED" value="1" enum="LeafKind">
+		</constant>
+		<constant name="LEAF_PALMATE" value="2" enum="LeafKind">
+		</constant>
+		<constant name="LEAF_PINNATE" value="3" enum="LeafKind">
+		</constant>
+		<constant name="LEAF_DIGITATE" value="4" enum="LeafKind">
+		</constant>
+		<constant name="LEAF_NEEDLE" value="5" enum="LeafKind">
+		</constant>
+		<constant name="CLIMBER_NONE" value="0" enum="Climber">
+		</constant>
+		<constant name="CLIMBER_IVY" value="1" enum="Climber">
+		</constant>
+		<constant name="CLIMBER_LIANA" value="2" enum="Climber">
+		</constant>
+		<constant name="CLIMBER_HONEYSUCKLE" value="3" enum="Climber">
+		</constant>
+		<constant name="CLIMBER_MAX" value="4" enum="Climber">
 		</constant>
 		<constant name="STAND_RIPARIAN" value="5" enum="Stand">
 			Alder, willow and elder along water.
@@ -720,6 +863,24 @@
 		</constant>
 		<constant name="PARAM_MAX" value="40" enum="Param">
 			Number of parameters.
+		</constant>
+		<constant name="SHRUB_YOUNG" value="0" enum="ShrubForm">
+			A young shrub, 3-4 years, dense to the ground.
+		</constant>
+		<constant name="SHRUB_MATURE" value="1" enum="ShrubForm">
+			A mature single bush.
+		</constant>
+		<constant name="SHRUB_OLD" value="2" enum="ShrubForm">
+			An old shrub: stems leaning out round a bare grey dead centre.
+		</constant>
+		<constant name="SHRUB_THICKET" value="3" enum="ShrubForm">
+			Several plants grown into one thicket, wider than tall.
+		</constant>
+		<constant name="SHRUB_CUSHION" value="4" enum="ShrubForm">
+			A wind-pruned cushion under 60 cm.
+		</constant>
+		<constant name="SHRUB_MAX" value="5" enum="ShrubForm">
+			Number of shrub forms.
 		</constant>
 	</constants>
 </class>

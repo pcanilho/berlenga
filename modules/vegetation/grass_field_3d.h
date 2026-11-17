@@ -34,6 +34,7 @@
 #include "plant_species.h"
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
+#include "vegetation_paths.h"
 
 #include "core/io/image.h"
 #include "core/templates/hash_map.h"
@@ -64,6 +65,11 @@ class GrassField3D : public Node3D {
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	PackedVector4Array obstacles; // Rocks, (x, ground y, z, radius at the soil): no blade grows inside one.
 	VegetationObstacles obstacle_grid;
+	Array paths; // Worn paths (VegetationPaths): the sward thins and shortens towards the trodden line.
+	VegetationPaths path_grid;
+	float trample_resistance = 300.0f; // Passes a year that halve the sward's cover (Cole 1995: grasses resist).
+	float _trample_cover(float p_passes) const;
+	float _trample_scale(float p_passes) const;
 	VegetationHoles holes; // Openings in the ground (cave mouths, the data map's generator): no blade there.
 	ObjectID hole_source;
 	void _follow_holes(TerrainDataMap3D *p_map);
@@ -217,7 +223,7 @@ class GrassField3D : public Node3D {
 	void _build_material();
 	int _lod_for(float p_distance) const;
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
-	void _build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const class VegetationField3D *p_canopy, const LocalVector<float> &p_light, const LocalVector<float> &p_sward, int p_lg, float p_width);
+	void _build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const class VegetationField3D *p_canopy, const LocalVector<float> &p_light, const LocalVector<float> &p_sward, const LocalVector<float> &p_wear, int p_lg, float p_width);
 	void _free_tile(Tile &p_tile);
 	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
@@ -257,6 +263,10 @@ public:
 	void set_undergrowth_field(const NodePath &p_path);
 	NodePath get_undergrowth_field() const { return undergrowth_field; }
 	void set_obstacles(const PackedVector4Array &p_obstacles);
+	void set_paths(const Array &p_paths);
+	Array get_paths() const { return paths; }
+	void set_trample_resistance(float p_passes);
+	float get_trample_resistance() const { return trample_resistance; }
 	static constexpr float OBSTACLE_MARGIN = 0.02f; // Blades root this far off a rock's foot.
 	PackedVector4Array get_obstacles() const { return obstacles; }
 	void set_rules(const Ref<PlantSpecies> &p_rules);

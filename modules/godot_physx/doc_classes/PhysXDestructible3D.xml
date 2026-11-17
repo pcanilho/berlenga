@@ -132,6 +132,9 @@
 		<member name="lod_bias" type="float" setter="set_lod_bias" getter="get_lod_bias" default="1.0">
 			Mesh LOD selection bias for every piece, the same as [member GeometryInstance3D.lod_bias]. Higher values keep more detail at a distance.
 		</member>
+		<member name="max_depenetration_velocity" type="float" setter="set_max_depenetration_velocity" getter="get_max_depenetration_velocity" default="3.0">
+			How fast, in m/s, the PhysX engine may push this destructible's pieces out of an overlap. Pieces split at a break start touching, and with no cap they were thrown apart at tens of m/s, through the ground. [code]0[/code] leaves it to [member ProjectSettings.physics/physx_3d/simulation/max_depenetration_velocity] (uncapped by default). Other physics engines ignore it.
+		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1.0">
 			The whole intact object's mass, same meaning as [member RigidBody3D.mass]. Read-only while [member auto_mass] is on (see its own note). Once fractured, each piece gets a share of this proportional to its own volume -- a large remaining chunk and a tiny sliver don't get the same weight.
 		</member>

@@ -439,7 +439,7 @@ a mild coastal year (rosemary 0 to 900, lavender 300 to 1,300, thyme 600 to 1,50
 to 1,100); rosemary's autumn flowers before the year turns are not modelled (forcing restarts
 on 1 January).
 
-Worn paths and trampling (researching 17 Nov). Where people and animals walk, plants thin out,
+Worn paths and trampling (built 17 Nov). Where people and animals walk, plants thin out,
 get shorter and flatter, and the walked line turns to bare, compacted soil; the edges keep the
 low, tough plants (Cole 1995, "Experimental trampling of vegetation", J. Appl. Ecol. 32: two
 measures, resistance to the first passes and tolerance to recover; Cole and Bayfield 1993, the
@@ -456,6 +456,16 @@ already bends plants under bodies) for passes; per-species trample resistance as
 value from the growth form; the plants' scale and density fall with passes, the resistant set
 taking over at the edges; GroundSurface3D or the terrain material shows bare, compacted soil in
 the middle. Desire lines could come from the mud and sand threads' tracks over time.
+Built: `paths` on VegetationField3D and GrassField3D, each path a centre line with a width and
+walkers a year; passes fall off across it as a Gaussian (sigma a quarter of the width), bucketed
+on an 8 m grid. `PlantSpecies.trample_resistance` (passes that halve cover) comes from the growth
+form via `PlantGenerator.get_trample_resistance` (plantain 1000, daisy and dandelion 600, clover
+500, grasses and sedges 300, moss 150, forbs 40 to 80, heaths and scrub 40, ferns and bilberry
+30); cover is `1 / (1 + x^1.5)` with x = passes / resistance, the plants left shrink towards 45 %.
+So at 1,000 passes the centre is bare, grass keeps a shortened sward a step out and the path
+weeds hold the edge. The grass field thins and shortens blades on both its CPU and GPU fill, and
+its ground tint shows bare soil along the line. Left for the terrain material: a compacted-soil
+layer read from the same paths.
 
 ## Salt marsh and shingle plants (built 17 Nov)
 

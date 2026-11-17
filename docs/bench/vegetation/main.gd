@@ -1019,6 +1019,40 @@ func _deadwood_checks() -> void:
 	_check("rock foot: a thin cover gathers at the rocks' feet (rock_foot 3)", ring_n > 10 and foot_d > ring_d * 2.0, "%.1f /m2 at the foot, %.1f /m2 2-3 m out" % [foot_d, ring_d])
 	cover.density = 1.0
 	cover.rock_foot = 0.0
+	# Worn paths (VegetationField3D.paths, PlantSpecies.trample_resistance): a busy path across the
+	# cover leaves its trodden line nearly bare and the band beside it thinned; a resistant
+	# species keeps more of its cover there than a fragile one.
+	ground.obstacles = PackedVector4Array()
+	ground.populate()
+	var all_cov: Array = ground.get_placements(0)
+	var mid := Vector3()
+	for q in all_cov:
+		mid += q
+	mid /= maxf(all_cov.size(), 1)
+	var path_line := PackedVector3Array([mid - Vector3(30, 0, 0), mid + Vector3(30, 0, 0)])
+	ground.paths = [{"points": path_line, "width": 2.0, "passes": 2000.0}]
+	var path_bands := func() -> Array:
+		var on := 0
+		var off := 0
+		for q in ground.get_placements(0):
+			var dz := absf(q.z - mid.z)
+			if absf(q.x - mid.x) < 25.0:
+				if dz < 0.3:
+					on += 1
+				elif dz > 3.0 and dz < 3.6:
+					off += 1
+		return [on, off]
+	cover.trample_resistance = 100.0
+	ground.populate()
+	var fragile: Array = path_bands.call()
+	cover.trample_resistance = 3000.0
+	ground.populate()
+	var tough: Array = path_bands.call()
+	cover.trample_resistance = 0.0
+	ground.populate()
+	var untrodden: Array = path_bands.call()
+	ground.paths = []
+	_check("worn path: the trodden line nearly bare for a fragile species, a resistant one keeps more, none without resistance", fragile[0] * 10 < fragile[1] and tough[0] > fragile[0] * 3 and untrodden[0] * 2 > untrodden[1], [fragile, tough, untrodden])
 	# Plants between stones (PlantSpecies.stone_gap): a 2 m patch of packed scree laid by random
 	# sequential addition; with stone_gap 1 the cover grows only in its gaps, none on open ground,
 	# and none at all without stones.

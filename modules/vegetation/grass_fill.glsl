@@ -16,7 +16,7 @@ layout(set = 0, binding = 0, std430) restrict writeonly buffer Records {
 };
 
 // Header (H_* floats), then candidates (ix, iz as int bits, rank), suitability grid, light grid,
-// height patch.
+// height patch, and the trodden height grid when a worn path crosses the tile (H_OFF_WEAR, 0: none).
 layout(set = 0, binding = 1, std430) restrict readonly buffer Inputs {
 	float inp[];
 };
@@ -49,6 +49,7 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer Inputs {
 #define H_OFF_SUIT 36
 #define H_OFF_LIGHT 37
 #define H_OFF_HEIGHT 38
+#define H_OFF_WEAR 39
 
 uint murmur3_one(uint p_in, uint p_seed) {
 	p_in *= 0xcc9e2d51u;
@@ -96,6 +97,23 @@ float suitability(float x, float z) {
 	const float fx = u - float(i0);
 	const float fz = v - float(j0);
 	return mix(mix(a, b, fx), mix(c, d, fx), fz);
+}
+
+float grid_at(int base, float x, float z) {
+	const int lg = int(inp[H_LG]);
+	const float lx = clamp(x - inp[H_X0], 0.0, float(lg - 1));
+	const float lz = clamp(z - inp[H_Z0], 0.0, float(lg - 1));
+	const int gx = min(int(lx), lg - 2);
+	const int gz = min(int(lz), lg - 2);
+	const float a = mix(inp[base + gz * lg + gx], inp[base + gz * lg + gx + 1], lx - float(gx));
+	const float b = mix(inp[base + (gz + 1) * lg + gx], inp[base + (gz + 1) * lg + gx + 1], lx - float(gx));
+	return mix(a, b, lz - float(gz));
+}
+
+// Worn paths: the blades' trodden height, 1 off the paths.
+float wear_at(float x, float z) {
+	const int base = int(inp[H_OFF_WEAR]);
+	return base > 0 ? grid_at(base, x, z) : 1.0;
 }
 
 float light_at(float x, float z) {
@@ -177,7 +195,7 @@ void main() {
 	const float light = light_at(x, z);
 	const float shade_t = 1.0 - clamp(light, 0.0, 1.0);
 	const float sun_t = smoothstep(1.0, 1.3, light);
-	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * clump_h + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t);
+	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * clump_h + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t) * wear_at(x, z);
 	const float yaw = clump_yaw + (unit(hj, 24) - 0.5) * 1.6;
 
 	// to_local * Transform3D(Basis(Y, yaw), (x, y, z)).
