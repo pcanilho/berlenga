@@ -590,6 +590,47 @@ https://docs.nvidia.com/gameworks/content/gameworkslibrary/physx/apexsdk/APEX_Tu
 http://physbam.stanford.edu/~fedkiw/papers/stanford2005-02.pdf ;
 https://dev.epicgames.com/documentation/unreal-engine/niagara-fluids-in-unreal-engine
 
+Status (17 Nov): built as above (fc47ebb3). Found while building it: a body
+sampling the grid inside its own solid reads its own velocity back, so it
+never moves; the gas is sampled on a six-point shell 1.5 cells outside the
+shape. Area is the shape's surface over four (Cauchy's projected area), and
+the impulse is capped at the speed difference so light bodies do not
+overshoot the gas. A 0.5 m crate in a campfire updraft moved 0.44 m, a flag
+streamed out; neither moved with coupling off.
+
+### Next options (card, 17 Nov)
+
+1. Burning wood and debris. Far Cry 2's fire (GDC 2008, Levesque) and
+   Breath of the Wild's chemistry engine (GDC 2017, "Breaking Conventions")
+   give objects a fuel amount and an ignition temperature and spread
+   between neighbours; offline, Melek and Keyser 2002 move a burn front
+   over the mesh. Here: per-vertex fuel and char on a body, heat read from
+   Flow (sample_temperature) and from PhysXFireSpread3D, a Flow emitter on
+   the burning part, char in a vertex colour PT reads. Embers: Albini's
+   spotting distance (1979) with Flow's updraft carrying lofted embers that
+   ignite cells where they land.
+2. Weather wets the fire. FARSITE and WRF-SFIRE take dead fuel moisture
+   from Nelson's model (2000): each size class relaxes towards an
+   equilibrium moisture from air temperature and humidity with a time lag
+   (1 h fine fuel), and rain wets it directly. WeatherMap3D already has
+   rain, temperature and humidity; a moisture grid in the fire node would
+   follow them, and rain over burning cells cools them out.
+3. Fire burns grass and trees. Far Cry 5 and Unreal's landscape grass
+   both read a mask in the foliage shader; here the vegetation and tree
+   shaders read the existing fire_char_map and fire_char_rect globals:
+   grass shortened and black where burnt, a scorch height on bark from
+   flame length (Byram), leaves browned in the band above it (crown scorch
+   height, Van Wagner 1973). No new state, both renderers see it.
+4. Open-world checks (item 4 of the order of work): PxPruningStructure for
+   streamed static regions, a pool for Blast and debris bodies, sleep and
+   removal by distance, relative origin; a bench with thousands of static
+   bodies per region, as Mortal Plane needs.
+
+Sources: https://www.gdcvault.com/play/1022394/ (Breath of the Wild);
+https://www.fs.usda.gov/rm/pubs_journals/2000/rmrs_2000_nelson_r001.pdf ;
+https://www.fs.usda.gov/research/treesearch/24216 (Van Wagner 1973);
+https://www.fs.usda.gov/research/treesearch/32533 (Albini spotting).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
