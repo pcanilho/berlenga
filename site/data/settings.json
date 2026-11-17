@@ -1100,7 +1100,7 @@
     "BaseMaterial3D.ground_deform_enabled"
    ],
    "note": "",
-   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`, on by default).",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp, and wet ground carries on past the deform patch.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2401,7 +2401,7 @@
     "bark_relief"
    ],
    "note": "",
-   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark carries stemflow tracks, low algae and crust lichen.",
+   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark shows cross-stem creases, lenticel streaks and fine grain, and carries stemflow tracks, low algae and crust lichen.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

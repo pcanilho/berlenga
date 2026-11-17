@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 72;
+	static constexpr int RT_PARAM_COUNT = 76;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -232,6 +232,12 @@ public:
 	static constexpr int RT_PARAM_GROUND_RIPPLE_MAP = 68;
 	// GroundSurface3D's pore water map (wetness, sheen; its last row the rect) for the wet sand look.
 	static constexpr int RT_PARAM_GROUND_WET_MAP = 69;
+	// GroundSurface3D's finer near field (docs/ideas/mud.md, stage 0): bindless index (0 = none), its world XZ
+	// origin and size; used inside its square, faded into the main field over its outer half metre.
+	static constexpr int RT_PARAM_GROUND_NEAR_MAP = 70;
+	static constexpr int RT_PARAM_GROUND_NEAR_X = 71;
+	static constexpr int RT_PARAM_GROUND_NEAR_Z = 72;
+	static constexpr int RT_PARAM_GROUND_NEAR_SIZE = 73;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

@@ -157,6 +157,36 @@ vehicle, with the same GPU passes and the coarse field as its boundary; the patc
 inner ring so the path tracer sees the geometry. This is the sand thread's pending offer; it serves all
 three surfaces and comes first.
 
+**Built.** GroundSurface3D `near_field` (on), `near_extent` 8 m, `near_resolution` 512 (1.5625 cm).
+A second GroundDeformGPUHost runs the same passes on a field centred with the main one; every stamp
+forwards to it, and direct presses update its CPU copy too. Slumping spreads like diffusion, so the near
+field runs (texel ratio) squared slump passes, at most 16, each spending only its share of the owed time,
+which keeps repose times equal to the main field's. Tiles entering the near field are seeded from the main
+field's copy, so prints made far away arrive intact. The material blends the near map over the main one in
+its outer 0.5 m (globals `ground_deform_near_map`, `ground_deform_near_rect`), the patch mesh gets a fine
+ring at the near texel, and the path tracer reads the same map (rt params 70-73).
+
+Found on the way:
+- At 1.56 cm a print's rim showed as a square wall: the rim ring was half the footprint's equivalent
+  radius. The ground's rim now spreads over at least one footing width (`GroundDeformField::rim_reach`,
+  Prandtl's passive wedge beside a strip footing on undrained clay reaches about one width out), so the
+  pushed soil rises as a broad lip. Snow keeps the old ring.
+- The straight edge of the wet look came from pore water existing only on the patch's 0.25 m lattice.
+  A far lattice (4 times coarser, as many cells, about 130 m) runs the same Green-Ampt balance from the
+  water sources, an eighth of its rows per step, and copies the fine lattice where they overlap. The wet
+  map carries both (fine block, far block, a row of rects); the fine block fades into the far one with a
+  noisy edge, the terrain round the patch reads the far block in raster and path tracing (rt material
+  bit `ground_terrain`), and cells entering the fine lattice start from the far one.
+- Runoff and blown sand write their 12.5 cm and 25 cm cells as discs; the near field drew each as a
+  round pit. Grid amounts now keep the main field's soft edge on the near field. Rills are still as wide
+  as the runoff grid draws them: sharp rills need the runoff routed on the near field's own grid (sand
+  thread).
+
+Bench `--test=near` (6 checks, `--near=0` for A/B): a boot print's wall is 0.8 cm wide against 5.5 cm on
+the main field, volume kept, dry sand still slumps to 35 degrees in 3 s, prints seeded on arrival. Slope
+checks now measure on the finest field's texel; the print rounded off under flowing water is checked at
+two thirds (the wider lip sits farther from the hole). GPU cost of the near field: PC queue.
+
 ### Stage 1: deep mud that flows (the MudRunner feel)
 
 - **A mud layer.** Per lattice cell a soft-layer depth over the firm base (0 to about 1.2 m), from a

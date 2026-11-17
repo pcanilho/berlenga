@@ -34,7 +34,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 ## Sea and lakes
 
-- **Clear water** (`clear_water`, on by default): in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.
+- **Clear water** (`clear_water`): in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.
 
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 
@@ -54,7 +54,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Wave spreading: cos² gave long parallel crests; the measured spreading breaks them up, and swell adds long crests back.*
 
-- **Whitecaps by wind speed** (`whitecap_auto`, on; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
+- **Whitecaps by wind speed** (`whitecap_auto`; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
 
   ![Sea from above at 6, 14 and 20 m/s, fixed whitecap threshold and whitecap_auto](media/whitecaps.jpg)
 
@@ -72,13 +72,13 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Torn spray sheets: veils of spray stream downwind off the folding crests.*
 
-- **Crisp sea foam** (`foam_crisp`, `foam_relief`, on by default): sharp patch edges, torn lobed holes and bubble relief, up close and at range.
+- **Crisp sea foam** (`foam_crisp`, `foam_relief`): sharp patch edges, torn lobed holes and bubble relief, up close and at range.
 
   ![Sea foam on a rough sea a few metres away, without and with crisp foam, raster](media/water-foam-crisp.jpg)
 
   *Crisp sea foam: soft foam turns into torn patches with ragged holes, floating rafts and raised bubble relief.*
 
-- **Crest glow** (`crest_glow`, on by default): low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.
+- **Crest glow** (`crest_glow`): low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.
 - **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
 - **Ocean detail** (`detail_waves`, `far_filter`; `bubble_strength`): short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 
@@ -171,7 +171,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Rivers: the cascade and the white water below it.*
 
-  - Pools behind bumps, draws down before steps and ends fast reaches in a hydraulic jump; the surface banks up round bends (`gradually_varied_flow`, `bend_superelevation`, on by default).
+  - Pools behind bumps, draws down before steps and ends fast reaches in a hydraulic jump; the surface banks up round bends (`gradually_varied_flow`, `bend_superelevation`).
   - A train of smooth standing waves below a weak hydraulic jump, and cross-waves where fast water narrows (`standing_waves`).
   - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.

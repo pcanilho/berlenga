@@ -3782,6 +3782,9 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	if (rt_state.ground_deform_patch) {
 		mat.subsurface.ground_deform = 1;
 	}
+	if (rt_state.ground_deform_terrain) {
+		mat.subsurface.ground_terrain = 1;
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -7552,6 +7555,29 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_X] = rect.x;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_Z] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_SIZE] = rect.z;
+		}
+		// And its finer near field (rect width 0 = none).
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName near_map_name = "ground_deform_near_map";
+			static const StringName near_rect_name = "ground_deform_near_rect";
+			const Variant rect_var = ms->global_shader_parameter_get_internal(near_rect_name);
+			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
+			RID near_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(near_map_name);
+			if (tex_var.get_type() == Variant::RID) {
+				near_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				Object *t = tex_var;
+				if (t) {
+					near_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID near_rd = near_tex.is_valid() && rect.z > 0.0f ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(near_tex) : RID();
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_MAP] = near_rd.is_valid() ? float(bindless_block->add_texture(near_rd)) : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_X] = rect.x;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_Z] = rect.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_SIZE] = near_rd.is_valid() ? rect.z : 0.0f;
 		}
 		// And its wind ripple map, for the far ripples past the window (rect width 0 = ripples off).
 		{

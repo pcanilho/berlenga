@@ -46,11 +46,11 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 mesh_rect; // x, z, w, h
 	vec4 relax; // keep (wind and settling), refill share, press settle seconds, loose snow tan(repose)
 	vec4 collision; // centre x, z, spacing, cells
-	vec4 bow; // bow speed, gain, reach, unused
+	vec4 bow; // bow speed, gain, reach, heave zone in footing widths (GroundDeformField::rim_reach)
 	vec4 crust_consts; // crack length, plate size, crack sectors, unused
 	ivec4 shift; // texel offset of the old field in the new one's tiles: old tile index = new tile index + shift.xy
 	vec4 kind; // 1 for the ground (else snow), slow slumping seconds this step, fresh kept by ageing, sand drift per hour
-	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, unused
+	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, slump passes this step (0 = 1)
 }
 params;
 
@@ -309,9 +309,10 @@ void run_amount_stamp(Stamp s) {
 		int x = x0 + k % w;
 		int z = z0 + k / w;
 		vec2 wp = texel_world(x, z);
-		float sd = length(wp - pos.xz) - radius;
-		float cover = clamp(0.5 - sd / tx, 0.0, 1.0);
-		if (cover <= 0.0) {
+		// GroundDeformField::amount_cover(): a disc antialiased over a texel, or (c.y) a bilinear tent.
+		vec2 dd = wp - pos.xz;
+		float cover = s.c.y > 0.5 ? max(1.0 - abs(dd.x) / radius, 0.0) * max(1.0 - abs(dd.y) / radius, 0.0) : clamp(0.5 - (length(dd) - radius) / tx, 0.0, 1.0);
+		if (cover == 0.0) {
 			continue;
 		}
 		Column c = column_at(wp, 0u);
@@ -320,8 +321,9 @@ void run_amount_stamp(Stamp s) {
 		}
 		int i = z * n + x;
 		vec4 st = state[i];
-		float a = abs(depth) * cover;
-		if (depth > 0.0) {
+		float sa = depth * cover;
+		float a = abs(sa);
+		if (sa > 0.0) {
 			float take = min(st.y, a);
 			st.y -= take;
 			st.x = min(st.x + a - take, c.max_dent);
@@ -377,7 +379,7 @@ void run_stamp(Stamp s) {
 	float r2 = radius * radius;
 	float cy = cos(yaw);
 	float sy = sin(yaw);
-	float ring = 0.5 * (box ? sqrt(half_.x * half_.y) : radius);
+	float ring = max(0.5 * (box ? sqrt(half_.x * half_.y) : radius), params.bow.w * (box ? 2.0 * min(half_.x, half_.y) : radius));
 	float speed = length(vel);
 	float bow = clamp(speed / params.bow.x, 0.0, 1.0);
 	vec2 heading = speed > 1e-4 ? vel / speed : vec2(0.0);
@@ -708,7 +710,9 @@ void slump_take(int x, int z) {
 	int n = fn();
 	int i = z * n + x;
 	vec4 st = state[i];
-	float dt = params.field.w;
+	// A finer field runs several slump passes a step (more texels to cross in the same time): each spends
+	// only its share of the owed slumping time.
+	float dt = params.field.w / max(params.age.w, 1.0);
 	vec4 outv = st;
 	vec2 own = give[i];
 	float own_rim = min(st.y, own.x);

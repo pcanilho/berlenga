@@ -89,8 +89,9 @@ public:
 	class StampSink {
 	public:
 		virtual void stamp(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) = 0;
-		// add_amount's stamp: dig (p_depth > 0) or deposit (p_depth < 0) a set depth over a disc.
-		virtual void amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) {}
+		// add_amount's stamp: dig (p_depth > 0) or deposit (p_depth < 0) a set depth over a disc. p_cell: the size of
+		// the grid cell it writes (runoff, blown sand), 0 for none (see amount_cover()).
+		virtual void amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f) {}
 		virtual ~StampSink() {}
 	};
 	class Columns {
@@ -106,6 +107,15 @@ public:
 	int max_cached_tiles = 1024;
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
+	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).
+	// The ground uses 1: Prandtl's passive wedge beside a strip footing on undrained clay reaches one width
+	// out, so the pushed soil rises as a broad lip rather than a wall round the print.
+	float rim_reach = 0.0f;
+	static float rim_ring(bool p_box, Vector2 p_half, float p_radius, float p_reach) {
+		const float base = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
+		const float width = p_box ? 2.0f * MIN(p_half.x, p_half.y) : p_radius;
+		return MAX(base, p_reach * width);
+	}
 	StampSink *stamp_sink = nullptr;
 
 	Vector2i origin; // texel index of the first texel
@@ -140,8 +150,19 @@ public:
 	// p_box), and p_sink below the undisturbed surface. Returns the volume moved, m3.
 	// Grains leaving (p_depth > 0: dug, rim first) or landing (p_depth < 0: dent first) over a disc of
 	// p_radius, p_depth deep (sand stage 2). Returns the volume, m3 (0 when a stamp sink takes it).
-	float amount_scale(Vector3 p_position, float p_radius) const;
-	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth);
+	// An amount's share of a texel offset (p_dx, p_dz) from its centre: a disc of p_radius antialiased over one texel,
+	// or (p_tent) a bilinear tent p_radius each way. A grid's cells (runoff, blown sand) reach the finer near field as
+	// tents one cell wide, whose copies add up to the smooth interpolation of the cells' values: the near field draws
+	// what the main field draws, without the round pits and egg-crate dimples its fine texels would show of discs.
+	// The disc holds pi r^2, the tent r^2.
+	static float amount_cover(float p_dx, float p_dz, float p_radius, float p_texel, bool p_tent) {
+		if (p_tent) {
+			return MAX(1.0f - Math::abs(p_dx) / p_radius, 0.0f) * MAX(1.0f - Math::abs(p_dz) / p_radius, 0.0f);
+		}
+		return CLAMP(0.5f - (Math::sqrt(p_dx * p_dx + p_dz * p_dz) - p_radius) / p_texel, 0.0f, 1.0f);
+	}
+	float amount_scale(Vector3 p_position, float p_radius, bool p_tent = false) const;
+	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f);
 	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity = Vector2());
 	// Bodies in p_groups press along the path they moved since the last call.
 	void press_bodies(SceneTree *p_tree, const PackedStringArray &p_groups, const Columns &p_columns, float p_character_mass, float p_character_area, float p_contact_tolerance, double p_delta);

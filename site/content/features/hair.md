@@ -25,7 +25,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Deep opacity shadows: raster darkens the hair with depth like the path tracer; path tracing shows more fuzz at the edges.*
 
-- **Hair shadows** (`cast_hair_shadows`, on by default): raster strand hair casts shadows on the face, body and ground.
+- **Hair shadows** (`cast_hair_shadows`): raster strand hair casts shadows on the face, body and ground.
 
   ![Strand hair over the ground: shadow from the head only, then from the strands, raster](media/hair-shadows.jpg)
 
