@@ -387,8 +387,9 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 // travelling along p_dir): every directional light, and one positional light chosen among the light
 // grid's candidates in proportion to its unshadowed contribution (as plight_update), each through a
 // shadow ray whose transmittance includes the gas (ratio tracking), weighted by the
-// Henyey-Greenstein phase function of anisotropy g (the gas's, or a water medium's).
-vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
+// Henyey-Greenstein phase function of anisotropy g (the gas's, or a water medium's). With p_cloud_beam
+// (the open air's haze), the sun's light is its direct beam through the clouds over x.
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, inout uint rng) {
 	vec3 sum = vec3(0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	uint dir_count = lights_directional_count(light_count);
@@ -403,7 +404,11 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
 		vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
 		vec3 bitangent = cross(axis, tangent);
 		vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
-		sum += light.emission * rt_volume_hg(dot(L, p_dir), g) * lights_shadow_transmittance(light, x, L, 10000.0, 0xFFu, rng);
+		vec3 beam = p_cloud_beam ? lights_directional_projector_beam(light, x) : vec3(1.0);
+		if (max(beam.r, max(beam.g, beam.b)) <= 0.0) {
+			continue;
+		}
+		sum += light.emission * beam * rt_volume_hg(dot(L, p_dir), g) * lights_shadow_transmittance(light, x, L, 10000.0, 0xFFu, rng);
 	}
 	uint g_start, g_count, c_start, c_count;
 	lights_grid_lists(x, g_start, g_count, c_start, c_count);
@@ -444,6 +449,28 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
 		}
 	}
 	return sum;
+}
+
+// The open air's aerosol haze (WeatherMap3D traced_haze): extinction sigma0 exp(-(y - base) / H). The optical
+// depth along a ray from o is a (1 - exp(-k t)) / k, with a the extinction at o and k = d.y / H, which inverts in
+// closed form, so distances are drawn exactly (no tracking).
+void rt_haze_ray(vec3 p_o, vec3 p_d, out float r_a, out float r_k) {
+	float h = get_rt_param(RT_PARAM_HAZE_HEIGHT);
+	r_a = get_rt_param(RT_PARAM_HAZE_SIGMA) * exp(clamp((get_rt_param(RT_PARAM_HAZE_BASE) - p_o.y) / h, -80.0, 8.0));
+	r_k = p_d.y / h;
+}
+
+float rt_haze_depth(float p_a, float p_k, float p_t) {
+	return abs(p_k * p_t) < 1e-4 ? p_a * p_t : p_a * (1.0 - exp(-p_k * p_t)) / p_k;
+}
+
+// The distance at which the optical depth reaches p_tau; -1 when it never does (an upward ray's whole depth is less).
+float rt_haze_distance(float p_a, float p_k, float p_tau, float p_t_max) {
+	if (abs(p_k * p_t_max) < 1e-4) {
+		return p_tau / p_a;
+	}
+	float x = p_tau * p_k / p_a;
+	return x >= 1.0 ? -1.0 : -log(1.0 - x) / p_k;
 }
 
 // The medium of payload code p_code (MEDIUM_CHANGE_FLAG): 0 none, RT_MEDIUM_CODE_GEOMETRY plus the TLAS entry
@@ -937,7 +964,7 @@ void main() {
 					vec3 albedo = rt_volume.smoke_color.rgb * rt_volume.medium.y;
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, ps.rng_state);
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_vol;
 					cone_width += rt_cone_spread_angle() * t_vol;
@@ -960,6 +987,49 @@ void main() {
 					continue;
 				}
 				ps.radiance += throughput_entry * vol_emitted;
+			}
+
+			// The open air's aerosol haze (WeatherMap3D traced_haze; docs/ideas/weather.md, godrays stage 3), in place of
+			// its froxels: a free flight drawn exactly against its extinction, up to the surface, or to the sky's own
+			// aerosol for a ray that reaches the sky. A collision replaces the surface with a scattering event lit by
+			// the sun's beam through the clouds and through any shadow (pixel-sharp shafts, on every bounce), then the
+			// path goes on along the phase function (the sky's and the ground's light on the haze, multiple scattering).
+			// The sun's light scattered on the segment is estimated on every segment (next event at a distance drawn in
+			// proportion to sigma T over the segment, weighted by its scattering probability 1 - T); the path's own
+			// collision, drawn independently, only decides whether it scatters there and goes on, so that light is not
+			// counted twice. Far less noise than lighting only the collisions, for the same expectation.
+			if (!in_medium && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
+				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : min(t_far, get_rt_param(RT_PARAM_HAZE_REACH));
+				if (seg_len > 0.0) {
+					float h_a, h_k;
+					rt_haze_ray(ray_origin, ray_dir, h_a, h_k);
+					float p_scatter = 1.0 - exp(-rt_haze_depth(h_a, h_k, seg_len));
+					vec3 haze_light = vec3(0.0);
+					if (p_scatter > 1e-6) {
+						float t_ne = rt_haze_distance(h_a, h_k, -log(max(1.0 - rand(ps.rng_state) * p_scatter, 1e-30)), seg_len);
+						t_ne = t_ne < 0.0 ? seg_len : min(t_ne, seg_len);
+						haze_light = throughput_entry * (get_rt_param(RT_PARAM_HAZE_ALBEDO) * p_scatter) *
+								rt_volume_direct(ray_origin + ray_dir * t_ne, ray_dir, 0.6, true, ps.rng_state);
+					}
+					float t_haze = rt_haze_distance(h_a, h_k, -log(max(1.0 - rand(ps.rng_state), 1e-30)), seg_len);
+					if (t_haze > 0.0 && t_haze < seg_len) {
+						vec3 x = ray_origin + ray_dir * t_haze;
+						ps.radiance = radiance_pre + haze_light;
+						ps.throughput = throughput_entry * get_rt_param(RT_PARAM_HAZE_ALBEDO);
+						ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
+								NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
+						ps.hit_t = t_haze;
+						ps.bsdf_pdf = 0.0;
+						cone_width += rt_cone_spread_angle() * t_haze;
+						if (!russian_roulette_survives(bounce + 1u, ps)) {
+							break;
+						}
+						ray_origin = x;
+						ray_dir = rt_volume_sample_hg(ray_dir, 0.6, rand2(ps.rng_state));
+						continue;
+					}
+					ps.radiance += haze_light;
+				}
 			}
 
 			// A segment inside a medium (refraction into RT_MAT_FLAG_VOLUME surfaces). Without scattering,
@@ -985,7 +1055,7 @@ void main() {
 					vec3 x = ray_origin + ray_dir * t_coll;
 					ps.radiance = radiance_pre;
 					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, false, ps.rng_state);
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
 							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_coll;

@@ -1,0 +1,1 @@
+- Weather: under path tracing the aerosol haze is a traced medium, sampled exactly on every path segment and lit by the sun's beam through clouds and traced shadows, for sharp shafts at any distance and haze in reflections (`WeatherMap3D.traced_haze`, on).

@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 76;
+	static constexpr int RT_PARAM_COUNT = 88;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -238,6 +238,11 @@ public:
 	static constexpr int RT_PARAM_GROUND_NEAR_X = 71;
 	static constexpr int RT_PARAM_GROUND_NEAR_Z = 72;
 	static constexpr int RT_PARAM_GROUND_NEAR_SIZE = 73;
+	static constexpr int RT_PARAM_HAZE_SIGMA = 80; // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
+	static constexpr int RT_PARAM_HAZE_ALBEDO = 81;
+	static constexpr int RT_PARAM_HAZE_HEIGHT = 82; // scale height (m)
+	static constexpr int RT_PARAM_HAZE_BASE = 83; // base height, relative to rt_origin
+	static constexpr int RT_PARAM_HAZE_REACH = 84; // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

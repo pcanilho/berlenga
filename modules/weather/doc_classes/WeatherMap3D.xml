@@ -567,6 +567,9 @@
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
 			Weather seconds per real second: storms, transitions, wetting and drying run this much faster than the clock (60 makes a game hour a real minute). Gusts always run in real time.
 		</member>
+		<member name="traced_haze" type="bool" setter="set_traced_haze" getter="get_traced_haze" default="true">
+			Under path tracing, the [member aerosol_haze] is a traced medium instead of a volumetric fog layer. Every path segment draws its distances exactly against the haze's height profile and lights it with the sun's direct beam through the clouds and through traced shadows, so shafts are as sharp as the shadows that cast them, at any distance and in reflections. Rays that reach the sky carry it out to the volumetric fog's reach, where the [WeatherSkyMaterial]'s own aerosol takes over. Raster rendering is unchanged.
+		</member>
 		<member name="transition_time" type="float" setter="set_transition_time" getter="get_transition_time" default="600.0">
 			Time constant over which the weather eases toward changed settings, in weather seconds. [code]0[/code] changes at once.
 		</member>
