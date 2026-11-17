@@ -1537,6 +1537,71 @@ Gorse and broom come first, then gum rockrose, kermes oak and lentisk, then the 
 - Raster vs path-traced 100% crop (gorse in flower, April): spines and flowers both present;
   PT is darker inside the bush from occlusion, no detail lost.
 
+### 5v. Gum rockrose, kermes oak and lentisk (17 Nov; Mediterranean scrub with vegetation)
+
+**Research** (Flora iberica, Castroviejo et al. 1986-, vols. 2 Cistaceae, 2 Fagaceae, 9
+Anacardiaceae; Blondel et al. 2010; Correia and Ascensao 2017 on Cistus ladanifer's summer
+leaves; Gratani and Varone 2004 on kermes oak and lentisk leaf traits; Jordano 1989 on lentisk
+fruiting):
+- **Gum rockrose** (Cistus ladanifer): 1-2.5 m, few erect, little-branched stems from the base,
+  open and leggy, sticky with labdanum; short-lived (15-20 years) and fire-seeded, old plants lanky
+  with dead stems. Leaves opposite and sessile, linear-lanceolate 4-8 (10) cm by 0.6-2 cm,
+  three-veined, dark glossy green and varnished above, grey felted below. Flowers solitary at the
+  tips of short side shoots, 5-10 cm, five crumpled white petals, often a maroon blotch at each
+  base, a boss of yellow stamens; April to June, each lasting a day. Capsule globose, 10-celled,
+  1-1.5 cm, woody, standing grey-brown through summer. Summer: the big spring leaves fold along
+  the midrib, droop, dull and partly fall; small summer leaves stay at the tips.
+- **Kermes oak** (Quercus coccifera): 0.5-2 m, rarely a small tree; a dense, intricately branched
+  mound that suckers into clonal thickets; browsing and fire keep it as a hard cushion 30-50 cm
+  (garrigue "coussin"). Leaves 1.5-4 cm, oval, stiff and leathery, the margin wavy and spiny
+  toothed (holly-like, 3-6 spines a side), glossy bright green both sides, glabrous; petiole
+  1-4 mm. Acorns ripen in the second autumn (September-November), 1.5-3 cm, in a cup of stiff,
+  spreading, spine-tipped scales. Bark grey, smooth.
+- **Lentisk** (Pistacia lentiscus): 1-3 (5) m, a dense, rounded, many-stemmed evergreen mound,
+  sea-pruned to a flat-topped hummock on cliffs. Leaves paripinnate, no end leaflet: 2-7 (usually
+  3-5) pairs of elliptic, leathery, glossy dark leaflets 1-5 cm on a narrowly winged rachis, young
+  shoots and rachis reddish. Dioecious; tiny reddish flowers in dense axillary spikes March-May;
+  female plants carry clusters of 4-5 mm drupes, red in late summer, black when ripe
+  (October-January). Smells of resin (mastic).
+
+**Plan.**
+- `PRESET_GUM_ROCKROSE`, `PRESET_KERMES_OAK`, `PRESET_LENTISK`; `apply_scrub_rules` stays
+  vegetation's, `make_shrub_species` serves all three with the five forms (the cushion for kermes
+  oak and lentisk; rockrose has no cushion and gives its young form).
+- Leaves as geometry: rockrose long, narrow, folded along the midrib, glossy; kermes oak small
+  pointed-lobed blades (the spiny teeth in the outline) with a wavy margin; lentisk paripinnate
+  without the end leaflet, elliptic leaflets on a red rachis.
+- Rockrose flowers (five crumpled petals with the blotch, yellow stamen boss) and standing
+  capsules from `get_bloom`; summer leaf fold by day of year.
+- Kermes oak acorns in spiny cups, autumn; lentisk drupe clusters red to black on female plants.
+
+**As built.**
+- `PRESET_GUM_ROCKROSE` (33): four erect stems, opposite leaves 6.5 cm by 1.4 cm, dark and
+  glossy; flowers 7 cm across as geometry (five crumpled petals on a 5 x 5 grid each, the maroon
+  blotch on seven plants in ten, a yellow stamen crown, three sepals), `get_bloom` 90-175;
+  ten-ridged capsules after, green to brown to grey and split. Summer fold days 175-300: leaves
+  shrink 40%, grey and a third fall. Old plants are leggier, not taller. No cushion: its
+  `SHRUB_CUSHION` is the young plant.
+- `PRESET_KERMES_OAK` (34): dense, zigzag, suckering mound leafy to the ground; pointed-lobed
+  leaves 2.8 cm (the spiny teeth in the outline); acorns in cups ringed by spreading spines,
+  green to brown, days 180-345.
+- `PRESET_LENTISK` (35): dense rounded mound; paripinnate leaves (four pairs, no end leaflet) on
+  a winged red rachis, entire elliptic leaflets from their own alpha cut; female plants (half,
+  by seed) carry drupe clusters, red then black, days 210-45.
+- Far colours: rockrose whitens by bloom x 0.3. Thicket tops 1.8 / 1.4 / 2.0 m. Cushions
+  0.48 m (kermes oak), 0.54 m (lentisk).
+- Cost (mature): rockrose 217k triangles, kermes oak 620k, lentisk 650k; old forms 0.5-1.5M.
+  Generation 0.6-1.4 s.
+- Crown parts' normals were right-handed while Godot's front faces wind clockwise, so with
+  double-sided shading every cone, berry, key, catkin and flower was lit from behind in raster
+  (white rockrose flowers drew grey, gorse flowers flat). `close_part` now takes (c - a) x
+  (b - a). The path tracer was unaffected.
+- Shape pass: kermes oak and lentisk with 12-14 stems fanned to 80 degrees, weak trunk
+  gravitropism, no light floor and leaves kept three years, so the mounds are leafy to the
+  ground; rockrose with six stems fanned to 38 degrees. Rockrose flowers on 4.5 cm stalks over
+  the shoot's last leaves. Lentisk leaflets 2 cm on a rachis 0.42 leaflet a pair.
+- Bank trees in one-variant stands (6411eda3): one slope variant, not four.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

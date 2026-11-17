@@ -531,6 +531,18 @@ rhomboid rill pattern of a draining beach face (Woodford 1935; Hoyt and Henry 19
 seepage rills of a steeper face. The run's depth does not grow with the time scale, since the table also drains
 on it. `--view=rills` now runs at x120 from a higher camera. Left: rill spacing check, water drawn in the rills.
 
+Docs round 1 (declined: dotted rills, a parallel comb, no water, bench background). Fixes:
+- Relief: the bed's fixed relief adds the swash's low ridges and hollows (15 and 50 cm, 3 and 4 mm) to the 3 cm
+  grain roughness, so the seepage gathers into fewer rills that join and split downslope (RillGrow's
+  microtopography at the scale beach rills space at).
+- Floors: a separate, larger bed-slope weight along the flow (3 on top of the 1.5 across, as morphodynamic models
+  keep streamwise and transverse factors apart) planes bumps off channel floors; 8 brought back cross ridges.
+- Water: the ground drew water only past 0.3 mm, but the sheet is 0.2 mm (3 mm in the rills); a film now glistens
+  from 0.02 mm (smooth surface, Lagarde 2013's accumulated water) and covers the grains past 0.3 mm as before.
+- `--view=rills` looks down the face to the waterline. The site frame belongs to the scene's real beach.
+Left: faint ridges across some floors (the explicit scheme's two-texel mode; de Almeida et al. 2012's flux
+weighting would damp it but needs the neighbours' fluxes double-buffered).
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.

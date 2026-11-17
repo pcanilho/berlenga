@@ -8,7 +8,7 @@ extends Node3D
 #   --spp=N          path tracing samples (default 16)
 #   --wind=x,z       fallback wind in m/s (default 3,1); 0,0 for still grass
 #   --weather        a WeatherMap3D drives the wind instead
-#   --frames=N       frames before the capture (default 20)
+#   --frames=N       frames before the capture (default 20; path traced, more until no surface waits for its first capture)
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
 #   --sun-elev=D     sun elevation in degrees (default 28)
@@ -1983,6 +1983,13 @@ func _process(dt: float) -> void:
 		return
 	if far_match or n < frames:
 		return
+	# Path traced: wait for every surface's first vertex capture and BLAS (built under a per-frame
+	# budget, so a dense meadow takes more than the default frames; captured too early the grass
+	# blades were missing from the frame).
+	if not raster and n < frames + 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+		return
+	if not raster and n > frames:
+		print("GRASS_PT_READY after %d frames" % n)
 	set_process(false)
 	if t_frames > 0:
 		var blades := grass.get_blade_count() + (under.get_blade_count() if under else 0)

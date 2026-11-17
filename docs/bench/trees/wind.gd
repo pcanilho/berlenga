@@ -16,7 +16,7 @@ const S := 18
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
 		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
-		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom"]
+		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk"]
 
 var fails := 0
 var fps := 30.0

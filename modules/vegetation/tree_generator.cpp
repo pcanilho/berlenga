@@ -47,15 +47,22 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
 	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
 	"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
-	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom"
+	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk"
 };
 
+// The woody shrubs vegetation places through make_shrub_species (trees.md 5u, 5v): Atlantic heath
+// and Mediterranean scrub.
 // Bank trees (trees.md 5q) step through four slopes for placement to pick from. A stand asked for
 // one variant (scouts and tests on the cloud) gets one bank tree: four slope variants of three
 // bank species added some 47M triangles to make_woodland(1) (a bank willow is about 10M) and the
 // forest no longer fit in 15 GB.
 static int _bank_variants(int p_variants) {
 	return p_variants <= 0 ? 0 : (p_variants == 1 ? 1 : MAX(p_variants, 4));
+}
+
+static bool scrub_shrub(TreeGenerator::Preset p_preset) {
+	return p_preset == TreeGenerator::PRESET_GORSE || p_preset == TreeGenerator::PRESET_BROOM || p_preset == TreeGenerator::PRESET_GUM_ROCKROSE ||
+			p_preset == TreeGenerator::PRESET_KERMES_OAK || p_preset == TreeGenerator::PRESET_LENTISK;
 }
 
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
@@ -598,6 +605,94 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAVES_PER_INTERNODE] = 6;
 			bark_color = Color(0.42f, 0.38f, 0.3f);
 			leaf_color = Color(0.1f, 0.2f, 0.06f);
+			break;
+		case PRESET_GUM_ROCKROSE: // Cistus ladanifer: few erect, sticky, little-branched stems; open and leggy (5v).
+			p[PARAM_YEARS] = 8;
+			p[PARAM_MATURITY] = 4;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_INTERNODE_LENGTH] = 0.12f;
+			p[PARAM_INTERNODE_LENGTH_AGE] = 0.95f;
+			p[PARAM_MAX_SHOOT] = 3;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
+			p[PARAM_BRANCH_ANGLE] = 30;
+			p[PARAM_BRANCH_ANGLE_VARIANCE] = 8;
+			p[PARAM_DIRECTION_NOISE] = 8;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.8f;
+			p[PARAM_GRAVITROPISM] = 0.3f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.15f; // Few shoots: an open shrub, its stems seen through it.
+			p[PARAM_SHED_RATIO] = 0.06f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.5f;
+			p[PARAM_TIP_RADIUS] = 0.002f;
+			p[PARAM_PIPE_EXPONENT] = 2.5f;
+			p[PARAM_STEMS] = 6;
+			p[PARAM_STEM_SPREAD] = 38; // Several stems from the base, fanning out.
+			p[PARAM_BASAL_SPROUTS] = 0.2f;
+			p[PARAM_ROOT_FLARE] = 0.1f;
+			p[PARAM_LEAF_SIZE] = 0.065f; // Leaves 4-8 cm by 0.6-2 cm, linear-lanceolate.
+			p[PARAM_LEAF_WIDTH] = 0.11f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 10;
+			p[PARAM_LEAF_YEARS] = 2;
+			bark_color = Color(0.38f, 0.28f, 0.2f); // Red-brown, glossy with resin.
+			leaf_color = Color(0.05f, 0.1f, 0.04f); // Dark, varnished.
+			break;
+		case PRESET_KERMES_OAK: // Quercus coccifera: dense, intricately branched, spiny-leaved evergreen mound (5v).
+			p[PARAM_YEARS] = 18;
+			p[PARAM_MATURITY] = 8;
+			p[PARAM_INTERNODE_LENGTH] = 0.06f;
+			p[PARAM_INTERNODE_LENGTH_AGE] = 0.96f;
+			p[PARAM_MAX_SHOOT] = 3;
+			p[PARAM_APICAL_DOMINANCE] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.49f;
+			p[PARAM_BRANCH_ANGLE] = 55;
+			p[PARAM_BRANCH_ANGLE_VARIANCE] = 15;
+			p[PARAM_DIRECTION_NOISE] = 20; // Zigzag, intricate twigs.
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.12f;
+			p[PARAM_GRAVITROPISM] = -0.05f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f; // Leafy to the ground: a closed mound, not a crown on stems.
+			p[PARAM_SHED_RATIO] = 0.015f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.5f;
+			p[PARAM_TIP_RADIUS] = 0.0014f;
+			p[PARAM_PIPE_EXPONENT] = 2.8f;
+			p[PARAM_STEMS] = 14; // Suckering: many stems from one rootstock.
+			p[PARAM_STEM_SPREAD] = 82;
+			p[PARAM_BASAL_SPROUTS] = 0.8f;
+			p[PARAM_ROOT_FLARE] = 0.1f;
+			p[PARAM_LEAF_SIZE] = 0.028f; // Leaves 1.5-4 cm, oval, spiny toothed.
+			p[PARAM_LEAF_WIDTH] = 0.36f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 14;
+			p[PARAM_LEAF_YEARS] = 3; // Leaves live 2-3 years.
+			bark_color = Color(0.45f, 0.43f, 0.38f);
+			leaf_color = Color(0.1f, 0.2f, 0.06f); // Glossy green both sides.
+			break;
+		case PRESET_LENTISK: // Pistacia lentiscus: dense, rounded, many-stemmed evergreen; paripinnate leaves (5v).
+			p[PARAM_YEARS] = 16;
+			p[PARAM_MATURITY] = 8;
+			p[PARAM_INTERNODE_LENGTH] = 0.09f;
+			p[PARAM_INTERNODE_LENGTH_AGE] = 0.96f;
+			p[PARAM_MAX_SHOOT] = 3;
+			p[PARAM_APICAL_DOMINANCE] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.49f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_BRANCH_ANGLE_VARIANCE] = 12;
+			p[PARAM_DIRECTION_NOISE] = 14;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.15f;
+			p[PARAM_GRAVITROPISM] = -0.03f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f; // Dense to the ground.
+			p[PARAM_SHED_RATIO] = 0.015f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.4f;
+			p[PARAM_TIP_RADIUS] = 0.0016f;
+			p[PARAM_PIPE_EXPONENT] = 2.8f;
+			p[PARAM_STEMS] = 12;
+			p[PARAM_STEM_SPREAD] = 80;
+			p[PARAM_BASAL_SPROUTS] = 0.7f;
+			p[PARAM_ROOT_FLARE] = 0.12f;
+			p[PARAM_LEAF_SIZE] = 0.02f; // Leaflets 1-5 cm (mostly 2-3).
+			p[PARAM_LEAF_WIDTH] = 0.3f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 18;
+			p[PARAM_LEAF_YEARS] = 3;
+			bark_color = Color(0.42f, 0.4f, 0.36f);
+			leaf_color = Color(0.06f, 0.13f, 0.04f); // Dark, leathery, glossy.
 			break;
 		case PRESET_MAX:
 			break;
@@ -1424,7 +1519,7 @@ float TreeGenerator::_krumm_cap(const Vector3 &p_q, float *r_slope) const {
 	const Vector3 root = nodes[0].start;
 	// A heath shrub's wind-pruned cushion (trees.md 5u) is the same dome at a shrub's scale: a
 	// metre or two across and under half a metre high.
-	const bool heath = preset == PRESET_GORSE || preset == PRESET_BROOM;
+	const bool heath = scrub_shrub(preset);
 	const float rim = Math::lerp(9.0f, 2.5f, krummholz) * (heath ? 0.3f : 1.0f);
 	Vector2 off(p_q.x - root.x, p_q.z - root.z);
 	off.x /= off.x > 0.0f ? 1.0f + 0.6f * wind_exposure : 1.0f - 0.35f * wind_exposure;
@@ -2241,6 +2336,9 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Mountain laurel.
 	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Gorse: spines.
 	{ TreeGenerator::LEAF_DIGITATE, 3, 0.0f }, // Broom: trifoliate.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Gum rockrose: linear-lanceolate, opposite.
+	{ TreeGenerator::LEAF_LOBED, 5, 0.2f }, // Kermes oak: shallow pointed lobes are its spiny teeth, 3-6 a side.
+	{ TreeGenerator::LEAF_PINNATE, 8, 0.0f }, // Lentisk: paripinnate, 3-5 pairs, no end leaflet.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -2309,6 +2407,9 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Mountain laurel.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Gorse: evergreen spines.
 	{ true, 140.0f, 90.0f, 160.0f, 40.0f, Color(0.22f, 0.2f, 0.07f) }, // Broom: early out, falls soon after turning.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Gum rockrose: evergreen (the summer fold is its own).
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Kermes oak.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Lentisk.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -2344,9 +2445,9 @@ Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_s
 	d["fallen_fraction"] = ls.fallen;
 	d["autumn_color"] = ls.color;
 	// Heath shrubs (trees.md 5u): the open share of their flowers, and its colour.
-	if (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM) {
+	if (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM || p_preset == PRESET_GUM_ROCKROSE) {
 		d["flowering"] = get_bloom(p_preset, p_season.get("day_of_year", 182.0f));
-		d["flower_color"] = Color(0.95f, 0.68f, 0.03f);
+		d["flower_color"] = p_preset == PRESET_GUM_ROCKROSE ? Color(0.95f, 0.94f, 0.9f) : Color(0.95f, 0.68f, 0.03f);
 	}
 	return d;
 }
@@ -2534,14 +2635,17 @@ void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const
 			const int pairs = form.count / 2;
 			// Half-width over length: rowan's leaflets are narrow (about 3:1 to 4:1), ash's a
 			// little broader, elder's broadest.
-			const float hwr = preset == PRESET_ROWAN ? 0.15f : (preset == PRESET_ELDER ? 0.24f : 0.19f);
+			// Lentisk's are elliptic, about 2.5:1, on a paripinnate leaf (no end leaflet).
+			const bool paripinnate = preset == PRESET_LENTISK;
+			const float hwr = preset == PRESET_ROWAN ? 0.15f : (preset == PRESET_ELDER ? 0.24f : (paripinnate ? 0.22f : 0.19f));
 			// Three rows, a quarter wider than the leaflet: the leaflet texture cuts the
 			// lanceolate outline and its teeth from it (_leaflet_texture).
 			const int steps = 3;
 			const float hull = hwr * LEAFLET_HULL;
 			// Leaflets of 2 x hwr l x l x 0.656 each share the slots' area.
 			const float leaflet = Math::sqrt(slot_area / (float(form.count) * 2.0f * 0.656f * hwr));
-			const float rachis = leaflet * 0.6f * float(pairs + 1);
+			// Lentisk's pairs sit close on a short rachis.
+			const float rachis = leaflet * (paripinnate ? 0.42f : 0.6f) * float(pairs + 1);
 			for (int i = 0; i < pairs; i++) {
 				const float t = Math::lerp(0.25f, 0.9f, pairs > 1 ? float(i) / (pairs - 1) : 0.5f);
 				const Vector3 at = start + along * (rachis * t) + n * (-0.15f * rachis * t * t);
@@ -2550,14 +2654,17 @@ void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const
 					_add_blade(r_b, at, dir, n.cross(dir).normalized(), n, leaflet, leaflet * hull, steps, 0, 0.0f, p_color, false, 1.0f);
 				}
 			}
-			const Vector3 tip = start + along * rachis + n * (-0.15f * rachis);
-			_add_blade(r_b, tip, along, side, n, leaflet, leaflet * hull, steps, 0, 0.0f, p_color, false, 1.0f);
+			if (!paripinnate) {
+				const Vector3 tip = start + along * rachis + n * (-0.15f * rachis);
+				_add_blade(r_b, tip, along, side, n, leaflet, leaflet * hull, steps, 0, 0.0f, p_color, false, 1.0f);
+			}
 			{
 				// The rachis: a stalk 1.5-3 mm across carrying the pairs (grooved above in rowan and
 				// ash; Stace 2019). Without it near leaflets floated apart. A shallow V ribbon, so
 				// it keeps some width seen edge-on, sampled on the leaflet texture's midrib (opaque).
-				const float hw = MAX(0.0012f, 0.025f * leaflet);
-				const Color rc(p_color.r * 0.85f, p_color.g * 0.8f, p_color.b * 0.75f, p_color.a);
+				// Lentisk's rachis is narrowly winged (Flora iberica), a little wider and redder.
+				const float hw = MAX(0.0012f, (paripinnate ? 0.03f : 0.025f) * leaflet);
+				const Color rc = paripinnate ? Color(p_color.r * 0.9f, p_color.g * 0.6f, p_color.b * 0.5f, p_color.a) : Color(p_color.r * 0.85f, p_color.g * 0.8f, p_color.b * 0.75f, p_color.a);
 				const int segs = 4;
 				const int base = r_b.verts.size();
 				for (int i = 0; i <= segs; i++) {
@@ -2725,6 +2832,8 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 		case PRESET_AMERICAN_BEECH:
 		case PRESET_HOLLY:
 		case PRESET_BOX:
+		case PRESET_KERMES_OAK: // Smooth grey, finely fissured only at the base of old stems.
+		case PRESET_LENTISK:
 		case PRESET_RED_MAPLE:
 		case PRESET_WITCH_HAZEL:
 			return BARK_SMOOTH;
@@ -3299,6 +3408,9 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.3f, // Mountain laurel.
 	0.35f, // Gorse.
 	0.25f, // Broom.
+	0.1f, // Gum rockrose: resin-varnished stems in dry sun.
+	0.2f, // Kermes oak.
+	0.2f, // Lentisk.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -3434,6 +3546,9 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.5f, 0.4f, 0.0f }, // Mountain laurel.
 	{ 0.9f, 0.75f, 0.12f }, // Gorse: old coastal gorse is grey with Ramalina and Usnea.
 	{ 0.4f, 0.4f, 0.05f }, // Broom.
+	{ 0.2f, 0.3f, 0.05f }, // Gum rockrose: sticky, short-lived stems.
+	{ 0.6f, 0.5f, 0.1f }, // Kermes oak: smooth grey bark, crusts and some Xanthoria near the sea.
+	{ 0.6f, 0.5f, 0.1f }, // Lentisk.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -4481,6 +4596,9 @@ static const struct {
 	{ 50.0f, 200.0f }, // mountain laurel
 	{ 45.0f, 200.0f }, // gorse
 	{ 40.0f, 200.0f }, // broom
+	{ 35.0f, 200.0f }, // gum rockrose
+	{ 60.0f, 200.0f }, // kermes oak (dense oak wood)
+	{ 50.0f, 200.0f }, // lentisk
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -4746,6 +4864,10 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 			return MAX(ramp(20.0f, 60.0f, 120.0f, 160.0f), 0.04f);
 		case PRESET_BROOM:
 			return ramp(120.0f, 136.0f, 160.0f, 178.0f);
+		case PRESET_GUM_ROCKROSE:
+			// April to June, peaking late April and May (Flora iberica); each flower lasts a day,
+			// so a shrub in flower shows a share of its buds open at once.
+			return ramp(90.0f, 110.0f, 145.0f, 175.0f);
 		default:
 			return 0.0f;
 	}
@@ -4783,13 +4905,16 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		r_b.indices.push_back(b);
 		r_b.indices.push_back(c);
 	};
-	// Face normals, averaged, for a finished part (all parts are seen from both sides).
+	// Face normals, averaged, for a finished part (all parts are seen from both sides). Godot's
+	// front faces wind clockwise, so a face's normal is (c - a) x (b - a): the right-handed one
+	// pointed to the back, and with double-sided shading every crown part was lit from behind
+	// in raster (white rockrose flowers drew grey, gorse flowers flat). Trees.md 5v.
 	auto close_part = [&](Vector4i &p_part, float p_size) {
 		Vector3 *nw = r_b.normals.ptrw();
 		const Vector3 *vw = r_b.verts.ptr();
 		for (int64_t i = p_part.x; i + 2 < r_b.indices.size(); i += 3) {
 			const int a = r_b.indices[i], b = r_b.indices[i + 1], c = r_b.indices[i + 2];
-			const Vector3 fn = (vw[b] - vw[a]).cross(vw[c] - vw[a]);
+			const Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
 			nw[a] += fn;
 			nw[b] += fn;
 			nw[c] += fn;
@@ -5323,8 +5448,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 								const Vector3 wd = (u * -0.75f + sd * (0.65f * side)).normalized();
 								petal(k0 + sd * (0.04f * l * side), (a - u * 0.08f).normalized(), wd, 0.85f * l, 0.4f * l, -0.6f * side, kc * 0.6f, pc, 0.1f * side);
 							}
-							// The banner: standing up and back over the boat, folded along its midline
-							// and its tip turned back.
+							// The banner: folded along its midline and its tip turned back.
 							petal(k0 + u * (0.08f * l), (u * 0.85f + a * 0.55f).normalized(), sd, 0.9f * l, 0.7f * l, 0.65f, bc * 0.6f, bc, -0.25f);
 						} else if (split > 0.0f && float((h >> 8) & 255u) / 255.0f < split) {
 							// A burst broom pod: two black valves twisted into spirals.
@@ -5364,6 +5488,154 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				}
 			}
 			close_part(part, 0.02f);
+		}
+		// Gum rockrose flowers and capsules (trees.md 5v), kept by the coarser LODs: white flowers
+		// 5-10 cm across are seen from far off. One flower at the tip of a short side shoot, five
+		// broad, crumpled petals (the crinkled silk is geometry: each petal a 4 x 5 grid lifted by
+		// a hash), in most plants a maroon blotch at each petal's base, a boss of many yellow
+		// stamens; three sepals behind. The capsule after: a woody, ten-valved globe 1-1.5 cm on the
+		// tip, green, then brown, then grey and split, standing into winter (Flora iberica).
+		if (fruit_cover > 0.0f && preset == PRESET_GUM_ROCKROSE && !tips.is_empty()) {
+			const float bloom = get_bloom(preset, day);
+			const float caps = day <= 120.0f ? CLAMP((60.0f - day) / 60.0f, 0.0f, 1.0f) * 0.4f : (day < 170.0f ? (day - 120.0f) / 50.0f : 1.0f);
+			const float dry = CLAMP((day - 170.0f) / 60.0f, 0.0f, 1.0f);
+			// Most plants carry the blotch (var. maculatus); some are plain white (var. albiflorus).
+			const bool blotched = (uint32_t(seed) * 2654435761u >> 20) % 10 < 7;
+			const Color white = lin(0.97f, 0.96f, 0.93f), shade = lin(0.88f, 0.87f, 0.84f);
+			const Color blotch = lin(0.38f, 0.05f, 0.1f), base_y = lin(0.98f, 0.86f, 0.4f);
+			const Color stamen_c = lin(0.98f, 0.78f, 0.12f), sepal_c = lin(0.42f, 0.48f, 0.22f);
+			const Color cap_green = lin(0.38f, 0.42f, 0.2f), cap_brown = lin(0.42f, 0.3f, 0.18f), cap_grey = lin(0.5f, 0.47f, 0.42f);
+			Vector4i part;
+			r_b.begin(part);
+			int bone_now = -1;
+			uint32_t slot = 0;
+			for (const Tip &t : tips) {
+				const Node &n = nodes[t.node];
+				if (n.removed || n.dead) {
+					continue;
+				}
+				const uint32_t h = hash_murmur3_one_32(slot++, uint32_t(seed) * 2654435761u + 0x63697374u);
+				const float hu = float(h & 0xffff) / 65535.0f;
+				const bool is_flower = hu < 0.45f * bloom * fruit_cover;
+				const bool is_cap = !is_flower && hu < 0.45f * bloom * fruit_cover + 0.5f * caps * fruit_cover;
+				if (!is_flower && !is_cap) {
+					continue;
+				}
+				const int b = bone_of(t.node);
+				if (b != bone_now) {
+					if (bone_now >= 0) {
+						close_part(part, 0.1f);
+						r_b.begin(part);
+					}
+					r_b.bone = b;
+					bone_now = b;
+				}
+				const Vector3 d = n.dir;
+				const Vector3 at = n.end();
+				const float jit = Math::lerp(0.85f, 1.15f, float((h >> 16) & 255u) / 255.0f);
+				if (is_flower) {
+					// The flower faces up and out over the shoot's last leaves, on a stalk of a few
+					// centimetres (the flowering side shoot).
+					const Vector3 ax = (d * 0.6f + Vector3(0, 0.8f, 0)).normalized();
+					const Vector3 c0 = at + ax * 0.045f;
+					stalk(at, c0, 0.0014f, sepal_c);
+					const Vector3 s0 = perp(ax);
+					const float R = 0.036f * jit; // Petal length: a flower about 7 cm across.
+					for (int q = 0; q < 3; q++) {
+						const Vector3 sd = s0.rotated(ax, q * 2.0944f + 0.5f);
+						const Vector3 sdir = (sd * 0.8f - ax * 0.35f).normalized();
+						const Vector3 sw = ax.cross(sdir).normalized();
+						const int v0 = r_b.verts.size();
+						for (int i = 0; i < 3; i++) {
+							const float tt = float(i) / 2.0f;
+							const float w = R * 0.32f * Math::sin(float(Math::PI) * (0.15f + 0.7f * tt));
+							const Vector3 c = c0 + sdir * (R * 0.45f * tt);
+							vert(c - sw * w, Vector2(0.0f, tt), sepal_c);
+							vert(c + sw * w, Vector2(1.0f, tt), sepal_c);
+						}
+						for (int k = 0; k < 2; k++) {
+							tri(v0 + k * 2, v0 + k * 2 + 2, v0 + k * 2 + 1);
+							tri(v0 + k * 2 + 1, v0 + k * 2 + 2, v0 + k * 2 + 3);
+						}
+					}
+					const int RN = 5, CN = 5; // Rows out from the centre, columns across.
+					for (int q = 0; q < 5; q++) {
+						const Vector3 pd = s0.rotated(ax, q * 1.25664f + 0.2f * float((h >> (q * 3)) & 7u) / 7.0f);
+						const Vector3 pw = ax.cross(pd).normalized();
+						const int v0 = r_b.verts.size();
+						for (int i = 0; i < RN; i++) {
+							const float tt = float(i) / (RN - 1);
+							// Obovate, broad and overlapping its neighbours: widest near the tip.
+							const float half = R * 0.62f * Math::sin(float(Math::PI) * 0.5f * Math::pow(tt, 0.7f)) * (1.0f - 0.25f * tt * tt * tt) + R * 0.06f;
+							// Opened out flat to slightly cupped, the outer half rising.
+							const Vector3 c = c0 + pd * (R * tt) + ax * (R * (0.12f * tt * tt + 0.03f));
+							for (int k = 0; k < CN; k++) {
+								const float u = float(k) / (CN - 1) * 2.0f - 1.0f;
+								const uint32_t hk = hash_murmur3_one_32(uint32_t(i * 16 + k + q * 97), h);
+								// Crumpled silk: a lift that grows to the petal's edge.
+								const float crumple = (float(hk & 255u) / 255.0f - 0.5f) * R * 0.1f * (0.3f + tt) * (0.4f + Math::abs(u));
+								Color col = white.lerp(shade, float((hk >> 8) & 255u) / 255.0f * 0.5f);
+								if (tt < 0.12f) {
+									col = base_y;
+								} else if (blotched && tt < 0.32f && Math::abs(u) < 0.75f) {
+									col = blotch;
+								}
+								vert(c + pw * (u * half) + ax * crumple, Vector2(0.5f + 0.5f * u, tt), col);
+							}
+						}
+						for (int i = 0; i + 1 < RN; i++) {
+							for (int k = 0; k + 1 < CN; k++) {
+								const int a = v0 + i * CN + k;
+								tri(a, a + CN, a + 1);
+								tri(a + 1, a + CN, a + CN + 1);
+							}
+						}
+					}
+					// The stamens: a dense ring of yellow, as a low crown of twelve points round the
+					// green ovary.
+					const int v0 = r_b.verts.size();
+					const float sr = R * 0.24f;
+					const int ctr = vert(c0 + ax * (R * 0.1f), Vector2(0.5f, 0.5f), sepal_c);
+					for (int k = 0; k < 24; k++) {
+						const Vector3 rd = s0.rotated(ax, k * 0.2618f);
+						const float r = (k & 1) ? sr : sr * 0.55f;
+						vert(c0 + rd * r + ax * ((k & 1) ? R * 0.16f : R * 0.05f), Vector2(0.5f, 0.5f), stamen_c);
+					}
+					for (int k = 0; k < 24; k++) {
+						tri(ctr, v0 + 1 + k, v0 + 1 + (k + 1) % 24);
+					}
+				} else {
+					// The capsule: a globe of ten valves (ridged), on a short stalk; splitting from the
+					// top once dry.
+					const Vector3 ax = (d * 0.7f + Vector3(0, 0.6f, 0)).normalized();
+					const float cr = 0.0065f * jit;
+					const Vector3 c = at + ax * (0.01f + cr);
+					stalk(at, c - ax * cr, 0.0011f, cap_green.lerp(cap_brown, dry));
+					const Color cc = dry < 0.5f ? cap_green.lerp(cap_brown, dry * 2.0f) : cap_brown.lerp(cap_grey, dry * 2.0f - 1.0f);
+					const Vector3 s0 = perp(ax), s1 = ax.cross(s0);
+					const int rings = 6, sides = 20;
+					const int v0 = r_b.verts.size();
+					for (int i = 0; i <= rings; i++) {
+						const float th = float(Math::PI) * float(i) / rings;
+						for (int k = 0; k < sides; k++) {
+							const float ph = float(Math::TAU) * k / sides;
+							const float ridge = (k & 1) ? 1.0f : 0.9f;
+							// Split valves spread at the top.
+							const float open = dry > 0.7f && i < 2 ? 1.0f + 0.35f * (2 - i) * (k & 1) : 1.0f;
+							const Vector3 rr = (s0 * Math::cos(ph) + s1 * Math::sin(ph)) * (Math::sin(th) * cr * ridge * open);
+							vert(c + rr + ax * (Math::cos(th) * cr * 0.95f), Vector2(float(k) / sides, float(i) / rings), cc * ((k & 1) ? 1.0f : 0.8f));
+						}
+					}
+					for (int i = 0; i < rings; i++) {
+						for (int k = 0; k < sides; k++) {
+							const int k1 = (k + 1) % sides;
+							tri(v0 + i * sides + k, v0 + (i + 1) * sides + k, v0 + i * sides + k1);
+							tri(v0 + i * sides + k1, v0 + (i + 1) * sides + k, v0 + (i + 1) * sides + k1);
+						}
+					}
+				}
+			}
+			close_part(part, 0.1f);
 		}
 		big_end = r_b.indices.size();
 	}
@@ -5481,6 +5753,8 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		BERRY_ROWAN,
 		BERRY_YEW,
 		BERRY_ELDER,
+		ACORN_KERMES,
+		DRUPE_LENTISK,
 	};
 	Kind kind = NONE;
 	float share = 0.0f, low = 0.0f; // Share of the tips above `low` (0-1 up the crown).
@@ -5535,11 +5809,17 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		case PRESET_ELDER:
 			kind = BERRY_ELDER, share = 0.15f, low = 0.2f;
 			break;
+		case PRESET_KERMES_OAK:
+			kind = ACORN_KERMES, share = 0.12f, low = 0.0f;
+			break;
+		case PRESET_LENTISK:
+			kind = DRUPE_LENTISK, share = 0.25f, low = 0.0f;
+			break;
 		default:
 			break;
 	}
 	// Dioecious species: only the female trees fruit (holly, yew), by seed.
-	if ((kind == BERRY_HOLLY || kind == BERRY_YEW) && (uint32_t(seed) * 2654435761u >> 16) % 2 == 1) {
+	if ((kind == BERRY_HOLLY || kind == BERRY_YEW || kind == DRUPE_LENTISK) && (uint32_t(seed) * 2654435761u >> 16) % 2 == 1) {
 		kind = NONE;
 	}
 	// In season (day of year): keys hang from late summer into spring (ash) or fall by early
@@ -5567,6 +5847,16 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			break;
 		case BERRY_ELDER:
 			present = in_days(225.0f, 270.0f) ? 1.0f : 0.0f;
+			break;
+		case ACORN_KERMES:
+			// Biennial: the acorns swell through their second summer and fall from October to
+			// December (Flora iberica).
+			present = in_days(180.0f, 345.0f) ? 1.0f : 0.0f;
+			break;
+		case DRUPE_LENTISK:
+			// Red from late summer, black when ripe from October; birds take them into winter
+			// (Jordano 1989).
+			present = in_days(210.0f, 45.0f) ? 1.0f : 0.0f;
 			break;
 		case CATKIN_HAZEL:
 			present = in_days(210.0f, 100.0f) ? 1.0f : 0.0f;
@@ -5835,6 +6125,87 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					}
 				}
 				size = 2.0f * R;
+			} break;
+			case ACORN_KERMES: {
+				// One or two acorns on the year-old wood behind the tip, each 1.5-3 cm, in a cup of
+				// stiff, spreading, spine-tipped scales covering a third to a half of it.
+				const float day_ripe = CLAMP((day - 250.0f) / 50.0f, 0.0f, 1.0f);
+				const Color nut = lin(0.5f, 0.52f, 0.26f).lerp(lin(0.5f, 0.33f, 0.16f), day_ripe);
+				const Color cup_c = lin(0.55f, 0.52f, 0.36f);
+				const int k = 1 + int(cr.randf() * 1.6f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 base = n.start + d * (n.length * Math::lerp(0.4f, 0.8f, cr.randf()));
+					const Vector3 ax = (sd.rotated(d, cr.randf() * Math::TAU) * 0.7f + d * 0.5f + Vector3(0, -0.3f, 0)).normalized();
+					const float L = Math::lerp(0.016f, 0.026f, cr.randf()), r0 = L * 0.36f;
+					const Vector3 u0 = perp(ax), u1 = ax.cross(u0);
+					const int rings = 7, sides = 10;
+					const int v0 = r_b.verts.size();
+					// The nut: an ovoid from inside the cup to a blunt point.
+					for (int i = 0; i <= rings; i++) {
+						const float tt = float(i) / rings;
+						const float rr = r0 * Math::pow(Math::sin(float(Math::PI) * (0.5f + 0.5f * tt)), 0.7f) * (i == rings ? 0.0f : 1.0f) + (i == 0 ? 0.0f : 0.0f);
+						const Vector3 c = base + ax * (0.004f + L * tt);
+						for (int e = 0; e < sides; e++) {
+							const float ph = float(Math::TAU) * e / sides;
+							vert(c + (u0 * Math::cos(ph) + u1 * Math::sin(ph)) * MAX(rr, 0.0003f), Vector2(), nut);
+						}
+					}
+					for (int i = 0; i < rings; i++) {
+						for (int e = 0; e < sides; e++) {
+							const int e1 = (e + 1) % sides;
+							tri(v0 + i * sides + e, v0 + (i + 1) * sides + e, v0 + i * sides + e1);
+							tri(v0 + i * sides + e1, v0 + (i + 1) * sides + e, v0 + (i + 1) * sides + e1);
+						}
+					}
+					// The cup: a bowl to 40% of the nut, ringed by spreading spines.
+					const int c0 = r_b.verts.size();
+					for (int i = 0; i <= 3; i++) {
+						const float tt = float(i) / 3.0f;
+						const float rr = r0 * Math::lerp(0.5f, 1.12f, Math::sqrt(tt));
+						const Vector3 c = base + ax * (0.004f + L * 0.4f * tt);
+						for (int e = 0; e < sides; e++) {
+							const float ph = float(Math::TAU) * (e + 0.5f) / sides;
+							vert(c + (u0 * Math::cos(ph) + u1 * Math::sin(ph)) * rr, Vector2(), cup_c * (0.85f + 0.15f * float(i & 1)));
+						}
+					}
+					for (int i = 0; i < 3; i++) {
+						for (int e = 0; e < sides; e++) {
+							const int e1 = (e + 1) % sides;
+							tri(c0 + i * sides + e, c0 + (i + 1) * sides + e, c0 + i * sides + e1);
+							tri(c0 + i * sides + e1, c0 + (i + 1) * sides + e, c0 + (i + 1) * sides + e1);
+						}
+					}
+					for (int e = 0; e < 18; e++) {
+						const float ph = float(Math::TAU) * e / 18.0f + cr.randf() * 0.2f;
+						const float tt = 0.3f + 0.7f * float(e % 3) / 2.0f;
+						const Vector3 rd = u0 * Math::cos(ph) + u1 * Math::sin(ph);
+						const Vector3 sb = base + ax * (0.004f + L * 0.4f * tt) + rd * (r0 * Math::lerp(0.5f, 1.12f, Math::sqrt(tt)));
+						const Vector3 tip = sb + (rd * 0.8f - ax * 0.4f).normalized() * (L * 0.18f);
+						const Vector3 w = ax.cross(rd).normalized() * (L * 0.03f);
+						tri(vert(sb - w, Vector2(), cup_c), vert(tip, Vector2(), cup_c * 0.7f), vert(sb + w, Vector2(), cup_c));
+					}
+					stalk(n.start + d * (n.length * 0.5f), base, 0.0012f, cup_c);
+				}
+				size = 0.04f;
+			} break;
+			case DRUPE_LENTISK: {
+				// Short, dense clusters of 4-5 mm drupes in the leaf axils, red, then black from
+				// October, not all together.
+				const int k = 8 + int(cr.randf() * 14.0f);
+				const float ripe = CLAMP((day - 265.0f) / 45.0f + (day < 60.0f ? 2.0f : 0.0f), 0.0f, 1.0f);
+				const Vector3 hub = n.start + d * (n.length * Math::lerp(0.3f, 0.8f, cr.randf())) + Vector3(0, -0.006f, 0);
+				const Color stalk_c = lin(0.42f, 0.2f, 0.12f);
+				stalk(n.start + d * (n.length * 0.5f), hub, 0.0008f, stalk_c);
+				for (int q = 0; q < k; q++) {
+					const Vector3 o = Vector3(cr.randf() - 0.5f, (cr.randf() - 0.8f) * 0.8f, cr.randf() - 0.5f) * 0.03f;
+					const float rb = 0.0022f * Math::lerp(0.85f, 1.15f, cr.randf());
+					const Vector3 bc = hub + o;
+					const Vector3 away = o.length_squared() > 1e-10f ? o.normalized() : Vector3(0, -1, 0);
+					stalk(hub, bc - away * (rb * 0.8f), 0.0003f, stalk_c);
+					const float rp = CLAMP(ripe * 1.6f - 0.6f * cr.randf(), 0.0f, 1.0f);
+					ball(bc, rb, lin(0.72f, 0.1f, 0.08f).lerp(lin(0.09f, 0.06f, 0.07f), rp) * Math::lerp(0.85f, 1.1f, cr.randf()));
+				}
+				size = 0.04f;
 			} break;
 			case BERRY_HOLLY:
 			case BERRY_HAW:
@@ -8643,9 +9014,12 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 // the outline is set in that measure. Serrate teeth point to the apex: along the margin from
 // the base each rises slowly to its tip and drops back sharply (Ellis et al., Manual of Leaf
 // Architecture, 2009). RGB is the venation factor (as _leaf_texture), A the cut.
+// Lentisk's leaflets are entire and elliptic with a short point (Flora iberica): its own cut.
 Ref<Texture2D> TreeGenerator::_leaflet_texture() {
-	if (leaflet_texture.is_valid()) {
-		return leaflet_texture;
+	const bool entire = preset == PRESET_LENTISK;
+	Ref<Texture2D> &cached = entire ? leaflet_entire_texture : leaflet_texture;
+	if (cached.is_valid()) {
+		return cached;
 	}
 	const int w = 128, h = 512;
 	const float lat = 0.866f * LEAFLET_HULL; // Lateral offset per unit d, in leaflet half-widths.
@@ -8657,10 +9031,10 @@ Ref<Texture2D> TreeGenerator::_leaflet_texture() {
 			const float d = Math::abs(u - 0.5f) * 2.0f;
 			const float xl = d * lat; // Offset from the midrib in half-widths.
 			// Lanceolate: widest a little below the middle, an acuminate tip.
-			const float half = Math::sin(float(Math::PI) * Math::pow(v, 0.85f)) * (1.0f - 0.25f * Math::smoothstep(0.6f, 1.0f, v));
+			const float half = entire ? Math::pow(Math::sin(float(Math::PI) * Math::pow(v, 0.9f)), 0.75f) * (1.0f - 0.15f * Math::smoothstep(0.85f, 1.0f, v)) : Math::sin(float(Math::PI) * Math::pow(v, 0.85f)) * (1.0f - 0.25f * Math::smoothstep(0.6f, 1.0f, v));
 			// Teeth on the upper three quarters, about 22 a side, a tenth of the half-width deep.
 			const float s = v * 22.0f - Math::floor(v * 22.0f);
-			const float teeth = Math::smoothstep(0.12f, 0.3f, v) * (1.0f - Math::smoothstep(0.93f, 1.0f, v));
+			const float teeth = entire ? 0.0f : Math::smoothstep(0.12f, 0.3f, v) * (1.0f - Math::smoothstep(0.93f, 1.0f, v));
 			const float edge = half * (1.0f - 0.11f * teeth * (1.0f - Math::pow(s, 0.6f)));
 			// Antialiased over a texel across.
 			const float aa = lat * 2.0f / w;
@@ -8686,8 +9060,8 @@ Ref<Texture2D> TreeGenerator::_leaflet_texture() {
 	}
 	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGBA8, px);
 	img->generate_mipmaps();
-	leaflet_texture = ImageTexture::create_from_image(img);
-	return leaflet_texture;
+	cached = ImageTexture::create_from_image(img);
+	return cached;
 }
 
 Ref<Texture2D> TreeGenerator::_leaf_texture() {
@@ -13137,6 +13511,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	const LeafSeason leaf_season = _leaf_season(preset, season);
 	uint32_t leaf_slot = 0; // Every broad leaf the summer tree has, kept or not: a stable key.
 	const uint32_t season_seed = hash_murmur3_one_32(uint32_t(seed) * 2654435761u + 977u);
+	// Gum rockrose is summer semi-deciduous (trees.md 5v; Correia and Ascensao 2017): from early
+	// July the big spring leaves fold along the midrib, shrink, dull and partly fall, and only the
+	// small summer leaves at the tips stay green; the autumn rains bring new leaves.
+	float summer_fold = 0.0f;
+	if (preset == PRESET_GUM_ROCKROSE && !season.is_empty()) {
+		const float sday = season.get("day_of_year", 182.0f);
+		summer_fold = sday <= 175.0f || sday >= 300.0f ? 0.0f : (sday < 205.0f ? (sday - 175.0f) / 30.0f : (sday <= 260.0f ? 1.0f : (300.0f - sday) / 40.0f));
+	}
 	auto season_leaf = [&](uint32_t p_key, Color &r_color, float &r_size) -> bool {
 		if (season.is_empty()) {
 			return true;
@@ -13147,6 +13529,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const float h = float(hash_murmur3_one_32(p_key, season_seed) & 0xffffff) / float(0x1000000);
 		if (h < leaf_season.fallen) {
 			return false;
+		}
+		if (summer_fold > 0.0f) {
+			if (h > 1.0f - 0.35f * summer_fold) {
+				return false;
+			}
+			r_size *= 1.0f - 0.4f * summer_fold;
+			r_color = r_color.lerp(Color(0.1f, 0.1f, 0.06f), 0.6f * summer_fold);
 		}
 		if (leaf_season.out < 1.0f) {
 			const float young = 1.0f - leaf_season.out;
@@ -14383,12 +14772,18 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	// 2002); vegetation places them (trees.md 5u).
 	{ 6, 15, -3, 9, 600, 2500, 0.5f, 45, 0.1f, 0, 0.3f, 0.80f, 1.6f, 0.5f }, // Gorse
 	{ 5, 15, -6, 9, 500, 2000, 0.5f, 45, 0.1f, 0, 0.3f, 0.45f, 1.6f, 0.4f }, // Broom
+	// Mediterranean scrub (trees.md 5v; Blondel et al. 2010, Flora iberica): mild winters,
+	// summer drought; vegetation places them with PlantGenerator.apply_scrub_rules.
+	{ 12, 19, 3, 13, 300, 1100, 0.2f, 40, 0.1f, 0, 0.2f, 0.55f, 1.4f, 0.5f }, // Gum rockrose
+	{ 12, 20, 3, 14, 250, 1000, 0.2f, 45, 0.05f, 0, 0.3f, 0.85f, 1.8f, 0.6f }, // Kermes oak
+	{ 13, 20, 4, 14, 250, 1100, 0.2f, 45, 0.1f, 0, 0.35f, 0.85f, 2.2f, 0.7f }, // Lentisk
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
 	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER || p_preset == TreeGenerator::PRESET_HOLLY || p_preset == TreeGenerator::PRESET_BOX ||
 			p_preset == TreeGenerator::PRESET_WITCH_HAZEL || p_preset == TreeGenerator::PRESET_MOUNTAIN_LAUREL || p_preset == TreeGenerator::PRESET_GORSE ||
-			p_preset == TreeGenerator::PRESET_BROOM;
+			p_preset == TreeGenerator::PRESET_BROOM || p_preset == TreeGenerator::PRESET_GUM_ROCKROSE || p_preset == TreeGenerator::PRESET_KERMES_OAK ||
+			p_preset == TreeGenerator::PRESET_LENTISK;
 }
 
 void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
@@ -14497,13 +14892,19 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			params[PARAM_SHED_RATIO] = look.params[PARAM_SHED_RATIO] * 0.5f;
 			params[PARAM_TRUNK_GRAVITROPISM] = look.params[PARAM_TRUNK_GRAVITROPISM] * 0.6f;
 			// The wind and grazing take the tallest leaders: a low, broad top.
-			const float top = (p_preset == PRESET_BROOM ? 1.7f : 1.3f) * Math::lerp(0.9f, 1.1f, t);
+			// Thicket tops: gorse 1.3 m, broom 1.7, gum rockrose 1.8, kermes oak 1.4, lentisk 2.
+			const float top = (p_preset == PRESET_BROOM ? 1.7f : (p_preset == PRESET_GUM_ROCKROSE ? 1.8f : (p_preset == PRESET_KERMES_OAK ? 1.4f : (p_preset == PRESET_LENTISK ? 2.0f : 1.3f)))) * Math::lerp(0.9f, 1.1f, t);
 			envelope = AABB(Vector3(-4.0f, -1.0f, -4.0f), Vector3(8.0f, 1.0f + top, 8.0f));
 		} else {
 			// Old (BSBI: gorse lives 15-20 years, grows top-heavy and keels over; broom 10-20,
 			// its branches leaning out and thinning, GOERT): older, the inside shaded out and
 			// dead but standing, the stems splayed.
+			// Gum rockrose lives 15-20 years but stops gaining height early: old plants are leggy
+			// and sparse, not taller (Flora iberica).
 			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(1.5f, 1.7f, t));
+			if (p_preset == PRESET_GUM_ROCKROSE) {
+				params[PARAM_INTERNODE_LENGTH_AGE] = 0.86f;
+			}
 			params[PARAM_BUD_LIGHT_MIN] = MAX(look.params[PARAM_BUD_LIGHT_MIN], 0.2f);
 			params[PARAM_SHED_RATIO] = look.params[PARAM_SHED_RATIO] * 1.5f;
 			params[PARAM_DEAD_BRANCH_KEEP] = 0.9f;
@@ -14607,6 +15008,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	species_leaf_forms = p_from.species_leaf_forms;
 	leaf_texture = p_from.leaf_texture;
 	leaflet_texture = p_from.leaflet_texture;
+	leaflet_entire_texture = p_from.leaflet_entire_texture;
 	spray_texture = p_from.spray_texture;
 	for (int i = 0; i < BARK_MAX; i++) {
 		bark_sets[i] = p_from.bark_sets[i];
@@ -14695,7 +15097,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
 	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD &&
-			!(p_form == FORM_SAPLING && (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM));
+			!(p_form == FORM_SAPLING && scrub_shrub(p_preset));
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -14749,7 +15151,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const AABB saved_envelope = envelope;
 		if (p_form == FORM_SAPLING) {
 			// A young heath shrub is three or four years old, already flowering (BSBI, GOERT).
-			const bool heath = p_preset == PRESET_GORSE || p_preset == PRESET_BROOM;
+			const bool heath = scrub_shrub(p_preset);
 			params[PARAM_YEARS] = heath ? MAX(3.0f, Math::round(params[PARAM_YEARS] * 0.33f)) : MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
 		// Leaf detail near, on demand: lobed and compound leaves are simple lenses in the far
@@ -14959,6 +15361,12 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			far = Color(stems.r, stems.g, stems.b).lerp(gold, bloom);
 			far.a = p_form == FORM_SAPLING ? 0.6f : 0.85f;
 		}
+		if (p_preset == PRESET_GUM_ROCKROSE) {
+			// A jara in flower is speckled white from afar: a flower 7 cm across on about a third
+			// of the shoot tips at the peak (trees.md 5v).
+			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * 0.3f;
+			far = Color(far.r, far.g, far.b, far.a).lerp(Color(0.92f, 0.91f, 0.88f, far.a), bloom);
+		}
 		if (p_form == FORM_SAPLING) {
 			far.a = 0.5f;
 		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -14979,7 +15387,7 @@ Ref<PlantSpecies> TreeGenerator::make_species(bool p_stand_grown, int p_variants
 // canopy radius and far colour on the season's day; placement and its climate and terrain rules
 // are vegetation's (PlantGenerator.apply_scrub_rules and its own).
 Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season) {
-	ERR_FAIL_COND_V_MSG(p_preset != PRESET_GORSE && p_preset != PRESET_BROOM, Ref<PlantSpecies>(), "Not a heath shrub preset.");
+	ERR_FAIL_COND_V_MSG(!scrub_shrub(p_preset), Ref<PlantSpecies>(), "Not a heath or scrub shrub preset.");
 	ERR_FAIL_INDEX_V(int(p_form), int(SHRUB_MAX), Ref<PlantSpecies>());
 	static const Form forms[SHRUB_MAX] = { FORM_SAPLING, FORM_OPEN, FORM_OLD, FORM_THICKET, FORM_KRUMMHOLZ };
 	static const char *names[SHRUB_MAX] = { " (young)", "", " (old)", " (thicket)", " (cushion)" };
@@ -14987,7 +15395,10 @@ Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p
 	g.instantiate();
 	g->set_preset(p_preset);
 	g->season = p_season.duplicate(true);
-	Ref<PlantSpecies> sp = g->_stand_species(p_preset, false, MAX(p_variants, 1), forms[p_form]);
+	// Gum rockrose is not wind-clipped into cushions (an erect, short-lived seeder): its low form
+	// is the young plant.
+	const Form form = p_preset == PRESET_GUM_ROCKROSE && p_form == SHRUB_CUSHION ? FORM_SAPLING : forms[p_form];
+	Ref<PlantSpecies> sp = g->_stand_species(p_preset, false, MAX(p_variants, 1), form);
 	ERR_FAIL_COND_V(sp.is_null(), sp);
 	// No climate, terrain or shade rules: a fresh species' ranges.
 	Ref<PlantSpecies> plain;
@@ -16156,6 +16567,9 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_MOUNTAIN_LAUREL);
 	BIND_ENUM_CONSTANT(PRESET_GORSE);
 	BIND_ENUM_CONSTANT(PRESET_BROOM);
+	BIND_ENUM_CONSTANT(PRESET_GUM_ROCKROSE);
+	BIND_ENUM_CONSTANT(PRESET_KERMES_OAK);
+	BIND_ENUM_CONSTANT(PRESET_LENTISK);
 	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
 	BIND_ENUM_CONSTANT(SHRUB_MATURE);
 	BIND_ENUM_CONSTANT(SHRUB_OLD);

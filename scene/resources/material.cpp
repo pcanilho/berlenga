@@ -2766,9 +2766,9 @@ void fragment() {)";
 		if (gwd > 0.0) {
 			vec4 gwl = ground_water_look(gwd, ground_wet.x);
 			ALBEDO *= gwl.x;
-			ROUGHNESS = mix(ROUGHNESS, gwl.z, gwl.y);
-			SPECULAR = mix(SPECULAR, 0.25, gwl.y);
-			NORMAL_MAP_DEPTH *= 1.0 - gwl.y;
+			ROUGHNESS = mix(ROUGHNESS, gwl.z, max(gwl.y, 0.85 * gwl.w));
+			SPECULAR = mix(SPECULAR, 0.25, max(gwl.y, gwl.w));
+			NORMAL_MAP_DEPTH *= 1.0 - max(gwl.y, 0.6 * gwl.w);
 			ground_wet.z *= 1.0 - gwl.y;
 		}
 	}
@@ -4466,12 +4466,15 @@ float ground_deform_top(vec2 p_xz) {
 vec4 ground_water_look(float p_depth, float p_wet) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
+	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
+	// the top grains and its surface is smooth (Lagarde 2013's accumulated water), though the grains still show.
+	float gloss = smoothstep(0.00002, 0.0003, p_depth);
 	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
 	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
 	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
-	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, 0.0);
+	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, gloss);
 }
 // Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
 // of 0.25 mm counted per cell of the pixel's footprint, as the snow's sparkle is (Zirr and Kaplanyan 2016;

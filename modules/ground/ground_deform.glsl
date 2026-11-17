@@ -880,14 +880,18 @@ float runoff_hash(ivec2 c) {
 	h ^= h >> 16u;
 	return float(h & 0xffffu) / 65535.0;
 }
-float runoff_rough(vec2 p) {
-	vec2 q = p / 0.03;
-	ivec2 c = ivec2(floor(q));
-	vec2 f = q - vec2(c);
+float runoff_noise(vec2 q, int salt) {
+	ivec2 c = ivec2(floor(q)) + ivec2(salt * 7919, salt * 104729);
+	vec2 f = q - floor(q);
 	f = f * f * (3.0 - 2.0 * f);
 	float a = mix(runoff_hash(c), runoff_hash(c + ivec2(1, 0)), f.x);
 	float b = mix(runoff_hash(c + ivec2(0, 1)), runoff_hash(c + ivec2(1, 1)), f.x);
-	return params.water3.z * (mix(a, b, f.y) - 0.5);
+	return mix(a, b, f.y) - 0.5;
+}
+// The face's own relief, fixed per place: grain-scale roughness (3 cm) on the swash's low ridges and hollows
+// (15 and 50 cm, a few mm), which gather the seepage into fewer, joining rills.
+float runoff_rough(vec2 p) {
+	return params.water3.z * (runoff_noise(p / 0.03, 0) + 1.5 * runoff_noise(p / 0.15, 1) + 2.0 * runoff_noise(p / 0.5, 2));
 }
 
 float water_bed(int x, int z) {
@@ -1085,7 +1089,11 @@ void water_erode(int x, int z) {
 			// turns downhill by 1.5 times the slope, which keeps a cut's floor smooth.
 			float l = texel();
 			vec2 gb = vec2(water_bed(x + 1, z) - water_bed(x - 1, z), water_bed(x, z + 1) - water_bed(x, z - 1)) / (2.0 * l);
-			qs = qv - 1.5 * qb * gb;
+			// A separate, larger weight along the flow (morphodynamic models keep the two apart, as Delft3D's
+			// streamwise and transverse bed-slope factors): a bump on a channel's floor is planed off where it
+			// rises in the flow, so the floor runs smooth instead of breaking into a row of pits.
+			vec2 uh = qv / qb;
+			qs = qv - qb * (1.5 * gb + 3.0 * dot(gb, uh) * uh);
 			// The bed's own wave (celerity 3 q / (0.6 h) for transport going as u^3) kept under half a texel a
 			// substep at the morphological factor: past it the explicit bed update overshoots into a chain of
 			// pits. Held on the transport itself, so the sand is still kept exactly.

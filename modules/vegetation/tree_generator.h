@@ -88,6 +88,9 @@ public:
 		PRESET_MOUNTAIN_LAUREL,
 		PRESET_GORSE,
 		PRESET_BROOM,
+		PRESET_GUM_ROCKROSE, // Cistus ladanifer (Mediterranean scrub, trees.md 5v).
+		PRESET_KERMES_OAK, // Quercus coccifera.
+		PRESET_LENTISK, // Pistacia lentiscus.
 		PRESET_MAX,
 	};
 
@@ -698,6 +701,7 @@ private:
 	Ref<Texture2D> leaf_texture;
 	Ref<Texture2D> _leaf_texture();
 	Ref<Texture2D> leaflet_texture;
+	Ref<Texture2D> leaflet_entire_texture;
 	Ref<Texture2D> _leaflet_texture();
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
 	void _add_spine(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash, bool p_branched);
