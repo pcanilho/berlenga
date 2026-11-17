@@ -44,7 +44,7 @@ layout(set = 0, binding = 2, std140) uniform SceneDataBlock {
 scene_data_block;
 
 layout(set = 0, binding = 14, std430) readonly buffer GlobalShaderUniformData {
-	vec4 data[256];
+	vec4 data[]; // Global uniforms, then the instances' (instance_uniforms_ofs).
 }
 global_shader_uniforms;
 

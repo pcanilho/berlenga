@@ -360,6 +360,9 @@
 		<member name="msdf_pixel_range" type="float" setter="set_msdf_pixel_range" getter="get_msdf_pixel_range" default="4.0">
 			The width of the range around the shape between the minimum and maximum representable signed distance.
 		</member>
+		<member name="mud_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
+			If [code]true[/code], mud cakes the surface where a [code]PhysXVehicle3D[/code] has picked it up: its tyres' packed treads, the spray each wheel has thrown up its arch and along the body, and the belly up to the deepest it sat in mud. The vehicle turns this on in copies of the materials under it (see its [code]body_mud[/code]) and writes the instance uniforms [code]mud_*[/code] each physics tick. The mud lands as splats that grow into a cake as it accumulates, wet and dark when fresh and drying to a pale, matte crust. The path tracer applies the same model.
+		</member>
 		<member name="no_depth_test" type="bool" setter="set_flag" getter="get_flag" default="false">
 			If [code]true[/code], depth testing is disabled and the object will be drawn in render order.
 		</member>
@@ -790,7 +793,10 @@
 		<constant name="FEATURE_GROUND_DEFORM" value="17" enum="Feature">
 			Constant for setting [member ground_deform_enabled].
 		</constant>
-		<constant name="FEATURE_MAX" value="18" enum="Feature">
+		<constant name="FEATURE_MUD" value="18" enum="Feature">
+			Constant for setting [member mud_enabled].
+		</constant>
+		<constant name="FEATURE_MAX" value="19" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">

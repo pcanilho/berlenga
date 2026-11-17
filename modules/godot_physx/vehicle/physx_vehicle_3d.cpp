@@ -40,10 +40,12 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/curve.h"
+#include "scene/resources/material.h"
 
 #include "modules/modules_enabled.gen.h" // For ground.
 
@@ -417,6 +419,16 @@ struct PhysXVehicle3D::Impl {
 	Transform3D chassis_local;
 	float belly_drag = 0.0f;
 	float belly_support = 0.0f;
+	float belly_deepest = 0.0f; // m under the undisturbed surface, the last step
+	// Mud on the body (stage 3b): per wheel the spray level and the shed kg already counted; the belly's mud line,
+	// the mud's wetness; the meshes painted (their materials copied with Mud on).
+	float mud_spray[4] = {};
+	float mud_shed_seen[4] = {};
+	float mud_line = 0.0f;
+	float mud_wet = 0.0f;
+	bool mud_written = false;
+	bool mud_meshes_ready = false;
+	LocalVector<ObjectID> mud_meshes;
 };
 
 PhysXVehicle3D::PhysXVehicle3D() {
@@ -704,6 +716,9 @@ void PhysXVehicle3D::_notification(int p_what) {
 				wheels[impl->wheel_order[i]]->_set_simulated_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
 			}
 			_cache_chassis();
+			if (get_physics_process_delta_time() > 0.0) {
+				_body_mud_step((float)get_physics_process_delta_time());
+			}
 		} break;
 	}
 }
@@ -796,6 +811,7 @@ real_t PhysXVehicle3D::get_belly_support() const {
 void PhysXVehicle3D::_belly_step(float p_delta) {
 	impl->belly_drag = 0.0f;
 	impl->belly_support = 0.0f;
+	impl->belly_deepest = 0.0f;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSurface3D *ground = GroundSurface3D::get_active();
 	PxRigidDynamic *dyn = impl->vehicle.physxActor.rigidBody ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
@@ -873,6 +889,7 @@ void PhysXVehicle3D::_belly_step(float p_delta) {
 		dyn->addForce(pf, PxForceMode::eFORCE);
 		dyn->addTorque(pt, PxForceMode::eFORCE);
 	});
+	impl->belly_deepest = deepest;
 	// The trough: the belly's footprint pressed to its depth under the surface there.
 	const Vector3 c = box.xform(Vector3(0.0f, -h.y, 0.0f));
 	const float sink = deepest;
@@ -881,6 +898,188 @@ void PhysXVehicle3D::_belly_step(float p_delta) {
 	ground->press_wheel(c, Vector2(wx, wz), Math::atan2(-side.z, side.x), sink, Vector2(slide.x, slide.z));
 	(void)p_delta;
 #endif
+}
+
+// Mud on the body (docs/ideas/mud.md, stage 3b). Off-road games keep a mud level per region of the vehicle and let it
+// threshold a splat mask (Saber's per-vertex truck mud, the dirt masks of rally games); BaseMaterial3D's Mud layer
+// does that in the vehicle's own frame, from the instance uniforms written here (BaseMaterial3D::get_mud_functions_code()):
+// each tyre's tread fill (stage 3a), the spray each wheel has thrown up its arch (its shed clay, and the slurry it
+// ploughs), the belly's mud line (the deepest the chassis sat under the surface). Wet when it lands, drying over
+// minutes; standing water washes it.
+static constexpr float MUD_SPRAY_KG = 12.0f; // clay thrown off a wheel to spray its arch fully
+static constexpr float MUD_DRY_TIME = 300.0f; // s from fresh to dry
+
+void PhysXVehicle3D::_body_mud_meshes() {
+	impl->mud_meshes.clear();
+	List<Node *> stack;
+	stack.push_back(this);
+	while (!stack.is_empty()) {
+		Node *n = stack.front()->get();
+		stack.pop_front();
+		for (int i = 0; i < n->get_child_count(); i++) {
+			stack.push_back(n->get_child(i));
+		}
+		MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(n);
+		if (!mi || mi->get_mesh().is_null()) {
+			continue;
+		}
+		bool any = false;
+		Ref<BaseMaterial3D> over = mi->get_material_override();
+		if (over.is_valid()) {
+			if (!over->get_feature(BaseMaterial3D::FEATURE_MUD)) {
+				over = over->duplicate();
+				over->set_feature(BaseMaterial3D::FEATURE_MUD, true);
+				mi->set_material_override(over);
+			}
+			any = true;
+		} else if (mi->get_material_override().is_null()) {
+			for (int s = 0; s < mi->get_surface_override_material_count(); s++) {
+				Ref<BaseMaterial3D> m = mi->get_active_material(s);
+				if (m.is_null()) {
+					continue;
+				}
+				if (!m->get_feature(BaseMaterial3D::FEATURE_MUD)) {
+					m = m->duplicate();
+					m->set_feature(BaseMaterial3D::FEATURE_MUD, true);
+					mi->set_surface_override_material(s, m);
+				}
+				any = true;
+			}
+		}
+		if (any) {
+			impl->mud_meshes.push_back(mi->get_instance_id());
+		}
+	}
+	impl->mud_meshes_ready = true;
+}
+
+void PhysXVehicle3D::_body_mud_step(float p_delta) {
+	if (!body_mud) {
+		return;
+	}
+	if (!impl->mud_meshes_ready) {
+		_body_mud_meshes();
+	}
+	bool fresh = false;
+	float water_body = 0.0f;
+#ifdef MODULE_GROUND_ENABLED
+	GroundSurface3D *ground = GroundSurface3D::get_active();
+#endif
+	const Vehicle4W &v = impl->vehicle;
+	for (uint32_t i = 0; i < 4; i++) {
+		const PhysXVehicleSoilWheel &sw = impl->soil_wheels[i];
+		float &spray = impl->mud_spray[i];
+		const float before = spray;
+		const float thrown = MAX(sw.shed - impl->mud_shed_seen[i], 0.0f);
+		impl->mud_shed_seen[i] = sw.shed;
+		spray += thrown / MUD_SPRAY_KG;
+#ifdef MODULE_GROUND_ENABLED
+		if (sw.soft && sw.soil.stickiness > 0.0f) {
+			// Ploughing through sticky slurry splashes the arch too, more as the tread turns faster.
+			const float tread = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * v.wheelParams[i].radius;
+			spray += 0.05f * sw.soil.stickiness * MIN(tread / 5.0f, 1.0f) * MIN(sw.sinkage / (0.3f * v.wheelParams[i].radius), 1.0f) * p_delta;
+		}
+		if (ground) {
+			const Vector3 c = wheels[impl->wheel_order[i]]->get_global_position();
+			const float water = ground->get_standing_water_at(c);
+			if (water > 0.02f) {
+				spray -= spray * MIN(MIN(water / 0.1f, 1.0f) * 0.3f * p_delta, 1.0f);
+				water_body = MAX(water_body, water);
+			}
+		}
+#endif
+		spray = CLAMP(spray, 0.0f, 1.0f);
+		fresh = fresh || spray > before + 1e-5f || sw.mud > 0.05f;
+	}
+	Transform3D frame = get_global_transform();
+	frame.basis.orthonormalize();
+	const Transform3D inv = frame.affine_inverse();
+	const float bottom = (impl->chassis_local.xform(Vector3(0.0f, -impl->chassis_half.y, 0.0f))).y;
+	// The mud line: the deepest the body has sat in mud, from the belly under the surface or the mud's surface at a
+	// wheel sunk past the chassis bottom (a car sunk to its axles in slurry is muddy to the sills or above).
+	float line = impl->belly_deepest > 0.0f ? impl->belly_deepest : 0.0f;
+	for (uint32_t i = 0; i < 4; i++) {
+		const PhysXVehicleSoilWheel &sw = impl->soil_wheels[i];
+		if (sw.soft && sw.sinkage > 0.0f) {
+			const Vector3 c = inv.xform(wheels[impl->wheel_order[i]]->get_global_position());
+			line = MAX(line, c.y - v.wheelParams[i].radius + sw.sinkage - bottom);
+		}
+	}
+	if (line > 0.0f && line + 0.05f > impl->mud_line) {
+		impl->mud_line = line + 0.05f;
+		fresh = true;
+	}
+	impl->mud_wet = fresh || water_body > 0.02f ? 1.0f : MAX(impl->mud_wet - p_delta / MUD_DRY_TIME, 0.0f);
+
+	float total = impl->mud_line;
+	for (uint32_t i = 0; i < 4; i++) {
+		total += impl->mud_spray[i] + impl->soil_wheels[i].mud;
+	}
+	if (total <= 0.0f && !impl->mud_written) {
+		return;
+	}
+	impl->mud_written = total > 0.0f;
+
+	Vector4 rows[3];
+	for (int k = 0; k < 3; k++) {
+		rows[k] = Vector4(inv.basis.rows[k].x, inv.basis.rows[k].y, inv.basis.rows[k].z, inv.origin[k]);
+	}
+	Vector4 wheel[4];
+	Vector4 fill;
+	Vector4 spray;
+	for (uint32_t i = 0; i < 4; i++) {
+		const Vector3 c = inv.xform(wheels[impl->wheel_order[i]]->get_global_position());
+		wheel[i] = Vector4(c.x, c.y, c.z, v.wheelParams[i].radius);
+		fill[i] = impl->soil_wheels[i].mud;
+		spray[i] = impl->mud_spray[i];
+	}
+	const Vector4 body(bottom, impl->mud_line, impl->mud_wet, 0.0f);
+	// Clay, linear: a mid brown (sRGB about 0.45, 0.36, 0.27).
+	const Vector4 color(0.17f, 0.11f, 0.065f, 1.0f);
+	static const StringName names[11] = { "mud_frame0", "mud_frame1", "mud_frame2", "mud_wheel0", "mud_wheel1", "mud_wheel2",
+		"mud_wheel3", "mud_fill", "mud_spray", "mud_body", "mud_color" };
+	const Vector4 values[11] = { rows[0], rows[1], rows[2], wheel[0], wheel[1], wheel[2], wheel[3], fill, spray, body, color };
+	for (const ObjectID &id : impl->mud_meshes) {
+		GeometryInstance3D *gi = ObjectDB::get_instance<GeometryInstance3D>(id);
+		if (!gi) {
+			continue;
+		}
+		for (int k = 0; k < 11; k++) {
+			gi->set_instance_shader_parameter(names[k], values[k]);
+		}
+	}
+}
+
+void PhysXVehicle3D::set_body_mud(bool p_enabled) {
+	body_mud = p_enabled;
+	if (!body_mud) {
+		for (const ObjectID &id : impl->mud_meshes) {
+			if (GeometryInstance3D *gi = ObjectDB::get_instance<GeometryInstance3D>(id)) {
+				gi->set_instance_shader_parameter("mud_fill", Vector4());
+				gi->set_instance_shader_parameter("mud_spray", Vector4());
+				gi->set_instance_shader_parameter("mud_body", Vector4());
+			}
+		}
+		for (uint32_t i = 0; i < 4; i++) {
+			impl->mud_spray[i] = 0.0f;
+		}
+		impl->mud_line = 0.0f;
+		impl->mud_wet = 0.0f;
+		impl->mud_written = false;
+	}
+}
+
+real_t PhysXVehicle3D::get_wheel_mud_spray(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->mud_spray[i];
+}
+
+real_t PhysXVehicle3D::get_body_mud_line() const {
+	return impl->mud_line;
+}
+
+real_t PhysXVehicle3D::get_body_mud_wetness() const {
+	return impl->mud_wet;
 }
 
 int PhysXVehicle3D::_soil_slot(int p_wheel) const {
@@ -1241,6 +1440,12 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);
 	ClassDB::bind_method(D_METHOD("get_belly_drag"), &PhysXVehicle3D::get_belly_drag);
 	ClassDB::bind_method(D_METHOD("get_belly_support"), &PhysXVehicle3D::get_belly_support);
+	ClassDB::bind_method(D_METHOD("set_body_mud", "enabled"), &PhysXVehicle3D::set_body_mud);
+	ClassDB::bind_method(D_METHOD("is_body_mud"), &PhysXVehicle3D::is_body_mud);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "body_mud"), "set_body_mud", "is_body_mud");
+	ClassDB::bind_method(D_METHOD("get_wheel_mud_spray", "wheel"), &PhysXVehicle3D::get_wheel_mud_spray);
+	ClassDB::bind_method(D_METHOD("get_body_mud_line"), &PhysXVehicle3D::get_body_mud_line);
+	ClassDB::bind_method(D_METHOD("get_body_mud_wetness"), &PhysXVehicle3D::get_body_mud_wetness);
 	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);
 	ClassDB::bind_method(D_METHOD("is_wheel_on_soft_soil", "wheel"), &PhysXVehicle3D::is_wheel_on_soft_soil);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);
