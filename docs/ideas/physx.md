@@ -626,10 +626,12 @@ streamed out; neither moved with coupling off.
    removal by distance, relative origin; a bench with thousands of static
    bodies per region, as Mortal Plane needs.
 
-Sources: https://www.gdcvault.com/play/1022394/ (Breath of the Wild);
-https://www.fs.usda.gov/rm/pubs_journals/2000/rmrs_2000_nelson_r001.pdf ;
-https://www.fs.usda.gov/research/treesearch/24216 (Van Wagner 1973);
-https://www.fs.usda.gov/research/treesearch/32533 (Albini spotting).
+Sources: Nelson 2000, "Prediction of diurnal change in 10-h fuel stick
+moisture content", Can. J. For. Res. 30; Van Wagner 1973, "Height of crown
+scorch in forest fires", Can. J. For. Res. 3; Albini 1979, "Spot fire
+distance from burning trees", USDA INT-56; Melek and Keyser 2002,
+"Interactive simulation of fire"; GDC 2017 "Breaking Conventions with The
+Legend of Zelda: Breath of the Wild".
 
 ### Ray tracing cost
 
