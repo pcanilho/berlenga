@@ -2236,6 +2236,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Salt marsh and shingle plants",
+   "settings": [
+    "PlantGenerator.make_saltmarsh()"
+   ],
+   "note": "",
+   "what": "glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Alpine and scree plants",
    "settings": [
     "PlantGenerator.make_alpine()"
