@@ -1320,6 +1320,7 @@ void SceneShaderRaytracing::_poll_variant_tasks(bool p_wait) {
 						bundle.dirty = true;
 					}
 					bundle.initial_pipeline_built = true;
+					_mark_bundle_used(bundle);
 					print_verbose(vformat("Path tracing: built pipeline variant 0x%x on a worker thread in %.1f ms (shaders %.1f ms, pipeline %.1f ms).",
 							task->rt_flags, (task->end_usec - task->start_usec) / 1000.0, (task->shaders_usec - task->start_usec) / 1000.0, (task->end_usec - task->shaders_usec) / 1000.0));
 				} else {
@@ -1351,6 +1352,7 @@ bool SceneShaderRaytracing::is_pipeline_bundle_ready(uint32_t p_rt_flags) const 
 bool SceneShaderRaytracing::request_pipeline_bundle(uint32_t p_rt_flags) {
 	_poll_variant_tasks(false);
 	if (is_pipeline_bundle_ready(p_rt_flags)) {
+		_mark_bundle_used(pipeline_bundles[p_rt_flags]);
 		return true;
 	}
 	if (!async_compilation_enabled || failed_async_variants.has(p_rt_flags)) {
@@ -1388,6 +1390,7 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 
 	HashMap<uint32_t, PipelineBundle>::Iterator it = pipeline_bundles.find(p_rt_flags);
 	if (it != pipeline_bundles.end() && it->value.initial_pipeline_built) {
+		_mark_bundle_used(it->value);
 		return it->value;
 	}
 
@@ -1407,7 +1410,55 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 		bundle.dirty = true;
 	}
 	bundle.initial_pipeline_built = true;
+	_mark_bundle_used(bundle);
 	return bundle;
+}
+
+void SceneShaderRaytracing::_mark_bundle_used(PipelineBundle &r_bundle) {
+	r_bundle.last_used_tick = bundle_tick;
+	r_bundle.last_used_usec = OS::get_singleton()->get_ticks_usec();
+}
+
+void SceneShaderRaytracing::_evict_unused_bundles() {
+	// Unused for a few traced frames and some seconds, so toggling between two variants in the
+	// editor does not recompile, while a variant left behind stops holding memory.
+	static constexpr uint64_t EVICT_AFTER_TICKS = 8;
+	static constexpr uint64_t EVICT_AFTER_USEC = 20000000;
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	uint32_t building = UINT32_MAX;
+	{
+		MutexLock lock(compile_lane.mutex);
+		if (compile_lane.to_be_built) {
+			building = compile_lane.to_be_built->rt_flags;
+		}
+	}
+	LocalVector<uint32_t> evict;
+	for (const KeyValue<uint32_t, PipelineBundle> &kv : pipeline_bundles) {
+		const PipelineBundle &b = kv.value;
+		if (kv.key != building && b.last_used_tick + EVICT_AFTER_TICKS < bundle_tick && now - b.last_used_usec > EVICT_AFTER_USEC) {
+			evict.push_back(kv.key);
+		}
+	}
+	for (uint32_t flags : evict) {
+		PipelineBundle &b = pipeline_bundles[flags];
+		if (b.hit_sbt.is_valid()) {
+			RD::get_singleton()->free_rid(b.hit_sbt);
+		}
+		if (b.pipeline.is_valid()) {
+			RD::get_singleton()->free_rid(b.pipeline);
+		}
+		for (const RID &rid : b.per_hg_shaders) {
+			if (rid.is_valid()) {
+				RD::get_singleton()->free_rid(rid);
+			}
+		}
+		if (b.base_shader.is_valid()) {
+			RD::get_singleton()->free_rid(b.base_shader);
+		}
+		print_verbose(vformat("Path tracing: freed pipeline variant 0x%x, unused for %d traced frames.", flags, int(bundle_tick - b.last_used_tick)));
+		pipeline_bundles.erase(flags);
+		ready_version++;
+	}
 }
 
 // Minimal HG0 + empty sentinel pipeline/SBT for first use of a variant.
@@ -1931,6 +1982,9 @@ void SceneShaderRaytracing::_start_next_build_if_idle() {
 		if (!kv.value.dirty || !kv.value.initial_pipeline_built) {
 			continue;
 		}
+		if (kv.value.last_used_tick + 1 < bundle_tick) {
+			continue; // Not traced lately: stays dirty, rebuilt if it is asked for again.
+		}
 		PipelineBuildTask *task = _make_pipeline_build_task(kv.key, kv.value);
 		if (task) {
 			kv.value.dirty = false;
@@ -1947,6 +2001,8 @@ void SceneShaderRaytracing::_start_next_build_if_idle() {
 }
 
 void SceneShaderRaytracing::drain_completed_compiles() {
+	bundle_tick++;
+	_evict_unused_bundles();
 	while (true) {
 		PipelineBuildTask *finished = nullptr;
 		{
@@ -2056,6 +2112,13 @@ void SceneShaderRaytracing::init(const String p_defines) {
 			const PipelineBundle &b = ensure_pipeline_bundle(RT_FLAG_NONE);
 			if (!b.pipeline.is_valid()) {
 				WARN_PRINT("Failed to create default raytracing pipeline bundle");
+			}
+			// A start-up guess, not a use: frames usually trace another variant (their sample
+			// count and bounces are part of the flags), so this one must not be kept rebuilding.
+			HashMap<uint32_t, PipelineBundle>::Iterator guess = pipeline_bundles.find(RT_FLAG_NONE);
+			if (guess != pipeline_bundles.end()) {
+				guess->value.last_used_tick = 0;
+				guess->value.last_used_usec = 0;
 			}
 		}
 	} else {
