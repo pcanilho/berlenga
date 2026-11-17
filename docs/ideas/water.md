@@ -3312,3 +3312,20 @@ roughness (the hidden variance included), each weighted by the area it turns tow
 n_k.n). Facets facing the eye mirror less and a higher sky, so the band under the horizon drops to about 118,
 nearer the path-traced frame, and keeps the swell's dark troughs. Near water is unchanged (its roughness is
 small). Cost: two more panorama reads per raster water pixel.
+
+## Waterfall stage 3a: mist wets the rock (17 Nov)
+
+A surface in waterfall mist takes drops at the flux LWC v_d, where v_d is the deposition velocity of cloud
+drops on rough surfaces: Stokes settling (1.2 cm/s at 20 um) plus impaction, about 2% of the wind speed
+(fog interception on forests and rough ground, Lovett 1984; Katata et al. 2008 measured 2 to 8 cm/s). It looks
+wet once a film of about 50 g/m^2 fills the pores near the surface (Lagarde 2013's wet porous surfaces), and
+dries over the weather's contact drying time T (Magnus vapour deficit and Penman wind function, already in
+WeatherMap3D). Where the two balance the wetness is F / (F + C / T): 1 g/m^3 of mist in a 3 m/s spray wind
+gives 0.07 g/m^2/s against 0.08 drying, so about half wet; the foot of a fall, at 2 to 3 g/m^3, is soaked.
+`PhysXWaterMist3D.wet_surfaces` (on) writes that per column of its box (the densest cell, where a face in the
+column meets it; the air's speed there is the source's jet plus the wind) into the weather's contact wetness
+every half second; the contact map's own drying takes it back off once the mist goes. Every material that
+reads the weather's wetness (terrain, rocks, BaseMaterial3D with wetness on, and the path tracer's copy of
+those lines) darkens and smooths there. River bench: `--falls --contact` (`--mist-dry` for the rock without it).
+Limit: the contact map is a square round the camera (64 m by default), so a fall farther off stays dry.
+
