@@ -10937,6 +10937,9 @@ static const struct {
 	{ 0.2f, 0.15f, 0.03f },
 	{ 0.8f, 0.04f, 0.08f },
 };
+// The thinnest bark tube a far mesh keeps when its near mesh is split off (trees.md 5x.2): leaf
+// twigs under this radius are near only.
+static constexpr float FAR_TWIG_RADIUS = 0.001f;
 
 // The stone (trees.md 5q): a RockGenerator boulder when the rocks module is built in (looked up
 // by name, so vegetation does not depend on it), glacial family: subrounded, its faces and
@@ -14606,9 +14609,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		if (s == 0) {
 			// LOD 0 draws the relief tubes in place of the plain ones they cover.
+			// A far mesh with its near mesh split off (trees.md 8d) leaves out the leaf twigs under
+			// a millimetre (FAR_TWIG_RADIUS): a fraction of a pixel past the near range, and a
+			// shrub's bulk (lentisk 700k of its 930k bark triangles). The near mesh keeps them.
+			const bool far_twigs = far_leaves && far_lod1 && !skip_lods;
+			auto skip_part = [&](uint32_t i) {
+				return b.part_role[i] == Builder::ROLE_PLAIN || (far_twigs && b.part_role[i] == Builder::ROLE_ALL && b.part_size[i] < FAR_TWIG_RADIUS);
+			};
 			bool any_plain = false;
 			for (uint32_t i = 0; i < b.parts.size(); i++) {
-				any_plain = any_plain || b.part_role[i] == Builder::ROLE_PLAIN;
+				any_plain = any_plain || skip_part(i);
 			}
 			if (any_plain) {
 				PackedInt32Array full;
@@ -14617,7 +14627,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				int32_t *fw = full.ptrw();
 				for (uint32_t i = 0; i < b.parts.size(); i++) {
 					const Vector4i &pt = b.parts[i];
-					if (b.part_role[i] != Builder::ROLE_PLAIN) {
+					if (!skip_part(i)) {
 						continue;
 					}
 					// Keep everything up to this part, then skip it.
@@ -14661,6 +14671,26 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				}
 			}
 			arrays[Mesh::ARRAY_TEX_UV2] = uv2;
+		}
+		if (s == 0 && far_leaves && far_lod1 && !skip_lods) {
+			// The far mesh's left-out twigs: drop their vertices too.
+			PackedVector2Array uv2 = arrays[Mesh::ARRAY_TEX_UV2];
+			_compact_vertices(b, lods, uv2.size() == b.verts.size() ? &uv2 : nullptr);
+			if (!uv2.is_empty()) {
+				arrays[Mesh::ARRAY_TEX_UV2] = uv2;
+			}
+		}
+		{
+			// A level no smaller than the base it simplifies (the base lost its plain tubes, far
+			// twigs or LOD 0 leaves after the levels were cut) is rejected by the renderer with an
+			// error; it would draw the same anyway.
+			Dictionary kept;
+			for (const KeyValue<Variant, Variant> &kv : lods) {
+				if (PackedInt32Array(kv.value).size() < b.indices.size()) {
+					kept[kv.key] = kv.value;
+				}
+			}
+			lods = kept;
 		}
 		arrays[Mesh::ARRAY_VERTEX] = b.verts;
 		arrays[Mesh::ARRAY_NORMAL] = b.normals;
@@ -15268,6 +15298,13 @@ void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
 	}
 	r_b.indices = r_lods[first];
 	r_lods.erase(first);
+	_compact_vertices(r_b, r_lods, nullptr);
+}
+
+// Drops the vertices no index (base or LOD) uses, remapping them all; and the LODs no coarser than
+// the base (a palm keeps its fans whole), which the renderer rejects. The parts index the old
+// vertices, so they are cleared: nothing reads them past this point.
+void TreeGenerator::_compact_vertices(Builder &r_b, Dictionary &r_lods, PackedVector2Array *r_uv2) const {
 	const int nv = r_b.verts.size();
 	LocalVector<int> remap;
 	remap.resize(nv);
@@ -15300,6 +15337,9 @@ void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
 		r_b.normals.write[to] = r_b.normals[v];
 		r_b.uvs.write[to] = r_b.uvs[v];
 		r_b.colors.write[to] = r_b.colors[v];
+		if (r_uv2) {
+			r_uv2->write[to] = (*r_uv2)[v];
+		}
 		for (int k = 0; k < 4; k++) {
 			if (tang) {
 				r_b.tangents.write[to * 4 + k] = r_b.tangents[v * 4 + k];
@@ -15314,6 +15354,9 @@ void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
 	r_b.normals.resize(n);
 	r_b.uvs.resize(n);
 	r_b.colors.resize(n);
+	if (r_uv2) {
+		r_uv2->resize(n);
+	}
 	if (tang) {
 		r_b.tangents.resize(n * 4);
 	}
@@ -15332,14 +15375,12 @@ void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
 	for (const KeyValue<Variant, Variant> &kv : r_lods) {
 		PackedInt32Array idx = kv.value;
 		if (idx.size() >= r_b.indices.size()) {
-			// No coarser than the new base (a palm keeps its fans whole): the renderer rejects it.
 			continue;
 		}
 		apply(idx);
 		out[kv.key] = idx;
 	}
 	r_lods = out;
-	// The parts index the old vertices; nothing reads them past this point but keep them sane.
 	r_b.parts.clear();
 	r_b.part_size.clear();
 }

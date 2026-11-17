@@ -342,6 +342,7 @@ private:
 	Dictionary _bark_lods(const Builder &p_bark) const;
 	Dictionary _leaf_lods(Builder &r_leaves, bool p_twins = true) const;
 	void _promote_lod1(Builder &r_b, Dictionary &r_lods) const;
+	void _compact_vertices(Builder &r_b, Dictionary &r_lods, PackedVector2Array *r_uv2) const;
 	// Climber leaves from PlantGenerator.make_climber_leaves (one baked set per climber, shared),
 	// instanced into their own surface; empty when climber_plant_leaves is off.
 	Builder climber_leaf_b;
