@@ -17,6 +17,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 
   *Smoke shadows: the plume throws a soft dark shadow across the floor toward the camera.*
 
+- **Smoke on the ground** (PhysXFlow3D `terrain_floor`, `smoke_buoyancy`): Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.
 - **Particle fluid surface** (`PhysXParticleFluid3D.render_mode`, `foam_enabled`): particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray, foam and air bubbles rise where the water is agitated.
 
   ![Water pouring from a wall pipe into a wooden bucket, raster](media/physx-fluid-pour.jpg)

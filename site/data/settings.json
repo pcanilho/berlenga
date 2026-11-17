@@ -840,7 +840,7 @@
     "scree_age"
    ],
    "note": "",
-   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks, with gravel and fines between them up close.",
+   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks; up close, each is an angular stone standing in a bed of gravel and fines.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -3081,6 +3081,18 @@
    ],
    "note": "",
    "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Smoke on the ground",
+   "settings": [
+    "terrain_floor",
+    "smoke_buoyancy"
+   ],
+   "note": "",
+   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
