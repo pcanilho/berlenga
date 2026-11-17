@@ -19,6 +19,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 - **Pollards and coppice** (`cut_height`, `cut_cycle`, `cut_since`): trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.
 - **Shrubs and hedges** (`stems`, `envelope`): many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.
 - **Gorse and broom** (`TreeGenerator.make_shrub_species()`): real spines, flowers and pods, flowering by season, in young, mature, old, thicket and cushion forms.
+- **Mediterranean shrubs** (`TreeGenerator.make_shrub_species()`): gum rockrose, kermes oak and lentisk, with flowers, acorns and drupes as geometry.
 - **Wind, bank and rock trees** (`wind_exposure`, `krummholz`, `ground_slope`, `bank_erosion`, `root_stone`): at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.
 - **Clearings** (`mask_channel`): painted clearings and paths keep trees and shrubs out.
 
