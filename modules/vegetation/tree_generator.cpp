@@ -2856,11 +2856,44 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// Darker damp patches where water stands longer.
 					a = a * Math::lerp(1.0f, 0.78f, Math::smoothstep(0.04f, 0.16f, bark_fbm(u, v, 3, 2, 4, salt + 145u)));
 					// Mottling a few centimetres across, grey on grey: without it a hand's width of
-					// bark between colonies read as one flat wall at 40 cm (docs, 16 Nov).
-					a = a * Math::lerp(0.66f, 1.12f, Math::smoothstep(-0.1f, 0.1f, bark_fbm(u, v, 10, 7, 3, salt + 147u)));
-					a = a * Math::lerp(0.8f, 1.08f, Math::smoothstep(-0.08f, 0.08f, bark_fbm(u, v, 24, 16, 2, salt + 149u)));
-					// Elephant-skin wrinkling: soft relief a few centimetres across.
-					height += 0.0003f * bark_fbm(u, v, 12, 8, 3, salt + 143u);
+					// bark between colonies read as one flat wall at 40 cm (docs, 16 Nov). Softer
+					// than before: big smooth blotches were what read as cloud noise (docs, 16 Nov).
+					a = a * Math::lerp(0.76f, 1.1f, Math::smoothstep(-0.1f, 0.1f, bark_fbm(u, v, 10, 7, 3, salt + 147u)));
+					a = a * Math::lerp(0.86f, 1.06f, Math::smoothstep(-0.08f, 0.08f, bark_fbm(u, v, 24, 16, 2, salt + 149u)));
+					// Elephant-skin wrinkling (beech's own; Vaucher 2003): a net of fine creases a few
+					// centimetres across, sharp in the fold and rounded between, as ridged noise
+					// (1 - |n|) rather than soft value noise, so the relief has edges a low sun catches.
+					{
+						// Stretched round the stem, so the folds run mostly across it as on a beech
+						// (isotropic noise drew wandering contour loops), and only in patches.
+						const float n1 = bark_fbm(u, v, 5, 36, 3, salt + 143u);
+						const float patch = Math::smoothstep(-0.02f, 0.1f, bark_fbm(u, v, 4, 6, 2, salt + 151u));
+						const float fold = (1.0f - Math::smoothstep(0.0f, 0.03f, Math::abs(n1))) * patch;
+						height += 0.0003f * bark_fbm(u, v, 12, 8, 3, salt + 165u) - 0.00025f * fold;
+						a = a * Math::lerp(1.0f, 0.9f, fold);
+					}
+					// Horizontal striations: the lenticels' bands, faint lines across the stem a few
+					// millimetres to a centimetre apart, broken into dashes (what makes beech read as
+					// beech up close, with the creases).
+					{
+						const float band_v = v * 52.0f + 0.6f * bark_fbm(u, v, 3, 2, 2, salt + 153u) * 8.0f;
+						const float row = Math::floor(band_v);
+						const float in_row = band_v - row;
+						const float lw = 0.06f + 0.05f * bark_hash(int(row), 3, salt + 155u);
+						const float line = 1.0f - Math::smoothstep(lw * 0.5f, lw, Math::abs(in_row - 0.5f));
+						const float dash = Math::smoothstep(0.0f, 0.08f, bark_fbm(u * 1.0f + row * 0.37f, v, 40, 1, 2, salt + 157u));
+						const float sl = line * dash * (0.5f + 0.5f * bark_hash(int(row), 7, salt + 159u));
+						a = a * Math::lerp(1.0f, 0.88f, sl);
+						height -= 0.00012f * sl;
+					}
+					// Granular surface: the bark's millimetre grain, so a hand's distance shows a
+					// crisp matt skin rather than smooth gradients.
+					{
+						const float gr = bark_hash(x, y, salt + 161u) - 0.5f;
+						const float gr2 = bark_fbm(u, v, 160, 160, 1, salt + 163u);
+						a = a * (1.0f + 0.07f * gr + 0.12f * gr2);
+						height += 0.00004f * gr + 0.00008f * gr2;
+					}
 				}
 				// Patches over a tile and finer blotches: the bark's own tone and the thin films of
 				// green algae and crust lichens on it.
