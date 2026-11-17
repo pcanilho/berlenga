@@ -135,6 +135,7 @@ func _test() -> void:
 	_check(heights[[34, 1]] > 0.5 and heights[[34, 1]] < 2.3, "mature kermes oak %.2f m in 0.5-2.2 m" % heights[[34, 1]])
 	_check(heights[[35, 1]] > 0.9 and heights[[35, 1]] < 3.1, "mature lentisk %.2f m in 1-3 m" % heights[[35, 1]])
 	_check(heights[[36, 4]] < 0.6 and heights[[36, 0]] < heights[[36, 1]] and heights[[36, 1]] < heights[[36, 2]], "dwarf fan palm: cushion %.2f m under 60 cm, young %.2f < mature %.2f < old %.2f m" % [heights[[36, 4]], heights[[36, 0]], heights[[36, 1]], heights[[36, 2]]])
+	_check(TreeGenerator.get_bloom(36, 100) > 0.9 and TreeGenerator.get_bloom(36, 225) == 0.0, "dwarf fan palm in flower in April, not in August")
 	_check(heights[[36, 1]] > 0.8 and heights[[36, 1]] < 2.6, "mature dwarf fan palm %.2f m in 0.8-2.5 m" % heights[[36, 1]])
 	_check(TreeGenerator.get_bloom(33, 125) > 0.9 and TreeGenerator.get_bloom(33, 225) == 0.0 and TreeGenerator.get_bloom(33, 40) == 0.0, "gum rockrose in flower in May only")
 	var jara_may: PlantSpecies = TreeGenerator.make_shrub_species(33, 1, 1, main.weather_season(125))

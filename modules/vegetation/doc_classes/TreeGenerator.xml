@@ -41,14 +41,7 @@
 			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
 			<param index="1" name="day_of_year" type="float" />
 			<description>
-			</description>
-		</method>
-		<method name="get_bloom" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
-			<param index="1" name="day_of_year" type="float" />
-			<description>
-				Share of the shrub's flowers open on [param day_of_year], 0 to 1: gorse flushes February to May and keeps a few flowers all year, broom flowers in late May and June, gum rockrose from April to June. 0 for presets without a flowering season.
+				Share of the shrub's flowers open on [param day_of_year], 0 to 1: gorse flushes February to May and keeps a few flowers all year, broom flowers in late May and June, gum rockrose from April to June, the dwarf fan palm March to June. 0 for presets without a flowering season.
 			</description>
 		</method>
 		<method name="get_bole_height" qualifiers="const">
@@ -202,7 +195,7 @@
 			<param index="2" name="variants" type="int" default="3" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
-				Grows [param variants] heath or scrub shrubs ([constant PRESET_GORSE], [constant PRESET_BROOM], [constant PRESET_GUM_ROCKROSE], [constant PRESET_KERMES_OAK], [constant PRESET_LENTISK], [constant PRESET_DWARF_FAN_PALM]) of one [param form] and returns them as a [PlantSpecies] with meshes, footprint, canopy radius and far colour, and no climate or terrain rules: the caller places it. [param season] is a [method WeatherMap3D.get_season] dictionary; its [code]day_of_year[/code] opens the flowers and ripens pods and fruit, and the far colour turns gold (gorse, broom) or speckled white (gum rockrose) in flower. Gum rockrose has no cushion form and gives its young plant for [constant SHRUB_CUSHION].
+				Grows [param variants] heath or scrub shrubs ([constant PRESET_GORSE], [constant PRESET_BROOM], [constant PRESET_GUM_ROCKROSE], [constant PRESET_KERMES_OAK], [constant PRESET_LENTISK], [constant PRESET_DWARF_FAN_PALM]) of one [param form] and returns them as a [PlantSpecies] with meshes, footprint, canopy radius and far colour, and no climate or terrain rules: the caller places it. [param season] is a [method WeatherMap3D.get_season] dictionary; its [code]day_of_year[/code] opens the flowers and ripens pods and fruit, and the far colour turns gold (gorse, broom) or speckled white (gum rockrose) in flower. The dwarf fan palm flowers among its leaf bases in spring (yellow on male plants) and female plants carry dates, green to red-brown, from summer into winter. Gum rockrose has no cushion form and gives its young plant for [constant SHRUB_CUSHION].
 			</description>
 		</method>
 		<method name="make_stand">

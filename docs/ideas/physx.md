@@ -529,6 +529,24 @@ Cost: CPU, narrow band only (a few thousand cells); the map upload is a
 small texture. Wood and Blast pieces catching fire, and moisture from the
 weather map, are later steps.
 
+Status (17 Nov): `PhysXFireSpread3D` (modules/godot_physx/flow). Found while
+building it:
+- Unburnt cells starting at a flat far value do not get crossed by the
+  front, they relax towards it (dphi/dt = -R (phi - phi_n) / h), about nine
+  cells' time per cell. The unburnt side is kept a distance field with
+  fast sweeping (Zhao 2005) after each substep, which only lowers phi.
+- Projecting the wind onto each front normal (WRF-SFIRE's form) leaves the
+  flanks almost still, a needle instead of a grass fire's ellipse. Wind and
+  slope factors are summed as vectors into one effective wind (Rothermel;
+  Finney 1998, FARSITE), Anderson 1983 gives the length-to-width ratio from
+  it, and each normal moves at the ellipse's support function
+  c cos t + sqrt(a^2 cos^2 t + b^2 sin^2 t) (Richards 1990, as CSIRO Spark
+  does); the ellipse's polar radius is wrong for a level set and slowed the
+  head about fourfold.
+- Short grass, 6% moisture, 2 m/s wind: head 0.3 m/s, about 30 m2 after
+  30 s, fireline intensity up to about 440 kW/m, as BehavePlus gives for
+  fuel model 1.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
