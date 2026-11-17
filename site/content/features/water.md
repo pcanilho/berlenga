@@ -85,7 +85,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   *Crest glow: the low sun lights the thin top of the near wave crest in the water's own turquoise.*
 
 - **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
-- **Ocean detail** (`detail_waves`, `far_filter`; `bubble_strength`): short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
+- **Ocean detail** (`detail_waves`, `far_filter`; `bubble_strength`): short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width, and the far sea mirrors the sky through their mean Fresnel instead of turning into a pale sheet; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 
   ![Sun glitter on a moderate sea from 2 m up, without and with detail waves, raster](media/water-ocean-detail.jpg)
 
