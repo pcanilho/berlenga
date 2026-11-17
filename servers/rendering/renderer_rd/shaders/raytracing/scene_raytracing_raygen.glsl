@@ -959,6 +959,9 @@ void main() {
 				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : t_far;
 				vec3 vol_emitted;
 				float t_vol = rt_volume_free_flight(ray_origin, ray_dir, seg_len, ps.rng_state, vol_emitted);
+				if (rt_volume.emission.z > 1.5 && bounce > 0u && (flags_entry & LAST_BOUNCE_DIFFUSE_FLAG) != 0u) {
+					vol_emitted = vec3(0.0); // a proxy light (Flow's fire light) already lit this vertex by next event estimation
+				}
 				if (t_vol > 0.0) {
 					vec3 x = ray_origin + ray_dir * t_vol;
 					vec3 albedo = rt_volume.smoke_color.rgb * rt_volume.medium.y;
