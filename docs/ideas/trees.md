@@ -1685,6 +1685,96 @@ would show first:
    scattered oak standards) cut in coupes of different ages, so a stand shows fresh-cut
    stools, young regrowth and full-grown poles side by side.
 
+#### 5x.1 Mediterranean trees: plan per species
+
+Same route as the scrub: presets through the shoot model, `make_tree_species` forms, habitats
+from the Atlas chapters, crown parts in season. What each needs beyond parameters:
+
+- **Stone pine (Pinus pinea).** Young trees are globular; from 20-30 years the leader loses
+  dominance and the upper limbs grow out and up to an even height, so the crown flattens into an
+  umbrella 10-20 m across on a clear, often leaning bole; lower limbs die and are shed early
+  (Mutke et al. 2005, crown architecture of stone pine; Atlas 2016). Needles 10-20 cm in pairs,
+  tufted at the shoot tips. Cones 8-15 cm, glossy chestnut, ripening over three years (all three
+  ages on a tree). Bark: deep fissures between long flat orange-red plates. New: an
+  apical-control parameter that drops with age (the umbrella), flat-topped light from above.
+- **Maritime pine (P. pinaster).** Tall (to 30 m), open, often crooked and wind-leaning on dunes
+  and cliffs; the thickest, most deeply furrowed bark of the European pines, dark red-brown
+  plates in black fissures; needles 15-25 cm, stiff; cones 10-20 cm in whorls of 2-5, persisting
+  shut (serotinous) for years. Existing pine plumbing plus the coastal flagging (5q).
+- **Cork oak (Quercus suber).** A broad, open, irregular crown on a short stem with heavy
+  sinuous limbs; leaves 3-7 cm, dark above, grey-felted below, lightly toothed. The bark is the
+  story: virgin cork 5-10 cm thick, deeply ridged, pale grey; harvested every 9-12 years from
+  the stem and main limbs to 2-3 m (Portuguese law: 9 years minimum), the stripped surface
+  first rust-red, darkening to brown-black, with the harvest year's last digit painted in white
+  (Pereira 2007, Cork: Biology, Production and Uses). New: a cork bark kind (relief from the
+  bark builder's furrow model, much deeper and rounder) and a `cork_stripped_years` input that
+  sets the strip height, colour and a thin regrown layer.
+- **Holm oak (Q. ilex).** Dense, dark, rounded evergreen crown, often multi-stemmed from
+  coppice; leaves 2-7 cm, very variable: spiny-toothed and holly-like on young and browsed
+  shoots, entire on the upper crown, grey-felted beneath (Atlas 2016). Acorns in scaly cups.
+  Bark: fine square checks, dark grey. New: leaf margin by height and browse (the kermes oak's
+  spiny leaf already exists).
+- **Wild olive (Olea europaea var. sylvestris).** A shrub or small tree, 2-8 m, many-stemmed,
+  the old stems fluted and twisted with hollows; narrow leaves 3-6 cm, dark grey-green above,
+  silver-scaled beneath, so the crown flickers silver in wind; small black drupes in autumn.
+  New: a twisted, fluted old-stem relief (the bark builder's buttress flutes, wound around).
+- **Carob (Ceratonia siliqua).** A broad, dense, dark evergreen dome to 10 m; paripinnate
+  leaves of 2-5 pairs of round, leathery, glossy leaflets (the lentisk's leaf plumbing); pods
+  10-25 cm, flat, dark brown, hanging all year from old wood (cauliflory). Female, male or
+  hermaphrodite trees.
+
+Order: stone pine and cork oak first (they define the Algarve skyline and carry the two new
+stories), then holm oak, wild olive, maritime pine and carob. Each: research note, build, the
+five forms, raster and PT frames, docs.
+
+#### 5x.2 Triangle diet: measured (17 Nov, cloud, LOD 0, day 200)
+
+| Species | Young | Mature | Old | Thicket | Cushion |
+|---|---|---|---|---|---|
+| Gorse | 127k | 2.53M | 4.14M | 3.00M | 2.24M |
+| Broom | 45k | 350k | 823k | 349k | 244k |
+| Gum rockrose | 28k | 286k | 398k | 353k | 28k |
+| Kermes oak | 55k | 930k | 2.05M | 1.11M | 449k |
+| Lentisk | 74k | 1.27M | 2.14M | 1.61M | 489k |
+| Dwarf fan palm | 19k | 44k | 70k | 154k | 21k |
+
+Where it goes (mature, by surface): gorse needles (spines) 602k, bark 206k, crown parts 1.72M
+(the summer pods: the flower and pod budget is 60,000 a bush); kermes oak bark 536k, leaves
+131k, crown parts 261k (acorns); lentisk bark 929k, leaves 159k, crown parts 178k (drupes).
+So the bulk is many small repeated parts and thin twigs, not leaves. Techniques:
+- **Instanced crown parts** (Unreal 5.7 PVE assemblies; SpeedTree's mesh fronds): one pod,
+  flower, acorn or drupe mesh per species and season, placed by transforms, instead of merged
+  copies. In Godot a MultiMesh per part kind, skinned to the wind bones by the instance's bone
+  index (the fork's PT reads MultiMesh BLAS instances; the known limit is per-instance colour
+  past 12 bones). Memory falls by the repeat count (gorse pods: 1.7M to a few thousand plus
+  transforms); triangles drawn stay, so the PC bench decides draw cost.
+- **Thin-twig bark**: 3 sides under 4 mm and collinear rings merged (shrub twigs are straight
+  between nodes); the far LODs already drop them.
+- **Spines in the near range only**: gorse spines and the palm's petiole spines go to the near
+  mesh (`near_leaf_range`), the far mesh keeps a needle tuft per shoot (Cook 2007 pruning with
+  area kept).
+- **Palm fans in far LODs**: segments merged in threes (one blade per three, its width summed).
+- **Per-form budgets**: a ceiling per form (e.g. 400k mature, 150k cushion), the generator
+  thinning crown parts first.
+Measured in the cloud (triangles, memory, generation ms); GPU cost on the PC queue.
+
+#### 5x.3 Coppice cutting in stands
+
+Coppice-with-standards (Rackham 2006, Woodlands; Buckley 1992, Ecology and Management of
+Coppice Woodlands; Harmer and Howe 2003, The Silviculture and Management of Coppice
+Woodlands): hazel (or ash, sweet chestnut, hornbeam) stools cut to the ground every 7-15 years
+(hazel), the wood divided into coupes (compartments, often 0.5-2 ha) cut one a year in turn, so
+neighbouring coupes differ by years; 20-50 oak standards a hectare over the underwood, of
+several ages (a few felled at each cut). In a fresh coupe: stools of cut stubs with sawn faces
+and the brash (cut twigs) in heaps or rows, ground flora flowering in the new light (bluebells,
+wood anemone: vegetation's), standards suddenly in full light. Two to five years: dense
+regrowth of straight rods 1-4 m. Mature coupe: poles 6-10 m, closed canopy, a dark floor.
+Lapsed coppice: overstood stools of thick, leaning poles. Plan: `STAND_COPPICE_STANDARDS` takes
+a coupe map (age by cell from a Voronoi of coupes with a cutting order) and places stools of
+`FORM_COPPICE` at that cell's years since cut (5l's cut model), standards of `FORM_STAND` oak
+at a set density with ages mixed, brash heaps and cut faces in fresh coupes (deadwood plumbing,
+5o), and hands vegetation the coupe light map.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
