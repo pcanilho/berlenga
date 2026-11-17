@@ -35,6 +35,7 @@
 #include "vegetation_field_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/geometry_2d.h"
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -266,6 +267,16 @@ vec3 grass_patch_tint(vec2 xz, float blade, float value, float variation) {
 )";
 
 void GrassField3D::_ensure_resources() {
+	if (blade_mesh.is_null() && crop != CROP_NONE) {
+		blade_mesh = _make_crop_mesh(false);
+		crop_mesh_far = _make_crop_mesh(true);
+		const int tris = blade_mesh->surface_get_array_index_len(0) / 3;
+		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
+		const float tile_tris = density * tile_size * tile_size * tris;
+		if (cap > 0 && tile_tris > cap) {
+			WARN_PRINT(vformat("GrassField3D \"%s\": a full crop tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+		}
+	}
 	if (blade_mesh.is_null()) {
 		// A strip of blade_segments quads and a tip: VERTEX.x is the side (-0.5..0.5), VERTEX.y
 		// the parameter along the blade; the vertex shader builds the real blade from them.
@@ -421,7 +432,324 @@ vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
 	return vec3(fallback_wind.x, 0.0, fallback_wind.y) * g;
 }
 )";
-	code += R"(
+	if (crop != CROP_NONE) {
+		code += R"(
+// Crop tillers (farmland stage 1): _make_crop_mesh() parts built here from the stage uniforms.
+varying float v_t;
+varying float v_part;
+varying float v_ripe;
+varying float v_dead;
+varying float v_wet;
+varying vec3 v_tint;
+varying float v_light;
+varying float v_hf;
+varying float v_rnd;
+
+uniform float color_variation;
+// The growth stage (BBCH) of each plot: 0 the node's crop_stage, 1 on its fields in order.
+uniform float crop_plot_stage[64];
+uniform float crop_nod; // How far the ripe ear bends over (0 upright, 1 hanging).
+uniform vec4 crop_ear; // Ear length, half width, awn length, panicle branches.
+uniform vec4 crop_leaf; // Leaf length, half width, stem radius.
+uniform vec3 crop_green : source_color;
+uniform vec3 crop_ripe : source_color;
+uniform vec3 crop_straw : source_color;
+uniform float crop_lai = 3.0;
+)";
+		code += GRASS_COLOR_CODE;
+		code += VegetationLight::SHADER_CODE;
+		code += R"(
+float crop_ramp(float x, float a, float b) {
+	return clamp((x - a) / (b - a), 0.0, 1.0);
+}
+
+// The look at a growth stage (BBCH decimal code, Zadoks et al. 1974; Lancashire et al. 1991):
+// leaves unfold from 10, the stem elongates from 30, the ear emerges from 49 to 59; from late milk
+// (75) the ear and then the straw turn from green to gold while the leaves die from the bottom up,
+// and the ripe ear nods; at 99 the crop is cut to stubble. growth: stem share of its ripe height,
+// leaf scale, ear emerged (0..1), nod (0..1); age: ear ripeness, straw ripeness, dead leaf share, cut
+// height (m; 0 standing).
+void crop_look(float s, out vec4 growth, out vec4 age) {
+	float stem = s < 30.0 ? 0.0 : (s < 39.0 ? 0.55 * crop_ramp(s, 30.0, 39.0) : (s < 51.0 ? mix(0.55, 0.9, crop_ramp(s, 39.0, 51.0)) : mix(0.9, 1.0, crop_ramp(s, 51.0, 65.0))));
+	float leaf = s < 21.0 ? mix(0.25, 0.6, crop_ramp(s, 10.0, 21.0)) : (s < 30.0 ? mix(0.6, 0.7, crop_ramp(s, 21.0, 30.0)) : mix(0.7, 1.0, crop_ramp(s, 30.0, 39.0)));
+	float ear = crop_ramp(s, 49.0, 59.0);
+	float nod = smoothstep(0.0, 1.0, crop_ramp(s, 73.0, 89.0)) * crop_nod;
+	float dead = s < 55.0 ? 0.0 : (s < 75.0 ? 0.5 * crop_ramp(s, 55.0, 75.0) : mix(0.5, 1.0, crop_ramp(s, 75.0, 85.0)));
+	if (s >= 99.0) {
+		growth = vec4(stem, leaf, 0.0, nod);
+		age = vec4(1.0, 1.0, 1.0, 0.15);
+	} else {
+		growth = vec4(stem, leaf, ear, nod);
+		age = vec4(crop_ramp(s, 75.0, 89.0), crop_ramp(s, 77.0, 91.0), dead, 0.0);
+	}
+}
+
+vec3 crop_bez(vec3 a, vec3 b, vec3 c, float t) {
+	return mix(mix(a, b, t), mix(b, c, t), t);
+}
+vec3 crop_bez_d(vec3 a, vec3 b, vec3 c, float t) {
+	return 2.0 * mix(b - a, c - b, t) + vec3(0.0, 1e-5, 0.0);
+}
+
+void vertex() {
+	float H = INSTANCE_CUSTOM.x;
+	float light_q = floor(INSTANCE_CUSTOM.z / 4.0);
+	float rest_lean = INSTANCE_CUSTOM.z - light_q * 4.0;
+	v_light = light_q / 100.0 * 1.5;
+	float rnd = fract(INSTANCE_CUSTOM.w);
+	v_rnd = rnd;
+	// y: the plot in its integer part over 4, the bulk (thicker where fewer remain) below 4.
+	float plot = floor(INSTANCE_CUSTOM.y / 4.0);
+	float bulk = INSTANCE_CUSTOM.y - plot * 4.0;
+	float stage = crop_plot_stage[clamp(int(plot), 0, 63)];
+	vec4 crop_growth;
+	vec4 crop_age;
+	crop_look(stage, crop_growth, crop_age);
+	int part = int(VERTEX.z + 0.5);
+	float a = VERTEX.x;
+	float t = VERTEX.y;
+	float idx = UV2.x;
+	float cnt = max(UV2.y, 1.0);
+	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	mat3 to_local = inverse(mat3(MODEL_MATRIX));
+	vec3 cam_l = to_local * (MAIN_CAM_INV_VIEW_MATRIX[3].xyz - base_w);
+	float cut = crop_age.w;
+	// Late tillers lag behind: a ripening field keeps some greener ears and stems.
+	float lag = (fract(rnd * 5.17) - 0.5) * 0.3;
+	float h = cut > 0.0 ? min(H, cut * (0.8 + 0.4 * fract(rnd * 3.7))) : H * crop_growth.x;
+
+	// Wind: the tiller sways as a cantilever with the ear's mass on top, 1 to 2 Hz (Berry et al.
+	// 2003, wheat stems); the same oscillator and honami as the grass. Stubble barely moves.
+	float omega0 = 6.2832 * (1.1 + 0.4 * rnd) * (cut > 0.0 ? 3.0 : 1.0);
+	vec3 wind_l = to_local * grass_wind(base_w, max(h * 0.8, 0.08), TIME, omega0, rnd);
+	vec2 wl = wind_l.xz;
+	float ws = length(wl);
+	vec2 off = vec2(0.0, rest_lean) + (ws > 1e-4 ? wl / ws : vec2(0.0)) * clamp(ws * wind_response * (cut > 0.0 ? 0.1 : 0.45), 0.0, 0.8);
+	if (trample_rect.z > 0.0) {
+		vec2 tuv = (base_w.xz - trample_rect.xy) / trample_rect.zw;
+		if (all(greaterThan(tuv, vec2(0.0))) && all(lessThan(tuv, vec2(1.0)))) {
+			vec2 b = textureLod(trample_map, tuv, 0.0).rg;
+			float bl = length(b);
+			if (bl > 1e-3) {
+				vec2 bd = (to_local * vec3(b.x, 0.0, b.y)).xz;
+				off = mix(off, normalize(bd) * 1.3, smoothstep(0.0, 1.0, min(bl, 1.0)));
+			}
+		}
+	}
+	float ang = min(length(off), 1.4);
+	vec2 dir = length(off) > 1e-4 ? normalize(off) : vec2(0.0, 1.0);
+	vec3 dir3 = vec3(dir.x, 0.0, dir.y);
+	vec3 top = vec3(dir.x * sin(ang), cos(ang), dir.y * sin(ang)) * h;
+	vec3 mid = vec3(0.0, h * 0.55 * cos(ang * 0.3), 0.0) + dir3 * h * 0.12 * sin(ang);
+	vec3 top_tg = normalize(crop_bez_d(vec3(0.0), mid, top, 1.0));
+
+	// The ear's axis: on from the top of the stem, bending over towards the lean by the nod.
+	float ear_len = crop_ear.x * crop_growth.z * (0.9 + 0.2 * fract(rnd * 9.1));
+	float nod = clamp(crop_growth.w * (1.0 + lag), 0.0, 1.0);
+	vec3 nod_dir = normalize(dir3 * 0.55 + vec3(0.0, -1.0, 0.0));
+	vec3 e1 = top + top_tg * ear_len * 0.5;
+	vec3 e2 = e1 + normalize(mix(top_tg, nod_dir, nod) + vec3(0.0, 1e-4, 0.0)) * ear_len * 0.5;
+
+	vec3 p = vec3(0.0);
+	vec3 n = vec3(0.0, 1.0, 0.0);
+	vec3 axis = vec3(0.0, 1.0, 0.0);
+	float view_w = 0.0; // Half width across the view, for thin round parts.
+	bool hide = false;
+	float ripe = 0.0;
+	float dead = 0.0;
+	if (part == 0) {
+		// The culm, round: a strip turned to the view.
+		hide = h < 0.003;
+		p = crop_bez(vec3(0.0), mid, top, t);
+		axis = normalize(crop_bez_d(vec3(0.0), mid, top, t));
+		view_w = crop_leaf.z * sqrt(bulk) * (1.0 - 0.3 * t);
+		ripe = clamp(crop_age.y + lag, 0.0, 1.0);
+	} else if (part == 1) {
+		// A leaf from its node: the lamina rises at its insertion angle and arches over, widest near
+		// the base and tapering to a fine tip, alternate sides up the stem; the lowest die first,
+		// curl and hang.
+		hide = idx + 0.5 > clamp(1.0 + (stage - 10.0) / 1.5, 1.0, 4.0) || (cut > 0.0 && idx > 0.5);
+		float sn = pow(idx / 3.0, 1.15) * 0.8;
+		vec3 node = crop_bez(vec3(0.0), mid, top, sn);
+		vec3 ntg = normalize(crop_bez_d(vec3(0.0), mid, top, sn));
+		float L = crop_leaf.x * crop_growth.y * (0.75 + 0.35 * sin(3.1416 * (idx + 1.0) / 5.0)) * (0.85 + 0.3 * fract(rnd * (idx + 3.0) * 7.1));
+		dead = clamp(crop_age.z * 4.0 - idx + lag, 0.0, 1.0);
+		if (cut > 0.0) {
+			dead = 1.0;
+			L *= 0.6;
+		}
+		float yaw = idx * 3.1416 + (fract(rnd * 11.3 + idx * 0.37) - 0.5) * 0.9;
+		vec3 out_d = vec3(sin(yaw), 0.0, cos(yaw));
+		float ins = 0.3 + 0.3 * fract(rnd * 5.3 + idx * 0.71) + 0.5 * dead;
+		float droop = 0.5 + 0.4 * fract(rnd * 2.9 + idx * 0.43) + 1.3 * dead;
+		vec3 l1 = node + normalize(ntg * cos(ins) + out_d * sin(ins)) * L * 0.5;
+		vec3 l2 = l1 + normalize(out_d * 0.85 + vec3(0.0, 0.35 - droop, 0.0)) * L * 0.5;
+		l2 += vec3(wl.x, 0.0, wl.y) * 0.004 * L * (1.0 + sin(TIME * 5.0 + rnd * 20.0 + idx));
+		p = crop_bez(node, l1, l2, t);
+		vec3 tg = normalize(crop_bez_d(node, l1, l2, t));
+		vec3 acr = normalize(vec3(-out_d.z, 0.0, out_d.x));
+		float tw = t * 1.6 * (fract(rnd * 3.1 + idx * 0.29) - 0.5);
+		acr = normalize(acr * cos(tw) + cross(tg, acr) * sin(tw));
+		float lw = crop_leaf.y * sqrt(bulk) * (0.55 + 0.45 * smoothstep(0.0, 0.15, t)) * (1.0 - pow(t, 1.6)) * (1.0 - 0.5 * dead);
+		p += acr * a * 2.0 * lw;
+		n = normalize(cross(acr, tg));
+		n = normalize(n + acr * a * 0.8);
+		ripe = clamp(crop_age.y + lag, 0.0, 1.0);
+	} else if (part == 2) {
+		// The ear: two rows of spikelets, flattened, tapering to the tip (oats: the panicle's thin
+		// axis).
+		hide = ear_len < 0.002 || cut > 0.0;
+		p = crop_bez(top, e1, e2, t);
+		vec3 tg = normalize(crop_bez_d(top, e1, e2, t));
+		vec3 b1 = normalize(cross(tg, abs(tg.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		vec3 b2 = cross(b1, tg);
+		float th = a * 6.2832;
+		float prof = crop_ear.w > 0.5 ? 1.0 : mix(0.55, 1.0, smoothstep(0.0, 0.15, t)) * (1.0 - 0.6 * smoothstep(0.7, 1.0, t));
+		float r = t > 0.999 ? 0.0 : crop_ear.y * prof * mix(1.0, sqrt(bulk), 0.6);
+		p += (b1 * cos(th) + b2 * sin(th) * 0.72) * r;
+		n = normalize(b1 * cos(th) + b2 * sin(th) * 1.3);
+		ripe = clamp(crop_age.x + lag, 0.0, 1.0);
+	} else if (part == 3) {
+		// An awn from each spikelet, rows on alternate sides, spreading a little, longest at the top.
+		hide = ear_len < 0.002 || cut > 0.0;
+		float tk = (idx + 0.5) / cnt * 0.92;
+		vec3 c = crop_bez(top, e1, e2, tk);
+		vec3 tg = normalize(crop_bez_d(top, e1, e2, tk));
+		vec3 b1 = normalize(cross(tg, abs(tg.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		vec3 b2 = cross(b1, tg);
+		vec3 out_r = b1 * (mod(idx, 2.0) < 0.5 ? 1.0 : -1.0);
+		vec3 ad = normalize(tg + out_r * (0.18 + 0.1 * fract(idx * 0.618 + rnd)) + b2 * (fract(idx * 0.37 + rnd * 3.0) - 0.5) * 0.2);
+		float al = crop_ear.z * crop_growth.z * (0.7 + 0.3 * tk);
+		p = c + out_r * crop_ear.y * 0.8 + ad * al * t + vec3(0.0, -1.0, 0.0) * al * 0.06 * t * t;
+		axis = ad;
+		view_w = 0.0007 * (1.0 - 0.8 * t);
+		ripe = clamp(crop_age.x + lag + 0.05, 0.0, 1.0);
+	} else {
+		// Oat panicle: branches in whorls (golden angle round the axis) leaving the axis and
+		// drooping, a spikelet hanging from each end.
+		hide = ear_len < 0.002 || cut > 0.0;
+		float tk = (idx + 0.5) / cnt * 0.95;
+		vec3 c = crop_bez(top, e1, e2, tk);
+		vec3 tg = normalize(crop_bez_d(top, e1, e2, tk));
+		vec3 b1 = normalize(cross(tg, abs(tg.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		vec3 b2 = cross(b1, tg);
+		float phi = idx * 2.39996 + rnd * 6.2832;
+		vec3 radial = b1 * cos(phi) + b2 * sin(phi);
+		float bl = 0.075 * (1.0 - 0.65 * tk) * crop_growth.z;
+		vec3 bd = normalize(radial * 0.8 + tg * 0.45 + vec3(0.0, -0.25 - 0.4 * nod, 0.0));
+		if (part == 4) {
+			p = c + bd * bl * t + vec3(0.0, -1.0, 0.0) * bl * 0.3 * t * t;
+			axis = normalize(bd + vec3(0.0, -0.6 * t, 0.0));
+			view_w = 0.0006;
+			ripe = clamp(crop_age.y + lag, 0.0, 1.0);
+		} else {
+			// The spikelet: its glumes a pendant about 2.2 cm long.
+			vec3 hang = normalize(vec3(0.0, -1.0, 0.0) + bd * 0.25 + vec3(wl.x, 0.0, wl.y) * 0.02);
+			p = c + bd * bl + vec3(0.0, -1.0, 0.0) * bl * 0.3 + hang * 0.022 * crop_growth.z * t;
+			axis = hang;
+			view_w = 0.0024 * sin(3.1416 * min(t * 0.85 + 0.12, 1.0)) * sqrt(bulk);
+			// Papery glumes: pale long before the grain is ripe.
+			ripe = clamp(crop_age.x + lag + 0.3 * smoothstep(55.0, 70.0, stage), 0.0, 1.0);
+		}
+	}
+	if (view_w > 0.0) {
+		vec3 to_cam = cam_l - p;
+		vec3 acr = cross(axis, to_cam);
+		float acl = length(acr);
+		acr = acl > 1e-6 ? acr / acl : vec3(1.0, 0.0, 0.0);
+		p += acr * a * 2.0 * view_w;
+		vec3 fwd = normalize(cross(acr, axis));
+		fwd = dot(fwd, to_cam) < 0.0 ? -fwd : fwd;
+		n = normalize(fwd + acr * a * 1.6);
+	}
+	if (fade_band.w > 0.0) {
+		float keep_b = clamp((fade_band.z - length(base_w.xz - fade_band.xy)) / fade_band.w, 0.0, 1.0);
+		float order = floor(INSTANCE_CUSTOM.w) / 256.0;
+		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
+	}
+	// Not yet emerged (a plot sown, below 10): nothing shows.
+	VERTEX = hide || stage < 10.0 ? vec3(0.0) : p;
+	NORMAL = n;
+	v_t = t;
+	v_part = float(part);
+	v_ripe = ripe;
+	v_dead = dead;
+	v_hf = clamp(p.y / max(h + ear_len, 0.05), 0.0, 1.0);
+	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
+	v_wet = 0.0;
+	if (weather_map_rect.z > 0.0) {
+		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
+		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
+		v_wet = textureLod(weather_state_map, uv, 0.0).g;
+	}
+}
+
+void fragment() {
+	int part = int(v_part + 0.5);
+	vec3 green = crop_green * v_tint;
+	float x = abs(UV.x - 0.5) * 2.0;
+	float fw = max(fwidth(UV.x), 1e-4);
+	float detail = 1.0 - smoothstep(0.08, 0.25, fw);
+	vec3 c;
+	float rough;
+	float spec;
+	float back;
+	if (part == 1) {
+		// Leaf: waxy glaucous green, yellowing with the straw; dead leaves a pale grey-tan.
+		c = mix(green, crop_straw * 0.9, v_ripe * 0.8);
+		c = mix(c, crop_straw * vec3(0.8, 0.74, 0.66) * (0.8 + 0.3 * fract(v_rnd * 17.0)), v_dead);
+		float rib = 1.0 - smoothstep(0.0, 0.1 + fw, x);
+		float veins = 0.5 + 0.5 * cos(x * 6.2832 * 4.5);
+		c *= 1.0 + detail * (0.12 * rib - 0.06 * veins * (1.0 - rib));
+		rough = mix(0.45, 0.75, max(v_dead, v_ripe));
+		spec = mix(0.42, 0.25, max(v_dead, v_ripe));
+		back = mix(0.65, 0.3, v_dead);
+	} else if (part == 0 || part == 4) {
+		// Culm: a paler green, then glossy straw.
+		c = mix(green * vec3(1.15, 1.12, 1.0), crop_straw, v_ripe);
+		rough = mix(0.45, 0.5, v_ripe);
+		spec = 0.45;
+		back = 0.35;
+	} else {
+		// Ear, awns, spikelets: green, through yellow, to the ripe colour, ripening from the top.
+		float r = clamp(v_ripe + (part == 2 ? (v_t - 0.5) * 0.2 : 0.0), 0.0, 1.0);
+		vec3 turning = mix(green, crop_ripe, 0.5) * vec3(1.15, 1.1, 0.75);
+		c = r < 0.5 ? mix(green * 1.1, turning, r * 2.0) : mix(turning, crop_ripe, r * 2.0 - 1.0);
+		c *= 0.9 + 0.2 * fract(v_rnd * 23.0);
+		if (part == 2 && crop_ear.w < 0.5) {
+			// Spikelets up the ear in two alternate rows: dark creases between the glumes.
+			float sk = fract(v_t * 9.0 + step(0.5, fract(UV.x * 2.0)) * 0.5);
+			float crease = smoothstep(0.0, 0.2, sk) * smoothstep(1.0, 0.75, sk);
+			c *= mix(1.0, 0.7 + 0.3 * crease, 1.0 - smoothstep(0.1, 0.4, fwidth(v_t * 9.0)));
+		}
+		rough = 0.6;
+		spec = 0.3;
+		back = 0.45;
+	}
+	c = vegetation_light_tint(c, v_light);
+	// Specular antialiasing (Kaplanyan et al. 2016): the normals' spread over the pixel widens the
+	// lobe; past a few metres leaves are under a pixel and their derivatives say nothing, so the
+	// distance widens it too. Without it the waxy leaves sparkle as white speckles across the field.
+	// fwidth(), not dFdx()/dFdy(): the path tracer's shader translation provides only fwidth().
+	vec3 dn = fwidth(NORMAL);
+	float spread = min(0.25 * dot(dn, dn), 0.18);
+	float far_t = smoothstep(4.0, 18.0, length(VERTEX));
+	rough = sqrt(clamp(rough * rough + spread, 0.0, 1.0));
+	rough = mix(rough, max(rough, 0.85), far_t);
+	spec *= mix(1.0, 0.6, far_t);
+	// Wet (Lagarde 2013, low porosity): a little darker and glossier.
+	float wet_factor = mix(1.0, 0.2, 0.25);
+	ALBEDO = c * mix(1.0, wet_factor, v_wet);
+	ROUGHNESS = rough * mix(1.0, 0.4, v_wet);
+	SPECULAR = spec;
+	BACKLIGHT = ALBEDO * back;
+	// Sky light inside the canopy (Monsi and Saeki 1953), as the grass: raster ambient only.
+	float scatter = clamp(dot(ALBEDO, vec3(0.3, 0.59, 0.11)) * 1.7, 0.0, 0.95);
+	AO = exp(-0.7 * sqrt(1.0 - scatter) * crop_lai * (1.0 - v_hf));
+}
+)";
+	} else {
+		code += R"(
 varying float v_t;
 varying float v_dry;
 varying float v_wet;
@@ -431,9 +759,9 @@ varying float v_trod; // Trodden flat on a worn path (its rest lean past any swa
 
 uniform float color_variation;
 )";
-	code += GRASS_COLOR_CODE;
-	code += VegetationLight::SHADER_CODE;
-	code += R"(
+		code += GRASS_COLOR_CODE;
+		code += VegetationLight::SHADER_CODE;
+		code += R"(
 
 void vertex() {
 	float h = INSTANCE_CUSTOM.x;
@@ -575,6 +903,7 @@ void fragment() {
 }
 
 )";
+	}
 	// A rebuild keeps the compiled shader when its code is unchanged (most settings are uniforms):
 	// only the material is new, so no pipeline recompiles on a settings change.
 	if (blade_shader.is_null() || blade_shader->get_code() != code) {
@@ -600,11 +929,527 @@ void fragment() {
 	if (blade_mesh.is_valid()) {
 		blade_mesh->surface_set_material(0, material);
 	}
+	if (crop != CROP_NONE) {
+		_crop_uniforms(material);
+		if (crop_mesh_far.is_valid()) {
+			crop_mesh_far->surface_set_material(0, material);
+		}
+	}
 }
 
 int GrassField3D::_lod_for(float p_distance) const {
 	const float f = p_distance / MAX(radius, 0.001f);
 	return f < 0.25f ? 0 : (f < 0.5f ? 1 : (f < 0.75f ? 2 : 3));
+}
+
+// The cereals (vegetation.md, farmland plan): modern straw lengths to the ear's base, ear and awn
+// sizes and leaf blades from agronomy texts (AHDB wheat and barley growth guides; Kirby and
+// Appleyard, "Cereal development guide"). Colours: glaucous leaf green, the ripe ear and straw.
+GrassField3D::CropShape GrassField3D::_crop_shape(Crop p_crop) {
+	switch (p_crop) {
+		case CROP_BARLEY:
+			// Two-row barley: a slim ear with long awns that bends right over when ripe.
+			return { 0.68f, 0.075f, 0.0048f, 0.13f, 14, 0, 0.19f, 0.0065f, 1.0f, Color(0.21f, 0.35f, 0.14f), Color(0.80f, 0.71f, 0.50f), Color(0.80f, 0.72f, 0.53f) };
+		case CROP_OATS:
+			// An open panicle of drooping spikelets on whorled branches.
+			return { 0.85f, 0.22f, 0.0012f, 0.0f, 0, 12, 0.24f, 0.0072f, 0.35f, Color(0.19f, 0.34f, 0.15f), Color(0.80f, 0.76f, 0.58f), Color(0.79f, 0.72f, 0.50f) };
+		case CROP_RYE:
+			// The tallest: a long slender ear with short awns, blue-grey leaves, nodding a little.
+			return { 1.25f, 0.11f, 0.0042f, 0.035f, 18, 0, 0.22f, 0.006f, 0.45f, Color(0.23f, 0.34f, 0.22f), Color(0.68f, 0.61f, 0.46f), Color(0.74f, 0.66f, 0.49f) };
+		case CROP_WHEAT:
+		default:
+			// Bread wheat: an awnless, flattened ear of two rows of spikelets, held upright.
+			return { 0.80f, 0.09f, 0.0055f, 0.0f, 0, 0, 0.22f, 0.007f, 0.15f, Color(0.20f, 0.33f, 0.14f), Color(0.75f, 0.62f, 0.39f), Color(0.78f, 0.69f, 0.49f) };
+	}
+}
+
+namespace {
+float seg_distance(const Vector2 &p_q, const Vector2 &p_a, const Vector2 &p_b) {
+	const Vector2 ab = p_b - p_a;
+	const float t = CLAMP((p_q - p_a).dot(ab) / MAX(ab.length_squared(), 1e-8f), 0.0f, 1.0f);
+	return p_q.distance_to(p_a + ab * t);
+}
+
+float polygon_edge_distance(const Vector2 &p_q, const PackedVector2Array &p_poly, int *r_edge = nullptr) {
+	float best = 1e30f;
+	const int n = p_poly.size();
+	for (int i = 0; i < n; i++) {
+		const float dd = seg_distance(p_q, p_poly[i], p_poly[(i + 1) % n]);
+		if (dd < best) {
+			best = dd;
+			if (r_edge) {
+				*r_edge = i;
+			}
+		}
+	}
+	return best;
+}
+} // namespace
+
+// The stage on a day from the sowing day: days after sowing to the BBCH code for a crop in a mild
+// temperate climate (AHDB "Wheat growth guide" and "Barley growth guide"; HGCA timings for England):
+// autumn sowing (day 200 on) over-winters in tillering; spring sowing runs through in five months.
+// After harvest the stubble stands until the next sowing.
+float GrassField3D::crop_calendar_stage(int p_sown_day, int p_harvest_day, int p_day) {
+	static const float WINTER[][2] = { { 0, 0 }, { 14, 10 }, { 30, 13 }, { 60, 21 }, { 150, 25 }, { 175, 30 }, { 210, 37 }, { 220, 39 }, { 235, 51 }, { 246, 59 }, { 255, 65 }, { 265, 71 }, { 272, 75 }, { 286, 85 }, { 291, 87 }, { 302, 92 } };
+	static const float SPRING[][2] = { { 0, 0 }, { 14, 10 }, { 30, 13 }, { 45, 21 }, { 55, 30 }, { 75, 39 }, { 85, 51 }, { 92, 59 }, { 98, 65 }, { 110, 71 }, { 118, 75 }, { 130, 85 }, { 138, 92 } };
+	const bool winter = p_sown_day >= 200;
+	const float(*table)[2] = winter ? WINTER : SPRING;
+	const int count = winter ? int(sizeof(WINTER) / sizeof(WINTER[0])) : int(sizeof(SPRING) / sizeof(SPRING[0]));
+	const int since = ((p_day - p_sown_day) % 365 + 365) % 365;
+	int harvest = p_harvest_day >= 0 ? ((p_harvest_day - p_sown_day) % 365 + 365) % 365 : int(table[count - 1][0]) + 10;
+	if (since >= harvest) {
+		return 99.0f;
+	}
+	for (int i = 1; i < count; i++) {
+		if (since < table[i][0]) {
+			const float t = (since - table[i - 1][0]) / (table[i][0] - table[i - 1][0]);
+			return Math::lerp(table[i - 1][1], table[i][1], t);
+		}
+	}
+	return table[count - 1][1];
+}
+
+void GrassField3D::_update_plot_stages(int p_day) {
+	for (CropPlot &pl : plots) {
+		pl.current = pl.sown_day >= 0 && p_day >= 0 ? crop_calendar_stage(pl.sown_day, pl.harvest_day, p_day) : (pl.stage >= 0.0f ? pl.stage : crop_stage);
+	}
+	if (material.is_valid() && crop != CROP_NONE) {
+		_crop_uniforms(material);
+	}
+	crop_plots_dirty = true;
+}
+
+void GrassField3D::set_fields(const Array &p_fields) {
+	fields = p_fields;
+	plots.clear();
+	for (int i = 0; i < fields.size(); i++) {
+		const Dictionary f = fields[i];
+		CropPlot pl;
+		pl.polygon = f.get("polygon", PackedVector2Array());
+		if (pl.polygon.size() < 3) {
+			continue;
+		}
+		pl.bounds = Rect2(pl.polygon[0], Vector2());
+		for (const Vector2 &v : pl.polygon) {
+			pl.bounds.expand_to(v);
+		}
+		pl.clockwise = Geometry2D::is_polygon_clockwise(pl.polygon);
+		pl.drill_angle = f.get("drill_angle", drill_angle);
+		pl.row_spacing = MAX(float(f.get("row_spacing", row_spacing)), 0.03f);
+		pl.stage = f.get("stage", -1.0f);
+		pl.sown_day = f.get("sown_day", -1);
+		pl.harvest_day = f.get("harvest_day", -1);
+		pl.tramline_spacing = MAX(float(f.get("tramline_spacing", 24.0f)), 0.0f);
+		pl.tramline_gauge = f.get("tramline_gauge", 1.8f);
+		pl.headland = MAX(float(f.get("headland", 12.0f)), 0.0f);
+		plots.push_back(pl);
+		if (plots.size() >= uint32_t(MAX_PLOTS)) {
+			WARN_PRINT(vformat("GrassField3D \"%s\": only the first %d fields are grown.", get_name(), MAX_PLOTS));
+			break;
+		}
+	}
+	_update_plot_stages(crop_day);
+	crop_ground_dirty = true;
+	rebuild();
+}
+
+float GrassField3D::get_field_stage(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, int(plots.size()), -1.0f);
+	return plots[p_index].current;
+}
+
+// The crop as seen from above at a stage (rgb, linear) and how much of the soil it covers (a), for
+// the ground past the tillers' band: from the sparse green rows of tillering to a closed canopy,
+// through the ears' turn to gold, to the pale stubble after harvest. The canopy's own shade
+// darkens its leaves' colour seen from afar (the far bake measured grass about 0.8 of its blades).
+Color GrassField3D::crop_canopy_look(Crop p_crop, float p_stage) {
+	const CropShape cs = _crop_shape(p_crop);
+	const float s = p_stage;
+	if (s < 10.0f) {
+		return Color(0, 0, 0, 0);
+	}
+	if (s >= 99.0f) {
+		return Color(cs.straw.r * 0.85f, cs.straw.g * 0.85f, cs.straw.b * 0.85f, 0.45f);
+	}
+	auto ramp = [](float p_x, float p_a, float p_b) { return CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f); };
+	const float cover = s < 30.0f ? Math::lerp(0.08f, 0.45f, ramp(s, 10.0f, 30.0f)) : Math::lerp(0.45f, 0.97f, ramp(s, 30.0f, 45.0f));
+	Color c = cs.green.lerp(cs.green * 1.12f, ramp(s, 51.0f, 65.0f));
+	c = c.lerp(cs.ripe.lerp(cs.straw, 0.4f), Math::smoothstep(0.0f, 1.0f, ramp(s, 71.0f, 87.0f)));
+	c = c * 0.8f;
+	c.a = cover;
+	return c;
+}
+
+LocalVector<GrassField3D *> GrassField3D::crop_nodes;
+bool GrassField3D::crop_ground_dirty = true;
+bool GrassField3D::crop_plots_dirty = true;
+Ref<ImageTexture> GrassField3D::crop_ground_texture;
+Ref<ImageTexture> GrassField3D::crop_plots_texture;
+
+// The fields' ground (crop_ground()), shared by every crop node: the first one in the tree bakes the
+// map of all their fields (a slot each, up to 255) and the table of their looks.
+void GrassField3D::_crop_ground_step() {
+	if (!crop_nodes.has(this)) {
+		crop_nodes.push_back(this);
+		crop_ground_dirty = true;
+	}
+	if (crop_nodes[0] != this) {
+		return;
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (crop_ground_dirty) {
+		crop_ground_dirty = false;
+		crop_plots_dirty = true;
+		Rect2 bounds;
+		bool any = false;
+		for (const GrassField3D *g : crop_nodes) {
+			for (const CropPlot &pl : g->plots) {
+				bounds = any ? bounds.merge(pl.bounds) : pl.bounds;
+				any = true;
+			}
+		}
+		if (!any) {
+			rs->global_shader_parameter_set("crop_ground_rect", Vector4());
+		} else {
+			bounds = bounds.grow(1.0f);
+			const float texel = MAX(0.5f, MAX(bounds.size.x, bounds.size.y) / 2048.0f);
+			const int w = MAX(int(Math::ceil(bounds.size.x / texel)), 1);
+			const int h = MAX(int(Math::ceil(bounds.size.y / texel)), 1);
+			Vector<uint8_t> data;
+			data.resize(w * h * 2);
+			memset(data.ptrw(), 0, data.size());
+			uint8_t *d = data.ptrw();
+			int slot = 1;
+			for (const GrassField3D *g : crop_nodes) {
+				for (const CropPlot &pl : g->plots) {
+					if (slot > 255) {
+						break;
+					}
+					const Vector2 dd(Math::cos(pl.drill_angle), Math::sin(pl.drill_angle));
+					const Vector2 n(-dd.y, dd.x);
+					const int x0 = MAX(int((pl.bounds.position.x - bounds.position.x) / texel), 0);
+					const int y0 = MAX(int((pl.bounds.position.y - bounds.position.y) / texel), 0);
+					const int x1 = MIN(int(Math::ceil((pl.bounds.get_end().x - bounds.position.x) / texel)), w - 1);
+					const int y1 = MIN(int(Math::ceil((pl.bounds.get_end().y - bounds.position.y) / texel)), h - 1);
+					for (int y = y0; y <= y1; y++) {
+						for (int x = x0; x <= x1; x++) {
+							const Vector2 q = bounds.position + Vector2(x + 0.5f, y + 0.5f) * texel;
+							if (!Geometry2D::is_point_in_polygon(q, pl.polygon)) {
+								continue;
+							}
+							uint8_t *o = d + (y * w + x) * 2;
+							o[0] = uint8_t(slot);
+							if (pl.tramline_spacing > 0.0f && (pl.headland <= 0.0f || polygon_edge_distance(q, pl.polygon) >= pl.headland)) {
+								const float wv = Math::fposmod(q.dot(n), pl.tramline_spacing) - 0.5f * pl.tramline_spacing;
+								const float off = Math::abs(Math::abs(wv) - 0.5f * pl.tramline_gauge);
+								o[1] = uint8_t(CLAMP(1.0f - (off - 0.15f) / (0.5f * texel + 0.1f), 0.0f, 1.0f) * 255.0f);
+							}
+						}
+					}
+					slot++;
+				}
+			}
+			crop_ground_texture = ImageTexture::create_from_image(Image::create_from_data(w, h, false, Image::FORMAT_RG8, data));
+			rs->global_shader_parameter_set("crop_ground_map", crop_ground_texture->get_rid());
+			rs->global_shader_parameter_set("crop_ground_rect", Vector4(bounds.position.x, bounds.position.y, w * texel, h * texel));
+		}
+	}
+	if (crop_plots_dirty) {
+		crop_plots_dirty = false;
+		Ref<Image> img = Image::create_empty(256, 2, false, Image::FORMAT_RGBAF);
+		int slot = 1;
+		for (const GrassField3D *g : crop_nodes) {
+			for (const CropPlot &pl : g->plots) {
+				if (slot > 255) {
+					break;
+				}
+				const Color look = crop_canopy_look(g->crop, pl.current);
+				Color lin = look.srgb_to_linear(); // The crop's colours are sRGB (source_color).
+				lin.a = look.a;
+				img->set_pixel(slot, 0, lin);
+				img->set_pixel(slot, 1, Color(pl.drill_angle, pl.row_spacing, g->radius * 0.97f, g->radius * 0.37f));
+				slot++;
+			}
+		}
+		if (crop_plots_texture.is_valid() && crop_plots_texture->get_size() == Vector2(256, 2)) {
+			crop_plots_texture->update(img);
+		} else {
+			crop_plots_texture = ImageTexture::create_from_image(img);
+		}
+		rs->global_shader_parameter_set("crop_ground_plots", crop_plots_texture->get_rid());
+	}
+}
+
+// The tillers of a drilled crop over p_rect: without fields, rows everywhere along drill_angle;
+// with fields, inside each polygon along its own drill angle, with tramlines (paired unsown wheel
+// tracks every tramline_spacing metres) and a headland of rows run round the edge, drilled last
+// where the drill turned. Plants spaced along each row from the density, each one to three tillers
+// fanning from its crown. p_place(x, z, rank, hash, yaw, splay, plot): rank orders the thinning
+// (whole plants drop out; a golden-ratio sequence along each row keeps the spacing even at every
+// level), yaw turns local +z away from the crown, splay is the tiller's rest lean, plot the
+// stage slot (0 the node's, 1 on the fields).
+template <typename F>
+void GrassField3D::_crop_rows(const Rect2 &p_rect, float p_keep, F &&p_place, bool p_fields) const {
+	const float plants = MAX(density, 1.0f) / 2.0f; // About 2 tillers survive to ear a plant.
+	const Vector2 end = p_rect.get_end();
+	// One plant on row r at step k (row frame: n across, d along), offset across by p_u.
+	auto plant = [&](float p_u, const Vector2 &p_n, const Vector2 &p_d, float p_v, int p_r, int p_k, uint32_t p_salt, float p_phase, int p_plot, const CropPlot *p_pl, bool p_headland) {
+		const uint32_t hp = cell_hash(p_r, p_k, 0x27D4EB2Fu ^ p_salt);
+		if (unit(hp, 0) < 0.07f) {
+			return; // Seeds that did not establish.
+		}
+		const float wobble = 0.02f * Math::sin(p_v * 0.23f + p_phase) + 0.006f * Math::sin(p_v * 1.7f + p_phase * 3.0f);
+		const float u = p_u + wobble + (unit(hp, 16) - 0.5f) * 0.025f;
+		const Vector2 crown = p_n * u + p_d * p_v;
+		if (p_pl) {
+			if (!p_pl->bounds.grow(0.05f).has_point(crown) || !Geometry2D::is_point_in_polygon(crown, p_pl->polygon)) {
+				return;
+			}
+			if (p_pl->headland > 0.0f && !p_headland && polygon_edge_distance(crown, p_pl->polygon) < p_pl->headland) {
+				return;
+			}
+		}
+		const float rank = Math::fmod(p_k * 0.618034f + unit(cell_hash(p_r, 0, 0x165667B1u ^ p_salt), 8) + 1000.0f, 1.0f);
+		const int tillers = 1 + MIN(int(unit(hp, 24) * 3.0f), 2);
+		const float a0 = unit(cell_hash(p_r, p_k, 0x61C88647u ^ p_salt), 0) * Math::TAU;
+		for (int t = 0; t < tillers; t++) {
+			const uint32_t ht = cell_hash(p_r * 4 + t, p_k, 0x9E3779B9u ^ p_salt);
+			const float a = a0 + t * Math::TAU / tillers + (unit(ht, 24) - 0.5f) * 0.8f;
+			const Vector2 dir(Math::cos(a), Math::sin(a));
+			const Vector2 q = crown + dir * (tillers > 1 ? 0.006f + 0.006f * unit(ht, 0) : 0.0f);
+			if (q.x < p_rect.position.x || q.y < p_rect.position.y || q.x >= end.x || q.y >= end.y) {
+				continue;
+			}
+			const float splay = tillers > 1 ? 0.05f + 0.14f * unit(ht, 8) : 0.04f * unit(ht, 8);
+			p_place(q.x, q.y, rank, ht, Math::atan2(dir.x, dir.y), splay, p_plot);
+		}
+	};
+	// The main body: rows along the drill angle.
+	auto drill = [&](const Rect2 &p_area, float p_angle, float p_rs, int p_plot, const CropPlot *p_pl) {
+		const Vector2 d(Math::cos(p_angle), Math::sin(p_angle));
+		const Vector2 n(-d.y, d.x);
+		const float s = 1.0f / (plants * p_rs);
+		float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+		for (int i = 0; i < 4; i++) {
+			const Vector2 c = p_area.position + Vector2((i & 1) ? p_area.size.x : 0.0f, (i & 2) ? p_area.size.y : 0.0f);
+			umin = MIN(umin, c.dot(n));
+			umax = MAX(umax, c.dot(n));
+			vmin = MIN(vmin, c.dot(d));
+			vmax = MAX(vmax, c.dot(d));
+		}
+		const uint32_t salt = uint32_t(p_plot) * 0x9E3779B1u;
+		const int r0 = int(Math::floor(umin / p_rs)) - 1;
+		const int r1 = int(Math::ceil(umax / p_rs)) + 1;
+		const int k0 = int(Math::floor(vmin / s)) - 2;
+		const int k1 = int(Math::ceil(vmax / s)) + 2;
+		for (int r = r0; r <= r1; r++) {
+			const float u = r * p_rs;
+			if (p_pl && p_pl->tramline_spacing > 0.0f) {
+				// Tramlines: the drill shuts the coulters over the sprayer's wheel tracks.
+				const float w = Math::fposmod(u, p_pl->tramline_spacing) - 0.5f * p_pl->tramline_spacing;
+				if (Math::abs(Math::abs(w) - 0.5f * p_pl->tramline_gauge) < 0.2f) {
+					continue;
+				}
+			}
+			// A drill's coulters (24 rows, 3 m) wander together; the next bout its own way, which is
+			// what makes the bouts readable across a field.
+			const int bout = int(Math::floor(r / 24.0f));
+			const float phase = unit(cell_hash(bout, 0, 0xD3A2646Cu ^ salt), 0) * Math::TAU;
+			for (int k = k0; k <= k1; k++) {
+				const float rank = Math::fmod(k * 0.618034f + unit(cell_hash(r, 0, 0x165667B1u ^ salt), 8) + 1000.0f, 1.0f);
+				if (rank >= p_keep) {
+					continue;
+				}
+				const uint32_t hp = cell_hash(r, k, 0x27D4EB2Fu ^ salt);
+				plant(u, n, d, (k + (unit(hp, 8) - 0.5f) * 0.9f) * s, r, k, salt, phase, p_plot, p_pl, false);
+			}
+		}
+	};
+	if (plots.is_empty() || !p_fields) {
+		drill(p_rect, drill_angle, MAX(row_spacing, 0.03f), 0, nullptr);
+		return;
+	}
+	const Rect2 reach = p_rect.grow(0.05f);
+	for (uint32_t pi = 0; pi < plots.size(); pi++) {
+		const CropPlot &pl = plots[pi];
+		if (!pl.bounds.intersects(reach) || (pl.sown_day < 0 && pl.current < 10.0f)) {
+			continue;
+		}
+		const int slot = int(pi) + 1;
+		drill(p_rect, pl.drill_angle, pl.row_spacing, slot, &pl);
+		if (pl.headland <= 0.0f) {
+			continue;
+		}
+		// The headland: rows parallel to each edge, out to the headland's width; each point grows on
+		// the rows of its nearest edge, so the corners mitre.
+		const int ne = pl.polygon.size();
+		const float s = 1.0f / (plants * pl.row_spacing);
+		const int rows = int(Math::ceil(pl.headland / pl.row_spacing));
+		for (int e = 0; e < ne; e++) {
+			const Vector2 a = pl.polygon[e];
+			const Vector2 b = pl.polygon[(e + 1) % ne];
+			const float len = a.distance_to(b);
+			if (len < 1e-3f) {
+				continue;
+			}
+			const Vector2 d = (b - a) / len;
+			const Vector2 n = pl.clockwise ? Vector2(d.y, -d.x) : Vector2(-d.y, d.x); // Inward.
+			// The stretch of this edge's rows over the tile.
+			float vmin = 1e30f, vmax = -1e30f, umin = 1e30f, umax = -1e30f;
+			for (int i = 0; i < 4; i++) {
+				const Vector2 c = p_rect.position + Vector2((i & 1) ? p_rect.size.x : 0.0f, (i & 2) ? p_rect.size.y : 0.0f) - a;
+				vmin = MIN(vmin, c.dot(d));
+				vmax = MAX(vmax, c.dot(d));
+				umin = MIN(umin, c.dot(n));
+				umax = MAX(umax, c.dot(n));
+			}
+			if (umax < 0.0f || umin > pl.headland || vmax < -pl.headland || vmin > len + pl.headland) {
+				continue;
+			}
+			const uint32_t salt = uint32_t(slot) * 0x9E3779B1u ^ uint32_t(e + 1) * 0x85EBCA77u;
+			const float phase = unit(cell_hash(e, slot, 0xD3A2646Cu), 0) * Math::TAU;
+			const int k0 = int(Math::floor(MAX(vmin, -pl.headland) / s)) - 2;
+			const int k1 = int(Math::ceil(MIN(vmax, len + pl.headland) / s)) + 2;
+			for (int r = MAX(int(Math::floor(umin / pl.row_spacing)) - 1, 0); r < MIN(rows, int(Math::ceil(umax / pl.row_spacing)) + 2); r++) {
+				const float u = (r + 0.5f) * pl.row_spacing;
+				for (int k = k0; k <= k1; k++) {
+					const float rank = Math::fmod(k * 0.618034f + unit(cell_hash(r, 0, 0x165667B1u ^ salt), 8) + 1000.0f, 1.0f);
+					if (rank >= p_keep) {
+						continue;
+					}
+					const uint32_t hp = cell_hash(r, k, 0x27D4EB2Fu ^ salt);
+					const float v = (k + (unit(hp, 8) - 0.5f) * 0.9f) * s;
+					// Its own edge's rows only: the nearest edge to the row line at this point.
+					const Vector2 at = a + d * v + n * u;
+					int nearest = -1;
+					if (polygon_edge_distance(at, pl.polygon, &nearest) >= pl.headland || nearest != e) {
+						continue;
+					}
+					// The row frame is the edge's, shifted to start at a.
+					plant(u + a.dot(n), n, d, v + a.dot(d), r, k, salt, phase, slot, &pl, true);
+				}
+			}
+		}
+	}
+}
+
+// A tiller's parts as one mesh: VERTEX.z is the part (0 stem, 1 leaf, 2 ear or panicle axis, 3
+// awn, 4 panicle branch, 5 spikelet), VERTEX.x the side (-0.5..0.5) or the angle round (0..1),
+// VERTEX.y the parameter along it; UV2 the part's index and count. The vertex shader builds the
+// real tiller from them (stage, wind, ripeness). p_far: fewer segments, half the leaves and awns.
+Ref<ArrayMesh> GrassField3D::_make_crop_mesh(bool p_far) const {
+	const CropShape cs = _crop_shape(crop);
+	PackedVector3Array verts;
+	PackedVector2Array uvs;
+	PackedVector2Array uv2s;
+	PackedInt32Array idx;
+	auto strip = [&](int p_part, int p_index, int p_count, int p_segs, bool p_tip) {
+		const int b = verts.size();
+		const int rows = p_tip ? p_segs : p_segs + 1;
+		for (int i = 0; i < rows; i++) {
+			const float t = float(i) / p_segs;
+			verts.push_back(Vector3(-0.5f, t, p_part));
+			verts.push_back(Vector3(0.5f, t, p_part));
+			uvs.push_back(Vector2(0.0f, t));
+			uvs.push_back(Vector2(1.0f, t));
+			uv2s.push_back(Vector2(p_index, p_count));
+			uv2s.push_back(Vector2(p_index, p_count));
+		}
+		for (int i = 0; i < rows - 1; i++) {
+			const int a = b + i * 2;
+			idx.append_array(PackedInt32Array({ a, a + 2, a + 1, a + 1, a + 2, a + 3 }));
+		}
+		if (p_tip) {
+			verts.push_back(Vector3(0.0f, 1.0f, p_part));
+			uvs.push_back(Vector2(0.5f, 1.0f));
+			uv2s.push_back(Vector2(p_index, p_count));
+			const int a = b + (rows - 1) * 2;
+			idx.append_array(PackedInt32Array({ a, a + 2, a + 1 }));
+		}
+	};
+	auto ring = [&](int p_part, int p_sides, int p_segs) {
+		const int b = verts.size();
+		for (int i = 0; i < p_segs; i++) {
+			const float t = float(i) / p_segs;
+			for (int j = 0; j <= p_sides; j++) {
+				verts.push_back(Vector3(float(j) / p_sides, t, p_part));
+				uvs.push_back(Vector2(float(j) / p_sides, t));
+				uv2s.push_back(Vector2(0, 1));
+			}
+		}
+		const int tip = verts.size();
+		verts.push_back(Vector3(0.0f, 1.0f, p_part));
+		uvs.push_back(Vector2(0.5f, 1.0f));
+		uv2s.push_back(Vector2(0, 1));
+		const int w = p_sides + 1;
+		for (int i = 0; i < p_segs - 1; i++) {
+			for (int j = 0; j < p_sides; j++) {
+				const int a = b + i * w + j;
+				idx.append_array(PackedInt32Array({ a, a + w, a + 1, a + 1, a + w, a + w + 1 }));
+			}
+		}
+		for (int j = 0; j < p_sides; j++) {
+			const int a = b + (p_segs - 1) * w + j;
+			idx.append_array(PackedInt32Array({ a, tip, a + 1 }));
+		}
+	};
+	strip(0, 0, 1, p_far ? 2 : 5, false);
+	constexpr int LEAVES = 4;
+	for (int i = p_far ? 1 : 0; i < LEAVES; i += p_far ? 2 : 1) {
+		strip(1, i, LEAVES, p_far ? 2 : 4, true);
+	}
+	if (cs.branches > 0) {
+		ring(2, 3, p_far ? 2 : 3);
+		for (int k = 0; k < cs.branches; k += p_far ? 2 : 1) {
+			strip(4, k, cs.branches, 1, true);
+			strip(5, k, cs.branches, 2, true);
+		}
+	} else {
+		ring(2, p_far ? 3 : 4, p_far ? 2 : 4);
+	}
+	for (int k = 0; k < cs.awns; k += p_far ? 2 : 1) {
+		strip(3, k, cs.awns, 1, true);
+	}
+	PackedVector3Array normals;
+	normals.resize(verts.size());
+	normals.fill(Vector3(0, 0, 1));
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
+	arrays[Mesh::ARRAY_INDEX] = idx;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	const float h = cs.height * 1.25f + cs.ear_length + cs.awn_length + 0.1f;
+	mesh->set_custom_aabb(AABB(Vector3(-h, -0.05f, -h), Vector3(2.0f * h, h + 0.1f, 2.0f * h)));
+	return mesh;
+}
+
+// The crop's shape and each plot's growth stage as shader uniforms; the shader's crop_look() turns a
+// stage into the look.
+void GrassField3D::_crop_uniforms(const Ref<ShaderMaterial> &p_material) const {
+	const CropShape cs = _crop_shape(crop);
+	PackedFloat32Array stages;
+	stages.resize(MAX_PLOTS + 1);
+	stages.fill(crop_stage);
+	for (uint32_t i = 0; i < plots.size() && i < MAX_PLOTS; i++) {
+		stages.set(i + 1, plots[i].current);
+	}
+	p_material->set_shader_parameter("crop_plot_stage", stages);
+	p_material->set_shader_parameter("crop_nod", cs.nod);
+	p_material->set_shader_parameter("crop_ear", Vector4(cs.ear_length, cs.ear_width, cs.awn_length, float(cs.branches)));
+	p_material->set_shader_parameter("crop_leaf", Vector4(cs.leaf_length, cs.leaf_width, 0.0022f, 4.0f));
+	p_material->set_shader_parameter("crop_green", cs.green);
+	p_material->set_shader_parameter("crop_ripe", cs.ripe);
+	p_material->set_shader_parameter("crop_straw", cs.straw);
+	// Leaf area per ground area, for the light inside the canopy: tillers x leaves x length x width
+	// (at the node's stage).
+	const float leaf_scale = crop_stage < 30.0f ? CLAMP(0.25f + (crop_stage - 10.0f) * 0.02f, 0.25f, 0.7f) : CLAMP(0.7f + (crop_stage - 30.0f) / 30.0f, 0.7f, 1.0f);
+	p_material->set_shader_parameter("crop_lai", density * 4.0f * cs.leaf_length * leaf_scale * 2.0f * cs.leaf_width * 0.75f);
 }
 
 void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map) {
@@ -663,7 +1508,8 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	}
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
-	if (gpu_fill && is_gpu_fill_available()) {
+	// Crops are CPU-built for now (farmland stage 1).
+	if (gpu_fill && crop == CROP_NONE && is_gpu_fill_available()) {
 		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, sward_grid, wear_grid, lg, width);
 		return;
 	}
@@ -671,76 +1517,117 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	LocalVector<Color> customs;
 	const bool rocks = _tile_has_obstacles(x0, z0);
 	const bool holed = !holes.is_empty() && holes.any_in(Rect2(x0, z0, tile_size, tile_size).grow(OBSTACLE_MARGIN));
-	for (int iz = iz0; iz < iz1; iz++) {
-		for (int ix = ix0; ix < ix1; ix++) {
-			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
-			// The rank decides which blades a coarser level keeps: the same ones, so nothing pops.
-			// A blue-noise mask instead of a hash: every threshold keeps an even spread, so thinned
-			// grass has no clumps and gaps.
-			const float rank = blue_rank(ix, iz);
-			if (rank >= keep) {
-				continue;
+	// Whether a blade (or crop tiller) grows at (x, z): the rules, paths and light decide; rank orders
+	// the thinning (coarser levels keep the same ones).
+	struct Spot {
+		float y = 0.0f;
+		float light = 1.0f;
+		float shade_t = 0.0f;
+		float sun_t = 0.0f;
+		float passes = 0.0f;
+	};
+	auto accept = [&](float x, float z, float rank, Spot &r_spot) -> bool {
+		if (rocks && obstacle_grid.blocks(Vector2(x, z), OBSTACLE_MARGIN)) {
+			return false;
+		}
+		if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
+			return false;
+		}
+		const float passes = trodden ? path_grid.passes_at(Vector2(x, z)) : 0.0f;
+		if (passes > 0.0f && rank >= keep * _trample_cover(passes)) {
+			return false;
+		}
+		const Vector3 p(x, ground_y, z);
+		float y = ground_y;
+		if (p_map) {
+			float suit = r->get_suitability(p_map, p);
+			if (canopy && suit > 0.0f) {
+				suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
 			}
-			const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
-			const float x = (ix + unit(hj, 0)) * cell;
-			const float z = (iz + unit(hj, 8)) * cell;
-			if (rocks && obstacle_grid.blocks(Vector2(x, z), OBSTACLE_MARGIN)) {
-				continue;
+			if (!sward_grid.is_empty() && suit > 0.0f) {
+				suit *= 1.0f - grid_bilinear(sward_grid, lg, x - x0, z - z0);
 			}
-			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
-				continue;
+			if (passes > 0.0f && suit > 0.0f) {
+				suit *= _trample_cover(passes);
 			}
-			const float passes = trodden ? path_grid.passes_at(Vector2(x, z)) : 0.0f;
-			if (passes > 0.0f && rank >= keep * _trample_cover(passes)) {
-				continue;
+			if (rank >= keep * suit) {
+				return false;
 			}
-			const Vector3 p(x, ground_y, z);
-			float y = ground_y;
-			if (p_map) {
-				float suit = r->get_suitability(p_map, p);
-				if (canopy && suit > 0.0f) {
-					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
-				}
-				if (!sward_grid.is_empty() && suit > 0.0f) {
-					suit *= 1.0f - grid_bilinear(sward_grid, lg, x - x0, z - z0);
-				}
-				if (passes > 0.0f && suit > 0.0f) {
-					suit *= _trample_cover(passes);
-				}
-				if (rank >= keep * suit) {
+			y = p_map->get_height_at(p);
+		}
+		const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
+		const float lz = CLAMP(z - z0, 0.0f, float(lg - 1));
+		const int gx = MIN(int(lx), lg - 2);
+		const int gz = MIN(int(lz), lg - 2);
+		r_spot.light = Math::lerp(Math::lerp(light_grid[gz * lg + gx], light_grid[gz * lg + gx + 1], lx - gx), Math::lerp(light_grid[(gz + 1) * lg + gx], light_grid[(gz + 1) * lg + gx + 1], lx - gx), lz - gz);
+		r_spot.y = y;
+		r_spot.passes = passes;
+		// Shade avoidance (Franklin 2008): grass in shade grows longer and laxer; in full sun on a
+		// sunny slope, shorter.
+		r_spot.shade_t = 1.0f - CLAMP(r_spot.light, 0.0f, 1.0f);
+		r_spot.sun_t = Math::smoothstep(1.0f, 1.3f, r_spot.light);
+		return true;
+	};
+	if (crop == CROP_NONE) {
+		for (int iz = iz0; iz < iz1; iz++) {
+			for (int ix = ix0; ix < ix1; ix++) {
+				// The rank decides which blades a coarser level keeps: the same ones, so nothing
+				// pops. A blue-noise mask instead of a hash: every threshold keeps an even spread,
+				// so thinned grass has no clumps and gaps.
+				const float rank = blue_rank(ix, iz);
+				if (rank >= keep) {
 					continue;
 				}
-				y = p_map->get_height_at(p);
+				const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
+				const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
+				const float x = (ix + unit(hj, 0)) * cell;
+				const float z = (iz + unit(hj, 8)) * cell;
+				Spot sp;
+				if (!accept(x, z, rank, sp)) {
+					continue;
+				}
+				// Clumps (Ghost of Tsushima): blades of a clump share height, facing and dryness.
+				const int cx = int(Math::floor(x / clump_size));
+				const int cz = int(Math::floor(z / clump_size));
+				const uint32_t hc = cell_hash(cx, cz, 0xC2B2AE35u);
+				const float clump_h = unit(hc, 0);
+				const float clump_yaw = unit(hc, 8) * Math::TAU;
+				const float rnd = unit(hb, 16);
+				const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes);
+				const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
+				const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, sp.y, z));
+				xforms.push_back(to_local * world);
+				// w: the outer band's drop order in the integer part (the rank within the coarsest
+				// level, so the last blades left are evenly spread too), the blade's random value in
+				// the fraction.
+				const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
+				// z: the light in its integer part over 4 (VegetationLight::pack), the rest lean
+				// (under 4). Trodden blades lie over (wear 0.45 at the most-walked: flat).
+				const float flat = CLAMP((1.0f - _trample_scale(sp.passes)) / 0.55f, 0.0f, 1.0f);
+				const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)) * (1.0f + 0.8f * sp.shade_t) + 2.6f * Math::sqrt(flat) * (0.7f + 0.6f * Math::fmod(rnd * 7.31f, 1.0f)), 3.99f);
+				customs.push_back(Color(height, width, VegetationLight::pack(sp.light) * 4.0f + blade_lean, order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
 			}
-			// Clumps (Ghost of Tsushima): blades of a clump share height, facing and dryness.
-			const int cx = int(Math::floor(x / clump_size));
-			const int cz = int(Math::floor(z / clump_size));
-			const uint32_t hc = cell_hash(cx, cz, 0xC2B2AE35u);
-			const float clump_h = unit(hc, 0);
-			const float clump_yaw = unit(hc, 8) * Math::TAU;
-			const float rnd = unit(hb, 16);
-			const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
-			const float lz = CLAMP(z - z0, 0.0f, float(lg - 1));
-			const int gx = MIN(int(lx), lg - 2);
-			const int gz = MIN(int(lz), lg - 2);
-			const float light = Math::lerp(Math::lerp(light_grid[gz * lg + gx], light_grid[gz * lg + gx + 1], lx - gx), Math::lerp(light_grid[(gz + 1) * lg + gx], light_grid[(gz + 1) * lg + gx + 1], lx - gx), lz - gz);
-			// Shade avoidance (Franklin 2008): grass in shade grows longer and laxer; in full sun on a
-			// sunny slope, shorter.
-			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
-			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes);
-			const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
-			const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z));
-			xforms.push_back(to_local * world);
-			// w: the outer band's drop order in the integer part (the rank within the coarsest level,
-			// so the last blades left are evenly spread too), the blade's random value in the fraction.
-			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
-			// z: the light in its integer part over 4 (VegetationLight::pack), the rest lean (under 4).
-			// Trodden blades lie over (wear 0.45 at the most-walked: flat).
-			const float flat = CLAMP((1.0f - _trample_scale(passes)) / 0.55f, 0.0f, 1.0f);
-			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)) * (1.0f + 0.8f * shade_t) + 2.6f * Math::sqrt(flat) * (0.7f + 0.6f * Math::fmod(rnd * 7.31f, 1.0f)), 3.99f);
-			customs.push_back(Color(height, width, VegetationLight::pack(light) * 4.0f + blade_lean, order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
 		}
+	} else if (crop_stage >= 10.0f || !plots.is_empty()) {
+		// A tiller: x its ripe stem height, y its bulk (thicker where fewer remain), z the light and
+		// rest lean as the blades, w the drop order and its random value. Local +z points away from
+		// its plant's crown, the way it leans.
+		const float bulk = 1.0f / Math::sqrt(keep);
+		const float crop_h = _crop_shape(crop).height;
+		_crop_rows(Rect2(x0, z0, tile_size, tile_size), keep, [&](float x, float z, float rank, uint32_t hb, float yaw, float splay, int plot) {
+			Spot sp;
+			if (!accept(x, z, rank, sp)) {
+				return;
+			}
+			const float rnd = unit(hb, 16);
+			// Shaded crop grows taller and thinner (shade avoidance), a sunny slope a little shorter.
+			const float height = crop_h * (0.9f + 0.2f * unit(hb, 0)) * (1.0f + 0.15f * sp.shade_t - 0.05f * sp.sun_t) * _trample_scale(sp.passes);
+			xforms.push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, sp.y, z)));
+			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
+			const float flat = CLAMP((1.0f - _trample_scale(sp.passes)) / 0.55f, 0.0f, 1.0f);
+			const float tiller_lean = MIN(splay * (1.0f + 0.5f * sp.shade_t) + 1.3f * Math::sqrt(flat) * (0.7f + 0.6f * Math::fmod(rnd * 7.31f, 1.0f)), 3.99f);
+			customs.push_back(Color(height, plot * 4.0f + MIN(bulk * (0.85f + 0.3f * unit(hb, 8)), 3.99f), VegetationLight::pack(sp.light) * 4.0f + tiller_lean, order + 0.999f * rnd));
+		});
 	}
 	Tile tile;
 	tile.lod = p_lod;
@@ -750,7 +1637,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		mm.instantiate();
 		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
 		mm->set_use_custom_data(true);
-		mm->set_mesh(blade_mesh);
+		mm->set_mesh(crop != CROP_NONE && p_lod >= 2 && crop_mesh_far.is_valid() ? crop_mesh_far : blade_mesh);
 		mm->set_instance_count(xforms.size());
 		for (uint32_t i = 0; i < xforms.size(); i++) {
 			mm->set_instance_transform(i, xforms[i]);
@@ -987,6 +1874,14 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 	if (material.is_valid()) {
 		material->set_shader_parameter("fade_band", band);
 	}
+	if (crop != CROP_NONE) {
+		// A crop's ground is its own (crop_ground()): the meadow keeps the grass ground's band.
+		if (is_inside_tree()) {
+			RenderingServer::get_singleton()->global_shader_parameter_set("crop_ground_fade", Vector4(p_center.x, p_center.y, 0.0f, 0.0f));
+			crop_plots_dirty = true;
+		}
+		return;
+	}
 	// The ground's band is global: the widest field publishes it, so a near undercoat field does
 	// not pull the ground's blade colour in to its own short radius.
 	if (fade_owner && fade_owner != this && fade_owner->radius > radius) {
@@ -1076,7 +1971,7 @@ void GrassField3D::_far_bake_start() {
 	}
 	_ensure_resources();
 	const float e = Math::deg_to_rad(FAR_BAKE_VIEW_DEG);
-	const float hmax = MAX(blade_height.x, blade_height.y) * 1.1f;
+	const float hmax = crop != CROP_NONE ? _crop_shape(crop).height * 1.15f + _crop_shape(crop).ear_length : MAX(blade_height.x, blade_height.y) * 1.1f;
 	// The patch every view ray crosses from the top of the sward to the ground (view along -z).
 	const float half_w = FAR_BAKE_ORTHO * 0.5f + hmax + 0.5f;
 	const float z_lo = -FAR_BAKE_ORTHO * 0.5f / Math::sin(e) - hmax - 0.5f;
@@ -1090,7 +1985,16 @@ void GrassField3D::_far_bake_start() {
 	const int iz1 = int(Math::ceil(z_hi / cell));
 	LocalVector<Transform3D> xforms;
 	LocalVector<Color> customs;
-	for (int iz = iz0; iz < iz1; iz++) {
+	if (crop != CROP_NONE) {
+		// The tillers as _build_tile() makes them.
+		const float crop_h = _crop_shape(crop).height;
+		_crop_rows(Rect2(-half_w, z_lo, 2.0f * half_w, z_hi - z_lo), 1.0f, [&](float x, float z, float rank, uint32_t hb, float yaw, float splay, int plot) {
+			xforms.push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, 0.0f, z)));
+			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
+			customs.push_back(Color(crop_h * (0.9f + 0.2f * unit(hb, 0)), plot * 4.0f + 0.85f + 0.3f * unit(hb, 8), VegetationLight::pack(1.0f) * 4.0f + splay, order + 0.999f * unit(hb, 16)));
+		}, false);
+	}
+	for (int iz = iz0; iz < (crop != CROP_NONE ? iz0 : iz1); iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
 			const float rank = blue_rank(ix, iz);
@@ -1786,6 +2690,9 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	} else if (ground_job.active) {
 		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
+	if (crop != CROP_NONE && is_inside_tree()) {
+		_crop_ground_step();
+	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const Vector2 c(p_center.x, p_center.z);
 	const float reach = radius + tile_size * 0.75f;
@@ -1862,6 +2769,10 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_job.active = false;
 	sun_mean = VegetationLight::sun_mean(p_map);
 	fade_band = Vector4(); // Send the band and the far colour again.
+	if (crop != CROP_NONE) {
+		crop_ground_dirty = true; // The fields' own ground (crop_ground()).
+		return;
+	}
 	if (is_inside_tree()) {
 		// The fallback wind for the other plants (PlantGenerator's shader), so they sway with the grass.
 		RenderingServer::get_singleton()->global_shader_parameter_set("grass_wind", Vector4(fallback_wind.x, fallback_wind.y, wind_response, 0.0f));
@@ -2001,6 +2912,10 @@ global uniform vec4 grass_ground_under_far; // rgb: the undercoat's far colour; 
 global uniform vec4 grass_ground_far_scale; // rgb: the far colour at the sun's elevation over the cover map's (30 degrees).
 global uniform vec4 grass_ground_sun; // xy: the sun light's heading (xz); z: how much the azimuth counts.
 global uniform vec4 grass_ground_view; // xyz: the camera.
+global uniform sampler2D crop_ground_map : filter_linear; // GrassField3D.fields: r the field's slot, g the wheelings.
+global uniform sampler2D crop_ground_plots : filter_nearest; // A texel a field (crop_ground()).
+global uniform vec4 crop_ground_rect;
+global uniform vec4 crop_ground_fade; // xy: the centre of the tillers' band.
 )";
 	code += GRASS_COLOR_CODE;
 	code += VegetationField3D::get_floor_shader_code();
@@ -2155,10 +3070,74 @@ vec3 grass_path_soil(vec3 world_pos, vec3 albedo, float tread) {
 	return mix(albedo, soil, smoothstep(0.0, 0.6, tread));
 }
 
+// Arable fields (GrassField3D.fields): the drilled soil under the crop, darker in the tramline
+// wheelings, and past the tillers' band the crop's own colour and cover at its stage, so fields read
+// to the horizon as a patchwork with their tramlines (Serious Sam 4's "4 million acres": the ground
+// matched to the instanced crop). crop_ground_map: r the field (its slot), g the wheelings;
+// crop_ground_plots, a texel a field: row 0 its colour from above and cover, row 1 its drill angle,
+// row spacing and tillers' radius and band.
+float crop_ground_field(vec3 world_pos, out vec4 r_look, out vec4 r_drill, out float r_wheel) {
+	r_look = vec4(0.0);
+	r_drill = vec4(0.0);
+	r_wheel = 0.0;
+	if (crop_ground_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (world_pos.xz - crop_ground_rect.xy) / crop_ground_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) {
+		return 0.0;
+	}
+	ivec2 size = textureSize(crop_ground_map, 0);
+	vec4 m = texelFetch(crop_ground_map, ivec2(uv * vec2(size)), 0);
+	int slot = int(m.r * 255.0 + 0.5);
+	if (slot == 0) {
+		return 0.0;
+	}
+	r_look = texelFetch(crop_ground_plots, ivec2(slot, 0), 0);
+	r_drill = texelFetch(crop_ground_plots, ivec2(slot, 1), 0);
+	r_wheel = textureLod(crop_ground_map, uv, 0.0).g;
+	return 1.0;
+}
+
+vec3 crop_ground(vec3 world_pos, vec3 albedo) {
+	vec4 look;
+	vec4 drill;
+	float wheel;
+	if (crop_ground_field(world_pos, look, drill, wheel) <= 0.0) {
+		return albedo;
+	}
+	vec2 xz = world_pos.xz;
+	// Tilled soil: a fine crumb, the drill's slots as faint lines along the rows.
+	vec2 d = vec2(cos(drill.x), sin(drill.x));
+	float u = dot(xz, vec2(-d.y, d.x)) / max(drill.y, 0.03);
+	float slot_line = smoothstep(0.35, 0.0, abs(fract(u) - 0.5) - 0.3);
+	vec3 soil = albedo * (0.9 + 0.2 * grass_noise(xz * 6.0)) * mix(1.0, 0.85, slot_line);
+	// Wheelings: compacted, darker, a little smoother.
+	soil = mix(soil, albedo * vec3(0.72, 0.7, 0.68), wheel * 0.8);
+	// Close up the tillers stand on it and shade it. Further out the coarser levels keep fewer of
+	// them (a half, a quarter, an eighth) and the ground takes the colour of the ones dropped, as the
+	// grass ground does under thinned blades; past their band the crop's colour covers it all.
+	float dist = length(xz - crop_ground_fade.xy);
+	float gone = 0.0;
+	float dropped = 0.0;
+	if (drill.w > 0.0) {
+		gone = 1.0 - clamp((drill.z - dist) / drill.w, 0.0, 1.0);
+		float radius = drill.z / 0.97;
+		dropped = smoothstep(0.15, 0.85, dist / radius);
+	}
+	float var = 0.9 + 0.2 * grass_noise(xz * 0.35 + 3.3);
+	vec3 canopy = look.rgb * var;
+	vec3 shaded = soil * mix(1.0, 0.55, look.a);
+	vec3 near = mix(shaded, canopy, look.a * dropped * (1.0 - wheel * 0.7));
+	vec3 far = mix(soil, canopy, look.a * (1.0 - wheel * 0.7));
+	return mix(near, far, gone);
+}
+
 // The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), the
 // undergrowth's litter under its stands, then the sward's turf where grass grows.
 vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	albedo = forest_floor(world_pos, albedo);
+	albedo = crop_ground(world_pos, albedo);
 	albedo = grass_ground_undergrowth(world_pos, albedo);
 	float tread = grass_ground_tread(world_pos);
 	if (tread > 0.0) {
@@ -2498,6 +3477,7 @@ void GrassField3D::update_at(const Vector3 &p_center) {
 void GrassField3D::rebuild() {
 	generation++;
 	blade_mesh.unref();
+	crop_mesh_far.unref();
 	material.unref();
 	ground_baked = false;
 }
@@ -2508,6 +3488,12 @@ void GrassField3D::_notification(int p_what) {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_process_internal(true);
 				_queue_far_bake();
+			}
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			if (crop_nodes.has(this)) {
+				crop_nodes.erase(this);
+				crop_ground_dirty = true;
 			}
 		} break;
 		case NOTIFICATION_PREDELETE: {
@@ -2541,6 +3527,10 @@ void GrassField3D::_notification(int p_what) {
 
 GrassField3D::~GrassField3D() {
 	_drop_under();
+	if (crop_nodes.has(this)) {
+		crop_nodes.erase(this);
+		crop_ground_dirty = true;
+	}
 	if (fade_owner == this) {
 		fade_owner = nullptr;
 		if (RenderingServer::get_singleton()) {
@@ -2665,6 +3655,31 @@ void GrassField3D::set_data_map(const NodePath &p_path) {
 void GrassField3D::set_rules(const Ref<PlantSpecies> &p_rules) {
 	GRASS_SET_REBUILD(rules, p_rules)
 }
+void GrassField3D::set_crop(Crop p_crop) {
+	_queue_far_bake();
+	if (p_crop == CROP_NONE && crop_nodes.has(this)) {
+		crop_nodes.erase(this);
+		crop_ground_dirty = true;
+	}
+	GRASS_SET_REBUILD(crop, p_crop)
+}
+void GrassField3D::set_crop_stage(float p_stage) {
+	const bool emerged = crop_stage >= 10.0f;
+	crop_stage = CLAMP(p_stage, 0.0f, 99.0f);
+	_queue_far_bake();
+	_update_plot_stages(crop_day);
+	// The stage is all uniforms, but below 10 nothing has emerged: the tiles rebuild across that line.
+	if (emerged != (crop_stage >= 10.0f)) {
+		rebuild();
+	}
+}
+void GrassField3D::set_row_spacing(float p_spacing) {
+	_queue_far_bake();
+	GRASS_SET_REBUILD(row_spacing, CLAMP(p_spacing, 0.03f, 1.0f))
+}
+void GrassField3D::set_drill_angle(float p_angle) {
+	GRASS_SET_REBUILD(drill_angle, p_angle)
+}
 void GrassField3D::set_density(float p_density) {
 	_queue_far_bake();
 	GRASS_SET_REBUILD(density, CLAMP(p_density, 0.1f, 1000.0f))
@@ -2775,6 +3790,15 @@ void GrassField3D::_season_step() {
 	if (!wm) {
 		return;
 	}
+	if (crop != CROP_NONE && !plots.is_empty()) {
+		// Fields with a sowing day grow through the year.
+		const int day = int(wm->get_season().get("day_of_year", -1));
+		if (day != crop_day) {
+			crop_day = day;
+			_update_plot_stages(day);
+			_queue_far_bake();
+		}
+	}
 	const float g = season_greenness(wm->get_season());
 	if (Math::abs(g - season_green) < 0.005f) {
 		return;
@@ -2841,6 +3865,14 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_paths, get_paths, "paths")
 	GRASS_BIND(set_trample_resistance, get_trample_resistance, "passes")
 	GRASS_BIND(set_density, get_density, "density")
+	GRASS_BIND(set_crop, get_crop, "crop")
+	GRASS_BIND(set_crop_stage, get_crop_stage, "stage")
+	GRASS_BIND(set_row_spacing, get_row_spacing, "spacing")
+	GRASS_BIND(set_drill_angle, get_drill_angle, "angle")
+	GRASS_BIND(set_fields, get_fields, "fields")
+	ClassDB::bind_method(D_METHOD("get_field_stage", "index"), &GrassField3D::get_field_stage);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("crop_calendar_stage", "sown_day", "harvest_day", "day"), &GrassField3D::crop_calendar_stage);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("crop_canopy_look", "crop", "stage"), &GrassField3D::crop_canopy_look);
 	GRASS_BIND(set_blade_height, get_blade_height, "height")
 	GRASS_BIND(set_blade_width, get_blade_width, "width")
 	GRASS_BIND(set_clump_size, get_clump_size, "size")
@@ -2892,6 +3924,17 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_resistance", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:passes/yr"), "set_trample_resistance", "get_trample_resistance");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.1,400,0.1,or_greater,suffix:/m²"), "set_density", "get_density");
+	ADD_GROUP("Crop", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "crop", PROPERTY_HINT_ENUM, "None,Wheat,Barley,Oats,Rye"), "set_crop", "get_crop");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crop_stage", PROPERTY_HINT_RANGE, "0,99,0.5"), "set_crop_stage", "get_crop_stage");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "row_spacing", PROPERTY_HINT_RANGE, "0.03,1,0.005,suffix:m"), "set_row_spacing", "get_row_spacing");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drill_angle", PROPERTY_HINT_RANGE, "-180,180,0.1,radians_as_degrees"), "set_drill_angle", "get_drill_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "fields", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_fields", "get_fields");
+	BIND_ENUM_CONSTANT(CROP_NONE);
+	BIND_ENUM_CONSTANT(CROP_WHEAT);
+	BIND_ENUM_CONSTANT(CROP_BARLEY);
+	BIND_ENUM_CONSTANT(CROP_OATS);
+	BIND_ENUM_CONSTANT(CROP_RYE);
 	ADD_GROUP("Blades", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "blade_height", PROPERTY_HINT_NONE, "suffix:m"), "set_blade_height", "get_blade_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "blade_width", PROPERTY_HINT_RANGE, "0.001,0.2,0.001,suffix:m"), "set_blade_width", "get_blade_width");

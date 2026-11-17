@@ -516,6 +516,31 @@ Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
   ploughed soil; ridge and furrow for strip fields) and the seasons (BBCH from the WeatherMap3D
   day). Stage 3: margins (a make_margin set) and hedgerows as polylines like paths, woody
   shrubs from the trees thread, a bank and ditch through the ground module or terrain.
+- Stage 1 built (17 Nov): `GrassField3D.crop` (wheat, barley, oats, rye) rather than a separate
+  node, so crops share the tiles, rules, paths, trample, wind and far bake. Each record is a tiller:
+  stem (5 segments, turned to the view), four distichous leaves (Bezier arch, twist, taper, lowest
+  die first), the ear as a 4-sided flattened ring with spikelet creases, awns as single triangles
+  (barley 14, rye 18), oats as 12 whorled branches with hanging spikelets; about 66 to 100
+  triangles, a 30-triangle mesh for levels 2 and 3. Rows: plants on each drill row at the density
+  over two tillers a plant, 7% failed seeds, a golden-ratio rank along the row (thinning keeps the
+  spacing even), rows of a 3 m drill bout wander together. `crop_stage` (BBCH) is uniforms only:
+  leaf scale, stem share, ear emergence 49 to 59, ripening 75 to 91, leaves dying from the bottom
+  55 to 85, nod (barley 1, rye 0.45, oats 0.35, wheat 0.15), stubble 15 cm at 99. Specular
+  antialiasing (Kaplanyan et al. 2016, via fwidth since the path tracer's translation has no
+  dFdx) stops the waxy leaves sparkling. Cost: 400 tillers/m2 at tile_size 1.5 m keeps a tile under
+  the 65536-triangle merged BLAS cap. CPU fill for now; GPU fill and a soil ground for crops come
+  with stage 2.
+- Stage 2 first part built (17 Nov): `GrassField3D.fields` (polygon, drill angle, stage or
+  sown/harvest day, tramline spacing and gauge, headland). Tramlines skip drill rows over the
+  wheel tracks; headland rows run parallel to each edge, mitred at the corners by nearest edge.
+  Stage per field is a uniform array (instance y carries the slot), so the season moves fields
+  without rebuilding tiles; a sowing calendar (AHDB growth guides) gives the stage by day. The
+  ground: every crop node's fields in one shared map (`crop_ground_map`, 0.5 m texels, slot and
+  wheelings) and a 256x2 look table; `crop_ground()` in the ground shader draws drilled soil with
+  slot lines and darker wheelings, the colour of tillers dropped by the coarser levels, and past
+  the band the crop's colour and cover by stage. Still to do: ridge and furrow and ploughed soil
+  (needs terrain heights: terrain thread), straw swaths on stubble, the meadow grass kept out of
+  fields, GPU fill for crops.
 - References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
   instanced rows); Ghost of Tsushima, GDC 2021 (blades and wind); Butler and Ebert, "Procedural
   field grasses".
