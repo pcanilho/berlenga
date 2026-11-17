@@ -475,6 +475,36 @@ above the waterline, net volume within 1%, 10 ms a step on the CPU (twice a seco
 `--view=rills` (--runoff=0 for the A/B). Not modelled yet: headward sapping at rill heads, the rills' braided
 rhomboid fans, a finer near field (rills are 2 grid cells wide at 12.5 cm), water drawn in the rills.
 
+### Sharp rills on the near field (research, 17 Nov 2026)
+
+Docs declined the rills pair (soft stripes); the mud thread's near field (8 m at 1.56 cm) now draws detail fine
+enough for real rills, but routing runoff on it with the steady-state scheme failed three ways (patches kept outside
+the repo): multiple flow direction with a slope-grown exponent (Qin et al. 2007, MFD-md) gives ruled stripes along
+the grid's eight directions on an even face; adding microtopography noise gives pockmarks (water stops in every
+hollow and drops its sand); filling hollows first (priority flood, Barnes et al. 2014) gives runaway mounds (the
+filled flats keep taking sand). MFD-md alone does make `--test=runoff` robust (median cut 0.09 of the 99th
+percentile, was 0.25 on the threshold).
+
+What the literature does instead:
+- RillGrow (Favis-Mortlock 1998, 2000; Favis-Mortlock et al., Earth Surf. Process. Landforms): rills are
+  self-organising. Water moves cell to cell over a microtopography DEM by the WATER SURFACE (ground plus depth), so
+  ponds fill and spill instead of being skipped or filled ahead of time; detachment from stream power above a
+  threshold, deposition where transport capacity drops. Rill networks emerge from the random roughness and the
+  feedback of flow onto its own cuts, with no grid-direction bias because flow follows the water surface and the
+  roughness, not one steady pass.
+- Virtual pipes (Mei, Decaudin and Hu 2007; St'ava et al. 2008; layered heightmaps, VMV 2024): explicit shallow
+  water on the heightfield, outflow per pipe from the water-surface difference, erosion and deposition toward a
+  sediment capacity C = Kc sin(a) |v|, sediment advected semi-Lagrangian. Real time on the GPU at 512^2.
+
+Plan (needs a card before building, it replaces the runoff routing on the near field):
+1. Near-field runoff as virtual-pipe shallow water on the near grid (256^2 at 3 cm, GPU compute next to the
+   deform pass; the coarse grid stays steady-state MFD-md and feeds the edge), sources unchanged (seepage, rain).
+2. Microtopography from the sand's own roughness (a few mm, fixed per place) so channels start irregularly.
+3. Capacity erosion and deposition (Mei 2007) with the Shields threshold already in `bed_load_shear`; deposits
+   where flow slackens, fans at the foot.
+4. Checks: `--test=runoff` (channels, mass kept, fans), a new rill spacing check (tens of cm on a 1 in 12 face,
+   field observations of beach rills), cost under 2 ms GPU; `--view=rills` raster and path-traced pair.
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.
