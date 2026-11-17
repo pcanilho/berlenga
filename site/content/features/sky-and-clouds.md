@@ -9,6 +9,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 - **Sky atmosphere** (`WeatherSkyMaterial.atmosphere_model`, `SkyClock.drive_light_energy`): multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.
 - **Night sky** (`stars_enabled`, `moon_disc_enabled`, `airglow_enabled`, `milky_way`): the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine; on moonless nights the faint green airglow of the upper air brightens toward the horizon and lights cloud tops; the Milky Way comes from a galactic panorama turned with the stars.
 - **Eye adaptation** (`SkyClock.drive_exposure`, `adaptation`): exposure follows the light on the ground like an adapting eye, so twilight, moonlit and starlit scenes stay readable.
+- **Night vision** (`CameraAttributes.night_vision`): in dim light colour fades to the eye's blue-grey night vision (Purkinje shift) while lamps, lit windows and the moon keep theirs, from the scene's real luminance, in raster and path tracing.
 
   ![The sea horizon at midday under the old sky and the new atmosphere](media/sky-atmosphere.jpg)
 

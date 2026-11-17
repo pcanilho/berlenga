@@ -3076,6 +3076,17 @@
    "topic": ""
   },
   {
+   "name": "Night vision",
+   "settings": [
+    "CameraAttributes.night_vision"
+   ],
+   "note": "",
+   "what": "in dim light colour fades to the eye's blue-grey night vision (Purkinje shift) while lamps, lit windows and the moon keep theirs, from the scene's real luminance, in raster and path tracing.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
    "name": "Cloud layer",
    "settings": [
     "cloud_base_height",
