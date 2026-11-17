@@ -1637,11 +1637,14 @@ in 15 cm nodes (none on young plants and cushions; mature clumps mix stemless cr
 to about a metre, old ones to 2.5 m), leaning out at the foot. Each crown has 6-19 live leaves
 on golden-angle rolls, the young upright in the middle and the older spread near level, and old
 stems 3-7 dead ones hanging down; each petiole is three nodes, so the wind bones bend it.
-`_palm_geometry` draws the blade as a pleated disc to a third of its radius (the palman: seams
-up, midribs down) and 14-22 free segments beyond it, V-folded with the margins up, stiff, the
-tips bending a little, the outer ones shorter; dead leaves brown and torn. Petioles are green
-tubes on the leaves surface (the bark skips them) from a brown sheath, with forward spines on
-their lower two thirds; trunks carry rings of leaf-base stubs and hanging fibre. LODs: a fan's
+`_palm_geometry` draws the blade as 14-22 segments free almost from the stalk tip (a small
+pleated hastula joins them; a first try fused them to a third of the radius and the leaves read
+as saw blades), each V-folded with the margins up and the two halves shaded apart so the crease
+shows, stiff, the tips bending a little, the outer ones shorter. Dead leaves half close and hang
+straw-brown against the trunk just below the crown; crowns too low for that have shed them.
+Petioles are green tubes on the leaves surface (the bark skips them), rewound since _tube winds
+for the bark's later flip (inside-out faces sparkled under the path tracer), with forward
+spines on their lower two thirds; trunks carry rings of leaf-base stubs and hanging fibre. LODs: a fan's
 parts are sized so stochastic pruning keeps them whole and unscaled (grown about its base a fan
 reached metres out); spines are LOD 0 only. Flowers and fruit are not built yet. Mature 1.5 m,
 43k triangles; thicket 108k (on the optimisation list: segments could merge in far LODs).
