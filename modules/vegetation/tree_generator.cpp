@@ -14569,6 +14569,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						}
 						lods[level.error] = idx;
 					}
+					if (far_leaves && far_lod1) {
+						// A far mesh starts at the first thinned level, as its leaves do (8d).
+						_promote_lod1(b, lods);
+					}
 				} else if (crown_big_end < b.indices.size()) {
 					PackedInt32Array keep;
 					if (crown_big_end > 0) {
@@ -15893,7 +15897,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// variant when the field asks for it (request_near_mesh()).
 		const LeafKind leaf_kind = LEAF_FORMS[p_preset].kind;
 		// With far_lod1 every broadleaf splits: its far mesh starts at LOD 1 (trees.md 8d).
-		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && params[PARAM_NEEDLES] <= 0.5f &&
+		// Gorse's spines are needles but thin stochastically as leaves (trees.md 5x.2): it splits too.
+		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && (params[PARAM_NEEDLES] <= 0.5f || scrub_shrub(Preset(p_preset))) &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
 				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD);
 		if (near_split) {
