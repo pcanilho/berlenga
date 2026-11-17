@@ -24,7 +24,7 @@ struct RTVolumeParams {
 	vec4 world_max; // xyz: simulation units; w: 1 when a volume is present
 	vec4 block_size; // xyz: block size (simulation units); w: layer index
 	vec4 medium; // x: extinction per meter at density 1; y: albedo; z: HG g; w: density majorant
-	vec4 emission; // x: emission scale (radiance per heat ramp unit); y: 1 / temperature range; z: 1 when emissive; w: dense box count (0: the sparse atlas)
+	vec4 emission; // x: emission scale (radiance per heat ramp unit); y: 1 / temperature range; z: 1 when emissive, 2 when a proxy light carries its lighting (emission seen after a diffuse bounce is dropped); w: dense box count (0: the sparse atlas)
 	vec4 heat_ramp[8]; // rgb: emitted color along the temperature range
 	vec4 smoke_color; // rgb: scattering color
 };

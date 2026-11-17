@@ -189,6 +189,24 @@ public:
 	real_t get_wheel_soil_side_force(int p_wheel) const; // N, sidewall bulldozing against a side slide
 	real_t get_wheel_slip(int p_wheel) const;
 	bool is_wheel_on_soft_soil(int p_wheel) const;
+	// Mud on wheels and the belly (docs/ideas/mud.md, stage 3): sticky clay packs the tread (0 clean to 1 full, a
+	// slick's grip) and is flung off past a tread speed, washed in water; the chassis' underside, once in the mud,
+	// is held up by it (high-centring), dragged and ploughs a trough. N for the belly's forces.
+	void set_tyre_clogging(bool p_enabled);
+	bool is_tyre_clogging() const { return tyre_clogging; }
+	void set_belly_drag(bool p_enabled);
+	bool is_belly_drag() const { return belly_drag; }
+	real_t get_wheel_mud(int p_wheel) const;
+	real_t get_wheel_mud_shed(int p_wheel) const; // kg thrown off so far
+	real_t get_belly_drag() const;
+	real_t get_belly_support() const;
+	// Mud on the body (docs/ideas/mud.md, stage 3b): BaseMaterial3D's Mud layer, turned on in copies of the materials of
+	// the meshes under this node and fed from the wheels' clogging and spray and the belly's mud line.
+	void set_body_mud(bool p_enabled);
+	bool is_body_mud() const { return body_mud; }
+	real_t get_wheel_mud_spray(int p_wheel) const; // 0..1, the spray level round the wheel
+	real_t get_body_mud_line() const; // m above the chassis bottom
+	real_t get_body_mud_wetness() const; // 1 fresh, 0 dry
 	Vector3 get_actor_position() const;
 
 	PackedStringArray get_configuration_warnings() const override;
@@ -218,6 +236,12 @@ private:
 	real_t rear_anti_roll_stiffness = 0.0f;
 	real_t tire_force_point = 0.0f;
 	bool soft_soil = true;
+	bool tyre_clogging = true;
+	bool belly_drag = true;
+	bool body_mud = true;
+	void _belly_step(float p_delta);
+	void _body_mud_step(float p_delta);
+	void _body_mud_meshes();
 
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;

@@ -68,6 +68,33 @@
 				Instances posed by the last [method update].
 			</description>
 		</method>
+		<method name="get_storm_break_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Parts a storm has broken off so far.
+			</description>
+		</method>
+		<method name="get_storm_fall_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Fallen parts that hit hard enough to become Blast destructibles ([PhysXDestructible3D]) so far.
+			</description>
+		</method>
+		<method name="get_storm_load">
+			<return type="Dictionary" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="placement" type="Transform3D" />
+			<param index="2" name="seed" type="int" />
+			<description>
+				For tests: the storm load on [param mesh] at [param placement] in the current wind. Keys: [code]bone[/code] (nearest to breaking), [code]ratio[/code] (its moment over its strength), [code]root_ratio[/code] (overturning moment over anchorage), [code]radius[/code], [code]height[/code], [code]storm[/code] (the mesh has a storm kit).
+			</description>
+		</method>
+		<method name="get_storm_throw_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Trees a storm has thrown so far.
+			</description>
+		</method>
 		<method name="get_target_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -151,6 +178,21 @@
 		<member name="stiffness_scale" type="float" setter="set_stiffness_scale" getter="get_stiffness_scale" default="1.0">
 			Scales every bone's stiffness (and so its frequency, by the square root).
 		</member>
+		<member name="storm_anchorage" type="float" setter="set_storm_anchorage" getter="get_storm_anchorage" default="1.0">
+			Scales every tree's root anchorage: below 1 for wet or shallow soil, above for deep, dry soil.
+		</member>
+		<member name="storm_enabled" type="bool" setter="set_storm_enabled" getter="is_storm_enabled" default="true">
+			Breaks and throws trees with a storm kit ([member TreeGenerator.storm_kit]) when the wind loads them past their wood's or roots' strength. Broken parts fall as rigid bodies, and on their first hard hit become [PhysXDestructible3D]s that break where they land and under their own weight. See docs/ideas/trees.md, section 5t.
+		</member>
+		<member name="storm_min_radius" type="float" setter="set_storm_min_radius" getter="get_storm_min_radius" default="0.03">
+			Thinnest wood (m) a storm breaks.
+		</member>
+		<member name="storm_min_wind" type="float" setter="set_storm_min_wind" getter="get_storm_min_wind" default="12.0">
+			Mean wind (m/s) below which storm loads are not checked (gusts reach 1.6 times the mean).
+		</member>
+		<member name="storm_strength" type="float" setter="set_storm_strength" getter="get_storm_strength" default="1.0">
+			Scales the strength of every tree's wood.
+		</member>
 		<member name="target" type="NodePath" setter="set_target" getter="get_target" default="NodePath(&quot;..&quot;)">
 			Node searched (with its children and internal children) for MultiMeshInstance3Ds of rigged trees.
 		</member>
@@ -176,4 +218,15 @@
 			Instances closer than this to the camera (m) move; further ones hold their rest pose. With [member lod_enabled], far trees are posed only as often and with only the limbs their size on screen can show, so a wide range costs little.
 		</member>
 	</members>
+	<signals>
+		<signal name="storm_damage">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="uprooted" type="bool" />
+			<param index="3" name="pit" type="Dictionary" />
+			<description>
+				A storm broke a part at [param position] (world) of wood [param radius] (m), or threw a tree ([param uprooted]). For a throw, [param pit] has the root plate's pit: [code]center[/code] (world), [code]radius[/code] and [code]depth[/code] (m), for terrain and plants to follow.
+			</description>
+		</signal>
+	</signals>
 </class>

@@ -18,7 +18,13 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
   *Smoke shadows: the plume throws a soft dark shadow across the floor toward the camera.*
 
 - **Smoke on the ground** (PhysXFlow3D `terrain_floor`, `smoke_buoyancy`): Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.
-- **Particle fluid surface** (`PhysXParticleFluid3D.render_mode`, `foam_enabled`): particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray, foam and air bubbles rise where the water is agitated.
+- **Fire light and embers** (`PhysXFlow3D.fire_light`, `embers`): a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.
+
+  ![A campfire in a stone ring at night, seen from above, lighting the ground and stones](media/physx-campfire.jpg)
+
+  *Fire light and embers: flame tongues light the stone ring and the ground around it, and small embers streak up from the fire.*
+
+- **Particle fluid surface** (`PhysXParticleFluid3D.render_mode`, `foam_enabled`): particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray falls as clear drops, and foam and bubbles form only where water strikes water, so a smooth pour stays clear.
 
   ![Water pouring from a wall pipe into a wooden bucket, raster](media/physx-fluid-pour.jpg)
 

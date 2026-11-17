@@ -37,6 +37,8 @@
 #include "tree_generator.h"
 #include "tree_wind_3d.h"
 #include "vegetation_field_3d.h"
+#include "vegetation_mist_3d.h"
+#include "vegetation_pollen_3d.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
@@ -48,6 +50,8 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(PlantSpecies);
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
+	GDREGISTER_CLASS(VegetationMist3D);
+	GDREGISTER_CLASS(VegetationPollen3D);
 	GDREGISTER_CLASS(GrassField3D);
 	GDREGISTER_CLASS(TreeGenerator);
 	GDREGISTER_CLASS(TreeWind3D);

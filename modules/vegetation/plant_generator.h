@@ -38,6 +38,8 @@
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
+class PlantSpecies;
+
 // Small plants for ground cover (docs/ideas/plant-generator.md), after Prusinkiewicz et al.,
 // "The use of positional information in the modeling of plants" (2001): organs placed along
 // axes by phyllotaxis, their size, angle and bend functions of their position; leaves, petals
@@ -134,6 +136,24 @@ public:
 		PRESET_ALPINE_SEDGE,
 		PRESET_DWARF_WILLOW,
 		PRESET_ALPINE_TOADFLAX,
+		// Salt marsh and shingle plants (plant_saltmarsh.cpp).
+		PRESET_GLASSWORT,
+		PRESET_CORD_GRASS,
+		PRESET_SEA_PURSLANE,
+		PRESET_SEA_ASTER,
+		PRESET_SEA_LAVENDER,
+		PRESET_SEA_KALE,
+		PRESET_SEA_CAMPION,
+		PRESET_HORNED_POPPY,
+		// Atlantic heath dwarf shrubs (plant_heath.cpp).
+		PRESET_BELL_HEATHER,
+		PRESET_CROSS_LEAVED_HEATH,
+		PRESET_CROWBERRY,
+		// Mediterranean scrub dwarf shrubs (plant_scrub.cpp).
+		PRESET_ROSEMARY,
+		PRESET_FRENCH_LAVENDER,
+		PRESET_THYME,
+		PRESET_SAGE_ROCKROSE,
 		PRESET_MAX,
 	};
 
@@ -310,6 +330,24 @@ private:
 	void _build_alpine_sedge();
 	void _build_dwarf_willow();
 	void _build_alpine_toadflax();
+	// Salt marsh and shingle plants (plant_saltmarsh.cpp).
+	void _build_glasswort();
+	void _build_cord_grass();
+	void _build_sea_purslane();
+	void _build_sea_aster();
+	void _build_sea_lavender();
+	void _build_sea_kale();
+	void _build_sea_campion();
+	void _build_horned_poppy();
+	// Atlantic heath (plant_heath.cpp).
+	void _build_bell_heather();
+	void _build_cross_leaved_heath();
+	void _build_crowberry();
+	// Mediterranean scrub (plant_scrub.cpp).
+	void _build_rosemary();
+	void _build_french_lavender();
+	void _build_thyme();
+	void _build_sage_rockrose();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -443,6 +481,13 @@ public:
 	void set_season(const Dictionary &p_season);
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
+	// Wind pollination (docs/ideas/vegetation.md, "Ground mist and pollen"): how much pollen a brushed
+	// plant of the preset sheds at full flower (0 for insect-pollinated plants), and the share of it
+	// shedding on the season's day.
+	static float get_pollen_amount(Preset p_preset);
+	static float get_pollen_release(Preset p_preset, const Dictionary &p_season);
+	// Sets the meta plant_preset, and pollen for wind-pollinated presets, on a species a make_* returns.
+	static void tag_species(const Ref<Resource> &p_species, Preset p_preset);
 	static float get_presence(Preset p_preset, const Dictionary &p_season);
 	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
 	static bool is_mushroom(Preset p_preset) { return p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS; }
@@ -513,6 +558,32 @@ public:
 		ALPINE_MAX,
 	};
 	static TypedArray<Resource> make_alpine(AlpineStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Salt marsh by height in the tidal frame, and the shingle backshore above it (plant_saltmarsh.cpp).
+	enum SaltmarshStand {
+		SALTMARSH_PIONEER, // Bare mud about mean high water neaps: glasswort and cord-grass.
+		SALTMARSH_MID, // Low to mid marsh: sea purslane, sea aster, sea lavender.
+		SALTMARSH_HIGH, // High marsh: thrift, sea lavender, sea rush, a fine sward.
+		SALTMARSH_SHINGLE, // The backshore above the tides: sea kale, sea campion, horned-poppy.
+		SALTMARSH_MAX,
+	};
+	static TypedArray<Resource> make_saltmarsh(SaltmarshStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Atlantic heath on acid, oceanic, open ground (plant_heath.cpp).
+	enum HeathStand {
+		HEATH_DRY, // Free-draining ground: heather, bell heather, crowberry, wiry grasses.
+		HEATH_WET, // Where water gathers, short of bog: cross-leaved heath, heather, cottongrass, sphagnum.
+		HEATH_MARITIME, // Exposed cliff tops: wind-pruned heather and bell heather, thrift, crowberry.
+		HEATH_MAX,
+	};
+	static TypedArray<Resource> make_heath(HeathStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Mediterranean scrub on summer-dry, mild ground (plant_scrub.cpp).
+	enum ScrubStand {
+		SCRUB_GARRIGUE, // Thin soil and rock: open rosemary, thyme and rockrose with bare ground between.
+		SCRUB_MAQUIS, // Deeper soil: closed rockrose and lavender under the tall shrubs.
+		SCRUB_MAX,
+	};
+	static TypedArray<Resource> make_scrub(ScrubStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// The scrub's climate and soil rules on any species (TreeGenerator's woody scrub shrubs).
+	static void apply_scrub_rules(const Ref<PlantSpecies> &p_species, ScrubStand p_stand);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -523,3 +594,6 @@ VARIANT_ENUM_CAST(PlantGenerator::BankStand);
 VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
+VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
+VARIANT_ENUM_CAST(PlantGenerator::HeathStand);
+VARIANT_ENUM_CAST(PlantGenerator::ScrubStand);

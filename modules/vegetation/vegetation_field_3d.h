@@ -210,6 +210,8 @@ class VegetationField3D : public Node3D {
 		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
 		VegetationHoles holes; // Openings in the ground (cave mouths): no plant there (a copy).
 		const TerrainGenerator3D *dunes = nullptr; // The map's geology source when it has coastal dunes (PlantSpecies.RULE_DUNE); read only.
+		const TerrainGenerator3D *coast = nullptr; // The map's geology source when it has a sea (PlantSpecies.RULE_TIDE_HEIGHT and the other coast rules); read only.
+		float sea_y = 0.0f; // Its sea's surface, world y.
 	};
 	struct FarAdd {
 		Vector2 xz;

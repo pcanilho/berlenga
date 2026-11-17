@@ -30,6 +30,12 @@ extends Node3D
 #                         in stiff mud keeps its walls and one in slurry closes (volume kept); with the PhysX
 #                         build a 4x4 sinks to its axles and bogs in slurry and crawls through stiff mud
 #   --near=0            the near field off (A/B for any view)
+#   --test=clog         mud on wheels and the belly (mud stage 3): sticky clay, a clogging tread grips less and is
+#                         flung off when spun fast on dry ground; a low car high-centres in slurry and ploughs a trough
+#   --view=bodymud      mud on a car's body (mud stage 3b): a dressed 4x4 crawls through stiff clay, then is floored
+#                         so its tyres throw the clay up the arches; a close frame on the rear wheel and side.
+#                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear); --spray: the
+#                         frame mid-throw, the clods in the air
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -76,6 +82,7 @@ var runoff_test := false
 var drift_test := false
 var near_test := false
 var mud_test := false
+var clog_test := false
 var puddle_test := false
 var crack_test := false
 var near_on := true
@@ -113,6 +120,7 @@ func _ready() -> void:
 		elif a == "--test=drift": drift_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
+		elif a == "--test=clog": clog_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--near=0": near_on = false
@@ -137,6 +145,8 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if clog_test:
+		await _run_clog_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -200,6 +210,9 @@ func _ready() -> void:
 		return
 	if view == "roost":
 		await _build_roost()
+		return
+	if view == "bodymud":
+		await _build_bodymud()
 		return
 	if view == "ripples":
 		await _build_ripples()
@@ -805,6 +818,207 @@ func _run_mud_tests() -> void:
 	# compaction resistance (motion resistance about 0.16 of the load): a crawl, as stiff mud is in MudRunner.
 	_check("it crawls through stiff mud, sinking a fraction of slurry's depth", res["stiff"][0] > 0.5 and res["stiff"][0] > 4.0 * res["slurry"][0] and res["stiff"][1] < 0.25 * res["slurry"][1],
 			"%.1f m, sinkage %.1f cm; firm %.1f m" % [res["stiff"][0], res["stiff"][1] * 100.0, res["firm"][0]])
+
+
+# Mud on wheels and the belly (docs/ideas/mud.md, stage 3).
+func _run_clog_tests() -> void:
+	await _soil_scene("soil")
+	var o := Vector3(0.3, 0, 0.2)
+	await _paint_mud(0.8, STIFF_MUD)
+	var sticky: Dictionary = surface.get_wheel_soil(o, 3000.0, 0.35, 0.26)
+	surface.moisture = 0.1
+	surface.settle(5.0, 0.5)
+	var dry: Dictionary = surface.get_wheel_soil(o, 3000.0, 0.35, 0.26)
+	_check("stiff wet clay is sticky, dry soil is not (Fountaine 1954)", sticky["stickiness"] > 0.7 and dry["stickiness"] < 0.1,
+			"stickiness %.2f (ca %.1f kPa) in stiff mud, %.2f dry" % [sticky["stickiness"], sticky["adhesion"], dry["stickiness"]])
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		print("(no PhysX: vehicle checks skipped)")
+		return
+	# A 4x4 at half throttle for 4 s from rest in stiff mud (its wheels slipping, not racing), with and without
+	# clogging.
+	var res := {}
+	for k in ["clean", "clogging"]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, STIFF_MUD)
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		car.tyre_clogging = k == "clogging"
+		car.belly_drag = false
+		car.body_mud = k == "clogging"
+		_dress_car(car)
+		surface.follow_target = surface.get_path_to(car)
+		var r: Array = await _drive(car, 4.0, 0.5)
+		var fill := 0.0
+		var traction := 0.0
+		for w in 4:
+			fill += car.get_wheel_mud(w) / 4.0
+			traction += car.get_wheel_soil_traction(w) / 4.0
+		res[k] = [r[0], r[2], fill, traction, car, ((car.get_node("Body") as MeshInstance3D).get_active_material(0) as BaseMaterial3D).mud_enabled]
+		print("  %s: %.1f m in 4 s, slip %.2f, tread %.0f%% full, traction %.0f N a wheel" % [k, r[0], r[2], fill * 100.0, traction])
+	_check("spinning in sticky clay packs the tread", res["clogging"][2] > 0.3 and res["clean"][2] == 0.0, "%.0f%% full" % (res["clogging"][2] * 100.0))
+	_check("a packed tread grips as a slick: it slips more for no more ground", res["clogging"][1] > 1.15 * res["clean"][1] and res["clogging"][0] <= res["clean"][0] + 0.05,
+			"slip %.2f against %.2f clean; %.2f m against %.2f m" % [res["clogging"][1], res["clean"][1], res["clogging"][0], res["clean"][0]])
+	# Out onto dry ground, floored: the tread clears (scoured, and flung off past ~7 m/s of tread speed).
+	var car: PhysXVehicle3D = res["clogging"][4]
+	var before := 0.0
+	for w in 4:
+		before += car.get_wheel_mud(w) / 4.0
+	surface.moisture = 0.1
+	surface.settle(2.0, 0.5)
+	# The clay thrown off flies as mud clods (stage 4): a grains node routes it to its mud child.
+	var grains := _make_grains(car)
+	var shed0 := 0.0
+	for w in 4:
+		shed0 += car.get_wheel_mud_shed(w)
+	await _drive(car, 4.0, 1.0)
+	var after := 0.0
+	var shed := 0.0
+	for w in 4:
+		after += car.get_wheel_mud(w) / 4.0
+		shed += car.get_wheel_mud_shed(w)
+	_check("on dry ground the tread clears, its clay thrown off", after < 0.3 * before and shed > shed0,
+			"%.0f%% to %.0f%% full; %.1f kg thrown" % [before * 100.0, after * 100.0, shed - shed0])
+	for i in 120:
+		await get_tree().physics_frame
+	var mud_grains: PhysXGroundGrains3D = grains.get_mud_grains()
+	var md := mud_grains.get_dug_volume() if mud_grains else 0.0
+	var mk := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
+	_check("the thrown clay flies as mud clods and lands, volume kept", md > 0.5 * (shed - shed0) / 1700.0 and absf(mk - md) < 0.05 * md + 1e-5,
+			"%.1f l of clay thrown as clods, %.1f l in the air or landed (%.1f l of the dry ground thrown as sand)" % [md * 1000.0, mk * 1000.0, grains.get_dug_volume() * 1000.0])
+	# The clay thrown off lands up the arches (stage 3b): the body's material carries the Mud layer, fed by the car.
+	var spray := 0.0
+	for w in 4:
+		spray += car.get_wheel_mud_spray(w) / 4.0
+	var body_mi: MeshInstance3D = car.get_node("Body")
+	var body_mat := body_mi.get_active_material(0) as BaseMaterial3D
+	var fed: Vector4 = body_mi.get_instance_shader_parameter("mud_spray")
+	_check("the thrown clay muds the arches, the body's material shows it", spray > 0.3 and body_mat.mud_enabled and fed.x + fed.y + fed.z + fed.w > 1.0 and not res["clean"][5] and car.get_body_mud_wetness() > 0.9,
+			"spray %.2f a wheel, uniform %s, wetness %.2f" % [spray, str(fed), car.get_body_mud_wetness()])
+	# A low car (15 cm under its belly) in 80 cm of slurry at half throttle: with belly drag it high-centres.
+	var belly := {}
+	for k in ["off", "on"]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, 1.0)
+		var low := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		(low.get_child(0) as CollisionShape3D).position = Vector3(0, 0.1, 0)
+		low.belly_drag = k == "on"
+		low.tyre_clogging = false
+		surface.follow_target = surface.get_path_to(low)
+		var r: Array = await _drive(low, 4.0, 0.5)
+		var under := low.global_position
+		belly[k] = [r[0], low.get_belly_support(), low.get_belly_drag(), surface.get_ground_height_at(under) - surface.get_surface_height_at(under), low.get_body_mud_line()]
+		print("  belly %s: %.2f m in 4 s, sinkage %.1f cm; belly holds %.0f N, drags %.0f N; %.1f cm trough under it" % [k, r[0], r[1] * 100.0, belly[k][1], belly[k][2], belly[k][3] * 100.0])
+	_check("a low car's belly meets the slurry: held up and dragged", belly["on"][1] > 1000.0 and belly["on"][2] > 0.0 and belly["off"][1] == 0.0,
+			"%.0f N up, %.0f N drag" % [belly["on"][1], belly["on"][2]])
+	_check("the slurry the car sits in marks the body: a mud line round the belly", belly["on"][4] > 0.05 and belly["on"][4] < 0.4, "%.0f cm above the chassis bottom" % (belly["on"][4] * 100.0))
+	_check("the belly ploughs a trough", belly["on"][3] > 0.03 and belly["on"][3] > belly["off"][3] + 0.05, "%.1f cm (%.1f cm without)" % [belly["on"][3] * 100.0, belly["off"][3] * 100.0])
+
+
+# Meshes for a bench car (mud stage 3b): a painted body over the chassis box and a cab, tyres on the wheels.
+func _dress_car(car: PhysXVehicle3D) -> void:
+	var paint := StandardMaterial3D.new()
+	paint.albedo_color = Color(0.16, 0.3, 0.22)
+	paint.roughness = 0.35
+	var body := MeshInstance3D.new()
+	body.name = "Body"
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.8, 0.6, 4.0)
+	body.mesh = bm
+	body.material_override = paint
+	body.position = (car.get_child(0) as CollisionShape3D).position
+	car.add_child(body)
+	var cab := MeshInstance3D.new()
+	var cm := BoxMesh.new()
+	cm.size = Vector3(1.6, 0.6, 1.8)
+	cab.mesh = cm
+	cab.material_override = paint
+	cab.position = body.position + Vector3(0, 0.6, -0.3)
+	car.add_child(cab)
+	var rubber := StandardMaterial3D.new()
+	rubber.albedo_color = Color(0.05, 0.05, 0.05)
+	rubber.roughness = 0.85
+	for c in car.get_children():
+		if c is PhysXVehicleWheel3D:
+			var t := MeshInstance3D.new()
+			var tm := CylinderMesh.new()
+			tm.top_radius = c.radius
+			tm.bottom_radius = c.radius
+			tm.height = 2.0 * c.half_width
+			tm.radial_segments = 48
+			t.mesh = tm
+			t.material_override = rubber
+			t.rotation_degrees = Vector3(0, 0, 90)
+			c.add_child(t)
+
+
+# Mud stage 3b: a dressed 4x4 crawls 5 s through stiff clay at half throttle (its treads pack), then is floored for
+# 3 s (they throw the clay up the arches), then stands; a close frame from its right rear.
+func _build_bodymud() -> void:
+	kind = "soil"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, 120.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 20.0
+	add_child(sun)
+	await _paint_mud(0.8, STIFF_MUD)
+	var car := _make_car(1500.0, 700.0, Vector3(0.0, _undisturbed(Vector3.ZERO) + 0.9, 0.0))
+	_dress_car(car)
+	surface.follow_target = surface.get_path_to(car)
+	var grains := _make_grains(car)
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	for i in 30:
+		await get_tree().physics_frame
+	car.throttle = 0.5
+	for i in 300:
+		await get_tree().physics_frame
+	car.throttle = 1.0
+	# --spray: the frame mid-throw (the clods in the air), else after it lands
+	for i in (120 if "--spray" in OS.get_cmdline_user_args() else 180):
+		await get_tree().physics_frame
+	if not "--spray" in OS.get_cmdline_user_args():
+		car.throttle = 0.0
+		car.brake = 1.0
+		for i in 60:
+			await get_tree().physics_frame
+	var mg: PhysXGroundGrains3D = grains.get_mud_grains()
+	if mg:
+		print("bodymud: %.1f l of clay thrown, %d clods in the air" % [mg.get_dug_volume() * 1000.0, mg.get_airborne_count()])
+	var spray := []
+	var fill := []
+	for w in 4:
+		spray.append(snappedf(car.get_wheel_mud_spray(w), 0.01))
+		fill.append(snappedf(car.get_wheel_mud(w), 0.01))
+	print("bodymud: tread fill %s, spray %s, line %.2f m, wetness %.2f" % [str(fill), str(spray), car.get_body_mud_line(), car.get_body_mud_wetness()])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([2.4, 0.9, -3.2, 0.6, 0.35, -1.1])
+	var xf := car.global_transform
+	cam.position = xf * Vector3(c[0], c[1], c[2])
+	cam.look_at(xf * Vector3(c[3], c[4], c[5]))
+	cam.fov = 45.0
+	get_window().size = full
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
 
 
 # Bekker's rigid wheel, written out here apart from the engine's: z0 = (3 W / ((3 - n) b k sqrt(D)))^(2 / (2n + 1)).

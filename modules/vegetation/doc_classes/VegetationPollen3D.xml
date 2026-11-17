@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VegetationPollen3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Pollen puffs from wind-pollinated plants brushed by bodies, simulated with NVIDIA Flow.
+	</brief_description>
+	<description>
+		Grasses, sedges, rushes, reedmace, nettles and docks hold ripe pollen in dangling anthers, and a jolt shakes it out. This node watches the bodies in [member trample_group] (the movers that also press [GrassField3D]'s grass; a [code]trample_radius[/code] meta gives a body's radius, else 0.4 m). When one moves faster than [member min_speed] through plants of [member vegetation_field] that shed pollen, the plants it brushes puff pollen into a [code]PhysXFlow3D[/code] of its own: a pale cloud flung along the push, carried by the ground wind, curling in the body's wake and fading as it spreads.
+		Species shed pollen when they carry the meta [code]pollen[/code] (the amount) and [code]plant_preset[/code]; the [PlantGenerator] [code]make_*[/code] sets add both (see [method PlantGenerator.get_pollen_amount]). They shed only in flower ([method PlantGenerator.get_pollen_release] for [member season], or [method WeatherMap3D.get_season] when [member season] is empty), not when wet, and a shaken plant refills over [member recharge_time].
+		Needs an engine built with [code]flow_sdk=[/code] and the Flow libraries beside it; without them this node shows a warning and does nothing.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_active_puffs" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many puff emitters are running now.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="Node3D" />
+			<description>
+				The internal [code]PhysXFlow3D[/code], or [code]null[/code] without Flow.
+			</description>
+		</method>
+		<method name="get_pollen_plant_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many placed plants can shed pollen.
+			</description>
+		</method>
+		<method name="get_puffs_fired" qualifiers="const">
+			<return type="int" />
+			<description>
+				Puffs fired since the node started.
+			</description>
+		</method>
+		<method name="is_flow_available" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether this engine has Flow ([code]PhysXFlow3D[/code]).
+			</description>
+		</method>
+		<method name="reindex">
+			<return type="void" />
+			<description>
+				Reads the field's placements again on the next step. It does so by itself when the field places a different number of plants.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Off: no new puffs.
+		</member>
+		<member name="max_puffs" type="int" setter="set_max_puffs" getter="get_max_puffs" default="12">
+			Emitters in the pool. Each moving body fires one puff a step for all the plants it brushes.
+		</member>
+		<member name="min_speed" type="float" setter="set_min_speed" getter="get_min_speed" default="0.4">
+			Bodies slower than this (m/s) do not shake the plants.
+		</member>
+		<member name="pollen_color" type="Color" setter="set_pollen_color" getter="get_pollen_color" default="Color(0.93, 0.84, 0.5, 1)">
+			Colour of the pollen cloud.
+		</member>
+		<member name="recharge_time" type="float" setter="set_recharge_time" getter="get_recharge_time" default="20.0">
+			Seconds for a shaken plant's anthers to hold their full pollen again.
+		</member>
+		<member name="season" type="Dictionary" setter="set_season" getter="get_season" default="{}">
+			A season state as [method WeatherMap3D.get_season] returns it. Empty: read from [member weather_map].
+		</member>
+		<member name="strength" type="float" setter="set_strength" getter="get_strength" default="1.0">
+			Multiplier on the pollen put in.
+		</member>
+		<member name="trample_group" type="StringName" setter="set_trample_group" getter="get_trample_group" default="&amp;&quot;grass_trample&quot;">
+			The group of the bodies that brush the plants.
+		</member>
+		<member name="vegetation_field" type="NodePath" setter="set_vegetation_field" getter="get_vegetation_field" default="NodePath(&quot;&quot;)">
+			The [VegetationField3D] whose placed plants shed pollen.
+		</member>
+		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
+			The [WeatherMap3D] for the season, the ground wind and wet plants.
+		</member>
+	</members>
+</class>

@@ -347,6 +347,9 @@
 		<member name="shed_ratio" type="float" setter="set_param" getter="get_param" default="0.056">
 			Branches whose light per internode falls below this share of the tree's are shed.
 		</member>
+		<member name="storm_kit" type="bool" setter="set_storm_kit" getter="get_storm_kit" default="true">
+			With [member rigged], a standing living tree's mesh carries what [TreeWind3D] needs to break it in a storm or throw it by its roots: the wood's strength and the roots' anchorage for the species (meta [code]tree_storm[/code]), a fracture cap ([code]tree_fracture_cap[/code]) and the root plate it would lift ([code]tree_storm_plate[/code]), with unskinned twins of the surface materials ([code]tree_static_materials[/code]).
+		</member>
 		<member name="stem_spread" type="float" setter="set_param" getter="get_param" default="0.0">
 			Lean of the stems of a multi-stemmed shrub, in degrees.
 		</member>

@@ -303,6 +303,8 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	{
 		const TerrainGenerator3D *gen = VegetationHoles::source_of(map);
 		r_setup.dunes = gen && gen->get_dune_rect().has_area() ? gen : nullptr;
+		r_setup.coast = gen && gen->has_sea_result() ? gen : nullptr;
+		r_setup.sea_y = gen ? float(gen->get_sea_level() + gen->get_height_offset()) : 0.0f;
 	}
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
@@ -824,6 +826,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool conifer_rule = sp->uses_conifer();
 		const bool litter_rule = sp->uses_litter();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
+		const bool coast_rule = sp->uses_coast();
+		if (coast_rule && !p_setup.coast) {
+			continue; // Coast plants need a sea to measure from.
+		}
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = sp->get_visibility_range();
 		const bool is_log = ps.deadwood_reach > 0.0f;
@@ -912,6 +918,18 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector3 dp(xz.x, 0.0f, xz.y);
 						const float dune = p_setup.dunes->get_dune_height(dp) >= DUNE_SAND_MIN ? float(p_setup.dunes->get_dune_stability(dp)) : -1.0f;
 						suit *= sp->rule_weight(PlantSpecies::RULE_DUNE, dune);
+					}
+					if (coast_rule && suit > 0.0f) {
+						// The tidal frame (salt marsh and shingle): height over the generator's sea, the
+						// coast's exposure to waves and its beach mask, all from the geology source.
+						const Vector3 cp(xz.x, 0.0f, xz.y);
+						suit *= sp->rule_weight(PlantSpecies::RULE_TIDE_HEIGHT, float(p_setup.coast->get_height(cp)) - p_setup.sea_y);
+						if (suit > 0.0f) {
+							suit *= sp->rule_weight(PlantSpecies::RULE_COAST_EXPOSURE, float(p_setup.coast->get_coast_exposure_at(cp)));
+						}
+						if (suit > 0.0f) {
+							suit *= sp->rule_weight(PlantSpecies::RULE_BEACH, float(p_setup.coast->get_beach_at(cp)));
+						}
 					}
 					if (litter_rule && suit > 0.0f) {
 						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + p_setup.litter_reach, CROWN_CELL, xz, p_setup.litter_skew);

@@ -34,7 +34,7 @@ struct RTLightPacked {
 	uint orientation_xy; // snorm16 quaternion x, y.
 	uint orientation_zw; // snorm16 quaternion z, w.
 	uint projector_texture; // index : 24, unused : 8.
-	uint reserved0; // Directional projector: float corner u, v (relative to rt_origin), fp16 size u, v.
+	uint reserved0; // Directional projector: float corner u, v (relative to rt_origin), fp16 size u, v. Positional: reserved0 = float volumetric fog energy - 1.
 	uint reserved1;
 	uint reserved2;
 };
@@ -57,6 +57,7 @@ struct RTLightData {
 	vec4 orientation; // Unit rotation quaternion; the spot cone points along local -Z. Directional: only with a projector.
 	vec2 projector_corner; // Directional projector rect in the light's plane (along +X and -Y), metres.
 	vec2 projector_size;
+	float volume_energy; // Light3D.light_volumetric_fog_energy: how strongly it lights participating media (positional lights).
 };
 
 // Light buffer SSBO (binding provided by the including shader via RT_LIGHT_BUFFER_BINDING).
@@ -402,6 +403,8 @@ RTLightData lights_get(uint idx) {
 	light.orientation = q * inversesqrt(max(dot(q, q), 1e-8));
 	light.projector_corner = vec2(uintBitsToFloat(p.reserved0), uintBitsToFloat(p.reserved1));
 	light.projector_size = max(unpackHalf2x16(p.reserved2), vec2(0.01));
+	// Stored minus one, so a light written without it (all zero bits) lights media fully.
+	light.volume_energy = light.type == RT_LIGHT_TYPE_DIRECTIONAL ? 1.0 : max(1.0 + uintBitsToFloat(p.reserved0), 0.0);
 	return light;
 }
 

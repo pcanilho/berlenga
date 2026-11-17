@@ -61,6 +61,9 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_LITTER] = Vector2(0.0f, 1.0f);
 	ranges[RULE_DUNE] = Vector2(-1.0f, 1.0f);
 	ranges[RULE_SEASON_TEMPERATURE] = Vector2(-100.0f, 100.0f);
+	ranges[RULE_TIDE_HEIGHT] = Vector2(-10000.0f, 10000.0f);
+	ranges[RULE_COAST_EXPOSURE] = Vector2(0.0f, 1.0f);
+	ranges[RULE_BEACH] = Vector2(0.0f, 1.0f);
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -472,6 +475,12 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "dune_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_DUNE);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "season_temperature_range", PROPERTY_HINT_NONE, "suffix:°C"), "set_rule_range", "get_rule_range", RULE_SEASON_TEMPERATURE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "season_temperature_fade", PROPERTY_HINT_RANGE, "0,10,0.1,suffix:°C"), "set_rule_fade", "get_rule_fade", RULE_SEASON_TEMPERATURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "tide_height_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_TIDE_HEIGHT);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "tide_height_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_TIDE_HEIGHT);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "coast_exposure_range"), "set_rule_range", "get_rule_range", RULE_COAST_EXPOSURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "coast_exposure_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_COAST_EXPOSURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "beach_range"), "set_rule_range", "get_rule_range", RULE_BEACH);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "beach_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_BEACH);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -493,6 +502,9 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_LITTER);
 	BIND_ENUM_CONSTANT(RULE_DUNE);
 	BIND_ENUM_CONSTANT(RULE_SEASON_TEMPERATURE);
+	BIND_ENUM_CONSTANT(RULE_TIDE_HEIGHT);
+	BIND_ENUM_CONSTANT(RULE_COAST_EXPOSURE);
+	BIND_ENUM_CONSTANT(RULE_BEACH);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

@@ -40,6 +40,8 @@
 #include "scene/3d/node_3d.h"
 #include "scene/resources/gradient.h"
 
+class GPUParticles3D;
+class OmniLight3D;
 class RenderingDevice;
 class PhysXFlowRenderEffect;
 
@@ -127,6 +129,15 @@ private:
 	// sample_temperature() and stats:
 	// every READBACK_INTERVAL steps (a full field each time).
 	bool cpu_readback = false;
+	// Fire (see _update_fire): a raster light at the flames and glowing embers.
+	bool fire_light = true;
+	float fire_light_energy = 1.0f;
+	bool embers = true;
+	float ember_rate = 40.0f;
+	OmniLight3D *fire_light_node = nullptr;
+	GPUParticles3D *ember_node = nullptr;
+	double fire_clock = 0.0;
+	void _update_fire(double p_delta);
 	static constexpr int READBACK_INTERVAL = 4;
 	uint64_t step_count = 0;
 	// Flow's GPU work -- making the grid, each step (simulate + flush +
@@ -213,6 +224,7 @@ private:
 	float traced_extinction = 4.0f;
 	float traced_anisotropy = 0.4f;
 	float traced_emission = 0.0f;
+	bool traced_proxy_light = false; // the fire light is on: it carries the glow's lighting under the path tracer
 	float traced_temperature_range = 2.0f;
 	bool traced_this_frame = false; // render thread only
 	// The sun the gas shadows the scene from (its light RID and the world direction toward it).
@@ -296,6 +308,14 @@ public:
 	Ref<Gradient> get_heat_ramp() const { return heat_ramp; }
 	void set_temperature_range(float p_v) { temperature_range = MAX(p_v, 0.001f); }
 	float get_temperature_range() const { return temperature_range; }
+	void set_fire_light(bool p_v) { fire_light = p_v; }
+	bool is_fire_light() const { return fire_light; }
+	void set_fire_light_energy(float p_v) { fire_light_energy = MAX(p_v, 0.0f); }
+	float get_fire_light_energy() const { return fire_light_energy; }
+	void set_embers(bool p_v) { embers = p_v; }
+	bool is_embers() const { return embers; }
+	void set_ember_rate(float p_v) { ember_rate = MAX(p_v, 0.0f); }
+	float get_ember_rate() const { return ember_rate; }
 	void set_emission_strength(float p_v) { emission_strength = MAX(p_v, 0.0f); }
 	float get_emission_strength() const { return emission_strength; }
 	void set_shadow_steps(int p_v) { shadow_steps = CLAMP(p_v, 0, 128); }

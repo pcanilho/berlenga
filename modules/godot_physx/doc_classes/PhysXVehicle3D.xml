@@ -75,6 +75,30 @@
 				The chassis's world-space angular velocity, in radians per second.
 			</description>
 		</method>
+		<method name="get_belly_drag" qualifiers="const">
+			<return type="float" />
+			<description>
+				The drag the ground puts on the chassis underside where it rides in the soil (shear and bulldozing of the soil ahead), in newtons. [code]0[/code] while the belly is clear. See [member belly_drag].
+			</description>
+		</method>
+		<method name="get_belly_support" qualifiers="const">
+			<return type="float" />
+			<description>
+				The load the ground carries on the chassis underside, in newtons: weight taken off the wheels once the car is high-centred. See [member belly_drag].
+			</description>
+		</method>
+		<method name="get_body_mud_line" qualifiers="const">
+			<return type="float" />
+			<description>
+				How high the mud reaches on the body, in metres above the chassis box's underside: the deepest the belly has sat in mud. See [member body_mud].
+			</description>
+		</method>
+		<method name="get_body_mud_wetness" qualifiers="const">
+			<return type="float" />
+			<description>
+				How wet the body's mud is, [code]1[/code] fresh to [code]0[/code] dried to a crust (over about five minutes). See [member body_mud].
+			</description>
+		</method>
 		<method name="get_collision_exceptions" qualifiers="const">
 			<return type="Node[]" />
 			<description>
@@ -128,6 +152,27 @@
 			<param index="0" name="wheel" type="int" />
 			<description>
 				How compressed wheel [param wheel]'s suspension is right now, from [code]0[/code] (fully extended / max droop) to that wheel's own [member PhysXVehicleWheel3D.suspension_travel] (fully compressed / bottomed out). [param wheel] is the child index among this node's [PhysXVehicleWheel3D] children, in the order they were added -- not a fixed front-left/front-right/rear-left/rear-right order. Useful for tuning [member PhysXVehicleWheel3D.suspension_stiffness]: resting jounce well under half of [member PhysXVehicleWheel3D.suspension_travel] leaves real margin before the suspension bottoms out under braking, cornering, or a bump.
+			</description>
+		</method>
+		<method name="get_wheel_mud" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				How full wheel [param wheel]'s tread is of packed mud, [code]0[/code] (clean) to [code]1[/code] (a slick of clay). Wheel index as in [method get_wheel_jounce]. See [member tyre_clogging].
+			</description>
+		</method>
+		<method name="get_wheel_mud_shed" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The mud wheel [param wheel] has thrown or washed off its tread so far, in kilograms. Useful to drive spray and clods. See [member tyre_clogging].
+			</description>
+		</method>
+		<method name="get_wheel_mud_spray" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				How much mud wheel [param wheel] has thrown up its arch and along the body, [code]0[/code] (clean) to [code]1[/code] (caked). Standing water washes it off. See [member body_mud].
 			</description>
 		</method>
 		<method name="get_wheel_separation" qualifiers="const">
@@ -230,6 +275,12 @@
 		</member>
 		<member name="automatic_transmission" type="bool" setter="set_automatic_transmission" getter="is_automatic_transmission" default="true">
 			A control, read every physics tick. If [code]true[/code], the automatic gearbox picks the forward gears. While [member clutch] is pressed past halfway it holds its gear, so revving against the clutch for a launch doesn't shift up standing still. If [code]false[/code], the gearbox goes to [member gear]. Either way, [member reverse] selects the reverse gear. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="belly_drag" type="bool" setter="set_belly_drag" getter="is_belly_drag" default="true">
+			When the chassis box's underside meets soft ground deeper than the ruts, the soil holds it up by its bearing pressure (Bekker) and drags it by its shear and adhesion, bulldozing at the front, and the body presses its own trough. A car sunk to its axles high-centres and has to be dug or winched out. See [method get_belly_drag] and [method get_belly_support].
+		</member>
+		<member name="body_mud" type="bool" setter="set_body_mud" getter="is_body_mud" default="true">
+			Mud cakes the meshes under this node: the tyres as their treads pack (see [member tyre_clogging]), the arches and sides as the wheels throw it, the underside up to the deepest the belly sat in mud. It lands wet and dark and dries over minutes to a pale crust; standing water washes the spray off. The node turns [member BaseMaterial3D.mud_enabled] on in copies of its meshes' [BaseMaterial3D] materials and feeds them each physics tick; [ShaderMaterial]s are left alone.
 		</member>
 		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
 			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
@@ -368,6 +419,9 @@
 		</member>
 		<member name="tire_grip" type="float" setter="set_tire_grip" getter="get_tire_grip" default="1.0">
 			A live multiplier on every tire's grip: below [code]1[/code] for ice, mud or wet roads, above for sticky tires. It takes effect at once, without rebuilding the vehicle (the wheels' own [code]tire_*[/code] properties rebuild it), so it can follow the ground the vehicle is on every frame.
+		</member>
+		<member name="tyre_clogging" type="bool" setter="set_tyre_clogging" getter="is_tyre_clogging" default="true">
+			In sticky clay the tyre tread packs with mud as it turns, more as it spins: a packed tread grips like a slick (the clay shears against itself) and its mass adds to the wheel's inertia, and the clay's adhesion drags on the wheel. Spun fast enough the tyre throws the mud off; it scours on sand, dries and drops on firm ground and washes off in standing water. See [method get_wheel_mud].
 		</member>
 	</members>
 	<constants>

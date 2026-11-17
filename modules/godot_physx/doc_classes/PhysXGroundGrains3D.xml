@@ -40,6 +40,12 @@
 				The sand taken out of the ground so far, m3.
 			</description>
 		</method>
+		<method name="get_mud_grains" qualifiers="const">
+			<return type="PhysXGroundGrains3D" />
+			<description>
+				The internal grains node of wet clay this node throws sticky sprays with, or [code]null[/code] (see [member mud_spray]).
+			</description>
+		</method>
 		<method name="kick">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -63,6 +69,9 @@
 		</member>
 		<member name="max_flight_time" type="float" setter="set_max_flight_time" getter="get_max_flight_time" default="8.0">
 			A grain still in the air after this long lands where it is.
+		</member>
+		<member name="mud_spray" type="bool" setter="set_mud_spray" getter="is_mud_spray" default="true">
+			Sprays from sticky clay go to an internal grains node of wet clay (1700 kg/m³, 20 degrees, cohesive), drawn as wet clods, which lands back into the ground as this node's sand does. It also throws the clay a [code]PhysXVehicle3D[/code]'s clogged treads shed, up and back off the tyre at the tread's speed. See [method get_mud_grains].
 		</member>
 		<member name="spray_spread" type="float" setter="set_spray_spread" getter="get_spray_spread" default="0.2">
 			The spread of a throw's velocity, as a share of its speed.

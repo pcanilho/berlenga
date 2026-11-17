@@ -1132,6 +1132,50 @@
    "topic": "Ground"
   },
   {
+   "name": "Tyre clogging",
+   "settings": [
+    "PhysXVehicle3D.tyre_clogging"
+   ],
+   "note": "",
+   "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Belly drag",
+   "settings": [
+    "PhysXVehicle3D.belly_drag"
+   ],
+   "note": "",
+   "what": "a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Mud on vehicles",
+   "settings": [
+    "PhysXVehicle3D.body_mud"
+   ],
+   "note": "",
+   "what": "tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Mud spray",
+   "settings": [
+    "PhysXGroundGrains3D.mud_spray"
+   ],
+   "note": "",
+   "what": "spinning wheels fling clods of wet clay that land back in the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
@@ -1667,6 +1711,17 @@
    "topic": "Shore"
   },
   {
+   "name": "Rock contact foam",
+   "settings": [
+    "contact_foam"
+   ],
+   "note": "",
+   "what": "white water rings where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and washes over rock tops just under the surface.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
    "name": "Currents",
    "settings": [
     "current",
@@ -2191,6 +2246,28 @@
    "topic": "Plants"
   },
   {
+   "name": "Atlantic heath",
+   "settings": [
+    "PlantGenerator.make_heath()"
+   ],
+   "note": "",
+   "what": "bell heather, cross-leaved heath and crowberry in dry, wet and cliff-top heath, placed by rain, winter cold and wetness.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Mediterranean scrub",
+   "settings": [
+    "PlantGenerator.make_scrub()"
+   ],
+   "note": "",
+   "what": "rosemary, French lavender, thyme and sage-leaved rockrose, as garrigue on thin soil and maquis on deeper soil where winters are mild and summers dry; the rockrose folds and greys its leaves in drought.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Dune plants",
    "settings": [
     "PlantGenerator.make_dunes()",
@@ -2198,6 +2275,17 @@
    ],
    "note": "",
    "what": "marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Salt marsh and shingle plants",
+   "settings": [
+    "PlantGenerator.make_saltmarsh()"
+   ],
+   "note": "",
+   "what": "glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2231,6 +2319,29 @@
    ],
    "note": "",
    "what": "plants bend away from bodies and spring back, and lean in the wind.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Ground mist",
+   "settings": [
+    "VegetationMist3D",
+    "mist_amount"
+   ],
+   "note": "",
+   "what": "at dawn, low mist pools in hollows and drifts through the grass, set by the weather and sun; bodies part it, and it burns off as the sun climbs.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Pollen puffs",
+   "settings": [
+    "VegetationPollen3D"
+   ],
+   "note": "",
+   "what": "brushing grasses and other wind-pollinated plants in flower releases a puff of pollen; each plant recharges, and wet plants stay still.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2406,7 +2517,7 @@
     "root_stone"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3217,13 +3328,25 @@
    "topic": ""
   },
   {
+   "name": "Fire light and embers",
+   "settings": [
+    "PhysXFlow3D.fire_light",
+    "embers"
+   ],
+   "note": "",
+   "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Particle fluid surface",
    "settings": [
     "PhysXParticleFluid3D.render_mode",
     "foam_enabled"
    ],
    "note": "",
-   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray, foam and air bubbles rise where the water is agitated.",
+   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray falls as clear drops, and foam and bubbles form only where water strikes water, so a smooth pour stays clear.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

@@ -580,6 +580,7 @@ TypedArray<Resource> PlantGenerator::make_alpine(AlpineStand p_stand, int p_vari
 		}
 		sp->set_visibility_range(f.visibility);
 		sp->set_meta("alpine", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 17;
 	}

@@ -3785,6 +3785,9 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	if (rt_state.ground_deform_terrain) {
 		mat.subsurface.ground_terrain = 1;
 	}
+	if (rt_state.mud) {
+		mat.subsurface.mud = 1;
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -7129,6 +7132,9 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 			ld.spot.inv_attenuation = rt_half(1.0f / MAX(0.001f, ls->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION)));
 		}
 		ld.projector_texture.index = _light_projector_texture(base);
+		// How strongly it lights participating media, as raster volumetric fog and Flow's scattering read it.
+		const float volume_energy_m1 = ls->light_get_param(base, RSE::LIGHT_PARAM_VOLUMETRIC_FOG_ENERGY) - 1.0f;
+		memcpy(&ld.reserved[0], &volume_energy_m1, sizeof(float));
 		if (r_instances) {
 			r_instances->push_back(light_instance);
 		}
@@ -7993,7 +7999,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			vp.medium[3] = vol.density_majorant;
 			vp.emission[0] = vol.emission_scale;
 			vp.emission[1] = vol.temperature_range > 0.0f ? 1.0f / vol.temperature_range : 1.0f;
-			vp.emission[2] = vol.emission_scale > 0.0f ? 1.0f : 0.0f;
+			vp.emission[2] = vol.emission_scale > 0.0f ? (vol.emission_proxy_light ? 2.0f : 1.0f) : 0.0f;
 			for (int i = 0; i < 8; i++) {
 				vp.heat_ramp[i][0] = vol.heat_ramp[i].r;
 				vp.heat_ramp[i][1] = vol.heat_ramp[i].g;

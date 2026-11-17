@@ -36,6 +36,7 @@
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -133,8 +134,13 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_kill_y", "y"), &PhysXDestructible3D::set_kill_y);
 	ClassDB::bind_method(D_METHOD("get_kill_y"), &PhysXDestructible3D::get_kill_y);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
+	ClassDB::bind_method(D_METHOD("set_initial_linear_velocity", "velocity"), &PhysXDestructible3D::set_initial_linear_velocity);
+	ClassDB::bind_method(D_METHOD("get_initial_linear_velocity"), &PhysXDestructible3D::get_initial_linear_velocity);
+	ClassDB::bind_method(D_METHOD("set_initial_angular_velocity", "velocity"), &PhysXDestructible3D::set_initial_angular_velocity);
+	ClassDB::bind_method(D_METHOD("get_initial_angular_velocity"), &PhysXDestructible3D::get_initial_angular_velocity);
 	ClassDB::bind_method(D_METHOD("get_piece_count"), &PhysXDestructible3D::get_piece_count);
 	ClassDB::bind_method(D_METHOD("get_piece_transform", "index"), &PhysXDestructible3D::get_piece_transform);
+	ClassDB::bind_method(D_METHOD("get_piece_chunks", "index"), &PhysXDestructible3D::get_piece_chunks);
 	ClassDB::bind_method(D_METHOD("get_piece_chunk", "index"), &PhysXDestructible3D::get_piece_chunk);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
@@ -173,6 +179,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "initial_linear_velocity", PROPERTY_HINT_NONE, "suffix:m/s"), "set_initial_linear_velocity", "get_initial_linear_velocity");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "initial_angular_velocity", PROPERTY_HINT_NONE, "radians_as_degrees,suffix:\u00B0/s"), "set_initial_angular_velocity", "get_initial_angular_velocity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buried_below_y", PROPERTY_HINT_RANGE, "-10000,10000,0.01,or_less,or_greater,suffix:m"), "set_buried_below_y", "get_buried_below_y");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
@@ -210,6 +218,22 @@ void PhysXDestructible3D::_bind_methods() {
 
 PhysXDestructible3D::PhysXDestructible3D() {
 	set_notify_transform(true);
+}
+
+void PhysXDestructible3D::set_initial_linear_velocity(const Vector3 &p_velocity) {
+	initial_linear_velocity = p_velocity;
+	if (dynamic && !fractured && pieces.size() == 1 && pieces[0].body.is_valid()) {
+		PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, p_velocity);
+		pieces[0].last_linear_velocity = p_velocity;
+	}
+}
+
+void PhysXDestructible3D::set_initial_angular_velocity(const Vector3 &p_velocity) {
+	initial_angular_velocity = p_velocity;
+	if (dynamic && !fractured && pieces.size() == 1 && pieces[0].body.is_valid()) {
+		PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, p_velocity);
+		pieces[0].last_angular_velocity = p_velocity;
+	}
 }
 
 void PhysXDestructible3D::set_mass(float p_mass) {
@@ -296,7 +320,9 @@ void PhysXDestructible3D::set_material_override(const Ref<Material> &p_material)
 	RenderingServer *rs = RenderingServer::get_singleton();
 	const RID mat_rid = material_override_res.is_valid() ? material_override_res->get_rid() : RID();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_geometry_set_material_override(piece.instance, mat_rid);
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_material_override(instance, mat_rid);
+		}
 	}
 }
 
@@ -304,7 +330,9 @@ void PhysXDestructible3D::set_gi_mode(GIMode p_mode) {
 	gi_mode = p_mode;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		_apply_gi_mode(rs, piece.instance);
+		for (const RID &instance : piece.instances) {
+			_apply_gi_mode(rs, instance);
+		}
 	}
 }
 
@@ -321,7 +349,9 @@ void PhysXDestructible3D::set_cast_shadow(ShadowCastingSetting p_setting) {
 	cast_shadow = p_setting;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_geometry_set_cast_shadows_setting(piece.instance, (RSE::ShadowCastingSetting)cast_shadow);
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_cast_shadows_setting(instance, (RSE::ShadowCastingSetting)cast_shadow);
+		}
 	}
 }
 
@@ -329,7 +359,9 @@ void PhysXDestructible3D::set_transparency(float p_transparency) {
 	transparency = p_transparency;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_geometry_set_transparency(piece.instance, transparency);
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_transparency(instance, transparency);
+		}
 	}
 }
 
@@ -338,7 +370,9 @@ void PhysXDestructible3D::set_material_overlay(const Ref<Material> &p_material) 
 	RenderingServer *rs = RenderingServer::get_singleton();
 	const RID mat_rid = material_overlay_res.is_valid() ? material_overlay_res->get_rid() : RID();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_geometry_set_material_overlay(piece.instance, mat_rid);
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_material_overlay(instance, mat_rid);
+		}
 	}
 }
 
@@ -346,7 +380,9 @@ void PhysXDestructible3D::set_extra_cull_margin(float p_margin) {
 	extra_cull_margin = p_margin;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_set_extra_visibility_margin(piece.instance, extra_cull_margin);
+		for (const RID &instance : piece.instances) {
+			rs->instance_set_extra_visibility_margin(instance, extra_cull_margin);
+		}
 	}
 }
 
@@ -354,7 +390,9 @@ void PhysXDestructible3D::set_lod_bias(float p_bias) {
 	lod_bias = p_bias;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_geometry_set_lod_bias(piece.instance, lod_bias);
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_lod_bias(instance, lod_bias);
+		}
 	}
 }
 
@@ -362,7 +400,9 @@ void PhysXDestructible3D::set_ignore_occlusion_culling(bool p_ignore) {
 	ignore_occlusion_culling = p_ignore;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		rs->instance_geometry_set_flag(piece.instance, RSE::INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING, ignore_occlusion_culling);
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_flag(instance, RSE::INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING, ignore_occlusion_culling);
+		}
 	}
 }
 
@@ -375,7 +415,9 @@ void PhysXDestructible3D::set_visibility_range_begin(float p_distance) {
 	visibility_range_begin = p_distance;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		_apply_visibility_range(rs, piece.instance);
+		for (const RID &instance : piece.instances) {
+			_apply_visibility_range(rs, instance);
+		}
 	}
 }
 
@@ -383,7 +425,9 @@ void PhysXDestructible3D::set_visibility_range_end(float p_distance) {
 	visibility_range_end = p_distance;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		_apply_visibility_range(rs, piece.instance);
+		for (const RID &instance : piece.instances) {
+			_apply_visibility_range(rs, instance);
+		}
 	}
 }
 
@@ -391,7 +435,9 @@ void PhysXDestructible3D::set_visibility_range_begin_margin(float p_distance) {
 	visibility_range_begin_margin = p_distance;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		_apply_visibility_range(rs, piece.instance);
+		for (const RID &instance : piece.instances) {
+			_apply_visibility_range(rs, instance);
+		}
 	}
 }
 
@@ -399,7 +445,9 @@ void PhysXDestructible3D::set_visibility_range_end_margin(float p_distance) {
 	visibility_range_end_margin = p_distance;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		_apply_visibility_range(rs, piece.instance);
+		for (const RID &instance : piece.instances) {
+			_apply_visibility_range(rs, instance);
+		}
 	}
 }
 
@@ -407,7 +455,9 @@ void PhysXDestructible3D::set_visibility_range_fade_mode(VisibilityRangeFadeMode
 	visibility_range_fade_mode = p_mode;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		_apply_visibility_range(rs, piece.instance);
+		for (const RID &instance : piece.instances) {
+			_apply_visibility_range(rs, instance);
+		}
 	}
 }
 
@@ -507,7 +557,7 @@ void PhysXDestructible3D::_notification(int p_what) {
 				if (pieces[0].body.is_valid()) {
 					PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
 				}
-				RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, get_global_transform());
+				_set_piece_transform(pieces[0], get_global_transform());
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
@@ -534,7 +584,7 @@ void PhysXDestructible3D::_notification(int p_what) {
 					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, Vector3());
 					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, Vector3());
 					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_SLEEPING, false);
-					RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, get_global_transform());
+					_set_piece_transform(pieces[0], get_global_transform());
 					synced = get_global_transform();
 				}
 				PhysicsDirectBodyState3D *state = PhysicsServer3D::get_singleton()->body_get_direct_state(pieces[0].body);
@@ -552,7 +602,7 @@ void PhysXDestructible3D::_notification(int p_what) {
 						t.basis = t.basis.scaled_local(spawn_scale);
 						set_global_transform(t);
 						synced = get_global_transform();
-						RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
+						_set_piece_transform(pieces[0], t);
 						_check_impact_fracture();
 						_record_piece_velocities();
 					}
@@ -572,7 +622,6 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 	asset_chunk_count = NvBlastAssetGetChunkCount(asset, blast_log);
 	asset_bond_count = NvBlastAssetGetBondCount(asset, blast_log);
 
-
 	const size_t family_size = NvBlastAssetGetFamilyMemorySize(asset, blast_log);
 	family_mem = aligned_alloc_16(family_size);
 	ERR_FAIL_NULL_V(family_mem, false);
@@ -582,6 +631,18 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 	NvBlastActorDesc actor_desc;
 	actor_desc.uniformInitialBondHealth = health;
 	actor_desc.initialBondHealths = nullptr;
+	// Per-bond health from the asset (a multiple of health each), when it has one per bond.
+	LocalVector<float> bond_healths;
+	if (blast_asset.is_valid() && blast_asset->get_bond_healths().size() == (int)asset_bond_count && asset_bond_count > 0) {
+		const PackedFloat32Array scale = blast_asset->get_bond_healths();
+		bond_healths.resize(asset_bond_count);
+		for (uint32_t b = 0; b < asset_bond_count; b++) {
+			bond_healths[b] = health * MAX(scale[b], 0.0f);
+		}
+		actor_desc.initialBondHealths = bond_healths.ptr();
+	} else if (blast_asset.is_valid() && !blast_asset->get_bond_healths().is_empty()) {
+		WARN_PRINT_ONCE(vformat("PhysXDestructible3D: the asset has %d bond healths for %d bonds; all bonds start at health.", blast_asset->get_bond_healths().size(), asset_bond_count));
+	}
 	actor_desc.uniformInitialLowerSupportChunkHealth = health;
 	actor_desc.initialSupportChunkHealths = nullptr;
 
@@ -718,34 +779,36 @@ bool PhysXDestructible3D::_island_anchored(const LocalVector<uint32_t> &p_chunks
 	return false;
 }
 
-void PhysXDestructible3D::_compute_chunk_surfaces() {
+void PhysXDestructible3D::build_chunk_surfaces(const LocalVector<PackedVector3Array> &p_points, const Array &p_meshes, const Array &p_materials, LocalVector<LocalVector<ChunkSurface>> &r_surfaces) {
 	// Flat per-triangle normals -- the asset only stores positions -- with the
 	// winding (c-a)x(b-a), not the intuitive (b-a)x(c-a): Blast's
 	// AuthoringResult::geometry triangles are opposite to CCW-front-face here,
 	// and the wrong order cooked clean but rendered every face pitch-black
 	// (normals inward).
-	chunk_surfaces.resize(chunk_points.size());
+	r_surfaces.resize(p_points.size());
 	// Chunks authored with their own shading data (PhysXBlastAsset.chunk_meshes): their smooth normals, tangents,
 	// colours and UVs, kept indexed as authored.
-	const Array meshes = blast_asset.is_valid() ? blast_asset->get_chunk_meshes() : Array();
-	if (meshes.size() == (int)chunk_points.size()) {
-		for (uint32_t c = 0; c < chunk_points.size(); c++) {
-			const Array arrays = meshes[c];
+	const Array &meshes = p_meshes;
+	if (meshes.size() == (int)p_points.size()) {
+		const Array &materials = p_materials;
+		// One ChunkSurface from a Mesh arrays Array; p_fallback (the chunk's soup) when it has no normals.
+		auto make_surface = [](const Array &p_arrays, const PackedVector3Array &p_fallback, int p_slot) {
 			ChunkSurface surface;
-			surface.vertices = chunk_points[c];
-			if (arrays.size() == RSE::ARRAY_MAX) {
+			surface.slot = p_slot;
+			surface.vertices = p_fallback;
+			if (p_arrays.size() == RSE::ARRAY_MAX) {
 				// The chunk's own indexed arrays as they are: no unrolling to a soup (three times the vertices).
-				const PackedVector3Array src_v = arrays[RSE::ARRAY_VERTEX];
+				const PackedVector3Array src_v = p_arrays[RSE::ARRAY_VERTEX];
 				const int vcount = src_v.size();
-				const PackedVector3Array src_n = arrays[RSE::ARRAY_NORMAL];
-				const PackedFloat32Array src_t = arrays[RSE::ARRAY_TANGENT];
-				const PackedColorArray src_c = arrays[RSE::ARRAY_COLOR];
-				const PackedVector2Array src_uv = arrays[RSE::ARRAY_TEX_UV];
-				const PackedVector2Array src_uv2 = arrays[RSE::ARRAY_TEX_UV2];
+				const PackedVector3Array src_n = p_arrays[RSE::ARRAY_NORMAL];
+				const PackedFloat32Array src_t = p_arrays[RSE::ARRAY_TANGENT];
+				const PackedColorArray src_c = p_arrays[RSE::ARRAY_COLOR];
+				const PackedVector2Array src_uv = p_arrays[RSE::ARRAY_TEX_UV];
+				const PackedVector2Array src_uv2 = p_arrays[RSE::ARRAY_TEX_UV2];
 				if (vcount > 0 && src_n.size() == vcount) {
 					surface.vertices = src_v;
 					surface.normals = src_n;
-					surface.indices = arrays[RSE::ARRAY_INDEX];
+					surface.indices = p_arrays[RSE::ARRAY_INDEX];
 					if (src_t.size() == vcount * 4) {
 						surface.tangents = src_t;
 					}
@@ -769,13 +832,45 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 					surface.normals.write[t] = surface.normals.write[t + 1] = surface.normals.write[t + 2] = fn;
 				}
 			}
-			chunk_surfaces[c].clear();
-			chunk_surfaces[c].push_back(surface);
+			return surface;
+		};
+		for (uint32_t c = 0; c < p_points.size(); c++) {
+			r_surfaces[c].clear();
+			const Variant entry = meshes[c];
+			const Ref<Mesh> mesh = entry;
+			if (mesh.is_valid()) {
+				// A Mesh: one surface per slot, the slot of its material in the asset's materials, else its index.
+				for (int s = 0; s < mesh->get_surface_count(); s++) {
+					const int found = materials.find(mesh->surface_get_material(s));
+					const PackedVector3Array none;
+					r_surfaces[c].push_back(make_surface(mesh->surface_get_arrays(s), s == 0 ? PackedVector3Array(p_points[c]) : none, found >= 0 ? found : s));
+				}
+				continue;
+			}
+			const Array arrays = entry;
+			const bool single = arrays.size() == RSE::ARRAY_MAX && arrays[RSE::ARRAY_VERTEX].get_type() == Variant::PACKED_VECTOR3_ARRAY;
+			if (single || arrays.is_empty()) {
+				r_surfaces[c].push_back(make_surface(arrays, p_points[c], 0));
+				continue;
+			}
+			// An Array of surfaces (several materials: bark, wood, leaves).
+			for (int s = 0; s < arrays.size(); s++) {
+				Array surface_arrays;
+				int slot = s;
+				if (arrays[s].get_type() == Variant::DICTIONARY) {
+					const Dictionary d = arrays[s];
+					surface_arrays = d.get("arrays", Array());
+					slot = MAX(int(d.get("slot", s)), 0);
+				} else {
+					surface_arrays = arrays[s];
+				}
+				r_surfaces[c].push_back(make_surface(surface_arrays, s == 0 ? PackedVector3Array(p_points[c]) : PackedVector3Array(), slot));
+			}
 		}
 		return;
 	}
-	for (uint32_t c = 0; c < chunk_points.size(); c++) {
-		const PackedVector3Array &points = chunk_points[c];
+	for (uint32_t c = 0; c < p_points.size(); c++) {
+		const PackedVector3Array &points = p_points[c];
 		const int tri_count = points.size() / 3;
 		ChunkSurface surface;
 		surface.vertices = points;
@@ -790,8 +885,92 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 			nw[t * 3 + 1] = n;
 			nw[t * 3 + 2] = n;
 		}
-		chunk_surfaces[c].clear();
-		chunk_surfaces[c].push_back(surface);
+		r_surfaces[c].clear();
+		r_surfaces[c].push_back(surface);
+	}
+}
+
+void PhysXDestructible3D::_compute_chunk_surfaces() {
+	build_chunk_surfaces(chunk_points, blast_asset.is_valid() ? blast_asset->get_chunk_meshes() : Array(), blast_asset.is_valid() ? blast_asset->get_materials() : Array(), chunk_surfaces);
+	if (blast_asset.is_valid()) {
+		render_cache = blast_asset->get_render_cache();
+	} else {
+		render_cache.instantiate();
+	}
+}
+
+Array PhysXDestructible3D::chunk_surface_arrays(const ChunkSurface &p_surface) {
+	Array arrays;
+	arrays.resize(RSE::ARRAY_MAX);
+	const int n = p_surface.vertices.size();
+	arrays[RSE::ARRAY_VERTEX] = p_surface.vertices;
+	arrays[RSE::ARRAY_NORMAL] = p_surface.normals;
+	if (!p_surface.indices.is_empty()) {
+		arrays[RSE::ARRAY_INDEX] = p_surface.indices;
+	}
+	if (p_surface.tangents.size() == n * 4) {
+		arrays[RSE::ARRAY_TANGENT] = p_surface.tangents;
+	}
+	if (p_surface.colors.size() == n) {
+		arrays[RSE::ARRAY_COLOR] = p_surface.colors;
+	}
+	if (p_surface.uv.size() == n) {
+		arrays[RSE::ARRAY_TEX_UV] = p_surface.uv;
+	}
+	if (p_surface.uv2.size() == n) {
+		arrays[RSE::ARRAY_TEX_UV2] = p_surface.uv2;
+	}
+	return arrays;
+}
+
+// Chunk p_chunk's render mesh, one surface per material slot, built once per asset and shared: from the arrays
+// PhysXBlastAsset.prepare_render() already converted, else from this node's chunk_surfaces.
+RID PhysXDestructible3D::_chunk_mesh(uint32_t p_chunk) {
+	if (render_cache.is_null()) {
+		render_cache.instantiate();
+	}
+	MutexLock lock(render_cache->mutex);
+	if (render_cache->meshes.size() < chunk_points.size()) {
+		render_cache->meshes.resize(chunk_points.size());
+	}
+	ERR_FAIL_UNSIGNED_INDEX_V(p_chunk, render_cache->meshes.size(), RID());
+	if (render_cache->meshes[p_chunk].is_valid()) {
+		return render_cache->meshes[p_chunk];
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const Array slot_materials = blast_asset.is_valid() ? blast_asset->get_materials() : Array();
+	const RID mesh = rs->mesh_create();
+	auto set_material = [&](int p_slot) {
+		if (p_slot < slot_materials.size()) {
+			const Ref<Material> m = slot_materials[p_slot];
+			if (m.is_valid()) {
+				rs->mesh_surface_set_material(mesh, rs->mesh_get_surface_count(mesh) - 1, m->get_rid());
+			}
+		}
+	};
+	if (p_chunk < render_cache->prepared.size() && !render_cache->prepared[p_chunk].is_empty()) {
+		for (const PhysXBlastRenderCache::Surface &surface : render_cache->prepared[p_chunk]) {
+			rs->mesh_add_surface(mesh, surface.data);
+			set_material(surface.slot);
+		}
+		render_cache->prepared[p_chunk].clear(); // uploaded: the CPU copy is no longer needed
+	} else if (p_chunk < chunk_surfaces.size()) {
+		for (const ChunkSurface &cs : chunk_surfaces[p_chunk]) {
+			if (cs.vertices.is_empty()) {
+				continue;
+			}
+			rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, chunk_surface_arrays(cs));
+			set_material(cs.slot);
+		}
+	}
+	render_cache->meshes[p_chunk] = mesh;
+	return mesh;
+}
+
+void PhysXDestructible3D::_set_piece_transform(const ChunkVisual &p_piece, const Transform3D &p_transform) const {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const RID &instance : p_piece.instances) {
+		rs->instance_set_transform(instance, p_transform);
 	}
 }
 
@@ -959,6 +1138,10 @@ void PhysXDestructible3D::_spawn_intact() {
 			// reporting so _check_impact_fracture() can see what it hit.
 			ps->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_RIGID);
 			ps->body_set_max_contacts_reported(pieces[0].body, 8);
+			ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, initial_linear_velocity);
+			ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, initial_angular_velocity);
+			pieces[0].last_linear_velocity = initial_linear_velocity;
+			pieces[0].last_angular_velocity = initial_angular_velocity;
 		} else {
 			ps->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_STATIC);
 		}
@@ -1036,146 +1219,30 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		}
 	}
 
-	// One surface per material slot, concatenating every chunk the piece
-	// carries (see chunk_surfaces) -- all authored in the same frame, so the
-	// single body transform positions all of them.
+	// One instance per chunk, of the chunk's shared mesh (built once per asset): no mesh is merged or rebuilt
+	// here, so spawning and splitting a large asset (a tree) does not stall. Drawn at the node's real scale
+	// (bodies carry only rotation, see spawn_scale).
 	RenderingServer *rs = RenderingServer::get_singleton();
-	RID mesh = rs->mesh_create();
-	int max_slot = -1;
-	for (uint32_t ci : p_chunk_indices) {
-		if (ci < chunk_surfaces.size()) {
-			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-				max_slot = MAX(max_slot, cs.slot);
-			}
-		}
+	const RID scenario = get_world_3d().is_valid() ? get_world_3d()->get_scenario() : RID();
+	Transform3D draw_transform = p_transform;
+	if (p_physics) {
+		draw_transform.basis = p_transform.basis.orthonormalized().scaled_local(spawn_scale);
 	}
-	for (int slot = 0; slot <= max_slot; slot++) {
-		int count = 0;
-		for (uint32_t ci : p_chunk_indices) {
-			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-				if (cs.slot == slot) {
-					count += cs.vertices.size();
-				}
-			}
-		}
-		if (count == 0) {
+	LocalVector<RID> instances;
+	for (uint32_t ci : p_chunk_indices) {
+		const RID mesh = _chunk_mesh(ci);
+		if (!mesh.is_valid() || rs->mesh_get_surface_count(mesh) == 0) {
 			continue;
 		}
-		PackedVector3Array vertices;
-		PackedVector3Array normals;
-		vertices.resize(count);
-		normals.resize(count);
-		Vector3 *vw = vertices.ptrw();
-		Vector3 *nw = normals.ptrw();
-		int at = 0;
-		for (uint32_t ci : p_chunk_indices) {
-			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-				if (cs.slot != slot) {
-					continue;
-				}
-				memcpy(vw + at, cs.vertices.ptr(), sizeof(Vector3) * cs.vertices.size());
-				memcpy(nw + at, cs.normals.ptr(), sizeof(Vector3) * cs.normals.size());
-				at += cs.vertices.size();
-			}
+		const RID instance = rs->instance_create2(mesh, scenario);
+		rs->instance_set_transform(instance, draw_transform);
+		if (material_override_res.is_valid()) {
+			rs->instance_geometry_set_material_override(instance, material_override_res->get_rid());
 		}
-		Array arrays;
-		arrays.resize(RSE::ARRAY_MAX);
-		arrays[RSE::ARRAY_VERTEX] = vertices;
-		arrays[RSE::ARRAY_NORMAL] = normals;
-		// Indexed when any chunk is (a soup chunk gets the identity index), each chunk's index offset by its start.
-		bool any_indexed = false;
-		int index_count = 0;
-		for (uint32_t ci : p_chunk_indices) {
-			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-				if (cs.slot == slot) {
-					any_indexed = any_indexed || !cs.indices.is_empty();
-					index_count += cs.indices.is_empty() ? cs.vertices.size() : cs.indices.size();
-				}
-			}
-		}
-		if (any_indexed) {
-			PackedInt32Array indices;
-			indices.resize(index_count);
-			int32_t *iw = indices.ptrw();
-			int ia = 0, base = 0;
-			for (uint32_t ci : p_chunk_indices) {
-				for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-					if (cs.slot != slot) {
-						continue;
-					}
-					if (cs.indices.is_empty()) {
-						for (int i = 0; i < cs.vertices.size(); i++) {
-							iw[ia++] = base + i;
-						}
-					} else {
-						const int32_t *src = cs.indices.ptr();
-						for (int i = 0; i < cs.indices.size(); i++) {
-							iw[ia++] = base + src[i];
-						}
-					}
-					base += cs.vertices.size();
-				}
-			}
-			arrays[RSE::ARRAY_INDEX] = indices;
-		}
-		// Shading data from chunk_meshes, when every chunk of this slot carries it.
-		bool has_t = true, has_c = true, has_uv = true, has_uv2 = true;
-		for (uint32_t ci : p_chunk_indices) {
-			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-				if (cs.slot == slot) {
-					has_t = has_t && cs.tangents.size() == cs.vertices.size() * 4;
-					has_c = has_c && cs.colors.size() == cs.vertices.size();
-					has_uv = has_uv && cs.uv.size() == cs.vertices.size();
-					has_uv2 = has_uv2 && cs.uv2.size() == cs.vertices.size();
-				}
-			}
-		}
-		if (has_t || has_c || has_uv || has_uv2) {
-			PackedFloat32Array tangents;
-			PackedColorArray colors;
-			PackedVector2Array uv, uv2;
-			for (uint32_t ci : p_chunk_indices) {
-				for (const ChunkSurface &cs : chunk_surfaces[ci]) {
-					if (cs.slot != slot) {
-						continue;
-					}
-					if (has_t) {
-						tangents.append_array(cs.tangents);
-					}
-					if (has_c) {
-						colors.append_array(cs.colors);
-					}
-					if (has_uv) {
-						uv.append_array(cs.uv);
-					}
-					if (has_uv2) {
-						uv2.append_array(cs.uv2);
-					}
-				}
-			}
-			if (has_t) {
-				arrays[RSE::ARRAY_TANGENT] = tangents;
-			}
-			if (has_c) {
-				arrays[RSE::ARRAY_COLOR] = colors;
-			}
-			if (has_uv) {
-				arrays[RSE::ARRAY_TEX_UV] = uv;
-			}
-			if (has_uv2) {
-				arrays[RSE::ARRAY_TEX_UV2] = uv2;
-			}
-		}
-		rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
+		_apply_gi_mode(rs, instance);
+		_apply_extra_render_settings(rs, instance);
+		instances.push_back(instance);
 	}
-
-	RID instance = rs->instance_create2(mesh, get_world_3d().is_valid() ? get_world_3d()->get_scenario() : RID());
-	rs->instance_set_transform(instance, p_transform);
-	if (material_override_res.is_valid()) {
-		rs->instance_geometry_set_material_override(instance, material_override_res->get_rid());
-	}
-	_apply_gi_mode(rs, instance);
-	_apply_extra_render_settings(rs, instance);
 
 	// U24: an island actor's later split re-emits chunks that were already
 	// spawned live when the island itself first formed -- or when a sibling
@@ -1205,8 +1272,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 
 	ChunkVisual piece;
 	piece.body = body;
-	piece.mesh = mesh;
-	piece.instance = instance;
+	piece.instances = instances;
 	piece.chunk_indices = chunk_indices_storage;
 	piece.actor = p_actor;
 	piece.last_linear_velocity = p_linear_velocity;
@@ -1239,8 +1305,9 @@ void PhysXDestructible3D::_free_piece(uint32_t p_index) {
 	if (piece.body.is_valid()) {
 		ps->free_rid(piece.body);
 	}
-	rs->free_rid(piece.instance);
-	rs->free_rid(piece.mesh);
+	for (const RID &instance : piece.instances) {
+		rs->free_rid(instance);
+	}
 	pieces.remove_at_unordered(p_index);
 }
 
@@ -1301,15 +1368,15 @@ void PhysXDestructible3D::_free_all_pieces() {
 		if (piece.body.is_valid()) {
 			ps->free_rid(piece.body);
 		}
-		rs->free_rid(piece.instance);
-		rs->free_rid(piece.mesh);
+		for (const RID &instance : piece.instances) {
+			rs->free_rid(instance);
+		}
 	}
 	pieces.clear();
 }
 
 void PhysXDestructible3D::_sync_transforms() {
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
-	RenderingServer *rs = RenderingServer::get_singleton();
 	if (freeze_when_asleep) {
 		// Freeze the debris all at once, once every moving piece is asleep:
 		// freezing them one by one as each fell asleep disturbed the pieces
@@ -1401,7 +1468,7 @@ void PhysXDestructible3D::_sync_transforms() {
 			const Vector3 p = pieces[i].shrink_pivot;
 			t = Transform3D(Basis().scaled(Vector3(shrink, shrink, shrink)), p - p * shrink) * t;
 		}
-		rs->instance_set_transform(piece.instance, t);
+		_set_piece_transform(piece, t);
 	}
 	// Impact fracture for fractured nodes: the intact single-piece path in
 	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS above only runs while
@@ -1536,7 +1603,7 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 	Vector3 spawn_linear = piece_linear;
 	if (visible_count == 1) {
 		child_mode = PhysicsServer3D::BODY_MODE_RIGID;
-		const Vector3 centroid_world = piece_transform.xform(_chunk_centroid_local(visible[0]));
+		const Vector3 centroid_world = Transform3D(piece_transform.basis.orthonormalized().scaled_local(spawn_scale), piece_transform.origin).xform(_chunk_centroid_local(visible[0]));
 		const Vector3 offset = centroid_world - p_damage_world_origin;
 		const real_t dist = offset.length();
 		const Vector3 dir = dist > 0.001 ? (offset / dist) : Vector3(0, 1, 0);
@@ -1566,6 +1633,15 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 		pieces[piece_idx].last_angular_velocity = piece_angular;
 	}
 	return 1;
+}
+
+PackedInt32Array PhysXDestructible3D::get_piece_chunks(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, (int)pieces.size(), PackedInt32Array());
+	PackedInt32Array out;
+	for (uint32_t ci : pieces[p_index].chunk_indices) {
+		out.push_back(int(ci));
+	}
+	return out;
 }
 
 Transform3D PhysXDestructible3D::get_piece_transform(int p_index) const {
@@ -1648,18 +1724,22 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 		if (actor_piece >= 0 && pieces[actor_piece].body.is_valid()) {
 			const Transform3D t = ps->body_get_state(pieces[actor_piece].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
 			if (t != Transform3D()) {
-				damage_from_asset = t;
+				// Bodies carry rotation only (see spawn_scale): put the node's scale back, so the point lands in
+				// asset units on a scaled destructible.
+				damage_from_asset = Transform3D(t.basis.orthonormalized().scaled_local(spawn_scale), t.origin);
 			}
 		}
 		const Vector3 local_position = damage_from_asset.affine_inverse().xform(p_world_position);
+		// Radii are world lengths: in asset units by the mean scale (exact for a uniformly scaled one).
+		const real_t radius_scale = MAX((spawn_scale.x + spawn_scale.y + spawn_scale.z) / 3.0, (real_t)1e-6);
 
 		NvBlastExtRadialDamageDesc damage_desc;
 		damage_desc.damage = p_damage;
 		damage_desc.position[0] = local_position.x;
 		damage_desc.position[1] = local_position.y;
 		damage_desc.position[2] = local_position.z;
-		damage_desc.minRadius = p_min_radius;
-		damage_desc.maxRadius = p_max_radius;
+		damage_desc.minRadius = p_min_radius / radius_scale;
+		damage_desc.maxRadius = p_max_radius / radius_scale;
 
 		// The falloff shaders cast programParams to NvBlastExtProgramParams
 		// internally -- passing the bare desc directly is a silent access

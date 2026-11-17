@@ -457,6 +457,48 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_ALPINE_TOADFLAX:
 			r_phenology = { 450.0f, 1400.0f, 300.0f, false }; // June to September.
 			return true;
+		// Salt marsh and shingle (Stace 2019): the marsh flowers late, the shingle from early summer.
+		case PRESET_GLASSWORT:
+			r_phenology = { 1500.0f, 2200.0f, -1.0f, true }; // August and September; the dead plants stand.
+			return true;
+		case PRESET_CORD_GRASS:
+			r_phenology = { 1400.0f, 2300.0f, -1.0f, true }; // July to November; spikes stand into winter.
+			return true;
+		case PRESET_SEA_ASTER:
+			r_phenology = { 1300.0f, 2500.0f, 400.0f, false }; // July to October.
+			return true;
+		case PRESET_SEA_LAVENDER:
+			r_phenology = { 1300.0f, 2000.0f, -1.0f, true }; // July to September; papery calyces stand.
+			return true;
+		case PRESET_SEA_KALE:
+			r_phenology = { 600.0f, 1000.0f, 900.0f, true }; // June; then the round pods.
+			return true;
+		case PRESET_SEA_CAMPION:
+			r_phenology = { 450.0f, 1700.0f, 300.0f, false }; // May to August.
+			return true;
+		case PRESET_HORNED_POPPY:
+			r_phenology = { 700.0f, 1900.0f, 600.0f, false }; // June to September; the horns after.
+			return true;
+		case PRESET_BELL_HEATHER:
+			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September, before heather; brown bells stand.
+			return true;
+		case PRESET_CROSS_LEAVED_HEATH:
+			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September.
+			return true;
+		// Mediterranean scrub: windows in the degree days of a mild coastal year (a January near
+		// 11 C runs some 6 a day: about 350 by March, 900 by May, 1,700 by July).
+		case PRESET_ROSEMARY:
+			r_phenology = { 0.0f, 900.0f, 200.0f, false }; // Winter to spring, on and off.
+			return true;
+		case PRESET_FRENCH_LAVENDER:
+			r_phenology = { 300.0f, 1300.0f, 600.0f, true }; // March to June; the bracts fade on the heads.
+			return true;
+		case PRESET_THYME:
+			r_phenology = { 600.0f, 1500.0f, 400.0f, true }; // April to June.
+			return true;
+		case PRESET_SAGE_ROCKROSE:
+			r_phenology = { 550.0f, 1100.0f, -1.0f, true }; // April and May; the capsules stand.
+			return true;
 		default:
 			return false;
 	}
@@ -580,6 +622,86 @@ Vector3 PlantGenerator::get_bloom_shares(Preset p_preset, const Dictionary &p_se
 		}
 	}
 	return shares;
+}
+
+// Wind-pollinated plants hold ripe pollen in dangling anthers that a jolt empties (Urzay et al. 2009).
+// Relative amounts: reedmace and the meadow grasses shed clouds, sedges and rushes less.
+float PlantGenerator::get_pollen_amount(Preset p_preset) {
+	switch (p_preset) {
+		case PRESET_CATTAIL:
+			return 1.0f;
+		case PRESET_COCKSFOOT:
+		case PRESET_TIMOTHY:
+			return 0.9f;
+		case PRESET_REED:
+		case PRESET_NETTLE:
+			return 0.7f;
+		case PRESET_MARRAM:
+		case PRESET_LYME_GRASS:
+		case PRESET_DRY_GRASS:
+		case PRESET_CORD_GRASS:
+			return 0.6f;
+		case PRESET_DOCK:
+		case PRESET_PLANTAIN:
+		case PRESET_SORREL:
+			return 0.5f;
+		case PRESET_SEDGE:
+		case PRESET_ALPINE_SEDGE:
+			return 0.4f;
+		case PRESET_RUSH:
+		case PRESET_COTTONGRASS:
+			return 0.25f;
+		default:
+			return 0.0f;
+	}
+}
+
+float PlantGenerator::get_pollen_release(Preset p_preset, const Dictionary &p_season) {
+	if (get_pollen_amount(p_preset) <= 0.0f) {
+		return 0.0f;
+	}
+	Phenology ph;
+	if (_phenology(p_preset, ph)) {
+		return get_bloom_shares(p_preset, p_season).y;
+	}
+	// No flowering window in the look: the anthesis months by day of year (Stace 2019; northern
+	// temperate). Grasses late May to July, nettle and docks June to September, plantain May to August.
+	if (!p_season.has("day_of_year")) {
+		return 1.0f;
+	}
+	const float day = float(int(p_season["day_of_year"]));
+	float a = 145.0f, b = 210.0f;
+	switch (p_preset) {
+		case PRESET_NETTLE:
+		case PRESET_DOCK:
+			a = 160.0f;
+			b = 260.0f;
+			break;
+		case PRESET_PLANTAIN:
+			a = 130.0f;
+			b = 235.0f;
+			break;
+		case PRESET_CATTAIL:
+		case PRESET_REED:
+			a = 170.0f;
+			b = 240.0f;
+			break;
+		default:
+			break;
+	}
+	const float ramp = 12.0f;
+	return Math::smoothstep(a - ramp, a + ramp, day) * (1.0f - Math::smoothstep(b - ramp, b + ramp, day));
+}
+
+void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
+	if (p_species.is_null()) {
+		return;
+	}
+	p_species->set_meta("plant_preset", int(p_preset));
+	const float pollen = get_pollen_amount(p_preset);
+	if (pollen > 0.0f) {
+		p_species->set_meta("pollen", pollen);
+	}
 }
 
 static float smoothstep_f(float p_a, float p_b, float p_x) {
@@ -3730,6 +3852,49 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			l.shape = LEAF_ROUND;
 			t.aspect = 1.0f;
 			t.base_tint = Color(0.3f, 0.15f, 0.5f, 0.4f);
+		} else if (preset == PRESET_SEA_ASTER) {
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.18f;
+			t.base_tint = Color(0.9f, 0.88f, 0.95f, 0.25f); // Paler at the base of the ray.
+		} else if (preset == PRESET_SEA_LAVENDER) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.0f;
+			t.base_tint = Color(0.92f, 0.9f, 0.95f, 0.3f); // The pale papery calyx under the corolla.
+		} else if (preset == PRESET_SEA_KALE) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.base_tint = Color(0.86f, 0.9f, 0.7f, 0.25f); // Greenish claws.
+		} else if (preset == PRESET_SEA_CAMPION) {
+			t.aspect = 0.75f;
+			t.base_tint = Color(0.95f, 0.9f, 0.92f, 0.2f);
+		} else if (preset == PRESET_BELL_HEATHER || preset == PRESET_CROSS_LEAVED_HEATH) {
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.75f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+			t.base_tint = Color(0.6f, 0.5f, 0.55f, 0.35f); // Darker at the mouth's lobes and the calyx.
+		} else if (preset == PRESET_ROSEMARY || preset == PRESET_THYME) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.base_tint = Color(0.95f, 0.95f, 1.0f, 0.3f); // Paler throat; rosemary's dark spots read as the vein lines.
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+		} else if (preset == PRESET_FRENCH_LAVENDER) {
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.55f;
+			t.venation = VENATION_PARALLEL; // The bracts' net of darker veins.
+			t.parallel_veins = 5;
+			t.base_tint = Color(0.45f, 0.2f, 0.5f, 0.3f);
+		} else if (preset == PRESET_SAGE_ROCKROSE) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.1f;
+			t.venation = VENATION_PALMATE; // Crumpled silk, creased from the base.
+			t.base_tint = Color(0.95f, 0.8f, 0.2f, 0.45f); // The yellow spot at each petal's base.
+		} else if (preset == PRESET_HORNED_POPPY) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.0f;
+			t.venation = VENATION_PALMATE; // Crumpled silk, veined from the base.
+			t.base_tint = Color(0.95f, 0.72f, 0.05f, 0.35f);
 		} else {
 			t.base_tint = Color(0.9f, 0.55f, 0.02f, 0.4f);
 		}
@@ -3944,6 +4109,43 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.1f;
 			t.spots = 0.15f;
 			break;
+		case PRESET_BELL_HEATHER:
+		case PRESET_CROSS_LEAVED_HEATH:
+		case PRESET_CROWBERRY:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.45f; // The needle fills its narrow card.
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.vein = leaf_color.lerp(Color(0.8f, 0.82f, 0.75f), 0.35f); // The pale rolled-under margin line.
+			t.yellowing = 0.1f;
+			t.spots = 0.05f;
+			break;
+		case PRESET_ROSEMARY:
+		case PRESET_FRENCH_LAVENDER:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.2f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.vein = leaf_color.lerp(Color(0.85f, 0.87f, 0.82f), 0.3f); // The rolled, white-felted margin.
+			t.yellowing = 0.08f;
+			t.spots = 0.05f;
+			break;
+		case PRESET_THYME:
+			l.shape = LEAF_LANCEOLATE;
+			t.aspect = 0.4f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.1f;
+			t.spots = 0.1f; // The oil glands.
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.58f;
+			t.venation = VENATION_PINNATE; // The sunken net of the sage leaf.
+			t.vein = leaf_color.lerp(Color(0.12f, 0.14f, 0.08f), 0.4f);
+			t.yellowing = 0.15f;
+			t.spots = 0.15f;
+			break;
 		case PRESET_HEATHER:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.3f;
@@ -4154,6 +4356,66 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.vein = Color(0.3f, 0.45f, 0.12f); // Net veins, paler.
 			t.yellowing = 0.15f;
 			t.spots = 0.2f;
+			break;
+		case PRESET_GLASSWORT:
+			// No blades: the jointed stems carry the stem colour.
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.2f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.0f;
+			t.spots = 0.0f;
+			break;
+		case PRESET_CORD_GRASS:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.04f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 7;
+			t.vein = leaf_color.lerp(Color(0.7f, 0.72f, 0.6f), 0.3f);
+			t.yellowing = 0.35f; // In-rolled, withered tips.
+			t.spots = 0.1f;
+			break;
+		case PRESET_SEA_PURSLANE:
+			l.shape = LEAF_SPATULATE;
+			t.aspect = 0.38f;
+			t.vein = leaf_color.lerp(Color(0.8f, 0.82f, 0.78f), 0.2f); // Veins hidden under the meal.
+			t.yellowing = 0.05f;
+			t.spots = 0.5f; // The silvery bladder hairs, a fine mealy fleck.
+			break;
+		case PRESET_SEA_ASTER:
+			l.shape = LEAF_LANCEOLATE;
+			t.aspect = 0.14f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.15f;
+			t.spots = 0.05f;
+			break;
+		case PRESET_SEA_LAVENDER:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.32f;
+			t.vein = leaf_color.lerp(Color(0.62f, 0.66f, 0.42f), 0.5f); // The broad pale midrib.
+			t.yellowing = 0.2f;
+			t.spots = 0.1f;
+			break;
+		case PRESET_SEA_KALE:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.7f;
+			t.vein = Color(0.72f, 0.8f, 0.78f); // The broad pale midrib and veins.
+			t.yellowing = 0.1f;
+			t.spots = 0.0f;
+			break;
+		case PRESET_SEA_CAMPION:
+			l.shape = LEAF_LANCEOLATE;
+			t.aspect = 0.3f;
+			t.yellowing = 0.05f;
+			t.spots = 0.0f;
+			break;
+		case PRESET_HORNED_POPPY:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.42f;
+			t.vein = leaf_color.lerp(Color(0.8f, 0.84f, 0.82f), 0.35f);
+			t.yellowing = 0.1f;
+			t.spots = 0.4f; // The rough, warty hairs.
 			break;
 		case PRESET_SEA_HOLLY:
 			l.shape = LEAF_ROUND;
@@ -5330,6 +5592,45 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.62f, 0.16f, 0.09f); // Red flowers.
 			centre_color = Color(0.4f, 0.14f, 0.08f); // The panicle's red branches.
 			break;
+		case PRESET_BELL_HEATHER:
+			leaf_color = Color(0.1f, 0.19f, 0.06f); // Dark, glossy.
+			stem_color = Color(0.27f, 0.17f, 0.11f);
+			petal_color = Color(0.55f, 0.08f, 0.32f); // Crimson-purple.
+			break;
+		case PRESET_CROSS_LEAVED_HEATH:
+			leaf_color = Color(0.34f, 0.42f, 0.3f); // Grey-green, downy.
+			stem_color = Color(0.3f, 0.22f, 0.15f);
+			petal_color = Color(0.86f, 0.58f, 0.64f); // Pale rose.
+			break;
+		case PRESET_CROWBERRY:
+			leaf_color = Color(0.09f, 0.2f, 0.05f); // Glossy dark green.
+			stem_color = Color(0.3f, 0.16f, 0.1f); // Red-brown.
+			centre_color = Color(0.03f, 0.03f, 0.04f); // Black berries.
+			break;
+		case PRESET_ROSEMARY:
+			leaf_color = Color(0.13f, 0.2f, 0.1f); // Dark, leathery.
+			stem_color = Color(0.32f, 0.26f, 0.2f); // Grey-brown flaking bark.
+			petal_color = Color(0.62f, 0.68f, 0.86f); // Pale blue.
+			centre_color = Color(0.2f, 0.24f, 0.16f); // The green-purple calyx.
+			break;
+		case PRESET_FRENCH_LAVENDER:
+			leaf_color = Color(0.3f, 0.36f, 0.27f); // Grey-felted.
+			stem_color = Color(0.33f, 0.3f, 0.24f);
+			petal_color = Color(0.48f, 0.22f, 0.52f); // The purple bracts.
+			centre_color = Color(0.16f, 0.07f, 0.2f); // The dark purple spike.
+			break;
+		case PRESET_THYME:
+			leaf_color = Color(0.22f, 0.28f, 0.17f); // Grey-green.
+			stem_color = Color(0.3f, 0.2f, 0.15f); // Wiry, red-brown.
+			petal_color = Color(0.8f, 0.62f, 0.78f); // Pale pink-mauve.
+			centre_color = Color(0.32f, 0.18f, 0.24f); // The purplish calyces.
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			leaf_color = Color(0.25f, 0.3f, 0.18f); // Grey-green, rough.
+			stem_color = Color(0.32f, 0.24f, 0.17f);
+			petal_color = Color(0.93f, 0.92f, 0.88f); // White.
+			centre_color = Color(0.85f, 0.65f, 0.08f); // The yellow stamens.
+			break;
 		case PRESET_HEATHER:
 			leaf_color = Color(0.13f, 0.22f, 0.07f); // Dark, dull green.
 			stem_color = Color(0.25f, 0.18f, 0.12f);
@@ -5487,6 +5788,49 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.32f, 0.4f, 0.38f);
 			petal_color = Color(0.4f, 0.24f, 0.62f); // Violet.
 			centre_color = Color(0.95f, 0.55f, 0.08f); // The orange palate.
+			break;
+		case PRESET_GLASSWORT:
+			leaf_color = Color(0.32f, 0.5f, 0.12f);
+			stem_color = Color(0.34f, 0.52f, 0.12f); // Translucent fleshy yellow-green (reddens in autumn: make_saltmarsh).
+			centre_color = Color(0.38f, 0.5f, 0.14f);
+			break;
+		case PRESET_CORD_GRASS:
+			leaf_color = Color(0.3f, 0.38f, 0.24f); // Grey-green.
+			stem_color = Color(0.38f, 0.42f, 0.26f);
+			centre_color = Color(0.6f, 0.5f, 0.3f); // Yellow-brown spikes.
+			break;
+		case PRESET_SEA_PURSLANE:
+			leaf_color = Color(0.46f, 0.52f, 0.44f); // Silvery mealy grey-green.
+			stem_color = Color(0.4f, 0.32f, 0.24f);
+			break;
+		case PRESET_SEA_ASTER:
+			leaf_color = Color(0.26f, 0.4f, 0.18f); // Fleshy, slightly glaucous.
+			stem_color = Color(0.32f, 0.38f, 0.2f);
+			petal_color = Color(0.72f, 0.64f, 0.86f); // Pale lilac rays.
+			centre_color = Color(0.92f, 0.72f, 0.12f); // Yellow disc.
+			break;
+		case PRESET_SEA_LAVENDER:
+			leaf_color = Color(0.2f, 0.32f, 0.12f); // Leathery dark green.
+			stem_color = Color(0.36f, 0.4f, 0.24f);
+			petal_color = Color(0.5f, 0.38f, 0.72f); // Lavender-purple.
+			break;
+		case PRESET_SEA_KALE:
+			leaf_color = Color(0.36f, 0.48f, 0.5f); // Waxy glaucous blue-grey.
+			stem_color = Color(0.4f, 0.5f, 0.48f);
+			petal_color = Color(0.95f, 0.95f, 0.9f); // White.
+			centre_color = Color(0.85f, 0.75f, 0.25f);
+			break;
+		case PRESET_SEA_CAMPION:
+			leaf_color = Color(0.3f, 0.42f, 0.36f); // Glaucous.
+			stem_color = Color(0.32f, 0.42f, 0.34f);
+			petal_color = Color(0.96f, 0.95f, 0.93f); // White.
+			centre_color = Color(0.7f, 0.55f, 0.58f); // The pink-veined bladder.
+			break;
+		case PRESET_HORNED_POPPY:
+			leaf_color = Color(0.42f, 0.5f, 0.52f); // Grey-blue, rough-hairy.
+			stem_color = Color(0.45f, 0.54f, 0.52f);
+			petal_color = Color(0.98f, 0.82f, 0.08f); // Yellow.
+			centre_color = Color(0.5f, 0.56f, 0.48f); // Glaucous pods.
 			break;
 		case PRESET_LIVERWORT:
 			leaf_color = Color(0.1f, 0.26f, 0.06f);
@@ -5704,6 +6048,51 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_ALPINE_TOADFLAX:
 			_build_alpine_toadflax();
 			break;
+		case PRESET_GLASSWORT:
+			_build_glasswort();
+			break;
+		case PRESET_CORD_GRASS:
+			_build_cord_grass();
+			break;
+		case PRESET_SEA_PURSLANE:
+			_build_sea_purslane();
+			break;
+		case PRESET_SEA_ASTER:
+			_build_sea_aster();
+			break;
+		case PRESET_SEA_LAVENDER:
+			_build_sea_lavender();
+			break;
+		case PRESET_SEA_KALE:
+			_build_sea_kale();
+			break;
+		case PRESET_SEA_CAMPION:
+			_build_sea_campion();
+			break;
+		case PRESET_HORNED_POPPY:
+			_build_horned_poppy();
+			break;
+		case PRESET_BELL_HEATHER:
+			_build_bell_heather();
+			break;
+		case PRESET_CROSS_LEAVED_HEATH:
+			_build_cross_leaved_heath();
+			break;
+		case PRESET_CROWBERRY:
+			_build_crowberry();
+			break;
+		case PRESET_ROSEMARY:
+			_build_rosemary();
+			break;
+		case PRESET_FRENCH_LAVENDER:
+			_build_french_lavender();
+			break;
+		case PRESET_THYME:
+			_build_thyme();
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			_build_sage_rockrose();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -5761,7 +6150,33 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_ALPINE_TOADFLAX:
 		case PRESET_PURPLE_SAXIFRAGE:
+		case PRESET_SEA_CAMPION:
+		case PRESET_HORNED_POPPY:
 			leaf_rough = 0.55f; // Waxy bloom.
+			break;
+		case PRESET_GLASSWORT:
+		case PRESET_SEA_ASTER:
+			leaf_rough = 0.35f; // Fleshy, wet-looking succulent skin.
+			break;
+		case PRESET_SEA_KALE:
+		case PRESET_SEA_LAVENDER:
+			leaf_rough = 0.42f; // Thick, waxy.
+			break;
+		case PRESET_SEA_PURSLANE:
+		case PRESET_CROSS_LEAVED_HEATH:
+			leaf_rough = 0.85f; // Mealy or downy hairs scatter.
+			break;
+		case PRESET_BELL_HEATHER:
+		case PRESET_CROWBERRY:
+			leaf_rough = 0.35f; // Glossy needles.
+			break;
+		case PRESET_ROSEMARY:
+			leaf_rough = 0.45f; // Leathery, a dull sheen above.
+			break;
+		case PRESET_FRENCH_LAVENDER:
+		case PRESET_THYME:
+		case PRESET_SAGE_ROCKROSE:
+			leaf_rough = 0.85f; // Felted or rough with hairs.
 			break;
 		default:
 			break;
@@ -5850,7 +6265,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -6430,6 +6845,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
 		}
 		sp->set_meta("floor", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}
@@ -6540,6 +6956,7 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		// Too sparse and low to colour the far ground; the stones are what shows there.
 		sp->set_far_color(Color(0, 0, 0, 0));
 		sp->set_meta("stones", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}
@@ -6585,6 +7002,8 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_bloom_shares", "preset", "season"), &PlantGenerator::get_bloom_shares);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_amount", "preset"), &PlantGenerator::get_pollen_amount);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_release", "preset", "season"), &PlantGenerator::get_pollen_release);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_presence", "preset", "season"), &PlantGenerator::get_presence);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
@@ -6662,11 +7081,30 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_ALPINE_SEDGE);
 	BIND_ENUM_CONSTANT(PRESET_DWARF_WILLOW);
 	BIND_ENUM_CONSTANT(PRESET_ALPINE_TOADFLAX);
+	BIND_ENUM_CONSTANT(PRESET_GLASSWORT);
+	BIND_ENUM_CONSTANT(PRESET_CORD_GRASS);
+	BIND_ENUM_CONSTANT(PRESET_SEA_PURSLANE);
+	BIND_ENUM_CONSTANT(PRESET_SEA_ASTER);
+	BIND_ENUM_CONSTANT(PRESET_SEA_LAVENDER);
+	BIND_ENUM_CONSTANT(PRESET_SEA_KALE);
+	BIND_ENUM_CONSTANT(PRESET_SEA_CAMPION);
+	BIND_ENUM_CONSTANT(PRESET_HORNED_POPPY);
+	BIND_ENUM_CONSTANT(PRESET_BELL_HEATHER);
+	BIND_ENUM_CONSTANT(PRESET_CROSS_LEAVED_HEATH);
+	BIND_ENUM_CONSTANT(PRESET_CROWBERRY);
+	BIND_ENUM_CONSTANT(PRESET_ROSEMARY);
+	BIND_ENUM_CONSTANT(PRESET_FRENCH_LAVENDER);
+	BIND_ENUM_CONSTANT(PRESET_THYME);
+	BIND_ENUM_CONSTANT(PRESET_SAGE_ROCKROSE);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("apply_scrub_rules", "species", "stand"), &PlantGenerator::apply_scrub_rules);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
@@ -6707,5 +7145,17 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);
 	BIND_ENUM_CONSTANT(ALPINE_SCREE);
 	BIND_ENUM_CONSTANT(ALPINE_MAX);
+	BIND_ENUM_CONSTANT(SALTMARSH_PIONEER);
+	BIND_ENUM_CONSTANT(SALTMARSH_MID);
+	BIND_ENUM_CONSTANT(SALTMARSH_HIGH);
+	BIND_ENUM_CONSTANT(SALTMARSH_SHINGLE);
+	BIND_ENUM_CONSTANT(SALTMARSH_MAX);
+	BIND_ENUM_CONSTANT(HEATH_DRY);
+	BIND_ENUM_CONSTANT(HEATH_WET);
+	BIND_ENUM_CONSTANT(HEATH_MARITIME);
+	BIND_ENUM_CONSTANT(HEATH_MAX);
+	BIND_ENUM_CONSTANT(SCRUB_GARRIGUE);
+	BIND_ENUM_CONSTANT(SCRUB_MAQUIS);
+	BIND_ENUM_CONSTANT(SCRUB_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

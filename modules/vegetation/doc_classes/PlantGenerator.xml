@@ -25,6 +25,21 @@
 				The shares of a preset's flowering stems on the day of [param season] ([member season]): [code]x[/code] none (leaves only), [code]y[/code] in flower, [code]z[/code] in seed. Use it to tell when a species' look has moved enough to generate its meshes again. Presets without a flowering window, and a season without [code]forcing[/code], give [code]Vector3(0, 1, 0)[/code].
 			</description>
 		</method>
+		<method name="get_pollen_amount" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<description>
+				How much pollen a brushed plant of [param preset] sheds at full flower, relative (reedmace 1, meadow grasses 0.9, sedges 0.4); [code]0[/code] for insect-pollinated plants. The [code]make_*[/code] sets put it on their species as the meta [code]pollen[/code], with the preset as [code]plant_preset[/code], for [VegetationPollen3D].
+			</description>
+		</method>
+		<method name="get_pollen_release" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<param index="1" name="season" type="Dictionary" />
+			<description>
+				The share of a wind-pollinated preset's plants shedding pollen on the day of [param season]: its flowering share ([method get_bloom_shares]) where its look has a flowering window, else its anthesis months by day of year (grasses late May to July, nettle and docks June to September). [code]0[/code] for insect-pollinated presets.
+			</description>
+		</method>
 		<method name="get_presence" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
@@ -84,6 +99,36 @@
 				Returns the plants of a sand dune zone as [PlantSpecies], placed by distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) on slopes under dry sand's angle of repose: lyme grass and a little marram on the embryo dunes of the strandline, marram tussocks with lyme grass and sea holly on the mobile foredunes, thinning marram with a dry sward and moss on the fixed dunes behind. Grasses grow in clonal patches. Put the [VegetationField3D] in [code]GroundSurface3D.wind_shelters[/code] and the plants shelter the sand and trap it ([method VegetationField3D.sample_lateral_cover]). They do not colour the far ground. Each species has the meta [code]dunes[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering.
 			</description>
 		</method>
+		<method name="make_heath" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.HeathStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the dwarf shrubs of an Atlantic heath zone as [PlantSpecies] (Gimingham 1972; Rodwell 1991). Heath is oceanic and open: over about 700 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), January means over about -4 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), out of the shade of crowns ([constant PlantSpecies.RULE_SHADE] under 0.3), off bare rock, and below the alpine belt (growing season over 6.4 C, [constant PlantSpecies.RULE_SEASON_TEMPERATURE], where [method make_alpine] takes over). Dry heath (heather in patches of different ages, bell heather on the sunniest slopes, crowberry on the shaded ones, wiry grasses) keeps to free-draining ground ([constant PlantSpecies.RULE_WETNESS] under 7.5); wet heath (cross-leaved heath, heather, cottongrass, sphagnum) to where water gathers, short of the bog (7 to 10); maritime heath (wind-pruned heather and bell heather, thrift, crowberry) to cliff tops open to the sea ([constant PlantSpecies.RULE_COAST_EXPOSURE] over 0.4, 6 to 150 m above it, needing a geology source with a sea). They do not colour the far ground. Each species has the meta [code]heath[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and berries.
+			</description>
+		</method>
+		<method name="make_saltmarsh" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.SaltmarshStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of a salt marsh zone or a shingle backshore as [PlantSpecies], zoned by height above the sea ([constant PlantSpecies.RULE_TIDE_HEIGHT], metres for a mesotidal coast; Adam 1990, Rodwell 2000): glasswort and cord-grass on the pioneer mud (0 to 0.7 m), sea purslane, sea aster and sea lavender in a saltmarsh-grass sward on the low to mid marsh (0.5 to 1.3 m), thrift, sea lavender and sea rush in a fescue sward on the high marsh (1.1 to 1.9 m). The marsh keeps to sheltered coasts ([constant PlantSpecies.RULE_COAST_EXPOSURE] under 0.3) on ground under 3 degrees, beach or not, since wave energy decides where mud settles. Shingle plants (sea kale, sea campion, yellow horned-poppy and thrift) grow on the beach's backshore ([constant PlantSpecies.RULE_BEACH]) above the highest tides (1.8 to 4 m). The sets need a [member TerrainDataMap3D.geology_source] with a sea, and are not placed without one. Glasswort reddens from late August. They do not colour the far ground. Each species has the meta [code]saltmarsh[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and colour.
+			</description>
+		</method>
+		<method name="make_scrub" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.ScrubStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the low aromatic shrubs of a Mediterranean scrub zone as [PlantSpecies] (Blondel et al. 2010; Flora iberica). Scrub is summer-dry and mild in winter: January means over about 3 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), 250 to 1,100 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), aridity 0.2 to 0.75 ([constant PlantSpecies.RULE_ARIDITY]), out of the shade of crowns and off wet ground. Garrigue (open rosemary, thyme cushions and sage-leaved rockrose with bare stony ground between, and dry grass) keeps to thin soil ([constant PlantSpecies.RULE_SOIL_DEPTH] under 0.45 m) and rock; maquis (closed sage-leaved rockrose and French lavender, a little rosemary) to deeper soil (over 0.35 m), under the tall shrubs added with [method apply_scrub_rules]. Thyme and lavender take the sunniest ground. Each species has the meta [code]scrub[/code] set to its stand. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the rockrose's summer drought.
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -116,6 +161,14 @@
 			<return type="void" />
 			<description>
 				Sets the colours to the [member preset]'s natural ones.
+			</description>
+		</method>
+		<method name="apply_scrub_rules" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="species" type="PlantSpecies" />
+			<param index="1" name="stand" type="int" enum="PlantGenerator.ScrubStand" />
+			<description>
+				Gives [param species] the climate and soil rules of a Mediterranean scrub stand, as [method make_scrub] does for its own plants, and sets its meta [code]scrub[/code] to the stand. Use it to place other scrub shrubs, such as a [code]TreeGenerator[/code] shrub species (gum rockrose, kermes oak, lentisk, dwarf fan palm), in the same garrigue or maquis.
 			</description>
 		</method>
 		<method name="generate">
@@ -408,7 +461,52 @@
 		<constant name="PRESET_ALPINE_TOADFLAX" value="67" enum="Preset">
 			Alpine toadflax ([i]Linaria alpina[/i]): blue-grey, whorled, fleshy leaves on sprawling shoots that wander through moving scree, with violet snapdragon flowers with an orange palate.
 		</constant>
-		<constant name="PRESET_MAX" value="68" enum="Preset">
+		<constant name="PRESET_GLASSWORT" value="68" enum="Preset">
+			Glasswort ([i]Salicornia europaea[/i] agg.): leafless candelabras of jointed, fleshy green segments 3 to 5 mm thick on bare marsh mud, turning red and purple in autumn.
+		</constant>
+		<constant name="PRESET_CORD_GRASS" value="69" enum="Preset">
+			Common cord-grass ([i]Spartina anglica[/i]): dense clonal clumps of stiff stems with flat, grey-green leaves spreading stiffly, and erect yellow-brown spikes that stand into winter.
+		</constant>
+		<constant name="PRESET_SEA_PURSLANE" value="70" enum="Preset">
+			Sea purslane ([i]Atriplex portulacoides[/i]): a low, sprawling shrublet densely clothed in opposite, silvery-grey, mealy leaves, lining the marsh creeks.
+		</constant>
+		<constant name="PRESET_SEA_ASTER" value="71" enum="Preset">
+			Sea aster ([i]Tripolium pannonicum[/i]): fleshy, narrow leaves and a flat-topped spray of pale lilac daisies with yellow discs (some rayless), late summer.
+		</constant>
+		<constant name="PRESET_SEA_LAVENDER" value="72" enum="Preset">
+			Common sea lavender ([i]Limonium vulgare[/i]): a rosette of leathery leaves and stiff, zigzag-branched stems with one-sided spikes of small lavender flowers whose papery calyces stand through winter.
+		</constant>
+		<constant name="PRESET_SEA_KALE" value="73" enum="Preset">
+			Sea kale ([i]Crambe maritima[/i]): a low mound of huge, waxy, glaucous, crinkled leaves on shingle, with dense flat heads of white four-petalled flowers in June, then round pods.
+		</constant>
+		<constant name="PRESET_SEA_CAMPION" value="74" enum="Preset">
+			Sea campion ([i]Silene uniflora[/i]): trailing mats of glaucous, fleshy leaves with white, notched-petalled flowers over swollen bladder calyces.
+		</constant>
+		<constant name="PRESET_HORNED_POPPY" value="75" enum="Preset">
+			Yellow horned-poppy ([i]Glaucium flavum[/i]): grey-blue, crinkled, deeply lobed rosettes, branched stems with yellow poppies and long, curved seed pods.
+		</constant>
+		<constant name="PRESET_BELL_HEATHER" value="76" enum="Preset">
+			Bell heather ([i]Erica cinerea[/i]): a dwarf shrub of wiry stems, dark glossy needle leaves in whorls of three with leafy tufts in their axils, and crimson-purple bells in short spikes, July to September. The driest, sunniest heath.
+		</constant>
+		<constant name="PRESET_CROSS_LEAVED_HEATH" value="77" enum="Preset">
+			Cross-leaved heath ([i]Erica tetralix[/i]): a straggling dwarf shrub of the wet heath, grey-green downy leaves in whorls of four, and pale rose bells nodding in a tight cluster at each shoot tip.
+		</constant>
+		<constant name="PRESET_CROWBERRY" value="78" enum="Preset">
+			Crowberry ([i]Empetrum nigrum[/i]): prostrate mats of trailing stems crowded with glossy, rolled needle leaves; black berries from August to October.
+		</constant>
+		<constant name="PRESET_ROSEMARY" value="79" enum="Preset">
+			Rosemary ([i]Salvia rosmarinus[/i]): an erect, dense evergreen shrub of woody stems branching into leafy shoots crowded with dark, rolled, linear leaves; pale blue two-lipped flowers in the leaf axils from winter to spring.
+		</constant>
+		<constant name="PRESET_FRENCH_LAVENDER" value="80" enum="Preset">
+			French lavender ([i]Lavandula stoechas[/i]): a compact, grey-leaved bush of upright leafy shoots, each ending in a dense dark purple spike crowned by purple bracts, March to June.
+		</constant>
+		<constant name="PRESET_THYME" value="81" enum="Preset">
+			Thyme ([i]Thymus[/i]): a low cushion of wiry woody stems and small grey-green leaves, with rounded heads of pale pink flowers, April to June.
+		</constant>
+		<constant name="PRESET_SAGE_ROCKROSE" value="82" enum="Preset">
+			Sage-leaved rockrose ([i]Cistus salviifolius[/i]): a low, sprawling shrub of wrinkled grey-green leaves and white, crumpled-silk flowers with yellow stamens on long stalks, April and May; woody capsules after. In the summer drought the leaves fold, grey and partly fall.
+		</constant>
+		<constant name="PRESET_MAX" value="83" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -503,6 +601,42 @@
 		</constant>
 		<constant name="ALPINE_MAX" value="4" enum="AlpineStand">
 			Number of alpine stand types.
+		</constant>
+		<constant name="SALTMARSH_PIONEER" value="0" enum="SaltmarshStand">
+			Pioneer marsh about mean high water neaps: glasswort scattered on bare mud, cord-grass in clonal clumps.
+		</constant>
+		<constant name="SALTMARSH_MID" value="1" enum="SaltmarshStand">
+			Low to mid marsh: sea purslane, sea aster and sea lavender in a saltmarsh-grass sward.
+		</constant>
+		<constant name="SALTMARSH_HIGH" value="2" enum="SaltmarshStand">
+			High marsh: thrift, sea lavender, sea rush and a little sea aster in a fine fescue sward.
+		</constant>
+		<constant name="SALTMARSH_SHINGLE" value="3" enum="SaltmarshStand">
+			Shingle backshore above the highest tides: sea kale, sea campion, yellow horned-poppy and thrift.
+		</constant>
+		<constant name="SALTMARSH_MAX" value="4" enum="SaltmarshStand">
+			Number of salt marsh stand types.
+		</constant>
+		<constant name="HEATH_DRY" value="0" enum="HeathStand">
+			Dry heath on free-draining ground: heather, bell heather, crowberry and wiry grasses.
+		</constant>
+		<constant name="HEATH_WET" value="1" enum="HeathStand">
+			Wet heath where water gathers, short of the bog: cross-leaved heath, heather, cottongrass and sphagnum.
+		</constant>
+		<constant name="HEATH_MARITIME" value="2" enum="HeathStand">
+			Maritime heath on exposed cliff tops: heather and bell heather pruned low by salt wind, thrift and crowberry.
+		</constant>
+		<constant name="HEATH_MAX" value="3" enum="HeathStand">
+			Number of heath stand types.
+		</constant>
+		<constant name="SCRUB_GARRIGUE" value="0" enum="ScrubStand">
+			Garrigue on thin soil and rock: open rosemary, thyme and sage-leaved rockrose with bare ground between.
+		</constant>
+		<constant name="SCRUB_MAQUIS" value="1" enum="ScrubStand">
+			Maquis on deeper soil: closed sage-leaved rockrose and French lavender under the tall shrubs.
+		</constant>
+		<constant name="SCRUB_MAX" value="2" enum="ScrubStand">
+			Number of scrub stand types.
 		</constant>
 	</constants>
 </class>

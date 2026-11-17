@@ -116,7 +116,10 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Waterside plants** (`PlantGenerator.make_banks()`, `PlantSpecies.stone_top_water`, `follow_flow`): marsh marigold, meadowsweet and butterbur line streams, lakes and falls by distance to water; river stones carry river moss and liverwort by height over the water, the moss trailing downstream.
 - **Bog plants** (`PlantGenerator.make_bog()`, BOG_BLANKET or BOG_VALLEY): sphagnum hummocks, cotton grass, bog asphodel and sundew on wet level ground.
+- **Atlantic heath** (`PlantGenerator.make_heath()`): bell heather, cross-leaved heath and crowberry in dry, wet and cliff-top heath, placed by rain, winter cold and wetness.
+- **Mediterranean scrub** (`PlantGenerator.make_scrub()`): rosemary, French lavender, thyme and sage-leaved rockrose, as garrigue on thin soil and maquis on deeper soil where winters are mild and summers dry; the rockrose folds and greys its leaves in drought.
 - **Dune plants** (`PlantGenerator.make_dunes()`; `GroundSurface3D.wind_shelters`): marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.
+- **Salt marsh and shingle plants** (`PlantGenerator.make_saltmarsh()`): glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.
 - **Alpine and scree plants** (`PlantGenerator.make_alpine()`): fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.
 
 - **Leaf wear** (`PlantGenerator.leaf_wear`): insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.
@@ -130,6 +133,9 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   ![Nettles standing, then bent away from a body](media/plants-bend.jpg)
 
   *Bending: the nettles part round the body.*
+
+- **Ground mist** (`VegetationMist3D`, `mist_amount`; needs PhysX Flow): at dawn, low mist pools in hollows and drifts through the grass, set by the weather and sun; bodies part it, and it burns off as the sun climbs.
+- **Pollen puffs** (`VegetationPollen3D`; needs PhysX Flow): brushing grasses and other wind-pollinated plants in flower releases a puff of pollen; each plant recharges, and wet plants stay still.
 
 - **Sun and shade growth** (always on): grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.

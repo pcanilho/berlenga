@@ -312,6 +312,38 @@ tracer can bind them directly: no NanoVDB conversion or copy each frame.
   PhysX splashes and floating props read their height rather than drawing a
   second surface.
 
+### MPM fluid: two-layer water in raster (picked 17 Nov)
+
+Problem (bucket pour, docs review 17 Nov): a stream falling in front of the
+pool shows the bucket wall behind the pool, a faint brown band, where the path
+tracer shows the pool's surface. The shot draws the isosurface mesh with the
+clear-water material (Transmission, not thin-walled): raster transmission
+reads the screen copy taken before the transparent pass, which holds opaque
+geometry only, so the stream sees through the pool as if it were not there.
+(A debug render ruled out the screen-space proxy: the shot does not use it.
+The refraction mask added there in 0e459f27 stays: it fixes a real leak for
+screen-space fluid.) The same limit hides a river behind a waterfall's sheet,
+or one glass behind another, in every engine that refracts a single screen
+copy (Unreal and HDRP document it for translucency behind translucency).
+
+Technique: depth peeling (Everitt, "Interactive Order-Independent
+Transparency", NVIDIA 2001), as screen-space liquid renderers do for layered
+refraction (Imai, Kanamori, Mitani et al., "Real-Time Screen-Space Liquid
+Rendering with Complex Refractions", CAVW 27, 2016). Two layers, in the
+forward renderer:
+1. Front depth: the screen-reading transparent surfaces (Transmission,
+   refraction) drawn depth-only, front faces, into a scratch depth D1.
+2. Second layer: the same surfaces drawn in colour into the scene colour,
+   each fragment discarded unless it lies behind D1 (plus a small bias); their
+   transmission reads the opaque screen copy as now.
+3. The screen copy is taken again, so it now holds layer 2.
+4. The normal transparent pass: the front layer reads the new copy and shows
+   the pool behind the stream, lit and reflecting, as the path tracer does.
+Only frames with such surfaces pay: one depth-only and one extra colour pass
+over them, and one more screen copy. Back faces stay culled, so a closed
+water mesh's second front-facing layer is the next body of water. PT is
+unchanged.
+
 ### MPM fluid: spray, foam and bubbles
 
 Technique: Ihmsen, Akinci, Akinci and Teschner 2012, "Unified spray, foam
@@ -327,6 +359,13 @@ extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
   curvature proxy is how far the particle sits from the local centre of
   liquid mass. New particles are placed in the cylinder that the fluid
   particle sweeps that frame.
+- Trapped air on MPM (17 Nov 2026): each node is compared with the
+  particle's own APIC velocity field, v + C (x_node - x), not with v alone.
+  Against v alone a smooth falling stream read about 1 m/s across the
+  stencil (its shear, stretch and necking), as high as the plunge, and
+  filled the pour with white specks. Against the APIC field the stream
+  reads under 0.05 m/s and the plunge 0.05 to 0.3 m/s (measured on the
+  bucket pour); the clamps are 0.06 to 0.3.
 - Sort: by the grid's liquid fraction (Ihmsen's neighbour count): spray
   below 0.12, bubbles above 0.7, foam in between.
 - Spray: ballistic.
@@ -337,11 +376,55 @@ extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
 - Foam (Wretborn): advected with the surface and projected back onto it,
   the move capped at half a cell. Lifetimes are normally distributed
   (sd 0.4 of the mean).
-- Drawing: lit white spheres, as in both papers.
+- Drawing: foam and bubbles as lit white spheres, as in both papers. Spray
+  as clear water drops (the fluid's clear-water material on small spheres):
+  airborne drops read by their highlight and refraction, which is how
+  Pixar shaded droplets in "Simulating Rivers in The Good Dinosaur"
+  (Reisch et al., SIGGRAPH 2016 talk), with scattering volumes only for
+  whitewater. White spray read as a curtain of beads.
 - Not done (cost): two-way bubble coupling, SPH wet-foam forces, screen
   space or volumetric foam.
 - GPU cost: two passes a frame (one over the fluid, one over a 16k ring);
   the PC queue measures it.
+
+### Flow: fire light and embers (campfire)
+
+Paulo picked a campfire showcase (17 Nov 2026): combustion, heat glow lighting
+the ground, smoke resting on the slope.
+
+- Fire: NVIDIA Flow's own combustion (fuel burns above ignition_temperature
+  into heat and smoke), drawn by the heat ramp.
+- Light in raster (`fire_light`, on): the gas's glow lights nothing in
+  raster, so a shadowed point light stands in the flames, as engines light
+  fire (Unreal's Niagara light renderer, Frostbite). It pulses at the flame's
+  puffing frequency, f = 1.5 / sqrt(D) Hz for a base D metres across
+  (Cetegen and Ahmed 1993, "Experiments on the periodic instability of
+  buoyant plumes and pool fires", Combustion and Flame 93): about 2 Hz for a
+  0.4 m campfire. The path tracer keeps it as the flame's proxy light for next
+  event estimation: the traced glow lights a surface only when a bounce ray
+  happens to hit it, so at a few samples a pixel the ground around the fire
+  stayed dark (first PT check). With the proxy on, the glow is dropped on rays
+  leaving a diffuse bounce or a smoke scatter, so the fire is not counted
+  twice; camera and mirror rays still see it.
+- Flame look (docs review: "a soft orange smoke column, no tongues or core").
+  Two causes. The default heat ramp rose linearly, so all warm gas glowed
+  orange; it is now soot as a blackbody (Nguyen, Fedkiw and Jensen 2002;
+  Pegoraro and Parker 2006): colour from the blackbody's chromaticity,
+  brightness from Planck's law in Wien's approximation at 580 nm, about
+  twentyfold per 100 K, so the flame has a sharp edge and a bright core and the
+  cooler gas reads as smoke. And the fire light, standing inside the smoke, lit
+  it brighter than the flame's own glow (its near field is inverse square); it
+  now scatters at `light_volumetric_fog_energy` 0.1, which the path tracer
+  honours too (stored in the light's free word).
+- Embers are velocity-aligned streaks (a camera shutter's motion blur), 0.4-1.5x
+  sizes, in linear blackbody colours whose brightness falls as they cool.
+- Showcase sticks char towards the fuel bed with glowing Voronoi cracks.
+- Embers (`embers`, on): GPU particles from the fire's base, drag and a weak
+  net gravity with turbulence, coloured along the blackbody colours of a
+  cooling ember (about 1,300 K to 800 K), emissive billboards that PT draws.
+  They do not read the gas velocity (that needs a Flow readback).
+- Smoke on the slope: `smoke_buoyancy` below zero makes cooled smoke heavier
+  than the air, and the terrain floor keeps it on the ground.
 
 ### Flow: terrain under the gas
 

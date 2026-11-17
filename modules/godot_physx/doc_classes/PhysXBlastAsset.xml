@@ -15,19 +15,32 @@
 				Returns how many chunks this asset has, including chunk [code]0[/code] (the whole unfractured mesh) -- so this is always one more than the number of pieces a full fracture actually produces.
 			</description>
 		</method>
+		<method name="prepare_render">
+			<return type="void" />
+			<description>
+				Converts every chunk's render arrays to GPU format now, the costly part of building them, so a [PhysXDestructible3D] using this asset later only uploads them instead of stalling the frame it spawns or splits in. Safe to call from a worker thread (for example with [WorkerThreadPool]) while nothing edits the asset. The chunk meshes are built once and shared by every destructible using this asset; calling it again does nothing.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="asset_bytes" type="PackedByteArray" setter="set_asset_bytes" getter="get_asset_bytes" default="PackedByteArray()">
 			The raw NvBlast asset data (bond/chunk support-graph structure) -- a single relocatable memory block per NvBlast's own design, stored here as-is. Not meaningful to edit by hand.
+		</member>
+		<member name="bond_healths" type="PackedFloat32Array" setter="set_bond_healths" getter="get_bond_healths" default="PackedFloat32Array()">
+			Optional initial health of each bond, in the asset's own bond order, as a multiple of [member PhysXDestructible3D.health]: a thin joint such as [code]0.01[/code] breaks long before a thick one such as [code]50[/code]. [method PhysXBlastAuthoring.build_prefractured] fills it from each bond's [code]health[/code]. When this is empty, or its size doesn't match the bond count, every bond starts at [member PhysXDestructible3D.health].
 		</member>
 		<member name="chunk_hulls" type="Array" setter="set_chunk_hulls" getter="get_chunk_hulls" default="[]">
 			Optional collision hulls, one [PackedVector3Array] of convex hull points per chunk (a few dozen points). [PhysXDestructible3D] cooks these instead of every triangle corner in [member chunk_points], which makes spawning pieces much cheaper. When this is empty, hulls are made from [member chunk_points].
 		</member>
 		<member name="chunk_meshes" type="Array" setter="set_chunk_meshes" getter="get_chunk_meshes" default="[]">
 			Optional render meshes, one [Mesh] arrays [Array] per chunk (indexed or not), for chunks authored with their own shading data (see [method PhysXBlastAuthoring.build_prefractured]). [PhysXDestructible3D] draws pieces with their normals, tangents, colours and UVs. When this is empty, pieces are drawn from [member chunk_points] with flat normals.
+			For a chunk with several materials (bark, wood, moss, leaves), an entry may also be a [Mesh], or an [Array] of surfaces, each a [Mesh] arrays [Array] or a [Dictionary] with [code]arrays[/code] and [code]slot[/code]. Each surface is drawn with [member materials][code][slot][/code]; a surface's slot is its index unless given, and a [Mesh] surface whose material is in [member materials] takes that material's slot. A piece's mesh gets one surface per slot, whatever number of chunks it carries.
 		</member>
 		<member name="chunk_points" type="Array" setter="set_chunk_points" getter="get_chunk_points" default="[]">
 			Per-chunk render-mesh triangle-soup positions, in the source mesh's local space -- one [PackedVector3Array] per chunk, index-matched to [member asset_bytes]' own chunk indices. Not meaningful to edit by hand.
+		</member>
+		<member name="materials" type="Material[]" setter="set_materials" getter="get_materials" default="[]">
+			Materials by surface slot for [member chunk_meshes]. [member PhysXDestructible3D.material_override], when set, covers all of them.
 		</member>
 	</members>
 </class>

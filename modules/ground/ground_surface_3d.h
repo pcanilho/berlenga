@@ -90,6 +90,10 @@ public:
 		float wheel_kphi = 1000.0f;
 		// Deep mud (docs/ideas/mud.md, stage 1): the soft layer's thickness over the firm base, m (0: none).
 		float mud = 0.0f;
+		// How the soil sticks to rubber and steel (docs/ideas/mud.md, stage 3): 0..1, and the tangential adhesion
+		// (kPa, Wong's ca).
+		float stickiness = 0.0f;
+		float adhesion = 0.0f;
 		bool deformable = true;
 	};
 	// p_saturation: pore water in the top layer, 0..1 (< 0: none known, p_moisture alone); p_water_speed: water
@@ -168,6 +172,10 @@ public:
 		// out of the side of the turn, m3/s (beside what its tread throws).
 		float side_share = 0.0f;
 		float side_volume_rate = 0.0f;
+		// The soil's stickiness there (0 sand .. 1 sticky clay): a grains node throws sticky sprays as mud.
+		float stickiness = 0.0f;
+		// Clay flung off a tyre's tread (mud stage 4), m3: thrown as it is, not dug from the field.
+		float volume = 0.0f;
 	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {

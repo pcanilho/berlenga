@@ -88,6 +88,12 @@
 		<member name="aridity_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1000)">
 			Aridity index (annual precipitation over potential evapotranspiration, Thornthwaite) where the species grows: below 0.5 is dry steppe, above 1 humid. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="beach_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member beach_range].
+		</member>
+		<member name="beach_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Range of [constant RULE_BEACH].
+		</member>
 		<member name="canopy_conifer" type="bool" setter="set_canopy_conifer" getter="is_canopy_conifer" default="false">
 			If [code]true[/code], this species' crown is needle-leaved (pine, spruce, fir, larch). [VegetationField3D] counts each crown's share of the cover overhead, so the floor under it can follow the stand type through [member conifer_range].
 		</member>
@@ -96,6 +102,12 @@
 		</member>
 		<member name="canopy_radius" type="float" setter="set_canopy_radius" getter="get_canopy_radius" default="0.0">
 			Crown radius in metres (times each plant's scale). Above 0 the species shades the ground under it, and later species in the [Biome] with a [member shade_range] are placed by that shade (see [method VegetationField3D.get_shade_at]).
+		</member>
+		<member name="coast_exposure_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member coast_exposure_range].
+		</member>
+		<member name="coast_exposure_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Range of [constant RULE_COAST_EXPOSURE].
 		</member>
 		<member name="conifer_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Fade width outside [member conifer_range].
@@ -298,6 +310,12 @@
 		<member name="temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
 			Mean annual temperature in °C where the species grows; with the lapse rate it sets tree lines and altitude belts. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="tide_height_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member tide_height_range], m.
+		</member>
+		<member name="tide_height_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-10000, 10000)">
+			Range of [constant RULE_TIDE_HEIGHT], m above the sea.
+		</member>
 		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
 			Distance, in metres, beyond which the species is not drawn. For ground cover too small to see far away. Plants with the generated plant material thin out before it: from 35% of the range the share drawn falls to none at the range, each plant shrinking away in the order of its placement rank while the rest grow slightly to hold the cover, so there are no pops; [member far_color] then carries them on the ground. 0 draws it at any distance.
 		</member>
@@ -384,7 +402,16 @@
 		<constant name="RULE_SEASON_TEMPERATURE" value="19" enum="Rule">
 			The growing season's mean temperature, C ([method season_temperature]), from the map's January and July means. Needs the map's climate; only worked out for species whose range is narrower than the default.
 		</constant>
-		<constant name="RULE_MAX" value="20" enum="Rule">
+		<constant name="RULE_TIDE_HEIGHT" value="20" enum="Rule">
+			Height above the sea, m: the ground of the map's [member TerrainDataMap3D.geology_source] over its sea ([member TerrainGenerator3D.sea_level] plus [member TerrainGenerator3D.height_offset]). Salt marsh zones by it. The coast rules need a geology source with a sea; without one, a species that uses any of them is not placed.
+		</constant>
+		<constant name="RULE_COAST_EXPOSURE" value="21" enum="Rule">
+			Exposure to the sea's waves, [code]0[/code] sheltered to [code]1[/code] open ([method TerrainGenerator3D.get_coast_exposure_at]); [code]0[/code] far from the sea, so pair it with [constant RULE_TIDE_HEIGHT]. Needs a geology source with a sea.
+		</constant>
+		<constant name="RULE_BEACH" value="22" enum="Rule">
+			Beach mask, [code]1[/code] on the beach face fading over the backshore, [code]0[/code] inland ([method TerrainGenerator3D.get_beach_at]). Needs a geology source with a sea.
+		</constant>
+		<constant name="RULE_MAX" value="23" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

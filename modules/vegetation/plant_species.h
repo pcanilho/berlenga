@@ -65,6 +65,9 @@ public:
 		RULE_LITTER, // Leaf fall from the placed canopy, 0 none to 1 under closed crowns, drifting past the crowns (VegetationField3D).
 		RULE_DUNE, // Coastal dune stability (TerrainGenerator3D marram cover), 0 bare to 1 fixed; -1 off the dune sand. Only where the map's geology_source has dunes.
 		RULE_SEASON_TEMPERATURE, // Growing season mean, C (Paulsen and Koerner 2014: days over 0.9 C; under 94 of them counts as -10). Trees stop at 6.4 C.
+		RULE_TIDE_HEIGHT, // Metres above the sea (the geology source's sea). Coast rules need a geology source with a sea; without one a species using them is not placed.
+		RULE_COAST_EXPOSURE, // 0 sheltered to 1 open to the sea's waves (TerrainGenerator3D.get_coast_exposure_at); 0 far from the sea.
+		RULE_BEACH, // Beach mask, 1 on the beach face fading over the backshore, 0 inland (TerrainGenerator3D.get_beach_at).
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -222,6 +225,12 @@ public:
 	// Koerner 2014, the treeline model: trees need 6.4 C over at least 94 days).
 	static float season_temperature(float p_january, float p_july);
 	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
+	// True when a coast rule (tide height, exposure, beach) is narrower than "anywhere".
+	bool uses_coast() const {
+		return ranges[RULE_TIDE_HEIGHT].x > -10000.0f || ranges[RULE_TIDE_HEIGHT].y < 10000.0f ||
+				ranges[RULE_COAST_EXPOSURE].x > 0.0f || ranges[RULE_COAST_EXPOSURE].y < 1.0f ||
+				ranges[RULE_BEACH].x > 0.0f || ranges[RULE_BEACH].y < 1.0f;
+	}
 	void set_spacing(float p_spacing);
 	float get_spacing() const { return spacing; }
 	void set_footprint(float p_footprint);

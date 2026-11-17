@@ -147,6 +147,10 @@ private:
 	RID foam_multimesh;
 	RID foam_instance;
 	Ref<Mesh> foam_mesh;
+	// MPM spray (airborne drops): drawn apart from foam and bubbles, as clear water.
+	RID spray_multimesh;
+	RID spray_instance;
+	Ref<Mesh> spray_mesh;
 
 	int particle_count = 4096;
 	float particle_size = 0.1;

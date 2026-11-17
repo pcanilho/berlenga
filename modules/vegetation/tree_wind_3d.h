@@ -29,7 +29,6 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-
 #pragma once
 
 #include "core/templates/hash_map.h"
@@ -38,6 +37,7 @@
 #include "scene/resources/multimesh.h"
 
 class MultiMeshInstance3D;
+class RigidBody3D;
 class WeatherMap3D;
 
 // Wind for rigged trees (TreeGenerator.rigged), docs/ideas/trees.md section 3a. Every bone is a
@@ -63,6 +63,7 @@ public:
 		float mass = 0.0f; // Carried mass (kg).
 		float reach = 0.3f; // Foliage reach around the bone's axis (m), for touch.
 		float length = 0.0f;
+		float strength = 0.0f; // Bending moment that breaks it (N m at scale 1): MOR pi r^3 / 4, less knots.
 	};
 	struct Rig {
 		LocalVector<Bone> bones;
@@ -71,6 +72,21 @@ public:
 		float extent = 0.0f; // Furthest bone tip from the base (m).
 		PackedFloat32Array colliders; // TreeGenerator.get_collision_capsules().
 		Ref<Mesh> mesh;
+		// Storms (docs/ideas/trees.md section 5t), from TreeGenerator's storm kit.
+		bool storm = false;
+		float anchorage = 0.0f; // Root anchorage (N m) at scale 1: C_reg times the stem's mass.
+		float plate_radius = 1.0f;
+		float plate_thick = 0.3f;
+		PackedFloat32Array storm_data; // TreeGenerator's "tree_storm" meta.
+		Array cap_kit;
+		Array static_materials;
+	};
+	// The worst storm load on one instance this frame: the bone nearest to breaking and the roots.
+	struct StormLoad {
+		int bone = -1;
+		float ratio = 0.0f; // Bending moment over the bone's strength.
+		float root_ratio = 0.0f; // Overturning moment over the anchorage.
+		Vector3 wind; // At the failing part, world space.
 	};
 	// Touch on one instance: each bone's extra turn (tree space, axis * angle) and its rate, and
 	// the bones that snapped off.
@@ -79,6 +95,9 @@ public:
 		LocalVector<Vector3> rate;
 		LocalVector<Vector3> target;
 		LocalVector<uint8_t> broken;
+		LocalVector<uint8_t> flat; // Stem segments snapped by a storm: drawn flattened onto their joint.
+		LocalVector<ObjectID> parts; // Bodies broken off this instance.
+		bool uprooted = false; // Thrown by a storm: the whole instance is a body now.
 		bool active = false;
 	};
 	struct Contact {
@@ -133,6 +152,78 @@ private:
 	float break_speed = 3.0f; // m/s; a faster body snaps thin branches it bends far.
 	float break_radius = 0.04f;
 	int max_pieces = 32;
+	bool storm_enabled = true;
+	float storm_strength = 1.0f;
+	float storm_anchorage = 1.0f;
+	float storm_min_radius = 0.03f;
+	float storm_min_wind = 12.0f;
+	int storm_breaks = 0;
+	int storm_throws = 0;
+	// A part a storm broke off or threw, while the wind still pushes it.
+	struct StormPart {
+		ObjectID body;
+		float area = 0.0f; // Frontal area at scale (m2), with its Vogel exponent.
+		float vogel = -0.7f;
+		Vector3 load; // Load point in the body's own space.
+		float age = 0.0f;
+		RID joint; // The hinge it turns on (torn fibres or the root plate's edge), until it lets go.
+		float release = 0.0f; // Angle (rad) past which the hinge lets go; 0 never.
+		Basis start;
+		// For its Blast swap at the first hard impact.
+		Ref<Mesh> mesh;
+		int bone = 0;
+		float scale = 1.0f;
+		uint64_t key = 0;
+		LocalVector<uint8_t> exclude; // Bones broken off before (not part of it).
+		Transform3D butt; // Its fracture cap, tree space (none for a thrown tree).
+		bool swapped = false;
+		// A hard hit that came before its Blast asset was ready: swapped when it is.
+		bool hit = false;
+		Vector3 hit_local; // Contact, in the body's space.
+		float hit_impulse = 0.0f;
+	};
+	LocalVector<StormPart> storm_parts;
+	// A fracture cap on a stub left standing, following the bone below the break.
+	struct Cap {
+		ObjectID node;
+		ObjectID target;
+		int instance = 0;
+		int bone = 0;
+		Transform3D local; // In the bone's tree space.
+	};
+	LocalVector<Cap> caps;
+	HashMap<uint64_t, Ref<ArrayMesh>> kit_meshes;
+	HashMap<uint64_t, Ref<Resource>> blast_assets;
+	HashMap<uint64_t, Array> blast_materials;
+	// A Blast asset being built on a worker thread, from a copy of the rig and the mesh's arrays.
+	struct BlastJob {
+		Rig rig;
+		Array surface_arrays;
+		int bone = 0;
+		LocalVector<uint8_t> exclude;
+		Transform3D butt;
+		Ref<Resource> asset;
+		Array materials;
+		uint64_t task = 0;
+	};
+	HashMap<uint64_t, BlastJob *> blast_jobs;
+	// A part that fell as a Blast destructible, while it settles (its chunks by authored index).
+	struct StormFall {
+		ObjectID node;
+		float scale = 1.0f;
+		float age = 0.0f;
+		float next = 0.0f;
+		int butt = -1; // The chunk at its foot or break.
+		LocalVector<float> mass; // kg, at scale.
+		LocalVector<Vector3> center; // Tree space.
+		LocalVector<Vector3> low_a, low_b; // Its first bone's ends, tree space.
+		LocalVector<int> parent; // The chunk each grows from (-1 for the butt's).
+		LocalVector<float> strength; // Of its bond to that chunk (kN m at scale 1).
+		HashMap<int, Transform3D> last; // Pieces' poses at the last check, by their first chunk.
+	};
+	LocalVector<StormFall> storm_settling;
+	HashMap<uint64_t, Array> mesh_arrays; // Surface arrays by mesh instance id, read on the main thread.
+	int storm_falls = 0;
 	bool lod_enabled = true;
 	float lod_pixel_error = 0.5f; // Largest pose error the LOD may leave, in pixels.
 	float budget_msec = 0.0f; // 0: none; else the LOD coarsens while the solve runs over it.
@@ -163,6 +254,8 @@ private:
 		int instance = 0;
 		Transform3D world; // MultiMesh space to world.
 		float min_length = 0.0f; // Bones shorter than this (tree space) ride their parent.
+		bool storm = false; // Test the storm load this frame.
+		StormLoad load;
 	};
 	LocalVector<Job> jobs;
 	const WeatherMap3D *frame_weather = nullptr;
@@ -178,7 +271,21 @@ private:
 	void _free_colliders(Target &r_target);
 	bool _touch_instance(Target &r_target, int p_instance, const Transform3D &p_tree, double p_delta);
 	void _snap(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Vector3 &p_velocity);
-	Ref<ArrayMesh> _piece_mesh(const Rig &p_rig, int p_bone);
+	Ref<ArrayMesh> _piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude = nullptr, uint64_t p_key = 0);
+	Ref<ArrayMesh> _kit_mesh(const Rig &p_rig, bool p_plate);
+	RigidBody3D *_make_part(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Transform3D &p_at, const LocalVector<uint8_t> &p_exclude, uint64_t p_key);
+	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, Array &r_materials);
+	static void _blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> &p_exclude, LocalVector<int> &r_chunk_of, LocalVector<int> &r_chunk_bone);
+	void _storm_settle(double p_delta);
+	void _blast_request(const StormPart &p_part);
+	void _blast_job(BlastJob *p_job);
+	bool _blast_ready(uint64_t p_key);
+	void _blast_wait_all();
+	void _blast_swap(StormPart &r_part, RigidBody3D *p_body, const Vector3 &p_contact, float p_impulse);
+	void _storm_impacts();
+	void _storm_fail(Target &r_target, int p_instance, const Transform3D &p_world, const StormLoad &p_load);
+	void _storm_parts(double p_delta);
+	void _collapse(Target &r_target, int p_instance, const Transform3D &p_world);
 
 protected:
 	void _notification(int p_what);
@@ -189,7 +296,7 @@ public:
 	// The wind a point sees: mean, gust frame and sigma (weather map or fallback).
 	WindSample sample_wind(const Vector3 &p_position, float p_height) const;
 	// The skinning transforms (in the tree's own space) of one instance at the current time.
-	void solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch = nullptr, float p_min_length = 0.0f) const;
+	void solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch = nullptr, float p_min_length = 0.0f, StormLoad *r_storm = nullptr) const;
 
 	// A MultiMesh of rigged trees at rest: bones_per_instance records per placement.
 	static Ref<MultiMesh> make_multimesh(const Ref<Mesh> &p_mesh, const TypedArray<Transform3D> &p_transforms, const PackedColorArray &p_custom_data = PackedColorArray());
@@ -235,6 +342,21 @@ public:
 	float get_break_speed() const { return break_speed; }
 	void set_break_radius(float p_radius) { break_radius = MAX(p_radius, 0.0f); }
 	float get_break_radius() const { return break_radius; }
+	void set_storm_enabled(bool p_enabled) { storm_enabled = p_enabled; }
+	bool is_storm_enabled() const { return storm_enabled; }
+	void set_storm_strength(float p_scale) { storm_strength = MAX(p_scale, 0.01f); }
+	float get_storm_strength() const { return storm_strength; }
+	void set_storm_anchorage(float p_scale) { storm_anchorage = MAX(p_scale, 0.01f); }
+	float get_storm_anchorage() const { return storm_anchorage; }
+	void set_storm_min_radius(float p_radius) { storm_min_radius = MAX(p_radius, 0.0f); }
+	float get_storm_min_radius() const { return storm_min_radius; }
+	void set_storm_min_wind(float p_speed) { storm_min_wind = MAX(p_speed, 0.0f); }
+	float get_storm_min_wind() const { return storm_min_wind; }
+	int get_storm_break_count() const { return storm_breaks; }
+	int get_storm_throw_count() const { return storm_throws; }
+	int get_storm_fall_count() const { return storm_falls; }
+	// For tests: the storm load on a rigged mesh at a placement and the current time.
+	Dictionary get_storm_load(const Ref<Mesh> &p_mesh, const Transform3D &p_placement, int p_seed);
 	int get_collider_count() const;
 	int get_piece_count() const { return pieces.size(); }
 	// For tests: the touch turn (axis * angle) of each bone of one instance of a target.
@@ -260,4 +382,5 @@ public:
 	PackedVector3Array get_bone_bends(const Ref<Mesh> &p_mesh, const Transform3D &p_placement, int p_seed);
 
 	TreeWind3D();
+	~TreeWind3D();
 };

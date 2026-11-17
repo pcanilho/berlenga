@@ -366,6 +366,227 @@ the British Isles (2019) for sizes and flowering.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
 
+## Next round candidates (17 Nov): Atlantic heath, Mediterranean scrub, worn paths
+
+Atlantic heath and gorse (Paulo picked all three in order, 17 Nov; dwarf shrubs and sets built
+17 Nov in plant_heath.cpp, gorse and broom come from TreeGenerator as shrub species and join
+the sets when they land). Dwarf-shrub heath covers
+acid, nutrient-poor ground from the Atlantic coasts of Portugal to Norway, on sea cliffs, sandy
+plateaux and upland moor (Gimingham 1972, "Ecology of Heathlands"; Webb 1986, "Heathlands";
+Rodwell 1991, British Plant Communities vol. 2, H1 to H22). The engine has heather already; the
+heath needs its other woody plants, each real geometry:
+- Common gorse (Ulex europaeus): a dense, rounded, very spiny shrub 1 to 2.5 m (dwarf forms on
+  cliffs), the leaves reduced to grooved green spines 1.5 to 2.5 cm, branched spines on every
+  shoot; coconut-scented yellow pea flowers 1.5 to 2 cm, heaviest February to May but some all
+  year; black hairy pods that crack open in summer heat (Stace 2019; Richardson and Hill 1998,
+  "The biology of Australian weeds 34: Ulex europaeus"). Old bushes grey and dead inside, the
+  living shell outside: real branches, not a textured blob. Western gorse (U. gallii) is low
+  (to 1 m), flowers July to October, so the heath is yellow most of the year.
+- Broom (Cytisus scoparius): erect green, five-angled, nearly leafless switch-like twigs to 2 m,
+  yellow flowers May and June, black pods (Stace 2019).
+- Bell heather (Erica cinerea): low shrublet 15 to 60 cm on the driest, sunniest ground, whorls
+  of three dark needle leaves, bell-shaped crimson-purple flowers June to September (Bannister
+  1965, Biological Flora: Erica cinerea). Cross-leaved heath (E. tetralix) on the wet heath, grey
+  hairy leaves in fours, pale pink bells in terminal clusters (Bannister 1966).
+- Crowberry (Empetrum nigrum): prostrate mats of needle-like rolled leaves and black berries on
+  windy upland and coastal heath (Bell and Tallis 1973, Biological Flora).
+Built: `make_heath(HEATH_DRY | HEATH_WET | HEATH_MARITIME)`; real needles (whorls of three or
+four, bell heather's axillary leafy tufts), about 35 to 45k triangles a plant; rules: rain over
+700 mm, January over -4 C, growing season over 6.4 C (alpine above), shade under 0.3, wetness
+under 7.5 (dry) or 7 to 10 (wet), maritime on exposure over 0.4 at 6 to 150 m above the sea.
+Planned placement as researched: heath sets by aridity, soil depth and exposure: dry heath (heather, bell heather,
+gorse) on free-draining slopes, wet heath (cross-leaved heath, cottongrass, sphagnum) in hollows
+with the bog set, maritime heath (dwarf gorse, heather and thrift, wind-pruned) on cliff tops
+with RULE_COAST_EXPOSURE, and gorse scrub where soil is deeper. Calluna's growth phases
+(pioneer, building, mature, degenerate; Watt 1947, Gimingham 1972) give a heath's patchwork of
+bush sizes and gaps: a per-patch age drawn from the patch noise.
+
+Mediterranean scrub, garrigue and maquis (Paulo picked it second, 17 Nov; dwarf shrubs and sets built 17 Nov in plant_scrub.cpp, the tall maquis shrubs come from TreeGenerator). Evergreen, aromatic, sclerophyll
+shrubs on summer-dry ground, from the Algarve and the Tagus hills round the basin (Blondel et
+al. 2010, "The Mediterranean Region: Biological Diversity in Space and Time"; Flora iberica,
+Castroviejo et al.; Rivas-Martinez 2011 for the bioclimate belts). Maquis is the tall, closed
+scrub (1 to 4 m) on deeper soil; garrigue the low, open, broken cover (under 1 m) on thin soil and
+limestone with rock showing between the bushes. Plants, real geometry:
+- Gum rockrose (Cistus ladanifer): an erect shrub 1 to 2.5 m of few, upright, sticky branches;
+  opposite, linear-lanceolate, dark glossy leaves 4 to 8 cm, varnished with labdanum resin (high
+  specular sheen, grey felt below); white crinkled-silk flowers 5 to 10 cm, often with a maroon
+  blotch at each petal base, April to June; woody, ten-celled capsules stand after. On acid soils,
+  the dominant shrub of the Portuguese and Spanish interior jaras.
+- Sage-leaved rockrose (Cistus salviifolius): a low, sprawling shrub 30 to 60 cm, small, wrinkled,
+  grey-green ovate leaves, white flowers 4 to 5 cm.
+- Rosemary (Salvia rosmarinus): 0.5 to 1.5 m, dense, linear, rolled leaves 1.5 to 4 cm, dark above,
+  white felt below; pale blue two-lipped flowers along the shoots, winter to spring. Limestone.
+- French lavender (Lavandula stoechas): 30 to 100 cm, grey-green linear leaves, dense flower heads
+  topped by a tuft of purple bracts ("rabbit ears"), March to June. Acid soils.
+- Thyme (Thymus spp.) and other dwarf aromatics: cushions 10 to 30 cm.
+- Kermes oak (Quercus coccifera) and lentisk (Pistacia lentiscus): dense, small-leaved, spiny or
+  leathery evergreen mounds that make most of the maquis' bulk.
+- Dwarf fan palm (Chamaerops humilis): clumps of fan leaves on short trunks, 1 to 2 m, on the
+  Algarve's coastal limestone; the only native palm of Europe.
+Placement: the climate map's aridity and summer drought (RULE_ARIDITY, RULE_PRECIPITATION) and
+mild winters (RULE_JANUARY_TEMPERATURE over about 2 C); maquis where the soil is deeper, garrigue
+on thin soil and rock (RULE_SOIL_DEPTH, RULE_ROCK), sunny slopes first (RULE_SUNLIGHT); bare
+ground between the bushes is part of the look. Summer dormancy: the cistus leaves fold and turn
+grey-brown in July and August (summer semi-deciduous), a season the phenology must carry.
+Built: `make_scrub(SCRUB_GARRIGUE | SCRUB_MAQUIS)` with rosemary, French lavender, thyme and
+sage-leaved rockrose, real leaves on branched woody frames (about 20 to 55k triangles a plant);
+rules: January over 3 C, rain 250 to 1,100 mm, aridity 0.2 to 0.75, shade under 0.35, wetness
+under 8; garrigue on soil under 0.45 m with rock, maquis on soil over 0.35 m; thyme and lavender on
+the sunniest ground. The rockrose's leaves fold, shrink, grey and partly fall from early July to
+late September (by day of year). `apply_scrub_rules(species, stand)` gives TreeGenerator's gum
+rockrose, kermes oak, lentisk and fan palm the same rules. Flowering windows are in degree days of
+a mild coastal year (rosemary 0 to 900, lavender 300 to 1,300, thyme 600 to 1,500, rockrose 550
+to 1,100); rosemary's autumn flowers before the year turns are not modelled (forcing restarts
+on 1 January).
+
+Worn paths and trampling (researching 17 Nov). Where people and animals walk, plants thin out,
+get shorter and flatter, and the walked line turns to bare, compacted soil; the edges keep the
+low, tough plants (Cole 1995, "Experimental trampling of vegetation", J. Appl. Ecol. 32: two
+measures, resistance to the first passes and tolerance to recover; Cole and Bayfield 1993, the
+standard trampling protocol; Liddle 1997, "Recreation Ecology"). What sets the damage:
+- Passes: cover falls steeply with the first 25 to 100 passes a year, then levels off; the
+  centre of a used path is bare, a band either side keeps a shortened, trampled sward.
+- Growth form (Cole 1995): tufted grasses, sedges and rosette plants (plantain, the "path weeds")
+  resist and recover; erect forbs, ferns and dwarf shrubs (heather, bilberry) break and die. So
+  the edge of a path is plantain, rye-grass and pearlwort, not taller meadow plants.
+- Ground: wet and soft ground widens a path (walkers step round mud), steep ground cuts it into a
+  rut with braids.
+Engine pieces: a path mask (a texture or curves) and the existing trample field (VegetationField3D
+already bends plants under bodies) for passes; per-species trample resistance as a PlantSpecies
+value from the growth form; the plants' scale and density fall with passes, the resistant set
+taking over at the edges; GroundSurface3D or the terrain material shows bare, compacted soil in
+the middle. Desire lines could come from the mud and sand threads' tracks over time.
+
+## Salt marsh and shingle plants (built 17 Nov)
+
+Where the land meets a sheltered sea the ground is mud and the plants sort by how often the tide
+covers them; on open coasts the backshore is sand or shingle with a strandline flora. Both are
+zoned by height in the tidal frame far more sharply than by anything else (Adam 1990, "Saltmarsh
+Ecology"; Rodwell 2000, British Plant Communities vol. 5, "Maritime communities"; Silvestri,
+Defina and Marani 2005, "Tidal regime, salinity and salt marsh plant zonation"). Lower limits are
+set by flooding stress, upper limits by competition (Bertness and Ellison 1987; Pennings and
+Callaway 1992).
+
+Salt marsh, low to high (heights for a mesotidal coast, as metres above mean sea level):
+- Pioneer zone, about mean high water neaps (0 to 0.7 m): glasswort (Salicornia europaea agg.:
+  leafless, jointed, succulent green stems 10 to 30 cm, branching like little candelabra, turning
+  red and purple in autumn) scattered on bare mud, and common cord-grass (Spartina anglica: stiff
+  grey-green leaves 30 to 100 cm in dense clonal clumps that trap mud).
+- Low to mid marsh (0.5 to 1.3 m): sea purslane (Atriplex portulacoides: a silvery-grey, mealy
+  low shrub 20 to 60 cm lining the creek edges), sea aster (Tripolium pannonicum: fleshy leaves,
+  pale lilac daisies in late summer), sea lavender (Limonium vulgare: rosettes of leathery
+  leaves, flat-topped sprays of lavender flowers in July and August that colour the marsh), common
+  saltmarsh-grass (here: a low sward of dry grass).
+- High marsh (1.1 to 1.9 m): thrift cushions, sea lavender, sea aster, red fescue sward, sea rush.
+Creek levees carry sea purslane; pans (shallow hollows) stay bare or carry glasswort. Marshes form
+only on sheltered, low-energy coasts on nearly level mud (slopes under about 2 degrees).
+
+Shingle and the strandline (above the highest tides, 1.8 to 4 m, on the beach's backshore):
+sea kale (Crambe maritima: huge, waxy, glaucous, crinkled cabbage leaves in a low mound 30 to
+75 cm, white honey-scented flower heads in June), sea campion (Silene uniflora: trailing glaucous
+mats with white bladder-calyxed flowers), yellow horned-poppy (Glaucium flavum: grey-blue
+crinkled hairy rosettes, yellow poppies and seed pods up to 30 cm long, curved like horns), with
+thrift (Scott 1963, "The ecology of shingle beach plants"; Randall 1977; Packham and Willis
+1997, "Ecology of Dunes, Salt Marsh and Shingle").
+
+Built (plant_saltmarsh.cpp):
+- Eight presets, real geometry: glasswort as jointed succulent candelabras (each segment swelling
+  from a narrow node), cord-grass as stiff two-ranked clumps with pressed spikes, sea purslane as a
+  sprawling mealy shrublet with opposite spoon leaves, sea aster with a fleshy rosette and a
+  corymb of lilac daisies (a quarter rayless), sea lavender with zigzag sprays of one-sided spikes,
+  sea kale as a mound of big cupped, waved, lobed leaves with flat flower heads then pods, sea
+  campion as trailing mats with bladder calyces and notched petals, horned-poppy with lobed grey
+  rosettes, silk poppies and long curved pods.
+- `make_saltmarsh(SALTMARSH_PIONEER | SALTMARSH_MID | SALTMARSH_HIGH | SALTMARSH_SHINGLE)`; the
+  mid and high swards reuse dry grass in saltmarsh-grass and fescue colours, sea rush is the rush
+  preset in its grey-green.
+- Three rules, all from the map's geology source when it has a sea: `RULE_TIDE_HEIGHT` (ground
+  over `sea_level + height_offset`), `RULE_COAST_EXPOSURE` (`get_coast_exposure_at`) and
+  `RULE_BEACH` (`get_beach_at`). A species using any of them is not placed without a sea. Marsh:
+  exposure under 0.3, slope under 3 degrees. No beach rule for the marsh: a scout of the showcase
+  map (17 Nov) found every sheltered, level cell in the tidal band under the generator's beach
+  mask (it runs along every coast), and wave energy, not grain size, sets where marsh forms
+  (Allen 2000, "Morphodynamics of Holocene salt marshes"); a sheltered beach head fines to mud.
+  Shingle: beach over 0.15, 1.8 to 4 m, slopes to 15 degrees.
+- Seasons: phenology per preset (marsh late, shingle from June); glasswort reddens from late
+  August to purple-red by October and browns into winter; cord-grass spikes and sea lavender
+  calyces stand through winter. Cord-grass sheds pollen (`VegetationPollen3D`).
+
+## Ground mist and pollen with PhysX Flow (built 17 Nov)
+
+Two things in the air just above the plants, both carried by Flow (docs/ideas/physx.md) so they swirl
+round the bodies that walk through them and drift with the ground wind instead of hanging as cards.
+
+### Ground mist
+
+What it is. Radiation fog: on clear, calm nights the ground and the grass tips lose heat by longwave
+radiation, the air touching them cools to its dew point and condenses. It starts as a shallow layer
+under 2 m (the WMO's "shallow fog", METAR MIFG), thickest in hollows because the cooled air is
+denser and drains down slopes into them (cold-air pooling; Whiteman 2000, "Mountain Meteorology";
+Clements et al. 2003, Peter Sinks). Fog needs relative humidity near 100 %, wind under about
+3 m/s (stronger wind mixes the cold layer away) and little cloud; it lifts or burns off within one to
+three hours after sunrise as the sun warms the ground (Roach et al. 1976, Cardington; Duynkerke 1991,
+"Radiation fog: a comparison of model simulation with detailed observations"; Gultepe et al. 2007,
+"Fog research: a review"; Price 2011, "Radiation fog. Part I"). Grass makes it first: the canopy top
+is the coldest surface.
+
+How thick it looks. Fog droplets are about 10 um; extinction follows liquid water content,
+beta = 144.7 LWC^0.88 per km with LWC in g/m3 (Kunkel 1984). Mist (visibility over 1 km) is
+beta under 0.004 per metre; thin ground fog 0.01 to 0.05; thick valley fog up to 0.2 (20 m
+visibility). So a ground mist is hardly visible across a metre but closes off the view along the
+ground over tens of metres; that is how it should read. Droplets that size scatter strongly forward
+(Henyey-Greenstein g about 0.8), so mist glows when looking towards a low sun.
+
+What games do. Red Dead Redemption 2 uses froxel volumetric fog with a height layer and noise
+(Bauer, SIGGRAPH 2019 Advances, "Creating the atmospheric world of RDR2"); Unreal has Exponential
+Height Fog plus Local Fog Volumes; Frostbite unified froxel volumetrics (Hillaire 2015). All of
+these are static density with scrolling noise: nothing parts round a walker or rolls into a hollow.
+The near field here is a real fluid instead; the wide haze beyond it stays with the environment's
+fog (Valence's weather side).
+
+Build: `VegetationMist3D`, in the vegetation module, using Flow by class name (no build
+dependency on PhysX; without Flow it warns and stays inert).
+- One `PhysXFlow3D` with 25 cm cells, no combustion, no heat, heavier-than-air gas
+  (`smoke_buoyancy` -0.15: a 1 to 2 % density excess of air a few degrees colder), a slow fade
+  (evaporation), little vorticity (calm air), terrain floor on, forward scattering 0.75, white.
+  `smoke_density` is set so one unit of smoke is the extinction the weather asks for.
+- A ring of flat box emitters on a world-snapped 8 m grid round the camera (or a target), each
+  sitting on the ground and coupling gently towards its cell's mist level, so the layer is held
+  where it should be and anything that stirs it recovers over seconds. Each cell's level is the
+  zone's mist amount times its propensity: hollows (the ground below the mean of a ring 8 m out)
+  get more, crests less, wet ground more.
+- The mist amount comes from the weather when a `WeatherMap3D` is set: humidity over 0.88,
+  wind under 3 m/s at 10 m, little cloud, and the sun under 15 degrees (it burns off as the sun
+  climbs). `mist_amount` overrides it.
+- One wide box emitter puts the ground wind (0.6 of the 10 m wind) into the air with no smoke, so
+  the mist drifts and curls round stems' bodies.
+
+### Pollen puffs
+
+What it is. Wind-pollinated plants (grasses, sedges, rushes, reedmace, nettle, docks, plantain)
+hold ripe pollen in dangling anthers; a shake releases a puff. Release needs a jolt past a threshold
+(Urzay et al. 2009, "Wind gusts and plant aeroelasticity effects on the aerodynamics of pollen
+shedding", J Theor Biol), and walking through a meadow in flower lifts visible pale clouds. Grass
+pollen grains are 25 to 40 um and settle at 2 to 3 cm/s (Gregory 1973; Klahs 2019 for
+Diarrhena), so a puff hangs and drifts for many seconds and fades as it spreads. Anthesis is in the
+morning on warm, dry days; plants shed only while in flower (`PlantGenerator.get_bloom_shares`).
+
+Build: `VegetationPollen3D`.
+- Species made by the `make_*` functions carry their preset (meta `plant_preset`) and, for the
+  wind-pollinated ones, a pollen amount (meta `pollen`).
+- It watches the bodies in the trample group (the same movers that press the grass). For each one
+  moving faster than a slow walk, it looks up flowering plants of pollen species within reach in
+  the `VegetationField3D` placements (a spatial hash rebuilt when the placement changes) and fires a
+  short puff at their flower height: smoke by pollen amount, share in flower and speed, the jet
+  along the mover's motion and a little up.
+- One `PhysXFlow3D` with 4 cm cells, cream-yellow, very slightly heavy, slow fade, more swirl; a
+  small pool of sphere emitters.
+
+Checks: the bench `--mist` runs a dawn hollow with mist and a walker through it; `--pollen`
+walks a body through flowering cocksfoot and timothy. Tests check that mist gathers more in the
+hollow than on the crest, that it clears with the sun high or a strong wind, that puffs fire only
+from plants in flower and only when brushed, and that both nodes stay inert without Flow.
+
 ## Alpine and scree plants (built 17 Nov)
 
 Above the treeline the ground is not turf. The alpine belt starts where the growing season's mean

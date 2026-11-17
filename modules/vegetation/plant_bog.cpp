@@ -345,6 +345,7 @@ TypedArray<Resource> PlantGenerator::make_bog(BogStand p_stand, int p_variants, 
 		}
 		sp->set_visibility_range(f.visibility);
 		sp->set_meta("bog", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}

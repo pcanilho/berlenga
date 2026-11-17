@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -348,6 +348,9 @@ func _checks() -> void:
 	_bog_checks()
 	_dune_checks()
 	_alpine_checks()
+	_saltmarsh_checks()
+	_heath_checks()
+	_scrub_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -520,6 +523,125 @@ func _dune_checks() -> void:
 
 # Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants"): sizes (all low,
 # hugging the ground), the sets above the treeline, sorted by relief, snow and scree.
+# Salt marsh and shingle (docs/ideas/vegetation.md, "Salt marsh and shingle plants"): sizes in
+# summer and in late-summer flower, and the sets zoned up the tidal frame.
+func _saltmarsh_checks() -> void:
+	var P := PlantGenerator
+	var sizes := {P.PRESET_GLASSWORT: [0.06, 0.32, 0.45], P.PRESET_CORD_GRASS: [0.25, 1.05, 1.3], P.PRESET_SEA_PURSLANE: [0.06, 0.45, 0.9], P.PRESET_SEA_ASTER: [0.04, 0.65, 0.5], P.PRESET_SEA_LAVENDER: [0.02, 0.45, 0.45], P.PRESET_SEA_KALE: [0.07, 0.65, 1.1], P.PRESET_SEA_CAMPION: [0.015, 0.2, 0.45], P.PRESET_HORNED_POPPY: [0.03, 0.95, 0.8]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for season in [{"forcing": 600.0, "day_of_year": 170, "senescence": 0.0}, {"forcing": 1700.0, "day_of_year": 225, "senescence": 0.0}]:
+			g.season = season
+			for sd in 3:
+				g.seed = sd
+				var m := g.generate()
+				var bb := m.get_aabb()
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 40000 and bb.position.y > -0.05
+				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 40k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	var lows := []
+	for st in P.SALTMARSH_MAX:
+		var set := P.make_saltmarsh(st, 1, false)
+		var ok := set.size() >= 2
+		var lo := 100.0
+		for sp in set:
+			var s := sp as PlantSpecies
+			var t: Vector2 = s.tide_height_range
+			lo = minf(lo, t.x)
+			ok = ok and s.meshes.size() == 1 and s.has_meta("saltmarsh") and t.x >= 0.0 and t.y <= 4.01
+			if st == P.SALTMARSH_SHINGLE:
+				ok = ok and s.beach_range.x > 0.0 and t.x >= 1.79
+			else:
+				ok = ok and s.slope_range.y <= 3.01 and s.coast_exposure_range.y <= 0.31 and t.y <= 2.0
+		lows.append(lo)
+		_check("saltmarsh set %d: on its own band of the tidal frame, marsh sheltered and level, shingle on the backshore" % st, ok, set.size())
+	_check("saltmarsh sets run up the shore: pioneer, mid, high, shingle", lows[0] < lows[1] and lows[1] < lows[2] and lows[2] < lows[3], lows)
+	var red := PlantGenerator.make_saltmarsh(P.SALTMARSH_PIONEER, 1, false, {"forcing": 2000.0, "day_of_year": 290, "senescence": 0.3})
+	var green := PlantGenerator.make_saltmarsh(P.SALTMARSH_PIONEER, 1, false, {"forcing": 900.0, "day_of_year": 190, "senescence": 0.0})
+	_check("glasswort and cord-grass carry pollen tags; cord-grass sheds pollen", (green[1] as PlantSpecies).get_meta("pollen", 0.0) > 0.0 and int((green[0] as PlantSpecies).get_meta("plant_preset", -1)) == P.PRESET_GLASSWORT, [green[1].get_meta("pollen", 0.0)])
+	_check("both glasswort seasons build", (red[0] as PlantSpecies).meshes.size() == 1 and (green[0] as PlantSpecies).meshes.size() == 1, null)
+
+# Atlantic heath (docs/ideas/vegetation.md, "Next round candidates (17 Nov)"): the dwarf shrubs'
+# sizes in leaf and in flower, and the sets on their own water and coast bands.
+func _heath_checks() -> void:
+	var P := PlantGenerator
+	var sizes := {P.PRESET_BELL_HEATHER: [0.08, 0.6, 0.7], P.PRESET_CROSS_LEAVED_HEATH: [0.06, 0.6, 0.7], P.PRESET_CROWBERRY: [0.01, 0.15, 0.75]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for season in [{"forcing": 500.0, "day_of_year": 160, "senescence": 0.0}, {"forcing": 1300.0, "day_of_year": 230, "senescence": 0.0}]:
+			g.season = season
+			for sd in 3:
+				g.seed = sd
+				var m := g.generate()
+				var bb := m.get_aabb()
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 50000 and bb.position.y > -0.05 # Real needles: dense dwarf shrubs.
+				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 50k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	for st in P.HEATH_MAX:
+		var set := P.make_heath(st, 1, false)
+		var ok := set.size() >= 3
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("heath") and s.precipitation_range.x >= 600.0 and s.season_temperature_range.x > 6.0 and s.shade_range.y <= 0.31
+			var w: Vector2 = s.wetness_range
+			if st == P.HEATH_DRY:
+				ok = ok and w.y <= 8.0
+			elif st == P.HEATH_WET:
+				ok = ok and w.x >= 6.5
+			else:
+				ok = ok and s.coast_exposure_range.x >= 0.39 and s.tide_height_range.x >= 5.0
+		_check("heath set %d: oceanic, open, below the alpine belt, on its own water or coast band" % st, ok, set.size())
+
+# Mediterranean scrub dwarf shrubs (docs/ideas/vegetation.md): sizes from Flora iberica in spring
+# and in summer drought, the rockrose's summer-folded leaves, the garrigue and maquis sets.
+func _scrub_checks() -> void:
+	var P := PlantGenerator
+	var sizes := {P.PRESET_ROSEMARY: [0.25, 1.1, 1.3], P.PRESET_FRENCH_LAVENDER: [0.15, 0.7, 0.9], P.PRESET_THYME: [0.05, 0.3, 0.5], P.PRESET_SAGE_ROCKROSE: [0.1, 0.6, 1.1]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for season in [{"forcing": 700.0, "day_of_year": 110, "senescence": 0.0}, {"forcing": 2200.0, "day_of_year": 215, "senescence": 0.0}]:
+			g.season = season
+			for sd in 3:
+				g.seed = sd
+				var m := g.generate()
+				var bb := m.get_aabb()
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 60000 and bb.position.y > -0.05
+				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.0f to %.0f cm tall, under %.0f cm across, under 60k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	# Lavender in April carries its bracts (petal surface); in August only leaves and dead heads.
+	var lv := PlantGenerator.new()
+	lv.preset = P.PRESET_FRENCH_LAVENDER
+	lv.season = {"forcing": 800.0, "day_of_year": 110, "senescence": 0.0}
+	var spring := _surface_tris(lv.generate(), "petal")
+	lv.season = {"forcing": 2400.0, "day_of_year": 220, "senescence": 0.0}
+	var august := _surface_tris(lv.generate(), "petal")
+	_check("french_lavender: purple bracts on the spikes in April, gone by August", spring > 200 and august == 0, [spring, august])
+	for st in P.SCRUB_MAX:
+		var set := P.make_scrub(st, 1, false)
+		var ok := set.size() >= 3
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("scrub") and s.january_temperature_range.x >= 2.0 and s.aridity_range.y <= 0.8 and s.precipitation_range.y <= 1200.0
+			var sd: Vector2 = s.soil_depth_range
+			ok = ok and (sd.y <= 0.5 if st == P.SCRUB_GARRIGUE else sd.x >= 0.3)
+		_check("scrub set %d: mild, summer-dry, garrigue on thin soil and maquis on deep" % st, ok, set.size())
+	# TreeGenerator's woody shrubs take the same rules.
+	var extra := PlantSpecies.new()
+	P.apply_scrub_rules(extra, P.SCRUB_MAQUIS)
+	_check("apply_scrub_rules: maquis rules on another species", extra.soil_depth_range.x >= 0.3 and extra.has_meta("scrub"), extra.soil_depth_range)
+
 func _alpine_checks() -> void:
 	var P := PlantGenerator
 	var summer := {"forcing": 600.0, "day_of_year": 200, "senescence": 0.0}

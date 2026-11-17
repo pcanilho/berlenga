@@ -222,6 +222,7 @@ private:
 	LocalVector<float> rock;
 	LocalVector<float> talus;
 	LocalVector<float> beach; // 1 on the beach face, fading over the backshore; 0 inland and where no beach
+	LocalVector<float> coast_exposure; // 0 sheltered to 1 open to the sea's waves, within coast_exposure_reach of the sea
 	LocalVector<float> hardness; // 0 soft .. 1 hard rock at the surface (strata)
 	LocalVector<int32_t> receivers;
 	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
@@ -336,6 +337,9 @@ private:
 	LocalVector<ObjectID> lake_nodes;
 	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
 	void _shape_coast(const LocalVector<uint8_t> &p_sea);
+	void _coast_exposure(const LocalVector<uint8_t> &p_sea, const double *p_to_sea);
+	float _coast_exposure_cell(const uint8_t *p_sea, int p_i) const;
+	static void _coast_exposure_task(void *p_userdata, uint32_t p_index);
 	void _make_lakes(const LocalVector<uint8_t> &p_sea);
 	// p_want marks the cells that make a basin a lake (none: the cells the last glaciation's ice covered).
 	void _basin_lakes(std::vector<uint8_t> &r_taken, const uint8_t *p_want = nullptr, double p_min_area = -1.0);
@@ -711,6 +715,8 @@ public:
 	real_t get_dune_vegetation() const { return dune_vegetation; }
 	real_t get_dune_height(const Vector3 &p_global_position) const { return _dune_sample(dune_sand, p_global_position.x, p_global_position.z); }
 	real_t get_dune_stability(const Vector3 &p_global_position) const { return _dune_sample(dune_plants, p_global_position.x, p_global_position.z); }
+	real_t get_beach_at(const Vector3 &p_global_position) const;
+	real_t get_coast_exposure_at(const Vector3 &p_global_position) const;
 	Rect2 get_dune_rect() const;
 	real_t get_last_dune_msec() const { return last_dune_msec; }
 	real_t get_last_dune_volume() const { return last_dune_volume; }

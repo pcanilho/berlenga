@@ -170,6 +170,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Soft ground** (PhysXVehicle3D `soft_soil`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.
 - **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry.
+- **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
+- **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
+- **Mud on vehicles** (`PhysXVehicle3D.body_mud`): tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.
+- **Mud spray** (`PhysXGroundGrains3D.mud_spray`): spinning wheels fling clods of wet clay that land back in the ground.
 - **Standing water** (`GroundSurface3D.standing_water`): rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing.
 - **Desiccation cracks** (`GroundSurface3D.desiccation_cracks`): soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.
@@ -187,6 +191,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   ![A beach at the swash line with a row of footprints, before and after wet sand, raster](media/sand-wet.jpg)
 
   *Wet sand: the band the sea has soaked turns glossy and catches the sun.*
+
+  ![Footprints running from dry sand into the wet band at the waterline, raster](media/sand-shore.jpg)
+
+  *Wet sand: dry prints keep sharp walls, the drained band holds a sheen, and prints at the waterline wash out to shallow dips.*
 
 - **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.
 

@@ -270,11 +270,21 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 		for (int i = 0; i < 3; i++) {
 			vec2 q = mix(uv, q_full, exp2(-float(i)));
 			float d1 = texture(p_depth, q).r;
-			// Reverse Z: behind the surface is a smaller depth than the surface's own.
-			if (d1 <= d_s) {
+			// Reverse Z: behind the surface is a smaller depth than the surface's own. All four texels the
+			// filtered colour read blends: one on a rock's edge left a dotted outline of it on the water.
+			vec4 d4 = textureGather(p_depth, q, 0);
+			if (max(max(d4.x, d4.y), max(d4.z, d4.w)) <= d_s) {
 				uv_r = q;
 				len = 1e4;
-				if (d1 > 0.0) {
+				if (i > 0) {
+					// A shortened offset (something in front hid the full one): its point is not on the refracted
+					// ray, so its distance is not the path's; the path is the refracted one to the bed. The colour
+					// is read at the texel the depth test passed (a filtered read pulled in the rock's edge).
+					// Using the sample's distance tinted the water there deeper, in a ghost of the rock's outline.
+					vec2 sz = vec2(textureSize(p_depth, 0));
+					uv_r = (floor(q * sz) + 0.5) / sz;
+					len = len0 < 1e4 ? z0 / max(-t.y, 0.05) : len0;
+				} else if (d1 > 0.0) {
 					vec4 b = inv_proj * vec4(q * 2.0 - 1.0, d1, 1.0);
 					len = distance((inv_view * vec4(b.xyz / b.w, 1.0)).xyz, p_s);
 				}

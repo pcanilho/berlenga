@@ -333,6 +333,69 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - Characters: boots and legs pick up mud the same way (this was "leg caking", not picked for the ground
   in November; offered again here).
 
+#### Plan (3a: wheels and belly, physics)
+
+- **Stickiness.** Clay sticks to rubber and steel most between its plastic and liquid limits and least dry
+  or as slurry (Fountaine 1954, "Investigations into the mechanism of soil adhesion"; Ren et al. 2001 on
+  soil adhesion to machines): per cell a stickiness 0..1 from moisture and clay share, and a tangential
+  adhesion ca up to ~5 kPa, the ca of Wong's rubber-soil interface (Wong 2008, sec. 2.5).
+- **Clogging.** Per wheel a tread fill 0..1: filled per revolution by slip in sticky soil, shed when the
+  tread's centripetal acceleration w^2 r passes what adhesion holds on a lug-deep layer, ca / (rho t) (with ca
+  5 kPa, 1700 kg/m3, 2 cm lugs: about 150 m/s2, so a wheel spun past ~7 m/s of tread speed cleans itself, the
+  "spin it clean" every MudRunner player learns), washed in standing water, falling off slowly on firm
+  ground. A full tread grips as a slick: its shear limit falls from A c + W tan phi (soil on soil through the
+  lugs) to A ca + W tan delta (rubber on clay, delta about 0.6 phi). Mud mass adds to the wheel's inertia.
+  The shed mass is kept for stage 4's clods.
+- **Adhesion drag.** Sticky clay holds the tread as it leaves the rut: ca over the trailing face (width times
+  sinkage) against the travel, added to compaction and bulldozing.
+- **Belly drag (high-centring).** Once the chassis' underside meets the mud surface: a grid of points on the
+  lowest face of its collision shapes; where one is below the surface, Bekker's plate pressure k z^n (plate
+  the belly's width) lifts it (taking load off the wheels: high-centring), Mohr-Coulomb shear against its
+  slide (A ca + N tan delta, smooth steel), bulldozing at its leading edge, and the belly presses a trough
+  into the field. Damped so the stiff contact does not ring at 60 Hz.
+- Settings on PhysXVehicle3D: `tyre_clogging`, `belly_drag` (both on). Checks: `--test=clog` (fills in sticky
+  clay, grips less, cleans when spun fast, washes in water), `--test=belly` (a low car bogs and leaves a
+  trough, more drag with than without).
+
+#### Plan (3b: mud on the body, the look)
+
+- **How others do it.** Saber (MudRunner, SnowRunner) keeps per-vertex mud data on the trucks, raised where
+  chassis, wheels and particles touch mud. Codemasters (DiRT Rally) and Playground (Forza Horizon) blend authored
+  per-car dirt masks by an accumulation level, dust then mud. BeamNG's "Grit" and "dynamic dirt" mods put
+  triplanar dirt over any vehicle with a height gradient from the bottom up. Assetto Corsa's CSP dirties tyres
+  by surface. The common core: an accumulation level per region thresholding a noise or mask, so mud spreads as
+  splats and grows from where it lands, never as a uniform tint.
+- **Ours.** No authored masks (imported cars and Tripo meshes have arbitrary UVs) and no per-vertex data (the path
+  tracer would need it on every mesh): the mask is computed in the vehicle's own frame from a few numbers the
+  vehicle updates each tick, so the same lines run in BaseMaterial3D's raster shader and in the path tracer.
+  - Tyres: within each wheel's radius, the tread fill of 3a.
+  - Wheel spray: round each wheel and up its arch, rearward, from the mud that wheel has thrown (3a's shed kg),
+    accumulated and washed by standing water.
+  - Belly line: from the chassis bottom up to the deepest the body has sat in mud, ragged.
+  - Splats: each level thresholds an object-space noise (two octaves), so low levels are scattered flecks and
+    high levels a cake; a little relief from the same noise (normal only, both renderers).
+  - Wet mud dark and glossy, drying in minutes to a pale matte crust (the crack crust's tone).
+- **Wiring.** BaseMaterial3D gets a Mud layer (`mud_enabled`, off per material, like Snow) reading instance
+  uniforms at fixed indices; the path tracer reads the same slots from the global uniform buffer.
+  PhysXVehicle3D `body_mud` (on) turns the layer on in copies of its meshes' materials and writes the uniforms.
+  Check: raster and path traced at 100% crop of a car after a run through clay.
+
+#### Built (3b)
+
+- BaseMaterial3D `mud_enabled` (Mud group), `get_mud_functions_code()`: instance uniforms at fixed slots 0-10 (the
+  vehicle's world-to-frame rows, four wheels' centre and radius, tread fill, spray, belly (bottom, line, wetness),
+  clay colour), `vmud_at()` and `vmud_apply()`; the raygen has the same lines and reads the slots from the global
+  uniform buffer at the geometry's `instance_uniforms_ofs` (that buffer is now a runtime array, it was declared 256
+  long). Material bit: subsurface bit 31.
+- PhysXVehicle3D `body_mud` (on): copies its meshes' BaseMaterial3D materials with Mud on, then each tick writes the
+  uniforms. Spray grows by the shed clay (12 kg to full) and by ploughing sticky slurry, washes in standing water; the
+  mud line is the deepest the belly or the mud at a sunk wheel reached on the body; wet 1 while mud lands or water
+  stands, drying over 5 minutes. Getters: `get_wheel_mud_spray`, `get_body_mud_line`, `get_body_mud_wetness`.
+- Bench: `--view=bodymud` (a dressed 4x4 crawls through stiff clay, then is floored); `--test=clog` checks the spray,
+  the body material and the mud line of a car sunk in slurry. Raster and path traced match at 100% crop.
+- Next for the look: splashes stretched along their flight from the wheel (streaks), and the clay's colour taken
+  from the ground it came from.
+
 ### Stage 4: spray and clods
 
 - GPU ballistic particles from each slipping wheel (speed from the wheel's surface speed, mass from
@@ -340,6 +403,82 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   writes a splat into the ground field and into a body's mud mask.
 - Large clods as PhysX rigid bodies that break up, as MudRunner's chunks; MPM grains (built for sand)
   for wet mud ploughed by a blade or a bucket, with a cohesive Drucker-Prager setting.
+
+#### Built (4a: mud spray on the grains node)
+
+- **PhysX first.** Flow is gas (dust and smoke); it already carries the dust of dry ground (GroundDust3D far,
+  PhysXGroundDust3D near). Liquid mud and clods are PhysX MPM: the sand roost's PhysXGroundGrains3D (Holz, Beer and
+  Kuhlen 2009 hybrid: dug out of the field, flown as MPM grains, deposited where they land, volume kept) already
+  takes every wheel's spray on any soft ground. Mud needs its own material on it: heavier, cohesive (the
+  Drucker-Prager cohesion term), drawn as wet clods rather than sand clouds.
+- **Routing.** Each spray carries the soil's stickiness; a grains node routes sticky sprays to a mud child it makes
+  (`mud_spray`, on): clay, 1700 kg/m3, friction 20 degrees, cohesive, 3.5 cm particles drawn as clumps of two or three
+  lumpy blobs in a wet clay material (real geometry, so path tracing keeps them). Landed clods go back into the field
+  as the sand does: splats round the car.
+- **Clods off the tyre.** The clay a clogged tread sheds (3a's shed kg) leaves from the rear of the tread, up and back
+  at the tread speed (the rooster tail of a wheel spun clean), as a spray with its own volume (not dug: it came out
+  of the tread).
+- Checks (`--test=clog`): floored out of the clay, the shed clay flies as mud clods and lands, volume kept.
+  `--view=bodymud --spray` frames them mid-throw; raster and path traced match. Sticky clay throws a quarter of
+  sand's tread depth, and landed clods splat over 12 cm (stiff mud would otherwise keep each texel's heap as a spike).
+- Next: clods of several sizes, wet clods sticking to the body they hit (they pass through it now: the grains have
+  no colliders), slurry splashes in standing water.
+
+#### Research (4b: clods sticking to bodies)
+
+- **How others do it.** Saber raises per-vertex mud data on the truck where a particle touches it. Splatoon-style
+  games paint hits into a texture in the mesh's UV space (render-target unwrap); Unity's skinned-mesh decals and
+  CryEngine's mud-splatter decals project a decal at the hit. MSFS 2024 blends authored dirt and grime layers by a
+  level. Our body mud is computed in the vehicle's frame with no UVs, so hits are best kept the same way.
+- **Proposal.** The grains have no colliders; the mud child tests each live clod against every PhysXVehicle3D's
+  chassis box (grown by the wheel radius). A clod inside it sticks: it is killed, its volume kept as a splat in that
+  vehicle's frame (position, radius from volume, wetness). The vehicle keeps a ring of splats and publishes them as
+  a small texture shared by all vehicles (one row of RGBA float texels per vehicle, its row index in a spare
+  instance-uniform slot), read the same way in raster (a global sampler) and in the raygen (bindless). Each splat
+  raises the mud level round it with a radial streak along the clod's flight. Clod sizes: three meshes (2, 3.5,
+  6 cm) chosen by slot.
+- Checks: clods thrown at a parked car stick, volume kept (dug = air + landed + stuck); raster vs PT crop.
+
+#### Research (4c: splashes in standing water)
+
+- **How others do it.** Saber keeps water as two swapped RGBA textures that the GPU spreads (height, foam,
+  "water-mud" carried to neighbours), with decorative CPU particles on top. The standard real-time recipe is a height
+  field for the bulk and particles where it breaks: Chentanez and Muller 2010 ("Real-time simulation of large bodies
+  of water with small scale details", SCA) spawn spray particles where the field's surface is steep or fast and
+  return them to it on landing; Holz, Beer and Kuhlen 2009 do the same for soil (our grains). Engineering wading
+  studies (GPU SPH, e.g. the vehicle wading papers on arXiv; Particleworks with RecurDyn) show the bow wave and side
+  sheets of a wheel and a body, a reference for shape, far too costly as the answer.
+- **Ours.** The standing water is already a GPU virtual-pipe field (2a). A wheel in it pushes a bow wave into the
+  field (a moving source, volume kept) and, past a Froude number of about 1 (speed over sqrt(g depth)), throws sheets
+  off the tread and the sidewalls: water taken from the field becomes MPM fluid particles (the clear-water solver
+  PhysX already runs, foam and spray on), coloured by the mud the field carries, and lands back into the field.
+  Muddy water also lifts the body's spray level and washes the body. Rings in the field from the bow wave.
+- **Dependency.** Sand owns the water passes and WaterCell for rills this week: build after they land, through
+  the field's own source term, not a second solver.
+
+#### Research (4d: streaked spatter and local clay colour)
+
+- **How others do it.** Forza Motorsport (2023) builds each car's dirt live, thrown by its own tyres and the track,
+  so it gathers where the flow carries it; MSFS 2024 blends dirt and grime layers by level and region; BeamNG's dirt
+  mods and Codemasters use authored directional masks. Real spatter is elongated along its flight, with a tail away
+  from the source, and wet mud runs down in drips that dry in place.
+- **Ours.** Stretch the splat noise along each wheel's spray direction in the vehicle frame (anisotropic sampling:
+  the noise coordinate compressed along the flight from the wheel), add a tail streak and, while wet, short drip
+  runs downward that freeze as the mud dries. Clay colour: the vehicle averages the ground's albedo (GroundSurface3D
+  tint and material colour) at its wheels' contacts over the last metres driven and writes it into `mud_color`, so
+  red laterite gives red mud and grey clay grey.
+
+#### Research (4e: mud on boots and legs)
+
+- **How others do it.** RDR2 layers dirt, mud, snow, blood and wet masks on characters and horses, raised by
+  region from contact (no talk published). FFXV's character effects (Flagrum wiki) keep per-region dirt and wetness.
+  CryEngine's Dirt Layer and UE's forum recipes paint a mask by overlap. Arkham Origins' deformable snow (GDC 2014)
+  pairs it with the ground's prints.
+- **Ours.** The same BaseMaterial3D Mud layer: a mud line rising from the soles by how deep the boot sank (the boot
+  prints already know, meta `ground_sole`) and spatter up the shins from walking speed. Skinned meshes need a stable
+  frame: the vertex's rest position (baked into CUSTOM0 at import), read by raster and by the path tracer's captured
+  vertices, so the mud does not slide as the legs move. Open question: the path tracer reads per-vertex custom data
+  only for some meshes (a known limit on MultiMeshes), to check before building.
 
 ### Look (any stage)
 

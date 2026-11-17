@@ -977,6 +977,129 @@ String BaseMaterial3D::get_snow_shader_code() {
 	return get_snow_functions_code(true);
 }
 
+String BaseMaterial3D::get_mud_functions_code() {
+	// The vehicle's frame (world to vehicle rows), its wheels (centre, radius), their tread fill and thrown spray, the
+	// belly (chassis bottom y, mud line m, wetness 0..1) and the clay's colour, written by PhysXVehicle3D at fixed slots
+	// that the path tracer reads too (scene_raytracing_raygen.glsl, VMUD_SLOT_*).
+	String code = R"(instance uniform vec4 mud_frame0 : instance_index(0);
+instance uniform vec4 mud_frame1 : instance_index(1);
+instance uniform vec4 mud_frame2 : instance_index(2);
+instance uniform vec4 mud_wheel0 : instance_index(3);
+instance uniform vec4 mud_wheel1 : instance_index(4);
+instance uniform vec4 mud_wheel2 : instance_index(5);
+instance uniform vec4 mud_wheel3 : instance_index(6);
+instance uniform vec4 mud_fill : instance_index(7);
+instance uniform vec4 mud_spray : instance_index(8);
+instance uniform vec4 mud_body : instance_index(9);
+instance uniform vec4 mud_color : instance_index(10);
+
+)";
+	code += R"(// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
+// Off-road games keep an accumulation level per region and let it threshold a splat mask, so mud lands as flecks and
+// grows into a cake. Here the regions are the vehicle's own (each tyre's tread, the spray each wheel throws up its arch
+// and back along the body, the belly up to the deepest it sat in mud), in the vehicle's frame (x across, y up, z forward,
+// m), and the mask is an object-space noise: no authored mask, no UVs, the same in both renderers.
+float vmud_hash(vec3 p_c) {
+	uvec3 q = uvec3(ivec3(p_c));
+	uint h = (q.x * 73856093u) ^ (q.y * 19349663u) ^ (q.z * 83492791u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h & 0xffffu) / 65535.0;
+}
+float vmud_noise(vec3 p_p) {
+	vec3 i = floor(p_p);
+	vec3 f = fract(p_p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = mix(vmud_hash(i), vmud_hash(i + vec3(1.0, 0.0, 0.0)), f.x);
+	float b = mix(vmud_hash(i + vec3(0.0, 1.0, 0.0)), vmud_hash(i + vec3(1.0, 1.0, 0.0)), f.x);
+	float c = mix(vmud_hash(i + vec3(0.0, 0.0, 1.0)), vmud_hash(i + vec3(1.0, 0.0, 1.0)), f.x);
+	float d = mix(vmud_hash(i + vec3(0.0, 1.0, 1.0)), vmud_hash(i + vec3(1.0, 1.0, 1.0)), f.x);
+	return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+// The splat field, 0..1: splashes of about 6 cm with 2 cm drops; the drops fade to their mean over a footprint p_fw (m)
+// that cannot hold them.
+float vmud_splat(vec3 p_p, float p_fw) {
+	float fine = mix(vmud_noise(p_p * 48.0 + 17.0), 0.5, smoothstep(0.004, 0.015, p_fw));
+	return 0.6 * vmud_noise(p_p * 16.0) + 0.4 * fine;
+}
+// One wheel (p_w: centre, radius; its tread fill and thrown spray, 0..1).
+float vmud_wheel(vec3 p_p, vec4 p_w, float p_fill, float p_spray) {
+	if (p_w.w <= 0.0) {
+		return 0.0;
+	}
+	vec3 q = (p_p - p_w.xyz) / p_w.w;
+	float rho = length(q.yz);
+	// The tyre: its tread packed as full as the fill, the sidewall a little less.
+	float tyre = p_fill * (1.0 - smoothstep(1.0, 1.06, rho)) * (1.0 - smoothstep(0.55, 0.7, abs(q.x))) * mix(0.55, 1.0, smoothstep(0.6, 0.9, rho));
+	// The spray: thrown off the top and back of the tread, up the arch and back along the lower body, thinning outwards
+	// (as far as about 1.5 m behind and 0.8 m above a 35 cm wheel), heaviest low down.
+	float e = length((q - vec3(0.0, 0.4, -1.2)) / vec3(2.2, 2.4, 4.4));
+	float spray = p_spray * (1.0 - smoothstep(0.25, 1.0, e)) * mix(1.0, 0.6, smoothstep(0.0, 2.0, q.y));
+	return max(tyre, spray);
+}
+// The accumulation level at p_p (0 clean, 1 caked). p_body: chassis bottom (y), mud line above it (m).
+float vmud_level(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
+	float lvl = 0.0;
+	if (p_body.y > 0.0) {
+		// Caked below the line, flecked above it, the line's edge ragged.
+		float line = p_body.y * (0.7 + 0.6 * vmud_noise(vec3(p_p.x * 3.0, 0.0, p_p.z * 3.0) + 41.0));
+		lvl = 1.0 - clamp((p_p.y - p_body.x - line) / (0.1 + 0.5 * p_body.y), 0.0, 1.0);
+	}
+	lvl = max(lvl, vmud_wheel(p_p, p_w0, p_fill.x, p_spray.x));
+	lvl = max(lvl, vmud_wheel(p_p, p_w1, p_fill.y, p_spray.y));
+	lvl = max(lvl, vmud_wheel(p_p, p_w2, p_fill.z, p_spray.z));
+	lvl = max(lvl, vmud_wheel(p_p, p_w3, p_fill.w, p_spray.w));
+	return lvl;
+}
+// The level thresholds the splat field: a low level keeps only the splats' peaks, a full one covers all.
+float vmud_cover(float p_level, float p_splat) {
+	return p_level <= 0.0 ? 0.0 : smoothstep(1.0 - 1.2 * p_level, 1.15 - 1.2 * p_level, p_splat);
+}
+// The cake's relief (m): thickest inside a splat, lumpy; its edge a step.
+float vmud_height(float p_level, float p_splat) {
+	float c = vmud_cover(p_level, p_splat);
+	return c * (0.004 + 0.0015 * p_splat);
+}
+// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows): (cover, relief gradient in world
+// space (x, y, z) per m). The gradient fades out over a footprint p_fw too wide to hold the lumps.
+vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
+	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
+	float lvl = vmud_level(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body);
+	if (lvl <= 0.0) {
+		return vec4(0.0);
+	}
+	float fw = max(p_fw, 1e-4);
+	float s = vmud_splat(p, fw);
+	float c = vmud_cover(lvl, s);
+	if (c <= 0.0) {
+		return vec4(0.0);
+	}
+	const float e = 0.003;
+	float h0 = vmud_height(lvl, s);
+	vec3 g = vec3(vmud_height(lvl, vmud_splat(p + vec3(e, 0.0, 0.0), fw)), vmud_height(lvl, vmud_splat(p + vec3(0.0, e, 0.0), fw)),
+					 vmud_height(lvl, vmud_splat(p + vec3(0.0, 0.0, e), fw))) -
+			h0;
+	g *= (1.0 - smoothstep(0.004, 0.02, fw)) / e;
+	// Back to world space: the frame's rows are a rotation.
+	vec3 gw = g.x * p_frame0.xyz + g.y * p_frame1.xyz + g.z * p_frame2.xyz;
+	return vec4(c, gw);
+}
+// Wet clay dark and glossy, drying to a pale matte crust (the crack crust's tone).
+void vmud_apply(float p_cover, vec3 p_color, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
+	vec3 dry = p_color * 1.6;
+	dry = mix(dry, vec3(dot(dry, vec3(0.299, 0.587, 0.114))), 0.2);
+	r_albedo = mix(r_albedo, mix(dry, p_color * 0.6, p_wet), p_cover);
+	r_roughness = mix(r_roughness, mix(0.95, 0.3, p_wet), p_cover);
+	r_metallic = mix(r_metallic, 0.0, p_cover);
+	r_specular = mix(r_specular, 0.5, p_cover);
+}
+)";
+	return code;
+}
+
 void BaseMaterial3D::_update_shader() {
 	if (!_is_initialized()) {
 		_mark_ready();
@@ -1021,6 +1144,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.snow_from_weather = snow_from_weather;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		rt.ground_deform_terrain = features[FEATURE_GROUND_DEFORM] && !ground_deform_patch;
+		rt.mud = features[FEATURE_MUD];
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1484,6 +1608,10 @@ uniform float snow_amount : hint_range(0.0, 1.0, 0.01);
 uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 )";
 		code += get_snow_functions_code(snow_from_weather);
+	}
+
+	if (features[FEATURE_MUD]) {
+		code += get_mud_functions_code();
 	}
 
 	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
@@ -2603,13 +2731,13 @@ void fragment() {)";
 			ALBEDO *= mix(1.0, 0.75, gcf.w * max(gcs.w, 0.0));
 		}
 		float gcc = max(gcs.w, 0.0);
-		vec3 gcl = ALBEDO * 1.7;
-		ALBEDO = mix(ALBEDO, mix(gcl, vec3(dot(gcl, vec3(0.299, 0.587, 0.114))), 0.15), gcc);
+		vec3 gcl = ALBEDO * 1.9;
+		ALBEDO = mix(ALBEDO, mix(gcl, vec3(dot(gcl, vec3(0.299, 0.587, 0.114))), 0.2), gcc);
 		ROUGHNESS = mix(ROUGHNESS, 1.0, 0.5 * gcc);
 		// A pool's bed (a drying layer over 9 mm: plates over 3.5 cm): its fine clay buries the soil's grain, damp or dry.
 		NORMAL_MAP_DEPTH *= 1.0 - 0.8 * smoothstep(0.035, 0.05, gcs.y) * step(1e-4, abs(gcs.w) + gcs.x);
 		float gcdmp = max(-gcs.w - ground_wet.x, 0.0);
-		ALBEDO *= 1.0 - 0.45 * gcdmp;
+		ALBEDO *= 1.0 - 0.5 * gcdmp;
 		ROUGHNESS = mix(ROUGHNESS, 0.45, 0.6 * gcdmp);
 	}
 )";
@@ -2680,6 +2808,28 @@ void fragment() {)";
 		snow_glint_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, snow_n_geo, snow_fp, snow, snow_wet, VIEW_MATRIX, TANGENT, BINORMAL, NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT, CLEARCOAT_ROUGHNESS);
 	}
 )";
+	}
+
+	if (features[FEATURE_MUD]) {
+		// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b). The path tracer applies the same lines from the same
+		// instance uniforms (scene_raytracing_raygen.glsl).
+		code += R"(
+	// Mud: Enabled
+	{
+		float vmud_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		float vmud_fp = PROJECTION_MATRIX[3][3] != 0.0 ? vmud_pix : length(VERTEX) * vmud_pix;
+		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body);
+		if (vmud.x > 0.0) {
+			float vmud_specular = SPECULAR;
+			vmud_apply(vmud.x, mud_color.rgb, mud_body.z, ALBEDO, ROUGHNESS, METALLIC, vmud_specular);
+			SPECULAR = vmud_specular;
+			vec3 vmud_g = (VIEW_MATRIX * vec4(vmud.yzw, 0.0)).xyz;
+			NORMAL = normalize(NORMAL - (vmud_g - dot(vmud_g, NORMAL) * NORMAL));
+)";
+		if (features[FEATURE_NORMAL_MAPPING]) {
+			code += "\t\t\tNORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), vmud.x);\n";
+		}
+		code += "\t\t}\n\t}\n";
 	}
 
 	code += "}\n";
@@ -4068,6 +4218,7 @@ struct GroundCracks {
 	vec2 dir3;
 	float curl;
 	float reach;
+	float scale; // the first generation's domain size, m
 };
 // p_c: the crack state (opening 0..1, plate size m, regularity 0..1, crust 0..1 or negative while damp).
 GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
@@ -4152,7 +4303,8 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	g.dir2 = t2 >= 0.0 ? v2 : -v2;
 	g.dir3 = t3 >= 0.0 ? u2 : -u2;
 	g.curl = max(p_c.w, 0.0) * open * 0.35 * thick;
-	g.reach = 0.12 * s1;
+	g.reach = 0.06 * s1;
+	g.scale = s1;
 	return g;
 }
 // The surface's offset at the cracks seen through a footprint p_fw (m) wide: (height m, its slope x, z, the share of
@@ -4164,22 +4316,32 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 	float h = 0.0;
 	vec2 slope = vec2(0.0);
 	float cover = 0.0;
-	float edge = 1e9;
-	vec2 edge_dir = vec2(0.0);
+	// The rims' curl: each crack lifts the plate's edge beside it over a short reach; joined as a smooth union
+	// (1 - the product of what each leaves flat), so the plate's middle stays flat with no crease where the
+	// nearest crack changes.
+	float reach = max(p_g.reach, 0.5 * fw);
+	float flat_all = 1.0;
+	float fl[3];
+	vec2 fg[3];
 	for (int k = 0; k < 3; k++) {
 		float d = k == 0 ? p_g.dist.x : (k == 1 ? p_g.dist.y : p_g.dist.z);
 		float w = k == 0 ? p_g.width.x : (k == 1 ? p_g.width.y : p_g.width.z);
 		float dp = k == 0 ? p_g.depth.x : (k == 1 ? p_g.depth.y : p_g.depth.z);
 		vec2 dir = k == 0 ? p_g.dir1 : (k == 1 ? p_g.dir2 : p_g.dir3);
+		fl[k] = 1.0;
+		fg[k] = vec2(0.0);
 		if (w <= 0.0) {
 			continue;
 		}
+		// The rim beside it: e beyond the crack's edge.
+		// A crack lifts its rims only once it has opened a few millimetres (a tapering tip lifts none).
+		float e = max(d - 0.5 * w, 0.0);
+		float x = exp(-e / reach) * smoothstep(0.0, 0.005, w);
+		fl[k] = 1.0 - x;
+		fg[k] = d > 0.5 * w ? dir * (x / reach) : vec2(0.0); // the slope of (1 - x)
+		flat_all *= fl[k];
 		float hw = 0.5 * max(w, fw);
 		float deep = dp * min(w / fw, 1.0);
-		if (d - 0.5 * w < edge) {
-			edge = d - 0.5 * w;
-			edge_dir = dir;
-		}
 		if (d < hw) {
 			// Steep walls over the outer third of the half width, a rounded floor.
 			float t = 1.0 - d / hw;
@@ -4193,16 +4355,16 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 			cover = max(cover, min(w / fw, 1.0) * (t < 0.35 ? s : 1.0));
 		}
 	}
-	// The curl of the plate's rim beside the nearest crack.
-	if (p_g.curl > 0.0 && edge > 0.0 && h == 0.0) {
-		float reach = max(p_g.reach, 0.5 * fw);
-		float c = p_g.curl * (p_g.reach / reach) * exp(-edge / reach);
-		h = c;
-		slope = -edge_dir * (c / reach);
+	if (p_g.curl > 0.0 && h == 0.0) {
+		float c = p_g.curl * (p_g.reach / reach);
+		h = c * (1.0 - flat_all);
+		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
+		slope = -c * g;
 	}
-	// A footprint wider than a few rims spans whole plates: their mean, flat, with the cracks' mean share.
-	float fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
-	float mean = clamp(dot(p_g.width, vec3(1.0)) * 0.12 / max(p_g.reach, 1e-4), 0.0, 1.0);
+	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
+	// share.
+	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
+	float mean = clamp(dot(p_g.width, vec3(1.0)) * 2.0 / max(p_g.scale, 1e-4), 0.0, 1.0);
 	return vec4(h * fade, slope * fade, mix(mean, cover, fade));
 }
 // The crack state at p_xz: the wet map's crack block (GroundSurface3D::_wet_publish()); 0 where none.
@@ -5190,6 +5352,9 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_deform_patch"), "set_ground_deform_patch", "is_ground_deform_patch");
 
+	ADD_GROUP("Mud", "mud_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "mud_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_MUD);
+
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "detail_mask", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_DETAIL_MASK);
@@ -5329,6 +5494,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
 	BIND_ENUM_CONSTANT(FEATURE_SNOW);
 	BIND_ENUM_CONSTANT(FEATURE_GROUND_DEFORM);
+	BIND_ENUM_CONSTANT(FEATURE_MUD);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);

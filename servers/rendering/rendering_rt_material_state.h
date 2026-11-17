@@ -70,7 +70,8 @@ struct RTBaseMaterialState {
 	uint32_t snow_from_weather : 1; // BaseMaterial3D snow_from_weather: cover from SnowCover3D's snow map.
 	uint32_t ground_deform_patch : 1; // BaseMaterial3D Ground Deform on GroundSurface3D's patch: turned-ground tint.
 	uint32_t ground_deform_terrain : 1; // BaseMaterial3D Ground Deform off the patch: the ground's pore water only.
-	uint32_t unused : 27;
+	uint32_t mud : 1; // BaseMaterial3D Mud: a vehicle's body mud from its instance uniforms (docs/ideas/mud.md, stage 3b).
+	uint32_t unused : 26;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

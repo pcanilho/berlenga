@@ -139,4 +139,21 @@ GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, fl
 	return r;
 }
 
+
+float clogged_grip(const GroundSoil &p_soil, float p_load, float p_area) {
+	const float clean = 1000.0f * p_area * p_soil.cohesion + p_load * p_soil.tan_phi;
+	const float slick = 1000.0f * p_area * p_soil.adhesion + p_load * 0.6f * p_soil.tan_phi;
+	return clean > 0.0f ? CLAMP(slick / clean, 0.05f, 1.0f) : 1.0f;
+}
+
+float adhesion_resistance(const GroundSoil &p_soil, float p_width, float p_sinkage) {
+	return 1000.0f * p_soil.adhesion * p_width * MAX(p_sinkage, 0.0f);
+}
+
+float shedding_speed(const GroundSoil &p_soil, float p_radius) {
+	// w^2 r = ca / (rho t): v = w r = sqrt(ca r / (rho t)), a 2 cm lug of clay at 1700 kg/m3.
+	const float ca = 1000.0f * MAX(p_soil.adhesion, 0.05f);
+	return Math::sqrt(ca * MAX(p_radius, 0.05f) / (1700.0f * 0.02f));
+}
+
 } // namespace GroundTerramechanics
