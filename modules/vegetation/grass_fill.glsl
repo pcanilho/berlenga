@@ -121,7 +121,7 @@ float passes_at(float x, float z) {
 
 float trample_cover(float p) {
 	const float x = p / max(inp[H_TRAMPLE_R], 1e-3);
-	return p > 0.0 ? 1.0 / (1.0 + x * x) : 1.0;
+	return p > 0.0 ? (1.0 - smoothstep(2.5, 5.0, x)) / (1.0 + x * x) : 1.0;
 }
 
 float trample_scale(float p) {

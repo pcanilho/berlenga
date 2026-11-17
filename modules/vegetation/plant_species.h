@@ -248,7 +248,8 @@ public:
 			return 1.0f;
 		}
 		const float x = p_passes / trample_resistance;
-		return 1.0f / (1.0f + x * x);
+		// Past about four times the resistance nothing stands: the tread is bare.
+		return (1.0f - Math::smoothstep(2.5f, 5.0f, x)) / (1.0f + x * x);
 	}
 	float trample_scale(float p_passes) const {
 		if (trample_resistance <= 0.0f || p_passes <= 0.0f) {

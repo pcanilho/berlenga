@@ -29,23 +29,23 @@ extends Node3D
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
 #   --storm ...       storm breaks and windthrow: see storm.gd
-#   --shrubs ...      heath and scrub shrubs (gorse, broom, gum rockrose, kermes oak, lentisk) in their forms: see shrubs.gd
+#   --shrubs ...      heath and scrub shrubs (gorse, broom, gum rockrose, kermes oak, lentisk, dwarf fan palm) in their forms: see shrubs.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
 		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
-		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk"]
-const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35] # Shrubs and evergreens that stay leafy low in a stand.
+		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm"]
+const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35, 36] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
 const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5,
-		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2]
+		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
 		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6),
 		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
 		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6), Vector2(1.0, 2.6), Vector2(1.0, 2.6),
-		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0)]
+		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5)]
 
 var junction_side := 1 # --junction-side=-1: the junction view from the limb's other side.
 var test := false
@@ -239,7 +239,8 @@ func _run_test() -> void:
 		_check(o.height >= r.x and o.height <= r.y, "%s open-grown height %.1f m in %.0f-%.0f m" % [NAMES[p], o.height, r.x, r.y])
 		if not p in SHRUBS and not p in [14, 25]: # Shrubs and shade-tolerant fir and hemlock keep low foliage in a stand.
 			_check(f.crown_base > o.crown_base, "%s forest-grown crown base %.1f m above open-grown %.1f m" % [NAMES[p], f.crown_base, o.crown_base])
-		_check(f.crown_radius < o.crown_radius, "%s forest-grown crown narrower (%.1f m vs %.1f m)" % [NAMES[p], f.crown_radius, o.crown_radius])
+		if p != 36: # The palm does not grow by shoots: its fans are the same in a stand.
+			_check(f.crown_radius < o.crown_radius, "%s forest-grown crown narrower (%.1f m vs %.1f m)" % [NAMES[p], f.crown_radius, o.crown_radius])
 		var again := _gen(p, false, seed)
 		_check(again.internodes == o.internodes and is_equal_approx(again.height, o.height), "%s deterministic for one seed" % NAMES[p])
 	_season_test()

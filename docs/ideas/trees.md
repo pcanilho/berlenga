@@ -1632,6 +1632,20 @@ leaf bases. Forms through `make_shrub_species`: young (one stemless crown), matu
 few short trunks), old (taller trunks, more skirt), thicket (many stems), cushion (stemless,
 short petioles, under 60 cm).
 
+**As built.** `_grow_palm` lays the clump: stems on a ring 0.16 m x sqrt(stems) across, trunks
+in 15 cm nodes (none on young plants and cushions; mature clumps mix stemless crowns with trunks
+to about a metre, old ones to 2.5 m), leaning out at the foot. Each crown has 6-19 live leaves
+on golden-angle rolls, the young upright in the middle and the older spread near level, and old
+stems 3-7 dead ones hanging down; each petiole is three nodes, so the wind bones bend it.
+`_palm_geometry` draws the blade as a pleated disc to a third of its radius (the palman: seams
+up, midribs down) and 14-22 free segments beyond it, V-folded with the margins up, stiff, the
+tips bending a little, the outer ones shorter; dead leaves brown and torn. Petioles are green
+tubes on the leaves surface (the bark skips them) from a brown sheath, with forward spines on
+their lower two thirds; trunks carry rings of leaf-base stubs and hanging fibre. LODs: a fan's
+parts are sized so stochastic pruning keeps them whole and unscaled (grown about its base a fan
+reached metres out); spines are LOD 0 only. Flowers and fruit are not built yet. Mature 1.5 m,
+43k triangles; thicket 108k (on the optimisation list: segments could merge in far LODs).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

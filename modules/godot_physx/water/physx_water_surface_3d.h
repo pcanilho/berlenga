@@ -690,6 +690,8 @@ private:
 	int contact_settle_ticks = 30; // one more measure this many physics ticks after the start (bodies built late)
 	void _update_contact_foam();
 	void _push_contact_foam();
+	void _push_shore_wave_activity();
+	float shore_wave_activity_sent = -1.0f;
 	// Open water past the simulated square (render_extent > domain, no surface_mesh): true = it is open, deep sea
 	// everywhere past the square (full chop, wet, never lifted onto the ground) -- for a sea whose ripple square
 	// follows a focus that may sit over land; false = the square's edge seabed carries on outward (a beach scene).

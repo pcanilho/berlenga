@@ -91,6 +91,7 @@ public:
 		PRESET_GUM_ROCKROSE, // Cistus ladanifer (Mediterranean scrub, trees.md 5v).
 		PRESET_KERMES_OAK, // Quercus coccifera.
 		PRESET_LENTISK, // Pistacia lentiscus.
+		PRESET_DWARF_FAN_PALM, // Chamaerops humilis (trees.md 5w).
 		PRESET_MAX,
 	};
 
@@ -314,6 +315,18 @@ private:
 	};
 	LocalVector<RigBone> rig;
 	LocalVector<int> node_bone;
+	// The dwarf fan palm (trees.md 5w): laid out by _grow_palm, not grown by shoots.
+	struct PalmFrond {
+		int node = -1; // The petiole's last node: the hastula, where the blade fans out.
+		float blade = 0.3f; // Blade radius, metres.
+		int segments = 18;
+		bool dead = false;
+	};
+	LocalVector<PalmFrond> palm_fronds;
+	LocalVector<int> palm_trunks; // Trunk nodes, for the leaf-base stubs.
+	LocalVector<int> palm_crowns; // Each stem's top node.
+	void _grow_palm();
+	void _palm_geometry(Builder &r_bark, Builder &r_leaves);
 	LocalVector<float> node_drag; // m2 of effective frontal area per node (wood and foliage).
 	LocalVector<float> node_mass; // kg per node.
 	LocalVector<float> axis_offset; // Per node: arc length from its axis start to the node's start.
