@@ -2340,6 +2340,16 @@ func _build_shore() -> void:
 		var pp := Vector3(0.0, _undisturbed(Vector3(0.0, 0.0, pz)), pz)
 		prof += " z%.1f:%.2f(c%.2f s%s d%.2f)" % [pz, surface.get_saturation_at(pp), weather.call("get_contact_wetness_at", pp), str(sea.call("sample_swash", pp)), sea.call("sample_depth", pp)]
 	print("shore: saturation by z" + prof)
+	print("shore: %d swash marks laid, %.2f ms a step" % [surface.get_swash_mark_count(), surface.get_swash_step_usec() / 1000.0])
+	if OS.get_environment("SWASH_DUMP") != "":
+		# The ground's change from undisturbed over x -3..3, z -1..3 at 1 cm (raw floats) for a look from above.
+		var buf := PackedFloat32Array()
+		for zi in 400:
+			for xi in 600:
+				var pq := Vector3(-3.0 + xi * 0.01, 0.0, -1.0 + zi * 0.01)
+				buf.append(surface.get_surface_height_at(pq) - _undisturbed(pq))
+		var fa := FileAccess.open(OS.get_environment("SWASH_DUMP"), FileAccess.WRITE)
+		fa.store_buffer(buf.to_byte_array())
 	print("shore: saturation %.2f in the wash, %.2f above it; prints %.1f cm deep in the wash, %.1f cm above" % [
 		surface.get_saturation_at(Vector3(0.12, 0, -0.6)), surface.get_saturation_at(Vector3(-0.12, 0, 3.6)),
 		surface.get_dent_at(Vector3(0.12, 0, -0.6)) * 100.0, surface.get_dent_at(Vector3(-0.12, 0, 3.6)) * 100.0])

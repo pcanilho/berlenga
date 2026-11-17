@@ -566,6 +566,19 @@ and filled its hollows, but the relief was not drawn, so filled hollows showed a
 - Plain fix, no card: the faint two-texel ridges across some rill floors; de Almeida, Bates et al. 2012 weight
   each face's discharge with its neighbours' (theta 0.7 to 0.9), which needs the fluxes double-buffered.
 
+### Swash marks (Paulo picked all three candidates, 17 Nov 2026)
+
+Built first of the three. `swash_marks` (on): ten times a second the near field is cut into shore-normal transects
+10 cm apart (the beach's downhill direction there); along each, the water's landward edge (swash film or sea over
+1 mm, from the water sources' `sample_swash` and `sample_depth`) is found to 6 mm. When a swash that was climbing
+falls back 5 cm from its highest reach, that reach is the uprush limit (Komar 1998): a ridge of sand is laid along
+it, 3 mm high and about 2.5 cm wide (two near-field texels; a narrower one is lost between texels), joined halfway
+to the neighbouring transects' marks of the same wave (within 20 cm) so each wave draws one scalloped line. The
+next swash that reaches higher smooths it as it does prints; the highest lines stay. About 0.7 ms a step on the
+CPU. `--view=shore` prints the count; `SWASH_DUMP=file.f32` writes the ground's change over x -3..3, z -1..3.
+Left for later: the foam-tinted line that dries pale (needs a lasting tint channel; the deposit's fresh tint
+fades).
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.
