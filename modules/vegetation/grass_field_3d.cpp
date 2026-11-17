@@ -427,6 +427,7 @@ varying float v_dry;
 varying float v_wet;
 varying vec3 v_tint;
 varying float v_light;
+varying float v_trod; // Trodden flat on a worn path (its rest lean past any sward's own).
 
 uniform float color_variation;
 )";
@@ -439,6 +440,7 @@ void vertex() {
 	float w = INSTANCE_CUSTOM.y;
 	float light_q = floor(INSTANCE_CUSTOM.z / 4.0);
 	float rest_lean = INSTANCE_CUSTOM.z - light_q * 4.0;
+	v_trod = smoothstep(1.1, 2.2, rest_lean);
 	v_light = light_q / 100.0 * 1.5;
 	float rnd = fract(INSTANCE_CUSTOM.w);
 	float t = VERTEX.y;
@@ -556,9 +558,12 @@ void fragment() {
 	c = vegetation_light_tint(c, v_light);
 	// Wet blades (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
+	// Trodden flat: bruised and soiled, and its waxy face no longer catches the sky at a grazing
+	// angle (lying blades read frosted white on a worn path's edge, docs 17 Nov).
+	c *= mix(1.0, 0.72, v_trod);
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
-	ROUGHNESS = 0.55 * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet);
-	SPECULAR = 0.35;
+	ROUGHNESS = mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet);
+	SPECULAR = mix(0.35, 0.2, v_trod);
 	BACKLIGHT = ALBEDO * 0.7;
 	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
 	// exp(-k L) with the leaf area L above, k about 0.8 for upright blades, and light the blades
@@ -2116,13 +2121,37 @@ vec3 grass_path_soil(vec3 world_pos, vec3 albedo, float tread) {
 	// Damp patches in the hollows: darker (water fills the pores; Lagarde 2013).
 	float damp = smoothstep(0.55, 0.75, grass_noise(xz * 0.7 + 4.4) * 0.7 + grass_noise(xz * 3.1) * 0.3) * smoothstep(0.5, 0.9, tread);
 	soil *= mix(1.0, 0.62, damp);
-	// Grit and small stones: 2 to 15 mm, pale grey-brown, most where the tread is barest.
-	float stones = grass_noise(xz * 38.0 + 1.7);
-	float grit = grass_noise(xz * 110.0 + 5.3);
-	vec3 stone_c = vec3(0.2, 0.185, 0.155) * (0.7 + 0.5 * grass_noise(xz * 61.0));
+	// Small stones the feet have bared: one in half the 10 cm cells, 1.5 to 6 cm across, each its
+	// own size, shade and shape (rounded, a little elongated);
+	// between them only a faint fine grit.
 	float bare = smoothstep(0.35, 0.85, tread);
-	soil = mix(soil, stone_c, smoothstep(0.8, 0.85, stones) * bare * 0.85);
-	soil = mix(soil, stone_c * 0.9, smoothstep(0.82, 0.9, grit) * bare * 0.6);
+	vec2 cell = floor(xz * 10.0);
+	float st = 0.0;
+	float st_c = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = cell + vec2(float(i), float(j));
+			float h0 = grass_hash(c * 1.31 + 7.7);
+			if (h0 > 0.45) {
+				continue; // Half the cells have none: fewer, larger stones.
+			}
+			vec2 o = vec2(grass_hash(c + 3.1), grass_hash(c + 9.4));
+			vec2 d = xz * 10.0 - (c + o);
+			float ang = grass_hash(c + 5.9) * 3.1416;
+			d = vec2(dot(d, vec2(cos(ang), sin(ang))), dot(d, vec2(-sin(ang), cos(ang))));
+			d.y *= 1.0 + 0.8 * grass_hash(c + 2.2);
+			float r = mix(0.08, 0.32, pow(grass_hash(c + 4.6), 1.5)); // 1.5 to 6 cm across, mostly small.
+			float k = length(d) / r;
+			float in_s = 1.0 - smoothstep(0.85, 1.0, k);
+			if (in_s > st) {
+				st = in_s;
+				st_c = grass_hash(c + 8.3);
+			}
+		}
+	}
+	vec3 stone_c = vec3(0.21, 0.19, 0.16) * (0.6 + 0.6 * st_c) * (0.85 + 0.3 * grass_noise(xz * 140.0));
+	soil = mix(soil, stone_c, st * bare);
+	soil *= 0.92 + 0.08 * grass_noise(xz * 90.0 + 5.3); // Fine grit.
 	return mix(albedo, soil, smoothstep(0.0, 0.6, tread));
 }
 
@@ -2587,7 +2616,8 @@ float GrassField3D::_trample_cover(float p_passes) const {
 		return 1.0f;
 	}
 	const float x = p_passes / trample_resistance;
-	return 1.0f / (1.0f + x * x);
+	// Past about four times its resistance nothing stands: the tread is bare.
+	return (1.0f - Math::smoothstep(2.5f, 5.0f, x)) / (1.0f + x * x);
 }
 
 float GrassField3D::_trample_scale(float p_passes) const {

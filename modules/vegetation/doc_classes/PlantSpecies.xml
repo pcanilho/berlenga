@@ -81,7 +81,7 @@
 			<return type="float" />
 			<param index="0" name="passes" type="float" />
 			<description>
-				Returns the cover left after [param passes] walkers a year: [code]1 / (1 + x^2)[/code] with [code]x = passes / trample_resistance[/code]. 1 when [member trample_resistance] is 0.
+				Returns the cover left after [param passes] walkers a year: [code]1 / (1 + x^2)[/code] with [code]x = passes / trample_resistance[/code], falling to 0 between 2.5 and 5 times the resistance (a bare tread). 1 when [member trample_resistance] is 0.
 			</description>
 		</method>
 		<method name="trample_scale" qualifiers="const">
