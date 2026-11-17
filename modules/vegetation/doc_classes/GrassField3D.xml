@@ -10,6 +10,23 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="crop_calendar_stage" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="sown_day" type="int" />
+			<param index="1" name="harvest_day" type="int" />
+			<param index="2" name="day" type="int" />
+			<description>
+				The BBCH growth stage on [param day] (of the year) of a cereal sown on [param sown_day], from a temperate sowing calendar (winter crops sown from day 200; spring crops otherwise). Harvested (99) from [param harvest_day], or about ten days after hard dough when it is negative, until the next sowing.
+			</description>
+		</method>
+		<method name="crop_canopy_look" qualifiers="static">
+			<return type="Color" />
+			<param index="0" name="crop" type="int" enum="GrassField3D.Crop" />
+			<param index="1" name="stage" type="float" />
+			<description>
+				The crop seen from a distance at [param stage]: its colour (sRGB) and, in alpha, how much of the soil it covers.
+			</description>
+		</method>
 		<method name="get_far_color" qualifiers="const">
 			<return type="Color" />
 			<description>
@@ -119,6 +136,13 @@
 				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days). [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
 			</description>
 		</method>
+		<method name="get_field_stage" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The growth stage of [member fields] entry [param index] now.
+			</description>
+		</method>
 		<method name="update_at">
 			<return type="void" />
 			<param index="0" name="center" type="Vector3" />
@@ -175,6 +199,9 @@
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
+		</member>
+		<member name="fields" type="Dictionary[]" setter="set_fields" getter="get_fields" default="[]">
+			With a [member crop]: the fields it grows in, each a [Dictionary]. [code]polygon[/code] ([PackedVector2Array], world XZ) is required; optional [code]drill_angle[/code] and [code]row_spacing[/code] (default the node's), [code]stage[/code] (a fixed BBCH stage; default the node's [member crop_stage]), [code]sown_day[/code] and [code]harvest_day[/code] (days of the year: with a [member season_source] the stage follows a sowing calendar, autumn sowing from day 200 over-wintering, spring sowing through in five months, stubble from harvest to the next sowing), [code]tramline_spacing[/code] (default 24 m; 0 none: paired unsown wheel tracks [code]tramline_gauge[/code] apart, default 1.8 m) and [code]headland[/code] (default 12 m; 0 none: rows run round the edge where the drill turned). Outside the fields nothing grows. Up to 63 fields a node. The ground shader ([method get_ground_shader_code]) draws the drilled soil and darker wheelings under every crop node's fields and, past the tillers, the crop's own colour and cover at its stage ([method crop_canopy_look]).
 		</member>
 		<member name="gpu_fill" type="bool" setter="set_gpu_fill" getter="is_gpu_fill" default="true">
 			Fill each tile's blades with a compute shader instead of the CPU loop. The CPU lists the cells the tile keeps at its level and bakes [member rules] into a 0.5 m grid; the shader makes every blade from the same hashes, clumps and light and writes the records straight into the tile's [MultiMesh] ([method RenderingServer.multimesh_mark_buffer_rd_changed]), so the path tracer sees them as before. The blades match the CPU path except within a few centimetres of a rule's edge; the main-thread cost of a tile drops by about 40%. Falls back to the CPU without a [RenderingDevice].

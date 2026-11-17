@@ -12,6 +12,8 @@ extends Node3D
 #                    400 tillers per m2 in rows 12.5 cm apart (--grass-density sets the tillers)
 #   --stage=N        the crop's growth stage, BBCH (default 75: milky ripe; 99 harvested stubble)
 #   --crop-close     the crop seen from 1.1 m, 2.5 m off its ears
+#   --fields         three fields (GrassField3D.fields) seen from 18 m up: ripe with tramlines every 12 m
+#                    and a 6 m headland, one at stem elongation drilled across, one harvested stubble
 #   --frames=N       frames before the capture (default 20; path traced, more until no surface waits for its first capture)
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
@@ -91,6 +93,7 @@ var layers := true
 var crop_name := "" # --crop=wheat|barley|oats|rye
 var crop_stage := 75.0
 var crop_close := false
+var crop_fields := false
 var close := false
 var forest := false
 var litter_wind := Vector2()
@@ -153,7 +156,11 @@ class Pond extends Node3D:
 	func get_water_level() -> float:
 		return -0.6
 
+static var farmland := false # --fields: gently rolling farmland, no pond.
+
 static func height(x: float, z: float) -> float:
+	if farmland:
+		return 0.5 * sin(x * 0.035) * cos(z * 0.03) + 0.3 * sin((x - z) * 0.02) + 0.4
 	return 0.6 * sin(x * 0.08) * cos(z * 0.06) + 0.4 * sin((x + z) * 0.05) + 0.02 * (x * x + (z + 12.0) * (z + 12.0)) / 40.0 - 0.6
 
 func _ready() -> void:
@@ -170,6 +177,9 @@ func _ready() -> void:
 			layers = false
 		elif a.begins_with("--stage="): crop_stage = float(a.substr(8))
 		elif a == "--crop-close": crop_close = true
+		elif a == "--fields":
+			crop_fields = true
+			farmland = true
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
 		elif a == "--swamp": swamp = true
@@ -298,6 +308,14 @@ func _ready() -> void:
 		grass.drill_angle = deg_to_rad(20.0)
 		grass.radius = 24.0
 		grass.tile_size = 1.5 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
+		if crop_fields:
+			grass.radius = 40.0
+			grass.density = grass_density if grass_density > 0.0 else 250.0 # Seen from 16 m up.
+			grass.fields = [
+				{"polygon": PackedVector2Array([Vector2(-42, -3), Vector2(-2, -1), Vector2(-3, -26), Vector2(-44, -25)]), "drill_angle": deg_to_rad(92.0), "stage": crop_stage, "tramline_spacing": 12.0, "headland": 6.0},
+				{"polygon": PackedVector2Array([Vector2(1, -1), Vector2(40, -4), Vector2(43, -26), Vector2(0, -27)]), "drill_angle": deg_to_rad(5.0), "stage": 37.0, "tramline_spacing": 12.0, "headland": 6.0},
+				{"polygon": PackedVector2Array([Vector2(-44, -29), Vector2(44, -30), Vector2(44, -46), Vector2(-44, -46)]), "drill_angle": deg_to_rad(-30.0), "stage": 99.0, "headland": 0.0},
+			]
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
 	if season_map:
@@ -574,6 +592,9 @@ void fragment() {
 	cam.position = Vector3(6, height(6, 20) + eye_h, 20)
 	add_child(cam)
 	cam.look_at(Vector3(0, -0.5 - 0.6 * (eye_h - 1.7), -8))
+	if crop_fields:
+		cam.position = Vector3(0, height(0, 12) + 16.0, 12)
+		cam.look_at(Vector3(0, height(0, -22), -22))
 	if crop_close:
 		cam.position = Vector3(6, height(6, 20) + 1.1, 20)
 		cam.look_at(Vector3(5.2, height(5.2, 17.6) + 0.75, 17.6))
@@ -1594,6 +1615,9 @@ func _sward_shade_check(c: Vector2, open_density: float) -> void:
 # --crop --test: tillers placed, in rows along the drill direction, the crop shader in use; then the
 # stage set before emergence (the next check, 30 frames on).
 func _crop_checks() -> void:
+	# Every tile in range built first (the fields' radius holds hundreds of small tiles).
+	for i in 600:
+		grass.update_at(cam.global_position)
 	var count := grass.get_blade_count()
 	var off_row := 0
 	var total := 0
@@ -1613,13 +1637,76 @@ func _crop_checks() -> void:
 	if count < 1000:
 		fails += 1
 		print("GRASS_FAIL crop: too few tillers")
-	if total == 0 or off_row > total / 20:
+	if not crop_fields and (total == 0 or off_row > total / 20):
 		fails += 1
 		print("GRASS_FAIL crop: tillers off their rows")
-	if not code.contains("crop_growth"):
+	if not code.contains("crop_look"):
 		fails += 1
 		print("GRASS_FAIL crop: not the crop shader")
-	grass.crop_stage = 5.0
+	# The sowing calendar: winter wheat sown 7 Oct is at hard dough by late July, stubble in September.
+	var july := GrassField3D.crop_calendar_stage(280, -1, 205)
+	var sept := GrassField3D.crop_calendar_stage(280, -1, 250)
+	var spring := GrassField3D.crop_calendar_stage(75, -1, 165)
+	print("GRASS_CROP calendar winter 24 Jul %.1f, 7 Sep %.1f; spring barley 14 Jun %.1f" % [july, sept, spring])
+	if july < 80.0 or july > 92.0 or sept != 99.0 or spring < 50.0 or spring > 65.0:
+		fails += 1
+		print("GRASS_FAIL crop calendar")
+	if crop_fields:
+		_field_checks()
+	if not crop_fields:
+		grass.crop_stage = 5.0
+
+# --crop --fields --test: no tillers outside the fields, none in the tramline wheel tracks, headland
+# tillers on rows parallel to their edge.
+func _field_checks() -> void:
+	var f0: Dictionary = grass.fields[0]
+	var poly: PackedVector2Array = f0["polygon"]
+	var rs: float = grass.row_spacing
+	var d := Vector2(cos(f0["drill_angle"]), sin(f0["drill_angle"]))
+	var nrm := Vector2(-d.y, d.x)
+	var outside := 0
+	var in_track := 0
+	var body := 0
+	var head := 0
+	var head_off := 0
+	var total := 0
+	for ch in grass.get_children(true):
+		if not (ch is MultiMeshInstance3D and ch.multimesh):
+			continue
+		var mm: MultiMesh = ch.multimesh
+		for i in range(0, mm.instance_count, 7):
+			var o: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
+			var q := Vector2(o.x, o.z)
+			total += 1
+			var inside := false
+			for f in grass.fields:
+				if Geometry2D.is_point_in_polygon(q, f["polygon"]):
+					inside = true
+			if not inside:
+				outside += 1
+				continue
+			if not Geometry2D.is_point_in_polygon(q, poly):
+				continue
+			var de := 1e9
+			for e in poly.size():
+				de = minf(de, q.distance_to(Geometry2D.get_closest_point_to_segment(q, poly[e], poly[(e + 1) % poly.size()])))
+			if de >= 6.0 + 0.1:
+				body += 1
+				var w := fposmod(q.dot(nrm), 12.0) - 6.0
+				if absf(absf(w) - 0.9) < 0.1:
+					in_track += 1
+			elif de < 5.5 and de > 0.3:
+				head += 1
+				var r := fposmod(de / rs, 1.0)
+				if absf(r - 0.5) > 0.4:
+					head_off += 1
+	print("GRASS_FIELDS sampled=%d outside=%d body=%d in_wheel_tracks=%d headland=%d off_row=%d" % [total, outside, body, in_track, head, head_off])
+	if total == 0 or outside > 0 or body == 0 or in_track > 0:
+		fails += 1
+		print("GRASS_FAIL fields: tillers outside the fields or in the tramlines")
+	if head == 0 or head_off > head / 4:
+		fails += 1
+		print("GRASS_FAIL fields: headland rows not parallel to the edge")
 
 func _checks() -> void:
 	_season_checks()
@@ -1943,8 +2030,10 @@ func _process(dt: float) -> void:
 			_crop_checks()
 		elif n == frames + 30:
 			# Not yet emerged (below BBCH 10): no tillers at all.
+			for i in 600:
+				grass.update_at(cam.global_position)
 			print("GRASS_CROP stage 5 tillers=%d" % grass.get_blade_count())
-			if grass.get_blade_count() != 0:
+			if grass.get_blade_count() != 0 and not crop_fields:
 				fails += 1
 				print("GRASS_FAIL crop tillers before emergence")
 			print("GRASS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)

@@ -160,6 +160,32 @@ private:
 	float row_spacing = 0.125f;
 	float drill_angle = 0.0f; // The rows' direction, radians from +x towards +z.
 	Ref<ArrayMesh> crop_mesh_far; // Fewer parts for the coarse levels.
+	// Fields (set_fields()): polygons each with its own drill angle, stage or sowing calendar,
+	// tramlines and headland.
+	struct CropPlot {
+		PackedVector2Array polygon;
+		Rect2 bounds;
+		bool clockwise = false;
+		float drill_angle = 0.0f;
+		float row_spacing = 0.125f;
+		float stage = -1.0f; // Fixed stage; below 0 the node's crop_stage.
+		int sown_day = -1; // Day of the year sown; with a season_source the stage follows the calendar.
+		int harvest_day = -1;
+		float tramline_spacing = 24.0f;
+		float tramline_gauge = 1.8f;
+		float headland = 12.0f;
+		float current = 75.0f; // The stage now.
+	};
+	Array fields;
+	LocalVector<CropPlot> plots;
+	int crop_day = -1; // The season's day the plot stages were set for.
+	void _update_plot_stages(int p_day);
+	static LocalVector<GrassField3D *> crop_nodes; // Crop nodes in the tree, sharing the fields' ground.
+	static bool crop_ground_dirty;
+	static bool crop_plots_dirty;
+	static Ref<ImageTexture> crop_ground_texture;
+	static Ref<ImageTexture> crop_plots_texture;
+	void _crop_ground_step();
 	struct CropShape {
 		float height; // Stem to the ear's base, ripe (m).
 		float ear_length;
@@ -178,7 +204,7 @@ private:
 	Ref<ArrayMesh> _make_crop_mesh(bool p_far) const;
 	void _crop_uniforms(const Ref<ShaderMaterial> &p_material) const;
 	template <typename F>
-	void _crop_rows(const Rect2 &p_rect, float p_keep, F &&p_place) const;
+	void _crop_rows(const Rect2 &p_rect, float p_keep, F &&p_place, bool p_fields = true) const;
 
 	bool gpu_fill = true; // Fill tiles with the compute shader (stage 3a) when a RenderingDevice exists.
 	Ref<Image> height_image; // The data map's height channel, for the GPU fill.
@@ -386,6 +412,12 @@ public:
 	float get_crop_stage() const { return crop_stage; }
 	void set_row_spacing(float p_spacing);
 	float get_row_spacing() const { return row_spacing; }
+	static constexpr int MAX_PLOTS = 63;
+	void set_fields(const Array &p_fields);
+	Array get_fields() const { return fields; }
+	float get_field_stage(int p_index) const;
+	static float crop_calendar_stage(int p_sown_day, int p_harvest_day, int p_day);
+	static Color crop_canopy_look(Crop p_crop, float p_stage);
 	void set_drill_angle(float p_angle);
 	float get_drill_angle() const { return drill_angle; }
 

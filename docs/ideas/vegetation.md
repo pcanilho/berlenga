@@ -530,6 +530,17 @@ Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
   dFdx) stops the waxy leaves sparkling. Cost: 400 tillers/m2 at tile_size 1.5 m keeps a tile under
   the 65536-triangle merged BLAS cap. CPU fill for now; GPU fill and a soil ground for crops come
   with stage 2.
+- Stage 2 first part built (17 Nov): `GrassField3D.fields` (polygon, drill angle, stage or
+  sown/harvest day, tramline spacing and gauge, headland). Tramlines skip drill rows over the
+  wheel tracks; headland rows run parallel to each edge, mitred at the corners by nearest edge.
+  Stage per field is a uniform array (instance y carries the slot), so the season moves fields
+  without rebuilding tiles; a sowing calendar (AHDB growth guides) gives the stage by day. The
+  ground: every crop node's fields in one shared map (`crop_ground_map`, 0.5 m texels, slot and
+  wheelings) and a 256x2 look table; `crop_ground()` in the ground shader draws drilled soil with
+  slot lines and darker wheelings, the colour of tillers dropped by the coarser levels, and past
+  the band the crop's colour and cover by stage. Still to do: ridge and furrow and ploughed soil
+  (needs terrain heights: terrain thread), straw swaths on stubble, the meadow grass kept out of
+  fields, GPU fill for crops.
 - References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
   instanced rows); Ghost of Tsushima, GDC 2021 (blades and wind); Butler and Ebert, "Procedural
   field grasses".
