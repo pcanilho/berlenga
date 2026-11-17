@@ -1928,7 +1928,7 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 	// Bark vertex colours are linear (as the bark builder's own): the leaf bases mid brown, the
 	// fibre dark brown.
 	const Color stub_c = Color(0.3f, 0.22f, 0.15f).srgb_to_linear();
-	const Color fibre_c = Color(0.2f, 0.14f, 0.09f).srgb_to_linear();
+	const Color fibre_c = Color(0.25f, 0.18f, 0.12f).srgb_to_linear();
 	for (const int ti : palm_trunks) {
 		const Node &n = nodes[ti];
 		if (n.length < 0.08f) {
@@ -1970,15 +1970,16 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 					const Vector3 f0 = n.start + n.dir * (n.length * t) + frd * (n.radius * Math::lerp(0.98f, 1.1f, pr.randf()));
 					const float fl = Math::lerp(0.06f, 0.16f, pr.randf());
 					const Vector3 run = across ? (tang * 0.75f - n.dir * 0.65f).normalized() : (-n.dir + frd * 0.15f).normalized();
+					// Wavy and soft: five points, each pulled to the trunk and kinked sideways, thin.
 					LocalVector<Vector3> fp;
 					LocalVector<float> fr;
-					fp.push_back(f0);
-					// Hugging the trunk: pulled back to its surface along the way.
-					fp.push_back(f0 + run * (fl * 0.5f) - frd * (across ? 0.006f : -0.004f));
-					fp.push_back(f0 + run * fl - frd * (across ? 0.012f : -0.01f) + tang * Math::lerp(-0.01f, 0.01f, pr.randf()));
-					fr.push_back(Math::lerp(0.0025f, 0.005f, pr.randf()));
-					fr.push_back(0.0025f);
-					fr.push_back(0.0012f);
+					const float ph = pr.randf() * Math::TAU;
+					for (int fk = 0; fk <= 4; fk++) {
+						const float u = fk / 4.0f;
+						const float wav = Math::sin(ph + u * 9.0f) * 0.008f;
+						fp.push_back(f0 + run * (fl * u) - frd * ((across ? 0.012f : -0.006f) * u) + tang * wav + n.dir * (0.004f * Math::sin(ph * 1.7f + u * 7.0f)));
+						fr.push_back(Math::lerp(0.0028f, 0.0012f, u));
+					}
 					Vector4i fpart;
 					r_bark.begin(fpart);
 					_tube(r_bark, fp, fr, 3, 0.0f, fibre_c * (0.8f + 0.4f * pr.randf()));
@@ -6161,7 +6162,8 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 						// Erect to spreading in flower; bowed out and down by the fruit.
 						const float bow = flowers ? 0.15f : 0.55f + 0.3f * swell;
 						const Vector3 d0 = (ax * (1.0f - bow) + out * 0.8f - Vector3(0, bow * 0.6f, 0)).normalized();
-						const float len = Math::lerp(0.1f, 0.2f, float((h >> 8) & 255u) / 255.0f);
+						// Short and stubby (8-15 cm), the branches packed close.
+						const float len = Math::lerp(0.08f, 0.15f, float((h >> 8) & 255u) / 255.0f) * (flowers ? 0.8f : 1.0f);
 						// The peduncle in its bract.
 						LocalVector<Vector3> pts;
 						LocalVector<float> rad;
@@ -6190,21 +6192,22 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 							tube(bp, br, 5, bc);
 						}
 						// The branches: five to eight short rachillae along the outer half.
-						const int nb = 5 + int((h >> 4) % 4u);
+						const int nb = (flowers && male ? 8 : 6) + int((h >> 4) % 4u);
 						for (int b = 0; b < nb; b++) {
 							const float t = 0.45f + 0.55f * float(b) / MAX(nb - 1, 1);
 							const Vector3 at = pts[1].lerp(pts[2], (t - 0.45f) / 0.55f);
 							const Vector3 bd = (d0 + perp(d0).rotated(d0, roll + b * 2.4f) * 0.9f - Vector3(0, flowers ? 0.0f : 0.4f, 0)).normalized();
-							const float bl = Math::lerp(0.025f, 0.05f, 1.0f - t * 0.6f);
+							const float bl = Math::lerp(0.018f, 0.035f, 1.0f - t * 0.6f);
 							stalk(at, at + bd * bl, 0.0018f, axis_c);
 							if (flowers) {
-								// Male: a dense crowd of 3-4 mm flowers; female: few, 2-3 a branch.
-								const int nf = male ? 7 : 3;
+								// Packed all round each branch: male ones a golden lump of 4 mm flowers,
+								// female ones fewer, larger and greener.
+								const int nf = male ? 12 : 6;
 								for (int k = 0; k < nf; k++) {
 									const float u = (k + 0.5f) / nf;
 									const uint32_t hk = hash_murmur3_one_32(uint32_t(k + b * 16), h);
-									const Vector3 jit = perp(bd).rotated(bd, float(hk & 255u) / 255.0f * float(Math::TAU)) * 0.004f;
-									const float r = (male ? 0.0022f : 0.003f) * (bloom > 0.4f ? 1.0f : 0.75f);
+									const Vector3 jit = perp(bd).rotated(bd, float(hk & 255u) / 255.0f * float(Math::TAU)) * (male ? 0.0045f : 0.004f);
+									const float r = (male ? 0.0042f : 0.0045f) * (bloom > 0.4f ? 1.0f : 0.75f);
 									// A few millimetres across: an octahedron (8 triangles) is round enough.
 									const Vector3 fc = at + bd * (bl * u) + jit;
 									const Color fcol = male ? fl_y * (0.9f + 0.2f * float((hk >> 8) & 255u) / 255.0f) : fl_f;
