@@ -543,6 +543,29 @@ Docs round 1 (declined: dotted rills, a parallel comb, no water, bench backgroun
 Left: faint ridges across some floors (the explicit scheme's two-texel mode; de Almeida et al. 2012's flux
 weighting would damp it but needs the neighbours' fluxes double-buffered).
 
+Docs passed round 2, with a note: in raster the net partly reads as raised ridges with bright crests. Checked
+on the cut: the rills' banks sit 0.1 mm below the face on average, not above it; under the low side sun each
+groove's far wall is lit, which reads as a crest. One real cause fixed with it: the water ran over the fixed relief
+and filled its hollows, but the relief was not drawn, so filled hollows showed as raised patches (30% of the face
+0.5 to 7 mm up). The blit now draws the relief with the cut while runoff is on.
+
+### Next sand candidates (research, 17 Nov 2026; need a card)
+
+- Swash marks: the thin arcuate ridges of fine sand, foam and debris a swash leaves at its uprush limit, a few
+  mm high and cm wide, one per wave, overlapping in scallops (Komar 1998, Beach Processes and Sedimentation;
+  Reineck and Singh 1980). Built from the shore water's swash film: where the film stops and turns, lay a thin
+  ridge (deposit from the film's last load) and a foam-tinted line that dries pale. Small, high payoff in shore
+  frames.
+- Rill heads and fans: beach rills start at a sharp head where seepage saps the face (headward sapping, Higgins
+  1984; Dunne 1990) and end in small deltas at the waterline, lobes that spread and split. Needs the head's
+  steepening (a cut wall over repose slumps into the flow) and the fan's lobe switching (deposits blocking
+  their own channel). Medium; makes the network read as rills from far.
+- Flowing water in the rills: draw the seepage as moving, with flow-mapped normals and sparkle advected by the
+  shallow water's own velocity (Vlachos 2010, flow maps; the velocity is already on the GPU). Small to medium;
+  the water now only glistens.
+- Plain fix, no card: the faint two-texel ridges across some rill floors; de Almeida, Bates et al. 2012 weight
+  each face's discharge with its neighbours' (theta 0.7 to 0.9), which needs the fluxes double-buffered.
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.

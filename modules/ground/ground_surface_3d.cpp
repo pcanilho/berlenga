@@ -3236,6 +3236,9 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 			// water at its own pace); 2 mm of bed roughness; the seepage landed in the substeps at its own rate.
 			put(15, 1.0f, runoff_time_scale / _morph_passes(), 0.002f, gain / MAX(runoff_time_scale, 1e-6f));
 		}
+	} else if (_runoff_on_gpu()) {
+		// No water step (a still frame): the bed's relief is still drawn (the blit reads it), nothing moves.
+		put(15, 1.0f, 0.0f, 0.002f, 0.0f);
 	}
 	return b;
 }

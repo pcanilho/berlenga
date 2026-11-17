@@ -1271,7 +1271,10 @@ void main() {
 		}
 		if (is_ground()) {
 			// The ground's map: the net depression (dent less rim) and the standing water over it.
-			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y, water[i].w.x, tint));
+			// With runoff on, the bed's fixed relief (runoff_rough) is drawn too: the water runs over it and lays its
+			// sand in its hollows, so a drawing without it showed the filled hollows as raised ridges.
+			float relief = params.water3.x > 0.5 ? runoff_rough(texel_world(x, z)) : 0.0;
+			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y - relief, water[i].w.x, tint));
 		} else {
 			imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
 		}
