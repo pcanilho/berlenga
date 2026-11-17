@@ -1354,6 +1354,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
 		actions.renames["sun_visibility"] = "sun_visibility";
 		actions.renames["sun_direction"] = "sun_direction";
+		actions.renames["relief_sun_direction"] = "relief_sun_direction";
 		actions.renames["SUN_SHADOW"] = "sun_shadow";
 		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
 

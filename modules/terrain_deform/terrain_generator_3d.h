@@ -56,6 +56,12 @@ public:
 		OUTLET_NEGATIVE_Z = 4,
 		OUTLET_POSITIVE_Z = 8,
 	};
+	enum SandSeaKind {
+		SAND_SEA_TRANSVERSE, // one wind: ridges across it
+		SAND_SEA_BARCHAN, // one wind over thin sand: crescents
+		SAND_SEA_LINEAR, // two winds 120 degrees apart: ridges along their mean
+		SAND_SEA_STAR, // three winds: arms in every direction
+	};
 
 private:
 	// Where.
@@ -175,6 +181,15 @@ private:
 	int dune_steps = 1500;
 	real_t dune_wind_angle = 0.0; // degrees from onshore
 	real_t dune_vegetation = 1.0; // marram: 0 none (bare sand), 1 where it can grow
+	// Desert sand seas (TerrainDuneSea in terrain_dunes.h): dune fields over sand_sea_rect (none while it is empty).
+	bool sand_seas_enabled = true;
+	Rect2 sand_sea_rect;
+	SandSeaKind sand_sea_kind = SAND_SEA_TRANSVERSE;
+	real_t sand_sea_depth = 12.0; // m of sand, on average
+	real_t sand_sea_wind_angle = 0.0; // degrees, the way the (mean) wind blows, from +X toward +Z
+	real_t sand_sea_scale = 4.0; // m a cell; dunes come out some 25 cells apart and scale with it
+	int sand_sea_steps = 300;
+	real_t sand_sea_edge = 300.0; // m over which the sand thins out at the sea's edge
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
@@ -425,6 +440,18 @@ private:
 	static void _dune_tile(void *p_job, uint32_t p_tile);
 	void _build_dunes();
 	float _dune_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
+	// The sand sea's result on its grid (sea_nx x sea_nz nodes from sea_origin, sea_cell apart).
+	int sea_nx = 0;
+	int sea_nz = 0;
+	Vector2 sea_origin;
+	real_t sea_cell = 4.0;
+	LocalVector<float> sea_sand; // m of sand
+	LocalVector<float> sea_cover; // 0..1 loose sand at the surface, per node of the result
+	double last_sand_sea_msec = 0.0;
+	double last_sand_sea_max = 0.0;
+	static void _sand_sea_band(void *p_sea, uint32_t p_band);
+	void _build_sand_sea();
+	float _sea_sample(real_t p_x, real_t p_z) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
@@ -688,6 +715,25 @@ public:
 	real_t get_last_dune_msec() const { return last_dune_msec; }
 	real_t get_last_dune_volume() const { return last_dune_volume; }
 	real_t get_last_dune_max() const { return last_dune_max; }
+	void set_sand_seas_enabled(bool p_value) { sand_seas_enabled = p_value; }
+	bool is_sand_seas_enabled() const { return sand_seas_enabled; }
+	void set_sand_sea_rect(const Rect2 &p_rect) { sand_sea_rect = p_rect.abs(); }
+	Rect2 get_sand_sea_rect() const { return sand_sea_rect; }
+	void set_sand_sea_kind(SandSeaKind p_kind) { sand_sea_kind = p_kind; }
+	SandSeaKind get_sand_sea_kind() const { return sand_sea_kind; }
+	void set_sand_sea_depth(real_t p_value) { sand_sea_depth = MAX(p_value, real_t(0.0)); }
+	real_t get_sand_sea_depth() const { return sand_sea_depth; }
+	void set_sand_sea_wind_angle(real_t p_value) { sand_sea_wind_angle = p_value; }
+	real_t get_sand_sea_wind_angle() const { return sand_sea_wind_angle; }
+	void set_sand_sea_scale(real_t p_value) { sand_sea_scale = CLAMP(p_value, real_t(0.5), real_t(64.0)); }
+	real_t get_sand_sea_scale() const { return sand_sea_scale; }
+	void set_sand_sea_steps(int p_value) { sand_sea_steps = MAX(p_value, 0); }
+	int get_sand_sea_steps() const { return sand_sea_steps; }
+	void set_sand_sea_edge(real_t p_value) { sand_sea_edge = MAX(p_value, real_t(0.0)); }
+	real_t get_sand_sea_edge() const { return sand_sea_edge; }
+	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
+	real_t get_last_sand_sea_msec() const { return last_sand_sea_msec; }
+	real_t get_last_sand_sea_max() const { return last_sand_sea_max; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
 	void set_gorge_age(double p_years) { gorge_age = MAX(p_years, 0.0); }
@@ -857,3 +903,4 @@ public:
 };
 
 VARIANT_ENUM_CAST(TerrainGenerator3D::OutletEdge);
+VARIANT_ENUM_CAST(TerrainGenerator3D::SandSeaKind);

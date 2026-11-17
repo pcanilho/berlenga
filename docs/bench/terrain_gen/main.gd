@@ -616,6 +616,7 @@ func _run_checks() -> void:
 	_strata_checks()
 	_runoff_checks()
 	_deposition_checks()
+	_sand_sea_checks()
 	_landscape_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
@@ -1427,6 +1428,41 @@ func _deposition_checks() -> void:
 	check(b1["alluvium_share"] > b0["alluvium_share"] + 0.05, "below ranges on still ground, deposition spreads alluvium (%.0f%% of the land on over 1 m, against %.0f%%)" % [100.0 * b1["alluvium_share"], 100.0 * b0["alluvium_share"]])
 	gen.base_uplift = 0.1
 	gen.deposition = 0.0
+	gen.generate()
+
+
+func _sand_sea_checks() -> void:
+	# Sand seas (TerrainDuneSea, Paris et al. 2019): none while the rect is empty; over a rect, dunes with real relief,
+	# the same for the same seed, and nothing outside it.
+	var before := _hash(gen.get_height_image())
+	gen.sand_seas_enabled = false
+	gen.generate()
+	check(_hash(gen.get_height_image()) == before, "an empty sand_sea_rect leaves the terrain byte for byte")
+	gen.sand_seas_enabled = true
+	gen.sand_sea_rect = Rect2(1000, 800, 900, 900)
+	gen.sand_sea_scale = 4.0
+	gen.sand_sea_depth = 12.0
+	gen.sand_sea_steps = 120
+	gen.generate()
+	var first := _hash(gen.get_height_image())
+	var vals := PackedFloat32Array()
+	for i in 400:
+		var p := Vector3(1200 + (i % 20) * 25.0, 0, 1000 + (i / 20) * 25.0)
+		vals.append(gen.get_sand_sea_height(p))
+	var mean := 0.0
+	for v in vals:
+		mean += v
+	mean /= vals.size()
+	var dev := 0.0
+	for v in vals:
+		dev += (v - mean) * (v - mean)
+	dev = sqrt(dev / vals.size())
+	check(gen.get_last_sand_sea_max() > 12.0, "the sand sea builds dunes higher than its cover (%.1f m over 12 m, %.0f ms)" % [gen.get_last_sand_sea_max(), gen.get_last_sand_sea_msec()])
+	check(dev > 2.0, "its dunes have relief (sand %.1f m, spread %.1f m)" % [mean, dev])
+	check(gen.get_sand_sea_height(Vector3(0, 0, 0)) == 0.0 and gen.get_sand_sea_height(Vector3(1450, 0, 750)) == 0.0, "no sand outside the rect")
+	gen.generate()
+	check(_hash(gen.get_height_image()) == first, "the same seed gives the same sand sea")
+	gen.sand_sea_rect = Rect2()
 	gen.generate()
 
 

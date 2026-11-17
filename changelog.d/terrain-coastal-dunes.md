@@ -1,6 +1,6 @@
 ### Added
 
-- Terrain generator: coastal dunes. The beaches feed wind-blown sand inland on a fine grid; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails (`dunes_enabled`, off by default; `get_dune_height()`, `get_dune_stability()`).
+- Terrain generator: coastal dunes. The beaches feed wind-blown sand inland on a fine grid; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails (`dunes_enabled`; `get_dune_height()`, `get_dune_stability()`).
 - Terrain material: scree shows a gravel and fines matrix between its stones up close (`rock_detail_enabled`).
 
 ### Changed

@@ -2179,6 +2179,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
 		actions.renames["SUN_SHADOW"] = "sun_shadow";
 		actions.renames["sun_direction"] = "sun_direction";
+		actions.renames["relief_sun_direction"] = "relief_sun_direction";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";

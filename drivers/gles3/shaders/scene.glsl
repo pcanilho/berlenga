@@ -1525,6 +1525,9 @@ vec3 sun_visibility(vec3 p_world) {
 vec3 sun_direction() {
 	return vec3(0.0);
 }
+vec3 relief_sun_direction() {
+	return vec3(0.0);
+}
 
 #GLOBALS
 

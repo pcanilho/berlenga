@@ -30,6 +30,8 @@ extends Node3D
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set sea shader uniforms (floats, true/false, colours as r,g,b,a)
 #   --prints=0            no GroundSurface3D (footprints) node
+#   --layout=desert       the range's peaks behind a wide low plain to the sea, with a sand sea over the plain
+#                         (--sand-sea defaults to it; Namib-like: the dunes run down to the beach)
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
@@ -39,6 +41,8 @@ extends Node3D
 #   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
 #   --dunes=steps|0       coastal dunes behind the beaches (dunes_enabled, on); --dune-supply=m3/m, --dune-belt=m,
 #                         --dune-cell=m, --dune-wind=degrees from onshore, --dune-veg=0..1 (0: bare sand)
+#   --sand-sea=x0,z0,w,d  a desert sand sea over that rect (sand_sea_rect); --sand-sea-kind=transverse|barchan|
+#                         linear|star, --sand-sea-depth=m, --sand-sea-wind=degrees, --sand-sea-scale=m, --sand-sea-steps=n
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
 #                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
@@ -622,7 +626,7 @@ func _generate() -> void:
 	noise.fractal_octaves = 3
 	var up := Image.create(64, 64, false, Image.FORMAT_RF)
 	var lake_marker: Node3D = null
-	if layout == "range":
+	if layout == "range" or layout == "desert":
 		# A range across the north with a spur, uplift fading out towards a coastal plain in the south.
 		var rng := _range_path("Range", [Vector3(-2000, 0, -900), Vector3(-200, 0, -1300), Vector3(2000, 0, -1000)], 0.0, 1.0)
 		var rc := Curve3D.new()
@@ -631,10 +635,14 @@ func _generate() -> void:
 		rc.add_point(Vector3(2000, 0, -1000), Vector3(-600, 0, -200))
 		rng.curve = rc
 		range_nodes.append(rng)
-		range_nodes.append(_range_path("Spur", [Vector3(700, 0, -1200), Vector3(1100, 0, 200)], 450.0, 0.6))
+		if layout == "range":
+			range_nodes.append(_range_path("Spur", [Vector3(700, 0, -1200), Vector3(1100, 0, 200)], 450.0, 0.6))
 		for y in 64:
 			var z := Z0 + (y + 0.5) / 64.0 * GEN_SIZE
 			var s := 0.15 + 0.85 * (1.0 - smoothstep(-400.0, 1100.0, z))
+			if layout == "desert":
+				# The range front closer in, a plain barely rising (it stays under the sand's 15 degrees).
+				s = 0.005 + 0.995 * (1.0 - smoothstep(-1100.0, -650.0, z))
 			for x in 64:
 				up.set_pixel(x, y, Color(s, 0, 0))
 	else:
@@ -695,7 +703,8 @@ func _generate() -> void:
 	gen.cell_size = float(args.get("cell", "16"))
 	gen.seed = 3
 	gen.uplift = float(args.get("uplift", "3.0"))
-	gen.base_uplift = float(args.get("base-uplift", "0.1"))
+	# The desert's plain: no uplift under it, filled with the range's alluvium.
+	gen.base_uplift = float(args.get("base-uplift", "0.0" if layout == "desert" else "0.1"))
 	gen.uplift_map = ImageTexture.create_from_image(up)
 	gen.uplift_noise = noise
 	# The sea along the south edge is the only outlet; the generator shapes the coast, beach and seabed.
@@ -708,7 +717,7 @@ func _generate() -> void:
 	# Erosion detail down to 4 m gullies on the 1 m Landscape3D ground (16 m on the 4 m grid, which would alias finer).
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
 	gen.tile_erosion_enabled = args.has("tiles")
-	gen.deposition = float(args.get("deposition", "0"))
+	gen.deposition = float(args.get("deposition", "0.5" if layout == "desert" else "0"))
 	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
 	gen.gorge_age = float(args.get("gorge-age", "12000"))
@@ -717,7 +726,7 @@ func _generate() -> void:
 	gen.meander_age = float(args.get("meander-age", "0"))
 	gen.outwash_age = float(args.get("outwash-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
-	gen.dunes_enabled = args.get("dunes", "1") != "0"
+	gen.dunes_enabled = args.get("dunes", "0" if layout == "desert" else "1") != "0"
 	if gen.dunes_enabled:
 		if args.get("dunes", "1") != "1":
 			gen.dune_steps = int(args["dunes"])
@@ -726,6 +735,16 @@ func _generate() -> void:
 		gen.dune_cell = float(args.get("dune-cell", str(gen.dune_cell)))
 		gen.dune_wind_angle = float(args.get("dune-wind", "0"))
 		gen.dune_vegetation = float(args.get("dune-veg", "1"))
+	if layout == "desert" and not args.has("sand-sea"):
+		args["sand-sea"] = "-2000,-650,4000,1900"
+	if args.has("sand-sea"):
+		var ss: PackedFloat64Array = Array(args["sand-sea"].split(",")).map(func(v): return float(v))
+		gen.sand_sea_rect = Rect2(ss[0], ss[1], ss[2], ss[3])
+		gen.sand_sea_kind = ["transverse", "barchan", "linear", "star"].find(args.get("sand-sea-kind", "transverse"))
+		gen.sand_sea_depth = float(args.get("sand-sea-depth", str(gen.sand_sea_depth)))
+		gen.sand_sea_wind_angle = float(args.get("sand-sea-wind", "0"))
+		gen.sand_sea_scale = float(args.get("sand-sea-scale", str(gen.sand_sea_scale)))
+		gen.sand_sea_steps = int(args.get("sand-sea-steps", str(gen.sand_sea_steps)))
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
 		gen.glacial_enabled = true
@@ -999,6 +1018,8 @@ func _generate() -> void:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.dunes_enabled:
 		_log("dunes: %.0f ms, %.0f m3 of sand, deepest %.1f m" % [gen.get_last_dune_msec(), gen.get_last_dune_volume(), gen.get_last_dune_max()])
+	if args.has("sand-sea"):
+		_log("sand sea: %.0f ms, deepest %.1f m" % [gen.get_last_sand_sea_msec(), gen.get_last_sand_sea_max()])
 	if gen.glacial_enabled:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m, ice imbalance %.2f m/yr (%d cycles)" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded(), gen.get_last_glacial_residual(), gen.get_last_glacial_steps()])
 		for l in gen.get_lake_results():
@@ -1190,12 +1211,14 @@ func _range_path(n: String, pts: Array, width: float, uplift: float) -> Path3D:
 func _save_dune_map(spec: String) -> void:
 	var parts := spec.split(",")
 	var r: Rect2 = gen.get_dune_rect()
+	if r.size.x <= 0.0 and args.has("sand-sea"):
+		r = gen.sand_sea_rect
 	if parts.size() >= 4:
 		r = Rect2(float(parts[1]), float(parts[2]), float(parts[3]), float(parts[3]))
 	if r.size.x <= 0.0:
 		_log("dune map: no dunes")
 		return
-	var step := float(gen.dune_cell)
+	var step := float(gen.dune_cell) if not args.has("sand-sea") else maxf(r.size.x / 1024.0, 2.0)
 	var sz := Vector2i(int(r.size.x / step), int(r.size.y / step))
 	var hm: Image = gen.sample_heights(r.position, step, sz)
 	var img := Image.create(sz.x, sz.y, false, Image.FORMAT_RGB8)
@@ -1210,7 +1233,7 @@ func _save_dune_map(spec: String) -> void:
 			var p := r.position + Vector2(x, z) * step
 			var c := Color(0.2, 0.32, 0.55)
 			if hc > float(gen.sea_level) + 0.05:
-				var sand := clampf(gen.get_dune_height(Vector3(p.x, 0, p.y)) / 0.3, 0.0, 1.0)
+				var sand := clampf((gen.get_dune_height(Vector3(p.x, 0, p.y)) + gen.get_sand_sea_height(Vector3(p.x, 0, p.y))) / 0.3, 0.0, 1.0)
 				var veg := gen.get_dune_stability(Vector3(p.x, 0, p.y))
 				c = Color(0.42, 0.45, 0.32).lerp(Color(0.86, 0.78, 0.6), sand).lerp(Color(0.38, 0.52, 0.26), veg * sand)
 			img.set_pixel(x, z, c * (0.3 + 0.7 * sh))
@@ -1945,9 +1968,14 @@ func _build_vegetation() -> void:
 	grass.name = "Grass"
 	grass.rules = meadow
 	grass.radius = float(args.get("grass-radius", "40"))
+	var desert: bool = args.get("layout", "range") == "desert"
+	if desert:
+		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
+		grass.ground_tint_enabled = false
+		grass.radius = 0.0
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
-	if args.get("plants", "1") != "0":
+	if args.get("plants", "1") != "0" and not desert:
 		# The sward in three layers (the grass bench's meadow): tall blades in patches, a short dense undercoat that
 		# owns the ground tint, and a very short turf right at the camera (overlapped density grids, Serious Sam 4).
 		meadow.patch_scale = 9.0

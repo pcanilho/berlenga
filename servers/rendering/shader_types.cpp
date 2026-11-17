@@ -332,6 +332,17 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["sun_direction"] = func;
 	}
 
+	{
+		// The same direction for relief drawn without geometry (parallax occlusion): nonzero under the path tracer
+		// too, which has no faces to trace there and applies SUN_SHADOW to the sun's light instead. Zero only
+		// without a directional light.
+		ShaderLanguage::StageFunctionInfo func;
+		func.skip_function = "vertex";
+		func.return_type = ShaderLanguage::TYPE_VEC3;
+		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["relief_sun_direction"] = func;
+		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["relief_sun_direction"] = func;
+	}
+
 	// spatial render modes
 	{
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("blend"), "mix", "add", "sub", "mul", "premul_alpha", "oit" });

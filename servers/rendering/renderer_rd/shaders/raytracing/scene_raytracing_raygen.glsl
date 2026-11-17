@@ -1917,6 +1917,9 @@ void main() {
 
 #include "raytracing_custom_fragment_inc.glsl"
 
+	// Relief drawn without faces shades itself from the sun (SUN_SHADOW with relief_sun_direction()).
+	rt_relief_sun_visibility = clamp(sun_shadow, 0.0, 1.0);
+
 	// Build MaterialResult from fragment outputs.
 	MaterialResult m;
 	m.albedo = albedo;
