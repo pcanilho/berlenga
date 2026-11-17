@@ -1132,6 +1132,28 @@
    "topic": "Ground"
   },
   {
+   "name": "Tyre clogging",
+   "settings": [
+    "PhysXVehicle3D.tyre_clogging"
+   ],
+   "note": "",
+   "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Belly drag",
+   "settings": [
+    "PhysXVehicle3D.belly_drag"
+   ],
+   "note": "",
+   "what": "a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
