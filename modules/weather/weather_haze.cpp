@@ -37,7 +37,6 @@
 // segment, the froxels on camera segments.
 
 #include "weather_map_3d.h"
-
 #include "weather_sky_material.h"
 
 #include "core/config/engine.h"
@@ -125,7 +124,28 @@ void WeatherMap3D::set_drive_environment_fog(bool p_enabled) {
 	applied_haze = -1.0f;
 }
 
+// The aerosol as a traced medium for the path tracer (render_raytracing.cpp reads these globals): extinction at the
+// base, albedo, scale height and base height, and how far rays that reach the sky carry it (the froxels' reach,
+// where the sky's own aerosol starts). Extinction 0: none.
+void WeatherMap3D::_apply_traced_haze(const Vector4 &p_medium, float p_reach) {
+	if (p_medium == applied_traced_haze && p_reach == applied_traced_reach) {
+		return;
+	}
+	applied_traced_haze = p_medium;
+	applied_traced_reach = p_reach;
+	_set_global("weather_haze_medium", p_medium, RSE::GLOBAL_VAR_TYPE_VEC4);
+	_set_global("weather_haze_reach", p_reach, RSE::GLOBAL_VAR_TYPE_FLOAT);
+}
+
+void WeatherMap3D::set_traced_haze(bool p_enabled) {
+	traced_haze = p_enabled;
+	applied_haze = -1.0f;
+}
+
 void WeatherMap3D::_restore_fog() {
+	if (applied_traced_haze.x > 0.0f) {
+		_apply_traced_haze(Vector4(), 0.0f);
+	}
 	for (HazeSource &h : haze_sources) {
 		if (h.volume) {
 			h.volume->queue_free();
@@ -251,7 +271,19 @@ void WeatherMap3D::_apply_haze() {
 
 	// Each layer near the ground: a FogVolume over its area (or the map), density falling as
 	// exp(-(y - ground) / H). FogMaterial falls as exp2(-falloff y), so falloff = 1 / (H ln 2).
+	// Under path tracing the aerosol (this map's own source) is traced as a medium instead: its volume is hidden
+	// and the path tracer draws free flights through it (pixel-sharp shafts, haze on every bounce).
+	const bool traced = traced_haze && env->is_pathtracing_enabled();
+	Vector4 traced_medium;
 	for (HazeSource &h : haze_sources) {
+		if (traced && h.source == get_instance_id() && h.height_scale > 0.0f && h.sigma > 0.0f) {
+			traced_medium = Vector4(h.sigma, h.albedo, h.height_scale, _haze_base(h));
+			if (h.volume) {
+				h.volume->queue_free();
+				h.volume = nullptr;
+			}
+			continue;
+		}
 		if (h.height_scale <= 0.0f || h.sigma <= 0.0f) {
 			if (h.volume) {
 				h.volume->queue_free();
@@ -279,6 +311,7 @@ void WeatherMap3D::_apply_haze() {
 		h.volume->set_size(Vector3(width, height, width));
 		h.volume->set_global_position(Vector3(centre.x, _haze_base(h), centre.z));
 	}
+	_apply_traced_haze(traced_medium, traced_medium.x > 0.0f && env->is_volumetric_fog_enabled() ? env->get_volumetric_fog_length() : 0.0f);
 }
 
 // Background aerosol haze. Koschmieder: a black target fades to the 2% contrast threshold at the

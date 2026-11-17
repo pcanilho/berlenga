@@ -7579,6 +7579,22 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_Z] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_SIZE] = near_rd.is_valid() ? rect.z : 0.0f;
 		}
+		// WeatherMap3D's aerosol haze as a traced medium (weather_haze_medium: extinction, albedo, scale height, base;
+		// weather_haze_reach), published while the scene is path traced.
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName haze_medium_name = "weather_haze_medium";
+			static const StringName haze_reach_name = "weather_haze_reach";
+			const Variant medium_var = ms->global_shader_parameter_get_internal(haze_medium_name);
+			const Vector4 medium = medium_var.get_type() == Variant::VECTOR4 ? Vector4(medium_var) : Vector4();
+			const Variant reach_var = ms->global_shader_parameter_get_internal(haze_reach_name);
+			const bool has_haze = medium.x > 0.0f && medium.z > 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_SIGMA] = has_haze ? medium.x : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_ALBEDO] = medium.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_HEIGHT] = has_haze ? medium.z : 1.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_BASE] = float(double(medium.w) - p_state->rt_origin.y);
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_REACH] = reach_var.get_type() == Variant::FLOAT ? float(reach_var) : 0.0f;
+		}
 		// And its wind ripple map, for the far ripples past the window (rect width 0 = ripples off).
 		{
 			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();

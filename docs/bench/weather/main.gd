@@ -28,6 +28,7 @@ extends Node3D
 #   --sun-up=D        shafts view: the sun D degrees up (default 20)
 #   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
 #   --cover=C --haze-km=V  shafts view: cloud cover (default 0.45) and the aerosol's dry visibility (default 40)
+#   --froxel-haze     path traced: the aerosol stays a froxel layer (WeatherMap3D.traced_haze off)
 #   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
 #                     (--strike-frames=K: K frames after the flash)
@@ -65,6 +66,7 @@ var only_lightning := false
 var only_haze := false
 var haze := ""
 var no_sky_shadow := false
+var froxel_haze := false
 var sun_up := 20.0
 var sun_yaw := -13.0
 var cover := -1.0
@@ -93,6 +95,7 @@ func _ready() -> void:
 		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
 		elif a == "--frozen": frozen = true
 		elif a == "--no-sky-shadow": no_sky_shadow = true
+		elif a == "--froxel-haze": froxel_haze = true
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
 		elif a.begins_with("--cover="): cover = float(a.substr(8))
@@ -1039,6 +1042,7 @@ func _build_clouds() -> void:
 		weather.cloud_cover = cover
 	if haze_km > 0.0:
 		weather.haze_visibility = haze_km
+		weather.traced_haze = not froxel_haze
 	weather.cloud_type = 0.4 if view == "clouds_wide" else 0.6
 	weather.cloud_variation = 0.3
 	weather.transition_time = 0.0

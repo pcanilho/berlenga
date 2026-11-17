@@ -288,6 +288,11 @@ private:
 	float applied_aerosol = -1.0f;
 	void _update_aerosol();
 	Vector2 applied_sky_aerosol = Vector2(-1.0f, -1.0f); // extinction and froxel reach last given to the sky
+	// Under path tracing the aerosol is a traced medium instead of a froxel layer (godrays stage 3).
+	bool traced_haze = true;
+	Vector4 applied_traced_haze = Vector4(-1.0f, 0.0f, 0.0f, 0.0f);
+	float applied_traced_reach = -1.0f;
+	void _apply_traced_haze(const Vector4 &p_medium, float p_reach);
 	void _apply_sky_aerosol(float p_extinction, float p_from);
 	bool drive_environment_fog = true;
 	struct FogBase {
@@ -399,6 +404,8 @@ public:
 	float get_humidity() const { return humidity; }
 	// Background aerosol haze (docs/ideas/weather.md, "Godrays"): what lets the sun's shafts show.
 	void set_aerosol_haze(bool p_enabled);
+	void set_traced_haze(bool p_enabled);
+	bool get_traced_haze() const { return traced_haze; }
 	bool get_aerosol_haze() const { return aerosol_haze; }
 	void set_haze_visibility(float p_km);
 	float get_haze_visibility() const { return haze_visibility; }
