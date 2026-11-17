@@ -201,6 +201,13 @@
 				Bakes an octahedral impostor of a plant (Brucks, 2018): the plant seen from [param frames] by [param frames] directions over the upper hemisphere, each [param frame_size] texels square and fitted to the plant, into an albedo and coverage atlas and a normal, depth and back light atlas. Returns a quad whose shader turns it to the view, blends the three nearest views, and moves each pixel to the plant's surface by the baked depth, so it meets the ground and casts and receives shadows like the mesh. Wind, wetness, snow and [VegetationField3D]'s far thinning work as on the plant shader. The quad has the meta [code]impostor_of[/code] set to [param mesh]. About 2.8 MB of textures with the defaults; baking runs on all cores.
 			</description>
 		</method>
+		<method name="get_trample_resistance" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<description>
+				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="centre_color" type="Color" setter="set_centre_color" getter="get_centre_color" default="Color(0.95, 0.65, 0.05, 1)">

@@ -586,6 +586,8 @@ public:
 	static TypedArray<Resource> make_scrub(ScrubStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	// The scrub's climate and soil rules on any species (TreeGenerator's woody scrub shrubs).
 	static void apply_scrub_rules(const Ref<PlantSpecies> &p_species, ScrubStand p_stand);
+	// Passes a year on a worn path that halve the preset's cover, by its growth form (0: not trampled).
+	static float get_trample_resistance(Preset p_preset);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);

@@ -77,6 +77,20 @@
 				Sets the range (min, max) of a rule in its units, see [enum Rule].
 			</description>
 		</method>
+		<method name="trample_cover" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="passes" type="float" />
+			<description>
+				Returns the cover left after [param passes] walkers a year: [code]1 / (1 + x^1.5)[/code] with [code]x = passes / trample_resistance[/code]. 1 when [member trample_resistance] is 0.
+			</description>
+		</method>
+		<method name="trample_scale" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="passes" type="float" />
+			<description>
+				Returns the size of the plants left after [param passes] walkers a year, from 1 down to 0.45 on a heavily used path.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="align_to_ground" type="float" setter="set_align_to_ground" getter="get_align_to_ground" default="0.0">
@@ -339,6 +353,9 @@
 		</member>
 		<member name="wind_frontal_area" type="float" setter="set_wind_frontal_area" getter="get_wind_frontal_area" default="-1.0">
 			Square metres one plant at scale 1 shows the wind, for the shelter it gives blowing sand ([method VegetationField3D.sample_lateral_cover]). Negative: 0.4 of its first mesh's height times its mean width (a grass tuft's leaves block about that share of its outline). 0: no shelter.
+		</member>
+		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="0.0">
+			Walkers a year on a worn path that halve this species' cover. 0: not trampled. Rosettes such as plantain resist most, then grasses; ferns, heaths and tall forbs least. [method PlantGenerator.tag_species] sets it from [method PlantGenerator.get_trample_resistance].
 		</member>
 	</members>
 	<constants>

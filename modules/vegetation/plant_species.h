@@ -83,6 +83,7 @@ private:
 	float spacing = 2.0f;
 	float footprint = 0.5f;
 	float sward_shade = 0.0f; // How much of the grass a stand of it shades out under it (bracken, bramble).
+	float trample_resistance = 0.0f; // Passes a year on a worn path that halve its cover (Cole 1995); 0: not trampled.
 public:
 	// Ground litter colours for undergrowth (linear): dead bracken fronds, sRGB about (150, 100, 60);
 	// bramble's leaf litter over soil, sRGB about (115, 92, 64), not covering all of it.
@@ -237,6 +238,24 @@ public:
 	float get_footprint() const { return footprint; }
 	void set_sward_shade(float p_shade);
 	float get_sward_shade() const { return sward_shade; }
+	void set_trample_resistance(float p_passes) { trample_resistance = MAX(p_passes, 0.0f); }
+	float get_trample_resistance() const { return trample_resistance; }
+	// Trampling (Cole 1995): cover falls steeply over the first passes and levels off, halved at
+	// trample_resistance passes a year; the plants left are shorter and flatter, halfway to their
+	// trodden height (0.45) at the same passes.
+	float trample_cover(float p_passes) const {
+		if (trample_resistance <= 0.0f || p_passes <= 0.0f) {
+			return 1.0f;
+		}
+		const float x = p_passes / trample_resistance;
+		return 1.0f / (1.0f + x * Math::sqrt(x));
+	}
+	float trample_scale(float p_passes) const {
+		if (trample_resistance <= 0.0f || p_passes <= 0.0f) {
+			return 1.0f;
+		}
+		return Math::lerp(1.0f, 0.45f, p_passes / (p_passes + trample_resistance));
+	}
 	void set_litter_color(const Color &p_color);
 	Color get_litter_color() const { return litter_color; }
 	void set_density(float p_density);

@@ -166,6 +166,13 @@
 				Returns the placed plants' frontal area index at a global point: the area they show the wind ([member PlantSpecies.wind_frontal_area] times each plant's scale squared) per square metre of ground, spread over a 1 m grid, at most 0.5. Put this field in [code]GroundSurface3D.wind_shelters[/code] and its plants shelter blowing sand and trap it (Raupach's drag partition): dune grass builds hummocks round itself.
 			</description>
 		</method>
+		<method name="get_path_passes_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the walkers a year at [param position] from [member paths], 0 off every path.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="density_mask" type="Texture2D" setter="set_density_mask" getter="get_density_mask">
@@ -248,6 +255,9 @@
 		</member>
 		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
 			Path to a [WeatherMap3D]. After each [method populate] the placed canopy species are written to its [member WeatherMap3D.canopy_map] over the data map's rect (about 1 m cells): crown top height in red, leaf area index over 4 in green, taking [member PlantSpecies.canopy_opacity] as [code]1 - exp(-0.5 LAI)[/code]. [method WeatherMap3D.get_canopy_closure_at] then matches [method get_shade_at], and snow, wind and light under the trees all see the same forest. This replaces any canopy map already set there.
+		</member>
+		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
+			Worn paths, each a [Dictionary] with [code]points[/code] ([PackedVector3Array], the path's centre line), [code]width[/code] (metres, default 1.0) and [code]passes[/code] (walkers a year, default 1000). Trampling falls off across a path as a Gaussian with sigma a quarter of its width. Plants with a [member PlantSpecies.trample_resistance] thin out and grow shorter where passes outweigh it, following Cole's trampling experiments; trees, logs and stone-top plants are never trampled. Changing it repopulates.
 		</member>
 	</members>
 	<signals>

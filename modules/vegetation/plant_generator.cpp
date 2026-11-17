@@ -693,11 +693,123 @@ float PlantGenerator::get_pollen_release(Preset p_preset, const Dictionary &p_se
 	return Math::smoothstep(a - ramp, a + ramp, day) * (1.0f - Math::smoothstep(b - ramp, b + ramp, day));
 }
 
+// Trampling resistance by growth form (Cole 1995, J. Appl. Ecol. 32; Cole and Monz 2002; Liddle
+// 1997, ch. 4): passes a year that halve a plant's cover. Tufted and creeping grasses, sedges and
+// flat rosettes ("path weeds": plantain, daisy, dandelion, clover) resist and recover; mosses
+// middling; erect forbs, ferns and dwarf shrubs (heather, bilberry) break, and fragile things
+// (seedlings, mushrooms, sphagnum, sundew) go first. Litter is trodden into the soil. 0: not
+// trampled (water plants, unknown presets).
+float PlantGenerator::get_trample_resistance(Preset p_preset) {
+	switch (p_preset) {
+		case PRESET_PLANTAIN:
+			return 1000.0f;
+		case PRESET_DANDELION:
+		case PRESET_DAISY:
+			return 600.0f;
+		case PRESET_CLOVER:
+			return 500.0f;
+		case PRESET_SEDGE:
+		case PRESET_COCKSFOOT:
+		case PRESET_DRY_GRASS:
+		case PRESET_ALPINE_SEDGE:
+		case PRESET_CORD_GRASS:
+			return 300.0f;
+		case PRESET_TIMOTHY:
+		case PRESET_RUSH:
+		case PRESET_LEAF_LITTER:
+		case PRESET_NEEDLE_LITTER:
+		case PRESET_TWIGS:
+			return 250.0f;
+		case PRESET_YARROW:
+			return 200.0f; // A creeping, low-rosette forb: the toughest of the meadow herbs.
+		case PRESET_BUTTERCUP:
+		case PRESET_MOSS:
+		case PRESET_FEATHER_MOSS:
+		case PRESET_THRIFT:
+		case PRESET_MARRAM:
+		case PRESET_LYME_GRASS:
+			return 150.0f;
+		case PRESET_DOCK:
+		case PRESET_STONECROP:
+		case PRESET_COTTONGRASS:
+			return 100.0f;
+		case PRESET_SORREL:
+		case PRESET_VIOLET:
+		case PRESET_THYME:
+		case PRESET_IVY:
+		case PRESET_SEA_PURSLANE:
+		case PRESET_GLASSWORT:
+			return 80.0f;
+		case PRESET_THISTLE:
+		case PRESET_KNAPWEED:
+		case PRESET_CROWBERRY:
+		case PRESET_MOUNTAIN_AVENS:
+		case PRESET_LIVERWORT:
+		case PRESET_BOG_ASPHODEL:
+		case PRESET_SEA_ASTER:
+		case PRESET_SEA_LAVENDER:
+		case PRESET_SEA_CAMPION:
+			return 60.0f;
+		case PRESET_SCABIOUS:
+		case PRESET_WILD_CARROT:
+		case PRESET_WOOD_SORREL:
+		case PRESET_MARSH_MARIGOLD:
+		case PRESET_BRAMBLE:
+		case PRESET_DWARF_WILLOW:
+		case PRESET_MOSS_CAMPION:
+		case PRESET_SAXIFRAGE:
+		case PRESET_PURPLE_SAXIFRAGE:
+		case PRESET_ALPINE_TOADFLAX:
+		case PRESET_SEA_HOLLY:
+		case PRESET_HORNED_POPPY:
+		case PRESET_SEA_KALE:
+			return 50.0f;
+		case PRESET_NETTLE:
+		case PRESET_HERB_ROBERT:
+		case PRESET_WOODRUFF:
+		case PRESET_WOOD_ANEMONE:
+		case PRESET_MEADOWSWEET:
+		case PRESET_BUTTERBUR:
+		case PRESET_HEATHER:
+		case PRESET_BELL_HEATHER:
+		case PRESET_CROSS_LEAVED_HEATH:
+		case PRESET_ROSEMARY:
+		case PRESET_FRENCH_LAVENDER:
+		case PRESET_SAGE_ROCKROSE:
+		case PRESET_REED:
+		case PRESET_CATTAIL:
+			return 40.0f;
+		case PRESET_FERN:
+		case PRESET_BRACKEN:
+		case PRESET_BILBERRY:
+		case PRESET_FOXGLOVE:
+		case PRESET_PARSLEY_FERN:
+		case PRESET_SPLEENWORT:
+		case PRESET_SPHAGNUM:
+		case PRESET_FLY_AGARIC:
+		case PRESET_CEP:
+		case PRESET_CHANTERELLE:
+		case PRESET_BRITTLEGILL:
+		case PRESET_CLOUDED_AGARIC:
+		case PRESET_HONEY_FUNGUS:
+			return 30.0f;
+		case PRESET_SEEDLING:
+		case PRESET_SUNDEW:
+			return 20.0f;
+		default:
+			return 0.0f;
+	}
+}
+
 void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
 	if (p_species.is_null()) {
 		return;
 	}
 	p_species->set_meta("plant_preset", int(p_preset));
+	PlantSpecies *sp = Object::cast_to<PlantSpecies>(p_species.ptr());
+	if (sp && sp->get_trample_resistance() <= 0.0f) {
+		sp->set_trample_resistance(get_trample_resistance(p_preset));
+	}
 	const float pollen = get_pollen_amount(p_preset);
 	if (pollen > 0.0f) {
 		p_species->set_meta("pollen", pollen);
@@ -7104,6 +7216,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_trample_resistance", "preset"), &PlantGenerator::get_trample_resistance);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("apply_scrub_rules", "species", "stand"), &PlantGenerator::apply_scrub_rules);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));

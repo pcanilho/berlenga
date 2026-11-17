@@ -641,10 +641,22 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			}
 		}
 	}
+	// Worn paths: the trodden height on the same grid (1 where no path reaches); the cover is
+	// taken with the suitability.
+	const bool trodden = !path_grid.is_empty() && path_grid.any_in(Rect2(x0, z0, tile_size, tile_size).grow(path_grid.max_reach));
+	LocalVector<float> wear_grid;
+	if (trodden) {
+		wear_grid.resize(lg * lg);
+		for (int gz = 0; gz < lg; gz++) {
+			for (int gx = 0; gx < lg; gx++) {
+				wear_grid[gz * lg + gx] = _trample_scale(path_grid.passes_at(Vector2(x0 + gx, z0 + gz)));
+			}
+		}
+	}
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
 	if (gpu_fill && is_gpu_fill_available()) {
-		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, sward_grid, lg, width);
+		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, sward_grid, wear_grid, lg, width);
 		return;
 	}
 	LocalVector<Transform3D> xforms;
@@ -680,6 +692,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				if (!sward_grid.is_empty() && suit > 0.0f) {
 					suit *= 1.0f - grid_bilinear(sward_grid, lg, x - x0, z - z0);
 				}
+				if (trodden && suit > 0.0f) {
+					suit *= _trample_cover(path_grid.passes_at(Vector2(x, z)));
+				}
 				if (rank >= keep * suit) {
 					continue;
 				}
@@ -701,7 +716,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			// sunny slope, shorter.
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
 			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * (trodden ? grid_bilinear(wear_grid, lg, x - x0, z - z0) : 1.0f);
 			const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 			const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z));
 			xforms.push_back(to_local * world);
@@ -741,7 +756,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 // light grid and the patch of map heights under the tile; the compute shader makes each blade from
 // the same hashes as the CPU loop and writes the records in place. Rejected candidates are written
 // as zero (degenerate) records.
-void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const VegetationField3D *p_canopy, const LocalVector<float> &p_light, const LocalVector<float> &p_sward, int p_lg, float p_width) {
+void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const VegetationField3D *p_canopy, const LocalVector<float> &p_light, const LocalVector<float> &p_sward, const LocalVector<float> &p_wear, int p_lg, float p_width) {
 	const float keep = 1.0f / float(1 << p_lod);
 	const float cell = 1.0f / Math::sqrt(MAX(density, 0.01f));
 	const float x0 = p_tile.x * tile_size;
@@ -815,6 +830,9 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 				}
 				if (!p_sward.is_empty() && v > 0.0f) {
 					v *= 1.0f - grid_bilinear(p_sward, p_lg, q.x - x0, q.z - z0);
+				}
+				if (!p_wear.is_empty() && v > 0.0f) {
+					v *= _trample_cover(path_grid.passes_at(Vector2(q.x, q.z)));
 				}
 				suit[j * sg_n + i] = v;
 			}
@@ -897,12 +915,17 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 	h[36] = float(off_suit);
 	h[37] = float(off_light);
 	h[38] = float(off_height);
-	in.resize(off_height + int(heights.size()));
+	const int off_wear = off_height + int(heights.size());
+	h[39] = p_wear.is_empty() ? 0.0f : float(off_wear); // The trodden height grid (worn paths), on the light grid's cells.
+	in.resize(off_wear + int(p_wear.size()));
 	float *w = in.ptrw();
 	memcpy(w + off_cand, cand.ptr(), cand.size() * sizeof(float));
 	memcpy(w + off_suit, suit.ptr(), suit.size() * sizeof(float));
 	memcpy(w + off_light, p_light.ptr(), p_light.size() * sizeof(float));
 	memcpy(w + off_height, heights.ptr(), heights.size() * sizeof(float));
+	if (!p_wear.is_empty()) {
+		memcpy(w + off_wear, p_wear.ptr(), p_wear.size() * sizeof(float));
+	}
 
 	Ref<MultiMesh> mm;
 	mm.instantiate();
@@ -1896,6 +1919,10 @@ void GrassField3D::_ground_bake_rows(TerrainDataMap3D *p_map, uint64_t p_budget_
 				o[3] = uint8_t(CLAMP(lc.a, 0.0f, 1.0f) * 255.0f + 0.5f);
 				j.any_litter = j.any_litter || o[3] > 0;
 			}
+			if (suit > 0.0f && !path_grid.is_empty()) {
+				// Worn paths: the trodden line shows the bare soil the walkers have opened.
+				suit *= _trample_cover(path_grid.passes_at(Vector2(p.x, p.z)));
+			}
 			w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
 		}
 		j.row++;
@@ -2501,6 +2528,34 @@ bool GrassField3D::_tile_has_obstacles(float p_x0, float p_z0) const {
 	return obstacle_grid.clearance(Vector2(p_x0 + half, p_z0 + half), reach) <= reach;
 }
 
+// Trampling of the sward (Cole 1995), as PlantSpecies.trample_cover() and trample_scale().
+float GrassField3D::_trample_cover(float p_passes) const {
+	if (trample_resistance <= 0.0f || p_passes <= 0.0f) {
+		return 1.0f;
+	}
+	const float x = p_passes / trample_resistance;
+	return 1.0f / (1.0f + x * Math::sqrt(x));
+}
+
+float GrassField3D::_trample_scale(float p_passes) const {
+	if (trample_resistance <= 0.0f || p_passes <= 0.0f) {
+		return 1.0f;
+	}
+	return Math::lerp(1.0f, 0.45f, p_passes / (p_passes + trample_resistance));
+}
+
+void GrassField3D::set_paths(const Array &p_paths) {
+	paths = p_paths;
+	path_grid.build(paths);
+	ground_baked = false; // The ground tint opens on the paths too.
+	rebuild();
+}
+
+void GrassField3D::set_trample_resistance(float p_passes) {
+	trample_resistance = MAX(p_passes, 0.0f);
+	rebuild();
+}
+
 void GrassField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacles = p_obstacles;
 	obstacle_grid.build(obstacles);
@@ -2700,6 +2755,8 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_undergrowth_field, get_undergrowth_field, "path")
 	GRASS_BIND(set_obstacles, get_obstacles, "obstacles")
+	GRASS_BIND(set_paths, get_paths, "paths")
+	GRASS_BIND(set_trample_resistance, get_trample_resistance, "passes")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")
 	GRASS_BIND(set_blade_width, get_blade_width, "width")
@@ -2748,6 +2805,8 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "undergrowth_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_undergrowth_field", "get_undergrowth_field");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "paths", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_paths", "get_paths");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_resistance", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:passes/yr"), "set_trample_resistance", "get_trample_resistance");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.1,400,0.1,or_greater,suffix:/m²"), "set_density", "get_density");
 	ADD_GROUP("Blades", "");

@@ -298,6 +298,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.mask_rect = density_mask_rect;
 	}
 	r_setup.obstacles = obstacle_grid;
+	r_setup.paths = path_grid;
 	_follow_holes(map);
 	r_setup.holes.read(VegetationHoles::source_of(map));
 	{
@@ -1099,6 +1100,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const float second = p_setup.obstacles.is_empty() ? 1e6f : p_setup.obstacles.second_clearance(xz, gap_reach, &first);
 						suit *= sp->stone_gap_weight(first, second);
 					}
+					// Worn paths: the plants thin out towards the trodden line by their resistance
+					// (PlantSpecies.trample_resistance), the ones left shorter. Trees, logs and the
+					// plants on stones and logs stand clear of the feet.
+					float trodden = 1.0f;
+					if (suit > 0.0f && !p_setup.paths.is_empty() && canopy_r <= 0.0f && !is_log && !on_top && !on_log && sp->get_trample_resistance() > 0.0f) {
+						const float passes = p_setup.paths.passes_at(xz);
+						suit *= sp->trample_cover(passes);
+						trodden = sp->trample_scale(passes);
+					}
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
 						continue;
@@ -1148,7 +1158,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
 					const float r = pat.randoms[i];
-					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f));
+					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f)) * trodden;
 					// At a rock's foot: leaves must not pass into the rock. A plant reaching in over it
 					// grows smaller and leans away, as plants pressed against a boulder do.
 					float rock_fit = 1.0f;
@@ -2571,6 +2581,11 @@ void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacle_grid.build(obstacles);
 }
 
+void VegetationField3D::set_paths(const Array &p_paths) {
+	paths = p_paths;
+	path_grid.build(paths);
+}
+
 void VegetationField3D::set_stone_tops(const PackedVector4Array &p_tops) {
 	stone_tops = p_tops;
 	_build_stone_tops();
@@ -3442,6 +3457,9 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
+	ClassDB::bind_method(D_METHOD("set_paths", "paths"), &VegetationField3D::set_paths);
+	ClassDB::bind_method(D_METHOD("get_paths"), &VegetationField3D::get_paths);
+	ClassDB::bind_method(D_METHOD("get_path_passes_at", "position"), &VegetationField3D::get_path_passes_at);
 	ClassDB::bind_method(D_METHOD("sample_lateral_cover", "position"), &VegetationField3D::sample_lateral_cover);
 	ClassDB::bind_method(D_METHOD("get_obstacles"), &VegetationField3D::get_obstacles);
 	ClassDB::bind_method(D_METHOD("set_stone_tops", "tops"), &VegetationField3D::set_stone_tops);
@@ -3521,6 +3539,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "paths", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_paths", "get_paths");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "stone_tops"), "set_stone_tops", "get_stone_tops");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "stone_top_normals"), "set_stone_top_normals", "get_stone_top_normals");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
