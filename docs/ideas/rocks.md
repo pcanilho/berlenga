@@ -819,3 +819,32 @@ replaced it as the opening.
 `ground_material` is now an override: unset, the field takes the TerrainMaterial3D of the Landscape3D drawing its
 generator, so the blend matches the ground with no wiring. The blend band is thin by design (`ground_blend_height`
 0.25 m times sqrt(scale): a full foot ~10 cm up a 1 m stone, dust to ~45 cm); scene's seat3 tries 0.45.
+
+## Stone and ground contact (Paulo, 17 Nov: "stone and ground side")
+
+The ground blend paints only the stone, and on grey scree the stone and ground colours are close, so it hardly
+reads. What the eye uses to see a stone sitting in soil is on the ground as much as on the stone.
+
+What others do:
+- **Terrain blending on the object**: Far Cry 5 (GDC 2018, "Terrain Rendering in Far Cry 5") and UE's Runtime
+  Virtual Texture blending (Megascans rocks) sample the terrain's own colour and normal near the object's base.
+  We already do this (`ground_blend`). The flat ground colour reads as paint, so it needs the ground's grain.
+- **Objects writing into the terrain**: UE "Draw in Virtual Texture" lets a mesh render a mask into the
+  terrain's RVT (dirt and damp under rocks, paths). Frostbite (Andersson 2007; Widmark 2012, "Terrain in
+  Battlefield 3") uses terrain decals and procedural masks. We have no RVT, but we do have a working pattern:
+  a CPU-written global mask the terrain material samples (`terrain_cover_map` from vegetation).
+- **The physics of it**: rock fragments act as a mulch. Soil under and beside a stone loses less water, so it is
+  wetter and darker (Poesen and Lavee 1994, "Rock fragments in top soils"). On a slope, a stone traps the fines
+  washed down against its uphill side, and the downslope lee holds less of them. Wet porous ground darkens and
+  smooths (Lagarde 2013, already used for the sand wetness).
+
+Plan:
+- **Stone side** (rock shader): the blend band takes the ground's grain (fines with pale and dark chips) instead
+  of a flat colour, a damp foot (darker, less rough), and the band rising on the uphill side where debris banks up.
+- **Ground side**: `rock_contact_map`, a global R8G8 mask around the follow target (64 m at 6.25 cm). RockField3D
+  stamps each near stone's footprint:
+  - R: a damp ring falling off over about a third of the stone's radius;
+  - G: fines and grit banked on the uphill side.
+  TerrainMaterial3D reads it the same way it reads `terrain_cover_map`: wet darkening and lower roughness from R,
+  and a fines tint with a little grit from G. Under the path tracer it is the same shader, so the two match.
+- Setting: `ground_contact` (on). It is redrawn when the target moves 8 m or cells change.

@@ -2583,6 +2583,10 @@ void fragment() {
 		// and sand settle there), and the shading normal eased to the ground's so the seam lights alike.
 		if (ground_blend && above < ground_blend_height * 2.5 * sqrt(max(v_scale, 0.25))) {
 			float band = ground_blend_height * sqrt(max(v_scale, 0.25));
+			// Debris banks up on the uphill side (sediment trapped against the stone).
+			float sl = length(v_slope);
+			float up = sl > 1e-3 ? dot(v_slope / sl, v_world.xz - v_origin.xz) / max(v_scale, 0.25) : 0.0;
+			band *= 1.0 + 1.2 * clamp(up, 0.0, 1.0) * clamp(sl * 2.0, 0.0, 1.0);
 			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
 			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.
 			float gb = max(1.0 - smoothstep(0.45, 0.7, edge), 0.4 * (1.0 - smoothstep(0.7, 1.8, edge)) * smoothstep(0.3, 0.6, rk_fbm3(mp * 7.0 + 5.0)));
@@ -2597,8 +2601,14 @@ void fragment() {
 				gcol = mix(gcol, ground_sand, clamp(-g.x, 0.0, 1.0));
 			}
 			gcol *= 0.75 + 0.5 * rk_fbm3(mp * 9.0 + 4.0);
+			// The ground's grain, not a flat colour: fines with grit (pale and dark chips, 1 to 3 cm).
+			float grit = rk_noise3(v_world * 45.0);
+			gcol *= grit > 0.72 ? 1.45 : (grit < 0.2 ? 0.6 : 1.0);
+			// A damp foot: soil wicks water up the lowest part, darker and a little glossier.
+			float damp = 1.0 - smoothstep(0.0, 0.45, edge);
+			gcol *= mix(1.0, 0.55, damp);
 			col = mix(col, gcol, gb);
-			rough = mix(rough, 0.95, gb);
+			rough = mix(rough, mix(0.95, 0.7, damp), gb);
 			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;

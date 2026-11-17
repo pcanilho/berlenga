@@ -88,6 +88,18 @@
 				Triangles in the most detailed level of every shape built so far.
 			</description>
 		</method>
+		<method name="get_contact_texture" qualifiers="const">
+			<return type="ImageTexture" />
+			<description>
+				The ground contact map (see [member ground_contact]): 64 m a side at 1024 texels round the follow target, red the damp ring round each stone's foot, green the fines banked against its uphill side. Published as the [code]rock_contact_map[/code] and [code]rock_contact_rect[/code] shader globals, which [TerrainMaterial3D] reads.
+			</description>
+		</method>
+		<method name="get_last_contact_usec" qualifiers="const">
+			<return type="int" />
+			<description>
+				Microseconds the last contact map took to draw on its worker thread.
+			</description>
+		</method>
 		<method name="get_obstacles">
 			<return type="PackedVector4Array" />
 			<param index="0" name="rect" type="Rect2" />
@@ -269,10 +281,13 @@
 			How far round the follow target glacial boulders are built.
 		</member>
 		<member name="ground_blend" type="bool" setter="set_ground_blend" getter="is_ground_blend" default="true">
-			Eases each stone's foot into the ground under it: over a band of [member ground_blend_height] the stone takes the ground layer's colour and roughness (the hollows first, the proud parts last, with a thinning dust above) and its normal turns toward the ground's, following the slope under the stone. The layer comes from the generator's geology, coloured as [member ground_material]'s layers.
+			Eases each stone's foot into the ground under it: over a band of [member ground_blend_height] the stone takes the ground layer's colour and roughness (the hollows first, the proud parts last, with a thinning dust above) and its normal turns toward the ground's, following the slope under the stone. The layer comes from the generator's geology, coloured as [member ground_material]'s layers, with its grain (fines and pale and dark chips). The lowest part is damp (darker, smoother), and the band rises on the uphill side, where debris banks up. See also [member ground_contact].
 		</member>
 		<member name="ground_blend_height" type="float" setter="set_ground_blend_height" getter="get_ground_blend_height" default="0.45">
 			The ground-blend band's height in metres for a 1 m stone; it grows with the square root of the stone's size.
+		</member>
+		<member name="ground_contact" type="bool" setter="set_ground_contact" getter="is_ground_contact_enabled" default="true">
+			The ground side of a stone's contact. Soil beside a stone stays damper (stones act as a mulch), so it is darker and smoother, and the fines washed downhill bank up against the stone's uphill side. The field draws both into a map round the follow target on a worker thread, and [TerrainMaterial3D] darkens and tints the ground by it. The map is redrawn when the target moves 8 m or the field is rebuilt. With [member ground_blend], which paints the stone's own foot, the stone reads as sitting in the ground.
 		</member>
 		<member name="ground_material" type="ShaderMaterial" setter="set_ground_material" getter="get_ground_material">
 			Overrides the material the ground blend takes its colours from: each layer's colour times the mean of its albedo texture. When unset, the field uses the [TerrainMaterial3D] of the [Landscape3D] that draws its generator (else any landscape's), so the blend matches the ground with no wiring; with no landscape either, the terrain material's default colours.

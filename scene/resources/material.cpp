@@ -2579,19 +2579,38 @@ void fragment() {)";
 )";
 	}
 	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
-		// Desiccation cracks (mud stage 2b): the mesh carries those its spacing can (ground_deform_top()); the finer
-		// ones darken, being slots a quarter plate deep that let little light down. The dry crust is lighter, matte.
+		// Desiccation cracks (mud stage 2b): the mesh carries those its spacing can (ground_deform_top()); the shading
+		// takes the rest: the slopes of the walls and rims finer than the mesh, and the slots' darkness (a slot w wide
+		// and d deep sees about w / (w + 2 d) of the sky). The layer still drying is dark with its water; dry, the
+		// crust of fine clay is pale and matte, the cracks' walls the darker soil under it.
 		code += R"(	{
 		vec3 gcp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		vec4 gcs = ground_crack_state(gcp.xz);
 		if (gcs.x > 0.0 && gcs.y > 0.0) {
-			vec2 gce = ground_crack_edges(gcp.xz, gcs);
-			float gcv = max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(gcp.xz)), 1e-3);
-			ALBEDO *= 1.0 - 0.8 * max(ground_crack_mask(gce, gcs, ground_fp) - ground_crack_mask(gce, gcs, gcv), 0.0);
+			GroundCracks gc = ground_cracks(gcp.xz, gcs);
+			float gcv = 1.5 * max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(gcp.xz)), 1e-3);
+			// The footprint stretched along the ground at a grazing view (the pixel's long axis there).
+			float gcg = max(abs(dot(normalize(VIEW), NORMAL)), 0.15);
+			vec4 gcf = ground_crack_height(gc, max(ground_fp / gcg, 1e-4));
+			vec4 gcm = ground_crack_height(gc, gcv);
+			vec3 gcn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+			gcn = normalize(gcn - vec3(gcf.y - gcm.y, 0.0, gcf.z - gcm.z));
+			NORMAL = normalize((VIEW_MATRIX * vec4(gcn, 0.0)).xyz);
+			float gcd = max(gc.depth.x, 1e-4);
+			float gcw = max(max(gc.width.x, gc.width.y), 1e-4);
+			float gcsky = gcw / (gcw + 2.0 * gcd);
+			ALBEDO *= mix(1.0, 0.7 * gcsky, max(gcf.w - gcm.w, 0.0));
+			ALBEDO *= mix(1.0, 0.75, gcf.w * max(gcs.w, 0.0));
 		}
-		// The crust: the fine clay the water left, lighter than the soil under it, and matte.
-		ALBEDO *= 1.0 + 0.15 * gcs.w;
-		ROUGHNESS = mix(ROUGHNESS, 1.0, 0.4 * gcs.w);
+		float gcc = max(gcs.w, 0.0);
+		vec3 gcl = ALBEDO * 1.7;
+		ALBEDO = mix(ALBEDO, mix(gcl, vec3(dot(gcl, vec3(0.299, 0.587, 0.114))), 0.15), gcc);
+		ROUGHNESS = mix(ROUGHNESS, 1.0, 0.5 * gcc);
+		// A pool's bed (a drying layer over 9 mm: plates over 3.5 cm): its fine clay buries the soil's grain, damp or dry.
+		NORMAL_MAP_DEPTH *= 1.0 - 0.8 * smoothstep(0.035, 0.05, gcs.y) * step(1e-4, abs(gcs.w) + gcs.x);
+		float gcdmp = max(-gcs.w - ground_wet.x, 0.0);
+		ALBEDO *= 1.0 - 0.45 * gcdmp;
+		ROUGHNESS = mix(ROUGHNESS, 0.45, 0.6 * gcdmp);
 	}
 )";
 	}
@@ -4003,11 +4022,17 @@ vec3 ground_wet_at(vec3 p_world, vec3 p_normal) {
 	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), clamp(w.y, 0.0, 1.0) * smoothstep(0.7, 0.95, p_normal.y), clamp(w.z, 0.0, 1.0));
 }
 // Desiccation cracks (docs/ideas/mud.md, stage 2b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
-// Drying clay cracks into plates whose size follows the drying layer's thickness (Groisman and Kaplan 1994):
-// primary cracks first, then secondary ones splitting the plates (Bohn et al. 2005); each wetting and drying
-// cycle moves the junctions towards 120 degrees and the plates towards hexagons (Goehring et al. 2010).
-// The pattern: the Voronoi cells of a hexagonal lattice of seeds jittered less as the cycles add up; the
-// distance to a crack is the distance to the cell's edge (Quilez 2012's two-pass Voronoi border distance).
+// Drying clay cracks into plates whose size follows the drying layer's thickness (Groisman and Kaplan 1994). The
+// cracks come in generations (Bohn, Pauchard and Couder 2005, "Hierarchical crack pattern as formed by successive
+// domain divisions"): the first ones meet at about 120 degrees and part the layer into large domains; each domain
+// then splits across its long axis, the new crack meeting the old ones at right angles (T junctions), and the
+// halves split again, each generation narrower and shallower than the one before. Wetting and drying again moves
+// the junctions towards 120 degrees and the plates towards hexagons (Goehring et al. 2010, "Evolving mud-crack
+// patterns"). The plates' rims curl up as their top dries and shrinks first (Allen 1986).
+// Here: the first generation is the Voronoi cells of a jittered hexagonal lattice (Quilez's two-pass border
+// distance); the second a line through each cell's seed towards its nearest neighbour, so across the cell's long
+// axis and square to the edge it shares with that neighbour; the third, in each half, a line square to the second
+// that may end short of the far edge, tapering out. The pattern meanders (a smooth warp) and its width wanders.
 vec2 ground_crack_hash(ivec2 p_c, uint p_salt) {
 	uint h = (uint(p_c.x) * 73856093u) ^ (uint(p_c.y) * 19349663u) ^ (p_salt * 83492791u);
 	h ^= h >> 16u;
@@ -4017,71 +4042,168 @@ vec2 ground_crack_hash(ivec2 p_c, uint p_salt) {
 	h ^= h >> 16u;
 	return vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
 }
-vec2 ground_crack_seed(ivec2 p_c, float p_jitter, uint p_salt) {
+vec2 ground_crack_seed(ivec2 p_c, float p_jitter) {
 	// Lattice basis (1, 0), (0.5, 0.866): hexagonal plates at no jitter.
-	return vec2(float(p_c.x) + 0.5 * float(p_c.y), 0.8660254 * float(p_c.y)) + p_jitter * (ground_crack_hash(p_c, p_salt) - 0.5);
+	return vec2(float(p_c.x) + 0.5 * float(p_c.y), 0.8660254 * float(p_c.y)) + p_jitter * (ground_crack_hash(p_c, 0u) - 0.5);
 }
-// Distance from p (in plate sizes) to the nearest crack.
-float ground_crack_edge(vec2 p_p, float p_jitter, uint p_salt) {
-	vec2 l = vec2(p_p.x - p_p.y * 0.57735027, p_p.y * 1.1547005);
+// A smooth value noise in 0..1 (two channels).
+vec2 ground_crack_noise(vec2 p_p, uint p_salt) {
+	ivec2 i = ivec2(floor(p_p));
+	vec2 f = fract(p_p);
+	f = f * f * (3.0 - 2.0 * f);
+	vec2 a = ground_crack_hash(i, p_salt);
+	vec2 b = ground_crack_hash(i + ivec2(1, 0), p_salt);
+	vec2 c = ground_crack_hash(i + ivec2(0, 1), p_salt);
+	vec2 d = ground_crack_hash(i + ivec2(1, 1), p_salt);
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+// The cracks near a point: per generation (x, y, z) the distance (m) to it, its width and depth (m), and the
+// direction (xz) in which the distance grows; and the rims' curl (height m, reach m).
+struct GroundCracks {
+	vec3 dist;
+	vec3 width;
+	vec3 depth;
+	vec2 dir1;
+	vec2 dir2;
+	vec2 dir3;
+	float curl;
+	float reach;
+};
+// p_c: the crack state (opening 0..1, plate size m, regularity 0..1, crust 0..1 or negative while damp).
+GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
+	GroundCracks g;
+	float reg = clamp(p_c.z, 0.0, 1.0);
+	float open = clamp(p_c.x, 0.0, 1.0);
+	float thick = 0.25 * p_c.y;
+	// The first generation's domains: two to three plates across, one as the cycles make them hexagons.
+	float s1 = p_c.y * mix(2.4, 1.1, reg);
+	vec2 q = p_xz / s1;
+	q += 0.22 * (ground_crack_noise(q * 0.8, 5u) - 0.5) + 0.025 * (ground_crack_noise(q * 6.0, 6u) - 0.5);
+	float jit = mix(0.9, 0.25, reg);
+	// The nearest seed, then the distance to the cell's border and the nearest neighbour's direction.
+	vec2 l = vec2(q.x - q.y * 0.57735027, q.y * 1.1547005);
 	ivec2 c = ivec2(floor(l));
 	vec2 best = vec2(0.0);
-	ivec2 best_c = c;
+	ivec2 id = c;
 	float bd = 1e9;
 	for (int j = -1; j <= 2; j++) {
 		for (int i = -1; i <= 2; i++) {
-			ivec2 q = c + ivec2(i, j);
-			vec2 r = ground_crack_seed(q, p_jitter, p_salt) - p_p;
+			ivec2 k = c + ivec2(i, j);
+			vec2 r = ground_crack_seed(k, jit) - q;
 			float d = dot(r, r);
 			if (d < bd) {
 				bd = d;
 				best = r;
-				best_c = q;
+				id = k;
 			}
 		}
 	}
-	float e = 1e9;
+	float e1 = 1e9;
+	vec2 n1 = vec2(1.0, 0.0);
+	vec2 nn = vec2(1.0, 0.0);
+	float nnd = 1e9;
 	for (int j = -2; j <= 2; j++) {
 		for (int i = -2; i <= 2; i++) {
-			ivec2 q = best_c + ivec2(i, j);
-			if (all(equal(q, best_c))) {
+			ivec2 k = id + ivec2(i, j);
+			if (all(equal(k, id))) {
 				continue;
 			}
-			vec2 r = ground_crack_seed(q, p_jitter, p_salt) - p_p;
-			vec2 dr = r - best;
-			if (dot(dr, dr) > 1e-8) {
-				e = min(e, dot(0.5 * (best + r), normalize(dr)));
+			vec2 dr = ground_crack_seed(k, jit) - q - best;
+			float dl = dot(dr, dr);
+			if (dl > 1e-8) {
+				vec2 dn = dr * inversesqrt(dl);
+				float e = dot(best + 0.5 * dr, dn);
+				if (e < e1) {
+					e1 = e;
+					n1 = dn;
+				}
+				if (dl < nnd) {
+					nnd = dl;
+					nn = dn;
+				}
 			}
 		}
 	}
-	return e;
+	vec2 x = -best; // from the seed, in domain units
+	vec2 h2 = ground_crack_hash(id, 2u);
+	vec2 h3 = ground_crack_hash(id, 3u);
+	// Second generation: along the nearest neighbour's direction, turned and shifted a little.
+	float a2 = (h2.y - 0.5) * 0.4;
+	vec2 u2 = vec2(nn.x * cos(a2) - nn.y * sin(a2), nn.x * sin(a2) + nn.y * cos(a2));
+	vec2 v2 = vec2(-u2.y, u2.x);
+	float t2 = dot(x, v2) - (h2.x - 0.5) * 0.16;
+	bool split2 = h2.x * 0.7 + h2.y * 0.3 < 0.92 - 0.75 * reg;
+	// Third generation, in this half: square to the second, from it outwards, ending at a length of its own.
+	float side = t2 >= 0.0 ? 1.0 : 0.0;
+	vec2 h3s = side > 0.5 ? h3 : ground_crack_hash(id, 4u);
+	float t3 = dot(x, u2) - (h3s.x - 0.5) * 0.5;
+	float len3 = mix(0.25, 0.9, h3s.y);
+	bool split3 = split2 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
+	// Widths: the layer's shrinkage (8%, Peron et al. 2009 for clays) shared out over the generations, which open
+	// in turn as the layer dries; each wanders along its length.
+	float strain = 0.08 * s1;
+	vec2 wander = ground_crack_noise(q * 3.0, 7u);
+	g.width = vec3(0.5 * smoothstep(0.0, 0.5, open), 0.3 * smoothstep(0.3, 0.8, open), 0.17 * smoothstep(0.6, 1.0, open)) * strain;
+	g.width *= vec3(0.55 + 0.9 * wander.x, 0.55 + 0.9 * wander.y, 0.5 + wander.x);
+	g.width.z *= smoothstep(len3, 0.55 * len3, abs(t2)); // the tip tapers out
+	g.depth = thick * vec3(1.0, 0.75, 0.45) * clamp(4.0 * open, 0.0, 1.0);
+	g.dist = vec3(max(e1, 0.0), split2 ? abs(t2) : 1e3, split3 && abs(t2) < len3 ? abs(t3) : 1e3) * s1;
+	g.dir1 = -n1;
+	g.dir2 = t2 >= 0.0 ? v2 : -v2;
+	g.dir3 = t3 >= 0.0 ? u2 : -u2;
+	g.curl = max(p_c.w, 0.0) * open * 0.35 * thick;
+	g.reach = 0.12 * s1;
+	return g;
 }
-// The distances (m) from p to the nearest primary and secondary crack for the crack state p_c (opening 0..1,
-// plate size m, regularity 0..1, crust 0..1); the secondary cracks open from half way.
-vec2 ground_crack_edges(vec2 p_xz, vec4 p_c) {
-	float l = p_c.y;
-	float jit = mix(0.85, 0.2, clamp(p_c.z, 0.0, 1.0));
-	float e1 = ground_crack_edge(p_xz / l, jit, 0u) * l;
-	float e2 = p_c.x > 0.5 ? ground_crack_edge(p_xz / (0.5 * l), jit, 1u) * 0.5 * l : 1e9;
-	return vec2(e1, e2);
-}
-// The share of a footprint p_fw (m) wide that is crack: primary cracks open to 8% of the plate (clay's linear
-// shrinkage), secondary ones to 4%.
-float ground_crack_mask(vec2 p_e, vec4 p_c, float p_fw) {
+// The surface's offset at the cracks seen through a footprint p_fw (m) wide: (height m, its slope x, z, the share of
+// the footprint that is crack). A crack narrower than the footprint spreads into a dip of the same volume as wide
+// as the footprint (a box filter), and the curl likewise; so the mesh takes the cracks its spacing carries, the
+// shading those it does not.
+vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 	float fw = max(p_fw, 1e-4);
-	float w1 = p_c.x * 0.08 * p_c.y;
-	float m = clamp(w1 / (2.0 * fw), 0.0, 1.0) * (1.0 - smoothstep(0.5 * w1, 0.5 * w1 + fw, p_e.x));
-	float w2 = clamp(2.0 * p_c.x - 1.0, 0.0, 1.0) * 0.04 * p_c.y;
-	if (w2 > 0.0) {
-		m = max(m, clamp(w2 / (2.0 * fw), 0.0, 1.0) * (1.0 - smoothstep(0.5 * w2, 0.5 * w2 + fw, p_e.y)));
+	float h = 0.0;
+	vec2 slope = vec2(0.0);
+	float cover = 0.0;
+	float edge = 1e9;
+	vec2 edge_dir = vec2(0.0);
+	for (int k = 0; k < 3; k++) {
+		float d = k == 0 ? p_g.dist.x : (k == 1 ? p_g.dist.y : p_g.dist.z);
+		float w = k == 0 ? p_g.width.x : (k == 1 ? p_g.width.y : p_g.width.z);
+		float dp = k == 0 ? p_g.depth.x : (k == 1 ? p_g.depth.y : p_g.depth.z);
+		vec2 dir = k == 0 ? p_g.dir1 : (k == 1 ? p_g.dir2 : p_g.dir3);
+		if (w <= 0.0) {
+			continue;
+		}
+		float hw = 0.5 * max(w, fw);
+		float deep = dp * min(w / fw, 1.0);
+		if (d - 0.5 * w < edge) {
+			edge = d - 0.5 * w;
+			edge_dir = dir;
+		}
+		if (d < hw) {
+			// Steep walls over the outer third of the half width, a rounded floor.
+			float t = 1.0 - d / hw;
+			float s = smoothstep(0.0, 0.35, t);
+			float hk = -deep * s;
+			if (hk < h) {
+				h = hk;
+				float ds = t < 0.35 ? 6.0 * (t / 0.35) * (1.0 - t / 0.35) / 0.35 : 0.0;
+				slope = dir * (deep * ds / hw);
+			}
+			cover = max(cover, min(w / fw, 1.0) * (t < 0.35 ? s : 1.0));
+		}
 	}
-	return m;
-}
-// The surface's offset (m): the cracks go down through the drying layer (a quarter of the plate); the plates curl
-// up at their rims as the top dries and shrinks first (Allen 1986), by up to 3% of the plate.
-float ground_crack_offset(vec2 p_e, vec4 p_c, float p_fw) {
-	float rim = p_c.w * p_c.x * 0.03 * p_c.y * (1.0 - smoothstep(0.0, 0.3 * p_c.y, min(p_e.x, p_e.y)));
-	return rim - 0.25 * p_c.y * ground_crack_mask(p_e, p_c, p_fw);
+	// The curl of the plate's rim beside the nearest crack.
+	if (p_g.curl > 0.0 && edge > 0.0 && h == 0.0) {
+		float reach = max(p_g.reach, 0.5 * fw);
+		float c = p_g.curl * (p_g.reach / reach) * exp(-edge / reach);
+		h = c;
+		slope = -edge_dir * (c / reach);
+	}
+	// A footprint wider than a few rims spans whole plates: their mean, flat, with the cracks' mean share.
+	float fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
+	float mean = clamp(dot(p_g.width, vec3(1.0)) * 0.12 / max(p_g.reach, 1e-4), 0.0, 1.0);
+	return vec4(h * fade, slope * fade, mix(mean, cover, fade));
 }
 // The crack state at p_xz: the wet map's crack block (GroundSurface3D::_wet_publish()); 0 where none.
 vec4 ground_crack_state(vec2 p_xz) {
@@ -4103,7 +4225,8 @@ float ground_deform_top(vec2 p_xz) {
 	vec4 cs = ground_crack_state(p_xz);
 	if (cs.x > 0.0 && cs.y > 0.0) {
 		float e = max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(p_xz)), 1e-3);
-		h += ground_crack_offset(ground_crack_edges(p_xz, cs), cs, e);
+		// Filtered to the mesh's Nyquist: one and a half vertex spacings.
+		h += ground_crack_height(ground_cracks(p_xz, cs), 1.5 * e).x;
 	}
 	return h;
 }

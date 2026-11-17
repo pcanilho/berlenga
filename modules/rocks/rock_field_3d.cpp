@@ -54,6 +54,7 @@
 #include "scene/resources/3d/convex_polygon_shape_3d.h"
 #include "scene/resources/3d/importer_mesh.h"
 #include "scene/resources/multimesh.h"
+#include "servers/rendering/rendering_server.h"
 
 namespace {
 
@@ -2785,7 +2786,7 @@ void RockField3D::set_live_rockfall(bool p_enabled) {
 }
 
 void RockField3D::_update_process() {
-	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall));
+	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall || ground_contact));
 }
 
 void RockField3D::restore_broken() {
@@ -2809,6 +2810,7 @@ void RockField3D::restore_broken() {
 
 void RockField3D::rebuild() {
 	clear();
+	contact_dirty = true;
 	auto_ground_found = false;
 	if (ground_material.is_null() && is_inside_tree()) {
 		for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
@@ -3359,11 +3361,152 @@ void RockField3D::set_streaming(bool p_streaming) {
 	}
 }
 
+// The contact map (docs/ideas/rocks.md, "Stone and ground contact"). Rock fragments keep the soil beside them wetter
+// (a mulch: Poesen and Lavee 1994) and trap the fines washed down against their uphill side; UE's "draw in virtual
+// texture" and Frostbite's terrain masks put such marks into the terrain from the objects. Here RockField3D stamps
+// each stone's footprint (get_obstacles) into an RG8 global around the target, CONTACT_SIZE metres a side, redrawn
+// when the target crosses an eighth of it or the field changes; TerrainMaterial3D darkens and tints by it.
+void RockField3D::_update_contact(bool p_force) {
+	if (!is_inside_tree()) {
+		return;
+	}
+	_finish_contact(p_force);
+	if (contact_job) {
+		return; // one at a time
+	}
+	const Vector3 t = _target_position();
+	const real_t step = CONTACT_SIZE / 8.0;
+	const Vector2 origin = Vector2(Math::round(t.x / step) * step, Math::round(t.z / step) * step) - Vector2(CONTACT_SIZE, CONTACT_SIZE) * 0.5;
+	if (!p_force && !contact_dirty && origin == contact_origin) {
+		return;
+	}
+	contact_dirty = false;
+	contact_origin = origin;
+	ContactJob *job = memnew(ContactJob);
+	job->start = OS::get_singleton()->get_ticks_usec();
+	job->origin = origin;
+	const TerrainGenerator3D *gen = _get_generator();
+	const PackedVector4Array obs = get_obstacles(Rect2(origin, Vector2(CONTACT_SIZE, CONTACT_SIZE)).grow(4.0), 0.1);
+	job->obstacles.resize(obs.size());
+	job->uphill.resize(obs.size());
+	for (int i = 0; i < obs.size(); i++) {
+		const Vector4 o = obs[i];
+		// Uphill from the ground's gradient round the foot.
+		Vector2 up;
+		real_t slope = 0.0;
+		if (gen) {
+			const real_t e = MAX(real_t(0.5), real_t(o.w));
+			up = Vector2(gen->get_height(Vector3(o.x + e, 0, o.z)) - gen->get_height(Vector3(o.x - e, 0, o.z)), gen->get_height(Vector3(o.x, 0, o.z + e)) - gen->get_height(Vector3(o.x, 0, o.z - e))) / (2.0 * e);
+			slope = up.length();
+			up = slope > 1e-4 ? up / slope : Vector2();
+		}
+		job->obstacles[i] = Vector4(o.x, o.z, o.w, slope);
+		job->uphill[i] = up;
+	}
+	contact_job = job;
+	// High priority: a job of about 0.1 s that the ground waits on.
+	contact_task = WorkerThreadPool::get_singleton()->add_native_task(&RockField3D::_contact_job, job, true, "RockField3D contact map");
+	if (p_force) {
+		_finish_contact(true);
+	}
+}
+
+void RockField3D::_contact_job(void *p_job) {
+	ContactJob *job = static_cast<ContactJob *>(p_job);
+	const int R = CONTACT_RES;
+	const real_t texel = CONTACT_SIZE / real_t(R);
+	const Vector2 origin = job->origin;
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	job->data.resize(R * R * 2);
+	uint8_t *w = job->data.ptrw();
+	memset(w, 0, job->data.size());
+	for (uint32_t i = 0; i < job->obstacles.size(); i++) {
+		const Vector4 o = job->obstacles[i];
+		const real_t r = o.z;
+		const Vector2 up = job->uphill[i];
+		// The damp ring: about 0.6 of the radius wide (at least 10 cm), falling off smoothly.
+		const real_t ring = MAX(real_t(0.1), real_t(0.6) * r);
+		const real_t bank = ring * 2.2; // the banked fines reach further out uphill
+		const real_t reach = r + MAX(ring, bank);
+		const int x0 = MAX(0, int(Math::floor((o.x - reach - origin.x) / texel))), x1 = MIN(R - 1, int(Math::ceil((o.x + reach - origin.x) / texel)));
+		const int z0 = MAX(0, int(Math::floor((o.y - reach - origin.y) / texel))), z1 = MIN(R - 1, int(Math::ceil((o.y + reach - origin.y) / texel)));
+		const real_t uphill_w = CLAMP(real_t(o.w) * 2.5f, real_t(0.0), real_t(1.0));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 d = Vector2(origin.x + (x + 0.5) * texel - o.x, origin.y + (z + 0.5) * texel - o.y);
+				const real_t dl = d.length();
+				const real_t out = dl - r; // metres past the footprint's edge
+				const real_t s = CLAMP(1.0 - out / ring, 0.0, 1.0);
+				const real_t damp = s * s * (3.0 - 2.0 * s);
+				// Fines: a thin skirt all round, a bank on the uphill side.
+				const real_t u = dl > 1e-4 ? CLAMP((d.x * up.x + d.y * up.y) / dl, real_t(0.0), real_t(1.0)) : 0.0;
+				const real_t span = Math::lerp(ring * 0.6, bank, u * uphill_w);
+				const real_t sf = CLAMP(1.0 - out / span, 0.0, 1.0);
+				const real_t fines = sf * sf * (3.0 - 2.0 * sf) * Math::lerp(real_t(0.45), real_t(1.0), u * uphill_w);
+				uint8_t *px = w + (z * R + x) * 2;
+				px[0] = MAX(px[0], uint8_t(CLAMP(damp * 255.0, 0.0, 255.0)));
+				px[1] = MAX(px[1], uint8_t(CLAMP(fines * 255.0, 0.0, 255.0)));
+			}
+		}
+	}
+	job->end = OS::get_singleton()->get_ticks_usec();
+	job->start = t0;
+}
+
+void RockField3D::_finish_contact(bool p_wait) {
+	if (!contact_job) {
+		return;
+	}
+	if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(contact_task)) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_task_completion(contact_task);
+	ContactJob *job = contact_job;
+	contact_job = nullptr;
+	contact_task = WorkerThreadPool::INVALID_TASK_ID;
+	if (is_inside_tree() && ground_contact) {
+		const int R = CONTACT_RES;
+		Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, job->data);
+		if (contact_texture.is_valid() && contact_texture->get_width() == R) {
+			contact_texture->update(img);
+		} else {
+			contact_texture = ImageTexture::create_from_image(img);
+		}
+		RenderingServer *rs = RenderingServer::get_singleton();
+		rs->global_shader_parameter_set("rock_contact_map", contact_texture->get_rid());
+		rs->global_shader_parameter_set("rock_contact_rect", Vector4(job->origin.x, job->origin.y, CONTACT_SIZE, CONTACT_SIZE));
+		contact_usec = job->end - job->start; // the worker's own time
+	}
+	memdelete(job);
+}
+
+void RockField3D::_clear_contact() {
+	_finish_contact(true);
+	if (contact_texture.is_valid()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("rock_contact_rect", Vector4());
+	}
+	contact_origin = Vector2(1e30, 1e30);
+	contact_dirty = true;
+}
+
+void RockField3D::set_ground_contact(bool p_enabled) {
+	ground_contact = p_enabled;
+	if (ground_contact) {
+		contact_dirty = true;
+		_update_contact(true);
+	} else {
+		_clear_contact();
+	}
+	if (is_inside_tree()) {
+		_update_process();
+	}
+}
+
 void RockField3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
 			auto_ground_found = false;
-			set_process_internal(streaming || live_rockfall);
+			_update_process();
 			fall_rng.seed(uint64_t(seed) * 2654435761u + 17);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
@@ -3373,9 +3516,13 @@ void RockField3D::_notification(int p_what) {
 			if (live_rockfall) {
 				_update_rockfall(get_process_delta_time());
 			}
+			if (ground_contact) {
+				_update_contact(false);
+			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			clear();
+			_clear_contact();
 		} break;
 	}
 }
@@ -3474,6 +3621,10 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_area", "rect"), &RockField3D::build_area);
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
+	ClassDB::bind_method(D_METHOD("set_ground_contact", "enabled"), &RockField3D::set_ground_contact);
+	ClassDB::bind_method(D_METHOD("is_ground_contact_enabled"), &RockField3D::is_ground_contact_enabled);
+	ClassDB::bind_method(D_METHOD("get_contact_texture"), &RockField3D::get_contact_texture);
+	ClassDB::bind_method(D_METHOD("get_last_contact_usec"), &RockField3D::get_last_contact_usec);
 	ClassDB::bind_method(D_METHOD("get_stones", "layer", "rect"), &RockField3D::get_stones);
 	ClassDB::bind_method(D_METHOD("get_stone_caps", "layer", "rect", "tolerance"), &RockField3D::get_stone_caps, DEFVAL(0.03));
 	ClassDB::bind_method(D_METHOD("get_stone_count"), &RockField3D::get_stone_count);
@@ -3500,6 +3651,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mineral_glints"), "set_mineral_glints", "is_mineral_glints");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_blend_height", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_ground_blend_height", "get_ground_blend_height");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_ground_material", "get_ground_material");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_contact"), "set_ground_contact", "is_ground_contact_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_stones_per_cell", PROPERTY_HINT_RANGE, "1,100000,1"), "set_max_stones_per_cell", "get_max_stones_per_cell");

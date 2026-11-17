@@ -343,8 +343,8 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		}
 		_shift_lattice(water_speed, ground_origin, p_origin, p_n, 1);
 		_shift_lattice(cell_water, ground_origin, p_origin, p_n, 2);
-		if ((int)crack_state.size() == p_n * p_n * 2) {
-			_shift_lattice(crack_state, ground_origin, p_origin, p_n, 2); // new cells: never soaked (0)
+		if ((int)crack_state.size() == p_n * p_n * CRACK_FLOATS) {
+			_shift_lattice(crack_state, ground_origin, p_origin, p_n, CRACK_FLOATS); // new cells: never soaked (0)
 		}
 		if ((int)water_table.size() == p_n * p_n) {
 			_shift_lattice(water_table, ground_origin, p_origin, p_n, 1);
@@ -596,17 +596,18 @@ void GroundSurface3D::set_desiccation_cracks(bool p_enabled) {
 }
 
 // Drying (docs/ideas/mud.md, stage 2b). Clay soaked by standing water or to saturation, once the ground round it is
-// no longer wet, loses its water to evaporation (Penman, as the standing water) from a drying layer a few
-// centimetres thick (40% porosity); it shrinks, and once it has lost about a third of its water the top cracks
-// (past the shrinkage limit's start), the cracks opening fully by the time four fifths have gone. Wetting again
-// swells it shut and counts a cycle.
+// no longer wet, loses its water to evaporation (Penman, as the standing water) from its drying layer (40%
+// porosity); it shrinks, and once it has lost about a third of its water the top cracks (past the shrinkage limit's
+// start), the cracks opening fully by the time four fifths have gone. Wetting again swells it shut and counts a
+// cycle. The drying layer is the fine clay a pool lets settle: thicker the deeper the pool stood, so a dried puddle's
+// thin rim dries and cracks first into small plates and fine cracks, its deep centre later into large ones.
 void GroundSurface3D::_crack_update(double p_delta) {
 	const int n = ground_n;
 	if (!desiccation_cracks || !ground_valid || n < 2 || (int)cell_inputs.size() != n * n) {
 		return;
 	}
-	if ((int)crack_state.size() != n * n * 2) {
-		crack_state.resize(n * n * 2);
+	if ((int)crack_state.size() != n * n * CRACK_FLOATS) {
+		crack_state.resize(n * n * CRACK_FLOATS);
 		for (float &v : crack_state) {
 			v = 0.0f;
 		}
@@ -615,48 +616,74 @@ void GroundSurface3D::_crack_update(double p_delta) {
 	const bool pores = (int)pore.size() == n * n;
 	for (int i = 0; i < n * n; i++) {
 		const CellInput &in = cell_inputs[i];
-		float &st = crack_state[i * 2 + 0];
-		float &cycles = crack_state[i * 2 + 1];
+		float *cs = &crack_state[i * CRACK_FLOATS];
+		float &st = cs[0];
+		float &cycles = cs[1];
+		float &pool = cs[2];
 		// Only clay-rich bare ground cracks: not sand, litter, rock or snow.
 		if (in.fixed || in.sand > 0.5f || in.litter > 0.01f) {
 			st = 0.0f;
+			pool = 0.0f;
 			continue;
 		}
 		const float wx = (ground_origin.x + i % n) * ground_spacing;
 		const float wz = (ground_origin.y + i / n) * ground_spacing;
-		const bool soaked = (pores && pore[i] >= 0.95f) || (standing_water && get_standing_water_at(Vector3(wx, 0.0f, wz)) > 0.001f);
+		const float standing = standing_water ? get_standing_water_at(Vector3(wx, 0.0f, wz)) : 0.0f;
+		const bool soaked = (pores && pore[i] >= 0.95f) || standing > 0.001f;
 		if (soaked) {
 			if (st > 0.0f && st < 1.7f) {
 				cycles = MIN(cycles + 1.0f, 10.0f); // it had cracked: a cycle
+				pool = 0.0f; // a new pool lays a new layer
 			}
 			st = 2.0f;
+			pool = MAX(pool, standing);
 			continue;
 		}
 		if (st <= 0.0f || in.moisture >= mud_wet_start) {
 			continue; // never soaked, or the ground round it is still wet
 		}
 		const float thick = _crack_at_cell(i).y * 0.25f;
-		st = MAX(st - evap * float(p_delta) / (0.4f * thick), 1.0f);
+		st = MAX(st - evap * float(p_delta) / (0.4f * MAX(thick, 0.002f)), 1.0f);
 	}
 }
 
-Vector4 GroundSurface3D::_crack_at_cell(int p_i) const {
+float GroundSurface3D::_crack_layer(int p_i) const {
+	// The drying layer: the soft top the water worked, about 6 mm where the ground was only saturated, thicker the
+	// deeper a pool stood on it (its slurry and the clay it settled) up to 5 cm; thinner where the soil is sandier,
+	// and varied a little from place to place. Plates about four times as wide (Groisman and Kaplan 1994: spacing in
+	// proportion to the layer), so a dried puddle cracks finer towards its rim.
 	const int n = ground_n;
 	const CellInput &in = cell_inputs[p_i];
-	// The drying layer: the top 3 cm, thicker over deep mud (up to 6 cm); plates about four times as wide
-	// (Groisman and Kaplan 1994: spacing in proportion to the layer), varied a little from place to place.
 	const float wx = (ground_origin.x + p_i % n) * ground_spacing;
 	const float wz = (ground_origin.y + p_i / n) * ground_spacing;
-	const float thick = CLAMP(0.03f + 0.05f * in.mud, 0.03f, 0.06f) * (0.85f + 0.3f * _value_noise(wx / 3.0f, wz / 3.0f));
-	if ((int)crack_state.size() != n * n * 2) {
+	const float pool = (int)crack_state.size() == n * n * CRACK_FLOATS ? crack_state[p_i * CRACK_FLOATS + 2] : 0.0f;
+	const float clay = (0.5f + 0.5f * Math::smoothstep(0.5f, 0.2f, in.sand)) * (0.8f + 0.2f * CLAMP(in.mud / 0.3f, 0.0f, 1.0f));
+	return CLAMP(0.006f + 0.6f * pool, 0.006f, 0.05f) * clay * (0.85f + 0.3f * _value_noise(wx / 3.0f, wz / 3.0f));
+}
+
+Vector4 GroundSurface3D::_crack_at_cell(int p_i, float *r_damp) const {
+	const int n = ground_n;
+	const float thick = _crack_layer(p_i);
+	if (r_damp) {
+		*r_damp = 0.0f;
+	}
+	if ((int)crack_state.size() != n * n * CRACK_FLOATS) {
 		return Vector4(0.0f, 4.0f * thick, 0.0f, 0.0f);
 	}
-	const float st = crack_state[p_i * 2 + 0];
+	const float st = crack_state[p_i * CRACK_FLOATS + 0];
 	if (st <= 0.0f) {
 		return Vector4(0.0f, 4.0f * thick, 0.0f, 0.0f);
 	}
 	const float water = st - 1.0f;
-	return Vector4(Math::smoothstep(0.67f, 0.2f, water), 4.0f * thick, MIN(crack_state[p_i * 2 + 1] / 5.0f, 1.0f), Math::smoothstep(0.9f, 0.6f, water));
+	if (r_damp) {
+		// Soaked or drying: dark with its water until the first third has gone (where the pore water does not show it
+		// already: material.cpp takes the larger).
+		*r_damp = Math::smoothstep(0.6f, 0.95f, water) * Math::smoothstep(0.004f, 0.009f, thick);
+	}
+	// Ground only saturated (a layer of about 6 mm) cracks too finely to show; a pool's bed does, its cracks finer
+	// and fading out towards its rim as the water there stood shallower.
+	const float shows = Math::smoothstep(0.006f, 0.012f, thick);
+	return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, 4.0f * thick, MIN(crack_state[p_i * CRACK_FLOATS + 1] / 5.0f, 1.0f), Math::smoothstep(0.9f, 0.6f, water) * Math::smoothstep(0.004f, 0.009f, thick));
 }
 
 Vector4 GroundSurface3D::get_crack_at(Vector3 p_position) const {
@@ -666,7 +693,10 @@ Vector4 GroundSurface3D::get_crack_at(Vector3 p_position) const {
 	}
 	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
 	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
-	return _crack_at_cell(z * n + x);
+	float damp = 0.0f;
+	Vector4 c = _crack_at_cell(z * n + x, &damp);
+	c.w -= damp;
+	return c;
 }
 
 void GroundSurface3D::set_mud_map(const Ref<Image> &p_map) {
@@ -1602,9 +1632,9 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 	const bool far = on && wet && far_n == n && (int)far_pore.size() == n * n;
 	// Then, with desiccation cracks, their block (opening, plate size, regularity, crust; texel 2's tag 4.5).
 	bool cracks = false;
-	if (on && desiccation_cracks && (int)crack_state.size() == n * n * 2 && n >= 3) {
+	if (on && desiccation_cracks && (int)crack_state.size() == n * n * CRACK_FLOATS && n >= 3) {
 		for (int i = 0; i < n * n && !cracks; i++) {
-			cracks = crack_state[i * 2] > 0.0f && crack_state[i * 2] < 1.9f;
+			cracks = crack_state[i * CRACK_FLOATS] > 0.0f && crack_state[i * CRACK_FLOATS] < 1.999f;
 		}
 	}
 	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0);
@@ -1635,11 +1665,12 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 		if (cracks) {
 			float *cd = d + (blocks - 1) * n * n * 4;
 			for (int i = 0; i < n * n; i++) {
-				const Vector4 c = _crack_at_cell(i);
+				float damp = 0.0f;
+				const Vector4 c = _crack_at_cell(i, &damp);
 				cd[i * 4 + 0] = c.x;
 				cd[i * 4 + 1] = c.y;
 				cd[i * 4 + 2] = c.z;
-				cd[i * 4 + 3] = c.w;
+				cd[i * 4 + 3] = c.w - damp; // the crust, or (negative) the drying layer still dark with water
 			}
 			r[11] = 4.5f;
 		}

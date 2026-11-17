@@ -136,6 +136,8 @@ String TerrainMaterial3D::get_shader_code() const {
 		c += R"(
 global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear; // rgb sRGB cover colour, a cover share
 global uniform vec4 terrain_cover_rect;
+global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
+global uniform vec4 rock_contact_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -970,6 +972,25 @@ void fragment() {
 	}
 )";
 	}
+	// Where stones sit (RockField3D.ground_contact): the soil beside them kept damp (darker, smoother: porous darkening
+	// as for wet sand, Lagarde 2013) and the fines banked on their uphill side, a finer, browner skin with a little
+	// grit, so a stone reads as sitting in the ground. Edges broken by noise; none on bare rock faces.
+	c += R"(	if (rock_contact_rect.z > 0.0) {
+		vec2 kuv = (wp.xz - rock_contact_rect.xy) / rock_contact_rect.zw;
+		if (all(greaterThanEqual(kuv, vec2(0.0))) && all(lessThanEqual(kuv, vec2(1.0)))) {
+			vec2 k = textureLod(rock_contact_map, kuv, 0.0).rg;
+			float kn = tm_vn(wp * 3.1 + 17.0);
+			float soft = smoothstep(0.35, 0.75, wn.y);
+			float damp = smoothstep(0.0, 1.0, k.r * (0.75 + 0.5 * kn)) * soft;
+			float fines = smoothstep(0.15, 0.85, k.g * (0.7 + 0.6 * tm_vn(wp * 7.3 + 5.0))) * soft;
+			float grit = tm_vn(wp * 38.0 + 3.0);
+			vec3 fcol = albedo * vec3(0.82, 0.76, 0.66) * (grit > 0.74 ? 1.5 : (grit < 0.22 ? 0.65 : 1.0));
+			albedo = mix(albedo, fcol, fines);
+			albedo *= mix(1.0, 0.5, damp);
+			rough = mix(rough, rough * 0.75, damp);
+		}
+	}
+)";
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";

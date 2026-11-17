@@ -1278,6 +1278,22 @@ done when the surface is not a single texture (mesh decals, as in UE and HDRP).
   the stem.
 - LOD: a 2 cm part, kept at LOD 1 and dropped at LOD 2.
 
+**Round 2 (17 Nov, docs review).** The first cut read as a thin drawn boomerang.
+- The scar is now a knob: an oval dome about a fifth of its width high, with a dark pit at the
+  top and its foot tucked under the bark. Every mark is drawn for a limb at least 1.2 cm thick,
+  since smaller ones were lost in the bark texture.
+- Beech arms are 3.6 cm wide or more and darken to x0.45 down the middle. They fade softly
+  across their width and over the outer three quarters of their length.
+- Colour: the mark's body takes the colour under the scar, and its edges take the bark's own,
+  so no halo forms and the moss tint does not patch it.
+- Birch arms are 1.5x longer and broader.
+- Birch lenticels: each cell's dash can sit anywhere and is read from neighbouring cells too.
+  Lengths run from a few millimetres to a hand, thick and thin, and denser in bands up the
+  stem. A dash per cell at a jittered spot still read as a grid.
+- Not chevron faults: the strand under the bench chevron is a beech crust-lichen rim (it goes
+  with `lichen_cover` 0). The vertical line on the shaded side is the sun's terminator on the
+  stem; it moves with the sun azimuth.
+
 **Cost.** Forest beech: +10.7k triangles (+0.7%), about +70 ms to generate. Forest birch: +9.5k
 triangles. Open-grown trees keep their low limbs and gain few or none.
 
