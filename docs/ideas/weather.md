@@ -824,3 +824,12 @@ green, sliding with the drift between bakes. One read per step, so 48 steps unde
 Where they read (weather bench `--view=shafts --sun-up=D`): looking toward a sun 20 to 35 degrees up behind
 broken cumulus (cover about 0.45) with the aerosol haze on; strongest with gaps near the sun. Under 12
 degrees the deck is too thick along the sun's path and the air under it is mostly in shadow.
+Round 3 (17 Nov, docs: shafts too weak). The froxels lit the haze under a cloud with the projector's value,
+which is the cloud's diffuse transmission (1 / (1 + 3/4 (1 - g) tau), about 0.3 under a thick cumulus) as if
+it were the sun's beam, with the forward phase peak: the air in the cloud's shadow stayed a third as bright as
+the lit air. The cloud map now carries alpha 254 as a mark, and the froxels take the beam exp(-tau) back out
+of it for the phase-weighted sun term, the rest scattered evenly (1 / 4 pi). Surfaces are unchanged.
+Spec for shots (weather bench `--view=shafts --sun-up=22 --cover=0.35 --haze-km=25 --sun-yaw=-5`): camera
+low, looking about 13 degrees up toward a sun 20 to 25 degrees up and within about 5 degrees of the view's
+centre, behind the edge of broken cumulus (cover 0.3 to 0.35); `haze_visibility` 25 km. Thicker cover or a
+sun under 15 degrees hides the sun behind the deck; thinner haze (40 km) keeps the shafts faint.

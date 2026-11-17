@@ -1,0 +1,1 @@
+- Weather: the volumetric fog lights the air under clouds with the sun's beam through them (exp(-tau)) and scatters the rest evenly, so cloud shafts keep their contrast; weather bench `--view=shafts` takes `--sun-up`, `--sun-yaw`, `--cover`, `--haze-km`.

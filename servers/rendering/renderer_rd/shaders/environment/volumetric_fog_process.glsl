@@ -83,7 +83,13 @@ layout(set = 0, binding = 22) uniform texture2D decal_atlas_srgb;
 // (scene_forward_lights_inc.glsl): projected along the light over a rect in its plane, white outside it.
 // The fog it lights then carries the shafts the projector's holes let through (cloud shadows into the
 // froxel fog, as Unreal's volumetric fog and HDRP's cloud cookie do).
-vec3 fog_directional_projector(uint p_index, vec3 p_pos) {
+// r_beam: the part of it that is the light's direct beam. A cloud shadow (WeatherMap3D marks its map with
+// alpha 254/255) stores the cloud's diffuse transmission, 1 / (1 + 3/4 (1 - g) tau) (two-stream, which the
+// surfaces take); the beam through the cloud is exp(-tau), the rest leaves the cloud spread over all
+// directions. The fog scatters the beam with its phase function and the rest evenly, so the air under a
+// cloud is not lit as by the sun itself and the shafts between keep their contrast.
+vec3 fog_directional_projector(uint p_index, vec3 p_pos, out vec3 r_beam) {
+	r_beam = vec3(1.0);
 	vec4 rect = directional_lights.data[p_index].projector_rect;
 	if (rect == vec4(0.0)) {
 		return vec3(1.0);
@@ -93,7 +99,13 @@ vec3 fog_directional_projector(uint p_index, vec3 p_pos) {
 		return vec3(1.0);
 	}
 	vec4 proj = textureLod(sampler2D(decal_atlas_srgb, linear_sampler), uv * rect.zw + rect.xy, 0.0);
-	return proj.rgb * proj.a;
+	vec3 t = proj.rgb * proj.a;
+	r_beam = t;
+	if (abs(proj.a * 255.0 - 254.0) < 0.25) {
+		vec3 tau = (1.0 / max(proj.rgb, vec3(1e-3)) - 1.0) / (0.75 * (1.0 - 0.85));
+		r_beam = exp(-tau) * proj.a;
+	}
+	return t;
 }
 
 #define MAX_VOXEL_GI_INSTANCES 8
@@ -426,11 +438,15 @@ void main() {
 		for (uint i = 0; i < params.directional_light_count; i++) {
 			if (directional_lights.data[i].volumetric_fog_energy > 0.001) {
 				vec3 shadow_attenuation = vec3(1.0);
-				vec3 projector = fog_directional_projector(i, view_pos);
+				vec3 beam;
+				vec3 projector = fog_directional_projector(i, view_pos, beam);
+				vec3 light_energy = directional_lights.data[i].color * directional_lights.data[i].energy * directional_lights.data[i].volumetric_fog_energy;
+				// What the clouds scatter on, evenly over directions (1 / 4 pi).
+				total_light += (projector - beam) * light_energy * 0.0795774715;
 
 				if (directional_lights.data[i].shadow_opacity > 0.001) {
 #ifdef USE_RAY_QUERY_SHADOWS
-					fog_shadows_add_directional(fog_shadows, projector * directional_lights.data[i].color * directional_lights.data[i].energy * directional_lights.data[i].volumetric_fog_energy * directional_lights.data[i].shadow_opacity, directional_lights.data[i].direction);
+					fog_shadows_add_directional(fog_shadows, beam * directional_lights.data[i].color * directional_lights.data[i].energy * directional_lights.data[i].volumetric_fog_energy * directional_lights.data[i].shadow_opacity, directional_lights.data[i].direction);
 					shadow_attenuation = vec3(1.0 - directional_lights.data[i].shadow_opacity);
 #else
 					float depth_z = -view_pos.z;
@@ -470,7 +486,7 @@ void main() {
 #endif
 				}
 
-				total_light += projector * shadow_attenuation * directional_lights.data[i].color * directional_lights.data[i].energy * henyey_greenstein(dot(safe_normalize(view_pos), safe_normalize(directional_lights.data[i].direction)), params.phase_g) * directional_lights.data[i].volumetric_fog_energy;
+				total_light += beam * shadow_attenuation * directional_lights.data[i].color * directional_lights.data[i].energy * henyey_greenstein(dot(safe_normalize(view_pos), safe_normalize(directional_lights.data[i].direction)), params.phase_g) * directional_lights.data[i].volumetric_fog_energy;
 			}
 		}
 

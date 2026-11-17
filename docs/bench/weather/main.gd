@@ -26,6 +26,8 @@ extends Node3D
 #   --view=shafts     broken cumulus from a rise toward a sun 20 degrees up, aerosol haze: shafts under the clouds
 #                     and across the sky (docs/ideas/weather.md, "Godrays", stages 1 and 2)
 #   --sun-up=D        shafts view: the sun D degrees up (default 20)
+#   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
+#   --cover=C --haze-km=V  shafts view: cloud cover (default 0.45) and the aerosol's dry visibility (default 40)
 #   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
 #                     (--strike-frames=K: K frames after the flash)
@@ -64,6 +66,9 @@ var only_haze := false
 var haze := ""
 var no_sky_shadow := false
 var sun_up := 20.0
+var sun_yaw := -13.0
+var cover := -1.0
+var haze_km := -1.0
 var strike_frames := 1
 var light_scale := 1.0
 var thunder_out := ""
@@ -89,6 +94,9 @@ func _ready() -> void:
 		elif a == "--frozen": frozen = true
 		elif a == "--no-sky-shadow": no_sky_shadow = true
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
+		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
+		elif a.begins_with("--cover="): cover = float(a.substr(8))
+		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a == "--test=lightning": test = true; only_lightning = true
@@ -995,8 +1003,9 @@ func _build_clouds() -> void:
 	if view == "clouds_wide":
 		sun.look_at_from_position(Vector3(-2500, 1500, 2500), Vector3.ZERO) # low, behind the camera
 	elif view == "shafts":
-		var sd := 2668.0 # ahead, a little left
-		sun.look_at_from_position(Vector3(-600, sd * tan(deg_to_rad(sun_up)), -2600), Vector3.ZERO)
+		var sd := 2668.0 # ahead
+		var yr := deg_to_rad(sun_yaw)
+		sun.look_at_from_position(Vector3(sin(yr) * sd, sd * tan(deg_to_rad(sun_up)), -cos(yr) * sd), Vector3.ZERO)
 
 	var cam := Camera3D.new()
 	cam.far = 60000.0
@@ -1026,6 +1035,10 @@ func _build_clouds() -> void:
 	weather.wind_speed = 6.0
 	weather.wind_direction = Vector2(0.6, -0.8)
 	weather.cloud_cover = 0.3 if view == "clouds_wide" else 0.45
+	if cover >= 0.0:
+		weather.cloud_cover = cover
+	if haze_km > 0.0:
+		weather.haze_visibility = haze_km
 	weather.cloud_type = 0.4 if view == "clouds_wide" else 0.6
 	weather.cloud_variation = 0.3
 	weather.transition_time = 0.0
