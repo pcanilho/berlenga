@@ -91,6 +91,9 @@ public:
 	void set_star_sky(const Basis &p_celestial, float p_energy_per_lux);
 	// The moon's angular diameter (radians), from its distance.
 	void set_moon_angular_size(float p_radians);
+	// The weather's aerosol haze past the froxel fog: extinction at the ground (1/m, 0 for none), its
+	// single-scatter albedo, scale height (m), and where it starts along the eye's rays (the froxels' reach, m).
+	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

@@ -74,6 +74,9 @@ group_uniforms atmosphere; // The scattering atmosphere (atmosphere_model SCATTE
 uniform int atmo_steps : hint_range(8, 64) = 32;
 uniform int atmo_radiance_steps : hint_range(4, 32) = 12;
 uniform int atmo_cloud_air_steps : hint_range(4, 32) = 12; // the air in front of the clouds
+// Steps through the air under the cloud tops, each reading the clouds' shadow: shafts across the sky
+// (0: no cloud shadow in the air). Half as many for the air in front of the clouds; none in the radiance map.
+uniform int atmo_cloud_shadow_steps : hint_range(0, 64) = 24;
 uniform bool atmo_driven = false;
 uniform vec3 atmo_sun_direction = vec3(0.0, 1.0, 0.0);
 uniform vec3 atmo_sun_irradiance = vec3(0.0); // above the air, in light energy units
@@ -440,7 +443,7 @@ void sky() {
 		// The air alone: smooth, so a quarter of the resolution carries it (Hillaire's sky-view table
 		// is coarser still); its transmittance in alpha for what lies past it.
 		vec3 t_view;
-		vec3 air = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, 1e12, AT_CUBEMAP_PASS ? atmo_radiance_steps : atmo_steps, 0.3, t_view).rgb;
+		vec3 air = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, 1e12, AT_CUBEMAP_PASS ? atmo_radiance_steps : atmo_steps, 0.3, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, t_view).rgb;
 		if (atmo_far_water > 0.0 && atmo_hits_ground(r_cam, EYEDIR.y)) {
 			// Open water past the scene: the sky mirrored at the angle the ray meets the curved sea, by
 			// Fresnel (Schlick, water), seen through the air in front (Bruneton 2010 lights an ocean so).
@@ -450,7 +453,7 @@ void sky() {
 			vec2 hz = length(EYEDIR.xz) > 1e-5 ? normalize(EYEDIR.xz) : vec2(1.0, 0.0);
 			vec3 rm = vec3(hz.x * sqrt(1.0 - c * c), c, hz.y * sqrt(1.0 - c * c));
 			vec3 t_m;
-			vec3 mirrored = atmo_scatter(1.0, rm, l0, e0, l1, e1, 1e12, 8, 0.5, t_m).rgb;
+			vec3 mirrored = atmo_scatter(1.0, rm, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, t_m).rgb;
 			float fresnel = 0.02 + 0.98 * pow(1.0 - c, 5.0);
 			air += t_view * atmo_far_water * fresnel * mirrored;
 		}
@@ -480,7 +483,7 @@ void sky() {
 		float r_c = atmo_radii.x + cloud_base_height;
 		vec3 sun_radiance = e0 * atmo_light_transmittance(r_c, l0.y) * cloud_brightness;
 		vec3 t_up;
-		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, t_up).rgb * cloud_brightness;
+		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, t_up).rgb * cloud_brightness;
 		if (airglow_enabled && atmo_driven) {
 			// The airglow over the clouds lights their tops (its mean over the sky, about twice the zenith's).
 			ambient_top += vec3(0.6, 1.15, 0.75) * (2.0 * airglow_luminance * star_energy_per_lux * cloud_brightness);
@@ -502,7 +505,7 @@ void sky() {
 			// Aerial perspective (Hillaire 2020): the clouds seen through the air in front of them, which
 			// also scatters light toward the eye; what the clouds let through sees the whole sky behind.
 			vec3 t_front;
-			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, t_front).rgb;
+			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps / 2, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, t_front).rgb;
 			COLOR = ((1.0 - clouds.a) * front + t_front * clouds.rgb) * exposure + air.rgb * clouds.a;
 		} else {
 			COLOR = air.rgb;
@@ -515,13 +518,13 @@ void sky() {
 		float half_size = 0.5 * size0 * sun_disk_scale;
 		float sundisk = smoothstep(cos(half_size * 2.0), cos(half_size), c0);
 		if (sundisk > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
-			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * sundisk;
+			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * atmo_aerosol_view(r_cam, EYEDIR) * sundisk;
 		}
 		// The moon and the stars through the air, behind the clouds (the stars not in the radiance map: they
 		// light nothing).
 		if (atmo_driven && !atmo_hits_ground(r_cam, EYEDIR.y)) {
 			float pixel_angle = max(max(length(dFdx(EYEDIR)), length(dFdy(EYEDIR))), 1e-5);
-			vec3 t_top = atmo_transmittance_to_top(r_cam, EYEDIR.y);
+			vec3 t_top = atmo_transmittance_to_top(r_cam, EYEDIR.y) * atmo_aerosol_view(r_cam, EYEDIR);
 			float cover = 0.0;
 			if (moon_disc_enabled && dot(e1, vec3(1.0)) > 0.0) {
 				disc += moon_radiance(EYEDIR, l0, l1, e1, pixel_angle, cover) * t_top;
@@ -810,6 +813,11 @@ void WeatherSkyMaterial::set_moon_angular_size(float p_radians) {
 	RS::get_singleton()->material_set_param(get_rid(), "atmo_moon_angular_size", p_radians);
 }
 
+void WeatherSkyMaterial::set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from) {
+	const float e = MAX(p_extinction, 0.0f);
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_aerosol", Vector4(e * CLAMP(p_albedo, 0.0f, 1.0f), e, MAX(p_height, 10.0f), MAX(p_from, 0.0f)));
+}
+
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {
 	if (atmosphere_model == p_model) {
 		return;
@@ -852,6 +860,7 @@ void WeatherSkyMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_atmosphere_model"), &WeatherSkyMaterial::get_atmosphere_model);
 	ClassDB::bind_method(D_METHOD("set_star_sky", "celestial", "energy_per_lux"), &WeatherSkyMaterial::set_star_sky);
 	ClassDB::bind_method(D_METHOD("set_moon_angular_size", "radians"), &WeatherSkyMaterial::set_moon_angular_size);
+	ClassDB::bind_method(D_METHOD("set_aerosol", "extinction", "albedo", "height", "from"), &WeatherSkyMaterial::set_aerosol);
 	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "atmosphere_model", PROPERTY_HINT_ENUM, "Physical Sky,Scattering"), "set_atmosphere_model", "get_atmosphere_model");
 	BIND_ENUM_CONSTANT(ATMOSPHERE_PHYSICAL_SKY);
