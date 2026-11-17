@@ -401,7 +401,7 @@ with RULE_COAST_EXPOSURE, and gorse scrub where soil is deeper. Calluna's growth
 (pioneer, building, mature, degenerate; Watt 1947, Gimingham 1972) give a heath's patchwork of
 bush sizes and gaps: a per-patch age drawn from the patch noise.
 
-Mediterranean scrub, garrigue and maquis (researching 17 Nov). Evergreen, aromatic, sclerophyll
+Mediterranean scrub, garrigue and maquis (Paulo picked it second, 17 Nov; dwarf shrubs and sets built 17 Nov in plant_scrub.cpp, the tall maquis shrubs come from TreeGenerator). Evergreen, aromatic, sclerophyll
 shrubs on summer-dry ground, from the Algarve and the Tagus hills round the basin (Blondel et
 al. 2010, "The Mediterranean Region: Biological Diversity in Space and Time"; Flora iberica,
 Castroviejo et al.; Rivas-Martinez 2011 for the bioclimate belts). Maquis is the tall, closed
@@ -428,6 +428,16 @@ mild winters (RULE_JANUARY_TEMPERATURE over about 2 C); maquis where the soil is
 on thin soil and rock (RULE_SOIL_DEPTH, RULE_ROCK), sunny slopes first (RULE_SUNLIGHT); bare
 ground between the bushes is part of the look. Summer dormancy: the cistus leaves fold and turn
 grey-brown in July and August (summer semi-deciduous), a season the phenology must carry.
+Built: `make_scrub(SCRUB_GARRIGUE | SCRUB_MAQUIS)` with rosemary, French lavender, thyme and
+sage-leaved rockrose, real leaves on branched woody frames (about 20 to 55k triangles a plant);
+rules: January over 3 C, rain 250 to 1,100 mm, aridity 0.2 to 0.75, shade under 0.35, wetness
+under 8; garrigue on soil under 0.45 m with rock, maquis on soil over 0.35 m; thyme and lavender on
+the sunniest ground. The rockrose's leaves fold, shrink, grey and partly fall from early July to
+late September (by day of year). `apply_scrub_rules(species, stand)` gives TreeGenerator's gum
+rockrose, kermes oak, lentisk and fan palm the same rules. Flowering windows are in degree days of
+a mild coastal year (rosemary 0 to 900, lavender 300 to 1,300, thyme 600 to 1,500, rockrose 550
+to 1,100); rosemary's autumn flowers before the year turns are not modelled (forcing restarts
+on 1 January).
 
 Worn paths and trampling (researching 17 Nov). Where people and animals walk, plants thin out,
 get shorter and flatter, and the walked line turns to bare, compacted soil; the edges keep the

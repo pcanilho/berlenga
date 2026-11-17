@@ -38,6 +38,8 @@
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
+class PlantSpecies;
+
 // Small plants for ground cover (docs/ideas/plant-generator.md), after Prusinkiewicz et al.,
 // "The use of positional information in the modeling of plants" (2001): organs placed along
 // axes by phyllotaxis, their size, angle and bend functions of their position; leaves, petals
@@ -147,6 +149,11 @@ public:
 		PRESET_BELL_HEATHER,
 		PRESET_CROSS_LEAVED_HEATH,
 		PRESET_CROWBERRY,
+		// Mediterranean scrub dwarf shrubs (plant_scrub.cpp).
+		PRESET_ROSEMARY,
+		PRESET_FRENCH_LAVENDER,
+		PRESET_THYME,
+		PRESET_SAGE_ROCKROSE,
 		PRESET_MAX,
 	};
 
@@ -336,6 +343,11 @@ private:
 	void _build_bell_heather();
 	void _build_cross_leaved_heath();
 	void _build_crowberry();
+	// Mediterranean scrub (plant_scrub.cpp).
+	void _build_rosemary();
+	void _build_french_lavender();
+	void _build_thyme();
+	void _build_sage_rockrose();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -563,6 +575,15 @@ public:
 		HEATH_MAX,
 	};
 	static TypedArray<Resource> make_heath(HeathStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Mediterranean scrub on summer-dry, mild ground (plant_scrub.cpp).
+	enum ScrubStand {
+		SCRUB_GARRIGUE, // Thin soil and rock: open rosemary, thyme and rockrose with bare ground between.
+		SCRUB_MAQUIS, // Deeper soil: closed rockrose and lavender under the tall shrubs.
+		SCRUB_MAX,
+	};
+	static TypedArray<Resource> make_scrub(ScrubStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// The scrub's climate and soil rules on any species (TreeGenerator's woody scrub shrubs).
+	static void apply_scrub_rules(const Ref<PlantSpecies> &p_species, ScrubStand p_stand);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -575,3 +596,4 @@ VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::HeathStand);
+VARIANT_ENUM_CAST(PlantGenerator::ScrubStand);

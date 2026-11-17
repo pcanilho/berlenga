@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -350,6 +350,7 @@ func _checks() -> void:
 	_alpine_checks()
 	_saltmarsh_checks()
 	_heath_checks()
+	_scrub_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -598,6 +599,48 @@ func _heath_checks() -> void:
 			else:
 				ok = ok and s.coast_exposure_range.x >= 0.39 and s.tide_height_range.x >= 5.0
 		_check("heath set %d: oceanic, open, below the alpine belt, on its own water or coast band" % st, ok, set.size())
+
+# Mediterranean scrub dwarf shrubs (docs/ideas/vegetation.md): sizes from Flora iberica in spring
+# and in summer drought, the rockrose's summer-folded leaves, the garrigue and maquis sets.
+func _scrub_checks() -> void:
+	var P := PlantGenerator
+	var sizes := {P.PRESET_ROSEMARY: [0.25, 1.1, 1.3], P.PRESET_FRENCH_LAVENDER: [0.15, 0.7, 0.9], P.PRESET_THYME: [0.05, 0.3, 0.5], P.PRESET_SAGE_ROCKROSE: [0.1, 0.6, 1.1]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for season in [{"forcing": 700.0, "day_of_year": 110, "senescence": 0.0}, {"forcing": 2200.0, "day_of_year": 215, "senescence": 0.0}]:
+			g.season = season
+			for sd in 3:
+				g.seed = sd
+				var m := g.generate()
+				var bb := m.get_aabb()
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 60000 and bb.position.y > -0.05
+				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.0f to %.0f cm tall, under %.0f cm across, under 60k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	# Lavender in April carries its bracts (petal surface); in August only leaves and dead heads.
+	var lv := PlantGenerator.new()
+	lv.preset = P.PRESET_FRENCH_LAVENDER
+	lv.season = {"forcing": 800.0, "day_of_year": 110, "senescence": 0.0}
+	var spring := _surface_tris(lv.generate(), "petal")
+	lv.season = {"forcing": 2400.0, "day_of_year": 220, "senescence": 0.0}
+	var august := _surface_tris(lv.generate(), "petal")
+	_check("french_lavender: purple bracts on the spikes in April, gone by August", spring > 200 and august == 0, [spring, august])
+	for st in P.SCRUB_MAX:
+		var set := P.make_scrub(st, 1, false)
+		var ok := set.size() >= 3
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("scrub") and s.january_temperature_range.x >= 2.0 and s.aridity_range.y <= 0.8 and s.precipitation_range.y <= 1200.0
+			var sd: Vector2 = s.soil_depth_range
+			ok = ok and (sd.y <= 0.5 if st == P.SCRUB_GARRIGUE else sd.x >= 0.3)
+		_check("scrub set %d: mild, summer-dry, garrigue on thin soil and maquis on deep" % st, ok, set.size())
+	# TreeGenerator's woody shrubs take the same rules.
+	var extra := PlantSpecies.new()
+	P.apply_scrub_rules(extra, P.SCRUB_MAQUIS)
+	_check("apply_scrub_rules: maquis rules on another species", extra.soil_depth_range.x >= 0.3 and extra.has_meta("scrub"), extra.soil_depth_range)
 
 func _alpine_checks() -> void:
 	var P := PlantGenerator

@@ -485,6 +485,20 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_CROSS_LEAVED_HEATH:
 			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September.
 			return true;
+		// Mediterranean scrub: windows in the degree days of a mild coastal year (a January near
+		// 11 C runs some 6 a day: about 350 by March, 900 by May, 1,700 by July).
+		case PRESET_ROSEMARY:
+			r_phenology = { 0.0f, 900.0f, 200.0f, false }; // Winter to spring, on and off.
+			return true;
+		case PRESET_FRENCH_LAVENDER:
+			r_phenology = { 300.0f, 1300.0f, 600.0f, true }; // March to June; the bracts fade on the heads.
+			return true;
+		case PRESET_THYME:
+			r_phenology = { 600.0f, 1500.0f, 400.0f, true }; // April to June.
+			return true;
+		case PRESET_SAGE_ROCKROSE:
+			r_phenology = { 550.0f, 1100.0f, -1.0f, true }; // April and May; the capsules stand.
+			return true;
 		default:
 			return false;
 	}
@@ -3859,6 +3873,23 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.venation = VENATION_PARALLEL;
 			t.parallel_veins = 3;
 			t.base_tint = Color(0.6f, 0.5f, 0.55f, 0.35f); // Darker at the mouth's lobes and the calyx.
+		} else if (preset == PRESET_ROSEMARY || preset == PRESET_THYME) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.base_tint = Color(0.95f, 0.95f, 1.0f, 0.3f); // Paler throat; rosemary's dark spots read as the vein lines.
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+		} else if (preset == PRESET_FRENCH_LAVENDER) {
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.55f;
+			t.venation = VENATION_PARALLEL; // The bracts' net of darker veins.
+			t.parallel_veins = 5;
+			t.base_tint = Color(0.45f, 0.2f, 0.5f, 0.3f);
+		} else if (preset == PRESET_SAGE_ROCKROSE) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.1f;
+			t.venation = VENATION_PALMATE; // Crumpled silk, creased from the base.
+			t.base_tint = Color(0.95f, 0.8f, 0.2f, 0.45f); // The yellow spot at each petal's base.
 		} else if (preset == PRESET_HORNED_POPPY) {
 			l.shape = LEAF_ROUND;
 			t.aspect = 1.0f;
@@ -4088,6 +4119,32 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.vein = leaf_color.lerp(Color(0.8f, 0.82f, 0.75f), 0.35f); // The pale rolled-under margin line.
 			t.yellowing = 0.1f;
 			t.spots = 0.05f;
+			break;
+		case PRESET_ROSEMARY:
+		case PRESET_FRENCH_LAVENDER:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.2f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.vein = leaf_color.lerp(Color(0.85f, 0.87f, 0.82f), 0.3f); // The rolled, white-felted margin.
+			t.yellowing = 0.08f;
+			t.spots = 0.05f;
+			break;
+		case PRESET_THYME:
+			l.shape = LEAF_LANCEOLATE;
+			t.aspect = 0.4f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.1f;
+			t.spots = 0.1f; // The oil glands.
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.58f;
+			t.venation = VENATION_PINNATE; // The sunken net of the sage leaf.
+			t.vein = leaf_color.lerp(Color(0.12f, 0.14f, 0.08f), 0.4f);
+			t.yellowing = 0.15f;
+			t.spots = 0.15f;
 			break;
 		case PRESET_HEATHER:
 			l.shape = LEAF_LINEAR;
@@ -5550,6 +5607,30 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.3f, 0.16f, 0.1f); // Red-brown.
 			centre_color = Color(0.03f, 0.03f, 0.04f); // Black berries.
 			break;
+		case PRESET_ROSEMARY:
+			leaf_color = Color(0.13f, 0.2f, 0.1f); // Dark, leathery.
+			stem_color = Color(0.32f, 0.26f, 0.2f); // Grey-brown flaking bark.
+			petal_color = Color(0.62f, 0.68f, 0.86f); // Pale blue.
+			centre_color = Color(0.2f, 0.24f, 0.16f); // The green-purple calyx.
+			break;
+		case PRESET_FRENCH_LAVENDER:
+			leaf_color = Color(0.3f, 0.36f, 0.27f); // Grey-felted.
+			stem_color = Color(0.33f, 0.3f, 0.24f);
+			petal_color = Color(0.48f, 0.22f, 0.52f); // The purple bracts.
+			centre_color = Color(0.16f, 0.07f, 0.2f); // The dark purple spike.
+			break;
+		case PRESET_THYME:
+			leaf_color = Color(0.22f, 0.28f, 0.17f); // Grey-green.
+			stem_color = Color(0.3f, 0.2f, 0.15f); // Wiry, red-brown.
+			petal_color = Color(0.8f, 0.62f, 0.78f); // Pale pink-mauve.
+			centre_color = Color(0.32f, 0.18f, 0.24f); // The purplish calyces.
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			leaf_color = Color(0.25f, 0.3f, 0.18f); // Grey-green, rough.
+			stem_color = Color(0.32f, 0.24f, 0.17f);
+			petal_color = Color(0.93f, 0.92f, 0.88f); // White.
+			centre_color = Color(0.85f, 0.65f, 0.08f); // The yellow stamens.
+			break;
 		case PRESET_HEATHER:
 			leaf_color = Color(0.13f, 0.22f, 0.07f); // Dark, dull green.
 			stem_color = Color(0.25f, 0.18f, 0.12f);
@@ -6000,6 +6081,18 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_CROWBERRY:
 			_build_crowberry();
 			break;
+		case PRESET_ROSEMARY:
+			_build_rosemary();
+			break;
+		case PRESET_FRENCH_LAVENDER:
+			_build_french_lavender();
+			break;
+		case PRESET_THYME:
+			_build_thyme();
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			_build_sage_rockrose();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -6076,6 +6169,14 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_BELL_HEATHER:
 		case PRESET_CROWBERRY:
 			leaf_rough = 0.35f; // Glossy needles.
+			break;
+		case PRESET_ROSEMARY:
+			leaf_rough = 0.45f; // Leathery, a dull sheen above.
+			break;
+		case PRESET_FRENCH_LAVENDER:
+		case PRESET_THYME:
+		case PRESET_SAGE_ROCKROSE:
+			leaf_rough = 0.85f; // Felted or rough with hairs.
 			break;
 		default:
 			break;
@@ -6991,6 +7092,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_BELL_HEATHER);
 	BIND_ENUM_CONSTANT(PRESET_CROSS_LEAVED_HEATH);
 	BIND_ENUM_CONSTANT(PRESET_CROWBERRY);
+	BIND_ENUM_CONSTANT(PRESET_ROSEMARY);
+	BIND_ENUM_CONSTANT(PRESET_FRENCH_LAVENDER);
+	BIND_ENUM_CONSTANT(PRESET_THYME);
+	BIND_ENUM_CONSTANT(PRESET_SAGE_ROCKROSE);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -6998,6 +7103,8 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("apply_scrub_rules", "species", "stand"), &PlantGenerator::apply_scrub_rules);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
@@ -7047,5 +7154,8 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(HEATH_WET);
 	BIND_ENUM_CONSTANT(HEATH_MARITIME);
 	BIND_ENUM_CONSTANT(HEATH_MAX);
+	BIND_ENUM_CONSTANT(SCRUB_GARRIGUE);
+	BIND_ENUM_CONSTANT(SCRUB_MAQUIS);
+	BIND_ENUM_CONSTANT(SCRUB_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

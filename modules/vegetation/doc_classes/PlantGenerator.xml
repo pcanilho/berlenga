@@ -119,6 +119,16 @@
 				Returns the plants of a salt marsh zone or a shingle backshore as [PlantSpecies], zoned by height above the sea ([constant PlantSpecies.RULE_TIDE_HEIGHT], metres for a mesotidal coast; Adam 1990, Rodwell 2000): glasswort and cord-grass on the pioneer mud (0 to 0.7 m), sea purslane, sea aster and sea lavender in a saltmarsh-grass sward on the low to mid marsh (0.5 to 1.3 m), thrift, sea lavender and sea rush in a fescue sward on the high marsh (1.1 to 1.9 m). The marsh keeps to sheltered coasts ([constant PlantSpecies.RULE_COAST_EXPOSURE] under 0.3) on ground under 3 degrees, beach or not, since wave energy decides where mud settles. Shingle plants (sea kale, sea campion, yellow horned-poppy and thrift) grow on the beach's backshore ([constant PlantSpecies.RULE_BEACH]) above the highest tides (1.8 to 4 m). The sets need a [member TerrainDataMap3D.geology_source] with a sea, and are not placed without one. Glasswort reddens from late August. They do not colour the far ground. Each species has the meta [code]saltmarsh[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and colour.
 			</description>
 		</method>
+		<method name="make_scrub" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.ScrubStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the low aromatic shrubs of a Mediterranean scrub zone as [PlantSpecies] (Blondel et al. 2010; Flora iberica). Scrub is summer-dry and mild in winter: January means over about 3 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), 250 to 1,100 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), aridity 0.2 to 0.75 ([constant PlantSpecies.RULE_ARIDITY]), out of the shade of crowns and off wet ground. Garrigue (open rosemary, thyme cushions and sage-leaved rockrose with bare stony ground between, and dry grass) keeps to thin soil ([constant PlantSpecies.RULE_SOIL_DEPTH] under 0.45 m) and rock; maquis (closed sage-leaved rockrose and French lavender, a little rosemary) to deeper soil (over 0.35 m), under the tall shrubs added with [method apply_scrub_rules]. Thyme and lavender take the sunniest ground. Each species has the meta [code]scrub[/code] set to its stand. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the rockrose's summer drought.
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -151,6 +161,14 @@
 			<return type="void" />
 			<description>
 				Sets the colours to the [member preset]'s natural ones.
+			</description>
+		</method>
+		<method name="apply_scrub_rules" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="species" type="PlantSpecies" />
+			<param index="1" name="stand" type="int" enum="PlantGenerator.ScrubStand" />
+			<description>
+				Gives [param species] the climate and soil rules of a Mediterranean scrub stand, as [method make_scrub] does for its own plants, and sets its meta [code]scrub[/code] to the stand. Use it to place other scrub shrubs, such as a [code]TreeGenerator[/code] shrub species (gum rockrose, kermes oak, lentisk, dwarf fan palm), in the same garrigue or maquis.
 			</description>
 		</method>
 		<method name="generate">
@@ -476,7 +494,19 @@
 		<constant name="PRESET_CROWBERRY" value="78" enum="Preset">
 			Crowberry ([i]Empetrum nigrum[/i]): prostrate mats of trailing stems crowded with glossy, rolled needle leaves; black berries from August to October.
 		</constant>
-		<constant name="PRESET_MAX" value="79" enum="Preset">
+		<constant name="PRESET_ROSEMARY" value="79" enum="Preset">
+			Rosemary ([i]Salvia rosmarinus[/i]): an erect, dense evergreen shrub of woody stems branching into leafy shoots crowded with dark, rolled, linear leaves; pale blue two-lipped flowers in the leaf axils from winter to spring.
+		</constant>
+		<constant name="PRESET_FRENCH_LAVENDER" value="80" enum="Preset">
+			French lavender ([i]Lavandula stoechas[/i]): a compact, grey-leaved bush of upright leafy shoots, each ending in a dense dark purple spike crowned by purple bracts, March to June.
+		</constant>
+		<constant name="PRESET_THYME" value="81" enum="Preset">
+			Thyme ([i]Thymus[/i]): a low cushion of wiry woody stems and small grey-green leaves, with rounded heads of pale pink flowers, April to June.
+		</constant>
+		<constant name="PRESET_SAGE_ROCKROSE" value="82" enum="Preset">
+			Sage-leaved rockrose ([i]Cistus salviifolius[/i]): a low, sprawling shrub of wrinkled grey-green leaves and white, crumpled-silk flowers with yellow stamens on long stalks, April and May; woody capsules after. In the summer drought the leaves fold, grey and partly fall.
+		</constant>
+		<constant name="PRESET_MAX" value="83" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -598,6 +628,15 @@
 		</constant>
 		<constant name="HEATH_MAX" value="3" enum="HeathStand">
 			Number of heath stand types.
+		</constant>
+		<constant name="SCRUB_GARRIGUE" value="0" enum="ScrubStand">
+			Garrigue on thin soil and rock: open rosemary, thyme and sage-leaved rockrose with bare ground between.
+		</constant>
+		<constant name="SCRUB_MAQUIS" value="1" enum="ScrubStand">
+			Maquis on deeper soil: closed sage-leaved rockrose and French lavender under the tall shrubs.
+		</constant>
+		<constant name="SCRUB_MAX" value="2" enum="ScrubStand">
+			Number of scrub stand types.
 		</constant>
 	</constants>
 </class>
