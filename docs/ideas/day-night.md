@@ -279,6 +279,18 @@ Orion reads. Clouds near the horizon: a grazing path through the deck is up to 2
 holes showed dithered, stepped edges (worst at night under high exposure); the step count now grows with the
 root of the path past 5 km, up to three times (about 9% on the sky-only bench).
 
+**Built (17 Nov): airglow.** The upper air's own light, 1.2e-4 cd/m2 at the zenith (about 22 V magnitudes a
+square arcsecond, the airglow share of the 2e-4 natural night sky; Leinert et al. 1998), brightening to the
+horizon by the van Rhijn factor of a 90 km layer, seen through the air, green (oxygen's 557.7 nm line). It also
+lights the cloud tops, so a moonless overcast reads as dark grey-green shapes, not black holes. At an exposure
+where it shows (about 2e7 in the bench), stars saturate with glare, as in a long-exposure photograph. The Milky
+Way waits for its panorama in Gitea LFS (ESO, CC BY 4.0, galactic coordinates, rotated to the equator).
+
+**Step 4 notes (next).** The eye at night: scotopic vision loses colour and shifts toward blue (Purkinje); Jensen
+et al. 2001 and Thompson, Shirley and Ferwerda 2002 tone-map night scenes by blending toward a blue-grey scotopic
+luminance below about 0.01 cd/m2. Exposure from the clock's light levels, pre-exposed in every pass (lights and
+emission, not only the sky), since moonlit scenes in light energy units also fall below half floats.
+
 **Pre-exposure.** A night sky in light energy units (1e-5 per lux) is below half floats: the quarter and half
 resolution passes stored the air in visible bands and dropped every star fainter than about V 3. The sky's
 `exposure` now applies in each pass before the buffers (Frostbite's pre-exposure, Lagarde and de Rousiers 2014),

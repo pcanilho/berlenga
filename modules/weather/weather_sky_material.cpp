@@ -111,6 +111,11 @@ uniform vec3 lightning_color = vec3(0.82, 0.86, 1.0);
 uniform bool stars_enabled = true;
 uniform float star_brightness : hint_range(0, 16) = 1.0;
 uniform float star_glare : hint_range(0, 4) = 1.0;
+// Airglow: the upper air's own faint light (oxygen's green 557.7 nm line, OH bands), about 22 V magnitudes a
+// square arcsecond at the zenith of a dark site (1.2e-4 cd/m2 of the 2e-4 natural night sky), brightening toward
+// the horizon by the van Rhijn factor for a 90 km layer (Jensen et al. 2001; Leinert et al. 1998).
+uniform bool airglow_enabled = true;
+uniform float airglow_luminance : hint_range(0, 0.01) = 1.2e-4; // cd/m2 at the zenith
 // The moon's disc (Lommel-Seeliger, lit from the sun's direction: the phase and the terminator follow), earthshine
 // on its dark side; its angular diameter from SkyClock (by distance).
 uniform bool moon_disc_enabled = true;
@@ -442,6 +447,14 @@ void sky() {
 			float fresnel = 0.02 + 0.98 * pow(1.0 - c, 5.0);
 			air += t_view * atmo_far_water * fresnel * mirrored;
 		}
+		if (airglow_enabled && atmo_driven && star_energy_per_lux > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
+			// cd/m2 is lux per steradian: star_energy_per_lux turns it into radiance. Seen through the air.
+			float s = atmo_radii.x / (atmo_radii.x + 90000.0);
+			float sin_z2 = 1.0 - EYEDIR.y * EYEDIR.y;
+			float van_rhijn = inversesqrt(max(1.0 - s * s * sin_z2, 1e-4));
+			vec3 tint = vec3(0.6, 1.15, 0.75); // greenish, unit luminance
+			air += t_view * tint * (airglow_luminance * star_energy_per_lux * van_rhijn);
+		}
 		// Exposed here, ahead of the half-float buffers: a night sky's radiance in light energy units is
 		// below half floats' range (Frostbite's pre-exposure; Lagarde and de Rousiers 2014).
 		COLOR = air * exposure;
@@ -453,6 +466,10 @@ void sky() {
 		vec3 sun_radiance = e0 * atmo_light_transmittance(r_c, l0.y) * cloud_brightness;
 		vec3 t_up;
 		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, t_up).rgb * cloud_brightness;
+		if (airglow_enabled && atmo_driven) {
+			// The airglow over the clouds lights their tops (its mean over the sky, about twice the zenith's).
+			ambient_top += vec3(0.6, 1.15, 0.75) * (2.0 * airglow_luminance * star_energy_per_lux * cloud_brightness);
+		}
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(l0.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
 		float jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, 0.0);
 #ifdef CLOUD_REPROJECTION
