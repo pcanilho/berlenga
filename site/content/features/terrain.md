@@ -72,7 +72,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Moraines** (`moraine_age`, years, 0 = off): debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.
 - **Ice-worn rock** (`ice_worn_detail`): faces toward the old ice flow are smoothed, faces away are stepped, with striations.
 - **Cliff ledges** (`cliff_ledge_spacing`, `cliff_ledge_strength`): rock beds of uneven thickness step faces steeper than 40 degrees into ledges.
-- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks, with gravel and fines between them up close.
+- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks; up close, each is an angular stone standing in a bed of gravel and fines.
 - **Fallen blocks** (`get_boulders(rect, density)`): blocks shed by cliffs rest below them, the largest furthest out.
 
 ## Rivers, coasts and lakes
