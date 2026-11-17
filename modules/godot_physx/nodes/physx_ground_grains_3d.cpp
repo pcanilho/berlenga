@@ -123,7 +123,7 @@ void vertex() {
 	vec3 cw = (MODEL_MATRIX * vec4(c, 1.0)).xyz;
 	float dist = length(cw - CAMERA_POSITION_WORLD);
 	float pixel = 2.0 * dist / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-	float k = clamp(min_pixels * 0.5 * pixel / max(UV2.y * scale, 1e-6), 1.0, 6.0);
+	float k = clamp(min_pixels * 0.5 * pixel / max(UV2.y * scale, 1e-6), 1.0, 3.0);
 	VERTEX = c + (VERTEX - c) * k;
 }
 void fragment() {
