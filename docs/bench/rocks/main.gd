@@ -16,6 +16,7 @@ extends Node3D
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
+#   --no-ground-contact   no damp ring or banked fines on the ground round the stones (for a before frame)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
@@ -330,6 +331,7 @@ func _world() -> void:
 		rocks.ground_material = tm # the stones' feet blend into these layers
 		# On by default; --no-ground-blend for an A/B.
 		rocks.ground_blend = not args.has("no-ground-blend")
+		rocks.ground_contact = not args.has("no-ground-contact")
 		# Live falls serve only the rockfall runs (--live, the test turns them on itself): off here so frames stay still.
 		rocks.live_rockfall = false
 		rocks.mineral_glints = not args.has("no-glints")
@@ -1192,6 +1194,19 @@ func _test() -> void:
 		var want_some := true
 		check(not want_some or st.size() > 0, "%s: %d stones over the world in %d ms" % [LAYERS[l], st.size(), Time.get_ticks_msec() - t0])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])
+	# Ground contact: the damp ring and banked fines round the stones, drawn into the map the terrain reads.
+	rocks.ground_contact = true
+	var ct0 := Time.get_ticks_msec()
+	rocks.set_ground_contact(true)
+	var ctex: ImageTexture = rocks.get_contact_texture()
+	var damp_n := 0
+	if ctex:
+		var ci: Image = ctex.get_image()
+		for y in range(0, ci.get_height(), 4):
+			for x in range(0, ci.get_width(), 4):
+				if ci.get_pixel(x, y).r > 0.1:
+					damp_n += 1
+	check(ctex != null and damp_n > 0 and rocks.get_last_contact_usec() > 0, "ground contact: map drawn in %d ms (%.1f ms on the worker), %d damp samples" % [Time.get_ticks_msec() - ct0, rocks.get_last_contact_usec() / 1000.0, damp_n])
 	# Landforms: hoodoo rows on the steep soft beds, pavement on flat bare limestone; each kind somewhere.
 	var kinds := {}
 	for s in rocks.get_stones(RockField3D.LAYER_LANDFORM, wr):
@@ -1485,6 +1500,14 @@ func _render_later() -> void:
 			t0 = Time.get_ticks_usec()
 		await RenderingServer.frame_post_draw
 	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
+	if rocks and rocks.ground_contact and rocks.get_contact_texture():
+		var ci: Image = rocks.get_contact_texture().get_image()
+		var lit := 0
+		for y in range(0, ci.get_height(), 8):
+			for x in range(0, ci.get_width(), 8):
+				if ci.get_pixel(x, y).r > 0.1:
+					lit += 1
+		print("ground contact: map drawn in %.1f ms, %.1f%% of the samples damp" % [rocks.get_last_contact_usec() / 1000.0, 100.0 * lit / float((ci.get_height() / 8) * (ci.get_width() / 8))])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

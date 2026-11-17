@@ -39,6 +39,7 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/multimesh.h"
+#include "scene/resources/image_texture.h"
 
 class TerrainGenerator3D;
 class MultiMeshInstance3D;
@@ -226,6 +227,28 @@ private:
 		uint64_t key = 0;
 	};
 	bool live_rockfall = true;
+	// The ground side of the contact (docs/ideas/rocks.md, "Stone and ground contact"): a global mask around the
+	// target the terrain material reads, R the damp ring round each stone's foot, G fines banked on its uphill side.
+	bool ground_contact = true;
+	Ref<ImageTexture> contact_texture;
+	Vector2 contact_origin = Vector2(1e30, 1e30);
+	bool contact_dirty = true;
+	uint64_t contact_usec = 0;
+	// The stamping runs on a worker (main thread: deciding, the obstacle list and the upload).
+	struct ContactJob {
+		Vector2 origin;
+		LocalVector<Vector4> obstacles; // x, z, footprint radius, slope
+		LocalVector<Vector2> uphill;
+		Vector<uint8_t> data;
+		uint64_t start = 0;
+		uint64_t end = 0;
+	};
+	ContactJob *contact_job = nullptr;
+	WorkerThreadPool::TaskID contact_task = WorkerThreadPool::INVALID_TASK_ID;
+	static void _contact_job(void *p_job);
+	void _finish_contact(bool p_wait);
+	void _update_contact(bool p_force);
+	void _clear_contact();
 	real_t rockfall_rate = 4.0; // falls per game hour in rockfall_radius
 	real_t rockfall_radius = 150.0;
 	int rockfall_max = 16;
@@ -307,6 +330,13 @@ public:
 	void set_cave_mouths(bool p_enabled);
 	bool is_cave_mouths() const { return cave_mouths; }
 	void set_ground_blend(bool p_enabled);
+	void set_ground_contact(bool p_enabled);
+	bool is_ground_contact_enabled() const { return ground_contact; }
+	// The contact map's side (m) and resolution (texels a side).
+	static constexpr real_t CONTACT_SIZE = 64.0;
+	static constexpr int CONTACT_RES = 1024;
+	uint64_t get_last_contact_usec() const { return contact_usec; }
+	Ref<ImageTexture> get_contact_texture() const { return contact_texture; }
 	bool is_ground_blend() const { return ground_blend; }
 	void set_ground_blend_height(real_t p_height);
 	real_t get_ground_blend_height() const { return ground_blend_height; }
