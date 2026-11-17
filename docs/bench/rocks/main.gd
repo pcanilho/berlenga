@@ -20,6 +20,8 @@ extends Node3D
 #   --fall-dust           with --fall: keep drawing while it falls, so the Flow rockfall dust is in the shot (run
 #                         godot with --fixed-fps 60: Flow steps once a drawn frame); --no-dust
 #                         turns the field's rockfall_dust off
+#   --cave-view=stream    with --caves --cave-mesh: down the channel of the cave stream nearest the entrance
+#                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
@@ -596,6 +598,7 @@ func _caves(cam: Camera3D) -> void:
 			var pos: Vector3 = e["position"]
 			net.rimstone_water = not args.has("no-pool-water")
 			net.sea_mist = not args.has("no-sea-mist")
+			net.cave_streams = not args.has("no-streams")
 			if args.has("mist-period"):
 				# The mist node is made on the network's first frames: set its swell period once it is there.
 				var mp := float(args["mist-period"])
@@ -823,6 +826,42 @@ func _caves(cam: Camera3D) -> void:
 				lamp_r.global_position = lp_r
 				print("  rimstone view: pool %d of %d (%d within 3 m) at %s, camera %s" % [best_k, pools_v.size(), best_c, pc, eye_r])
 				get_tree().create_timer(1.0).timeout.connect(func(): print("  rimstone water: %d pools with live water" % net.get_rimstone_water_count()))
+			elif args.get("cave-view", "outside") == "stream":
+				# A cave stream: the stream segment nearest the entrance, from 2.5 m upstream at the passage line,
+				# looking down the channel; a lamp beside the camera.
+				var st_segs: Array = net.get_segments(0)
+				var best_s := -1
+				var best_d := 1e9
+				for k in st_segs.size():
+					if st_segs[k]["stream"]:
+						var dk: float = (st_segs[k]["a"] as Vector3).distance_to(pos)
+						if dk < best_d:
+							best_d = dk
+							best_s = k
+				var sa: Vector3 = st_segs[best_s]["a"] if best_s >= 0 else pos
+				var sb: Vector3 = st_segs[best_s]["b"] if best_s >= 0 else pos + f
+				var rr_s: float = float(st_segs[best_s]["radius_a"]) if best_s >= 0 else 1.0
+				var mid := (sa + sb) * 0.5
+				# The stream may lie past the meshed ball round the entrance: mesh round it too.
+				net.build_meshes(AABB(mid - Vector3(24, 24, 24), Vector3(48, 48, 48)))
+				var dir := (sb - sa).normalized()
+				if sb.y > sa.y:
+					dir = -dir # look downstream
+				var eye_s := mid - dir * float(args.get("dist", "2.5")) + Vector3(0, -0.2 * rr_s, 0)
+				cam.position = eye_s
+				cam.look_at(mid + dir * 1.5 - Vector3(0, 1.1 * rr_s, 0))
+				cam.fov = 65.0
+				var lamp_st := OmniLight3D.new()
+				lamp_st.omni_range = 14.0
+				lamp_st.light_energy = float(args.get("lamp-energy", "2.0"))
+				lamp_st.shadow_enabled = true
+				add_child(lamp_st)
+				lamp_st.global_position = eye_s + dir.cross(Vector3.UP).normalized() * 0.4 * rr_s + Vector3(0, 0.2, 0)
+				var n_stream := 0
+				for sgx in st_segs:
+					n_stream += 1 if sgx["stream"] else 0
+				print("  stream view: segment %d (%d of %d segments carry streams), radius %.2f, camera %s" % [best_s, n_stream, st_segs.size(), rr_s, eye_s])
+				get_tree().create_timer(0.5).timeout.connect(func(): print("  cave streams: %d" % net.get_stream_count()))
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)
 				cam.look_at(pos, f)

@@ -996,3 +996,12 @@ frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it
    along the trench floors of passages above the water table (from the network's own segments), sinks and resurgences
    at its key points, and the swell running in and out of sea caves (the sea surface reaching in), so the mist and
    the cave's sound follow real water.
+   Built (17 Nov, first stage): CaveNetwork3D `cave_streams` (on). Runs of joined keyhole and canyon segments at
+   least 8 m long, about two in three of them (the rest abandoned, dry), carry a stream (Segment.stream): their fill
+   is washed level across the trench 0.1 r below the dry fill, and a PhysXRiver3D (given depth 0.08 r, at least
+   6 cm; no snapping, no carving, raster reflections off as the pools) runs along it downhill to where the passage
+   meets the water table. Bench `--caves=1 --cave-mesh --cave-view=stream`, `--no-streams`. Still to do: the water
+   reads faintly under a lamp (clear and shallow), sinks and resurgences, the sea swell into sea caves.
+   Sea mouths (17 Nov): find_sea_entrances loosened for cliffed coasts with a beach or platform at the foot (top 6 m
+   over the sea, sea within 150 m, cliff foot within 40 m of the waterline, a steep rise to 6 m within 6 to 25 m
+   behind the mouth); CAVE_SEA_DEBUG=1 prints why candidates fail.

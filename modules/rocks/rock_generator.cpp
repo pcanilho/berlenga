@@ -1773,18 +1773,24 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float extent = 0.5f * MIN(box.size.x, MIN(box.size.y, box.size.z)) + 0.5f * 0.5f * MAX(box.size.x, MAX(box.size.y, box.size.z));
 		const float up_len = box.size[up_axis];
 		// Tafoni crowd: a face that dries in the wind (or the spray) carries a cluster of them, many small and a few
-		// large (their sizes run roughly log-normal; Mustoe 1982), so they gather round one or two faces.
-		const int count = CLAMP(int(Math::round(tafoni * (5.0f + 7.0f * trng.randf()))), 2, 12);
-		const int faces = 1 + (trng.randf() < 0.5f ? 1 : 0);
-		const float face_az[2] = { trng.randf() * float(Math::TAU), trng.randf() * float(Math::TAU) };
+		// large (their sizes run roughly log-normal; Mustoe 1982), packed so that only thin walls and visors stand
+		// between neighbours, and behind them they open into each other (cavernous weathering).
+		const int target = CLAMP(int(Math::round(tafoni * (12.0f + 12.0f * trng.randf()))), 4, 26);
+		const int faces = 1 + (trng.randf() < 0.55f ? 1 : 0);
+		float face_az[2], face_hy[2];
+		for (int f = 0; f < 2; f++) {
+			face_az[f] = trng.randf() * float(Math::TAU);
+			face_hy[f] = (-0.3f + 0.4f * trng.randf()) * up_len; // the lower half and the middle
+		}
 		LocalVector<RockScoop> hollows;
 		LocalVector<float> squash;
-		for (int k = 0; k < count; k++) {
-			// Sides, mostly the lower half (the salt-laden film creeps up from the foot; the hood shades the top): a
-			// height on the stone's up axis, then out across it to the face, so a tall column is hollowed along its
-			// length rather than only round its middle.
-			const float az = face_az[k % faces] + (trng.randf() + trng.randf() - 1.0f) * 1.1f;
-			const float hy = (-0.42f + 0.72f * trng.randf()) * up_len;
+		LocalVector<uint8_t> main_hollow;
+		int placed = 0;
+		for (int attempt = 0; attempt < target * 8 && placed < target; attempt++) {
+			const int f = attempt % faces;
+			// Round the cluster's middle: spread across the face and up and down it (the column's length).
+			const float az = face_az[f] + (trng.randf() + trng.randf() + trng.randf() - 1.5f) * 1.2f;
+			const float hy = CLAMP(face_hy[f] + (trng.randf() + trng.randf() - 1.0f) * 0.45f * up_len, -0.45f * up_len, 0.38f * up_len);
 			const Vector3 o0 = c0 + t_up * hy;
 			const Vector3 d = t_a1 * Math::cos(az) + t_a2 * Math::sin(az);
 			float t = 0.0f;
@@ -1797,40 +1803,73 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 			const Vector3 s0 = o0 + d * t;
 			const float u = trng.randf();
-			const float R = MIN(t, 0.5f * up_len) * (0.14f + 0.36f * u * u) * (0.6f + 0.4f * MIN(tafoni, 1.0f));
-			if (R < 3.0f * fine.h) {
+			const float R = ((x_up || z_up) ? MIN(t, 0.5f * up_len) : 1.7f * MIN(t, up_len)) * (0.07f + 0.25f * u * u) * (0.6f + 0.4f * MIN(tafoni, 1.0f));
+			if (R < 2.5f * fine.h) {
 				continue;
 			}
 			// Sunk past the surface by 0.55 R and raised a little: the opening narrower than the hollow, the hood on top.
-			const Vector3 dh = d;
-			const Vector3 c = s0 - dh * (0.55f * R) + t_up * (0.22f * R);
+			const Vector3 c = s0 - d * (0.55f * R) + t_up * (0.22f * R);
+			// Thin walls: the openings (0.83 R across each) nearly touch, but no hollow swallows a neighbour.
+			bool clash = false;
+			for (uint32_t j = 0; j < hollows.size() && !clash; j++) {
+				if (main_hollow[j]) {
+					clash = c.distance_to(hollows[j].c) < 0.92f * (R + hollows[j].r);
+				}
+			}
+			if (clash) {
+				continue;
+			}
+			placed++;
 			hollows.push_back({ c, R });
-			squash.push_back(0.7f + 0.15f * trng.randf());
-			// Nested hollows in the back wall and roof.
-			const int nested = 1 + int(trng.randf() * 3.0f);
+			squash.push_back(0.72f + 0.15f * trng.randf());
+			main_hollow.push_back(1);
+			// Nested hollows in the back wall and roof of the bigger ones.
+			const int nested = R > 5.0f * fine.h ? 1 + int(trng.randf() * 3.0f) : 0;
 			for (int m = 0; m < nested; m++) {
 				const Vector3 o = (t_a1 * (trng.randf() - 0.5f) + t_a2 * (trng.randf() - 0.5f) + t_up * (0.3f + 0.5f * trng.randf())) * R;
 				const float r2 = R * (0.3f + 0.15f * trng.randf());
-				if (r2 >= 2.5f * fine.h) {
-					hollows.push_back({ c - dh * (0.55f * R) + o * 0.8f, r2 });
+				if (r2 >= 2.0f * fine.h) {
+					hollows.push_back({ c - d * (0.55f * R) + o * 0.8f, r2 });
 					squash.push_back(0.8f);
+					main_hollow.push_back(0);
 				}
 			}
 		}
-		for (int z = 0; z < fine.nz; z++) {
-			for (int y = 0; y < fine.ny; y++) {
-				for (int x = 0; x < fine.nx; x++) {
-					const Vector3 p = fine.pos(x, y, z);
-					float &v = fine.v[fine.idx(x, y, z)];
-					for (uint32_t k = 0; k < hollows.size(); k++) {
-						const RockScoop &hw = hollows[k];
-						Vector3 q = p - hw.c;
-						q += t_up * (q.dot(t_up) * (1.0f / squash[k] - 1.0f));
+		// Each hollow over its own box of the grid only (scanning the whole grid per hollow costs seconds a stone).
+		for (uint32_t k = 0; k < hollows.size(); k++) {
+			const RockScoop &hw = hollows[k];
+			const float reach = 1.27f * hw.r / squash[k] + fine.h;
+			const Vector3 lo = (hw.c - Vector3(reach, reach, reach) - fine.origin) / fine.h;
+			const Vector3 hi = (hw.c + Vector3(reach, reach, reach) - fine.origin) / fine.h;
+			const int x0 = MAX(0, int(Math::floor(lo.x))), y0 = MAX(0, int(Math::floor(lo.y))), z0 = MAX(0, int(Math::floor(lo.z)));
+			const int x1 = MIN(fine.nx - 1, int(Math::ceil(hi.x))), y1 = MIN(fine.ny - 1, int(Math::ceil(hi.y))), z1 = MIN(fine.nz - 1, int(Math::ceil(hi.z)));
+			for (int z = z0; z <= z1; z++) {
+				for (int y = y0; y <= y1; y++) {
+					for (int x = x0; x <= x1; x++) {
+						const Vector3 p = fine.pos(x, y, z);
+						float &v = fine.v[fine.idx(x, y, z)];
+						const Vector3 q0 = p - hw.c;
+						const float qy = q0.dot(t_up);
+						Vector3 q = q0 + t_up * (qy * (1.0f / squash[k] - 1.0f));
 						if (q.length_squared() > 1.6f * hw.r * hw.r) {
 							continue;
 						}
-						const float rough = 1.0f + 0.12f * (rk_fbm(p * (3.0f / MAX(hw.r, 0.05f)), nseed + 151u + k, 2) - 0.5f) * 2.0f;
-						v = MAX(v, (hw.r * rough - q.length()) * squash[k]);
+						float r = hw.r * (1.0f + 0.12f * (rk_fbm(p * (3.0f / MAX(hw.r, 0.05f)), nseed + 151u + k, 2) - 0.5f) * 2.0f);
+						if (qy > 0.0f) {
+							// The roof flakes off in scales (granular disintegration and flaking; Mustoe 1982): shallow
+							// dished scars with their rims hanging down between them.
+							float f1, f2;
+							uint32_t fid;
+							rk_worley2(p / MAX(0.28f * hw.r, 1.5f * fine.h), nseed + 171u + k, f1, f2, fid);
+							const float rim = 1.0f - Math::smoothstep(0.0f, 0.18f, f2 - f1);
+							r -= 0.09f * hw.r * rim * Math::smoothstep(0.0f, 0.4f * hw.r, qy);
+						}
+						float carve = (r - q.length()) * squash[k];
+						if (main_hollow[k]) {
+							// The grains that fall out lie on its floor: a level, sandy bottom.
+							carve = MIN(carve, qy + 0.42f * hw.r * squash[k]);
+						}
+						v = MAX(v, carve);
 					}
 				}
 			}
@@ -1907,9 +1946,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			uint32_t cid;
 			rk_worley2(p / cell, nseed + 161u, f1, f2, cid);
 			const float inner = Math::smoothstep(0.05f, 0.3f, f2 - f1);
-			const float patch = Math::smoothstep(0.35f, 0.6f, rk_fbm(p * (0.6f / cell), nseed + 162u, 2) + 0.25f * MIN(tafoni, 1.0f));
+			const float patch = Math::smoothstep(0.3f, 0.5f, rk_fbm(p * (0.6f / cell), nseed + 162u, 2) + 0.3f * MIN(tafoni, 1.0f));
 			const float side = 1.0f - Math::smoothstep(0.55f, 0.85f, n.dot(t_up)); // not on tops that rain washes
-			const float cdepth = 0.32f * cell * (0.7f + 0.6f * float(cid & 255u) / 255.0f);
+			const float cdepth = 0.45f * cell * (0.7f + 0.6f * float(cid & 255u) / 255.0f);
 			phi += MIN(tafoni, 1.0f) * inner * patch * side * cdepth * worn;
 		}
 		// Close-up: the rock's own millimetre fabric as geometry (crystals, grains, vesicles, karren, cleavage steps,
@@ -2862,6 +2901,14 @@ void fragment() {
 		film = max(film, tidal);
 	}
 	col = mix(col, col * vec3(0.75, 0.72, 0.55), 0.5 * film);
+	// Grus on the floors of hollows (tafoni, pits): the grains that fell out of the walls, paler than the rind and
+	// dull, settled where the face turns up deep in a cavity.
+	float grus = smoothstep(0.55, 0.85, wn.y) * (1.0 - smoothstep(0.3, 0.65, cavity)) * (1.0 - film_in);
+	if (grus > 0.0) {
+		vec3 sand = col * (1.15 + 0.25 * rk_noise3(mp * 180.0)) + vec3(0.03, 0.025, 0.015);
+		col = mix(col, sand, grus);
+		rough = mix(rough, 0.97, grus);
+	}
 	// Rain on the stone (docs/ideas/rocks.md, "Rain-wet rock"): it wets the whole face while it rains, then dries
 	// patchily, the open tops and the sunny side first, the hollows, the shaded side and the lines where the water
 	// ran last (Lagarde 2013, "Water drop 2"; Tatarchuk 2006). While it rains, the water on the steep faces gathers
@@ -2874,7 +2921,6 @@ void fragment() {
 	float local_wet = mix(0.35, 1.0, ground_wet) * smoothstep(hold - 0.05, hold + 0.05, ground_wet);
 	float wet = max(wetness * local_wet, max(film, contact * 0.4 * ground_wet));
 	float rivulet = 0.0;
-	vec3 riv_tilt = vec3(0.0);
 	if (rain_rivulets && weather_map_rect.z > 0.0) {
 		vec2 st_half = 0.5 / vec2(textureSize(weather_state_map, 0));
 		float rain_mm = textureLod(weather_state_map, clamp((v_world.xz - weather_map_rect.xy) / weather_map_rect.zw, st_half, 1.0 - st_half), 0.0).r;
@@ -2882,12 +2928,10 @@ void fragment() {
 		float fm = smoothstep(0.28, 0.7, flow);
 		float steep = 1.0 - smoothstep(0.75, 0.95, abs(wn.y));
 		if (running * fm * steep > 0.0) {
-			vec3 down = normalize(vec3(0.0, -1.0, 0.0) + wn * wn.y + vec3(1e-5, 0.0, 0.0));
-			vec3 lat = normalize(cross(wn, down));
 			// Lines across the face by the angle round the stone's vertical axis (a whole number of them round it,
 			// so no seam), not by a projection on the bumpy normal, which would scatter them into specks.
 			vec2 rel = v_world.xz - v_origin.xz;
-			float n_lines = max(1.0, floor(float(TAU) * 0.85 * max(v_scale, 0.05) / 0.06));
+			float n_lines = max(1.0, floor(float(TAU) * 0.85 * max(v_scale, 0.05) / 0.13));
 			float sl = (atan(rel.y, rel.x) / float(TAU) + 0.5) * n_lines;
 			float cw = float(TAU) * 0.85 * max(v_scale, 0.05) / n_lines; // m between rivulet lines across the face
 			float along = v_world.y;
@@ -2895,26 +2939,27 @@ void fragment() {
 			float h1 = fract(sin(cid * 127.1 + v_random * 311.7) * 43758.5453);
 			float h2 = fract(sin(cid * 269.5 + v_random * 183.3) * 43758.5453);
 			float present = step(h1, (0.2 + 0.7 * fm) * running * smoothstep(0.1, 0.3, flow));
-			float x0 = 0.3 + 0.4 * h2 + 0.16 * sin(along * 6.0 + h1 * 40.0) + 0.07 * sin(along * 17.0 + h2 * 13.0);
+			float x0 = 0.35 + 0.3 * h2 + 0.14 * sin(along * 3.1 + h1 * 40.0) + 0.06 * sin(along * 8.3 + h2 * 13.0) + 0.03 * sin(along * 21.0 + h1 * 5.0);
 			float dx = (fract(sl) - x0) * cw;
-			float width = 0.003 + 0.011 * fm * fm;
+			// A band of standing water a centimetre or two wide where it starts, widening down the face as it gathers.
+			float width = 0.007 + 0.022 * fm;
 			// A rivulet breaks where the film thins (a dry rib, a grain) and starts again below.
 			float runs = smoothstep(0.32, 0.45, fract(sin(floor(along * 4.0 + h2 * 3.0) * 91.7 + cid * 17.3 + v_random * 7.1) * 43758.5453) + 0.3 * fm);
-			float core = runs * (1.0 - smoothstep(0.5 * width, width, abs(dx)));
-			float bead = 0.65 + 0.35 * smoothstep(0.75, 1.0, fract(along * 2.5 - TIME * (0.6 + 0.5 * h2) + h1 * 7.0));
+			float core = runs * (1.0 - smoothstep(0.35 * width, width, abs(dx)));
+			float bead = 0.85 + 0.15 * smoothstep(0.75, 1.0, fract(along * 2.5 - TIME * (0.6 + 0.5 * h2) + h1 * 7.0));
 			float resolved_r = 1.0 - smoothstep(0.5 * width, 2.0 * width, footprint);
-			rivulet = present * steep * mix(1.6 * width / cw, core * bead, resolved_r);
-			riv_tilt = lat * sign(dx) * core * resolved_r * present * 0.45 * smoothstep(0.0, width, abs(dx));
+			rivulet = present * steep * mix(1.4 * width / cw, core * bead, resolved_r);
 			wet = max(wet, running * steep * mix(0.6, 1.0, fm));
 		}
 	}
 	float metallic = 0.0;
 	float specular = 0.5;
 	// Rivulets and overhang lips: the water clings under the overhangs too (the shared wet code leaves undersides dry).
-	weather_wetness_apply(wet, max(wn.y, rivulet > 0.0 ? 0.2 : -1.0), metallic, porosity, col, rough);
-	col *= 1.0 - 0.35 * rivulet;
-	rough = mix(rough, 0.04, rivulet);
-	wn = normalize(wn + riv_tilt);
+	// Stone soaks: pores filling with water darken it far more than the shared default porosity gives (wet
+	// sandstone and limestone go about half as bright, granite a third darker; Lekner and Dorf 1988).
+	weather_wetness_apply(wet, max(wn.y, rivulet > 0.0 ? 0.2 : -1.0), metallic, clamp(porosity + 0.4, 0.0, 1.0), col, rough);
+	col *= 1.0 - 0.4 * rivulet;
+	rough = mix(rough, 0.07, rivulet);
 
 	vec4 snow_s = snow_cover_at(v_world);
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);

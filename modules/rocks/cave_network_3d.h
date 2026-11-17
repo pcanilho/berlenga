@@ -69,6 +69,7 @@ public:
 		Vector3 a, b;
 		float ra = 1.0f, rb = 1.0f; // half widths at a and b, metres
 		PassageType type = PASSAGE_TUBE;
+		bool stream = false; // a vadose stream runs along its trench floor, in a channel cut into the fill
 	};
 	struct Chamber {
 		Vector3 center;
@@ -158,6 +159,12 @@ private:
 	bool sea_mist = true;
 	ObjectID mist_node;
 	void _update_mist_node();
+	// Cave streams (docs/ideas/rocks.md, "Cave streams"): a PhysXRiver3D along each run of stream segments.
+	bool cave_streams = true;
+	bool streams_dirty = true;
+	LocalVector<ObjectID> stream_nodes;
+	void _mark_streams(Cave &r_cave, uint32_t p_seed) const;
+	void _update_stream_nodes();
 	Ref<ShaderMaterial> rim_material;
 	bool collision = true;
 	Ref<Material> wall_material;
@@ -258,6 +265,9 @@ public:
 	int get_rimstone_water_max() const { return rimstone_water_max; }
 	int get_rimstone_water_count() const;
 	int get_rimstone_pool_count() const;
+	void set_cave_streams(bool p_enable);
+	bool get_cave_streams() const { return cave_streams; }
+	int get_stream_count() const;
 	void set_sea_mist(bool p_enable);
 	bool get_sea_mist() const { return sea_mist; }
 	Node *get_sea_mist_node() const { return ObjectDB::get_instance<Node>(mist_node); }
