@@ -312,6 +312,32 @@ tracer can bind them directly: no NanoVDB conversion or copy each frame.
   PhysX splashes and floating props read their height rather than drawing a
   second surface.
 
+### MPM fluid: two-layer screen-space water (proposed)
+
+Problem (bucket pour, docs review 17 Nov): the raster fluid is one
+screen-space layer (van der Laan, Green and Sainz 2009, curvature flow). A
+stream falling in front of the pool refracts the screen copy, which holds
+only opaque geometry, so through the stream shows the bucket wall under the
+pool instead of the pool's surface and its reflections: a faint brown band.
+The path tracer shows it right. A refraction mask (Sousa, GPU Gems 2 ch. 19)
+went in (0e459f27) but cannot fix this: the pool is not in any buffer.
+
+Technique: depth-peeled layers, as in Imai, Kanamori, Mitani et al.,
+"Real-time screen-space liquid rendering with complex refractions", CAVW 27,
+2016 (multiple refraction through peeled liquid layers), the fluid analogue
+of Everitt's depth peeling (NVIDIA 2001).
+- Splat pass 2: each particle sphere writes its front depth only where it lies
+  more than a gap (about 2 particle radii) behind layer 1's depth: layer 2,
+  the first liquid surface behind the stream.
+- Smooth and take normals for layer 2 as for layer 1 (same bilateral filter).
+- Shade layer 2 first (reflection, specular, refraction of the screen copy,
+  absorption by the thickness behind it), then layer 1 refracts layer 2's
+  result where layer 2 exists, else the screen copy.
+- Two layers cover stream-over-pool, splash-over-pool and waterfall-over-
+  plunge-pool; more layers buy little (Imai et al. stop at a few).
+Cost: one more splat, filter and composite at the liquid's pixels only;
+memory: one depth, one normal/thickness target. PT unchanged.
+
 ### MPM fluid: spray, foam and bubbles
 
 Technique: Ihmsen, Akinci, Akinci and Teschner 2012, "Unified spray, foam
