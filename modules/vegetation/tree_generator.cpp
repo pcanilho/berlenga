@@ -2761,21 +2761,52 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				// Lenticels: short dashes across the stem (long and dark on birch).
 				const int cu = p_kind == BARK_PAPERY ? 5 : 14, cv = p_kind == BARK_PAPERY ? 26 : 24;
 				const float lx = u * cu, ly = v * cv;
-				const int ix = int(lx), iy = int(ly);
-				const float on = bark_hash(ix, iy, salt + 61u);
-				if (on > (p_kind == BARK_PAPERY ? 0.62f : 0.9f)) {
-					const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
-					const float len = p_kind == BARK_PAPERY ? 0.1f + 0.4f * bark_hash(ix, iy, salt + 65u) : 0.1f + 0.08f * on;
-					// Off the cell's middle both ways, so they do not line up in rows.
-					const float cy = 0.5f + 0.5f * (bark_hash(ix, iy, salt + 67u) - 0.5f);
-					const float dx = (lx - ix - cx) / len, dy = (ly - iy - cy) / (p_kind == BARK_PAPERY ? 0.18f : 0.1f);
-					const float m = 1.0f - Math::smoothstep(0.6f, 1.0f, dx * dx + dy * dy);
-					// Faint on beech: dashes darker than this read as a printed pattern up close.
-					const float lent = p_kind == BARK_PAPERY ? 0.18f : 0.95f;
-					a = a * Math::lerp(1.0f, lent, m);
-					// Flush on beech (a raised rim lit as a ring of dew drops at 40 cm).
-					height += m * (p_kind == BARK_PAPERY ? 0.0004f : 0.00005f);
-					r = Math::lerp(r, 0.97f, m);
+				const int ix = int(Math::floor(lx)), iy = int(Math::floor(ly));
+				if (p_kind == BARK_PAPERY) {
+					// Birch: each cell's dash anywhere in it, read from the neighbouring cells too so a
+					// long one runs over its cell's edge; lengths from a few millimetres to a hand,
+					// thick and thin, and denser in bands up the stem (a dash per cell at a jittered
+					// spot still read as a grid, docs 17 Nov).
+					const float band = bark_fbm(u, v, 2, 9, 2, salt + 69u);
+					float m = 0.0f;
+					for (int oy = -1; oy <= 1; oy++) {
+						for (int ox = -1; ox <= 1; ox++) {
+							const int jx = ((ix + ox) % cu + cu) % cu, jy = ((iy + oy) % cv + cv) % cv;
+							const float on = bark_hash(jx, jy, salt + 61u);
+							if (on < 0.45f - 1.6f * band) {
+								continue;
+							}
+							const float cx = float(ix + ox) + bark_hash(jx, jy, salt + 63u);
+							const float cy = float(iy + oy) + bark_hash(jx, jy, salt + 67u);
+							const float h = bark_hash(jx, jy, salt + 65u);
+							const float len = 0.05f + 0.75f * h * h;
+							const float thick = 0.1f + 0.2f * bark_hash(jx, jy, salt + 64u) * (0.4f + 0.6f * h);
+							// Ragged ends: a slight bow and taper.
+							const float dx = (lx - cx) / len;
+							const float dy = (ly - cy - 0.08f * dx * dx) / (thick * (1.0f - 0.4f * dx * dx));
+							m = MAX(m, 1.0f - Math::smoothstep(0.6f, 1.0f, dx * dx + dy * dy));
+						}
+					}
+					if (m > 0.0f) {
+						a = a * Math::lerp(1.0f, 0.18f, m);
+						height += m * 0.0004f;
+						r = Math::lerp(r, 0.97f, m);
+					}
+				} else {
+					const float on = bark_hash(ix, iy, salt + 61u);
+					if (on > 0.9f) {
+						const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
+						const float len = 0.1f + 0.08f * on;
+						// Off the cell's middle both ways, so they do not line up in rows.
+						const float cy = 0.5f + 0.5f * (bark_hash(ix, iy, salt + 67u) - 0.5f);
+						const float dx = (lx - ix - cx) / len, dy = (ly - iy - cy) / 0.1f;
+						const float m = 1.0f - Math::smoothstep(0.6f, 1.0f, dx * dx + dy * dy);
+						// Faint on beech: dashes darker than this read as a printed pattern up close;
+						// flush (a raised rim lit as a ring of dew drops at 40 cm).
+						a = a * Math::lerp(1.0f, 0.95f, m);
+						height += m * 0.00005f;
+						r = Math::lerp(r, 0.97f, m);
+					}
 				}
 				if (p_kind == BARK_SMOOTH) {
 					// Creases: short fine wrinkles across the stem where the thin bark stretched
@@ -6597,7 +6628,8 @@ void TreeGenerator::_plan_chevrons() {
 		w.age = p_frac * tree_age;
 		// Arms: the scar's width and then the girth gained since, pulled round the stem; at most
 		// a little under half way round.
-		const float arm = (p_rb * (1.5f + 5.0f * p_frac) + 0.25f * r * p_frac) * Math::lerp(0.8f, 1.2f, rng.randf());
+		// A birch's are broader for the limb (its fold runs out wide in the thin bark).
+		const float arm = (p_rb * (1.5f + 5.0f * p_frac) + 0.25f * r * p_frac) * Math::lerp(0.8f, 1.2f, rng.randf()) * (papery ? 1.5f : 1.0f);
 		w.extra = MIN(arm, 0.42f * float(Math::PI) * r) * (p_scar ? 1.0f : -1.0f);
 		// Flatter with age: from about 60 degrees below the horizontal to about 28 (a birch's
 		// steeper, a black inverted V).
@@ -6614,6 +6646,8 @@ void TreeGenerator::_plan_chevrons() {
 		for (int l = n.first_lateral; l >= 0; l = nodes[l].next_sibling) {
 			const Node &b = nodes[l];
 			if ((!b.removed && !b.dead) || b.radius < 0.005f) {
+				// Thinner shed twigs are drawn at a thumb's thickness below (a smaller mark is lost
+				// in the bark's own texture).
 				continue;
 			}
 			Vector3 rad = b.dir - n.dir * b.dir.dot(n.dir);
@@ -6626,7 +6660,7 @@ void TreeGenerator::_plan_chevrons() {
 				continue;
 			}
 			const float frac = last_year > 0 ? CLAMP(float(last_year - b.born) / float(last_year), 0.15f, 1.0f) : 0.5f;
-			add(s, Math::atan2(rad.dot(bin), rad.dot(ref)), MIN(b.radius, 0.45f * stem_r(s)), frac, b.removed);
+			add(s, Math::atan2(rad.dot(bin), rad.dot(ref)), MIN(MAX(b.radius, 0.012f), 0.45f * stem_r(s)), frac, b.removed);
 		}
 		len += n.length;
 	}
@@ -6655,7 +6689,8 @@ void TreeGenerator::_plan_chevrons() {
 		}
 		const float low = 1.0f - s / MAX(crown_base, 0.5f);
 		const float frac = CLAMP(Math::lerp(0.2f, 0.95f, rng.randf()) * Math::lerp(0.7f, 1.1f, low), 0.1f, 1.0f);
-		const float rb = CLAMP(r13 * Math::lerp(0.04f, 0.14f, rng.randf()), 0.005f, 0.035f);
+		// Twigs thinner than a thumb leave no mark that reads; the scars are of limbs that were.
+		const float rb = CLAMP(r13 * Math::lerp(0.04f, 0.14f, rng.randf()), 0.012f, 0.035f);
 		add(s, az, rb, frac, true);
 		have++;
 	}
@@ -7027,8 +7062,8 @@ void TreeGenerator::_grow_chevrons(Builder &r_bark) {
 	const bool beech = preset == PRESET_BEECH || preset == PRESET_AMERICAN_BEECH;
 	// The fold's darkness (a multiplier on the bark's colour) and height: beech's is a grey-black
 	// fold about a millimetre proud, birch's a flat black mark on the white.
-	const float k_dark = papery ? 0.11f : (beech ? 0.34f : 0.55f);
-	const float fold = papery ? 0.0003f : 0.0007f;
+	const float k_dark = papery ? 0.1f : (beech ? 0.45f : 0.6f);
+	const float fold = papery ? 0.0002f : 0.0004f;
 	const float tuck = 0.0005f;
 	const Vector4 keep_uv2 = r_bark.uv2_map;
 	const uint8_t keep_role = r_bark.role;
@@ -7078,10 +7113,15 @@ void TreeGenerator::_grow_chevrons(Builder &r_bark) {
 			r_bark.verts.push_back(p);
 			r_bark.normals.push_back((out - tang * p_gx - ax * p_gy).normalized());
 			r_bark.uvs.push_back(base_uv + Vector2(Math::angle_difference(at.az, az) * repeats / float(Math::TAU), (sv - at.s) / circ));
+			// The colour under the scar's middle for the mark's dark body (per-vertex reads took the
+			// moss and film tints of the stem's grid in patches along an arm), the bark's own under
+			// its soft edge, so the edge meets the bark without a halo.
 			const Vector2i under = wound_vtx[bin_of(sv, az)];
-			Color c = r_bark.colors[under.x >= 0 && under.x < r_bark.colors.size() ? under.x : bv.x];
+			const Color cu = r_bark.colors[under.x >= 0 && under.x < r_bark.colors.size() ? under.x : bv.x];
+			Color c = cu.lerp(r_bark.colors[bv.x], Math::smoothstep(0.1f, 0.5f, p_d));
 			const float k = Math::lerp(1.0f, k_dark, CLAMP(p_d, 0.0f, 1.0f));
-			// Lichen keeps off the fold a little (its weight in the alpha's upper half).
+			// Lichen keeps off the fold a little (its weight in the alpha's upper half); held off
+			// wholly, the bark texture's own pale crusts showed through the dark as blotches.
 			const float a = c.a > 0.5f ? Math::lerp(c.a, 0.5f, 0.5f * p_d) : c.a;
 			r_bark.colors.push_back(Color(c.r * k, c.g * k, c.b * k, a));
 			if (r_bark.use_tangents) {
@@ -7121,30 +7161,31 @@ void TreeGenerator::_grow_chevrons(Builder &r_bark) {
 		};
 		const bool scar = w.extra > 0.0f;
 		const float rb = w.half_w;
-		// The eye: the occluded stub, an oval stretched round the stem as it grows.
-		const float ex = MIN(rb * (1.0f + 0.6f * frac), 0.06f);
-		const float ey = ex * Math::lerp(0.8f, 0.5f, frac);
+		// The eye: the occluded stub, a knob of callus over it, an oval stretched round the stem as
+		// it grows; the scar itself a small dark pit at its top (Shigo 1989: the stub is walled
+		// off and overgrown from the collar).
+		const float ex = MIN(MAX(rb * (1.2f + 0.6f * frac), 0.015f), 0.06f);
+		const float ey = ex * Math::lerp(0.85f, 0.6f, frac);
 		if (scar) {
-			const int sides = CLAMP(int(float(Math::TAU) * ex / 0.004f), 12, 40);
-			static const float RING[5] = { 0.0f, 0.4f, 0.72f, 0.88f, 1.0f };
-			// Height: a little sunk in the middle, a callus rim, tucked under at the edge.
-			const float HGT[5] = { 0.0002f, 0.0007f, 0.0016f, 0.0011f, -tuck };
-			const float DRK[5] = { 0.95f, 0.85f, papery ? 0.95f : 0.6f, papery ? 0.9f : 0.75f, 0.25f };
+			const int sides = CLAMP(int(float(Math::TAU) * ex / 0.004f), 14, 48);
+			static const float RING[6] = { 0.0f, 0.18f, 0.35f, 0.6f, 0.85f, 1.0f };
+			// A dome a fifth of its width high, a pit at its middle, its foot tucked under the bark.
+			const float knob = (papery ? 0.12f : 0.22f) * ex;
+			const float HGT[6] = { 0.55f * knob, 0.75f * knob, knob, 0.75f * knob, 0.3f * knob, -tuck };
+			const float DRK[6] = { 1.0f, 0.95f, papery ? 0.95f : 0.6f, papery ? 0.95f : 0.8f, papery ? 0.85f : 0.55f, 0.1f };
 			const int first = r_bark.verts.size();
-			for (int ri = 0; ri < 5; ri++) {
+			for (int ri = 0; ri < 6; ri++) {
 				for (int j = 0; j < sides; j++) {
 					const float ang = float(Math::TAU) * j / sides;
 					const float wob = 1.0f + 0.16f * (moss_noise(Vector3(Math::cos(ang) * 1.3f, Math::sin(ang) * 1.3f, salt), w.salt) - 0.5f);
 					const float rf = RING[ri] * wob;
 					const float x = Math::cos(ang) * ex * rf, y = Math::sin(ang) * ey * rf;
-					// Radial slope from the neighbouring rings.
-					const int r0 = MAX(ri - 1, 0), r1 = MIN(ri + 1, 4);
+					const int r0 = MAX(ri - 1, 0), r1 = MIN(ri + 1, 5);
 					const float dh = (HGT[r1] - HGT[r0]) / MAX((RING[r1] - RING[r0]) * 0.5f * (ex + ey), 1e-4f);
-					const float h = ri == 0 ? HGT[0] : HGT[ri];
-					put(x, y, h * (papery ? 0.5f : 1.0f), Math::cos(ang) * dh * 0.5f, Math::sin(ang) * dh * 0.5f, DRK[ri]);
+					put(x, y, HGT[ri], Math::cos(ang) * dh * 0.7f, Math::sin(ang) * dh * 0.7f, DRK[ri]);
 				}
 			}
-			quad_grid(first, 5, sides, true);
+			quad_grid(first, 6, sides, true);
 		}
 		// The arms.
 		const float arm = Math::abs(w.extra);
@@ -7152,7 +7193,7 @@ void TreeGenerator::_grow_chevrons(Builder &r_bark) {
 			RandomPCG rng;
 			rng.seed(uint64_t(w.salt) * 2246822519u + uint64_t(side + 2) * 0x61726du);
 			const float L = arm * Math::lerp(0.85f, 1.15f, rng.randf());
-			const float w0 = papery ? CLAMP(1.1f * rb, 0.01f, 0.045f) : CLAMP(1.5f * rb, 0.013f, 0.045f);
+			const float w0 = papery ? CLAMP(1.4f * rb, 0.015f, 0.05f) : CLAMP(1.5f * rb, 0.018f, 0.045f);
 			const float droop = Math::lerp(0.15f, 0.35f, rng.randf());
 			float x = scar ? float(side) * 0.7f * ex : float(side) * 0.8f * rb;
 			float y = scar ? -0.3f * ey : -0.9f * rb;
@@ -7174,10 +7215,10 @@ void TreeGenerator::_grow_chevrons(Builder &r_bark) {
 					const float c = float(k) / 3.0f - 1.0f;
 					const float h = h0 * (1.0f - c * c) - tuck * c * c * c * c;
 					const float dhdc = -2.0f * c * h0 - 4.0f * tuck * c * c * c;
-					const Vector2 g = pp * (dhdc / MAX(hw, 1e-3f));
+					const Vector2 g = pp * (0.5f * dhdc / MAX(hw, 1e-3f));
 					// Dark down the fold's middle, fading to the bark's own tone where it meets it;
 					// darker in the creases.
-					const float dk = Math::smoothstep(0.95f, 0.25f, Math::abs(c)) * (papery ? 1.0f - 0.2f * t : (0.7f + 0.3f * cr) * (1.0f - 0.35f * t));
+					const float dk = (papery ? Math::smoothstep(0.95f, 0.4f, Math::abs(c)) * (1.0f - 0.25f * t) : Math::smoothstep(1.0f, 0.0f, Math::abs(c)) * (0.7f + 0.3f * cr) * (1.0f - 0.75f * Math::smoothstep(0.2f, 1.0f, t)));
 					put(x + pp.x * c * hw, y + pp.y * c * hw, h, g.x, g.y, dk);
 				}
 				x += d.x * L / n;

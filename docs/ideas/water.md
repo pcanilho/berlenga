@@ -3366,3 +3366,16 @@ sets the pitch and their count the level.
   +2 dB. Built in well under a second.
 - Open: little above 6 kHz, where real falls also hiss from drops landing on the pool. That could come
   from the spray particles later.
+
+## Foam crackle at close range (17 Nov, docs on sand's shore frame)
+
+The swash foam in the shore frame showed a dark crackle of cells with hard edges. Each layer was switched off in
+turn with the ground bench's new `--water=uniform:value`. The shore-foam texture, the crisp step and the relief were
+not the cause, and nor was the grain as cover. The cause was the bubbles' dome normal (`foam_bubble_normal`): fbm at
+about 6 cm with finer octaves, differenced 1 cm apart and tilting the foam's normal by up to about 0.3. Lit, that
+gave a crackle of ±30% shading cells at 1 to 2 cm a pixel. The tilt is now a uniform, `foam_grain_tilt`, at 0.15
+(was 0.6).
+
+Foam also damps the short waves under it: the film's surface elasticity acts as a slick does (Alpers and Hühnerfuss
+1989). So a foam sheet's normal blends toward the mesh's longer-wave normal by its cover. Before and after crop:
+fork/water/shore-foam/.

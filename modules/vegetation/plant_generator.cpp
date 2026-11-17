@@ -438,6 +438,25 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_SEA_HOLLY:
 			r_phenology = { 1000.0f, 1650.0f, -1.0f, true }; // July to September; the heads brown on the stems.
 			return true;
+		// Alpine plants flower soon after the snow melts, on small degree-day sums.
+		case PRESET_MOSS_CAMPION:
+			r_phenology = { 350.0f, 900.0f, 300.0f, false }; // June to August, on and off over the cushion.
+			return true;
+		case PRESET_PURPLE_SAXIFRAGE:
+			r_phenology = { 100.0f, 450.0f, 300.0f, true }; // The first after the thaw, April to June.
+			return true;
+		case PRESET_MOUNTAIN_AVENS:
+			r_phenology = { 350.0f, 900.0f, 900.0f, true }; // June to August; the feathery plumes into autumn.
+			return true;
+		case PRESET_ALPINE_SEDGE:
+			r_phenology = { 500.0f, 900.0f, -1.0f, true }; // July; brown spikes stand.
+			return true;
+		case PRESET_DWARF_WILLOW:
+			r_phenology = { 400.0f, 800.0f, 300.0f, true }; // June and July catkins.
+			return true;
+		case PRESET_ALPINE_TOADFLAX:
+			r_phenology = { 450.0f, 1400.0f, 300.0f, false }; // June to September.
+			return true;
 		default:
 			return false;
 	}
@@ -3697,6 +3716,20 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.base_tint = Color(0.9f, 0.62f, 0.05f, 0.35f);
 		} else if (preset == PRESET_SUNDEW) {
 			t.base_tint = Color(0.95f, 0.92f, 0.9f, 0.2f);
+		} else if (preset == PRESET_MOSS_CAMPION) {
+			t.base_tint = Color(0.95f, 0.8f, 0.86f, 0.35f); // Paler towards the throat.
+		} else if (preset == PRESET_PURPLE_SAXIFRAGE) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.8f;
+			t.base_tint = Color(0.35f, 0.08f, 0.3f, 0.35f); // Darker veins into the cup.
+		} else if (preset == PRESET_MOUNTAIN_AVENS) {
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.6f;
+			t.base_tint = Color(0.92f, 0.9f, 0.7f, 0.25f);
+		} else if (preset == PRESET_ALPINE_TOADFLAX) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.0f;
+			t.base_tint = Color(0.3f, 0.15f, 0.5f, 0.4f);
 		} else {
 			t.base_tint = Color(0.9f, 0.55f, 0.02f, 0.4f);
 		}
@@ -4080,6 +4113,47 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.vein = leaf_color.lerp(Color(0.8f, 0.78f, 0.62f), 0.3f);
 			t.yellowing = 0.25f; // Straw tips.
 			t.spots = 0.1f;
+			break;
+		case PRESET_MOSS_CAMPION:
+		case PRESET_ALPINE_TOADFLAX:
+			l.shape = LEAF_LINEAR;
+			t.aspect = preset == PRESET_MOSS_CAMPION ? 0.12f : 0.15f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.1f;
+			t.spots = 0.05f;
+			break;
+		case PRESET_PURPLE_SAXIFRAGE:
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.55f;
+			t.vein = Color(0.62f, 0.66f, 0.6f); // The lime pit at the tip, pale.
+			t.yellowing = 0.1f;
+			t.spots = 0.2f;
+			break;
+		case PRESET_MOUNTAIN_AVENS:
+			l.shape = LEAF_LANCEOLATE;
+			l.lobes = 5;
+			l.lobe_depth = 0.35f;
+			l.round_lobes = true;
+			t.aspect = 0.38f;
+			t.vein = Color(0.06f, 0.12f, 0.03f); // Deeply impressed veins, dark.
+			t.yellowing = 0.15f;
+			t.spots = 0.15f;
+			break;
+		case PRESET_ALPINE_SEDGE:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.03f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+			t.yellowing = 0.55f; // The browned, curled tips.
+			t.spots = 0.1f;
+			break;
+		case PRESET_DWARF_WILLOW:
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.95f;
+			t.vein = Color(0.3f, 0.45f, 0.12f); // Net veins, paler.
+			t.yellowing = 0.15f;
+			t.spots = 0.2f;
 			break;
 		case PRESET_SEA_HOLLY:
 			l.shape = LEAF_ROUND;
@@ -5380,6 +5454,40 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.5f, 0.6f, 0.64f);
 			centre_color = Color(0.42f, 0.52f, 0.78f); // Powder-blue heads.
 			break;
+		case PRESET_MOSS_CAMPION:
+			leaf_color = Color(0.2f, 0.34f, 0.1f); // Bright, stiff green.
+			stem_color = Color(0.36f, 0.3f, 0.2f); // The dead leaves packed inside.
+			petal_color = Color(0.86f, 0.36f, 0.58f); // Pink.
+			centre_color = Color(0.9f, 0.85f, 0.75f);
+			break;
+		case PRESET_PURPLE_SAXIFRAGE:
+			leaf_color = Color(0.22f, 0.32f, 0.22f); // Blue-green, lime-pitted.
+			stem_color = Color(0.3f, 0.3f, 0.2f);
+			petal_color = Color(0.55f, 0.16f, 0.48f); // Purple.
+			centre_color = Color(0.7f, 0.5f, 0.2f);
+			break;
+		case PRESET_MOUNTAIN_AVENS:
+			leaf_color = Color(0.11f, 0.22f, 0.06f); // Dark glossy green.
+			stem_color = Color(0.34f, 0.24f, 0.16f); // Woody.
+			petal_color = Color(0.96f, 0.95f, 0.9f);
+			centre_color = Color(0.92f, 0.75f, 0.12f); // Yellow stamens.
+			break;
+		case PRESET_ALPINE_SEDGE:
+			leaf_color = Color(0.26f, 0.34f, 0.12f); // Olive green; the curled tips brown.
+			stem_color = Color(0.4f, 0.36f, 0.2f);
+			centre_color = Color(0.32f, 0.22f, 0.12f); // Brown spikes.
+			break;
+		case PRESET_DWARF_WILLOW:
+			leaf_color = Color(0.17f, 0.36f, 0.08f); // Bright, glossy.
+			stem_color = Color(0.38f, 0.24f, 0.14f);
+			centre_color = Color(0.7f, 0.35f, 0.2f); // Red-tinged catkins.
+			break;
+		case PRESET_ALPINE_TOADFLAX:
+			leaf_color = Color(0.3f, 0.42f, 0.4f); // Glaucous blue-grey.
+			stem_color = Color(0.32f, 0.4f, 0.38f);
+			petal_color = Color(0.4f, 0.24f, 0.62f); // Violet.
+			centre_color = Color(0.95f, 0.55f, 0.08f); // The orange palate.
+			break;
 		case PRESET_LIVERWORT:
 			leaf_color = Color(0.1f, 0.26f, 0.06f);
 			stem_color = Color(0.08f, 0.2f, 0.05f);
@@ -5578,6 +5686,24 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_SEA_HOLLY:
 			_build_sea_holly();
 			break;
+		case PRESET_MOSS_CAMPION:
+			_build_moss_campion();
+			break;
+		case PRESET_PURPLE_SAXIFRAGE:
+			_build_purple_saxifrage();
+			break;
+		case PRESET_MOUNTAIN_AVENS:
+			_build_mountain_avens();
+			break;
+		case PRESET_ALPINE_SEDGE:
+			_build_alpine_sedge();
+			break;
+		case PRESET_DWARF_WILLOW:
+			_build_dwarf_willow();
+			break;
+		case PRESET_ALPINE_TOADFLAX:
+			_build_alpine_toadflax();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -5628,6 +5754,14 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_SEA_HOLLY:
 			leaf_rough = 0.35f; // Leathery and waxy.
+			break;
+		case PRESET_MOUNTAIN_AVENS:
+		case PRESET_DWARF_WILLOW:
+			leaf_rough = 0.38f; // Glossy upper faces.
+			break;
+		case PRESET_ALPINE_TOADFLAX:
+		case PRESET_PURPLE_SAXIFRAGE:
+			leaf_rough = 0.55f; // Waxy bloom.
 			break;
 		default:
 			break;
@@ -6522,10 +6656,17 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_MARRAM);
 	BIND_ENUM_CONSTANT(PRESET_LYME_GRASS);
 	BIND_ENUM_CONSTANT(PRESET_SEA_HOLLY);
+	BIND_ENUM_CONSTANT(PRESET_MOSS_CAMPION);
+	BIND_ENUM_CONSTANT(PRESET_PURPLE_SAXIFRAGE);
+	BIND_ENUM_CONSTANT(PRESET_MOUNTAIN_AVENS);
+	BIND_ENUM_CONSTANT(PRESET_ALPINE_SEDGE);
+	BIND_ENUM_CONSTANT(PRESET_DWARF_WILLOW);
+	BIND_ENUM_CONSTANT(PRESET_ALPINE_TOADFLAX);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
@@ -6561,5 +6702,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(DUNES_MOBILE);
 	BIND_ENUM_CONSTANT(DUNES_FIXED);
 	BIND_ENUM_CONSTANT(DUNES_MAX);
+	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
+	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
+	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);
+	BIND_ENUM_CONSTANT(ALPINE_SCREE);
+	BIND_ENUM_CONSTANT(ALPINE_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

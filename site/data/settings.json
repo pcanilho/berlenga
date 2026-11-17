@@ -2202,6 +2202,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Alpine and scree plants",
+   "settings": [
+    "PlantGenerator.make_alpine()"
+   ],
+   "note": "",
+   "what": "fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Leaf wear",
    "settings": [
     "PlantGenerator.leaf_wear"
@@ -2450,6 +2461,17 @@
    ],
    "note": "",
    "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Branch-scar chevrons",
+   "settings": [
+    "bark_chevrons"
+   ],
+   "note": "",
+   "what": "living beech and birch carry dark chevrons below shed limbs, longer and flatter with age, black on birch.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

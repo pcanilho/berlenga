@@ -54,6 +54,16 @@
 				Returns the waterside plants for a stream, a lake or a waterfall's spray zone as [PlantSpecies], placed by their distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) in clonal patches: marsh marigold at the water's edge, butterbur colonies on stream banks, meadowsweet in the tall-herb band behind, and in spray ([constant PlantSpecies.RULE_SPRAY]) thallose liverworts on the wet ground. The plants of the stones in the water are in [method make_stones] with [constant STONES_RIVER]. They do not colour the far ground. Each species has the meta [code]banks[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the leaves' year.
 			</description>
 		</method>
+		<method name="make_alpine" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.AlpineStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of an alpine zone above the treeline as [PlantSpecies]. They grow only where the climate map's mean annual temperature is between -8 and 1.5 C ([constant PlantSpecies.RULE_TEMPERATURE]), so the map needs a climate. The stands sort by snow lie and ground: fellfield cushions on convex ridges blown free of snow ([constant PlantSpecies.RULE_CURVATURE]), the sedge sward on slopes with soil ([constant PlantSpecies.RULE_SOIL_DEPTH]), dwarf willow and moss in concave, shaded snowbeds ([constant PlantSpecies.RULE_SUNLIGHT]), and the scree set on talus ([constant PlantSpecies.RULE_TALUS]). They do not colour the far ground. Each species has the meta [code]alpine[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and seed heads.
+			</description>
+		</method>
 		<method name="make_bog" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.BogStand" />
@@ -380,7 +390,25 @@
 		<constant name="PRESET_SEA_HOLLY" value="61" enum="Preset">
 			Sea holly ([i]Eryngium maritimum[/i]): a stiff, waxy, glaucous plant 20 to 40 cm of spiny, holly-like leaves, branching low, with round powder-blue flower heads in ruffs of spiny bracts from July to September.
 		</constant>
-		<constant name="PRESET_MAX" value="62" enum="Preset">
+		<constant name="PRESET_MOSS_CAMPION" value="62" enum="Preset">
+			Moss campion ([i]Silene acaulis[/i]): a hard, domed cushion 10 to 25 cm across of tightly packed rosettes of tiny linear leaves, the core dead and brown, studded with stalkless pink flowers in June and July.
+		</constant>
+		<constant name="PRESET_PURPLE_SAXIFRAGE" value="63" enum="Preset">
+			Purple saxifrage ([i]Saxifraga oppositifolia[/i]): a prostrate mat of trailing shoots clothed in small, opposite, overlapping blue-green leaves, with stalkless purple-pink cup flowers just after the snow melts.
+		</constant>
+		<constant name="PRESET_MOUNTAIN_AVENS" value="64" enum="Preset">
+			Mountain avens ([i]Dryas octopetala[/i]): a woody mat of forking prostrate shoots, dark green scalloped leaves with rolled margins crowded at the shoot ends, old leaves brown below; white eight-petalled flowers on short stems, then twisted silky seed plumes.
+		</constant>
+		<constant name="PRESET_ALPINE_SEDGE" value="65" enum="Preset">
+			Curved sedge ([i]Carex curvula[/i]): dense tufts of fine, curved, grey-green leaves with withered tips, and short dark spikes. The sedge of the closed alpine sward on acid soil.
+		</constant>
+		<constant name="PRESET_DWARF_WILLOW" value="66" enum="Preset">
+			Dwarf willow ([i]Salix herbacea[/i]): a creeping carpet of buried stems with pairs of small round glossy leaves only 1 to 3 cm above the ground, and tiny reddish catkins. The plant of late snowbeds.
+		</constant>
+		<constant name="PRESET_ALPINE_TOADFLAX" value="67" enum="Preset">
+			Alpine toadflax ([i]Linaria alpina[/i]): blue-grey, whorled, fleshy leaves on sprawling shoots that wander through moving scree, with violet snapdragon flowers with an orange palate.
+		</constant>
+		<constant name="PRESET_MAX" value="68" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -460,6 +488,21 @@
 		</constant>
 		<constant name="DUNES_MAX" value="3" enum="DuneStand">
 			Number of dune stand types.
+		</constant>
+		<constant name="ALPINE_FELLFIELD" value="0" enum="AlpineStand">
+			Fellfield on exposed ridges blown free of snow: moss campion cushions, purple saxifrage and mountain avens mats far apart on gravel, curved sedge in the lee.
+		</constant>
+		<constant name="ALPINE_GRASSLAND" value="1" enum="AlpineStand">
+			Alpine grassland on slopes with soil: a closed sward of curved sedge, with mountain avens and moss campion in it.
+		</constant>
+		<constant name="ALPINE_SNOWBED" value="2" enum="AlpineStand">
+			Snowbeds in shaded hollows where snow lies late: dwarf willow carpets with dark mosses and a little sedge.
+		</constant>
+		<constant name="ALPINE_SCREE" value="3" enum="AlpineStand">
+			Moving scree: alpine toadflax wandering through it, purple saxifrage mats holding it, mountain avens over it.
+		</constant>
+		<constant name="ALPINE_MAX" value="4" enum="AlpineStand">
+			Number of alpine stand types.
 		</constant>
 	</constants>
 </class>

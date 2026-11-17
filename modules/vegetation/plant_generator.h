@@ -127,6 +127,13 @@ public:
 		PRESET_MARRAM,
 		PRESET_LYME_GRASS,
 		PRESET_SEA_HOLLY,
+		// Alpine and scree plants (plant_alpine.cpp).
+		PRESET_MOSS_CAMPION,
+		PRESET_PURPLE_SAXIFRAGE,
+		PRESET_MOUNTAIN_AVENS,
+		PRESET_ALPINE_SEDGE,
+		PRESET_DWARF_WILLOW,
+		PRESET_ALPINE_TOADFLAX,
 		PRESET_MAX,
 	};
 
@@ -296,6 +303,13 @@ private:
 	void _build_marram();
 	void _build_lyme_grass();
 	void _build_sea_holly();
+	// Alpine and scree plants (plant_alpine.cpp).
+	void _build_moss_campion();
+	void _build_purple_saxifrage();
+	void _build_mountain_avens();
+	void _build_alpine_sedge();
+	void _build_dwarf_willow();
+	void _build_alpine_toadflax();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -489,6 +503,16 @@ public:
 		DUNES_MAX,
 	};
 	static TypedArray<Resource> make_dunes(DuneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+
+	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
+	enum AlpineStand {
+		ALPINE_FELLFIELD, // Exposed ridges blown free of snow: cushions and mats.
+		ALPINE_GRASSLAND, // The closed sward of the slopes: curved sedge.
+		ALPINE_SNOWBED, // Hollows where snow lies late: dwarf willow and moss.
+		ALPINE_SCREE, // Moving scree: toadflax, saxifrage mats, avens.
+		ALPINE_MAX,
+	};
+	static TypedArray<Resource> make_alpine(AlpineStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -498,3 +522,4 @@ VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
 VARIANT_ENUM_CAST(PlantGenerator::BankStand);
 VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
+VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
