@@ -295,6 +295,12 @@ about x4e4. Engine fix found on the way: the sky's half and quarter resolution p
 brightness multiplier and read back without undoing it, so a sky that composites them took the exposure once per
 pass (white at night). Histogram metering (exposure.md) can sit on top later.
 
+**Built (17 Nov): the Milky Way.** `milky_way` takes a galactic panorama (ESO's eso0932a, ESO/S. Brunier,
+CC BY 4.0, now in Gitea LFS at art-src `sky/milky_way/`), rotated from the equator by Hipparcos' galactic matrix,
+read at mip 2 (about half a degree) so its photographed stars smear into the band rather than doubling the
+catalogue's; a linear texel of 1 is `milky_way_luminance` (1e-3 cd/m2; the band's brightest clouds about 7e-4).
+The engine ships no texture: a project assigns it (the sky bench's `--milky-way=path`).
+
 **Step 4 notes (next).** The eye at night: scotopic vision loses colour and shifts toward blue (Purkinje); Jensen
 et al. 2001 and Thompson, Shirley and Ferwerda 2002 tone-map night scenes by blending toward a blue-grey scotopic
 luminance below about 0.01 cd/m2. Exposure from the clock's light levels, pre-exposed in every pass (lights and
