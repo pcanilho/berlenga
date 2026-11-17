@@ -366,6 +366,40 @@ the British Isles (2019) for sizes and flowering.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
 
+## Next round candidates (17 Nov): Atlantic heath, Mediterranean scrub, worn paths
+
+Atlantic heath and gorse (researching 17 Nov, awaiting Paulo's pick). Dwarf-shrub heath covers
+acid, nutrient-poor ground from the Atlantic coasts of Portugal to Norway, on sea cliffs, sandy
+plateaux and upland moor (Gimingham 1972, "Ecology of Heathlands"; Webb 1986, "Heathlands";
+Rodwell 1991, British Plant Communities vol. 2, H1 to H22). The engine has heather already; the
+heath needs its other woody plants, each real geometry:
+- Common gorse (Ulex europaeus): a dense, rounded, very spiny shrub 1 to 2.5 m (dwarf forms on
+  cliffs), the leaves reduced to grooved green spines 1.5 to 2.5 cm, branched spines on every
+  shoot; coconut-scented yellow pea flowers 1.5 to 2 cm, heaviest February to May but some all
+  year; black hairy pods that crack open in summer heat (Stace 2019; Richardson and Hill 1998,
+  "The biology of Australian weeds 34: Ulex europaeus"). Old bushes grey and dead inside, the
+  living shell outside: real branches, not a textured blob. Western gorse (U. gallii) is low
+  (to 1 m), flowers July to October, so the heath is yellow most of the year.
+- Broom (Cytisus scoparius): erect green, five-angled, nearly leafless switch-like twigs to 2 m,
+  yellow flowers May and June, black pods (Stace 2019).
+- Bell heather (Erica cinerea): low shrublet 15 to 60 cm on the driest, sunniest ground, whorls
+  of three dark needle leaves, bell-shaped crimson-purple flowers June to September (Bannister
+  1965, Biological Flora: Erica cinerea). Cross-leaved heath (E. tetralix) on the wet heath, grey
+  hairy leaves in fours, pale pink bells in terminal clusters (Bannister 1966).
+- Crowberry (Empetrum nigrum): prostrate mats of needle-like rolled leaves and black berries on
+  windy upland and coastal heath (Bell and Tallis 1973, Biological Flora).
+Placement: heath sets by aridity, soil depth and exposure: dry heath (heather, bell heather,
+gorse) on free-draining slopes, wet heath (cross-leaved heath, cottongrass, sphagnum) in hollows
+with the bog set, maritime heath (dwarf gorse, heather and thrift, wind-pruned) on cliff tops
+with RULE_COAST_EXPOSURE, and gorse scrub where soil is deeper. Calluna's growth phases
+(pioneer, building, mature, degenerate; Watt 1947, Gimingham 1972) give a heath's patchwork of
+bush sizes and gaps: a per-patch age drawn from the patch noise.
+
+Mediterranean scrub (garrigue and maquis): cistus, rosemary, lavender, thyme, dwarf fan palm on
+dry, sunny, rocky slopes (aridity and sunlight rules). Worn paths and trampling: desire lines
+where plants thin, shorten and flatten along walked routes (Cole 1995, trampling resistance;
+Bayfield 1979), driven by the trample field and a path mask.
+
 ## Salt marsh and shingle plants (built 17 Nov)
 
 Where the land meets a sheltered sea the ground is mud and the plants sort by how often the tide
