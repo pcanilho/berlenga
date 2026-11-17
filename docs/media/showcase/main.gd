@@ -562,6 +562,36 @@ func shot_flowslope() -> void:
 	flow.add_child(em)
 	em.flow = em.get_path_to(flow)
 	camera(Vector3(3.0, 4.2, 5.0), Vector3(-1.8, 1.0, -1.5), 50)
+	if OS.get_cmdline_user_args().has("--vehicle"):
+		# A car (its shapes live on its own PhysX actor, not Godot's) driving down the valley floor through
+		# the pooled dust: the gas must part round it, with no errors gathering its colliders.
+		var car = ClassDB.instantiate("PhysXVehicle3D")
+		car.mass = 900.0
+		car.max_engine_torque = 300.0
+		car.can_sleep = false
+		var ccs := CollisionShape3D.new()
+		ccs.shape = BoxShape3D.new()
+		(ccs.shape as BoxShape3D).size = Vector3(1.6, 0.6, 3.2)
+		ccs.position = Vector3(0, 0.45, 0)
+		car.add_child(ccs)
+		var body_mesh := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(1.6, 0.6, 3.2)
+		bm.material = mat(Color(0.6, 0.15, 0.1), 0.5)
+		body_mesh.mesh = bm
+		body_mesh.position = ccs.position
+		car.add_child(body_mesh)
+		for k in 4:
+			var w = ClassDB.instantiate("PhysXVehicleWheel3D")
+			w.position = Vector3(0.75 if k % 2 == 0 else -0.75, 0.0, 1.1 if k < 2 else -1.1)
+			w.radius = 0.32
+			w.half_width = 0.12
+			w.use_as_steering = k < 2
+			w.use_as_traction = true
+			car.add_child(w)
+		car.position = Vector3(0.0, valley_h(0.0, -7.5) + 0.6, -7.5)
+		add_child(car)
+		get_tree().create_timer(2.0, true, true).timeout.connect(func() -> void: car.throttle = 0.6)
 	if OS.get_cmdline_user_args().has("--mover"):
 		# A crate sliding down the flank through the dust: it must push the gas, and never become floor.
 		var crate := RigidBody3D.new()
