@@ -295,6 +295,18 @@
 				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
 			</description>
 		</method>
+		<method name="get_last_sand_sea_max" qualifiers="const">
+			<return type="float" />
+			<description>
+				The deepest sand (m) the last sand sea run left; 0 without a [member sand_sea_rect].
+			</description>
+		</method>
+		<method name="get_last_sand_sea_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last sand sea run took.
+			</description>
+		</method>
 		<method name="get_last_sky_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -343,6 +355,13 @@
 			<param index="1" name="month" type="int" default="-1" />
 			<description>
 				Water leaving the ground at a position for the rivers, in mm: in [param month] (0 January to 11 December), or a year with -1. A monthly water balance (McCabe and Markstrom 2007) of the [member climate_recipe]'s climate: rain and snow split by temperature, the snowpack melting by degree days and sunshine (Hock 1999), a soil water store losing Thornthwaite evapotranspiration (Thornthwaite and Mather 1957), a share of the rain running off at once and the rest of the surplus through a groundwater store. Without a recipe, [member river_runoff].
+			</description>
+		</method>
+		<method name="get_sand_sea_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Sand (m) the sand sea added to the ground at [param global_position] (x and z); 0 outside [member sand_sea_rect].
 			</description>
 		</method>
 		<method name="get_sediment_depth" qualifiers="const">
@@ -734,6 +753,30 @@
 		<member name="river_width_coefficient" type="float" setter="set_river_width_coefficient" getter="get_river_width_coefficient" default="7.0">
 			River width per square root of discharge: [code]width = coefficient * discharge^0.5[/code] (hydraulic geometry, Leopold and Maddock 1953). About 7 for mean flows.
 		</member>
+		<member name="sand_sea_depth" type="float" setter="set_sand_sea_depth" getter="get_sand_sea_depth" default="12.0">
+			Sand (m) over the sand sea, on average. Transverse, linear and star dunes want a thick cover (some 2 to 5 times [member sand_sea_scale]); barchans a thin one (under a third of it), between which the bare floor shows.
+		</member>
+		<member name="sand_sea_edge" type="float" setter="set_sand_sea_edge" getter="get_sand_sea_edge" default="300.0">
+			Distance (m) over which the sand thins out to nothing at the edge of [member sand_sea_rect].
+		</member>
+		<member name="sand_sea_kind" type="int" setter="set_sand_sea_kind" getter="get_sand_sea_kind" enum="TerrainGenerator3D.SandSeaKind" default="0">
+			The wind regime, which picks the dunes: one wind for transverse ridges or barchans, two winds 120 degrees apart for linear dunes along their mean, three for star dunes.
+		</member>
+		<member name="sand_sea_rect" type="Rect2" setter="set_sand_sea_rect" getter="get_sand_sea_rect" default="Rect2(0, 0, 0, 0)">
+			Where the desert sand sea lies, in global x and z (m). Empty, there is none.
+		</member>
+		<member name="sand_sea_scale" type="float" setter="set_sand_sea_scale" getter="get_sand_sea_scale" default="4.0">
+			Metres a cell of the sand sea. Heights scale with it, so the dunes keep their shapes and angles and grow with it: crests come some 25 cells apart (100 m at 4 m). Past 1024 cells a side it grows to fit.
+		</member>
+		<member name="sand_sea_steps" type="int" setter="set_sand_sea_steps" getter="get_sand_sea_steps" default="300">
+			Steps of the sand sea run, each lifting every cell's sand once on average. More steps give older, bigger and fewer dunes, at more cost; barchans want about 600.
+		</member>
+		<member name="sand_sea_wind_angle" type="float" setter="set_sand_sea_wind_angle" getter="get_sand_sea_wind_angle" default="0.0">
+			The way the dune-building wind blows (for linear and star dunes, their mean), in degrees from +X toward +Z.
+		</member>
+		<member name="sand_seas_enabled" type="bool" setter="set_sand_seas_enabled" getter="is_sand_seas_enabled" default="true">
+			Desert sand seas over [member sand_sea_rect]: Paris et al.'s 2019 desertscape simulation (stochastic 10 cm slabs that hop downwind, faster up slopes facing the wind, settle more on sand than on bare ground and always in the wind shadow behind crests, and slide past the angle of repose), on cells of [member sand_sea_scale], wrapped like an endless erg and run in parallel by bands of rows. It lies on the generated ground, filling hollows and sliding off slopes past its repose, thins out over [member sand_sea_edge] and on water, and is added to the ground and to the geology's sand. A 2 km square at 4 m takes some 20 seconds on four cores.
+		</member>
 		<member name="scree_age" type="float" setter="set_scree_age" getter="get_scree_age" default="10000.0">
 			Years the cliffs have shed scree onto cones and aprons at their feet. 0 builds none.
 		</member>
@@ -888,6 +931,18 @@
 		</constant>
 		<constant name="OUTLET_POSITIVE_Z" value="8" enum="OutletEdge">
 			The edge at the largest Z.
+		</constant>
+		<constant name="SAND_SEA_TRANSVERSE" value="0" enum="SandSeaKind">
+			One wind over thick sand: long ridges across the wind.
+		</constant>
+		<constant name="SAND_SEA_BARCHAN" value="1" enum="SandSeaKind">
+			One wind over thin sand: crescents with horns pointing downwind.
+		</constant>
+		<constant name="SAND_SEA_LINEAR" value="2" enum="SandSeaKind">
+			Two winds 120 degrees apart, in turn: ridges along their mean.
+		</constant>
+		<constant name="SAND_SEA_STAR" value="3" enum="SandSeaKind">
+			Three winds from every side, in long turns: peaks with arms in every direction.
 		</constant>
 	</constants>
 </class>

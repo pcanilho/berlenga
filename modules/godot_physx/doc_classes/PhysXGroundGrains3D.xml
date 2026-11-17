@@ -64,7 +64,7 @@
 		<member name="max_flight_time" type="float" setter="set_max_flight_time" getter="get_max_flight_time" default="8.0">
 			A grain still in the air after this long lands where it is.
 		</member>
-		<member name="spray_spread" type="float" setter="set_spray_spread" getter="get_spray_spread" default="0.08">
+		<member name="spray_spread" type="float" setter="set_spray_spread" getter="get_spray_spread" default="0.2">
 			The spread of a throw's velocity, as a share of its speed.
 		</member>
 		<member name="tread_depth" type="float" setter="set_tread_depth" getter="get_tread_depth" default="0.008">

@@ -69,6 +69,13 @@
 				The field's world XZ rectangle.
 			</description>
 		</method>
+		<method name="get_crack_at" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The desiccation cracks at [param position] (see [member desiccation_cracks]): how far open they are (0 to 1), the plate size in metres, how regular the pattern has grown (0 to 1) and how dry the crust is (0 to 1).
+			</description>
+		</method>
 		<method name="get_dent_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -106,6 +113,13 @@
 				The undisturbed ground height at [param position], from the height source.
 			</description>
 		</method>
+		<method name="get_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Same as [method get_surface_height_at], under the name height sources share, so a [PhysXFlow3D]'s [code]terrain_path[/code] can point at this node and its gas rest on the ruts and berms.
+			</description>
+		</method>
 		<method name="get_material_at" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />
@@ -117,6 +131,25 @@
 			<return type="Vector2" />
 			<description>
 				The volume pressed down (x) and piled into rims (y) over the live field, in m³. Their difference is what was compacted.
+			</description>
+		</method>
+		<method name="get_mud_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of the soft mud layer at [param position], in metres (0 where the ground is not mud or not wet enough; see [member mud_layer]).
+			</description>
+		</method>
+		<method name="get_near_moved_volume" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				As [method get_moved_volume], over the near field ([member near_field]); zero when it is not active.
+			</description>
+		</method>
+		<method name="get_near_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The near field's square in world XZ, or an empty rect when it is not active.
 			</description>
 		</method>
 		<method name="get_patch_material" qualifiers="const">
@@ -226,6 +259,13 @@
 				The time the last physics step took (pressing, slumping, ageing, upload), in milliseconds.
 			</description>
 		</method>
+		<method name="get_standing_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of standing water at [param position] in metres (see [member standing_water]), from the latest read back of the GPU field; 0 without one.
+			</description>
+		</method>
 		<method name="get_surface_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -271,10 +311,30 @@
 				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
 			</description>
 		</method>
+		<method name="is_near_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] when the near field ([member near_field]) is running (it needs the field on the GPU).
+			</description>
+		</method>
 		<method name="is_ripples_ready" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] once the first ripple field grown in the background has filled the window.
+			</description>
+		</method>
+		<method name="mud_viscosity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="concentration" type="float" />
+			<description>
+				The Bingham viscosity of mud, in Pa s, at a volumetric sediment concentration from 0.40 (slurry) to 0.56 (stiff), after O'Brien and Julien (1988).
+			</description>
+		</method>
+		<method name="mud_yield_stress" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="concentration" type="float" />
+			<description>
+				The yield stress of mud, in Pa, at a volumetric sediment concentration from 0.40 (slurry) to 0.56 (stiff), after O'Brien and Julien (1988). Below it mud stands; above it flows.
 			</description>
 		</method>
 		<method name="press">
@@ -354,14 +414,20 @@
 		<member name="contact_tolerance" type="float" setter="set_contact_tolerance" getter="get_contact_tolerance" default="0.03">
 			How close a body's underside must come to the surface to press it, in metres.
 		</member>
+		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
+			A [code]TerrainDataMap3D[/code] whose wetness index, slope and distance to water place mud by themselves ([member mud_auto_depth]). Empty: the height source, when it is one.
+		</member>
 		<member name="deform_extent" type="float" setter="set_deform_extent" getter="get_deform_extent" default="32.0">
 			The width of the field, in metres. Prints are made only where the terrain is fully lowered: [member terrain_margin] plus [member skirt_fade] inside its edge.
 		</member>
 		<member name="deform_groups" type="PackedStringArray" setter="set_deform_groups" getter="get_deform_groups" default="PackedStringArray(&quot;ground_deform&quot;, &quot;snow_deform&quot;, &quot;grass_trample&quot;)">
-			Groups whose nodes press the ground. A node's first collision shape gives its footprint; rigid bodies press by their mass, characters by [member character_mass], others only to their underside. The metas [code]ground_mass[/code], [code]ground_contact_area[/code] and [code]ground_radius[/code] (or the snow ones) override.
+			Groups whose nodes press the ground. A node's first collision shape gives its footprint; rigid bodies press by their mass, characters by [member character_mass], others only to their underside. The metas [code]ground_mass[/code], [code]ground_contact_area[/code] and [code]ground_radius[/code] (or the snow ones) override. A [BoxShape3D] with the meta [code]ground_sole[/code] set prints a boot sole (heel, waist, toe and lug tread, the toe toward the box's longer side) instead of a block.
 		</member>
 		<member name="deform_resolution" type="int" setter="set_deform_resolution" getter="get_deform_resolution" default="512">
 			Texels across the field (a multiple of 64).
+		</member>
+		<member name="desiccation_cracks" type="bool" setter="set_desiccation_cracks" getter="is_desiccation_cracks" default="true">
+			If [code]true[/code], clay soaked by standing water dries once the ground round it is dry, goes matte, then cracks into plates about four times as wide as its drying layer (about 12 cm), primary cracks first and finer ones splitting the plates, their rims curling up. Rain closes them; each wetting and drying makes the next pattern more regular, towards hexagons. Sand, litter and rock do not crack. Drawn as geometry where the mesh is fine enough, in both renderers.
 		</member>
 		<member name="detail_spacing" type="float" setter="set_detail_spacing" getter="get_detail_spacing" default="0.0625">
 			The patch's vertex spacing over the middle half of the field, in metres.
@@ -405,13 +471,43 @@
 		<member name="moisture" type="float" setter="set_moisture" getter="get_moisture" default="-1.0">
 			The ground's moisture from 0 (dry) to 1 (soaked); -1 takes the [code]WeatherMap3D[/code] wetness.
 		</member>
+		<member name="mud_auto_depth" type="float" setter="set_mud_auto_depth" getter="get_mud_auto_depth" default="0.5">
+			The mud layer's depth where water gathers by itself, in metres: valley floors, hollows and flats below slopes (a high topographic wetness index) and the first metres of a bank, on ground under about 10 degrees. Needs [member data_map].
+		</member>
+		<member name="mud_layer" type="bool" setter="set_mud_layer" getter="is_mud_layer" default="true">
+			Deep mud: where the ground is wet, a soft layer of clay and silt over the firm base, as deep as [member mud_map] and the rules of [member mud_auto_depth] give. It flows as a Bingham fluid (stiff mud holds a rut, slurry closes it), bears and grips as clay, and lets wheels sink to the base.
+		</member>
+		<member name="mud_map" type="Image" setter="set_mud_map" getter="get_mud_map">
+			A painted mud depth over [member mud_map_rect]: the red channel times [member mud_max_depth].
+		</member>
+		<member name="mud_map_rect" type="Rect2" setter="set_mud_map_rect" getter="get_mud_map_rect" default="Rect2(0, 0, 0, 0)">
+			The world rectangle (x, z, width, depth) [member mud_map] covers.
+		</member>
+		<member name="mud_max_depth" type="float" setter="set_mud_max_depth" getter="get_mud_max_depth" default="1.2">
+			The mud depth where [member mud_map] is white, in metres.
+		</member>
+		<member name="mud_wet_full" type="float" setter="set_mud_wet_full" getter="get_mud_wet_full" default="0.55">
+			The moisture at which the mud layer reaches its full depth.
+		</member>
+		<member name="mud_wet_start" type="float" setter="set_mud_wet_start" getter="get_mud_wet_start" default="0.35">
+			The moisture where the ground starts turning to mud. Mud is stiff (a solid share of 0.56) at a moisture of 0.35 and slurry (0.40) soaked.
+		</member>
+		<member name="near_extent" type="float" setter="set_near_extent" getter="get_near_extent" default="8.0">
+			The near field's side, in metres, centred on the field. A multiple of twice the [member detail_spacing], so the patch's fine ring lines up with its grid.
+		</member>
+		<member name="near_field" type="bool" setter="set_near_field" getter="is_near_field" default="true">
+			A finer field in the middle of the deformation field ([member near_extent] at [member near_resolution] texels, by default 8 m at 1.5625 cm against 6.25 cm), pressed and slumped with the same rules and used inside its square by the material and the path tracer, so tread, boot and rill edges are sharp geometry. The patch gains a matching fine ring. Tiles it has never held start from the main field. Needs [member gpu_simulation].
+		</member>
+		<member name="near_resolution" type="int" setter="set_near_resolution" getter="get_near_resolution" default="512">
+			The near field's texels per side (a multiple of 64).
+		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.
 		</member>
 		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
 			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.
 		</member>
-		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.06">
+		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.
 		</member>
 		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">
@@ -434,6 +530,9 @@
 		</member>
 		<member name="sand_glints" type="bool" setter="set_sand_glints" getter="is_sand_glints" default="true">
 			If [code]true[/code], loose dry sand shows its grains up close: their mixed colours, averaging out with distance, and the clean faces among them flashing where they mirror the sun (counted per pixel footprint like snow's sparkle), in raster and under the path tracer alike. Wet sand loses them.
+		</member>
+		<member name="standing_water" type="bool" setter="set_standing_water" getter="is_standing_water" default="true">
+			If [code]true[/code], water stands in ruts and prints: rain the ground cannot take, and ground water where a print reaches below the water table (soaked ground has it at the surface), run downhill over the printed ground and gather level in its hollows, then soak in and evaporate. The water is the surface there in both renderers: flat, smooth and murky with the clay it carries, and it softens the mud under it. Needs the GPU field ([member gpu_simulation]). [member runoff_time_scale] speeds up its rain, soaking and evaporation.
 		</member>
 		<member name="skirt" type="float" setter="set_skirt" getter="get_skirt" default="0.5">
 			How far the terrain is lowered under the patch, in metres.

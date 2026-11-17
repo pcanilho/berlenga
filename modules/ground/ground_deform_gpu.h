@@ -65,8 +65,9 @@ public:
 		STEP_GROUND = 1 << 8, // new ground heights
 		STEP_COVER = 1 << 9, // new cover cells
 		STEP_SYNC = 1 << 10, // read back now, blocking (tests)
+		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
 	};
-	static constexpr int PARAMS_BYTES = 224;
+	static constexpr int PARAMS_BYTES = 256;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -78,6 +79,9 @@ public:
 		int slots = 0;
 		int coll_w = 0;
 		int stride = 1; // uints per texel in the cache and the read back: 1 (dent, rim), 2 (and fresh)
+		int slump_passes = 1; // slumping passes per step (a finer field needs more to move as far in a second)
+		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 3 ground (the third: water inputs)
+		int water_passes = 0; // pipe-model substeps this step (STEP_WATER)
 	};
 
 	static bool is_available();
@@ -88,16 +92,20 @@ public:
 	void shutdown();
 
 	// Main thread. Posts the work to the render thread.
-	void step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center);
+	// p_uploads: whole cache tiles written before the tile moves, each an int32 slot and TILE x TILE x stride
+	// uints packed as the cache holds them (the near field seeds tiles it has never held from the coarse field).
+	void step(const Dims &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center, const PackedByteArray &p_uploads = PackedByteArray());
 	// The texture the material samples (RGBA16F: dent, rim, 1, 1 for snow; dent, rim, albedo and roughness
 	// factors for the ground), once built; invalid before.
 	RID get_texture() const;
 	uint64_t get_texture_serial() const { return texture_serial.get(); }
 	// The latest collision heights (already divided by the spacing) and the centre they were taken at.
 	bool take_collision(PackedFloat32Array &r_heights, Vector2 &r_center);
-	// The latest packed field (half floats dent, rim per texel, then fresh and 0 with a stride of 2) and the
-	// origin it was taken at.
+	// The latest packed field (half floats dent, rim per texel, then fresh and the slumping owed with a stride of
+	// 2, then for the ground a block of (water depth, 0) per texel) and the origin it was taken at.
 	bool take_field(PackedByteArray &r_packed, Vector2i &r_origin);
+	// uints per texel in the packed read back.
+	static int packed_uints(int p_stride) { return p_stride == 2 ? 3 : 1; }
 
 private:
 	RenderingDevice *rd = nullptr;
@@ -116,6 +124,8 @@ private:
 	RID buf_tile_ops;
 	int tile_ops_capacity = 0;
 	RID buf_packed;
+	RID buf_water; // ground: per texel the pipe model's outflows and depth (2 vec4)
+	RID buf_water_tmp; // ground: the shifted depth
 	RID tex_out;
 	RID uset[2]; // state = buf_state[i], out = buf_state[1 - i]
 	Dims dims;
@@ -142,7 +152,7 @@ private:
 	void _rt_make_sets();
 	void _dispatch(int64_t p_list, int p_mode, int p_count, int p_groups);
 
-	void rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center);
+	void rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center, const PackedByteArray &p_uploads);
 	void rt_on_collision(const PackedByteArray &p_data, Vector2 p_center);
 	void rt_on_field(const PackedByteArray &p_data, Vector2i p_origin);
 	void rt_free();
@@ -164,6 +174,7 @@ public:
 	PackedByteArray stamps;
 	PackedByteArray stores;
 	PackedByteArray shift;
+	PackedByteArray uploads; // seeded cache tiles (GroundDeformGPU::step's p_uploads)
 	HashMap<Vector2i, Slot> cache; // world tile -> cache slot
 	LocalVector<int> free_slots;
 	int slots = 0;
@@ -187,6 +198,11 @@ public:
 	// The field is about to move to p_origin: tiles leaving with prints go to the cache, tiles coming in are
 	// read from the old field or the cache, and stamps not yet sent move with the texels.
 	void shift_to(const GroundDeformField &p_field, Vector2i p_origin, int p_resolution, int p_max_cached_tiles);
+	// Seeds a tile the field has never held (world tile p_tile) with p_data (TILE x TILE x stride uints, as the
+	// cache packs them), so the next shift_to reads it in from the cache. Takes a free or least recently used
+	// slot. Call before shift_to.
+	void seed_tile(Vector2i p_tile, const uint32_t *p_data, int p_stride, int p_max_cached_tiles);
+	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
 	// Takes a new texture RID; true when it changed.
 	bool take_texture();
 	// Copies the latest read back into the field's CPU arrays (and fresh, with p_stride 2; then r_owed gets the

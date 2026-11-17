@@ -89,7 +89,8 @@ layout(push_constant, std430) uniform Params {
 
 	float local_highlight_contrast;
 	float local_shadow_contrast;
-	float local_pad[2];
+	float night_luminance; // cd/m2 per unit of the source buffer; 0: no night vision
+	float local_pad;
 }
 params;
 
@@ -544,6 +545,30 @@ float rgb2luma(vec3 rgb) {
 	return sqrt(dot(rgb, vec3(0.299, 0.587, 0.114)));
 }
 
+// Night vision (docs/ideas/day-night.md, "Night vision"): below a few cd/m2 the rods take over from the cones,
+// colour fades and what is left shifts toward blue (the Purkinje shift). The scotopic luminance comes from XYZ by
+// Larson, Rushmeier and Piatko's fit to V'(lambda) (1997); the rods see it in one blue-grey hue (Thompson, Shirley
+// and Ferwerda 2002), scaled so that a D65 white keeps its brightness. The mix runs over the CIE mesopic range
+// (CIE 191:2010): cones alone above 5 cd/m2, rods alone below 0.005 cd/m2, log-linear between, per pixel, so lit
+// windows and lamps keep their colour in a moonlit street.
+vec3 night_vision(vec3 p_color) {
+	if (params.night_luminance <= 0.0) {
+		return p_color;
+	}
+	const mat3 rgb_to_xyz = mat3(vec3(0.4124, 0.2126, 0.0193), vec3(0.3576, 0.7152, 0.1192), vec3(0.1805, 0.0722, 0.9505));
+	vec3 xyz = rgb_to_xyz * max(p_color, vec3(0.0));
+	float photopic = xyz.y * params.night_luminance;
+	float rods = 1.0 - clamp((log2(max(photopic, 1e-12)) - log2(0.005)) / (log2(5.0) - log2(0.005)), 0.0, 1.0);
+	if (rods <= 0.0) {
+		return p_color;
+	}
+	float scotopic = max(xyz.y * (1.33 * (1.0 + (xyz.y + xyz.z) / max(xyz.x, 1e-9)) - 1.68), 0.0);
+	// 2.5728: the fit's scotopic over photopic luminance of D65 white. The rod hue (1.05, 0.97, 1.27) has a luminance
+	// of 1.009.
+	vec3 rod_color = vec3(1.05, 0.97, 1.27) * (scotopic / (2.5728 * 1.009));
+	return mix(p_color, rod_color, rods);
+}
+
 vec3 do_fxaa(vec3 color, float exposure, vec2 uv_interp) {
 	const float EDGE_THRESHOLD_MIN = 0.0312;
 	const float EDGE_THRESHOLD_MAX = 0.125;
@@ -691,7 +716,7 @@ vec3 do_fxaa(vec3 color, float exposure, vec2 uv_interp) {
 		finalUv.x += finalOffset * stepLength;
 	}
 
-	vec3 finalColor = textureLod(source_color, finalUv, 0.0).xyz * exposure * params.luminance_multiplier;
+	vec3 finalColor = night_vision(textureLod(source_color, finalUv, 0.0).xyz * params.luminance_multiplier) * exposure;
 	return finalColor;
 
 #else
@@ -864,6 +889,7 @@ void main() {
 	vec4 color = textureLod(source_color, uv_interp, 0.0f);
 #endif
 	color.rgb *= params.luminance_multiplier;
+	color.rgb = night_vision(color.rgb);
 
 	// Exposure
 

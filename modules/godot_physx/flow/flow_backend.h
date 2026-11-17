@@ -105,6 +105,8 @@ struct Settings {
 // Loads Flow's libraries on first use (shared by every grid); false, with
 // the reason in r_error, if they aren't there.
 bool acquire_library(char *r_error, int p_error_size);
+// The same with other library names (tests: a missing library must fail softly, not crash).
+bool acquire_library_named(const char *p_nvflow, const char *p_nvflowext, char *r_error, int p_error_size);
 void release_library();
 
 // A grid on Godot's RenderingDevice. Must be called -- like every grid_*

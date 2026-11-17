@@ -1038,7 +1038,7 @@
     "rock_detail_enabled"
    ],
    "note": "",
-   "what": "steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.",
+   "what": "steep rock shows bedding planes and breaks into irregular jointed blocks, and scree and till show loose stones that stand out of the gravel in parallax with their own shadows, also path traced; no textures and no stretching on any face.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1100,7 +1100,7 @@
     "BaseMaterial3D.ground_deform_enabled"
    ],
    "note": "",
-   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`, on by default).",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1114,6 +1114,41 @@
    ],
    "note": "",
    "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Deep mud",
+   "settings": [
+    "GroundSurface3D.mud_layer",
+    "mud_map",
+    "data_map"
+   ],
+   "note": "",
+   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Standing water",
+   "settings": [
+    "GroundSurface3D.standing_water"
+   ],
+   "note": "",
+   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Desiccation cracks",
+   "settings": [
+    "GroundSurface3D.desiccation_cracks"
+   ],
+   "note": "",
+   "what": "soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1534,7 +1569,7 @@
     "bubble_strength"
    ],
    "note": "",
-   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
+   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width, and the far sea mirrors the sky through their mean Fresnel instead of turning into a pale sheet; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1719,6 +1754,8 @@
     "fall_min_height",
     "fall_mist_amount",
     "PhysXWaterMist3D",
+    "wet_surfaces",
+    "PhysXRiver3D.fall_sound",
     "edge_lap_height",
     "edge_relief",
     "edge_foam"
@@ -2401,7 +2438,7 @@
     "bark_relief"
    ],
    "note": "",
-   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark carries stemflow tracks, low algae and crust lichen.",
+   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark shows cross-stem creases, lenticel streaks and fine grain, and carries stemflow tracks, low algae and crust lichen.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -2931,6 +2968,28 @@
    "topic": ""
   },
   {
+   "name": "Shafts across the sky",
+   "settings": [
+    "atmo_cloud_shadow_steps"
+   ],
+   "note": "",
+   "what": "the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Path traced haze",
+   "settings": [
+    "WeatherMap3D.traced_haze"
+   ],
+   "note": "",
+   "what": "under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wet surfaces and puddles",
    "settings": [
     "surface_storage",
@@ -2986,6 +3045,43 @@
    ],
    "note": "",
    "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Night sky",
+   "settings": [
+    "stars_enabled",
+    "moon_disc_enabled",
+    "airglow_enabled",
+    "milky_way"
+   ],
+   "note": "",
+   "what": "the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine; on moonless nights the faint green airglow of the upper air brightens toward the horizon and lights cloud tops; the Milky Way comes from a galactic panorama turned with the stars.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Eye adaptation",
+   "settings": [
+    "SkyClock.drive_exposure",
+    "adaptation"
+   ],
+   "note": "",
+   "what": "exposure follows the light on the ground like an adapting eye, so twilight, moonlit and starlit scenes stay readable.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Night vision",
+   "settings": [
+    "CameraAttributes.night_vision"
+   ],
+   "note": "",
+   "what": "in dim light colour fades to the eye's blue-grey night vision (Purkinje shift) while lamps, lit windows and the moon keep theirs, from the scene's real luminance, in raster and path tracing.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

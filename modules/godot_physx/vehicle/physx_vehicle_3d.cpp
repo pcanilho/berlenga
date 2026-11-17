@@ -339,6 +339,9 @@ struct PhysXVehicle3D::Impl {
 	PxReal sleep_threshold = 0.0f;
 	PxReal time_before_sleep = 0.0f;
 	bool built = false;
+	// The node transform this node last wrote from the actor: a different one at the next step was set by a script
+	// (spawn, respawn, a reset), and the actor is moved there.
+	Transform3D synced;
 	// wheel_order[Vehicle4W::WHEEL_FL/FR/RL/RR] = index into the parent's own
 	// `wheels` vector (child-registration order) for that canonical slot --
 	// see configure_vehicle4w()'s own doc comment.
@@ -406,6 +409,7 @@ bool PhysXVehicle3D::_build() {
 	if (!space) {
 		// Not running on the PhysX backend -- this node offers PxVehicle2-
 		// specific capability and has no fallback for another backend.
+		WARN_PRINT_ONCE("PhysXVehicle3D needs the PhysX physics engine (Project Settings > physics/3d/physics_engine = PhysX); it stays still on any other.");
 		return false;
 	}
 	PxPhysics *physics = space->get_px_physics();
@@ -489,6 +493,7 @@ bool PhysXVehicle3D::_build() {
 	for (PhysXVehicleSoilWheel &sw : impl->soil_wheels) {
 		sw = PhysXVehicleSoilWheel();
 	}
+	impl->synced = get_global_transform();
 	GodotPhysXServer3D::run_on_physics_thread([&]() {
 		if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext, impl->wheel_order)) {
 			return;
@@ -572,7 +577,19 @@ void PhysXVehicle3D::_notification(int p_what) {
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
 			}
-			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			if (!get_global_transform().is_equal_approx(impl->synced)) {
+				// Moved by a script since the last step: the actor goes there at rest.
+				v.physxActor.rigidBody->setGlobalPose(to_px(get_global_transform()));
+				if (PxRigidDynamic *dyn = v.physxActor.rigidBody->is<PxRigidDynamic>()) {
+					dyn->setLinearVelocity(PxVec3(0.0f));
+					dyn->setAngularVelocity(PxVec3(0.0f));
+					dyn->wakeUp();
+				}
+			}
+			// Engine.time_scale 0 gives a zero step: the vehicle holds still (PhysX rejects a step that is not positive).
+			if (get_physics_process_delta_time() > 0.0) {
+				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			}
 			// v.rigidBodyState.pose is CoM-relative, not the actor's real
 			// origin (confirmed directly by comparing it against a raw
 			// getGlobalPose() read while root-causing the chassis-collision
@@ -586,6 +603,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			// visibly swing whenever the body rotated (braking, cornering, a
 			// bump) since it rotates with the body.
 			set_global_transform(to_godot(v.physxActor.rigidBody->getGlobalPose()));
+			impl->synced = get_global_transform();
 			// Push each wheel's live pose (suspension jounce + steer angle +
 			// roll spin, all baked into wheelLocalPoses by PxVehicleWheelComponent)
 			// onto that wheel's own node -- same idea as VehicleBody3D's own

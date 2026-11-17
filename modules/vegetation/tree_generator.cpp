@@ -6514,6 +6514,153 @@ void TreeGenerator::_plan_wounds() {
 	}
 }
 
+// Branch-scar chevrons (trees.md 5r): on smooth bark (beech, hornbeam) and on birch, a limb's
+// junction is marked by a dark chevron, the "Chinese moustache" (Mattheck and Breloer, The Body
+// Language of Trees, 1994): the branch bark ridge, the bark fold pushed up in the crotch, splits
+// in two arms once the limb dies, and the stem's girth growth pulls them apart round it and down
+// its sides. The longer since the limb was shed, the longer and flatter the arms; on birch the
+// fold's bark is black against the white. A beech or birch bole grown in a stand carries one from
+// every self-pruned limb up its clear length. Planned from the shed and dead laterals of the
+// main stem, and filled to a density up the clear bole for the twigs shed before the record.
+void TreeGenerator::_plan_chevrons() {
+	if (bark_chevrons <= 0.0f || fallen || fallen_branch || decay_class > 1 || nodes.size() < 3) {
+		return;
+	}
+	switch (preset) {
+		case PRESET_BEECH:
+		case PRESET_AMERICAN_BEECH:
+		case PRESET_BIRCH:
+		case PRESET_PAPER_BIRCH:
+		case PRESET_RED_MAPLE:
+		case PRESET_ROWAN:
+			break;
+		default:
+			return;
+	}
+	const int ms = _main_stem();
+	if (ms < 0) {
+		return;
+	}
+	int last_year = 0;
+	for (const Node &n : nodes) {
+		last_year = MAX(last_year, n.born);
+	}
+	float len = 0.0f, r13 = 0.0f, crown_base = -1.0f;
+	struct Seg {
+		float s0, len, r;
+	};
+	LocalVector<Seg> segs;
+	for (int k = ms; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+		const Node &n = nodes[k];
+		if (r13 <= 0.0f && len + n.length > 1.3f) {
+			r13 = n.radius;
+		}
+		segs.push_back({ len, n.length, n.radius });
+		if (crown_base < 0.0f) {
+			for (int l = n.first_lateral; l >= 0; l = nodes[l].next_sibling) {
+				if (!nodes[l].removed && !nodes[l].dead && nodes[l].radius > 0.02f) {
+					crown_base = len;
+					break;
+				}
+			}
+		}
+		len += n.length;
+	}
+	if (len < 2.0f || r13 < 0.03f) {
+		return;
+	}
+	if (crown_base < 0.0f) {
+		crown_base = 0.6f * len;
+	}
+	auto stem_r = [&](float p_s) {
+		for (const Seg &g : segs) {
+			if (p_s < g.s0 + g.len) {
+				return g.r;
+			}
+		}
+		return segs[segs.size() - 1].r;
+	};
+	// The stem's age from its girth: about 3-4 mm of radius a year in a stand (beech and birch,
+	// Pretzsch 2009).
+	const float tree_age = CLAMP(r13 / 0.0035f, 8.0f, 250.0f);
+	const bool papery = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH;
+	RandomPCG rng;
+	rng.seed(uint64_t(seed) * 2654435761u + 0x63687672u);
+	const int first = wounds.size();
+	auto add = [&](float p_s, float p_az, float p_rb, float p_frac, bool p_scar) {
+		const float r = stem_r(p_s);
+		Wound w;
+		w.kind = WOUND_CHEVRON;
+		w.s0 = p_s;
+		w.az0 = p_az;
+		w.half_w = p_rb;
+		w.age = p_frac * tree_age;
+		// Arms: the scar's width and then the girth gained since, pulled round the stem; at most
+		// a little under half way round.
+		const float arm = (p_rb * (1.5f + 5.0f * p_frac) + 0.25f * r * p_frac) * Math::lerp(0.8f, 1.2f, rng.randf());
+		w.extra = MIN(arm, 0.42f * float(Math::PI) * r) * (p_scar ? 1.0f : -1.0f);
+		// Flatter with age: from about 60 degrees below the horizontal to about 28 (a birch's
+		// steeper, a black inverted V).
+		w.twist = Math::deg_to_rad(papery ? Math::lerp(65.0f, 42.0f, p_frac) : Math::lerp(60.0f, 28.0f, p_frac)) * Math::lerp(0.85f, 1.15f, rng.randf());
+		w.salt = rng.rand();
+		wounds.push_back(w);
+	};
+	// The recorded limbs: shed (removed) leave a scar, dead ones still stand as stubs.
+	len = 0.0f;
+	for (int k = ms; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+		const Node &n = nodes[k];
+		const Vector3 ref = stem_ref(n.dir);
+		const Vector3 bin = n.dir.cross(ref);
+		for (int l = n.first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			const Node &b = nodes[l];
+			if ((!b.removed && !b.dead) || b.radius < 0.005f) {
+				continue;
+			}
+			Vector3 rad = b.dir - n.dir * b.dir.dot(n.dir);
+			if (rad.length_squared() < 1e-6f) {
+				continue;
+			}
+			rad.normalize();
+			const float s = len + CLAMP((b.start - n.start).dot(n.dir), 0.0f, n.length);
+			if (s < 0.4f || s > len + n.length || s > 0.92f * crown_base + 0.08f * len) {
+				continue;
+			}
+			const float frac = last_year > 0 ? CLAMP(float(last_year - b.born) / float(last_year), 0.15f, 1.0f) : 0.5f;
+			add(s, Math::atan2(rad.dot(bin), rad.dot(ref)), MIN(b.radius, 0.45f * stem_r(s)), frac, b.removed);
+		}
+		len += n.length;
+	}
+	// The twigs shed before the record, up the clear bole: about one a metre and a half in the
+	// open, two in a stand, more on birch; older and larger low down.
+	const float clear = MAX(0.0f, crown_base - 0.5f);
+	float per_m = (papery ? 4.0f : 1.8f) * Math::lerp(0.6f, 1.0f, CLAMP(r13 / 0.2f, 0.0f, 1.0f));
+	if (preset == PRESET_RED_MAPLE || preset == PRESET_ROWAN) {
+		per_m *= 0.5f;
+	}
+	const int want = int(clear * per_m * bark_chevrons);
+	int have = int(wounds.size()) - first;
+	for (int tries = 0; have < want && tries < want * 6; tries++) {
+		const float s = Math::lerp(0.5f, crown_base, rng.randf());
+		const float az = rng.randf() * float(Math::TAU) - float(Math::PI);
+		const float r = stem_r(s);
+		bool clash = false;
+		for (int i = first; i < int(wounds.size()) && !clash; i++) {
+			const Wound &o = wounds[i];
+			const float ds = s - o.s0;
+			const float dl = Math::abs(Math::angle_difference(az, o.az0)) * r;
+			clash = Math::abs(ds) < 0.12f + 0.4f * Math::abs(o.extra) && dl < 0.08f + 1.1f * Math::abs(o.extra);
+		}
+		if (clash) {
+			continue;
+		}
+		const float low = 1.0f - s / MAX(crown_base, 0.5f);
+		const float frac = CLAMP(Math::lerp(0.2f, 0.95f, rng.randf()) * Math::lerp(0.7f, 1.1f, low), 0.1f, 1.0f);
+		const float rb = CLAMP(r13 * Math::lerp(0.04f, 0.14f, rng.randf()), 0.005f, 0.035f);
+		add(s, az, rb, frac, true);
+		have++;
+	}
+}
+
 bool TreeGenerator::_wounds_resin() const {
 	switch (preset) {
 		case PRESET_SCOTS_PINE:
@@ -6537,6 +6684,9 @@ Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) c
 			continue;
 		}
 		const Wound &w = wounds[i];
+		if (w.kind == WOUND_CHEVRON) {
+			continue; // Its own strips (_grow_chevrons).
+		}
 		const float salt = float(w.salt & 0xffff) * 0.01f;
 		// Woundwood: rolls of callus grow in from every edge, about 3 mm a year wider and
 		// standing out a little less (Shigo 1989; Neely 1988).
@@ -6732,6 +6882,316 @@ void TreeGenerator::_grow_checks() {
 	}
 }
 
+// Branch-scar chevrons as geometry (trees.md 5r): the stem's bark grid is 2.5 cm round and 5-10 cm
+// along at best, so a chevron's arm a centimetre or two wide cannot be drawn in its vertex colour.
+// Each scar is its own small mesh laid on the recorded stem surface: an oval eye with a callus rim,
+// and two arms tapering out and down, a low fold of bark whose edges tuck under the stem's surface
+// (no floating edge at a grazing view), creased across. Bark material, its UV continued from the
+// stem under it and its colour and lichen weight taken from there, darkened.
+void TreeGenerator::_grow_chevrons(Builder &r_bark) {
+	if (wounds.is_empty() || wound_pts.size() < 2 || wound_surf.is_empty() || wound_vtx.size() != wound_surf.size() || fallen || fallen_branch) {
+		return;
+	}
+	const int na = 96;
+	const int ns = int(wound_surf.size()) / na;
+	auto radius_at = [&](float p_s) {
+		int i = 0;
+		while (i + 2 < int(wound_arc.size()) && wound_arc[i + 1] < p_s) {
+			i++;
+		}
+		const float t = CLAMP((p_s - wound_arc[i]) / MAX(wound_arc[i + 1] - wound_arc[i], 1e-6f), 0.0f, 1.0f);
+		return Math::lerp(wound_rad[i], wound_rad[i + 1], t);
+	};
+	auto bin_of = [&](float p_s, float p_az) {
+		const int is = CLAMP(int(p_s / 0.02f), 0, ns - 1);
+		const int ia = ((int(Math::floor((p_az + float(Math::PI)) / float(Math::TAU) * na)) % na) + na) % na;
+		return is * na + ia;
+	};
+	// The surface radius, bilinear over the bins (the tube's own between its vertices).
+	auto surf_at = [&](float p_s, float p_az) {
+		const float fs = CLAMP(p_s / 0.02f - 0.5f, 0.0f, float(ns - 1));
+		const float fa = (p_az + float(Math::PI)) / float(Math::TAU) * na - 0.5f;
+		const int s0 = int(fs), a0 = int(Math::floor(fa));
+		const float ts = fs - s0, ta = fa - a0;
+		float sum = 0.0f, wsum = 0.0f;
+		for (int ds = 0; ds <= 1; ds++) {
+			for (int da = 0; da <= 1; da++) {
+				const float w = (ds ? ts : 1.0f - ts) * (da ? ta : 1.0f - ta);
+				const float m = wound_surf[MIN(s0 + ds, ns - 1) * na + ((a0 + da) % na + na) % na];
+				if (m > 0.0f && w > 0.0f) {
+					sum += w * m;
+					wsum += w;
+				}
+			}
+		}
+		return wsum > 0.0f ? sum / wsum : radius_at(p_s);
+	};
+	// The stem's own triangles, bucketed by (s, az), for the surface under each strip vertex: the
+	// recorded bins are sparse where the rings are 10 cm apart, and a radius read between them sank
+	// stretches of an arm under the bark.
+	const float len = wound_arc[wound_arc.size() - 1];
+	const int bs_n = int(len / 0.05f) + 1, ba_n = 32;
+	LocalVector<LocalVector<int>> buckets;
+	buckets.resize(bs_n * ba_n);
+	{
+		HashSet<int> stem_parts;
+		for (const Vector2i &e : wound_vtx) {
+			if (e.y >= 0) {
+				stem_parts.insert(e.y);
+			}
+		}
+		const int *ix = r_bark.indices.ptr();
+		const Vector3 *vx = r_bark.verts.ptr();
+		LocalVector<StemAt> v_at;
+		for (int pi : stem_parts) {
+			if (pi >= int(r_bark.parts.size())) {
+				continue;
+			}
+			const Vector4i &pt = r_bark.parts[pi];
+			v_at.resize(pt.w);
+			LocalVector<uint8_t> ok;
+			ok.resize(pt.w);
+			for (int v = 0; v < pt.w; v++) {
+				ok[v] = stem_at(wound_pts, wound_rad, wound_arc, vx[pt.z + v], v_at[v]) ? 1 : 0;
+			}
+			for (int q = pt.x; q + 2 < pt.x + pt.y; q += 3) {
+				float s_lo = 1e9f, s_hi = -1e9f;
+				float a_ref = 0.0f, a_lo = 0.0f, a_hi = 0.0f;
+				bool good = true;
+				for (int j = 0; j < 3 && good; j++) {
+					const int lv = ix[q + j] - pt.z;
+					if (lv < 0 || lv >= pt.w || !ok[lv]) {
+						good = false;
+						break;
+					}
+					const StemAt &a = v_at[lv];
+					s_lo = MIN(s_lo, a.s);
+					s_hi = MAX(s_hi, a.s);
+					if (j == 0) {
+						a_ref = a.az;
+					} else {
+						const float d = Math::angle_difference(a_ref, a.az);
+						a_lo = MIN(a_lo, d);
+						a_hi = MAX(a_hi, d);
+					}
+				}
+				if (!good || a_hi - a_lo > 1.5f) {
+					continue;
+				}
+				const int i0 = CLAMP(int(s_lo / 0.05f), 0, bs_n - 1), i1 = CLAMP(int(s_hi / 0.05f), 0, bs_n - 1);
+				const int j0 = int(Math::floor((a_ref + a_lo + float(Math::PI)) / float(Math::TAU) * ba_n));
+				const int j1 = int(Math::floor((a_ref + a_hi + float(Math::PI)) / float(Math::TAU) * ba_n));
+				for (int i = i0; i <= i1; i++) {
+					for (int j = j0; j <= j1; j++) {
+						buckets[i * ba_n + ((j % ba_n) + ba_n) % ba_n].push_back(q);
+					}
+				}
+			}
+		}
+	}
+	// The stem's outermost surface along a ray from its centreline at (s, az); the bins' radius
+	// where the ray finds none.
+	auto surface = [&](float p_s, float p_az) {
+		Vector3 out, ax;
+		const Vector3 o = stem_point(wound_pts, wound_arc, p_s, p_az, 0.0f, out, ax);
+		const int i = CLAMP(int(p_s / 0.05f), 0, bs_n - 1);
+		const int j = ((int(Math::floor((p_az + float(Math::PI)) / float(Math::TAU) * ba_n)) % ba_n) + ba_n) % ba_n;
+		float best = -1.0f;
+		const int *ix = r_bark.indices.ptr();
+		const Vector3 *vx = r_bark.verts.ptr();
+		for (int q : buckets[i * ba_n + j]) {
+			const Vector3 &a = vx[ix[q]], &b = vx[ix[q + 1]], &c = vx[ix[q + 2]];
+			const Vector3 e1 = b - a, e2 = c - a;
+			const Vector3 pv = out.cross(e2);
+			const float det = e1.dot(pv);
+			if (Math::abs(det) < 1e-12f) {
+				continue;
+			}
+			const float inv = 1.0f / det;
+			const Vector3 tv = o - a;
+			const float u = tv.dot(pv) * inv;
+			if (u < -1e-4f || u > 1.0001f) {
+				continue;
+			}
+			const Vector3 qv = tv.cross(e1);
+			const float v = out.dot(qv) * inv;
+			if (v < -1e-4f || u + v > 1.0001f) {
+				continue;
+			}
+			const float t = e2.dot(qv) * inv;
+			best = MAX(best, t);
+		}
+		return best > 0.0f ? best : surf_at(p_s, p_az);
+	};
+	const bool papery = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH;
+	const bool beech = preset == PRESET_BEECH || preset == PRESET_AMERICAN_BEECH;
+	// The fold's darkness (a multiplier on the bark's colour) and height: beech's is a grey-black
+	// fold about a millimetre proud, birch's a flat black mark on the white.
+	const float k_dark = papery ? 0.11f : (beech ? 0.34f : 0.55f);
+	const float fold = papery ? 0.0003f : 0.0007f;
+	const float tuck = 0.0005f;
+	const Vector4 keep_uv2 = r_bark.uv2_map;
+	const uint8_t keep_role = r_bark.role;
+	r_bark.uv2_map = Vector4();
+	r_bark.role = Builder::ROLE_ALL;
+	for (int wi = 0; wi < int(wounds.size()); wi++) {
+		const Wound &w = wounds[wi];
+		if (w.kind != WOUND_CHEVRON || w.s0 >= wound_arc[wound_arc.size() - 1] - 0.05f) {
+			continue;
+		}
+		// The stem vertex under the scar: the UV, colour and skin the scar continues.
+		Vector2i bv(-1, -1);
+		{
+			const int c = bin_of(w.s0, w.az0);
+			for (int d = 0; d < 9 && bv.x < 0; d++) {
+				const int is = c / na + (d / 3 - 1), ia = (c % na + (d % 3 - 1) + na) % na;
+				if (is >= 0 && is < ns) {
+					bv = wound_vtx[is * na + ia];
+				}
+			}
+		}
+		if (bv.x < 0 || bv.x >= r_bark.verts.size()) {
+			continue;
+		}
+		StemAt at;
+		if (!stem_at(wound_pts, wound_rad, wound_arc, r_bark.verts[bv.x], at)) {
+			continue;
+		}
+		const Vector2 base_uv = r_bark.uvs[bv.x];
+		const float repeats = MAX(1.0f, Math::round(float(Math::TAU) * wound_rad[0] / BARK_TILE));
+		const float circ = float(Math::TAU) * wound_rad[0] / repeats;
+		const float salt = float(w.salt & 0xffff) * 0.01f;
+		const float frac = CLAMP(w.age / MAX(1.0f, CLAMP(radius_at(1.3f) / 0.0035f, 8.0f, 250.0f)), 0.0f, 1.0f);
+		Vector4i part;
+		r_bark.begin(part);
+		// The skin (and the wind's bone) of the stem vertex under the scar.
+		const bool skin = r_bark.bones.size() == r_bark.verts.size() * 4 && r_bark.weights.size() == r_bark.bones.size();
+		// One vertex at (x round the stem, y along it) in metres from the scar's centre, lifted
+		// by p_h off the surface, its height's gradient (gx, gy) for the normal, darkened by p_d.
+		auto put = [&](float p_x, float p_y, float p_h, float p_gx, float p_gy, float p_d) {
+			const float sv = w.s0 + p_y;
+			const float rr = MAX(radius_at(sv), 0.01f);
+			const float az = w.az0 + p_x / rr;
+			Vector3 out, ax;
+			const Vector3 p = stem_point(wound_pts, wound_arc, sv, az, surface(sv, az) + p_h, out, ax);
+			const Vector3 tang = ax.cross(out).normalized();
+			r_bark.verts.push_back(p);
+			r_bark.normals.push_back((out - tang * p_gx - ax * p_gy).normalized());
+			r_bark.uvs.push_back(base_uv + Vector2(Math::angle_difference(at.az, az) * repeats / float(Math::TAU), (sv - at.s) / circ));
+			const Vector2i under = wound_vtx[bin_of(sv, az)];
+			Color c = r_bark.colors[under.x >= 0 && under.x < r_bark.colors.size() ? under.x : bv.x];
+			const float k = Math::lerp(1.0f, k_dark, CLAMP(p_d, 0.0f, 1.0f));
+			// Lichen keeps off the fold a little (its weight in the alpha's upper half).
+			const float a = c.a > 0.5f ? Math::lerp(c.a, 0.5f, 0.5f * p_d) : c.a;
+			r_bark.colors.push_back(Color(c.r * k, c.g * k, c.b * k, a));
+			if (r_bark.use_tangents) {
+				r_bark.tangents.push_back(tang.x);
+				r_bark.tangents.push_back(tang.y);
+				r_bark.tangents.push_back(tang.z);
+				r_bark.tangents.push_back(1.0f);
+			}
+			if (skin) {
+				for (int j = 0; j < 4; j++) {
+					r_bark.bones.push_back(r_bark.bones[bv.x * 4 + j]);
+					r_bark.weights.push_back(r_bark.weights[bv.x * 4 + j]);
+				}
+			}
+			r_bark.extra_part.push_back(Vector2i(r_bark.verts.size() - 1, bv.y));
+		};
+		// Counter-clockwise seen from outside, as _tube's (the bark is flipped in the mesh loop).
+		auto quad_grid = [&](int p_first, int p_rows, int p_cols, bool p_wrap) {
+			const int span = p_wrap ? p_cols : p_cols - 1;
+			for (int i = 0; i + 1 < p_rows; i++) {
+				for (int k = 0; k < span; k++) {
+					const int k1 = (k + 1) % p_cols;
+					const int a = p_first + i * p_cols + k, b = p_first + i * p_cols + k1;
+					const int c = a + p_cols, d = b + p_cols;
+					for (const Vector3i &t : { Vector3i(a, b, c), Vector3i(b, d, c) }) {
+						int p0 = t.x, p1 = t.y, p2 = t.z;
+						const Vector3 fn = (r_bark.verts[p2] - r_bark.verts[p0]).cross(r_bark.verts[p1] - r_bark.verts[p0]);
+						if (fn.dot(r_bark.normals[p0] + r_bark.normals[p1] + r_bark.normals[p2]) > 0.0f) {
+							SWAP(p1, p2);
+						}
+						r_bark.indices.push_back(p0);
+						r_bark.indices.push_back(p1);
+						r_bark.indices.push_back(p2);
+					}
+				}
+			}
+		};
+		const bool scar = w.extra > 0.0f;
+		const float rb = w.half_w;
+		// The eye: the occluded stub, an oval stretched round the stem as it grows.
+		const float ex = MIN(rb * (1.0f + 0.6f * frac), 0.06f);
+		const float ey = ex * Math::lerp(0.8f, 0.5f, frac);
+		if (scar) {
+			const int sides = CLAMP(int(float(Math::TAU) * ex / 0.004f), 12, 40);
+			static const float RING[5] = { 0.0f, 0.4f, 0.72f, 0.88f, 1.0f };
+			// Height: a little sunk in the middle, a callus rim, tucked under at the edge.
+			const float HGT[5] = { 0.0002f, 0.0007f, 0.0016f, 0.0011f, -tuck };
+			const float DRK[5] = { 0.95f, 0.85f, papery ? 0.95f : 0.6f, papery ? 0.9f : 0.75f, 0.25f };
+			const int first = r_bark.verts.size();
+			for (int ri = 0; ri < 5; ri++) {
+				for (int j = 0; j < sides; j++) {
+					const float ang = float(Math::TAU) * j / sides;
+					const float wob = 1.0f + 0.16f * (moss_noise(Vector3(Math::cos(ang) * 1.3f, Math::sin(ang) * 1.3f, salt), w.salt) - 0.5f);
+					const float rf = RING[ri] * wob;
+					const float x = Math::cos(ang) * ex * rf, y = Math::sin(ang) * ey * rf;
+					// Radial slope from the neighbouring rings.
+					const int r0 = MAX(ri - 1, 0), r1 = MIN(ri + 1, 4);
+					const float dh = (HGT[r1] - HGT[r0]) / MAX((RING[r1] - RING[r0]) * 0.5f * (ex + ey), 1e-4f);
+					const float h = ri == 0 ? HGT[0] : HGT[ri];
+					put(x, y, h * (papery ? 0.5f : 1.0f), Math::cos(ang) * dh * 0.5f, Math::sin(ang) * dh * 0.5f, DRK[ri]);
+				}
+			}
+			quad_grid(first, 5, sides, true);
+		}
+		// The arms.
+		const float arm = Math::abs(w.extra);
+		for (int side = -1; side <= 1; side += 2) {
+			RandomPCG rng;
+			rng.seed(uint64_t(w.salt) * 2246822519u + uint64_t(side + 2) * 0x61726du);
+			const float L = arm * Math::lerp(0.85f, 1.15f, rng.randf());
+			const float w0 = papery ? CLAMP(1.1f * rb, 0.01f, 0.045f) : CLAMP(1.5f * rb, 0.013f, 0.045f);
+			const float droop = Math::lerp(0.15f, 0.35f, rng.randf());
+			float x = scar ? float(side) * 0.7f * ex : float(side) * 0.8f * rb;
+			float y = scar ? -0.3f * ey : -0.9f * rb;
+			const float step = 0.005f;
+			const int n = CLAMP(int(L / step), 6, 120);
+			const int first = r_bark.verts.size();
+			const float crease = papery ? 0.0f : 1.0f;
+			for (int i = 0; i <= n; i++) {
+				const float t = float(i) / n;
+				const float th = w.twist + droop * t + 0.12f * (moss_noise(Vector3(t * 3.0f, float(side), salt), w.salt) - 0.5f);
+				const Vector2 d(float(side) * Math::cos(th), -Math::sin(th));
+				const Vector2 pp(-d.y, d.x);
+				// Tapering to a point; a birch's broad at the root, as a black triangle.
+				const float hw = w0 * (1.0f - 0.88f * Math::pow(t, papery ? 0.8f : 1.6f)) * (0.85f + 0.3f * moss_noise(Vector3(t * 9.0f, float(side) * 2.0f, salt), w.salt + 3u));
+				// Creases across the fold, a couple of centimetres apart: darker and lower in them.
+				const float cr = crease * (0.5f + 0.5f * Math::sin(t * L / 0.018f * float(Math::TAU) + salt));
+				const float h0 = fold * (1.0f - 0.35f * cr) * (1.0f - 0.5f * t);
+				for (int k = 0; k < 7; k++) {
+					const float c = float(k) / 3.0f - 1.0f;
+					const float h = h0 * (1.0f - c * c) - tuck * c * c * c * c;
+					const float dhdc = -2.0f * c * h0 - 4.0f * tuck * c * c * c;
+					const Vector2 g = pp * (dhdc / MAX(hw, 1e-3f));
+					// Dark down the fold's middle, fading to the bark's own tone where it meets it;
+					// darker in the creases.
+					const float dk = Math::smoothstep(0.95f, 0.25f, Math::abs(c)) * (papery ? 1.0f - 0.2f * t : (0.7f + 0.3f * cr) * (1.0f - 0.35f * t));
+					put(x + pp.x * c * hw, y + pp.y * c * hw, h, g.x, g.y, dk);
+				}
+				x += d.x * L / n;
+				y += d.y * L / n;
+			}
+			quad_grid(first, n + 1, 7, false);
+		}
+		// Kept at the first LOD (a 2 cm part), dropped at the second.
+		r_bark.end(part, 0.02f);
+	}
+	r_bark.uv2_map = keep_uv2;
+	r_bark.role = keep_role;
+}
+
 // Resin (trees.md 5p): conifers flood a wound with resin, which wells from its edges and runs
 // down the bark in drips that end in a drop, and sets in beads on the callus; amber while fresh,
 // crusted whitish-yellow as its terpenes evaporate. Small tubes and beads laid on the stem's
@@ -6808,7 +7268,7 @@ void TreeGenerator::_grow_resin(Builder &r_resin) {
 	};
 	for (int wi = 0; wi < int(wounds.size()); wi++) {
 		const Wound &w = wounds[wi];
-		if (w.kind == WOUND_FROST || w.kind == WOUND_CHECK) {
+		if (w.kind == WOUND_FROST || w.kind == WOUND_CHECK || w.kind == WOUND_CHEVRON) {
 			continue;
 		}
 		RandomPCG rng;
@@ -9236,7 +9696,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// tilted by the same field's slope; the bare wood goes to _peel_bark. Moss holds the bark under
 	// it, as on dead wood.
 	_plan_wounds();
+	_plan_chevrons();
 	wound_pts.clear();
+	wound_vtx.clear();
 	wound_rad.clear();
 	wound_arc.clear();
 	wound_surf.clear();
@@ -9305,7 +9767,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const int is = CLAMP(int(at.s / 0.02f), 0, ns - 1);
 				const int ia = int((at.az + float(Math::PI)) / float(Math::TAU) * na) % na;
 				float &m = wound_surf[is * na + ia];
-				m = MAX(m, at.dist + f.x);
+				if (at.dist + f.x > m) {
+					m = at.dist + f.x;
+					if (is * na + ia < int(wound_vtx.size())) {
+						wound_vtx[is * na + ia] = Vector2i(v, int(r_b.parts.size()) - 1);
+					}
+				}
 			}
 		}
 	};
@@ -10948,6 +11415,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			for (uint32_t i = 0; i < wound_surf.size(); i++) {
 				wound_surf[i] = -1.0f;
 			}
+			wound_vtx.resize(wound_surf.size());
+			for (uint32_t i = 0; i < wound_vtx.size(); i++) {
+				wound_vtx[i] = Vector2i(-1, -1);
+			}
 		}
 		// A hanger's base is a fracture hanging beside its stub, not a junction: no branch
 		// collar, fork crotch or weld into the parent.
@@ -12274,6 +12745,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder crown_parts;
 	const int crown_big_end = _grow_crown_parts(crown_parts);
 	_grow_checks();
+	_grow_chevrons(bark);
 	Builder resin;
 	_grow_resin(resin);
 	Builder *builders[10] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts, &resin };
@@ -13343,6 +13815,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
 	bark_wounds = p_from.bark_wounds;
+	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
 	ground_slope = p_from.ground_slope;
 	root_stone = p_from.root_stone;
@@ -14644,6 +15117,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_krummholz"), &TreeGenerator::get_krummholz);
 	ClassDB::bind_method(D_METHOD("set_bark_wounds", "wounds"), &TreeGenerator::set_bark_wounds);
 	ClassDB::bind_method(D_METHOD("get_bark_wounds"), &TreeGenerator::get_bark_wounds);
+	ClassDB::bind_method(D_METHOD("set_bark_chevrons", "amount"), &TreeGenerator::set_bark_chevrons);
+	ClassDB::bind_method(D_METHOD("get_bark_chevrons"), &TreeGenerator::get_bark_chevrons);
 	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
 	ClassDB::bind_method(D_METHOD("set_fruit_cover", "cover"), &TreeGenerator::set_fruit_cover);
 	ClassDB::bind_method(D_METHOD("get_fruit_cover"), &TreeGenerator::get_fruit_cover);
@@ -14744,6 +15219,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_exposure", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wind_exposure", "get_wind_exposure");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");

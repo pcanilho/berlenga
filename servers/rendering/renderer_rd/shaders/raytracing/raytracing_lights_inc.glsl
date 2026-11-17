@@ -563,6 +563,26 @@ vec3 lights_directional_projector_color(RTLightData light, vec3 p_pos) {
 	return projector.rgb * projector.a;
 }
 
+// The sun's direct beam through the clouds at p_pos. WeatherMap3D's cloud map holds the clouds' diffuse
+// transmission 1 / (1 + 3/4 (1 - g) tau), marked by alpha 254; the beam exp(-tau) is taken back out of it, as the
+// froxel fog does (fog_directional_projector). Any other projector is its colour.
+vec3 lights_directional_projector_beam(RTLightData light, vec3 p_pos) {
+	if (light.projector_texture == RT_LIGHT_NO_PROJECTOR) {
+		return vec3(1.0);
+	}
+	vec3 axis_u = lights_rotate(light.orientation, vec3(1.0, 0.0, 0.0));
+	vec3 axis_v = -lights_rotate(light.orientation, vec3(0.0, 1.0, 0.0));
+	vec2 uv = (vec2(dot(p_pos, axis_u), dot(p_pos, axis_v)) - light.projector_corner) / light.projector_size;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec3(1.0);
+	}
+	vec4 projector = textureLod(sampler2D(bindless_textures[nonuniformEXT(light.projector_texture)], rt_light_projector_sampler), uv, 0.0);
+	if (abs(projector.a * 255.0 - 254.0) < 0.25) {
+		return exp(-(1.0 / max(projector.rgb, vec3(1e-3)) - 1.0) / (0.75 * (1.0 - 0.85))) * projector.a;
+	}
+	return projector.rgb * projector.a;
+}
+
 // Raygen (the transparent pass's light cache) has no geometry tables: it traces its shadow rays.
 #ifndef RT_LIGHTS_TRACE_SHADOWS_ONLY
 #include "raytracing_shadow_query_inc.glsl"
@@ -1178,6 +1198,10 @@ vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V,
 
 // Unweighted contribution of one directional light, one shadow ray. r_visible as for
 // lights_evaluate_positional.
+// The sun's visibility over relief a material draws without faces (parallax occlusion), from its SUN_SHADOW: the
+// closest hit sets it before shading, 1 elsewhere.
+float rt_relief_sun_visibility = 1.0;
+
 vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
 		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask, out float r_visible) {
 	r_visible = -1.0;
@@ -1195,6 +1219,9 @@ vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V
 	}
 
 	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, ls.max_distance, p_receiver_shadow_mask, rng_state) * projector_color;
+	if (rt_relief_sun_visibility < 1.0 && light.position == lights_get(0u).position) {
+		shadow_transmittance *= rt_relief_sun_visibility;
+	}
 	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
 	if (max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.0 && rt_caustics_enabled() && light.position == lights_get(0u).position) {
 		// Under water, the sun's light gathered into lines by the surface (raytracing_caustics_inc.glsl).

@@ -221,6 +221,122 @@ the same model; the half resolution pass puts the clouds over it.
   goes black within about 3 deg below the horizon, as it should: exposure is step 4. Raster open water's body
   colour is unlit emission, so it glows at dusk; that is a water fix, next.
 
+### Step 3: the night sky, research update (16 Nov)
+
+Newer work on drawing stars in real time, read before building:
+- **Bruneton 2020** ("A Real-time Rendering of the Night Sky", arXiv 2010.08735, his precomputed atmosphere's
+  successor demo): Gaia DR2 and Tycho-2 (3.6 million stars) baked into two cube maps (RGB9E5, 6 x 2048 x 2048),
+  each texel holding at most one star's colour; the mip chain sums colours rather than averaging them, so a star
+  never fades with distance in the chain. The lookup treats each star as a 1 x 1 texel area and weighs it by its
+  overlap with the pixel's footprint (from the screen derivatives of the view direction, with analytic cube-face
+  coordinates to avoid seams), picking the mip level that keeps the footprint under 9 x 9 texels. Bright stars get a
+  glare (a point spread function after Spencer et al. 1995, applied before tone mapping). 2.99 ms at 1080p on a GTX 960;
+  a few stars still flicker as the camera moves. Point sprites were slower there (overdraw).
+- **Schneegans, Kreskowski and Gerndt 2025** ("Smaller than Pixels: Rendering Millions of Stars in Real-Time",
+  Eurographics short paper, CosmoScout VR): a star's luminance from its magnitude and an assumed disc of solid angle
+  A, `S = m + 2.5 log10(A)` (A in square arcseconds) and `L = 10.8e4 * 10^(-0.4 S)` cd/m2, splatted over 2 x 2
+  pixels by distance to the pixel centres; glare as a pyramid of Gaussians (each level twice the width and half the
+  weight, summing to the 1/theta^2 fall-off of veiling glare), 0.34 ms at 1080p.
+- **Gaia Sky** (ARI Heidelberg): apparent magnitude to a billboard's size; quads rather than GL points so that
+  stars keep their size with the field of view.
+- **The moon's surface**: Hapke-Lommel-Seeliger (Jensen et al. 2001's parameters) or the full Hapke model; Menon
+  et al. (CU Boulder, lunar regolith for VR) implement both and find both convincing, with no frame time measured.
+
+What fits the fork (the plan above, refined): everything in `WeatherSkyMaterial`, so the path tracer, which
+draws the same sky shader (`pathtracing_sky_shader_enabled`), sees the same stars and moon.
+1. **Stars**: the Yale Bright Star Catalogue (public domain; about 9,100 stars down to magnitude 6.5, what the eye
+   sees) as a small data table built into the module, baked once into a star cube map Bruneton's way (one star per
+   texel, summed mips) and looked up per pixel with his footprint weighting, in the sky's full resolution pass.
+   Each star's illuminance `E = 10^(-0.4 (m + 13.98))` lux above the air (Jensen's formula in lux), times the
+   air's transmittance along it (the same table as the sun), colour from B-V as a black body at
+   `7000 K / (B-V + 0.56)`, turned by `SkyClock.get_celestial_basis()` so the sky wheels round the pole.
+   Twinkle from scintillation near the horizon, small. Glare: a few pixels of point spread around the brightest
+   (Schneegans' pyramid would be a post pass; later, with exposure, if needed).
+2. **Moon disc**: 0.52 deg, shaded by Hapke-Lommel-Seeliger from the sun's direction with the clock's phase and
+   bright limb angle, earthshine on the dark side; albedo and normals from the NASA LRO CGI Moon Kit (public
+   domain) as art in Gitea LFS, with a plain grey disc of mean albedo 0.12 as the fallback.
+3. **Milky Way** (ESO panorama, CC BY 4.0, via Gitea LFS) and Jensen's airglow and zodiacal light.
+4. Exposure across the day is step 4, as planned.
+
+**Built (17 Nov): stars.** Not Bruneton's cube map: 9,096 stars fit a smaller scheme. The catalogue
+(`modules/weather/bright_stars_data.h`, from `tools/make_bright_stars.py`) is binned once into a cube-face grid
+(6 x 32 x 32 cells, about 3 deg); a star within 0.5 deg of a cell's edge goes into the neighbours too, so a pixel
+reads one cell's short list (1.5 stars on average). Each star is its illuminance (`10^(-0.4 (V + 13.99))` lux)
+spread by a normalised Gaussian half a pixel wide (at least half an arcminute), so the pixels round a star sum to
+it at any resolution (Schneegans et al. 2025), times the air's transmittance, behind the clouds. Colour: B-V to a
+temperature (Ballesteros 2012), a black body through the CIE observer (Wyman, Sloan and Shirley 2013 fit) to
+linear sRGB at unit luminance. Checked: at latitude 45 deg the brightest star in an 8 deg view centred on the
+pole is 0.7 deg from it (Polaris, 0.65 deg in 2026). Not drawn in the radiance map. Two 64 KB textures.
+
+**Built (17 Nov): the moon's disc, star glare, horizon clouds.** The disc (diameter from the clock's distance)
+is shaded by Lommel-Seeliger, `2 mu0 / (mu0 + mu)`, lit from the sun's direction, so its phase and terminator
+follow the clock; divided by the disc-integrated Lommel-Seeliger phase function
+`1 - sin(a/2) tan(a/2) ln(cot(a/4))`, the disc sums to the clock's moon illuminance (whose magnitude already
+carries the phase). Earthshine lights the dark side at 2e-4 of a full moon times the earth's phase. Plain albedo
+until the LRO map is in Gitea LFS. Stars hide behind it. Bright stars get glare: three wider Gaussians, each twice
+the width and half the weight (Schneegans' pyramid), on top of the core, so Sirius and Betelgeuse stand out and
+Orion reads. Clouds near the horizon: a grazing path through the deck is up to 200 km, sampled 64 times, so far
+holes showed dithered, stepped edges (worst at night under high exposure); the step count now grows with the
+root of the path past 5 km, up to three times (about 9% on the sky-only bench).
+
+**Built (17 Nov): airglow.** The upper air's own light, 1.2e-4 cd/m2 at the zenith (about 22 V magnitudes a
+square arcsecond, the airglow share of the 2e-4 natural night sky; Leinert et al. 1998), brightening to the
+horizon by the van Rhijn factor of a 90 km layer, seen through the air, green (oxygen's 557.7 nm line). It also
+lights the cloud tops, so a moonless overcast reads as dark grey-green shapes, not black holes. At an exposure
+where it shows (about 2e7 in the bench), stars saturate with glare, as in a long-exposure photograph. The Milky
+Way waits for its panorama in Gitea LFS (ESO, CC BY 4.0, galactic coordinates, rotated to the equator).
+
+**Built (17 Nov): step 4, exposure from the clock.** Godot already has a pre-exposure: the camera's
+`exposure_multiplier` scales lights, emission, probes and the sky before the buffers. SkyClock (`drive_exposure`,
+on) sets it from the ground illuminance (sun and moon through the air, the sky's light through twilight from
+published values, a 0.002 lux floor): 1 at 10,000 lux and up, `(10000 / E)^adaptation` below (`adaptation` 1:
+twilight, moonlight and starlight read like an overcast day, a twelfth of noon). Moonless night x5e6, full moon
+about x4e4. Engine fix found on the way: the sky's half and quarter resolution passes were written after the
+brightness multiplier and read back without undoing it, so a sky that composites them took the exposure once per
+pass (white at night). Histogram metering (exposure.md) can sit on top later.
+
+**Built (17 Nov): the Milky Way.** `milky_way` takes a galactic panorama (ESO's eso0932a, ESO/S. Brunier,
+CC BY 4.0, now in Gitea LFS at art-src `sky/milky_way/`), rotated from the equator by Hipparcos' galactic matrix,
+read at mip 2 (about half a degree) so its photographed stars smear into the band rather than doubling the
+catalogue's; a linear texel of 1 is `milky_way_luminance` (1e-3 cd/m2; the band's brightest clouds about 7e-4).
+The engine ships no texture: a project assigns it (the sky bench's `--milky-way=path`).
+
+**Step 4 notes (next).** The eye at night: scotopic vision loses colour and shifts toward blue (Purkinje); Jensen
+et al. 2001 and Thompson, Shirley and Ferwerda 2002 tone-map night scenes by blending toward a blue-grey scotopic
+luminance below about 0.01 cd/m2. Exposure from the clock's light levels, pre-exposed in every pass (lights and
+emission, not only the sky), since moonlit scenes in light energy units also fall below half floats.
+
+**Built (17 Nov): night vision (step 4b).** Kirk and O'Brien's model (thesis, Berkeley EECS-2011-91, ch. 5) and
+Ghost of Tsushima's real-time version (Patry 2021) give the rod-to-cone gains, but neither prints its RGB to LMSR
+matrix or the units the gains expect, so their constants cannot be applied to physical luminance as published.
+Built instead on the published, calibrated pieces:
+- **Where it applies:** the CIE mesopic range (CIE 191:2010). Above 5 cd/m2 the cones work alone, and below
+  0.005 cd/m2 the rods do. In between the mix is log-linear in the pixel's photopic luminance, so lamps, lit windows
+  and the moon's disc keep their colour while the moonlit ground goes blue-grey.
+- **What the rods see:** scotopic luminance from XYZ by Larson, Rushmeier and Piatko's fit to V'(lambda) (1997),
+  in the single blue-grey hue of Thompson, Shirley and Ferwerda 2002 (1.05, 0.97, 1.27). It is scaled so a D65
+  white keeps its brightness (the fit's S/P of D65 is 2.573). Reds drop to about a sixth against white and blues
+  rise about 2.8 times: the Purkinje shift.
+- **Units:** `CameraAttributes.luminance_per_energy` (cd/m2 of a white surface under one unit of light energy).
+  SkyClock sets it to 1 / (pi energy_per_lux) whenever it drives the exposure. The tonemap divides out the
+  pre-exposure, so the eye's state follows the real light and not the exposure. `CameraAttributes.night_vision`
+  (on) does nothing until the units are known.
+- It runs in the tonemap before exposure (also in its FXAA path), so raster and PT get the same treatment. It does
+  not run in the mobile renderer yet.
+- Found on the way: Godot baked the sky's radiance map with the camera's exposure and then scaled it again by
+  `IBL_exposure_normalization`, so ambient and reflected sky light took the pre-exposure squared. At full moon
+  (x4.5e4) the ground went white. The bake now records the exposure it was drawn with (sky.cpp).
+- Checked with the sky bench `--sky --chart` (full moon 24 Nov, new moon 9 Nov, noon): noon is unchanged. At full
+  moon (about 0.02 cd/m2 on the grey ground) the chart goes blue-grey, red near black and blue the brightest
+  colour.
+- Open: on the new moon the ground reads about four times darker than the sky's own brightness implies. The
+  radiance map may lack the airglow or the stars; to check.
+
+**Pre-exposure.** A night sky in light energy units (1e-5 per lux) is below half floats: the quarter and half
+resolution passes stored the air in visible bands and dropped every star fainter than about V 3. The sky's
+`exposure` now applies in each pass before the buffers (Frostbite's pre-exposure, Lagarde and de Rousiers 2014),
+the same result by day. The sky bench's `--exposure` sets it; step 4 drives it from the camera.
+
 ### Checks
 
 - Positions against published almanac values. The JPL Horizons ephemeris gives the sun and the moon for a
@@ -249,3 +365,8 @@ the same model; the half resolution pass puts the clouds over it.
 - Sky3D (TokisanGames, MIT): https://github.com/TokisanGames/Sky3D
 - Hoffleit and Warren, The Bright Star Catalogue, 5th revised ed. (Yale), 1991.
 - NASA SVS, CGI Moon Kit (LRO): https://svs.gsfc.nasa.gov/4720
+- Bruneton, A Real-time Rendering of the Night Sky, 2020: https://arxiv.org/abs/2010.08735
+- Schneegans, Kreskowski and Gerndt, Smaller than Pixels: Rendering Millions of Stars in Real-Time, Eurographics
+  2025 short paper.
+- Gaia Sky documentation, star rendering: https://gaia.ari.uni-heidelberg.de/gaiasky/docs/3.7.3/Star-rendering.html
+- Menon et al., Efficient Photometric Models of the Lunar Regolith for Virtual Reality Simulation (CU Boulder).

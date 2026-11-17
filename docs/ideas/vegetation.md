@@ -288,7 +288,7 @@ Neyret (1998) volumetric textures; Bako et al. (2023), "Deep Appearance Prefilte
 - Before: a species past its `visibility_range` leaves only the far colour on the ground (the
   cover bake), so bracken, heather and tall herbs flatten into paint past 15 to 30 m, and the
   silhouette of a fern bank against the slope is gone.
-- `VegetationField3D.far_volume` (off), `far_volume_range` (150 m), `far_volume_cell` (0.3 m):
+- `VegetationField3D.far_volume` (on by default since 16 Nov: every feature ships on, the PC tunes cost later), `far_volume_range` (150 m), `far_volume_cell` (0.3 m):
   per tile and species, each placed plant's mesh bounds fill an ellipsoid of leaf cover over its
   foot; covers add on the voxel grid and a voxel is solid with probability 1 - exp(-cover)
   (Beer-Lambert, a fixed hash: a thin stand stays porous and never flickers); the solid voxels'
@@ -365,6 +365,59 @@ the British Isles (2019) for sizes and flowering.
   and hummock/hollow split.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
+
+## Dune plants on generated dunes (built 17 Nov)
+
+The terrain generator now builds coastal dunes (TerrainGenerator3D `dunes_enabled`, on): Werner's
+slab model with marram after Nield and Baas 2008, so each dune cell carries a stability, the
+marram cover that holds its sand (0 bare and moving, 1 fixed). That is the ecological sequence the
+dune sets stand for (embryo dunes on the strandline, mobile yellow dunes under young marram, fixed
+grey dunes behind where the sand has stopped; Ranwell 1972, Maun 2009), so it places them better
+than distance from the water alone.
+
+- `PlantSpecies.RULE_DUNE` (`dune_range`, `dune_fade`): the generator's `get_dune_stability()`, or
+  -1 where it has less than 0.3 m of dune sand. Applied only when the map's geology source has
+  built dunes; elsewhere the dune sets keep placing by distance from the water as before.
+- `make_dunes()`: embryo 0 to 0.3, mobile 0.15 to 0.8, fixed 0.6 to 1 (fade 0.1); their water
+  distances widened (embryo to 40 to 60 m, mobile to 250 m, fixed from 30 m) so the generator's
+  foredunes, tens of metres behind the beach, fall inside them.
+- Blowouts and parabolic dune noses, where cover failed, read as bare or embryo sand.
+
+## Far colour matched to the plants on screen (built 16 Nov)
+
+The showcase scene showed a lighter ring of ground where the cover plants (bracken, heather) end.
+Scene isolated it by hiding one field at a time: with the cover field hidden the ring is gone, so
+it is the cover plants darkening the ground within their range (their shadowed depths, leaves in
+each other's shade, the dark soil between stems) against the far colour that replaces them, which
+is only the species' leaf colour. Grass already solves the same problem for its far ground with a
+live-view match (`GrassField3D.far_match_view`, the standard "match the impostor to the mesh"
+step of far-field LOD, as in the far-grass colour pass of Horizon Zero Dawn and Ghost of Tsushima
+talks); the cover plants now get the same.
+
+- `VegetationField3D.far_match_view` (on): after the maps are built, it reads the rendered image
+  back (asynchronously, as grass does) along 16 arcs round the camera. In a band inside the range
+  (0.1 R to 0.34 R, where every plant is drawn) and one just past it (1.03 R to 1.3 R), six
+  distances each, it takes per arc the most covered spot (far cover alpha 0.55 or more) and the
+  barest (0.1 or less) on screen, within about 8 m of each other. The ratio of covered over bare
+  near, against the same far, is what the plants darken the ground by that the far colour misses.
+- The far colour where it stands for plants (and the far volume, which stands for the same
+  plants) is scaled by `vegetation_far_shade` (a global, 0.3 to 1.2) until the ratio is within 3%
+  (at most 8 rounds), and looked at again once the camera has gone a fifth of the range. Bare
+  ground is untouched, so it is a pure per-cover darkening, not a tint.
+- The far colour is only the diffuse part of the ground's light: sky reflection and haze do not
+  follow it, so on dark ground a step moves the contrast far less than itself. Each round measures
+  that gain (contrast ~ shade^-gain) and steps by the ratio's root (at most x0.6 or x1.5 a round).
+  A gain under 0.05 means the ground there does not draw the far colour at all (no
+  `vegetation_far()`, or something covers it): the shade goes back to 1 and the match stops.
+- Vegetation bench `--far-match[=off|dark]`: on its humus ground the match took 3 rounds to shade
+  0.63 (gain 0.10), contrast within 1.3%. Path traced frames are not measured (still converging,
+  noisy without a denoiser): the raster shade stays.
+- Needs 6 sample groups; fewer (no cover in view, or all one kind) retries, then gives up and
+  keeps the last shade. `get_far_match_stats()` reports shade, ratio, groups, round, state.
+- Past the vegetation far map, the terrain's far blend reads the cover map, whose cover also counts
+  grass (matched on its own, `grass_ground_far_scale`) and crowns. So the shade is baked into the
+  cover plants' share of the cover map only, which is rebuilt once the match settles on a new shade
+  (more than 2% from the one it was built with).
 
 ## Waterside and wet-stone plants (built 16 Nov)
 

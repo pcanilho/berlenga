@@ -809,6 +809,7 @@ void WeatherMap3D::_notification(int p_what) {
 			}
 			set_physics_process_internal(false);
 			_finish_shadow_bake(true);
+			_finish_sky_shadow_bake(true);
 			_release_shadow_light();
 			_restore_fog();
 		} break;
@@ -839,6 +840,13 @@ void WeatherMap3D::_notification(int p_what) {
 				_start_shadow_bake();
 			}
 			_apply_shadow();
+			sky_shadow_timer += dt;
+			if (sky_shadow_task != WorkerThreadPool::INVALID_TASK_ID && WorkerThreadPool::get_singleton()->is_group_task_completed(sky_shadow_task)) {
+				_finish_sky_shadow_bake(false);
+			} else if (sky_shadow_task == WorkerThreadPool::INVALID_TASK_ID && sky_shadow_timer >= 2.0 * cloud_shadow_interval) {
+				_start_sky_shadow_bake();
+			}
+			_apply_sky_shadow();
 			_apply_haze();
 			_update_contact(wdt);
 			if (update_accum >= period) {
@@ -1403,12 +1411,21 @@ void WeatherMap3D::ShadowBake::row(uint32_t p_row, void *) {
 		const float t = 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * tau);
 		const int k = int(p_row) * n + x;
 		transmittance_w[k] = t;
+		if (sky) {
+			bytes_w[k * 4 + 0] = uint8_t(CLAMP(int(Math::exp(-tau) * 255.0f + 0.5f), 0, 255));
+			bytes_w[k * 4 + 1] = uint8_t(CLAMP(int(t * 255.0f + 0.5f), 0, 255));
+			bytes_w[k * 4 + 2] = 0;
+			bytes_w[k * 4 + 3] = 255;
+			continue;
+		}
 		const float srgb = t <= 0.0031308f ? 12.92f * t : 1.055f * Math::pow(t, 1.0f / 2.4f) - 0.055f;
 		const uint8_t v = uint8_t(CLAMP(int(srgb * 255.0f + 0.5f), 0, 255));
 		bytes_w[k * 4 + 0] = v;
 		bytes_w[k * 4 + 1] = v;
 		bytes_w[k * 4 + 2] = v;
-		bytes_w[k * 4 + 3] = 255;
+		// 254 marks a cloud map: the volumetric fog takes the beam, exp(-tau), back out of it (the surfaces
+		// lose a 0.4%).
+		bytes_w[k * 4 + 3] = 254;
 	}
 }
 
@@ -1477,6 +1494,80 @@ void WeatherMap3D::update_cloud_shadow() {
 	_finish_shadow_bake(true);
 	_start_shadow_bake();
 	_finish_shadow_bake(false);
+	_finish_sky_shadow_bake(true);
+	_start_sky_shadow_bake();
+	_finish_sky_shadow_bake(false);
+}
+
+void WeatherMap3D::_start_sky_shadow_bake() {
+	sky_shadow_timer = 0.0;
+	DirectionalLight3D *light = Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
+	if (!light || !is_inside_tree() || WeatherSkyMaterial::find_for(this).is_null()) {
+		return;
+	}
+	const Basis basis = light->get_global_basis().orthonormalized();
+	const Vector3 to_sun = basis.get_column(2);
+	if (to_sun.y < 0.02f) {
+		return;
+	}
+	WeatherClouds::shape_noise();
+	if (!sky_shadow_bake) {
+		sky_shadow_bake = memnew(ShadowBake);
+	}
+	ShadowBake &sb = *sky_shadow_bake;
+	sb.sky = true;
+	sb.steps = 16;
+	sb.state = _cloud_state();
+	sb.axis_u = basis.get_column(0);
+	sb.axis_v = -basis.get_column(1);
+	sb.to_sun = to_sun;
+	sb.resolution = kSkyShadowResolution;
+	sb.texel = kSkyShadowExtent / kSkyShadowResolution;
+	const Vector3 c = _follow_position();
+	const Vector2 center(c.dot(sb.axis_u), c.dot(sb.axis_v));
+	sb.corner = (Vector2(Math::floor(center.x / sb.texel), Math::floor(center.y / sb.texel)) - Vector2(sb.resolution / 2, sb.resolution / 2)) * sb.texel;
+	sb.transmittance.resize(sb.resolution * sb.resolution);
+	sb.bytes.resize(sb.resolution * sb.resolution * 4);
+	sb.transmittance_w = sb.transmittance.ptrw();
+	sb.bytes_w = sb.bytes.ptrw();
+	sky_shadow_task = WorkerThreadPool::get_singleton()->add_template_group_task(sky_shadow_bake, &ShadowBake::row, (void *)nullptr, sb.resolution, -1, false, String("Sky cloud shadow"));
+}
+
+void WeatherMap3D::_finish_sky_shadow_bake(bool p_discard) {
+	if (sky_shadow_task == WorkerThreadPool::INVALID_TASK_ID) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(sky_shadow_task);
+	sky_shadow_task = WorkerThreadPool::INVALID_TASK_ID;
+	if (p_discard || !sky_shadow_bake) {
+		return;
+	}
+	const ShadowBake &sb = *sky_shadow_bake;
+	sky_shadow_axis_u = sb.axis_u;
+	sky_shadow_axis_v = sb.axis_v;
+	sky_shadow_corner = sb.corner;
+	sky_shadow_drift = sb.state.drift;
+	Ref<Image> img = Image::create_from_data(sb.resolution, sb.resolution, false, Image::FORMAT_RGBA8, sb.bytes);
+	if (sky_shadow_texture.is_null()) {
+		sky_shadow_texture = ImageTexture::create_from_image(img);
+	} else {
+		sky_shadow_texture->update(img);
+	}
+	_apply_sky_shadow();
+}
+
+void WeatherMap3D::_apply_sky_shadow() {
+	if (sky_shadow_texture.is_null() || active != this) {
+		return;
+	}
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
+	if (sky_material.is_null()) {
+		return;
+	}
+	const Vector2 d = cloud_drift - sky_shadow_drift;
+	const Vector3 d3(d.x, 0.0f, d.y);
+	const Vector2 corner = sky_shadow_corner + Vector2(d3.dot(sky_shadow_axis_u), d3.dot(sky_shadow_axis_v));
+	sky_material->set_cloud_shadow_map(sky_shadow_texture, sky_shadow_axis_u, sky_shadow_axis_v, corner, kSkyShadowExtent);
 }
 
 void WeatherMap3D::_apply_shadow() {
@@ -1736,6 +1827,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_surface_water_source", "owner", "rates", "resolution", "rect"), &WeatherMap3D::set_surface_water_source);
 	ClassDB::bind_method(D_METHOD("clear_surface_water_source", "owner"), &WeatherMap3D::clear_surface_water_source);
 	ClassDB::bind_method(D_METHOD("set_humidity", "humidity"), &WeatherMap3D::set_humidity);
+	ClassDB::bind_method(D_METHOD("set_traced_haze", "enabled"), &WeatherMap3D::set_traced_haze);
+	ClassDB::bind_method(D_METHOD("get_traced_haze"), &WeatherMap3D::get_traced_haze);
 	ClassDB::bind_method(D_METHOD("set_aerosol_haze", "enabled"), &WeatherMap3D::set_aerosol_haze);
 	ClassDB::bind_method(D_METHOD("get_aerosol_haze"), &WeatherMap3D::get_aerosol_haze);
 	ClassDB::bind_method(D_METHOD("set_haze_visibility", "km"), &WeatherMap3D::set_haze_visibility);
@@ -1916,6 +2009,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "temperature", PROPERTY_HINT_RANGE, "-60,60,0.1,suffix:C"), "set_temperature", "get_temperature");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "humidity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_humidity", "get_humidity");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_height", PROPERTY_HINT_RANGE, "10,5000,10,suffix:m"), "set_haze_height", "get_haze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surface_storage", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:mm"), "set_surface_storage", "get_surface_storage");
@@ -1945,4 +2039,8 @@ WeatherMap3D::~WeatherMap3D() {
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(shadow_task);
 	}
 	memdelete_notnull(shadow_bake);
+	if (sky_shadow_task != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(sky_shadow_task);
+	}
+	memdelete_notnull(sky_shadow_bake);
 }

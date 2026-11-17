@@ -87,9 +87,20 @@ float opaque_prepass_threshold_out = 0.99; // OPAQUE_PREPASS_THRESHOLD: raster o
 vec3 light_vertex = vec3(0.0);
 float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET: raster shadow maps only
 float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET: raster shadow maps only
-float sun_shadow = 1.0; // SUN_SHADOW: raster only (the path tracer traces the surface's own shadows)
+// SUN_SHADOW: the path tracer traces a surface's own faces, so only relief marched with relief_sun_direction()
+// (parallax, no faces to trace) sets it here; it scales the sun's light at this hit (rt_relief_sun_visibility).
+float sun_shadow = 1.0;
 // sun_direction(): zero under the path tracer, which traces real shadows, so a per-pixel shadow march is skipped.
 vec3 sun_direction() {
+	return vec3(0.0);
+}
+// relief_sun_direction(): toward the first light when it is directional (the sun the raster's SUN_SHADOW means).
+vec3 relief_sun_direction() {
+#ifdef RT_STAGE_CLOSEST_HIT
+	if (uint(get_rt_param(RT_PARAM_LIGHT_COUNT)) > 0u && lights_get_type(0u) == RT_LIGHT_TYPE_DIRECTIONAL) {
+		return -normalize(rt_light_buffer[0].position);
+	}
+#endif
 	return vec3(0.0);
 }
 vec2 rt_point_coord = vec2(0.0);

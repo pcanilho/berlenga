@@ -126,7 +126,8 @@ private:
 
 		float local_highlight_contrast; //  4 - 116
 		float local_shadow_contrast; //  4 - 120
-		float local_pad[2]; //  8 - 128
+		float night_luminance; //  4 - 124 (cd/m2 per buffer unit; 0: no night vision)
+		float local_pad; //  4 - 128
 	};
 
 	struct TonemapPushConstantMobile {
@@ -189,6 +190,7 @@ public:
 		float auto_exposure_scale = 0.5;
 		RID exposure_texture;
 		float luminance_multiplier = 1.0;
+		float night_luminance = 0.0f; // cd/m2 per unit of the source buffer; 0: no night vision
 
 		// Local exposure (needs auto exposure): bilateral grid from Luminance::local_exposure_grid().
 		bool use_local_exposure = false;

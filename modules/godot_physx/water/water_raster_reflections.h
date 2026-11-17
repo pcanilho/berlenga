@@ -107,7 +107,8 @@ vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p
 	vec3 n_w = p_glint.xyz;
 	float a2 = p_a2;
 	float weight = p_glint.w;
-	if (weight > 0.0 && dot(n_w, l) > 0.0) {
+	float nl = dot(n_w, l);
+	if (weight > 0.0 && nl > 0.0) {
 		vec3 v = normalize(mat3(p_inv_view) * p_view);
 		float nv = clamp(dot(n_w, v), 1e-3, 1.0);
 		vec3 hv = normalize(l + v);
@@ -115,7 +116,11 @@ vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p
 		float den = nh * nh * (a2 - 1.0) + 1.0;
 		float d_ggx = a2 / (PI * den * den);
 		float fh = 0.02 + 0.98 * pow(1.0 - clamp(dot(hv, v), 0.0, 1.0), 5.0);
-		add += p_irradiance * (fh * d_ggx / (4.0 * nv)) * weight;
+		// Height-correlated Smith masking and shadowing (Heitz 2014) times n.l: the glitter fades out as a facet
+		// turns from the sun or the eye. Without it (G = 1, D F / 4 n.v) it peaked right where the normal turned
+		// away from a low sun and then cut to nothing, as dark hard-edged holes in the sun's path.
+		float vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 1e-5);
+		add += p_irradiance * (fh * d_ggx * vis * nl) * weight;
 	}
 	return add;
 }
@@ -133,20 +138,43 @@ vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_wo
 	vec3 n_w = dot(p_normal, v) < 0.0 ? p_normal - 2.0 * dot(p_normal, v) * v : p_normal;
 	n_w = normalize(n_w);
 	float nv = clamp(dot(n_w, v), 1e-3, 1.0);
-	// Exact unpolarized Fresnel, air into water.
-	float st = sqrt(max(1.0 - nv * nv, 0.0)) / 1.33;
-	float ct = sqrt(max(1.0 - st * st, 0.0));
-	float rs = (nv - 1.33 * ct) / (nv + 1.33 * ct);
-	float rp = (1.33 * nv - ct) / (1.33 * nv + ct);
-	float f_eff = 0.5 * (rs * rs + rp * rp) * p_surface;
+	// The mean Fresnel and mirrored sky over the slopes the pixel holds but its normal no longer shows
+	// (Bruneton, Neyret and Holzschuch 2010): three Gauss-Hermite slopes along the view's tilt, each weighted by
+	// the area it turns toward the eye. A grazing pixel's facets that face the eye mirror less and higher sky.
+	float sig = sqrt(0.5 * pow(p_roughness, 4.0));
+	vec3 tv = v - nv * n_w;
+	tv = dot(tv, tv) > 1e-8 ? normalize(tv) : vec3(0.0);
+	float f_eff = 0.0;
 	vec3 add = vec3(0.0);
-	vec3 r = reflect(-v, n_w);
-	r.y = max(r.y, 0.01); // a ray turned down by a steep wave sees the horizon's sky
-	r = normalize(r);
-	if (raster_sky_energy > 0.0) {
-		vec2 pc = vec2(atan(r.x, -r.z) + PI, acos(clamp(r.y, -1.0, 1.0))) / vec2(2.0 * PI, PI);
-		add += f_eff * textureLod(raster_sky_panorama, pc, 0.0).rgb * raster_sky_energy;
+	float wsum = 0.0;
+	for (int k = 0; k < 3; k++) {
+		float s_k = k == 0 ? 0.0 : (k == 1 ? 1.7320508 : -1.7320508) * sig;
+		float g_k = k == 0 ? 0.6666667 : 0.1666667;
+		vec3 n_k = normalize(n_w + s_k * tv);
+		float nv_k = dot(n_k, v);
+		if (nv_k <= 0.0) {
+			continue;
+		}
+		float w_k = g_k * nv_k / max(dot(n_k, n_w), 1e-3);
+		nv_k = clamp(nv_k, 1e-3, 1.0);
+		// Exact unpolarized Fresnel, air into water.
+		float st = sqrt(max(1.0 - nv_k * nv_k, 0.0)) / 1.33;
+		float ct = sqrt(max(1.0 - st * st, 0.0));
+		float rs = (nv_k - 1.33 * ct) / (nv_k + 1.33 * ct);
+		float rp = (1.33 * nv_k - ct) / (1.33 * nv_k + ct);
+		float f_k = 0.5 * (rs * rs + rp * rp);
+		f_eff += w_k * f_k;
+		wsum += w_k;
+		if (raster_sky_energy > 0.0) {
+			vec3 r = reflect(-v, n_k);
+			r.y = max(r.y, 0.01); // a ray turned down by a steep wave sees the horizon's sky
+			r = normalize(r);
+			vec2 pc = vec2(atan(r.x, -r.z) + PI, acos(clamp(r.y, -1.0, 1.0))) / vec2(2.0 * PI, PI);
+			add += w_k * f_k * textureLod(raster_sky_panorama, pc, 0.0).rgb * raster_sky_energy;
+		}
 	}
+	f_eff = f_eff / max(wsum, 1e-6) * p_surface;
+	add *= p_surface / max(wsum, 1e-6);
 	// The glitter's roughness, widened by how fast the normal turns across the pixel (screen derivatives are
 	// only defined here, in fragment(), so light() gets the result).
 	float a2 = p_roughness * p_roughness;

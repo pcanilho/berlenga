@@ -119,6 +119,12 @@
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
 		</member>
+		<member name="dune_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member dune_range].
+		</member>
+		<member name="dune_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
+			Range of coastal dune stability the plant grows on ([method TerrainGenerator3D.get_dune_stability]: marram cover, [code]0[/code] bare moving sand to [code]1[/code] fixed), with [code]-1[/code] off the dune sand (less than 0.3 m of it). Only applied where the map's [member TerrainDataMap3D.geology_source] has built dunes; [method PlantGenerator.make_dunes] sets embryo and mobile dunes to the moving sand and fixed dunes to the held sand.
+		</member>
 		<member name="far_color" type="Color" setter="set_far_color" getter="get_far_color" default="Color(0, 0, 0, 0)">
 			The plant seen from far above (rgb) and how much of the ground it hides (alpha, 0 to 1). Beyond its [member visibility_range] the plants are thinned away, and [VegetationField3D] bakes this colour into the ground's [code]vegetation_far_map[/code] where they grew, so a stand of them stays a patch of their colour to the horizon (see [method VegetationField3D.get_floor_shader_code]). Alpha 0 leaves the ground as it is.
 		</member>
@@ -358,7 +364,10 @@
 		<constant name="RULE_LITTER" value="17" enum="Rule">
 			Broad-leaf litter fallen from the crowns, [code]0[/code] to [code]1[/code] ([method VegetationField3D.get_litter_at]).
 		</constant>
-		<constant name="RULE_MAX" value="18" enum="Rule">
+		<constant name="RULE_DUNE" value="18" enum="Rule">
+			Coastal dune stability, [code]0[/code] bare moving sand to [code]1[/code] fixed under marram ([method TerrainGenerator3D.get_dune_stability]); [code]-1[/code] off the dune sand. Only applied where the map's [member TerrainDataMap3D.geology_source] has built dunes.
+		</constant>
+		<constant name="RULE_MAX" value="19" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

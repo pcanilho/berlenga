@@ -415,7 +415,7 @@
 	</methods>
 	<members>
 		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="true">
-			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Off, the air is clear unless the [Environment] adds fog.
+			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Past the volumetric fog's reach the [WeatherSkyMaterial] carries the same haze in its air (see [method WeatherSkyMaterial.set_aerosol]), where the clouds' shadow draws the shafts on across the sky. Off, the air is clear unless the [Environment] adds fog.
 		</member>
 		<member name="canopy_map" type="Texture2D" setter="set_canopy_map" getter="get_canopy_map">
 			A map of plant canopies over [member canopy_map_rect]: canopy height in red (metres in a float texture, else times [member canopy_map_max_height]) and Cionco's attenuation coefficient over 4 in green. For vegetation systems that place whole forests.
@@ -566,6 +566,9 @@
 		</member>
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
 			Weather seconds per real second: storms, transitions, wetting and drying run this much faster than the clock (60 makes a game hour a real minute). Gusts always run in real time.
+		</member>
+		<member name="traced_haze" type="bool" setter="set_traced_haze" getter="get_traced_haze" default="true">
+			Under path tracing, the [member aerosol_haze] is a traced medium instead of a volumetric fog layer. Every path segment draws its distances exactly against the haze's height profile and lights it with the sun's direct beam through the clouds and through traced shadows, so shafts are as sharp as the shadows that cast them, at any distance and in reflections. Rays that reach the sky carry it out to the volumetric fog's reach, where the [WeatherSkyMaterial]'s own aerosol takes over. Raster rendering is unchanged.
 		</member>
 		<member name="transition_time" type="float" setter="set_transition_time" getter="get_transition_time" default="600.0">
 			Time constant over which the weather eases toward changed settings, in weather seconds. [code]0[/code] changes at once.

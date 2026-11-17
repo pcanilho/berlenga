@@ -16,6 +16,9 @@
 #define MODE_STORE 6
 #define MODE_SHIFT 7
 #define MODE_PACK 8
+#define MODE_WATER_FLUX 9
+#define MODE_WATER_DEPTH 10
+#define MODE_WATER_COPY 11
 
 #define STAMP_BOX 1u
 #define STAMP_ROUND 2u
@@ -46,11 +49,13 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 mesh_rect; // x, z, w, h
 	vec4 relax; // keep (wind and settling), refill share, press settle seconds, loose snow tan(repose)
 	vec4 collision; // centre x, z, spacing, cells
-	vec4 bow; // bow speed, gain, reach, unused
+	vec4 bow; // bow speed, gain, reach, heave zone in footing widths (GroundDeformField::rim_reach)
 	vec4 crust_consts; // crack length, plate size, crack sectors, unused
 	ivec4 shift; // texel offset of the old field in the new one's tiles: old tile index = new tile index + shift.xy
 	vec4 kind; // 1 for the ground (else snow), slow slumping seconds this step, fresh kept by ageing, sand drift per hour
-	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, unused
+	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, slump passes this step (0 = 1)
+	vec4 water; // standing water (docs/ideas/mud.md, stage 2): rain m/s, substep s, flux damping per s, evaporation m/s
+	vec4 water2; // seepage length m, compaction's share of the conductivity kept, conductivity scale, thinnest film kept m
 }
 params;
 
@@ -92,7 +97,19 @@ layout(set = 0, binding = 10, std430) restrict readonly buffer TileOps {
 	ivec4 tile_ops[]; // store: (tile x, tile z, slot, 0); shift: per new tile (source kind, index, 0, 0)
 };
 layout(set = 0, binding = 11, std430) restrict writeonly buffer Packed {
-	uint packed[];
+	uint packed[]; // per texel stride() uints, then for the ground one more each: (water depth, 0)
+};
+// Standing water (ground only): per texel the outflows to -x, +x, -z, +z (m/s: m3/s over the texel's area) and
+// (depth m, 0, 0, 0). The virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007).
+struct WaterCell {
+	vec4 flux;
+	vec4 w;
+};
+layout(set = 0, binding = 12, std430) restrict buffer Water {
+	WaterCell water[];
+};
+layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
+	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY
 };
 
 const float SWE_MIN = 0.01;
@@ -193,7 +210,7 @@ vec4 ground_cell(vec2 p, int part) {
 	if (x < 0 || z < 0 || x >= n || z >= n) {
 		return vec4(0.0);
 	}
-	return cover_cells[(z * n + x) * 2 + part];
+	return cover_cells[(z * n + x) * 3 + part];
 }
 
 bool ground_deformable(vec2 p) {
@@ -309,9 +326,10 @@ void run_amount_stamp(Stamp s) {
 		int x = x0 + k % w;
 		int z = z0 + k / w;
 		vec2 wp = texel_world(x, z);
-		float sd = length(wp - pos.xz) - radius;
-		float cover = clamp(0.5 - sd / tx, 0.0, 1.0);
-		if (cover <= 0.0) {
+		// GroundDeformField::amount_cover(): a disc antialiased over a texel, or (c.y) a bilinear tent.
+		vec2 dd = wp - pos.xz;
+		float cover = s.c.y > 0.5 ? max(1.0 - abs(dd.x) / radius, 0.0) * max(1.0 - abs(dd.y) / radius, 0.0) : clamp(0.5 - (length(dd) - radius) / tx, 0.0, 1.0);
+		if (cover == 0.0) {
 			continue;
 		}
 		Column c = column_at(wp, 0u);
@@ -320,8 +338,9 @@ void run_amount_stamp(Stamp s) {
 		}
 		int i = z * n + x;
 		vec4 st = state[i];
-		float a = abs(depth) * cover;
-		if (depth > 0.0) {
+		float sa = depth * cover;
+		float a = abs(sa);
+		if (sa > 0.0) {
 			float take = min(st.y, a);
 			st.y -= take;
 			st.x = min(st.x + a - take, c.max_dent);
@@ -338,6 +357,41 @@ void run_amount_stamp(Stamp s) {
 	}
 	memoryBarrierBuffer();
 	barrier();
+}
+
+// A boot's sole (GroundDeformField::sole_sd(), sole_relief()): a box stamp flagged round as well. Local p in the box's
+// frame, the toe toward + along its longer side. The outline: a heel and a forefoot ellipse joined by a smooth
+// union through the waist; the relief raises the print's floor where the sole does not bear: the shank between
+// heel and ball, and the grooves between chevron lugs (a few millimetres), with a solid rand round the edge.
+float sole_ellipse(vec2 p, vec2 r) {
+	return (length(p / r) - 1.0) * min(r.x, r.y);
+}
+vec2 sole_frame(vec2 p_local, vec2 p_half, out float r_len, out float r_wid) {
+	bool along_x = p_half.x > p_half.y;
+	r_len = along_x ? p_half.x : p_half.y;
+	r_wid = along_x ? p_half.y : p_half.x;
+	return along_x ? vec2(p_local.x, p_local.y) : vec2(p_local.y, p_local.x);
+}
+float sole_sd(vec2 p_local, vec2 p_half) {
+	float len;
+	float wid;
+	vec2 q = sole_frame(p_local, p_half, len, wid);
+	float heel = sole_ellipse(vec2(q.x + 0.64 * len, q.y), vec2(0.36 * len, 0.74 * wid));
+	float fore = sole_ellipse(vec2(q.x - 0.28 * len, q.y), vec2(0.72 * len, wid));
+	float k = 0.12 * wid;
+	float hh = clamp(0.5 + 0.5 * (fore - heel) / k, 0.0, 1.0);
+	return mix(fore, heel, hh) - k * hh * (1.0 - hh);
+}
+float sole_relief(vec2 p_local, vec2 p_half) {
+	float len;
+	float wid;
+	vec2 q = sole_frame(p_local, p_half, len, wid);
+	float u = q.x / len;
+	float shank = smoothstep(-0.4, -0.32, u) * (1.0 - smoothstep(-0.12, -0.04, u));
+	float rand = smoothstep(-0.008, -0.004, sole_sd(p_local, p_half));
+	float g = fract((q.x + 0.6 * abs(q.y)) / 0.045);
+	float groove = (1.0 - rand) * smoothstep(0.0, 0.12, g) * (1.0 - smoothstep(0.5, 0.62, g));
+	return max(0.012 * shank, 0.007 * groove);
 }
 
 void run_stamp(Stamp s) {
@@ -364,6 +418,11 @@ void run_stamp(Stamp s) {
 	float settle = ground ? s.d.w : params.relax.z; // seconds of slumping a pressed texel owes
 	bool box = (flags & STAMP_BOX) != 0u;
 	bool round_ = (flags & STAMP_ROUND) != 0u;
+	// A box flagged round is a boot's sole.
+	bool sole = box && round_;
+	if (sole) {
+		round_ = false;
+	}
 	int x0 = s.e.x;
 	int x1 = s.e.y;
 	int z0 = s.e.z;
@@ -377,7 +436,7 @@ void run_stamp(Stamp s) {
 	float r2 = radius * radius;
 	float cy = cos(yaw);
 	float sy = sin(yaw);
-	float ring = 0.5 * (box ? sqrt(half_.x * half_.y) : radius);
+	float ring = max(0.5 * (box ? sqrt(half_.x * half_.y) : radius), params.bow.w * (box ? 2.0 * min(half_.x, half_.y) : radius));
 	float speed = length(vel);
 	float bow = clamp(speed / params.bow.x, 0.0, 1.0);
 	vec2 heading = speed > 1e-4 ? vel / speed : vec2(0.0);
@@ -394,11 +453,12 @@ void run_stamp(Stamp s) {
 		vec2 d = wp - pos.xz;
 		float d2 = dot(d, d);
 		float sd;
-		if (box) {
-			float lx = cy * d.x - sy * d.y;
-			float lz = sy * d.x + cy * d.y;
-			float qx = abs(lx) - half_.x;
-			float qz = abs(lz) - half_.y;
+		vec2 lp = vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y);
+		if (sole) {
+			sd = sole_sd(lp, half_);
+		} else if (box) {
+			float qx = abs(lp.x) - half_.x;
+			float qz = abs(lp.y) - half_.y;
 			sd = sqrt(max(qx, 0.0) * max(qx, 0.0) + max(qz, 0.0) * max(qz, 0.0)) + min(max(qx, qz), 0.0);
 		} else {
 			sd = sqrt(d2) - radius;
@@ -413,6 +473,9 @@ void run_stamp(Stamp s) {
 		}
 		int i = z * n + x;
 		float prof = round_ ? bottom + radius - sqrt(max(r2 - d2, 0.0)) : bottom;
+		if (sole) {
+			prof += sole_relief(lp, half_);
+		}
 		if (prof <= c.surface - state[i].x + state[i].y + tol) {
 			atomicOr(touch_flag, 1u);
 		}
@@ -433,11 +496,12 @@ void run_stamp(Stamp s) {
 		vec2 d = wp - pos.xz;
 		float d2 = dot(d, d);
 		float sd;
-		if (box) {
-			float lx = cy * d.x - sy * d.y;
-			float lz = sy * d.x + cy * d.y;
-			float qx = abs(lx) - half_.x;
-			float qz = abs(lz) - half_.y;
+		vec2 lp = vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y);
+		if (sole) {
+			sd = sole_sd(lp, half_);
+		} else if (box) {
+			float qx = abs(lp.x) - half_.x;
+			float qz = abs(lp.y) - half_.y;
 			sd = sqrt(max(qx, 0.0) * max(qx, 0.0) + max(qz, 0.0) * max(qz, 0.0)) + min(max(qx, qz), 0.0);
 		} else {
 			sd = sqrt(d2) - radius;
@@ -455,9 +519,11 @@ void run_stamp(Stamp s) {
 		float sfc = c.surface - st.x + st.y;
 		float dd = min(d2, r2);
 		float target = round_ ? bottom + radius - sqrt(max(r2 - dd, 0.0)) : bottom;
+		float relief = sole ? sole_relief(lp, half_) : 0.0;
+		target += relief;
 		if (sink > 0.0) {
 			float wgt = round_ ? sqrt(max(1.0 - d2 / r2, 0.0)) : 1.0;
-			target = min(target, c.surface - sink * wgt);
+			target = min(target, c.surface - sink * wgt + relief);
 		}
 		target = max(target, c.surface - c.max_dent);
 		if (target >= sfc) {
@@ -493,7 +559,9 @@ void run_stamp(Stamp s) {
 			vec2 wp = texel_world(x, z);
 			vec2 d = wp - pos.xz;
 			float o;
-			if (box) {
+			if (sole) {
+				o = max(sole_sd(vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y), half_), 0.0);
+			} else if (box) {
 				float lx = cy * d.x - sy * d.y;
 				float lz = sy * d.x + cy * d.y;
 				float ox = max(abs(lx) - half_.x, 0.0);
@@ -538,13 +606,16 @@ void run_stamp(Stamp s) {
 		barrier();
 	}
 
-	// The rim: the pushed share spread over the ring, thickest at the edge.
+	// The rim: the pushed share spread over the ring, thickest at the edge. A moving body sends half to each
+	// side of its path (GroundDeformField::press()), as a tyre or blade throws up two even berms.
 	if (pushed <= 0.0) {
 		return;
 	}
-	float wsum = 0.0;
+	float fl = 0.0;
+	float fr = 0.0;
 	for (int pass = 0; pass < 2; pass++) {
 		float local_sum = 0.0;
+		float local_sum_r = 0.0;
 		for (int k = int(t); k < count; k += WG) {
 			int x = x0 + k % w;
 			int z = z0 + k / w;
@@ -552,7 +623,9 @@ void run_stamp(Stamp s) {
 			vec2 d = wp - pos.xz;
 			float d2 = dot(d, d);
 			float o;
-			if (box) {
+			if (sole) {
+				o = max(sole_sd(vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y), half_), 0.0);
+			} else if (box) {
 				float lx = cy * d.x - sy * d.y;
 				float lz = sy * d.x + cy * d.y;
 				float ox = max(abs(lx) - half_.x, 0.0);
@@ -573,7 +646,9 @@ void run_stamp(Stamp s) {
 			if (!c.deformable) {
 				continue;
 			}
-			float wgt = (1.0 - o / reach) * (1.0 + params.bow.y * ahead);
+			// The ground's lip is rounded (GroundDeformField::press()): highest a little out from the wall.
+			float lip = params.bow.w > 0.0 ? 0.35 + 0.65 * smoothstep(0.0, 0.3, o / reach) : 1.0;
+			float wgt = (1.0 - o / reach) * lip * (1.0 + params.bow.y * ahead);
 			if (c.crust > 0.0) {
 				float plate_size = params.crust_consts.y;
 				int px = int(floor(wp.x / plate_size));
@@ -586,12 +661,15 @@ void run_stamp(Stamp s) {
 				float plate = max(0.1 + 1.8 * hgt + tilt * along / plate_size, 0.0);
 				wgt *= 1.0 + min(c.crust / 0.02, 1.0) * (plate - 1.0);
 			}
+			float lat = bow > 0.0 ? d.x * heading.y - d.y * heading.x : 1.0;
+			float wl = wgt * (lat > 1e-4 ? 1.0 : (lat < -1e-4 ? 0.0 : 0.5));
 			if (pass == 0) {
-				local_sum += wgt;
+				local_sum += wl;
+				local_sum_r += wgt - wl;
 			} else {
 				int i = z * n + x;
 				vec4 st = state[i];
-				st.y += pushed * wgt / (wsum * area);
+				st.y += pushed * (wl * fl + (wgt - wl) * fr) / area;
 				st.z = max(st.z, settle);
 				if (ground) {
 					st.w = max(st.w, wgt);
@@ -600,10 +678,13 @@ void run_stamp(Stamp s) {
 			}
 		}
 		if (pass == 0) {
-			wsum = reduce3(local_sum, 0.0, 0.0).x;
-			if (wsum <= 0.0) {
+			vec3 sums = reduce3(local_sum, local_sum_r, 0.0);
+			if (sums.x + sums.y <= 0.0) {
 				return; // nowhere to push: it all compacts in place
 			}
+			float half_share = sums.x > 0.0 && sums.y > 0.0 ? 0.5 : 1.0;
+			fl = sums.x > 0.0 ? half_share / sums.x : 0.0;
+			fr = sums.y > 0.0 ? half_share / sums.y : 0.0;
 		}
 	}
 	memoryBarrierBuffer();
@@ -708,7 +789,9 @@ void slump_take(int x, int z) {
 	int n = fn();
 	int i = z * n + x;
 	vec4 st = state[i];
-	float dt = params.field.w;
+	// A finer field runs several slump passes a step (more texels to cross in the same time): each spends
+	// only its share of the owed slumping time.
+	float dt = params.field.w / max(params.age.w, 1.0);
 	vec4 outv = st;
 	vec2 own = give[i];
 	float own_rim = min(st.y, own.x);
@@ -774,6 +857,101 @@ float field_sample(vec2 p, int ch) {
 	return mix(a, b, az);
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and seepage gather in ruts and prints as a depth per
+// texel over the deformed surface, moved by the virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and
+// Hu 2007): each texel's outflows to its four neighbours grow with the head difference, are scaled down so no
+// texel sends more than it holds, and the depths change by the net flow, so water runs downhill and stands level.
+
+const float WATER_G = 9.81;
+
+float water_bed(int x, int z) {
+	vec4 st = state[z * fn() + x];
+	return ground_at(texel_world(x, z)) + st.y - st.x;
+}
+
+void water_flux(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	float d = water[i].w.x;
+	if (d <= 0.0) {
+		water[i].flux = vec4(0.0);
+		return;
+	}
+	float dt = params.water.y;
+	float l = texel();
+	float h = water_bed(x, z) + d;
+	vec4 f = water[i].flux * max(1.0 - params.water.z * dt, 0.0);
+	ivec2 nb[4] = ivec2[](ivec2(x - 1, z), ivec2(x + 1, z), ivec2(x, z - 1), ivec2(x, z + 1));
+	for (int k = 0; k < 4; k++) {
+		ivec2 q = nb[k];
+		if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) {
+			// The field's edge is open: water runs on past it as over the ground beyond (its bed as this
+			// texel's, dry), and is lost to the field; a wall there pooled the field's runoff along its edge.
+			f[k] = max(f[k] + dt * WATER_G * d / l, 0.0);
+			continue;
+		}
+		float hq = water_bed(q.x, q.y) + water[q.y * n + q.x].w.x;
+		f[k] = max(f[k] + dt * WATER_G * (h - hq) / l, 0.0);
+	}
+	float out_sum = (f.x + f.y + f.z + f.w) * dt;
+	if (out_sum > d) {
+		f *= d / out_sum;
+	}
+	water[i].flux = f;
+}
+
+void water_depth(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	float dt = params.water.y;
+	vec4 f = water[i].flux;
+	float flow = -(f.x + f.y + f.z + f.w);
+	if (x > 0) {
+		flow += water[i - 1].flux.y;
+	}
+	if (x < n - 1) {
+		flow += water[i + 1].flux.x;
+	}
+	if (z > 0) {
+		flow += water[i - n].flux.w;
+	}
+	if (z < n - 1) {
+		flow += water[i + n].flux.z;
+	}
+	float d = water[i].w.x + flow * dt;
+	vec2 wp = texel_world(x, z);
+	vec4 m2 = ground_cell(wp, 2); // conductivity m/s, water table depth m, moisture deficit
+	float rain = params.water.x;
+	if (m2.x <= 0.0 && d <= 0.0 && rain <= 0.0) {
+		water[i].w.x = 0.0;
+		return;
+	}
+	vec4 st = state[i];
+	float g = ground_at(wp);
+	float level = g + st.y - st.x + max(d, 0.0);
+	float table = g - m2.y;
+	// Ground pressed by a tyre or a boot drains slower: compaction closes the large pores.
+	float k = m2.x * params.water2.z * (st.x > 0.0 ? params.water2.y : 1.0);
+	float src = rain;
+	if (level > table + 1e-3) {
+		// Above the water table: rain the ground takes, and standing water soaking in, and evaporating. Green and
+		// Ampt (1911): the rate is the conductivity times (1 + suction head x moisture deficit / water taken in).
+		// Dry ground under rain: the wetting front a few centimetres down, about 1 + 4 x the deficit (m2.z) for
+		// loamy soil. Under standing water the top is soaked and the front deep: the conductivity.
+		src -= k * (d > 0.0 ? 1.0 : 1.0 + 4.0 * m2.z);
+		src -= d > 0.0 ? params.water.w : 0.0;
+	}
+	d = max(d + src * dt, 0.0);
+	if (level < table) {
+		// Below it: ground water seeps in through the hollow's walls (Darcy over the seepage length), up to the
+		// table and no further.
+		d += min(k * (table - level) / params.water2.x * dt, table - level);
+	}
+	bool fed = src > 0.0 || level < table;
+	water[i].w.x = d < params.water2.w && !fed ? 0.0 : d;
+}
+
 void main() {
 	int n = fn();
 	uint gid = gl_GlobalInvocationID.x;
@@ -823,7 +1001,7 @@ void main() {
 		int sw = stride();
 		cache[(o.z * TILE * TILE + k) * sw] = packHalf2x16(st.xy);
 		if (sw == 2) {
-			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, 0.0));
+			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, water[z * n + x].w.x));
 		}
 		return;
 	}
@@ -833,7 +1011,14 @@ void main() {
 	int x = int(gid) % n;
 	int z = int(gid) / n;
 	int i = int(gid);
-	if (push.mode == MODE_SLUMP_GIVE) {
+	if (push.mode == MODE_WATER_FLUX) {
+		water_flux(x, z);
+	} else if (push.mode == MODE_WATER_DEPTH) {
+		water_depth(x, z);
+	} else if (push.mode == MODE_WATER_COPY) {
+		water[i].flux = vec4(0.0);
+		water[i].w = vec4(water_tmp[i], 0.0, 0.0, 0.0);
+	} else if (push.mode == MODE_SLUMP_GIVE) {
 		slump_give(x, z);
 	} else if (push.mode == MODE_SLUMP_TAKE) {
 		slump_take(x, z);
@@ -880,7 +1065,12 @@ void main() {
 			vec4 m1 = ground_cell(texel_world(x, z), 1);
 			tint = vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
 		}
-		imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
+		if (is_ground()) {
+			// The ground's map: the net depression (dent less rim) and the standing water over it.
+			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y, water[i].w.x, tint));
+		} else {
+			imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
+		}
 	} else if (push.mode == MODE_SHIFT) {
 		// state is the old field, state_out the new one. tile_ops[new tile] = (kind, index): kind 1 an old
 		// tile's index, 2 a cache slot, 0 empty.
@@ -890,25 +1080,33 @@ void main() {
 		int lx = x % TILE;
 		int lz = z % TILE;
 		vec4 v = vec4(0.0);
+		float wd = 0.0;
 		if (o.x == 1) {
 			int ox = (o.y % nt) * TILE + lx;
 			int oz = (o.y / nt) * TILE + lz;
 			v = state[oz * n + ox];
+			wd = is_ground() ? water[oz * n + ox].w.x : 0.0;
 		} else if (o.x == 2) {
 			int sw = stride();
 			int ci = (o.y * TILE * TILE + lz * TILE + lx) * sw;
 			v.xy = unpackHalf2x16(cache[ci]);
 			if (sw == 2) {
-				v.w = unpackHalf2x16(cache[ci + 1]).x;
+				vec2 fw = unpackHalf2x16(cache[ci + 1]);
+				v.w = fw.x;
+				wd = fw.y;
 			}
 		}
 		state_out[i] = v;
+		if (is_ground()) {
+			water_tmp[i] = wd;
+		}
 	} else if (push.mode == MODE_PACK) {
 		vec4 st = state[i];
 		int sw = stride();
 		packed[i * sw] = packHalf2x16(st.xy);
 		if (sw == 2) {
 			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
+			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, 0.0));
 		}
 	}
 }

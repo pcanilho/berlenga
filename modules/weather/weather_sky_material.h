@@ -56,9 +56,15 @@ private:
 	static Ref<Shader> shared_shaders[4];
 	static Ref<ImageTexture> atmo_transmittance_tex;
 	static Ref<ImageTexture> atmo_multiscatter_tex;
+	// The bright stars (bright_stars_data.h) binned by cube-face cell: per entry a direction and illuminance
+	// texel and a colour texel; per cell its first entry and count.
+	static Ref<ImageTexture> star_data_tex;
+	static Ref<ImageTexture> star_cells_tex;
+	static void _bake_stars();
 
 	bool cloud_reprojection = true;
 	AtmosphereModel atmosphere_model = ATMOSPHERE_SCATTERING;
+	RID cloud_shadow_map; // the last one given, so a moving corner does not rebind the texture
 	void _update_shader();
 	void _update_atmosphere_textures();
 
@@ -80,6 +86,19 @@ public:
 	// The sun and the moon above the air (directions toward them, irradiance in light energy units), from
 	// SkyClock; until set, the first directional light stands for the sun above the air.
 	void set_atmosphere_lights(const Vector3 &p_sun_direction, const Vector3 &p_sun_irradiance, const Vector3 &p_moon_direction, const Vector3 &p_moon_irradiance);
+
+	// The stars: p_celestial turns the J2000 equator frame (x to RA 0h, z to the north pole) into the world
+	// (SkyClock.get_celestial_basis()); p_energy_per_lux turns their illuminance above the air into light energy.
+	void set_star_sky(const Basis &p_celestial, float p_energy_per_lux);
+	// The moon's angular diameter (radians), from its distance.
+	void set_moon_angular_size(float p_radians);
+	// The weather's aerosol haze past the froxel fog: extinction at the ground (1/m, 0 for none), its
+	// single-scatter albedo, scale height (m), and where it starts along the eye's rays (the froxels' reach, m).
+	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from);
+	// The clouds' shadow for the sky's air: a map in the sun's plane (red: the beam's transmittance; green:
+	// the diffuse), its axes (world), the corner of its square in that plane and its size (m). Without one
+	// the shader marches the clouds toward the sun itself, coarser.
+	void set_cloud_shadow_map(const Ref<Texture2D> &p_map, const Vector3 &p_axis_u, const Vector3 &p_axis_v, const Vector2 &p_corner, float p_size);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

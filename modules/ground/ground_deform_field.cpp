@@ -133,6 +133,7 @@ void GroundDeformField::shift(Vector2i p_origin) {
 	const int n = resolution;
 	const int nt = tiles();
 	const bool keep = valid && int(dent.size()) == n * n && (!track_fresh || int(fresh.size()) == n * n);
+	water.clear(); // the GPU's: the next read back after the move brings it again
 	if (!keep) {
 		dent.resize(n * n);
 		rim.resize(n * n);
@@ -352,47 +353,48 @@ float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
 	return load / (p_body.wheel ? l * MAX(p_body.width, 0.01f) : Math::PI * 0.25f * l * l);
 }
 
-float GroundDeformField::amount_scale(Vector3 p_position, float p_radius) const {
+float GroundDeformField::amount_scale(Vector3 p_position, float p_radius, bool p_tent) const {
 	// The disc's antialiased cover summed over the texels: the depth is scaled so the volume moved is the
 	// disc's exactly, also for a disc smaller than a texel (a landed grain).
 	const float t = texel();
-	const int x0 = int(Math::floor((p_position.x - p_radius) / t)) - 1;
-	const int x1 = int(Math::ceil((p_position.x + p_radius) / t)) + 1;
-	const int z0 = int(Math::floor((p_position.z - p_radius) / t)) - 1;
-	const int z1 = int(Math::ceil((p_position.z + p_radius) / t)) + 1;
+	const float reach = p_radius;
+	const int x0 = int(Math::floor((p_position.x - reach) / t)) - 1;
+	const int x1 = int(Math::ceil((p_position.x + reach) / t)) + 1;
+	const int z0 = int(Math::floor((p_position.z - reach) / t)) - 1;
+	const int z1 = int(Math::ceil((p_position.z + reach) / t)) + 1;
 	float w = 0.0f;
 	for (int z = z0; z <= z1; z++) {
 		for (int x = x0; x <= x1; x++) {
-			const float sd = Vector2((x + 0.5f) * t - p_position.x, (z + 0.5f) * t - p_position.z).length() - p_radius;
-			w += CLAMP(0.5f - sd / t, 0.0f, 1.0f);
+			w += amount_cover((x + 0.5f) * t - p_position.x, (z + 0.5f) * t - p_position.z, p_radius, t, p_tent);
 		}
 	}
-	return w > 0.0f ? (float)Math::PI * p_radius * p_radius / (w * t * t) : 0.0f;
+	const float area = p_tent ? p_radius * p_radius : (float)Math::PI * p_radius * p_radius;
+	return w > 0.0f ? area / (w * t * t) : 0.0f;
 }
 
-float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) {
+float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell) {
 	if (!valid || p_radius <= 0.0f || p_depth == 0.0f) {
 		return 0.0f;
 	}
 	p_depth *= amount_scale(p_position, p_radius);
 	if (stamp_sink) {
-		stamp_sink->amount(p_columns, p_position, p_radius, p_depth);
+		stamp_sink->amount(p_columns, p_position, p_radius, p_depth, p_cell);
 		return 0.0f;
 	}
 	const int n = resolution;
 	const float t = texel();
-	const int x0 = MAX(int(Math::floor((p_position.x - p_radius) / t)) - origin.x - 1, 0);
-	const int x1 = MIN(int(Math::ceil((p_position.x + p_radius) / t)) - origin.x + 1, n - 1);
-	const int z0 = MAX(int(Math::floor((p_position.z - p_radius) / t)) - origin.y - 1, 0);
-	const int z1 = MIN(int(Math::ceil((p_position.z + p_radius) / t)) - origin.y + 1, n - 1);
-	float volume = 0.0f;
+	const float reach = p_radius;
+	const int x0 = MAX(int(Math::floor((p_position.x - reach) / t)) - origin.x - 1, 0);
+	const int x1 = MIN(int(Math::ceil((p_position.x + reach) / t)) - origin.x + 1, n - 1);
+	const int z0 = MAX(int(Math::floor((p_position.z - reach) / t)) - origin.y - 1, 0);
+	const int z1 = MIN(int(Math::ceil((p_position.z + reach) / t)) - origin.y + 1, n - 1);
+	float volume = 0.0f; // dug (positive) less laid
 	for (int z = z0; z <= z1; z++) {
 		for (int x = x0; x <= x1; x++) {
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
-			const float sd = Vector2(wx - p_position.x, wz - p_position.z).length() - p_radius;
-			const float cover = CLAMP(0.5f - sd / t, 0.0f, 1.0f);
-			if (cover <= 0.0f) {
+			const float cover = amount_cover(wx - p_position.x, wz - p_position.z, p_radius, t, false);
+			if (cover == 0.0f) {
 				continue;
 			}
 			const Column c = p_columns.column(wx, wz);
@@ -400,8 +402,8 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				continue;
 			}
 			const int i = z * n + x;
-			const float a = Math::abs(p_depth) * cover;
-			if (p_depth > 0.0f) {
+			const float a = p_depth * cover;
+			if (a > 0.0f) {
 				const float take = MIN(rim[i], a);
 				rim[i] -= take;
 				const float before = dent[i];
@@ -411,9 +413,9 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 					fresh[i] = 1.0f;
 				}
 			} else {
-				const float fill = MIN(dent[i], a);
+				const float fill = MIN(dent[i], -a);
 				dent[i] -= fill;
-				rim[i] += a - fill;
+				rim[i] += -a - fill;
 				volume += a * t * t;
 			}
 			_mark(x, z, press_settle);
@@ -421,7 +423,45 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 	}
 	dirty = true;
 	shape_dirty = true;
-	return volume;
+	return p_depth > 0.0f ? volume : -volume;
+}
+
+// A boot's sole, matching ground_deform.glsl: a heel and a forefoot ellipse in smooth union through the
+// waist, the toe toward + along the longer half axis. The relief raises the print's floor where the sole
+// does not bear: the shank under the arch and chevron grooves between the lugs, inside a solid rand.
+static float sole_ellipse(float p_x, float p_y, float p_rx, float p_ry) {
+	return (Math::sqrt((p_x / p_rx) * (p_x / p_rx) + (p_y / p_ry) * (p_y / p_ry)) - 1.0f) * MIN(p_rx, p_ry);
+}
+static void sole_frame(float p_lx, float p_lz, Vector2 p_half, float &r_qx, float &r_qy, float &r_len, float &r_wid) {
+	const bool along_x = p_half.x > p_half.y;
+	r_len = along_x ? p_half.x : p_half.y;
+	r_wid = along_x ? p_half.y : p_half.x;
+	r_qx = along_x ? p_lx : p_lz;
+	r_qy = along_x ? p_lz : p_lx;
+}
+static float smooth01(float p_a, float p_b, float p_x) {
+	const float t = CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f);
+	return t * t * (3.0f - 2.0f * t);
+}
+float GroundDeformField::sole_sd(float p_lx, float p_lz, Vector2 p_half) {
+	float qx, qy, len, wid;
+	sole_frame(p_lx, p_lz, p_half, qx, qy, len, wid);
+	const float heel = sole_ellipse(qx + 0.64f * len, qy, 0.36f * len, 0.74f * wid);
+	const float fore = sole_ellipse(qx - 0.28f * len, qy, 0.72f * len, wid);
+	const float k = 0.12f * wid;
+	const float hh = CLAMP(0.5f + 0.5f * (fore - heel) / k, 0.0f, 1.0f);
+	return Math::lerp(fore, heel, hh) - k * hh * (1.0f - hh);
+}
+float GroundDeformField::sole_relief(float p_lx, float p_lz, Vector2 p_half) {
+	float qx, qy, len, wid;
+	sole_frame(p_lx, p_lz, p_half, qx, qy, len, wid);
+	const float u = qx / len;
+	const float shank = smooth01(-0.4f, -0.32f, u) * (1.0f - smooth01(-0.12f, -0.04f, u));
+	const float rand = smooth01(-0.008f, -0.004f, sole_sd(p_lx, p_lz, p_half));
+	const float gv = (qx + 0.6f * Math::abs(qy)) / 0.045f;
+	const float g = gv - Math::floor(gv);
+	const float groove = (1.0f - rand) * smooth01(0.0f, 0.12f, g) * (1.0f - smooth01(0.5f, 0.62f, g));
+	return MAX(0.012f * shank, 0.007f * groove);
 }
 
 float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
@@ -432,11 +472,16 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		stamp_sink->stamp(p_columns, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, p_contact_tolerance, p_velocity);
 		return 0.0f;
 	}
+	// A box flagged round is a boot's sole.
+	const bool sole = p_box && p_round;
+	if (sole) {
+		p_round = false;
+	}
 	const int n = resolution;
 	const float t = texel();
 	const float area = t * t;
-	// The rim ring: half the footprint's equivalent radius wide.
-	const float ring = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
+	// The rim ring: half the footprint's equivalent radius wide, or the heave zone where wider.
+	const float ring = rim_ring(p_box, p_half, p_radius, rim_reach);
 	const float crust = p_columns.column(p_position.x, p_position.z).crust;
 	const float crack = crust > 0.0f ? CRACK_LENGTH * Math::pow(crust / 0.02f, 0.75f) : 0.0f;
 	// A bow wave: a fast body cannot compact what it meets in time and shoves it ahead (the ploughing of
@@ -466,6 +511,9 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			// Node yaw turns local x toward -z: local = R(-yaw) applied to the offset.
 			const float lx = cy * dx - sy * dz;
 			const float lz = sy * dx + cy * dz;
+			if (sole) {
+				return MAX(sole_sd(lx, lz, p_half), 0.0f);
+			}
 			const float ox = MAX(Math::abs(lx) - p_half.x, 0.0f);
 			const float oz = MAX(Math::abs(lz) - p_half.y, 0.0f);
 			return Math::sqrt(ox * ox + oz * oz);
@@ -484,6 +532,9 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		if (p_box) {
 			const float lx = cy * dx - sy * dz;
 			const float lz = sy * dx + cy * dz;
+			if (sole) {
+				return CLAMP(0.5f - 2.0f * sole_sd(lx, lz, p_half) / t, 0.0f, 1.0f);
+			}
 			const float qx = Math::abs(lx) - p_half.x;
 			const float qz = Math::abs(lz) - p_half.y;
 			sd = Math::sqrt(MAX(qx, 0.0f) * MAX(qx, 0.0f) + MAX(qz, 0.0f) * MAX(qz, 0.0f)) + MIN(MAX(qx, qz), 0.0f);
@@ -494,6 +545,14 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 	};
 	auto profile = [&](float d2) {
 		return p_round ? p_bottom + p_radius - Math::sqrt(MAX(r2 - d2, 0.0f)) : p_bottom;
+	};
+	auto relief = [&](float wx, float wz) {
+		if (!sole) {
+			return 0.0f;
+		}
+		const float dx = wx - p_position.x;
+		const float dz = wz - p_position.z;
+		return sole_relief(cy * dx - sy * dz, sy * dx + cy * dz, p_half);
 	};
 	// Contact: the underside reaches the current surface somewhere in the footprint.
 	bool touching = false;
@@ -510,7 +569,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				continue;
 			}
 			const int i = z * n + x;
-			if (profile(d2) <= c.surface - dent[i] + rim[i] + p_contact_tolerance) {
+			if (profile(d2) + relief(wx, wz) <= c.surface - dent[i] + rim[i] + p_contact_tolerance) {
 				touching = true;
 				break;
 			}
@@ -537,10 +596,11 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			}
 			const int i = z * n + x;
 			const float s = c.surface - dent[i] + rim[i];
-			float target = profile(MIN(d2, r2));
+			const float lift = relief(wx, wz);
+			float target = profile(MIN(d2, r2)) + lift;
 			if (p_sink > 0.0f) {
 				const float w = p_round ? Math::sqrt(MAX(1.0f - d2 / r2, 0.0f)) : 1.0f;
-				target = MIN(target, c.surface - p_sink * w);
+				target = MIN(target, c.surface - p_sink * w + lift);
 			}
 			target = MAX(target, c.surface - c.max_dent);
 			if (target >= s) {
@@ -607,8 +667,14 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			}
 		}
 	}
-	// The rim: the pushed share of the moved material, spread over the ring, thickest at the edge.
-	float wsum = 0.0f;
+	// The rim: the pushed share of the moved material, spread over the ring, thickest at the edge. A moving
+	// body sends half to each side of its path: a tyre or a blade throws up two even berms. Spread by weight
+	// alone, the first texel to lean one way gathers the bow wave, which then spills to that side only and
+	// swaps sides every metre or so, a beaded rut.
+	float wsum_l = 0.0f;
+	float wsum_r = 0.0f;
+	float fl = 0.0f;
+	float fr = 0.0f;
 	for (int pass = 0; pass < 2 && pushed > 0.0f; pass++) {
 		for (int z = z0; z <= z1; z++) {
 			for (int x = x0; x <= x1; x++) {
@@ -628,7 +694,11 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				if (!c.deformable) {
 					continue;
 				}
-				float w = (1.0f - o / reach) * (1.0f + BOW_GAIN * ahead);
+				// The ground's lip is rounded, highest a little out from the wall: peaked at the wall's top it made
+				// a knife edge a texel wide that a low sun drew as a bright line along every rut.
+				const float xo = o / reach;
+				const float lip = rim_reach > 0.0f ? 0.35f + 0.65f * Math::smoothstep(0.0f, 0.3f, xo) : 1.0f;
+				float w = (1.0f - xo) * lip * (1.0f + BOW_GAIN * ahead);
 				if (c.crust > 0.0f) {
 					// A broken crust: the rim is heaped in plates, each a tilted slab of its own height.
 					const int px = int(Math::floor(wx / PLATE));
@@ -640,11 +710,14 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 					const float plate = MAX(0.1f + 1.8f * hgt + tilt * along / PLATE, 0.0f);
 					w *= 1.0f + MIN(c.crust / 0.02f, 1.0f) * (plate - 1.0f);
 				}
+				const float lat = bow > 0.0f ? (wx - p_position.x) * heading.y - (wz - p_position.z) * heading.x : 1.0f;
+				const float wl = w * (lat > 1e-4f ? 1.0f : (lat < -1e-4f ? 0.0f : 0.5f));
 				if (pass == 0) {
-					wsum += w;
+					wsum_l += wl;
+					wsum_r += w - wl;
 				} else {
 					const int i = z * n + x;
-					rim[i] += pushed * w / (wsum * area);
+					rim[i] += pushed * (wl * fl + (w - wl) * fr) / area;
 					if (track_fresh) {
 						fresh[i] = MAX(fresh[i], w);
 					}
@@ -652,9 +725,12 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				}
 			}
 		}
-		if (wsum <= 0.0f) {
+		if (wsum_l + wsum_r <= 0.0f) {
 			break; // Nowhere to push: it all compacts in place.
 		}
+		const float half_share = wsum_l > 0.0f && wsum_r > 0.0f ? 0.5f : 1.0f;
+		fl = wsum_l > 0.0f ? half_share / wsum_l : 0.0f;
+		fr = wsum_r > 0.0f ? half_share / wsum_r : 0.0f;
 	}
 	dirty = true;
 	shape_dirty = true;
@@ -704,6 +780,8 @@ bool GroundDeformField::read_body(Node3D *p_node, float p_character_mass, float 
 			// A boot or a crate: an oriented print, turned with the shape's heading.
 			b.box = true;
 			b.box_half = Vector2(s.x, s.z);
+			// Flagged a sole: a boot outline with heel, toe and tread instead of a block.
+			b.round = p_node->has_meta("ground_sole") && bool(p_node->get_meta("ground_sole"));
 			const Vector3 fx = basis.get_column(0);
 			b.yaw = Math::atan2(-fx.z, fx.x);
 		}
@@ -756,7 +834,8 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 			}
 			const float dist = Vector2(center.x - from.x, center.z - from.z).length();
 			const Vector2 velocity = Vector2(center.x - from.x, center.z - from.z) / MAX(float(p_delta), 1e-4f);
-			const int steps = CLAMP(int(Math::ceil(dist / MAX(b.radius * 0.5f, 0.01f))), 1, 16);
+			const float step_len = MAX(MIN(b.radius * 0.5f, stamp_step > 0.0f ? stamp_step : texel()), 0.005f);
+			const int steps = CLAMP(int(Math::ceil(dist / step_len)), 1, 16);
 			for (int k = 1; k <= steps; k++) {
 				const Vector3 p = from.lerp(center, float(k) / steps);
 				press(p_columns, p, b.radius, b.box ? b.box_half : Vector2(), b.yaw, b.box, p.y - b.half_height, sink, b.round, p_contact_tolerance, velocity);
@@ -790,8 +869,14 @@ void GroundDeformField::upload(Ref<Image> &r_image, Ref<ImageTexture> &r_texture
 	bytes.resize(n * n * c * 2);
 	uint16_t *w = reinterpret_cast<uint16_t *>(bytes.ptrw());
 	for (int i = 0; i < n * n; i++) {
-		w[i * c + 0] = Math::make_half_float(dent[i]);
-		w[i * c + 1] = Math::make_half_float(rim[i]);
+		if (four) {
+			// The ground's map (material.cpp): the net depression and the standing water over it.
+			w[i * c + 0] = Math::make_half_float(dent[i] - rim[i]);
+			w[i * c + 1] = Math::make_half_float(int(water.size()) == n * n ? water[i] : 0.0f);
+		} else {
+			w[i * c + 0] = Math::make_half_float(dent[i]);
+			w[i * c + 1] = Math::make_half_float(rim[i]);
+		}
 		if (four) {
 			w[i * c + 2] = Math::make_half_float(p_b ? (*p_b)[i] : 1.0f);
 			w[i * c + 3] = Math::make_half_float(p_a ? (*p_a)[i] : 1.0f);

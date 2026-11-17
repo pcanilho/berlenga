@@ -361,6 +361,7 @@ private:
 		WOUND_DEER,
 		WOUND_SQUIRREL,
 		WOUND_CHECK, // A drying check down a log (section 5o).
+		WOUND_CHEVRON, // A shed branch's scar and its two arms below it (section 5r); geometry only.
 	};
 	struct Wound {
 		WoundKind kind = WOUND_LIGHTNING;
@@ -369,6 +370,7 @@ private:
 		float twist = 0.0f; // Radians per metre up the stem (the grain's spiral).
 		float half_w = 0.0f; // Half width across the stem, metres.
 		float age = 0.0f; // Years since the wound.
+		float extra = 0.0f; // Chevron: the arms' length (metres); negative when no scar is drawn (a stub stands there).
 		uint32_t salt = 0;
 	};
 	LocalVector<Wound> wounds;
@@ -378,7 +380,11 @@ private:
 	LocalVector<Vector3> wound_pts;
 	LocalVector<float> wound_rad;
 	LocalVector<float> wound_arc;
+	// Per wound_surf bin, the bark vertex that set its radius and that vertex's part (x -1: none).
+	LocalVector<Vector2i> wound_vtx;
 	void _plan_wounds();
+	void _plan_chevrons();
+	void _grow_chevrons(Builder &r_bark);
 	bool _wounds_resin() const;
 	// Offset out from the stem (metres), bare wood 0..1 and darkening 0..1 at s along the main
 	// stem and az round it, on a stem of radius p_r; p_only: one wound (-1 all).
@@ -591,6 +597,7 @@ public:
 		LocalVector<float> top;
 		int gn = 0;
 	} stone;
+	float bark_chevrons = 1.0f; // Branch-scar chevrons below shed limbs on smooth and papery bark (section 5r); 0 none.
 	float bark_wounds = 1.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
@@ -846,6 +853,8 @@ public:
 	float get_krummholz() const { return krummholz; }
 	void set_bark_wounds(float p_wounds) { bark_wounds = MAX(p_wounds, 0.0f); }
 	float get_bark_wounds() const { return bark_wounds; }
+	void set_bark_chevrons(float p_amount) { bark_chevrons = CLAMP(p_amount, 0.0f, 2.0f); }
+	float get_bark_chevrons() const { return bark_chevrons; }
 	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }
 	float get_fungi_cover() const { return fungi_cover; }
 	void set_fruit_cover(float p_cover) { fruit_cover = MAX(p_cover, 0.0f); }

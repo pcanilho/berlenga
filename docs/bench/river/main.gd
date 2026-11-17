@@ -33,10 +33,13 @@ extends Node3D
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
-#   --contact        with --live, a WeatherMap3D (dry) whose contact wetness the live window writes; prints the
+#   --contact        with --live, a WeatherMap3D (dry) whose contact wetness the live window writes (with --falls
+#                    alone: the falls' mist wets the rock round the foot); prints the
 #                    wet share of the window every 60 frames
 #   --fall-run=M     with --falls, the cliff's face runs M metres out each side of the lip (default 0.1): 1.5 or more
 #                    makes a sloping face the water keeps to (a contact fall)
+#   --mist-dry       with --falls --contact, the mist leaves the rock dry (PhysXWaterMist3D.wet_surfaces off)
+#   --sound-wav=P    with --falls, save each fall's synthesised roar as P_<i>.wav and print its level, then quit
 #   --mist           with --falls, print the mist's densest point and its spread each second
 #   --sun=P,Y        the sun's pitch and yaw in degrees (default -50,-140); --sun=-35,180 puts the fall's face in shade
 #   --report         print the cross-sections and the boxes' positions
@@ -46,6 +49,7 @@ extends Node3D
 # Run with --fixed-fps 30.
 
 var view := "overview"
+var sound_wav := ""
 var raster := false
 var spp := 16
 var bounces := 3
@@ -66,6 +70,7 @@ var joins := false
 var outlet := false
 var outlet_lake: Node3D
 var falls := false
+var mist_dry := false
 var fall_run := 0.1
 var sun_rot := Vector3(-50, -140, 0)
 var lake: Node3D
@@ -134,6 +139,8 @@ func _ready() -> void:
 		elif a == "--contact": contact = true
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
+		elif a == "--mist-dry": mist_dry = true
+		elif a.begins_with("--sound-wav="): sound_wav = a.substr(12)
 		elif a.begins_with("--fall-run="): fall_run = float(a.substr(11))
 		elif a == "--outlet": outlet = true
 		elif a == "--narrows": narrows = true
@@ -188,6 +195,7 @@ func _ready() -> void:
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
+	rock_mat.wetness_enabled = true
 	# Rocks in the channel above the step, standing out of the water, on their own physics layer (2)
 	# so a carving river, which measures the uncarved terrain, still finds them.
 	for r in [[-14.0, 0.8, Vector3(1.0, 2.0, 1.4), 0.5], [-24.0, -0.9, Vector3(1.2, 2.0, 1.0), -0.4], [-31.0, 0.3, Vector3(0.8, 2.0, 0.9), 1.1]]:
@@ -232,6 +240,18 @@ func _ready() -> void:
 			weather.set("drive_environment_fog", false)
 			add_child(weather)
 			(func(): weather.set("follow_target", weather.get_path_to(focus))).call_deferred()
+	if falls and contact and not live and ClassDB.class_exists("WeatherMap3D"):
+		# The mist wets the rock round the foot (PhysXWaterMist3D.wet_surfaces): a dry WeatherMap3D on the fall.
+		focus = Marker3D.new()
+		focus.position = Vector3(_valley_x(2.0), -6.0, 2.0)
+		add_child(focus)
+		weather = ClassDB.instantiate("WeatherMap3D")
+		weather.set("rain_rate", 0.0)
+		weather.set("humidity", 0.6)
+		weather.set("drive_environment_fog", false)
+		weather.set("contact_wetness_size", 48.0)
+		add_child(weather)
+		(func(): weather.set("follow_target", weather.get_path_to(focus))).call_deferred()
 	if carve:
 		river.set("carve", true)
 		river.set("carve_depth", 1.2)
@@ -476,6 +496,7 @@ func _build_ground(p_fresh := true) -> void:
 	mat.albedo_texture = _checker(Color(0.52, 0.48, 0.36), Color(0.42, 0.39, 0.3))
 	mat.roughness = 0.95
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.wetness_enabled = true # the weather's wetness (with --contact: where the river and the falls' mist reach)
 	var body := StaticBody3D.new()
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
@@ -567,8 +588,23 @@ func _process(_delta: float) -> void:
 			var t2 := Time.get_ticks_usec()
 			var up := (t1 - t0) / 1000.0
 			print("mist: step %.2f ms, upload %.2f ms, grid about %s cells, %d steps a second" % [((t2 - t1) / 1000.0 - up) / (2.0 * m.update_rate), up, m.size / maxf(m.cell_size, 0.0001), int(m.update_rate)])
+	if mist_dry and n == 1:
+		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
+			m.set("wet_surfaces", false)
+	if sound_wav != "" and n == 5:
+		var i := 0
+		for p in river.find_children("*", "AudioStreamPlayer3D", true, false):
+			var path := "%s_%d.wav" % [sound_wav, i]
+			p.stream.save_to_wav(path)
+			print("fall sound %d: %s volume %.1f dB unit size %.0f m, %.1f s loop -> %s" % [i, p.get_parent().name, p.volume_db, p.unit_size, p.stream.get_length(), path])
+			i += 1
+		print("fall sounds: %d" % i)
+		get_tree().quit()
 	if mist_report and n % 30 == 0:
 		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
+			if weather and not live:
+				var foot: Vector3 = m.global_transform * m.source_position
+				print("frame %d contact wetness at the foot %.2f, 4 m to the side %.2f, 10 m out %.2f" % [n, weather.call("get_contact_wetness_at", foot), weather.call("get_contact_wetness_at", foot + Vector3(4, 0, 0)), weather.call("get_contact_wetness_at", foot + Vector3(0, 0, 10))])
 			print("frame %d mist max %.2f g/m3 at foot %.2f, 5 m up %.2f, 10 m out %.2f" % [n, m.get_max_density(), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 1, 0))), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 5, 0))), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 1, -10)))])
 	if report and n % 60 == 0:
 		for b in boxes:

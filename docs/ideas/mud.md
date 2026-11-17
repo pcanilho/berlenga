@@ -157,6 +157,58 @@ vehicle, with the same GPU passes and the coarse field as its boundary; the patc
 inner ring so the path tracer sees the geometry. This is the sand thread's pending offer; it serves all
 three surfaces and comes first.
 
+**Built.** GroundSurface3D `near_field` (on), `near_extent` 8 m, `near_resolution` 512 (1.5625 cm).
+A second GroundDeformGPUHost runs the same passes on a field centred with the main one; every stamp
+forwards to it, and direct presses update its CPU copy too. Slumping spreads like diffusion, so the near
+field runs (texel ratio) squared slump passes, at most 16, each spending only its share of the owed time,
+which keeps repose times equal to the main field's. Tiles entering the near field are seeded from the main
+field's copy, so prints made far away arrive intact. The material blends the near map over the main one in
+its outer 1 m (globals `ground_deform_near_map`, `ground_deform_near_rect`), the patch mesh gets a fine
+ring at the near texel, and the path tracer reads the same map (rt params 70-73).
+
+Found on the way:
+- At 1.56 cm a print's rim showed as a square wall: the rim ring was half the footprint's equivalent
+  radius. The ground's rim now spreads over at least one footing width (`GroundDeformField::rim_reach`,
+  Prandtl's passive wedge beside a strip footing on undrained clay reaches about one width out), so the
+  pushed soil rises as a broad lip. Snow keeps the old ring.
+- The straight edge of the wet look came from pore water existing only on the patch's 0.25 m lattice.
+  A far lattice (4 times coarser, as many cells, about 130 m) runs the same Green-Ampt balance from the
+  water sources, an eighth of its rows per step, and copies the fine lattice where they overlap. The wet
+  map carries both (fine block, far block, a row of rects); the fine block fades into the far one with a
+  noisy edge, the terrain round the patch reads the far block in raster and path tracing (rt material
+  bit `ground_terrain`), and cells entering the fine lattice start from the far one.
+- Runoff and blown sand write their 12.5 cm and 25 cm cells as discs; the near field drew each as a
+  round pit. Grid amounts now keep the main field's soft edge on the near field. Rills are still as wide
+  as the runoff grid draws them: sharp rills need the runoff routed on the near field's own grid (sand
+  thread).
+
+Docs review fixes (prints frame):
+- Prints were blocks. A box stamp marked `ground_sole` (meta on the body) is a boot: heel and forefoot
+  ellipses in a smooth union, toe toward the longer half axis; the shank under the arch and chevron lug
+  bars (7 mm, 45 mm apart: a finer tread aliases on the 1.56 cm grid) inside a solid rand raise the print's floor where the sole does not
+  bear (`GroundDeformField::sole_sd()`, `sole_relief()`, the same in ground_deform.glsl).
+- A rut changed shape at the near field's edge. The patch's coarse vertices sat on the main field's
+  texel corners, where a sample is the mean of four texels: the whole main field was drawn with a 2x2 box
+  blur, the fine ring without it. Inner vertices now sit on texel centres (half a detail step in, a whole
+  number of fine steps so ripple cells still land on the ring's vertices); ruts and prints are sharper on
+  the main field too. The hand-over band is 1 m, so a track entering the near field (which starts it
+  fresh at its edge) does so where the main field still shows.
+- Rims on the near field came out toothed: a body pressed once per frame (2.8 cm at 1.7 m/s) left one
+  tooth per press, finer than the main field could show. Bodies are pressed once per finest texel
+  (`GroundDeformField::stamp_step`).
+- Second review: a hot white spot at every heel was the fresh-ground sheen on the print's curved wall;
+  the sheen now stays on floors (raster and path tracer). A thin bright line along ruts was a lip
+  peaked a texel wide at the wall's top; the ground's lip is now highest a little out from the wall.
+  Tread shows with the sun above about 30 degrees: at 15 degrees a print's floor is all shadow.
+- A moving body's pushed soil goes half to each side of its path, so a tyre throws up two even berms.
+  A tyre narrower than two main texels still leaves rims that swap sides on the main field (aliasing of
+  the rim ring); the bench tyre is now 25 cm wide.
+
+Bench `--test=near` (6 checks, `--near=0` for A/B): a boot print's wall is 0.8 cm wide against 5.5 cm on
+the main field, volume kept, dry sand still slumps to 35 degrees in 3 s, prints seeded on arrival. Slope
+checks now measure on the finest field's texel; the print rounded off under flowing water is checked at
+two thirds (the wider lip sits farther from the hole). GPU cost of the near field: PC queue.
+
 ### Stage 1: deep mud that flows (the MudRunner feel)
 
 - **A mud layer.** Per lattice cell a soft-layer depth over the firm base (0 to about 1.2 m), from a
@@ -175,6 +227,28 @@ three surfaces and comes first.
 - Checks: a 4x4 sinks to its axles in 1 m of slurry and not in stiff mud; a rut in stiff mud keeps its
   walls for hours, one in slurry closes in under a minute; volume kept; traction against Wong's clay curves.
 
+**Built.** GroundSurface3D `mud_layer` (on), `mud_map` and `mud_map_rect` (painted depth up to
+`mud_max_depth`, 1.2 m), `data_map` and `mud_auto_depth` (0.5 m where a TerrainDataMap3D's wetness index is
+high or within a few metres of water, on ground under about 10 degrees), counted only when wet between
+`mud_wet_start` 0.35 and `mud_wet_full` 0.55. `get_mud_depth_at()`.
+- The solid share runs from 0.56 where ground first turns to mud to 0.40 soaked; O'Brien and Julien's
+  fits give the yield stress and viscosity (`mud_yield_stress()`, `mud_viscosity()`).
+- Bingham flow rides on the field's slumping rather than a pass of its own: a wall stands up to the
+  critical slope tau_y / (rho g h) for the mass that would move (about half the layer, at most 30 cm),
+  and past it moves at the depth-averaged plug flow's diffusivity rho g h^3 / (3 mu). Mass is kept.
+- Bearing and grip as clay: at the stiff end Wong's lean clay at 32% water (n 0.5, kc 13.19, kphi 692,
+  c 4.14 kPa, phi 13 deg); slurry fitted so a boot sinks about 15 cm and a loaded tyre reaches the base.
+  Nearly incompressible (97% of what is pressed squeezes up beside it); the deepest dent is the layer.
+- Bekker on that clay gives a 1500 kg 4x4 on 26 cm tyres a thrust only just above its compaction
+  resistance (about 0.16 of the load), and slip sinkage tips it over when floored: stiff mud is a crawl
+  at part throttle, slurry bogs it to the axles. That is the MudRunner feel, from measured soil.
+- Not yet: belly drag (the chassis rests on the collider at the undisturbed top, which carries it but
+  does not drag), adhesion drag on the wheel, a second field box following a fast vehicle.
+
+Bench `--test=mud` (10 checks): Bingham numbers, painted mud only when wet, boot 15 cm in slurry and
+0.1 cm in stiff mud, a 25 cm rut in stiff mud keeps 70 degree walls for a minute while one in slurry
+closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
+
 ### Stage 2: water in ruts, drying and cracks
 
 - Ruts collect rain and runoff (the runoff routing already stops water in hollows): a water depth per
@@ -184,6 +258,56 @@ three surfaces and comes first.
   thin and dry, desiccation cracks: a Voronoi pattern sized by the drying layer's thickness, opened as
   geometry in the near field, curled plate edges; rewetting closes them, and each cycle rounds the
   pattern towards hexagons (Goehring 2010).
+
+#### Built (2a: standing water)
+
+- **Technique.** Shallow water on the print field itself, by the virtual pipe model (O'Brien and Hodgins
+  1995; Mei, Decaudin and Hu 2007; Št'ava et al. 2008), the method of most GPU terrain water (and of Fluid
+  Flux in Unreal). Per texel a depth and four outflows; an outflow grows with the head difference to its
+  neighbour, the four are scaled so no texel sends more than it holds, depths change by the net flow. Two
+  compute passes per substep in `ground_deform.glsl` (`MODE_WATER_FLUX`, `MODE_WATER_DEPTH`), on the main
+  field and the near field alike; substeps from the shallow-water wave speed for water up to 20 cm (at most
+  4 a frame), light damping so pools settle in a second or two. The water rides with the field: tile moves,
+  the GPU tile cache and the near field's seeding all carry it (the cache's spare half).
+- **Sources and sinks.** Rain from the `WeatherMap3D`; soaking in at the cell's saturated conductivity
+  (clay-rich soil 1e-6 m/s to sand 1e-4 m/s, Rawls et al. 1982; litter fast; puddled mud a third; pressed
+  ground a third again, as tyres close the large pores, Horn et al. 1995), so heavy rain on clay ponds
+  (Horton overland flow) and sand never does. Ground water seeps in (Darcy over 2 cm) wherever a print
+  reaches below the water table: soaked ground has it at the surface, ground at mud's wetness a few
+  decimetres down, a beach its sea's (`runoff_channels`). Evaporation by Penman's open-water wind function
+  (as the weather map's film). `runoff_time_scale` speeds the sources and sinks up for benches.
+- **Drawn as real geometry.** The ground map's channels are now the net depression (dent less rim) and the
+  water depth; the patch's vertices rise to the water's level, so the water is the surface there, flat, in
+  both renderers and in shadow. Its look (`ground_water_look()`, material.cpp and the raygen alike): water's
+  F0 (0.02) and roughness 0.03, no relief, the bed under it soaked (Lagarde 2013), and rut water carries clay,
+  so the bed fades out within about a centimetre (Beer-Lambert, e-folding 1 cm) to a darker soil colour.
+  Clear water over gravel would want transmission; rut water is turbid, so this is the right default.
+- **Coupling.** Standing water saturates the ground under it (the pore model), which softens the mud there.
+- **Not chosen.** PhysX MPM (particles) for this: millimetre to decimetre films over 64 m2 would need millions
+  of particles; it stays for splashes (stage 4). No GPU: no standing water (the CPU field keeps prints only).
+- **Checks** (`--test=puddles`): a 12 cm rut in soaked soil fills to the 6 cm water table and stands level;
+  a new print cut into the pool draws water in and the volume holds; rain gathers in a rut, the flat soaks its
+  sheet up first after the rain, the rut empties within a day.
+
+#### Built (2b: drying and cracks)
+
+- **Drying.** Per lattice cell, clay-rich bare ground (not sand, litter, rock, snow) soaked by standing water or
+  to saturation keeps the share of water its drying layer still holds; once the ground round it is no longer
+  wet (moisture under `mud_wet_start`) it loses it to evaporation (Penman, as the standing water), from a layer
+  3 cm thick (to 6 cm over deep mud) at 40% porosity. `runoff_time_scale` speeds it up like the rest.
+- **Cracks.** Past a third of its water lost the top cracks, fully open at four fifths. The pattern is the
+  Voronoi cells of a hexagonal seed lattice, the crack distance Quilez's two-pass Voronoi border distance:
+  plates about four times the drying layer (spacing in proportion to thickness, Groisman and Kaplan 1994),
+  primary cracks to 8% of the plate (clay's linear shrinkage), secondary ones at half the size from half way
+  (hierarchical cracking, Bohn et al. 2005), plate rims curled up by up to 3% of the plate as the top shrinks
+  first (Allen 1986). Wetting closes them and counts a cycle; the seed jitter falls with the cycles, so the
+  junctions drift towards 120 degrees and the plates towards hexagons (Goehring et al. 2010).
+- **Drawn.** A third block in the ground wet map (opening, plate size, regularity, crust) read by
+  `ground_crack_*()` in material.cpp and the raygen alike. The patch's vertices carry the cracks their spacing
+  can (`ground_deform_top()`: 1.6 cm in the near field), the finer ones darken as slots that let little light
+  down (only what the mesh cannot show), and the dry crust goes matte.
+- **Checks** (`--test=cracks`): soaked clay stays whole; dried, it cracks with 10 cm plates; rain closes the
+  cracks; the next drying cracks again, more regular; sand never cracks. `--view=ruts --water=mm --dry` shoots it.
 
 ### Stage 3: mud on wheels and bodies
 

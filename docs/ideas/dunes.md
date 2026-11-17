@@ -72,7 +72,7 @@ dune, so they belong to TerrainGenerator3D. Paulo picked "hand dunes to the terr
   surroundings (Jackson and Hunt 1975, as Paris 2019 warp it), lifting more and hopping further, which caps the
   crests. Marram follows Maun's burial response on the deposition averaged over about 30 steps: best under gentle
   burial, dying under heavy burial or erosion (DECAL's rule).
-- TerrainGenerator3D `dunes_enabled` (off): the belt is land within `dune_belt_width` of a beach face, on its own
+- TerrainGenerator3D `dunes_enabled` (on): the belt is land within `dune_belt_width` of a beach face, on its own
   `dune_cell` grid; supply from the dry beach (`dune_supply` m3 per metre of beach over the run); the wind blows up
   the beaches on average, turned by `dune_wind_angle`; the sea, lakes and river channels swallow sand; marram grows
   behind the beach face in patches (`dune_vegetation`). The sand adds to the ground in `_ground` and to the
@@ -85,3 +85,34 @@ dune, so they belong to TerrainGenerator3D. Paulo picked "hand dunes to the terr
   on the 4 cloud cores; expect a few seconds on a 16-core desktop. Tuning: full marram stops 90% of the lift; less
   lets most of the sand run off inland as a film, more grows spires.
 - Next: desert dune fields (bare sand seas, wind regimes: barchan, transverse, linear, star; nebkha round shrubs).
+
+## Built: desert sand seas (16 Nov, option 3, second half)
+
+- First tried the coastal model's deterministic slabs (Nilles 2024) on bare sand: they left stripes along the grid
+  rows and flat plateaus with pits, because every cell moves at once in a fixed order. The stochastic original
+  (Werner 1995 as Paris, Galin, Peytavie, Guérin and Gain 2019 run it) does not: `TerrainDuneSea` in
+  `terrain_dunes.h` ports Paris's MIT code. A random cell lifts a 10 cm slab unless the shadow behind a crest
+  (5 to 15 degrees, within 10 cells) holds it; the slab hops downwind, up to twice as fast up slopes facing the wind,
+  and settles at each landing with a chance (60% on sand, 40% on bare ground, certain in the shadow), up to three
+  bounces; sand past 33 degrees slides off at the lift and the landing. The grid wraps.
+- Two fixes over the original: the shadow marches straight up the wind with bilinear heights instead of along the
+  wind's octant, and each slab starts at a random point in its cell. Without them, winds off the grid axes built
+  ridges snapped to 45 degrees.
+- Lengths and heights are both in cells, so the dunes keep their angles at any `sand_sea_scale` and grow with it:
+  crests come some 25 cells apart (100 m at the default 4 m).
+- Kinds by wind regime (`sand_sea_kind`): one wind over thick sand gives transverse ridges; one wind over sand gathered
+  in low cones gives barchans; two winds 120 degrees apart in turn give linear dunes along their mean; three winds in
+  long turns give star-like peaks. All four checked on a 256-cell harness; sand is conserved to the cell.
+- Parallel: each step cuts the grid into an even number of row bands at a random offset and runs the even bands side
+  by side, then the odd ones (the sublattice decomposition of parallel kinetic Monte Carlo). Bands are at least
+  twice the farthest an event reaches (hops, shadow, slides), and each band draws from a hash of seed, step and band,
+  so the result is identical on one thread or many. 512 x 512 cells, 300 steps: 55 s on one core, 19 s on four.
+- Generator: `sand_seas_enabled` (on; nothing happens until `sand_sea_rect` is set), `sand_sea_depth`,
+  `sand_sea_wind_angle`, `sand_sea_scale`, `sand_sea_steps`, `sand_sea_edge`. The sand lies on the generated ground
+  (the model's base), filling hollows and sliding off slopes past its repose, so hills stand out of the erg; it
+  thins out at the rect's edge (where the base eases to its mean, so the wrapped grid has no step) and on water,
+  and adds to the ground and to the geology's sand.
+  `get_sand_sea_height()` for placing things.
+- Bench: landscape `--sand-sea=x0,z0,w,d` with `--sand-sea-kind`, `--sand-sea-depth`, `--sand-sea-wind`,
+  `--sand-sea-scale`, `--sand-sea-steps`; `--dune-map` draws it. terrain_gen `--test` checks it.
+- Not yet: nebkha (sand gathered round shrubs), sand seas following a mask instead of a rect, wind from the climate.

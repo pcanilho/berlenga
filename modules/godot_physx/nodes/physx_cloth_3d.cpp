@@ -67,6 +67,8 @@ void PhysXCloth3D::_apply_solver_settings() {
 
 void PhysXCloth3D::_rebuild() {
 	_destroy();
+	stepped = false;
+	built_xform = is_inside_tree() ? get_global_transform() : Transform3D();
 
 	_apply_solver_settings();
 
@@ -325,6 +327,15 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 void PhysXCloth3D::_step(double p_delta) {
 	if (!built || !simulating || p_delta <= 0.0) {
 		return;
+	}
+	if (!stepped) {
+		if (!get_global_transform().is_equal_approx(built_xform)) {
+			_rebuild(); // placed by a script after it entered the tree
+			if (!built) {
+				return;
+			}
+		}
+		stepped = true;
 	}
 
 	const Vector3 wind_now = _sample_wind(p_delta);
@@ -677,7 +688,8 @@ void PhysXCloth3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
 			// Only the rest pose lives in local space; a running sim owns world
-			// positions, so a mid-sim move should not teleport it.
+			// positions, so a mid-sim move should not teleport it (a move before
+			// the first step rebuilds it there: see _step).
 		} break;
 	}
 }

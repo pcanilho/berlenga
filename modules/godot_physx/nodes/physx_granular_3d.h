@@ -63,6 +63,7 @@ protected:
 	void _reconfigure_if_live();
 
 public:
+	PhysXGranular3D();
 	void set_friction(float p_deg);
 	float get_friction() const { return friction; }
 	void set_hardness(float p_v);

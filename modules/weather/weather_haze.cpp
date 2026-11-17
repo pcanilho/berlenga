@@ -37,7 +37,6 @@
 // segment, the froxels on camera segments.
 
 #include "weather_map_3d.h"
-
 #include "weather_sky_material.h"
 
 #include "core/config/engine.h"
@@ -125,7 +124,28 @@ void WeatherMap3D::set_drive_environment_fog(bool p_enabled) {
 	applied_haze = -1.0f;
 }
 
+// The aerosol as a traced medium for the path tracer (render_raytracing.cpp reads these globals): extinction at the
+// base, albedo, scale height and base height, and how far rays that reach the sky carry it (the froxels' reach,
+// where the sky's own aerosol starts). Extinction 0: none.
+void WeatherMap3D::_apply_traced_haze(const Vector4 &p_medium, float p_reach) {
+	if (p_medium == applied_traced_haze && p_reach == applied_traced_reach) {
+		return;
+	}
+	applied_traced_haze = p_medium;
+	applied_traced_reach = p_reach;
+	_set_global("weather_haze_medium", p_medium, RSE::GLOBAL_VAR_TYPE_VEC4);
+	_set_global("weather_haze_reach", p_reach, RSE::GLOBAL_VAR_TYPE_FLOAT);
+}
+
+void WeatherMap3D::set_traced_haze(bool p_enabled) {
+	traced_haze = p_enabled;
+	applied_haze = -1.0f;
+}
+
 void WeatherMap3D::_restore_fog() {
+	if (applied_traced_haze.x > 0.0f) {
+		_apply_traced_haze(Vector4(), 0.0f);
+	}
 	for (HazeSource &h : haze_sources) {
 		if (h.volume) {
 			h.volume->queue_free();
@@ -145,6 +165,20 @@ void WeatherMap3D::_restore_fog() {
 	fog_base.saved = false;
 	fog_environment.unref();
 	applied_haze = -1.0f;
+	_apply_sky_aerosol(0.0f, 0.0f);
+}
+
+void WeatherMap3D::_apply_sky_aerosol(float p_extinction, float p_from) {
+	const Vector2 state(p_extinction, p_from);
+	if (state == applied_sky_aerosol) {
+		return;
+	}
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
+	if (sky_material.is_null()) {
+		return;
+	}
+	sky_material->set_aerosol(p_extinction, 0.9f, haze_height, p_from);
+	applied_sky_aerosol = state;
 }
 
 void WeatherMap3D::_apply_haze() {
@@ -227,6 +261,8 @@ void WeatherMap3D::_apply_haze() {
 		// Falling rain and snow are as forward or more, so the layers share it.
 		env->set_volumetric_fog_anisotropy(aerosol_haze ? 0.6f : fog_base.volumetric_anisotropy);
 	}
+	// The aerosol past the froxels' reach, in the sky's air (its shafts across the sky, its haze at the horizon).
+	_apply_sky_aerosol(aerosol_haze && applied_aerosol > 0.0f ? applied_aerosol : 0.0f, env->is_volumetric_fog_enabled() ? env->get_volumetric_fog_length() : 0.0f);
 	// Falling and blowing snow is lit mostly by the sky (single-scatter albedo about 0.97), so the
 	// layers take the ambient light in full unless the project set its own share.
 	if (fog_base.volumetric_ambient_inject <= 0.0f) {
@@ -235,7 +271,19 @@ void WeatherMap3D::_apply_haze() {
 
 	// Each layer near the ground: a FogVolume over its area (or the map), density falling as
 	// exp(-(y - ground) / H). FogMaterial falls as exp2(-falloff y), so falloff = 1 / (H ln 2).
+	// Under path tracing the aerosol (this map's own source) is traced as a medium instead: its volume is hidden
+	// and the path tracer draws free flights through it (pixel-sharp shafts, haze on every bounce).
+	const bool traced = traced_haze && env->is_pathtracing_enabled();
+	Vector4 traced_medium;
 	for (HazeSource &h : haze_sources) {
+		if (traced && h.source == get_instance_id() && h.height_scale > 0.0f && h.sigma > 0.0f) {
+			traced_medium = Vector4(h.sigma, h.albedo, h.height_scale, _haze_base(h));
+			if (h.volume) {
+				h.volume->queue_free();
+				h.volume = nullptr;
+			}
+			continue;
+		}
 		if (h.height_scale <= 0.0f || h.sigma <= 0.0f) {
 			if (h.volume) {
 				h.volume->queue_free();
@@ -263,6 +311,7 @@ void WeatherMap3D::_apply_haze() {
 		h.volume->set_size(Vector3(width, height, width));
 		h.volume->set_global_position(Vector3(centre.x, _haze_base(h), centre.z));
 	}
+	_apply_traced_haze(traced_medium, traced_medium.x > 0.0f && env->is_volumetric_fog_enabled() ? env->get_volumetric_fog_length() : 0.0f);
 }
 
 // Background aerosol haze. Koschmieder: a black target fades to the 2% contrast threshold at the
@@ -280,8 +329,9 @@ float WeatherMap3D::aerosol_extinction(float p_dry_visibility_km, float p_humidi
 void WeatherMap3D::_update_aerosol() {
 	if (!aerosol_haze) {
 		if (applied_aerosol >= 0.0f) {
-			clear_precipitation_extinction(this);
+			// Marked cleared first: clearing re-applies the haze (_apply_haze), which comes back here.
 			applied_aerosol = -1.0f;
+			clear_precipitation_extinction(this);
 		}
 		return;
 	}
@@ -307,4 +357,5 @@ void WeatherMap3D::set_haze_visibility(float p_km) {
 void WeatherMap3D::set_haze_height(float p_m) {
 	haze_height = MAX(p_m, 10.0f);
 	applied_aerosol = aerosol_haze ? 0.0f : applied_aerosol;
+	applied_sky_aerosol = Vector2(-1.0f, -1.0f);
 }

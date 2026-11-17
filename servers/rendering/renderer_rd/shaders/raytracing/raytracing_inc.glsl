@@ -128,6 +128,15 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_CONTACT_WET_SIZE 67
 #define RT_PARAM_GROUND_WET_MAP 69 // GroundSurface3D pore water map (wetness, sheen; last row its rect), 0 = none
 #define RT_PARAM_GROUND_RIPPLE_MAP 68 // GroundSurface3D ripple map for far ripples (sand stage 3), 0 = none
+#define RT_PARAM_GROUND_NEAR_MAP 70 // GroundSurface3D finer near field (mud stage 0), as the deform map, 0 = none
+#define RT_PARAM_GROUND_NEAR_X 71 // its world XZ origin and size
+#define RT_PARAM_GROUND_NEAR_Z 72
+#define RT_PARAM_GROUND_NEAR_SIZE 73
+#define RT_PARAM_HAZE_SIGMA 80 // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
+#define RT_PARAM_HAZE_ALBEDO 81
+#define RT_PARAM_HAZE_HEIGHT 82 // scale height (m)
+#define RT_PARAM_HAZE_BASE 83 // base height, relative to rt_origin
+#define RT_PARAM_HAZE_REACH 84 // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

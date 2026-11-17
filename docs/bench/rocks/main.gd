@@ -16,6 +16,7 @@ extends Node3D
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
+#   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
@@ -332,7 +333,9 @@ func _world() -> void:
 		# Live falls serve only the rockfall runs (--live, the test turns them on itself): off here so frames stay still.
 		rocks.live_rockfall = false
 		rocks.mineral_glints = not args.has("no-glints")
-		rocks.cave_mouths = not args.has("no-caves")
+		# The portal block is retired (off by default; CaveNetwork3D's entrance patch replaced it): frames leave it out,
+		# the test keeps covering its holes. --cave-mouths shows it.
+		rocks.cave_mouths = args.has("cave-mouths") or args.has("test")
 		if args.has("water"):
 			rocks.collision_enabled = false # the sea's seabed probe would take the rocks for the bed
 	var view: String = args.get("view", "scree")

@@ -43,6 +43,7 @@
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
@@ -189,7 +190,12 @@ void PhysXFlow3D::_start() {
 		library_acquired = FlowBackend::acquire_library(err, sizeof(err));
 		if (!library_acquired) {
 			device_error = String::utf8(err);
-			WARN_PRINT("PhysXFlow3D: NVIDIA Flow unavailable: " + device_error);
+			// Once a run: every Flow node in the scene fails the same way, and stays inert (no-op).
+			static bool warned = false;
+			if (!warned) {
+				warned = true;
+				ERR_PRINT("PhysXFlow3D: NVIDIA Flow unavailable, Flow nodes do nothing: " + device_error);
+			}
 			update_configuration_warnings();
 			return;
 		}
@@ -519,22 +525,8 @@ void PhysXFlow3D::_gather_colliders(const AABB &p_region, LocalVector<FlowBacken
 	constexpr int MAX_RESULTS = 64;
 	PhysicsDirectSpaceState3D::ShapeResult results[MAX_RESULTS];
 	const int count = space->intersect_shape(query, results, MAX_RESULTS);
-	for (int i = 0; i < count; i++) {
-		const RID body = results[i].rid;
-		const int index = results[i].shape;
-		const RID shape = ps->body_get_shape(body, index);
-		if (!shape.is_valid()) {
-			continue;
-		}
-		const Transform3D body_xform = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM);
-		const Transform3D xform = body_xform * ps->body_get_shape_transform(body, index);
-		// The body's velocity where this shape is, spin included: a shape on a
-		// spinning or swinging body (a rotor, a door, a walker on a turntable)
-		// moves although the body's centre may not.
-		Vector3 velocity = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
-		if (PhysicsDirectBodyState3D *state = ps->body_get_direct_state(body)) {
-			velocity = state->get_velocity_at_local_position(xform.origin - body_xform.origin);
-		}
+	// One shape as solids for the gas.
+	auto add_shape = [&](const RID &shape, const Transform3D &xform, const Vector3 &velocity) {
 		const Variant shape_data = ps->shape_get_data(shape);
 		switch (ps->shape_get_type(shape)) {
 			case PhysicsServer3D::SHAPE_BOX: {
@@ -581,6 +573,49 @@ void PhysXFlow3D::_gather_colliders(const AABB &p_region, LocalVector<FlowBacken
 				// collider).
 			} break;
 		}
+	};
+	HashSet<RID> native_bodies;
+	for (int i = 0; i < count; i++) {
+		const RID body = results[i].rid;
+		const int index = results[i].shape;
+		const Transform3D body_xform = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+		if (ps->body_get_shape_count(body) == 0) {
+			// A body whose shapes live on its own PhysX actor (PhysXVehicle3D and the other vehicles): its
+			// CollisionShape3D children, once per body.
+			if (native_bodies.has(body)) {
+				continue;
+			}
+			native_bodies.insert(body);
+			Node3D *owner = ObjectDB::get_instance<Node3D>(ObjectID(ps->body_get_object_instance_id(body)));
+			if (owner == nullptr) {
+				continue;
+			}
+			const Transform3D owner_xform = owner->get_global_transform();
+			const Vector3 lin = owner->get("linear_velocity");
+			const Vector3 ang = owner->get("angular_velocity");
+			for (int c = 0; c < owner->get_child_count(); c++) {
+				CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(owner->get_child(c));
+				if (cs == nullptr || cs->is_disabled() || cs->get_shape().is_null()) {
+					continue;
+				}
+				const Transform3D xform = cs->get_global_transform();
+				add_shape(cs->get_shape()->get_rid(), xform, lin + ang.cross(xform.origin - owner_xform.origin));
+			}
+			continue;
+		}
+		const RID shape = ps->body_get_shape(body, index);
+		if (!shape.is_valid()) {
+			continue;
+		}
+		const Transform3D xform = body_xform * ps->body_get_shape_transform(body, index);
+		// The body's velocity where this shape is, spin included: a shape on a
+		// spinning or swinging body (a rotor, a door, a walker on a turntable)
+		// moves although the body's centre may not.
+		Vector3 velocity = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
+		if (PhysicsDirectBodyState3D *state = ps->body_get_direct_state(body)) {
+			velocity = state->get_velocity_at_local_position(xform.origin - body_xform.origin);
+		}
+		add_shape(shape, xform, velocity);
 	}
 }
 

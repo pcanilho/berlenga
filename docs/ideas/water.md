@@ -3282,3 +3282,87 @@ k_peak = 0.77 g / U^2). The fragment finds the wavenumber a pixel can still show
 the hidden fraction's variance to the roughness (sqrt(sqrt(a^2 + hidden))). Foam still reads the full field.
 `far_filter` (shader uniform, on) turns it off for comparisons.
 Status: in every crest glow render (on); a dedicated far-sea before/after and PT pair are next.
+
+### Round 3: artefacts in the low-sun frame (17 Nov, docs review)
+
+Docs passed the glow but declined the frame for artefacts. Found and fixed:
+- Dark hard-edged holes in the sun's path: the raster glitter was D F / (4 n.v) with no masking term, so it
+  peaked as a facet turned from a low sun and then cut to nothing at n.l = 0. Now the height-correlated Smith
+  visibility (Heitz 2014) times n.l, which fades both ways (water_raster_sun_light()).
+- Thin bright posts along distant crests: the far rings of the open sea mesh (steps growing 15% a ring) took the
+  short chop at their sparse vertices as random spikes, whose faces caught the sun. Each vertex now keeps only the
+  share of each cascade its step can carry (four steps a wavelength, far_shown() at the step), on the open mesh
+  with or without a near step; the normal and roughness keep the rest (Bruneton 2010).
+- Aliased horizon dashes and stair-stepped foam rims: the bench rendered without anti-aliasing; storm_crest
+  shots use --taa (as the game does), and far_filter keeps the far glitter as roughness.
+- The sun: a warm (1.0, 0.84, 0.64) disc 0.8 degrees across with a tight glow, not a grey blob.
+
+## Far sea: the mean Fresnel of the hidden slopes (17 Nov)
+
+Checked `far_filter` against a path-traced frame of the `sea` view. The path-traced far sea is darker than
+either raster frame (rows just under the horizon about 92 against 135 with the filter off and 151 on). With
+the filter on, the normal near the horizon is nearly level, so the mirrored sky took the full grazing
+Fresnel (close to 1) and the far band turned a pale grey sheet. Scaling the hidden variance changed nothing:
+the raster sky mirror ignored roughness.
+
+Fix (Bruneton, Neyret and Holzschuch 2010, section 4: the reflectance is the Fresnel averaged over the
+visible slopes, not the Fresnel of the mean normal): `water_raster_reflect` takes three Gauss-Hermite slopes
+along the view's tilt (0 and plus or minus sqrt(3) sigma, weights 2/3, 1/6, 1/6), sigma from the pixel's
+roughness (the hidden variance included), each weighted by the area it turns toward the eye (n_k.v over
+n_k.n). Facets facing the eye mirror less and a higher sky, so the band under the horizon drops to about 118,
+nearer the path-traced frame, and keeps the swell's dark troughs. Near water is unchanged (its roughness is
+small). Cost: two more panorama reads per raster water pixel.
+
+## Waterfall stage 3a: mist wets the rock (17 Nov)
+
+A surface in waterfall mist takes drops at the flux LWC v_d, where v_d is the deposition velocity of cloud
+drops on rough surfaces: Stokes settling (1.2 cm/s at 20 um) plus impaction, about 2% of the wind speed
+(fog interception on forests and rough ground, Lovett 1984; Katata et al. 2008 measured 2 to 8 cm/s). It looks
+wet once a film of about 50 g/m^2 fills the pores near the surface (Lagarde 2013's wet porous surfaces), and
+dries over the weather's contact drying time T (Magnus vapour deficit and Penman wind function, already in
+WeatherMap3D). Where the two balance the wetness is F / (F + C / T): 1 g/m^3 of mist in a 3 m/s spray wind
+gives 0.07 g/m^2/s against 0.08 drying, so about half wet; the foot of a fall, at 2 to 3 g/m^3, is soaked.
+`PhysXWaterMist3D.wet_surfaces` (on) writes that per column of its box (the densest cell, where a face in the
+column meets it; the air's speed there is the source's jet plus the wind) into the weather's contact wetness
+every half second; the contact map's own drying takes it back off once the mist goes. Every material that
+reads the weather's wetness (terrain, rocks, BaseMaterial3D with wetness on, and the path tracer's copy of
+those lines) darkens and smooths there. River bench: `--falls --contact` (`--mist-dry` for the rock without it).
+Limit: the contact map is a square round the camera (64 m by default), so a fall farther off stays dry.
+
+
+## Waterfall stage 3b: the roar (17 Nov)
+
+A waterfall's sound is mostly the ringing of the air bubbles its plunge drags under. Each newly formed
+bubble is a damped oscillator at its Minnaert frequency, f = 3.26 / r (r in m), so the size of the bubbles
+sets the pitch and their count the level.
+
+- **Technique.** Bubble synthesis after van den Doel 2005 ("Physically based models for liquid sounds",
+  ACM TAP), the model later used by Moss et al. 2010 ("Sounding Liquids", SIGGRAPH) and Zheng and James
+  2009 ("Harmonic fluids"). Each bubble is a sine of amplitude a ~ r (a pulsating bubble radiates
+  p ~ rho r^3 omega^2 eps / R, with omega ~ 1/r and the same starting excursion eps at every size), damping
+  d = 0.13 / r + 0.0072 r^-1.5 (viscous and thermal losses plus radiation), and a pitch that rises as it
+  nears the surface, f(t) = f0 (1 + 0.1 d t).
+- **Sizes.** Measured breaking-wave plumes (Deane and Stokes 2002, Nature) follow r^-1.5 below the Hinze
+  scale (about 1 mm) and r^-3.3 above it. Radii run from 0.25 mm up to a largest size that grows with the
+  impact speed, r_max = 1.5 mm per m/s, held to 3 to 30 mm. A 16 m/s plunge therefore rings down to about
+  130 Hz, and a 3 m/s cascade stays above 1 kHz: tall falls rumble and small ones hiss.
+- **Count.** Air enters at about a tenth of the water's flow (Bin 1993). That is far more bubbles than can
+  be rung one by one, so up to 20000 a second are rung, which is past the point where they overlap into a
+  steady roar.
+- **Loop.** Six seconds at 44.1 kHz, built once per fall when the river builds. Rings run past the end and
+  wrap round to the start, so the loop has no seam. A 20 Hz high-pass removes any offset, and the loop is
+  normalised to -3 dBFS.
+- **Level.** The acoustic power is about 3e-7 of the jet's kinetic power, ½ρQv². The level at 10 m
+  (unit_size) on a half sphere over the pool is mapped so that 80 dB SPL plays at 0 dB.
+  `fall_sound_volume_db` offsets it.
+- **Rejected.** Recorded loops: they cannot follow a fall's size and are not free at quality. Filtered noise
+  has no bubble texture. Per-particle bubbles from the live water are costly, and the plunge pool is not
+  resolved at bubble scale.
+- `PhysXRiver3D.fall_sound` (on): one AudioStreamPlayer3D at each fall's foot, not in the editor.
+- **Checked** on the river bench's 6 m cliff (`--falls --sound-wav=`): peak near 240 Hz, then about
+  -6 dB an octave from 400 Hz to 3.2 kHz, the slope of surf noise (Knudsen). An amplitude ~ r^1.5 gave
+  -9 dB an octave and a dull rumble, so it was dropped. The level swings 8 dB across 50 ms windows, and the
+  loop's seam step is the size of an ordinary sample step. The level at 10 m is 82 dB SPL, which plays at
+  +2 dB. Built in well under a second.
+- Open: little above 6 kHz, where real falls also hiss from drops landing on the pool. That could come
+  from the spray particles later.

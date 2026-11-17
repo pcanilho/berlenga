@@ -52,6 +52,9 @@ struct PhysXMotorcycle3D::Impl {
 	PxReal sleep_threshold = 0.0f;
 	PxReal time_before_sleep = 0.0f;
 	bool built = false;
+	// The node transform this node last wrote from the actor: a different one at the next step was set by a script
+	// (spawn, respawn, a reset), and the actor is moved there.
+	Transform3D synced;
 	// wheel_order[Vehicle2W::WHEEL_FRONT/REAR] = index into the parent's own
 	// `wheels` vector (child-registration order) for that canonical slot.
 	uint32_t wheel_order[2] = {};
@@ -140,6 +143,7 @@ bool PhysXMotorcycle3D::_build() {
 	}
 	GodotPhysXSpace3D *space = server->get_space(get_world_3d()->get_space());
 	if (!space) {
+		WARN_PRINT_ONCE("PhysXMotorcycle3D needs the PhysX physics engine (Project Settings > physics/3d/physics_engine = PhysX); it stays still on any other.");
 		return false;
 	}
 	PxPhysics *physics = space->get_px_physics();
@@ -198,6 +202,7 @@ bool PhysXMotorcycle3D::_build() {
 	impl->sleep_threshold = (PxReal)space->get_sleep_energy_threshold();
 	impl->time_before_sleep = (PxReal)space->get_time_before_sleep();
 	const PxTransform pose = to_px(get_global_transform());
+	impl->synced = get_global_transform();
 	// Made and added where the scene may be touched, and waited for (see GodotPhysXServer3D::run_on_physics_thread()).
 	GodotPhysXServer3D::run_on_physics_thread([&]() {
 		if (!configure_vehicle2w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext)) {
@@ -269,11 +274,24 @@ void PhysXMotorcycle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			_engine_controls();
-			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			if (!get_global_transform().is_equal_approx(impl->synced)) {
+				// Moved by a script since the last step: the actor goes there at rest.
+				v.physxActor.rigidBody->setGlobalPose(to_px(get_global_transform()));
+				if (PxRigidDynamic *dyn = v.physxActor.rigidBody->is<PxRigidDynamic>()) {
+					dyn->setLinearVelocity(PxVec3(0.0f));
+					dyn->setAngularVelocity(PxVec3(0.0f));
+					dyn->wakeUp();
+				}
+			}
+			// Engine.time_scale 0 gives a zero step: the vehicle holds still (PhysX rejects a step that is not positive).
+			if (get_physics_process_delta_time() > 0.0) {
+				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			}
 			// Same CoM-vs-actor-origin frame notes as PhysXVehicle3D's own
 			// identical code -- see that class's comment for the SDK source
 			// citations that confirmed this.
 			set_global_transform(to_godot(v.physxActor.rigidBody->getGlobalPose()));
+			impl->synced = get_global_transform();
 			const PxTransform cmass_local_pose = v.physxActor.rigidBody->getCMassLocalPose();
 			for (uint32_t i = 0; i < 2; i++) {
 				wheels[impl->wheel_order[i]]->_set_simulated_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));

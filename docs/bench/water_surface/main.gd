@@ -282,7 +282,13 @@ func _ready() -> void:
 		sky_mat.sky_top_color = Color(0.16, 0.36, 0.72)
 		sky_mat.sky_horizon_color = Color(0.62, 0.72, 0.84)
 		sky_mat.ground_horizon_color = Color(0.62, 0.72, 0.84)
-		sky_mat.sun_angle_max = 2.0 # a crisp low sun, not a haze
+		# A low sun: warm (the air's long path reddens it), a crisp disc with a tight glow round it, and the
+		# horizon under it warmer than the rest.
+		sun.light_color = Color(1.0, 0.84, 0.64)
+		sky_mat.sky_horizon_color = Color(0.74, 0.74, 0.76)
+		sun.light_angular_distance = 0.8
+		sky_mat.sun_angle_max = 6.0
+		sky_mat.sun_curve = 0.05
 	elif view == "storm_sheets":
 		# 10 degrees up, behind the sheets and a little to the side: they backlight against the darker sea.
 		var wds2 := Vector2(-0.3, 1.0).normalized()
@@ -380,6 +386,9 @@ func _ready() -> void:
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
+		# A shader uniform (far_filter, crest_glow ...) goes through --water=; a wrong --node= key did nothing.
+		if not (k in water):
+			push_error("--node=%s: the water has no such property (a shader uniform takes --water=)" % k)
 		water.set(k, node_params[k])
 	add_child(water)
 	var wm: ShaderMaterial = water.call("get_water_material")

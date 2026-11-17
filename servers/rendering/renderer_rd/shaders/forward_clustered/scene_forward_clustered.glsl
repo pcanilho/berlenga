@@ -1144,6 +1144,11 @@ vec3 sun_direction() {
 	return normalize(inv_view * directional_lights.data[0].direction);
 }
 
+// relief_sun_direction(): sun_direction() for relief without geometry (parallax); the path tracer's is nonzero.
+vec3 relief_sun_direction() {
+	return sun_direction();
+}
+
 #GLOBALS
 
 // POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow

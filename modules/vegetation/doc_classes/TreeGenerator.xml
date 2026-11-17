@@ -185,6 +185,9 @@
 		<member name="apical_dominance_old" type="float" setter="set_param" getter="get_param" default="0.49">
 			Borchert-Honda lambda once the tree reaches [member maturity]; decurrent broadleaves drop it to spread their crowns.
 		</member>
+		<member name="bark_chevrons" type="float" setter="set_bark_chevrons" getter="get_bark_chevrons" default="1.0">
+			Branch-scar chevrons ("Chinese moustaches") on beech and birch boles: a dark scar below each shed limb with two arms running down round the stem, longer and flatter the older the scar. Drawn as their own small mesh on the stem. Scales how many fill the clear bole; [code]0[/code] draws none.
+		</member>
 		<member name="bark_color" type="Color" setter="set_bark_color" getter="get_bark_color" default="Color(0.27, 0.24, 0.2, 1)">
 			Bark colour (vertex colour of the bark surface).
 		</member>

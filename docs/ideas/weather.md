@@ -795,3 +795,71 @@ Stages:
    Unreal's "cloud shadow on atmosphere"), for rays beyond the froxel range.
 3. **Traced haze under path tracing**: a real medium with equiangular sampling of the sun's segment
    (Kulla and Fajardo 2012), its shadow rays reading the cloud projector.
+
+Stage 2 built (17 Nov 2026). The sky's march (atmosphere.cpp, `atmo_scatter`) now runs in two stretches:
+under the cloud tops, `atmo_cloud_shadow_steps` (24; 12 for the air in front of a cloud, none for the
+radiance map) steps, each reading the sun's transmittance through the deck: three steps of the base cloud
+shape (`wc_extinction` without the detail erosion, as the shadow bake) along the sun's ray, read at the
+step's scale. The beam takes exp(-tau); the multiply scattered light takes the deck's diffuse transmission
+1 / (1 + 3/4 (1 - g) tau) (two-stream, as the clouds' own diffuse term), so air under overcast is not lit as
+if clear. Past 20 to 60 km the steps are kilometres apart and single shadows would band at the horizon, so
+the shadow turns to its mean over the cover there (1 - 0.9 cover for the beam). The ground past the scene
+takes the shadow too.
+Found on the way: the sky's air had only Hillaire's clear-air Mie (visibility about 200 km) while the froxels
+drew the weather's aerosol (`haze_visibility`, 40 km dry, more with humidity) out to 1.5 km, so the haze, and
+any shaft in it, stopped where the froxels end. WeatherMap3D now hands the sky its aerosol
+(`WeatherSkyMaterial.set_aerosol`: extinction, albedo 0.9, scale height, and the froxels' reach as where it
+starts, so the two never overlap): scattering with g 0.6 as the froxels do, the sun's light through it by
+the air mass of a thin exponential layer (1 / sqrt(mu^2 + 2H / (pi R))), and the sun's disc and the stars
+dimmed by it. It is left out of the transmittance and multiple scattering tables (baked once for all skies).
+Bench: `docs/bench/weather --view=shafts` (`--no-sky-shadow` for the air without it); `docs/bench/sky
+--aerosol=km --look-sun --params=name:value,...`.
+Fix (17 Nov, docs declined the first pair: no shafts visible). The shader read the cloud shape at the
+march's step length (a kilometre), where the noise's mips are a uniform grey, so the shadow was a uniform
+dimming. Now WeatherMap3D bakes a second cloud shadow for the sky (Unreal's cloud shadow map on the
+atmosphere; Hillaire 2016): 40 km square in the sun's plane, 256 texels (160 m), 16 steps through the deck
+per texel on the worker threads every two shadow intervals, the beam exp(-tau) in red and the diffuse in
+green, sliding with the drift between bakes. One read per step, so 48 steps under the deck (most within
+60 km). Without a map (no WeatherMap3D) the shader still marches the clouds itself, coarser.
+Where they read (weather bench `--view=shafts --sun-up=D`): looking toward a sun 20 to 35 degrees up behind
+broken cumulus (cover about 0.45) with the aerosol haze on; strongest with gaps near the sun. Under 12
+degrees the deck is too thick along the sun's path and the air under it is mostly in shadow.
+Round 3 (17 Nov, docs: shafts too weak). The froxels lit the haze under a cloud with the projector's value,
+which is the cloud's diffuse transmission (1 / (1 + 3/4 (1 - g) tau), about 0.3 under a thick cumulus) as if
+it were the sun's beam, with the forward phase peak: the air in the cloud's shadow stayed a third as bright as
+the lit air. The cloud map now carries alpha 254 as a mark, and the froxels take the beam exp(-tau) back out
+of it for the phase-weighted sun term, the rest scattered evenly (1 / 4 pi). Surfaces are unchanged.
+Spec for shots (weather bench `--view=shafts --sun-up=22 --cover=0.35 --haze-km=25 --sun-yaw=-5`): camera
+low, looking about 13 degrees up toward a sun 20 to 25 degrees up and within about 5 degrees of the view's
+centre, behind the edge of broken cumulus (cover 0.3 to 0.35); `haze_visibility` 25 km. Thicker cover or a
+sun under 15 degrees hides the sun behind the deck; thinner haze (40 km) keeps the shafts faint.
+
+
+Stage 3 built (17 Nov 2026): traced haze under path tracing. Under PT the camera rays only read the froxels,
+whose cells are tens of metres deep at a kilometre and are smeared over frames, so the shafts came out as a
+soft veil, and bounce rays (reflections, the light under trees) saw no haze at all. Now, under PT, WeatherMap3D
+hides the aerosol's FogVolume and hands the path tracer the medium instead: extinction at the base, albedo
+0.9, scale height and base height (`weather_haze_medium`, rt_params 80 to 84). Other haze layers (rain, blowing
+snow) stay in the froxels. This is a real medium, as Unreal's path tracer does with height fog
+(`r.PathTracing.HeightFog`) and as PBRT and Mitsuba treat a homogeneous or exponential medium:
+- **Distances drawn exactly.** Optical depth along a ray in an exponential atmosphere has a closed form,
+  a (1 - exp(-k t)) / k with k = d.y / H, which inverts in closed form, so free flights need no delta or
+  ratio tracking (Novák et al. 2018, "Monte Carlo methods for volumetric light transport simulation", for
+  the estimators).
+- **The sun on every segment.** Each segment, to the surface or out to the froxels' reach for a ray that
+  reaches the sky, takes one next-event estimate. It is drawn at a distance in proportion to sigma T over the
+  segment and weighted by 1 - T. The sun comes through its traced shadow ray and through the clouds' direct
+  beam: exp(-tau) recovered from the cloud map, as the froxels do since round 3. The phase is Henyey-Greenstein
+  with g 0.6. The path's own collision is drawn independently and only decides whether it scatters there and
+  goes on along the phase function. That carries the sky's, the clouds' and the ground's light on the haze
+  (multiple scattering), so the clouds' diffuse is not added again as a term. Lighting only the collisions was
+  far noisier for the same mean (thin haze scatters 20% of rays over 1.5 km).
+- **Equiangular sampling** (Kulla and Fajardo 2012) is for point lights. The sun is directional, so distance
+  sampling in proportion to the transmittance is the right one for it. Lamps are lit through the same
+  next-event estimate (one light picked from the grid). Equiangular sampling for lamp beams is left for when a
+  night street needs it.
+- Checked on the shafts spec (960x540, 128 spp, lavapipe): crepuscular rays fan out from the gap with the
+  shadow wedges between them, where the froxel version showed a uniform veil. The 100% crop of the near posts
+  keeps every edge (traced, froxel PT and raster side by side). Cost: about 1.7 times the froxel PT frame in
+  the cloud (one more shadow ray per segment). GPU cost on the PC list.
+- `WeatherMap3D.traced_haze` (on); weather bench `--froxel-haze` for the froxel layer under PT.

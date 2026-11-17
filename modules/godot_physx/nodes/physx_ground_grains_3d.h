@@ -48,7 +48,7 @@ class PhysXGroundGrains3D : public PhysXGranular3D {
 	NodePath ground_surface; // empty: the active GroundSurface3D
 	NodePath follow_target; // the domain follows it (a vehicle), its floor a metre under the ground
 	float tread_depth = 0.008f; // m of sand a slipping tread throws, per metre of slip (lug grooves and the sand they drag)
-	float spray_spread = 0.08f; // velocity jitter, as a share of the throw speed
+	float spray_spread = 0.2f; // velocity jitter, as a share of the throw speed
 	float max_flight_time = 8.0f;
 	Ref<Material> grain_material; // empty: dry sand
 

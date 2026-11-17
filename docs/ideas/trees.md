@@ -1240,6 +1240,50 @@ m). Bank species are generated with at least four variants so every slope step e
 - STAND_BEECH: ravine sycamore on gorge sides past 25 degrees (density 0.4), after the
   Tilio-Acerion ravine woods of sycamore, ash and lime on steep stony slopes (Ellenberg 1988).
 
+### 5r. Branch-scar chevrons (17 Nov; Paulo's pick, first of three)
+
+**What it is.** On smooth bark (beech, hornbeam) and on birch every lost limb leaves a dark
+chevron below its scar, the "Chinese moustache" of arborists (Mattheck and Breloer, *The Body
+Language of Trees*, 1994; Mattheck, Bethge and Weber, *The Body Language of Trees: Encyclopedia of Visual Tree Assessment*, 2015). It is the
+branch bark ridge (Shigo 1989), the fold of bark pushed up in the crotch: once the limb dies and
+is shed, girth growth splits the fold in two arms and pulls them apart round the stem and down
+its sides. The longer since the limb went, the longer and flatter the arms; a fresh one is a
+steep inverted V close under the scar. On beech the fold is a grey-black, slightly raised and
+creased strip; on silver and paper birch it is a black inverted V on the white bark. A forest
+bole carries one from each self-pruned limb up its clear length.
+
+**Why geometry.** The stem's bark grid is 2.5 cm round and 5-10 cm along at best, so an arm a
+centimetre or two wide drawn in vertex colour blurs into a smudge. Per-tree marks also rule out
+the shared bark texture. Each chevron is a small mesh laid on the stem, which is how decals are
+done when the surface is not a single texture (mesh decals, as in UE and HDRP).
+
+**As built.**
+- `bark_chevrons` (0-2, default 1). Beech, American beech, silver and paper birch; red maple and
+  rowan at half the density. Living, standing trees only.
+- Planned from the main stem's shed laterals (scar and arms) and dead ones (arms only, under the
+  stub), then filled up the clear bole below the crown to about 1.8 a metre on beech and 4 on
+  birch, older and larger low down, never overlapping.
+- Arm length: the scar's radius x (1.5 + 5 x age) plus a quarter of the stem's radius x age (age
+  0-1 from the limb's year), at most 0.42 x pi x stem radius. Angle: 60 to 28 degrees below
+  horizontal with age (birch 65 to 42), drooping further along the arm.
+- The eye: an oval stretched round the stem, sunk centre, callus rim. The arms: seven columns
+  across, edges tucked 0.5 mm under the stem surface so no edge floats at a grazing view, a fold
+  0.7 mm proud on beech, creases across every 1.8 cm on beech.
+- Laid on the stem's own triangles: a ray from the centreline out through triangles bucketed by
+  (s, az). The recorded 2 cm bins are sparse where rings are 10 cm apart, and reading between
+  them sank stretches of an arm under the bark.
+- Bark material. UV continues from the stem vertex under the scar, so the bark texture carries
+  on across the fold. Colour and lichen weight are taken from the bark underneath, darkened to
+  x0.34 on beech and x0.11 on birch. Lichen is held off the fold by half. Skin is copied from
+  the stem.
+- LOD: a 2 cm part, kept at LOD 1 and dropped at LOD 2.
+
+**Cost.** Forest beech: +10.7k triangles (+0.7%), about +70 ms to generate. Forest birch: +9.5k
+triangles. Open-grown trees keep their low limbs and gain few or none.
+
+**Check.** Raster against PT at 100% crop on a forest beech at 1 m: the arms, eye and creases
+hold under PT.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

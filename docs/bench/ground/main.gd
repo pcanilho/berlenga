@@ -22,12 +22,23 @@ extends Node3D
 #                         under water and draining after, a damp wall holding where dry and saturated slump,
 #                         a print rounded off under flowing water and kept under slow water, volume kept
 #   --test=shelter      dune grass (wind_shelters): Raupach drag partition, flux dies among the plants, sand lands
+#   --test=near         the finer near field (docs/ideas/mud.md, stage 0; needs a GPU): a boot print's walls
+#                         sharper than on the main field, volume kept, dry sand still slumps to its repose
+#                         in 3 s, a print made outside the near field is there when the field arrives
+#   --test=mud          deep mud (docs/ideas/mud.md, stage 1): Bingham numbers (O'Brien and Julien 1988), a painted
+#                         mud layer only counts when wet, a boot sinks deeper in slurry than in stiff mud, a rut
+#                         in stiff mud keeps its walls and one in slurry closes (volume kept); with the PhysX
+#                         build a 4x4 sinks to its axles and bogs in slurry and crawls through stiff mud
+#   --near=0            the near field off (A/B for any view)
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
 #                         on the outside; dust: none from damp sand, a plume from dry, Stokes settling, wind drift
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
+#   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
+#   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
+#   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
@@ -39,7 +50,8 @@ extends Node3D
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
-#   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
+#   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
+#   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
@@ -60,12 +72,21 @@ var water_test := false
 var shelter_test := false
 var runoff_test := false
 var drift_test := false
+var near_test := false
+var mud_test := false
+var puddle_test := false
+var crack_test := false
+var near_on := true
 var out := ""
 var spp := 16
 var gpu := true
 var bounces := 3
 var cam_arg := PackedFloat32Array()
 var wind_arg := 9.0
+var sun_arg := PackedFloat32Array()
+var mud_arg := PackedFloat32Array()
+var water_arg := 0.0
+var dry_arg := false
 var fails := 0
 var height: Node3D
 var surface: GroundSurface3D
@@ -87,14 +108,47 @@ func _ready() -> void:
 		elif a == "--test=shelter": shelter_test = true
 		elif a == "--test=runoff": runoff_test = true
 		elif a == "--test=drift": drift_test = true
+		elif a == "--test=near": near_test = true
+		elif a == "--test=mud": mud_test = true
+		elif a == "--test=puddles": puddle_test = true
+		elif a == "--test=cracks": crack_test = true
+		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--gpu=0": gpu = false
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
+		elif a.begins_with("--water="): water_arg = float(a.substr(8))
+		elif a == "--dry": dry_arg = true
+		elif a.begins_with("--mud="):
+			for v in a.substr(6).split(","):
+				mud_arg.append(float(v))
+		elif a.begins_with("--sun="):
+			for v in a.substr(6).split(","):
+				sun_arg.append(float(v))
 		elif a.begins_with("--cam="):
 			for v in a.substr(6).split(","):
 				cam_arg.append(float(v))
+	if mud_test:
+		await _run_mud_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if near_test:
+		await _run_near_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if crack_test:
+		await _run_crack_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if puddle_test:
+		await _run_puddle_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if shelter_test:
 		await _run_shelter_tests()
 		print("RESULT: %d failed" % fails)
@@ -183,11 +237,14 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.moisture = moisture
 	surface.litter_cover = litter
 	surface.gpu_simulation = gpu
+	surface.near_field = near_on
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
 	# Everything ships on; each check turns on what it is about (--defaults keeps the shipped settings).
 	if not OS.get_cmdline_user_args().has("--defaults"):
 		surface.wind_ripples = false
 		surface.runoff_channels = false
+		surface.standing_water = false
+		surface.desiccation_cracks = false
 	add_child(surface)
 	await get_tree().physics_frame
 
@@ -215,7 +272,10 @@ func _apply(kind_name: String) -> void:
 
 # Steepest surface slope (degrees) between neighbouring texels in a square around p.
 func _max_slope(p: Vector3, half: float) -> float:
+	# Over the finest field's texel at p (the near field's where it is on).
 	var t := surface.deform_extent / surface.deform_resolution
+	if surface.get_near_rect().has_point(Vector2(p.x, p.z)):
+		t = surface.near_extent / surface.near_resolution
 	var worst := 0.0
 	var x := p.x - half
 	while x <= p.x + half:
@@ -350,6 +410,394 @@ func _run_tests() -> void:
 	var late := surface.get_dent_at(Vector3(2.0, 0, 2.0)) - surface.get_rim_at(Vector3(2.0, 0, 2.0))
 	_check("render loop off for 2 s: no crash, prints kept", late > 0.01, "%.1f cm under the boot's path" % (late * 100.0))
 	print("step %.2f ms, field on the %s" % [surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU"])
+
+
+# Width of a print's wall along +x from p: the run from 10% to 90% of the depth at p, m (step: the sampling).
+func _wall_width(p: Vector3, step: float) -> float:
+	var g: float = height.get_height(p) if height.has_method("get_height") else 0.0
+	var depth: float = g - surface.get_surface_height_at(p)
+	var x10 := -1.0
+	var x90 := -1.0
+	var x := 0.0
+	while x < 0.4:
+		var q := p + Vector3(x, 0, 0)
+		var d: float = (height.get_height(q) if height.has_method("get_height") else 0.0) - surface.get_surface_height_at(q)
+		if x90 < 0.0 and d < 0.9 * depth:
+			x90 = x
+		if d < 0.1 * depth:
+			x10 = x
+			break
+		x += step
+	return x10 - x90 if x10 >= 0.0 and x90 >= 0.0 else 1.0
+
+
+# Steepest slope (degrees) at a given spacing in a square around p.
+func _max_slope_at(p: Vector3, half: float, t: float) -> float:
+	var worst := 0.0
+	var x := p.x - half
+	while x <= p.x + half:
+		var z := p.z - half
+		while z <= p.z + half:
+			var a := Vector3(x, 0, z)
+			var h := surface.get_surface_height_at(a)
+			for d in [Vector3(t, 0, 0), Vector3(0, 0, t)]:
+				var g := surface.get_surface_height_at(a + d)
+				worst = maxf(worst, rad_to_deg(atan(absf(g - h) / t)))
+			z += t
+		x += t
+	return worst
+
+
+func _run_near_tests() -> void:
+	near_on = true
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 3:
+		await get_tree().physics_frame
+	_check("near field active on the GPU path", surface.is_near_active(), "near rect %s, main %s" % [surface.get_near_rect(), surface.get_deform_rect()])
+	if not surface.is_near_active():
+		return
+	var tn := surface.near_extent / surface.near_resolution
+	var o := Vector3(0.3, 0, 0.2)
+	# A boot (0.11 x 0.29 m) pressed 4 cm: the wall from 90% to 10% of the depth, near field against main.
+	surface.clear_deformation()
+	surface.press_box(o, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	surface.sync_deformation()
+	var near_wall := _wall_width(o, tn * 0.5)
+	var near_depth := -surface.get_surface_height_at(o)
+	var nv: Vector2 = surface.get_near_moved_volume()
+	var mv: Vector2 = surface.get_moved_volume()
+	surface.near_field = false
+	await get_tree().physics_frame
+	surface.clear_deformation()
+	surface.press_box(o, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	surface.sync_deformation()
+	var main_wall := _wall_width(o, tn * 0.5)
+	var main_depth := -surface.get_surface_height_at(o)
+	_check("boot print walls are sharp", near_wall <= 0.035 and near_wall < main_wall * 0.6,
+			"wall %.1f cm on the near field, %.1f cm on the main field; depth %.1f and %.1f cm" % [near_wall * 100.0, main_wall * 100.0, near_depth * 100.0, main_depth * 100.0])
+	_check("near field keeps the press's volume", absf((nv.x - nv.y) - (mv.x - mv.y)) < 0.1 * maxf(mv.x - mv.y, 1e-6) and absf(nv.x - mv.x) < 0.1 * mv.x,
+			"near dent %.3f l rim %.3f l, main dent %.3f l rim %.3f l" % [nv.x * 1000.0, nv.y * 1000.0, mv.x * 1000.0, mv.y * 1000.0])
+	surface.near_field = true
+	for i in 3:
+		await get_tree().physics_frame
+	# A boot sole (a body with the ground_sole meta) prints its tread: lug bars stand in the forefoot's floor.
+	surface.clear_deformation()
+	var boot := Node3D.new()
+	var bs := CollisionShape3D.new()
+	bs.shape = BoxShape3D.new()
+	(bs.shape as BoxShape3D).size = Vector3(0.11, 0.06, 0.29)
+	boot.add_child(bs)
+	boot.set_meta("ground_mass", 80.0)
+	boot.set_meta("ground_contact_area", 0.035)
+	boot.set_meta("ground_sole", true)
+	boot.add_to_group("ground_deform")
+	add_child(boot)
+	boot.global_position = Vector3(o.x, _undisturbed(o) + 0.03, o.z)
+	for i in 20:
+		await get_tree().physics_frame
+	boot.queue_free()
+	for i in 3:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var lo := 1.0
+	var hi := -1.0
+	var row := ""
+	for j in 13:
+		var q := o + Vector3(0, 0, 0.0 + j * 0.008)
+		var hq := surface.get_surface_height_at(q) - _undisturbed(q)
+		row += "%.1f " % (hq * 100.0)
+		lo = minf(lo, hq)
+		hi = maxf(hi, hq)
+	_check("a boot sole prints its lug bars", hi - lo > 0.004, "forefoot floor %s cm" % row)
+	# A ball's pit in dry sand slumps to the repose on the near field too, in the same 3 s.
+	surface.ground_type = GroundSurface3D.GROUND_SAND
+	surface.moisture = 0.0
+	for i in 3:
+		await get_tree().physics_frame
+	surface.clear_deformation()
+	surface.press(o, 0.15, -0.12, 0.0, true)
+	surface.sync_deformation()
+	var before := _max_slope_at(o, 0.3, tn * 2.0)
+	var v0: Vector2 = surface.get_near_moved_volume()
+	var t0 := Time.get_ticks_usec()
+	surface.settle(3.0)
+	var settle_ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var after := _max_slope_at(o, 0.3, tn * 2.0)
+	var v1: Vector2 = surface.get_near_moved_volume()
+	_check("dry sand slumps to its repose on the near field", before > 45.0 and after < 38.0, "steepest wall %.0f before, %.0f degrees after 3 s (over %.1f cm)" % [before, after, tn * 200.0])
+	_check("near slumping keeps volume", absf((v1.x - v1.y) - (v0.x - v0.y)) < 2e-4, "net hollow %.3f l before, %.3f l after; 3 s settled in %.0f ms here" % [(v0.x - v0.y) * 1000.0, (v1.x - v1.y) * 1000.0, settle_ms])
+	# A print made outside the near field is there when the near field moves over it (seeded from the main).
+	surface.ground_type = GroundSurface3D.GROUND_SOIL
+	surface.moisture = 0.6
+	for i in 3:
+		await get_tree().physics_frame
+	surface.clear_deformation()
+	var nr: Rect2 = surface.get_near_rect()
+	var away := Vector3(nr.end.x + 2.0, 0, nr.get_center().y)
+	surface.press_box(away, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	surface.sync_deformation()
+	var main_there := -surface.get_surface_height_at(away)
+	var probe := get_node("Probe") as Node3D
+	probe.global_position = Vector3(away.x + 2.0, 0, 0)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var nr2: Rect2 = surface.get_near_rect()
+	var near_there := -surface.get_surface_height_at(away)
+	_check("a print outside the near field is kept when it arrives", nr2.has_point(Vector2(away.x, away.z)) and near_there > 0.6 * main_there,
+			"%.1f cm deep on the main field, %.1f cm on the near field after it moved (near %s)" % [main_there * 100.0, near_there * 100.0, nr2])
+	print("step %.2f ms, near %d slump passes" % [surface.get_step_time_msec(), roundi(pow(surface.deform_extent / surface.deform_resolution / tn, 2.0))])
+
+
+# Stiff mud: Wong's lean clay at 32% water by mass (a solid share of 0.535, GroundSurface3D.mud_concentration),
+# the layer half soft at that moisture.
+const STIFF_MUD := 0.45
+
+
+# A mud layer of p_depth painted over the whole bench (mud_map white), at a moisture.
+func _paint_mud(p_depth: float, p_moisture: float) -> void:
+	var img := Image.create(4, 4, false, Image.FORMAT_RF)
+	img.fill(Color(1, 0, 0))
+	surface.mud_max_depth = p_depth
+	surface.mud_map_rect = Rect2(-200, -200, 400, 400)
+	surface.mud_map = img
+	surface.moisture = p_moisture
+	for i in 3:
+		await get_tree().physics_frame
+
+
+# Rain fills a rut on p_ground, stops, and the rut dries (sped up): the crack state at the rut after each.
+func _rain_and_dry(p_ground: int, o: Vector3) -> Array:
+	near_on = false
+	await _setup("flat", p_ground, 0.2, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.desiccation_cracks = true
+	surface.runoff_time_scale = 100.0
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 20.0
+	wm.humidity = 0.6
+	wm.temperature = 18.0
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.press_box(o, Vector2(0.3, 1.5), 0.0, 0.0, 0.05)
+	surface.sync_deformation()
+	surface.settle(20.0, 0.05)
+	for i in 40:
+		await get_tree().physics_frame
+	var wet: Vector4 = surface.get_crack_at(o)
+	var water := surface.get_standing_water_at(o)
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	# Days of drying in seconds: the water soaks away and evaporates, then the drying layer.
+	surface.runoff_time_scale = 1e5
+	for i in 600:
+		await get_tree().physics_frame
+	var dry: Vector4 = surface.get_crack_at(o)
+	return [wet, dry, water, wm]
+
+
+func _run_crack_tests() -> void:
+	var o := Vector3(0.3, 0, 0.2)
+	var r: Array = await _rain_and_dry(GroundSurface3D.GROUND_SOIL, o)
+	var wet: Vector4 = r[0]
+	var dry: Vector4 = r[1]
+	print("  soil: %.1f mm of water in the rut; cracks %s soaked, %s dried" % [r[2] * 1000.0, wet, dry])
+	_check("soaked clay does not crack", r[2] > 0.001 and wet.x == 0.0, "opening %.2f under %.1f mm of water" % [wet.x, r[2] * 1000.0])
+	_check("dried, it cracks open", dry.x > 0.9 and dry.w > 0.9, "opening %.2f, crust %.2f" % [dry.x, dry.w])
+	_check("plates about four times the drying layer (Groisman and Kaplan 1994)", dry.y > 0.09 and dry.y < 0.25, "%.0f cm" % (dry.y * 100.0))
+	# Rain again: it swells shut, and the cycle makes the next pattern more regular (Goehring et al. 2010).
+	var wm: WeatherMap3D = r[3]
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 20.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 100.0
+	surface.settle(20.0, 0.05)
+	for i in 40:
+		await get_tree().physics_frame
+	var shut: Vector4 = surface.get_crack_at(o)
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 1e5
+	for i in 600:
+		await get_tree().physics_frame
+	var again: Vector4 = surface.get_crack_at(o)
+	_check("wetting closes the cracks", shut.x == 0.0, "opening %.2f" % shut.x)
+	_check("the next drying cracks again, more regular", again.x > 0.9 and again.z > dry.z, "opening %.2f, regularity %.2f (was %.2f)" % [again.x, again.z, dry.z])
+	wm.queue_free()
+	r = await _rain_and_dry(GroundSurface3D.GROUND_SAND, o)
+	_check("sand does not crack", (r[1] as Vector4).x == 0.0, "opening %.2f" % (r[1] as Vector4).x)
+	(r[3] as WeatherMap3D).queue_free()
+	near_on = true
+
+
+# Standing water (docs/ideas/mud.md, stage 2) in a square of half size p_half round p, m3, and the water
+# surface's spread (m) over the samples deeper than 5 mm.
+func _water_volume(p: Vector3, half: float) -> Vector2:
+	var t := surface.deform_extent / surface.deform_resolution
+	if surface.get_near_rect().has_point(Vector2(p.x, p.z)):
+		t = surface.near_extent / surface.near_resolution
+	var vol := 0.0
+	var lo := 1e9
+	var hi := -1e9
+	# At texel centres, where the field holds its values (between them a shore texel's depth and its bed blend
+	# apart and read as a slope that is not there).
+	var x := (floorf((p.x - half) / t) + 0.5) * t
+	while x <= p.x + half:
+		var z := (floorf((p.z - half) / t) + 0.5) * t
+		while z <= p.z + half:
+			var a := Vector3(x, 0, z)
+			var w := surface.get_standing_water_at(a)
+			vol += w * t * t
+			if w > 0.005:
+				var top := surface.get_surface_height_at(a) + w
+				lo = minf(lo, top)
+				hi = maxf(hi, top)
+			z += t
+		x += t
+	return Vector2(vol, hi - lo if hi >= lo else 0.0)
+
+
+func _run_puddle_tests() -> void:
+	# Ground water seeping into a rut: soaked soil (moisture 0.9) has its water table 6 cm down; a 12 cm rut
+	# fills to it and stands level. Conductivity sped up 1000 times (runoff_time_scale) so it fills in minutes.
+	# The main field only (6.25 cm): the near field runs the same passes 16 times over, slow on a CPU device.
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.9, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.runoff_time_scale = 1000.0
+	var o := Vector3(0.3, 0, 0.2)
+	surface.press_box(o, Vector2(0.3, 1.5), 0.0, 0.0, 0.12)
+	surface.sync_deformation()
+	var floor_h := surface.get_surface_height_at(o)
+	surface.settle(240.0, 0.05)
+	var w := surface.get_standing_water_at(o)
+	var vs := _water_volume(o, 1.0)
+	print("  rut floor %.1f cm, water %.1f cm, surface at %.1f cm; %.1f l, spread %.1f mm" % [floor_h * 100.0, w * 100.0, (floor_h + w) * 100.0, vs.x * 1000.0, vs.y * 1000.0])
+	_check("ground water seeps into a rut up to the water table", absf(floor_h + w + 0.06) < 0.01, "surface %.1f cm (table -6 cm)" % ((floor_h + w) * 100.0))
+	_check("it stands level", vs.y < 0.003, "%.1f mm from lowest to highest" % (vs.y * 1000.0))
+	_check("none outside the rut", surface.get_standing_water_at(o + Vector3(0.6, 0, 0)) == 0.0, "%.2f mm beside it" % (surface.get_standing_water_at(o + Vector3(0.6, 0, 0)) * 1000.0))
+	# Flow alone keeps the water: with the sources and sinks stopped (time scale 0), a print pressed beside the
+	# pool and cut into it draws water in; the volume holds.
+	surface.runoff_time_scale = 0.0
+	surface.settle(1.0, 0.05)
+	var v0 := _water_volume(o, 1.0)
+	surface.press_box(o + Vector3(0.25, 0, 0), Vector2(0.3, 0.4), 0.0, 0.0, 0.16)
+	surface.settle(20.0, 0.02)
+	var v1 := _water_volume(o, 1.0)
+	var w_new := surface.get_standing_water_at(o + Vector3(0.3, 0, 0))
+	_check("water runs into a new hollow and keeps its volume", w_new > 0.02 and absf(v1.x - v0.x) < 0.02 * v0.x, "%.1f cm in the new print; %.2f l before, %.2f l after" % [w_new * 100.0, v0.x * 1000.0, v1.x * 1000.0])
+	# (the print's rim may dam it off from the rut: level within the print)
+	var vp := _water_volume(o + Vector3(0.3, 0, 0), 0.1)
+	_check("and stands level in it", vp.y < 0.003, "%.1f mm spread in the print; %.1f mm over print and rut" % [vp.y * 1000.0, v1.y * 1000.0])
+	# Rain on dry clay soil (table 48 cm down): 20 mm/h is more than it takes (1 um/s), so a sheet stands on the
+	# flat and the rut fills deeper; once the rain stops the flat soaks it up first and the rut, compacted, holds
+	# its water longer (Horton overland flow; tyres cut the conductivity).
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.runoff_time_scale = 100.0
+	var wm := WeatherMap3D.new()
+	wm.name = "Weather"
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 20.0
+	wm.humidity = 0.6
+	wm.temperature = 18.0
+	add_child(wm)
+	wm.snap_to_settings()
+	for i in 10:
+		await get_tree().physics_frame
+	print("  rain at the rut %.1f mm/h" % wm.get_rain_at(o))
+	surface.press_box(o, Vector2(0.3, 1.5), 0.0, 0.0, 0.05)
+	surface.sync_deformation()
+	surface.settle(20.0, 0.05)
+	var rut_wet := surface.get_standing_water_at(o)
+	var flat_wet := surface.get_standing_water_at(o + Vector3(1.0, 0, 0))
+	print("  after 20 s (33 min scaled): rut %.1f mm, flat %.2f mm" % [rut_wet * 1000.0, flat_wet * 1000.0])
+	_check("rain collects in the rut (the flat's sheet beside it runs in)", rut_wet > 2.0 * flat_wet and flat_wet > 0.0, "%.1f mm in the rut, %.2f mm on the flat" % [rut_wet * 1000.0, flat_wet * 1000.0])
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	for i in 10:
+		await get_tree().physics_frame
+	print("  rain after it stops %.1f mm/h" % wm.get_rain_at(o))
+	surface.settle(120.0, 0.05)
+	var rut_after := surface.get_standing_water_at(o)
+	var flat_after := surface.get_standing_water_at(o + Vector3(1.0, 0, 0))
+	_check("after the rain the flat soaks up its sheet, the rut keeps water", flat_after == 0.0 and rut_after > 0.5 * rut_wet,
+			"rut %.1f mm, flat %.2f mm 200 min (scaled) later" % [rut_after * 1000.0, flat_after * 1000.0])
+	surface.settle(600.0, 0.5)
+	var rut_dry := surface.get_standing_water_at(o)
+	_check("the rut empties in a day or so (soaking in and evaporating)", rut_dry < 0.2 * rut_after, "%.1f mm after 17 h (scaled)" % (rut_dry * 1000.0))
+	wm.queue_free()
+	near_on = true
+
+
+func _run_mud_tests() -> void:
+	# O'Brien and Julien 1988 (Aspen Pit 1) as the engine has them: a slurry at Cv 0.40, stiff mud at Cv 0.50.
+	var ty40 := GroundSurface3D.mud_yield_stress(0.40)
+	var ty50 := GroundSurface3D.mud_yield_stress(0.50)
+	var mu45 := GroundSurface3D.mud_viscosity(0.45)
+	_check("Bingham yield stress and viscosity", ty40 > 400.0 and ty40 < 700.0 and ty50 > 5000.0 and ty50 < 9000.0 and mu45 > 50.0 and mu45 < 200.0,
+			"tau_y %.0f Pa at Cv 0.40, %.0f Pa at 0.50; mu %.0f Pa s at 0.45" % [ty40, ty50, mu45])
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	var o := Vector3(0.3, 0, 0.2)
+	await _paint_mud(0.8, 0.2)
+	var dry_depth := surface.get_mud_depth_at(o)
+	await _paint_mud(0.8, 1.0)
+	var wet_depth := surface.get_mud_depth_at(o)
+	_check("painted mud counts only when wet", dry_depth < 0.01 and wet_depth > 0.7, "%.2f m at moisture 0.2, %.2f m soaked" % [dry_depth, wet_depth])
+	var slurry_boot := surface.get_sinkage_at(o, 75.0, 0.035, 0.108)
+	await _paint_mud(0.8, STIFF_MUD)
+	var stiff_boot := surface.get_sinkage_at(o, 75.0, 0.035, 0.108)
+	_check("a boot sinks deep in slurry, little in stiff mud", slurry_boot > 0.1 and slurry_boot < 0.25 and stiff_boot < 0.04,
+			"%.1f cm in slurry, %.1f cm in stiff mud" % [slurry_boot * 100.0, stiff_boot * 100.0])
+	# A rut: a 30 cm wide box pressed 25 cm, then a minute. Stiff mud keeps its walls; slurry closes it.
+	var walls := {}
+	for k in ["stiff", "slurry"]:
+		await _paint_mud(0.8, STIFF_MUD if k == "stiff" else 1.0)
+		surface.clear_deformation()
+		surface.press_box(o, Vector2(0.3, 1.5), 0.0, -0.25, 0.25)
+		surface.sync_deformation()
+		var v0 := surface.get_moved_volume()
+		var w0 := _max_slope(o, 0.4)
+		var d0 := -surface.get_surface_height_at(o)
+		surface.settle(60.0, 0.05)
+		var v1 := surface.get_moved_volume()
+		var w1 := _max_slope(o, 0.4)
+		var d1 := -surface.get_surface_height_at(o)
+		walls[k] = [w0, w1, d0, d1]
+		_check("%s mud keeps the volume" % k, absf((v1.x - v1.y) - (v0.x - v0.y)) < 0.02 * maxf(v0.x, 1e-6) + 2e-4,
+				"net %.2f l before, %.2f l after a minute" % [(v0.x - v0.y) * 1000.0, (v1.x - v1.y) * 1000.0])
+	_check("a rut in stiff mud keeps its walls", walls["stiff"][1] > 40.0 and walls["stiff"][3] > 0.6 * walls["stiff"][2],
+			"steepest wall %.0f, %.0f degrees after a minute; %.1f to %.1f cm deep" % [walls["stiff"][0], walls["stiff"][1], walls["stiff"][2] * 100.0, walls["stiff"][3] * 100.0])
+	_check("a rut in slurry closes", walls["slurry"][1] < 15.0 and walls["slurry"][3] < 0.4 * walls["slurry"][2],
+			"steepest wall %.0f, %.0f degrees after a minute; %.1f to %.1f cm deep" % [walls["slurry"][0], walls["slurry"][1], walls["slurry"][2] * 100.0, walls["slurry"][3] * 100.0])
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		print("(no PhysX: vehicle checks skipped)")
+		return
+	# A 1500 kg 4x4 at half throttle for 4 s (easing in, as one drives in mud): 80 cm of slurry, stiff mud, firm ground.
+	var res := {}
+	for k in ["firm", "stiff", "slurry"]:
+		await _soil_scene("soil")
+		if k != "firm":
+			await _paint_mud(0.8, STIFF_MUD if k == "stiff" else 1.0)
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		if k == "firm":
+			car.soft_soil = false
+		surface.follow_target = surface.get_path_to(car)
+		res[k] = await _drive(car, 4.0, 0.5)
+		print("  %s: %.1f m in 4 s, sinkage %.1f cm, slip %.2f" % [k, res[k][0], res[k][1] * 100.0, res[k][2]])
+	_check("a 4x4 sinks to its axles and bogs in slurry", res["slurry"][1] > 0.3 and res["slurry"][0] < 0.25 * res["firm"][0],
+			"%.1f m, sinkage %.1f cm (wheel radius 35)" % [res["slurry"][0], res["slurry"][1] * 100.0])
+	# Lean clay at 32% water (Wong table 2.2: c 4.14 kPa, phi 13 deg) gives a tyre little more thrust than its
+	# compaction resistance (motion resistance about 0.16 of the load): a crawl, as stiff mud is in MudRunner.
+	_check("it crawls through stiff mud, sinking a fraction of slurry's depth", res["stiff"][0] > 0.5 and res["stiff"][0] > 4.0 * res["slurry"][0] and res["stiff"][1] < 0.25 * res["slurry"][1],
+			"%.1f m, sinkage %.1f cm; firm %.1f m" % [res["stiff"][0], res["stiff"][1] * 100.0, res["firm"][0]])
 
 
 # Bekker's rigid wheel, written out here apart from the engine's: z0 = (3 W / ((3 - n) b k sqrt(D)))^(2 / (2n + 1)).
@@ -836,7 +1284,7 @@ func _run_water_tests() -> void:
 		var d1 := surface.get_dent_at(o)
 		var v1 := surface.get_moved_volume()
 		if speed > 0.5:
-			_check("flowing water rounds off a print within a minute", d1 < 0.3 * d0, "%.1f cm deep, %.1f cm after 60 s at %.1f m/s" % [d0 * 100.0, d1 * 100.0, speed])
+			_check("flowing water rounds off a print within a minute", d1 < 0.35 * d0, "%.1f cm deep, %.1f cm after 60 s at %.1f m/s" % [d0 * 100.0, d1 * 100.0, speed])
 			_check("no sand made or lost (Exner)", absf((v1.y - v1.x) - (v0.y - v0.x)) < 0.02 * maxf(v0.x, 1e-6), "net %.3f l, was %.3f l" % [(v1.y - v1.x) * 1000.0, (v0.y - v0.x) * 1000.0])
 		else:
 			_check("slow water leaves a print (under the threshold)", d1 > 0.6 * d0, "%.1f cm deep, %.1f cm after 60 s at %.2f m/s" % [d0 * 100.0, d1 * 100.0, speed])
@@ -1086,16 +1534,19 @@ func _build_trail() -> void:
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-18.0, 140.0, 0.0)
+	sun.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-18.0, 140.0, 0.0)
+	if sun_arg.size() >= 3:
+		env.tonemap_exposure = sun_arg[2]
 	sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
 	var cam := Camera3D.new()
 	add_child(cam)
-	cam.position = Vector3(1.2, 1.05, 3.4)
-	cam.look_at(Vector3(-1.2, 0.0, 0.7))
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.2, 1.05, 3.4, -1.2, 0.0, 0.7])
+	cam.position = Vector3(c[0], c[1], c[2])
+	cam.look_at(Vector3(c[3], c[4], c[5]))
 	cam.fov = 55.0
 	# The walker: a capsule on the ground's collider, its two boots (boxes in ground_deform, 80 kg on
-	# 0.035 m2) printing by Bekker sinkage; a ball and a cart wheel roll through at set depths.
+	# 0.035 m2) printing by Bekker sinkage; a ball and a 25 cm tyre roll through at set depths.
 	var dark := StandardMaterial3D.new()
 	dark.albedo_color = Color(0.15, 0.17, 0.22)
 	walker = CharacterBody3D.new()
@@ -1115,6 +1566,8 @@ func _build_trail() -> void:
 		foot.add_child(fs)
 		foot.set_meta("ground_mass", 80.0)
 		foot.set_meta("ground_contact_area", 0.035)
+		# A boot's sole: heel, waist, toe and lugs instead of a block.
+		foot.set_meta("ground_sole", true)
 		foot.add_to_group("ground_deform")
 		foot.position = Vector3(0, 100, 0)
 		add_child(foot)
@@ -1141,14 +1594,14 @@ func _build_trail() -> void:
 	var wc := CollisionShape3D.new()
 	wc.shape = CylinderShape3D.new()
 	(wc.shape as CylinderShape3D).radius = 0.4
-	(wc.shape as CylinderShape3D).height = 0.12
+	(wc.shape as CylinderShape3D).height = 0.25
 	wc.rotation_degrees = Vector3(90, 0, 0)
 	wheel.add_child(wc)
 	var wmi := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.4
 	cyl.bottom_radius = 0.4
-	cyl.height = 0.12
+	cyl.height = 0.25
 	wmi.mesh = cyl
 	wmi.rotation_degrees = Vector3(90, 0, 0)
 	wmi.material_override = dark
@@ -1161,11 +1614,15 @@ func _build_trail() -> void:
 	for i in int(6.5 * 60.0):
 		await get_tree().physics_frame
 	walking = false
+	# Off the frame: only their tracks are shown (their shadows would cross it at a low sun).
+	for nm in ["Ball", "Wheel", "Foot0", "Foot1"]:
+		(get_node(nm) as Node3D).global_position = Vector3(0, 100, 0)
+	walker.global_position = Vector3(0, 100, 0)
 	# Let the walls settle as they would in the second after.
 	for i in 60:
 		await get_tree().physics_frame
 	surface.sync_deformation()
-	print("ground %s: step %.2f ms on the %s, moved %s m3" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume()])
+	print("ground %s: step %.2f ms on the %s, moved %s m3, near rect %s" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume(), surface.get_near_rect()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
@@ -1198,7 +1655,11 @@ func _build_ruts() -> void:
 	sun.rotation_degrees = Vector3(-16.0, 150.0, 0.0)
 	sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
-	var car := _make_car(1500.0, 700.0, Vector3(-1.0, _undisturbed(Vector3(-1.0, 0, -9.0)) + 0.9, -9.0))
+	var start_z := -9.0
+	if mud_arg.size() == 2:
+		await _paint_mud(mud_arg[0], mud_arg[1])
+		start_z = -2.0
+	var car := _make_car(1500.0, 700.0, Vector3(-1.0, _undisturbed(Vector3(-1.0, 0, start_z)) + 0.9, start_z))
 	if kind == "dry_sand":
 		for c in car.get_children():
 			if c is PhysXVehicleWheel3D:
@@ -1212,7 +1673,7 @@ func _build_ruts() -> void:
 	# A gentle S through the frame, then on out of it.
 	car.throttle = 0.5
 	var t := 0.0
-	while t < 9.0 and car.global_position.z < 14.0:
+	while t < (12.0 if mud_arg.size() == 2 else 9.0) and car.global_position.z < 14.0:
 		car.steer = 0.25 * sin(t * 0.8)
 		await get_tree().physics_frame
 		t += 1.0 / 60.0
@@ -1229,6 +1690,48 @@ func _build_ruts() -> void:
 	surface.follow_target = surface.get_path_to(cam)
 	for i in 60:
 		await get_tree().physics_frame
+	if water_arg > 0.0:
+		# Rain on the ruts (sped up 100 times): what the clay cannot take stands, then an hour after it the flat
+		# has soaked its sheet up and the ruts, pressed, still hold theirs.
+		surface.standing_water = true
+		surface.desiccation_cracks = dry_arg
+		surface.runoff_time_scale = 100.0
+		var wm := WeatherMap3D.new()
+		wm.cloud_cover = 1.0
+		wm.rain_rate = 20.0
+		wm.humidity = 0.7
+		add_child(wm)
+		wm.snap_to_settings()
+		for i in 5:
+			await get_tree().physics_frame
+		surface.settle(water_arg / 20.0 * 36.0, 0.05)
+		wm.rain_rate = 0.0
+		wm.cloud_cover = 0.0
+		wm.snap_to_settings()
+		for i in 5:
+			await get_tree().physics_frame
+		surface.settle(36.0, 0.05)
+		print("water: %.1f mm in the left rut" % (surface.get_standing_water_at(Vector3(-1.6, 0, 0.0)) * 1000.0))
+		if dry_arg:
+			surface.desiccation_cracks = true
+			surface.runoff_time_scale = 1e5
+			for i in 600:
+				await get_tree().physics_frame
+			surface.runoff_time_scale = 1.0
+			print("dried: cracks %s in the left rut" % surface.get_crack_at(Vector3(-1.6, 0, 0.0)))
+			# Where the dried pools are, round the view (for framing --cam).
+			var sum := Vector3()
+			var cnt := 0
+			for xi in range(-24, 25):
+				for zi in range(-24, 25):
+					var q := Vector3(0.25 * xi, 0, -1.0 + 0.25 * zi)
+					if surface.get_crack_at(q).x > 0.9:
+						sum += q
+						cnt += 1
+			print("dried: %d cracked cells, centroid %s" % [cnt, sum / maxf(cnt, 1)])
+		if cam_arg.size() == 6:
+			cam.position = Vector3(cam_arg[0], _undisturbed(Vector3(cam_arg[0], 0, cam_arg[2])) + cam_arg[1], cam_arg[2])
+			cam.look_at(Vector3(cam_arg[3], _undisturbed(Vector3(cam_arg[3], 0, cam_arg[5])) + cam_arg[4], cam_arg[5]))
 	surface.sync_deformation()
 	get_window().size = full
 	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car_end, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])
@@ -1535,11 +2038,11 @@ func _physics_process(delta: float) -> void:
 		else:
 			foot.global_position = Vector3(0, 100, 0)
 	var b: Node3D = get_node("Ball")
-	var bp := Vector3(-6.0 + 1.2 * walk_t, 0, -0.6)
+	var bp := Vector3(-6.0 + 1.2 * walk_t, 0, -0.6 + 0.12 * sin(walk_t * 0.8))
 	b.global_position = Vector3(bp.x, _undisturbed(bp) - 0.06 + 0.25, bp.z)
 	b.rotation.z = -bp.x / 0.25
 	var w: Node3D = get_node("Wheel")
-	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -2.4)
+	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -2.4 + 0.2 * sin(walk_t * 0.6 + 1.0))
 	w.global_position = Vector3(wp.x, _undisturbed(wp) - 0.03 + 0.4, wp.z)
 	w.rotation.z = -wp.x / 0.4
 

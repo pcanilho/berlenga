@@ -33,13 +33,12 @@
 
 #include "ground_deform_field.h"
 #include "ground_deform_gpu.h"
+#include "ground_height_query.h"
 #include "ground_ripples.h"
+#include "ground_terramechanics.h"
 
 #include "core/object/worker_thread_pool.h"
 #include "core/variant/typed_array.h"
-#include "ground_terramechanics.h"
-#include "ground_height_query.h"
-
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
@@ -89,11 +88,21 @@ public:
 		float wheel_n = 1.0f;
 		float wheel_kc = 1.0f;
 		float wheel_kphi = 1000.0f;
+		// Deep mud (docs/ideas/mud.md, stage 1): the soft layer's thickness over the firm base, m (0: none).
+		float mud = 0.0f;
 		bool deformable = true;
 	};
 	// p_saturation: pore water in the top layer, 0..1 (< 0: none known, p_moisture alone); p_water_speed: water
 	// flowing over it, m/s (sand stage 4).
-	static Cell material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation = -1.0f, float p_water_speed = 0.0f);
+	// p_mud: deep mud over the firm base, m (stage 1 of docs/ideas/mud.md), already scaled by how wet it is.
+	static Cell material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation = -1.0f, float p_water_speed = 0.0f, float p_mud = 0.0f);
+	// Mud as a Bingham fluid (O'Brien and Julien 1988, Aspen Pit 1): yield stress (Pa) and viscosity (Pa s) at a
+	// volumetric sediment concentration p_cv (0.40 slurry to 0.56 stiff).
+	static float mud_yield_stress(float p_cv);
+	static float mud_viscosity(float p_cv);
+	// The sediment concentration of mud at a moisture: stiff (0.56) where the ground first turns to mud (0.35),
+	// slurry (0.40) soaked.
+	static float mud_concentration(float p_moisture) { return Math::lerp(0.56f, 0.40f, CLAMP((p_moisture - 0.35f) / 0.65f, 0.0f, 1.0f)); }
 	// Bed load under flowing water (Meyer-Peter and Mueller 1948) for fine sand, m2/s per m across the flow.
 	static float bed_load(float p_water_speed);
 
@@ -109,6 +118,31 @@ private:
 	bool rock_from_geology = true;
 	Ref<Image> type_map; // R: sand share, G: bare rock
 	Rect2 type_map_rect;
+	// Deep mud (docs/ideas/mud.md, stage 1): painted (mud_map R times mud_max_depth over mud_map_rect, as
+	// MudRunner's mud brush) and from the terrain (a TerrainDataMap3D's wetness index and distance to water, at
+	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
+	bool mud_layer = true;
+	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
+	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
+	bool standing_water = true;
+	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
+	float water_seen = 0.0f; // the deepest standing water at the last read back, m
+	float _evaporation() const;
+	int _water_passes(const GroundDeformField &p_field, double p_delta) const;
+	// Drying and desiccation cracks (docs/ideas/mud.md, stage 2b): per lattice cell (1 + the share of its water the
+	// drying layer still holds, or 0 where it was never soaked; the wetting and drying cycles it has cracked in).
+	bool desiccation_cracks = true;
+	LocalVector<float> crack_state;
+	void _crack_update(double p_delta);
+	Vector4 _crack_at_cell(int p_i) const; // opening 0..1, plate size m, regularity 0..1, crust 0..1
+	Ref<Image> mud_map;
+	Rect2 mud_map_rect;
+	float mud_max_depth = 1.2f;
+	float mud_auto_depth = 0.5f;
+	float mud_wet_start = 0.35f;
+	float mud_wet_full = 0.55f;
+	NodePath data_map;
+	float _mud_depth_at(const Vector3 &p_position, float p_moisture, bool p_sand_or_rock, const Node *p_data_map) const;
 
 	float deform_extent = 32.0f;
 	int deform_resolution = 512;
@@ -139,11 +173,14 @@ public:
 		float rate = 0.0f; // kg/s
 	};
 
-
 private:
 	LocalVector<Spray> sprays;
 	LocalVector<Dust> dust;
+	LocalVector<Dust> near_dust; // inside the claim (claim_dust): for a near-field dust node
 	uint64_t dust_frame = 0;
+	Vector3 dust_claim_center;
+	float dust_claim_radius = 0.0f;
+	uint64_t dust_claim_frame = 0;
 	float dust_emission = 0.06f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
 	uint64_t spray_frame = 0;
 	void _plough_bodies();
@@ -204,7 +241,6 @@ public:
 	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z); }
 
 private:
-
 	GroundDeformField field;
 	struct Columns : public GroundDeformField::Columns {
 		const GroundSurface3D *surface = nullptr;
@@ -218,10 +254,13 @@ private:
 	bool gpu_simulation = true;
 	struct GPUSink : public GroundDeformField::StampSink {
 		GroundSurface3D *surface = nullptr;
+		bool is_near = false; // the near field's sink (the main one forwards to it)
+		GPUSink *next = nullptr;
 		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
-		void amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth) override;
+		void amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f) override;
 	};
 	GPUSink gpu_sink;
+	GPUSink near_sink;
 	GroundDeformGPUHost gpu_host;
 	bool gpu_ground_dirty = true;
 	bool gpu_cells_dirty = true;
@@ -229,9 +268,32 @@ private:
 	double gpu_readback_accum = 0.0;
 	bool _gpu_on() const;
 	void _gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync);
+	void _gpu_submit_field(GroundDeformGPUHost &r_host, const GroundDeformField &p_field, bool &r_ground_dirty, bool &r_cells_dirty, double &r_slow_accum, int p_passes, float p_edge_margin, double p_delta, double p_age, bool p_readback, bool p_sync);
 	void _gpu_take();
 	void _gpu_release();
-	PackedByteArray _gpu_params(double p_delta, double p_age, double p_slow) const;
+	PackedByteArray _gpu_params(const GroundDeformField &p_field, float p_edge_margin, double p_delta, double p_age, double p_slow) const;
+
+	// The finer near field (docs/ideas/mud.md, stage 0): a second, smaller field at a quarter of the texel
+	// (8 m at 1.5625 cm), centred on the main one, pressed with the same stamps and slumped with the same rules
+	// (more passes, so a slope moves as far in a second). The material and the path tracer use it inside its
+	// square, blended into the main field over its last half metre; the patch gains a matching fine ring. Tiles it
+	// has never held start as the main field's copy. GPU path only.
+	bool near_field = true;
+	float near_extent = 8.0f;
+	int near_resolution = 512;
+	GroundDeformField near_fld;
+	GroundDeformGPUHost near_host;
+	bool near_ground_dirty = true;
+	bool near_cells_dirty = true;
+	double near_slow_accum = 0.0;
+	static constexpr float NEAR_BLEND = 1.0f; // m over which the near field fades into the main one (material.cpp, raygen)
+	bool _near_on() const;
+	void _near_follow();
+	void _near_seed(Vector2i p_origin);
+	void _near_release();
+	int _near_passes() const;
+	bool _near_inside(float p_x, float p_z) const;
+	void _publish_near();
 	PackedByteArray _gpu_cells() const;
 
 	int ground_n = 0;
@@ -244,9 +306,12 @@ private:
 		float sand = 0.0f;
 		float moisture = 0.0f;
 		float litter = 0.0f;
+		float mud = 0.0f; // deep mud, m (stage 1 of docs/ideas/mud.md)
 		bool fixed = false; // rock or snow: never deforms
 	};
 	LocalVector<CellInput> cell_inputs;
+	float _water_conductivity(const CellInput &p_in) const;
+	float _water_table_depth(int p_i) const;
 	// Sand and water (docs/ideas/sand.md, stage 4): pore water and the water over each cell.
 	TypedArray<NodePath> water_sources;
 	bool water_coupling = true;
@@ -258,6 +323,22 @@ private:
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
+	// The far pore water (docs/ideas/mud.md, stage 0): the same balance on a lattice FAR_STEP times coarser with as
+	// many cells, centred on the patch, so wet ground carries on past it over the terrain with no edge. A
+	// FAR_PHASES-th of its rows is sampled each water step; inside the fine lattice it copies the fine one.
+	static constexpr int FAR_STEP = 4;
+	static constexpr int FAR_PHASES = 8;
+	LocalVector<float> far_pore;
+	LocalVector<float> far_table;
+	LocalVector<float> far_ground;
+	Vector2i far_origin;
+	int far_n = 0;
+	int far_phase = 0;
+	double far_age[FAR_PHASES] = {};
+	void _far_update(double p_delta, const LocalVector<Node *> &p_sources, const class WeatherMap3D *p_weather);
+	float _far_pore_at(float p_x, float p_z) const;
+	float _pore_step(float p_s, float p_depth, float p_contact, float p_dt, float &r_table) const;
+	static float _value_noise(float p_x, float p_z);
 	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film,
 	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
 	Vector<uint8_t> wet_data;
@@ -379,6 +460,7 @@ public:
 	Dictionary get_footing_at(Vector3 p_position, float p_mass = 75.0f, float p_area = 0.035f) const;
 	// Grains leaving the ground (dig) or landing on it (deposit): a set depth over a disc; the volume, m3.
 	float dig(Vector3 p_position, float p_radius, float p_depth);
+	float _amount(Vector3 p_position, float p_radius, float p_depth, float p_cell);
 	float deposit(Vector3 p_position, float p_radius, float p_depth);
 	// Sand thrown by spinning wheels since the last call (press_wheel with slip): Array of Dictionaries
 	// (position, velocity, width, slip_speed, reach_center, reach_radius). For a grains node to dig and spawn (sand stage 2).
@@ -386,6 +468,11 @@ public:
 	// of the ground there the wind could move (dry, bare sand; none from damp sand). Taken by GroundDust3D.
 	void add_dust(Vector3 p_position, Vector3 p_velocity, float p_strength);
 	void take_dust(LocalVector<Dust> &r_dust);
+	// A near-field dust node (PhysXGroundDust3D) claims the dust lifted within p_radius of p_center, renewed each
+	// physics frame; that dust goes to take_near_dust() instead of take_dust(). A claim not renewed for two
+	// frames lapses.
+	void claim_dust(Vector3 p_center, float p_radius);
+	void take_near_dust(LocalVector<Dust> &r_dust);
 	void set_dust_emission(float p_v) { dust_emission = MAX(p_v, 0.0f); }
 	float get_dust_emission() const { return dust_emission; }
 	Array take_sprays();
@@ -433,6 +520,39 @@ public:
 	Vector2 get_wind_override() const { return wind_override; }
 	void set_wind_ripples(bool p_enabled);
 	bool is_wind_ripples() const { return wind_ripples; }
+	void set_mud_layer(bool p_enabled);
+	bool is_mud_layer() const { return mud_layer; }
+	void set_standing_water(bool p_enabled);
+	bool is_standing_water() const { return standing_water; }
+	float get_standing_water_at(Vector3 p_position) const;
+	void set_desiccation_cracks(bool p_enabled);
+	bool is_desiccation_cracks() const { return desiccation_cracks; }
+	// The crack state at a point: (opening 0..1, plate size m, regularity 0..1, crust 0..1).
+	Vector4 get_crack_at(Vector3 p_position) const;
+	void set_mud_map(const Ref<Image> &p_map);
+	Ref<Image> get_mud_map() const { return mud_map; }
+	void set_mud_map_rect(const Rect2 &p_rect);
+	Rect2 get_mud_map_rect() const { return mud_map_rect; }
+	void set_mud_max_depth(float p_m);
+	float get_mud_max_depth() const { return mud_max_depth; }
+	void set_mud_auto_depth(float p_m);
+	float get_mud_auto_depth() const { return mud_auto_depth; }
+	void set_mud_wet_start(float p_m);
+	float get_mud_wet_start() const { return mud_wet_start; }
+	void set_mud_wet_full(float p_m);
+	float get_mud_wet_full() const { return mud_wet_full; }
+	void set_data_map(const NodePath &p_path);
+	NodePath get_data_map() const { return data_map; }
+	float get_mud_depth_at(Vector3 p_position) const;
+	void set_near_field(bool p_enabled);
+	bool is_near_field() const { return near_field; }
+	void set_near_extent(float p_extent);
+	float get_near_extent() const { return near_extent; }
+	void set_near_resolution(int p_resolution);
+	int get_near_resolution() const { return near_resolution; }
+	Rect2 get_near_rect() const;
+	Vector2 get_near_moved_volume() const { return is_near_active() ? near_fld.moved_volume() : Vector2(); }
+	bool is_near_active() const { return _near_on() && near_fld.valid; }
 	void set_water_sources(const TypedArray<NodePath> &p_sources) { water_sources = p_sources; }
 	TypedArray<NodePath> get_water_sources() const { return water_sources; }
 	void set_water_coupling(bool p_enabled);
@@ -492,6 +612,9 @@ public:
 
 	float get_surface_height_at(Vector3 p_position) const;
 	float get_ground_height_at(Vector3 p_position) const;
+	// The deformed surface's height, under the name height sources share (GroundHeightQuery: a PhysXFlow3D's
+	// terrain floor), so gas rests on the ruts and berms.
+	float get_height(Vector3 p_position) const { return get_surface_height_at(p_position); }
 	float get_dent_at(Vector3 p_position) const;
 	float get_rim_at(Vector3 p_position) const;
 	float get_fresh_at(Vector3 p_position) const;

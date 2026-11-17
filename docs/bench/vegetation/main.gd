@@ -25,6 +25,7 @@ var deadwood_view := false
 var stone_view := "" # --stones=scree|river|shore|stream: plants between stones (PlantGenerator.make_stones).
 var stone_plants := true # --stones-off: the same stones, no plants.
 var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 without (--far-volume=off).
+var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on a ground drawing the far colour, waiting for the far shade match; 2 = match off (=off), 3 = shade forced to 0.3 (=dark).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
@@ -67,6 +68,9 @@ func _ready() -> void:
 		elif a.begins_with("--stones="):
 			stone_view = a.substr(9)
 			size = 48.0
+		elif a.begins_with("--far-match"):
+			far_match = 2 if a == "--far-match=off" else (3 if a == "--far-match=dark" else 1)
+			far_volume_view = 2
 		elif a.begins_with("--far-volume"):
 			far_volume_view = 2 if a == "--far-volume=off" else 1
 		elif a == "--stones-off":
@@ -112,6 +116,7 @@ func _ready() -> void:
 	dm.water_sources = [NodePath("../Lake"), NodePath("../River")]
 	add_child(dm)
 	field = VegetationField3D.new()
+	field.far_volume = false # Not under test here.
 	field.name = "Field"
 	field.populate_on_ready = false
 	field.biome = _biome()
@@ -299,6 +304,7 @@ func _place_form_checks() -> void:
 	flag.footprint = 0.0
 	flag.set_meta("wind_flag", true)
 	var f := VegetationField3D.new()
+	f.far_volume = false # Not under test here.
 	f.populate_on_ready = false
 	f.litter_wind = Vector2(0.3, 0.4)
 	var b := Biome.new()
@@ -326,13 +332,15 @@ func _place_form_checks() -> void:
 		m.size = Vector3(0.3, 1.0, 0.3)
 		var am := ArrayMesh.new()
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, m.get_mesh_arrays())
-		am.set_meta("tree_ground_slope", Vector2(0.15 * k, 0.2))
+		if k > 0: # The flat form carries no slope (as the trees module's).
+			am.set_meta("tree_ground_slope", Vector2(0.15 * k, 0.2))
 		meshes.append(am)
 	var bank := PlantSpecies.new()
 	bank.meshes = meshes
 	bank.spacing = 6.0
 	bank.footprint = 0.0
 	var fb := VegetationField3D.new()
+	fb.far_volume = false # Not under test here.
 	fb.populate_on_ready = false
 	var bb := Biome.new()
 	bb.species = [bank]
@@ -347,7 +355,7 @@ func _place_form_checks() -> void:
 		if not ch is MultiMeshInstance3D:
 			continue
 		var vm: Mesh = ch.multimesh.mesh
-		var vs: float = Vector2(vm.get_meta("tree_ground_slope")).x
+		var vs: float = Vector2(vm.get_meta("tree_ground_slope", Vector2())).x
 		for i in ch.multimesh.instance_count:
 			var t: Transform3D = ch.multimesh.get_instance_transform(i)
 			var p := fb.global_transform * t.origin
@@ -365,9 +373,65 @@ func _place_form_checks() -> void:
 					wrong_turn += 1
 	_check("bank trees: the variant grown on the nearest slope, its ground falling (+Z) downhill", total > 20 and wrong_variant == 0 and wrong_turn == 0, [total, wrong_variant, wrong_turn])
 	fb.queue_free()
+	# Roots over a stone (tree_root_stone: centre, half extents): floor plants keep off it.
+	var tm := ArrayMesh.new()
+	tm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, box.get_mesh_arrays())
+	tm.set_meta("tree_root_stone", PackedFloat32Array([0.6, 0.1, 0.2, 0.35, 0.25, 0.3]))
+	var st := PlantSpecies.new()
+	st.meshes = [tm]
+	st.spacing = 6.0
+	st.footprint = 0.0
+	var floor_sp := PlantSpecies.new()
+	floor_sp.meshes = [box]
+	floor_sp.spacing = 0.15
+	floor_sp.footprint = 0.0
+	var fs := VegetationField3D.new()
+	fs.far_volume = false # Not under test here.
+	fs.populate_on_ready = false
+	var sb := Biome.new()
+	sb.species = [st, floor_sp]
+	fs.biome = sb
+	add_child(fs)
+	fs.data_map = fs.get_path_to(dm)
+	fs.populate()
+	var stones := []
+	for ch in fs.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh.mesh == tm:
+			for i in ch.multimesh.instance_count:
+				stones.append(fs.global_transform * (ch.multimesh.get_instance_transform(i) * Vector3(0.6, 0.1, 0.2)))
+	var on_stone := 0
+	var near := 0
+	for q in fs.get_placements(1):
+		for c in stones:
+			var d := Vector2(q.x - c.x, q.z - c.z).length()
+			if d < 0.3 * 0.8:
+				on_stone += 1
+			elif d < 0.6:
+				near += 1
+	_check("root stones: no floor plant on the stone a tree's roots grow over, plants right round it", stones.size() > 20 and on_stone == 0 and near > stones.size(), [stones.size(), on_stone, near])
+	fs.queue_free()
 	await get_tree().process_frame
 
 func _checks() -> void:
+	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
+	var open_litter := []
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH]:
+		for sp in PlantGenerator.make_floor(fs, 1, false):
+			var lr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_LITTER)
+			if lr.x > 0.0 and not (lr.x - sp.get_rule_fade(PlantSpecies.RULE_LITTER) > 0.0):
+				open_litter.append(sp.resource_name)
+	_check("litter: no fallen leaves or twigs on open ground away from crowns", open_litter.is_empty(), open_litter)
+	# Dunes on a generator's dunes (RULE_DUNE): embryo and mobile sets on moving sand, fixed on held
+	# sand, none off the dune sand (-1).
+	var dune_bad := []
+	for stand in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
+		for sp in PlantGenerator.make_dunes(stand, 1, false):
+			var off: float = sp.rule_weight(PlantSpecies.RULE_DUNE, -1.0)
+			var dr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_DUNE)
+			var moving: bool = stand != PlantGenerator.DUNES_FIXED
+			if dr.x - sp.get_rule_fade(PlantSpecies.RULE_DUNE) <= -1.0 or off > 0.0 or (moving and dr.y > 0.85) or (not moving and dr.x < 0.5):
+				dune_bad.append([stand, dr])
+	_check("dunes: dune sets follow the generator's dune stability, none off the dune sand", dune_bad.is_empty(), dune_bad)
 	var trees := field.get_placements(0)
 	var bushes := field.get_placements(1)
 	var reeds := field.get_placements(2)
@@ -511,6 +575,7 @@ func _checks() -> void:
 	bush_sp.visibility_range = 0.0
 	# canopy_field: a second field without trees (a camera-local herb layer) reads the first's crowns.
 	var herbs := VegetationField3D.new()
+	herbs.far_volume = false # Not under test here.
 	herbs.name = "Herbs"
 	herbs.populate_on_ready = false
 	var hb := Biome.new()
@@ -785,6 +850,7 @@ func _deadwood_checks() -> void:
 	trunks.canopy_radius = 3.0
 	trunks.canopy_opacity = 0.5
 	var wood := VegetationField3D.new()
+	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"
 	wood.populate_on_ready = false
 	var wb := Biome.new()
@@ -814,6 +880,7 @@ func _deadwood_checks() -> void:
 	fern.deadwood_rule = PlantSpecies.DEADWOOD_BESIDE
 	fern.deadwood_band = 0.6
 	var ground := VegetationField3D.new()
+	ground.far_volume = false # Not under test here.
 	ground.name = "DeadwoodGround"
 	ground.populate_on_ready = false
 	var gb := Biome.new()
@@ -1214,6 +1281,7 @@ func _stream_checks() -> void:
 	add_child(target)
 	target.global_position = Vector3(-60, 0, -50)
 	var sf := VegetationField3D.new()
+	sf.far_volume = false # Not under test here.
 	sf.name = "Streamed"
 	sf.populate_on_ready = false
 	sf.biome = field.biome
@@ -1267,6 +1335,7 @@ func _stream_checks() -> void:
 	var near_on := VegetationField3D.get_near_radius()
 	# A second streaming field out to 150 m (a forest): the nearest end still counts.
 	var sf2 := VegetationField3D.new()
+	sf2.far_volume = false # Not under test here.
 	sf2.name = "StreamedWide"
 	sf2.populate_on_ready = false
 	sf2.biome = field.biome
@@ -1300,6 +1369,19 @@ func _build_view() -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = _ground_mesh()
 	mi.material_override = gm
+	if far_match > 0:
+		# A ground that draws the plants' far colour, as a terrain does (TerrainMaterial3D).
+		var sh := Shader.new()
+		sh.code = "shader_type spatial;\nrender_mode diffuse_burley;\n" + VegetationField3D.get_floor_shader_code() + """
+void fragment() {
+	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	ALBEDO = vegetation_far(wp, vec3(0.025, 0.013, 0.007), CAMERA_POSITION_WORLD);
+	ROUGHNESS = 0.95;
+}
+"""
+		var smat := ShaderMaterial.new()
+		smat.shader = sh
+		mi.material_override = smat
 	add_child(mi)
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()
@@ -1461,6 +1543,7 @@ func _stones_view() -> void:
 		tops.append(Vector4(o.x, o.y + o.w * 0.62 * 1.25, o.z, o.w * 0.5))
 	var stand: int = {"scree": PlantGenerator.STONES_SCREE, "river": PlantGenerator.STONES_RIVER, "stream": PlantGenerator.STONES_RIVER, "shore": PlantGenerator.STONES_SHORE}.get(stone_view, PlantGenerator.STONES_SCREE)
 	var veg := VegetationField3D.new()
+	veg.far_volume = false # Not under test here.
 	veg.name = "Stones"
 	veg.populate_on_ready = false
 	var b := Biome.new()
@@ -1516,6 +1599,7 @@ func _deadwood_view() -> void:
 	var t0 := Time.get_ticks_msec()
 	var tg := TreeGenerator.new()
 	var wood := VegetationField3D.new()
+	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"
 	wood.populate_on_ready = false
 	if OS.get_environment("VEG_DW_FUNGI") != "":
@@ -1552,6 +1636,7 @@ func _deadwood_view() -> void:
 	cam.look_at(at + Vector3(0, 0.2, 0))
 	cam.current = true
 	var ground := VegetationField3D.new()
+	ground.far_volume = false # Not under test here.
 	ground.name = "Floor"
 	ground.populate_on_ready = false
 	var gb := Biome.new()
@@ -1800,15 +1885,16 @@ func _far_volume_setup() -> void:
 		sp.visibility_range = spec[4]
 		sp.scale_range = Vector2(0.8, 1.2)
 		sp.patch_scale = 12.0
-		sp.patch_cover = 0.55
+		sp.patch_cover = 0.75 if far_match > 0 else 0.55 # The match wants covered and bare ground on both sides of the range.
 		sp.patch_seed = 3 + list.size()
 		sp.patch_invert = list.size() == 1
 		list.append(sp)
 	b.species = list
 	field.biome = b
 	field.far_volume = far_volume_view == 1
+	field.far_match_view = far_match == 1
 	field.far_volume_range = 160.0
-	var cam_at := Vector3(0, height(0, 85) + 1.7, 85)
+	var cam_at := Vector3(0, height(0, 85) + (4.0 if far_match > 0 else 1.7), 85) # The match needs the ground past the range in view.
 	var cam := get_viewport().get_camera_3d()
 	cam.position = cam_at
 	cam.look_at(Vector3(0, height(0, -40) + 1.0, -40))
@@ -1827,6 +1913,12 @@ func _far_volume_stats() -> void:
 func _render_later() -> void:
 	for i in (6 if raster else 10):
 		await RenderingServer.frame_post_draw
+	if far_match == 3:
+		RenderingServer.global_shader_parameter_set("vegetation_far_shade", 0.3)
+	if far_match > 0:
+		for i in 240:
+			await RenderingServer.frame_post_draw
+		print("VEG_FAR_MATCH ", field.get_far_match_stats())
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(1 if fails > 0 else 0)
