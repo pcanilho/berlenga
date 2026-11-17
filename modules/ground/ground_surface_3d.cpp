@@ -343,6 +343,9 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		}
 		_shift_lattice(water_speed, ground_origin, p_origin, p_n, 1);
 		_shift_lattice(cell_water, ground_origin, p_origin, p_n, 2);
+		if ((int)crack_state.size() == p_n * p_n * 2) {
+			_shift_lattice(crack_state, ground_origin, p_origin, p_n, 2); // new cells: never soaked (0)
+		}
 		if ((int)water_table.size() == p_n * p_n) {
 			_shift_lattice(water_table, ground_origin, p_origin, p_n, 1);
 			for (int i = 0; i < p_n * p_n; i++) {
@@ -583,6 +586,87 @@ float GroundSurface3D::_evaporation() const {
 int GroundSurface3D::_water_passes(const GroundDeformField &p_field, double p_delta) const {
 	const float limit = 0.5f * p_field.texel() / Math::sqrt(9.81f * 0.2f);
 	return CLAMP(int(Math::ceil(float(p_delta) / limit)), 1, 4);
+}
+
+void GroundSurface3D::set_desiccation_cracks(bool p_enabled) {
+	desiccation_cracks = p_enabled;
+	if (!p_enabled) {
+		crack_state.clear();
+	}
+}
+
+// Drying (docs/ideas/mud.md, stage 2b). Clay soaked by standing water or to saturation, once the ground round it is
+// no longer wet, loses its water to evaporation (Penman, as the standing water) from a drying layer a few
+// centimetres thick (40% porosity); it shrinks, and once it has lost about a third of its water the top cracks
+// (past the shrinkage limit's start), the cracks opening fully by the time four fifths have gone. Wetting again
+// swells it shut and counts a cycle.
+void GroundSurface3D::_crack_update(double p_delta) {
+	const int n = ground_n;
+	if (!desiccation_cracks || !ground_valid || n < 2 || (int)cell_inputs.size() != n * n) {
+		return;
+	}
+	if ((int)crack_state.size() != n * n * 2) {
+		crack_state.resize(n * n * 2);
+		for (float &v : crack_state) {
+			v = 0.0f;
+		}
+	}
+	const float evap = _evaporation() * runoff_time_scale;
+	const bool pores = (int)pore.size() == n * n;
+	for (int i = 0; i < n * n; i++) {
+		const CellInput &in = cell_inputs[i];
+		float &st = crack_state[i * 2 + 0];
+		float &cycles = crack_state[i * 2 + 1];
+		// Only clay-rich bare ground cracks: not sand, litter, rock or snow.
+		if (in.fixed || in.sand > 0.5f || in.litter > 0.01f) {
+			st = 0.0f;
+			continue;
+		}
+		const float wx = (ground_origin.x + i % n) * ground_spacing;
+		const float wz = (ground_origin.y + i / n) * ground_spacing;
+		const bool soaked = (pores && pore[i] >= 0.95f) || (standing_water && get_standing_water_at(Vector3(wx, 0.0f, wz)) > 0.001f);
+		if (soaked) {
+			if (st > 0.0f && st < 1.7f) {
+				cycles = MIN(cycles + 1.0f, 10.0f); // it had cracked: a cycle
+			}
+			st = 2.0f;
+			continue;
+		}
+		if (st <= 0.0f || in.moisture >= mud_wet_start) {
+			continue; // never soaked, or the ground round it is still wet
+		}
+		const float thick = _crack_at_cell(i).y * 0.25f;
+		st = MAX(st - evap * float(p_delta) / (0.4f * thick), 1.0f);
+	}
+}
+
+Vector4 GroundSurface3D::_crack_at_cell(int p_i) const {
+	const int n = ground_n;
+	const CellInput &in = cell_inputs[p_i];
+	// The drying layer: the top 3 cm, thicker over deep mud (up to 6 cm); plates about four times as wide
+	// (Groisman and Kaplan 1994: spacing in proportion to the layer), varied a little from place to place.
+	const float wx = (ground_origin.x + p_i % n) * ground_spacing;
+	const float wz = (ground_origin.y + p_i / n) * ground_spacing;
+	const float thick = CLAMP(0.03f + 0.05f * in.mud, 0.03f, 0.06f) * (0.85f + 0.3f * _value_noise(wx / 3.0f, wz / 3.0f));
+	if ((int)crack_state.size() != n * n * 2) {
+		return Vector4(0.0f, 4.0f * thick, 0.0f, 0.0f);
+	}
+	const float st = crack_state[p_i * 2 + 0];
+	if (st <= 0.0f) {
+		return Vector4(0.0f, 4.0f * thick, 0.0f, 0.0f);
+	}
+	const float water = st - 1.0f;
+	return Vector4(Math::smoothstep(0.67f, 0.2f, water), 4.0f * thick, MIN(crack_state[p_i * 2 + 1] / 5.0f, 1.0f), Math::smoothstep(0.9f, 0.6f, water));
+}
+
+Vector4 GroundSurface3D::get_crack_at(Vector3 p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)cell_inputs.size() != n * n) {
+		return Vector4();
+	}
+	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+	return _crack_at_cell(z * n + x);
 }
 
 void GroundSurface3D::set_mud_map(const Ref<Image> &p_map) {
@@ -1516,8 +1600,16 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 	// is the fine lattice's rect (tag 2.5) and texel 1 the far one's (tag 3.5). material.cpp ground_wet_at() and
 	// scene_raytracing_raygen.glsl read it.
 	const bool far = on && wet && far_n == n && (int)far_pore.size() == n * n;
+	// Then, with desiccation cracks, their block (opening, plate size, regularity, crust; texel 2's tag 4.5).
+	bool cracks = false;
+	if (on && desiccation_cracks && (int)crack_state.size() == n * n * 2 && n >= 3) {
+		for (int i = 0; i < n * n && !cracks; i++) {
+			cracks = crack_state[i * 2] > 0.0f && crack_state[i * 2] < 1.9f;
+		}
+	}
+	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0);
 	const int w = on ? n : (wet_texture.is_valid() ? wet_texture->get_width() : 1);
-	const int h = on ? (far ? 2 * n + 1 : n + 1) : (wet_texture.is_valid() ? wet_texture->get_height() : 2);
+	const int h = on ? blocks * n + 1 : (wet_texture.is_valid() ? wet_texture->get_height() : 2);
 	Vector<uint8_t> data;
 	data.resize(w * h * 16);
 	memset(data.ptrw(), 0, data.size());
@@ -1539,7 +1631,18 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			const float edge = _edge_distance(wx, wz) + 1.8f * (_value_noise(wx / 2.1f, wz / 2.1f) - 0.5f);
 			d[i * 4 + 3] = Math::smoothstep(terrain_margin, terrain_margin + skirt_fade, edge);
 		}
-		float *r = d + (far ? 2 * n * n : n * n) * 4;
+		float *r = d + blocks * n * n * 4;
+		if (cracks) {
+			float *cd = d + (blocks - 1) * n * n * 4;
+			for (int i = 0; i < n * n; i++) {
+				const Vector4 c = _crack_at_cell(i);
+				cd[i * 4 + 0] = c.x;
+				cd[i * 4 + 1] = c.y;
+				cd[i * 4 + 2] = c.z;
+				cd[i * 4 + 3] = c.w;
+			}
+			r[11] = 4.5f;
+		}
 		if (far) {
 			float *fd = d + n * n * 4;
 			for (int i = 0; i < n * n; i++) {
@@ -2481,6 +2584,7 @@ void GroundSurface3D::_notification(int p_what) {
 			water_accum += delta;
 			if (water_accum >= 0.5) {
 				_water_update(water_accum);
+				_crack_update(water_accum);
 				water_accum = 0.0;
 			}
 			wet_publish_accum += delta;
@@ -3459,6 +3563,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_standing_water", "enabled"), &GroundSurface3D::set_standing_water);
 	ClassDB::bind_method(D_METHOD("is_standing_water"), &GroundSurface3D::is_standing_water);
 	ClassDB::bind_method(D_METHOD("get_standing_water_at", "position"), &GroundSurface3D::get_standing_water_at);
+	ClassDB::bind_method(D_METHOD("set_desiccation_cracks", "enabled"), &GroundSurface3D::set_desiccation_cracks);
+	ClassDB::bind_method(D_METHOD("is_desiccation_cracks"), &GroundSurface3D::is_desiccation_cracks);
+	ClassDB::bind_method(D_METHOD("get_crack_at", "position"), &GroundSurface3D::get_crack_at);
 	ClassDB::bind_method(D_METHOD("get_mud_map"), &GroundSurface3D::get_mud_map);
 	ClassDB::bind_method(D_METHOD("set_mud_map_rect", "rect"), &GroundSurface3D::set_mud_map_rect);
 	ClassDB::bind_method(D_METHOD("get_mud_map_rect"), &GroundSurface3D::get_mud_map_rect);
@@ -3613,6 +3720,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_channels"), "set_runoff_channels", "is_runoff_channels");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");

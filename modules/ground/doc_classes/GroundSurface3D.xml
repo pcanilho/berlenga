@@ -69,6 +69,13 @@
 				The field's world XZ rectangle.
 			</description>
 		</method>
+		<method name="get_crack_at" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The desiccation cracks at [param position] (see [member desiccation_cracks]): how far open they are (0 to 1), the plate size in metres, how regular the pattern has grown (0 to 1) and how dry the crust is (0 to 1).
+			</description>
+		</method>
 		<method name="get_dent_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -418,6 +425,9 @@
 		</member>
 		<member name="deform_resolution" type="int" setter="set_deform_resolution" getter="get_deform_resolution" default="512">
 			Texels across the field (a multiple of 64).
+		</member>
+		<member name="desiccation_cracks" type="bool" setter="set_desiccation_cracks" getter="is_desiccation_cracks" default="true">
+			If [code]true[/code], clay soaked by standing water dries once the ground round it is dry, goes matte, then cracks into plates about four times as wide as its drying layer (about 12 cm), primary cracks first and finer ones splitting the plates, their rims curling up. Rain closes them; each wetting and drying makes the next pattern more regular, towards hexagons. Sand, litter and rock do not crack. Drawn as geometry where the mesh is fine enough, in both renderers.
 		</member>
 		<member name="detail_spacing" type="float" setter="set_detail_spacing" getter="get_detail_spacing" default="0.0625">
 			The patch's vertex spacing over the middle half of the field, in metres.

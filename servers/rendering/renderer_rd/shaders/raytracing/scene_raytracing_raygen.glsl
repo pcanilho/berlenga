@@ -1684,6 +1684,88 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's raster shader, there
 // with its comments. Returns a facet normal and its weight (0: none) for a footprint in metres.
+// Desiccation cracks (docs/ideas/mud.md, stage 2b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
+// Drying clay cracks into plates whose size follows the drying layer's thickness (Groisman and Kaplan 1994):
+// primary cracks first, then secondary ones splitting the plates (Bohn et al. 2005); each wetting and drying
+// cycle moves the junctions towards 120 degrees and the plates towards hexagons (Goehring et al. 2010).
+// The pattern: the Voronoi cells of a hexagonal lattice of seeds jittered less as the cycles add up; the
+// distance to a crack is the distance to the cell's edge (Quilez 2012's two-pass Voronoi border distance).
+vec2 ground_crack_hash(ivec2 p_c, uint p_salt) {
+	uint h = (uint(p_c.x) * 73856093u) ^ (uint(p_c.y) * 19349663u) ^ (p_salt * 83492791u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
+}
+vec2 ground_crack_seed(ivec2 p_c, float p_jitter, uint p_salt) {
+	// Lattice basis (1, 0), (0.5, 0.866): hexagonal plates at no jitter.
+	return vec2(float(p_c.x) + 0.5 * float(p_c.y), 0.8660254 * float(p_c.y)) + p_jitter * (ground_crack_hash(p_c, p_salt) - 0.5);
+}
+// Distance from p (in plate sizes) to the nearest crack.
+float ground_crack_edge(vec2 p_p, float p_jitter, uint p_salt) {
+	vec2 l = vec2(p_p.x - p_p.y * 0.57735027, p_p.y * 1.1547005);
+	ivec2 c = ivec2(floor(l));
+	vec2 best = vec2(0.0);
+	ivec2 best_c = c;
+	float bd = 1e9;
+	for (int j = -1; j <= 2; j++) {
+		for (int i = -1; i <= 2; i++) {
+			ivec2 q = c + ivec2(i, j);
+			vec2 r = ground_crack_seed(q, p_jitter, p_salt) - p_p;
+			float d = dot(r, r);
+			if (d < bd) {
+				bd = d;
+				best = r;
+				best_c = q;
+			}
+		}
+	}
+	float e = 1e9;
+	for (int j = -2; j <= 2; j++) {
+		for (int i = -2; i <= 2; i++) {
+			ivec2 q = best_c + ivec2(i, j);
+			if (all(equal(q, best_c))) {
+				continue;
+			}
+			vec2 r = ground_crack_seed(q, p_jitter, p_salt) - p_p;
+			vec2 dr = r - best;
+			if (dot(dr, dr) > 1e-8) {
+				e = min(e, dot(0.5 * (best + r), normalize(dr)));
+			}
+		}
+	}
+	return e;
+}
+// The distances (m) from p to the nearest primary and secondary crack for the crack state p_c (opening 0..1,
+// plate size m, regularity 0..1, crust 0..1); the secondary cracks open from half way.
+vec2 ground_crack_edges(vec2 p_xz, vec4 p_c) {
+	float l = p_c.y;
+	float jit = mix(0.85, 0.2, clamp(p_c.z, 0.0, 1.0));
+	float e1 = ground_crack_edge(p_xz / l, jit, 0u) * l;
+	float e2 = p_c.x > 0.5 ? ground_crack_edge(p_xz / (0.5 * l), jit, 1u) * 0.5 * l : 1e9;
+	return vec2(e1, e2);
+}
+// The share of a footprint p_fw (m) wide that is crack: primary cracks open to 8% of the plate (clay's linear
+// shrinkage), secondary ones to 4%.
+float ground_crack_mask(vec2 p_e, vec4 p_c, float p_fw) {
+	float fw = max(p_fw, 1e-4);
+	float w1 = p_c.x * 0.08 * p_c.y;
+	float m = clamp(w1 / (2.0 * fw), 0.0, 1.0) * (1.0 - smoothstep(0.5 * w1, 0.5 * w1 + fw, p_e.x));
+	float w2 = clamp(2.0 * p_c.x - 1.0, 0.0, 1.0) * 0.04 * p_c.y;
+	if (w2 > 0.0) {
+		m = max(m, clamp(w2 / (2.0 * fw), 0.0, 1.0) * (1.0 - smoothstep(0.5 * w2, 0.5 * w2 + fw, p_e.y)));
+	}
+	return m;
+}
+// The surface's offset (m): the cracks go down through the drying layer (a quarter of the plate); the plates curl
+// up at their rims as the top dries and shrinks first (Allen 1986), by up to 3% of the plate.
+float ground_crack_offset(vec2 p_e, vec4 p_c, float p_fw) {
+	float rim = p_c.w * p_c.x * 0.03 * p_c.y * (1.0 - smoothstep(0.0, 0.3 * p_c.y, min(p_e.x, p_e.y)));
+	return rim - 0.25 * p_c.y * ground_crack_mask(p_e, p_c, p_fw);
+}
+
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
 // ground with pore water p_wet.
@@ -2067,6 +2149,7 @@ void main() {
 	float g_sheen = 0.0;
 	float g_grain = 0.0; // the share of loose dry sand showing its grains (sand_glints)
 	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
+	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
@@ -2077,7 +2160,9 @@ void main() {
 			vec4 grect = texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(0, gts.y - 1), 0);
 			vec4 frect = gts.x > 1 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(1, gts.y - 1), 0) : vec4(0.0);
 			bool gfar = abs(frect.w - 3.5) < 0.01;
-			float grows = float(gfar ? (gts.y - 1) / 2 : gts.y - 1);
+			// The crack block (mud stage 2b) follows the far one: texel 2's tag 4.5.
+			bool gcrk = gts.x > 2 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(2, gts.y - 1), 0).w - 4.5) < 0.01;
+			float grows = float((gts.y - 1) / (1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0)));
 			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
 			if (abs(grect.w - 2.5) < 0.01) {
 				vec4 gwn = vec4(0.0);
@@ -2096,6 +2181,13 @@ void main() {
 					}
 				}
 				vec3 gw = vec3(mix(gwf.xy, gwn.xy, gwn.w), gwn.z * gwn.w);
+				if (gcrk && rt_material_ground_deform(mat)) {
+					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
+					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gfar ? 2 : 1) * grows;
+						g_crack = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+					}
+				}
 				g_grain = clamp(gw.z, 0.0, 1.0);
 				float gup = smoothstep(-0.6, 0.2, h.geometry_normal.y);
 				g_wet = clamp(gw.x, 0.0, 1.0) * gup;
@@ -2230,6 +2322,38 @@ void main() {
 		m.normal = normalize(mix(m.normal, h.geometry_normal, gwl.y));
 		g_grain *= 1.0 - gwl.y;
 	}
+	// Desiccation cracks (material.cpp): the mesh carries those its spacing can; the finer ones darken, being slots a
+	// quarter plate deep that let little light down. The dry crust is matte.
+	if (g_crack.x > 0.0 && g_crack.y > 0.0) {
+		vec3 gcp = h.hit_pos + rt_origin.xyz;
+		float gcfp;
+		if (get_total_bounces(payload.packed_bounces_flags) == 0u) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+					scene_data_block.data.inv_view_matrix[2].w);
+			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+			gcfp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+		} else {
+			gcfp = exp2(rt_cone_footprint_log2);
+		}
+		// The mesh's spacing there: the main field's texel, the near field's inside its square.
+		float gcv = 1e-3;
+		uint gcm = uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP));
+		if (gcm != 0u) {
+			gcv = get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE) / float(textureSize(sampler2D(bindless_textures[nonuniformEXT(gcm)], SAMPLER_NEAREST_CLAMP), 0).x);
+			uint gcn = uint(get_rt_param(RT_PARAM_GROUND_NEAR_MAP));
+			float gns = get_rt_param(RT_PARAM_GROUND_NEAR_SIZE);
+			if (gcn != 0u && gns > 0.0) {
+				vec2 n0 = vec2(get_rt_param(RT_PARAM_GROUND_NEAR_X), get_rt_param(RT_PARAM_GROUND_NEAR_Z));
+				vec2 ne = min(gcp.xz - n0, n0 + gns - gcp.xz);
+				float nt = gns / float(textureSize(sampler2D(bindless_textures[nonuniformEXT(gcn)], SAMPLER_NEAREST_CLAMP), 0).x);
+				gcv = mix(gcv, nt, smoothstep(0.0, 1.0, min(ne.x, ne.y)));
+			}
+		}
+		vec2 gce = ground_crack_edges(gcp.xz, g_crack);
+		m.albedo *= 1.0 - 0.8 * max(ground_crack_mask(gce, g_crack, gcfp) - ground_crack_mask(gce, g_crack, max(gcv, 1e-3)), 0.0);
+	}
+	m.albedo *= 1.0 + 0.15 * g_crack.w; // the crust: the fine clay the water left, lighter, matte
+	m.roughness = mix(m.roughness, 1.0, 0.4 * g_crack.w);
 	// Loose dry sand: its grains' colours and the grains that mirror a light (sand_glints), sized by the
 	// footprint as the snow's sparkle is (camera rays: pixel angle times distance; others: their ray cone).
 	if (g_grain > 0.0) {

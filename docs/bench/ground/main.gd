@@ -38,6 +38,7 @@ extends Node3D
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
+#   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b)
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
@@ -74,6 +75,7 @@ var drift_test := false
 var near_test := false
 var mud_test := false
 var puddle_test := false
+var crack_test := false
 var near_on := true
 var out := ""
 var spp := 16
@@ -84,6 +86,7 @@ var wind_arg := 9.0
 var sun_arg := PackedFloat32Array()
 var mud_arg := PackedFloat32Array()
 var water_arg := 0.0
+var dry_arg := false
 var fails := 0
 var height: Node3D
 var surface: GroundSurface3D
@@ -108,6 +111,7 @@ func _ready() -> void:
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
 		elif a == "--test=puddles": puddle_test = true
+		elif a == "--test=cracks": crack_test = true
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -115,6 +119,7 @@ func _ready() -> void:
 		elif a == "--gpu=0": gpu = false
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--water="): water_arg = float(a.substr(8))
+		elif a == "--dry": dry_arg = true
 		elif a.begins_with("--mud="):
 			for v in a.substr(6).split(","):
 				mud_arg.append(float(v))
@@ -131,6 +136,11 @@ func _ready() -> void:
 		return
 	if near_test:
 		await _run_near_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if crack_test:
+		await _run_crack_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -234,6 +244,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.wind_ripples = false
 		surface.runoff_channels = false
 		surface.standing_water = false
+		surface.desiccation_cracks = false
 	add_child(surface)
 	await get_tree().physics_frame
 
@@ -553,6 +564,74 @@ func _paint_mud(p_depth: float, p_moisture: float) -> void:
 	surface.moisture = p_moisture
 	for i in 3:
 		await get_tree().physics_frame
+
+
+# Rain fills a rut on p_ground, stops, and the rut dries (sped up): the crack state at the rut after each.
+func _rain_and_dry(p_ground: int, o: Vector3) -> Array:
+	near_on = false
+	await _setup("flat", p_ground, 0.2, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.desiccation_cracks = true
+	surface.runoff_time_scale = 100.0
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 20.0
+	wm.humidity = 0.6
+	wm.temperature = 18.0
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.press_box(o, Vector2(0.3, 1.5), 0.0, 0.0, 0.05)
+	surface.sync_deformation()
+	surface.settle(20.0, 0.05)
+	for i in 40:
+		await get_tree().physics_frame
+	var wet: Vector4 = surface.get_crack_at(o)
+	var water := surface.get_standing_water_at(o)
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	# Days of drying in seconds: the water soaks away and evaporates, then the drying layer.
+	surface.runoff_time_scale = 1e5
+	for i in 600:
+		await get_tree().physics_frame
+	var dry: Vector4 = surface.get_crack_at(o)
+	return [wet, dry, water, wm]
+
+
+func _run_crack_tests() -> void:
+	var o := Vector3(0.3, 0, 0.2)
+	var r: Array = await _rain_and_dry(GroundSurface3D.GROUND_SOIL, o)
+	var wet: Vector4 = r[0]
+	var dry: Vector4 = r[1]
+	print("  soil: %.1f mm of water in the rut; cracks %s soaked, %s dried" % [r[2] * 1000.0, wet, dry])
+	_check("soaked clay does not crack", r[2] > 0.001 and wet.x == 0.0, "opening %.2f under %.1f mm of water" % [wet.x, r[2] * 1000.0])
+	_check("dried, it cracks open", dry.x > 0.9 and dry.w > 0.9, "opening %.2f, crust %.2f" % [dry.x, dry.w])
+	_check("plates about four times the drying layer (Groisman and Kaplan 1994)", dry.y > 0.09 and dry.y < 0.25, "%.0f cm" % (dry.y * 100.0))
+	# Rain again: it swells shut, and the cycle makes the next pattern more regular (Goehring et al. 2010).
+	var wm: WeatherMap3D = r[3]
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 20.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 100.0
+	surface.settle(20.0, 0.05)
+	for i in 40:
+		await get_tree().physics_frame
+	var shut: Vector4 = surface.get_crack_at(o)
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 1e5
+	for i in 600:
+		await get_tree().physics_frame
+	var again: Vector4 = surface.get_crack_at(o)
+	_check("wetting closes the cracks", shut.x == 0.0, "opening %.2f" % shut.x)
+	_check("the next drying cracks again, more regular", again.x > 0.9 and again.z > dry.z, "opening %.2f, regularity %.2f (was %.2f)" % [again.x, again.z, dry.z])
+	wm.queue_free()
+	r = await _rain_and_dry(GroundSurface3D.GROUND_SAND, o)
+	_check("sand does not crack", (r[1] as Vector4).x == 0.0, "opening %.2f" % (r[1] as Vector4).x)
+	(r[3] as WeatherMap3D).queue_free()
+	near_on = true
 
 
 # Standing water (docs/ideas/mud.md, stage 2) in a square of half size p_half round p, m3, and the water
@@ -1615,6 +1694,7 @@ func _build_ruts() -> void:
 		# Rain on the ruts (sped up 100 times): what the clay cannot take stands, then an hour after it the flat
 		# has soaked its sheet up and the ruts, pressed, still hold theirs.
 		surface.standing_water = true
+		surface.desiccation_cracks = dry_arg
 		surface.runoff_time_scale = 100.0
 		var wm := WeatherMap3D.new()
 		wm.cloud_cover = 1.0
@@ -1632,6 +1712,26 @@ func _build_ruts() -> void:
 			await get_tree().physics_frame
 		surface.settle(36.0, 0.05)
 		print("water: %.1f mm in the left rut" % (surface.get_standing_water_at(Vector3(-1.6, 0, 0.0)) * 1000.0))
+		if dry_arg:
+			surface.desiccation_cracks = true
+			surface.runoff_time_scale = 1e5
+			for i in 600:
+				await get_tree().physics_frame
+			surface.runoff_time_scale = 1.0
+			print("dried: cracks %s in the left rut" % surface.get_crack_at(Vector3(-1.6, 0, 0.0)))
+			# Where the dried pools are, round the view (for framing --cam).
+			var sum := Vector3()
+			var cnt := 0
+			for xi in range(-24, 25):
+				for zi in range(-24, 25):
+					var q := Vector3(0.25 * xi, 0, -1.0 + 0.25 * zi)
+					if surface.get_crack_at(q).x > 0.9:
+						sum += q
+						cnt += 1
+			print("dried: %d cracked cells, centroid %s" % [cnt, sum / maxf(cnt, 1)])
+		if cam_arg.size() == 6:
+			cam.position = Vector3(cam_arg[0], _undisturbed(Vector3(cam_arg[0], 0, cam_arg[2])) + cam_arg[1], cam_arg[2])
+			cam.look_at(Vector3(cam_arg[3], _undisturbed(Vector3(cam_arg[3], 0, cam_arg[5])) + cam_arg[4], cam_arg[5]))
 	surface.sync_deformation()
 	get_window().size = full
 	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car_end, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])

@@ -289,6 +289,26 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   a new print cut into the pool draws water in and the volume holds; rain gathers in a rut, the flat soaks its
   sheet up first after the rain, the rut empties within a day.
 
+#### Built (2b: drying and cracks)
+
+- **Drying.** Per lattice cell, clay-rich bare ground (not sand, litter, rock, snow) soaked by standing water or
+  to saturation keeps the share of water its drying layer still holds; once the ground round it is no longer
+  wet (moisture under `mud_wet_start`) it loses it to evaporation (Penman, as the standing water), from a layer
+  3 cm thick (to 6 cm over deep mud) at 40% porosity. `runoff_time_scale` speeds it up like the rest.
+- **Cracks.** Past a third of its water lost the top cracks, fully open at four fifths. The pattern is the
+  Voronoi cells of a hexagonal seed lattice, the crack distance Quilez's two-pass Voronoi border distance:
+  plates about four times the drying layer (spacing in proportion to thickness, Groisman and Kaplan 1994),
+  primary cracks to 8% of the plate (clay's linear shrinkage), secondary ones at half the size from half way
+  (hierarchical cracking, Bohn et al. 2005), plate rims curled up by up to 3% of the plate as the top shrinks
+  first (Allen 1986). Wetting closes them and counts a cycle; the seed jitter falls with the cycles, so the
+  junctions drift towards 120 degrees and the plates towards hexagons (Goehring et al. 2010).
+- **Drawn.** A third block in the ground wet map (opening, plate size, regularity, crust) read by
+  `ground_crack_*()` in material.cpp and the raygen alike. The patch's vertices carry the cracks their spacing
+  can (`ground_deform_top()`: 1.6 cm in the near field), the finer ones darken as slots that let little light
+  down (only what the mesh cannot show), and the dry crust goes matte.
+- **Checks** (`--test=cracks`): soaked clay stays whole; dried, it cracks with 10 cm plates; rain closes the
+  cracks; the next drying cracks again, more regular; sand never cracks. `--view=ruts --water=mm --dry` shoots it.
+
 ### Stage 3: mud on wheels and bodies
 
 - **Tyres clog.** Per wheel a tread fill fraction, filled by slip in sticky mud, lowering traction
