@@ -183,6 +183,12 @@
 		<member name="fall_mist_amount" type="float" setter="set_fall_mist_amount" getter="get_fall_mist_amount" default="1.0">
 			Scales the mist each fall's [PhysXWaterMist3D] is fed.
 		</member>
+		<member name="fall_sound" type="bool" setter="set_fall_sound" getter="get_fall_sound" default="true">
+			The roar of each waterfall: an [AudioStreamPlayer3D] at its foot playing a loop synthesised for that fall from the ringing of the air bubbles its plunge drags under. Each bubble rings at its Minnaert frequency (3.26 / radius), damped by viscous, thermal and radiation losses and rising in pitch as it nears the surface; the radii follow measured plume spectra, and the largest grow with the impact speed, so a tall fall rumbles low and a small cascade hisses. Its level comes from the fall's acoustic power, about 3e-7 of the jet's kinetic power. Not in the editor.
+		</member>
+		<member name="fall_sound_volume_db" type="float" setter="set_fall_sound_volume_db" getter="get_fall_sound_volume_db" default="0.0">
+			Added to each waterfall's level (dB), which is otherwise set from its acoustic power: 80 dB SPL at 10 m plays at 0 dB.
+		</member>
 		<member name="fall_spray" type="bool" setter="set_fall_spray" getter="get_fall_spray" default="true">
 			Spray thrown up where each waterfall lands: droplets launched at a share of the impact speed (a [GPUParticles3D] made by the river), scaled with the fall's power. Not in the editor.
 		</member>
