@@ -520,4 +520,4 @@ Asked: a fast slide through a sharp turn should throw sand, and dry sand should 
   deformed sand (`GroundSurface3D.get_height` for Flow's terrain floor), ground wind as an air-only box emitter at
   0.75 u10. Flow now takes the shapes of bodies whose shapes live on their own PhysX actor (vehicles) from their
   CollisionShape3D children, so the dust curls round the car. Raster and path-traced frames match in shape (the
-  path tracer's dust is browner and grainy without a denoiser). Open: the plume stays below ~1 m at 6 m/s.
+  path tracer's dust is browner and grainy without a denoiser). Defaults (17 Nov, after frames): `dust_heaviness` 0.3, `expansion` 3, `turbulence` 4: the plume billows to about car height. Raster dust is greyer than the path tracer's.

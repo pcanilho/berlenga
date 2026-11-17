@@ -59,10 +59,10 @@ class PhysXGroundDust3D : public Node3D {
 	int max_sources = 8;
 	float source_radius = 0.35f;
 	float smoke_per_kg = 20.0f; // emitter smoke per kg/s lifted
-	float dust_heaviness = 3.0f; // the dust's own weight in the air (PhysXFlow3D smoke_buoyancy = -this)
+	float dust_heaviness = 0.3f; // the dust's own weight in the air (PhysXFlow3D smoke_buoyancy = -this)
 	float wind_coupling = 0.4f;
-	float expansion = 1.5f; // the puff swells as it leaves the tyre (emitter divergence, 1/s)
-	float turbulence = 2.5f; // m/s of gusting jet: the wake's eddies, so the plume rolls instead of streaming
+	float expansion = 3.0f; // the puff swells as it leaves the tyre (emitter divergence, 1/s)
+	float turbulence = 4.0f; // m/s of gusting jet: the wake's eddies, so the plume rolls instead of streaming
 	uint32_t gust_seed = 1;
 	Color dust_color = Color(0.82, 0.72, 0.56);
 

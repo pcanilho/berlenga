@@ -27,13 +27,13 @@
 		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.82, 0.72, 0.56, 1)">
 			Colour of the dust.
 		</member>
-		<member name="dust_heaviness" type="float" setter="set_dust_heaviness" getter="get_dust_heaviness" default="3.0">
+		<member name="dust_heaviness" type="float" setter="set_dust_heaviness" getter="get_dust_heaviness" default="0.3">
 			How heavy the dust is in the air: the flow's [member PhysXFlow3D.smoke_buoyancy] is set to minus this, so thick dust sinks and spreads along the ground.
 		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			Off: no claim, so all dust goes to [GroundDust3D].
 		</member>
-		<member name="expansion" type="float" setter="set_expansion" getter="get_expansion" default="1.5">
+		<member name="expansion" type="float" setter="set_expansion" getter="get_expansion" default="3.0">
 			How fast each puff swells as it leaves the tyre (the emitters' divergence), per second.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
@@ -54,7 +54,7 @@
 		<member name="source_radius" type="float" setter="set_source_radius" getter="get_source_radius" default="0.35">
 			Radius of each wheel's emitter sphere.
 		</member>
-		<member name="turbulence" type="float" setter="set_turbulence" getter="get_turbulence" default="2.5">
+		<member name="turbulence" type="float" setter="set_turbulence" getter="get_turbulence" default="4.0">
 			Gusts on each wheel's jet, in m/s: the eddies of the car's wake, so the plume rolls and billows instead of streaming out as a smooth tube.
 		</member>
 		<member name="wind_coupling" type="float" setter="set_wind_coupling" getter="get_wind_coupling" default="0.4">
