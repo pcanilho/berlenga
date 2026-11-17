@@ -49,6 +49,7 @@
 #include "flow/physx_flow_emitter_3d.h"
 #include "flow/physx_flow_render_effect.h"
 #include "flow/physx_ground_dust_3d.h"
+#include "flow/physx_cave_mist_3d.h"
 #include "flow/physx_rock_dust_3d.h"
 #endif
 #include "nodes/physx_chunk_emitter_3d.h"
@@ -187,6 +188,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 #endif
 #ifdef MODULE_ROCKS_ENABLED
 		GDREGISTER_CLASS(PhysXRockDust3D);
+		GDREGISTER_CLASS(PhysXCaveMist3D);
 #endif
 		GDREGISTER_CLASS(PhysXFireSpread3D);
 #endif

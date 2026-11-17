@@ -97,6 +97,12 @@ private:
 	// Meshes: the rock round the passages as one distance field (docs/ideas/rocks.md, "Real caves"), polygonised
 	// per chunk by surface nets (Gibson 1998). Round each entrance a patch also carries the ground itself, so the
 	// cliff, the opening and the passage are one surface; the landscape gets a hole there.
+	// A rimstone pool: the still water behind a dam, at its level, inside its outline (xz round center).
+	struct RimPool {
+		Vector3 center; // y: the water level
+		real_t depth = 0.05;
+		PackedVector2Array outline;
+	};
 	struct Chunk {
 		Vector3i key;
 		Ref<ArrayMesh> mesh;
@@ -104,6 +110,9 @@ private:
 		int triangles = 0;
 		bool pinned = false; // an entrance patch chunk: kept while the landscape's hole is open
 		Vector<Transform3D> spel[16]; // speleothems by kind * SPEL_VARIANTS + variant (unit shapes placed)
+		Ref<ArrayMesh> rim_mesh; // rimstone dams (world space)
+		LocalVector<RimPool> pools;
+		LocalVector<ObjectID> pool_water; // the live water of each pool (none when far)
 	};
 	enum {
 		SPEL_STALACTITE,
@@ -141,6 +150,15 @@ private:
 	real_t speleothems = 1.0; // drip formations: density (0 none)
 	Ref<ArrayMesh> spel_mesh[16];
 	Ref<ShaderMaterial> spel_material;
+	real_t rimstone = 1.0; // rimstone dams and pools below the drips: density (0 none)
+	bool rimstone_water = true;
+	real_t rimstone_water_radius = 16.0; // m round the camera with live water
+	int rimstone_water_max = 12; // the nearest pools with live water
+	uint64_t pool_water_usec = 0;
+	bool sea_mist = true;
+	ObjectID mist_node;
+	void _update_mist_node();
+	Ref<ShaderMaterial> rim_material;
 	bool collision = true;
 	Ref<Material> wall_material;
 	Ref<Material> ground_material;
@@ -182,6 +200,10 @@ private:
 	void _drips(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const AABB &p_box, LocalVector<Drip> &r_drips) const;
 	static real_t _flowstone(const LocalVector<Drip> &p_drips, const Vector3 &p_p, real_t p_rock, real_t *r_weight = nullptr);
 	Ref<ArrayMesh> _spel_mesh(int p_kind, int p_variant);
+	void _rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p_own_from, real_t p_own_size, Chunk &r_chunk) const;
+	Ref<Material> _rim_material();
+	Node3D *_make_pool_water(const RimPool &p_pool, int p_index) const;
+	void _pool_water_update();
 	static void _mesh_job(void *p_data, uint32_t p_index);
 	Ref<Material> _wall_material();
 	void _wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashSet<Vector3i> &r_pinned, bool p_all_patches = false) const;
@@ -226,6 +248,20 @@ public:
 	void set_speleothems(real_t p_amount) { speleothems = MAX(p_amount, 0.0); }
 	real_t get_speleothems() const { return speleothems; }
 	int get_speleothem_count() const;
+	void set_rimstone(real_t p_amount) { rimstone = MAX(p_amount, 0.0); }
+	real_t get_rimstone() const { return rimstone; }
+	void set_rimstone_water(bool p_enable) { rimstone_water = p_enable; }
+	bool get_rimstone_water() const { return rimstone_water; }
+	void set_rimstone_water_radius(real_t p_metres) { rimstone_water_radius = MAX(p_metres, 0.0); }
+	real_t get_rimstone_water_radius() const { return rimstone_water_radius; }
+	void set_rimstone_water_max(int p_count) { rimstone_water_max = MAX(p_count, 0); }
+	int get_rimstone_water_max() const { return rimstone_water_max; }
+	int get_rimstone_water_count() const;
+	int get_rimstone_pool_count() const;
+	void set_sea_mist(bool p_enable);
+	bool get_sea_mist() const { return sea_mist; }
+	Node *get_sea_mist_node() const { return ObjectDB::get_instance<Node>(mist_node); }
+	Array get_rimstone_pools() const;
 	void set_follow_target(const NodePath &p_path);
 	NodePath get_follow_target() const { return follow_target; }
 	void set_stream_radius(real_t p_metres) { stream_radius = MAX(p_metres, 8.0); }

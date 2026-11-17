@@ -427,7 +427,9 @@ float tips(vec3 p) {
 // Tufts: the shoots grow in bundles about 12 mm across, each a rounded top with a dark gap round it. This is the
 // scale a mat reads at from a metre or more (the shoots themselves are under a pixel there).
 float tufts(vec3 p) {
+	// Warped twice (at 7 cm and 2 cm) so a slanted face never cuts the cells into regular rows.
 	vec3 q = p * 85.0;
+	q += vec3(mn(p * 5.0 + 21.0), mn(p * 5.0 + 27.0), mn(p * 5.0 + 33.0)) * 3.2;
 	q += vec3(mn(p * 14.0), mn(p * 14.0 + 3.0), mn(p * 14.0 + 11.0)) * 1.3;
 	return shoots(q);
 }
@@ -448,9 +450,11 @@ void fragment() {
 	// Colour drifts over a cushion: greener and darker in its dips, yellower on its lit domes.
 	col *= mix(0.75, 1.15, smoothstep(0.2, 0.9, h));
 	ALBEDO = col;
-	// A ragged edge: the cushion ends along its contour (COLOR.a 0.5) broken at a few millimetres to a centimetre.
+	// A ragged edge: the cushion ends along its contour (COLOR.a 0.5) broken at a few millimetres to a few centimetres.
+	// Lobes and bays a few centimetres across break the outline at the scale it reads from a metre.
 	float rag = mn(m_pos * 90.0) * 0.6 + mn(m_pos * 260.0) * 0.4;
-	ALPHA = COLOR.a + (rag - 0.5) * 0.7;
+	float lobe = mn(m_pos * 24.0 + 13.0) * 0.65 + mn(m_pos * 9.0 + 7.0) * 0.35;
+	ALPHA = COLOR.a + (rag - 0.5) * 0.7 + (lobe - 0.5) * 0.7;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 	ROUGHNESS = 0.82 + 0.1 * (1.0 - u);
 	SPECULAR = 0.3;

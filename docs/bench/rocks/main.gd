@@ -20,6 +20,10 @@ extends Node3D
 #   --fall-dust           with --fall: keep drawing while it falls, so the Flow rockfall dust is in the shot (run
 #                         godot with --fixed-fps 60: Flow steps once a drawn frame); --no-dust
 #                         turns the field's rockfall_dust off
+#   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
+#                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
+#                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
@@ -563,6 +567,19 @@ func _caves(cam: Camera3D) -> void:
 				net.mesh_cell = float(args["cell"])
 			var mr := float(args.get("mesh-radius", "50"))
 			var pos: Vector3 = e["position"]
+			net.rimstone_water = not args.has("no-pool-water")
+			net.sea_mist = not args.has("no-sea-mist")
+			if args.has("mist-period"):
+				# The mist node is made on the network's first frames: set its swell period once it is there.
+				var mp := float(args["mist-period"])
+				var set_period := func():
+					var mn: Node = net.get_sea_mist_node()
+					if mn:
+						mn.set("swell_period", mp)
+						print("  sea mist: swell period %.1f s" % mp)
+				get_tree().create_timer(0.05).timeout.connect(set_period)
+			if args.has("pool-water"):
+				net.rimstone_water_max = int(args["pool-water"])
 			var made := net.build_meshes(AABB(pos - Vector3(mr, mr, mr), Vector3(2 * mr, 2 * mr, 2 * mr)))
 			print("  meshes: %d chunks, %d triangles in %.0f ms (cell %.2f m)" % [made, net.get_mesh_triangle_count(), net.get_last_mesh_msec(), net.mesh_cell])
 			land_m.load_all_heights()
@@ -580,6 +597,18 @@ func _caves(cam: Camera3D) -> void:
 						var kn: String = String(mmi.name).split(" ")[0]
 						kinds[kn] = kinds.get(kn, 0) + (mmi.multimesh as MultiMesh).instance_count
 			print("  speleothems: %d %s" % [net.get_speleothem_count(), kinds])
+			var pools: Array = net.get_rimstone_pools()
+			var rim_tris := 0
+			for ch in net.get_children():
+				for rc in ch.get_children():
+					if rc is MeshInstance3D and String(rc.name) == "Rimstone":
+						rim_tris += (rc.mesh as ArrayMesh).surface_get_array_index_len(0) / 3
+			print("  rimstone: %d pools, %d dam triangles" % [pools.size(), rim_tris])
+			for pl in pools:
+				var rr := 0.0
+				for v in (pl["outline"] as PackedVector2Array):
+					rr += v.length()
+				print("    pool at %s depth %.3f m, mean radius %.2f m" % [pl["center"], pl["depth"], rr / maxf((pl["outline"] as PackedVector2Array).size(), 1)])
 			for c in get_children():
 				if c is MeshInstance3D and c.material_override is StandardMaterial3D and (c.material_override as StandardMaterial3D).no_depth_test:
 					c.visible = false
@@ -715,6 +744,58 @@ func _caves(cam: Camera3D) -> void:
 					lp = lp.lerp(eye_s, 0.3)
 				lamp_s.global_position = lp
 				print("  speleothem view: %d in the chunk round %s, camera %s" % [best_n, centre, eye_s])
+			elif args.get("cave-view", "outside") == "rimstone":
+				# The biggest pool (depth times reach) with the most pools round it: from about --dist m off and a metre up,
+				# a lamp beside the camera.
+				var pools_v: Array = net.get_rimstone_pools()
+				var pc := pos
+				var best_k := -1
+				var best_c := 0
+				var best_score := -1.0
+				for k in pools_v.size():
+					var n_near := 0
+					for k2 in pools_v.size():
+						if (pools_v[k2]["center"] as Vector3).distance_to(pools_v[k]["center"]) < 3.0:
+							n_near += 1
+					var rr := 0.0
+					for v in (pools_v[k]["outline"] as PackedVector2Array):
+						rr += v.length() / 32.0
+					var score: float = float(pools_v[k]["depth"]) * rr * (1.0 + 0.3 * n_near)
+					if score > best_score:
+						best_score = score
+						best_c = n_near
+						best_k = k
+				if best_k >= 0:
+					pc = pools_v[best_k]["center"]
+				var eye_r := pc + Vector3(0.9, 1.3, 0.6)
+				var best_air_r := -1.0
+				seed(11)
+				for ii in 400:
+					var cand := pc + Vector3(randf_range(-3, 3), randf_range(0.8, 1.8), randf_range(-3, 3))
+					var dd := Vector2(cand.x - pc.x, cand.z - pc.z).length()
+					if dd < float(args.get("dist", "1.6")) * 0.8 or dd > float(args.get("dist", "1.6")) * 1.3:
+						continue
+					var air := -net.get_rock_distance(cand)
+					if air > 0.25 and minf(air, 1.0) > best_air_r:
+						best_air_r = minf(air, 1.0)
+						eye_r = cand
+				cam.position = eye_r
+				cam.look_at(pc)
+				cam.fov = 60.0
+				var lamp_r := OmniLight3D.new()
+				lamp_r.omni_range = 14.0
+				lamp_r.light_energy = float(args.get("lamp-energy", "2.0"))
+				lamp_r.shadow_enabled = true
+				add_child(lamp_r)
+				var side_r := (pc - eye_r).cross(Vector3.UP).normalized()
+				var lp_r := eye_r + side_r * 1.2 + Vector3(0, 0.4, 0)
+				for k in 8:
+					if net.get_rock_distance(lp_r) < -0.3:
+						break
+					lp_r = lp_r.lerp(eye_r, 0.3)
+				lamp_r.global_position = lp_r
+				print("  rimstone view: pool %d of %d (%d within 3 m) at %s, camera %s" % [best_k, pools_v.size(), best_c, pc, eye_r])
+				get_tree().create_timer(1.0).timeout.connect(func(): print("  rimstone water: %d pools with live water" % net.get_rimstone_water_count()))
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)
 				cam.look_at(pos, f)
@@ -1274,6 +1355,7 @@ func _test() -> void:
 	# Cave networks (CaveNetwork3D): an entrance found at a limestone cliff foot grows a network that stays in the rock
 	# and joins its key points; the same seed gives the same cave.
 	var net := CaveNetwork3D.new()
+	net.rimstone_water = false # the pools' live water costs frames and checks nothing here
 	add_child(net)
 	net.generator = net.get_path_to(gen)
 	net.rock_field = net.get_path_to(rocks)
@@ -1310,6 +1392,15 @@ func _test() -> void:
 		var in_air := net.get_rock_distance(pos + Vector3(0, 1.2, 0) - (e["out"] as Vector3) * 3.0)
 		var in_rock := net.get_rock_distance(pos + Vector3(0, -6.0, 0) + (e["out"] as Vector3) * 8.0)
 		print("  speleothems near the entrance: %d" % net.get_speleothem_count())
+		# Rimstone pools: each pool's water stands in air over a floor below its level (none is required this near the
+		# entrance, where no formations grow).
+		var pools_t: Array = net.get_rimstone_pools()
+		var wet_ok := 0
+		for pl in pools_t:
+			var pc: Vector3 = pl["center"]
+			if net.get_rock_distance(pc + Vector3(0, 0.08, 0)) < 0.0 and net.get_rock_distance(pc - Vector3(0, float(pl["depth"]) + 0.08, 0)) > -0.05:
+				wet_ok += 1
+		check(wet_ok == pools_t.size(), "rimstone: %d pools near the entrance, %d standing in air over their floor" % [pools_t.size(), wet_ok])
 		# Every stalactite hangs from rock: rock 0.25 m over its base, air 0.3 m under it.
 		var hung := 0
 		var loose := 0
@@ -1370,6 +1461,13 @@ func _test() -> void:
 				if gen.get_height(m) < m.y + 0.6 * float(sg["radius_a"]) + 2.0:
 					thin += 1
 		check(sid >= 0 and net.is_sea_cave(sid) and ssegs.size() >= 3 and mouth_floor < maxf(sea_y, gen.get_height((sea_ents[0]["position"] as Vector3) + (sea_ents[0]["out"] as Vector3) * 4.0)) + 0.1 and thin <= 3, "sea caves: %d mouths; %d segments, floor %.1f m under the sea at the mouth (at most level with a beach), %d blowholes, %d segments under thin rock" % [sea_ents.size(), ssegs.size(), sea_y - mouth_floor, net.get_blowholes(maxi(sid, 0)).size(), thin])
+		# The network breathes mist out of its sea-cave mouths (PhysXCaveMist3D, made on its first frames).
+		if ClassDB.class_exists("PhysXCaveMist3D") and sid >= 0:
+			await get_tree().process_frame
+			await get_tree().process_frame
+			var mist: Node = net.get_sea_mist_node()
+			check(mist != null and mist.get("cave_network") != NodePath(), "sea mist: %s" % ("a mist node on the network" if mist else "no mist node"))
+			net.sea_mist = false # it checks nothing more here
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
