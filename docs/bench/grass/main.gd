@@ -8,6 +8,10 @@ extends Node3D
 #   --spp=N          path tracing samples (default 16)
 #   --wind=x,z       fallback wind in m/s (default 3,1); 0,0 for still grass
 #   --weather        a WeatherMap3D drives the wind instead
+#   --crop=NAME      a field of wheat, barley, oats or rye instead of the meadow (GrassField3D.crop),
+#                    400 tillers per m2 in rows 12.5 cm apart (--grass-density sets the tillers)
+#   --stage=N        the crop's growth stage, BBCH (default 75: milky ripe; 99 harvested stubble)
+#   --crop-close     the crop seen from 1.1 m, 2.5 m off its ears
 #   --frames=N       frames before the capture (default 20; path traced, more until no surface waits for its first capture)
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
@@ -84,6 +88,9 @@ var cam: Camera3D
 var fails := 0
 var trample := false
 var layers := true
+var crop_name := "" # --crop=wheat|barley|oats|rye
+var crop_stage := 75.0
+var crop_close := false
 var close := false
 var forest := false
 var litter_wind := Vector2()
@@ -158,6 +165,11 @@ func _ready() -> void:
 		elif a == "--weather": weather = true
 		elif a == "--trample": trample = true
 		elif a == "--layers=0": layers = false
+		elif a.begins_with("--crop="):
+			crop_name = a.substr(7)
+			layers = false
+		elif a.begins_with("--stage="): crop_stage = float(a.substr(8))
+		elif a == "--crop-close": crop_close = true
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
 		elif a == "--swamp": swamp = true
@@ -279,6 +291,13 @@ func _ready() -> void:
 	if OS.get_environment("GRASS_DIAG").contains("vf1"):
 		grass.view_facing = 1.0
 	grass.gpu_fill = gpu_fill
+	if crop_name != "":
+		grass.crop = {"wheat": GrassField3D.CROP_WHEAT, "barley": GrassField3D.CROP_BARLEY, "oats": GrassField3D.CROP_OATS, "rye": GrassField3D.CROP_RYE}[crop_name]
+		grass.crop_stage = crop_stage
+		grass.density = grass_density if grass_density > 0.0 else 400.0
+		grass.drill_angle = deg_to_rad(20.0)
+		grass.radius = 24.0
+		grass.tile_size = 1.5 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
 	if season_map:
@@ -555,6 +574,9 @@ void fragment() {
 	cam.position = Vector3(6, height(6, 20) + eye_h, 20)
 	add_child(cam)
 	cam.look_at(Vector3(0, -0.5 - 0.6 * (eye_h - 1.7), -8))
+	if crop_close:
+		cam.position = Vector3(6, height(6, 20) + 1.1, 20)
+		cam.look_at(Vector3(5.2, height(5.2, 17.6) + 0.75, 17.6))
 	if (trample or close) and not test:
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
@@ -1569,6 +1591,36 @@ func _sward_shade_check(c: Vector2, open_density: float) -> void:
 	grass.undergrowth_field = NodePath()
 	brk.queue_free()
 
+# --crop --test: tillers placed, in rows along the drill direction, the crop shader in use; then the
+# stage set before emergence (the next check, 30 frames on).
+func _crop_checks() -> void:
+	var count := grass.get_blade_count()
+	var off_row := 0
+	var total := 0
+	var nrm := Vector2(-sin(grass.drill_angle), cos(grass.drill_angle))
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			for i in mini(mm.instance_count, 400):
+				var o: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
+				var u: float = Vector2(o.x, o.z).dot(nrm) / grass.row_spacing
+				# Within 4 cm of its row (seed scatter, the drill's wander and the tillers' spread).
+				if absf(u - roundf(u)) * grass.row_spacing > 0.04:
+					off_row += 1
+				total += 1
+	var code: String = grass.get_material().get_shader().code
+	print("GRASS_CROP %s stage %.0f tillers=%d sampled=%d off_row=%d" % [crop_name, grass.crop_stage, count, total, off_row])
+	if count < 1000:
+		fails += 1
+		print("GRASS_FAIL crop: too few tillers")
+	if total == 0 or off_row > total / 20:
+		fails += 1
+		print("GRASS_FAIL crop: tillers off their rows")
+	if not code.contains("crop_growth"):
+		fails += 1
+		print("GRASS_FAIL crop: not the crop shader")
+	grass.crop_stage = 5.0
+
 func _checks() -> void:
 	_season_checks()
 	var count := grass.get_blade_count()
@@ -1886,6 +1938,18 @@ func _process(dt: float) -> void:
 		print("GRASS_VIEWTIME n=%d dt_ms=%.1f state=%d round=%d scale=%s" % [n, dt * 1000.0, pv["view_state"], pv["view_round"], str(pv["view_scale"])])
 	if n == frames - 30 and not test:
 		t_frames = Time.get_ticks_usec()
+	if test and crop_name != "":
+		if n == frames:
+			_crop_checks()
+		elif n == frames + 30:
+			# Not yet emerged (below BBCH 10): no tillers at all.
+			print("GRASS_CROP stage 5 tillers=%d" % grass.get_blade_count())
+			if grass.get_blade_count() != 0:
+				fails += 1
+				print("GRASS_FAIL crop tillers before emergence")
+			print("GRASS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+			get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test and n == frames:
 		_checks()
 	if test and n > frames:

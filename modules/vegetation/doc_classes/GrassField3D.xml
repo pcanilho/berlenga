@@ -149,11 +149,20 @@
 		<member name="color_variation" type="float" setter="set_color_variation" getter="get_color_variation" default="0.5">
 			How much blade colour varies: large patches and single blades drift towards yellower or bluer greens and lighter or darker values. 0 gives every blade the same colours.
 		</member>
+		<member name="crop" type="int" setter="set_crop" getter="get_crop" enum="GrassField3D.Crop" default="0">
+			A cereal grown instead of grass: each record is a tiller (a stem, four leaves and the ear, with awns for barley and rye, or the open panicle of oats) as real geometry, set in drill rows [member row_spacing] apart along [member drill_angle], one to three tillers to a plant. [member density] is then tillers per square metre (400 to 600 in a wheat crop) and [member crop_stage] sets the look. Built on the CPU for now ([member gpu_fill] is ignored). Keep [member tile_size] small enough that a tile stays under the path tracer's merged BLAS triangle cap: 1.5 m at 400 tillers per square metre.
+		</member>
+		<member name="crop_stage" type="float" setter="set_crop_stage" getter="get_crop_stage" default="75.0">
+			The crop's growth stage on the BBCH (Zadoks) decimal scale: below 10 nothing has emerged; 10 to 29 leaves and tillers only; 30 to 49 the stem elongates; 51 to 59 the ear emerges; 71 to 89 the grain fills and ripens, the ear and then the straw turning from green to gold while the leaves die from the bottom up and the ears nod (barley hangs right over, wheat stays upright); 99 harvested, leaving stubble about 15 cm high. Changing it only sets shader parameters, except across 10.
+		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			Path to a [TerrainDataMap3D] giving the ground height and the maps [member rules] read.
 		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="120.0">
 			Blades per square metre near the camera.
+		</member>
+		<member name="drill_angle" type="float" setter="set_drill_angle" getter="get_drill_angle" default="0.0">
+			The direction the crop's rows run, in radians from +X towards +Z. Rows of one 3 m drill bout wander together, so the bouts show across a field.
 		</member>
 		<member name="dry_color" type="Color" setter="set_dry_color" getter="get_dry_color" default="Color(0.55, 0.48, 0.28, 1)">
 			Tip colour of dry blades.
@@ -184,6 +193,9 @@
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
 			Distance from the camera, in metres, to which tiles are grown.
+		</member>
+		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.125">
+			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).
 		</member>
 		<member name="rules" type="PlantSpecies" setter="set_rules" getter="get_rules">
 			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only.
@@ -244,4 +256,21 @@
 			</description>
 		</signal>
 	</signals>
+	<constants>
+		<constant name="CROP_NONE" value="0" enum="Crop">
+			Grass blades (the default).
+		</constant>
+		<constant name="CROP_WHEAT" value="1" enum="Crop">
+			Bread wheat: an awnless, flattened ear held upright, about 0.8 m of straw.
+		</constant>
+		<constant name="CROP_BARLEY" value="2" enum="Crop">
+			Two-row barley: a slim ear with long awns that bends right over when ripe.
+		</constant>
+		<constant name="CROP_OATS" value="3" enum="Crop">
+			Oats: an open panicle of drooping spikelets on whorled branches.
+		</constant>
+		<constant name="CROP_RYE" value="4" enum="Crop">
+			Rye: the tallest, about 1.25 m, a long slender ear with short awns and blue-grey leaves.
+		</constant>
+	</constants>
 </class>

@@ -54,6 +54,19 @@ class TerrainDataMap3D;
 class GrassField3D : public Node3D {
 	GDCLASS(GrassField3D, Node3D);
 
+public:
+	// A cereal grown instead of grass (vegetation.md, farmland stage 1): each record a tiller in drill
+	// rows, its look set by the growth stage.
+	enum Crop {
+		CROP_NONE,
+		CROP_WHEAT,
+		CROP_BARLEY,
+		CROP_OATS,
+		CROP_RYE,
+	};
+
+private:
+
 	struct Tile {
 		MultiMeshInstance3D *mmi = nullptr;
 		int lod = 0;
@@ -141,6 +154,31 @@ class GrassField3D : public Node3D {
 	Ref<Image> trample_image;
 	Ref<ImageTexture> trample_texture;
 	HashMap<ObjectID, Vector3> trample_last;
+
+	Crop crop = CROP_NONE;
+	float crop_stage = 75.0f; // BBCH (Zadoks) decimal code: 10 first leaf, 30 stem elongation, 51 heading, 75 milk, 87 hard dough, 99 harvested (stubble).
+	float row_spacing = 0.125f;
+	float drill_angle = 0.0f; // The rows' direction, radians from +x towards +z.
+	Ref<ArrayMesh> crop_mesh_far; // Fewer parts for the coarse levels.
+	struct CropShape {
+		float height; // Stem to the ear's base, ripe (m).
+		float ear_length;
+		float ear_width; // Half width.
+		float awn_length;
+		int awns;
+		int branches; // Panicle branches (oats); 0: a spike.
+		float leaf_length;
+		float leaf_width; // Half width.
+		float nod; // How far the ripe ear bends over (0 upright, 1 hanging).
+		Color green;
+		Color ripe;
+		Color straw;
+	};
+	static CropShape _crop_shape(Crop p_crop);
+	Ref<ArrayMesh> _make_crop_mesh(bool p_far) const;
+	void _crop_uniforms(const Ref<ShaderMaterial> &p_material) const;
+	template <typename F>
+	void _crop_rows(const Rect2 &p_rect, float p_keep, F &&p_place) const;
 
 	bool gpu_fill = true; // Fill tiles with the compute shader (stage 3a) when a RenderingDevice exists.
 	Ref<Image> height_image; // The data map's height channel, for the GPU fill.
@@ -342,6 +380,15 @@ public:
 	Vector2 get_trample_at(const Vector3 &p_position) const;
 	void clear_trample();
 
+	void set_crop(Crop p_crop);
+	Crop get_crop() const { return crop; }
+	void set_crop_stage(float p_stage);
+	float get_crop_stage() const { return crop_stage; }
+	void set_row_spacing(float p_spacing);
+	float get_row_spacing() const { return row_spacing; }
+	void set_drill_angle(float p_angle);
+	float get_drill_angle() const { return drill_angle; }
+
 	void rebuild();
 	void update_at(const Vector3 &p_center);
 	int get_blade_count() const { return blade_count; }
@@ -351,3 +398,5 @@ public:
 
 	~GrassField3D();
 };
+
+VARIANT_ENUM_CAST(GrassField3D::Crop);
