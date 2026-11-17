@@ -298,6 +298,37 @@ tracer can bind them directly: no NanoVDB conversion or copy each frame.
   PhysX splashes and floating props read their height rather than drawing a
   second surface.
 
+### MPM fluid: spray, foam and bubbles
+
+Technique: Ihmsen, Akinci, Akinci and Teschner 2012, "Unified spray, foam
+and air bubbles for particle-based fluids" (The Visual Computer 28). It is
+still the base of FleX, Houdini and Blender FLIP whitewater. The newer
+production method, Wretborn, Flynn and Stomakhin 2022, "Guided bubbles and
+wet foam for realistic whitewater simulation" (ACM TOG 41(4), Weta FX),
+extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
+
+- Spawn (Ihmsen): trapped-air, wave-crest and kinetic-energy potentials,
+  each clamped to [0, 1]. On MPM, the neighbours are the 27 grid nodes of
+  the B-spline stencil, weighted by each node's liquid fraction. The crest
+  curvature proxy is how far the particle sits from the local centre of
+  liquid mass. New particles are placed in the cylinder that the fluid
+  particle sweeps that frame.
+- Sort: by the grid's liquid fraction (Ihmsen's neighbour count): spray
+  below 0.12, bubbles above 0.7, foam in between.
+- Spray: ballistic.
+- Bubbles (Wretborn): carried by the water at the slip speed where
+  buoyancy meets their Eq. 5 drag, mu r (6 pi + pi/2 rho r |dv| / mu) dv.
+  A 1 mm bubble rises at about 0.16 m/s. Radii follow the inverse-cubic
+  size distribution (Deike et al. 2016).
+- Foam (Wretborn): advected with the surface and projected back onto it,
+  the move capped at half a cell. Lifetimes are normally distributed
+  (sd 0.4 of the mean).
+- Drawing: lit white spheres, as in both papers.
+- Not done (cost): two-way bubble coupling, SPH wet-foam forces, screen
+  space or volumetric foam.
+- GPU cost: two passes a frame (one over the fluid, one over a 16k ring);
+  the PC queue measures it.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

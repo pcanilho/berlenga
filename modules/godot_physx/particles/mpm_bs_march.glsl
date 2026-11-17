@@ -39,9 +39,10 @@
 // surface shaded as facets. Normals now come from central-difference gradients at
 // the grid nodes, interpolated trilinearly across the cell, as GPU marching cubes
 // does (GPU Gems 3, ch. 1): neighbouring cells share their nodes' gradients, so the
-// normal is continuous over the surface. The block's densities plus a one-node halo
-// (7^3) are fetched once into shared memory by a loop with a single dsample() call
-// site, so block_lookup() is still not inlined per vertex (see above).
+// normal is continuous over the surface. The block's densities plus a two-node halo
+// (9^3) are fetched once into shared memory by a loop with a single dsample() call
+// site, so block_lookup() is still not inlined per vertex (see above), then smoothed
+// once (see main()).
 
 layout(set = 1, binding = 0, std430) restrict buffer MeshVerts {
 	vec4 mverts[];
@@ -66,7 +67,8 @@ const int EA[6] = int[6](0, 0, 0, 1, 1, 2);
 const int EB[6] = int[6](1, 2, 3, 2, 3, 3);
 const int INC[12] = int[12](0, 1, 2, 0, 3, 4, 1, 3, 5, 2, 4, 5);
 
-shared float sh_density[343]; // this block's nodes -1..5 on each axis
+shared float sh_raw[729]; // this block's nodes -2..6 on each axis, as scattered
+shared float sh_density[343]; // nodes -1..5, smoothed
 
 float sh_at(ivec3 n) { // n: node relative to the block's first, -1..5
 	ivec3 i = n + 1;
@@ -141,9 +143,29 @@ void main() {
 	ivec3 bc = unpack_block(bkey[bslot]);
 	ivec3 lc = ivec3(int(lin) & 3, (int(lin) >> 2) & 3, int(lin) >> 4);
 	ivec3 cell = bc * BLK + lc;
+	for (int i = int(lin); i < 729; i += BCELLS) {
+		ivec3 n = ivec3(i % 9, (i / 9) % 9, i / 81) - 2;
+		sh_raw[i] = dsample(bc * BLK + n);
+	}
+	barrier();
+	// One binomial (1 2 1) pass each way over the scattered density before marching. The field
+	// sampled from a sparse stream dips below the iso level between particles, which marched into
+	// small closed bubbles inside the liquid: hidden on an opaque surface, but through clear water
+	// they showed as bright cell-sized outlines, like cracked glass. The blur closes them and
+	// smooths the surface; a feature thinner than a cell thins slightly with it.
 	for (int i = int(lin); i < 343; i += BCELLS) {
-		ivec3 n = ivec3(i % 7, (i / 7) % 7, i / 49) - 1;
-		sh_density[i] = dsample(bc * BLK + n);
+		ivec3 n = ivec3(i % 7, (i / 7) % 7, i / 49) + 1; // into sh_raw's -2..6 indexing
+		float sum = 0.0;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dy = -1; dy <= 1; dy++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					ivec3 m = n + ivec3(dx, dy, dz);
+					float w = float((2 - abs(dx)) * (2 - abs(dy)) * (2 - abs(dz)));
+					sum += w * sh_raw[(m.z * 9 + m.y) * 9 + m.x];
+				}
+			}
+		}
+		sh_density[i] = sum * (1.0 / 64.0);
 	}
 	barrier();
 
