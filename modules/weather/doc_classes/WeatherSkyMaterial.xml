@@ -24,6 +24,14 @@
 				Lights the scattering atmosphere with two bodies above the air: directions toward them, and their irradiance in light energy units before the air. [SkyClock] calls this when [member SkyClock.drive_light_energy] is on. Until it is called, the sky takes the first directional light as the sun above the air.
 			</description>
 		</method>
+		<method name="set_star_sky">
+			<return type="void" />
+			<param index="0" name="celestial" type="Basis" />
+			<param index="1" name="energy_per_lux" type="float" />
+			<description>
+				Places the stars (the Yale Bright Star Catalogue, about 9,100 stars, what the eye sees): [param celestial] turns the J2000 equator frame (x toward right ascension 0h, z toward the north celestial pole) into the world, and [param energy_per_lux] turns a star's illuminance above the air into light energy. [SkyClock] calls this with [method SkyClock.get_celestial_basis] when [member SkyClock.drive_light_energy] is on; until then no stars are drawn. The shader parameters [code]stars_enabled[/code] (on) and [code]star_brightness[/code] (1) switch and scale them.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="atmosphere_model" type="int" setter="set_atmosphere_model" getter="get_atmosphere_model" enum="WeatherSkyMaterial.AtmosphereModel" default="1">

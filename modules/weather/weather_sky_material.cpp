@@ -32,6 +32,7 @@
 #include "weather_sky_material.h"
 
 #include "atmosphere.h"
+#include "bright_stars_data.h"
 
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
@@ -44,6 +45,8 @@
 Ref<Shader> WeatherSkyMaterial::shared_shaders[4];
 Ref<ImageTexture> WeatherSkyMaterial::atmo_transmittance_tex;
 Ref<ImageTexture> WeatherSkyMaterial::atmo_multiscatter_tex;
+Ref<ImageTexture> WeatherSkyMaterial::star_data_tex;
+Ref<ImageTexture> WeatherSkyMaterial::star_cells_tex;
 
 namespace {
 
@@ -100,6 +103,17 @@ group_uniforms lightning; // Set by WeatherLightning3D while flashes last.
 uniform int lightning_count = 0;
 uniform vec4 lightning_flashes[4]; // world position, energy this frame
 uniform vec3 lightning_color = vec3(0.82, 0.86, 1.0);
+
+// The stars (Yale Bright Star Catalogue, to V 6.5 and a little past: what the eye sees). Each is a point of
+// light spread over about a pixel (Schneegans, Kreskowski and Gerndt 2025: illuminance over a small area, so a
+// star keeps its brightness at any resolution), looked up through a coarse cube-face grid of the sky
+// (WeatherSkyMaterial::_bake_stars()).
+uniform bool stars_enabled = true;
+uniform float star_brightness : hint_range(0, 16) = 1.0;
+uniform float star_energy_per_lux = 0.0; // set by SkyClock (0: no stars)
+uniform mat3 star_sky_basis = mat3(1.0);
+uniform sampler2D star_data : filter_nearest, repeat_disable;
+uniform sampler2D star_cells : filter_nearest, repeat_disable;
 group_uniforms;
 
 const vec3 UP = vec3(0.0, 1.0, 0.0);
@@ -311,6 +325,52 @@ void atmo_lights(out vec3 l0, out vec3 e0, out vec3 l1, out vec3 e1, out float s
 	}
 }
 #endif
+#ifdef ATMO_SCATTERING
+// The cube face (0..5) and the face's coordinates in -1..1 of a direction; the C++ bake uses the same.
+ivec3 star_cell(vec3 d) {
+	vec3 a = abs(d);
+	int face;
+	vec2 uv;
+	if (a.x >= a.y && a.x >= a.z) {
+		face = d.x > 0.0 ? 0 : 1;
+		uv = d.yz / a.x;
+	} else if (a.y >= a.z) {
+		face = d.y > 0.0 ? 2 : 3;
+		uv = d.xz / a.y;
+	} else {
+		face = d.z > 0.0 ? 4 : 5;
+		uv = d.xy / a.z;
+	}
+	ivec2 c = clamp(ivec2((uv * 0.5 + 0.5) * 32.0), ivec2(0), ivec2(31));
+	return ivec3(face, c);
+}
+
+// The stars' radiance toward p_dir (world), above the air. Each star's illuminance spread by a normalised
+// Gaussian a pixel wide (at least the half arcminute of seeing), so the pixels round it sum to the star.
+vec3 star_radiance(vec3 p_dir, float p_pixel_angle) {
+	vec3 d = normalize(transpose(star_sky_basis) * p_dir);
+	ivec3 cell = star_cell(d);
+	vec2 se = texelFetch(star_cells, ivec2(cell.x * 32 + cell.y, cell.z), 0).rg;
+	int first = int(se.x);
+	int count = min(int(se.y), 64);
+	float sigma = max(0.5 * p_pixel_angle, 1.5e-4);
+	float inv2s2 = 0.5 / (sigma * sigma);
+	float norm = inv2s2 / PI;
+	vec3 sum = vec3(0.0);
+	for (int i = 0; i < count; i++) {
+		int e = first + i;
+		ivec2 px = ivec2((e % 128) * 2, e / 128);
+		vec4 s = texelFetch(star_data, px, 0);
+		float c = dot(d, s.xyz);
+		float th2 = 2.0 * max(1.0 - c, 0.0); // the angle squared, for small angles
+		float w = th2 * inv2s2;
+		if (w < 9.0) {
+			sum += s.w * norm * exp(-w) * texelFetch(star_data, px + ivec2(1, 0), 0).rgb;
+		}
+	}
+	return sum;
+}
+#endif
 
 void sky() {
 #ifdef ATMO_SCATTERING
@@ -340,7 +400,9 @@ void sky() {
 			float fresnel = 0.02 + 0.98 * pow(1.0 - c, 5.0);
 			air += t_view * atmo_far_water * fresnel * mirrored;
 		}
-		COLOR = air;
+		// Exposed here, ahead of the half-float buffers: a night sky's radiance in light energy units is
+		// below half floats' range (Frostbite's pre-exposure; Lagarde and de Rousiers 2014).
+		COLOR = air * exposure;
 		ALPHA = 1.0;
 	} else if (AT_HALF_RES_PASS) {
 		// The clouds over the air.
@@ -367,7 +429,7 @@ void sky() {
 			// also scatters light toward the eye; what the clouds let through sees the whole sky behind.
 			vec3 t_front;
 			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, t_front).rgb;
-			COLOR = (1.0 - clouds.a) * front + t_front * clouds.rgb + air.rgb * clouds.a;
+			COLOR = ((1.0 - clouds.a) * front + t_front * clouds.rgb) * exposure + air.rgb * clouds.a;
 		} else {
 			COLOR = air.rgb;
 		}
@@ -381,11 +443,16 @@ void sky() {
 		if (sundisk > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
 			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * sundisk;
 		}
+		// The stars through the air, behind the clouds (not in the radiance map: they light nothing).
+		if (stars_enabled && star_energy_per_lux > 0.0 && atmo_driven && !AT_CUBEMAP_PASS && !atmo_hits_ground(r_cam, EYEDIR.y)) {
+			float pixel_angle = max(length(dFdx(EYEDIR)), length(dFdy(EYEDIR)));
+			disc += star_radiance(EYEDIR, pixel_angle) * (star_energy_per_lux * star_brightness) * atmo_transmittance_to_top(r_cam, EYEDIR.y);
+		}
 		vec3 glow = vec3(0.0);
 		if (lightning_count > 0 && !AT_CUBEMAP_PASS) {
 			glow = lightning_glow(POSITION, EYEDIR, 1.0 - HALF_RES_COLOR.a);
 		}
-		COLOR = (HALF_RES_COLOR.rgb + disc * HALF_RES_COLOR.a + glow) * exposure;
+		COLOR = HALF_RES_COLOR.rgb + (disc * HALF_RES_COLOR.a + glow) * exposure;
 	}
 #else
 	vec3 sun_dir = LIGHT0_ENABLED ? normalize(LIGHT0_DIRECTION) : UP;
@@ -530,6 +597,131 @@ void WeatherSkyMaterial::_update_atmosphere_textures() {
 	}
 	RS::get_singleton()->material_set_param(get_rid(), "atmo_transmittance", atmo_transmittance_tex->get_rid());
 	RS::get_singleton()->material_set_param(get_rid(), "atmo_multiscatter_lut", atmo_multiscatter_tex->get_rid());
+	if (star_data_tex.is_null()) {
+		_bake_stars();
+	}
+	RS::get_singleton()->material_set_param(get_rid(), "star_data", star_data_tex->get_rid());
+	RS::get_singleton()->material_set_param(get_rid(), "star_cells", star_cells_tex->get_rid());
+}
+
+// The cube face and cell of a direction, as star_cell() in the shader.
+static int _star_cell(const Vector3 &p_d) {
+	const Vector3 a = p_d.abs();
+	int face;
+	Vector2 uv;
+	if (a.x >= a.y && a.x >= a.z) {
+		face = p_d.x > 0.0f ? 0 : 1;
+		uv = Vector2(p_d.y, p_d.z) / a.x;
+	} else if (a.y >= a.z) {
+		face = p_d.y > 0.0f ? 2 : 3;
+		uv = Vector2(p_d.x, p_d.z) / a.y;
+	} else {
+		face = p_d.z > 0.0f ? 4 : 5;
+		uv = Vector2(p_d.x, p_d.y) / a.z;
+	}
+	const int cu = CLAMP(int((uv.x * 0.5f + 0.5f) * 32.0f), 0, 31);
+	const int cv = CLAMP(int((uv.y * 0.5f + 0.5f) * 32.0f), 0, 31);
+	return (face * 32 + cu) + cv * 192;
+}
+
+// A star's colour from its B-V index: a black body at Ballesteros' (2012) temperature, through the CIE 1931
+// observer (Wyman, Sloan and Shirley 2013's fit) into linear sRGB, scaled to unit luminance.
+static Vector3 _star_colour(float p_bv) {
+	const double t = 4600.0 * (1.0 / (0.92 * p_bv + 1.7) + 1.0 / (0.92 * p_bv + 0.62));
+	double X = 0.0, Y = 0.0, Z = 0.0;
+	for (int nm = 380; nm <= 780; nm += 5) {
+		const double l = nm;
+		const double lm = l * 1e-9;
+		const double b = 1.0 / (Math::pow(lm, 5.0) * (Math::exp(1.4387769e-2 / (lm * t)) - 1.0));
+		auto g = [](double x, double mu, double s1, double s2) {
+			const double s = x < mu ? s1 : s2;
+			return Math::exp(-0.5 * (x - mu) * (x - mu) / (s * s));
+		};
+		const double xb = 1.056 * g(l, 599.8, 37.9, 31.0) + 0.362 * g(l, 442.0, 16.0, 26.7) - 0.065 * g(l, 501.1, 20.4, 26.2);
+		const double yb = 0.821 * g(l, 568.8, 46.9, 40.5) + 0.286 * g(l, 530.9, 16.3, 31.1);
+		const double zb = 1.217 * g(l, 437.0, 11.8, 36.0) + 0.681 * g(l, 459.0, 26.0, 13.8);
+		X += b * xb;
+		Y += b * yb;
+		Z += b * zb;
+	}
+	Vector3 rgb(3.2406 * X - 1.5372 * Y - 0.4986 * Z, -0.9689 * X + 1.8758 * Y + 0.0415 * Z, 0.0557 * X - 0.2040 * Y + 1.0570 * Z);
+	rgb = rgb.max(Vector3());
+	const float lum = rgb.dot(Vector3(0.2126, 0.7152, 0.0722));
+	return lum > 0.0f ? rgb / lum : Vector3(1, 1, 1);
+}
+
+// Bins the catalogue by cube-face cell (32 x 32 a face, about 3 deg). A star near a cell's edge goes into
+// the cells within its glow's reach too, so a pixel reads one cell's list.
+void WeatherSkyMaterial::_bake_stars() {
+	const float margin = Math::deg_to_rad(0.5f);
+	LocalVector<LocalVector<int>> cells;
+	cells.resize(192 * 32);
+	LocalVector<Vector3> dirs;
+	dirs.resize(BRIGHT_STAR_COUNT);
+	for (int i = 0; i < BRIGHT_STAR_COUNT; i++) {
+		const float ra = float(uint16_t(BRIGHT_STARS[i * 4 + 0])) / 65536.0f * Math::TAU;
+		const float dec = float(BRIGHT_STARS[i * 4 + 1]) / 32767.0f * float(Math::PI) * 0.5f;
+		const Vector3 d(Math::cos(dec) * Math::cos(ra), Math::cos(dec) * Math::sin(ra), Math::sin(dec));
+		dirs[i] = d;
+		const Vector3 t1 = (Math::abs(d.z) < 0.9f ? Vector3(0, 0, 1) : Vector3(1, 0, 0)).cross(d).normalized();
+		const Vector3 t2 = d.cross(t1);
+		int seen[9];
+		int n = 0;
+		for (int k = 0; k < 9; k++) {
+			const float a = k * Math::TAU / 8.0f;
+			const Vector3 p = k == 8 ? d : (d + (t1 * Math::cos(a) + t2 * Math::sin(a)) * margin).normalized();
+			const int c = _star_cell(p);
+			bool dup = false;
+			for (int j = 0; j < n; j++) {
+				dup = dup || seen[j] == c;
+			}
+			if (!dup) {
+				seen[n++] = c;
+				cells[c].push_back(i);
+			}
+		}
+	}
+	int total = 0;
+	for (const LocalVector<int> &l : cells) {
+		total += l.size();
+	}
+	const int rows = (total + 127) / 128;
+	Vector<float> data;
+	data.resize(256 * rows * 4);
+	data.fill(0.0f);
+	Vector<float> table;
+	table.resize(192 * 32 * 2);
+	float *dw = data.ptrw();
+	float *tw = table.ptrw();
+	int e = 0;
+	for (uint32_t c = 0; c < cells.size(); c++) {
+		tw[c * 2 + 0] = e;
+		tw[c * 2 + 1] = cells[c].size();
+		for (int s : cells[c]) {
+			const float vmag = BRIGHT_STARS[s * 4 + 2] / 100.0f;
+			const Vector3 col = _star_colour(BRIGHT_STARS[s * 4 + 3] / 1000.0f);
+			float *p = dw + ((e / 128) * 256 + (e % 128) * 2) * 4;
+			p[0] = dirs[s].x;
+			p[1] = dirs[s].y;
+			p[2] = dirs[s].z;
+			// Illuminance above the air, in lux (V magnitude 0 gives 2.54e-6 lux).
+			p[3] = Math::pow(10.0f, -0.4f * (vmag + 13.99f));
+			p[4] = col.x;
+			p[5] = col.y;
+			p[6] = col.z;
+			p[7] = 1.0f;
+			e++;
+		}
+	}
+	star_data_tex = ImageTexture::create_from_image(Image::create_from_data(256, rows, false, Image::FORMAT_RGBAF, data.to_byte_array()));
+	star_cells_tex = ImageTexture::create_from_image(Image::create_from_data(192, 32, false, Image::FORMAT_RGF, table.to_byte_array()));
+}
+
+void WeatherSkyMaterial::set_star_sky(const Basis &p_celestial, float p_energy_per_lux) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	rs->material_set_param(m, "star_sky_basis", p_celestial);
+	rs->material_set_param(m, "star_energy_per_lux", p_energy_per_lux);
 }
 
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {
@@ -572,6 +764,7 @@ void WeatherSkyMaterial::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cloud_reprojection"), "set_cloud_reprojection", "is_cloud_reprojection_enabled");
 	ClassDB::bind_method(D_METHOD("set_atmosphere_model", "model"), &WeatherSkyMaterial::set_atmosphere_model);
 	ClassDB::bind_method(D_METHOD("get_atmosphere_model"), &WeatherSkyMaterial::get_atmosphere_model);
+	ClassDB::bind_method(D_METHOD("set_star_sky", "celestial", "energy_per_lux"), &WeatherSkyMaterial::set_star_sky);
 	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "atmosphere_model", PROPERTY_HINT_ENUM, "Physical Sky,Scattering"), "set_atmosphere_model", "get_atmosphere_model");
 	BIND_ENUM_CONSTANT(ATMOSPHERE_PHYSICAL_SKY);
@@ -584,6 +777,8 @@ void WeatherSkyMaterial::cleanup() {
 	}
 	atmo_transmittance_tex.unref();
 	atmo_multiscatter_tex.unref();
+	star_data_tex.unref();
+	star_cells_tex.unref();
 	WeatherClouds::free_textures();
 }
 

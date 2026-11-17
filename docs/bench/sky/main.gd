@@ -4,6 +4,7 @@ extends Node3D
 #   --sky [--model=scattering|physical] [--time=H] [--out=path.png] [--frames=N]
 #            the sky alone (WeatherSkyMaterial, clouds from the defaults, sun from SkyClock), looking south-west
 #            and a little up; prints the mean frame time, saves the last frame
+#            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars]
 
 var fails := 0
 
@@ -28,6 +29,8 @@ func _sky(kv: Dictionary) -> void:
 	var mat := WeatherSkyMaterial.new()
 	mat.atmosphere_model = WeatherSkyMaterial.ATMOSPHERE_PHYSICAL_SKY if kv.get("model", "scattering") == "physical" else WeatherSkyMaterial.ATMOSPHERE_SCATTERING
 	mat.cloud_reprojection = kv.has("reproject")
+	if kv.has("no-stars"):
+		mat.set_shader_parameter("stars_enabled", false)
 	var sky := Sky.new()
 	sky.sky_material = mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
@@ -35,12 +38,15 @@ func _sky(kv: Dictionary) -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	# --exposure=k: the sky's own exposure, applied before the half-float buffers (pre-exposure, as Frostbite's):
+	# a night sky needs about 1e5-1e6 (a faint star is 1e-8 lux; auto exposure is step 4).
+	mat.set_shader_parameter("exposure", float(kv.get("exposure", "1")))
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	var cam := Camera3D.new()
 	cam.position = Vector3(0, 2, 0)
-	cam.fov = 90.0
+	cam.fov = float(kv.get("fov", "90"))
 	add_child(cam)
 	cam.rotation_degrees = Vector3(float(kv.get("pitch", "12")), float(kv.get("yaw", "135")), 0) # south-west
 	cam.make_current()
