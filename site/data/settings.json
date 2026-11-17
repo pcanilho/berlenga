@@ -2762,6 +2762,17 @@
    "topic": "Wind and touch"
   },
   {
+   "name": "Storm damage",
+   "settings": [
+    "TreeWind3D.storm_enabled"
+   ],
+   "note": "",
+   "what": "storm wind breaks limbs and throws trees by wood strength and root anchorage; they fall and break apart on landing.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
+  },
+  {
    "name": "Leaf flutter",
    "settings": [
     "leaf_flutter"

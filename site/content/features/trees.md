@@ -89,6 +89,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 ## Wind and touch
 
 - **Tree wind** (`TreeWind3D`, `TreeGenerator.rigged`): trees sway in the weather map's wind and gusts, each limb at its own frequency.
+- **Storm damage** (`TreeWind3D.storm_enabled`): storm wind breaks limbs and throws trees by wood strength and root anchorage; they fall and break apart on landing.
 - **Leaf flutter** (`leaf_flutter`): leaves flutter and twist on their stalks in the same wind as grass and plants.
 - **Far wind** (`wind_range`, `lod_enabled`, `lod_pixel_error`, `budget_msec`): trees move in the wind out to 1 km, with far ones posed less often and with fewer limbs.
 - **Colliders and touch** (`collision_enabled`, `touch_enabled`, `break_speed`): trunks and limbs collide near the camera; characters and vehicles push branches aside, and fast bodies snap thin ones off.
