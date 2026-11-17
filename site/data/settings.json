@@ -1143,6 +1143,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Desiccation cracks",
+   "settings": [
+    "GroundSurface3D.desiccation_cracks"
+   ],
+   "note": "",
+   "what": "soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Thrown sand",
    "settings": [
     "PhysXGroundGrains3D",
@@ -2960,7 +2971,7 @@
     "atmo_cloud_shadow_steps"
    ],
    "note": "",
-   "what": "the air under the clouds takes their shadow, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.",
+   "what": "the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
