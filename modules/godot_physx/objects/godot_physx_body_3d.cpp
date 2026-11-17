@@ -30,14 +30,13 @@
 
 #include "godot_physx_body_3d.h"
 
-#include "godot_physx_material.h"
-
 #include "../godot_physx_conversions.h"
 #include "../godot_physx_project_settings.h"
 #include "../joints/godot_physx_joint_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
 #include "../spaces/godot_physx_direct_state_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
+#include "godot_physx_material.h"
 
 #include <PxPhysicsAPI.h>
 
@@ -329,9 +328,16 @@ void GodotPhysXBody3D::_apply_dynamic_flags() {
 		dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD, true);
 	}
 	// overlapping bodies separate at most this fast (the SDK default is unbounded: they popped apart in one step)
-	if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
+	if (max_depenetration_velocity >= 0.0f) {
+		dyn->setMaxDepenetrationVelocity(max_depenetration_velocity > 0.0f ? (PxReal)max_depenetration_velocity : PX_MAX_F32);
+	} else if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
 		dyn->setMaxDepenetrationVelocity((PxReal)GodotPhysXProjectSettings::max_depenetration_velocity);
 	}
+}
+
+void GodotPhysXBody3D::set_max_depenetration_velocity(float p_velocity) {
+	max_depenetration_velocity = p_velocity;
+	_apply_dynamic_flags();
 }
 
 void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {

@@ -126,6 +126,7 @@ private:
 	uint32_t collision_mask = 1;
 	uint32_t axis_lock = 0; // PhysicsServer3D::BodyAxis bitmask
 	bool ccd = false;
+	float max_depenetration_velocity = -1.0f; // below 0: the project setting; 0: uncapped
 	bool ray_pickable = true; // input_ray_pickable: hit by the viewport's picking ray
 	bool can_sleep = true;
 	bool sleeping = false;
@@ -251,6 +252,9 @@ public:
 	uint32_t get_collision_mask() const { return collision_mask; }
 
 	void set_ccd(bool p_enable);
+	// How fast this body may be pushed out of an overlap (m/s); below 0 follows physics/physx_3d/simulation/
+	// max_depenetration_velocity, 0 leaves it uncapped.
+	void set_max_depenetration_velocity(float p_velocity);
 	bool is_ccd_enabled() const { return ccd; }
 
 	void set_ray_pickable(bool p_enable) { ray_pickable = p_enable; }

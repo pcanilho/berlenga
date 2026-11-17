@@ -109,6 +109,11 @@ public:
 	void set_initial_angular_velocity(const Vector3 &p_velocity);
 	Vector3 get_initial_angular_velocity() const { return initial_angular_velocity; }
 
+	// How fast overlapping pieces may be pushed apart (m/s, PhysX only). Split pieces start touching at the break;
+	// uncapped, PhysX threw them apart at tens of m/s and through the ground. 0: uncapped (or the project setting).
+	void set_max_depenetration_velocity(float p_velocity);
+	float get_max_depenetration_velocity() const { return max_depenetration_velocity; }
+
 	void set_asset_path(const String &p_path);
 	String get_asset_path() const { return asset_path; }
 	void set_chunks_path(const String &p_path);
@@ -477,6 +482,8 @@ private:
 	RID _chunk_mesh(uint32_t p_chunk);
 	Vector3 initial_linear_velocity;
 	Vector3 initial_angular_velocity;
+	float max_depenetration_velocity = 3.0f;
+	void _apply_depenetration_cap(RID p_body) const;
 	void _free_chunk_cache();
 	// Whether an island made of p_chunks stays STATIC under `anchor`.
 	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;
