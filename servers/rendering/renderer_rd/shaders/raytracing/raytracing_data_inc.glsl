@@ -162,7 +162,7 @@ struct MaterialData {
 	uint transmission_texture; // Red scales transmission.
 	uint medium; // With RT_MAT_FLAG_VOLUME: the extinction code of the volume it bounds, see rt_medium_absorption().
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
-	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness(); snow 27-28; ground deform 29.
+	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness(); snow 27-28; ground deform 29, terrain 30; mud 31.
 	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
 	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards. See rt_material_hair().
 	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
@@ -252,6 +252,11 @@ bool rt_material_ground_deform(MaterialData p_mat) {
 // BaseMaterial3D Ground Deform off the patch (the terrain round it): only the ground's pore water.
 bool rt_material_ground_terrain(MaterialData p_mat) {
 	return ((p_mat.subsurface >> 30u) & 1u) != 0u;
+}
+
+// BaseMaterial3D Mud: a vehicle's body mud from the instance uniforms (docs/ideas/mud.md, stage 3b).
+bool rt_material_mud(MaterialData p_mat) {
+	return (p_mat.subsurface >> 31u) != 0u;
 }
 
 // BaseMaterial3D Snow: amount (x), snow_max_slope in degrees (y), on (z), cover from the snow map (w).

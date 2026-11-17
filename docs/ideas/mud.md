@@ -357,6 +357,45 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   clay, grips less, cleans when spun fast, washes in water), `--test=belly` (a low car bogs and leaves a
   trough, more drag with than without).
 
+#### Plan (3b: mud on the body, the look)
+
+- **How others do it.** Saber (MudRunner, SnowRunner) keeps per-vertex mud data on the trucks, raised where
+  chassis, wheels and particles touch mud. Codemasters (DiRT Rally) and Playground (Forza Horizon) blend authored
+  per-car dirt masks by an accumulation level, dust then mud. BeamNG's "Grit" and "dynamic dirt" mods put
+  triplanar dirt over any vehicle with a height gradient from the bottom up. Assetto Corsa's CSP dirties tyres
+  by surface. The common core: an accumulation level per region thresholding a noise or mask, so mud spreads as
+  splats and grows from where it lands, never as a uniform tint.
+- **Ours.** No authored masks (imported cars and Tripo meshes have arbitrary UVs) and no per-vertex data (the path
+  tracer would need it on every mesh): the mask is computed in the vehicle's own frame from a few numbers the
+  vehicle updates each tick, so the same lines run in BaseMaterial3D's raster shader and in the path tracer.
+  - Tyres: within each wheel's radius, the tread fill of 3a.
+  - Wheel spray: round each wheel and up its arch, rearward, from the mud that wheel has thrown (3a's shed kg),
+    accumulated and washed by standing water.
+  - Belly line: from the chassis bottom up to the deepest the body has sat in mud, ragged.
+  - Splats: each level thresholds an object-space noise (two octaves), so low levels are scattered flecks and
+    high levels a cake; a little relief from the same noise (normal only, both renderers).
+  - Wet mud dark and glossy, drying in minutes to a pale matte crust (the crack crust's tone).
+- **Wiring.** BaseMaterial3D gets a Mud layer (`mud_enabled`, off per material, like Snow) reading instance
+  uniforms at fixed indices; the path tracer reads the same slots from the global uniform buffer.
+  PhysXVehicle3D `body_mud` (on) turns the layer on in copies of its meshes' materials and writes the uniforms.
+  Check: raster and path traced at 100% crop of a car after a run through clay.
+
+#### Built (3b)
+
+- BaseMaterial3D `mud_enabled` (Mud group), `get_mud_functions_code()`: instance uniforms at fixed slots 0-10 (the
+  vehicle's world-to-frame rows, four wheels' centre and radius, tread fill, spray, belly (bottom, line, wetness),
+  clay colour), `vmud_at()` and `vmud_apply()`; the raygen has the same lines and reads the slots from the global
+  uniform buffer at the geometry's `instance_uniforms_ofs` (that buffer is now a runtime array, it was declared 256
+  long). Material bit: subsurface bit 31.
+- PhysXVehicle3D `body_mud` (on): copies its meshes' BaseMaterial3D materials with Mud on, then each tick writes the
+  uniforms. Spray grows by the shed clay (12 kg to full) and by ploughing sticky slurry, washes in standing water; the
+  mud line is the deepest the belly or the mud at a sunk wheel reached on the body; wet 1 while mud lands or water
+  stands, drying over 5 minutes. Getters: `get_wheel_mud_spray`, `get_body_mud_line`, `get_body_mud_wetness`.
+- Bench: `--view=bodymud` (a dressed 4x4 crawls through stiff clay, then is floored); `--test=clog` checks the spray,
+  the body material and the mud line of a car sunk in slurry. Raster and path traced match at 100% crop.
+- Next for the look: splashes stretched along their flight from the wheel (streaks), and the clay's colour taken
+  from the ground it came from.
+
 ### Stage 4: spray and clods
 
 - GPU ballistic particles from each slipping wheel (speed from the wheel's surface speed, mass from

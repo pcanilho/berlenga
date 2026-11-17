@@ -227,6 +227,7 @@ public:
 		FEATURE_WETNESS,
 		FEATURE_SNOW,
 		FEATURE_GROUND_DEFORM,
+		FEATURE_MUD,
 		FEATURE_MAX
 	};
 
@@ -734,6 +735,8 @@ public:
 	static String get_snow_functions_code(bool p_from_weather);
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();
+	// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b): the functions, and the instance uniforms PhysXVehicle3D writes.
+	static String get_mud_functions_code();
 
 	void set_albedo(const Color &p_albedo);
 	Color get_albedo() const;

@@ -3785,6 +3785,9 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	if (rt_state.ground_deform_terrain) {
 		mat.subsurface.ground_terrain = 1;
 	}
+	if (rt_state.mud) {
+		mat.subsurface.mud = 1;
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {

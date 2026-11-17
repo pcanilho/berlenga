@@ -263,7 +263,8 @@ struct alignas(16) RT_MaterialData {
 		uint32_t ground_deform : 1;
 		// The terrain round the patch: only the ground's pore water (the far lattice) from RT_PARAM_GROUND_WET_MAP.
 		uint32_t ground_terrain : 1;
-		uint32_t unused : 1;
+		// BaseMaterial3D Mud (docs/ideas/mud.md, stage 3b): a vehicle's body mud from the instance uniforms.
+		uint32_t mud : 1;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;

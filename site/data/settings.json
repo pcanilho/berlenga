@@ -1154,6 +1154,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud on vehicles",
+   "settings": [
+    "PhysXVehicle3D.body_mud"
+   ],
+   "note": "",
+   "what": "tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
@@ -2231,6 +2242,17 @@
    ],
    "note": "",
    "what": "marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Salt marsh and shingle plants",
+   "settings": [
+    "PlantGenerator.make_saltmarsh()"
+   ],
+   "note": "",
+   "what": "glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
