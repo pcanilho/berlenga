@@ -350,6 +350,17 @@ func _world() -> void:
 					# frames wait for the map alike and show the same waves).
 					if args.has("no-contact-foam"):
 						w.set("contact_foam_strength", 0.0)
+					# --sea-prop=name:value (repeatable): one of the sea's properties.
+					for pa in OS.get_cmdline_user_args():
+						if pa.begins_with("--sea-prop="):
+							var pkv := pa.substr(11).split(":", true, 1)
+							w.set(pkv[0], str_to_var(pkv[1]))
+					# --sea-uniform=name:value (repeatable): one of the sea's shader uniforms, for A/B checks.
+					var wm: ShaderMaterial = w.call("get_water_material")
+					for ua in OS.get_cmdline_user_args():
+						if ua.begins_with("--sea-uniform=") and wm:
+							var kv := ua.substr(14).split(":", true, 1)
+							wm.set_shader_parameter(kv[0], str_to_var(kv[1]))
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
