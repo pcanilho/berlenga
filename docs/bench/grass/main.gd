@@ -330,6 +330,7 @@ func _ready() -> void:
 		turf.data_map = turf.get_path_to(dm)
 		turf.visible = not no_turf
 		cover = VegetationField3D.new()
+		cover.far_volume = false # Not under test here.
 		cover.name = "Cover"
 		cover.populate_on_ready = false
 		cover.tile_size = 4.0
@@ -380,6 +381,7 @@ func _ready() -> void:
 			var ub := Biome.new()
 			ub.species = [usp]
 			ug_field = VegetationField3D.new()
+			ug_field.far_volume = false # Not under test here.
 			ug_field.name = "Undergrowth"
 			ug_field.populate_on_ready = false
 			ug_field.tile_size = 8.0
@@ -1478,6 +1480,7 @@ func _season_checks() -> void:
 # under the stands the blades thin by the shade, in the open they are as before.
 func _sward_shade_check(c: Vector2, open_density: float) -> void:
 	var brk := VegetationField3D.new()
+	brk.far_volume = false # Not under test here.
 	brk.name = "BrackenStands"
 	brk.populate_on_ready = false
 	var sp := PlantSpecies.new()

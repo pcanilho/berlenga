@@ -50,15 +50,15 @@
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/multimesh.h"
 #include "servers/rendering/rendering_server.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/weather/weather_sky_material.h"
-#include "scene/main/viewport.h"
-#include "scene/resources/environment.h"
-#include "scene/resources/image_texture.h"
 
 namespace {
 
@@ -244,6 +244,9 @@ void VegetationField3D::_clear_generated() {
 	placements.clear();
 	shelter_static.clear();
 	shelter_dirty = true;
+	far_image.unref();
+	far_view_state = 0;
+	far_view_round = 0;
 	plant_count = 0;
 }
 
@@ -397,6 +400,28 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 				ps.deadwood_pits.push_back(m.is_valid() && m->has_meta(SNAME("tree_root_pit")) ? PackedFloat32Array(m->get_meta(SNAME("tree_root_pit"))) : PackedFloat32Array());
 			}
 		}
+		// A stone under the roots (trees.md 5q): the floor keeps clear of it as of a root pit. The
+		// bank shear only lifts the mesh, so its footprint across the ground holds.
+		{
+			const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
+			bool any_stone = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				PackedFloat32Array st;
+				if (m.is_valid() && m->has_meta(SNAME("tree_root_stone"))) {
+					st = m->get_meta(SNAME("tree_root_stone"));
+				}
+				if (st.size() >= 6) {
+					any_stone = true;
+					ps.stone_reach = MAX(ps.stone_reach, (Vector2(st[0], st[2]).length() + MAX(st[3], st[5]) + ROOT_STONE_MARGIN) * smax);
+				} else {
+					st.clear();
+				}
+				ps.root_stones.push_back(st);
+			}
+			if (!any_stone) {
+				ps.root_stones.clear();
+			}
+		}
 		if (ps.sp->get_deadwood_rule() == PlantSpecies::DEADWOOD_BESIDE) {
 			r_setup.deadwood_reach = MAX(r_setup.deadwood_reach, ps.sp->get_deadwood_band());
 		}
@@ -424,6 +449,9 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			}
 			if (ps.crown_max > 0.0f && later.sp->uses_litter()) {
 				halo = MAX(halo, later.halo + ps.crown_max + r_setup.litter_reach);
+			}
+			if (ps.stone_reach > 0.0f) {
+				halo = MAX(halo, later.halo + ps.stone_reach);
 			}
 			if (ps.deadwood_reach > 0.0f && later.sp->get_deadwood_rule() != PlantSpecies::DEADWOOD_IGNORE) {
 				halo = MAX(halo, later.halo + ps.deadwood_reach + later.sp->get_deadwood_band());
@@ -686,7 +714,7 @@ int VegetationField3D::get_deadwood_count() const {
 	RWLockRead guard(crown_lock);
 	int n = 0;
 	for (const Deadwood &d : deadwood) {
-		n += d.feature < 0 ? 1 : 0; // Logs and pits, not the places on them.
+		n += d.feature < 0 && !d.stone ? 1 : 0; // Logs and pits, not the places on them nor root stones.
 	}
 	return n;
 }
@@ -1295,6 +1323,20 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
+					// The stone its roots grow over: a disc of its widest half extent, kept clear.
+					if (variant < int(ps.root_stones.size()) && ps.root_stones[variant].size() >= 6) {
+						const PackedFloat32Array &st = ps.root_stones[variant];
+						Deadwood d;
+						d.a = d.b = world.xform(Vector3(st[0], st[1], st[2]));
+						d.radius = (MAX(st[3], st[5]) + ROOT_STONE_MARGIN) * scale;
+						d.pit = true;
+						d.stone = true;
+						local_deadwood.push_back(d);
+						deadwood_insert(local_deadwood_grid, d, local_deadwood.size() - 1, DEADWOOD_CELL);
+						if (out) {
+							out->deadwood.push_back(d);
+						}
+					}
 					if (!out) {
 						continue;
 					}
@@ -1698,6 +1740,7 @@ Ref<ArrayMesh> VegetationField3D::_build_far_volume(const PlaceSetup &p_setup, c
 		mat.instantiate();
 		mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 		mat->set_roughness(0.9f);
+		mat->set_albedo(Color(far_shade, far_shade, far_shade).linear_to_srgb()); // The far match's darkening (far_match_view).
 		const_cast<VegetationField3D *>(this)->far_volume_material = mat;
 	}
 	mesh->surface_set_material(0, mat);
@@ -1941,6 +1984,16 @@ void VegetationField3D::_apply_maps(Maps &p_maps) {
 		rs->global_shader_parameter_set("vegetation_far_map", far_texture->get_rid());
 		rs->global_shader_parameter_set("vegetation_far_rect", Vector4(p_maps.far_rect.position.x, p_maps.far_rect.position.y, p_maps.far_rect.size.x, p_maps.far_rect.size.y));
 		rs->global_shader_parameter_set("vegetation_far_range", p_maps.far_range);
+		far_image = p_maps.far;
+		far_image_rect = p_maps.far_rect;
+		far_image_range = p_maps.far_range;
+		_publish_far_shade();
+		if (far_match_view && far_view_state == 0 && far_view_round == 0) {
+			_far_view_start(30);
+		}
+		if (far_match_view && is_inside_tree()) {
+			set_process_internal(true);
+		}
 	}
 }
 
@@ -2361,7 +2414,7 @@ Error VegetationField3D::populate() {
 	_maps_wants(maps);
 	_compute_maps(maps, crown_lists, far_lists);
 	_apply_maps(maps);
-	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap);
+	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap || _far_view_active());
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -2761,6 +2814,7 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 global uniform sampler2D vegetation_far_map : hint_default_black, filter_linear; // sqrt of premultiplied linear colour, cover.
 global uniform vec4 vegetation_far_rect; // z 0: no plants published.
 global uniform float vegetation_far_range;
+global uniform float vegetation_far_shade;
 
 // The share of plants the plant shader still draws at a distance from the camera, as a share of
 // the range (PlantGenerator's thinning): 1 to 35% of the range, 0 at the range.
@@ -2783,7 +2837,10 @@ vec3 vegetation_far(vec3 world_pos, vec3 albedo, vec3 camera_pos) {
 		return albedo;
 	}
 	vec4 f = textureLod(vegetation_far_map, uv, 0.0);
-	return albedo * (1.0 - f.a * gone) + f.rgb * f.rgb * gone;
+	// vegetation_far_shade: the darkening plants give the ground they stand on within their range
+	// (their shadows and shaded sides), measured on screen (VegetationField3D.far_match_view).
+	float shade = mix(1.0, vegetation_far_shade, f.a * gone);
+	return (albedo * (1.0 - f.a * gone) + f.rgb * f.rgb * gone) * shade;
 }
 
 // Ground albedo with the forest floor over it, where the canopy closes.
@@ -3312,6 +3369,9 @@ void VegetationField3D::_notification(int p_what) {
 			if (!lazy_near.is_empty()) {
 				_lazy_near_update(_stream_centre());
 			}
+			if (_far_view_active()) {
+				_far_view_step();
+			}
 		} break;
 	}
 }
@@ -3393,6 +3453,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cover_grass_layers"), &VegetationField3D::get_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
 	ClassDB::bind_method(D_METHOD("set_far_volume", "enabled"), &VegetationField3D::set_far_volume);
+	ClassDB::bind_method(D_METHOD("set_far_match_view", "enabled"), &VegetationField3D::set_far_match_view);
+	ClassDB::bind_method(D_METHOD("is_far_match_view"), &VegetationField3D::is_far_match_view);
+	ClassDB::bind_method(D_METHOD("get_far_shade"), &VegetationField3D::get_far_shade);
+	ClassDB::bind_method(D_METHOD("get_far_match_stats"), &VegetationField3D::get_far_match_stats);
 	ClassDB::bind_method(D_METHOD("is_far_volume"), &VegetationField3D::is_far_volume);
 	ClassDB::bind_method(D_METHOD("set_far_volume_range", "range"), &VegetationField3D::set_far_volume_range);
 	ClassDB::bind_method(D_METHOD("get_far_volume_range"), &VegetationField3D::get_far_volume_range);
@@ -3434,6 +3498,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "cover_grass", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D"), "set_cover_grass", "get_cover_grass");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "cover_grass_layers", PROPERTY_HINT_ARRAY_TYPE, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D")), "set_cover_grass_layers", "get_cover_grass_layers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_GROUP("Far volume", "far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");

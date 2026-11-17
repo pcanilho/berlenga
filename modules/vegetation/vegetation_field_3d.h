@@ -35,9 +35,9 @@
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
 
-#include "core/templates/hash_map.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/rw_lock.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/safe_refcount.h"
 #include "scene/3d/node_3d.h"
@@ -75,6 +75,7 @@ class VegetationField3D : public Node3D {
 	struct Deadwood {
 		Vector3 a, b;
 		float radius = 0.0f;
+		bool stone = false; // With pit: a stone a tree's roots grow over (tree_root_stone), kept clear like a pit, not counted as wood.
 		bool pit = false; // An uprooted tree's root pit (mesh meta tree_root_pit): a disc of bare soil of this radius round a, not wood.
 		int8_t feature = -1; // A place on a log's surface (tree_deadwood_features: 0 peel edge, 1 drying check): a the point, b - a its outward normal (1 cm); not wood.
 	};
@@ -94,6 +95,7 @@ class VegetationField3D : public Node3D {
 	static constexpr float WOOD_FEEDER_REACH = 0.6f; // How far along a log a wood feeder looks for a crack or bark edge to root in.
 	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
+	static constexpr float ROOT_STONE_MARGIN = 0.04f; // Floor plants keep this far off a stone a tree's roots grow over.
 	LocalVector<Deadwood> deadwood;
 	HashMap<Vector2i, LocalVector<int>> deadwood_grid;
 	float deadwood_max_radius = 0.0f;
@@ -177,6 +179,8 @@ class VegetationField3D : public Node3D {
 		LocalVector<PackedFloat32Array> deadwood_features; // Per variant: tree_deadwood_features (8 floats a record: kind, point, normal, half width; mesh space).
 		LocalVector<PackedFloat32Array> deadwood_pits; // Per variant: the root pit (tree_root_pit: centre, radius, depth in mesh space) of an uprooted tree; empty if none.
 		float deadwood_reach = 0.0f; // How far its logs reach from the plant's origin (times its largest scale); 0: not deadwood.
+		LocalVector<PackedFloat32Array> root_stones; // Per variant: the stone its roots grow over (tree_root_stone: centre, half extents in mesh space); empty if none.
+		float stone_reach = 0.0f; // How far a root stone reaches from the plant's origin (times its largest scale); 0: none.
 		float frontal = 0.0f; // m2 a plant shows the wind at scale 1 (PlantSpecies.wind_frontal_area).
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
@@ -258,7 +262,7 @@ class VegetationField3D : public Node3D {
 	float cover_cell = 4.0f;
 	// Plants past their range as real volume (docs/ideas/vegetation.md, "Far plants as volume"):
 	// a voxel shell per tile and species, from the range out to far_volume_range.
-	bool far_volume = false;
+	bool far_volume = true;
 	float far_volume_range = 150.0f;
 	float far_volume_cell = 0.3f;
 	Ref<StandardMaterial3D> far_volume_material;
@@ -367,6 +371,36 @@ class VegetationField3D : public Node3D {
 	bool _path_traced() const;
 	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.
+	// Live-view match of the far plant colour (far_match_view; vegetation_far_match.cpp): plants
+	// within their range darken the ground they stand on (their shadows, their shaded sides), which
+	// the far colour that replaces them past the range does not carry. Reading the frame back, it
+	// compares ground under plants with bare ground at the same distance, near (plants drawn) and
+	// far (far colour), and scales the far colour's share (vegetation_far_shade) until the two agree.
+	bool far_match_view = true;
+	float far_shade = 1.0f;
+	Ref<Image> far_image; // The far map as published (sqrt of premultiplied colour, cover).
+	Rect2 far_image_rect;
+	float far_image_range = 0.0f;
+	int far_view_state = 0; // 0 idle, 1 waiting, 2 readback in flight.
+	int far_view_wait = 0;
+	int far_view_round = 0;
+	int far_view_misses = 0;
+	Vector3 far_view_camera = Vector3(1e30f, 0, 0);
+	Vector2 far_view_size;
+	PackedVector2Array far_view_px; // Groups of four: near plants, near bare, far plants, far bare.
+	float far_view_ratio = 1.0f;
+	float far_view_step_shade = 1.0f; // The shade before the last step, and the contrast then: a step that moves nothing (a ground without vegetation_far()) is undone.
+	float far_view_step_ratio = 1.0f;
+	float far_view_gain = 1.0f; // How the contrast follows the shade (contrast ~ shade^-gain), measured step to step.
+	int far_view_groups = 0;
+	static float far_shade_published;
+	void _far_view_start(int p_wait);
+	void _far_view_step();
+	void _far_view_issue(RID p_viewport_texture);
+	void _far_view_on_data(const PackedByteArray &p_data, int p_width, int p_height, int p_format);
+	void _far_view_apply(float p_ratio, int p_groups);
+	void _publish_far_shade();
+	bool _far_view_active() const { return far_match_view && far_image.is_valid() && far_image_range > 0.0f; }
 	// The plants' frontal area per square metre (Raupach's lambda) on a 1 m grid, for sand
 	// sheltered from the wind (GroundSurface3D.wind_shelters); rebuilt on demand once plants change.
 	static constexpr float SHELTER_CELL = 1.0f;
@@ -445,6 +479,10 @@ public:
 	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
 	void set_far_volume(bool p_on) { far_volume = p_on; }
+	void set_far_match_view(bool p_enabled);
+	bool is_far_match_view() const { return far_match_view; }
+	float get_far_shade() const { return far_shade; }
+	Dictionary get_far_match_stats() const;
 	bool is_far_volume() const { return far_volume; }
 	void set_far_volume_range(float p_range) { far_volume_range = MAX(p_range, 0.0f); }
 	float get_far_volume_range() const { return far_volume_range; }
