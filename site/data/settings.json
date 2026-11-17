@@ -975,6 +975,18 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "Sand seas",
+   "settings": [
+    "sand_sea_rect",
+    "sand_sea_kind"
+   ],
+   "note": "",
+   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Geology maps",
    "settings": [
     "terrain_geology()"
