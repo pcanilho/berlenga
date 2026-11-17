@@ -3375,6 +3375,31 @@
    "topic": ""
   },
   {
+   "name": "Blast materials",
+   "settings": [
+    "PhysXBlastAsset.materials",
+    "bond_healths"
+   ],
+   "note": "",
+   "what": "pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Blast without stalls",
+   "settings": [
+    "PhysXBlastAsset.prepare_render()",
+    "initial_linear_velocity",
+    "initial_angular_velocity"
+   ],
+   "note": "",
+   "what": "piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fibre shading",
    "settings": [
     "rendering/pathtracing/hair"
