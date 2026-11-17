@@ -1,0 +1,1 @@
+- Water: the far sea mirrors the sky through the mean Fresnel of the waves a pixel holds, so filtered distant water no longer turns into a pale sheet under the horizon (`far_filter`, on).

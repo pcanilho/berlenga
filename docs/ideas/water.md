@@ -3296,3 +3296,19 @@ Docs passed the glow but declined the frame for artefacts. Found and fixed:
 - Aliased horizon dashes and stair-stepped foam rims: the bench rendered without anti-aliasing; storm_crest
   shots use --taa (as the game does), and far_filter keeps the far glitter as roughness.
 - The sun: a warm (1.0, 0.84, 0.64) disc 0.8 degrees across with a tight glow, not a grey blob.
+
+## Far sea: the mean Fresnel of the hidden slopes (17 Nov)
+
+Checked `far_filter` against a path-traced frame of the `sea` view. The path-traced far sea is darker than
+either raster frame (rows just under the horizon about 92 against 135 with the filter off and 151 on). With
+the filter on, the normal near the horizon is nearly level, so the mirrored sky took the full grazing
+Fresnel (close to 1) and the far band turned a pale grey sheet. Scaling the hidden variance changed nothing:
+the raster sky mirror ignored roughness.
+
+Fix (Bruneton, Neyret and Holzschuch 2010, section 4: the reflectance is the Fresnel averaged over the
+visible slopes, not the Fresnel of the mean normal): `water_raster_reflect` takes three Gauss-Hermite slopes
+along the view's tilt (0 and plus or minus sqrt(3) sigma, weights 2/3, 1/6, 1/6), sigma from the pixel's
+roughness (the hidden variance included), each weighted by the area it turns toward the eye (n_k.v over
+n_k.n). Facets facing the eye mirror less and a higher sky, so the band under the horizon drops to about 118,
+nearer the path-traced frame, and keeps the swell's dark troughs. Near water is unchanged (its roughness is
+small). Cost: two more panorama reads per raster water pixel.
