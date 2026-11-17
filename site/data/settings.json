@@ -3440,6 +3440,17 @@
    "topic": ""
   },
   {
+   "name": "Spreading fire",
+   "settings": [
+    "PhysXFireSpread3D"
+   ],
+   "note": "",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, leaving char behind a glowing front with Flow flames and smoke.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fire light and embers",
    "settings": [
     "PhysXFlow3D.fire_light",
