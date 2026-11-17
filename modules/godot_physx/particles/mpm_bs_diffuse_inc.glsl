@@ -30,7 +30,7 @@ layout(set = 0, binding = 15, std430) restrict buffer DiffuseHead {
 }; // [0] ring write head
 layout(set = 0, binding = 16, std430) restrict buffer DiffuseOut {
 	vec4 dout[];
-}; // 1 vec4 / slot for drawing: xyz position, w drawn radius (0: none)
+}; // 1 vec4 / slot for drawing: xyz position, w drawn radius (0: none; negative: spray)
 
 #define FDT (diffuse_a.x)
 #define DRATE (diffuse_a.y)

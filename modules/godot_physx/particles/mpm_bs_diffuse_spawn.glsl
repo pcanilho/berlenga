@@ -34,6 +34,13 @@ void main() {
 	int bs[8];
 	resolve_blocks(base_bc, (base + 2) >> 2, bs);
 
+	// The particle's own velocity field from its last G2P (APIC): v + C (x_node - x), about the position it had
+	// then. Trapped air compares each node with that field, not with v alone, so only motion the smooth field
+	// cannot hold counts -- liquid striking liquid, a break in the velocity -- and a stream's own shear, stretch
+	// and necking (which a single velocity reads as ~1 m/s across the stencil: a smooth pour full of bubbles) do not.
+	mat3 C = mat3(particles[id].c0.xyz, particles[id].c1.xyz, particles[id].c2.xyz);
+	vec3 x_then = x - DT * v;
+
 	const float m_rest = RHO0 * DX * DX * DX;
 	float ta = 0.0; // trapped air, Eq. 2
 	float m = 0.0;
@@ -52,7 +59,7 @@ void main() {
 				}
 				float w = wx[i] * wy[j] * wz[k];
 				vec3 xn = ORIGIN + vec3(node) * DX;
-				vec3 vij = v - g.xyz;
+				vec3 vij = v + C * (xn - x_then) - g.xyz;
 				vec3 xij = x - xn;
 				float lv = length(vij);
 				float lx = length(xij);

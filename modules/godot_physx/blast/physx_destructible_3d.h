@@ -336,6 +336,8 @@ public:
 	// or a dead body (call get_piece_count() first); get_piece_chunk()
 	// returns UINT32_MAX there.
 	Transform3D get_piece_transform(int p_index) const;
+	// The asset chunk indices a piece carries (an island holds several; for build_prefractured, chunk i + 1 is piece i).
+	PackedInt32Array get_piece_chunks(int p_index) const;
 	uint32_t get_piece_chunk(int p_index) const;
 
 	PackedStringArray get_configuration_warnings() const override;
@@ -436,9 +438,9 @@ private:
 	RID _chunk_shape(uint32_t p_chunk);
 	// Per-chunk render data, by material slot, computed once per load. A
 	// piece's mesh gets ONE surface per slot (not per chunk: an island of
-	// ~190 chunks was ~190 draw calls). Every chunk is slot 0 today -- the
-	// asset keeps positions only; an interior-face slot (Blast's
-	// kMaterialInteriorId) slots in here once authoring keeps it.
+	// ~190 chunks was ~190 draw calls). A chunk's surfaces take their slots
+	// from the asset's chunk_meshes (several for a multi-material chunk,
+	// drawn with PhysXBlastAsset.materials); everything else is slot 0.
 	struct ChunkSurface {
 		int slot = 0;
 		PackedVector3Array vertices;

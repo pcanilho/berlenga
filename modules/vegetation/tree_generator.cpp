@@ -1016,7 +1016,8 @@ void TreeGenerator::_grow_year(int p_year) {
 			b.alive = false;
 			continue;
 		}
-		if (b.light < params[PARAM_BUD_LIGHT_MIN]) {
+		// A layered stem's first bud is fed by its new roots and the limb, not by its own light.
+		if (b.light < params[PARAM_BUD_LIGHT_MIN] && !b.layer) {
 			b.alive = false;
 		}
 	}
@@ -1129,7 +1130,10 @@ void TreeGenerator::_grow_year(int p_year) {
 		// the leader, which keeps conifers excurrent.
 		{
 			const Node &on = nodes[buds[bi].node];
-			const int ord = (buds[bi].terminal || buds[bi].sprout || buds[bi].node == 0) ? on.order : on.order + 1;
+			int ord = (buds[bi].terminal || buds[bi].sprout || buds[bi].node == 0) ? on.order : on.order + 1;
+			if (buds[bi].layer || (buds[bi].terminal && on.layered)) {
+				ord = 0; // A layered stem grows as a stem of its own (section 5s).
+			}
 			buds[bi].vigor *= Math::pow(params[PARAM_APICAL_CONTROL], float(ord));
 			// A cut stem's root system feeds a few poles: they shoot up 1-3 m a year (coppice
 			// regrowth; Rackham 2006).
@@ -1195,7 +1199,8 @@ void TreeGenerator::_grow_year(int p_year) {
 		// vigor for it starved the crown of buds and leaves (vigor comes from collected light) and
 		// the tree collapsed to a pole; scaling the shoot length alone keeps every bud and needle
 		// and only draws the branches in.
-		float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f) * Math::pow(params[PARAM_LATERAL_EXTENSION], float(MIN(order, 2)));
+		const bool layered = bud.layer || (bud.terminal && from.layered);
+		float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f) * Math::pow(params[PARAM_LATERAL_EXTENSION], float(layered ? 0 : MIN(order, 2)));
 		if (wind_exposure > 0.0f && order == 0) {
 			// Exposed stems stay short (Holtmeier 2009): the wind's drying and load shorten the
 			// leader's shoots, a flagged spruce at the tree line 3-8 m after a century.
@@ -1211,7 +1216,12 @@ void TreeGenerator::_grow_year(int p_year) {
 			// A resprout's first few years only: then the poles grow on as limbs.
 			len = MIN(len, params[PARAM_LEADER_GROWTH] * (pole && p_year - last_cut_year <= 4 ? 2.0f : 1.0f) / float(count));
 		}
-		const float grav = order == 0 ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
+		if (krummholz > 0.0f) {
+			// Dwarfed: short shoots on every axis under the snow (Holtmeier 2009), so the mat is
+			// dense with needles.
+			len *= Math::lerp(1.0f, 0.55f, krummholz);
+		}
+		const float grav = (order == 0 || layered) ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
 		Vector3 pos = from_root ? from.start : from.end();
 		Vector3 dir = bud.dir;
 		int parent = bud.node;
@@ -1221,9 +1231,9 @@ void TreeGenerator::_grow_year(int p_year) {
 			if (k > 0 || !bud.terminal) {
 				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] + Vector3(0, grav, 0) * 0.5f;
 				d += _random_unit() * Math::sin(noise);
-				if (krummholz > 0.0f && order > 0) {
+				if (krummholz > 0.0f && order > 0 && !layered) {
 					// Mat branches press down under the snow and spread (krummholz, trees.md 5q).
-					d.y -= 0.12f * krummholz;
+					d.y -= 0.08f * krummholz;
 				}
 				dir = d.length_squared() > 1e-8f ? d.normalized() : dir;
 			} else {
@@ -1236,32 +1246,58 @@ void TreeGenerator::_grow_year(int p_year) {
 			if (envelope.size.x > 0.0f && !envelope.has_point(pos + dir * len)) {
 				break;
 			}
-			// Krummholz (trees.md 5q): what rises above the snowpack is killed back each winter,
-			// so the tree grows as a mat about a metre deep.
+			// Krummholz (trees.md 5q, 5s): what rises above the snowpack is killed back each winter,
+			// so the tree grows as a cushion under the snow's surface.
+			float dome_slope = 0.0f;
+			Vector2 out_h;
 			if (krummholz > 0.0f) {
 				// The mat is a low dome a few metres across (Marr 1977; Holtmeier 2009), its top
-				// the snowpack's lumpy surface; shoots past its rim die back.
+				// the snowpack's lumpy surface, highest over its oldest stems and falling to the
+				// rim; it reaches further downwind, where the snow lies deeper and limbs that root
+				// in the lee carry it on (tree islands migrate to the lee, Marr 1977; Benedict
+				// 1984). Shoots past its rim die back.
 				const Vector3 q = pos + dir * len;
-				const float rim = Math::lerp(9.0f, 2.5f, krummholz);
-				const float rq = Vector2(q.x - root.x, q.z - root.z).length() / rim;
-				if (rq > 1.0f) {
+				out_h = Vector2(q.x - root.x, q.z - root.z);
+				krumm_cap = _krumm_cap(q, &dome_slope);
+				if (krumm_cap < 0.0f) {
 					break;
 				}
-				krumm_cap = Math::lerp(5.0f, 0.9f, krummholz) * (1.0f - 0.65f * rq * rq) * (0.75f + 0.5f * moss_noise(q * 0.8f, 0x6b72756du));
 			}
-			if (krummholz > 0.0f && (pos + dir * len).y - root.y > krumm_cap) {
-				if (order == 0) {
-					break; // The leader is killed back at the snow's surface every winter.
+			// The limbs run a hand or two under the surface, the shoots on them filling up to it,
+			// so the mat's outside is needles over a frame of wood, not limbs lying on the dome.
+			const float limb_depth = order <= 2 ? 0.3f * krumm_cap : 0.0f;
+			if (krummholz > 0.0f && (pos + dir * len).y - root.y > krumm_cap - limb_depth) {
+				if (order == 0 || layered || order >= 3) {
+					// A stem's leader and the outer shoots are killed back at the snow's surface every
+					// winter; the shoot's tip lives on under it as a spur, in needles, and pushes again
+					// next year, so the mat's surface is a dense skin of short shoots.
+					if (parent != bud.node || bud.terminal) {
+						Bud t;
+						t.node = parent;
+						t.dir = dir;
+						t.terminal = true;
+						t.idle = bud.idle + 1;
+						if (t.idle <= 12) {
+							buds.push_back(t);
+						}
+					}
+					break;
 				}
-				// Turned aside under the snow's surface: the shoot runs on outward, level.
-				Vector3 hd(dir.x, 0.0f, dir.z);
-				if (hd.length_squared() < 0.04f) {
+				// Under the snow's surface the shoot runs on outward along the dome: limbs at each
+				// height lie in their own skirt under it, not on one level table.
+				Vector3 hd(out_h.x, 0.0f, out_h.y);
+				if (hd.length_squared() < 0.01f) {
+					hd = Vector3(dir.x, 0.0f, dir.z);
+				}
+				if (hd.length_squared() < 0.01f) {
 					hd = Vector3(Math::cos(roll), 0.0f, Math::sin(roll));
 				}
-				dir = (hd.normalized() + Vector3(0.0f, -0.08f, 0.0f)).normalized();
+				hd.normalize();
+				dir = (hd + Vector3(0.0f, MIN(dome_slope, 0.0f) - 0.06f, 0.0f)).normalized();
 			}
 			const int idx = _add_node(parent, pos, dir, len, order, p_year, main);
 			nodes[idx].pole = pole;
+			nodes[idx].layered = layered;
 			if (k == 0 && bud.sprout) {
 				sprout_roots.insert(idx);
 			}
@@ -1280,13 +1316,25 @@ void TreeGenerator::_grow_year(int p_year) {
 	}
 
 	// Leaves stay on the shoots of the last leaf_years years.
-	const int leaf_years = MAX(1, int(params[PARAM_LEAF_YEARS]));
+	// At the tree line conifers keep their needles longer, 8-12 years (Reich et al. 1996).
+	const int leaf_years = MAX(1, int(params[PARAM_LEAF_YEARS]) + int(4.0f * krummholz));
 	_compute_radii();
 	// Leaves on the last leaf_years of shoots, and wherever a terminal bud is alive: a bud with too
 	// little vigor to extend still opens a short shoot (spur) with its leaves (Palubicki: leaves at
 	// the buds).
 	for (Node &n : nodes) {
 		n.leafy = !n.dead && !n.removed && n.length > 0.0f && n.born > p_year - leaf_years;
+	}
+	if (krummholz > 0.0f) {
+		// A mat's skin (trees.md 5s): the shoots in its top few tens of centimetres are cut back
+		// and push again every year, so all of it is in young needles over the old wood inside.
+		for (Node &n : nodes) {
+			if (n.leafy || n.dead || n.removed || n.length <= 0.0f || n.order < 2) {
+				continue;
+			}
+			const float cap = _krumm_cap(n.end(), nullptr);
+			n.leafy = cap > 0.0f && n.end().y - root.y > cap - 0.35f * cap - 0.05f;
+		}
 	}
 	for (const Bud &b : buds) {
 		if (b.alive && (b.terminal || phyllotaxis != PHYLLOTAXIS_WHORLED)) {
@@ -1297,6 +1345,28 @@ void TreeGenerator::_grow_year(int p_year) {
 	if (p_year >= 2) {
 		_shed(p_year);
 	}
+}
+
+// The krummholz mat's top over a point (trees.md 5q, 5s): a low dome a few metres across (Marr
+// 1977; Holtmeier 2009), the snowpack's lumpy surface, highest over its oldest stems and falling to
+// the rim; it reaches further downwind, where the snow lies deeper and limbs that root in the lee
+// carry it on (tree islands migrate to the lee, Marr 1977; Benedict 1984). Height over the root,
+// -1 past the rim; r_slope its fall per metre outward.
+float TreeGenerator::_krumm_cap(const Vector3 &p_q, float *r_slope) const {
+	const Vector3 root = nodes[0].start;
+	const float rim = Math::lerp(9.0f, 2.5f, krummholz);
+	Vector2 off(p_q.x - root.x, p_q.z - root.z);
+	off.x /= off.x > 0.0f ? 1.0f + 0.6f * wind_exposure : 1.0f - 0.35f * wind_exposure;
+	const float rq = off.length() / rim;
+	if (rq > 1.0f) {
+		return -1.0f;
+	}
+	const float cap_h = Math::lerp(3.0f, 0.75f, krummholz) * (0.75f + 0.5f * moss_noise(p_q * 0.8f, 0x6b72756du));
+	const float e = MAX(1.0f - rq * rq, 0.02f);
+	if (r_slope) {
+		*r_slope = -cap_h * 0.88f * 0.6f * Math::pow(e, -0.4f) * 2.0f * rq / rim;
+	}
+	return cap_h * (0.12f + 0.88f * Math::pow(e, 0.6f));
 }
 
 // Palubicki's shedding: a lateral branch whose light per internode stays below the threshold
@@ -1362,7 +1432,9 @@ void TreeGenerator::_shed(int p_year) {
 
 // Pipe model: a branch carries the sum of its children's pipes, r^n = sum r_i^n.
 void TreeGenerator::_compute_radii() {
-	const float e = MAX(1.0f, params[PARAM_PIPE_EXPONENT]);
+	// A mat's many short shoots would pipe into logs: its limbs are thin for the foliage they
+	// carry, a few centimetres (trees.md 5s).
+	const float e = MAX(1.0f, params[PARAM_PIPE_EXPONENT] + 0.6f * krummholz);
 	const float tip = params[PARAM_TIP_RADIUS];
 	LocalVector<float> acc;
 	acc.resize(nodes.size());
@@ -1500,7 +1572,8 @@ void TreeGenerator::_bend_under_gravity() {
 		moment[nodes[i].parent] += moment[i];
 	}
 	const float k = params[PARAM_GRAVITY_BENDING] * 9.81f / 1.0e10f;
-	const float droop = params[PARAM_TWIG_DROOP];
+	// A mat's twigs are pressed flat under the snow, not hanging in curtains (trees.md 5s).
+	const float droop = params[PARAM_TWIG_DROOP] * (1.0f - 0.85f * krummholz);
 	LocalVector<Quaternion> acc;
 	acc.resize(count);
 	acc[0] = Quaternion();
@@ -1655,12 +1728,22 @@ void TreeGenerator::_prune_collisions() {
 			return false;
 		}
 		away /= dist;
-		const Vector3 axis = arm.cross(away);
+		Vector3 axis = arm.cross(away);
 		if (axis.length_squared() < 1e-10f) {
 			return false;
 		}
+		float reach = arm.length();
+		if (krummholz > 0.0f) {
+			// A mat's limbs lie under the snow: swung aside, never up out of it (a 30 degree swing
+			// of a 3 m limb lifted it a metre and a half over the mat).
+			axis = Vector3(0.0f, axis.y >= 0.0f ? 1.0f : -1.0f, 0.0f);
+			reach = Vector2(arm.x, arm.z).length();
+			if (reach < 0.05f) {
+				return false;
+			}
+		}
 		const float need = 1.05f * p_clear - dist + 0.25f * p_clear;
-		const float angle = need / arm.length();
+		const float angle = need / reach;
 		if (angle > Math::deg_to_rad(30.0f)) {
 			return false;
 		}
@@ -12461,7 +12544,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// The year's shoots carry young bark: a birch's are dark red-brown, not its trunk's white.
 	const bool birch_twigs = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
 	const Color twig_col = (birch_twigs ? Color(0.3f, 0.18f, 0.14f) : bark_color).srgb_to_linear();
-	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE]));
+	// A mat's dwarfed shoots carry their needles close: more to a shoot (trees.md 5s).
+	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE] * (1.0f + 0.9f * krummholz)));
 	const float size = params[PARAM_LEAF_SIZE];
 	RandomPCG lr;
 	lr.seed(uint64_t(seed) * 7919u + 13u);
@@ -12646,7 +12730,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const int twigs = spurs[i] ? MAX(1, per / 12) : MAX(1, per / 4);
 		const int per_twig = MAX(1, per / twigs);
 		const float twig_r = params[PARAM_TIP_RADIUS] * 0.6f;
-		const float droop = params[PARAM_TWIG_DROOP];
+		const float droop = params[PARAM_TWIG_DROOP] * (1.0f - 0.85f * krummholz);
 		auto add_twig = [&](const Vector3 &p_base, const Vector3 &p_dir, float p_len, float p_r, int p_leaves) {
 			pts.clear();
 			rad.clear();
@@ -13715,6 +13799,13 @@ void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
 	p_species->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 1.5f);
 	p_species->set_rule_range(PlantSpecies::RULE_JANUARY_TEMPERATURE, Vector2(h.jan_min, h.jan_max));
 	p_species->set_rule_fade(PlantSpecies::RULE_JANUARY_TEMPERATURE, 3.0f);
+	// The tree line: trees stop where the growing season's mean falls to 6.4 C, whatever the
+	// annual mean (Paulsen and Korner 2014; an oceanic mountain's annual mean there is several
+	// degrees above a continental one's). The same rule and fade as the alpine plants
+	// (PlantGenerator::make_alpine, full to 6.4 C and gone at 7.2 C), mirrored, so the two
+	// cross-fade over the same 0.8 C instead of overlapping or leaving a bare band.
+	p_species->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(7.2f, 100.0f));
+	p_species->set_rule_fade(PlantSpecies::RULE_SEASON_TEMPERATURE, 0.8f);
 	// Only the dry end limits: the wet ends of the range maps follow where the climate is also cold
 	// or oceanic, which the temperature rules already cover; rain itself does not stop a tree.
 	p_species->set_rule_range(PlantSpecies::RULE_PRECIPITATION, Vector2(h.p_min, 100000.0f));
@@ -14355,9 +14446,10 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		case STAND_SUBALPINE: {
 			lead = PRESET_NORWAY_SPRUCE;
 			// Larch and spruce thinning towards the tree line; rowan in the gaps.
-			// Subalpine up to the tree line (about the 10 C July isotherm; Korner 2012).
-			// Its cold end is the tree line, about -1.5 C annual mean in the Alps.
-			const Vector2 belt(-1.5f, 2.5f);
+			// Subalpine up to the tree line (Korner 2012), its cold end set by the growing
+			// season's mean (apply_habitat), about -1.5 C annual mean in the Alps but warmer on
+			// an oceanic mountain.
+			const Vector2 belt(-100.0f, 2.5f);
 			clip(canopy(PRESET_LARCH, 0.8f, 50.0f, 0.6f, false, true), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(canopy(PRESET_NORWAY_SPRUCE, 0.8f, 50.0f, 0.6f, true, false), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(open(PRESET_LARCH, 0.4f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
@@ -14368,13 +14460,21 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			// this is where it fails.
 			Ref<PlantSpecies> flagged = _stand_species(PRESET_NORWAY_SPRUCE, false, p_variants, FORM_FLAGGED);
 			flagged->set_density(0.3f);
-			flagged->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-2.3f, -0.8f));
-			flagged->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 0.5f);
+			// Between the closed forest and the tree line, by the growing season's mean (the
+			// alpine plants' rule): 6.4-8.2 C.
+			flagged->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-100.0f, 2.5f));
+			flagged->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 1.0f);
+			flagged->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(6.8f, 7.8f));
+			flagged->set_rule_fade(PlantSpecies::RULE_SEASON_TEMPERATURE, 0.4f);
 			list.push_back(flagged);
 			Ref<PlantSpecies> mat = _stand_species(PRESET_NORWAY_SPRUCE, false, p_variants, FORM_KRUMMHOLZ);
 			mat->set_density(0.35f);
-			mat->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-3.2f, -1.7f));
-			mat->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 0.5f);
+			// Past the tree line among the alpine plants, a degree of season mean above it:
+			// 5.2-7 C (the tree species line; Korner 2012).
+			mat->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-100.0f, 2.5f));
+			mat->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 1.0f);
+			mat->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(5.6f, 6.6f));
+			mat->set_rule_fade(PlantSpecies::RULE_SEASON_TEMPERATURE, 0.4f);
 			list.push_back(mat);
 		} break;
 		case STAND_PINE_HEATH: {
@@ -14709,7 +14809,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		const float tilt = stems == 1 ? _rand(0.0f, 0.04f) : spread * _rand(0.4f, 1.0f);
 		add_stem_bud(Math::TAU * s / stems + _rand(-0.4f, 0.4f), tilt);
 	}
-	const int years = CLAMP(int(params[PARAM_YEARS]), 1, 300);
+	// Mats at the tree line are old, their growth a few centimetres a year (Holtmeier 2009): the
+	// cushion fills over many more years than an upright tree takes to its height.
+	const int years = CLAMP(int(params[PARAM_YEARS] * (1.0f + 0.9f * krummholz)), 1, 300);
+	LocalVector<Vector3> layer_roots;
 	int last_cut = -1;
 	int first_cut = -1;
 	int cuts = 0;
@@ -14724,6 +14827,41 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
 		}
 		_grow_year(y);
+		if (krummholz > 0.0f && y > 6 && int(layer_roots.size()) < 20 && rng.randf() < 0.5f * krummholz) {
+			// Layering (Cooper 1911; Laberge et al. 2000): a mat limb pressed to the ground under
+			// the snow roots where it lies, and its tip or a bud on it turns up as a new stem, so a
+			// mat stands on many stems spread over its width, each with a skirt of its own.
+			const float ground = nodes[0].start.y;
+			LocalVector<int> cand;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &n = nodes[i];
+				if (n.removed || n.dead || n.order < 1 || n.layered || n.end().y - ground > 0.1f) {
+					continue;
+				}
+				const Vector2 h(n.end().x - nodes[0].start.x, n.end().z - nodes[0].start.z);
+				if (h.length() < 0.5f) {
+					continue;
+				}
+				bool near = false;
+				for (const Vector3 &lr : layer_roots) {
+					near = near || lr.distance_to(n.end()) < 0.6f;
+				}
+				if (!near) {
+					cand.push_back(i);
+				}
+			}
+			if (!cand.is_empty()) {
+				const int i = cand[MIN(int(rng.randf() * cand.size()), int(cand.size()) - 1)];
+				layer_roots.push_back(nodes[i].end());
+				Vector3 out(nodes[i].end().x - nodes[0].start.x, 0.0f, nodes[i].end().z - nodes[0].start.z);
+				Bud b;
+				b.node = i;
+				b.dir = (Vector3(0, 1, 0) + out.normalized() * 0.35f).normalized();
+				b.sprout = true;
+				b.layer = true;
+				buds.push_back(b);
+			}
+		}
 		if (cut_height > 0.0f) {
 			// Cut back every cycle (trees.md 5l), first once the stem stands well over the cut;
 			// the last cut cut_since years before the end.

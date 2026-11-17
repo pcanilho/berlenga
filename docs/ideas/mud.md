@@ -333,6 +333,30 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - Characters: boots and legs pick up mud the same way (this was "leg caking", not picked for the ground
   in November; offered again here).
 
+#### Plan (3a: wheels and belly, physics)
+
+- **Stickiness.** Clay sticks to rubber and steel most between its plastic and liquid limits and least dry
+  or as slurry (Fountaine 1954, "Investigations into the mechanism of soil adhesion"; Ren et al. 2001 on
+  soil adhesion to machines): per cell a stickiness 0..1 from moisture and clay share, and a tangential
+  adhesion ca up to ~5 kPa, the ca of Wong's rubber-soil interface (Wong 2008, sec. 2.5).
+- **Clogging.** Per wheel a tread fill 0..1: filled per revolution by slip in sticky soil, shed when the
+  tread's centripetal acceleration w^2 r passes what adhesion holds on a lug-deep layer, ca / (rho t) (with ca
+  5 kPa, 1700 kg/m3, 2 cm lugs: about 150 m/s2, so a wheel spun past ~7 m/s of tread speed cleans itself, the
+  "spin it clean" every MudRunner player learns), washed in standing water, falling off slowly on firm
+  ground. A full tread grips as a slick: its shear limit falls from A c + W tan phi (soil on soil through the
+  lugs) to A ca + W tan delta (rubber on clay, delta about 0.6 phi). Mud mass adds to the wheel's inertia.
+  The shed mass is kept for stage 4's clods.
+- **Adhesion drag.** Sticky clay holds the tread as it leaves the rut: ca over the trailing face (width times
+  sinkage) against the travel, added to compaction and bulldozing.
+- **Belly drag (high-centring).** Once the chassis' underside meets the mud surface: a grid of points on the
+  lowest face of its collision shapes; where one is below the surface, Bekker's plate pressure k z^n (plate
+  the belly's width) lifts it (taking load off the wheels: high-centring), Mohr-Coulomb shear against its
+  slide (A ca + N tan delta, smooth steel), bulldozing at its leading edge, and the belly presses a trough
+  into the field. Damped so the stiff contact does not ring at 60 Hz.
+- Settings on PhysXVehicle3D: `tyre_clogging`, `belly_drag` (both on). Checks: `--test=clog` (fills in sticky
+  clay, grips less, cleans when spun fast, washes in water), `--test=belly` (a low car bogs and leaves a
+  trough, more drag with than without).
+
 ### Stage 4: spray and clods
 
 - GPU ballistic particles from each slipping wheel (speed from the wheel's surface speed, mass from

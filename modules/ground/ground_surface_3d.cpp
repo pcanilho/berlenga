@@ -220,6 +220,11 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		c.gloss = Math::lerp(c.gloss, mud.gloss, mw);
 		c.mud = p_mud * mw;
 	}
+	// Stickiness (docs/ideas/mud.md, stage 3): clay clings to rubber and steel most between its plastic and liquid
+	// limits, little dry, less as a slurry that runs off (Fountaine 1954; Ren et al. 2001); sand barely at all.
+	// The tangential adhesion of wet clay on rubber or steel, up to about 5 kPa (Wong 2008's ca).
+	c.stickiness = Math::smoothstep(0.2f, 0.45f, m) * (1.0f - 0.5f * Math::smoothstep(0.7f, 1.0f, m)) * (1.0f - Math::smoothstep(0.2f, 0.6f, s));
+	c.adhesion = 5.0f * c.stickiness;
 	// Wind moves only dry sand: a few percent of water binds the grains and the threshold climbs out of reach
 	// (Belly 1964; McKenna Neuman and Nickling 1989).
 	c.blown = s * (1.0f - Math::smoothstep(0.05f, 0.2f, m));
@@ -233,6 +238,8 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		c.darken = MAX(c.darken, 0.45f * lw);
 		c.tan_repose = MAX(c.tan_repose, Math::lerp(c.tan_repose, Math::tan(Math::deg_to_rad(60.0f)), lw));
 		c.blown *= 1.0f - lw;
+		c.stickiness *= 1.0f - 0.7f * lw;
+		c.adhesion *= 1.0f - 0.7f * lw;
 	}
 	return c;
 }
@@ -675,15 +682,16 @@ Vector4 GroundSurface3D::_crack_at_cell(int p_i, float *r_damp) const {
 		return Vector4(0.0f, 4.0f * thick, 0.0f, 0.0f);
 	}
 	const float water = st - 1.0f;
+	// Its tone, from dark with water (-1, soaked) to the pale crust (1) by the time half the water has gone; the
+	// cracks open over the second half of that.
+	const float tone = (1.0f - 2.0f * Math::smoothstep(0.5f, 0.95f, water)) * Math::smoothstep(0.004f, 0.009f, thick);
 	if (r_damp) {
-		// Soaked or drying: dark with its water until the first third has gone (where the pore water does not show it
-		// already: material.cpp takes the larger).
-		*r_damp = Math::smoothstep(0.6f, 0.95f, water) * Math::smoothstep(0.004f, 0.009f, thick);
+		*r_damp = MAX(-tone, 0.0f); // material.cpp takes the larger of this and the pore water's
 	}
 	// Ground only saturated (a layer of about 6 mm) cracks too finely to show; a pool's bed does, its cracks finer
 	// and fading out towards its rim as the water there stood shallower.
 	const float shows = Math::smoothstep(0.006f, 0.012f, thick);
-	return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, 4.0f * thick, MIN(crack_state[p_i * CRACK_FLOATS + 1] / 5.0f, 1.0f), Math::smoothstep(0.9f, 0.6f, water) * Math::smoothstep(0.004f, 0.009f, thick));
+	return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, 4.0f * thick, MIN(crack_state[p_i * CRACK_FLOATS + 1] / 5.0f, 1.0f), MAX(tone, 0.0f));
 }
 
 Vector4 GroundSurface3D::get_crack_at(Vector3 p_position) const {
@@ -1357,6 +1365,23 @@ static void ground_water_at(const LocalVector<Node *> &p_sources, const Vector3 
 		if (d > 0.0f && src->has_method(s_flow)) {
 			const Vector3 f = src->call(s_flow, p);
 			v = Vector2(f.x, f.z).length();
+		}
+		if (d > 0.0f && film <= d && src->has_method(s_swash)) {
+			// The inner surf: broken waves cross the shallows as bores, the wave height held at 0.8 of the depth
+			// (saturated breaking, Thornton and Guza 1983). Behind a bore of height H on depth h, which runs at
+			// c = sqrt(g (h + H)), mass conservation gives the water u = c H / (h + H) (Stoker 1957; Svendsen
+			// 1984): 0.6 sqrt(g h). That sweeps prints flat that the sea's mean flow alone would leave standing.
+			// Shoreward of where the shore waves break (h < H / 0.8).
+			static const StringName s_shore = "shore_waves";
+			static const StringName s_shore_h = "shore_wave_height";
+			bool valid = false;
+			const Variant on = src->get(s_shore, &valid);
+			if (valid && bool(on)) {
+				const float hb = float(src->get(s_shore_h)) / 0.8f;
+				if (d < hb) {
+					v = MAX(v, 0.6f * Math::sqrt(9.81f * d));
+				}
+			}
 		}
 		if (film > d) {
 			// The swash's run-up: a thin bore moves at about twice the shallow-water speed of its film.
@@ -2719,6 +2744,8 @@ GroundSoil GroundSurface3D::get_soil(Vector3 p_position) const {
 	soil.unit_weight = c.unit_weight;
 	soil.tan_repose = c.tan_repose;
 	soil.max_sinkage = c.max_dent;
+	soil.stickiness = c.stickiness;
+	soil.adhesion = c.adhesion;
 	return soil;
 }
 
@@ -2741,6 +2768,9 @@ Dictionary GroundSurface3D::get_wheel_soil(Vector3 p_position, float p_load, flo
 	d["shear_limit"] = w.shear_limit;
 	d["traction"] = w.traction;
 	d["lateral"] = w.lateral;
+	const GroundSoil soil = get_soil(p_position);
+	d["stickiness"] = soil.stickiness;
+	d["adhesion"] = soil.adhesion;
 	return d;
 }
 

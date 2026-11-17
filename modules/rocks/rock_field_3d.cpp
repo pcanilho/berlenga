@@ -3424,13 +3424,15 @@ void RockField3D::_contact_job(void *p_job) {
 		const Vector4 o = job->obstacles[i];
 		const real_t r = o.z;
 		const Vector2 up = job->uphill[i];
-		// The damp ring: about 0.6 of the radius wide (at least 10 cm), falling off smoothly.
-		const real_t ring = MAX(real_t(0.1), real_t(0.6) * r);
-		const real_t bank = ring * 2.2; // the banked fines reach further out uphill
+		// The damp ring: about the radius wide (at least 25 cm, so small stones still show one), falling off smoothly.
+		const real_t ring = MAX(real_t(0.25), real_t(1.0) * r);
+		const real_t bank = ring * 2.5; // the banked fines reach further out uphill
 		const real_t reach = r + MAX(ring, bank);
 		const int x0 = MAX(0, int(Math::floor((o.x - reach - origin.x) / texel))), x1 = MIN(R - 1, int(Math::ceil((o.x + reach - origin.x) / texel)));
 		const int z0 = MAX(0, int(Math::floor((o.y - reach - origin.y) / texel))), z1 = MIN(R - 1, int(Math::ceil((o.y + reach - origin.y) / texel)));
 		const real_t uphill_w = CLAMP(real_t(o.w) * 2.5f, real_t(0.0), real_t(1.0));
+		// Pebbles mark the ground less than boulders (a faint ring, not a dark halo round every chip).
+		const real_t size_w = CLAMP(r / real_t(0.35), real_t(0.35), real_t(1.0));
 		for (int z = z0; z <= z1; z++) {
 			for (int x = x0; x <= x1; x++) {
 				const Vector2 d = Vector2(origin.x + (x + 0.5) * texel - o.x, origin.y + (z + 0.5) * texel - o.y);
@@ -3444,8 +3446,8 @@ void RockField3D::_contact_job(void *p_job) {
 				const real_t sf = CLAMP(1.0 - out / span, 0.0, 1.0);
 				const real_t fines = sf * sf * (3.0 - 2.0 * sf) * Math::lerp(real_t(0.45), real_t(1.0), u * uphill_w);
 				uint8_t *px = w + (z * R + x) * 2;
-				px[0] = MAX(px[0], uint8_t(CLAMP(damp * 255.0, 0.0, 255.0)));
-				px[1] = MAX(px[1], uint8_t(CLAMP(fines * 255.0, 0.0, 255.0)));
+				px[0] = MAX(px[0], uint8_t(CLAMP(damp * size_w * 255.0, 0.0, 255.0)));
+				px[1] = MAX(px[1], uint8_t(CLAMP(fines * size_w * 255.0, 0.0, 255.0)));
 			}
 		}
 	}

@@ -169,6 +169,9 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 	if (foam_multimesh.is_valid()) {
 		_mpm_foam_slots = MAX(foam_particle_count, 1);
 		RenderingServer::get_singleton()->multimesh_allocate_data(foam_multimesh, _mpm_foam_slots, RSE::MULTIMESH_TRANSFORM_3D);
+		if (spray_multimesh.is_valid()) {
+			RenderingServer::get_singleton()->multimesh_allocate_data(spray_multimesh, _mpm_foam_slots, RSE::MULTIMESH_TRANSFORM_3D);
+		}
 	}
 	// The GPU build runs on the render thread; is_available() only flips true a
 	// frame or two later. Capacity is known synchronously, so treat "configure
@@ -839,9 +842,12 @@ void PhysXParticleFluid3D::_make_fluid() {
 }
 
 void PhysXParticleFluid3D::_make_mpm_foam() {
-	// Diffuse particles drawn as small lit spheres, as Wretborn et al. 2022 render
-	// their bubbles and foam. Opaque, so the path tracer and the water's refraction
-	// see them.
+	// Foam and bubbles drawn as small lit spheres, as Wretborn et al. 2022 render
+	// them. Opaque, so the path tracer and the water's refraction see them. Spray
+	// is drawn apart, as clear drops: airborne droplets are single drops of water
+	// whose look is their specular and refraction (Reisch et al. 2016, "Simulating
+	// Rivers in The Good Dinosaur": particles for droplets, scattering volumes only
+	// for whitewater); drawn white, a stream's spray read as a curtain of beads.
 	Ref<SphereMesh> sphere;
 	sphere.instantiate();
 	sphere->set_radius(0.5); // unit diameter: each instance is scaled to its own size
@@ -865,6 +871,26 @@ void PhysXParticleFluid3D::_make_mpm_foam() {
 	rs->instance_set_transform(foam_instance, Transform3D());
 	rs->instance_set_custom_aabb(foam_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
 	_apply_gi_mode(foam_instance);
+
+	Ref<SphereMesh> drop;
+	drop.instantiate();
+	drop->set_radius(0.5);
+	drop->set_height(1.0);
+	drop->set_radial_segments(10); // round enough for a drop's highlight and refraction to read
+	drop->set_rings(5);
+	Ref<StandardMaterial3D> water = make_clear_water_material();
+	// A drop is as thick as it is wide: the raster refraction leaves it on its far side.
+	water->set_transmission_thickness(MAX(_effective_foam_size(), 0.001f));
+	drop->set_material(water);
+	spray_mesh = drop;
+	spray_multimesh = rs->multimesh_create();
+	rs->multimesh_allocate_data(spray_multimesh, _mpm_foam_slots, RSE::MULTIMESH_TRANSFORM_3D);
+	rs->multimesh_set_mesh(spray_multimesh, spray_mesh->get_rid());
+	rs->multimesh_set_visible_instances(spray_multimesh, 0);
+	spray_instance = rs->instance_create2(spray_multimesh, get_world_3d()->get_scenario());
+	rs->instance_set_transform(spray_instance, Transform3D());
+	rs->instance_set_custom_aabb(spray_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+	_apply_gi_mode(spray_instance);
 }
 
 void PhysXParticleFluid3D::_mpm_update_diffuse() {
@@ -876,21 +902,28 @@ void PhysXParticleFluid3D::_mpm_update_diffuse() {
 	const int slots = MIN((int)(d.size() / 4), _mpm_foam_slots);
 	if (!foam_enabled || slots == 0) {
 		rs->multimesh_set_visible_instances(foam_multimesh, 0);
+		if (spray_multimesh.is_valid()) {
+			rs->multimesh_set_visible_instances(spray_multimesh, 0);
+		}
 		return;
 	}
-	// Compact the live slots (radius > 0) into the instance buffer.
-	PackedFloat32Array buf;
+	// Compact the live slots (radius != 0; negative: spray) into the two instance buffers.
+	PackedFloat32Array buf, sbuf;
 	buf.resize(_mpm_foam_slots * 12);
+	sbuf.resize(_mpm_foam_slots * 12);
 	float *b = buf.ptrw();
+	float *sb = sbuf.ptrw();
 	const float *s = d.ptr();
-	int n = 0;
+	int n = 0, ns = 0;
+	const bool split = spray_multimesh.is_valid();
 	for (int i = 0; i < slots; i++) {
-		const float r = s[i * 4 + 3];
-		if (!(r > 0.0f)) {
+		const float rs_ = s[i * 4 + 3];
+		if (!(rs_ != 0.0f) || Math::is_nan(rs_)) {
 			continue;
 		}
-		const float sc = r * 2.0f;
-		float *t = &b[n * 12];
+		const bool spray = split && rs_ < 0.0f;
+		const float sc = Math::abs(rs_) * 2.0f;
+		float *t = spray ? &sb[ns * 12] : &b[n * 12];
 		t[0] = sc;
 		t[1] = 0;
 		t[2] = 0;
@@ -903,11 +936,19 @@ void PhysXParticleFluid3D::_mpm_update_diffuse() {
 		t[9] = 0;
 		t[10] = sc;
 		t[11] = s[i * 4 + 2];
-		n++;
+		if (spray) {
+			ns++;
+		} else {
+			n++;
+		}
 	}
-	_mpm_live_diffuse = n;
+	_mpm_live_diffuse = n + ns;
 	rs->multimesh_set_buffer(foam_multimesh, buf);
 	rs->multimesh_set_visible_instances(foam_multimesh, n);
+	if (split) {
+		rs->multimesh_set_buffer(spray_multimesh, sbuf);
+		rs->multimesh_set_visible_instances(spray_multimesh, ns);
+	}
 }
 
 void PhysXParticleFluid3D::_apply_foam() {
@@ -956,6 +997,15 @@ void PhysXParticleFluid3D::_free_fluid() {
 		foam_multimesh = RID();
 	}
 	foam_mesh.unref();
+	if (spray_instance.is_valid()) {
+		rs->free_rid(spray_instance);
+		spray_instance = RID();
+	}
+	if (spray_multimesh.is_valid()) {
+		rs->free_rid(spray_multimesh);
+		spray_multimesh = RID();
+	}
+	spray_mesh.unref();
 
 	if (foam_mesh_instance.is_valid()) {
 		rs->free_rid(foam_mesh_instance);
@@ -1185,6 +1235,9 @@ void PhysXParticleFluid3D::clear() {
 	}
 	if (foam_multimesh.is_valid()) {
 		RenderingServer::get_singleton()->multimesh_set_visible_instances(foam_multimesh, 0);
+	}
+	if (spray_multimesh.is_valid()) {
+		RenderingServer::get_singleton()->multimesh_set_visible_instances(spray_multimesh, 0);
 	}
 	spawned = false;
 }
@@ -2122,7 +2175,7 @@ void PhysXParticleFluid3D::set_foam_buoyancy(float p_v) {
 void PhysXParticleFluid3D::set_foam_size(float p_v) {
 	foam_size = p_v > 0.0f ? MAX(p_v, 0.001f) : 0.0f; // 0 = follow particle_size
 	Ref<SphereMesh> s = foam_mesh;
-	if (s.is_valid()) {
+	if (s.is_valid() && mpm == nullptr) { // the MPM spheres are unit size, each instance scaled to its own
 		s->set_radius(_effective_foam_size() * 0.5);
 		s->set_height(_effective_foam_size());
 	}

@@ -79,6 +79,11 @@ struct PhysXVehicleSoilWheel {
 	bool soft = false;
 	bool printed = false;
 	Vector3 last_print;
+	// Mud in the tread (docs/ideas/mud.md, stage 3): 0 clean, 1 full; and the clay it has thrown off, kg.
+	float mud = 0.0f;
+	float shed = 0.0f;
+	float grip = 1.0f; // the share of the clean shear limit it keeps
+	float base_moi = -1.0f;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSoil soil;
 #endif
@@ -100,12 +105,56 @@ static float _soil_slip(const Vehicle4W &p_v, PxU32 p_i, float p_spin) {
 	return CLAMP((wr - vx) / d, -1.0f, 1.0f);
 }
 
+// Mud in the tread (docs/ideas/mud.md, stage 3): sticky clay packs into the tread as it slips through it; a tread
+// turning fast enough flings it off (w^2 r past ca / (rho t): GroundTerramechanics::shedding_speed()); standing water
+// washes it out; on firm ground it falls off slowly. A full tread grips as a slick and adds its mass to the wheel.
+static constexpr float TREAD_DEPTH = 0.02f; // m, a lug
+static constexpr float CLAY_DENSITY = 1700.0f; // kg/m3
+
+static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i, float p_spin, float p_dt, bool p_soft, float p_water) {
+	const PxVehicleWheelParams &wp = p_v.wheelParams[p_i];
+	const float r = wp.radius;
+	const float tread = Math::abs(p_spin) * r; // m/s
+	const float revs = tread / ((float)Math::TAU * r); // per second
+	float &f = p_sw.mud;
+	const float before = f;
+	if (p_soft && p_sw.soil.stickiness > 0.0f) {
+		// A quarter of the tread fills per turn at full slip in the stickiest clay, a tenth rolling.
+		f += 0.25f * p_sw.soil.stickiness * (0.4f + 0.6f * Math::abs(p_sw.slip)) * revs * (1.0f - f) * p_dt;
+		const float shed_speed = GroundTerramechanics::shedding_speed(p_sw.soil, r);
+		if (tread > shed_speed) {
+			f -= f * MIN(2.0f * (tread / shed_speed - 1.0f) * p_dt, 1.0f);
+		}
+	} else {
+		// Firm ground or no soil: it dries and drops, more as the wheel turns over bumps.
+		f -= f * MIN((0.02f + 0.05f * revs) * p_dt, 1.0f);
+		if (p_soft) {
+			// Clean soil (sand, dry ground) scours it.
+			f -= f * MIN(0.2f * revs * p_dt, 1.0f);
+		}
+	}
+	if (p_water > 0.02f) {
+		// Washed in standing water, faster as the wheel turns in it.
+		f -= f * MIN(MIN(p_water / 0.1f, 1.0f) * (0.2f + 0.5f * revs) * p_dt, 1.0f);
+	}
+	f = CLAMP(f, 0.0f, 1.0f);
+	const float full_kg = (float)Math::TAU * r * 2.0f * wp.halfWidth * TREAD_DEPTH * 0.5f * CLAY_DENSITY;
+	if (f < before) {
+		p_sw.shed += (before - f) * full_kg;
+	}
+	if (p_sw.base_moi < 0.0f) {
+		p_sw.base_moi = p_v.wheelParams[p_i].moi;
+	}
+	p_v.wheelParams[p_i].moi = p_sw.base_moi + f * full_kg * r * r;
+}
+
 class PhysXVehicleSoilRoad : public PxVehicleComponent {
 public:
 	Vehicle4W *vehicle = nullptr;
 	PhysXVehicleSoilWheel *wheels = nullptr;
 	PxVehicleSimulationContext *context = nullptr;
 	float base_slip_denominator = -1.0f;
+	bool clogging = true;
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -128,6 +177,10 @@ public:
 			}
 			v.tireForceParams[i].longStiff = sw.base_long_stiff;
 			if (!ground || !road.hitState) {
+				if (clogging) {
+					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, 0.0f);
+				}
+				sw.grip = 1.0f;
 				sw.soft = false;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
@@ -143,6 +196,10 @@ public:
 			sw.soil = ground->get_soil(at);
 			sw.soft = sw.soil.soft;
 			if (!sw.soft) {
+				if (clogging) {
+					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
+				}
+				sw.grip = 1.0f;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
 				sw.slip = 0.0f;
@@ -158,6 +215,11 @@ public:
 			sw.spin_n = 0;
 			sw.slip += (_soil_slip(v, i, spin) - sw.slip) * MIN(p_dt / 0.1f, 1.0f);
 			const float slip = sw.slip;
+			if (clogging) {
+				_clog_update(sw, v, i, spin, p_dt, true, ground->get_standing_water_at(at));
+			} else {
+				sw.mud = 0.0f;
+			}
 			const PxVec3 lng = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLONGITUDINAL];
 			const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
 			const float v_lng = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
@@ -184,7 +246,9 @@ public:
 			if (load > 0.0f) {
 				const PxVehicleTireForceParams &tp = v.tireForceParams[i];
 				const float peak = MAX(MAX(tp.frictionVsSlip[0][1], tp.frictionVsSlip[1][1]), MAX(tp.frictionVsSlip[2][1], 0.05f));
-				road.friction = probe.shear_limit / load / peak;
+				// A clogged tread grips as a slick (stage 3).
+				sw.grip = Math::lerp(1.0f, GroundTerramechanics::clogged_grip(sw.soil, load, probe.contact_length * width), sw.mud);
+				road.friction = probe.shear_limit * sw.grip / load / peak;
 				const float slope = probe.shear_limit * probe.contact_length / (2.0f * MAX(sw.soil.shear_k, 1e-3f));
 				const float substep = p_dt / 3.0f;
 				const float stable = 1.5f * wp.moi * SOIL_SLIP_SPEED / (MAX(substep, 1e-4f) * wp.radius * wp.radius);
@@ -270,6 +334,7 @@ class PhysXVehicleSoilTire : public PxVehicleComponent {
 public:
 	Vehicle4W *vehicle = nullptr;
 	PhysXVehicleSoilWheel *wheels = nullptr;
+	bool adhesion = true;
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -298,7 +363,8 @@ public:
 			const float v_lng = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
 			// At the wheel's actual sinkage (which builds over time), not the steady state of this slip.
 			const float width = 2.0f * wp.halfWidth;
-			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already);
+			// Plus sticky clay holding the tread as it leaves the rut (stage 3).
+			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already) + (adhesion ? GroundTerramechanics::adhesion_resistance(sw.soil, width, sw.sinkage) : 0.0f);
 			const float r = resist * CLAMP(v_lng / 0.3f, -1.0f, 1.0f);
 			if (r != 0.0f) {
 				const PxVec3 dF = lng * -r;
@@ -320,7 +386,7 @@ public:
 			sw.side_bulldozing = Math::abs(side);
 			}
 			sw.resistance = Math::abs(r);
-			sw.traction = ws.traction;
+			sw.traction = ws.traction * sw.grip;
 		}
 		return true;
 	}
@@ -346,6 +412,11 @@ struct PhysXVehicle3D::Impl {
 	// `wheels` vector (child-registration order) for that canonical slot --
 	// see configure_vehicle4w()'s own doc comment.
 	PxU32 wheel_order[4] = {};
+	// The chassis box (its half size and pose in this node's frame), for the belly (stage 3).
+	Vector3 chassis_half;
+	Transform3D chassis_local;
+	float belly_drag = 0.0f;
+	float belly_support = 0.0f;
 };
 
 PhysXVehicle3D::PhysXVehicle3D() {
@@ -400,6 +471,8 @@ bool PhysXVehicle3D::_build() {
 		ERR_PRINT("PhysXVehicle3D: chassis CollisionShape3D must use a BoxShape3D.");
 		return false;
 	}
+	impl->chassis_half = box_shape->get_size() * 0.5f;
+	impl->chassis_local = chassis_shape_node->get_transform();
 
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server) {
@@ -487,6 +560,7 @@ bool PhysXVehicle3D::_build() {
 	impl->soil_road.base_slip_denominator = -1.0f;
 	impl->soil_tire.vehicle = &impl->vehicle;
 	impl->soil_tire.wheels = impl->soil_wheels;
+	impl->soil_road.clogging = tyre_clogging;
 	impl->vehicle.soil_road_component = soft_soil ? &impl->soil_road : nullptr;
 	impl->vehicle.soil_tire_component = soft_soil ? &impl->soil_tire : nullptr;
 #endif
@@ -589,6 +663,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			// Engine.time_scale 0 gives a zero step: the vehicle holds still (PhysX rejects a step that is not positive).
 			if (get_physics_process_delta_time() > 0.0) {
 				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+				_belly_step((float)get_physics_process_delta_time());
 			}
 			// v.rigidBodyState.pose is CoM-relative, not the actor's real
 			// origin (confirmed directly by comparing it against a raw
@@ -682,6 +757,130 @@ void PhysXVehicle3D::set_soft_soil(bool p_enabled) {
 	}
 	soft_soil = p_enabled;
 	_rebuild_if_live();
+}
+
+void PhysXVehicle3D::set_tyre_clogging(bool p_enabled) {
+	tyre_clogging = p_enabled;
+	impl->soil_road.clogging = p_enabled;
+}
+
+void PhysXVehicle3D::set_belly_drag(bool p_enabled) {
+	belly_drag = p_enabled;
+}
+
+real_t PhysXVehicle3D::get_wheel_mud(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].mud;
+}
+
+real_t PhysXVehicle3D::get_wheel_mud_shed(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].shed;
+}
+
+real_t PhysXVehicle3D::get_belly_drag() const {
+	return impl->belly_drag;
+}
+
+real_t PhysXVehicle3D::get_belly_support() const {
+	return impl->belly_support;
+}
+
+// The belly in the mud (docs/ideas/mud.md, stage 3). Off-road games and NRMM count "belly drag" once the sinkage
+// passes the ground clearance; here the chassis box's underside, sampled 3 across by 5 along, meets the ground's
+// deformed surface. Where a sample is under it by z: Bekker's plate pressure k z^n (k = kc / b + kphi, b the
+// belly's width) holds it up, which takes load off the wheels (high-centring); Mohr-Coulomb shear on smooth steel
+// (A ca + N tan delta, delta 0.6 phi) drags against its slide; the leading row bulldozes (Bekker) what is not yet
+// pressed; and the belly presses a trough into the field. Depths from the undisturbed surface (the trough is mud
+// packed under the belly, still bearing). Damped near critical so the stiff contact does not ring.
+void PhysXVehicle3D::_belly_step(float p_delta) {
+	impl->belly_drag = 0.0f;
+	impl->belly_support = 0.0f;
+#ifdef MODULE_GROUND_ENABLED
+	GroundSurface3D *ground = GroundSurface3D::get_active();
+	PxRigidDynamic *dyn = impl->vehicle.physxActor.rigidBody ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
+	if (!belly_drag || !soft_soil || !ground || !dyn || impl->chassis_half == Vector3()) {
+		return;
+	}
+	const Transform3D box = get_global_transform() * impl->chassis_local;
+	const Vector3 h = impl->chassis_half;
+	const PxTransform com_pose = dyn->getGlobalPose() * dyn->getCMassLocalPose();
+	const Vector3 com(com_pose.p.x, com_pose.p.y, com_pose.p.z);
+	const PxVec3 lin_px = dyn->getLinearVelocity();
+	const PxVec3 ang_px = dyn->getAngularVelocity();
+	const Vector3 lin(lin_px.x, lin_px.y, lin_px.z);
+	const Vector3 ang(ang_px.x, ang_px.y, ang_px.z);
+	const Vector3 fwd = -box.basis.get_column(2).normalized();
+	const int NX = 3;
+	const int NZ = 5;
+	const float wx = 2.0f * h.x * 0.85f;
+	const float wz = 2.0f * h.z * 0.85f;
+	const float area = wx * wz / float(NX * NZ);
+	const float m_share = (float)mass / float(NX * NZ);
+	Vector3 force;
+	Vector3 torque;
+	float deepest = 0.0f;
+	Vector3 slide_sum;
+	for (int iz = 0; iz < NZ; iz++) {
+		for (int ix = 0; ix < NX; ix++) {
+			const Vector3 local((float(ix) + 0.5f) / NX * wx - 0.5f * wx, -h.y, (float(iz) + 0.5f) / NZ * wz - 0.5f * wz);
+			const Vector3 p = box.xform(local);
+			// Under the undisturbed surface: the trough the belly presses is mud packed under it, still bearing.
+			const float z = ground->get_ground_height_at(p) - p.y;
+			if (z <= 0.0f) {
+				continue;
+			}
+			const GroundSoil soil = ground->get_soil(p);
+			if (!soil.soft) {
+				continue;
+			}
+			const float zc = MIN(z, soil.max_sinkage + 0.05f);
+			const float k = soil.kc / MAX(wx, 0.1f) + soil.kphi; // kN/m^(n+2)
+			const float pressure = MIN(k * Math::pow(zc, soil.n), 300.0f); // kPa
+			const Vector3 v = lin + ang.cross(p - com);
+			float n_force = 1000.0f * pressure * area;
+			const float k_eff = soil.n * n_force / MAX(zc, 1e-3f);
+			n_force = MAX(n_force - 2.0f * 0.8f * Math::sqrt(k_eff * m_share) * v.y, 0.0f);
+			Vector3 vh(v.x, 0.0f, v.z);
+			const float speed = vh.length();
+			Vector3 f(0.0f, n_force, 0.0f);
+			if (speed > 1e-3f) {
+				const Vector3 dir = vh / speed;
+				float shear = 1000.0f * area * soil.adhesion + n_force * 0.6f * soil.tan_phi;
+				// The leading row's edge pushes a wedge of the mud (its width, the depth under the surface).
+				const float lead = dir.dot(fwd);
+				if ((iz == 0 && lead < -0.3f) || (iz == NZ - 1 && lead > 0.3f)) {
+					const float already = MAX(ground->get_dent_at(p) - ground->get_rim_at(p), 0.0f);
+					shear += GroundTerramechanics::bulldozing_resistance(soil, wx / NX, zc, MIN(already, zc));
+				}
+				// Eased in over the first 0.3 m/s, so a belly at rest is not pushed about.
+				f -= dir * shear * MIN(speed / 0.3f, 1.0f);
+				impl->belly_drag += shear * MIN(speed / 0.3f, 1.0f);
+				slide_sum += vh;
+			}
+			impl->belly_support += n_force;
+			force += f;
+			torque += (p - com).cross(f);
+			deepest = MAX(deepest, z);
+		}
+	}
+	if (force == Vector3()) {
+		return;
+	}
+	const PxVec3 pf(force.x, force.y, force.z);
+	const PxVec3 pt(torque.x, torque.y, torque.z);
+	GodotPhysXServer3D::run_on_physics_thread([=]() {
+		dyn->addForce(pf, PxForceMode::eFORCE);
+		dyn->addTorque(pt, PxForceMode::eFORCE);
+	});
+	// The trough: the belly's footprint pressed to its depth under the surface there.
+	const Vector3 c = box.xform(Vector3(0.0f, -h.y, 0.0f));
+	const float sink = deepest;
+	const Vector3 side = box.basis.get_column(0).normalized();
+	const Vector3 slide = slide_sum / float(NX * NZ);
+	ground->press_wheel(c, Vector2(wx, wz), Math::atan2(-side.z, side.x), sink, Vector2(slide.x, slide.z));
+	(void)p_delta;
+#endif
 }
 
 int PhysXVehicle3D::_soil_slot(int p_wheel) const {
@@ -1032,6 +1231,16 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_side_force", "wheel"), &PhysXVehicle3D::get_wheel_soil_side_force);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_resistance", "wheel"), &PhysXVehicle3D::get_wheel_soil_resistance);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_traction", "wheel"), &PhysXVehicle3D::get_wheel_soil_traction);
+	ClassDB::bind_method(D_METHOD("set_tyre_clogging", "enabled"), &PhysXVehicle3D::set_tyre_clogging);
+	ClassDB::bind_method(D_METHOD("is_tyre_clogging"), &PhysXVehicle3D::is_tyre_clogging);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tyre_clogging"), "set_tyre_clogging", "is_tyre_clogging");
+	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);
+	ClassDB::bind_method(D_METHOD("is_belly_drag"), &PhysXVehicle3D::is_belly_drag);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "belly_drag"), "set_belly_drag", "is_belly_drag");
+	ClassDB::bind_method(D_METHOD("get_wheel_mud", "wheel"), &PhysXVehicle3D::get_wheel_mud);
+	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);
+	ClassDB::bind_method(D_METHOD("get_belly_drag"), &PhysXVehicle3D::get_belly_drag);
+	ClassDB::bind_method(D_METHOD("get_belly_support"), &PhysXVehicle3D::get_belly_support);
 	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);
 	ClassDB::bind_method(D_METHOD("is_wheel_on_soft_soil", "wheel"), &PhysXVehicle3D::is_wheel_on_soft_soil);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);

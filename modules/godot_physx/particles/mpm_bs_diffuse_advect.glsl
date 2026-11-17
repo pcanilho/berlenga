@@ -136,7 +136,9 @@ void main() {
 
 	diffuse[id * 2u] = vec4(x, life);
 	diffuse[id * 2u + 1u] = vec4(v, rad);
-	// Foam shrinks over the last half of its mean life.
+	// Foam shrinks over the last half of its mean life. Spray is drawn with a
+	// negative radius: the node draws it as clear drops, foam and bubbles white.
 	float shrink = clamp(life / (0.5 * DLIFE), 0.0, 1.0);
-	dout[id] = life > 0.0 ? vec4(x, rad * (0.35 + 0.65 * shrink)) : vec4(0.0);
+	float drawn = rad * (0.35 + 0.65 * shrink);
+	dout[id] = life > 0.0 ? vec4(x, frac < SPRAY_BELOW ? -drawn : drawn) : vec4(0.0);
 }

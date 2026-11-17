@@ -284,6 +284,7 @@ func _world() -> void:
 		print("talus histogram (0-0.2..0.8-1): %s, till cells %d, highest %.0f m, ice %.2f km2" % [hist, till, hmax, gen.get_last_glacial_ice_area() / 1e6])
 	var tm := TerrainMaterial3D.new()
 	tm.use_generator(gen)
+	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.update_shader()
 	var land := Landscape3D.new()
 	land.cliff_relief = 0.0 # on by default; this bench measures without it

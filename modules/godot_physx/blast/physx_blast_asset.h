@@ -67,8 +67,20 @@ public:
 	// Optional render meshes, one per chunk (entry i: a Mesh arrays Array, indexed or not, with any of normals,
 	// tangents, colours, UV and UV2), for chunks authored outside Blast with their own shading data (a procedural
 	// rock's pieces). Empty: pieces are drawn from chunk_points with flat normals, as before.
+	// An entry may also be a Mesh, or an Array of surfaces (each a Mesh arrays Array, or a Dictionary with "arrays"
+	// and "slot"), for chunks with several materials (bark, wood, moss, leaves): surface s draws with materials[slot],
+	// its slot being s unless given (a Mesh surface whose material is in materials takes that slot).
 	void set_chunk_meshes(const Array &p_meshes) { chunk_meshes = p_meshes; }
 	Array get_chunk_meshes() const { return chunk_meshes; }
+
+	// Materials by surface slot for chunk_meshes; a PhysXDestructible3D's material_override still wins over them.
+	void set_materials(const Array &p_materials) { materials = p_materials; }
+	Array get_materials() const { return materials; }
+
+	// Optional initial health of each bond, in the asset's bond order, as a multiple of the destructible's health
+	// (a twig joint 0.01, a trunk joint 50). Empty: every bond starts at the destructible's health.
+	void set_bond_healths(const PackedFloat32Array &p_healths) { bond_healths = p_healths; }
+	PackedFloat32Array get_bond_healths() const { return bond_healths; }
 
 	// Optional collision hulls, one PackedVector3Array per chunk (its convex hull's points, few of them), so a
 	// destructible cooks small hulls instead of every render triangle's corners. Empty: hulls from chunk_points.
@@ -80,4 +92,6 @@ private:
 	Array chunk_points;
 	Array chunk_meshes;
 	Array chunk_hulls;
+	Array materials;
+	PackedFloat32Array bond_healths;
 };

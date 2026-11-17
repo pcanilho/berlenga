@@ -36,6 +36,7 @@
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -135,6 +136,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
 	ClassDB::bind_method(D_METHOD("get_piece_count"), &PhysXDestructible3D::get_piece_count);
 	ClassDB::bind_method(D_METHOD("get_piece_transform", "index"), &PhysXDestructible3D::get_piece_transform);
+	ClassDB::bind_method(D_METHOD("get_piece_chunks", "index"), &PhysXDestructible3D::get_piece_chunks);
 	ClassDB::bind_method(D_METHOD("get_piece_chunk", "index"), &PhysXDestructible3D::get_piece_chunk);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
@@ -572,7 +574,6 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 	asset_chunk_count = NvBlastAssetGetChunkCount(asset, blast_log);
 	asset_bond_count = NvBlastAssetGetBondCount(asset, blast_log);
 
-
 	const size_t family_size = NvBlastAssetGetFamilyMemorySize(asset, blast_log);
 	family_mem = aligned_alloc_16(family_size);
 	ERR_FAIL_NULL_V(family_mem, false);
@@ -582,6 +583,18 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 	NvBlastActorDesc actor_desc;
 	actor_desc.uniformInitialBondHealth = health;
 	actor_desc.initialBondHealths = nullptr;
+	// Per-bond health from the asset (a multiple of health each), when it has one per bond.
+	LocalVector<float> bond_healths;
+	if (blast_asset.is_valid() && blast_asset->get_bond_healths().size() == (int)asset_bond_count && asset_bond_count > 0) {
+		const PackedFloat32Array scale = blast_asset->get_bond_healths();
+		bond_healths.resize(asset_bond_count);
+		for (uint32_t b = 0; b < asset_bond_count; b++) {
+			bond_healths[b] = health * MAX(scale[b], 0.0f);
+		}
+		actor_desc.initialBondHealths = bond_healths.ptr();
+	} else if (blast_asset.is_valid() && !blast_asset->get_bond_healths().is_empty()) {
+		WARN_PRINT_ONCE(vformat("PhysXDestructible3D: the asset has %d bond healths for %d bonds; all bonds start at health.", blast_asset->get_bond_healths().size(), asset_bond_count));
+	}
 	actor_desc.uniformInitialLowerSupportChunkHealth = health;
 	actor_desc.initialSupportChunkHealths = nullptr;
 
@@ -729,23 +742,25 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 	// colours and UVs, kept indexed as authored.
 	const Array meshes = blast_asset.is_valid() ? blast_asset->get_chunk_meshes() : Array();
 	if (meshes.size() == (int)chunk_points.size()) {
-		for (uint32_t c = 0; c < chunk_points.size(); c++) {
-			const Array arrays = meshes[c];
+		const Array materials = blast_asset->get_materials();
+		// One ChunkSurface from a Mesh arrays Array; p_fallback (the chunk's soup) when it has no normals.
+		auto make_surface = [](const Array &p_arrays, const PackedVector3Array &p_fallback, int p_slot) {
 			ChunkSurface surface;
-			surface.vertices = chunk_points[c];
-			if (arrays.size() == RSE::ARRAY_MAX) {
+			surface.slot = p_slot;
+			surface.vertices = p_fallback;
+			if (p_arrays.size() == RSE::ARRAY_MAX) {
 				// The chunk's own indexed arrays as they are: no unrolling to a soup (three times the vertices).
-				const PackedVector3Array src_v = arrays[RSE::ARRAY_VERTEX];
+				const PackedVector3Array src_v = p_arrays[RSE::ARRAY_VERTEX];
 				const int vcount = src_v.size();
-				const PackedVector3Array src_n = arrays[RSE::ARRAY_NORMAL];
-				const PackedFloat32Array src_t = arrays[RSE::ARRAY_TANGENT];
-				const PackedColorArray src_c = arrays[RSE::ARRAY_COLOR];
-				const PackedVector2Array src_uv = arrays[RSE::ARRAY_TEX_UV];
-				const PackedVector2Array src_uv2 = arrays[RSE::ARRAY_TEX_UV2];
+				const PackedVector3Array src_n = p_arrays[RSE::ARRAY_NORMAL];
+				const PackedFloat32Array src_t = p_arrays[RSE::ARRAY_TANGENT];
+				const PackedColorArray src_c = p_arrays[RSE::ARRAY_COLOR];
+				const PackedVector2Array src_uv = p_arrays[RSE::ARRAY_TEX_UV];
+				const PackedVector2Array src_uv2 = p_arrays[RSE::ARRAY_TEX_UV2];
 				if (vcount > 0 && src_n.size() == vcount) {
 					surface.vertices = src_v;
 					surface.normals = src_n;
-					surface.indices = arrays[RSE::ARRAY_INDEX];
+					surface.indices = p_arrays[RSE::ARRAY_INDEX];
 					if (src_t.size() == vcount * 4) {
 						surface.tangents = src_t;
 					}
@@ -769,8 +784,40 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 					surface.normals.write[t] = surface.normals.write[t + 1] = surface.normals.write[t + 2] = fn;
 				}
 			}
+			return surface;
+		};
+		for (uint32_t c = 0; c < chunk_points.size(); c++) {
 			chunk_surfaces[c].clear();
-			chunk_surfaces[c].push_back(surface);
+			const Variant entry = meshes[c];
+			const Ref<Mesh> mesh = entry;
+			if (mesh.is_valid()) {
+				// A Mesh: one surface per slot, the slot of its material in the asset's materials, else its index.
+				for (int s = 0; s < mesh->get_surface_count(); s++) {
+					const int found = materials.find(mesh->surface_get_material(s));
+					const PackedVector3Array none;
+					chunk_surfaces[c].push_back(make_surface(mesh->surface_get_arrays(s), s == 0 ? PackedVector3Array(chunk_points[c]) : none, found >= 0 ? found : s));
+				}
+				continue;
+			}
+			const Array arrays = entry;
+			const bool single = arrays.size() == RSE::ARRAY_MAX && arrays[RSE::ARRAY_VERTEX].get_type() == Variant::PACKED_VECTOR3_ARRAY;
+			if (single || arrays.is_empty()) {
+				chunk_surfaces[c].push_back(make_surface(arrays, chunk_points[c], 0));
+				continue;
+			}
+			// An Array of surfaces (several materials: bark, wood, leaves).
+			for (int s = 0; s < arrays.size(); s++) {
+				Array surface_arrays;
+				int slot = s;
+				if (arrays[s].get_type() == Variant::DICTIONARY) {
+					const Dictionary d = arrays[s];
+					surface_arrays = d.get("arrays", Array());
+					slot = MAX(int(d.get("slot", s)), 0);
+				} else {
+					surface_arrays = arrays[s];
+				}
+				chunk_surfaces[c].push_back(make_surface(surface_arrays, s == 0 ? PackedVector3Array(chunk_points[c]) : PackedVector3Array(), slot));
+			}
 		}
 		return;
 	}
@@ -1041,6 +1088,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 	// single body transform positions all of them.
 	RenderingServer *rs = RenderingServer::get_singleton();
 	RID mesh = rs->mesh_create();
+	const Array slot_materials = blast_asset.is_valid() ? blast_asset->get_materials() : Array();
 	int max_slot = -1;
 	for (uint32_t ci : p_chunk_indices) {
 		if (ci < chunk_surfaces.size()) {
@@ -1167,6 +1215,13 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 			}
 		}
 		rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
+		// The slot's material from the asset (bark, wood, leaves); material_override, when set, covers them all.
+		if (slot < slot_materials.size()) {
+			const Ref<Material> m = slot_materials[slot];
+			if (m.is_valid()) {
+				rs->mesh_surface_set_material(mesh, rs->mesh_get_surface_count(mesh) - 1, m->get_rid());
+			}
+		}
 	}
 
 	RID instance = rs->instance_create2(mesh, get_world_3d().is_valid() ? get_world_3d()->get_scenario() : RID());
@@ -1566,6 +1621,15 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 		pieces[piece_idx].last_angular_velocity = piece_angular;
 	}
 	return 1;
+}
+
+PackedInt32Array PhysXDestructible3D::get_piece_chunks(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, (int)pieces.size(), PackedInt32Array());
+	PackedInt32Array out;
+	for (uint32_t ci : pieces[p_index].chunk_indices) {
+		out.push_back(int(ci));
+	}
+	return out;
 }
 
 Transform3D PhysXDestructible3D::get_piece_transform(int p_index) const {

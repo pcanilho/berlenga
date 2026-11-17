@@ -1132,6 +1132,28 @@
    "topic": "Ground"
   },
   {
+   "name": "Tyre clogging",
+   "settings": [
+    "PhysXVehicle3D.tyre_clogging"
+   ],
+   "note": "",
+   "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Belly drag",
+   "settings": [
+    "PhysXVehicle3D.belly_drag"
+   ],
+   "note": "",
+   "what": "a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
@@ -2406,7 +2428,7 @@
     "root_stone"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as a low many-stemmed mat cut at the snow surface; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3223,7 +3245,7 @@
     "foam_enabled"
    ],
    "note": "",
-   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray, foam and air bubbles rise where the water is agitated.",
+   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray falls as clear drops, and foam and bubbles form only where water strikes water, so a smooth pour stays clear.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
