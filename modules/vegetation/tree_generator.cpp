@@ -30,14 +30,16 @@
 /**************************************************************************/
 
 #include "tree_generator.h"
+
 #include "plant_generator.h"
-#include "modules/weather/weather_map_3d.h"
-#include "scene/resources/shader.h"
-#include "servers/rendering/rendering_server.h"
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "scene/resources/image_texture.h"
+#include "scene/resources/shader.h"
+#include "servers/rendering/rendering_server.h"
+
+#include "modules/weather/weather_map_3d.h"
 
 static constexpr int MAX_NODES = 150000;
 
@@ -4140,7 +4142,7 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 // Stressful Tree Modeling: Breaking Branches with Strands, SIGGRAPH 2025). Built from p_end (the
 // stem's end centre, its radius p_r, axis p_dir): a jagged face over the end, splinters as
 // tapering three-sided slivers, a torn strip of bark. p_old 0 fresh (pale), 1 weathered (grey).
-void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed) {
+void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed, const Vector3 &p_tension) {
 	Builder &w = wood_b;
 	RandomPCG sr;
 	sr.seed(uint64_t(p_seed) * 6364136223846793005ull + 0x66726163u);
@@ -4149,7 +4151,10 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 	// The tension side: up for a limb that bent down under its weight; for a near-vertical stem,
 	// downwind (here a random bearing).
 	Vector3 td = world_up - g * world_up.dot(g);
-	if (td.length_squared() < 0.04f) {
+	if (p_tension != Vector3()) {
+		// Given: a stem a storm bent, torn on its windward side (the storm kit, section 5t).
+		td = p_tension - g * p_tension.dot(g);
+	} else if (td.length_squared() < 0.04f) {
 		const float a = sr.randf() * float(Math::TAU);
 		td = Vector3(Math::cos(a), 0.0f, Math::sin(a));
 		td = td - g * td.dot(g);
@@ -4293,6 +4298,184 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : g;
 	}
 	w.end(part, p_r);
+}
+
+// Green wood's modulus of rupture (MPa; Wood Handbook FPL-GTR-282, 2021, tables 5-3a/b, green;
+// GALES for the European conifers: Norway spruce 35.5, Scots pine 39) and the root anchorage per
+// kilogram of stem (N m/kg; Nicoll et al. 2006, Can. J. For. Res. 36:1871, free-draining mineral
+// soil; deep or tap-rooted species higher, shallow rooters lower; shrubs seldom throw). Section 5t.
+static const struct {
+	float mor;
+	float creg;
+} STORM_WOOD[] = {
+	{ 57.0f, 190.0f }, // oak
+	{ 62.0f, 150.0f }, // beech
+	{ 46.0f, 140.0f }, // birch
+	{ 39.0f, 170.0f }, // Scots pine
+	{ 35.5f, 140.0f }, // Norway spruce
+	{ 50.0f, 200.0f }, // hazel
+	{ 55.0f, 200.0f }, // hawthorn
+	{ 34.0f, 160.0f }, // lime
+	{ 55.0f, 160.0f }, // sycamore maple
+	{ 66.0f, 160.0f }, // ash
+	{ 35.0f, 150.0f }, // horse chestnut
+	{ 45.0f, 150.0f }, // black alder
+	{ 33.0f, 140.0f }, // white willow
+	{ 53.0f, 170.0f }, // European larch
+	{ 38.0f, 160.0f }, // silver fir
+	{ 50.0f, 170.0f }, // rowan
+	{ 35.0f, 200.0f }, // elder
+	{ 52.0f, 180.0f }, // holly
+	{ 60.0f, 200.0f }, // yew
+	{ 70.0f, 200.0f }, // box
+	{ 65.0f, 170.0f }, // sugar maple
+	{ 53.0f, 150.0f }, // red maple
+	{ 57.0f, 170.0f }, // red oak
+	{ 57.0f, 190.0f }, // white oak
+	{ 34.0f, 160.0f }, // white pine
+	{ 44.0f, 130.0f }, // hemlock
+	{ 59.0f, 150.0f }, // American beech
+	{ 44.0f, 140.0f }, // paper birch
+	{ 57.0f, 150.0f }, // yellow birch
+	{ 50.0f, 200.0f }, // witch-hazel
+	{ 50.0f, 200.0f }, // mountain laurel
+};
+static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
+
+Ref<StandardMaterial3D> TreeGenerator::_soil_material() const {
+	Ref<StandardMaterial3D> m;
+	m.instantiate();
+	m->set_albedo(Color(1, 1, 1));
+	m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	m->set_feature(BaseMaterial3D::FEATURE_SNOW, true);
+	m->set_snow_from_weather(true);
+	m->set_roughness(0.95f);
+	return m;
+}
+
+// Broken wood (trees.md 5j): fracture faces and splinters, vertex colour by how fresh the break
+// is, a texture of fibres along v with their relief.
+Ref<StandardMaterial3D> TreeGenerator::_wood_material() {
+	Ref<StandardMaterial3D> m = _soil_material();
+	m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _wood_texture(false));
+	m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
+	m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, _wood_texture(true));
+	m->set_normal_scale(0.8f);
+	m->set_roughness(0.85f);
+	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	return m;
+}
+
+// A builder's triangles as a storm kit entry [name, surface arrays, material] (section 5t),
+// relief tubes in place of the plain ones they cover (as LOD 0 draws them).
+void TreeGenerator::_storm_pack(Builder &b, bool p_flip, const String &p_name, const Ref<Material> &p_m, Array &r_out) {
+	if (b.indices.is_empty()) {
+		return;
+	}
+	if (p_flip) {
+		int32_t *iw = b.indices.ptrw();
+		for (int64_t i = 0; i + 2 < b.indices.size(); i += 3) {
+			SWAP(iw[i + 1], iw[i + 2]);
+		}
+	}
+	PackedInt32Array idx;
+	for (uint32_t i = 0; i < b.parts.size(); i++) {
+		if (b.part_role[i] == Builder::ROLE_PLAIN) {
+			continue;
+		}
+		const Vector4i &pt = b.parts[i];
+		for (int k = pt.x; k < pt.x + pt.y; k++) {
+			idx.push_back(b.indices[k]);
+		}
+	}
+	if (idx.is_empty()) {
+		return;
+	}
+	Array a;
+	a.resize(Mesh::ARRAY_MAX);
+	a[Mesh::ARRAY_VERTEX] = b.verts;
+	a[Mesh::ARRAY_NORMAL] = b.normals;
+	a[Mesh::ARRAY_TEX_UV] = b.uvs;
+	a[Mesh::ARRAY_COLOR] = b.colors;
+	a[Mesh::ARRAY_INDEX] = idx;
+	if (b.use_tangents && b.tangents.size() == b.verts.size() * 4) {
+		a[Mesh::ARRAY_TANGENT] = b.tangents;
+	}
+	Array entry;
+	entry.push_back(p_name);
+	entry.push_back(a);
+	entry.push_back(p_m);
+	r_out.push_back(entry);
+}
+
+// What TreeWind3D needs to break a standing rigged tree in a storm or throw it (section 5t): the
+// wood's strength and the roots' anchorage (mesh meta "tree_storm": modulus of rupture in Pa,
+// anchorage in N m per kg of stem, plate radius, plate thickness, stem radius, seed, bark colour)
+// and a fracture cap of unit radius along +Y torn on its +X side ("tree_fracture_cap", as [name,
+// surface arrays, material] triples). The root plate (some 80-100k triangles) is built only when a
+// tree is thrown (build_storm_plate()).
+void TreeGenerator::_storm_kit(const Ref<ArrayMesh> &p_mesh, const Array &p_static_materials) {
+	if (nodes.is_empty() || p_mesh.is_null()) {
+		return;
+	}
+	RandomPCG kr;
+	kr.seed(uint64_t(seed) * 2862933555777941757ull + 0x73746f726dull);
+	float trunk_r = 0.02f;
+	for (const Node &n : nodes) {
+		if (!n.removed && n.parent == 0) {
+			trunk_r = MAX(trunk_r, n.radius);
+		}
+	}
+	// The plate a standing tree throws (5k, Krisans et al. 2020): radius about 11 stem radii,
+	// thickness about a fifth of that; a small tree's down to half a metre.
+	const float plate_radius = CLAMP(11.0f * trunk_r * Math::lerp(0.9f, 1.2f, kr.randf()), 0.5f, 2.8f);
+	const float plate_thick = CLAMP(0.22f * plate_radius, 0.15f, 0.6f);
+	const Builder saved_wood = wood_b;
+	wood_b = Builder();
+	_fracture(Vector3(), Vector3(0, 1, 0), 1.0f, 0.0f, uint32_t(seed) * 2654435761u + 77u, Vector3(1, 0, 0));
+	Builder cap = wood_b;
+	wood_b = saved_wood;
+	Array cap_kit;
+	_storm_pack(cap, false, "wood", _wood_material(), cap_kit);
+	const int p = CLAMP(int(preset), 0, int(PRESET_MAX) - 1);
+	const Color bc = bark_color;
+	p_mesh->set_meta(SNAME("tree_storm"), PackedFloat32Array({ STORM_WOOD[p].mor * 1.0e6f, STORM_WOOD[p].creg, plate_radius, plate_thick, trunk_r, float(seed % 65536), bc.r, bc.g, bc.b }));
+	p_mesh->set_meta(SNAME("tree_fracture_cap"), cap_kit);
+}
+
+// The root plate a storm throws with a tree (5k, 5t), built upright about the tree's foot from its
+// "tree_storm" meta: [name, surface arrays, material] triples for its roots ("bark", no material:
+// the tree's own), soil and torn root ends ("wood").
+Array TreeGenerator::build_storm_plate(const PackedFloat32Array &p_storm) {
+	Array out;
+	if (p_storm.size() < 9) {
+		return out;
+	}
+	Ref<TreeGenerator> g;
+	g.instantiate();
+	g->seed = int(p_storm[5]);
+	g->bark_color = Color(p_storm[6], p_storm[7], p_storm[8]);
+	g->plate = RootPlate();
+	g->plate.on = true;
+	g->plate.radius = p_storm[2];
+	g->plate.thick = p_storm[3];
+	g->plate.trunk_r = p_storm[4];
+	g->plate.base0 = Vector3();
+	g->plate.hinge = Vector3();
+	g->plate.rot = Basis();
+	g->soil_b = Builder();
+	g->wood_b = Builder();
+	Builder roots;
+	roots.use_tangents = true;
+	g->_root_plate(roots);
+	// Roots carry no lichen and no lost bark (vertex alpha 0.5 to the bark's lichen shader).
+	for (int v = 0; v < roots.colors.size(); v++) {
+		roots.colors.write[v].a = 0.5f;
+	}
+	_storm_pack(roots, true, "bark", Ref<Material>(), out);
+	_storm_pack(g->soil_b, true, "soil", g->_soil_material(), out);
+	_storm_pack(g->wood_b, false, "wood", g->_wood_material(), out);
+	return out;
 }
 
 // A sawn pole stub on a pollard head or coppice stool (trees.md 5l): a flat face, a little domed
@@ -10185,92 +10368,93 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			qf[i] = r_b.verts[p_part.z + i];
 			slides[i] = 0.0f;
 		}
-		for (int pass_apply = 0; pass_apply < 2; pass_apply++)
-		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
-			// Decide and slide on the undisplaced tube (ring centre + normal x radius), then move
-			// the displaced vertex by the same amount: bark relief keeps its shape at the seam
-			// instead of furrow vertices jumping ahead of their plate-top neighbours.
-			const int ring = (v - p_part.z) / (p_sides + 1);
-			if (ring >= int(p_pts.size())) {
-				break;
-			}
-			Vector3 q = p_pts[ring] + nn[v] * p_rad[ring];
-			if (pass_apply == 1) {
-				qf[v - p_part.z] = q;
-			}
-			if ((q - child.start).dot(d) > reach) {
-				continue;
-			}
-			// Slide along +d out of the parent's wood, the segments taken as capsules (rounded
-			// joints, so the bark has no gaps where the parent's axis bends or narrows). Marched
-			// in steps of a fifth of the limb's radius, then refined by bisection. Give up if the
-			// point would leave through the far end of the modelled parent (open bark).
-			auto inside_at = [&](const Vector3 &p_q) {
-				float best = 1e9f;
-				for (int k = 0; k < nseg; k++) {
-					const Vector3 rel = p_q - segs[k].a;
-					const float t = CLAMP(rel.dot(segs[k].u) / segs[k].len, 0.0f, 1.0f);
-					const float rk = bark_in * Math::lerp(segs[k].ra, segs[k].rb, t);
-					best = MIN(best, (rel - segs[k].u * (t * segs[k].len)).length() - rk);
+		for (int pass_apply = 0; pass_apply < 2; pass_apply++) {
+			for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
+				// Decide and slide on the undisplaced tube (ring centre + normal x radius), then move
+				// the displaced vertex by the same amount: bark relief keeps its shape at the seam
+				// instead of furrow vertices jumping ahead of their plate-top neighbours.
+				const int ring = (v - p_part.z) / (p_sides + 1);
+				if (ring >= int(p_pts.size())) {
+					break;
 				}
-				return best; // < 0: inside.
-			};
-			float slid = 0.0f;
-			bool ok = true;
-			// A steep limb (under 30 degrees off its parent) meets it along a long sliver: slid
-			// onto the bark it lies there almost tangent and shows through the bark's furrows.
-			// It stays a crotch: the limb enters the parent, and only the normals blend.
-			if (!steep && inside_at(q) < 0.0f) {
-				const float stepl = 0.2f * r0;
-				float x0 = 0.0f, x1 = 0.0f;
-				bool out = false;
-				for (int st = 1; st <= 400; st++) {
-					x1 = stepl * st;
-					if (inside_at(q + d * x1) >= 0.0f) {
-						out = true;
-						break;
+				Vector3 q = p_pts[ring] + nn[v] * p_rad[ring];
+				if (pass_apply == 1) {
+					qf[v - p_part.z] = q;
+				}
+				if ((q - child.start).dot(d) > reach) {
+					continue;
+				}
+				// Slide along +d out of the parent's wood, the segments taken as capsules (rounded
+				// joints, so the bark has no gaps where the parent's axis bends or narrows). Marched
+				// in steps of a fifth of the limb's radius, then refined by bisection. Give up if the
+				// point would leave through the far end of the modelled parent (open bark).
+				auto inside_at = [&](const Vector3 &p_q) {
+					float best = 1e9f;
+					for (int k = 0; k < nseg; k++) {
+						const Vector3 rel = p_q - segs[k].a;
+						const float t = CLAMP(rel.dot(segs[k].u) / segs[k].len, 0.0f, 1.0f);
+						const float rk = bark_in * Math::lerp(segs[k].ra, segs[k].rb, t);
+						best = MIN(best, (rel - segs[k].u * (t * segs[k].len)).length() - rk);
 					}
-					x0 = x1;
-				}
-				if (!out) {
-					ok = false;
-				} else {
-					for (int it = 0; it < 12; it++) {
-						const float xm = 0.5f * (x0 + x1);
-						if (inside_at(q + d * xm) < 0.0f) {
-							x0 = xm;
-						} else {
-							x1 = xm;
+					return best; // < 0: inside.
+				};
+				float slid = 0.0f;
+				bool ok = true;
+				// A steep limb (under 30 degrees off its parent) meets it along a long sliver: slid
+				// onto the bark it lies there almost tangent and shows through the bark's furrows.
+				// It stays a crotch: the limb enters the parent, and only the normals blend.
+				if (!steep && inside_at(q) < 0.0f) {
+					const float stepl = 0.2f * r0;
+					float x0 = 0.0f, x1 = 0.0f;
+					bool out = false;
+					for (int st = 1; st <= 400; st++) {
+						x1 = stepl * st;
+						if (inside_at(q + d * x1) >= 0.0f) {
+							out = true;
+							break;
 						}
+						x0 = x1;
 					}
-					const Vector3 nq = q + d * x1;
-					// Leaving through the far ends of the modelled parent: no bark there.
-					float t_first, t_last;
-					Vector3 rr;
-					seg_at(segs[0], nq, t_first, rr);
-					seg_at(segs[nseg - 1], nq, t_last, rr);
-					if (t_first < -0.05f && nseg == 1) {
-						ok = false;
-					} else if (t_last > 1.05f + r0 / MAX(segs[nseg - 1].len, 1e-3f)) {
+					if (!out) {
 						ok = false;
 					} else {
-						slid = x1 + 1e-4f;
-						q = q + d * slid;
+						for (int it = 0; it < 12; it++) {
+							const float xm = 0.5f * (x0 + x1);
+							if (inside_at(q + d * xm) < 0.0f) {
+								x0 = xm;
+							} else {
+								x1 = xm;
+							}
+						}
+						const Vector3 nq = q + d * x1;
+						// Leaving through the far ends of the modelled parent: no bark there.
+						float t_first, t_last;
+						Vector3 rr;
+						seg_at(segs[0], nq, t_first, rr);
+						seg_at(segs[nseg - 1], nq, t_last, rr);
+						if (t_first < -0.05f && nseg == 1) {
+							ok = false;
+						} else if (t_last > 1.05f + r0 / MAX(segs[nseg - 1].len, 1e-3f)) {
+							ok = false;
+						} else {
+							slid = x1 + 1e-4f;
+							q = q + d * slid;
+						}
 					}
 				}
-			}
-			if (pass_apply == 0) {
-				if (!ok) {
-					return;
+				if (pass_apply == 0) {
+					if (!ok) {
+						return;
+					}
+					slides[v - p_part.z] = slid;
+					continue;
 				}
-				slides[v - p_part.z] = slid;
-				continue;
+				if (slid > 0.0f) {
+					vv[v] += d * slid;
+					uv[v].y += slid / circumference;
+				}
+				qf[v - p_part.z] = q;
 			}
-			if (slid > 0.0f) {
-				vv[v] += d * slid;
-				uv[v].y += slid / circumference;
-			}
-			qf[v - p_part.z] = q;
 		}
 		// No folds: on the side where the limb meets its parent far out (the top of a steep
 		// limb), slid vertices would pass rings that were already outside and the tube would fold
@@ -10357,103 +10541,103 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float w = Math::pow(CLAMP(1.0f - out / (1.5f * r0), 0.0f, 1.0f), 2.0f);
 			wts[i] = w;
 			inside[i] = out < -0.05f * r0;
-			}
-			// The spread is set per line down the tube, from where that line's seam lies under the
-			// limb, then smoothed round the tube: set vertex by vertex, neighbouring lines met the
-			// bark one ring apart and the collar's edge came out in teeth.
-			const int S1 = p_sides + 1;
-			const int nrings_w = MIN(int(p_pts.size()), p_part.w / S1);
-			if (has_down && !steep && nrings_w > 1) {
-				LocalVector<float> col_down, col_lower;
-				col_down.resize(p_sides);
-				col_lower.resize(p_sides);
-				int known = 0;
-				for (int k = 0; k < p_sides; k++) {
-					const int m = seam_ring[k];
-					col_down[k] = -1.0f;
-					col_lower[k] = 0.0f;
-					if (m < 0) {
-						continue;
-					}
-					const int i = m * S1 + k;
-					const Vector3 radial0 = qf[i] - p_pts[m];
-					// Under the limb (toward the parent's base) the spread is longest; on top, in
-					// the crotch, the limb barely spreads and the bark ridges up instead.
-					const float lower = radial0.length_squared() > 1e-12f ? -radial0.normalized().dot(pd) : 0.0f;
-					col_lower[k] = lower;
-					col_down[k] = r0 * (0.1f + 0.9f * Math::pow(MAX(lower, 0.0f), 1.5f));
-					known++;
+		}
+		// The spread is set per line down the tube, from where that line's seam lies under the
+		// limb, then smoothed round the tube: set vertex by vertex, neighbouring lines met the
+		// bark one ring apart and the collar's edge came out in teeth.
+		const int S1 = p_sides + 1;
+		const int nrings_w = MIN(int(p_pts.size()), p_part.w / S1);
+		if (has_down && !steep && nrings_w > 1) {
+			LocalVector<float> col_down, col_lower;
+			col_down.resize(p_sides);
+			col_lower.resize(p_sides);
+			int known = 0;
+			for (int k = 0; k < p_sides; k++) {
+				const int m = seam_ring[k];
+				col_down[k] = -1.0f;
+				col_lower[k] = 0.0f;
+				if (m < 0) {
+					continue;
 				}
-				if (known > 0) {
-					// Lines that never reached the bark take their neighbours' spread.
-					for (int pass = 0; pass < p_sides && known < p_sides; pass++) {
-						LocalVector<float> nd;
-						nd.resize(p_sides);
-						for (int k = 0; k < p_sides; k++) {
-							nd[k] = col_down[k];
-						}
-						for (int k = 0; k < p_sides; k++) {
-							if (col_down[k] >= 0.0f) {
-								continue;
-							}
-							const float a = col_down[(k + p_sides - 1) % p_sides], b = col_down[(k + 1) % p_sides];
-							if (a >= 0.0f || b >= 0.0f) {
-								nd[k] = a >= 0.0f && b >= 0.0f ? 0.5f * (a + b) : MAX(a, b);
-								known++;
-							}
-						}
-						col_down = nd;
+				const int i = m * S1 + k;
+				const Vector3 radial0 = qf[i] - p_pts[m];
+				// Under the limb (toward the parent's base) the spread is longest; on top, in
+				// the crotch, the limb barely spreads and the bark ridges up instead.
+				const float lower = radial0.length_squared() > 1e-12f ? -radial0.normalized().dot(pd) : 0.0f;
+				col_lower[k] = lower;
+				col_down[k] = r0 * (0.1f + 0.9f * Math::pow(MAX(lower, 0.0f), 1.5f));
+				known++;
+			}
+			if (known > 0) {
+				// Lines that never reached the bark take their neighbours' spread.
+				for (int pass = 0; pass < p_sides && known < p_sides; pass++) {
+					LocalVector<float> nd;
+					nd.resize(p_sides);
+					for (int k = 0; k < p_sides; k++) {
+						nd[k] = col_down[k];
 					}
-					// The same smoothing arc on every tube: the relief tube has up to five times the
-					// sides of the plain one, and two passes there left its collar edge in teeth.
-					const int smooth_passes = MAX(2, int(Math::round(2.0f * Math::pow(float(p_sides) / 24.0f, 2.0f))));
-					for (int pass = 0; pass < smooth_passes; pass++) {
-						LocalVector<float> sm;
-						sm.resize(p_sides);
-						for (int k = 0; k < p_sides; k++) {
-							sm[k] = 0.25f * MAX(col_down[(k + p_sides - 1) % p_sides], 0.0f) + 0.5f * MAX(col_down[k], 0.0f) + 0.25f * MAX(col_down[(k + 1) % p_sides], 0.0f);
+					for (int k = 0; k < p_sides; k++) {
+						if (col_down[k] >= 0.0f) {
+							continue;
 						}
-						col_down = sm;
+						const float a = col_down[(k + p_sides - 1) % p_sides], b = col_down[(k + 1) % p_sides];
+						if (a >= 0.0f || b >= 0.0f) {
+							nd[k] = a >= 0.0f && b >= 0.0f ? 0.5f * (a + b) : MAX(a, b);
+							known++;
+						}
 					}
-					for (int k = 0; k <= p_sides; k++) {
-						const int kc = k % p_sides;
-						const int m = seam_ring[k] >= 0 ? seam_ring[k] : seam_ring[kc];
-						const float dn = col_down[kc];
-						const int m0 = MAX(m, 0);
-						const float a0 = (qf[m0 * S1 + k] - child.start).dot(d);
-						for (int r = m0; r < nrings_w; r++) {
-							const int i = r * S1 + k;
-							const float dist = (qf[i] - child.start).dot(d) - a0;
-							// The seam moves fully along the parent's axis, which keeps it on the
-							// bark; the rings after it follow less and less over 1.5 limb radii, a
-							// teardrop drawn down the bark.
-							const float f = r == m0 ? 1.0f : Math::pow(CLAMP(1.0f - dist / (1.5f * r0), 0.0f, 1.0f), 2.0f);
-							if (f <= 0.0f) {
-								break;
-							}
-							const Vector3 shift = -par.dir * (dn * f);
-							vv[p_part.z + i] += shift;
-							qf[i] += shift;
-							// The bark is drawn out over the whole distance the point moved, which keeps
-							// its texel density over the collar of a limb square to its parent.
-							uv[p_part.z + i].y -= dn * f / circumference;
-							// Branch bark ridge (Shigo 1985): in the crotch the two barks push
-							// together into a low ridge just above the seam.
-							const float lw = col_lower[kc];
-							if (lw < -0.3f && r > m0) {
-								const Vector3 rad = qf[i] - p_pts[MIN(r, int(p_pts.size()) - 1)];
-								const float bump = Math::sin(float(Math::PI) * CLAMP(dist / (1.0f * r0), 0.0f, 1.0f));
-								const float ridge = r0 * 0.1f * Math::smoothstep(0.3f, 1.0f, -lw) * bump;
-								if (rad.length_squared() > 1e-12f) {
-									const Vector3 up = rad.normalized() * ridge;
-									vv[p_part.z + i] += up;
-									qf[i] += up;
-								}
+					col_down = nd;
+				}
+				// The same smoothing arc on every tube: the relief tube has up to five times the
+				// sides of the plain one, and two passes there left its collar edge in teeth.
+				const int smooth_passes = MAX(2, int(Math::round(2.0f * Math::pow(float(p_sides) / 24.0f, 2.0f))));
+				for (int pass = 0; pass < smooth_passes; pass++) {
+					LocalVector<float> sm;
+					sm.resize(p_sides);
+					for (int k = 0; k < p_sides; k++) {
+						sm[k] = 0.25f * MAX(col_down[(k + p_sides - 1) % p_sides], 0.0f) + 0.5f * MAX(col_down[k], 0.0f) + 0.25f * MAX(col_down[(k + 1) % p_sides], 0.0f);
+					}
+					col_down = sm;
+				}
+				for (int k = 0; k <= p_sides; k++) {
+					const int kc = k % p_sides;
+					const int m = seam_ring[k] >= 0 ? seam_ring[k] : seam_ring[kc];
+					const float dn = col_down[kc];
+					const int m0 = MAX(m, 0);
+					const float a0 = (qf[m0 * S1 + k] - child.start).dot(d);
+					for (int r = m0; r < nrings_w; r++) {
+						const int i = r * S1 + k;
+						const float dist = (qf[i] - child.start).dot(d) - a0;
+						// The seam moves fully along the parent's axis, which keeps it on the
+						// bark; the rings after it follow less and less over 1.5 limb radii, a
+						// teardrop drawn down the bark.
+						const float f = r == m0 ? 1.0f : Math::pow(CLAMP(1.0f - dist / (1.5f * r0), 0.0f, 1.0f), 2.0f);
+						if (f <= 0.0f) {
+							break;
+						}
+						const Vector3 shift = -par.dir * (dn * f);
+						vv[p_part.z + i] += shift;
+						qf[i] += shift;
+						// The bark is drawn out over the whole distance the point moved, which keeps
+						// its texel density over the collar of a limb square to its parent.
+						uv[p_part.z + i].y -= dn * f / circumference;
+						// Branch bark ridge (Shigo 1985): in the crotch the two barks push
+						// together into a low ridge just above the seam.
+						const float lw = col_lower[kc];
+						if (lw < -0.3f && r > m0) {
+							const Vector3 rad = qf[i] - p_pts[MIN(r, int(p_pts.size()) - 1)];
+							const float bump = Math::sin(float(Math::PI) * CLAMP(dist / (1.0f * r0), 0.0f, 1.0f));
+							const float ridge = r0 * 0.1f * Math::smoothstep(0.3f, 1.0f, -lw) * bump;
+							if (rad.length_squared() > 1e-12f) {
+								const Vector3 up = rad.normalized() * ridge;
+								vv[p_part.z + i] += up;
+								qf[i] += up;
 							}
 						}
 					}
 				}
 			}
+		}
 		// Normals from the welded shape (the undisplaced surface, so bark relief keeps its own
 		// shading from the normal map), turning to the parent's bark at the seam.
 		LocalVector<Vector3> acc;
@@ -12675,7 +12859,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					rad.push_back(br);
 					pts.push_back(b0 + bdir * blen);
 					rad.push_back(br * 0.6f);
-					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, twig_col); bark.end(part, rad[0]); }
+					{
+						Vector4i part;
+						bark.begin(part);
+						_tube(bark, pts, rad, 3, 0.0f, twig_col);
+						bark.end(part, rad[0]);
+					}
 				}
 				if (needle_sprays) {
 					// One brush as two crossed alpha-cut sprays (the needle image is drawn from the
@@ -12690,8 +12879,18 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					flat = flat.length_squared() > 1e-6f ? flat.normalized() : perp;
 					const Vector3 cross = bdir.cross(flat).normalized();
 					const float half = size * 0.8f * spray_size;
-					{ Vector4i part; leaves.begin(part); _add_spray(leaves, b0, bdir, blen + size * 0.5f, half, flat, c); leaves.end(part, 0.0f); }
-					{ Vector4i part; leaves.begin(part); _add_spray(leaves, b0, bdir, blen + size * 0.5f, half, cross, c); leaves.end(part, 0.0f); }
+					{
+						Vector4i part;
+						leaves.begin(part);
+						_add_spray(leaves, b0, bdir, blen + size * 0.5f, half, flat, c);
+						leaves.end(part, 0.0f);
+					}
+					{
+						Vector4i part;
+						leaves.begin(part);
+						_add_spray(leaves, b0, bdir, blen + size * 0.5f, half, cross, c);
+						leaves.end(part, 0.0f);
+					}
 					leaf_count += per_brush;
 				}
 				// The brush as a bottle-brush silhouette, for the wind rig.
@@ -12714,7 +12913,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					if (!season_leaf(uint32_t(i) * 4099u + uint32_t(sh * 257 + k), c, needle_size)) {
 						continue;
 					}
-					{ Vector4i part; leaves.begin(part); _add_needle(leaves, base, out, needle_size, c); leaves.end(part, 0.0f); }
+					{
+						Vector4i part;
+						leaves.begin(part);
+						_add_needle(leaves, base, out, needle_size, c);
+						leaves.end(part, 0.0f);
+					}
 					leaf_count++;
 				}
 			}
@@ -12743,7 +12947,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 tip = mid + tip_dir * (p_len * 0.5f);
 			pts.push_back(tip);
 			rad.push_back(p_r * 0.5f);
-			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, twig_col); bark.end(part, rad[0]); }
+			{
+				Vector4i part;
+				bark.begin(part);
+				_tube(bark, pts, rad, 3, 0.0f, twig_col);
+				bark.end(part, rad[0]);
+			}
 			node_drag[i] += 1.5f * p_r * p_len * exposure;
 			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
 			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
@@ -12765,7 +12974,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (!season_leaf(leaf_slot++, c, leaf_size)) {
 					continue;
 				}
-				{ Vector4i part; leaves.begin(part); _add_leaf(leaves, at, k == p_leaves - 1 ? tip_dir : out, up, leaf_size, c); leaves.end(part, 0.0f); }
+				{
+					Vector4i part;
+					leaves.begin(part);
+					_add_leaf(leaves, at, k == p_leaves - 1 ? tip_dir : out, up, leaf_size, c);
+					leaves.end(part, 0.0f);
+				}
 				leaf_count++;
 				const float blade_area = 2.0f * params[PARAM_LEAF_WIDTH] * leaf_size * leaf_size * 0.656f;
 				// Randomly turned leaves present about half their area (G = 0.5).
@@ -12881,6 +13095,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// The stone itself is not draped over itself; it is sheared with the ground.
 		_bank_shear(*builders[s], s != 7);
 	}
+	// Rigged trees skin from MultiMesh instance bones; a part broken off by a storm or a body
+	// (TreeWind3D) is drawn unskinned, with a twin of each surface's material (section 5t).
+	Array static_materials;
+	auto twin = [&](const Ref<StandardMaterial3D> &p_m) {
+		Ref<StandardMaterial3D> t = p_m->duplicate();
+		t->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, false);
+		return t;
+	};
 	for (int s = 0; s < 10; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
@@ -13050,6 +13272,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const int at = mesh->get_surface_count() - 1;
 				mesh->surface_set_name(at, names[s]);
 				mesh->surface_set_material(at, material_source->surface_get_material(found));
+				if (rigged && material_source->has_meta(SNAME("tree_static_materials"))) {
+					const Array src = material_source->get_meta(SNAME("tree_static_materials"));
+					static_materials.push_back(found < src.size() ? src[found] : Variant());
+				}
 				continue;
 			}
 		}
@@ -13078,6 +13304,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "bark");
 			if (lichen_uv2 || bark_custom) {
 				mesh->surface_set_material(mesh->get_surface_count() - 1, _lichen_material(m));
+				if (rigged) {
+					static_materials.push_back(_lichen_material(twin(m)));
+				}
 				continue;
 			}
 		} else if (s == 3 || s == 6) {
@@ -13111,17 +13340,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "resin");
 		} else if (s == 7) {
 			// A root plate's soil and stones (trees.md 5k): vertex colour, the relief is geometry.
-			m->set_roughness(0.95f);
+			m = _soil_material();
+			if (rigged) {
+				m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
+			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "soil");
 		} else if (s == 5) {
-			// Broken wood (trees.md 5j): fracture faces and splinters, vertex colour by how fresh
-			// the break is, a texture of fibres along v with their relief.
-			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _wood_texture(false));
-			m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
-			m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, _wood_texture(true));
-			m->set_normal_scale(0.8f);
-			m->set_roughness(0.85f);
-			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			m = _wood_material();
+			if (rigged) {
+				m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
+			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "wood");
 		} else if (s == 4) {
 			// Fungi: vertex colour per species and zone, a texture of growth lines and pores.
@@ -13172,9 +13400,18 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		if ((s == 1 && !needles) || s == 3) {
 			mesh->surface_set_material(mesh->get_surface_count() - 1, _flutter_material(m, s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
+			if (rigged) {
+				static_materials.push_back(_flutter_material(twin(m), s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
+			}
 		} else {
 			mesh->surface_set_material(mesh->get_surface_count() - 1, m);
+			if (rigged) {
+				static_materials.push_back(twin(m));
+			}
 		}
+	}
+	if (rigged && static_materials.size() == mesh->get_surface_count()) {
+		mesh->set_meta(SNAME("tree_static_materials"), static_materials);
 	}
 	mesh->set_meta(SNAME("tree_colliders"), _collider_data());
 	if (!climber_leaves.is_empty()) {
@@ -13189,12 +13426,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 	if (rigged) {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
+		if (storm_kit && !fallen && decay_class == 0 && !fallen_branch) {
+			_storm_kit(mesh, static_materials);
+		}
 		// Vogel's exponent: drag grows as U^(2 + B) as foliage streamlines (Vogel 1989).
 		mesh->set_meta(SNAME("tree_vogel"), params[PARAM_NEEDLES] > 0.5f ? -0.5f : -0.7f);
 	}
 	return mesh;
 }
-
 
 Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 	Dictionary lods;
@@ -13453,7 +13692,8 @@ uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 	m->set_shader_parameter("lichen_map", _lichen_texture());
 	m->set_shader_parameter("lichen_leafy_share", la.leafy);
 	// Standing dead wood weathers silver-grey in sun and rain; rotting and on the ground it browns.
-	const Color wood = (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f) : Color(0.47f, 0.45f, 0.41f);
+	const Color wood = (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
+																													 : Color(0.47f, 0.45f, 0.41f);
 	m->set_shader_parameter("bark_wood_color", wood);
 	m->set_shader_parameter("lichen_orange_share", la.orange);
 	// Leafy lichens of acid bark are grey-green (Parmelia, Hypogymnia); of nutrient-rich bark
@@ -15297,6 +15537,9 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_bark_wounds", "wounds"), &TreeGenerator::set_bark_wounds);
 	ClassDB::bind_method(D_METHOD("get_bark_wounds"), &TreeGenerator::get_bark_wounds);
 	ClassDB::bind_method(D_METHOD("set_bark_chevrons", "amount"), &TreeGenerator::set_bark_chevrons);
+	ClassDB::bind_method(D_METHOD("set_storm_kit", "enabled"), &TreeGenerator::set_storm_kit);
+	ClassDB::bind_method(D_METHOD("get_storm_kit"), &TreeGenerator::get_storm_kit);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("build_storm_plate", "storm"), &TreeGenerator::build_storm_plate);
 	ClassDB::bind_method(D_METHOD("get_bark_chevrons"), &TreeGenerator::get_bark_chevrons);
 	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
 	ClassDB::bind_method(D_METHOD("set_fruit_cover", "cover"), &TreeGenerator::set_fruit_cover);
@@ -15399,6 +15642,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "storm_kit"), "set_storm_kit", "get_storm_kit");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_exposure", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wind_exposure", "get_wind_exposure");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
