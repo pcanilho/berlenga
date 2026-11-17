@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXFireSpread3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Fire that spreads over grass and leaf litter, with flames and smoke in NVIDIA Flow.
+	</brief_description>
+	<description>
+		Burns the ground under it over a [member size] area, as wildfire models do (the WRF-SFIRE surface model): a fire front moves at Rothermel's rate of spread for the [member fuel_type], faster downwind and uphill, slowed by [member fuel_moisture] and stopped when the fuel is too wet. A fire in the wind grows into an ellipse whose length-to-width ratio follows the wind speed (Anderson 1983), as fire spread tools such as FARSITE draw it.
+		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map.
+		Start a fire with [method ignite], or set [member heat_source] so that hot gas from another [PhysXFlow3D] (a campfire, a burning wreck) sets the ground alight.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="extinguish">
+			<return type="void" />
+			<description>
+				Puts the fire out. What has burnt stays charred.
+			</description>
+		</method>
+		<method name="get_burning_cells" qualifiers="const">
+			<return type="int" />
+			<description>
+				Grid cells still flaming (more than 5% of their fuel left).
+			</description>
+		</method>
+		<method name="get_burnt_area" qualifiers="const">
+			<return type="float" />
+			<description>
+				Square metres the fire has reached.
+			</description>
+		</method>
+		<method name="get_char_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How burnt the ground at [param position] is: 0 unburnt, 1 burnt out.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="PhysXFlow3D" />
+			<description>
+				The [PhysXFlow3D] the flames are drawn in.
+			</description>
+		</method>
+		<method name="get_intensity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Heat given off by the ground at [param position], in kW per square metre.
+			</description>
+		</method>
+		<method name="ignite">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" default="0.5" />
+			<description>
+				Sets the ground alight in a circle of [param radius] metres round [param position].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.25">
+			Size of the fire grid's cells in metres. Smaller cells give a finer front and char edge, at more CPU time.
+		</member>
+		<member name="char_darkness" type="float" setter="set_char_darkness" getter="get_char_darkness" default="0.95">
+			How fully burnt-out ground turns to black char.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			When disabled, the fire stops where it is.
+		</member>
+		<member name="flame_strength" type="float" setter="set_flame_strength" getter="get_flame_strength" default="1.0">
+			Scales the fuel and heat the burning ground feeds into Flow.
+		</member>
+		<member name="flow_path" type="NodePath" setter="set_flow_path" getter="get_flow_path" default="NodePath(&quot;&quot;)">
+			The [PhysXFlow3D] to draw the flames in. Empty: one of its own, with 10 cm cells.
+		</member>
+		<member name="fuel_load_scale" type="float" setter="set_fuel_load_scale" getter="get_fuel_load_scale" default="1.0">
+			Scales the fuel's load (kilograms a square metre) from the [member fuel_type]: more fuel burns hotter, with taller flames.
+		</member>
+		<member name="fuel_map" type="Image" setter="set_fuel_map" getter="get_fuel_map">
+			Optional. Its red channel multiplies the fuel load over the area, so paths, rock and bare ground (black) stop the fire.
+		</member>
+		<member name="fuel_moisture" type="float" setter="set_fuel_moisture" getter="get_fuel_moisture" default="0.06">
+			Dead fuel moisture as a fraction of dry weight. Wetter fuel spreads slower; at the fuel's moisture of extinction (12% for short grass, 25% for tall grass and litter) it does not burn.
+		</member>
+		<member name="fuel_type" type="int" setter="set_fuel_type" getter="get_fuel_type" enum="PhysXFireSpread3D.FuelType" default="0">
+			The fuel on the ground, with its load, depth and particle size from Anderson's fuel models.
+		</member>
+		<member name="glow_energy" type="float" setter="set_glow_energy" getter="get_glow_energy" default="4.0">
+			Emission energy of the burning band and embers on the ground.
+		</member>
+		<member name="heat_source" type="NodePath" setter="set_heat_source" getter="get_heat_source" default="NodePath(&quot;&quot;)">
+			A [PhysXFlow3D] whose hot gas sets the ground under it alight where it is hotter than [member ignition_temperature]. Its [member PhysXFlow3D.cpu_readback] is turned on.
+		</member>
+		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="0.35">
+			Temperature of the [member heat_source]'s gas, in its own units, that sets the ground alight.
+		</member>
+		<member name="max_emitters" type="int" setter="set_max_emitters" getter="get_max_emitters" default="16">
+			Flame emitters at most: the burning ground is merged into tiles of about a metre, and the strongest tiles get one each.
+		</member>
+		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(20, 20)">
+			The area that can burn, in metres along the node's X and Z, centred on it.
+		</member>
+		<member name="spread_scale" type="float" setter="set_spread_scale" getter="get_spread_scale" default="1.0">
+			Speeds the fire up or slows it down, for a game's pace.
+		</member>
+		<member name="use_weather_wind" type="bool" setter="set_use_weather_wind" getter="is_using_weather_wind" default="true">
+			When enabled, the wind comes from the active [WeatherMap3D] where there is one; [member wind] is used otherwise.
+		</member>
+		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
+			The wind over the fire, in metres a second, when no weather map gives one.
+		</member>
+	</members>
+	<constants>
+		<constant name="FUEL_SHORT_GRASS" value="0" enum="FuelType">
+			Short grass (Anderson fuel model 1): fast, low flames.
+		</constant>
+		<constant name="FUEL_TALL_GRASS" value="1" enum="FuelType">
+			Tall grass (fuel model 3): fast, tall flames.
+		</constant>
+		<constant name="FUEL_LITTER" value="2" enum="FuelType">
+			Leaf and needle litter under trees (fuel models 8 and 9): slow, low flames that burn for longer.
+		</constant>
+		<constant name="FUEL_MAX" value="3" enum="FuelType">
+			The number of fuel types.
+		</constant>
+	</constants>
+</class>

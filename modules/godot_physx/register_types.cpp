@@ -30,11 +30,11 @@
 
 #include "register_types.h"
 
-#include "modules/modules_enabled.gen.h" // For ground.
-
 #include "godot_physx_project_settings.h"
 #include "godot_physx_server_3d.h"
 #include "physx_info.h"
+
+#include "modules/modules_enabled.gen.h" // For ground.
 #ifdef GODOT_PHYSX_BLAST
 #include "blast/godot_physx_blast_probe.h"
 #include "blast/physx_blast_asset.h"
@@ -44,6 +44,7 @@
 #include "cloth/physx_hair_3d.h"
 #include "cloth/physx_skinned_cloth_3d.h"
 #ifdef GODOT_PHYSX_FLOW
+#include "flow/physx_fire_spread_3d.h"
 #include "flow/physx_flow_3d.h"
 #include "flow/physx_flow_emitter_3d.h"
 #include "flow/physx_flow_render_effect.h"
@@ -187,6 +188,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 #ifdef MODULE_ROCKS_ENABLED
 		GDREGISTER_CLASS(PhysXRockDust3D);
 #endif
+		GDREGISTER_CLASS(PhysXFireSpread3D);
 #endif
 	}
 
