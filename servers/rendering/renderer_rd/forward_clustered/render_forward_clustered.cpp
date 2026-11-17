@@ -423,7 +423,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		RID material_uniform_set;
 		void *mesh_surface;
 
-		if (shadow_pass || p_pass_mode == PASS_MODE_DEPTH) { //regular depth pass can use these too
+		if ((shadow_pass || p_pass_mode == PASS_MODE_DEPTH) && !peel_front_pass) { //regular depth pass can use these too
 			material_uniform_set = surf->material_uniform_set_shadow;
 			shader = surf->shader_shadow;
 			mesh_surface = surf->surface_shadow;
@@ -764,6 +764,112 @@ void RenderForwardClustered::_render_list_with_draw_list(RenderListParameters *p
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, p_draw_flags, p_clear_color_values, p_clear_depth_value, p_clear_stencil_value, p_region);
 	_render_list(draw_list, fb_format, p_params, 0, p_params->element_count);
 	RD::get_singleton()->draw_list_end();
+}
+
+// Two-layer refraction by depth peeling (Everitt, "Interactive Order-Independent Transparency", NVIDIA 2001; for
+// liquids, Imai et al., "Real-Time Screen-Space Liquid Rendering with Complex Refractions", CAVW 27, 2016). The
+// transparent pass refracts one screen copy holding opaque geometry only, so a stream of water in front of a pool
+// showed what lies under the pool, and a glass behind another vanished. Before it:
+// 1. the screen-reading transparent surfaces (Transmission, refraction) draw depth-only: their front depth;
+// 2. they draw again in colour into the scene, each fragment kept only if it lies behind that front depth (the
+//    second layer), refracting the opaque copy as usual;
+// 2b. they draw depth-only again with the same test, keeping the second layer's depth;
+// 3. a second screen copy is taken, with the second layer in it. The transparent pass's screen texture lookups
+//    pick per sample between it and the opaque copy (peel_screen_ok(), scene_forward_clustered.glsl): the peeled
+//    one only where its layer lies clearly behind the surface looking, so none refracts its own image.
+// Back faces stay culled, so for a closed water mesh the second layer is the next body of water. Every other
+// transparent material discards in both passes (SCREEN_TEXTURE_USED, scene_forward_clustered.glsl).
+void RenderForwardClustered::_render_refraction_second_layer(const RenderDataRD *p_render_data, const Ref<RenderSceneBuffersRD> &p_rb, const Ref<RenderBufferDataForwardClustered> &p_rb_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_color_pass_flags, bool p_reverse_cull, const SceneShaderForwardClustered::ShaderSpecialization &p_base_specialization, bool p_no_fog, const Size2i &p_screen_size, const Color &p_default_bg_color) {
+	RD *rd = RD::get_singleton();
+	RENDER_TIMESTAMP("Render Refraction Second Layer");
+	rd->draw_command_begin_label("Render Refraction Second Layer");
+
+	const Size2i size = p_rb->get_internal_size();
+	static const StringName peel_name = "peel_depth";
+	if (!p_rb->has_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_name)) {
+		p_rb->create_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_name, RenderSceneBuffersRD::get_depth_format(false, false, false), RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, RD::TEXTURE_SAMPLES_1, size);
+	}
+	const RID peel = p_rb->get_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_name);
+	const RID peel_fb = FramebufferCacheRD::get_singleton()->get_cache(peel);
+	RenderList &alpha = render_list[RENDER_LIST_ALPHA];
+	const float lod_multiplier = p_render_data->scene_data->lod_distance_multiplier;
+	const float lod_threshold = p_render_data->scene_data->screen_mesh_lod_threshold;
+
+	// 1. Front depth.
+	p_render_data->scene_data->peel_flags = RenderSceneDataRD::PEEL_FRONT;
+	uint32_t ubo_index = _setup_environment(p_render_data, p_no_fog, p_screen_size, p_screen_size, p_default_bg_color, false);
+	peel_depth_bound = RID();
+	RID pass_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, p_radiance_texture, p_samplers, ubo_index, true);
+	// The surfaces' own materials, not the shared depth material a depth pass uses: only those know they read the
+	// screen (SCREEN_TEXTURE_USED).
+	peel_front_pass = true;
+	{
+		RenderListParameters params(alpha.elements.ptr(), alpha.element_info.ptr(), alpha.elements.size(), p_reverse_cull, PASS_MODE_DEPTH, 0, true, p_render_data->directional_light_soft_shadows, pass_set, false, Vector2(), lod_multiplier, lod_threshold, 1, 0, p_base_specialization);
+		Vector<Color> no_colors;
+		_render_list_with_draw_list(&params, peel_fb, RD::DRAW_CLEAR_ALL, no_colors, 0.0f, 0u, p_render_data->render_region);
+	}
+	peel_front_pass = false;
+
+	// 2. The second layer, into the scene colour.
+	p_render_data->scene_data->peel_flags = RenderSceneDataRD::PEEL_BEHIND;
+	ubo_index = _setup_environment(p_render_data, p_no_fog, p_screen_size, p_screen_size, p_default_bg_color, false);
+	peel_depth_bound = peel;
+	pass_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, p_radiance_texture, p_samplers, ubo_index, true);
+	peel_depth_bound = RID();
+	p_render_data->scene_data->peel_flags = 0;
+	{
+		const uint32_t flags = (p_color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR | COLOR_PASS_FLAG_MOTION_VECTORS);
+		RenderListParameters params(alpha.elements.ptr(), alpha.element_info.ptr(), alpha.elements.size(), p_reverse_cull, PASS_MODE_COLOR, flags, false, p_render_data->directional_light_soft_shadows, pass_set, false, Vector2(), lod_multiplier, lod_threshold, 1, 0, p_base_specialization);
+		_render_list_with_draw_list(&params, p_rb_data->get_color_pass_fb(flags), RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+	}
+	// 2b. The second layer's depth, for the transparent pass to tell whether the peeled copy where it samples shows
+	// something behind it (and not, say, its own image as another surface's second layer).
+	static const StringName peel_second_name = "peel_depth_second";
+	if (!p_rb->has_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_second_name)) {
+		p_rb->create_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_second_name, RenderSceneBuffersRD::get_depth_format(false, false, false), RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, RD::TEXTURE_SAMPLES_1, size);
+	}
+	const RID peel_second = p_rb->get_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_second_name);
+	peel_front_pass = true;
+	{
+		RenderListParameters params(alpha.elements.ptr(), alpha.element_info.ptr(), alpha.elements.size(), p_reverse_cull, PASS_MODE_DEPTH, 0, true, p_render_data->directional_light_soft_shadows, pass_set, false, Vector2(), lod_multiplier, lod_threshold, 1, 0, p_base_specialization);
+		Vector<Color> no_colors;
+		_render_list_with_draw_list(&params, FramebufferCacheRD::get_singleton()->get_cache(peel_second), RD::DRAW_CLEAR_ALL, no_colors, 0.0f, 0u, p_render_data->render_region);
+	}
+	peel_front_pass = false;
+
+	// 3. A second screen copy, with the second layer in it, beside the opaque one: a surface that is itself a second
+	// layer somewhere must not refract its own image (peel_screen_ok(), scene_forward_clustered.glsl).
+	if (p_rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
+		rd->texture_resolve_multisample(p_rb->get_color_msaa(0), p_rb->get_internal_texture(0));
+	}
+	static const StringName peel_screen_name = "peel_screen";
+	const RID back = p_rb->get_back_buffer_texture();
+	const RD::TextureFormat back_format = rd->texture_get_format(back);
+	if (!p_rb->has_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_screen_name)) {
+		p_rb->create_texture_from_format(RB_SCOPE_FORWARD_CLUSTERED, peel_screen_name, back_format);
+	}
+	const bool can_use_storage = _render_buffers_can_be_storage();
+	const int mipmaps = int(back_format.mipmaps);
+	RID dest = p_rb->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, peel_screen_name, 0, 0);
+	if (can_use_storage) {
+		copy_effects->copy_to_rect(p_rb->get_internal_texture(0), dest, Rect2i(0, 0, size.x, size.y));
+	} else {
+		copy_effects->copy_to_fb_rect(p_rb->get_internal_texture(0), FramebufferCacheRD::get_singleton()->get_cache(dest), Rect2i(0, 0, size.x, size.y));
+	}
+	for (int i = 1; i < mipmaps; i++) {
+		const RID source = dest;
+		dest = p_rb->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, peel_screen_name, 0, i);
+		const Size2i msize = p_rb->get_texture_slice_size(RB_SCOPE_FORWARD_CLUSTERED, peel_screen_name, i);
+		if (can_use_storage) {
+			copy_effects->make_mipmap(source, dest, msize);
+		} else {
+			copy_effects->make_mipmap_raster(source, dest, msize);
+		}
+	}
+	peel_depth_bound = peel;
+	peel_depth_second_bound = peel_second;
+	peel_screen_bound = p_rb->get_texture(RB_SCOPE_FORWARD_CLUSTERED, peel_screen_name);
+	rd->draw_command_end_label();
 }
 
 uint32_t RenderForwardClustered::_setup_environment(const RenderDataRD *p_render_data, bool p_no_fog, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, bool p_opaque_render_buffers, bool p_apply_alpha_multiplier, bool p_pancake_shadows, float p_frag_coord_scale) {
@@ -2709,13 +2815,22 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
 
+	if (scene_state.used_screen_texture && GLOBAL_GET_CACHED(bool, "rendering/transparency/refraction_second_layer") && rb_data.is_valid() && rb->has_internal_texture() && rb->get_view_count() == 1 && !render_list[RENDER_LIST_ALPHA].elements.is_empty()) {
+		_render_refraction_second_layer(p_render_data, rb, rb_data, radiance_texture, samplers, color_pass_flags, reverse_cull, base_specialization, is_reflection_probe, screen_size, p_default_bg_color);
+	}
+
 	RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
 	RD::get_singleton()->draw_command_begin_label("Render 3D Transparent Pass");
 
+	p_render_data->scene_data->peel_flags = peel_screen_bound.is_valid() ? RenderSceneDataRD::PEEL_ACTIVE : 0;
 	uint32_t transparent_pass_uniform_buffer_index = _setup_environment(p_render_data, is_reflection_probe, screen_size, screen_size, p_default_bg_color, false);
+	p_render_data->scene_data->peel_flags = 0;
 
 	rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, transparent_pass_uniform_buffer_index, true);
+	peel_depth_bound = RID();
+	peel_depth_second_bound = RID();
+	peel_screen_bound = RID();
 
 	{
 		uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
@@ -4023,6 +4138,30 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		RID ssr_mip_level = (rb_data.is_valid() && !rb_data->ss_effects_data.ssr.half_size && rb->has_texture(RB_SCOPE_SSR, RB_MIP_LEVEL)) ? rb->get_texture(RB_SCOPE_SSR, RB_MIP_LEVEL) : RID();
 		RID texture = ssr_mip_level.is_valid() ? ssr_mip_level : texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
 		u.append_id(texture);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.binding = 39;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		u.append_id(peel_depth_bound.is_valid() ? peel_depth_bound : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
+		uniforms.push_back(u);
+	}
+	{
+		// The screen copy with the second layer; otherwise the plain one, so a lookup that picks it reads the same.
+		RD::Uniform u;
+		u.binding = 40;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		RID bbt = rb_data.is_valid() ? rb->get_back_buffer_texture() : RID();
+		RID texture = peel_screen_bound.is_valid() ? peel_screen_bound : (bbt.is_valid() ? bbt : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
+		u.append_id(texture);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.binding = 41;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		u.append_id(peel_depth_second_bound.is_valid() ? peel_depth_second_bound : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
 		uniforms.push_back(u);
 	}
 	for (int i = 0; i < 2; i++) {

@@ -3831,6 +3831,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "rendering/anti_aliasing/quality/smaa_edge_detection_threshold", PROPERTY_HINT_RANGE, "0.01,0.2,0.01"), 0.05);
 
 	GLOBAL_DEF("rendering/anti_aliasing/quality/use_debanding", false);
+	GLOBAL_DEF("rendering/transparency/refraction_second_layer", true);
 
 	{
 		String mode_hints;

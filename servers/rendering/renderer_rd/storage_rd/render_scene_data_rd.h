@@ -75,6 +75,10 @@ public:
 	bool material_uv2_mode = false;
 	float emissive_exposure_normalization = 0.0;
 	bool shadow_pass = false;
+	uint32_t peel_flags = 0; // SCENE_DATA_FLAGS_PEEL_* for the next uniform buffer setup
+	static constexpr uint32_t PEEL_FRONT = 1 << 11; // SCENE_DATA_FLAGS_PEEL_FRONT
+	static constexpr uint32_t PEEL_BEHIND = 1 << 12; // SCENE_DATA_FLAGS_PEEL_BEHIND
+	static constexpr uint32_t PEEL_ACTIVE = 1 << 13; // SCENE_DATA_FLAGS_PEEL_ACTIVE
 
 	Size2 shadow_atlas_pixel_size;
 	Size2 directional_shadow_pixel_size;
@@ -116,6 +120,11 @@ private:
 		SCENE_DATA_FLAGS_USE_DEPTH_FOG = 1 << 8,
 		SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG = 1 << 9,
 		SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE = 1 << 10,
+		// Two-layer refraction (Forward+): the front-depth pass and the second-layer pass draw only screen-reading
+		// surfaces, the second layer only behind the front one (render_forward_clustered.cpp, peel passes).
+		SCENE_DATA_FLAGS_PEEL_FRONT = 1 << 11,
+		SCENE_DATA_FLAGS_PEEL_BEHIND = 1 << 12,
+		SCENE_DATA_FLAGS_PEEL_ACTIVE = 1 << 13, // the transparent pass, with a peeled screen copy
 		SCENE_DATA_FLAGS_MAX
 	};
 

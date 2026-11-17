@@ -111,6 +111,8 @@ public:
 		bool suppress_varying_io = false;
 		bool apply_luminance_multiplier = false;
 		bool check_multiview_samplers = false;
+		// Wrap screen texture lookups to pick the peeled copy per sample (Forward+ two-layer refraction).
+		bool screen_texture_second_layer = false;
 	};
 
 private:
