@@ -1296,7 +1296,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(rock_away.x, 0.0f, rock_away.y)).normalized();
 						b = Basis(lean_axis, Math::deg_to_rad(ROCK_LEAN_DEG) * (1.0f - rock_fit) / (1.0f - ROCK_FIT_MIN)) * b;
 					}
-					b.scale(Vector3(scale, scale, scale));
+					// Trodden: the plants left are pressed down and lie over, each its own way.
+					const float trod = CLAMP((1.0f - trodden) / 0.55f, 0.0f, 1.0f);
+					if (trod > 0.0f) {
+						const float ta = Math::fmod(r * 6151.0f, 1.0f) * Math::TAU;
+						b = Basis(Vector3(Math::cos(ta), 0.0f, Math::sin(ta)), Math::deg_to_rad(55.0f) * trod) * b;
+					}
+					b.scale(Vector3(scale, scale * (1.0f - 0.5f * trod), scale));
 					const int variant = bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1);
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {

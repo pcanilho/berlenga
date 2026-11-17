@@ -7214,10 +7214,11 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_trample_resistance", "preset"), &PlantGenerator::get_trample_resistance);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("apply_scrub_rules", "species", "stand"), &PlantGenerator::apply_scrub_rules);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_woody_shrub", "tree_preset", "form", "variants", "season", "density", "patch_scale", "patch_cover", "seed"), &PlantGenerator::make_woody_shrub);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));

@@ -38,6 +38,7 @@
 
 #include "plant_generator.h"
 #include "plant_species.h"
+#include "tree_generator.h"
 
 namespace {
 const float SC_GOLDEN = 2.39996323f;
@@ -481,7 +482,7 @@ void PlantGenerator::apply_scrub_rules(const Ref<PlantSpecies> &p_species, Scrub
 	sp->set_meta("scrub", int(p_stand));
 }
 
-TypedArray<Resource> PlantGenerator::make_scrub(ScrubStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season) {
+TypedArray<Resource> PlantGenerator::make_scrub(ScrubStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season, bool p_shrubs) {
 	using P = PlantGenerator;
 	struct ScrubSpec {
 		Preset preset;
@@ -514,6 +515,33 @@ TypedArray<Resource> PlantGenerator::make_scrub(ScrubStand p_stand, int p_varian
 	}
 	TypedArray<Resource> out;
 	int seed_base = 10700 + int(p_stand) * 100;
+	if (p_shrubs) {
+		// The tall shrubs first, so their crowns claim the ground. Maquis: lentisk, kermes oak and
+		// gum rockrose closing to a 1.5 to 3 m canopy (Quezel 1981; Di Castri 1981). Garrigue: low
+		// kermes oak (grazed and burnt into cushions, the "garrigue a chene kermes") and young gum
+		// rockrose between the rosemary and thyme.
+		using T = TreeGenerator;
+		struct ShrubSpec {
+			int preset, form;
+			float density, patch_scale, patch_cover;
+		};
+		LocalVector<ShrubSpec> shrubs;
+		if (p_stand == SCRUB_MAQUIS) {
+			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_LENTISK, T::SHRUB_MATURE, 0.5f, 14.0f, 0.55f },
+					{ T::PRESET_KERMES_OAK, T::SHRUB_MATURE, 0.45f, 12.0f, 0.5f },
+					{ T::PRESET_GUM_ROCKROSE, T::SHRUB_MATURE, 0.4f, 10.0f, 0.45f } });
+		} else {
+			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_KERMES_OAK, T::SHRUB_CUSHION, 0.35f, 10.0f, 0.35f },
+					{ T::PRESET_GUM_ROCKROSE, T::SHRUB_YOUNG, 0.25f, 8.0f, 0.3f } });
+		}
+		for (const ShrubSpec &w : shrubs) {
+			Ref<PlantSpecies> sp = make_woody_shrub(w.preset, w.form, p_variants, p_season, w.density, w.patch_scale, w.patch_cover, seed_base + 7 * w.form + w.preset);
+			if (sp.is_valid()) {
+				apply_scrub_rules(sp, p_stand);
+				out.push_back(sp);
+			}
+		}
+	}
 	for (const ScrubSpec &f : set) {
 		Ref<PlantGenerator> gen;
 		gen.instantiate();

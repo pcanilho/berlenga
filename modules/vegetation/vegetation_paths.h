@@ -44,12 +44,16 @@
 // along, each with its trodden width and its passes a year. Walkers spread about the line in a
 // bell (Cole and Bayfield 1993 measure trampling as passes across a lane; Liddle 1997, ch. 3, the
 // spread of feet about a path's centre line), so the passes a point gets fall off as a Gaussian of
-// its distance, sigma a quarter of the trodden width. The fields thin and shorten their plants
+// its distance, sigma a quarter of the trodden width, over a wider, thinner tail (three times the
+// sigma, 15% of the walkers: people stepping aside to pass, round puddles), so the sward shortens
+// over a metre or so towards the tread rather than standing full height at its edge. The fields thin and shorten their plants
 // with the passes (PlantSpecies.trample_resistance). Each path is a Dictionary: "points"
 // (PackedVector3Array, world; y unused), "width" (m), "passes" (a year). A grid of 8 m cells finds
 // the segments near a point.
 struct VegetationPaths {
 	static constexpr float CELL = 8.0f;
+	static constexpr float TAIL = 3.0f; // The tail's sigma over the core's.
+	static constexpr float TAIL_SHARE = 0.15f;
 	struct Segment {
 		Vector2 a, b;
 		float sigma = 0.5f;
@@ -72,7 +76,7 @@ struct VegetationPaths {
 				continue;
 			}
 			const float sigma = width * 0.25f;
-			const float reach = sigma * 3.5f; // exp(-3.5^2 / 2): under 0.3% of the passes.
+			const float reach = sigma * TAIL * 3.5f; // exp(-3.5^2 / 2): under 0.3% of the tail's passes.
 			max_reach = MAX(max_reach, reach);
 			for (int k = 0; k + 1 < pts.size(); k++) {
 				Segment s;
@@ -112,7 +116,8 @@ struct VegetationPaths {
 			const float len2 = ab.length_squared();
 			const float t = len2 > 1e-8f ? CLAMP((p_xz - s.a).dot(ab) / len2, 0.0f, 1.0f) : 0.0f;
 			const float d2 = (s.a + ab * t).distance_squared_to(p_xz);
-			best = MAX(best, s.passes * Math::exp(-0.5f * d2 / (s.sigma * s.sigma)));
+			const float k = -0.5f * d2 / (s.sigma * s.sigma);
+			best = MAX(best, s.passes * ((1.0f - TAIL_SHARE) * Math::exp(k) + TAIL_SHARE * Math::exp(k / (TAIL * TAIL))));
 		}
 		return best;
 	}

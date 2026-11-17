@@ -2587,6 +2587,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Mediterranean shrubs",
+   "settings": [
+    "TreeGenerator.make_shrub_species()"
+   ],
+   "note": "",
+   "what": "gum rockrose, kermes oak and lentisk, with flowers, acorns and drupes as geometry.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Wind, bank and rock trees",
    "settings": [
     "wind_exposure",

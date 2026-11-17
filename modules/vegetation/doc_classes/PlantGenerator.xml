@@ -105,8 +105,10 @@
 			<param index="1" name="variants" type="int" default="3" />
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
+			<param index="4" name="shrubs" type="bool" default="true" />
 			<description>
 				Returns the dwarf shrubs of an Atlantic heath zone as [PlantSpecies] (Gimingham 1972; Rodwell 1991). Heath is oceanic and open: over about 700 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), January means over about -4 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), out of the shade of crowns ([constant PlantSpecies.RULE_SHADE] under 0.3), off bare rock, and below the alpine belt (growing season over 6.4 C, [constant PlantSpecies.RULE_SEASON_TEMPERATURE], where [method make_alpine] takes over). Dry heath (heather in patches of different ages, bell heather on the sunniest slopes, crowberry on the shaded ones, wiry grasses) keeps to free-draining ground ([constant PlantSpecies.RULE_WETNESS] under 7.5); wet heath (cross-leaved heath, heather, cottongrass, sphagnum) to where water gathers, short of the bog (7 to 10); maritime heath (wind-pruned heather and bell heather, thrift, crowberry) to cliff tops open to the sea ([constant PlantSpecies.RULE_COAST_EXPOSURE] over 0.4, 6 to 150 m above it, needing a geology source with a sea). They do not colour the far ground. Each species has the meta [code]heath[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and berries.
+				With [param shrubs], TreeGenerator's gorse (mature and young, in clumps) and broom lead the dry set and wind-clipped gorse cushions the maritime one, two variants each ([method make_woody_shrub]); they are heavy meshes, so tests can leave them out.
 			</description>
 		</method>
 		<method name="make_saltmarsh" qualifiers="static">
@@ -125,8 +127,10 @@
 			<param index="1" name="variants" type="int" default="3" />
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
+			<param index="4" name="shrubs" type="bool" default="true" />
 			<description>
 				Returns the low aromatic shrubs of a Mediterranean scrub zone as [PlantSpecies] (Blondel et al. 2010; Flora iberica). Scrub is summer-dry and mild in winter: January means over about 3 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), 250 to 1,100 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), aridity 0.2 to 0.75 ([constant PlantSpecies.RULE_ARIDITY]), out of the shade of crowns and off wet ground. Garrigue (open rosemary, thyme cushions and sage-leaved rockrose with bare stony ground between, and dry grass) keeps to thin soil ([constant PlantSpecies.RULE_SOIL_DEPTH] under 0.45 m) and rock; maquis (closed sage-leaved rockrose and French lavender, a little rosemary) to deeper soil (over 0.35 m), under the tall shrubs added with [method apply_scrub_rules]. Thyme and lavender take the sunniest ground. Each species has the meta [code]scrub[/code] set to its stand. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the rockrose's summer drought.
+				With [param shrubs], TreeGenerator's lentisk, kermes oak and gum rockrose lead the maquis, and kermes oak cushions and young gum rockrose the garrigue ([method make_woody_shrub]).
 			</description>
 		</method>
 		<method name="make_stones" qualifiers="static">
@@ -206,6 +210,20 @@
 			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
 			<description>
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
+			</description>
+		</method>
+		<method name="make_woody_shrub" qualifiers="static">
+			<return type="PlantSpecies" />
+			<param index="0" name="tree_preset" type="int" />
+			<param index="1" name="form" type="int" />
+			<param index="2" name="variants" type="int" />
+			<param index="3" name="season" type="Dictionary" />
+			<param index="4" name="density" type="float" />
+			<param index="5" name="patch_scale" type="float" />
+			<param index="6" name="patch_cover" type="float" />
+			<param index="7" name="seed" type="int" />
+			<description>
+				A [TreeGenerator] shrub ([enum TreeGenerator.Preset], [enum TreeGenerator.ShrubForm]) for a heath or scrub set: [method TreeGenerator.make_shrub_species] with at most two variants, the given density and clumps (patches); its climate and terrain rules are the caller's.
 			</description>
 		</method>
 	</methods>

@@ -50,6 +50,9 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer Inputs {
 #define H_OFF_LIGHT 37
 #define H_OFF_HEIGHT 38
 #define H_OFF_WEAR 39
+#define H_WG_N 40
+#define H_WG_STEP 41
+#define H_TRAMPLE_R 42
 
 uint murmur3_one(uint p_in, uint p_seed) {
 	p_in *= 0xcc9e2d51u;
@@ -99,21 +102,30 @@ float suitability(float x, float z) {
 	return mix(mix(a, b, fx), mix(c, d, fx), fz);
 }
 
-float grid_at(int base, float x, float z) {
-	const int lg = int(inp[H_LG]);
-	const float lx = clamp(x - inp[H_X0], 0.0, float(lg - 1));
-	const float lz = clamp(z - inp[H_Z0], 0.0, float(lg - 1));
-	const int gx = min(int(lx), lg - 2);
-	const int gz = min(int(lz), lg - 2);
-	const float a = mix(inp[base + gz * lg + gx], inp[base + gz * lg + gx + 1], lx - float(gx));
-	const float b = mix(inp[base + (gz + 1) * lg + gx], inp[base + (gz + 1) * lg + gx + 1], lx - float(gx));
-	return mix(a, b, lz - float(gz));
+// Worn paths: the walkers a year at a blade (GrassField3D::_trample_cover and _trample_scale).
+float passes_at(float x, float z) {
+	const int base = int(inp[H_OFF_WEAR]);
+	if (base <= 0) {
+		return 0.0;
+	}
+	const int n = int(inp[H_WG_N]);
+	const float step = inp[H_WG_STEP];
+	const float u = clamp((x - inp[H_X0]) / step, 0.0, float(n - 1));
+	const float v = clamp((z - inp[H_Z0]) / step, 0.0, float(n - 1));
+	const int i0 = min(int(u), n - 2);
+	const int j0 = min(int(v), n - 2);
+	const float a = mix(inp[base + j0 * n + i0], inp[base + j0 * n + i0 + 1], u - float(i0));
+	const float b = mix(inp[base + (j0 + 1) * n + i0], inp[base + (j0 + 1) * n + i0 + 1], u - float(i0));
+	return mix(a, b, v - float(j0));
 }
 
-// Worn paths: the blades' trodden height, 1 off the paths.
-float wear_at(float x, float z) {
-	const int base = int(inp[H_OFF_WEAR]);
-	return base > 0 ? grid_at(base, x, z) : 1.0;
+float trample_cover(float p) {
+	const float x = p / max(inp[H_TRAMPLE_R], 1e-3);
+	return p > 0.0 ? 1.0 / (1.0 + x * x) : 1.0;
+}
+
+float trample_scale(float p) {
+	return p > 0.0 ? mix(1.0, 0.45, p / (p + inp[H_TRAMPLE_R])) : 1.0;
 }
 
 float light_at(float x, float z) {
@@ -177,8 +189,13 @@ void main() {
 	const float x = (float(ix) + unit(hj, 0)) * cell;
 	const float z = (float(iz) + unit(hj, 8)) * cell;
 	float y = inp[H_GROUND_Y];
+	const float passes = passes_at(x, z);
+	if (rank >= keep * trample_cover(passes)) {
+		write_zero(b);
+		return;
+	}
 	if (inp[H_HAS_MAP] > 0.5) {
-		const float suit = suitability(x, z);
+		const float suit = suitability(x, z) * trample_cover(passes);
 		if (rank >= keep * suit) {
 			write_zero(b);
 			return;
@@ -195,7 +212,7 @@ void main() {
 	const float light = light_at(x, z);
 	const float shade_t = 1.0 - clamp(light, 0.0, 1.0);
 	const float sun_t = smoothstep(1.0, 1.3, light);
-	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * clump_h + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t) * wear_at(x, z);
+	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * clump_h + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t) * trample_scale(passes);
 	const float yaw = clump_yaw + (unit(hj, 24) - 0.5) * 1.6;
 
 	// to_local * Transform3D(Basis(Y, yaw), (x, y, z)).
@@ -212,7 +229,9 @@ void main() {
 		rec[b + uint(r) * 4u + 3u] = l0 * x + l1 * y + l2 * z + inp[t + 9 + r];
 	}
 	const float order = floor(fract(rank * 8.0) * 255.0);
-	const float blade_lean = min(inp[H_LEAN] * (0.4 + 1.2 * unit(hc, 16)) * (1.0 + 0.8 * shade_t), 3.99);
+	// Trodden blades lie over (wear 0.45 at the most-walked: flat).
+	const float trod = clamp((1.0 - trample_scale(passes)) / 0.55, 0.0, 1.0);
+	const float blade_lean = min(inp[H_LEAN] * (0.4 + 1.2 * unit(hc, 16)) * (1.0 + 0.8 * shade_t) + 2.6 * sqrt(trod) * (0.7 + 0.6 * fract(rnd * 7.31)), 3.99);
 	const float packed_light = max(1.0, round(clamp(light / 1.5, 0.0, 1.0) * 100.0));
 	rec[b + 12u] = height;
 	rec[b + 13u] = inp[H_WIDTH];

@@ -37,6 +37,7 @@
 
 #include "plant_generator.h"
 #include "plant_species.h"
+#include "tree_generator.h"
 
 namespace {
 const float HE_GOLDEN = 2.39996323f;
@@ -279,7 +280,23 @@ void PlantGenerator::_build_crowberry() {
 // where January means fall below about -4 C; Bannister 1965), open (no canopy), below the alpine
 // belt, and sorted by water: dry heath on free-draining ground, wet heath where water gathers but
 // short of the bog, maritime heath on exposed cliff tops, wind-pruned low.
-TypedArray<Resource> PlantGenerator::make_heath(HeathStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season) {
+// TreeGenerator's woody shrubs in a heath or scrub set (trees.md 5u, 5v). Gorse and broom grow in
+// clumps (Ulex europaeus spreads by seed into dense stands after fire or grazing stops; Hill et al.
+// 1996), so they come in patches; their crowns shade the dwarf shrubs out underneath.
+Ref<PlantSpecies> PlantGenerator::make_woody_shrub(int p_tree_preset, int p_form, int p_variants, const Dictionary &p_season, float p_density, float p_patch_scale, float p_patch_cover, int p_seed) {
+	Ref<PlantSpecies> sp = TreeGenerator::make_shrub_species(TreeGenerator::Preset(p_tree_preset), TreeGenerator::ShrubForm(p_form), CLAMP(p_variants, 1, 2), p_season);
+	ERR_FAIL_COND_V(sp.is_null(), sp);
+	sp->set_density(p_density);
+	if (p_patch_scale > 0.0f) {
+		sp->set_patch_scale(p_patch_scale);
+		sp->set_patch_cover(p_patch_cover);
+		sp->set_patch_seed(p_seed);
+	}
+	sp->set_meta("woody_shrub", true);
+	return sp;
+}
+
+TypedArray<Resource> PlantGenerator::make_heath(HeathStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season, bool p_shrubs) {
 	using P = PlantGenerator;
 	struct HeathSpec {
 		Preset preset;
@@ -319,6 +336,80 @@ TypedArray<Resource> PlantGenerator::make_heath(HeathStand p_stand, int p_varian
 	}
 	TypedArray<Resource> out;
 	int seed_base = 10300 + int(p_stand) * 100;
+	// The heath's rules on a species of its set.
+	auto heath_rules = [&](const Ref<PlantSpecies> &sp, int p_preset) {
+		// Oceanic, open, below the alpine belt (which takes over from the season's 6.4 C treeline).
+		sp->set_rule_range(PlantSpecies::RULE_PRECIPITATION, Vector2(700.0f, 100000.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_PRECIPITATION, 150.0f);
+		sp->set_rule_range(PlantSpecies::RULE_JANUARY_TEMPERATURE, Vector2(-4.0f, 100.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_JANUARY_TEMPERATURE, 1.5f);
+		sp->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(6.4f, 100.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_SEASON_TEMPERATURE, 0.8f);
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.3f));
+		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.15f);
+		sp->set_rule_range(PlantSpecies::RULE_ROCK, Vector2(0.0f, 0.5f));
+		sp->set_rule_fade(PlantSpecies::RULE_ROCK, 0.15f);
+		switch (p_stand) {
+			case HEATH_DRY:
+				sp->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(-1000.0f, 7.5f));
+				sp->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.0f);
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 35.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+				if (p_preset == P::PRESET_BELL_HEATHER) {
+					// The sunniest, driest slopes (Bannister 1965).
+					sp->set_rule_range(PlantSpecies::RULE_SUNLIGHT, Vector2(150.0f, 2000.0f));
+					sp->set_rule_fade(PlantSpecies::RULE_SUNLIGHT, 25.0f);
+				} else if (p_preset == P::PRESET_CROWBERRY) {
+					sp->set_rule_range(PlantSpecies::RULE_SUNLIGHT, Vector2(0.0f, 170.0f));
+					sp->set_rule_fade(PlantSpecies::RULE_SUNLIGHT, 25.0f);
+				}
+				break;
+			case HEATH_WET:
+				// Where water gathers, short of the bog's wettest ground (wetness 9 and up).
+				sp->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(7.0f, p_preset == P::PRESET_SPHAGNUM ? 1000.0f : 10.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.0f);
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 15.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+				break;
+			case HEATH_MARITIME:
+				// Cliff tops open to the sea's wind and salt, above the reach of the waves.
+				sp->set_rule_range(PlantSpecies::RULE_COAST_EXPOSURE, Vector2(0.4f, 1.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_COAST_EXPOSURE, 0.15f);
+				sp->set_rule_range(PlantSpecies::RULE_TIDE_HEIGHT, Vector2(6.0f, 150.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_TIDE_HEIGHT, 3.0f);
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 30.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+				break;
+			case HEATH_MAX:
+				break;
+		}
+		sp->set_meta("heath", true);
+	};
+	if (p_shrubs) {
+		// Gorse and broom on the dry heath, gorse clipped into cushions by the salt wind on cliff
+		// tops (the classic Ulex-Erica maritime heath, Rodwell 1991 H7/H8); neither stands
+		// waterlogged ground, so the wet heath has none.
+		using T = TreeGenerator;
+		struct ShrubSpec {
+			int preset, form;
+			float density, patch_scale, patch_cover;
+		};
+		LocalVector<ShrubSpec> shrubs;
+		if (p_stand == HEATH_DRY) {
+			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_GORSE, T::SHRUB_MATURE, 0.35f, 18.0f, 0.3f },
+					{ T::PRESET_GORSE, T::SHRUB_YOUNG, 0.3f, 12.0f, 0.3f },
+					{ T::PRESET_BROOM, T::SHRUB_MATURE, 0.25f, 15.0f, 0.25f } });
+		} else if (p_stand == HEATH_MARITIME) {
+			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_GORSE, T::SHRUB_CUSHION, 0.35f, 10.0f, 0.35f } });
+		}
+		for (const ShrubSpec &w : shrubs) {
+			Ref<PlantSpecies> sp = make_woody_shrub(w.preset, w.form, p_variants, p_season, w.density, w.patch_scale, w.patch_cover, seed_base + 7 * w.form + w.preset);
+			if (sp.is_valid()) {
+				heath_rules(sp, -1);
+				out.push_back(sp);
+			}
+		}
+	}
 	for (const HeathSpec &f : set) {
 		Ref<PlantGenerator> gen;
 		gen.instantiate();
@@ -344,58 +435,13 @@ TypedArray<Resource> PlantGenerator::make_heath(HeathStand p_stand, int p_varian
 		sp->set_density(f.density * get_presence(f.preset, p_season));
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
 		sp->set_align_to_ground(f.align);
-		// Oceanic, open, below the alpine belt (which takes over from the season's 6.4 C treeline).
-		sp->set_rule_range(PlantSpecies::RULE_PRECIPITATION, Vector2(700.0f, 100000.0f));
-		sp->set_rule_fade(PlantSpecies::RULE_PRECIPITATION, 150.0f);
-		sp->set_rule_range(PlantSpecies::RULE_JANUARY_TEMPERATURE, Vector2(-4.0f, 100.0f));
-		sp->set_rule_fade(PlantSpecies::RULE_JANUARY_TEMPERATURE, 1.5f);
-		sp->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(6.4f, 100.0f));
-		sp->set_rule_fade(PlantSpecies::RULE_SEASON_TEMPERATURE, 0.8f);
-		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.3f));
-		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.15f);
-		sp->set_rule_range(PlantSpecies::RULE_ROCK, Vector2(0.0f, 0.5f));
-		sp->set_rule_fade(PlantSpecies::RULE_ROCK, 0.15f);
-		switch (p_stand) {
-			case HEATH_DRY:
-				sp->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(-1000.0f, 7.5f));
-				sp->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.0f);
-				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 35.0f));
-				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
-				if (f.preset == P::PRESET_BELL_HEATHER) {
-					// The sunniest, driest slopes (Bannister 1965).
-					sp->set_rule_range(PlantSpecies::RULE_SUNLIGHT, Vector2(150.0f, 2000.0f));
-					sp->set_rule_fade(PlantSpecies::RULE_SUNLIGHT, 25.0f);
-				} else if (f.preset == P::PRESET_CROWBERRY) {
-					sp->set_rule_range(PlantSpecies::RULE_SUNLIGHT, Vector2(0.0f, 170.0f));
-					sp->set_rule_fade(PlantSpecies::RULE_SUNLIGHT, 25.0f);
-				}
-				break;
-			case HEATH_WET:
-				// Where water gathers, short of the bog's wettest ground (wetness 9 and up).
-				sp->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(7.0f, f.preset == P::PRESET_SPHAGNUM ? 1000.0f : 10.0f));
-				sp->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.0f);
-				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 15.0f));
-				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
-				break;
-			case HEATH_MARITIME:
-				// Cliff tops open to the sea's wind and salt, above the reach of the waves.
-				sp->set_rule_range(PlantSpecies::RULE_COAST_EXPOSURE, Vector2(0.4f, 1.0f));
-				sp->set_rule_fade(PlantSpecies::RULE_COAST_EXPOSURE, 0.15f);
-				sp->set_rule_range(PlantSpecies::RULE_TIDE_HEIGHT, Vector2(6.0f, 150.0f));
-				sp->set_rule_fade(PlantSpecies::RULE_TIDE_HEIGHT, 3.0f);
-				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 30.0f));
-				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
-				break;
-			case HEATH_MAX:
-				break;
-		}
+		heath_rules(sp, f.preset);
 		if (f.patch_scale > 0.0f) {
 			sp->set_patch_scale(f.patch_scale);
 			sp->set_patch_cover(f.patch_cover);
 			sp->set_patch_seed(seed_base);
 		}
 		sp->set_visibility_range(f.visibility);
-		sp->set_meta("heath", true);
 		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 19;

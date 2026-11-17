@@ -599,6 +599,13 @@ func _heath_checks() -> void:
 			else:
 				ok = ok and s.coast_exposure_range.x >= 0.39 and s.tide_height_range.x >= 5.0
 		_check("heath set %d: oceanic, open, below the alpine belt, on its own water or coast band" % st, ok, set.size())
+		# TreeGenerator's gorse and broom lead the dry set, gorse cushions the maritime one; none on wet heath.
+		var woody := 0
+		for i in set.size():
+			if (set[i] as PlantSpecies).has_meta("woody_shrub"):
+				woody += 1
+				ok = ok and i < 3
+		_check("heath set %d: woody shrubs first (gorse, broom)" % st, woody == [3, 0, 1][st] and ok, woody)
 
 # Mediterranean scrub dwarf shrubs (docs/ideas/vegetation.md): sizes from Flora iberica in spring
 # and in summer drought, the rockrose's summer-folded leaves, the garrigue and maquis sets.
@@ -638,6 +645,13 @@ func _scrub_checks() -> void:
 			var sd: Vector2 = s.soil_depth_range
 			ok = ok and (sd.y <= 0.5 if st == P.SCRUB_GARRIGUE else sd.x >= 0.3)
 		_check("scrub set %d: mild, summer-dry, garrigue on thin soil and maquis on deep" % st, ok, set.size())
+		# TreeGenerator's kermes oak and gum rockrose (and lentisk in the maquis) lead the set.
+		var woody := 0
+		for i in set.size():
+			if (set[i] as PlantSpecies).has_meta("woody_shrub"):
+				woody += 1
+				ok = ok and i < 3
+		_check("scrub set %d: woody shrubs first (kermes oak, gum rockrose, lentisk)" % st, woody == [2, 3][st] and ok, woody)
 	# TreeGenerator's woody shrubs take the same rules.
 	var extra := PlantSpecies.new()
 	P.apply_scrub_rules(extra, P.SCRUB_MAQUIS)
