@@ -350,7 +350,7 @@
 			The contact foam's opacity at the rock.
 		</member>
 		<member name="contact_foam_width" type="float" setter="set_contact_foam_width" getter="get_contact_foam_width" default="1.2">
-			The contact foam ring's width (m) at mean water: it widens to about 1.6 times this under a crest and narrows to about half in a trough, with older, lacier foam out to three times it.
+			The contact foam's width (m) at mean water: it widens to about 1.6 times this under a crest and narrows to about half in a trough, to 1.7 times it on the side the waves strike, and drains outward into the open sea's lace and holes over about two widths (longer in the lee).
 		</member>
 		<member name="contact_wetness" type="bool" setter="set_contact_wetness" getter="get_contact_wetness" default="true">
 			Where the sea reached stays wet in the weather's contact wetness ([code]WeatherMap3D.contact_wetness_enabled[/code]), so sand, rocks, plants and props on the shore stay dark and glossy up to where the waves ran and dry with the weather (much slower than [member wet_sand_dry_time], which is the sea's own wet sand). The swash's wetness is read back from the GPU every eighth step, over land and still water shallower than half a metre (piers and hulls over deeper water are left alone). Needs a varying depth ([member seabed_from_floor]).

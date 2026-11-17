@@ -1209,10 +1209,12 @@ float shore_foam_at(vec2 world_xz) {
 	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
 }
 
-// White water where the sea meets a steep face: a ring round each stack, boulder and cliff foot that widens as a
-// crest arrives (the wash) and draws back in the trough, churned solid at the rock and lacy at its outer edge,
-// plus a wash over rock tops just under the surface as the crests cross them.
-float contact_foam_at(vec2 world_xz) {
+// White water where the sea meets a steep face: churned foam against each stack, boulder and cliff foot that widens
+// as a crest arrives (the wash) and draws back in the trough, thickest on the side the waves strike and drawn out in
+// the lee, draining outward into the lace and holes of the open sea's foam (foam_structure: fresh foam is a sheet,
+// older foam a web of borders), plus a wash over rock tops just under the surface as the crests cross them.
+// footprint: the pixel's size on the water (m), so the lace fades to its mean cover where finer than a pixel.
+float contact_foam_at(vec2 world_xz, float footprint) {
 	if (!contact_foam_on) {
 		return 0.0;
 	}
@@ -1227,23 +1229,31 @@ float contact_foam_at(vec2 world_xz) {
 		return 0.0;
 	}
 	float d = c.r * 8.0;
+	// Away from the rock: the distance's gradient (a texel either way). Waves travel with the wind: the water on the
+	// rock's upwind side takes their impact, the lee their spent foam.
+	vec2 texel = vec2(1.0) / vec2(textureSize(contact_foam_tex, 0));
+	vec2 gd = vec2(texture(contact_foam_tex, uv + vec2(texel.x, 0.0)).r - texture(contact_foam_tex, uv - vec2(texel.x, 0.0)).r,
+			texture(contact_foam_tex, uv + vec2(0.0, texel.y)).r - texture(contact_foam_tex, uv - vec2(0.0, texel.y)).r);
+	vec2 away = dot(gd, gd) > 1e-10 ? normalize(gd) : vec2(0.0);
+	vec2 wave_dir = dot(foam_streak_dir, foam_streak_dir) > 1e-6 ? normalize(foam_streak_dir) : vec2(1.0, 0.0);
+	float facing = -dot(away, wave_dir); // 1 on the face the waves strike, -1 in the lee
 	// The water's height here against the sea's: up at a crest, down in a trough.
 	float pump = smoothstep(-0.6, 1.0, ocean_height_all(world_xz).r / max(contact_wave_height * 0.5, 0.05));
-	float w = contact_foam_width * mix(0.45, 1.6, pump);
-	// Churned white against the rock, then the older foam the backwash spreads out to about three widths.
-	float core = 1.0 - smoothstep(0.1 * w, w, d);
-	float trail = 1.0 - smoothstep(w, 3.0 * w, d);
-	float a = c.g * max(core, 0.6 * trail);
-	a = max(a, c.b * smoothstep(0.25, 0.85, pump));
-	if (a <= 0.0) {
+	float w = contact_foam_width * mix(0.45, 1.6, pump) * mix(1.0, 1.7, max(facing, 0.0));
+	// Fresh against the rock, draining with distance (further in the lee, where the backwash carries it).
+	float reach = w * mix(1.0, 1.8, max(-facing, 0.0));
+	float fall = 1.0 - smoothstep(0.0, 2.2 * reach, d);
+	float amount = c.g * 0.75 * fall * fall * mix(0.7, 1.0, max(facing, 0.0));
+	// Over a shoulder of rock just under the surface the water stays churned (aerated), most as a crest crosses it.
+	amount = max(amount, c.b * mix(0.45, 0.8, smoothstep(0.25, 0.85, pump)));
+	if (amount < 0.01) {
 		return 0.0;
 	}
-	// Lace, drifting slowly as the backwash stirs it: nearly solid at the rock, patches and holes further out.
-	vec2 q = world_xz * 1.3 + vec2(water_time * 0.09, -water_time * 0.06) + 57.0;
-	float ns = 0.55 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.3 - 11.0) + 0.15 * foam_value_noise(q * 5.1 + 7.0);
-	float breakup = mix(0.35, 1.0, smoothstep(0.0, 2.0 * w, d));
-	float g = clamp(a * (1.0 + breakup) - ns * breakup * 1.4, 0.0, 1.0);
-	return g * g * (3.0 - 2.0 * g) * contact_foam_strength * inside;
+	// The open sea's own foam structure, drifting slowly as the backwash stirs it, read at its amount: a sheet at
+	// the rock, opening into holes and torn strands further out, its edge ragged rather than a smooth outline.
+	vec2 drift = vec2(water_time * 0.07, -water_time * 0.05);
+	float cover = foam_structure(world_xz + drift, clamp(amount, 0.0, 1.0), footprint);
+	return cover * contact_foam_strength * inside;
 }
 
 // Water depth (m) above the moving waterline: the still-water depth minus an
@@ -1659,7 +1669,10 @@ void fragment() {
 		float nl = length(v_world_normal);
 		world_normal = nl > 1e-3 ? v_world_normal / nl : vec3(0.0, 1.0, 0.0);
 	}
-	float foam = max(v_foam, contact_foam_at(v_drawn_xz));
+	// The pixel's size on the water where it is drawn (the path tracer has no derivatives: full detail there).
+	vec2 fw_drawn = fwidth(v_drawn_xz);
+	float contact_footprint = max(max(fw_drawn.x, fw_drawn.y), 1e-4);
+	float foam = max(v_foam, contact_foam_at(v_drawn_xz, contact_footprint));
 	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
 		// The pixel's longer side (along the view at grazing angles), so no band aliases there.
@@ -1670,7 +1683,7 @@ void fragment() {
 		// The normal takes the bands the pixel shows; the foam reads the whole surface (its crests break as they are).
 		vec4 der_n = ocean_deriv_filtered(v_rest_xz, footprint_px, der, hidden_var);
 		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
-		foam = max(foam_at_with(v_rest_xz, der, disp), contact_foam_at(v_drawn_xz));
+		foam = max(foam_at_with(v_rest_xz, der, disp), contact_foam_at(v_drawn_xz, contact_footprint));
 		der = der_n;
 		{
 			float a = pathtraced_roughness * pathtraced_roughness;
