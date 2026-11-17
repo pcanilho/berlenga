@@ -95,6 +95,10 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Ocean detail: a turquoise bubble plume glows under a fresh whitecap.*
 
+  ![The far sea toward a low sun from 1.3 m up, without and with far filtering, raster](media/water-far-sea.jpg)
+
+  *Far filtering: grainy far crests and dark posts along the horizon settle into smooth distant sea.*
+
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 
   ![A lake looking into the sun, raster, with wind ripples and glitter](media/lake-ripples.jpg)
