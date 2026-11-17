@@ -61,6 +61,8 @@ struct GroundSoil {
 	float unit_weight = 15.7f; // kN/m3
 	float tan_repose = 0.65f;
 	float max_sinkage = 0.3f; // m, the loose layer
+	float stickiness = 0.0f; // 0..1, how it clings to rubber and steel (docs/ideas/mud.md, stage 3)
+	float adhesion = 0.0f; // kPa, its tangential adhesion to rubber and steel (Wong's ca)
 	bool soft = false; // false: firm ground, rock, no soil
 };
 
@@ -88,4 +90,13 @@ float wheel_bulldozing_resistance(const GroundSoil &p_soil, float p_width, float
 // The Janosi-Hanamoto share of the shear limit at shear displacement p_j over the contact (m): 0 to 1.
 float janosi_hanamoto(float p_j_end, float p_shear_k);
 GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle, float p_already_pressed);
+// Mud on wheels and bellies (docs/ideas/mud.md, stage 3). A tread full of clay grips as a slick: rubber on clay,
+// A ca + W tan delta (delta about 0.6 phi), not soil on soil through the lugs; the share of the clean shear
+// limit it keeps (0..1).
+float clogged_grip(const GroundSoil &p_soil, float p_load, float p_area);
+// The clay holding the tread as it leaves the rut: ca over the trailing face (width by sinkage), N.
+float adhesion_resistance(const GroundSoil &p_soil, float p_width, float p_sinkage);
+// The tread speed (m/s) past which a wheel of radius p_radius throws off a lug-deep layer of this clay: when
+// w^2 r passes ca / (rho t).
+float shedding_speed(const GroundSoil &p_soil, float p_radius);
 } // namespace GroundTerramechanics

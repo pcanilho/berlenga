@@ -1801,6 +1801,7 @@ struct GroundCracks {
 	vec2 dir3;
 	float curl;
 	float reach;
+	float scale; // the first generation's domain size, m
 };
 // p_c: the crack state (opening 0..1, plate size m, regularity 0..1, crust 0..1 or negative while damp).
 GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
@@ -1885,7 +1886,8 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	g.dir2 = t2 >= 0.0 ? v2 : -v2;
 	g.dir3 = t3 >= 0.0 ? u2 : -u2;
 	g.curl = max(p_c.w, 0.0) * open * 0.35 * thick;
-	g.reach = 0.12 * s1;
+	g.reach = 0.06 * s1;
+	g.scale = s1;
 	return g;
 }
 // The surface's offset at the cracks seen through a footprint p_fw (m) wide: (height m, its slope x, z, the share of
@@ -1897,22 +1899,32 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 	float h = 0.0;
 	vec2 slope = vec2(0.0);
 	float cover = 0.0;
-	float edge = 1e9;
-	vec2 edge_dir = vec2(0.0);
+	// The rims' curl: each crack lifts the plate's edge beside it over a short reach; joined as a smooth union
+	// (1 - the product of what each leaves flat), so the plate's middle stays flat with no crease where the
+	// nearest crack changes.
+	float reach = max(p_g.reach, 0.5 * fw);
+	float flat_all = 1.0;
+	float fl[3];
+	vec2 fg[3];
 	for (int k = 0; k < 3; k++) {
 		float d = k == 0 ? p_g.dist.x : (k == 1 ? p_g.dist.y : p_g.dist.z);
 		float w = k == 0 ? p_g.width.x : (k == 1 ? p_g.width.y : p_g.width.z);
 		float dp = k == 0 ? p_g.depth.x : (k == 1 ? p_g.depth.y : p_g.depth.z);
 		vec2 dir = k == 0 ? p_g.dir1 : (k == 1 ? p_g.dir2 : p_g.dir3);
+		fl[k] = 1.0;
+		fg[k] = vec2(0.0);
 		if (w <= 0.0) {
 			continue;
 		}
+		// The rim beside it: e beyond the crack's edge.
+		// A crack lifts its rims only once it has opened a few millimetres (a tapering tip lifts none).
+		float e = max(d - 0.5 * w, 0.0);
+		float x = exp(-e / reach) * smoothstep(0.0, 0.005, w);
+		fl[k] = 1.0 - x;
+		fg[k] = d > 0.5 * w ? dir * (x / reach) : vec2(0.0); // the slope of (1 - x)
+		flat_all *= fl[k];
 		float hw = 0.5 * max(w, fw);
 		float deep = dp * min(w / fw, 1.0);
-		if (d - 0.5 * w < edge) {
-			edge = d - 0.5 * w;
-			edge_dir = dir;
-		}
 		if (d < hw) {
 			// Steep walls over the outer third of the half width, a rounded floor.
 			float t = 1.0 - d / hw;
@@ -1926,16 +1938,16 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 			cover = max(cover, min(w / fw, 1.0) * (t < 0.35 ? s : 1.0));
 		}
 	}
-	// The curl of the plate's rim beside the nearest crack.
-	if (p_g.curl > 0.0 && edge > 0.0 && h == 0.0) {
-		float reach = max(p_g.reach, 0.5 * fw);
-		float c = p_g.curl * (p_g.reach / reach) * exp(-edge / reach);
-		h = c;
-		slope = -edge_dir * (c / reach);
+	if (p_g.curl > 0.0 && h == 0.0) {
+		float c = p_g.curl * (p_g.reach / reach);
+		h = c * (1.0 - flat_all);
+		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
+		slope = -c * g;
 	}
-	// A footprint wider than a few rims spans whole plates: their mean, flat, with the cracks' mean share.
-	float fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
-	float mean = clamp(dot(p_g.width, vec3(1.0)) * 0.12 / max(p_g.reach, 1e-4), 0.0, 1.0);
+	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
+	// share.
+	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
+	float mean = clamp(dot(p_g.width, vec3(1.0)) * 2.0 / max(p_g.scale, 1e-4), 0.0, 1.0);
 	return vec4(h * fade, slope * fade, mix(mean, cover, fade));
 }
 
@@ -2541,11 +2553,11 @@ void main() {
 	{
 		// The crust: the fine clay the water left, pale and matte; the layer still drying, dark with its water.
 		float gcc = max(g_crack.w, 0.0);
-		vec3 gcl = m.albedo * 1.7;
-		m.albedo = mix(m.albedo, mix(gcl, vec3(dot(gcl, vec3(0.299, 0.587, 0.114))), 0.15), gcc);
+		vec3 gcl = m.albedo * 1.9;
+		m.albedo = mix(m.albedo, mix(gcl, vec3(dot(gcl, vec3(0.299, 0.587, 0.114))), 0.2), gcc);
 		m.roughness = mix(m.roughness, 1.0, 0.5 * gcc);
 		float gcdmp = max(-g_crack.w - g_wet, 0.0);
-		m.albedo *= 1.0 - 0.45 * gcdmp;
+		m.albedo *= 1.0 - 0.5 * gcdmp;
 		m.roughness = mix(m.roughness, 0.45, 0.6 * gcdmp);
 	}
 	// Loose dry sand: its grains' colours and the grains that mirror a light (sand_glints), sized by the

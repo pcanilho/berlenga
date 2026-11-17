@@ -90,6 +90,10 @@ public:
 		float wheel_kphi = 1000.0f;
 		// Deep mud (docs/ideas/mud.md, stage 1): the soft layer's thickness over the firm base, m (0: none).
 		float mud = 0.0f;
+		// How the soil sticks to rubber and steel (docs/ideas/mud.md, stage 3): 0..1, and the tangential adhesion
+		// (kPa, Wong's ca).
+		float stickiness = 0.0f;
+		float adhesion = 0.0f;
 		bool deformable = true;
 	};
 	// p_saturation: pore water in the top layer, 0..1 (< 0: none known, p_moisture alone); p_water_speed: water

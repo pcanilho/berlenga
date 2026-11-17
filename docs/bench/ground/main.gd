@@ -30,6 +30,8 @@ extends Node3D
 #                         in stiff mud keeps its walls and one in slurry closes (volume kept); with the PhysX
 #                         build a 4x4 sinks to its axles and bogs in slurry and crawls through stiff mud
 #   --near=0            the near field off (A/B for any view)
+#   --test=clog         mud on wheels and the belly (mud stage 3): sticky clay, a clogging tread grips less and is
+#                         flung off when spun fast on dry ground; a low car high-centres in slurry and ploughs a trough
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -76,6 +78,7 @@ var runoff_test := false
 var drift_test := false
 var near_test := false
 var mud_test := false
+var clog_test := false
 var puddle_test := false
 var crack_test := false
 var near_on := true
@@ -113,6 +116,7 @@ func _ready() -> void:
 		elif a == "--test=drift": drift_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
+		elif a == "--test=clog": clog_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--near=0": near_on = false
@@ -137,6 +141,8 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if clog_test:
+		await _run_clog_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -805,6 +811,78 @@ func _run_mud_tests() -> void:
 	# compaction resistance (motion resistance about 0.16 of the load): a crawl, as stiff mud is in MudRunner.
 	_check("it crawls through stiff mud, sinking a fraction of slurry's depth", res["stiff"][0] > 0.5 and res["stiff"][0] > 4.0 * res["slurry"][0] and res["stiff"][1] < 0.25 * res["slurry"][1],
 			"%.1f m, sinkage %.1f cm; firm %.1f m" % [res["stiff"][0], res["stiff"][1] * 100.0, res["firm"][0]])
+
+
+# Mud on wheels and the belly (docs/ideas/mud.md, stage 3).
+func _run_clog_tests() -> void:
+	await _soil_scene("soil")
+	var o := Vector3(0.3, 0, 0.2)
+	await _paint_mud(0.8, STIFF_MUD)
+	var sticky: Dictionary = surface.get_wheel_soil(o, 3000.0, 0.35, 0.26)
+	surface.moisture = 0.1
+	surface.settle(5.0, 0.5)
+	var dry: Dictionary = surface.get_wheel_soil(o, 3000.0, 0.35, 0.26)
+	_check("stiff wet clay is sticky, dry soil is not (Fountaine 1954)", sticky["stickiness"] > 0.7 and dry["stickiness"] < 0.1,
+			"stickiness %.2f (ca %.1f kPa) in stiff mud, %.2f dry" % [sticky["stickiness"], sticky["adhesion"], dry["stickiness"]])
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		print("(no PhysX: vehicle checks skipped)")
+		return
+	# A 4x4 at half throttle for 4 s from rest in stiff mud (its wheels slipping, not racing), with and without
+	# clogging.
+	var res := {}
+	for k in ["clean", "clogging"]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, STIFF_MUD)
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		car.tyre_clogging = k == "clogging"
+		car.belly_drag = false
+		surface.follow_target = surface.get_path_to(car)
+		var r: Array = await _drive(car, 4.0, 0.5)
+		var fill := 0.0
+		var traction := 0.0
+		for w in 4:
+			fill += car.get_wheel_mud(w) / 4.0
+			traction += car.get_wheel_soil_traction(w) / 4.0
+		res[k] = [r[0], r[2], fill, traction, car]
+		print("  %s: %.1f m in 4 s, slip %.2f, tread %.0f%% full, traction %.0f N a wheel" % [k, r[0], r[2], fill * 100.0, traction])
+	_check("spinning in sticky clay packs the tread", res["clogging"][2] > 0.3 and res["clean"][2] == 0.0, "%.0f%% full" % (res["clogging"][2] * 100.0))
+	_check("a packed tread grips as a slick: it slips more for no more ground", res["clogging"][1] > 1.15 * res["clean"][1] and res["clogging"][0] <= res["clean"][0] + 0.05,
+			"slip %.2f against %.2f clean; %.2f m against %.2f m" % [res["clogging"][1], res["clean"][1], res["clogging"][0], res["clean"][0]])
+	# Out onto dry ground, floored: the tread clears (scoured, and flung off past ~7 m/s of tread speed).
+	var car: PhysXVehicle3D = res["clogging"][4]
+	var before := 0.0
+	for w in 4:
+		before += car.get_wheel_mud(w) / 4.0
+	surface.moisture = 0.1
+	surface.settle(2.0, 0.5)
+	var shed0 := 0.0
+	for w in 4:
+		shed0 += car.get_wheel_mud_shed(w)
+	await _drive(car, 4.0, 1.0)
+	var after := 0.0
+	var shed := 0.0
+	for w in 4:
+		after += car.get_wheel_mud(w) / 4.0
+		shed += car.get_wheel_mud_shed(w)
+	_check("on dry ground the tread clears, its clay thrown off", after < 0.3 * before and shed > shed0,
+			"%.0f%% to %.0f%% full; %.1f kg thrown" % [before * 100.0, after * 100.0, shed - shed0])
+	# A low car (15 cm under its belly) in 80 cm of slurry at half throttle: with belly drag it high-centres.
+	var belly := {}
+	for k in ["off", "on"]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, 1.0)
+		var low := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		(low.get_child(0) as CollisionShape3D).position = Vector3(0, 0.1, 0)
+		low.belly_drag = k == "on"
+		low.tyre_clogging = false
+		surface.follow_target = surface.get_path_to(low)
+		var r: Array = await _drive(low, 4.0, 0.5)
+		var under := low.global_position
+		belly[k] = [r[0], low.get_belly_support(), low.get_belly_drag(), surface.get_ground_height_at(under) - surface.get_surface_height_at(under)]
+		print("  belly %s: %.2f m in 4 s, sinkage %.1f cm; belly holds %.0f N, drags %.0f N; %.1f cm trough under it" % [k, r[0], r[1] * 100.0, belly[k][1], belly[k][2], belly[k][3] * 100.0])
+	_check("a low car's belly meets the slurry: held up and dragged", belly["on"][1] > 1000.0 and belly["on"][2] > 0.0 and belly["off"][1] == 0.0,
+			"%.0f N up, %.0f N drag" % [belly["on"][1], belly["on"][2]])
+	_check("the belly ploughs a trough", belly["on"][3] > 0.03 and belly["on"][3] > belly["off"][3] + 0.05, "%.1f cm (%.1f cm without)" % [belly["on"][3] * 100.0, belly["off"][3] * 100.0])
 
 
 # Bekker's rigid wheel, written out here apart from the engine's: z0 = (3 W / ((3 - n) b k sqrt(D)))^(2 / (2n + 1)).
