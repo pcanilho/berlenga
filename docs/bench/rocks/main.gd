@@ -25,6 +25,8 @@ extends Node3D
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
+#                         --no-rivulets for a before frame
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -185,6 +187,28 @@ func _gallery() -> void:
 	cam.look_at(Vector3(0, 0, 0.6))
 
 
+# --rain=mm/h [--rain-hours=h --dry-hours=h]: a WeatherMap3D over the bench raining for --rain-hours (0.5), then
+# drying for --dry-hours (0), so the stone's wetness, its drying pattern and its rivulets show (docs/ideas/rocks.md,
+# "Rain-wet rock"). --no-rivulets turns the rock material's rain_rivulets off (a before frame).
+func _rain_weather() -> void:
+	if not args.has("rain"):
+		return
+	var w = ClassDB.instantiate("WeatherMap3D")
+	w.extent = 256.0
+	w.resolution = 32
+	w.wind_speed = 3.0
+	w.cloud_cover = 0.8
+	w.cloud_variation = 0.0
+	w.transition_time = 0.0
+	w.rain_rate = float(args["rain"])
+	add_child(w)
+	w.advance(float(args.get("rain-hours", "0.5")) * 3600.0)
+	var dry := float(args.get("dry-hours", "0"))
+	if dry > 0.0:
+		w.rain_rate = 0.0
+		w.advance(dry * 3600.0)
+
+
 # The six families on one ground at their real relative sizes (b axis): the big three behind, the small three in
 # front where the camera can read them, sun low from the left so edges and facets show.
 func _families() -> void:
@@ -212,9 +236,12 @@ func _families() -> void:
 
 func _one_rock() -> void:
 	_plain_ground(20.0)
+	_rain_weather()
 	var tf: PackedStringArray = args["rock"].split(",")
 	var m := _rock(TYPES.find(tf[0]), FAMILIES.find(tf[1]) if tf.size() > 1 else 0, int(args.get("seed", "3")))
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
+	if args.has("no-rivulets") and m.surface_get_material(0) is ShaderMaterial:
+		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rain_rivulets", false)
 	var fam := FAMILIES.find(tf[1]) if tf.size() > 1 else 0
 	if args.has("stand") and fam in [RockGenerator.FAMILY_FIN, RockGenerator.FAMILY_HOODOO, RockGenerator.FAMILY_SEA_STACK, RockGenerator.FAMILY_GOBLIN, RockGenerator.FAMILY_CAVE_MOUTH]:
 		# --stand: on end as the field stands it (a fin's z up, a column's x up), seen side on from 6 b-axes away.

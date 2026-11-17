@@ -8,6 +8,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 ## Shapes
 
 - **Rock generator** (`RockGenerator`: `rock_type`, `family`, `transport_distance`, `weathering`): rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; joint sets at varying angles, stepped fracture faces and broken corners on fallen blocks; granite, limestone, sandstone, basalt and slate.
+- **Tafoni** (RockGenerator `salt`): salt weathering carves honeycomb hollows and tafoni into coastal and dry inland stone.
 
   ![Thirty generated rocks in five rows of rock type and six columns of family, raster](media/rocks-gallery.jpg)
 

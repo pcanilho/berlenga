@@ -117,6 +117,7 @@ private:
 	int resolution = 0; // 0: the family's own
 	real_t transport_distance = -1.0; // m; < 0: the family's own
 	real_t weathering = -1.0; // 0..1; < 0: the family's own
+	real_t salt = -1.0; // sea-spray salt 0..1 (tafoni, honeycomb); < 0: the family's own
 	real_t detail = 1.0;
 	bool lods = true;
 	bool simplify = true;
@@ -147,6 +148,8 @@ public:
 	real_t get_transport_distance() const { return transport_distance; }
 	void set_weathering(real_t p_weathering) { weathering = p_weathering < 0.0 ? -1.0 : MIN(p_weathering, real_t(1.0)); }
 	real_t get_weathering() const { return weathering; }
+	void set_salt(real_t p_salt) { salt = p_salt < 0.0 ? -1.0 : MIN(p_salt, real_t(1.0)); }
+	real_t get_salt() const { return salt; }
 	void set_detail(real_t p_detail) { detail = CLAMP(p_detail, real_t(0.0), real_t(2.0)); }
 	real_t get_detail() const { return detail; }
 	void set_lods(bool p_lods) { lods = p_lods; }
@@ -167,6 +170,7 @@ public:
 	int get_effective_resolution() const;
 	real_t get_effective_transport_distance() const;
 	real_t get_effective_weathering() const;
+	real_t get_effective_salt() const;
 	// Roundness reached by the transport (0 fresh .. 1 fully rounded), from the rock type's abrasion length.
 	real_t get_roundness() const;
 

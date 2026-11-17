@@ -1784,6 +1784,13 @@ LOD 0 leaves after the levels were cut left levels no smaller than it, which the
 rejected with "index_count >= index_array_len" (14 times per scrub and heath setup); none now
 over all six shrubs, five forms, two seasons. `--shrubs --near` shows the near mesh.
 
+Step 3 (17 Nov): gorse splits too. Its spines are needles (`PARAM_NEEDLES`), which kept it out
+of 8d's split, but they thin stochastically as leaves do; a scrub shrub now splits whatever its
+leaves, and a far mesh's flowers and pods start at their first thinned level as its leaves do.
+Mature gorse far mesh, day 200: bark 206k to 70k, spines 603k to 301k, flowers and pods 1.72M to
+858k (2.53M to 1.23M); broom's flowers and pods 250k to 108k. The near mesh is unchanged (3.21M
+in April). PT at 60 m in flower, far vs near: crown box mean 129.42 vs 129.38, 20 pixels differ.
+
 #### 5x.3 Coppice cutting in stands
 
 Coppice-with-standards (Rackham 2006, Woodlands; Buckley 1992, Ecology and Management of

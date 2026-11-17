@@ -174,4 +174,4 @@ func _test() -> void:
 		var last := full
 		if not lods.is_empty():
 			last = lods[lods.size() - 1].index_data.size() / (4 if sd.vertex_count > 65535 else 2)
-		_check(lods.size() == 3 and last * 10 < full, "gorse flowers and pods thin with distance (%d of %d indices at the coarsest of %d levels)" % [last, full, lods.size()])
+		_check(lods.size() >= 2 and last * 10 < full, "gorse flowers and pods thin with distance (%d of %d indices at the coarsest of %d levels)" % [last, full, lods.size()])
