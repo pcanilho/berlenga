@@ -47,8 +47,16 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
 	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
 	"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
-	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel"
+	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom"
 };
+
+// Bank trees (trees.md 5q) step through four slopes for placement to pick from. A stand asked for
+// one variant (scouts and tests on the cloud) gets one bank tree: four slope variants of three
+// bank species added some 47M triangles to make_woodland(1) (a bank willow is about 10M) and the
+// forest no longer fit in 15 GB.
+static int _bank_variants(int p_variants) {
+	return p_variants <= 0 ? 0 : (p_variants == 1 ? 1 : MAX(p_variants, 4));
+}
 
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
@@ -532,6 +540,64 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 3;
 			bark_color = Color(0.5f, 0.45f, 0.36f);
 			leaf_color = Color(0.07f, 0.17f, 0.05f);
+			break;
+		case PRESET_GORSE: // Ulex europaeus: dense, rounded, many-stemmed; spines for leaves (trees.md 5u).
+			// Many stems from one rootstock, the outer ones splayed near flat, branching wide and
+			// densely, so it grows a dome leafy nearly to the ground rather than a crown on stems.
+			p[PARAM_YEARS] = 12;
+			p[PARAM_MATURITY] = 6;
+			p[PARAM_INTERNODE_LENGTH] = 0.08f;
+			p[PARAM_INTERNODE_LENGTH_AGE] = 0.96f;
+			p[PARAM_MAX_SHOOT] = 3;
+			p[PARAM_APICAL_DOMINANCE] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.49f;
+			p[PARAM_BRANCH_ANGLE] = 60;
+			p[PARAM_BRANCH_ANGLE_VARIANCE] = 14;
+			p[PARAM_DIRECTION_NOISE] = 16;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.15f;
+			p[PARAM_GRAVITROPISM] = -0.05f;
+			p[PARAM_SHED_RATIO] = 0.04f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.7f; // The dead inside stays, grey and spiny.
+			p[PARAM_TIP_RADIUS] = 0.0016f;
+			p[PARAM_PIPE_EXPONENT] = 2.8f; // Many thin stems, not one trunk.
+			p[PARAM_STEMS] = 12;
+			p[PARAM_STEM_SPREAD] = 75;
+			p[PARAM_BASAL_SPROUTS] = 0.35f;
+			p[PARAM_ROOT_FLARE] = 0.15f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.022f; // Spines 15-30 mm (primary to 40).
+			p[PARAM_LEAVES_PER_INTERNODE] = 12;
+			p[PARAM_LEAF_YEARS] = 5;
+			bark_color = Color(0.4f, 0.37f, 0.31f);
+			leaf_color = Color(0.09f, 0.16f, 0.08f); // Glaucous dark green.
+			break;
+		case PRESET_BROOM: // Cytisus scoparius: erect, many straight green switches, few small leaves (5u).
+			p[PARAM_YEARS] = 10;
+			p[PARAM_MATURITY] = 5;
+			p[PARAM_INTERNODE_LENGTH] = 0.12f;
+			p[PARAM_INTERNODE_LENGTH_AGE] = 0.96f;
+			p[PARAM_MAX_SHOOT] = 4;
+			p[PARAM_APICAL_DOMINANCE] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 28;
+			p[PARAM_BRANCH_ANGLE_VARIANCE] = 6;
+			p[PARAM_DIRECTION_NOISE] = 5;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
+			p[PARAM_GRAVITROPISM] = 0.35f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.08f;
+			p[PARAM_SHED_RATIO] = 0.04f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.5f;
+			p[PARAM_TIP_RADIUS] = 0.0015f;
+			p[PARAM_PIPE_EXPONENT] = 2.6f;
+			p[PARAM_STEMS] = 14;
+			p[PARAM_STEM_SPREAD] = 30;
+			p[PARAM_BASAL_SPROUTS] = 0.25f;
+			p[PARAM_ROOT_FLARE] = 0.15f;
+			p[PARAM_LEAF_SIZE] = 0.011f; // Leaflets 4-16 mm.
+			p[PARAM_LEAF_WIDTH] = 0.42f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 6;
+			bark_color = Color(0.42f, 0.38f, 0.3f);
+			leaf_color = Color(0.1f, 0.2f, 0.06f);
 			break;
 		case PRESET_MAX:
 			break;
@@ -1356,14 +1422,17 @@ void TreeGenerator::_grow_year(int p_year) {
 // -1 past the rim; r_slope its fall per metre outward.
 float TreeGenerator::_krumm_cap(const Vector3 &p_q, float *r_slope) const {
 	const Vector3 root = nodes[0].start;
-	const float rim = Math::lerp(9.0f, 2.5f, krummholz);
+	// A heath shrub's wind-pruned cushion (trees.md 5u) is the same dome at a shrub's scale: a
+	// metre or two across and under half a metre high.
+	const bool heath = preset == PRESET_GORSE || preset == PRESET_BROOM;
+	const float rim = Math::lerp(9.0f, 2.5f, krummholz) * (heath ? 0.3f : 1.0f);
 	Vector2 off(p_q.x - root.x, p_q.z - root.z);
 	off.x /= off.x > 0.0f ? 1.0f + 0.6f * wind_exposure : 1.0f - 0.35f * wind_exposure;
 	const float rq = off.length() / rim;
 	if (rq > 1.0f) {
 		return -1.0f;
 	}
-	const float cap_h = Math::lerp(3.0f, 0.75f, krummholz) * (0.75f + 0.5f * moss_noise(p_q * 0.8f, 0x6b72756du));
+	const float cap_h = Math::lerp(3.0f, 0.75f, krummholz) * (heath ? 0.25f : 1.0f) * (0.75f + 0.5f * moss_noise(p_q * 0.8f, 0x6b72756du));
 	const float e = MAX(1.0f - rq * rq, 0.02f);
 	if (r_slope) {
 		*r_slope = -cap_h * 0.88f * 0.6f * Math::pow(e, -0.4f) * 2.0f * rq / rim;
@@ -2170,6 +2239,8 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Yellow birch.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Witch hazel.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Mountain laurel.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Gorse: spines.
+	{ TreeGenerator::LEAF_DIGITATE, 3, 0.0f }, // Broom: trifoliate.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -2236,6 +2307,8 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ true, 190.0f, 190.0f, 200.0f, 90.0f, Color(0.46f, 0.35f, 0.05f) }, // Yellow birch.
 	{ true, 200.0f, 210.0f, 200.0f, 100.0f, Color(0.47f, 0.37f, 0.05f) }, // Witch hazel: yellow.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Mountain laurel.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Gorse: evergreen spines.
+	{ true, 140.0f, 90.0f, 160.0f, 40.0f, Color(0.22f, 0.2f, 0.07f) }, // Broom: early out, falls soon after turning.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -2270,6 +2343,11 @@ Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_s
 	d["autumn"] = ls.autumn;
 	d["fallen_fraction"] = ls.fallen;
 	d["autumn_color"] = ls.color;
+	// Heath shrubs (trees.md 5u): the open share of their flowers, and its colour.
+	if (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM) {
+		d["flowering"] = get_bloom(p_preset, p_season.get("day_of_year", 182.0f));
+		d["flower_color"] = Color(0.95f, 0.68f, 0.03f);
+	}
 	return d;
 }
 
@@ -2549,6 +2627,64 @@ void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vecto
 	r_b.indices.push_back(base);
 	r_b.indices.push_back(base + 2);
 	r_b.indices.push_back(base + 1);
+}
+
+// A gorse spine (trees.md 5u): rigid, deeply furrowed, tapering to a point; three faces, so it
+// reads as a furrowed prism from every side. Primary spines (p_branched) carry one or two
+// secondary spines near their base (15-30 mm and to 12 mm; Webb et al. 1988).
+void TreeGenerator::_add_spine(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash, bool p_branched) {
+	auto prism = [&](const Vector3 &p_b, const Vector3 &p_d, float p_len, float p_r, float p_roll) {
+		Vector3 s0 = p_d.cross(Math::abs(p_d.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).normalized();
+		s0 = s0.rotated(p_d, p_roll);
+		const Vector3 s1 = p_d.cross(s0);
+		const Vector3 tip = p_b + p_d * p_len;
+		Vector3 c[3];
+		for (int k = 0; k < 3; k++) {
+			const float a = float(Math::TAU) * k / 3.0f;
+			c[k] = p_b + (s0 * Math::cos(a) + s1 * Math::sin(a)) * p_r;
+		}
+		// Flat faces (their own vertices), darker toward the base where the furrows deepen.
+		for (int k = 0; k < 3; k++) {
+			const Vector3 a = c[k], b = c[(k + 1) % 3];
+			Vector3 n = (b - a).cross(tip - a);
+			n = n.length_squared() > 1e-20f ? n.normalized() : p_d;
+			const int v = r_b.verts.size();
+			r_b.verts.push_back(a);
+			r_b.verts.push_back(b);
+			r_b.verts.push_back(tip);
+			const Color base_c = Color(p_color.r * 0.8f, p_color.g * 0.82f, p_color.b * 0.8f);
+			// The tip yellows and browns, as gorse spines do.
+			const Color tip_c = p_color.lerp(Color(0.32f, 0.26f, 0.1f), 0.35f);
+			r_b.colors.push_back(base_c);
+			r_b.colors.push_back(base_c);
+			r_b.colors.push_back(tip_c);
+			for (int q = 0; q < 3; q++) {
+				r_b.normals.push_back(n);
+			}
+			r_b.uvs.push_back(Vector2(0, 0));
+			r_b.uvs.push_back(Vector2(1, 0));
+			r_b.uvs.push_back(Vector2(0.5f, 1));
+			r_b.indices.push_back(v);
+			r_b.indices.push_back(v + 2);
+			r_b.indices.push_back(v + 1);
+		}
+	};
+	const float r = p_size * 0.045f;
+	prism(p_base, p_out, p_size, r, float(p_hash & 255u) / 255.0f * float(Math::TAU));
+	if (!p_branched) {
+		return;
+	}
+	const int sides = 1 + int((p_hash >> 8) & 1u);
+	const Vector3 ref = Math::abs(p_out.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+	const Vector3 across = p_out.cross(ref).normalized();
+	for (int k = 0; k < sides; k++) {
+		const float t = 0.15f + 0.12f * k + 0.1f * float((p_hash >> (12 + 4 * k)) & 15u) / 15.0f;
+		const float roll = float((p_hash >> (20 + 4 * k)) & 15u) / 15.0f * float(Math::TAU);
+		const Vector3 side = across.rotated(p_out, roll);
+		const Vector3 d = (p_out * 0.64f + side * 0.77f).normalized();
+		const float len = p_size * (0.3f + 0.15f * float((p_hash >> (16 + 3 * k)) & 7u) / 7.0f);
+		prism(p_base + p_out * (p_size * t), d, len, r * 0.6f, roll);
+	}
 }
 
 // A needle spray: a quad along the shoot, its texture a bottle brush of needles (Ref: SpeedTree
@@ -3161,6 +3297,8 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.6f, // Yellow birch.
 	0.6f, // Witch hazel.
 	0.3f, // Mountain laurel.
+	0.35f, // Gorse.
+	0.25f, // Broom.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -3294,6 +3432,8 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.5f, 0.5f, 0.0f }, // Yellow birch.
 	{ 0.8f, 0.3f, 0.0f }, // Witch hazel.
 	{ 0.5f, 0.4f, 0.0f }, // Mountain laurel.
+	{ 0.9f, 0.75f, 0.12f }, // Gorse: old coastal gorse is grey with Ramalina and Usnea.
+	{ 0.4f, 0.4f, 0.05f }, // Broom.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -4339,6 +4479,8 @@ static const struct {
 	{ 57.0f, 150.0f }, // yellow birch
 	{ 50.0f, 200.0f }, // witch-hazel
 	{ 50.0f, 200.0f }, // mountain laurel
+	{ 45.0f, 200.0f }, // gorse
+	{ 40.0f, 200.0f }, // broom
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -4590,6 +4732,25 @@ void TreeGenerator::_saw_face(const Vector3 &p_end, const Vector3 &p_dir, float 
 // Built like Unreal 5.7's procedural vegetation assemblies, in that each part is a small fixed
 // shape placed many times, but merged into one surface here: LOD 0 carries all of it, the coarser
 // levels only the mistletoe and brooms, which read from far.
+// Gorse: a flush from February to May, a few flowers all year (Trees and Shrubs Online: almost
+// year-round, spring peak). Broom: May to June (Bean). Trees.md 5u.
+float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
+	auto ramp = [&](float p_a, float p_b, float p_c, float p_d) {
+		if (p_day <= p_a || p_day >= p_d) {
+			return 0.0f;
+		}
+		return p_day < p_b ? (p_day - p_a) / (p_b - p_a) : (p_day <= p_c ? 1.0f : (p_d - p_day) / (p_d - p_c));
+	};
+	switch (p_preset) {
+		case PRESET_GORSE:
+			return MAX(ramp(20.0f, 60.0f, 120.0f, 160.0f), 0.04f);
+		case PRESET_BROOM:
+			return ramp(120.0f, 136.0f, 160.0f, 178.0f);
+		default:
+			return 0.0f;
+	}
+}
+
 int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	r_b = Builder();
 	if (nodes.size() < 2 || fallen || fallen_branch || decay_class >= 2 || (fruit_cover <= 0.0f && mistletoe <= 0.0f && witches_brooms <= 0.0f)) {
@@ -5029,6 +5190,180 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				}
 				close_part(part, MAX(reach, 0.2f));
 			}
+		}
+		// Gorse and broom flowers and pods (trees.md 5u), kept by the coarser LODs: a heath in
+		// flower is gold from far off.
+		if (fruit_cover > 0.0f && (preset == PRESET_GORSE || preset == PRESET_BROOM) && !tips.is_empty()) {
+			const bool gorse = preset == PRESET_GORSE;
+			// How much of the crop is open on this day. Gorse: a flush from February to May, a few
+			// flowers all year (TSO: almost year-round, spring peak). Broom: May to June (Bean).
+			auto ramp = [&](float p_a, float p_b, float p_c, float p_d) {
+				if (day <= p_a || day >= p_d) {
+					return 0.0f;
+				}
+				return day < p_b ? (day - p_a) / (p_b - p_a) : (day <= p_c ? 1.0f : (p_d - day) / (p_d - p_c));
+			};
+			const float bloom = get_bloom(preset, day); // No season: 1 July.
+			// Pods: gorse's from June, bursting in the July heat; broom's black by August, the
+			// valves twisting open and hanging into autumn.
+			const float pods = gorse ? ramp(140.0f, 170.0f, 215.0f, 250.0f) : ramp(165.0f, 190.0f, 240.0f, 290.0f);
+			const float ripe = gorse ? CLAMP((day - 175.0f) / 25.0f, 0.0f, 1.0f) : CLAMP((day - 190.0f) / 20.0f, 0.0f, 1.0f);
+			const float split = gorse ? 0.0f : CLAMP((day - 220.0f) / 25.0f, 0.0f, 1.0f);
+			// Corolla 13-20 mm (gorse) and 16-25 mm (broom); calyx nearly as long (gorse, hairy,
+			// yellow-green) or a quarter (broom, glabrous, green). Pods 10-20 mm, villous (gorse);
+			// 15-60 mm, black, hairy on the margins (broom). Webb et al. 1988.
+			const float L = gorse ? 0.017f : 0.02f;
+			// Egg-yolk to golden yellow (gorse deeper, a little orange in the banner; broom a
+			// clear golden yellow). Paler values read as a dull ochre once shaded.
+			const Color petal_c = gorse ? lin(1.0f, 0.86f, 0.06f) : lin(1.0f, 0.88f, 0.1f);
+			const Color banner_c = gorse ? lin(1.0f, 0.8f, 0.0f) : lin(1.0f, 0.84f, 0.04f);
+			const Color keel_c = petal_c.lerp(lin(1.0f, 0.92f, 0.3f), 0.3f);
+			// A petal or calyx lip: three stations of three points, folded along the midline by
+			// p_fold (the edges rise off the midrib, so the petal is a V, not a flat card) and
+			// curled back at the tip by p_curl (eight triangles).
+			auto petal = [&](const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_width, float p_len, float p_w, float p_fold, const Color &p_c0, const Color &p_c1, float p_curl = 0.0f) {
+				const Vector3 nrm = p_dir.cross(p_width).normalized();
+				static const float prof[3] = { 0.35f, 1.0f, 0.55f };
+				static const float ts[3] = { 0.0f, 0.55f, 1.0f };
+				const int v0 = r_b.verts.size();
+				for (int k = 0; k < 3; k++) {
+					const Vector3 c = p_at + p_dir * (p_len * ts[k]) + nrm * (p_curl * p_len * ts[k] * ts[k]);
+					const float w = p_w * prof[k] * 0.5f;
+					const Color col = p_c0.lerp(p_c1, ts[k]);
+					vert(c - p_width * w + nrm * (p_fold * w), Vector2(0.0f, ts[k]), col);
+					vert(c, Vector2(0.5f, ts[k]), col * 0.92f);
+					vert(c + p_width * w + nrm * (p_fold * w), Vector2(1.0f, ts[k]), col);
+				}
+				for (int k = 0; k < 2; k++) {
+					const int q = v0 + k * 3;
+					for (int e = 0; e < 2; e++) {
+						tri(q + e, q + 3 + e, q + e + 1);
+						tri(q + e + 1, q + 3 + e, q + 4 + e);
+					}
+				}
+			};
+			const Color calyx_c = gorse ? lin(0.8f, 0.72f, 0.22f) : lin(0.32f, 0.44f, 0.16f);
+			const Color stalk_c = gorse ? lin(0.38f, 0.42f, 0.24f) : lin(0.3f, 0.42f, 0.16f);
+			const Color pod_green = gorse ? lin(0.4f, 0.42f, 0.28f) : lin(0.3f, 0.4f, 0.14f);
+			const Color pod_black = gorse ? lin(0.13f, 0.1f, 0.08f) : lin(0.07f, 0.06f, 0.05f);
+			// Flowers along the last shoots: in gorse's spine axils, in broom's leaf joints on
+			// last year's switches. One internode stands for a few of the real nodes.
+			const int per_node = gorse ? 28 : 5;
+			const int depth = gorse ? 2 : 3;
+			const float budget = (gorse ? 60000.0f : 8000.0f) * fruit_cover;
+			const float want = float(tips.size() * per_node * depth);
+			const float p_flower = want > 0.0f ? MIN(1.0f, budget / want) : 0.0f;
+			static const float valve_prof[5] = { 0.3f, 0.9f, 1.0f, 0.9f, 0.3f };
+			Vector4i part;
+			r_b.begin(part);
+			int bone_now = -1;
+			uint32_t slot = 0;
+			for (const Tip &t : tips) {
+				int node = t.node;
+				for (int lvl = 0; lvl < depth && node > 0; lvl++, node = nodes[node].parent) {
+					const Node &n = nodes[node];
+					if (n.removed || n.dead || n.radius > 0.012f) {
+						break;
+					}
+					const int b = bone_of(node);
+					if (b != bone_now) {
+						if (bone_now >= 0) {
+							close_part(part, 0.02f);
+							r_b.begin(part);
+						}
+						r_b.bone = b;
+						bone_now = b;
+					}
+					const Vector3 d = n.dir;
+					const Vector3 s0 = perp(d);
+					for (int q = 0; q < per_node; q++) {
+						const uint32_t h = hash_murmur3_one_32(slot++, uint32_t(seed) * 2654435761u + 0x70656aU);
+						const float hu = float(h & 0xffff) / 65535.0f;
+						if (hu >= p_flower) {
+							continue;
+						}
+						const float hv = float((h >> 16) & 0xffff) / 65535.0f;
+						const bool is_flower = hv < bloom;
+						const bool is_pod = !is_flower && hv < bloom + pods * 0.45f;
+						if (!is_flower && !is_pod) {
+							continue;
+						}
+						const float along = (q + 0.5f) / per_node;
+						const float roll = float(q) * 2.39996f + hu * 40.0f;
+						const Vector3 radial = s0.rotated(d, roll);
+						const Vector3 at = n.start + d * (n.length * along) + radial * n.radius;
+						const float jit = Math::lerp(0.85f, 1.15f, float((h >> 4) & 255u) / 255.0f);
+						if (is_flower) {
+							// Out from the shoot and a little forward; the banner on its upper side.
+							// Each turned its own way (a cluster of flowers along a shoot, not a row of
+							// cards facing alike).
+							const float tw = float((h >> 12) & 255u) / 255.0f - 0.5f;
+							const Vector3 a = (radial * 0.8f + d * (0.45f + 0.3f * tw) + Vector3(0, 0.15f, 0)).normalized();
+							Vector3 u = Vector3(0, 1, 0) - a * a.y;
+							u = u.length_squared() > 1e-4f ? u.normalized().rotated(a, tw * 1.4f) : perp(a);
+							const Vector3 sd = a.cross(u).normalized();
+							const float l = L * jit;
+							// Each flower its own brightness, and its throat shaded: the base of each
+							// petal sits in the calyx and its neighbours' shadow, which a shadow map
+							// cannot resolve at a centimetre (the path tracer finds it anyway).
+							const float fb = Math::lerp(0.82f, 1.08f, float((h >> 20) & 255u) / 255.0f);
+							const Color pc = petal_c * fb, bc = banner_c * fb, kc = keel_c * fb;
+							const Vector3 c0 = at + a * (gorse ? 0.05f * l : 0.3f * l);
+							if (!gorse) {
+								stalk(at, c0, 0.0007f, stalk_c);
+							}
+							// Calyx: two lips, hairy and nearly the corolla's length in gorse, a short cup in
+							// broom; each lip a small folded blade.
+							const float cl = gorse ? 0.7f * l : 0.28f * l;
+							petal(c0, (a + u * 0.06f).normalized(), sd, cl, 0.24f * l, 0.7f, calyx_c * 0.85f, calyx_c);
+							petal(c0, (a - u * 0.06f).normalized(), sd, cl * 0.95f, 0.22f * l, -0.7f, calyx_c * 0.85f, calyx_c);
+							const Vector3 k0 = c0 + a * (gorse ? 0.25f * l : 0.1f * l);
+							// Wings and keel: a boat along the flower's axis, closed over the stamens.
+							for (int side = -1; side <= 1; side += 2) {
+								const Vector3 wd = (u * -0.75f + sd * (0.65f * side)).normalized();
+								petal(k0 + sd * (0.04f * l * side), (a - u * 0.08f).normalized(), wd, 0.85f * l, 0.4f * l, -0.6f * side, kc * 0.6f, pc, 0.1f * side);
+							}
+							// The banner: standing up and back over the boat, folded along its midline
+							// and its tip turned back.
+							petal(k0 + u * (0.08f * l), (u * 0.85f + a * 0.55f).normalized(), sd, 0.9f * l, 0.7f * l, 0.65f, bc * 0.6f, bc, -0.25f);
+						} else if (split > 0.0f && float((h >> 8) & 255u) / 255.0f < split) {
+							// A burst broom pod: two black valves twisted into spirals.
+							const Vector3 a = (radial * 0.5f + d * 0.6f + Vector3(0, -0.2f, 0)).normalized();
+							const float pl = 0.04f * jit;
+							const Vector3 w = perp(a);
+							blade(at, a, w, pl, 0.009f, valve_prof, 3.5f, 0.15f, pod_black, pod_black * 1.3f);
+							blade(at, (a + w * 0.4f).normalized(), w.rotated(a, 1.2f), pl * 0.95f, 0.009f, valve_prof, -3.2f, 0.15f, pod_black, pod_black * 1.3f);
+						} else {
+							// A closed pod: a flattened lens, hairy, green then black.
+							const Vector3 a = gorse ? (radial * 0.7f + d * 0.6f).normalized() : (radial * 0.45f + d * 0.75f + Vector3(0, -0.15f, 0)).normalized();
+							const float pl = (gorse ? 0.016f : 0.04f) * jit;
+							const float pw = gorse ? 0.0032f : 0.0045f, pt = gorse ? 0.0024f : 0.0014f;
+							const Color pc = pod_green.lerp(pod_black, ripe);
+							const Vector3 w = perp(a);
+							const Vector3 th = a.cross(w);
+							const int v0 = r_b.verts.size();
+							const int rings = 6, sides = 6;
+							for (int i = 0; i < rings; i++) {
+								const float tt = float(i) / (rings - 1);
+								const float pr = Math::pow(Math::sin(float(Math::PI) * (0.08f + 0.84f * tt)), 0.6f);
+								const Vector3 c = at + a * (pl * tt);
+								for (int k = 0; k < sides; k++) {
+									const float an = float(Math::TAU) * k / sides;
+									vert(c + w * (Math::cos(an) * pw * pr) + th * (Math::sin(an) * pt * pr), Vector2(float(k) / sides, tt), pc * Math::lerp(0.85f, 1.1f, float(k & 1)));
+								}
+							}
+							for (int i = 0; i + 1 < rings; i++) {
+								for (int k = 0; k < sides; k++) {
+									const int k1 = (k + 1) % sides;
+									tri(v0 + i * sides + k, v0 + i * sides + k1, v0 + (i + 1) * sides + k);
+									tri(v0 + i * sides + k1, v0 + (i + 1) * sides + k1, v0 + (i + 1) * sides + k);
+								}
+							}
+						}
+					}
+				}
+			}
+			close_part(part, 0.02f);
 		}
 		big_end = r_b.indices.size();
 	}
@@ -12069,6 +12404,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// red-brown and glossy, turning pale from about 2-4 cm (Rushforth, Trees of Britain and
 			// Europe). Thin shoots took the trunk's white and read as frosted sprays.
 			col = Color(0.3f, 0.18f, 0.14f).lerp(col, Math::smoothstep(0.008f, 0.03f, r0));
+		} else if (preset == PRESET_BROOM) {
+			// Broom's switches stay green and photosynthesise for years, browning only on old wood
+			// at the base (Bean); gorse's shoots are green only their first year or two.
+			col = Color(0.28f, 0.42f, 0.16f).lerp(col, Math::smoothstep(0.006f, 0.016f, r0));
+		} else if (preset == PRESET_GORSE) {
+			col = Color(0.3f, 0.42f, 0.22f).lerp(col, Math::smoothstep(0.0025f, 0.006f, r0));
 		}
 		if (first.dead) {
 			col = col.lerp(Color(0.42f, 0.4f, 0.37f), 0.6f);
@@ -12727,7 +13068,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
 	// The year's shoots carry young bark: a birch's are dark red-brown, not its trunk's white.
 	const bool birch_twigs = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
-	const Color twig_col = (birch_twigs ? Color(0.3f, 0.18f, 0.14f) : bark_color).srgb_to_linear();
+	const Color twig_col = (birch_twigs ? Color(0.3f, 0.18f, 0.14f) : (preset == PRESET_BROOM ? Color(0.28f, 0.42f, 0.16f) : (preset == PRESET_GORSE ? Color(0.3f, 0.42f, 0.22f) : bark_color))).srgb_to_linear();
 	// A mat's dwarfed shoots carry their needles close: more to a shoot (trees.md 5s).
 	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE] * (1.0f + 0.9f * krummholz)));
 	const float size = params[PARAM_LEAF_SIZE];
@@ -12916,7 +13257,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					{
 						Vector4i part;
 						leaves.begin(part);
-						_add_needle(leaves, base, out, needle_size, c);
+						if (preset == PRESET_GORSE) {
+							// Spines stand out wider than conifer needles (45-70 degrees).
+							const Vector3 sout = (ar * 0.85f + bdir * 0.53f).normalized();
+							const uint32_t sh_hash = hash_murmur3_one_32(uint32_t(i) * 7919u + uint32_t(sh * 257 + k), uint32_t(seed));
+							_add_spine(leaves, base, sout, needle_size * 1.25f, c, sh_hash, (k % 3) == 0);
+						} else {
+							_add_needle(leaves, base, out, needle_size, c);
+						}
 						leaves.end(part, 0.0f);
 					}
 					leaf_count++;
@@ -13332,6 +13680,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			m->set_feature(BaseMaterial3D::FEATURE_SNOW, false);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 			m->set_backlight(Color(0.12f, 0.14f, 0.05f));
+			if (preset == PRESET_GORSE || preset == PRESET_BROOM) {
+				// Mostly petals: thin, they glow golden against the light, and their satin
+				// sheen is weak (a plain 0.5 specular laid the sky's grey-blue over the yellow
+				// and turned it mustard).
+				m->set_backlight(Color(0.3f, 0.26f, 0.02f));
+				m->set_specular(0.25f);
+			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "crown_parts");
 		} else if (s == 9) {
 			// Resin runs and beads on a conifer's wounds (trees.md 5p): vertex colour, glossy.
@@ -14023,11 +14378,17 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	{ 2, 10, -18, -3, 640, 1500, 0.8f, 40, 0.2f, 0, 0.65f, 0.70f, 6.0f, 0.9f }, // Yellow birch
 	{ 3, 19, -15, 10, 650, 1600, 0.6f, 40, 0.2f, 0, 0.85f, 0.65f, 3.0f, 0.6f }, // Witch-hazel
 	{ 7, 19, -8, 10, 750, 2000, 0.6f, 45, 0.1f, 0, 0.85f, 0.80f, 2.5f, 0.5f }, // Mountain laurel
+	// Gorse and broom: light-demanding heath shrubs (Ellenberg L 7-8), gorse oceanic and cut back
+	// by hard frost, broom a little hardier (Atlas of the British and Irish Flora, Preston et al.
+	// 2002); vegetation places them (trees.md 5u).
+	{ 6, 15, -3, 9, 600, 2500, 0.5f, 45, 0.1f, 0, 0.3f, 0.80f, 1.6f, 0.5f }, // Gorse
+	{ 5, 15, -6, 9, 500, 2000, 0.5f, 45, 0.1f, 0, 0.3f, 0.45f, 1.6f, 0.4f }, // Broom
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
 	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER || p_preset == TreeGenerator::PRESET_HOLLY || p_preset == TreeGenerator::PRESET_BOX ||
-			p_preset == TreeGenerator::PRESET_WITCH_HAZEL || p_preset == TreeGenerator::PRESET_MOUNTAIN_LAUREL;
+			p_preset == TreeGenerator::PRESET_WITCH_HAZEL || p_preset == TreeGenerator::PRESET_MOUNTAIN_LAUREL || p_preset == TreeGenerator::PRESET_GORSE ||
+			p_preset == TreeGenerator::PRESET_BROOM;
 }
 
 void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
@@ -14108,12 +14469,49 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		// a sensible tree. The steeper the bank the more of the soil has washed from under the
 		// downhill roots (Gartner 2007); one steep variant in eight stands over a boulder, as on
 		// stony stream banks and gorge sides.
-		static const float slopes[4] = { 0.0f, 0.35f, 0.6f, 0.85f };
+		// The 34 degree bank first: a single-variant stand (scouts, tests) gets that one; the
+		// level tree is the stand's own open-grown form.
+		static const float slopes[4] = { 0.6f, 0.0f, 0.85f, 0.35f };
 		const uint32_t h = uint32_t(seed) * 2654435761u;
 		const float t = float((h >> 8) & 255u) / 255.0f;
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_form == FORM_THICKET || p_form == FORM_OLD) {
+		// Heath shrubs (trees.md 5u), from the preset's own numbers each variant.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f;
+		for (int k = 0; k < PARAM_MAX; k++) {
+			params[k] = look.params[k];
+		}
+		if (p_form == FORM_THICKET) {
+			// Several plants grown into one stand: stems from all round, splayed out low, leafy
+			// to the ground at the edges, wider than tall.
+			params[PARAM_STEMS] = Math::round(look.params[PARAM_STEMS] * 2.5f);
+			params[PARAM_STEM_SPREAD] = MIN(look.params[PARAM_STEM_SPREAD] + 12.0f, 85.0f);
+			params[PARAM_BASAL_SPROUTS] = 0.7f;
+			params[PARAM_YEARS] = look.params[PARAM_YEARS] + 3.0f;
+			params[PARAM_BUD_LIGHT_MIN] = 0.0f;
+			params[PARAM_SHED_RATIO] = look.params[PARAM_SHED_RATIO] * 0.5f;
+			params[PARAM_TRUNK_GRAVITROPISM] = look.params[PARAM_TRUNK_GRAVITROPISM] * 0.6f;
+			// The wind and grazing take the tallest leaders: a low, broad top.
+			const float top = (p_preset == PRESET_BROOM ? 1.7f : 1.3f) * Math::lerp(0.9f, 1.1f, t);
+			envelope = AABB(Vector3(-4.0f, -1.0f, -4.0f), Vector3(8.0f, 1.0f + top, 8.0f));
+		} else {
+			// Old (BSBI: gorse lives 15-20 years, grows top-heavy and keels over; broom 10-20,
+			// its branches leaning out and thinning, GOERT): older, the inside shaded out and
+			// dead but standing, the stems splayed.
+			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(1.5f, 1.7f, t));
+			params[PARAM_BUD_LIGHT_MIN] = MAX(look.params[PARAM_BUD_LIGHT_MIN], 0.2f);
+			params[PARAM_SHED_RATIO] = look.params[PARAM_SHED_RATIO] * 1.5f;
+			params[PARAM_DEAD_BRANCH_KEEP] = 0.9f;
+			params[PARAM_STEM_SPREAD] = MIN(look.params[PARAM_STEM_SPREAD] + 15.0f, 85.0f);
+			params[PARAM_TRUNK_GRAVITROPISM] = look.params[PARAM_TRUNK_GRAVITROPISM] * 0.5f;
+			params[PARAM_BASAL_SPROUTS] = look.params[PARAM_BASAL_SPROUTS] * 0.3f;
+			params[PARAM_GRAVITY_BENDING] = 0.25f;
+		}
 	} else if (p_form == FORM_POLLARD) {
 		// Pollards: willow still worked, cut every 5-8 years; beech, oak and the rest lapsed, last
 		// cut 40-150 years ago, their old poles now trunks (Read, Pollards, 2000).
@@ -14296,7 +14694,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK;
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD &&
+			!(p_form == FORM_SAPLING && (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM));
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -14321,7 +14720,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// sprays (a spruce is 7M vertices instead of 53M). A single tree near the camera is grown
 		// with generate() and keeps every needle.
 		const bool saved_sprays = needle_sprays;
-		needle_sprays = true;
+		// Gorse's spines are short and its flowers sit among them: sprays (quads a needle long
+		// either side of the shoot) hid the flowers, and its spines as geometry cost about what
+		// its flowers do (trees.md 5u).
+		needle_sprays = p_preset != PRESET_GORSE;
 		forest_shade = p_stand_grown ? 0.6f : 0.0f;
 		// Neighbours in a Poisson-disk stand stand on average about 1.3 times the minimum spacing
 		// apart, so crowns grown to that boundary close the canopy as real stands do.
@@ -14344,8 +14746,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_slope = ground_slope;
 		const float saved_erosion = bank_erosion;
 		const float saved_stone = root_stone;
+		const AABB saved_envelope = envelope;
 		if (p_form == FORM_SAPLING) {
-			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
+			// A young heath shrub is three or four years old, already flowering (BSBI, GOERT).
+			const bool heath = p_preset == PRESET_GORSE || p_preset == PRESET_BROOM;
+			params[PARAM_YEARS] = heath ? MAX(3.0f, Math::round(params[PARAM_YEARS] * 0.33f)) : MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
 		// Leaf detail near, on demand: lobed and compound leaves are simple lenses in the far
 		// meshes, and a copy of this generator, as set up here, builds the full-leaf mesh of a
@@ -14354,7 +14759,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// With far_lod1 every broadleaf splits: its far mesh starts at LOD 1 (trees.md 8d).
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && params[PARAM_NEEDLES] <= 0.5f &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -14393,6 +14798,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		veteran = saved_veteran;
 		wind_exposure = saved_exposure;
 		krummholz = saved_krummholz;
+		envelope = saved_envelope;
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
 		root_stone = saved_stone;
@@ -14401,7 +14807,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// One full-needle variant for the near range (the field repeats it over the variants):
 		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
 		// close. GPU memory and path tracing cost of it are not yet measured.
-		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ)) {
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_THICKET || p_form == FORM_OLD)) {
 			needle_sprays = false;
 			skip_lods = true;
 			seed = saved_seed * 31;
@@ -14434,7 +14840,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -14544,6 +14950,15 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const Color crown_color = leaf.lerp(ls.color, ls.season_blend());
 		const float leafy = ls.out * (1.0f - ls.fallen);
 		Color far = Color(crown_color.r * self_shade, crown_color.g * self_shade, crown_color.b * self_shade, Math::lerp(0.35f, conifer ? 0.85f : 0.9f, leafy));
+		if (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM) {
+			// Heath shrubs: their green stems and spines hide the ground whatever the season, and a
+			// bush in full flower is gold from afar (about half its outside in flowers, trees.md 5u).
+			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * (p_preset == PRESET_GORSE ? 0.55f : 0.45f);
+			const Color gold = Color(0.95f, 0.68f, 0.03f);
+			const Color stems = p_preset == PRESET_BROOM ? Color(0.06f, 0.14f, 0.03f) : far;
+			far = Color(stems.r, stems.g, stems.b).lerp(gold, bloom);
+			far.a = p_form == FORM_SAPLING ? 0.6f : 0.85f;
+		}
 		if (p_form == FORM_SAPLING) {
 			far.a = 0.5f;
 		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -14558,6 +14973,33 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 
 Ref<PlantSpecies> TreeGenerator::make_species(bool p_stand_grown, int p_variants) {
 	return _stand_species(preset, p_stand_grown, p_variants);
+}
+
+// A heath shrub species for vegetation (trees.md 5u): the meshes of one form, its footprint,
+// canopy radius and far colour on the season's day; placement and its climate and terrain rules
+// are vegetation's (PlantGenerator.apply_scrub_rules and its own).
+Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season) {
+	ERR_FAIL_COND_V_MSG(p_preset != PRESET_GORSE && p_preset != PRESET_BROOM, Ref<PlantSpecies>(), "Not a heath shrub preset.");
+	ERR_FAIL_INDEX_V(int(p_form), int(SHRUB_MAX), Ref<PlantSpecies>());
+	static const Form forms[SHRUB_MAX] = { FORM_SAPLING, FORM_OPEN, FORM_OLD, FORM_THICKET, FORM_KRUMMHOLZ };
+	static const char *names[SHRUB_MAX] = { " (young)", "", " (old)", " (thicket)", " (cushion)" };
+	Ref<TreeGenerator> g;
+	g.instantiate();
+	g->set_preset(p_preset);
+	g->season = p_season.duplicate(true);
+	Ref<PlantSpecies> sp = g->_stand_species(p_preset, false, MAX(p_variants, 1), forms[p_form]);
+	ERR_FAIL_COND_V(sp.is_null(), sp);
+	// No climate, terrain or shade rules: a fresh species' ranges.
+	Ref<PlantSpecies> plain;
+	plain.instantiate();
+	for (int r = 0; r < PlantSpecies::RULE_MAX; r++) {
+		sp->set_rule_range(PlantSpecies::Rule(r), plain->get_rule_range(PlantSpecies::Rule(r)));
+		sp->set_rule_fade(PlantSpecies::Rule(r), plain->get_rule_fade(PlantSpecies::Rule(r)));
+	}
+	sp->set_name(String(preset_names[p_preset]) + names[p_form]);
+	sp->set_meta("shrub_form", int(p_form));
+	// The source keeps the near meshes alive through the species (_near_mesh_source meta).
+	return sp;
 }
 
 void TreeGenerator::clear_cache() {
@@ -14636,7 +15078,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_BEECH, 0.3f);
 			// Ravine woods on the gorge sides (Tilio-Acerion: sycamore, ash and lime on steep,
 			// unstable, stony slopes; Ellenberg 1988): sycamore bank trees past about 25 degrees.
-			Ref<PlantSpecies> ravine = _stand_species(PRESET_SYCAMORE_MAPLE, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			Ref<PlantSpecies> ravine = _stand_species(PRESET_SYCAMORE_MAPLE, false, _bank_variants(p_variants), FORM_BANK);
 			ravine->set_density(0.4f);
 			ravine->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(25.0f, 90.0f));
 			ravine->set_rule_fade(PlantSpecies::RULE_SLOPE, 6.0f);
@@ -14734,14 +15176,14 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_BLACK_ALDER, 0.4f);
 			// On the banks themselves, alder and willow lean out over the water with their roots
 			// washed bare (trees.md 5q). Placement picks each tree's slope variant.
-			Ref<PlantSpecies> alder_bank = _stand_species(PRESET_BLACK_ALDER, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			Ref<PlantSpecies> alder_bank = _stand_species(PRESET_BLACK_ALDER, false, _bank_variants(p_variants), FORM_BANK);
 			alder_bank->set_density(0.5f);
 			alder_bank->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 12.0f));
 			alder_bank->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 6.0f);
 			alder_bank->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			alder_bank->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(alder_bank);
-			Ref<PlantSpecies> willow_bank = _stand_species(PRESET_WHITE_WILLOW, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			Ref<PlantSpecies> willow_bank = _stand_species(PRESET_WHITE_WILLOW, false, _bank_variants(p_variants), FORM_BANK);
 			willow_bank->set_density(0.3f);
 			willow_bank->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 8.0f));
 			willow_bank->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 4.0f);
@@ -15553,6 +15995,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_shrub_species", "preset", "form", "variants", "season"), &TreeGenerator::make_shrub_species, DEFVAL(SHRUB_MATURE), DEFVAL(3), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_bloom", "preset", "day_of_year"), &TreeGenerator::get_bloom);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
 	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
 	ClassDB::bind_method(D_METHOD("set_climber_plant_leaves", "enabled"), &TreeGenerator::set_climber_plant_leaves);
@@ -15710,6 +16154,14 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_YELLOW_BIRCH);
 	BIND_ENUM_CONSTANT(PRESET_WITCH_HAZEL);
 	BIND_ENUM_CONSTANT(PRESET_MOUNTAIN_LAUREL);
+	BIND_ENUM_CONSTANT(PRESET_GORSE);
+	BIND_ENUM_CONSTANT(PRESET_BROOM);
+	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
+	BIND_ENUM_CONSTANT(SHRUB_MATURE);
+	BIND_ENUM_CONSTANT(SHRUB_OLD);
+	BIND_ENUM_CONSTANT(SHRUB_THICKET);
+	BIND_ENUM_CONSTANT(SHRUB_CUSHION);
+	BIND_ENUM_CONSTANT(SHRUB_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 	BIND_ENUM_CONSTANT(STAND_BEECH);
 	BIND_ENUM_CONSTANT(STAND_OAK_MIXED);

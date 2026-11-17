@@ -1193,7 +1193,7 @@
     "PhysXVehicle3D.add_mud_splat()"
    ],
    "note": "",
-   "what": "clods that hit a vehicle stick as splats and wash off in water.",
+   "what": "clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1297,7 +1297,7 @@
     "GroundSurface3D.runoff_channels"
    ],
    "note": "",
-   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts rills and lays the sand down at their foot.",
+   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1997,6 +1997,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Worn paths",
+   "settings": [
+    "VegetationField3D.paths",
+    "GrassField3D.paths"
+   ],
+   "note": "",
+   "what": "along paths, plants and grass thin out and shorten by how well they resist trampling, leaving bare trodden soil.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Clear of boulders",
    "settings": [
     "VegetationField3D.obstacles",
@@ -2559,6 +2571,17 @@
    ],
    "note": "",
    "what": "many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Gorse and broom",
+   "settings": [
+    "TreeGenerator.make_shrub_species()"
+   ],
+   "note": "",
+   "what": "real spines, flowers and pods, flowering by season, in young, mature, old, thicket and cushion forms.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

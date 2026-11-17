@@ -1438,17 +1438,41 @@ func _runoff_dump() -> void:
 	var dump := OS.get_environment("RUNOFF_DUMP")
 	if dump == "":
 		return
-	var img := Image.create(256, 448, false, Image.FORMAT_RGB8)
+	# Hillshade of the cut over x -2..2, z 1.5..5.5 at 7.8 mm, lit from the left at a low angle, so pits and
+	# smooth grooves read apart; the cut's depth in red.
+	var n := 512
+	var s := 4.0 / n
+	var cut := PackedFloat32Array()
+	cut.resize(n * n)
 	var deepest := 0.0
-	for py in 448:
-		for px in 256:
-			var cc := surface.get_runoff_cut_at(Vector3(-2.0 + px * 0.015625, 0, 7.5 - py * 0.015625))
-			deepest = maxf(deepest, cc)
-			var v := clampf(0.5 + cc / 0.02, 0.0, 1.0)
-			img.set_pixel(px, py, Color(v, v, v) if cc >= 0.0 else Color(v, v * 0.8, v * 0.5))
+	for py in n:
+		for px in n:
+			var c := surface.get_runoff_cut_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s))
+			cut[py * n + px] = c
+			deepest = maxf(deepest, c)
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	for py in n:
+		for px in n:
+			var c := cut[py * n + px]
+			var gx := (cut[py * n + mini(px + 1, n - 1)] - cut[py * n + maxi(px - 1, 0)]) / (2.0 * s)
+			var shade := clampf(0.55 + 1.5 * gx, 0.0, 1.0)
+			var r := clampf(shade + c / 0.008, 0.0, 1.0)
+			img.set_pixel(px, py, Color(r, shade, shade))
 	img.save_png(dump)
-	print("  runoff cut map saved, deepest %.1f mm" % (deepest * 1000.0))
-
+	# And the raw cut (m, float) beside it for other looks.
+	var raw := FileAccess.open(dump.get_basename() + ".f32", FileAccess.WRITE)
+	if raw:
+		raw.store_buffer(cut.to_byte_array())
+	var wsum := 0.0
+	var wmax := 0.0
+	var wet := 0
+	for py in range(0, n, 8):
+		for px in range(0, n, 8):
+			var w: float = surface.get_runoff_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s)).x
+			wsum += w
+			wmax = maxf(wmax, w)
+			wet += 1 if w > 5e-5 else 0
+	print("  runoff cut map saved, deepest %.1f mm; water mean %.3f mm, max %.2f mm, %.0f%% over 0.05 mm" % [deepest * 1000.0, wsum / 4096.0 * 1000.0, wmax * 1000.0, wet / 40.96])
 
 func _run_runoff_tests() -> void:
 	var tc := 0.047 * 1650.0 * 9.81 * 0.00025
@@ -1464,7 +1488,8 @@ func _run_runoff_tests() -> void:
 	_check("the soaked face seeps and water runs down it", r.x > 0.0 and r.y > 0.0, "%.2f mm, %.2f m/s" % [r.x * 1000.0, r.y])
 	_check("none above the tide's reach", surface.get_runoff_at(Vector3(0, 0, 11.0)).x == 0.0, "%.2f mm" % (surface.get_runoff_at(Vector3(0, 0, 11.0)).x * 1000.0))
 	var peak_us := 0.0
-	for i in 2400: # 40 s
+	var frames := int(OS.get_environment("RUNOFF_FRAMES")) if OS.get_environment("RUNOFF_FRAMES") != "" else 2400
+	for i in frames: # 40 s (RUNOFF_FRAMES for a quicker look)
 		await get_tree().physics_frame
 		peak_us = maxf(peak_us, surface.get_runoff_step_usec())
 	surface.sync_deformation()
@@ -2198,8 +2223,9 @@ func _build_grains() -> void:
 	get_tree().quit()
 
 
-# Runoff channels: the --test=runoff beach after 84 minutes of seepage (scaled, as the test), seen from 1.3 m above
-# the waterline's side looking up the face, a low sun across it so the rills' walls shade. RUNOFF_DUMP=path.png
+# Runoff channels: the --test=runoff beach after 84 minutes of seepage (scaled, as the test), seen from 1.5 m above
+# the upper face looking down it to the waterline and the sand laid at the rills' foot, a low sun across it so the
+# rills' walls shade and the seeping water glistens. RUNOFF_DUMP=path.png
 # also saves the cut from above.
 func _build_rills() -> void:
 	var on := not OS.get_cmdline_user_args().has("--runoff=0")
@@ -2220,7 +2246,7 @@ func _build_rills() -> void:
 	_runoff_dump()
 	var cam := Camera3D.new()
 	add_child(cam)
-	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.4, 1.3, 1.4, 0.0, 0.0, 3.6])
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.6, 1.5, 6.8, 0.0, 0.0, 2.0])
 	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
 	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
 	cam.fov = 50.0
