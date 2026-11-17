@@ -327,6 +327,13 @@ extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
   curvature proxy is how far the particle sits from the local centre of
   liquid mass. New particles are placed in the cylinder that the fluid
   particle sweeps that frame.
+- Trapped air on MPM (17 Nov 2026): each node is compared with the
+  particle's own APIC velocity field, v + C (x_node - x), not with v alone.
+  Against v alone a smooth falling stream read about 1 m/s across the
+  stencil (its shear, stretch and necking), as high as the plunge, and
+  filled the pour with white specks. Against the APIC field the stream
+  reads under 0.05 m/s and the plunge 0.05 to 0.3 m/s (measured on the
+  bucket pour); the clamps are 0.06 to 0.3.
 - Sort: by the grid's liquid fraction (Ihmsen's neighbour count): spray
   below 0.12, bubbles above 0.7, foam in between.
 - Spray: ballistic.
@@ -337,7 +344,12 @@ extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
 - Foam (Wretborn): advected with the surface and projected back onto it,
   the move capped at half a cell. Lifetimes are normally distributed
   (sd 0.4 of the mean).
-- Drawing: lit white spheres, as in both papers.
+- Drawing: foam and bubbles as lit white spheres, as in both papers. Spray
+  as clear water drops (the fluid's clear-water material on small spheres):
+  airborne drops read by their highlight and refraction, which is how
+  Pixar shaded droplets in "Simulating Rivers in The Good Dinosaur"
+  (Reisch et al., SIGGRAPH 2016 talk), with scattering volumes only for
+  whitewater. White spray read as a curtain of beads.
 - Not done (cost): two-way bubble coupling, SPH wet-foam forces, screen
   space or volumetric foam.
 - GPU cost: two passes a frame (one over the fluid, one over a 16k ring);

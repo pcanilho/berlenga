@@ -1210,9 +1210,11 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(168, rmax);
 	put_f(172, rmax / 6.0f);
 	// Potential clamps (Ihmsen Eq. 1). Trapped air is a speed here: the grid
-	// weights sum to one, where Ihmsen's SPH kernel sums over ~30 neighbours.
-	put_f(176, 0.15f);
-	put_f(180, 1.2f);
+	// weights sum to one, where Ihmsen's SPH kernel sums over ~30 neighbours. It is
+	// measured against each particle's own APIC field (see the spawn pass): a smooth
+	// falling stream reads under 0.05 m/s, a plunge into the pool 0.05 to 0.3.
+	put_f(176, 0.06f);
+	put_f(180, 0.3f);
 	put_f(184, 0.5f * 0.6f * 0.6f);
 	put_f(188, 0.5f * 3.0f * 3.0f);
 }
