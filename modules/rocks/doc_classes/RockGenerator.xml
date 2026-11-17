@@ -22,6 +22,12 @@
 				Makes [param count] rocks from seeds [member seed] to [code]seed + count - 1[/code] on worker threads.
 			</description>
 		</method>
+		<method name="get_effective_salt" qualifiers="const">
+			<return type="float" />
+			<description>
+				The salt in use: [member salt], or the family's own when that is below 0 (1 for sea stacks, arches and platforms, 0.4 for cave mouths, 0 inland).
+			</description>
+		</method>
 		<method name="get_last_build_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -38,7 +44,7 @@
 			<return type="ShaderMaterial" />
 			<param index="0" name="rock_type" type="int" enum="RockGenerator.RockType" />
 			<description>
-				The shared material of a rock type: mineral colour and specks, bands, weathered rind, lichen and moss, a ground contact band, the water film and the weather wetness and snow.
+				The shared material of a rock type: mineral colour and specks, bands, weathered rind, lichen and moss, a ground contact band, the water film, the weather wetness (drying patchily, tops and sunny sides first) with rivulets down the steep faces while it rains ([code]rain_rivulets[/code], from the flow routing baked into the vertex colour alpha), and snow.
 			</description>
 		</method>
 		<method name="get_roundness" qualifiers="const">
@@ -78,6 +84,9 @@
 		</member>
 		<member name="rock_type" type="int" setter="set_rock_type" getter="get_rock_type" enum="RockGenerator.RockType" default="0">
 			The rock: how it is jointed and breaks, how fast it abrades, how it weathers and its colour.
+		</member>
+		<member name="salt" type="float" setter="set_salt" getter="get_salt" default="-1.0">
+			Sea-spray salt, 0 to 1: how strongly salt weathering hollows the stone. Sandstone, granite and limestone get tafoni, cavernous hollows a tenth to a third of the stone across with a hood over each opening and smaller hollows nested inside, and honeycomb cells about 6 cm across with thin walls over their sides. Old inland blocks (tors, hoodoos, goblins, fins, and any well-weathered stone) get them too, fewer and smaller. Below 0: the family's own (see [method get_effective_salt]).
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the rock. Each seed gives a different rock of the same type and family.

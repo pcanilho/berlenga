@@ -929,8 +929,70 @@ What we build:
   degrees) under drip formations (the water comes from the roof). Each cascade is a run of pools down the fall line.
   Each pool's dam is a sinuous crescent across the slope, with a level crest whose height is set by the pool's
   spill level, a rounded section, and crenellations. The pool fills behind it to the crest.
-- The water is the fork's own still water (PhysXWaterSurface3D with a surface_mesh outline, as lakes use), one per
-  near pool, so it takes shadows, refraction and transmission like every other water body. Drips from the
-  stalactites above ring it (submit_impulse). Pools away from the target show a still plane of the same material.
+- The water is the fork's own still water (PhysXWaterSurface3D with a surface_mesh outline, as lakes use), so it
+  takes shadows, refraction and transmission like every other water body. Underground it has no sky reflection and
+  no caustics, and it steps once per drawn frame. Each surface is a ripple simulation of its own, so only the
+  `rimstone_water_max` (12) pools nearest the camera within `rimstone_water_radius` (16 m) get one. The rest show their
+  calcite-lined floor dry until the camera comes near.
+
+Built (17 Nov): `CaveNetwork3D.rimstone` (density, 1) and `rimstone_water`. The chunk owning a standing formation's
+foot fits a plane to the floor round its flowstone mound. Where that floor falls 2 to 20 degrees, the chunk walks
+2 to 6 pools down the fall line, steering with the local cross slope. Each pool's rim height is 9 cm on gentle
+floors, falling to 3 cm on steep ones. The pool length is height over slope, and the width is 1.6 to 2.8 times the
+length. The crest is bowed downstream and wanders. It runs out to each side until it meets floor rising above the
+level or a wall, so a level-bottomed passage gets dams wall to wall. A pool that would spill round an open end, or
+whose dam would stand over 25 cm, ends the cascade. The dam is a swept section: a rounded top 4 mm over the water,
+a lobed downstream face flaring with the drop, and a buried foot. The floor inside each pool is coloured as calcite.
+Bench: `--caves --cave-mesh --cave-view=rimstone [--pool-water=n | --no-pool-water]`. Cost: once the water surfaces shared one
+compiled shader (afead43f), each live pool costs about 50 MB and 30 ms a frame on lavapipe; the PC queue measures
+it on the GPU.
+
+Sea-cave mist, built (17 Nov): PhysXCaveMist3D (godot_physx, Flow). A CaveNetwork3D with sea caves makes one itself
+(`sea_mist`, on). Each of the 4 nearest sea-cave mouths whose floor the sea reaches gets an emitter: a low slab across
+the mouth's lower half, 2 m inside and 0.6 m over the water. The emitter pulses with the swell (the sea's
+`shore_wave_period`, else 10 s). Each cave runs on its own phase. On a surge the slab pushes mist out at up to
+`push_speed` (2 m/s); in the trough it draws a little air back. The mist is pale, heavy (`heaviness` 0.4) and
+evaporates (`evaporation` 0.25), and it never jets up, so it spills out level and sinks over the water. Bench:
+`--sea-caves --cave-mesh --water --mist-period=2.5 --settle=200`, run with `--fixed-fps 60` (Flow steps per drawn
+frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it is still to be framed (PC queue).
 - Sea-cave mouths: cold mist in PhysX Flow. Spray and saturated air pushed out of the cave by the swell, where the
   sea is in the mouth. A slow, heavy, pale Flow emitter at the mouth, pulsing with the swell, near the target only.
+
+## Next options (17 Nov research, nothing built before Paulo picks)
+
+1. Tafoni and honeycomb weathering as real geometry. Coastal sandstone and granite boulders hollow out into
+   cavernous pits (tafoni, decimetres to metres) and cell-like honeycombs (centimetres) where salt crystallises in
+   the drying zone just inside the surface. The 2023 model of moisture transport and salt deposition (Geosciences
+   13(6) 161, "Mathematical Simulation of Honeycomb Weathering via Moisture Transport and Salt Deposition") grows them
+   from wetting and drying: hollows deepen where the rock dries slowly, and walls between them survive where it dries
+   fast. Plan: carve the hollows into the stone's own mesh (RockGenerator, coast and sea-spray zones and dry faces),
+   with sizes from exposure to salt (the sea's spray reach) and aspect; small honeycombs on the fins and stacks,
+   large tafoni on boulders and cliff feet. Real geometry, so PT keeps the cavities' shadow and occlusion.
+   Built (17 Nov): RockGenerator `salt` (-1 = from the family: 1 for sea stacks, arches and platforms, 0.4 for cave
+   mouths, 0 elsewhere; `get_effective_salt`). Tafoni strength = lithology (sandstone 1, granite 0.8, limestone 0.5)
+   times the larger of salt and an inland term (0.6 for corestones, hoodoos, goblins and fins, else from
+   weathering), times detail; none on pebbles, cobbles, rockfall, scree or cliff blocks. 2 to 12 hollows clustered
+   round one or two faces, mostly the lower half, each a squashed sphere sunk 0.55 R past the face and raised 0.22 R
+   so a hood stays over its opening, with 1 to 3 nested hollows in its back wall; carved over the whole fine field
+   before the weathering band, in the stone's stood-up frame (a column's x, a fin's z). Honeycomb: Worley cells
+   (F2 - F1 walls) about 1.3 periods across over the sides, in patches, deepest where the tafoni are. Bench
+   `--rock=sandstone,hoodoo --stand`, frames in fork/rocks/tafoni.
+2. Rain-wet rock with rivulets. Under rain, rock darkens and gains a water film first where water collects. Then thin
+   rivulets run down the fall lines of faces and drip from overhangs, and the stone dries from the tops and the sunny
+   faces after the rain (Tatarchuk, "Artist-Directable Real-Time Rain Rendering in City Environments", 2006;
+   fxguide's "Game environments: making wet environments"). Plan: wetness per stone from WeatherMap3D rain and
+   drying, a flow field down each stone's faces baked with the mesh (steepest descent on the surface), rivulets
+   along its converging lines with a thin film and lit drops at the lips, in raster and PT.
+   Built (17 Nov): each stone's mesh carries where rain runs, COLOR.a = 1 - log2(1 + upslope cells) / 12, from
+   multiple-flow-direction routing down the mesh in its stood-up frame (Freeman 1991; Quinn et al. 1991, slope to
+   the power 1.1); 1 means no data. The rock shader reads the weather map: while it rains (state map R, mm/h) the
+   steep faces carry rivulets, wavy lines of standing water a few mm to 1.4 cm wide, about 6 cm apart, counted
+   round the stone's vertical axis (so the bumpy normal cannot scatter them), more and wider where the flow
+   converges, broken where the film thins, with beads running down them; past a pixel they fade to their share
+   of the face. Drying (state map G) is patchy: the open tops and the sunny side first, the hollows, the shaded
+   side and the flow lines last. Material `rain_rivulets` (on). Bench `--rock=... --rain=4 [--dry-hours=0.4]`,
+   `--no-rivulets` for a before frame; frames in fork/rocks/wet. Not yet: drops hanging from the overhang lips.
+3. Cave streams. Vadose canyons and keyhole trenches carry streams; sea caves take the swell. Plan: a PhysXRiver3D
+   along the trench floors of passages above the water table (from the network's own segments), sinks and resurgences
+   at its key points, and the swell running in and out of sea caves (the sea surface reaching in), so the mist and
+   the cave's sound follow real water.

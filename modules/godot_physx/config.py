@@ -50,6 +50,8 @@ def get_doc_classes():
         "PhysXFlowRenderEffect",
         "PhysXGroundDust3D",
         "PhysXRockDust3D",
+        "PhysXFireSpread3D",
+        "PhysXCaveMist3D",
         "PhysXLensDirt3D",
         "PhysXLensFlare3D",
         "PhysXLensFlareSettings",

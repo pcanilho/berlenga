@@ -79,6 +79,10 @@ private:
 	Vector3 wind = Vector3(0, 0, 0); // constant base breeze, on top of the area
 	float wind_turbulence = 0.4;
 	bool weather_wind = true; // add the WeatherMap3D wind when there is one
+	// A PhysXFlow3D whose gas blows the cloth (its velocity at each vertex), and which the cloth stirs back.
+	NodePath flow_path;
+	LocalVector<Vector3> flow_prev_positions; // world, last step, for the cloth's own velocity
+	void _couple_flow(double p_delta);
 	float drag = 1.0;
 	float lift = 0.2;
 
@@ -164,6 +168,8 @@ public:
 	NodePath get_wind_area() const { return wind_area; }
 	void set_wind(const Vector3 &p_v);
 	Vector3 get_wind() const { return wind; }
+	void set_flow_path(const NodePath &p_path) { flow_path = p_path; }
+	NodePath get_flow_path() const { return flow_path; }
 	void set_weather_wind(bool p_v);
 	bool get_weather_wind() const { return weather_wind; }
 	void set_wind_turbulence(float p_v);

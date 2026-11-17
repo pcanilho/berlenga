@@ -520,8 +520,10 @@ void PhysXFlow3D::_gather_emitters(LocalVector<FlowBackend::Emitter> &r_emitters
 	}
 }
 
-void PhysXFlow3D::_gather_colliders(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) {
+void PhysXFlow3D::_gather_colliders(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters, float p_delta) {
+	bool dynamic_near = false;
 	if (!collide_with_bodies || get_world_3d().is_null() || !p_region.has_volume()) {
+		bodies_near = false;
 		return;
 	}
 	PhysicsDirectSpaceState3D *space = get_world_3d()->get_direct_space_state();
@@ -633,6 +635,99 @@ void PhysXFlow3D::_gather_colliders(const AABB &p_region, LocalVector<FlowBacken
 			velocity = state->get_velocity_at_local_position(xform.origin - body_xform.origin);
 		}
 		add_shape(shape, xform, velocity);
+		if (push_bodies && p_delta > 0.0f) {
+			const PhysicsServer3D::BodyMode mode = ps->body_get_mode(body);
+			if (mode == PhysicsServer3D::BODY_MODE_RIGID || mode == PhysicsServer3D::BODY_MODE_RIGID_LINEAR) {
+				dynamic_near = true;
+				_push_shape(ps, body, shape, xform, p_delta);
+			}
+		}
+	}
+	bodies_near = dynamic_near;
+}
+
+// The gas's push on one dynamic body's shape: quadratic drag F = 0.5 rho Cd A |u - v| (u - v) at the shape, u the
+// gas velocity (read back, a few frames late), v the body's there, A the shape's mean projected area (Cauchy's
+// formula: a convex body's surface over four, so it does not depend on how it faces the flow). Applied as an
+// impulse at the shape, so an off-centre push spins the body.
+void PhysXFlow3D::_push_shape(PhysicsServer3D *p_ps, const RID &p_body, const RID &p_shape, const Transform3D &p_xform, float p_delta) {
+	PhysicsDirectBodyState3D *state = p_ps->body_get_direct_state(p_body);
+	if (state == nullptr) {
+		return;
+	}
+	const Vector3 rel_pos = p_xform.origin - state->get_transform().origin;
+	const Variant data = p_ps->shape_get_data(p_shape);
+	const Vector3 sc = p_xform.basis.get_scale();
+	float area = 0.0f;
+	switch (p_ps->shape_get_type(p_shape)) {
+		case PhysicsServer3D::SHAPE_BOX: {
+			const Vector3 h = Vector3(data) * sc;
+			area = 2.0f * (h.x * h.y + h.y * h.z + h.z * h.x); // surface 8(...), over 4
+		} break;
+		case PhysicsServer3D::SHAPE_SPHERE: {
+			const float r = float(data) * sc.x;
+			area = Math::PI * r * r;
+		} break;
+		case PhysicsServer3D::SHAPE_CAPSULE:
+		case PhysicsServer3D::SHAPE_CYLINDER: {
+			const Dictionary d = data;
+			const float r = float(d["radius"]) * sc.x;
+			const float h = float(d["height"]) * sc.y;
+			area = 0.5f * Math::PI * r * r + 0.5f * Math::PI * r * h;
+		} break;
+		case PhysicsServer3D::SHAPE_CONVEX_POLYGON: {
+			// The hull's bounds, as a box (debris and Blast pieces are roughly boxy).
+			const PackedVector3Array pts = data;
+			if (pts.is_empty()) {
+				return;
+			}
+			AABB b(pts[0] * sc, Vector3());
+			for (int i = 1; i < pts.size(); i++) {
+				b.expand_to(pts[i] * sc);
+			}
+			const Vector3 h = b.size * 0.5f;
+			area = 2.0f * (h.x * h.y + h.y * h.z + h.z * h.x);
+		} break;
+		default: {
+			return; // meshes and heightmaps are static ground
+		}
+	}
+	// The gas velocity around the shape, not at its centre: the body is a solid for the gas, which takes the body's
+	// own velocity inside it. Six points on a shell a cell and a half outside it (a sphere of the same mean area).
+	const float shell = Math::sqrt(area / Math::PI) + 1.5f * cell_size;
+	static const Vector3 DIRS[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+	Vector3 u;
+	int inside = 0;
+	for (int k = 0; k < 6; k++) {
+		const Vector3 uk = sample_velocity(p_xform.origin + DIRS[k] * shell);
+		if (uk != Vector3()) {
+			u += uk;
+			inside++;
+		}
+	}
+	if (inside == 0) {
+		return; // no gas here (or nothing read back yet)
+	}
+	u /= (float)inside;
+	const Vector3 rel = u - state->get_velocity_at_local_position(rel_pos);
+	const float speed = rel.length();
+	if (speed < 0.05f) {
+		return;
+	}
+	constexpr float AIR_DENSITY = 1.2f; // kg/m3
+	const Vector3 force = rel * (0.5f * AIR_DENSITY * body_drag * area * speed);
+	// Never more than the change that would bring the body to the gas's speed this step (stiff drag on light bodies).
+	const float inv_mass = state->get_inverse_mass();
+	Vector3 impulse = force * p_delta;
+	if (inv_mass > 0.0f) {
+		const float max_impulse = speed / inv_mass;
+		if (impulse.length() > max_impulse) {
+			impulse = impulse.normalized() * max_impulse;
+		}
+	}
+	state->apply_impulse(impulse, rel_pos);
+	if (state->is_sleeping()) {
+		state->set_sleep_state(false);
 	}
 }
 
@@ -1018,7 +1113,11 @@ void PhysXFlow3D::_step(double p_delta) {
 	if (gas.has_volume()) {
 		region = region.has_volume() ? region.merge(gas.grow(1.0)) : gas.grow(1.0);
 	}
-	_gather_colliders(region, emitters);
+	_gather_colliders(region, emitters, (float)p_delta);
+	for (uint32_t i = 0; i < transient_solids.size(); i++) {
+		emitters.push_back(transient_solids[i]);
+	}
+	transient_solids.clear();
 	_gather_terrain_floor(region, emitters);
 	_gather_scatter_lights();
 	if (floor_enabled) {
@@ -1045,7 +1144,8 @@ void PhysXFlow3D::_step(double p_delta) {
 	settings.combustion = combustion;
 	// A full field each time; often enough for queries, and it stalls
 	// RenderingDevice's staging memory when done every step on large gas.
-	settings.readback = cpu_readback && (step_count++ % READBACK_INTERVAL) == 0;
+	const bool want_readback = cpu_readback || _velocity_wanted();
+	settings.readback = want_readback && (step_count++ % READBACK_INTERVAL) == 0;
 	_fill_render_settings(settings);
 	// The project's gravity sets which way is "up" for hot gas.
 	const Vector3 gravity_vector = GLOBAL_GET("physics/3d/default_gravity_vector");
@@ -1061,7 +1161,7 @@ void PhysXFlow3D::_step(double p_delta) {
 		StepQueue::Step &q = steps->queue[steps->queue.size() - 1];
 		q.time = sim_time + p_delta;
 		q.delta = (float)p_delta;
-		q.readback = cpu_readback;
+		q.readback = want_readback;
 		q.settings = settings;
 		q.emitters = emitters;
 	}
@@ -1104,6 +1204,15 @@ void PhysXFlow3D::_read_back() {
 	if (temp != nullptr && temp_size > 0) {
 		memcpy(last_temperature.ptrw(), temp, temp_size);
 	}
+	const uint8_t *vel = nullptr;
+	uint64_t vel_size = 0;
+	if (FlowBackend::grid_get_velocity_readback(grid, &vel, &vel_size) && vel_size > 0) {
+		last_velocity.resize((int64_t)vel_size);
+		memcpy(last_velocity.ptrw(), vel, vel_size);
+		stat_readback_bytes += (int64_t)vel_size;
+	} else {
+		last_velocity.clear();
+	}
 	float lo[3];
 	float hi[3];
 	if (FlowBackend::nanovdb_bounds(smoke, smoke_size, lo, hi)) {
@@ -1130,6 +1239,7 @@ void PhysXFlow3D::set_cpu_readback(bool p_v) {
 		MutexLock lock(step_mutex);
 		last_smoke.clear();
 		last_temperature.clear();
+		last_velocity.clear();
 		last_smoke_source = nullptr;
 		gas_bounds = AABB();
 		stat_readback_bytes = 0;
@@ -1154,6 +1264,35 @@ float PhysXFlow3D::sample_smoke(const Vector3 &p_position) const {
 
 float PhysXFlow3D::sample_temperature(const Vector3 &p_position) const {
 	return _sample_field(last_temperature, p_position);
+}
+
+bool PhysXFlow3D::_velocity_wanted() const {
+	return (push_bodies && bodies_near) || OS::get_singleton()->get_ticks_msec() - velocity_wanted_msec < 1000;
+}
+
+void PhysXFlow3D::request_velocity() {
+	velocity_wanted_msec = OS::get_singleton()->get_ticks_msec();
+}
+
+void PhysXFlow3D::add_transient_solid(const Vector3 &p_position, float p_radius, const Vector3 &p_velocity) {
+	if (transient_solids.size() >= 256) {
+		return;
+	}
+	FlowBackend::Emitter e = make_solid(Transform3D(Basis(), p_position), p_velocity);
+	e.shape = FlowBackend::Emitter::SHAPE_SPHERE;
+	e.radius = MAX(p_radius, 0.01f);
+	transient_solids.push_back(e);
+}
+
+Vector3 PhysXFlow3D::sample_velocity(const Vector3 &p_position) const {
+	MutexLock lock(step_mutex);
+	if (last_velocity.is_empty()) {
+		return Vector3();
+	}
+	const float p[3] = { (float)p_position.x, (float)p_position.y, (float)p_position.z };
+	float v[3];
+	FlowBackend::sample_velocity(last_velocity.ptr(), (uint64_t)last_velocity.size(), p, v);
+	return Vector3(v[0], v[1], v[2]);
 }
 
 Dictionary PhysXFlow3D::get_stats() const {
@@ -1500,6 +1639,13 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_scattering_shadow_reach"), &PhysXFlow3D::get_scattering_shadow_reach);
 	ClassDB::bind_method(D_METHOD("set_max_blocks", "blocks"), &PhysXFlow3D::set_max_blocks);
 	ClassDB::bind_method(D_METHOD("get_max_blocks"), &PhysXFlow3D::get_max_blocks);
+	ClassDB::bind_method(D_METHOD("sample_velocity", "position"), &PhysXFlow3D::sample_velocity);
+	ClassDB::bind_method(D_METHOD("request_velocity"), &PhysXFlow3D::request_velocity);
+	ClassDB::bind_method(D_METHOD("add_transient_solid", "position", "radius", "velocity"), &PhysXFlow3D::add_transient_solid);
+	ClassDB::bind_method(D_METHOD("set_push_bodies", "enabled"), &PhysXFlow3D::set_push_bodies);
+	ClassDB::bind_method(D_METHOD("is_push_bodies"), &PhysXFlow3D::is_push_bodies);
+	ClassDB::bind_method(D_METHOD("set_body_drag", "drag"), &PhysXFlow3D::set_body_drag);
+	ClassDB::bind_method(D_METHOD("get_body_drag"), &PhysXFlow3D::get_body_drag);
 	ClassDB::bind_method(D_METHOD("set_cpu_readback", "enabled"), &PhysXFlow3D::set_cpu_readback);
 	ClassDB::bind_method(D_METHOD("is_cpu_readback"), &PhysXFlow3D::is_cpu_readback);
 	ClassDB::bind_method(D_METHOD("sample_smoke", "position"), &PhysXFlow3D::sample_smoke);
@@ -1519,6 +1665,8 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.001"), "set_ignition_temperature", "get_ignition_temperature");
 	ADD_GROUP("Collision", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collide_with_bodies"), "set_collide_with_bodies", "is_collide_with_bodies");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "push_bodies"), "set_push_bodies", "is_push_bodies");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "body_drag", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_body_drag", "get_body_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_range", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_collision_range", "get_collision_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floor_enabled"), "set_floor_enabled", "is_floor_enabled");

@@ -41,6 +41,21 @@ func run(args: Dictionary) -> void:
 			var t0 := Time.get_ticks_msec()
 			var sp: PlantSpecies = TreeGenerator.make_shrub_species(p, f, 1, season)
 			var m: Mesh = sp.meshes[0]
+			if args.has("near"):
+				# The near mesh the field swaps in within near_range (built on demand).
+				var src: Object = sp.near_mesh_source
+				var nm: Mesh = null
+				for k in 1200:
+					if src == null:
+						break
+					nm = src.request_near_mesh(sp.near_mesh_key, 0)
+					if nm != null:
+						break
+					await get_tree().create_timer(0.1).timeout
+				if nm != null:
+					m = nm
+				else:
+					print("no near mesh for ", p)
 			var bb := m.get_aabb()
 			var tris := 0
 			for s in m.get_surface_count():
@@ -50,10 +65,13 @@ func run(args: Dictionary) -> void:
 			mi.mesh = m
 			mi.position = Vector3(x - bb.position.x, 0, z)
 			add_child(mi)
-			x += bb.size.x + 0.8
+			x += bb.size.x + float(args.get("gap", "0.8"))
 		width = maxf(width, x)
 		z -= 3.5
 	_world(args)
+	if args.has("lod_threshold"):
+		# 0 draws every mesh at LOD 0: the reference for a LOD comparison.
+		get_viewport().mesh_lod_threshold = float(args.lod_threshold)
 	var cam := Camera3D.new()
 	cam.fov = 40.0
 	add_child(cam)
@@ -135,6 +153,7 @@ func _test() -> void:
 	_check(heights[[34, 1]] > 0.5 and heights[[34, 1]] < 2.3, "mature kermes oak %.2f m in 0.5-2.2 m" % heights[[34, 1]])
 	_check(heights[[35, 1]] > 0.9 and heights[[35, 1]] < 3.1, "mature lentisk %.2f m in 1-3 m" % heights[[35, 1]])
 	_check(heights[[36, 4]] < 0.6 and heights[[36, 0]] < heights[[36, 1]] and heights[[36, 1]] < heights[[36, 2]], "dwarf fan palm: cushion %.2f m under 60 cm, young %.2f < mature %.2f < old %.2f m" % [heights[[36, 4]], heights[[36, 0]], heights[[36, 1]], heights[[36, 2]]])
+	_check(TreeGenerator.get_bloom(36, 100) > 0.9 and TreeGenerator.get_bloom(36, 225) == 0.0, "dwarf fan palm in flower in April, not in August")
 	_check(heights[[36, 1]] > 0.8 and heights[[36, 1]] < 2.6, "mature dwarf fan palm %.2f m in 0.8-2.5 m" % heights[[36, 1]])
 	_check(TreeGenerator.get_bloom(33, 125) > 0.9 and TreeGenerator.get_bloom(33, 225) == 0.0 and TreeGenerator.get_bloom(33, 40) == 0.0, "gum rockrose in flower in May only")
 	var jara_may: PlantSpecies = TreeGenerator.make_shrub_species(33, 1, 1, main.weather_season(125))
@@ -143,3 +162,16 @@ func _test() -> void:
 	var flowering: PlantSpecies = TreeGenerator.make_shrub_species(31, 1, 1, april)
 	var summer: PlantSpecies = TreeGenerator.make_shrub_species(31, 1, 1, aug)
 	_check(flowering.far_color.r > summer.far_color.r + 0.1, "gorse far colour gold in flower (%s vs %s)" % [flowering.far_color, summer.far_color])
+	# Gorse's flowers and pods thin with distance (trees.md 5x.2): the coarsest level keeps a
+	# few per cent of them; drawn whole they were 1.7 million triangles at every distance.
+	var gm: ArrayMesh = flowering.meshes[0]
+	for si in gm.get_surface_count():
+		if gm.surface_get_name(si) != "crown_parts":
+			continue
+		var sd: Dictionary = RenderingServer.mesh_get_surface(gm.get_rid(), si)
+		var full := gm.surface_get_array_index_len(si)
+		var lods: Array = sd.get("lods", [])
+		var last := full
+		if not lods.is_empty():
+			last = lods[lods.size() - 1].index_data.size() / (4 if sd.vertex_count > 65535 else 2)
+		_check(lods.size() >= 2 and last * 10 < full, "gorse flowers and pods thin with distance (%d of %d indices at the coarsest of %d levels)" % [last, full, lods.size()])

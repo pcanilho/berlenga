@@ -190,12 +190,26 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 	if (majorant <= 0.0) {
 		return -1.0;
 	}
+	// Glowing gas: track against a larger majorant (more null collisions, still unbiased; Novak et al.
+	// 2018, "Monte Carlo Methods for Volumetric Light Transport Simulation"), about one every 6 cm, so
+	// the emission integral is gathered along a flame instead of from the one or two collisions its thin
+	// smoke gives, which left a fire as scattered bright fireflies at a few samples a pixel.
+	if (rt_volume.emission.z > 0.5) {
+		majorant = max(majorant, 16.0);
+	}
 	RTVolumeAccessor acc = rt_volume_accessor();
 	float t = t0;
+	// Glowing gas: the emission integral along the whole segment by ratio tracking (each collision weighted
+	// by the transmittance so far), while delta tracking still picks where the path scatters. Stopping the
+	// emission at the scattering point instead made every sample all or nothing where smoke hangs in front
+	// of a flame (speckle); both estimate the same integral (Novak et al. 2018).
+	bool emissive = rt_volume.emission.z > 0.5;
+	float tr = 1.0;
+	float hit = -1.0;
 	for (uint i = 0u; i < 512u; i++) {
 		t -= log(max(1.0 - rand(rng_state), 1e-7)) / majorant;
 		if (t >= t1) {
-			return -1.0;
+			return hit;
 		}
 		vec3 p = (p_origin + rt_origin.xyz + p_dir * t) * upm;
 		vec2 ts;
@@ -205,16 +219,24 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 			continue;
 		}
 		float sigma_t = rt_volume_sigma_t(ts.y);
-		// Emission at every collision, real or null: the emission coefficient / majorant
-		// estimates its integral along the ray up to the collision. The gas emits as much as it
-		// absorbs (Kirchhoff): the heat ramp's radiance times its extinction, so a thick hot cloud
-		// glows at the ramp's color and clear hot air does not glow.
-		r_emitted += rt_volume_emitted(ts.x) * (sigma_t / majorant);
-		if (rand(rng_state) * majorant < sigma_t) {
-			return t;
+		// Emission at every collision, real or null: the emission coefficient / majorant estimates its
+		// integral along the ray. The gas emits as much as it absorbs (Kirchhoff): the heat ramp's radiance
+		// times its extinction, so a thick hot cloud glows at the ramp's color and clear hot air does not glow.
+		r_emitted += rt_volume_emitted(ts.x) * (tr * sigma_t / majorant);
+		if (hit < 0.0 && rand(rng_state) * majorant < sigma_t) {
+			hit = t;
+			if (!emissive) {
+				return hit;
+			}
+		}
+		if (emissive) {
+			tr *= 1.0 - sigma_t / majorant;
+			if (tr < 0.002) {
+				return hit;
+			}
 		}
 	}
-	return -1.0;
+	return hit;
 }
 
 // Ratio tracking transmittance from p_origin along p_dir over p_t_max meters.

@@ -33,6 +33,7 @@
 
 #include "rock_field_3d.h"
 
+#include "core/math/geometry_2d.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -41,11 +42,14 @@
 #include "core/templates/sort_array.h"
 #include "modules/terrain_deform/terrain_erosion_filter.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/material.h"
 #include "scene/resources/multimesh.h"
 
 TerrainGenerator3D *CaveNetwork3D::_get_generator() const {
@@ -1181,6 +1185,8 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	_gather(AABB(O - Vector3(2 * c, 2 * c, 2 * c), Vector3(chunk_size + 4 * c, chunk_size + 4 * c, chunk_size + 4 * c)), src);
 	r_chunk.key = p_key;
 	r_chunk.triangles = 0;
+	r_chunk.pools.clear();
+	r_chunk.rim_mesh.unref();
 	if (src.segments.is_empty() && src.chambers.is_empty() && src.patches.is_empty()) {
 		return;
 	}
@@ -1347,6 +1353,23 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	if (tris[0].is_empty() && tris[1].is_empty()) {
 		return;
 	}
+	// Rimstone dams and pools below the standing formations this chunk owns.
+	if (!drips.is_empty()) {
+		_rimstone(drips, O, chunk_size, r_chunk);
+	}
+	// Inside a pool (under its water, inside its outline): the floor is lined with calcite.
+	auto in_pool = [&](const Vector3 &p) {
+		for (const RimPool &pl : r_chunk.pools) {
+			if (p.y > pl.center.y + 0.04 || p.y < pl.center.y - 0.6) {
+				continue;
+			}
+			const Vector2 rel(p.x - pl.center.x, p.z - pl.center.z);
+			if (Geometry2D::is_point_in_polygon(rel, Vector<Vector2>(pl.outline))) {
+				return true;
+			}
+		}
+		return false;
+	};
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
 	for (int sfc = 0; sfc < 2; sfc++) {
@@ -1377,6 +1400,9 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 				real_t fw = 0.0;
 				if (!drips.is_empty()) {
 					_flowstone(drips, p, 0.0, &fw);
+				}
+				if (!r_chunk.pools.is_empty() && in_pool(p)) {
+					fw = 1.0;
 				}
 				pc.push_back(Color(fw, 0, 0));
 				pi.push_back(pv.size() - 1);
@@ -1575,6 +1601,316 @@ real_t CaveNetwork3D::_flowstone(const LocalVector<Drip> &p_drips, const Vector3
 		*r_weight = w;
 	}
 	return f;
+}
+
+// Rimstone (gours; docs/ideas/rocks.md, "Cave rimstone pools"): water spreading thinly over a floor below the drips
+// loses CO2 fastest where it speeds up over a rise, so calcite grows there into a dam that holds a pool behind it
+// (Hammer, Dysthe, Jamtveit et al. 2007, 2010). Below a standing formation on a floor falling 2 to 20 degrees, a
+// cascade of pools steps down the fall line. Each dam is a crescent across the slope, bowed downstream, sinuous, with
+// a level crest at the pool's spill level and a rounded section whose downstream face drops to the floor below; its
+// ends run into the floor where it rises above the level. Each pool's outline is where the floor stays under the level
+// inside the dam. Steeper floors give lower, closer dams (microgours), gentle ones wide shallow pools. The chunk that
+// owns the drip's foot builds the whole cascade, so it is built once.
+void CaveNetwork3D::_rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p_own_from, real_t p_own_size, Chunk &r_chunk) const {
+	const TerrainGenerator3D *gen = mesh_gen;
+	if (rimstone <= 0.0 || !gen) {
+		return;
+	}
+	const uint32_t ns = uint32_t(seed) * 2654435761u + 71u;
+	const Vector3 own_to = p_own_from + Vector3(p_own_size, p_own_size, p_own_size);
+	PackedVector3Array mv, mn;
+	PackedVector2Array muv;
+	PackedInt32Array mi;
+	for (const Drip &d : p_drips) {
+		const bool stands = d.kind == SPEL_COLUMN || d.mite > 0.0;
+		const Vector3 ft = d.foot;
+		if (!stands || ft.x < p_own_from.x || ft.y < p_own_from.y || ft.z < p_own_from.z || ft.x >= own_to.x || ft.y >= own_to.y || ft.z >= own_to.z) {
+			continue;
+		}
+		const int hx = int(Math::floor(ft.x * 10.0)), hy = int(Math::floor(ft.y * 10.0)), hz = int(Math::floor(ft.z * 10.0));
+		if (cave_hash(hx, hy, hz, ns) > MIN(0.6 * rimstone, 1.0)) {
+			continue;
+		}
+		FieldSource src;
+		_gather(AABB(ft - Vector3(9, 4, 9), Vector3(18, 8, 18)), src);
+		auto F = [&](real_t x, real_t y, real_t z) {
+			const Vector3 q(x, y, z);
+			return _flowstone(p_drips, q, _rock(src, gen, q));
+		};
+		// The floor under (x, z) searched down from y_from, which must be in the air.
+		auto floor_at = [&](const Vector2 &p, real_t y_from, real_t &r_y) -> bool {
+			if (F(p.x, y_from, p.y) > 0.0) {
+				return false;
+			}
+			real_t prev = y_from;
+			for (real_t y = y_from - 0.04; y > y_from - 1.5; y -= 0.04) {
+				if (F(p.x, y, p.y) > 0.0) {
+					real_t lo = y, hi = prev;
+					for (int k = 0; k < 6; k++) {
+						const real_t m = 0.5 * (lo + hi);
+						(F(p.x, m, p.y) > 0.0 ? lo : hi) = m;
+					}
+					r_y = 0.5 * (lo + hi);
+					return true;
+				}
+				prev = y;
+			}
+			return false;
+		};
+		// The floor's fall line round the formation's foot, outside its flowstone mound: a plane fitted to a ring.
+		const real_t mrad = d.kind == SPEL_COLUMN ? d.rad : d.mrad;
+		const real_t ring = 2.6 * mrad + 0.35 + 0.3;
+		const Vector2 f2(ft.x, ft.z);
+		real_t sa = 0.0, sb = 0.0, sxx = 0.0, szz = 0.0, mean = 0.0;
+		int got = 0;
+		real_t hk[12];
+		bool okk[12];
+		for (int k = 0; k < 12; k++) {
+			const Vector2 o = Vector2(1, 0).rotated(Math::TAU * k / 12.0) * ring;
+			okk[k] = floor_at(f2 + o, ft.y + 0.6, hk[k]);
+			if (okk[k]) {
+				mean += hk[k];
+				got++;
+			}
+		}
+		if (got < 9) {
+			continue;
+		}
+		mean /= got;
+		for (int k = 0; k < 12; k++) {
+			if (okk[k]) {
+				const Vector2 o = Vector2(1, 0).rotated(Math::TAU * k / 12.0) * ring;
+				sa += (hk[k] - mean) * o.x;
+				sb += (hk[k] - mean) * o.y;
+				sxx += o.x * o.x;
+				szz += o.y * o.y;
+			}
+		}
+		const Vector2 grad(sa / sxx, sb / szz);
+		const real_t slope0 = grad.length();
+		if (slope0 < 0.035 || slope0 > 0.364) {
+			continue; // flatter than 2 degrees: one sheet of flowstone; steeper than 20: it runs off as a coat
+		}
+		Vector2 dir = -grad / slope0;
+		Vector2 p2 = f2 + dir * ring;
+		real_t py;
+		if (!floor_at(p2, ft.y + 0.6, py)) {
+			continue;
+		}
+		const int n_pools = 2 + int(cave_hash(hx, hy, hz, ns + 1u) * 5.0f);
+		for (int i = 0; i < n_pools; i++) {
+			const float r1 = cave_hash(hx + i, hy, hz, ns + 11u), r2 = cave_hash(hx + i, hy, hz, ns + 12u), r3 = cave_hash(hx + i, hy, hz, ns + 13u);
+			// Steer down the local fall line, then measure the slope along it.
+			Vector2 perp(-dir.y, dir.x);
+			real_t yl, yr, ya;
+			if (floor_at(p2 + dir * 0.3 + perp * 0.3, py + 0.5, yl) && floor_at(p2 + dir * 0.3 - perp * 0.3, py + 0.5, yr)) {
+				dir = (dir - perp * CLAMP((yl - yr) / 0.6, -0.5, 0.5)).normalized();
+				perp = Vector2(-dir.y, dir.x);
+			}
+			if (!floor_at(p2 + dir * 0.5, py + 0.5, ya)) {
+				break;
+			}
+			const real_t s = (py - ya) / 0.5;
+			if (s < 0.02 || s > 0.45) {
+				break;
+			}
+			const real_t h = Math::lerp(0.09, 0.03, CLAMP(s / 0.36, 0.0, 1.0)) * (0.7 + 0.6 * r1);
+			const real_t L = CLAMP(h / s, 0.15, 1.4);
+			const real_t W = CLAMP(L * (1.6 + 1.2 * r2), 0.5, 2.6);
+			const Vector2 c2 = p2 + dir * L;
+			real_t yc;
+			if (!floor_at(c2, py + 0.3, yc)) {
+				break;
+			}
+			real_t level = yc + h;
+			// The crest: a crescent bowed downstream (its middle furthest down), sinuous, run out to each side until
+			// it meets floor rising above the level or a wall (on a level-bottomed passage that is wall to wall).
+			const real_t bow = 0.22 * W * (0.5 + r3);
+			const real_t du = 0.035;
+			auto crest_at = [&](real_t u) {
+				const Vector2 pos0 = c2 + perp * u;
+				const real_t t = u / (0.5 * W);
+				const real_t wig = (cave_fbm(Vector3(pos0.x * 5.0, yc * 3.0, pos0.y * 5.0), ns + 20u, 3) - 0.5f) * 0.16 * MIN(W, real_t(1.0));
+				return pos0 - dir * (bow * MIN(t * t, real_t(4.0))) + dir * wig;
+			};
+			LocalVector<Vector2> side_q[2];
+			LocalVector<real_t> side_f[2];
+			bool closed[2] = { false, false };
+			for (int sd = 0; sd < 2; sd++) {
+				for (real_t u = du; u < 4.0; u += du) {
+					const Vector2 qq = crest_at(sd == 0 ? -u : u);
+					real_t ff;
+					if (!floor_at(qq, level + 0.4, ff)) {
+						ff = level + 1.0; // a wall
+					}
+					side_q[sd].push_back(qq);
+					side_f[sd].push_back(ff);
+					if (ff >= level) {
+						closed[sd] = true;
+						break;
+					}
+				}
+			}
+			if (!closed[0] || !closed[1]) {
+				break; // it would spill round an open end
+			}
+			LocalVector<Vector2> q;
+			LocalVector<real_t> fy;
+			for (int k = int(side_q[0].size()) - 1; k >= 0; k--) {
+				q.push_back(side_q[0][k]);
+				fy.push_back(side_f[0][k]);
+			}
+			q.push_back(crest_at(0.0));
+			fy.push_back(yc);
+			for (uint32_t k = 0; k < side_q[1].size(); k++) {
+				q.push_back(side_q[1][k]);
+				fy.push_back(side_f[1][k]);
+			}
+			const int M = int(q.size());
+			if (level - yc < 0.012 || M > 260) {
+				break;
+			}
+			// A dam over a hollow in the floor would stand as a wall: rims stay low (tens of centimetres at most).
+			real_t tallest = 0.0;
+			for (int j = 1; j < M - 1; j++) {
+				tallest = MAX(tallest, level - fy[j]);
+			}
+			if (tallest > 0.25) {
+				break;
+			}
+			const int jl = 1, jr = M - 2;
+			const int j0 = jl - 1, j1 = jr + 1;
+			// The pool: rays from inside it to where the floor rises to the level (rock at the water line) or the
+			// dam's crest; a ray that runs on means the water would leak, so no pool.
+			const Vector2 pc = c2 - dir * (L * 0.5 + bow * 0.3);
+			real_t ypc;
+			if (!floor_at(pc, level + 0.3, ypc) || ypc >= level - 0.004) {
+				break;
+			}
+			const int RAYS = 32;
+			PackedVector2Array outline;
+			outline.resize(RAYS);
+			int leaks = 0;
+			const real_t reach = MAX(real_t(1.5) * MAX(L, W), real_t(0.6) * q[0].distance_to(q[q.size() - 1]) + real_t(0.5));
+			for (int k = 0; k < RAYS; k++) {
+				const Vector2 rd = Vector2(1, 0).rotated(Math::TAU * k / RAYS);
+				real_t r = 0.0;
+				bool hit = false;
+				for (r = 0.03; r < reach; r += 0.03) {
+					const Vector2 a = pc + rd * (r - 0.03), b = pc + rd * r;
+					if (F(b.x, level, b.y) > 0.0) {
+						hit = true;
+					}
+					for (int j = j0; j < j1 && !hit; j++) {
+						Vector2 x;
+						if (Geometry2D::segment_intersects_segment(a, b, q[j], q[j + 1], &x)) {
+							hit = true;
+						}
+					}
+					if (hit) {
+						break;
+					}
+				}
+				leaks += hit ? 0 : 1;
+				outline.write[k] = rd * MIN(r, reach);
+			}
+			if (leaks > 2) {
+				break;
+			}
+			RimPool pool;
+			pool.center = Vector3(pc.x, level, pc.y);
+			pool.depth = MAX(level - ypc, real_t(0.01));
+			pool.outline = outline;
+			r_chunk.pools.push_back(pool);
+			// The dam: a swept section along the crest, from its upstream foot (under the water) over a rounded top
+			// at the level to its downstream foot on the floor below, its downstream face flaring with the drop.
+			const int K = 11;
+			const int base = mv.size();
+			real_t arc = 0.0;
+			for (int j = j0; j <= j1; j++) {
+				const Vector2 Q = q[j];
+				const Vector2 T = (q[MIN(j + 1, M - 1)] - q[MAX(j - 1, 0)]).normalized();
+				Vector2 n(T.y, -T.x);
+				if (n.dot(Q - pc) < 0.0) {
+					n = -n;
+				}
+				const bool end = j == j0 || j == j1;
+				const real_t fj = MIN(fy[j], level + 0.05);
+				const real_t hj = end ? 0.0 : MAX(level - fj, real_t(0.0));
+				real_t fd;
+				if (!floor_at(Q + n * 0.1, level + 0.3, fd)) {
+					fd = fj - 0.02;
+				}
+				fd = MIN(fd, fj);
+				if (j > j0) {
+					arc += Q.distance_to(q[j - 1]);
+				}
+				// Crenellations: the crest a few millimetres up and down; the width wanders.
+				const real_t cren = 0.003 * (cave_noise(Vector3(arc * 45.0, 0.0, real_t(i) * 7.0), ns + 30u) - 0.5f) * 2.0;
+				const real_t w = (0.025 + 0.3 * MIN(hj, real_t(0.12))) * (0.6 + 0.8 * cave_noise(Vector3(arc * 9.0, 3.0, real_t(i)), ns + 31u));
+				// The downstream face grows in lobes (the spill is faster over some lips than others).
+				const real_t lobe = 0.6 + 0.8 * cave_noise(Vector3(arc * 28.0, 5.0, real_t(i) * 3.0), ns + 32u);
+				const real_t top = end ? fj - 0.012 : level + 0.004 + cren;
+				for (int k = 0; k < K; k++) {
+					const real_t th = Math::PI * (1.0 - real_t(k) / real_t(K - 1));
+					const real_t cs = Math::cos(th), sn = Math::sin(th);
+					const real_t bottom = (cs < 0.0 ? fj : fd) - 0.03;
+					const real_t y = bottom + (top - bottom) * Math::pow(MAX(sn, real_t(0.0)), real_t(0.3));
+					const real_t off = cs * (cs < 0.0 ? 0.5 * w : (0.5 * w + 0.4 * MAX(top - fd, real_t(0.0))) * lobe);
+					const Vector2 P = Q + n * off;
+					mv.push_back(Vector3(P.x, y, P.y));
+					mn.push_back(Vector3());
+					muv.push_back(Vector2(arc, real_t(k) / real_t(K - 1)));
+				}
+			}
+			const int rows = j1 - j0 + 1;
+			for (int j = 0; j < rows - 1; j++) {
+				for (int k = 0; k < K - 1; k++) {
+					const int a = base + j * K + k, b = a + 1, c = a + K, e = c + 1;
+					const int tri[2][3] = { { a, c, b }, { b, c, e } };
+					for (int t = 0; t < 2; t++) {
+						int v0 = tri[t][0], v1 = tri[t][1], v2 = tri[t][2];
+						// Outward: away from the crest line and up; Godot's front faces wind clockwise (the cross
+						// product points into the solid).
+						const Vector3 cn = (mv[v1] - mv[v0]).cross(mv[v2] - mv[v0]);
+						const Vector2 Qa = q[j0 + j];
+						const Vector3 mid = (mv[v0] + mv[v1] + mv[v2]) / 3.0;
+						const Vector3 out = Vector3(mid.x - Qa.x, 0.0, mid.z - Qa.y).normalized() * 0.5 + Vector3(0, 1, 0) * (mid.y > level - 0.01 ? 1.0 : 0.2);
+						if (cn.dot(out) > 0.0) {
+							SWAP(v1, v2);
+						}
+						const Vector3 fnrm = -(mv[v1] - mv[v0]).cross(mv[v2] - mv[v0]);
+						mn.write[v0] += fnrm;
+						mn.write[v1] += fnrm;
+						mn.write[v2] += fnrm;
+						mi.push_back(v0);
+						mi.push_back(v1);
+						mi.push_back(v2);
+					}
+				}
+			}
+			// On down: the next pool starts at this dam's foot.
+			p2 = c2 + dir * 0.06;
+			if (!floor_at(p2, level + 0.2, py)) {
+				break;
+			}
+		}
+	}
+	if (mi.is_empty()) {
+		return;
+	}
+	for (int k = 0; k < mn.size(); k++) {
+		mn.write[k] = mn[k].length_squared() > 1e-14f ? mn[k].normalized() : Vector3(0, 1, 0);
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = mv;
+	arrays[Mesh::ARRAY_NORMAL] = mn;
+	arrays[Mesh::ARRAY_TEX_UV] = muv;
+	arrays[Mesh::ARRAY_INDEX] = mi;
+	r_chunk.rim_mesh.instantiate();
+	r_chunk.rim_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	r_chunk.triangles += mi.size() / 3;
 }
 
 struct CaveMeshJob {
@@ -2019,7 +2355,259 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 		mmi->set_multimesh(mm);
 		mi->add_child(mmi);
 	}
+	if (p_chunk.rim_mesh.is_valid()) {
+		MeshInstance3D *rim = memnew(MeshInstance3D);
+		rim->set_name("Rimstone");
+		rim->set_mesh(p_chunk.rim_mesh);
+		rim->set_surface_override_material(0, _rim_material());
+		mi->add_child(rim);
+	}
+	p_chunk.pool_water.clear();
+	p_chunk.pool_water.resize(p_chunk.pools.size());
 	p_chunk.node = mi;
+}
+
+// A pool's live water: the fork's water surface (shadows, refraction and transmission as every other water body),
+// cut to the pool's outline, no wind under the ground; a plain sheet without the PhysX module. Each is a ripple
+// simulation of its own, so only the pools nearest the camera get one (_pool_water_update).
+Node3D *CaveNetwork3D::_make_pool_water(const RimPool &p_pool, int p_index) const {
+	PackedVector3Array sv, sn;
+	PackedInt32Array si;
+	sv.push_back(Vector3());
+	for (int r = 0; r < p_pool.outline.size(); r++) {
+		sv.push_back(Vector3(p_pool.outline[r].x, 0.0, p_pool.outline[r].y));
+	}
+	const int nr = p_pool.outline.size();
+	for (int r = 0; r < nr; r++) {
+		// Clockwise seen from above (Godot's front faces).
+		si.push_back(0);
+		si.push_back(1 + (r + 1) % nr);
+		si.push_back(1 + r);
+	}
+	sn.resize(sv.size());
+	for (int r = 0; r < sv.size(); r++) {
+		sn.write[r] = Vector3(0, 1, 0);
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = sv;
+	arrays[Mesh::ARRAY_NORMAL] = sn;
+	arrays[Mesh::ARRAY_INDEX] = si;
+	Ref<ArrayMesh> sheet;
+	sheet.instantiate();
+	sheet->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	Node3D *w = ClassDB::class_exists("PhysXWaterSurface3D") ? Object::cast_to<Node3D>(ClassDB::instantiate("PhysXWaterSurface3D")) : nullptr;
+	if (w) {
+		w->set("surface_mesh", sheet);
+		w->set("grid_resolution", 32);
+		w->set("water_level", 0.0);
+		w->set("depth", MAX(p_pool.depth, real_t(0.02)));
+		w->set("seabed_from_floor", false);
+		w->set("render_extent", 0.0);
+		w->set("wind_speed", 0.0);
+		w->set("follow_weather", false);
+		// Underground: no sky to mirror, no sun for caustics; one ripple step per drawn frame, so a slow frame never
+		// makes each pool catch up on several physics ticks.
+		w->set("raster_reflections", false);
+		w->set("caustics_enabled", false);
+		w->set("step_mode", 1);
+	} else {
+		MeshInstance3D *smi = memnew(MeshInstance3D);
+		Ref<StandardMaterial3D> still;
+		still.instantiate();
+		still->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+		still->set_albedo(Color(0.02, 0.03, 0.03, 0.25));
+		still->set_roughness(0.02);
+		smi->set_mesh(sheet);
+		smi->set_surface_override_material(0, still);
+		w = smi;
+	}
+	w->set_name(vformat("Pool %d", p_index));
+	w->set_meta("level", p_pool.center.y);
+	return w;
+}
+
+// Live water on the rimstone_water_max pools nearest the camera within rimstone_water_radius; the rest go dry to
+// the eye (their calcite lining still shows) until the camera comes near.
+void CaveNetwork3D::_pool_water_update() {
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	if (now - pool_water_usec < 250000 && pool_water_usec != 0) {
+		return;
+	}
+	pool_water_usec = now;
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	struct Near {
+		Chunk *chunk;
+		int index;
+		real_t d2;
+		bool operator<(const Near &p_o) const { return d2 < p_o.d2; }
+	};
+	LocalVector<Near> near;
+	const real_t r2 = rimstone_water_radius * rimstone_water_radius;
+	for (KeyValue<Vector3i, Chunk> &kv : chunks) {
+		Chunk &ch = kv.value;
+		if (ch.pool_water.size() != ch.pools.size()) {
+			ch.pool_water.resize(ch.pools.size());
+		}
+		for (uint32_t k = 0; k < ch.pools.size(); k++) {
+			const real_t d2 = cam ? cam->get_global_position().distance_squared_to(ch.pools[k].center) : 0.0;
+			if (rimstone_water && ch.node && cam && d2 < r2) {
+				near.push_back({ &ch, int(k), d2 });
+			}
+		}
+	}
+	near.sort();
+	HashSet<uint64_t> keep;
+	for (uint32_t k = 0; k < near.size() && int(k) < rimstone_water_max; k++) {
+		keep.insert(uint64_t(uintptr_t(near[k].chunk)) * 4096u + uint64_t(near[k].index));
+	}
+	for (KeyValue<Vector3i, Chunk> &kv : chunks) {
+		Chunk &ch = kv.value;
+		for (uint32_t k = 0; k < ch.pools.size(); k++) {
+			const bool want = keep.has(uint64_t(uintptr_t(&ch)) * 4096u + uint64_t(k));
+			Node3D *have = ch.pool_water[k].is_valid() ? Object::cast_to<Node3D>(ObjectDB::get_instance(ch.pool_water[k])) : nullptr;
+			if (want && !have && ch.node) {
+				Node3D *w = _make_pool_water(ch.pools[k], int(k));
+				ch.node->add_child(w);
+				w->set_global_transform(Transform3D(Basis(), ch.pools[k].center));
+				ch.pool_water[k] = w->get_instance_id();
+			} else if (!want && have) {
+				have->queue_free();
+				ch.pool_water[k] = ObjectID();
+			}
+		}
+	}
+}
+
+// The network's own PhysXCaveMist3D (godot_physx, built with Flow) when it has sea caves, called by name so the
+// module builds without it.
+void CaveNetwork3D::_update_mist_node() {
+	Node *n = get_sea_mist_node();
+	bool any_sea = false;
+	for (const Cave &cv : caves) {
+		any_sea = any_sea || cv.sea;
+	}
+	if (!sea_mist || !any_sea) {
+		if (n) {
+			n->queue_free();
+		}
+		mist_node = ObjectID();
+		return;
+	}
+	if (n || !ClassDB::class_exists("PhysXCaveMist3D")) {
+		return;
+	}
+	Object *obj = ClassDB::instantiate("PhysXCaveMist3D");
+	Node3D *node = Object::cast_to<Node3D>(obj);
+	if (!node) {
+		if (obj) {
+			memdelete(obj);
+		}
+		return;
+	}
+	node->set_name("SeaMist");
+	add_child(node, false, INTERNAL_MODE_BACK);
+	node->set("cave_network", node->get_path_to(this));
+	mist_node = node->get_instance_id();
+}
+
+void CaveNetwork3D::set_sea_mist(bool p_enable) {
+	sea_mist = p_enable;
+	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
+		_update_mist_node();
+	}
+}
+
+int CaveNetwork3D::get_rimstone_water_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		for (const ObjectID &id : kv.value.pool_water) {
+			n += id.is_valid() && ObjectDB::get_instance(id) ? 1 : 0;
+		}
+	}
+	return n;
+}
+
+int CaveNetwork3D::get_rimstone_pool_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		n += kv.value.node ? int(kv.value.pools.size()) : 0;
+	}
+	return n;
+}
+
+// Each meshed pool: center (its water level in y), depth, outline (xz round the center).
+Array CaveNetwork3D::get_rimstone_pools() const {
+	Array out;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		if (!kv.value.node) {
+			continue;
+		}
+		for (const RimPool &pl : kv.value.pools) {
+			Dictionary d;
+			d["center"] = pl.center;
+			d["depth"] = pl.depth;
+			d["outline"] = pl.outline;
+			out.push_back(d);
+		}
+	}
+	return out;
+}
+
+// Rimstone calcite: cream to amber, laid in thin growth layers parallel to the crest (horizontal), wet and smooth
+// everywhere (water spills over it), a little rougher and paler on the dry back of a dam's ends.
+Ref<Material> CaveNetwork3D::_rim_material() {
+	if (rim_material.is_valid()) {
+		return rim_material;
+	}
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(R"(shader_type spatial;
+render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+uniform vec3 calcite = vec3(0.52, 0.45, 0.35);
+uniform vec3 amber = vec3(0.36, 0.24, 0.13);
+varying vec3 w_pos;
+float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float vn(vec3 p) {
+	vec3 i = floor(p), f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+			mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p) { return 0.5 * vn(p) + 0.25 * vn(p * 2.03 + 7.0) + 0.125 * vn(p * 4.1 + 3.0); }
+void vertex() {
+	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+// Relief: growth layers (millimetres, horizontal) and the knobbly micro-rims on the downstream face.
+float relief(vec3 p) {
+	return 0.5 * sin(p.y * 900.0 + 6.0 * vn(p * 30.0)) * 0.15 + 0.6 * vn(p * 70.0) + 0.3 * vn(p * 180.0);
+}
+void fragment() {
+	float m = fbm(w_pos * 8.0);
+	vec3 col = mix(calcite, amber, 0.2 + 0.55 * fbm(w_pos * 1.7 + 4.0));
+	col *= 0.85 + 0.3 * m;
+	col *= 0.93 + 0.07 * sin(w_pos.y * 900.0 + 6.0 * vn(w_pos * 30.0));
+	// The downstream face darker and more amber (the spill carries the colour), the crest palest.
+	col = mix(col, amber * (0.8 + 0.3 * m), 0.45 * smoothstep(0.55, 1.0, UV.y));
+	col *= 0.8 + 0.25 * vn(vec3(UV.x * 6.0, 0.0, 0.0));
+	// Wet over the crest and the downstream face (the spill), damp at the ends.
+	float wet = smoothstep(0.05, 0.4, UV.y) * (0.6 + 0.4 * m);
+	ALBEDO = col * mix(1.0, 0.78, wet);
+	ROUGHNESS = mix(0.55, 0.12, wet);
+	SPECULAR = 0.55;
+	float e = 0.0015;
+	float h0 = relief(w_pos);
+	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0)) - h0, relief(w_pos + vec3(0, e, 0)) - h0, relief(w_pos + vec3(0, 0, e)) - h0) / e;
+	vec3 n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	g -= n * dot(g, n);
+	float near = 1.0 - smoothstep(1.0, 4.0, length(VERTEX));
+	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(n - 0.0012 * near * g), 0.0)).xyz);
+}
+)");
+	rim_material.instantiate();
+	rim_material->set_shader(sh);
+	return rim_material;
 }
 
 // The landscape opens over each patch (less a 1.5 m ring the patch overlaps), once per cave.
@@ -2085,7 +2673,7 @@ void CaveNetwork3D::set_follow_target(const NodePath &p_path) {
 	follow_target = p_path;
 	streamed = false;
 	if (is_inside_tree()) {
-		set_process_internal(!follow_target.is_empty());
+		set_process_internal(true);
 	}
 }
 
@@ -2185,10 +2773,16 @@ void CaveNetwork3D::_stream_finish(bool p_keep) {
 void CaveNetwork3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
-			set_process_internal(!follow_target.is_empty());
+			set_process_internal(true); // streaming round the follow target; live water on the nearest pools
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			_stream_update();
+			if (!follow_target.is_empty()) {
+				_stream_update();
+			}
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				_pool_water_update();
+				_update_mist_node();
+			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			_stream_finish(false);
@@ -2256,6 +2850,20 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mesh_chunk_count"), &CaveNetwork3D::get_mesh_chunk_count);
 	ClassDB::bind_method(D_METHOD("is_streaming"), &CaveNetwork3D::is_streaming);
 	ClassDB::bind_method(D_METHOD("get_speleothem_count"), &CaveNetwork3D::get_speleothem_count);
+	ClassDB::bind_method(D_METHOD("get_rimstone_pool_count"), &CaveNetwork3D::get_rimstone_pool_count);
+	ClassDB::bind_method(D_METHOD("get_rimstone_pools"), &CaveNetwork3D::get_rimstone_pools);
+	ClassDB::bind_method(D_METHOD("set_rimstone", "amount"), &CaveNetwork3D::set_rimstone);
+	ClassDB::bind_method(D_METHOD("get_rimstone"), &CaveNetwork3D::get_rimstone);
+	ClassDB::bind_method(D_METHOD("set_rimstone_water", "enable"), &CaveNetwork3D::set_rimstone_water);
+	ClassDB::bind_method(D_METHOD("get_rimstone_water"), &CaveNetwork3D::get_rimstone_water);
+	ClassDB::bind_method(D_METHOD("set_rimstone_water_radius", "metres"), &CaveNetwork3D::set_rimstone_water_radius);
+	ClassDB::bind_method(D_METHOD("get_rimstone_water_radius"), &CaveNetwork3D::get_rimstone_water_radius);
+	ClassDB::bind_method(D_METHOD("set_rimstone_water_max", "count"), &CaveNetwork3D::set_rimstone_water_max);
+	ClassDB::bind_method(D_METHOD("get_rimstone_water_max"), &CaveNetwork3D::get_rimstone_water_max);
+	ClassDB::bind_method(D_METHOD("get_rimstone_water_count"), &CaveNetwork3D::get_rimstone_water_count);
+	ClassDB::bind_method(D_METHOD("set_sea_mist", "enable"), &CaveNetwork3D::set_sea_mist);
+	ClassDB::bind_method(D_METHOD("get_sea_mist"), &CaveNetwork3D::get_sea_mist);
+	ClassDB::bind_method(D_METHOD("get_sea_mist_node"), &CaveNetwork3D::get_sea_mist_node);
 	ClassDB::bind_method(D_METHOD("set_scallops", "amount"), &CaveNetwork3D::set_scallops);
 	ClassDB::bind_method(D_METHOD("get_scallops"), &CaveNetwork3D::get_scallops);
 	ClassDB::bind_method(D_METHOD("set_speleothems", "amount"), &CaveNetwork3D::set_speleothems);
@@ -2322,6 +2930,11 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scallops", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_scallops", "get_scallops");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "speleothems", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_speleothems", "get_speleothems");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rimstone", PROPERTY_HINT_RANGE, "0,1.6,0.01"), "set_rimstone", "get_rimstone");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rimstone_water"), "set_rimstone_water", "get_rimstone_water");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rimstone_water_radius", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_rimstone_water_radius", "get_rimstone_water_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "rimstone_water_max", PROPERTY_HINT_RANGE, "0,64,1"), "set_rimstone_water_max", "get_rimstone_water_max");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_mist"), "set_sea_mist", "get_sea_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision"), "set_collision", "has_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "wall_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_wall_material", "get_wall_material");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_ground_material", "get_ground_material");

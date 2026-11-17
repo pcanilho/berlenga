@@ -40,6 +40,8 @@
 #include "scene/3d/node_3d.h"
 #include "scene/resources/gradient.h"
 
+class PhysicsServer3D;
+
 class GPUParticles3D;
 class OmniLight3D;
 class RenderingDevice;
@@ -90,6 +92,14 @@ private:
 	// Collision: physics bodies within collision_range of this flow's
 	// emitters become solids for the gas.
 	bool collide_with_bodies = true;
+	// GAS PUSHES BODIES (APEX Turbulence's pattern): dynamic bodies in the gas take quadratic drag from its velocity
+	// (read back while any are near, or while cloth asks), and cloth adds moving solids so it stirs the gas.
+	bool push_bodies = true;
+	float body_drag = 1.0f; // drag coefficient, Cd
+	bool bodies_near = false; // a dynamic body was in the gas region last step
+	uint64_t velocity_wanted_msec = 0; // last request_velocity()
+	LocalVector<FlowBackend::Emitter> transient_solids; // add_transient_solid(), consumed by the next step
+	bool _velocity_wanted() const;
 	uint32_t collision_mask = 1;
 	float collision_range = 10.0f;
 	// A FLOOR: with floor_enabled, gas never goes below floor_height — a wide solid under it (no blocks reserved there).
@@ -152,6 +162,7 @@ private:
 	Mutex step_mutex;
 	Vector<uint8_t> last_smoke; // copies of the newest readback (NanoVDB)
 	Vector<uint8_t> last_temperature;
+	Vector<uint8_t> last_velocity;
 	const uint8_t *last_smoke_source = nullptr; // the mapped readback they were copied from
 	AABB gas_bounds;
 	bool blocks_full = false; // seen on the render thread, warned about on this one
@@ -241,7 +252,8 @@ private:
 	ObjectID attached_world;
 	void _step(double p_delta);
 	void _gather_emitters(LocalVector<FlowBackend::Emitter> &r_emitters, AABB &r_emitter_bounds);
-	void _gather_colliders(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters);
+	void _gather_colliders(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters, float p_delta);
+	void _push_shape(PhysicsServer3D *p_ps, const RID &p_body, const RID &p_shape, const Transform3D &p_xform, float p_delta);
 	void _gather_light(Vector3 &r_direction, Color &r_color, Color &r_ambient);
 	void _fill_render_settings(FlowBackend::Settings &r_settings);
 	void _read_back();
@@ -275,6 +287,14 @@ public:
 	void set_combustion(bool p_v) { combustion = p_v; }
 	bool is_combustion() const { return combustion; }
 
+	void set_push_bodies(bool p_v) { push_bodies = p_v; }
+	bool is_push_bodies() const { return push_bodies; }
+	void set_body_drag(float p_v) { body_drag = MAX(p_v, 0.0f); }
+	float get_body_drag() const { return body_drag; }
+	// Keeps the gas velocity read back for a second (cloth and other samplers call it each step).
+	void request_velocity();
+	// A sphere solid moving at p_velocity for the next step only (cloth particles stirring the gas).
+	void add_transient_solid(const Vector3 &p_position, float p_radius, const Vector3 &p_velocity);
 	void set_collide_with_bodies(bool p_v) { collide_with_bodies = p_v; }
 	bool is_collide_with_bodies() const { return collide_with_bodies; }
 	void set_collision_mask(uint32_t p_mask) { collision_mask = p_mask; }
@@ -353,6 +373,8 @@ public:
 	float sample_smoke(const Vector3 &p_position) const;
 	// Temperature at a world position, the same way.
 	float sample_temperature(const Vector3 &p_position) const;
+	// Gas velocity in m/s (needs cpu_readback; zero without it or outside the gas), a few frames late.
+	Vector3 sample_velocity(const Vector3 &p_position) const;
 
 	bool is_running() const { return grid != nullptr; }
 	Dictionary get_stats() const;
