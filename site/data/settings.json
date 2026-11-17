@@ -1292,6 +1292,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Swash marks",
+   "settings": [
+    "GroundSurface3D.swash_marks"
+   ],
+   "note": "",
+   "what": "each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Runoff channels",
    "settings": [
     "GroundSurface3D.runoff_channels"
@@ -2603,7 +2614,7 @@
     "PRESET_DWARF_FAN_PALM"
    ],
    "note": "",
-   "what": "clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks and a skirt of dead leaves.",
+   "what": "clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks, a skirt of dead leaves, spring flower clusters and dates that ripen from green to red-brown.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3435,6 +3446,18 @@
    ],
    "note": "",
    "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Gas pushes bodies",
+   "settings": [
+    "PhysXFlow3D.push_bodies",
+    "PhysXCloth3D.flow"
+   ],
+   "note": "",
+   "what": "Flow smoke, blasts and fire updrafts blow debris, Blast pieces, flags and tarps, and the cloth stirs the gas back.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

@@ -2022,6 +2022,166 @@ void GroundSurface3D::_runoff_update(double p_delta) {
 	runoff_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
 }
 
+void GroundSurface3D::set_swash_marks(bool p_enabled) {
+	swash_marks = p_enabled;
+	if (!p_enabled) {
+		swash_tr.clear();
+	}
+}
+
+// SWASH_TRACE=1 prints each mark and every point a mark could not be laid on.
+static bool _swash_trace() {
+	static const bool on = OS::get_singleton()->has_environment("SWASH_TRACE");
+	return on;
+}
+
+// A ridge of fine sand from p_from to p_to (world xz): small deposits a centimetre apart, a few millimetres high and
+// about two near-field texels wide (real ones are a few mm high and about a centimetre wide, Komar 1998; two texels
+// is the narrowest the field draws). The sea brings the sand: the swash's own load.
+void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to) {
+	const float len = p_from.distance_to(p_to);
+	const int steps = MAX(1, int(Math::ceil(len / 0.01f)));
+	for (int k = 0; k <= steps; k++) {
+		const Vector2 q = p_from.lerp(p_to, float(k) / steps);
+		if (!_near_inside(q.x, q.y)) {
+			if (_swash_trace()) {
+				print_line(vformat("swash lay outside near at (%.2f, %.2f)", q.x, q.y));
+			}
+			continue;
+		}
+		const Cell &c = _cell_at(q.x, q.y);
+		if (!c.deformable || c.sand < 0.5f) {
+			if (_swash_trace()) {
+				print_line(vformat("swash lay skipped at (%.2f, %.2f): sand %.2f deformable %d", q.x, q.y, c.sand, int(c.deformable)));
+			}
+			continue;
+		}
+		deposit(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.003f);
+	}
+}
+
+// Swash marks: run-up followed on shore-normal transects 10 cm apart across the near field, ten times a second.
+// The beach's downhill direction there sets the transects; along each, the water's landward edge (swash film or
+// sea, over 1 mm) is found to 6 mm. When a swash that had been climbing falls back 5 cm from its highest reach,
+// that reach is its uprush limit: a ridge is laid there, joined halfway to the neighbouring transects' marks from
+// the same wave (or towards where they are climbing), so each wave draws one scalloped line.
+void GroundSurface3D::_swash_update(double p_delta) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	swash_time += p_delta;
+	if (!is_near_active() || !is_inside_tree()) {
+		swash_tr.clear();
+		return;
+	}
+	static const StringName s_swash = "sample_swash";
+	LocalVector<Node *> sources;
+	bool swash = false;
+	for (int k = 0; k < water_sources.size(); k++) {
+		Node *src = get_node_or_null(water_sources[k]);
+		if (src) {
+			sources.push_back(src);
+			swash = swash || src->has_method(s_swash);
+		}
+	}
+	if (!swash) {
+		swash_tr.clear();
+		return;
+	}
+	// The near field's own area (it follows the main field in whole tiles, so its centre is not the node's).
+	const Rect2 nr = near_fld.rect().grow(-NEAR_BLEND - 0.05f);
+	const float half = 0.5f * MIN(nr.size.x, nr.size.y);
+	const Vector2 mid = nr.position + nr.size * 0.5f;
+	swash_frame_age += p_delta;
+	// The transects' frame: the beach's downhill direction over the near field, kept while the field stays put
+	// (every few seconds and when it moves a metre).
+	if (swash_tr.is_empty() || swash_frame_age > 5.0 || swash_mid.distance_to(mid) > 1.0f) {
+		const float e = 1.0f;
+		const Vector2 g((_ground_at(mid.x + e, mid.y) - _ground_at(mid.x - e, mid.y)) / (2.0f * e), (_ground_at(mid.x, mid.y + e) - _ground_at(mid.x, mid.y - e)) / (2.0f * e));
+		if (g.length() < 0.005f) {
+			swash_tr.clear();
+			swash_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+			return;
+		}
+		const Vector2 dir = -g.normalized();
+		if (swash_tr.is_empty() || dir.dot(swash_dir) < 0.98f || swash_mid.distance_to(mid) > 1.0f) {
+			swash_tr.clear();
+			swash_tr.resize(int(2.0f * half / 0.1f) + 1);
+			swash_dir = dir;
+			swash_mid = mid;
+		}
+		swash_frame_age = 0.0;
+	}
+	const Vector2 down = swash_dir;
+	const Vector2 along(-down.y, down.x);
+	const int nt = swash_tr.size();
+	auto wet = [&](const Vector2 &q) -> bool {
+		const float gh = _ground_at(q.x, q.y);
+		float d = 0.0f;
+		float v = 0.0f;
+		ground_water_at(sources, Vector3(q.x, gh, q.y), gh, d, v);
+		return d > 0.001f;
+	};
+	for (int t = 0; t < nt; t++) {
+		SwashTransect &tr = swash_tr[t];
+		const Vector2 o = swash_mid + along * (-half + 0.1f * t);
+		// From the landward end down, the first wet point at 10 cm steps, then halved to 6 mm.
+		float reach = -1e9f;
+		Vector2 at;
+		for (float sd = -half; sd <= half; sd += 0.1f) {
+			if (wet(o + down * sd)) {
+				float a = sd - 0.1f;
+				float b = sd;
+				for (int k = 0; k < 4; k++) {
+					const float m = 0.5f * (a + b);
+					if (wet(o + down * m)) {
+						b = m;
+					} else {
+						a = m;
+					}
+				}
+				reach = -b;
+				at = o + down * b;
+				break;
+			}
+		}
+		if (reach > tr.peak + 0.005f) {
+			tr.peak = reach;
+			tr.peak_pos = at;
+			tr.rising = true;
+		} else if (tr.rising && reach < tr.peak - 0.05f) {
+			// The swash turned back: its highest reach is this wave's mark.
+			tr.rising = false;
+			tr.mark_time = swash_time;
+			tr.mark_pos = tr.peak_pos;
+			Vector2 ends[2];
+			for (int side = 0; side < 2; side++) {
+				const int u = side == 0 ? t - 1 : t + 1;
+				Vector2 to = tr.mark_pos + along * (side == 0 ? -0.05f : 0.05f);
+				if (u >= 0 && u < nt) {
+					const SwashTransect &nb = swash_tr[u];
+					// Joined only to a mark of the same wave nearby (within 20 cm up or down the beach): a
+					// neighbour's older or higher mark is another wave's line, not this one's.
+					if (swash_time - nb.mark_time < 3.0 && nb.mark_pos.distance_to(tr.mark_pos) < 0.2f) {
+						to = 0.5f * (tr.mark_pos + nb.mark_pos);
+					} else if (nb.rising && nb.peak_pos.distance_to(tr.mark_pos) < 0.2f) {
+						to = 0.5f * (tr.mark_pos + nb.peak_pos);
+					}
+				}
+				ends[side] = to;
+			}
+			if (_swash_trace()) {
+				print_line(vformat("swash mark t%d at (%.2f, %.2f) reach %.2f time %.1f", t, tr.mark_pos.x, tr.mark_pos.y, tr.peak, swash_time));
+			}
+			_swash_lay(ends[0], tr.mark_pos);
+			_swash_lay(tr.mark_pos, ends[1]);
+			swash_mark_count++;
+			tr.peak = reach;
+		} else if (!tr.rising) {
+			tr.peak = reach;
+		}
+	}
+	swash_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
+}
+
 void GroundSurface3D::set_runoff_channels(bool p_enabled) {
 	runoff_channels = p_enabled;
 	if (!p_enabled) {
@@ -2712,6 +2872,13 @@ void GroundSurface3D::_notification(int p_what) {
 			if (wind_accum >= 0.5) {
 				_wind_update(wind_accum);
 				wind_accum = 0.0;
+			}
+			if (swash_marks) {
+				swash_accum += delta;
+				if (swash_accum >= 0.1) {
+					_swash_update(swash_accum);
+					swash_accum = 0.0;
+				}
 			}
 			if (runoff_channels) {
 				runoff_accum += delta;
@@ -3754,6 +3921,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_step_usec"), &GroundSurface3D::get_wind_step_usec);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("bed_load", "water_speed"), &GroundSurface3D::bed_load);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("bed_load_shear", "shear_stress"), &GroundSurface3D::bed_load_shear);
+	ClassDB::bind_method(D_METHOD("set_swash_marks", "enabled"), &GroundSurface3D::set_swash_marks);
+	ClassDB::bind_method(D_METHOD("is_swash_marks"), &GroundSurface3D::is_swash_marks);
+	ClassDB::bind_method(D_METHOD("get_swash_mark_count"), &GroundSurface3D::get_swash_mark_count);
+	ClassDB::bind_method(D_METHOD("get_swash_step_usec"), &GroundSurface3D::get_swash_step_usec);
 	ClassDB::bind_method(D_METHOD("set_runoff_channels", "enabled"), &GroundSurface3D::set_runoff_channels);
 	ClassDB::bind_method(D_METHOD("is_runoff_channels"), &GroundSurface3D::is_runoff_channels);
 	ClassDB::bind_method(D_METHOD("set_runoff_time_scale", "scale"), &GroundSurface3D::set_runoff_time_scale);
@@ -3860,6 +4031,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_glints"), "set_sand_glints", "is_sand_glints");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_channels"), "set_runoff_channels", "is_runoff_channels");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "swash_marks"), "set_swash_marks", "is_swash_marks");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");

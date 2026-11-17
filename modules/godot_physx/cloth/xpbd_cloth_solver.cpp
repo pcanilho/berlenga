@@ -396,7 +396,8 @@ void XPBDClothSolver::_apply_aero(float p_dt, const Vector3 &p_wind) {
 		const Vector3 n = cr / twice_area;
 		const float area = 0.5f * twice_area;
 		const Vector3 v_tri = (velocities[a] + velocities[b] + velocities[c]) / 3.0f;
-		const Vector3 rel = p_wind - v_tri;
+		const Vector3 wind = air.size() == positions.size() ? p_wind + (air[a] + air[b] + air[c]) / 3.0f : p_wind;
+		const Vector3 rel = wind - v_tri;
 		const float vn = n.dot(rel);
 		const Vector3 tangential = rel - n * vn;
 		// Drag pushes along the normal in proportion to how square-on the flow is;

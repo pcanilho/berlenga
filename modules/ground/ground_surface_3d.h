@@ -390,6 +390,27 @@ private:
 	double runoff_accum = 0.0;
 	float runoff_usec = 0.0f;
 	void _runoff_update(double p_delta);
+	// Swash marks (docs/ideas/sand.md): each swash leaves a thin ridge of fine sand at its uprush limit. Tracked on
+	// shore-normal transects across the near field; each transect's run-up is followed and, when the swash turns
+	// back, a ridge is laid at its highest reach, joined to the neighbours' marks of the same wave.
+	struct SwashTransect {
+		float peak = -1e9f; // run-up this wave, m landward of the transect's middle
+		bool rising = false;
+		Vector2 peak_pos;
+		double mark_time = -1e9;
+		Vector2 mark_pos;
+	};
+	bool swash_marks = true;
+	LocalVector<SwashTransect> swash_tr;
+	Vector2 swash_dir; // down the beach
+	Vector2 swash_mid;
+	double swash_accum = 0.0;
+	double swash_time = 0.0;
+	double swash_frame_age = 1e9;
+	int swash_mark_count = 0;
+	float swash_usec = 0.0f;
+	void _swash_update(double p_delta);
+	void _swash_lay(const Vector2 &p_from, const Vector2 &p_to);
 	float _shelter_flux_at(float p_x, float p_z) const;
 	float _lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const;
 	void _shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride);
@@ -585,6 +606,10 @@ public:
 	Vector2 get_runoff_at(const Vector3 &p_position) const; // (depth m, speed m/s)
 	float get_runoff_cut_at(const Vector3 &p_position) const;
 	float get_runoff_step_usec() const { return runoff_usec; }
+	void set_swash_marks(bool p_enabled);
+	bool is_swash_marks() const { return swash_marks; }
+	int get_swash_mark_count() const { return swash_mark_count; }
+	float get_swash_step_usec() const { return swash_usec; }
 	// Bed load of fine sand under a bed shear stress (Pa): Meyer-Peter and Mueller, m2/s.
 	static float bed_load_shear(float p_tau);
 	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }

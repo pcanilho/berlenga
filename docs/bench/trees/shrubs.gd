@@ -41,6 +41,21 @@ func run(args: Dictionary) -> void:
 			var t0 := Time.get_ticks_msec()
 			var sp: PlantSpecies = TreeGenerator.make_shrub_species(p, f, 1, season)
 			var m: Mesh = sp.meshes[0]
+			if args.has("near"):
+				# The near mesh the field swaps in within near_range (built on demand).
+				var src: Object = sp.near_mesh_source
+				var nm: Mesh = null
+				for k in 1200:
+					if src == null:
+						break
+					nm = src.request_near_mesh(sp.near_mesh_key, 0)
+					if nm != null:
+						break
+					await get_tree().create_timer(0.1).timeout
+				if nm != null:
+					m = nm
+				else:
+					print("no near mesh for ", p)
 			var bb := m.get_aabb()
 			var tris := 0
 			for s in m.get_surface_count():

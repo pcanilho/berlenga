@@ -1157,6 +1157,13 @@ void GodotPhysXServer3D::cloth_apply_wind(RID p_cloth, const Vector3 &p_wind, re
 	cloth->apply_wind(p_wind, p_drag, p_lift, p_dt);
 }
 
+void GodotPhysXServer3D::cloth_set_air(RID p_cloth, const Vector<Vector3> &p_air) {
+	QUEUE_UNLESS_SAFE(cloth_set_air(p_cloth, p_air))
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->set_air(p_air);
+}
+
 bool GodotPhysXServer3D::cloth_is_ready(RID p_cloth) const {
 	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
 	return cloth && cloth->is_ready();

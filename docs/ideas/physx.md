@@ -547,6 +547,92 @@ building it:
   30 s, fireline intensity up to about 440 kW/m, as BehavePlus gives for
   fuel model 1.
 
+### Flow gas pushes cloth, flags and debris, two-way (picked 17 Nov)
+
+Goal: a fire's updraft, a blast or a gust carried by Flow lifts a flag,
+flaps a tarp and rolls light debris, and those bodies push the gas back.
+
+How others do it:
+- NVIDIA APEX Turbulence (Batman Arkham City, Borderlands 2, Hawken and
+  PlanetSide 2; GDC 2013 "Enhancing Hawken and PlanetSide 2 Through
+  Turbulence and Destruction"): a GPU velocity grid whose samples drive APEX
+  particles and clothing; moving rigid bodies are collision shapes in the
+  grid. That is the real-time pattern: sample the grid's velocity at the
+  body, apply aerodynamic force; bodies enter the grid as moving solids.
+- Unreal: Chaos Cloth's aerodynamics (per-triangle drag and lift
+  coefficients from the relative wind), Niagara Fluids sampling its grid for
+  particles; the gas is not pushed by cloth.
+- Offline: Guendelman, Selle, Losasso and Fedkiw 2005 ("Coupling water and
+  smoke to thin deformable and rigid shells", SIGGRAPH) solve thin shells and
+  smoke together; too costly here, but it names the two directions: the shell
+  takes the fluid's pressure, the fluid sees the shell as a moving boundary.
+
+Technique: grid sampling plus moving solids, as APEX Turbulence.
+1. Flow velocity readback: Flow's NanoVDB export already reads back velocity
+   (velocityEnabled, as it does temperature and smoke); add
+   `PhysXFlow3D.sample_velocity(position)` beside sample_temperature.
+2. Gas to cloth: PhysXCloth3D's existing drag and lift model (per-triangle,
+   Keckeisen et al. 2004) takes the wind at each triangle from the Flow grid
+   when a flow is set, falling back to its wind.
+3. Gas to debris: rigid bodies in the gas get drag
+   F = 0.5 rho Cd A |u - v| (u - v) at their centre, u the gas velocity, plus
+   hot-gas buoyancy for light ones (paper, leaves); Blast pieces through the
+   rocks' piece velocity, centre and mass getters.
+4. Debris and cloth to gas: bodies already enter Flow as moving solids
+   (collide_with_bodies, with body velocity). Cloth adds a few sphere solids
+   along its particles carrying their velocity, so a flapping flag stirs the
+   smoke.
+Cost: a velocity readback (a few frames late, as the others) and a few
+hundred samples a frame on the CPU.
+
+Sources: https://gdcvault.com/play/1017851/ ;
+https://docs.nvidia.com/gameworks/content/gameworkslibrary/physx/apexsdk/APEX_Turbulence/Turbulence_Module.html ;
+http://physbam.stanford.edu/~fedkiw/papers/stanford2005-02.pdf ;
+https://dev.epicgames.com/documentation/unreal-engine/niagara-fluids-in-unreal-engine
+
+Status (17 Nov): built as above (fc47ebb3). Found while building it: a body
+sampling the grid inside its own solid reads its own velocity back, so it
+never moves; the gas is sampled on a six-point shell 1.5 cells outside the
+shape. Area is the shape's surface over four (Cauchy's projected area), and
+the impulse is capped at the speed difference so light bodies do not
+overshoot the gas. A 0.5 m crate in a campfire updraft moved 0.44 m, a flag
+streamed out; neither moved with coupling off.
+
+### Next options (card, 17 Nov)
+
+1. Burning wood and debris. Far Cry 2's fire (GDC 2008, Levesque) and
+   Breath of the Wild's chemistry engine (GDC 2017, "Breaking Conventions")
+   give objects a fuel amount and an ignition temperature and spread
+   between neighbours; offline, Melek and Keyser 2002 move a burn front
+   over the mesh. Here: per-vertex fuel and char on a body, heat read from
+   Flow (sample_temperature) and from PhysXFireSpread3D, a Flow emitter on
+   the burning part, char in a vertex colour PT reads. Embers: Albini's
+   spotting distance (1979) with Flow's updraft carrying lofted embers that
+   ignite cells where they land.
+2. Weather wets the fire. FARSITE and WRF-SFIRE take dead fuel moisture
+   from Nelson's model (2000): each size class relaxes towards an
+   equilibrium moisture from air temperature and humidity with a time lag
+   (1 h fine fuel), and rain wets it directly. WeatherMap3D already has
+   rain, temperature and humidity; a moisture grid in the fire node would
+   follow them, and rain over burning cells cools them out.
+3. Fire burns grass and trees. Far Cry 5 and Unreal's landscape grass
+   both read a mask in the foliage shader; here the vegetation and tree
+   shaders read the existing fire_char_map and fire_char_rect globals:
+   grass shortened and black where burnt, a scorch height on bark from
+   flame length (Byram), leaves browned in the band above it (crown scorch
+   height, Van Wagner 1973). No new state, both renderers see it.
+4. Open-world checks (item 4 of the order of work): PxPruningStructure for
+   streamed static regions, a pool for Blast and debris bodies, sleep and
+   removal by distance, relative origin; a bench with thousands of static
+   bodies per region, as Mortal Plane needs.
+
+Sources: Nelson 2000, "Prediction of diurnal change in 10-h fuel stick
+moisture content", Can. J. For. Res. 30; Van Wagner 1973, "Height of crown
+scorch in forest fires", Can. J. For. Res. 3; Albini 1979, "Spot fire
+distance from burning trees", USDA INT-56; Melek and Keyser 2002,
+"Interactive simulation of fire"; GDC 2017 "Breaking Conventions with The
+Legend of Zelda: Breath of the Wild".
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

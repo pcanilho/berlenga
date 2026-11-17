@@ -1769,6 +1769,21 @@ for pixel the same with `--lod_threshold=0`), and the path tracer reads LOD 0. A
 palm's promoted far mesh kept LODs no coarser than its new base, which the renderer rejected
 with an error; those are dropped. `--shrubs` takes `--gap=` and `--lod_threshold=`.
 
+Step 2 (17 Nov): where the rest goes. Bark of a mature lentisk by tube radius: under 1 mm 696k
+triangles (58,000 leaf twigs of 12 each), 1-2 mm 77k, 2-3 mm 72k, 3-5 mm 43k, 5-10 mm 22k,
+over 1 cm 19k; kermes oak 309k of 537k under 1 mm. Those leaf twigs are a fraction of a pixel
+past the near range, so a far mesh with its near mesh split off (8d) leaves them out
+(`FAR_TWIG_RADIUS`, 1 mm) and drops their vertices; the near mesh keeps every one. Far bark,
+mature: lentisk 929k to 233k, kermes oak 537k to 227k, broom 74k to 38k, gum rockrose 83k to
+68k; broadleaf trees' far meshes lose the same sub-millimetre twigs where they have them.
+Path-traced check as 8d (a mature lentisk at 60 m, 16 spp, 960x540, 75 degree lens): far vs
+near mesh, crown box mean 111.06 vs 111.07, a few pixels differing at the crown's edge (the
+near mesh is its own build of the variant). And every LOD level is now checked against the base
+it simplifies just before the surface is made: a base that lost its plain tubes, far twigs or
+LOD 0 leaves after the levels were cut left levels no smaller than it, which the renderer
+rejected with "index_count >= index_array_len" (14 times per scrub and heath setup); none now
+over all six shrubs, five forms, two seasons. `--shrubs --near` shows the near mesh.
+
 #### 5x.3 Coppice cutting in stands
 
 Coppice-with-standards (Rackham 2006, Woodlands; Buckley 1992, Ecology and Management of

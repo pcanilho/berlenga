@@ -13,6 +13,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_transient_solid">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="velocity" type="Vector3" />
+			<description>
+				Adds a sphere solid moving at [param velocity] (m/s) for the next simulation step only: the gas cannot enter it and takes on its velocity there. [PhysXCloth3D] calls it for some of its moving particles when its [member PhysXCloth3D.flow] is set, so a flapping flag stirs and parts the smoke.
+			</description>
+		</method>
 		<method name="get_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
@@ -23,6 +32,12 @@
 			<return type="bool" />
 			<description>
 				Whether Flow is running for this node (see the configuration warnings if not).
+			</description>
+		</method>
+		<method name="request_velocity">
+			<return type="void" />
+			<description>
+				Keeps the gas velocity read back to the CPU for the next second, for [method sample_velocity]. Call it every step while sampling.
 			</description>
 		</method>
 		<method name="sample_smoke" qualifiers="const">
@@ -39,10 +54,20 @@
 				The temperature at [param position] (world space), from the last CPU readback, in the same units as [member PhysXFlowEmitter3D.temperature], [member ignition_temperature] and [member temperature_range] -- e.g. how much a fire hurts or how hot a sensor reads. Needs [member cpu_readback]; returns [code]-1.0[/code] without it. The readback lags a few frames behind the simulation.
 			</description>
 		</method>
+		<method name="sample_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The gas velocity at [param position] (world space) in metres a second, from the last readback, a few frames behind the simulation. It is read back while [member cpu_readback] is on, while [member push_bodies] has dynamic bodies near the gas, or for a second after [method request_velocity]. Zero outside the gas or without a readback.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="ambient_scattering" type="bool" setter="set_ambient_scattering" getter="is_ambient_scattering" default="true">
 			When enabled, the environment's ambient light lights the gas in raster, as it does Godot's volumetric fog: [member Environment.ambient_light_color] mixed with the sky's radiance by [member Environment.ambient_light_sky_contribution], scaled by [member Environment.ambient_light_energy]. Each point is dimmed by all the gas above it, read from a volumetric shadow map built looking straight down (with [member scattering_shadow_steps] at [code]0[/code], not at all), so the inside of a dense plume is darker than its edge. It replaces the flat grey floor Flow's own renderer gives the unlit side of the smoke. It shares the light scattering pass, at [member scattering_resolution]. The path tracer lights the gas with the sky and ambient on its own, so this only affects raster.
+		</member>
+		<member name="body_drag" type="float" setter="set_body_drag" getter="get_body_drag" default="1.0">
+			The drag coefficient for [member push_bodies]: about [code]1.0[/code] for boxy debris, [code]0.5[/code] for a ball, up to [code]2.0[/code] for flat sheets.
 		</member>
 		<member name="buoyancy" type="float" setter="set_buoyancy" getter="get_buoyancy" default="2.0">
 			Upward acceleration per unit of temperature: hot gas rises, cool gas hangs. "Up" is opposite the project's default gravity.
@@ -104,6 +129,9 @@
 		</member>
 		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="1024">
 			The most sparse blocks the gas may take up -- a GPU memory budget, since Flow reserves memory for all of them when the grid starts (about 0.45 MB a block: the default 1024 is roughly 0.5 GB). A small plume uses a few hundred; [method get_stats] reports [code]active_blocks[/code]. Gas that would need more is cut off, with a warning. Changing it restarts the simulation.
+		</member>
+		<member name="push_bodies" type="bool" setter="set_push_bodies" getter="is_push_bodies" default="true">
+			When enabled, the gas pushes the dynamic bodies in it (debris, Blast pieces, crates) with quadratic drag, [code]0.5 * 1.2 * body_drag * A * |u - v| * (u - v)[/code], where [code]u[/code] is the gas velocity, [code]v[/code] the body's and [code]A[/code] the shape's mean projected area (its surface over four). A blast's front or a fire's updraft carries light debris, as NVIDIA APEX Turbulence did. The bodies push back as moving solids through [member collide_with_bodies]. The gas velocity is read back while such bodies are near it, a few frames late.
 		</member>
 		<member name="scattering_anisotropy" type="float" setter="set_scattering_anisotropy" getter="get_scattering_anisotropy" default="0.4">
 			With [member light_scattering], how much the gas scatters light forward (toward a camera looking at the light) rather than evenly in every direction: [code]0[/code] glows the same from every side, higher values make a bright halo when looking toward a light, negative values light the gas most when the light is behind the camera.

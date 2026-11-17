@@ -351,6 +351,7 @@ public:
 	void cloth_set_pinned(RID p_cloth, const Vector<int32_t> &p_pinned);
 	void cloth_set_pin_targets(RID p_cloth, const Vector<Vector3> &p_world_targets);
 	void cloth_apply_wind(RID p_cloth, const Vector3 &p_wind, real_t p_drag, real_t p_lift, real_t p_dt);
+	void cloth_set_air(RID p_cloth, const Vector<Vector3> &p_air);
 	bool cloth_is_ready(RID p_cloth) const;
 	int cloth_get_mesh(RID p_cloth, PackedVector3Array &r_positions, PackedInt32Array &r_indices, uint32_t &r_version) const;
 	bool has_gpu() const { return px_cuda != nullptr; }
