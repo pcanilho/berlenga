@@ -22,6 +22,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
   ![Water pouring from a wall pipe into a wooden bucket, raster](media/physx-fluid-pour.jpg)
 
   *Particle fluid: a clear stream pours into a bucket and churns up foam and bubbles where it lands.*
+
 - **Cloth tearing** (`PhysXCloth3D.tear_factor`, `physics/physx_3d/cloth/tearing`): overstretched edges split and the rip runs.
 
 ![Cloth tearing: a ribbon rips off its post and a flag frays in rising wind](media/cloth-tearing.gif)
