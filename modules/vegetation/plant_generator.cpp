@@ -5614,7 +5614,7 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.2f, 0.24f, 0.16f); // The green-purple calyx.
 			break;
 		case PRESET_FRENCH_LAVENDER:
-			leaf_color = Color(0.3f, 0.36f, 0.27f); // Grey-felted.
+			leaf_color = Color(0.38f, 0.43f, 0.34f); // Grey-felted.
 			stem_color = Color(0.33f, 0.3f, 0.24f);
 			petal_color = Color(0.48f, 0.22f, 0.52f); // The purple bracts.
 			centre_color = Color(0.16f, 0.07f, 0.2f); // The dark purple spike.
@@ -5623,7 +5623,7 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.22f, 0.28f, 0.17f); // Grey-green.
 			stem_color = Color(0.3f, 0.2f, 0.15f); // Wiry, red-brown.
 			petal_color = Color(0.8f, 0.62f, 0.78f); // Pale pink-mauve.
-			centre_color = Color(0.32f, 0.18f, 0.24f); // The purplish calyces.
+			centre_color = Color(0.46f, 0.32f, 0.38f); // The purplish, hairy calyces.
 			break;
 		case PRESET_SAGE_ROCKROSE:
 			leaf_color = Color(0.25f, 0.3f, 0.18f); // Grey-green, rough.

@@ -604,7 +604,8 @@ func _heath_checks() -> void:
 # and in summer drought, the rockrose's summer-folded leaves, the garrigue and maquis sets.
 func _scrub_checks() -> void:
 	var P := PlantGenerator
-	var sizes := {P.PRESET_ROSEMARY: [0.25, 1.1, 1.3], P.PRESET_FRENCH_LAVENDER: [0.15, 0.7, 0.9], P.PRESET_THYME: [0.05, 0.3, 0.5], P.PRESET_SAGE_ROCKROSE: [0.1, 0.6, 1.1]}
+	# Height range, the most width and the triangle budget (rosemary, the biggest, a dense bush to a metre).
+	var sizes := {P.PRESET_ROSEMARY: [0.25, 1.1, 1.3, 85000], P.PRESET_FRENCH_LAVENDER: [0.15, 0.7, 0.9, 60000], P.PRESET_THYME: [0.05, 0.3, 0.5, 60000], P.PRESET_SAGE_ROCKROSE: [0.1, 0.6, 1.1, 60000]}
 	for p in sizes:
 		var g := PlantGenerator.new()
 		g.preset = p
@@ -617,9 +618,9 @@ func _scrub_checks() -> void:
 				g.seed = sd
 				var m := g.generate()
 				var bb := m.get_aabb()
-				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 60000 and bb.position.y > -0.05
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < sizes[p][3] and bb.position.y > -0.05
 				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
-		_check("%s: %.0f to %.0f cm tall, under %.0f cm across, under 60k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+		_check("%s: %.0f to %.0f cm tall, under %.0f cm across, under %dk triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100, sizes[p][3] / 1000], ok, info)
 	# Lavender in April carries its bracts (petal surface); in August only leaves and dead heads.
 	var lv := PlantGenerator.new()
 	lv.preset = P.PRESET_FRENCH_LAVENDER

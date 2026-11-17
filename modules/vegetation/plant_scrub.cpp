@@ -65,6 +65,52 @@ Vector3 sc_radial(const Transform3D &p_at, float p_a) {
 }
 } // namespace
 
+// The frame every scrub shrub shares: a dense, rounded mound leafy to the ground. Woody stems
+// leave the root crown in all directions over the dome, the low ones nearly flat and the inner
+// ones upright, each as long as the dome's surface in its direction (an ellipsoid of radius p_r
+// and height p_h), and all along them, from near the base, short leafy twigs, so the foliage
+// closes over the wood; p_twig dresses each twig and each stem's top with leaves and flowers
+// (its frames, its wind, and how high up the dome its tip is, 0 to 1). p_rise_min, the sine of
+// the lowest stem's elevation.
+template <typename F>
+void PlantGenerator::_scrub_mound(float p_r, float p_h, int p_stems, float p_stem_r, float p_twig_len, float p_twig_step, float p_rise_min, F p_twig) {
+	const float spin = _rand(0.0f, Math::TAU);
+	for (int i = 0; i < p_stems; i++) {
+		const float az = spin + i * SC_GOLDEN + _rand(-0.2f, 0.2f);
+		// Directions spread evenly over the dome (sin of the elevation uniform) above p_rise_min:
+		// erect shrubs keep few low stems.
+		const float el = Math::asin(_rand(p_rise_min, 0.97f));
+		const float ce = Math::cos(el) / p_r;
+		const float se = Math::sin(el) / p_h;
+		const float reach = 1.0f / Math::sqrt(ce * ce + se * se);
+		// The twigs stand out past the stem's tip by about their length, so the stem stops short.
+		const float len = MAX(reach - p_twig_len * 0.6f, reach * 0.4f) * _rand(0.8f, 1.0f);
+		const Transform3D base(sc_frame(sc_dir(az, el), Vector3(0, 1, 0)), Vector3(_rand(-0.015f, 0.015f), 0.0f, _rand(-0.015f, 0.015f)));
+		// Low stems arch up at the end, upright ones bow a little out.
+		const LocalVector<Transform3D> fr = _stem_frames(base, len, el < 0.6f ? _rand(0.05f, 0.25f) : _rand(-0.2f, 0.05f), 5);
+		_add_stem_along(fr, p_stem_r, p_stem_r * 0.35f, 0.0f);
+		const Vector3 outward = Vector3(Math::cos(az), 0.0f, Math::sin(az));
+		const int twigs = MAX(int(len / p_twig_step), 2);
+		for (int k = 0; k < twigs; k++) {
+			const float u = 0.1f + 0.85f * (k + _rand(0.0f, 0.8f)) / twigs;
+			const Transform3D at = _frame_at(fr, u);
+			const float a = (k & 1 ? 1.0f : -1.0f) * _rand(0.7f, 1.6f);
+			const Vector3 side = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
+			// Out from the stem, outward and a little up: the twigs fill the dome's shell.
+			const Vector3 d = (at.basis.get_column(2) * 0.6f + side * 0.6f + outward * 0.35f + Vector3(0, 0.35f, 0)).normalized();
+			const float tl = p_twig_len * _rand(0.6f, 1.2f) * (1.0f - 0.35f * u);
+			const LocalVector<Transform3D> tw = _stem_frames(Transform3D(sc_frame(d, Vector3(0, 1, 0)), at.origin), tl, _rand(-0.15f, 0.15f), 2);
+			_add_stem_along(tw, p_stem_r * 0.3f, p_stem_r * 0.18f, 0.4f);
+			p_twig(tw, 0.4f, CLAMP(tw[tw.size() - 1].origin.y / p_h, 0.0f, 1.0f));
+		}
+		LocalVector<Transform3D> top;
+		for (uint32_t k = fr.size() * 2 / 3; k < fr.size(); k++) {
+			top.push_back(fr[k]);
+		}
+		p_twig(top, 0.3f, CLAMP(fr[fr.size() - 1].origin.y / p_h, 0.0f, 1.0f));
+	}
+}
+
 // Rosemary (Salvia rosmarinus): an erect, dense evergreen shrub 0.5 to 1.5 m (garrigue plants
 // browsed and wind-cut to 40 to 80 cm); leaves linear, 1.5 to 4 cm by 2 to 4 mm, leathery, the
 // margins rolled under, dark green above and white-felted below, opposite and crowded towards the
@@ -74,7 +120,7 @@ void PlantGenerator::_build_rosemary() {
 	leaf_wear = 0.1f;
 	Leaf lf;
 	lf.shape = LEAF_LINEAR;
-	lf.width = 0.0032f;
+	lf.width = 0.0038f;
 	lf.fold = 0.45f; // Rolled margins.
 	lf.bend = 0.25f;
 	lf.segments = 1;
@@ -85,98 +131,58 @@ void PlantGenerator::_build_rosemary() {
 	lip.segments = 2;
 	float progress = 0.0f, dead = 0.0f;
 	const Bloom bloom = _bloom(false, &progress, &dead);
-	auto shoot = [&](const LocalVector<Transform3D> &p_fr, float p_wind, bool p_flower) {
+	// A short leafy shoot: leaves in crossed pairs crowded on it, spreading, shorter towards the tip.
+	auto shoot = [&](const LocalVector<Transform3D> &p_fr, float p_wind, float p_up) {
 		const float l = p_fr[0].origin.distance_to(p_fr[p_fr.size() - 1].origin);
-		const int nodes = MAX(int(l / 0.0082f), 3);
+		const int nodes = MAX(int(l / 0.0068f), 3);
+		const bool flower = bloom != BLOOM_NONE && p_up > 0.35f && _rand(0.0f, 1.0f) < 0.75f;
 		for (int k = 0; k < nodes; k++) {
-			const float s = 0.15f + 0.85f * float(k) / MAX(nodes - 1, 1);
+			const float s = 0.05f + 0.95f * float(k) / MAX(nodes - 1, 1);
 			const Transform3D at = _frame_at(p_fr, s);
-			// Decussate pairs, the leaves longest at mid-shoot, short and erect at the tip.
 			const float a0 = (k & 1) * Math::PI * 0.5f;
-			const float size = Math::lerp(0.9f, 0.55f, s * s);
+			const float size = Math::lerp(1.0f, 0.6f, s * s);
 			for (int q = 0; q < 2; q++) {
 				const Vector3 radial = sc_radial(at, a0 + q * Math::PI);
-				lf.length = _rand(0.02f, 0.034f) * size;
-				const float up = Math::lerp(0.35f, 1.3f, s * s);
-				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial + at.basis.get_column(2) * up).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(p_wind, 1.0f, s));
+				lf.length = _rand(0.022f, 0.034f) * size;
+				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial + at.basis.get_column(2) * Math::lerp(0.5f, 1.2f, s)).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(p_wind, 1.0f, s));
 			}
-			if (p_flower && s > 0.55f && s < 0.95f && _rand(0.0f, 1.0f) < 0.35f) {
-				// A small axillary cluster: one to three flowers, the lower lip hanging, the upper
-				// hooded, the two stamens arching out.
+			if (flower && s > 0.3f && s < 0.9f && _rand(0.0f, 1.0f) < 0.5f) {
+				// A small axillary cluster: the hooded upper lip, the broad lower lip hanging.
 				const Wither w(this, bloom == BLOOM_SEED ? 0.8f : dead * 0.6f);
-				const int nf = int(_rand(1.0f, 3.99f));
+				const int nf = int(_rand(1.0f, 2.99f));
 				for (int f = 0; f < nf; f++) {
 					const Vector3 radial = sc_radial(at, a0 + Math::PI * 0.5f + (f & 1) * Math::PI + _rand(-0.4f, 0.4f));
 					const Vector3 fd = (radial + Vector3(0, 0.35f, 0)).normalized();
-					const Vector3 fat = at.origin + radial * 0.004f;
-					_add_head(SURFACE_CENTRE, Transform3D(sc_frame(fd, Vector3(0, 1, 0)), fat), 0.0014f, 0.005f, Color(1, 1, 1), 2, 5); // The calyx.
-					const Vector3 mouth = fat + fd * 0.007f;
+					const Vector3 mouth = at.origin + radial * 0.004f + fd * 0.006f;
+					_add_head(SURFACE_PETAL, Transform3D(sc_frame(fd, Vector3(0, 1, 0)), at.origin + radial * 0.003f), 0.0018f, 0.007f, Color(0.9f, 0.9f, 0.95f), 2, 5); // The corolla tube.
 					lip.length = _rand(0.006f, 0.0075f);
-					lip.width = lip.length * 0.9f;
-					_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((fd - Vector3(0, 0.9f, 0)).normalized(), fd), mouth), lip, 1.0f); // Lower lip.
+					lip.width = lip.length * 0.95f;
+					_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((fd - Vector3(0, 0.9f, 0)).normalized(), fd), mouth), lip, 1.0f);
 					lip.length = _rand(0.005f, 0.006f);
-					lip.width = lip.length * 0.75f;
-					_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((fd + Vector3(0, 0.8f, 0)).normalized(), fd), mouth), lip, 1.0f); // Upper lip, a hood.
+					lip.width = lip.length * 0.8f;
+					_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((fd + Vector3(0, 0.8f, 0)).normalized(), fd), mouth), lip, 1.0f);
 				}
 			}
 		}
 	};
-	// Erect woody stems from a short trunk, branching all the way up into laterals that carry
-	// short leafy side shoots: the dense, rounded mass of foliage, not bare rods.
-	const int stems = int(_rand(7.0f, 10.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	const float tall = _rand(0.4f, 0.8f);
-	for (int i = 0; i < stems; i++) {
-		const float az = spin + i * SC_GOLDEN;
-		const Transform3D base(sc_frame(sc_dir(az, _rand(0.85f, 1.3f)), Vector3(0, 1, 0)), Vector3(_rand(-0.03f, 0.03f), 0.0f, _rand(-0.03f, 0.03f)));
-		const float len = tall * _rand(0.55f, 1.0f);
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(-0.3f, 0.05f), 6);
-		_add_stem_along(fr, 0.007f, 0.0025f, 0.0f);
-		const Vector3 outward = Vector3(Math::cos(az), 0.0f, Math::sin(az));
-		const int subs = int(_rand(7.0f, 10.0f));
-		for (int k = 0; k < subs; k++) {
-			const float u = _rand(0.15f, 0.92f);
-			const Transform3D at = _frame_at(fr, u);
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 d = (outward * 0.65f + Vector3(Math::cos(a) * 0.35f, 0.9f, Math::sin(a) * 0.35f)).normalized();
-			const float bl = len * _rand(0.22f, 0.38f) * (1.15f - u * 0.5f);
-			const LocalVector<Transform3D> br = _stem_frames(Transform3D(sc_frame(d, Vector3(0, 1, 0)), at.origin), bl, _rand(-0.2f, 0.1f), 4);
-			_add_stem_along(br, 0.0024f, 0.0011f, 0.3f);
-			const bool flower = bloom != BLOOM_NONE && _rand(0.0f, 1.0f) < 0.7f;
-			shoot(br, 0.35f, flower);
-			const int sides = int(_rand(1.0f, 3.99f));
-			for (int j = 0; j < sides; j++) {
-				const Transform3D bat = _frame_at(br, _rand(0.25f, 0.8f));
-				const float b = _rand(0.0f, Math::TAU);
-				const Vector3 sd = (bat.basis.get_column(2) + bat.basis.get_column(0) * Math::cos(b) * 0.8f + bat.basis.get_column(1) * Math::sin(b) * 0.8f + Vector3(0, 0.3f, 0)).normalized();
-				const LocalVector<Transform3D> sh = _stem_frames(Transform3D(sc_frame(sd, Vector3(0, 1, 0)), bat.origin), _rand(0.035f, 0.07f), -0.1f, 2);
-				_add_stem_along(sh, 0.0011f, 0.0007f, 0.5f);
-				shoot(sh, 0.5f, flower && _rand(0.0f, 1.0f) < 0.5f);
-			}
-		}
-		// The stem's own leafy top.
-		LocalVector<Transform3D> top;
-		for (uint32_t k = fr.size() / 2; k < fr.size(); k++) {
-			top.push_back(fr[k]);
-		}
-		shoot(top, 0.3f, bloom != BLOOM_NONE);
-	}
+	const float h = _rand(0.4f, 0.75f);
+	_scrub_mound(h * _rand(0.6f, 0.8f), h, int(_rand(18.0f, 24.0f)), 0.0045f, 0.065f, 0.02f, 0.45f, shoot);
 	plant_height = MAX(plant_height, 0.3f);
 }
 
 // French lavender (Lavandula stoechas): a compact, much-branched shrub 30 to 100 cm, grey-felted;
-// leaves linear to oblong, 1 to 4 cm by 2 to 5 mm, margins rolled, crowded and in leafy axillary
-// tufts; the flowering shoots end in a short bare stalk (1 to 3 cm in subsp. stoechas) under a
-// dense, four-angled spike 2 to 3 cm of dark purple flowers, crowned by three to five large purple
-// sterile bracts 1 to 5 cm ("rabbit ears"), March to June. Acid, sandy and schist soils
-// (Flora iberica 12; Upson and Andrews 2004, "The genus Lavandula").
+// leaves linear to oblong, 1 to 4 cm by 2 to 5 mm, margins rolled, ascending and crowded, with
+// leafy axillary tufts; the flowering shoots end in a short bare stalk (1 to 3 cm in subsp.
+// stoechas) under a dense, four-angled spike 2 to 3 cm of dark purple flowers, crowned by three to
+// five large purple sterile bracts 1 to 5 cm ("rabbit ears"), March to June. Acid, sandy and
+// schist soils (Flora iberica 12; Upson and Andrews 2004, "The genus Lavandula").
 void PlantGenerator::_build_french_lavender() {
 	leaf_wear = 0.1f;
 	Leaf lf;
 	lf.shape = LEAF_LINEAR;
 	lf.width = 0.0036f;
 	lf.fold = 0.4f;
-	lf.bend = 0.2f;
+	lf.bend = 0.15f;
 	lf.segments = 1;
 	Leaf bract;
 	bract.shape = LEAF_OVATE;
@@ -184,109 +190,86 @@ void PlantGenerator::_build_french_lavender() {
 	bract.bend = -0.2f; // Flaring back at the tip.
 	bract.twist = 0.3f;
 	bract.segments = 4;
-	// A short, much-branched woody base; from its tips and upper half the upright leafy shoots
-	// rise over a dome, so the bush is rounded and leafy to the ground, the spikes held above.
-	LocalVector<Transform3D> starts;
-	const int woody = int(_rand(5.0f, 8.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	const float tall = _rand(0.15f, 0.26f);
-	for (int i = 0; i < woody; i++) {
-		const float az = spin + i * SC_GOLDEN;
-		const Transform3D base(sc_frame(sc_dir(az, _rand(0.3f, 0.75f)), Vector3(0, 1, 0)), Vector3(_rand(-0.02f, 0.02f), 0.0f, _rand(-0.02f, 0.02f)));
-		const LocalVector<Transform3D> fr = _stem_frames(base, _rand(0.08f, 0.16f), _rand(-0.3f, 0.0f), 3);
-		_add_stem_along(fr, 0.0045f, 0.003f, 0.0f);
-		const Vector3 outward = Vector3(Math::cos(az), 0.0f, Math::sin(az));
-		const int n = int(_rand(4.0f, 6.99f));
-		for (int k = 0; k < n; k++) {
-			const float u = k == 0 ? 1.0f : _rand(0.3f, 0.95f);
-			const Transform3D at = _frame_at(fr, u);
-			const float a = _rand(0.0f, Math::TAU);
-			// The outer shoots lean out with the woody stem, so the bush is a dome, not a fan.
-			const Vector3 d = (outward * Math::lerp(0.3f, 0.75f, u) + Vector3(Math::cos(a) * 0.3f, 1.0f, Math::sin(a) * 0.3f)).normalized();
-			starts.push_back(Transform3D(sc_frame(d, Vector3(0, 1, 0)), at.origin));
-		}
-	}
-	for (const Transform3D &base : starts) {
-		float progress = 0.0f, dead = 0.0f;
-		const Bloom bloom = _bloom(false, &progress, &dead);
-		const float len = tall * _rand(0.6f, 1.0f);
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(-0.15f, 0.15f), 5);
-		_add_stem_along(fr, 0.0022f, 0.0011f, 0.15f);
-		// The leafy part: the lower two thirds of the shoot, leaves in opposite pairs with
-		// axillary tufts; the top a short bare stalk under the spike.
-		const float leafy = 0.68f;
-		const int nodes = MAX(int(len * leafy / 0.0075f), 3);
-		for (int k = 0; k < nodes; k++) {
-			const float s = 0.1f + (leafy - 0.1f) * float(k) / MAX(nodes - 1, 1);
-			const Transform3D at = _frame_at(fr, s);
-			const float a0 = (k & 1) * Math::PI * 0.5f;
-			for (int q = 0; q < 2; q++) {
-				const Vector3 radial = sc_radial(at, a0 + q * Math::PI);
-				lf.length = _rand(0.016f, 0.03f);
-				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial + at.basis.get_column(2) * 0.9f).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(0.15f, 1.0f, s));
-				if (s < 0.62f && _rand(0.0f, 1.0f) < 0.75f) {
-					// The axillary tuft of short leaves.
-					for (int t = 0; t < 3; t++) {
-						const Vector3 td = (radial * 0.6f + at.basis.get_column(2) + sc_radial(at, a0 + q * Math::PI + (t - 1) * 0.6f) * 0.3f).normalized();
-						lf.length = _rand(0.008f, 0.013f);
-						_add_leaf(SURFACE_LEAF, Transform3D(sc_frame(td, at.basis.get_column(2)), at.origin + radial * 0.002f), lf, Math::lerp(0.15f, 1.0f, s));
-					}
-				}
-			}
-		}
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		// The spike on its short bare stalk, the bracts on top.
-		const Wither w(this, bloom == BLOOM_SEED ? 0.85f : dead * 0.7f);
-		const Transform3D tip = fr[fr.size() - 1];
-		const Vector3 ax = tip.basis.get_column(2);
-		const float grow = progress < 0.0f ? 1.0f : CLAMP(0.55f + progress * 1.5f, 0.55f, 1.0f);
+	auto spike = [&](const Transform3D &p_tip, Bloom p_bloom, float p_progress, float p_dead) {
+		const Wither w(this, p_bloom == BLOOM_SEED ? 0.85f : p_dead * 0.7f);
+		const Vector3 ax = p_tip.basis.get_column(2);
+		const float grow = p_progress < 0.0f ? 1.0f : CLAMP(0.55f + p_progress * 1.5f, 0.55f, 1.0f);
 		const float sl = _rand(0.02f, 0.03f) * grow;
 		const float sr = sl * 0.24f;
 		// Four-angled, densely packed: a dark core with the calyx rows standing out as knobs.
-		_add_head(SURFACE_CENTRE, Transform3D(sc_frame(ax, Vector3(0, 1, 0)), tip.origin), sr, sl, Color(1, 1, 1), 5, 8);
+		_add_head(SURFACE_CENTRE, Transform3D(sc_frame(ax, Vector3(0, 1, 0)), p_tip.origin), sr, sl, Color(1, 1, 1), 5, 8);
 		const int rows = 6;
 		for (int k = 0; k < rows; k++) {
+			const float f = 0.12f + 0.76f * k / float(rows - 1);
+			const Transform3D at(p_tip.basis, p_tip.origin + ax * (sl * f));
 			for (int q = 0; q < 4; q++) {
 				const float a = q * Math::PI * 0.5f + (k & 1) * Math::PI * 0.25f;
-				const Transform3D at(tip.basis, tip.origin + ax * (sl * (0.12f + 0.76f * k / float(rows - 1))));
 				const Vector3 radial = sc_radial(at, a);
-				const float bulge = Math::sin(Math::PI * (0.12f + 0.76f * k / float(rows - 1)));
+				const float bulge = Math::sin(Math::PI * f);
 				_add_head(SURFACE_CENTRE, Transform3D(sc_frame((radial + ax * 0.4f).normalized(), ax), at.origin + radial * sr * 0.75f * bulge), sr * 0.42f, sr * 0.8f, Color(1, 1, 1), 2, 5);
-				if (bloom == BLOOM_FLOWER && _rand(0.0f, 1.0f) < 0.18f) {
-					// An open corolla here and there, the small flowers barely out of the calyx.
-					Leaf c = bract;
-					c.shape = LEAF_ROUND;
-					c.length = 0.0035f;
-					c.width = 0.0035f;
-					c.twist = 0.0f;
-					_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((radial + ax * 0.3f).normalized(), ax), at.origin + radial * sr * 1.1f), c, 1.0f, 1.0f, Color(0.7f, 0.55f, 0.75f));
-				}
 			}
 		}
 		const int nb = int(_rand(3.0f, 5.99f));
-		const Vector3 crown = tip.origin + ax * sl * 0.95f;
+		const Vector3 crown = p_tip.origin + ax * sl * 0.95f;
 		for (int k = 0; k < nb; k++) {
 			const float a = k * Math::TAU / nb + _rand(-0.25f, 0.25f);
-			const Vector3 radial = sc_radial(tip, a);
+			const Vector3 radial = sc_radial(p_tip, a);
 			bract.length = _rand(0.014f, 0.024f) * grow;
 			bract.width = bract.length * _rand(0.5f, 0.62f);
 			_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((ax * 1.6f + radial).normalized(), ax), crown + radial * sr * 0.3f), bract, 1.0f);
 		}
-	}
+	};
+	// A leafy shoot: narrow leaves held up close along it (ascending, not spread like a frond), with
+	// short leafy tufts in the lower axils; the upper shoots end in a flower stalk and spike.
+	auto shoot = [&](const LocalVector<Transform3D> &p_fr, float p_wind, float p_up) {
+		const float l = p_fr[0].origin.distance_to(p_fr[p_fr.size() - 1].origin);
+		const int nodes = MAX(int(l / 0.0085f), 3);
+		for (int k = 0; k < nodes; k++) {
+			const float s = 0.05f + 0.95f * float(k) / MAX(nodes - 1, 1);
+			const Transform3D at = _frame_at(p_fr, s);
+			const float a0 = (k & 1) * Math::PI * 0.5f;
+			for (int q = 0; q < 2; q++) {
+				const Vector3 radial = sc_radial(at, a0 + q * Math::PI + _rand(-0.2f, 0.2f));
+				lf.length = _rand(0.015f, 0.028f) * Math::lerp(1.0f, 0.65f, s);
+				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial * 0.45f + at.basis.get_column(2)).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(p_wind, 1.0f, s));
+				if (s < 0.6f && _rand(0.0f, 1.0f) < 0.25f) {
+					for (int t = 0; t < 2; t++) {
+						const Vector3 td = (radial * 0.35f + at.basis.get_column(2) + sc_radial(at, a0 + q * Math::PI + (t ? 0.5f : -0.5f)) * 0.2f).normalized();
+						lf.length = _rand(0.008f, 0.013f);
+						_add_leaf(SURFACE_LEAF, Transform3D(sc_frame(td, at.basis.get_column(2)), at.origin + radial * 0.002f), lf, Math::lerp(p_wind, 1.0f, s));
+					}
+				}
+			}
+		}
+		if (p_up < 0.45f || _rand(0.0f, 1.0f) > 0.55f) {
+			return;
+		}
+		float progress = 0.0f, dead = 0.0f;
+		const Bloom bloom = _bloom(false, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			return;
+		}
+		// The bare flower stalk rising clear of the leaves, then the spike.
+		const Transform3D end = p_fr[p_fr.size() - 1];
+		const Vector3 d = (end.basis.get_column(2) * 0.4f + Vector3(0, 1, 0)).normalized();
+		const Transform3D tip = _add_stem(Transform3D(sc_frame(d, Vector3(0, 1, 0)), end.origin), _rand(0.03f, 0.06f), 0.0011f, 0.0009f, _rand(-0.1f, 0.1f), 3, 0.7f);
+		spike(Transform3D(sc_frame(tip.basis.get_column(2), Vector3(0, 1, 0)), tip.origin), bloom, progress, dead);
+	};
+	const float h = _rand(0.2f, 0.32f);
+	_scrub_mound(h * _rand(0.9f, 1.2f), h, int(_rand(18.0f, 24.0f)), 0.0035f, 0.06f, 0.017f, 0.2f, shoot);
 	plant_height = MAX(plant_height, 0.2f);
 }
 
 // Thyme (Thymus vulgaris and kin, Thymus mastichina on acid ground): a dwarf, cushion-forming
 // subshrub 10 to 30 cm of wiry, woody, much-branched stems; leaves 4 to 8 mm by 1.5 to 3 mm,
-// grey-green, the margins rolled, in opposite pairs with leafy tufts in the axils; pale pink to
-// mauve flowers 4 to 6 mm in rounded terminal heads, April to June (Flora iberica 12; Morales 1986).
+// grey-green, the margins rolled, in opposite pairs with leafy tufts in the axils; tiny pale pink
+// to mauve flowers 4 to 6 mm in small rounded or whorled heads at the shoot tips, April to June
+// (Flora iberica 12; Morales 1986).
 void PlantGenerator::_build_thyme() {
 	leaf_wear = 0.1f;
 	Leaf lf;
 	lf.shape = LEAF_LANCEOLATE;
-	lf.width = 0.003f;
+	lf.width = 0.0035f;
 	lf.fold = 0.4f;
 	lf.bend = 0.2f;
 	lf.segments = 1;
@@ -295,77 +278,57 @@ void PlantGenerator::_build_thyme() {
 	petal.fold = 0.2f;
 	petal.bend = 0.4f;
 	petal.segments = 2;
-	// Low woody stems spreading from the root, each branching into many short leafy shoots that
-	// pack into the cushion; the flowering tips stand a little above it.
-	LocalVector<Transform3D> starts;
-	const int woody = int(_rand(6.0f, 10.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	const float tall = _rand(0.06f, 0.12f);
-	for (int i = 0; i < woody; i++) {
-		const float az = spin + i * SC_GOLDEN;
-		const Transform3D base(sc_frame(sc_dir(az, _rand(0.3f, 0.8f)), Vector3(0, 1, 0)), Vector3());
-		const LocalVector<Transform3D> fr = _stem_frames(base, _rand(0.04f, 0.09f), _rand(-0.2f, 0.1f), 3);
-		_add_stem_along(fr, 0.0022f, 0.0014f, 0.0f);
-		const Vector3 outward = Vector3(Math::cos(az), 0.0f, Math::sin(az));
-		const int n = int(_rand(10.0f, 16.0f));
-		for (int k = 0; k < n; k++) {
-			const float u = k == 0 ? 1.0f : _rand(0.15f, 0.95f);
-			const Transform3D at = _frame_at(fr, u);
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 d = (outward * Math::lerp(0.2f, 0.7f, u) + Vector3(Math::cos(a) * 0.35f, 1.0f, Math::sin(a) * 0.35f)).normalized();
-			starts.push_back(Transform3D(sc_frame(d, Vector3(0, 1, 0)), at.origin));
-		}
-	}
-	for (const Transform3D &base : starts) {
-		float progress = 0.0f, dead = 0.0f;
-		const Bloom bloom = _bloom(false, &progress, &dead);
-		const float len = tall * _rand(0.35f, 1.0f);
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(-0.25f, 0.05f), 3);
-		_add_stem_along(fr, 0.001f, 0.0006f, 0.3f);
-		const int nodes = MAX(int(len / 0.0042f), 3);
+	auto shoot = [&](const LocalVector<Transform3D> &p_fr, float p_wind, float p_up) {
+		const float l = p_fr[0].origin.distance_to(p_fr[p_fr.size() - 1].origin);
+		const int nodes = MAX(int(l / 0.004f), 3);
 		for (int k = 0; k < nodes; k++) {
-			const float s = 0.2f + 0.72f * float(k) / MAX(nodes - 1, 1);
-			const Transform3D at = _frame_at(fr, s);
+			const float s = 0.1f + 0.9f * float(k) / MAX(nodes - 1, 1);
+			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = (k & 1) * Math::PI * 0.5f;
 			for (int q = 0; q < 2; q++) {
 				const Vector3 radial = sc_radial(at, a0 + q * Math::PI);
-				lf.length = _rand(0.006f, 0.0085f);
-				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial + at.basis.get_column(2) * 0.7f).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(0.25f, 1.0f, s));
-				if (_rand(0.0f, 1.0f) < 0.5f) {
-					lf.length = _rand(0.003f, 0.005f);
-					const Vector3 td = (radial * 0.5f + at.basis.get_column(2)).normalized();
-					_add_leaf(SURFACE_LEAF, Transform3D(sc_frame(td, at.basis.get_column(2)), at.origin + radial * 0.0012f), lf, Math::lerp(0.25f, 1.0f, s));
+				lf.length = _rand(0.005f, 0.0075f);
+				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial + at.basis.get_column(2) * 0.7f).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(p_wind, 1.0f, s));
+				if (_rand(0.0f, 1.0f) < 0.35f) {
+					lf.length = _rand(0.003f, 0.0045f);
+					_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial * 0.5f + at.basis.get_column(2)).normalized(), at.basis.get_column(2)), at.origin + radial * 0.0012f), lf, Math::lerp(p_wind, 1.0f, s));
 				}
 			}
 		}
-		if (bloom == BLOOM_NONE || _rand(0.0f, 1.0f) > 0.55f) {
-			continue;
+		if (p_up < 0.4f || _rand(0.0f, 1.0f) > 0.6f) {
+			return;
 		}
-		// The rounded head: calyces packed in a ball, the small two-lipped flowers open round it.
+		float progress = 0.0f, dead = 0.0f;
+		const Bloom bloom = _bloom(false, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			return;
+		}
+		// A short stalk just clear of the leaves, and the small head: whorls of calyces with the
+		// tiny two-lipped flowers open round them, the head about a centimetre across.
 		const Wither w(this, bloom == BLOOM_SEED ? 0.8f : dead * 0.6f);
-		const Transform3D tip = fr[fr.size() - 1];
+		const Transform3D end = p_fr[p_fr.size() - 1];
+		const Transform3D tip = _add_stem(Transform3D(sc_frame((end.basis.get_column(2) * 0.3f + Vector3(0, 1, 0)).normalized(), Vector3(0, 1, 0)), end.origin), _rand(0.004f, 0.012f), 0.0006f, 0.0005f, 0.0f, 2, 0.8f);
 		const Vector3 ax = tip.basis.get_column(2);
-		// The calyces are small, mostly hidden by the open flowers: the head reads pink.
-		const float hr = _rand(0.0035f, 0.0045f);
-		_add_head(SURFACE_CENTRE, Transform3D(sc_frame(ax, Vector3(0, 1, 0)), tip.origin - ax * hr * 0.3f), hr, hr * 1.6f, Color(1, 1, 1), 3, 7);
+		const float hr = _rand(0.0025f, 0.0032f);
+		_add_head(SURFACE_CENTRE, Transform3D(sc_frame(ax, Vector3(0, 1, 0)), tip.origin), hr, hr * 1.6f, Color(1, 1, 1), 3, 6);
 		if (bloom == BLOOM_SEED) {
-			continue;
+			return;
 		}
-		const int nf = int(_rand(12.0f, 18.0f));
+		const int nf = int(_rand(14.0f, 20.0f));
 		for (int f = 0; f < nf; f++) {
 			const float a = f * SC_GOLDEN;
-			const float el = _rand(-0.2f, 0.9f);
-			const Vector3 d = (sc_radial(tip, a) * Math::cos(el) + ax * Math::sin(el)).normalized();
-			const Vector3 at = tip.origin + ax * hr * 0.4f + d * hr * 1.1f;
-			petal.length = _rand(0.0045f, 0.0055f);
+			const float hgt = _rand(0.15f, 0.95f);
+			const Vector3 rd = sc_radial(tip, a);
+			const Vector3 d = (rd + ax * 0.35f).normalized();
+			const Vector3 at = tip.origin + ax * hr * 1.5f * hgt + rd * hr * 0.9f;
+			petal.length = _rand(0.0026f, 0.0034f);
 			petal.width = petal.length * 1.1f;
-			_add_leaf(SURFACE_PETAL, Transform3D(sc_frame(d, ax), at), petal, 1.0f); // The broad lower lip.
-			petal.length *= 0.6f;
-			petal.width = petal.length;
-			_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((d + ax * 0.8f).normalized(), d), at), petal, 1.0f);
+			_add_leaf(SURFACE_PETAL, Transform3D(sc_frame(d, ax), at), petal, 1.0f);
 		}
-	}
-	plant_height = MAX(plant_height, 0.06f);
+	};
+	const float h = _rand(0.07f, 0.13f);
+	_scrub_mound(h * _rand(1.4f, 2.0f), h, int(_rand(20.0f, 26.0f)), 0.002f, 0.03f, 0.01f, 0.15f, shoot);
+	plant_height = MAX(plant_height, 0.05f);
 }
 
 // Sage-leaved rockrose (Cistus salviifolius): a low, spreading, often sprawling shrub 30 to 60 cm,
@@ -382,7 +345,7 @@ void PlantGenerator::_build_sage_rockrose() {
 	lf.petiole = 0.1f;
 	lf.fold = 0.3f;
 	lf.bend = 0.4f;
-	lf.segments = 5;
+	lf.segments = 4;
 	Leaf petal;
 	petal.shape = LEAF_ROUND;
 	petal.fold = 0.15f;
@@ -395,11 +358,18 @@ void PlantGenerator::_build_sage_rockrose() {
 	lf.fold = Math::lerp(0.3f, 0.65f, drought);
 	float progress = 0.0f, dead = 0.0f;
 	const Bloom bloom = _bloom(false, &progress, &dead);
-	auto shoot = [&](const LocalVector<Transform3D> &p_fr, float p_wind, bool p_flower) {
+	Leaf sepal = lf;
+	sepal.length = 0.009f;
+	sepal.width = 0.0065f;
+	sepal.fold = 0.4f;
+	sepal.bend = -0.2f;
+	sepal.segments = 3;
+	sepal.petiole = 0.0f;
+	auto shoot = [&](const LocalVector<Transform3D> &p_fr, float p_wind, float p_up) {
 		const float l = p_fr[0].origin.distance_to(p_fr[p_fr.size() - 1].origin);
-		const int nodes = MAX(int(l / 0.016f), 2);
+		const int nodes = MAX(int(l / 0.012f), 2);
 		for (int k = 0; k < nodes; k++) {
-			const float s = 0.25f + 0.75f * float(k) / MAX(nodes - 1, 1);
+			const float s = 0.15f + 0.85f * float(k) / MAX(nodes - 1, 1);
 			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = (k & 1) * Math::PI * 0.5f;
 			for (int q = 0; q < 2; q++) {
@@ -407,84 +377,53 @@ void PlantGenerator::_build_sage_rockrose() {
 					continue; // The older leaves shed in the drought.
 				}
 				const Vector3 radial = sc_radial(at, a0 + q * Math::PI);
-				lf.length = _rand(0.018f, 0.032f) * Math::lerp(1.0f, 0.75f, drought) * Math::lerp(1.0f, 0.7f, s * s);
+				lf.length = _rand(0.018f, 0.03f) * Math::lerp(1.0f, 0.75f, drought) * Math::lerp(1.0f, 0.75f, s * s);
 				lf.width = lf.length * _rand(0.5f, 0.62f);
 				const Vector3 d = (radial + at.basis.get_column(2) * 0.35f + Vector3(0, 0.25f, 0)).normalized();
 				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame(d, Vector3(0, 1, 0)), at.origin), lf, Math::lerp(p_wind, 1.0f, s), 1.0f, summer);
 			}
-			if (!p_flower || s < 0.55f || _rand(0.0f, 1.0f) > 0.3f) {
-				continue;
+		}
+		if (bloom == BLOOM_NONE || p_up < 0.35f || _rand(0.0f, 1.0f) > 0.4f) {
+			return;
+		}
+		// A flower or capsule on its long, slender stalk from near the shoot's tip, held out above
+		// the leaves.
+		const Transform3D at = _frame_at(p_fr, _rand(0.7f, 1.0f));
+		const Vector3 radial = sc_radial(at, _rand(0.0f, Math::TAU));
+		const Vector3 pd = (radial * 0.5f + Vector3(0, 1.0f, 0)).normalized();
+		const Transform3D top = _add_stem(Transform3D(sc_frame(pd, Vector3(0, 1, 0)), at.origin), _rand(0.025f, 0.05f), 0.0008f, 0.0006f, 0.25f, 3, 0.6f);
+		const Basis fb = sc_frame((top.basis.get_column(2) + Vector3(0, 1.2f, 0)).normalized(), radial);
+		if (bloom == BLOOM_FLOWER && _rand(0.0f, 1.0f) < 0.6f) {
+			const float open = progress < 0.0f ? 1.0f : CLAMP(0.4f + progress * 1.2f, 0.4f, 1.0f);
+			const float pr = _rand(0.019f, 0.024f) * open;
+			const float spin = _rand(0.0f, Math::TAU);
+			for (int p = 0; p < 5; p++) {
+				const float a = spin + p * Math::TAU / 5.0f + _rand(-0.1f, 0.1f);
+				const Vector3 pr_dir = fb.get_column(0) * Math::cos(a) + fb.get_column(1) * Math::sin(a);
+				const float rise = Math::lerp(1.1f, 0.25f, open) + _rand(-0.1f, 0.15f);
+				const Vector3 fwd = (pr_dir * Math::cos(rise) + fb.get_column(2) * Math::sin(rise)).normalized();
+				petal.length = pr;
+				petal.width = pr * _rand(1.05f, 1.2f); // Broader than long, overlapping.
+				petal.twist = _rand(-0.25f, 0.25f); // Crumpled silk.
+				petal.fold = _rand(0.1f, 0.3f);
+				_add_leaf(SURFACE_PETAL, Transform3D(sc_frame(fwd, fb.get_column(2)), top.origin + pr_dir * 0.002f), petal, 1.0f);
 			}
-			// A flower or capsule on its long, slender stalk, held out above the leaves.
-			const float side = a0 + Math::PI * 0.5f + (_rand(0.0f, 1.0f) < 0.5f ? 0.0f : Math::PI);
-			const Vector3 radial = sc_radial(at, side);
-			const Vector3 pd = (radial * 0.6f + Vector3(0, 1.0f, 0)).normalized();
-			const Transform3D top = _add_stem(Transform3D(sc_frame(pd, Vector3(0, 1, 0)), at.origin), _rand(0.025f, 0.05f), 0.0008f, 0.0006f, 0.25f, 3, 0.6f);
-			const Basis fb = sc_frame((top.basis.get_column(2) + Vector3(0, 1.2f, 0)).normalized(), radial);
-			// The sepals: five, the outer heart-shaped.
-			Leaf sepal = lf;
-			sepal.length = 0.009f;
-			sepal.width = 0.0065f;
-			sepal.fold = 0.4f;
-			sepal.bend = -0.2f;
-			sepal.segments = 3;
-			sepal.petiole = 0.0f;
-			if (bloom == BLOOM_FLOWER && _rand(0.0f, 1.0f) < 0.6f) {
-				const float open = progress < 0.0f ? 1.0f : CLAMP(0.4f + progress * 1.2f, 0.4f, 1.0f);
-				const float pr = _rand(0.019f, 0.024f) * open;
-				const float spin = _rand(0.0f, Math::TAU);
-				for (int p = 0; p < 5; p++) {
-					const float a = spin + p * Math::TAU / 5.0f + _rand(-0.1f, 0.1f);
-					const Vector3 pr_dir = fb.get_column(0) * Math::cos(a) + fb.get_column(1) * Math::sin(a);
-					const float rise = Math::lerp(1.1f, 0.25f, open) + _rand(-0.1f, 0.15f);
-					const Vector3 fwd = (pr_dir * Math::cos(rise) + fb.get_column(2) * Math::sin(rise)).normalized();
-					petal.length = pr;
-					petal.width = pr * _rand(1.05f, 1.2f); // Broader than long, overlapping.
-					petal.twist = _rand(-0.25f, 0.25f); // Crumpled silk.
-					petal.fold = _rand(0.1f, 0.3f);
-					_add_leaf(SURFACE_PETAL, Transform3D(sc_frame(fwd, fb.get_column(2)), top.origin + pr_dir * 0.002f), petal, 1.0f);
-				}
-				// The boss of many yellow stamens round the ovary.
-				_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0055f * open, 0.005f, Color(1, 1, 1), 3, 9);
-			} else if (bloom != BLOOM_NONE) {
-				// The capsule in its sepals (or a bud, before).
-				const Wither w(this, bloom == BLOOM_SEED ? 0.85f : 0.0f);
-				const bool capsule = bloom == BLOOM_SEED;
-				_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), capsule ? 0.0035f : 0.004f, capsule ? 0.007f : 0.009f, capsule ? Color(0.75f, 0.55f, 0.3f) : Color(0.45f, 0.65f, 0.35f), 3, 6);
-				for (int p = 0; p < 5; p++) {
-					const float a = p * Math::TAU / 5.0f;
-					const Vector3 sd = (fb.get_column(0) * Math::cos(a) + fb.get_column(1) * Math::sin(a) + fb.get_column(2) * 1.6f).normalized();
-					_add_leaf(SURFACE_LEAF, Transform3D(sc_frame(sd, fb.get_column(2)), top.origin), sepal, 1.0f, 1.0f, summer);
-				}
+			// The boss of many yellow stamens round the ovary.
+			_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0055f * open, 0.005f, Color(1, 1, 1), 3, 9);
+		} else {
+			// The capsule in its sepals (or a bud, before).
+			const Wither w(this, bloom == BLOOM_SEED ? 0.85f : 0.0f);
+			const bool capsule = bloom == BLOOM_SEED;
+			_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), capsule ? 0.0035f : 0.004f, capsule ? 0.007f : 0.009f, capsule ? Color(0.75f, 0.55f, 0.3f) : Color(0.45f, 0.65f, 0.35f), 3, 6);
+			for (int p = 0; p < 5; p++) {
+				const float a = p * Math::TAU / 5.0f;
+				const Vector3 sd = (fb.get_column(0) * Math::cos(a) + fb.get_column(1) * Math::sin(a) + fb.get_column(2) * 1.6f).normalized();
+				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame(sd, fb.get_column(2)), top.origin), sepal, 1.0f, 1.0f, summer);
 			}
 		}
 	};
-	// Spreading, sprawling woody stems, branching out sideways into leafy shoots.
-	const int stems = int(_rand(5.0f, 8.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	for (int i = 0; i < stems; i++) {
-		const float az = spin + i * SC_GOLDEN;
-		const Transform3D base(sc_frame(sc_dir(az, _rand(0.35f, 0.85f)), Vector3(0, 1, 0)), Vector3(_rand(-0.02f, 0.02f), 0.0f, _rand(-0.02f, 0.02f)));
-		const float len = _rand(0.22f, 0.4f);
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(-0.35f, -0.05f), 5);
-		_add_stem_along(fr, 0.0055f, 0.002f, 0.0f);
-		const Vector3 outward = Vector3(Math::cos(az), 0.0f, Math::sin(az));
-		const int subs = int(_rand(6.0f, 9.99f));
-		for (int k = 0; k < subs; k++) {
-			const float u = _rand(0.15f, 0.95f);
-			const Transform3D at = _frame_at(fr, u);
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 d = (outward * 0.6f + Vector3(Math::cos(a) * 0.45f, 0.8f, Math::sin(a) * 0.45f)).normalized();
-			const LocalVector<Transform3D> br = _stem_frames(Transform3D(sc_frame(d, Vector3(0, 1, 0)), at.origin), _rand(0.08f, 0.16f), _rand(-0.2f, 0.05f), 3);
-			_add_stem_along(br, 0.0018f, 0.0011f, 0.3f);
-			shoot(br, 0.3f, bloom != BLOOM_NONE);
-		}
-		LocalVector<Transform3D> top;
-		for (uint32_t k = fr.size() / 2; k < fr.size(); k++) {
-			top.push_back(fr[k]);
-		}
-		shoot(top, 0.25f, bloom != BLOOM_NONE);
-	}
+	const float h = _rand(0.28f, 0.42f);
+	_scrub_mound(h * _rand(1.2f, 1.6f), h, int(_rand(11.0f, 15.0f)), 0.0045f, 0.08f, 0.03f, 0.2f, shoot);
 	plant_height = MAX(plant_height, 0.15f);
 }
 

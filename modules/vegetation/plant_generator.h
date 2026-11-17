@@ -348,6 +348,8 @@ private:
 	void _build_french_lavender();
 	void _build_thyme();
 	void _build_sage_rockrose();
+	template <typename F>
+	void _scrub_mound(float p_r, float p_h, int p_stems, float p_stem_r, float p_twig_len, float p_twig_step, float p_rise_min, F p_twig);
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
