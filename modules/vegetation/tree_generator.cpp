@@ -668,29 +668,29 @@ void TreeGenerator::set_preset(Preset p_preset) {
 		case PRESET_LENTISK: // Pistacia lentiscus: dense, rounded, many-stemmed evergreen; paripinnate leaves (5v).
 			p[PARAM_YEARS] = 16;
 			p[PARAM_MATURITY] = 8;
-			p[PARAM_INTERNODE_LENGTH] = 0.09f;
+			p[PARAM_INTERNODE_LENGTH] = 0.07f;
 			p[PARAM_INTERNODE_LENGTH_AGE] = 0.96f;
-			p[PARAM_MAX_SHOOT] = 3;
+			p[PARAM_MAX_SHOOT] = 4;
 			p[PARAM_APICAL_DOMINANCE] = 0.5f;
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.49f;
-			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_BRANCH_ANGLE] = 45;
 			p[PARAM_BRANCH_ANGLE_VARIANCE] = 12;
 			p[PARAM_DIRECTION_NOISE] = 14;
-			p[PARAM_TRUNK_GRAVITROPISM] = 0.15f;
-			p[PARAM_GRAVITROPISM] = -0.03f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
+			p[PARAM_GRAVITROPISM] = 0.05f;
 			p[PARAM_BUD_LIGHT_MIN] = 0.0f; // Dense to the ground.
-			p[PARAM_SHED_RATIO] = 0.015f;
+			p[PARAM_SHED_RATIO] = 0.01f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.4f;
 			p[PARAM_TIP_RADIUS] = 0.0016f;
 			p[PARAM_PIPE_EXPONENT] = 2.8f;
 			p[PARAM_STEMS] = 12;
-			p[PARAM_STEM_SPREAD] = 80;
+			p[PARAM_STEM_SPREAD] = 60;
 			p[PARAM_BASAL_SPROUTS] = 0.7f;
 			p[PARAM_ROOT_FLARE] = 0.12f;
 			p[PARAM_LEAF_SIZE] = 0.02f; // Leaflets 1-5 cm (mostly 2-3).
 			p[PARAM_LEAF_WIDTH] = 0.3f;
-			p[PARAM_LEAVES_PER_INTERNODE] = 18;
-			p[PARAM_LEAF_YEARS] = 3;
+			p[PARAM_LEAVES_PER_INTERNODE] = 24; // A dense evergreen mass.
+			p[PARAM_LEAF_YEARS] = 4;
 			bark_color = Color(0.42f, 0.4f, 0.36f);
 			leaf_color = Color(0.06f, 0.13f, 0.04f); // Dark, leathery, glossy.
 			break;
@@ -5502,7 +5502,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			// Most plants carry the blotch (var. maculatus); some are plain white (var. albiflorus).
 			const bool blotched = (uint32_t(seed) * 2654435761u >> 20) % 10 < 7;
 			const Color white = lin(0.97f, 0.96f, 0.93f), shade = lin(0.88f, 0.87f, 0.84f);
-			const Color blotch = lin(0.38f, 0.05f, 0.1f), base_y = lin(0.98f, 0.86f, 0.4f);
+			const Color blotch = lin(0.32f, 0.02f, 0.08f), base_y = lin(0.98f, 0.86f, 0.4f);
 			const Color stamen_c = lin(0.98f, 0.78f, 0.12f), sepal_c = lin(0.42f, 0.48f, 0.22f);
 			const Color cap_green = lin(0.38f, 0.42f, 0.2f), cap_brown = lin(0.42f, 0.3f, 0.18f), cap_grey = lin(0.5f, 0.47f, 0.42f);
 			Vector4i part;
@@ -5516,9 +5516,18 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				}
 				const uint32_t h = hash_murmur3_one_32(slot++, uint32_t(seed) * 2654435761u + 0x63697374u);
 				const float hu = float(h & 0xffff) / 65535.0f;
-				const bool is_flower = hu < 0.45f * bloom * fruit_cover;
-				const bool is_cap = !is_flower && hu < 0.45f * bloom * fruit_cover + 0.5f * caps * fruit_cover;
-				if (!is_flower && !is_cap) {
+				// Each flower opens for a day and drops its petals (Flora iberica), so a bush in
+				// flower carries buds, open flowers and spent ones together: about a fifth of the
+				// tips open at the peak, as many in bud (more early in the season), some spent.
+				const float early = CLAMP((125.0f - day) / 35.0f, 0.0f, 1.0f);
+				const float p_open = 0.22f * bloom * fruit_cover;
+				const float p_bud = p_open + (0.12f + 0.18f * early) * bloom * fruit_cover;
+				const float p_spent = p_bud + (0.18f - 0.12f * early) * bloom * fruit_cover;
+				const bool is_flower = hu < p_open;
+				const bool is_bud = !is_flower && hu < p_bud;
+				const bool is_spent = !is_flower && !is_bud && hu < p_spent;
+				const bool is_cap = !is_flower && !is_bud && !is_spent && hu < p_spent + 0.5f * caps * fruit_cover;
+				if (!is_flower && !is_bud && !is_spent && !is_cap) {
 					continue;
 				}
 				const int b = bone_of(t.node);
@@ -5533,23 +5542,24 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				const Vector3 d = n.dir;
 				const Vector3 at = n.end();
 				const float jit = Math::lerp(0.85f, 1.15f, float((h >> 16) & 255u) / 255.0f);
-				if (is_flower) {
-					// The flower faces up and out over the shoot's last leaves, on a stalk of a few
-					// centimetres (the flowering side shoot).
-					const Vector3 ax = (d * 0.6f + Vector3(0, 0.8f, 0)).normalized();
-					const Vector3 c0 = at + ax * 0.045f;
-					stalk(at, c0, 0.0014f, sepal_c);
-					const Vector3 s0 = perp(ax);
-					const float R = 0.036f * jit; // Petal length: a flower about 7 cm across.
+				// Facing: up and out over the shoot's last leaves, each tilted its own way (up to
+				// about 40 degrees), on a stalk of a few centimetres (the flowering side shoot).
+				const float ta = float((h >> 24) & 255u) / 255.0f * float(Math::TAU);
+				const float tt0 = float((h >> 8) & 255u) / 255.0f;
+				const Vector3 tilt_axis = perp(Vector3(0, 1, 0)).rotated(Vector3(0, 1, 0), ta);
+				const Vector3 ax = (d * 0.6f + Vector3(0, 0.8f, 0)).normalized().rotated(tilt_axis, 0.7f * tt0 - 0.15f).normalized();
+				const Vector3 c0 = at + ax * 0.045f;
+				const Vector3 s0 = perp(ax);
+				auto sepals = [&](float p_r, float p_up) {
 					for (int q = 0; q < 3; q++) {
 						const Vector3 sd = s0.rotated(ax, q * 2.0944f + 0.5f);
-						const Vector3 sdir = (sd * 0.8f - ax * 0.35f).normalized();
+						const Vector3 sdir = (sd * (0.8f - p_up) + ax * (p_up - 0.35f)).normalized();
 						const Vector3 sw = ax.cross(sdir).normalized();
 						const int v0 = r_b.verts.size();
 						for (int i = 0; i < 3; i++) {
 							const float tt = float(i) / 2.0f;
-							const float w = R * 0.32f * Math::sin(float(Math::PI) * (0.15f + 0.7f * tt));
-							const Vector3 c = c0 + sdir * (R * 0.45f * tt);
+							const float w = p_r * 0.32f * Math::sin(float(Math::PI) * (0.15f + 0.7f * tt));
+							const Vector3 c = c0 + sdir * (p_r * 0.45f * tt);
 							vert(c - sw * w, Vector2(0.0f, tt), sepal_c);
 							vert(c + sw * w, Vector2(1.0f, tt), sepal_c);
 						}
@@ -5558,29 +5568,91 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 							tri(v0 + k * 2 + 1, v0 + k * 2 + 2, v0 + k * 2 + 3);
 						}
 					}
-					const int RN = 5, CN = 5; // Rows out from the centre, columns across.
+				};
+				if (is_bud) {
+					// A bud: an ovoid 1-1.5 cm, the three sepals closed round it, the white of the
+					// folded petals showing at the tip just before it opens.
+					stalk(at, c0, 0.0014f, sepal_c);
+					const float br = 0.006f * jit, bl = 0.016f * jit;
+					const bool late = tt0 > 0.6f;
+					const Vector3 s1 = ax.cross(s0);
+					const int rings = 5, sides = 9;
+					const int v0 = r_b.verts.size();
+					for (int i = 0; i <= rings; i++) {
+						const float tt = float(i) / rings;
+						const float rr = br * Math::pow(Math::sin(float(Math::PI) * (0.08f + 0.92f * tt)), 0.7f);
+						const Color cc = late && tt > 0.7f ? white : sepal_c * (0.85f + 0.15f * tt);
+						for (int k = 0; k < sides; k++) {
+							const float ph = float(Math::TAU) * k / sides;
+							vert(c0 + ax * (bl * tt) + (s0 * Math::cos(ph) + s1 * Math::sin(ph)) * MAX(rr, 0.0004f), Vector2(), cc * ((k % 3) == 0 ? 0.85f : 1.0f));
+						}
+					}
+					for (int i = 0; i < rings; i++) {
+						for (int k = 0; k < sides; k++) {
+							const int k1 = (k + 1) % sides;
+							tri(v0 + i * sides + k, v0 + (i + 1) * sides + k, v0 + i * sides + k1);
+							tri(v0 + i * sides + k1, v0 + (i + 1) * sides + k, v0 + (i + 1) * sides + k1);
+						}
+					}
+				} else if (is_spent) {
+					// Spent: the petals fallen, the sepals clasp the swelling green ovary and a few
+					// dry stamens.
+					stalk(at, c0, 0.0014f, sepal_c);
+					sepals(0.02f * jit, 0.55f);
+					const Vector3 s1 = ax.cross(s0);
+					const float cr = 0.0045f * jit;
+					const int v0 = r_b.verts.size();
+					for (int i = 0; i <= 4; i++) {
+						const float th = float(Math::PI) * float(i) / 4.0f;
+						for (int k = 0; k < 8; k++) {
+							const float ph = float(Math::TAU) * k / 8.0f;
+							vert(c0 + ax * (cr * (1.0f - Math::cos(th))) + (s0 * Math::cos(ph) + s1 * Math::sin(ph)) * (Math::sin(th) * cr), Vector2(), cap_green);
+						}
+					}
+					for (int i = 0; i < 4; i++) {
+						for (int k = 0; k < 8; k++) {
+							const int k1 = (k + 1) % 8;
+							tri(v0 + i * 8 + k, v0 + (i + 1) * 8 + k, v0 + i * 8 + k1);
+							tri(v0 + i * 8 + k1, v0 + (i + 1) * 8 + k, v0 + (i + 1) * 8 + k1);
+						}
+					}
+				} else if (is_flower) {
+					stalk(at, c0, 0.0014f, sepal_c);
+					// 5-10 cm across: petals 2.5-5 cm.
+					const float R = 0.036f * Math::lerp(0.75f, 1.25f, float((h >> 4) & 255u) / 255.0f);
+					sepals(R, 0.0f);
+					const int RN = 6, CN = 7; // Rows out from the centre, columns across.
 					for (int q = 0; q < 5; q++) {
-						const Vector3 pd = s0.rotated(ax, q * 1.25664f + 0.2f * float((h >> (q * 3)) & 7u) / 7.0f);
-						const Vector3 pw = ax.cross(pd).normalized();
+						// Five separate petals: each on a narrow base, broad and rounded at the tip,
+						// turned a little on its own axis so neighbours overlap unevenly.
+						const Vector3 pd0 = s0.rotated(ax, q * 1.25664f + 0.25f * (float((h >> (q * 3)) & 7u) / 7.0f - 0.5f));
+						const Vector3 pd = pd0.rotated(ax.cross(pd0).normalized(), 0.0f);
+						const float twist = 0.25f * (float((h >> (q * 5 + 2)) & 7u) / 7.0f - 0.5f);
+						const Vector3 pw0 = ax.cross(pd).normalized();
+						const Vector3 pup = ax.rotated(pd, twist);
+						const Vector3 pw = pw0.rotated(pd, twist);
+						const float pl = R * Math::lerp(0.9f, 1.08f, float((h >> (q * 4 + 1)) & 15u) / 15.0f);
 						const int v0 = r_b.verts.size();
 						for (int i = 0; i < RN; i++) {
 							const float tt = float(i) / (RN - 1);
-							// Obovate, broad and overlapping its neighbours: widest near the tip.
-							const float half = R * 0.62f * Math::sin(float(Math::PI) * 0.5f * Math::pow(tt, 0.7f)) * (1.0f - 0.25f * tt * tt * tt) + R * 0.06f;
-							// Opened out flat to slightly cupped, the outer half rising.
-							const Vector3 c = c0 + pd * (R * tt) + ax * (R * (0.12f * tt * tt + 0.03f));
+							// Obovate on a short claw: narrow at the centre, widest at three quarters.
+							const float half = pl * (0.07f + 0.5f * Math::pow(Math::sin(float(Math::PI) * 0.62f * tt), 1.4f));
+							// Cupped: the petal rises from the centre and its outer half lifts.
+							const Vector3 c = c0 + pd * (pl * tt) + pup * (pl * (0.06f + 0.32f * tt * tt));
 							for (int k = 0; k < CN; k++) {
 								const float u = float(k) / (CN - 1) * 2.0f - 1.0f;
 								const uint32_t hk = hash_murmur3_one_32(uint32_t(i * 16 + k + q * 97), h);
-								// Crumpled silk: a lift that grows to the petal's edge.
-								const float crumple = (float(hk & 255u) / 255.0f - 0.5f) * R * 0.1f * (0.3f + tt) * (0.4f + Math::abs(u));
+								// Crumpled silk: lifts and folds growing to the edge, the margin waved.
+								const float crumple = (float(hk & 255u) / 255.0f - 0.5f) * pl * 0.2f * (0.2f + tt) * (0.3f + Math::abs(u)) + pl * 0.05f * Math::sin(u * 7.0f + tt * 9.0f + q) * tt * Math::abs(u);
+								// The edges of the petal curl up a little more than its middle.
+								const float cup = pl * 0.1f * u * u * tt;
 								Color col = white.lerp(shade, float((hk >> 8) & 255u) / 255.0f * 0.5f);
-								if (tt < 0.12f) {
+								if (tt < 0.1f) {
 									col = base_y;
-								} else if (blotched && tt < 0.32f && Math::abs(u) < 0.75f) {
-									col = blotch;
+								} else if (blotched && tt < 0.42f && Math::abs(u) < 0.9f) {
+									col = blotch.lerp(blotch * 0.7f, float((hk >> 16) & 255u) / 255.0f);
 								}
-								vert(c + pw * (u * half) + ax * crumple, Vector2(0.5f + 0.5f * u, tt), col);
+								vert(c + pw * (u * half) + pup * (crumple + cup), Vector2(0.5f + 0.5f * u, tt), col);
 							}
 						}
 						for (int i = 0; i + 1 < RN; i++) {

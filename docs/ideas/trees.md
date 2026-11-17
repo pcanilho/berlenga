@@ -1601,6 +1601,36 @@ fruiting):
   ground; rockrose with six stems fanned to 38 degrees. Rockrose flowers on 4.5 cm stalks over
   the shoot's last leaves. Lentisk leaflets 2 cm on a rachis 0.42 leaflet a pair.
 - Bank trees in one-variant stands (6411eda3): one slope variant, not four.
+- Docs review (rockrose): flowers rebuilt as five separate petals on narrow claws, cupped and
+  crumpled with waved margins, a bold maroon blotch to 40% of each petal, 5-10 cm across and
+  tilted up to 40 degrees; a flowering bush mixes open flowers (a fifth of the tips at the
+  peak), buds (more early in the season) and spent flowers (sepals round the green ovary).
+  Lentisk denser: 7 cm internodes, 24 leaves an internode kept four years, stems fanned 60
+  degrees.
+
+### 5w. Dwarf fan palm (17 Nov; Mediterranean scrub with vegetation)
+
+**Research** (Flora iberica vol. 18, Arecaceae; Merlo et al. 1993 on its growth in the wild;
+Herrera 1989 on its fruit; Riffle and Craft 2003, An Encyclopedia of Cultivated Palms; Tomlinson
+1990, The Structural Biology of Palms, for the leaf and its plication):
+- Chamaerops humilis, Europe's only native palm, on the Algarve's coastal limestone and sandy
+  scrub. A clump of several to many stems suckering from the base; trunks 0-2 m in the wild
+  (often stemless where grazed, burnt or wind-cut), 15-25 cm across, clad in the persistent
+  bases of old leaves and their brown fibre; dead leaves hang a while beneath the crown.
+- Leaves palmate, 10-20 to a crown: the blade 40-80 cm across, a fan of three quarters of a
+  circle split into 10-30 stiff, induplicate (V-folded, the fold up) segments, divided for two
+  thirds or more of their length, the tips split in two; green to glaucous grey-green. Petiole
+  20-100 cm, armed along both edges with straight, forward-pointing spines up to 2 cm.
+- Dioecious: short, dense yellow inflorescences among the leaf bases, March to June; fruits
+  1.5-4 cm, yellow-green then orange-brown, ripe September to November.
+
+**Plan.** `PRESET_DWARF_FAN_PALM`, outside the shoot growth model: stems and petioles laid as
+nodes (so bark, wind bones, colliders and LODs work as for every tree), each blade a fan of
+V-folded segment blades on the leaves surface, spines as geometry along the petioles, leaf-base
+stubs and fibre on the trunks, a skirt of dead leaves on old stems, flowers and fruit among the
+leaf bases. Forms through `make_shrub_species`: young (one stemless crown), mature (a clump of a
+few short trunks), old (taller trunks, more skirt), thicket (many stems), cushion (stemless,
+short petioles, under 60 cm).
 
 ## 6. What the games at Paulo's bar do
 
