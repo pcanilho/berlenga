@@ -64,6 +64,7 @@ private:
 
 	bool cloud_reprojection = true;
 	AtmosphereModel atmosphere_model = ATMOSPHERE_SCATTERING;
+	RID cloud_shadow_map; // the last one given, so a moving corner does not rebind the texture
 	void _update_shader();
 	void _update_atmosphere_textures();
 
@@ -94,6 +95,10 @@ public:
 	// The weather's aerosol haze past the froxel fog: extinction at the ground (1/m, 0 for none), its
 	// single-scatter albedo, scale height (m), and where it starts along the eye's rays (the froxels' reach, m).
 	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from);
+	// The clouds' shadow for the sky's air: a map in the sun's plane (red: the beam's transmittance; green:
+	// the diffuse), its axes (world), the corner of its square in that plane and its size (m). Without one
+	// the shader marches the clouds toward the sun itself, coarser.
+	void set_cloud_shadow_map(const Ref<Texture2D> &p_map, const Vector3 &p_axis_u, const Vector3 &p_axis_v, const Vector2 &p_corner, float p_size);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

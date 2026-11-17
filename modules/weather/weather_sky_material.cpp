@@ -75,8 +75,8 @@ uniform int atmo_steps : hint_range(8, 64) = 32;
 uniform int atmo_radiance_steps : hint_range(4, 32) = 12;
 uniform int atmo_cloud_air_steps : hint_range(4, 32) = 12; // the air in front of the clouds
 // Steps through the air under the cloud tops, each reading the clouds' shadow: shafts across the sky
-// (0: no cloud shadow in the air). Half as many for the air in front of the clouds; none in the radiance map.
-uniform int atmo_cloud_shadow_steps : hint_range(0, 64) = 24;
+// (0: no cloud shadow in the air); none in the radiance map.
+uniform int atmo_cloud_shadow_steps : hint_range(0, 128) = 48;
 uniform bool atmo_driven = false;
 uniform vec3 atmo_sun_direction = vec3(0.0, 1.0, 0.0);
 uniform vec3 atmo_sun_irradiance = vec3(0.0); // above the air, in light energy units
@@ -505,7 +505,7 @@ void sky() {
 			// Aerial perspective (Hillaire 2020): the clouds seen through the air in front of them, which
 			// also scatters light toward the eye; what the clouds let through sees the whole sky behind.
 			vec3 t_front;
-			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps / 2, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, t_front).rgb;
+			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, t_front).rgb;
 			COLOR = ((1.0 - clouds.a) * front + t_front * clouds.rgb) * exposure + air.rgb * clouds.a;
 		} else {
 			COLOR = air.rgb;
@@ -818,6 +818,19 @@ void WeatherSkyMaterial::set_aerosol(float p_extinction, float p_albedo, float p
 	RS::get_singleton()->material_set_param(get_rid(), "atmo_aerosol", Vector4(e * CLAMP(p_albedo, 0.0f, 1.0f), e, MAX(p_height, 10.0f), MAX(p_from, 0.0f)));
 }
 
+void WeatherSkyMaterial::set_cloud_shadow_map(const Ref<Texture2D> &p_map, const Vector3 &p_axis_u, const Vector3 &p_axis_v, const Vector2 &p_corner, float p_size) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	const RID map = p_map.is_valid() ? p_map->get_rid() : RID();
+	if (map != cloud_shadow_map) {
+		rs->material_set_param(m, "atmo_cloud_shadow_map", map.is_valid() ? Variant(map) : Variant());
+		cloud_shadow_map = map;
+	}
+	rs->material_set_param(m, "atmo_cloud_shadow_u", Vector4(p_axis_u.x, p_axis_u.y, p_axis_u.z, p_corner.x));
+	rs->material_set_param(m, "atmo_cloud_shadow_v", Vector4(p_axis_v.x, p_axis_v.y, p_axis_v.z, p_corner.y));
+	rs->material_set_param(m, "atmo_cloud_shadow_size", p_map.is_valid() ? p_size : 0.0f);
+}
+
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {
 	if (atmosphere_model == p_model) {
 		return;
@@ -861,6 +874,7 @@ void WeatherSkyMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_star_sky", "celestial", "energy_per_lux"), &WeatherSkyMaterial::set_star_sky);
 	ClassDB::bind_method(D_METHOD("set_moon_angular_size", "radians"), &WeatherSkyMaterial::set_moon_angular_size);
 	ClassDB::bind_method(D_METHOD("set_aerosol", "extinction", "albedo", "height", "from"), &WeatherSkyMaterial::set_aerosol);
+	ClassDB::bind_method(D_METHOD("set_cloud_shadow_map", "map", "axis_u", "axis_v", "corner", "size"), &WeatherSkyMaterial::set_cloud_shadow_map);
 	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "atmosphere_model", PROPERTY_HINT_ENUM, "Physical Sky,Scattering"), "set_atmosphere_model", "get_atmosphere_model");
 	BIND_ENUM_CONSTANT(ATMOSPHERE_PHYSICAL_SKY);

@@ -25,6 +25,7 @@ extends Node3D
 #                     the landscape bench's clear wide shot (distant clouds at grazing angles)
 #   --view=shafts     broken cumulus from a rise toward a sun 20 degrees up, aerosol haze: shafts under the clouds
 #                     and across the sky (docs/ideas/weather.md, "Godrays", stages 1 and 2)
+#   --sun-up=D        shafts view: the sun D degrees up (default 20)
 #   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
 #                     (--strike-frames=K: K frames after the flash)
@@ -62,6 +63,7 @@ var only_lightning := false
 var only_haze := false
 var haze := ""
 var no_sky_shadow := false
+var sun_up := 20.0
 var strike_frames := 1
 var light_scale := 1.0
 var thunder_out := ""
@@ -86,6 +88,7 @@ func _ready() -> void:
 		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
 		elif a == "--frozen": frozen = true
 		elif a == "--no-sky-shadow": no_sky_shadow = true
+		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a == "--test=lightning": test = true; only_lightning = true
@@ -992,7 +995,8 @@ func _build_clouds() -> void:
 	if view == "clouds_wide":
 		sun.look_at_from_position(Vector3(-2500, 1500, 2500), Vector3.ZERO) # low, behind the camera
 	elif view == "shafts":
-		sun.look_at_from_position(Vector3(-600, 950, -2600), Vector3.ZERO) # 20 degrees up, ahead
+		var sd := 2668.0 # ahead, a little left
+		sun.look_at_from_position(Vector3(-600, sd * tan(deg_to_rad(sun_up)), -2600), Vector3.ZERO)
 
 	var cam := Camera3D.new()
 	cam.far = 60000.0

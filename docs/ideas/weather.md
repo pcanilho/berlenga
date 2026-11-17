@@ -814,3 +814,13 @@ the air mass of a thin exponential layer (1 / sqrt(mu^2 + 2H / (pi R))), and the
 dimmed by it. It is left out of the transmittance and multiple scattering tables (baked once for all skies).
 Bench: `docs/bench/weather --view=shafts` (`--no-sky-shadow` for the air without it); `docs/bench/sky
 --aerosol=km --look-sun --params=name:value,...`.
+Fix (17 Nov, docs declined the first pair: no shafts visible). The shader read the cloud shape at the
+march's step length (a kilometre), where the noise's mips are a uniform grey, so the shadow was a uniform
+dimming. Now WeatherMap3D bakes a second cloud shadow for the sky (Unreal's cloud shadow map on the
+atmosphere; Hillaire 2016): 40 km square in the sun's plane, 256 texels (160 m), 16 steps through the deck
+per texel on the worker threads every two shadow intervals, the beam exp(-tau) in red and the diffuse in
+green, sliding with the drift between bakes. One read per step, so 48 steps under the deck (most within
+60 km). Without a map (no WeatherMap3D) the shader still marches the clouds itself, coarser.
+Where they read (weather bench `--view=shafts --sun-up=D`): looking toward a sun 20 to 35 degrees up behind
+broken cumulus (cover about 0.45) with the aerosol haze on; strongest with gaps near the sun. Under 12
+degrees the deck is too thick along the sun's path and the air under it is mostly in shadow.

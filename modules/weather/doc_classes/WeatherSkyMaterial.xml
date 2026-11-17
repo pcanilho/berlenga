@@ -41,6 +41,17 @@
 				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze].
 			</description>
 		</method>
+		<method name="set_cloud_shadow_map">
+			<return type="void" />
+			<param index="0" name="map" type="Texture2D" />
+			<param index="1" name="axis_u" type="Vector3" />
+			<param index="2" name="axis_v" type="Vector3" />
+			<param index="3" name="corner" type="Vector2" />
+			<param index="4" name="size" type="float" />
+			<description>
+				The clouds' shadow for the sky's air (its shafts): a [param map] baked in the sun's plane, red the sun's beam transmittance through the cloud deck and green its diffuse transmission, with the plane's world axes [param axis_u] and [param axis_v], the corner of its square in that plane and its [param size] (m). [WeatherMap3D] bakes and sets it (40 km wide). Without one the shader marches the clouds toward the sun itself, coarser.
+			</description>
+		</method>
 		<method name="set_star_sky">
 			<return type="void" />
 			<param index="0" name="celestial" type="Basis" />

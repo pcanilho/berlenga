@@ -212,6 +212,7 @@ private:
 		float texel = 32.0f;
 		int resolution = 256;
 		int steps = 12;
+		bool sky = false; // the sky's map: the beam exp(-tau) in red, the diffuse transmission in green, linear
 		Vector<float> transmittance;
 		Vector<uint8_t> bytes;
 		float *transmittance_w = nullptr; // taken on the main thread, so the rows never copy on write
@@ -232,6 +233,21 @@ private:
 	Ref<Image> shadow_image;
 	Ref<ImageTexture> shadow_texture;
 	ObjectID shadow_light; // the light we gave our projector to
+	// The sky's cloud shadow (its shafts across the sky): the same bake over a square kSkyShadowExtent wide,
+	// coarser, read by WeatherSkyMaterial along its view rays (Unreal's cloud shadow map on the atmosphere).
+	static constexpr float kSkyShadowExtent = 40960.0f; // m
+	static constexpr int kSkyShadowResolution = 256;
+	ShadowBake *sky_shadow_bake = nullptr;
+	WorkerThreadPool::GroupID sky_shadow_task = WorkerThreadPool::INVALID_TASK_ID;
+	double sky_shadow_timer = 0.0;
+	Vector3 sky_shadow_axis_u;
+	Vector3 sky_shadow_axis_v;
+	Vector2 sky_shadow_corner;
+	Vector2 sky_shadow_drift;
+	Ref<ImageTexture> sky_shadow_texture;
+	void _start_sky_shadow_bake();
+	void _finish_sky_shadow_bake(bool p_discard);
+	void _apply_sky_shadow();
 
 	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
 	WeatherShelter shelter;
