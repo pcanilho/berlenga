@@ -1689,6 +1689,17 @@
    "topic": "Shore"
   },
   {
+   "name": "Rock contact foam",
+   "settings": [
+    "contact_foam"
+   ],
+   "note": "",
+   "what": "white water rings where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and washes over rock tops just under the surface.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
    "name": "Currents",
    "settings": [
     "current",
@@ -2253,6 +2264,29 @@
    ],
    "note": "",
    "what": "plants bend away from bodies and spring back, and lean in the wind.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Ground mist",
+   "settings": [
+    "VegetationMist3D",
+    "mist_amount"
+   ],
+   "note": "",
+   "what": "at dawn, low mist pools in hollows and drifts through the grass, set by the weather and sun; bodies part it, and it burns off as the sun climbs.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Pollen puffs",
+   "settings": [
+    "VegetationPollen3D"
+   ],
+   "note": "",
+   "what": "brushing grasses and other wind-pollinated plants in flower releases a puff of pollen; each plant recharges, and wet plants stay still.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3234,6 +3268,18 @@
    ],
    "note": "",
    "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Fire light and embers",
+   "settings": [
+    "PhysXFlow3D.fire_light",
+    "embers"
+   ],
+   "note": "",
+   "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

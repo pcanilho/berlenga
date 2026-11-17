@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 # --flow=property:value (a PhysXFlow3D property in the physx shot, or a PhysXParticleFluid3D one in the fluid shot)
@@ -610,6 +610,175 @@ func shot_flowslope() -> void:
 		crate.physics_material_override.friction = 0.05
 		crate.position = Vector3(-6.5, valley_h(-6.5, -1.6) + 0.7, -1.6)
 		add_child(crate)
+
+# A campfire on a wooded slope at dusk: Flow combustion (fuel burns above its ignition temperature into heat and
+# smoke), the gas glowing by its heat, PhysXFlow3D's fire light (raster) and embers, and the smoke, heavier than
+# the air once cool, settling down the slope on the terrain floor. Poly Haven CC0 assets (fetch_ext.sh).
+func campfire_h(x: float, z: float) -> float:
+	return 0.14 * z + 0.03 * sin(1.7 * x) * cos(1.3 * z)
+
+func gltf_scene(path: String) -> Node3D:
+	var doc := GLTFDocument.new()
+	var gstate := GLTFState.new()
+	doc.append_from_file(path, gstate)
+	return doc.generate_scene(gstate)
+
+func shot_campfire() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	if not FileAccess.file_exists("res://ext/rocks/rock_moss_set_01_1k.gltf"):
+		push_error("Run fetch_ext.sh first: the campfire shot uses CC0 Poly Haven assets.")
+		get_tree().quit(1)
+		return
+	# Dusk: a low, cool sky; the fire is the warm light.
+	var s := Sky.new()
+	var sm := ProceduralSkyMaterial.new()
+	sm.sky_top_color = Color(0.10, 0.14, 0.26)
+	sm.sky_horizon_color = Color(0.36, 0.30, 0.34)
+	sm.ground_horizon_color = Color(0.20, 0.18, 0.18)
+	sm.ground_bottom_color = Color(0.05, 0.05, 0.05)
+	sm.sky_energy_multiplier = 0.35
+	s.sky_material = sm
+	env.sky = s
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 0.6
+	# Dusk haze: the far ground fades into the sky.
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.12, 0.1, 0.12)
+	env.fog_density = 0.03
+	env.fog_sky_affect = 0.0
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-8, 120, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.light_color = Color(0.75, 0.62, 0.65)
+	sun.light_energy = 0.25
+	sun.shadow_enabled = true
+	add_child(sun)
+	camera(Vector3(1.7, campfire_h(1.7, 2.2) + 1.35, 2.2), Vector3(0.0, 0.2, -0.15), 40)
+
+	# Ground: forest floor, burned black in a ring round the fire (one shader, so raster and PT agree).
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var n := 120
+	var half := 30.0
+	var faces := PackedVector3Array()
+	for j in n:
+		for i in n:
+			var x0 := -half + 2.0 * half * i / n
+			var x1 := -half + 2.0 * half * (i + 1) / n
+			var z0 := -half + 2.0 * half * j / n
+			var z1 := -half + 2.0 * half * (j + 1) / n
+			var q := [Vector3(x0, campfire_h(x0, z0), z0), Vector3(x1, campfire_h(x1, z0), z0), Vector3(x1, campfire_h(x1, z1), z1), Vector3(x0, campfire_h(x0, z1), z1)]
+			for v in [q[0], q[1], q[2], q[0], q[2], q[3]]:
+				st.set_uv(Vector2(v.x, v.z))
+				st.add_vertex(v)
+				faces.append(v)
+	st.generate_normals()
+	st.generate_tangents()
+	var gsh := Shader.new()
+	gsh.code = """shader_type spatial;
+uniform sampler2D forest_albedo : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D forest_normal : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D forest_rough : filter_linear_mipmap, repeat_enable;
+uniform sampler2D burn_albedo : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D burn_normal : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D burn_rough : filter_linear_mipmap, repeat_enable;
+uniform vec2 fire = vec2(0.0);
+void fragment() {
+	vec2 uv = UV * 0.5;
+	float r = length(UV - fire);
+	float edge = texture(burn_rough, UV * 0.37).g;
+	float b = 1.0 - smoothstep(0.7, 1.4, r + 0.3 * (edge - 0.5));
+	ALBEDO = mix(texture(forest_albedo, uv).rgb, texture(burn_albedo, uv * 1.5).rgb, b);
+	NORMAL_MAP = mix(texture(forest_normal, uv).rgb, texture(burn_normal, uv * 1.5).rgb, b);
+	ROUGHNESS = mix(texture(forest_rough, uv).g, texture(burn_rough, uv * 1.5).g, b);
+}
+"""
+	var gm := ShaderMaterial.new()
+	gm.shader = gsh
+	for pair in [["forest", "forest_ground_04"], ["burn", "burned_ground_01"]]:
+		var dir := "res://ext/%s/" % pair[1]
+		gm.set_shader_parameter(pair[0] + "_albedo", ImageTexture.create_from_image(Image.load_from_file(dir + "Diffuse.jpg")))
+		gm.set_shader_parameter(pair[0] + "_normal", ImageTexture.create_from_image(Image.load_from_file(dir + "nor_gl.jpg")))
+		gm.set_shader_parameter(pair[0] + "_rough", ImageTexture.create_from_image(Image.load_from_file(dir + "Rough.jpg")))
+	st.set_material(gm)
+	var ground := MeshInstance3D.new()
+	ground.mesh = st.commit()
+	add_child(ground)
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var tri := ConcavePolygonShape3D.new()
+	tri.set_faces(faces)
+	cs.shape = tri
+	body.add_child(cs)
+	add_child(body)
+
+	# A ring of mossy stones (the rock set's six rocks, scaled to 25-35 cm, twice round) and dry branches leaned
+	# into a cone over the fire.
+	var rocks := gltf_scene("res://ext/rocks/rock_moss_set_01_1k.gltf")
+	var rock_meshes := []
+	for c in rocks.find_children("*", "MeshInstance3D", true, false):
+		rock_meshes.append(c)
+	var ring := 11
+	for k in ring:
+		var src: MeshInstance3D = rock_meshes[k % rock_meshes.size()]
+		var r := MeshInstance3D.new()
+		r.mesh = src.mesh
+		var a := TAU * k / ring
+		var p := Vector3(cos(a) * 0.5, 0, sin(a) * 0.5)
+		p.y = campfire_h(p.x, p.z) + 0.02
+		var sc := 0.11 + 0.025 * sin(3.7 * k)
+		r.transform = Transform3D(Basis(Vector3.UP, a * 1.7 + k).scaled(Vector3(sc, sc * 0.8, sc)), p)
+		add_child(r)
+	rocks.free()
+	var sticks := gltf_scene("res://ext/branches/dry_branches_medium_01_1k.gltf")
+	var stick_meshes := []
+	for c in sticks.find_children("*", "MeshInstance3D", true, false):
+		stick_meshes.append(c)
+	var base_y := campfire_h(0, 0)
+	for k in 7:
+		var src: MeshInstance3D = stick_meshes[k % stick_meshes.size()]
+		var m := MeshInstance3D.new()
+		m.mesh = src.mesh
+		var a := TAU * k / 7 + 0.3
+		# Leaned into a cone: foot on the ground, tip over the fire's centre.
+		var foot := Vector3(cos(a) * 0.3, base_y, sin(a) * 0.3)
+		var tip := Vector3(0.02 * cos(3.0 * a), base_y + 0.36, 0.02 * sin(3.0 * a))
+		var z := (tip - foot).normalized()
+		var x := z.cross(Vector3.UP).normalized()
+		var bz := Basis(x, z.cross(x), z)
+		m.transform = Transform3D(bz.scaled(Vector3.ONE * 0.45), (foot + tip) * 0.5)
+		add_child(m)
+	sticks.free()
+
+	var flow = ClassDB.instantiate("PhysXFlow3D")
+	flow.cell_size = 0.02
+	flow.smoke_density = 1.5
+	flow.combustion = true
+	# Flames about 0.7 m tall, as Heskestad's flame-height correlation gives for a ~50 kW campfire 0.4 m across:
+	# the gas cools out of its glow in about a third of a second of rise.
+	flow.cooling_rate = 4.5
+	flow.vorticity = 4.0
+	flow.buoyancy = 4.0 # hot gas rises fast and stretches into tongues
+	flow.temperature_range = 1.4
+	flow.smoke_buoyancy = -0.4 # cooled smoke is heavier than the dusk air and drifts down the slope
+	for k in flow_props:
+		flow.set(k, flow_props[k])
+	add_child(flow)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.position = Vector3(0, base_y + 0.05, 0)
+	em.shape = 1 # box: a bed of burning wood
+	em.size = Vector3(0.32, 0.06, 0.32)
+	em.fuel = 1.0
+	em.temperature = 1.0
+	em.burn = 0.0
+	em.smoke = 0.02
+	em.divergence = 0.3
+	em.velocity = Vector3(0, 1.0, 0)
+	flow.add_child(em)
+	em.flow = em.get_path_to(flow)
 
 func shot_fluid() -> void:
 	if not ClassDB.class_exists("PhysXParticleFluid3D"):

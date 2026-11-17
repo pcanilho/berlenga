@@ -58,6 +58,7 @@ struct RTSparseVolume {
 	Color smoke_color = Color(1, 1, 1);
 	float emission_scale = 0.0; // the heat ramp's radiance scale (the gas emits it times its extinction); 0: not emissive
 	float temperature_range = 1.0;
+	bool emission_proxy_light = false; // a light stands in for the glow's lighting (PhysXFlow3D.fire_light): the glow then shows only to camera and mirror rays
 	Color heat_ramp[8];
 };
 

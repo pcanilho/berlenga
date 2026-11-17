@@ -7993,7 +7993,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			vp.medium[3] = vol.density_majorant;
 			vp.emission[0] = vol.emission_scale;
 			vp.emission[1] = vol.temperature_range > 0.0f ? 1.0f / vol.temperature_range : 1.0f;
-			vp.emission[2] = vol.emission_scale > 0.0f ? 1.0f : 0.0f;
+			vp.emission[2] = vol.emission_scale > 0.0f ? (vol.emission_proxy_light ? 2.0f : 1.0f) : 0.0f;
 			for (int i = 0; i < 8; i++) {
 				vp.heat_ramp[i][0] = vol.heat_ramp[i].r;
 				vp.heat_ramp[i][1] = vol.heat_ramp[i].g;

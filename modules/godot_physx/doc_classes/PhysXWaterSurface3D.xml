@@ -43,18 +43,6 @@
 				The plunging lips of the last tick: [code]crest_points[/code], [code]vertices[/code], [code]triangles[/code], [code]spray_rate[/code] (droplets per second) and [code]cpu_ms[/code] (time to build them).
 			</description>
 		</method>
-		<method name="get_crest_sheet_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Torn spray sheets alive at the last physics tick (see [member crest_sheets]).
-			</description>
-		</method>
-		<method name="get_crest_spray_rate" qualifiers="const">
-			<return type="float" />
-			<description>
-				Droplets a second leaving the open sea's crests at the last update of [member crest_spray] (0 when off, calm or out of reach).
-			</description>
-		</method>
 		<method name="get_caustics_half_extent" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -91,6 +79,30 @@
 				The caustics repeat with the ocean waves, every [member ocean_domain_size]. A receiver can fold its world XZ into the tile around [method get_caustics_origin] ([code]p -= tile * round((p - origin) / tile)[/code]) before projecting, so caustics reach the whole seabed -- all along a beach -- not just the simulated square. The map spans a little more than one tile, so there's no seam.
 			</description>
 		</method>
+		<method name="get_contact_foam_cells" qualifiers="const">
+			<return type="int" />
+			<description>
+				Cells of the last contact map with a contact foam ring on the water (benches and tests).
+			</description>
+		</method>
+		<method name="get_contact_foam_rays" qualifiers="const">
+			<return type="int" />
+			<description>
+				Rays the last contact map took (a coarse pass, then the full resolution only near the waterline).
+			</description>
+		</method>
+		<method name="get_crest_sheet_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Torn spray sheets alive at the last physics tick (see [member crest_sheets]).
+			</description>
+		</method>
+		<method name="get_crest_spray_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Droplets a second leaving the open sea's crests at the last update of [member crest_spray] (0 when off, calm or out of reach).
+			</description>
+		</method>
 		<method name="get_detail_slope_variance" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -113,6 +125,16 @@
 			<return type="float" />
 			<description>
 				The foam threshold in use: [member foam_threshold], or with [member whitecap_auto] on, the threshold steered to the wind's whitecap cover.
+			</description>
+		</method>
+		<method name="get_flow_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+			</description>
+		</method>
+		<method name="get_live_flow_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
 			</description>
 		</method>
 		<method name="get_outflow_discharge" qualifiers="const">
@@ -146,6 +168,12 @@
 				Whether the active camera was under the surface (by [method sample_height] at the camera) when the node last updated the underwater view. Always [code]false[/code] while [member underwater_enabled] is off or the camera is out of reach of the water.
 			</description>
 		</method>
+		<method name="is_contact_foam_ready" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True once the contact map has been measured and the water shows its contact foam, including the second measure shortly after the start (for bodies built late) and with no measure in progress.
+			</description>
+		</method>
 		<method name="is_ripple_resting" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -159,11 +187,22 @@
 				Whether there is water at [param world_pos]'s XZ, at the ripple grid's resolution: inside the [member surface_mesh] footprint, and not over dry seabed ([member seabed_from_floor]). With a [member render_extent] past the simulated square, the open water out to the edge of the rendered surface counts too, carrying on the seabed at the square's edge the way the surface is drawn (the sea side stays sea, a beach stays dry). [code]world_pos.y[/code] is ignored.
 			</description>
 		</method>
+		<method name="rebake_flow">
+			<return type="void" />
+			<description>
+			</description>
+		</method>
 		<method name="recenter">
 			<return type="void" />
 			<param index="0" name="world_position" type="Vector3" />
 			<description>
 				Moves the simulated ripple square to [param world_position]'s XZ (the node's height is kept), for a sea that follows the camera or the player. Unlike moving the node or changing [member domain_size], it doesn't rebuild the surface: the mesh, the textures and the FFT ocean (sampled in world space, so its waves stay where they are) carry on, and only the ripples are cleared -- no frame without water. A surface with a [member surface_mesh] footprint or a per-cell seabed ([member seabed_from_floor]) depends on where the square is, so it still rebuilds.
+			</description>
+		</method>
+		<method name="remeasure_contact_foam">
+			<return type="void" />
+			<description>
+				Measures the contact map again over the next physics ticks (after bodies were added, moved or removed near the camera). The old map stays shown meanwhile.
 			</description>
 		</method>
 		<method name="remeasure_seabed">
@@ -178,6 +217,12 @@
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
 				Water depth in meters at [param world_pos]'s XZ: the surface as [method sample_height] reads it, over the seabed [member seabed_from_floor] measured (or [member depth] without one). Zero or below on dry ground. Safe from the physics thread.
+			</description>
+		</method>
+		<method name="sample_flow" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
 			</description>
 		</method>
 		<method name="sample_height" qualifiers="const">
@@ -289,6 +334,24 @@
 		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
 			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
 		</member>
+		<member name="contact_foam" type="bool" setter="set_contact_foam" getter="get_contact_foam" default="true">
+			Rock contact foam: a ring of white water where the sea meets a steep face (a sea stack, a boulder, a cliff foot), [member contact_foam_width] wide, widening as each crest arrives and drawing back in the trough, churned solid at the rock and lacy further out, plus wash over rock tops up to [member contact_foam_depth] under the surface. Read from a top-down height map of the static bodies in [member contact_foam_mask] over [member contact_foam_extent] round the camera, measured by rays (as the seabed is) and turned into the distance to the contact (an exact Euclidean distance transform) and the face's steepness there, so gentle beaches are left to the shore foam. The map is re-centred as the camera moves, spread over several physics ticks.
+		</member>
+		<member name="contact_foam_depth" type="float" setter="set_contact_foam_depth" getter="get_contact_foam_depth" default="0.6">
+			How deep under the surface (m) a rock top still washes white as crests pass over it. 0 = no wash, only the rings.
+		</member>
+		<member name="contact_foam_extent" type="float" setter="set_contact_foam_extent" getter="get_contact_foam_extent" default="96.0">
+			The side (m) of the square round the camera the contact map covers, at 0.25 m cells. Re-centred when the camera has moved an eighth of it.
+		</member>
+		<member name="contact_foam_mask" type="int" setter="set_contact_foam_mask" getter="get_contact_foam_mask" default="4294967295">
+			Physics layers whose static bodies the contact map measures. Bodies that are not static (floaters, boats, players) are always stepped through.
+		</member>
+		<member name="contact_foam_strength" type="float" setter="set_contact_foam_strength" getter="get_contact_foam_strength" default="0.9">
+			The contact foam's opacity at the rock.
+		</member>
+		<member name="contact_foam_width" type="float" setter="set_contact_foam_width" getter="get_contact_foam_width" default="1.2">
+			The contact foam ring's width (m) at mean water: it widens to about 1.6 times this under a crest and narrows to about half in a trough, with older, lacier foam out to three times it.
+		</member>
 		<member name="contact_wetness" type="bool" setter="set_contact_wetness" getter="get_contact_wetness" default="true">
 			Where the sea reached stays wet in the weather's contact wetness ([code]WeatherMap3D.contact_wetness_enabled[/code]), so sand, rocks, plants and props on the shore stay dark and glossy up to where the waves ran and dry with the weather (much slower than [member wet_sand_dry_time], which is the sea's own wet sand). The swash's wetness is read back from the GPU every eighth step, over land and still water shallower than half a metre (piers and hulls over deeper water are left alone). Needs a varying depth ([member seabed_from_floor]).
 		</member>
@@ -307,20 +370,28 @@
 		<member name="cull_margin" type="float" setter="set_cull_margin" getter="get_cull_margin" default="0.0">
 			Extra room (m) added around the surface before it is culled. The surface's bounds already allow for 4 times [member wave_amplitude], or 2 m if that is larger. Raise this for a material that displaces the surface further, such as a whirlpool or a tsunami wall, if the water disappears at grazing angles. A larger margin draws the water more often when it is off-screen.
 		</member>
+		<member name="current" type="Vector2" setter="set_current" getter="get_current" default="Vector2(0, 0)">
+		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>
-		<member name="detail_waves" type="bool" setter="set_detail_waves" getter="get_detail_waves" default="true">
-			Short waves the finest cascade's grid cannot carry (from its Nyquist wavelength down to about 8 cm), on a small FFT tile of their own, for the per-pixel normals, and displaced into the open sea mesh near the camera (see [member near_mesh_step]): crests get their ripples and glitter. Where they are smaller than a pixel they fade out and their slope variance goes to the roughness (Bruneton, Neyret and Holzschuch 2010), so the far sea keeps its glitter without shimmering. One more 128² FFT a step.
-		</member>
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
 			Still-water depth in meters used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion and spectrum: in shallow water the long waves carry less energy (TMA spectrum), so set it to the real depth of open water (tens of meters for a sea).
+		</member>
+		<member name="detail_waves" type="bool" setter="set_detail_waves" getter="get_detail_waves" default="true">
+			Short waves the finest cascade's grid cannot carry (from its Nyquist wavelength down to about 8 cm), on a small FFT tile of their own, for the per-pixel normals, and displaced into the open sea mesh near the camera (see [member near_mesh_step]): crests get their ripples and glitter. Where they are smaller than a pixel they fade out and their slope variance goes to the roughness (Bruneton, Neyret and Holzschuch 2010), so the far sea keeps its glitter without shimmering. One more 128² FFT a step.
 		</member>
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why. Ignored when [member surface_mesh] is set: the ripple grid is then fitted to the footprint's bounds.
 		</member>
 		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
 			How far the wind has blown over open water, in meters. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few meters give tiny, short ripples, kilometers give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
+		</member>
+		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="1.0">
+		</member>
+		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="8.0">
+		</member>
+		<member name="flow_period" type="float" setter="set_flow_period" getter="get_flow_period" default="2.0">
 		</member>
 		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="get_foam_enabled" default="true">
 			Whether whitecap foam forms at all. Turn it off for water that should never show foam, like a pool or a sheltered pond; turning it off also clears any foam already there. Foam only comes from the ocean waves folding (see [member foam_threshold]) -- bodies disturbing the water don't create it.
@@ -339,6 +410,8 @@
 		</member>
 		<member name="level_from_flows" type="bool" setter="set_level_from_flows" getter="get_level_from_flows" default="false">
 			The level settles where the outlets ([method set_outflow]) pass what flows in (the rivers' inflows plus [member catchment_inflow]): the steady state, since a lake takes hours to days to settle. When it moves by more than a centimetre, [member water_level] changes and the rivers leaving and entering rebuild on the new level.
+		</member>
+		<member name="live_flow" type="bool" setter="set_live_flow" getter="is_live_flow" default="true">
 		</member>
 		<member name="mesh_detail" type="int" setter="set_mesh_detail" getter="get_mesh_detail" default="1">
 			Rendered mesh cells per [member ocean_grid_resolution] cell (1 to 4). A curling breaker needs cells of about a tenth of the wave's height to fold over cleanly; the vertex and path tracing costs grow with the square of this.
@@ -433,6 +506,8 @@
 		</member>
 		<member name="underwater_meniscus" type="float" setter="set_underwater_meniscus" getter="get_underwater_meniscus" default="0.35">
 			How dark the thin line is where the surface crosses the lens, with [member underwater_enabled]. [code]0.0[/code] draws none.
+		</member>
+		<member name="wall_friction" type="float" setter="set_wall_friction" getter="get_wall_friction" default="1.5">
 		</member>
 		<member name="water_level" type="float" setter="set_water_level" getter="get_water_level" default="0.0">
 			Mean world-space Y of the surface -- place the node here rather than relying on its own transform, since the rendered mesh and both simulation layers are displaced relative to this baseline.

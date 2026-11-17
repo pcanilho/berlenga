@@ -42,13 +42,18 @@
 #include "core/os/os.h"
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/light_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
+#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/environment.h"
+#include "scene/resources/gradient_texture.h"
+#include "scene/resources/particle_process_material.h"
+#include "scene/resources/shader.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
@@ -335,6 +340,7 @@ bool PhysXFlow3D::prepare_traced() {
 		v.anisotropy = traced_anisotropy;
 		v.smoke_color = traced_smoke_color;
 		v.emission_scale = traced_emission;
+		v.emission_proxy_light = traced_proxy_light;
 		v.temperature_range = traced_temperature_range;
 		for (int i = 0; i < 8; i++) {
 			v.heat_ramp[i] = traced_heat[i];
@@ -1210,7 +1216,162 @@ void PhysXFlow3D::_notification(int p_what) {
 			// few grids that runs RenderingDevice's staging memory out, which
 			// stalls the frame, which makes for more ticks, and so on.
 			_step(get_process_delta_time());
+			_update_fire(get_process_delta_time());
 		} break;
+	}
+}
+
+// Fire: where emitters feed fuel (with combustion on) or gas hotter than ignition_temperature.
+// - Fire light: the gas's glow lights nothing in raster, so a point light stands in the flames, as engines light
+//   fire (Unreal's Niagara light renderer, Frostbite). It pulses at the flame's puffing frequency, f = 1.5 / sqrt(D)
+//   Hz for a base D metres across (Cetegen and Ahmed 1993, "Experiments on the periodic instability of buoyant
+//   plumes and pool fires", Combustion and Flame 93): about 2 Hz for a campfire. The path tracer keeps it too, as the
+//   fire's light source for next event estimation (a proxy light for an emissive volume): the glow is met only by
+//   chance on bounce rays, too rarely to light the ground at a few samples a pixel. The traced glow then shows only to
+//   camera and mirror rays, so the fire is not counted twice (RTVolume::emission_proxy_light).
+// - Embers: GPU particles thrown up from the fire's base that cool along their flight, their colour the blackbody
+//   colour of their temperature (about 1300 K yellow-orange to 800 K dull red), drawn as emissive billboards.
+void PhysXFlow3D::_update_fire(double p_delta) {
+	const bool editor = Engine::get_singleton()->is_editor_hint();
+	Vector3 centre;
+	float weight = 0.0f, diameter = 0.0f;
+	if ((fire_light || embers) && !editor && is_inside_tree()) {
+		for (Node *n : get_tree()->get_nodes_in_group(PhysXFlowEmitter3D::GROUP)) {
+			PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(n);
+			if (e == nullptr || !e->is_enabled() || !e->is_visible_in_tree() || e->get_flow() != this) {
+				continue;
+			}
+			const bool burning = (combustion && e->get_fuel() > 0.0f) || e->get_temperature() >= MAX(ignition_temperature, 0.05f);
+			if (!burning) {
+				continue;
+			}
+			const Vector3 s = e->get_global_transform().basis.get_scale();
+			const float d = e->get_shape() == PhysXFlowEmitter3D::SHAPE_BOX ? 0.5f * (e->get_size().x * s.x + e->get_size().z * s.z) : 2.0f * e->get_radius() * MAX(s.x, s.z);
+			const float w = MAX(e->get_fuel() + e->get_temperature(), 0.01f) * MAX(d, 0.01f);
+			centre += e->get_global_position() * w;
+			diameter += d * w;
+			weight += w;
+		}
+	}
+	const bool any = weight > 0.0f;
+	if (any) {
+		centre /= weight;
+		diameter = MAX(diameter / weight, 0.05f);
+	}
+	fire_clock += p_delta;
+
+	const bool light_on = any && fire_light && fire_light_energy > 0.0f;
+	{
+		MutexLock lock(scatter_mutex);
+		traced_proxy_light = light_on;
+	}
+	if (light_on && fire_light_node == nullptr) {
+		fire_light_node = memnew(OmniLight3D);
+		fire_light_node->set_shadow(true);
+		fire_light_node->set_param(Light3D::PARAM_SHADOW_BIAS, 0.05f);
+		add_child(fire_light_node, false, INTERNAL_MODE_BACK);
+	}
+	if (fire_light_node) {
+		fire_light_node->set_visible(light_on);
+	}
+	if (light_on) {
+		// Flames stand about twice their base's width above it; the light sits in their brightest part.
+		fire_light_node->set_global_position(centre + Vector3(0.0f, 0.8f * diameter, 0.0f));
+		const float f = 1.5f / Math::sqrt(diameter);
+		const double t = fire_clock * Math::TAU * f;
+		const float pulse = 1.0f + 0.16f * Math::sin(t) + 0.08f * Math::sin(1.73 * t + 1.3) + 0.05f * Math::sin(3.11 * t + 0.4);
+		// Flame colour about 1,800 K, as the default heat ramp's warm end.
+		Color c(1.0f, 0.52f, 0.2f);
+		if (heat_ramp.is_valid() && heat_ramp->get_point_count() > 0) {
+			c = heat_ramp->get_color_at_offset(0.65f);
+			const float m = MAX(c.r, MAX(c.g, c.b));
+			c = m > 0.0f ? Color(c.r / m, c.g / m, c.b / m) : Color(1.0f, 0.52f, 0.2f);
+		}
+		fire_light_node->set_color(c);
+		// Heat release grows with the base's area; a 0.5 m campfire is about 2.5 here.
+		const float area = diameter * diameter / 0.25f;
+		fire_light_node->set_param(Light3D::PARAM_ENERGY, fire_light_energy * 2.5f * MIN(area, 16.0f) * pulse);
+		fire_light_node->set_param(Light3D::PARAM_RANGE, 5.0f + 12.0f * diameter);
+		// Flames are a broad source, not a point: the shadows of logs and stones round them are soft.
+		fire_light_node->set_param(Light3D::PARAM_SIZE, 0.6f * diameter);
+	}
+
+	const bool embers_on = any && embers && ember_rate > 0.0f;
+	if (embers_on && ember_node == nullptr) {
+		ember_node = memnew(GPUParticles3D);
+		ember_node->set_use_local_coordinates(false);
+		ember_node->set_lifetime(3.0);
+		Ref<ParticleProcessMaterial> pm;
+		pm.instantiate();
+		pm->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_SPHERE);
+		pm->set_direction(Vector3(0, 1, 0));
+		pm->set_spread(22.0f);
+		pm->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.8f);
+		pm->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 2.6f);
+		// Carried up by the plume, then falling as they cool: a weak net gravity and air drag.
+		pm->set_gravity(Vector3(0, -0.6f, 0));
+		pm->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 0.2f);
+		pm->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 0.6f);
+		pm->set_turbulence_enabled(true);
+		pm->set_turbulence_noise_strength(1.2f);
+		pm->set_turbulence_noise_scale(1.5f);
+		pm->set_param_min(ParticleProcessMaterial::PARAM_TURB_INFLUENCE_OVER_LIFE, 0.05f);
+		pm->set_param_max(ParticleProcessMaterial::PARAM_TURB_INFLUENCE_OVER_LIFE, 0.15f);
+		pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.5f);
+		pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 1.2f);
+		pm->set_lifetime_randomness(0.6);
+		// Blackbody colours of a cooling ember (1,300 K to 800 K), fading out as it goes dark.
+		Ref<Gradient> g;
+		g.instantiate();
+		g->set_color(0, Color(1.0f, 0.62f, 0.26f, 1.0f));
+		g->set_color(1, Color(0.35f, 0.02f, 0.0f, 0.0f));
+		g->add_point(0.35f, Color(1.0f, 0.42f, 0.1f, 1.0f));
+		g->add_point(0.75f, Color(0.75f, 0.12f, 0.02f, 0.8f));
+		Ref<GradientTexture1D> gt;
+		gt.instantiate();
+		gt->set_gradient(g);
+		pm->set_color_ramp(gt);
+		ember_node->set_process_material(pm);
+		Ref<QuadMesh> quad;
+		quad.instantiate();
+		quad->set_size(Vector2(0.012f, 0.012f));
+		Ref<Shader> sh;
+		sh.instantiate();
+		sh->set_code(R"(shader_type spatial;
+render_mode billboard_particles, cull_disabled, shadows_disabled;
+uniform float energy = 8.0;
+void fragment() {
+	float r = length(UV - 0.5) * 2.0;
+	if (r > 1.0 || COLOR.a < 0.02) {
+		discard;
+	}
+	ALBEDO = vec3(0.0);
+	EMISSION = COLOR.rgb * energy * COLOR.a * (1.0 - r * r);
+}
+)");
+		Ref<ShaderMaterial> sm;
+		sm.instantiate();
+		sm->set_shader(sh);
+		quad->set_material(sm);
+		ember_node->set_draw_pass_mesh(0, quad);
+		ember_node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		add_child(ember_node, false, INTERNAL_MODE_BACK);
+	}
+	if (ember_node) {
+		ember_node->set_emitting(embers_on);
+		ember_node->set_visible(embers_on || ember_node->is_emitting());
+	}
+	if (embers_on) {
+		ember_node->set_global_position(centre);
+		const int amount = CLAMP(int(Math::ceil(ember_rate * 3.0f)), 1, 20000);
+		if (ember_node->get_amount() != amount) {
+			ember_node->set_amount(amount);
+		}
+		Ref<ParticleProcessMaterial> pm = ember_node->get_process_material();
+		if (pm.is_valid()) {
+			pm->set_emission_sphere_radius(0.35f * diameter);
+		}
+		ember_node->set_visibility_aabb(AABB(Vector3(-4, -1, -4), Vector3(8, 9, 8)));
 	}
 }
 
@@ -1265,6 +1426,14 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_heat_ramp"), &PhysXFlow3D::get_heat_ramp);
 	ClassDB::bind_method(D_METHOD("set_temperature_range", "range"), &PhysXFlow3D::set_temperature_range);
 	ClassDB::bind_method(D_METHOD("get_temperature_range"), &PhysXFlow3D::get_temperature_range);
+	ClassDB::bind_method(D_METHOD("set_fire_light", "enabled"), &PhysXFlow3D::set_fire_light);
+	ClassDB::bind_method(D_METHOD("is_fire_light"), &PhysXFlow3D::is_fire_light);
+	ClassDB::bind_method(D_METHOD("set_fire_light_energy", "energy"), &PhysXFlow3D::set_fire_light_energy);
+	ClassDB::bind_method(D_METHOD("get_fire_light_energy"), &PhysXFlow3D::get_fire_light_energy);
+	ClassDB::bind_method(D_METHOD("set_embers", "enabled"), &PhysXFlow3D::set_embers);
+	ClassDB::bind_method(D_METHOD("is_embers"), &PhysXFlow3D::is_embers);
+	ClassDB::bind_method(D_METHOD("set_ember_rate", "rate"), &PhysXFlow3D::set_ember_rate);
+	ClassDB::bind_method(D_METHOD("get_ember_rate"), &PhysXFlow3D::get_ember_rate);
 	ClassDB::bind_method(D_METHOD("set_emission_strength", "strength"), &PhysXFlow3D::set_emission_strength);
 	ClassDB::bind_method(D_METHOD("get_emission_strength"), &PhysXFlow3D::get_emission_strength);
 	ClassDB::bind_method(D_METHOD("set_shadow_steps", "steps"), &PhysXFlow3D::set_shadow_steps);
@@ -1329,6 +1498,12 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "temperature_range", PROPERTY_HINT_RANGE, "0.01,20,0.01,or_greater"), "set_temperature_range", "get_temperature_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission_strength", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater"), "set_emission_strength", "get_emission_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shadow_steps", PROPERTY_HINT_RANGE, "0,128,1"), "set_shadow_steps", "get_shadow_steps");
+	ADD_GROUP("Fire", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_light"), "set_fire_light", "is_fire_light");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fire_light_energy", PROPERTY_HINT_RANGE, "0,8,0.01,or_greater"), "set_fire_light_energy", "get_fire_light_energy");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "embers"), "set_embers", "is_embers");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ember_rate", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:/s"), "set_ember_rate", "get_ember_rate");
+
 	ADD_GROUP("Light Scattering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_scattering"), "set_light_scattering", "is_light_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ambient_scattering"), "set_ambient_scattering", "is_ambient_scattering");

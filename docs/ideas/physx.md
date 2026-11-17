@@ -355,6 +355,32 @@ extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
 - GPU cost: two passes a frame (one over the fluid, one over a 16k ring);
   the PC queue measures it.
 
+### Flow: fire light and embers (campfire)
+
+Paulo picked a campfire showcase (17 Nov 2026): combustion, heat glow lighting
+the ground, smoke resting on the slope.
+
+- Fire: NVIDIA Flow's own combustion (fuel burns above ignition_temperature
+  into heat and smoke), drawn by the heat ramp.
+- Light in raster (`fire_light`, on): the gas's glow lights nothing in
+  raster, so a shadowed point light stands in the flames, as engines light
+  fire (Unreal's Niagara light renderer, Frostbite). It pulses at the flame's
+  puffing frequency, f = 1.5 / sqrt(D) Hz for a base D metres across
+  (Cetegen and Ahmed 1993, "Experiments on the periodic instability of
+  buoyant plumes and pool fires", Combustion and Flame 93): about 2 Hz for a
+  0.4 m campfire. The path tracer keeps it as the flame's proxy light for next
+  event estimation: the traced glow lights a surface only when a bounce ray
+  happens to hit it, so at a few samples a pixel the ground around the fire
+  stayed dark (first PT check). With the proxy on, the glow is dropped on rays
+  leaving a diffuse bounce or a smoke scatter, so the fire is not counted
+  twice; camera and mirror rays still see it.
+- Embers (`embers`, on): GPU particles from the fire's base, drag and a weak
+  net gravity with turbulence, coloured along the blackbody colours of a
+  cooling ember (about 1,300 K to 800 K), emissive billboards that PT draws.
+  They do not read the gas velocity (that needs a Flow readback).
+- Smoke on the slope: `smoke_buoyancy` below zero makes cooled smoke heavier
+  than the air, and the terrain floor keeps it on the ground.
+
 ### Flow: terrain under the gas
 
 Flow solids are boxes, spheres and capsules only, so heightmaps and trimeshes

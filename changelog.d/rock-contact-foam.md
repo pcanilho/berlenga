@@ -1,0 +1,1 @@
+- Water: rock contact foam. A ring of white water where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and wash over rock tops just under the surface (`contact_foam`, on by default).
