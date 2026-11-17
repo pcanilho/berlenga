@@ -524,6 +524,9 @@ private:
 	// i.e. always from a moment before physics has had any chance to
 	// overwrite it.
 	Vector3 spawn_scale = Vector3(1, 1, 1);
+	// The node transform last written from the intact dynamic body (or spawned at): a different one at the next step
+	// was set by a script (a spawn, a respawn), and the body is moved there.
+	Transform3D synced;
 
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);

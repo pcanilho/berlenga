@@ -1,0 +1,1 @@
+- Water: waterfall mist wets the rock and ground it drifts over, by drop deposition against drying (`PhysXWaterMist3D.wet_surfaces`, on).

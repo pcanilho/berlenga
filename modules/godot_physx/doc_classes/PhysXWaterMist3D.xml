@@ -11,6 +11,14 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="deposition_velocity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="radius_um" type="float" />
+			<param index="1" name="wind_speed" type="float" />
+			<description>
+				The speed (m/s) at which drops of [param radius_um] micrometres settle onto rock and plants in a wind of [param wind_speed] m/s: Stokes settling plus impaction, about 2% of the wind (fog interception).
+			</description>
+		</method>
 		<method name="advance">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -77,6 +85,9 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="15.0">
 			Grid steps a second.
+		</member>
+		<member name="wet_surfaces" type="bool" setter="set_wet_surfaces" getter="get_wet_surfaces" default="true">
+			The mist wets what it drifts against: each column of the box writes into the [code]WeatherMap3D[/code]'s contact wetness the wetness at which the drops it deposits (see [method deposition_velocity]) balance drying, against a film of about 50 g/m² that looks wet. Materials that read the weather's wetness darken and smooth there.
 		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			Wind without a [code]WeatherMap3D[/code], m/s.

@@ -1038,7 +1038,7 @@
     "rock_detail_enabled"
    ],
    "note": "",
-   "what": "steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.",
+   "what": "steep rock shows bedding planes and breaks into irregular jointed blocks, and scree and till show loose stones that stand out of the gravel in parallax with their own shadows, also path traced; no textures and no stretching on any face.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1754,6 +1754,7 @@
     "fall_min_height",
     "fall_mist_amount",
     "PhysXWaterMist3D",
+    "wet_surfaces",
     "edge_lap_height",
     "edge_relief",
     "edge_foam"

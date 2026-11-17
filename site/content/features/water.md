@@ -44,9 +44,9 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 
-  ![Open sea with one wave layer and with three](media/ocean-swell.jpg)
+  ![Deep open sea under overcast sky with three wave layers, raster](media/ocean-swell.jpg)
 
-  *Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
+  *Ocean swell: three wave layers run long swell under the chop with no repeating pattern.*
 
 - **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
 
@@ -202,7 +202,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
     *Waterfall: the sheet breaks up into white water above the pool.*
 
-  - Waterfall mist (`fall_mist_amount`, `PhysXWaterMist3D`): a simulated mist grid per fall, drawn as a raster FogVolume and path traced.
+  - Waterfall mist (`fall_mist_amount`, `PhysXWaterMist3D`): a simulated mist grid per fall, drawn as a raster FogVolume and path traced; the mist wets the rock and ground it drifts over (`wet_surfaces`).
 
     ![A waterfall into a pool, raster, before and with mist](media/waterfall-mist.jpg)
 

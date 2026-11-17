@@ -100,6 +100,10 @@ private:
 	bool built = false;
 	double wind_time = 0.0;
 	Transform3D last_anchor_xform;
+	// Where the cloth was built, and whether it has stepped since: a script move before the first step (placing a
+	// spawned cloth) rebuilds it there. Once it runs, the cloth owns its world positions.
+	Transform3D built_xform;
+	bool stepped = false;
 	LocalVector<int> pinned_index_cache; // resolved pin set (mode + explicit)
 
 	PackedVector3Array render_verts;

@@ -65,6 +65,10 @@ class PhysXWaterMist3D : public Node3D {
 	float diffusion = 0.5f; // m^2/s
 	float update_rate = 15.0f; // Hz
 	bool emitting = true;
+	bool wet_surfaces = true;
+	double wet_accum = 0.0;
+	LocalVector<float> wet_cells;
+	void _wet_surfaces();
 
 	Vector3i dims;
 	Vector3 grid_min; // world
@@ -129,6 +133,13 @@ public:
 	float get_diffusion() const { return diffusion; }
 	void set_update_rate(float p_rate);
 	float get_update_rate() const { return update_rate; }
+	// The mist wets what it drifts against: the WeatherMap3D's contact wetness under the box takes, per column,
+	// the wetness at which the drops deposited balance what dries (weather contact drying time).
+	void set_wet_surfaces(bool p_enabled);
+	bool get_wet_surfaces() const { return wet_surfaces; }
+	// The deposition velocity (m/s) of drops of this radius on rock and plants in a wind of this speed: Stokes
+	// settling plus impaction, about 2% of the wind (fog interception, Lovett 1984; Katata et al. 2008).
+	static float deposition_velocity(float p_radius_um, float p_wind_speed);
 	void set_emitting(bool p_emitting);
 	bool is_emitting() const { return emitting; }
 
