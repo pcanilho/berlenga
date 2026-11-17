@@ -1154,6 +1154,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud on vehicles",
+   "settings": [
+    "PhysXVehicle3D.body_mud"
+   ],
+   "note": "",
+   "what": "tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
