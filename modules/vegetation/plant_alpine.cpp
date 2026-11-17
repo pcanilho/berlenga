@@ -456,6 +456,8 @@ void PlantGenerator::_build_alpine_toadflax() {
 // The alpine sets (docs/ideas/vegetation.md, "Alpine and scree plants"): above the treeline by the
 // climate map's mean annual temperature, sorted by curvature (ridges blown free of snow, hollows
 // where it lies late), the sun and the scree.
+static constexpr float ALP_TREELINE_SEASON = 6.4f; // Growing season mean at the treeline, C.
+
 TypedArray<Resource> PlantGenerator::make_alpine(AlpineStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season) {
 	using P = PlantGenerator;
 	struct AlpineSpec {
@@ -523,15 +525,23 @@ TypedArray<Resource> PlantGenerator::make_alpine(AlpineStand p_stand, int p_vari
 		sp->set_density(f.density * get_presence(f.preset, p_season));
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
 		sp->set_align_to_ground(f.align);
-		// Above the treeline: the alpine belt from about 2 C mean annual temperature (Körner and
-		// Paulsen 2004), faded over 1.5 C so the treeline is an ecotone, up to the nival belt.
-		sp->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-8.0f, 1.5f));
-		sp->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 1.5f);
+		// Above the treeline, which is set by the growing season's warmth, not the year's: trees stop
+		// where the season (days over 0.9 C) averages 6.4 C (Paulsen and Körner 2014). A mean annual
+		// band would miss oceanic mountains, mild in winter but cool all summer, whose treeline lies
+		// far lower (Scotland about 650 m). Faded over 0.8 C so the treeline is an ecotone; only polar
+		// cold (mean annual under -12 C) stops the plants.
+		sp->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(-100.0f, ALP_TREELINE_SEASON));
+		sp->set_rule_fade(PlantSpecies::RULE_SEASON_TEMPERATURE, 0.8f);
+		sp->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(-12.0f, 100.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 2.0f);
 		switch (p_stand) {
 			case ALPINE_FELLFIELD:
 				// Convex ground (curvature negative), blown free of snow; up to steep gravel.
 				sp->set_rule_range(PlantSpecies::RULE_CURVATURE, Vector2(-1000.0f, -0.001f));
 				sp->set_rule_fade(PlantSpecies::RULE_CURVATURE, 0.002f);
+				// Wind-blasted ridges hold alpine heath below the climatic treeline, most of all in
+				// oceanic mountains (Grace 1989; Crawford 2008, "Plants at the Margin").
+				sp->set_rule_range(PlantSpecies::RULE_SEASON_TEMPERATURE, Vector2(-100.0f, ALP_TREELINE_SEASON + 1.0f));
 				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 35.0f));
 				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
 				sp->set_rule_range(PlantSpecies::RULE_TALUS, Vector2(0.0f, 0.4f));

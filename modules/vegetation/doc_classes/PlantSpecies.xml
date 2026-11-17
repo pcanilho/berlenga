@@ -53,6 +53,14 @@
 				Returns the weight of [param value] against [param rule]: 1 inside the range, falling to 0 over the fade (smoothstep), 0 beyond.
 			</description>
 		</method>
+		<method name="season_temperature" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="january" type="float" />
+			<param index="1" name="july" type="float" />
+			<description>
+				The growing season's mean temperature for a place with these January and July means, on the annual harmonic: the mean over the days whose mean is at least 0.9 C, or [code]-10[/code] when there are fewer than 94 such days (Paulsen and Körner 2014). Trees stop where it falls to 6.4 C, whatever the mean annual temperature, so oceanic mountains with mild winters and cool summers have low treelines. [constant RULE_SEASON_TEMPERATURE] uses it.
+			</description>
+		</method>
 		<method name="set_rule_fade">
 			<return type="void" />
 			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
@@ -224,6 +232,12 @@
 		<member name="shade_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member shade_range].
 		</member>
+		<member name="season_temperature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member season_temperature_range], C.
+		</member>
+		<member name="season_temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
+			Range of [constant RULE_SEASON_TEMPERATURE], C.
+		</member>
 		<member name="shade_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Canopy shade (0 open sky, 1 dense crown) where the species grows, from the canopy species placed before it by a [VegetationField3D]: for example [code]Vector2(0.4, 1)[/code] for bilberry, ferns and mosses, [code]Vector2(0, 0.3)[/code] for meadow plants. Ignored outside a [VegetationField3D] (a [GrassField3D] has no canopy).
 		</member>
@@ -367,7 +381,10 @@
 		<constant name="RULE_DUNE" value="18" enum="Rule">
 			Coastal dune stability, [code]0[/code] bare moving sand to [code]1[/code] fixed under marram ([method TerrainGenerator3D.get_dune_stability]); [code]-1[/code] off the dune sand. Only applied where the map's [member TerrainDataMap3D.geology_source] has built dunes.
 		</constant>
-		<constant name="RULE_MAX" value="19" enum="Rule">
+		<constant name="RULE_SEASON_TEMPERATURE" value="19" enum="Rule">
+			The growing season's mean temperature, C ([method season_temperature]), from the map's January and July means. Needs the map's climate; only worked out for species whose range is narrower than the default.
+		</constant>
+		<constant name="RULE_MAX" value="20" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

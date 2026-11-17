@@ -60,6 +60,29 @@ PlantSpecies::PlantSpecies() {
 	fades[RULE_SPRAY] = 0.15f;
 	ranges[RULE_LITTER] = Vector2(0.0f, 1.0f);
 	ranges[RULE_DUNE] = Vector2(-1.0f, 1.0f);
+	ranges[RULE_SEASON_TEMPERATURE] = Vector2(-100.0f, 100.0f);
+}
+
+float PlantSpecies::season_temperature(float p_january, float p_july) {
+	// T(theta) = a - b cos(theta), theta = 0 mid-January. The season is where T >= 0.9 C:
+	// cos(theta) <= c, theta in [t0, 2 pi - t0]; its mean is a + b sin(t0) / (pi - t0).
+	const float a = 0.5f * (p_january + p_july);
+	const float b = 0.5f * (p_july - p_january);
+	if (Math::abs(b) < 1e-4f) {
+		return a >= 0.9f ? a : -10.0f;
+	}
+	const float c = (a - 0.9f) / b;
+	if (c >= 1.0f) {
+		return a; // Every day counts.
+	}
+	if (c <= -1.0f) {
+		return -10.0f;
+	}
+	const float t0 = Math::acos(c);
+	if (365.0f * (1.0f - t0 / float(Math::PI)) < 94.0f) {
+		return -10.0f;
+	}
+	return a + b * Math::sin(t0) / (float(Math::PI) - t0);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -175,6 +198,12 @@ float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3
 		w *= rule_weight(RULE_PRECIPITATION, p_map->get_precipitation_at(p_pos));
 		w *= rule_weight(RULE_ARIDITY, p_map->get_aridity_at(p_pos));
 		w *= rule_weight(RULE_SUNLIGHT, p_map->get_shortwave_at(p_pos));
+		const Vector2 season_range = ranges[RULE_SEASON_TEMPERATURE];
+		if (w > 0.0f && (season_range.x > -100.0f || season_range.y < 100.0f)) {
+			const float jan = p_map->get_temperature_at(p_pos, 15.0f);
+			const float jul = p_map->get_temperature_at(p_pos, 15.0f + 365.0f * 0.5f);
+			w *= rule_weight(RULE_SEASON_TEMPERATURE, season_temperature(jan, jul));
+		}
 	}
 	if (p_patches && patch_scale > 0.0f && w > 0.0f) {
 		w *= get_patch_weight(p_pos);
@@ -310,6 +339,7 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rule_fade", "rule", "fade"), &PlantSpecies::set_rule_fade);
 	ClassDB::bind_method(D_METHOD("get_rule_fade", "rule"), &PlantSpecies::get_rule_fade);
 	ClassDB::bind_method(D_METHOD("rule_weight", "rule", "value"), &PlantSpecies::rule_weight);
+	ClassDB::bind_static_method("PlantSpecies", D_METHOD("season_temperature", "january", "july"), &PlantSpecies::season_temperature);
 	ClassDB::bind_method(D_METHOD("set_patch_scale", "scale"), &PlantSpecies::set_patch_scale);
 	ClassDB::bind_method(D_METHOD("get_patch_scale"), &PlantSpecies::get_patch_scale);
 	ClassDB::bind_method(D_METHOD("set_patch_cover", "cover"), &PlantSpecies::set_patch_cover);
@@ -440,6 +470,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "litter_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_LITTER);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "dune_range"), "set_rule_range", "get_rule_range", RULE_DUNE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "dune_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_DUNE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "season_temperature_range", PROPERTY_HINT_NONE, "suffix:°C"), "set_rule_range", "get_rule_range", RULE_SEASON_TEMPERATURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "season_temperature_fade", PROPERTY_HINT_RANGE, "0,10,0.1,suffix:°C"), "set_rule_fade", "get_rule_fade", RULE_SEASON_TEMPERATURE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -460,6 +492,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_SPRAY);
 	BIND_ENUM_CONSTANT(RULE_LITTER);
 	BIND_ENUM_CONSTANT(RULE_DUNE);
+	BIND_ENUM_CONSTANT(RULE_SEASON_TEMPERATURE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);
