@@ -115,6 +115,13 @@ uniform float star_glare : hint_range(0, 4) = 1.0;
 // square arcsecond at the zenith of a dark site (1.2e-4 cd/m2 of the 2e-4 natural night sky), brightening toward
 // the horizon by the van Rhijn factor for a 90 km layer (Jensen et al. 2001; Leinert et al. 1998).
 uniform bool airglow_enabled = true;
+// The Milky Way: a panorama in galactic coordinates (equirectangular, galactic centre in the middle, longitude
+// increasing to the left, as ESO's eso0932a), read blurred to about half a degree so its photographed stars
+// smear into the band and do not double the catalogue's; a linear texel of 1 is milky_way_luminance cd/m2 (the
+// band's brightest clouds, about 20.5 V magnitudes a square arcsecond, are 7e-4 cd/m2). None by default.
+uniform sampler2D milky_way : source_color, filter_linear_mipmap, repeat_enable, hint_default_black;
+uniform float milky_way_luminance : hint_range(0, 0.01) = 1e-3;
+uniform float milky_way_blur_lod : hint_range(0, 8) = 2.0;
 uniform float airglow_luminance : hint_range(0, 0.01) = 1.2e-4; // cd/m2 at the zenith
 // The moon's disc (Lommel-Seeliger, lit from the sun's direction: the phase and the terminator follow), earthshine
 // on its dark side; its angular diameter from SkyClock (by distance).
@@ -454,6 +461,14 @@ void sky() {
 			float van_rhijn = inversesqrt(max(1.0 - s * s * sin_z2, 1e-4));
 			vec3 tint = vec3(0.6, 1.15, 0.75); // greenish, unit luminance
 			air += t_view * tint * (airglow_luminance * star_energy_per_lux * van_rhijn);
+		}
+		if (atmo_driven && star_energy_per_lux > 0.0 && milky_way_luminance > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
+			// J2000 equatorial to galactic (Hipparcos' rotation, ESA 1997), then the panorama's longitude and latitude.
+			const mat3 eq_to_gal = mat3(vec3(-0.0548755604, 0.4941094279, -0.8676661490), vec3(-0.8734370902, -0.4448296300, -0.1980763734), vec3(-0.4838350155, 0.7469822445, 0.4559837762));
+			vec3 g = eq_to_gal * normalize(transpose(star_sky_basis) * EYEDIR);
+			vec2 uv = vec2(0.5 - atan(g.y, g.x) / (2.0 * PI), 0.5 - asin(clamp(g.z, -1.0, 1.0)) / PI);
+			vec3 mw = textureLod(milky_way, uv, milky_way_blur_lod).rgb;
+			air += t_view * mw * (milky_way_luminance * star_energy_per_lux);
 		}
 		// Exposed here, ahead of the half-float buffers: a night sky's radiance in light energy units is
 		// below half floats' range (Frostbite's pre-exposure; Lagarde and de Rousiers 2014).

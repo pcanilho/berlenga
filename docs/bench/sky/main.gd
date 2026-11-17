@@ -4,7 +4,7 @@ extends Node3D
 #   --sky [--model=scattering|physical] [--time=H] [--out=path.png] [--frames=N]
 #            the sky alone (WeatherSkyMaterial, clouds from the defaults, sun from SkyClock), looking south-west
 #            and a little up; prints the mean frame time, saves the last frame
-#            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars] [--no-airglow] [--month=M --day=D] [--look-moon]
+#            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars] [--no-airglow] [--milky-way=path] [--month=M --day=D] [--look-moon]
 
 var fails := 0
 
@@ -31,6 +31,11 @@ func _sky(kv: Dictionary) -> void:
 	mat.cloud_reprojection = kv.has("reproject")
 	if kv.has("no-stars"):
 		mat.set_shader_parameter("stars_enabled", false)
+	if kv.has("milky-way"):
+		# --milky-way=path: the galactic panorama (art-src sky/milky_way/eso0932a_milky_way_panorama.jpg, Gitea LFS).
+		var img := Image.load_from_file(kv["milky-way"])
+		img.generate_mipmaps()
+		mat.set_shader_parameter("milky_way", ImageTexture.create_from_image(img))
 	if kv.has("no-airglow"):
 		mat.set_shader_parameter("airglow_enabled", false)
 	var sky := Sky.new()
