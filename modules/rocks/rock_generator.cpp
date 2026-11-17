@@ -35,6 +35,7 @@
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
+#include "core/templates/sort_array.h"
 #include "scene/resources/3d/importer_mesh.h"
 #include "scene/resources/surface_tool.h"
 
@@ -149,6 +150,14 @@ real_t RockGenerator::get_effective_weathering() const {
 	}
 	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f };
 	return w[family];
+}
+
+// Sea-spray salt: the sea stacks, arches, platforms and cave mouths stand in the spray; inland stones none.
+real_t RockGenerator::get_effective_salt() const {
+	if (salt >= 0.0) {
+		return salt;
+	}
+	return (family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH || family == FAMILY_SEA_PLATFORM) ? 1.0 : (family == FAMILY_CAVE_MOUTH ? 0.4 : 0.0);
 }
 
 real_t RockGenerator::get_roundness() const {
@@ -1731,6 +1740,103 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		return q;
 	};
 
+	// Tafoni (docs/ideas/rocks.md, "Next options" 1): cavernous hollows in the sides of sandstone, granite and
+	// limestone, decimetres to metres across, where salt crystallises in the drying zone just inside the surface and
+	// the grains fall out; a hollow keeps a hood (visor) over its opening because the case-hardened rind holds there
+	// while the softer core behind it goes (Mustoe 1982; Huinink et al. 2004; Geosciences 13(6) 161, 2023). They are
+	// largest and most crowded where sea spray salts the rock (salt) and on old, dry inland blocks (tors, hoodoos).
+	// Carved here over the whole field (they are deeper than the weathering band): each a squashed sphere sunk into
+	// the stone along a side direction, lower and shaded faces first, with smaller hollows nested in its back wall.
+	float tafoni = 0.0f;
+	{
+		const float lith_t = rock_type == ROCK_SANDSTONE ? 1.0f : (rock_type == ROCK_GRANITE ? 0.8f : (rock_type == ROCK_LIMESTONE ? 0.5f : 0.0f));
+		const bool old_inland = family == FAMILY_CORESTONE || family == FAMILY_HOODOO || family == FAMILY_GOBLIN || family == FAMILY_FIN;
+		const float inland = old_inland ? 0.6f : 0.5f * Math::smoothstep(0.4f, 0.9f, weather);
+		tafoni = lith_t * MAX(float(get_effective_salt()), inland) * float(detail);
+		if (family == FAMILY_PEBBLE || family == FAMILY_COBBLE || family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK) {
+			tafoni = 0.0f;
+		}
+	}
+	// The stone's up as the field stands it: a fin (and a cave-mouth block) on its z, a column (stack, hoodoo,
+	// goblin) on its x, everything else as built.
+	const bool z_up = family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH;
+	const bool x_up = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN;
+	// In the grid: the axis that becomes the local x is ax_long, y ax_short, z ax_b (to_local above).
+	const int up_axis = z_up ? ax_b : (x_up ? ax_long : ax_short);
+	Vector3 t_up, t_a1;
+	t_up[up_axis] = (z_up && odd) ? -1.0f : 1.0f; // an odd permutation flips the local z
+	t_a1[(up_axis + 1) % 3] = 1.0f;
+	const Vector3 t_a2 = t_up.cross(t_a1);
+	if (tafoni > 0.05f) {
+		RandomPCG trng(uint64_t(nseed) * 6364136223846793005ull + 1442695040888963407ull);
+		const Vector3 c0 = centre;
+		const float extent = 0.5f * MIN(box.size.x, MIN(box.size.y, box.size.z)) + 0.5f * 0.5f * MAX(box.size.x, MAX(box.size.y, box.size.z));
+		const float up_len = box.size[up_axis];
+		// Tafoni crowd: a face that dries in the wind (or the spray) carries a cluster of them, many small and a few
+		// large (their sizes run roughly log-normal; Mustoe 1982), so they gather round one or two faces.
+		const int count = CLAMP(int(Math::round(tafoni * (5.0f + 7.0f * trng.randf()))), 2, 12);
+		const int faces = 1 + (trng.randf() < 0.5f ? 1 : 0);
+		const float face_az[2] = { trng.randf() * float(Math::TAU), trng.randf() * float(Math::TAU) };
+		LocalVector<RockScoop> hollows;
+		LocalVector<float> squash;
+		for (int k = 0; k < count; k++) {
+			// Sides, mostly the lower half (the salt-laden film creeps up from the foot; the hood shades the top): a
+			// height on the stone's up axis, then out across it to the face, so a tall column is hollowed along its
+			// length rather than only round its middle.
+			const float az = face_az[k % faces] + (trng.randf() + trng.randf() - 1.0f) * 1.1f;
+			const float hy = (-0.42f + 0.72f * trng.randf()) * up_len;
+			const Vector3 o0 = c0 + t_up * hy;
+			const Vector3 d = t_a1 * Math::cos(az) + t_a2 * Math::sin(az);
+			float t = 0.0f;
+			const float step = fine.h * 0.5f;
+			while (t < 4.0f * extent && fine.sample(o0 + d * t) < 0.0f) {
+				t += step;
+			}
+			if (t <= step || t >= 4.0f * extent) {
+				continue;
+			}
+			const Vector3 s0 = o0 + d * t;
+			const float u = trng.randf();
+			const float R = MIN(t, 0.5f * up_len) * (0.14f + 0.36f * u * u) * (0.6f + 0.4f * MIN(tafoni, 1.0f));
+			if (R < 3.0f * fine.h) {
+				continue;
+			}
+			// Sunk past the surface by 0.55 R and raised a little: the opening narrower than the hollow, the hood on top.
+			const Vector3 dh = d;
+			const Vector3 c = s0 - dh * (0.55f * R) + t_up * (0.22f * R);
+			hollows.push_back({ c, R });
+			squash.push_back(0.7f + 0.15f * trng.randf());
+			// Nested hollows in the back wall and roof.
+			const int nested = 1 + int(trng.randf() * 3.0f);
+			for (int m = 0; m < nested; m++) {
+				const Vector3 o = (t_a1 * (trng.randf() - 0.5f) + t_a2 * (trng.randf() - 0.5f) + t_up * (0.3f + 0.5f * trng.randf())) * R;
+				const float r2 = R * (0.3f + 0.15f * trng.randf());
+				if (r2 >= 2.5f * fine.h) {
+					hollows.push_back({ c - dh * (0.55f * R) + o * 0.8f, r2 });
+					squash.push_back(0.8f);
+				}
+			}
+		}
+		for (int z = 0; z < fine.nz; z++) {
+			for (int y = 0; y < fine.ny; y++) {
+				for (int x = 0; x < fine.nx; x++) {
+					const Vector3 p = fine.pos(x, y, z);
+					float &v = fine.v[fine.idx(x, y, z)];
+					for (uint32_t k = 0; k < hollows.size(); k++) {
+						const RockScoop &hw = hollows[k];
+						Vector3 q = p - hw.c;
+						q += t_up * (q.dot(t_up) * (1.0f / squash[k] - 1.0f));
+						if (q.length_squared() > 1.6f * hw.r * hw.r) {
+							continue;
+						}
+						const float rough = 1.0f + 0.12f * (rk_fbm(p * (3.0f / MAX(hw.r, 0.05f)), nseed + 151u + k, 2) - 0.5f) * 2.0f;
+						v = MAX(v, (hw.r * rough - q.length()) * squash[k]);
+					}
+				}
+			}
+		}
+	}
+
 	// 3. Weathering and the rock's own marks, carved into the fine field near its surface.
 	LocalVector<int> band;
 	rk_band(fine, MAX(5.0f * h, 3.0f * hb), band);
@@ -1791,11 +1897,20 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float f = s - Math::floor(s);
 			phi += lith.cleavage * float(detail) * f * 1.4f * hb * (1.0f - Math::abs(n.y)) * worn;
 		}
-		// Tafoni: honeycomb hollows in the sides of weathered sandstone and granite blocks.
-		if ((rock_type == ROCK_SANDSTONE || rock_type == ROCK_GRANITE) && weather > 0.4f && family != FAMILY_PEBBLE && family != FAMILY_COBBLE) {
-			const float wd = rk_worley(p / 0.3f, nseed + 51u);
-			const float hollow = MAX(0.0f, 0.5f - wd) / 0.5f;
-			phi += (weather - 0.4f) * float(detail) * hollow * hollow * 0.09f * (1.0f - Math::abs(n.y)) * (rock_type == ROCK_SANDSTONE ? 1.0f : 0.4f);
+		// Honeycomb weathering (alveoli): centimetre cells with thin walls between them, crowded on the faces of salted
+		// and tafoni-hollowed rock, inside the hollows too (the cell walls are the harder, salt-cemented rims; Huinink
+		// et al. 2004). Worley cells, carved inside and left standing along the cell boundaries (F2 - F1 small).
+		if (tafoni > 0.05f) {
+			const float mpu = float(get_family_metres_per_unit(family));
+			const float cell = MAX(0.06f / MAX(mpu, 1e-3f), 1.3f * min_period);
+			float f1, f2;
+			uint32_t cid;
+			rk_worley2(p / cell, nseed + 161u, f1, f2, cid);
+			const float inner = Math::smoothstep(0.05f, 0.3f, f2 - f1);
+			const float patch = Math::smoothstep(0.35f, 0.6f, rk_fbm(p * (0.6f / cell), nseed + 162u, 2) + 0.25f * MIN(tafoni, 1.0f));
+			const float side = 1.0f - Math::smoothstep(0.55f, 0.85f, n.dot(t_up)); // not on tops that rain washes
+			const float cdepth = 0.32f * cell * (0.7f + 0.6f * float(cid & 255u) / 255.0f);
+			phi += MIN(tafoni, 1.0f) * inner * patch * side * cdepth * worn;
 		}
 		// Close-up: the rock's own millimetre fabric as geometry (crystals, grains, vesicles, karren, cleavage steps,
 		// conchoidal ripples on fresh breaks), so the path tracer and raster see the same relief.
@@ -1848,6 +1963,87 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		out_uv.resize(p_verts.size());
 		out_uv2.resize(p_verts.size());
 		out_tangents.resize(p_verts.size() * 4);
+		// Where rain runs (docs/ideas/rocks.md, "Rain-wet rock"): the area of stone draining through each vertex, by
+		// multiple-flow-direction routing down the mesh in the stone's stood-up frame (Freeman 1991; Quinn et al. 1991:
+		// each vertex hands its water to every lower neighbour in proportion to the slope to it, to the power 1.1).
+		// Sheet flow on the open faces gathers into rivulets along the converging lines, the grooves and the lips.
+		// Stored as COLOR.a = 1 - log2(1 + upslope cells) / 12, so 1 (any mesh without it) means no flow.
+		LocalVector<float> flow_acc;
+		{
+			const uint32_t nv = p_verts.size();
+			flow_acc.resize(nv);
+			LocalVector<int> deg, start, adj;
+			deg.resize(nv + 1);
+			for (uint32_t k = 0; k <= nv; k++) {
+				deg[k] = 0;
+			}
+			for (uint32_t k = 0; k < nv; k++) {
+				flow_acc[k] = 0.0f;
+			}
+			for (uint32_t t = 0; t + 2 < p_indices.size(); t += 3) {
+				const int a = p_indices[t], b = p_indices[t + 1], c = p_indices[t + 2];
+				const float area = 0.5f * (p_verts[b] - p_verts[a]).cross(p_verts[c] - p_verts[a]).length() / 3.0f;
+				flow_acc[a] += area;
+				flow_acc[b] += area;
+				flow_acc[c] += area;
+				deg[a] += 2;
+				deg[b] += 2;
+				deg[c] += 2;
+			}
+			start.resize(nv + 1);
+			start[0] = 0;
+			for (uint32_t k = 0; k < nv; k++) {
+				start[k + 1] = start[k] + deg[k];
+				deg[k] = start[k];
+			}
+			adj.resize(start[nv]);
+			for (uint32_t t = 0; t + 2 < p_indices.size(); t += 3) {
+				const int tri[3] = { p_indices[t], p_indices[t + 1], p_indices[t + 2] };
+				for (int e = 0; e < 3; e++) {
+					adj[deg[tri[e]]++] = tri[(e + 1) % 3];
+					adj[deg[tri[e]]++] = tri[(e + 2) % 3];
+				}
+			}
+			struct ByHeight {
+				const float *hgt = nullptr;
+				bool operator()(int p_a, int p_b) const { return hgt[p_a] > hgt[p_b]; }
+			};
+			LocalVector<float> hgt;
+			LocalVector<int> order;
+			hgt.resize(nv);
+			order.resize(nv);
+			for (uint32_t k = 0; k < nv; k++) {
+				hgt[k] = p_verts[k].dot(t_up);
+				order[k] = int(k);
+			}
+			SortArray<int, ByHeight> sorter;
+			sorter.compare.hgt = hgt.ptr();
+			sorter.sort(order.ptr(), nv);
+			for (uint32_t o = 0; o < nv; o++) {
+				const int v = order[o];
+				float wsum = 0.0f;
+				for (int j = start[v]; j < start[v + 1]; j++) {
+					const float drop = hgt[v] - hgt[adj[j]];
+					if (drop > 0.0f) {
+						wsum += Math::pow(drop / MAX((p_verts[adj[j]] - p_verts[v]).length(), 1e-6f), 1.1f);
+					}
+				}
+				if (wsum <= 0.0f) {
+					continue; // a hollow's floor: the water stands there
+				}
+				const float share = flow_acc[v] / wsum;
+				for (int j = start[v]; j < start[v + 1]; j++) {
+					const float drop = hgt[v] - hgt[adj[j]];
+					if (drop > 0.0f) {
+						flow_acc[adj[j]] += share * Math::pow(drop / MAX((p_verts[adj[j]] - p_verts[v]).length(), 1e-6f), 1.1f);
+					}
+				}
+			}
+			const float cell = p_field.h * p_field.h;
+			for (uint32_t k = 0; k < nv; k++) {
+				flow_acc[k] = 1.0f - CLAMP(Math::log2(1.0f + flow_acc[k] / cell) / 12.0f, 0.0f, 1.0f);
+			}
+		}
 		for (uint32_t k = 0; k < p_verts.size(); k++) {
 			const Vector3 p = p_verts[k];
 			Vector3 n = p_normals[k];
@@ -1867,7 +2063,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			n = dir_local(n);
 			out_verts.write[k] = q;
 			out_normals.write[k] = n;
-			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : ((family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH) ? 0.5f : 0.0f), 1.0f); // b: the beds cross x (1), z (0.5) or y (0)
+			out_colors.write[k] = Color(cavity, fr, upright ? 1.0f : ((family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH) ? 0.5f : 0.0f), flow_acc[k]); // b: the beds cross x (1), z (0.5) or y (0)
 			out_uv.write[k] = Vector2(q.x, q.z);
 			out_uv2.write[k] = Vector2(q.y, float(get_family_metres_per_unit(family)));
 			const Vector3 t = (Math::abs(n.y) < 0.95f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).cross(n).normalized();
@@ -2318,6 +2514,7 @@ uniform bool mineral_glints = false;
 uniform float sea_level = -100000.0;
 uniform float tide_range = 2.0;
 uniform float wetness = 1.0;
+uniform bool rain_rivulets = true;
 uniform float snow = 1.0;
 uniform float snow_max_slope = 55.0;
 // Instance data for a stone drawn outside the MultiMesh (a breakable copy): as INSTANCE_CUSTOM.
@@ -2665,10 +2862,59 @@ void fragment() {
 		film = max(film, tidal);
 	}
 	col = mix(col, col * vec3(0.75, 0.72, 0.55), 0.5 * film);
-	float wet = max(wetness * weather_wetness_at(v_world), max(film, contact * 0.4 * weather_wetness_at(v_world)));
+	// Rain on the stone (docs/ideas/rocks.md, "Rain-wet rock"): it wets the whole face while it rains, then dries
+	// patchily, the open tops and the sunny side first, the hollows, the shaded side and the lines where the water
+	// ran last (Lagarde 2013, "Water drop 2"; Tatarchuk 2006). While it rains, the water on the steep faces gathers
+	// into rivulets along the converging lines the mesh's flow routing found (COLOR.a), each a thin wavy line of
+	// standing water with beads running down it; under the pixel they fade to their share of the face.
+	float ground_wet = weather_wetness_at(v_world);
+	float flow = 1.0 - COLOR.a;
+	float dry_n = rk_fbm3(mp * 3.1 + 41.0);
+	float hold = clamp(0.38 + 0.32 * max(wn.y, 0.0) * cavity - 0.22 * shade_side - 0.45 * smoothstep(0.15, 0.6, flow) - 0.35 * (1.0 - cavity) + 0.6 * (dry_n - 0.5), 0.03, 0.88);
+	float local_wet = mix(0.35, 1.0, ground_wet) * smoothstep(hold - 0.05, hold + 0.05, ground_wet);
+	float wet = max(wetness * local_wet, max(film, contact * 0.4 * ground_wet));
+	float rivulet = 0.0;
+	vec3 riv_tilt = vec3(0.0);
+	if (rain_rivulets && weather_map_rect.z > 0.0) {
+		vec2 st_half = 0.5 / vec2(textureSize(weather_state_map, 0));
+		float rain_mm = textureLod(weather_state_map, clamp((v_world.xz - weather_map_rect.xy) / weather_map_rect.zw, st_half, 1.0 - st_half), 0.0).r;
+		float running = max(smoothstep(0.2, 3.0, rain_mm), 0.6 * smoothstep(0.92, 1.0, ground_wet) * step(0.05, rain_mm));
+		float fm = smoothstep(0.28, 0.7, flow);
+		float steep = 1.0 - smoothstep(0.75, 0.95, abs(wn.y));
+		if (running * fm * steep > 0.0) {
+			vec3 down = normalize(vec3(0.0, -1.0, 0.0) + wn * wn.y + vec3(1e-5, 0.0, 0.0));
+			vec3 lat = normalize(cross(wn, down));
+			// Lines across the face by the angle round the stone's vertical axis (a whole number of them round it,
+			// so no seam), not by a projection on the bumpy normal, which would scatter them into specks.
+			vec2 rel = v_world.xz - v_origin.xz;
+			float n_lines = max(1.0, floor(float(TAU) * 0.85 * max(v_scale, 0.05) / 0.06));
+			float sl = (atan(rel.y, rel.x) / float(TAU) + 0.5) * n_lines;
+			float cw = float(TAU) * 0.85 * max(v_scale, 0.05) / n_lines; // m between rivulet lines across the face
+			float along = v_world.y;
+			float cid = floor(sl);
+			float h1 = fract(sin(cid * 127.1 + v_random * 311.7) * 43758.5453);
+			float h2 = fract(sin(cid * 269.5 + v_random * 183.3) * 43758.5453);
+			float present = step(h1, (0.2 + 0.7 * fm) * running * smoothstep(0.1, 0.3, flow));
+			float x0 = 0.3 + 0.4 * h2 + 0.16 * sin(along * 6.0 + h1 * 40.0) + 0.07 * sin(along * 17.0 + h2 * 13.0);
+			float dx = (fract(sl) - x0) * cw;
+			float width = 0.003 + 0.011 * fm * fm;
+			// A rivulet breaks where the film thins (a dry rib, a grain) and starts again below.
+			float runs = smoothstep(0.32, 0.45, fract(sin(floor(along * 4.0 + h2 * 3.0) * 91.7 + cid * 17.3 + v_random * 7.1) * 43758.5453) + 0.3 * fm);
+			float core = runs * (1.0 - smoothstep(0.5 * width, width, abs(dx)));
+			float bead = 0.65 + 0.35 * smoothstep(0.75, 1.0, fract(along * 2.5 - TIME * (0.6 + 0.5 * h2) + h1 * 7.0));
+			float resolved_r = 1.0 - smoothstep(0.5 * width, 2.0 * width, footprint);
+			rivulet = present * steep * mix(1.6 * width / cw, core * bead, resolved_r);
+			riv_tilt = lat * sign(dx) * core * resolved_r * present * 0.45 * smoothstep(0.0, width, abs(dx));
+			wet = max(wet, running * steep * mix(0.6, 1.0, fm));
+		}
+	}
 	float metallic = 0.0;
 	float specular = 0.5;
-	weather_wetness_apply(wet, wn.y, metallic, porosity, col, rough);
+	// Rivulets and overhang lips: the water clings under the overhangs too (the shared wet code leaves undersides dry).
+	weather_wetness_apply(wet, max(wn.y, rivulet > 0.0 ? 0.2 : -1.0), metallic, porosity, col, rough);
+	col *= 1.0 - 0.35 * rivulet;
+	rough = mix(rough, 0.04, rivulet);
+	wn = normalize(wn + riv_tilt);
 
 	vec4 snow_s = snow_cover_at(v_world);
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);
@@ -2787,6 +3033,9 @@ void RockGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_transport_distance", "metres"), &RockGenerator::set_transport_distance);
 	ClassDB::bind_method(D_METHOD("get_transport_distance"), &RockGenerator::get_transport_distance);
 	ClassDB::bind_method(D_METHOD("set_weathering", "weathering"), &RockGenerator::set_weathering);
+	ClassDB::bind_method(D_METHOD("set_salt", "salt"), &RockGenerator::set_salt);
+	ClassDB::bind_method(D_METHOD("get_salt"), &RockGenerator::get_salt);
+	ClassDB::bind_method(D_METHOD("get_effective_salt"), &RockGenerator::get_effective_salt);
 	ClassDB::bind_method(D_METHOD("get_weathering"), &RockGenerator::get_weathering);
 	ClassDB::bind_method(D_METHOD("set_detail", "detail"), &RockGenerator::set_detail);
 	ClassDB::bind_method(D_METHOD("get_detail"), &RockGenerator::get_detail);
@@ -2814,6 +3063,7 @@ void RockGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "0,160,1"), "set_resolution", "get_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transport_distance", PROPERTY_HINT_RANGE, "-1,200000,1,or_greater,suffix:m"), "set_transport_distance", "get_transport_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "weathering", PROPERTY_HINT_RANGE, "-1,1,0.01"), "set_weathering", "get_weathering");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "salt", PROPERTY_HINT_RANGE, "-1,1,0.01"), "set_salt", "get_salt");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_detail", "get_detail");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simplify"), "set_simplify", "get_simplify");
