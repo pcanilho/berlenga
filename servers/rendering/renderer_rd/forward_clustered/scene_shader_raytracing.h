@@ -238,6 +238,7 @@ public:
 	static constexpr int RT_PARAM_GROUND_NEAR_X = 71;
 	static constexpr int RT_PARAM_GROUND_NEAR_Z = 72;
 	static constexpr int RT_PARAM_GROUND_NEAR_SIZE = 73;
+	static constexpr int RT_PARAM_VEHICLE_MUD_SPLATS = 74;
 	static constexpr int RT_PARAM_HAZE_SIGMA = 80; // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
 	static constexpr int RT_PARAM_HAZE_ALBEDO = 81;
 	static constexpr int RT_PARAM_HAZE_HEIGHT = 82; // scale height (m)

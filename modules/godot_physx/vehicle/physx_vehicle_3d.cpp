@@ -40,6 +40,9 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/config/project_settings.h"
+#include "core/io/image.h"
+#include "servers/rendering/rendering_server.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/resources/3d/box_shape_3d.h"
@@ -430,6 +433,14 @@ struct PhysXVehicle3D::Impl {
 	bool mud_written = false;
 	bool mud_meshes_ready = false;
 	LocalVector<ObjectID> mud_meshes;
+	// Clods stuck to the body (stage 4b): a ring of splats (where and how big in this node's frame; flight direction
+	// and amount), published as this vehicle's row of the shared splat texture.
+	int mud_row = -1;
+	Vector4 splat_a[32];
+	Vector4 splat_b[32];
+	int splat_count = 0;
+	int splat_head = 0;
+	bool splats_dirty = false;
 };
 
 PhysXVehicle3D::PhysXVehicle3D() {
@@ -437,6 +448,7 @@ PhysXVehicle3D::PhysXVehicle3D() {
 }
 
 PhysXVehicle3D::~PhysXVehicle3D() {
+	_mud_register(false);
 	_destroy();
 	_control_free();
 	memdelete(impl);
@@ -596,6 +608,7 @@ bool PhysXVehicle3D::_build() {
 
 		impl->scene = scene;
 		impl->built = true;
+		_mud_register(true);
 		_control_built();
 		_cache_chassis();
 	},
@@ -607,6 +620,7 @@ PHYSX_VEHICLE_CONTROL_DEFINE(PhysXVehicle3D, 4)
 PHYSX_VEHICLE_ENGINE_DEFINE(PhysXVehicle3D)
 
 void PhysXVehicle3D::_destroy() {
+	_mud_register(false);
 	if (impl->built) {
 		GodotPhysXServer3D::run_on_physics_thread([&]() {
 			_control_unbind();
@@ -910,6 +924,137 @@ void PhysXVehicle3D::_belly_step(float p_delta) {
 static constexpr float MUD_SPRAY_KG = 12.0f; // clay thrown off a wheel to spray its arch fully
 static constexpr float MUD_DRY_TIME = 300.0f; // s from fresh to dry
 
+// Stuck clods (mud stage 4b): every vehicle's splats in one RGBA float texture, a row a vehicle, two texels a clod,
+// published as the global shader parameter vehicle_mud_splats (BaseMaterial3D Mud reads it; the path tracer too).
+static constexpr int MUD_SPLATS = 32;
+static constexpr int MUD_SPLAT_ROWS = 16;
+static LocalVector<PhysXVehicle3D *> mud_vehicles;
+static PhysXVehicle3D *mud_rows[MUD_SPLAT_ROWS] = {};
+static Vector<uint8_t> mud_splat_data;
+static RID mud_splat_texture;
+
+void PhysXVehicle3D::_mud_register(bool p_on) {
+	if (p_on) {
+		if (mud_vehicles.find(this) >= 0) {
+			return;
+		}
+		mud_vehicles.push_back(this);
+		for (int r = 0; r < MUD_SPLAT_ROWS; r++) {
+			if (!mud_rows[r]) {
+				mud_rows[r] = this;
+				impl->mud_row = r;
+				break;
+			}
+		}
+		return;
+	}
+	const int i = mud_vehicles.find(this);
+	if (i < 0) {
+		return;
+	}
+	mud_vehicles.remove_at(i);
+	if (impl->mud_row >= 0) {
+		mud_rows[impl->mud_row] = nullptr;
+		impl->mud_row = -1;
+	}
+	if (mud_vehicles.is_empty() && mud_splat_texture.is_valid() && RenderingServer::get_singleton()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("vehicle_mud_splats", Variant());
+		RenderingServer::get_singleton()->free_rid(mud_splat_texture);
+		mud_splat_texture = RID();
+	}
+}
+
+void PhysXVehicle3D::get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles) {
+	r_vehicles = mud_vehicles;
+}
+
+bool PhysXVehicle3D::mud_box_contains(const Vector3 &p_world) const {
+	if (!body_mud || impl->chassis_half == Vector3()) {
+		return false;
+	}
+	const Vector3 l = (get_global_transform() * impl->chassis_local).affine_inverse().xform(p_world);
+	const Vector3 h = impl->chassis_half + Vector3(0.02f, 0.02f, 0.02f);
+	return Math::abs(l.x) < h.x && Math::abs(l.y) < h.y && Math::abs(l.z) < h.z;
+}
+
+void PhysXVehicle3D::add_mud_splat(const Vector3 &p_world, const Vector3 &p_velocity, float p_volume) {
+	if (!body_mud || p_volume <= 0.0f) {
+		return;
+	}
+	Transform3D frame = get_global_transform();
+	frame.basis.orthonormalize();
+	const Transform3D inv = frame.affine_inverse();
+	const Vector3 at = inv.xform(p_world);
+	Vector3 dir = inv.basis.xform(p_velocity);
+	dir = dir.length() > 1e-3f ? dir.normalized() : Vector3(0, -1, 0);
+	// A clod flattens into a splat a few millimetres thick.
+	float r = Math::sqrt(p_volume / (Math::PI * 0.005f));
+	// A clod landing on a splat thickens and widens it rather than taking a slot of its own.
+	for (int j = 0; j < impl->splat_count; j++) {
+		Vector4 &a = impl->splat_a[j];
+		const float rj = a.w;
+		if (Vector3(a.x, a.y, a.z).distance_to(at) < 0.5f * (rj + r)) {
+			a.w = MIN(Math::sqrt(rj * rj + r * r), 0.15f);
+			impl->splat_b[j].w = 1.0f;
+			impl->splats_dirty = true;
+			impl->mud_wet = 1.0f;
+			return;
+		}
+	}
+	r = CLAMP(r, 0.01f, 0.15f);
+	const int k = impl->splat_head;
+	impl->splat_a[k] = Vector4(at.x, at.y, at.z, r);
+	impl->splat_b[k] = Vector4(dir.x, dir.y, dir.z, 1.0f);
+	impl->splat_head = (k + 1) % MUD_SPLATS;
+	impl->splat_count = MIN(impl->splat_count + 1, MUD_SPLATS);
+	impl->splats_dirty = true;
+	impl->mud_wet = 1.0f;
+}
+
+int PhysXVehicle3D::get_mud_splat_count() const {
+	return impl->splat_count;
+}
+
+static void _mud_splats_upload(int p_row, const Vector4 *p_a, const Vector4 *p_b, int p_count) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!rs || p_row < 0) {
+		return;
+	}
+	const int w = 2 * MUD_SPLATS;
+	const int row_bytes = w * 4 * sizeof(float);
+	if (mud_splat_data.size() != row_bytes * MUD_SPLAT_ROWS) {
+		mud_splat_data.resize(row_bytes * MUD_SPLAT_ROWS);
+		memset(mud_splat_data.ptrw(), 0, mud_splat_data.size());
+	}
+	float *f = (float *)(mud_splat_data.ptrw() + p_row * row_bytes);
+	memset(f, 0, row_bytes);
+	for (int k = 0; k < p_count; k++) {
+		const Vector4 a = p_a[k];
+		const Vector4 b = p_b[k];
+		f[8 * k + 0] = a.x;
+		f[8 * k + 1] = a.y;
+		f[8 * k + 2] = a.z;
+		f[8 * k + 3] = a.w;
+		f[8 * k + 4] = b.x;
+		f[8 * k + 5] = b.y;
+		f[8 * k + 6] = b.z;
+		f[8 * k + 7] = b.w;
+	}
+	Ref<Image> img = Image::create_from_data(w, MUD_SPLAT_ROWS, false, Image::FORMAT_RGBAF, mud_splat_data);
+	if (mud_splat_texture.is_valid()) {
+		rs->texture_2d_update(mud_splat_texture, img, 0);
+		return;
+	}
+	mud_splat_texture = rs->texture_2d_create(img);
+	static bool added = false;
+	if (!added && !ProjectSettings::get_singleton()->has_setting("shader_globals/vehicle_mud_splats")) {
+		rs->global_shader_parameter_add("vehicle_mud_splats", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, mud_splat_texture);
+	} else {
+		rs->global_shader_parameter_set("vehicle_mud_splats", mud_splat_texture);
+	}
+	added = true;
+}
+
 void PhysXVehicle3D::_body_mud_meshes() {
 	impl->mud_meshes.clear();
 	List<Node *> stack;
@@ -1029,10 +1174,22 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		fresh = true;
 	}
 	impl->mud_wet = fresh || water_body > 0.02f ? 1.0f : MAX(impl->mud_wet - p_delta / MUD_DRY_TIME, 0.0f);
+	if (water_body > 0.02f && impl->splat_count > 0) {
+		// Standing water washes the stuck clods off too.
+		for (int k = 0; k < impl->splat_count; k++) {
+			impl->splat_b[k].w -= impl->splat_b[k].w * MIN(MIN(water_body / 0.1f, 1.0f) * 0.3f * p_delta, 1.0f);
+		}
+		impl->splats_dirty = true;
+	}
 
 	float total = impl->mud_line;
 	for (uint32_t i = 0; i < 4; i++) {
 		total += impl->mud_spray[i] + impl->soil_wheels[i].mud;
+	}
+	total += impl->splat_count;
+	if (impl->splats_dirty) {
+		_mud_splats_upload(impl->mud_row, impl->splat_a, impl->splat_b, impl->splat_count);
+		impl->splats_dirty = false;
 	}
 	if (total <= 0.0f && !impl->mud_written) {
 		return;
@@ -1055,15 +1212,16 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 	const Vector4 body(bottom, impl->mud_line, impl->mud_wet, 0.0f);
 	// Clay, linear: a mid brown (sRGB about 0.45, 0.36, 0.27).
 	const Vector4 color(0.17f, 0.11f, 0.065f, 1.0f);
-	static const StringName names[11] = { "mud_frame0", "mud_frame1", "mud_frame2", "mud_wheel0", "mud_wheel1", "mud_wheel2",
-		"mud_wheel3", "mud_fill", "mud_spray", "mud_body", "mud_color" };
-	const Vector4 values[11] = { rows[0], rows[1], rows[2], wheel[0], wheel[1], wheel[2], wheel[3], fill, spray, body, color };
+	const Vector4 splat(float(MAX(impl->mud_row, 0)), impl->mud_row >= 0 ? float(impl->splat_count) : 0.0f, 0.0f, 0.0f);
+	static const StringName names[12] = { "mud_frame0", "mud_frame1", "mud_frame2", "mud_wheel0", "mud_wheel1", "mud_wheel2",
+		"mud_wheel3", "mud_fill", "mud_spray", "mud_body", "mud_color", "mud_splat" };
+	const Vector4 values[12] = { rows[0], rows[1], rows[2], wheel[0], wheel[1], wheel[2], wheel[3], fill, spray, body, color, splat };
 	for (const ObjectID &id : impl->mud_meshes) {
 		GeometryInstance3D *gi = ObjectDB::get_instance<GeometryInstance3D>(id);
 		if (!gi) {
 			continue;
 		}
-		for (int k = 0; k < 11; k++) {
+		for (int k = 0; k < 12; k++) {
 			gi->set_instance_shader_parameter(names[k], values[k]);
 		}
 	}
@@ -1085,6 +1243,11 @@ void PhysXVehicle3D::set_body_mud(bool p_enabled) {
 		impl->mud_line = 0.0f;
 		impl->mud_wet = 0.0f;
 		impl->mud_written = false;
+		impl->splat_count = 0;
+		impl->splat_head = 0;
+		if (mud_splat_texture.is_valid()) {
+			_mud_splats_upload(impl->mud_row, impl->splat_a, impl->splat_b, 0);
+		}
 	}
 }
 
@@ -1465,6 +1628,8 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_spray", "wheel"), &PhysXVehicle3D::get_wheel_mud_spray);
 	ClassDB::bind_method(D_METHOD("get_body_mud_line"), &PhysXVehicle3D::get_body_mud_line);
 	ClassDB::bind_method(D_METHOD("get_body_mud_wetness"), &PhysXVehicle3D::get_body_mud_wetness);
+	ClassDB::bind_method(D_METHOD("add_mud_splat", "position", "velocity", "volume"), &PhysXVehicle3D::add_mud_splat);
+	ClassDB::bind_method(D_METHOD("get_mud_splat_count"), &PhysXVehicle3D::get_mud_splat_count);
 	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);
 	ClassDB::bind_method(D_METHOD("is_wheel_on_soft_soil", "wheel"), &PhysXVehicle3D::is_wheel_on_soft_soil);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);

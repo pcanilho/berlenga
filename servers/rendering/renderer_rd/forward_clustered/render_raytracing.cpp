@@ -7539,6 +7539,23 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_Z] = crect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_SIZE] = has_contact ? crect.z : 0.0f;
 		}
+		// PhysXVehicle3D's stuck clods for BaseMaterial3D Mud (mud stage 4b).
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName splats_name = "vehicle_mud_splats";
+			RID splat_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(splats_name);
+			if (tex_var.get_type() == Variant::RID) {
+				splat_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				Object *t = tex_var;
+				if (t) {
+					splat_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID splat_rd = splat_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(splat_tex) : RID();
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_VEHICLE_MUD_SPLATS] = splat_rd.is_valid() ? float(bindless_block->add_texture(splat_rd)) : 0.0f;
+		}
 		// GroundSurface3D's deform map for its BaseMaterial3D patch (turned-ground tint).
 		{
 			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
