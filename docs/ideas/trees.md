@@ -1758,6 +1758,17 @@ So the bulk is many small repeated parts and thin twigs, not leaves. Techniques:
   thinning crown parts first.
 Measured in the cloud (triangles, memory, generation ms); GPU cost on the PC queue.
 
+As built, step 1 (17 Nov): gorse and broom flowers and pods had no LODs at all (the crown parts
+before `big_end` stay whole), so a mature gorse drew its 1.7M crown-part triangles at every
+distance. Each flower and pod is now its own part, sized negative, and the crown parts' LODs
+thin those stochastically as leaves do (survivors grown by 1/sqrt(keep) about their base, Cook
+et al. 2007); other parts before `big_end` stay whole. Mature gorse, day 200: 1.72M, then 858k,
+258k, 69k; broom 250k, then 108k, 32k, 9k. LOD 0 is unchanged (a row at 5-30 m renders pixel
+for pixel the same with `--lod_threshold=0`), and the path tracer reads LOD 0. At 30 m and fov
+20 the first level swaps in over a few dozen pixels at the crown's edge, the gold kept. Also: a
+palm's promoted far mesh kept LODs no coarser than its new base, which the renderer rejected
+with an error; those are dropped. `--shrubs` takes `--gap=` and `--lod_threshold=`.
+
 #### 5x.3 Coppice cutting in stands
 
 Coppice-with-standards (Rackham 2006, Woodlands; Buckley 1992, Ecology and Management of

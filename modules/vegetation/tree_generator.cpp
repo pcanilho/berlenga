@@ -5790,9 +5790,11 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			const float want = float(tips.size() * per_node * depth);
 			const float p_flower = want > 0.0f ? MIN(1.0f, budget / want) : 0.0f;
 			static const float valve_prof[5] = { 0.3f, 0.9f, 1.0f, 0.9f, 0.3f };
+			// One part per flower or pod, sized negative: the coarser LODs keep a stochastic subset,
+			// each survivor grown about its base to keep the gold's area (as leaves, trees.md 5x.2).
+			// A mature gorse carries some 25 000 of them; drawn whole at every distance they were
+			// 1.7 million triangles.
 			Vector4i part;
-			r_b.begin(part);
-			int bone_now = -1;
 			uint32_t slot = 0;
 			for (const Tip &t : tips) {
 				int node = t.node;
@@ -5801,15 +5803,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					if (n.removed || n.dead || n.radius > 0.012f) {
 						break;
 					}
-					const int b = bone_of(node);
-					if (b != bone_now) {
-						if (bone_now >= 0) {
-							close_part(part, 0.02f);
-							r_b.begin(part);
-						}
-						r_b.bone = b;
-						bone_now = b;
-					}
+					r_b.bone = bone_of(node);
 					const Vector3 d = n.dir;
 					const Vector3 s0 = perp(d);
 					for (int q = 0; q < per_node; q++) {
@@ -5829,6 +5823,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 						const Vector3 radial = s0.rotated(d, roll);
 						const Vector3 at = n.start + d * (n.length * along) + radial * n.radius;
 						const float jit = Math::lerp(0.85f, 1.15f, float((h >> 4) & 255u) / 255.0f);
+						r_b.begin(part);
 						if (is_flower) {
 							// Out from the shoot and a little forward; the banner on its upper side.
 							// Each turned its own way (a cluster of flowers along a shoot, not a row of
@@ -5895,10 +5890,10 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 								}
 							}
 						}
+						close_part(part, -0.02f);
 					}
 				}
 			}
-			close_part(part, 0.02f);
 		}
 		// Gum rockrose flowers and capsules (trees.md 5v), kept by the coarser LODs: white flowers
 		// 5-10 cm across are seen from far off. One flower at the tip of a short side shoot, five
@@ -14518,7 +14513,60 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			} else if (s == 8) {
 				// Crown parts (5n): mistletoe balls and brooms are seen from far; cones, catkins
 				// and keys are centimetres across, LOD 0 only.
-				if (crown_big_end < b.indices.size()) {
+				bool scatter = false;
+				for (uint32_t i = 0; i < b.part_size.size() && !scatter; i++) {
+					scatter = b.part_size[i] < 0.0f;
+				}
+				if (scatter) {
+					// A shrub's flowers and pods (sized negative) thin stochastically as leaves do,
+					// survivors grown about their base by 1/sqrt(keep) (Cook et al. 2007); the other
+					// parts before big_end stay whole, those after it are LOD 0 only.
+					const int full = b.indices.size();
+					for (const auto &level : TREE_LODS) {
+						const float grow = 1.0f / Math::sqrt(level.keep);
+						PackedInt32Array idx;
+						for (uint32_t i = 0; i < b.parts.size(); i++) {
+							const Vector4i pt = b.parts[i];
+							if (pt.x >= crown_big_end) {
+								continue;
+							}
+							if (b.part_size[i] >= 0.0f) {
+								for (int k = 0; k < pt.y; k++) {
+									idx.push_back(b.indices[pt.x + k]);
+								}
+								continue;
+							}
+							const float u = float((uint32_t(i) * 2654435761u) >> 8) / 16777216.0f;
+							if (u >= level.keep) {
+								continue;
+							}
+							const int v0 = b.verts.size();
+							const Vector3 pivot = b.verts[pt.z];
+							for (int v = 0; v < pt.w; v++) {
+								b.verts.push_back(pivot + (b.verts[pt.z + v] - pivot) * grow);
+								b.normals.push_back(b.normals[pt.z + v]);
+								b.uvs.push_back(b.uvs[pt.z + v]);
+								b.colors.push_back(b.colors[pt.z + v]);
+								for (int k = 0; k < 4; k++) {
+									b.bones.push_back(b.bones[(pt.z + v) * 4 + k]);
+									b.weights.push_back(b.weights[(pt.z + v) * 4 + k]);
+								}
+							}
+							for (int k = 0; k < pt.y; k++) {
+								idx.push_back(b.indices[pt.x + k] - pt.z + v0);
+							}
+						}
+						if (idx.size() >= full) {
+							continue;
+						}
+						if (idx.is_empty()) {
+							idx.push_back(0);
+							idx.push_back(0);
+							idx.push_back(0);
+						}
+						lods[level.error] = idx;
+					}
+				} else if (crown_big_end < b.indices.size()) {
 					PackedInt32Array keep;
 					if (crown_big_end > 0) {
 						keep = b.indices.slice(0, crown_big_end);
@@ -15283,6 +15331,10 @@ void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
 	Dictionary out;
 	for (const KeyValue<Variant, Variant> &kv : r_lods) {
 		PackedInt32Array idx = kv.value;
+		if (idx.size() >= r_b.indices.size()) {
+			// No coarser than the new base (a palm keeps its fans whole): the renderer rejects it.
+			continue;
+		}
 		apply(idx);
 		out[kv.key] = idx;
 	}

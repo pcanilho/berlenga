@@ -50,10 +50,13 @@ func run(args: Dictionary) -> void:
 			mi.mesh = m
 			mi.position = Vector3(x - bb.position.x, 0, z)
 			add_child(mi)
-			x += bb.size.x + 0.8
+			x += bb.size.x + float(args.get("gap", "0.8"))
 		width = maxf(width, x)
 		z -= 3.5
 	_world(args)
+	if args.has("lod_threshold"):
+		# 0 draws every mesh at LOD 0: the reference for a LOD comparison.
+		get_viewport().mesh_lod_threshold = float(args.lod_threshold)
 	var cam := Camera3D.new()
 	cam.fov = 40.0
 	add_child(cam)
@@ -144,3 +147,16 @@ func _test() -> void:
 	var flowering: PlantSpecies = TreeGenerator.make_shrub_species(31, 1, 1, april)
 	var summer: PlantSpecies = TreeGenerator.make_shrub_species(31, 1, 1, aug)
 	_check(flowering.far_color.r > summer.far_color.r + 0.1, "gorse far colour gold in flower (%s vs %s)" % [flowering.far_color, summer.far_color])
+	# Gorse's flowers and pods thin with distance (trees.md 5x.2): the coarsest level keeps a
+	# few per cent of them; drawn whole they were 1.7 million triangles at every distance.
+	var gm: ArrayMesh = flowering.meshes[0]
+	for si in gm.get_surface_count():
+		if gm.surface_get_name(si) != "crown_parts":
+			continue
+		var sd: Dictionary = RenderingServer.mesh_get_surface(gm.get_rid(), si)
+		var full := gm.surface_get_array_index_len(si)
+		var lods: Array = sd.get("lods", [])
+		var last := full
+		if not lods.is_empty():
+			last = lods[lods.size() - 1].index_data.size() / (4 if sd.vertex_count > 65535 else 2)
+		_check(lods.size() == 3 and last * 10 < full, "gorse flowers and pods thin with distance (%d of %d indices at the coarsest of %d levels)" % [last, full, lods.size()])
