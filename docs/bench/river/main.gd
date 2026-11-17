@@ -39,6 +39,7 @@ extends Node3D
 #   --fall-run=M     with --falls, the cliff's face runs M metres out each side of the lip (default 0.1): 1.5 or more
 #                    makes a sloping face the water keeps to (a contact fall)
 #   --mist-dry       with --falls --contact, the mist leaves the rock dry (PhysXWaterMist3D.wet_surfaces off)
+#   --sound-wav=P    with --falls, save each fall's synthesised roar as P_<i>.wav and print its level, then quit
 #   --mist           with --falls, print the mist's densest point and its spread each second
 #   --sun=P,Y        the sun's pitch and yaw in degrees (default -50,-140); --sun=-35,180 puts the fall's face in shade
 #   --report         print the cross-sections and the boxes' positions
@@ -48,6 +49,7 @@ extends Node3D
 # Run with --fixed-fps 30.
 
 var view := "overview"
+var sound_wav := ""
 var raster := false
 var spp := 16
 var bounces := 3
@@ -138,6 +140,7 @@ func _ready() -> void:
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
 		elif a == "--mist-dry": mist_dry = true
+		elif a.begins_with("--sound-wav="): sound_wav = a.substr(12)
 		elif a.begins_with("--fall-run="): fall_run = float(a.substr(11))
 		elif a == "--outlet": outlet = true
 		elif a == "--narrows": narrows = true
@@ -588,6 +591,15 @@ func _process(_delta: float) -> void:
 	if mist_dry and n == 1:
 		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
 			m.set("wet_surfaces", false)
+	if sound_wav != "" and n == 5:
+		var i := 0
+		for p in river.find_children("*", "AudioStreamPlayer3D", true, false):
+			var path := "%s_%d.wav" % [sound_wav, i]
+			p.stream.save_to_wav(path)
+			print("fall sound %d: %s volume %.1f dB unit size %.0f m, %.1f s loop -> %s" % [i, p.get_parent().name, p.volume_db, p.unit_size, p.stream.get_length(), path])
+			i += 1
+		print("fall sounds: %d" % i)
+		get_tree().quit()
 	if mist_report and n % 30 == 0:
 		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
 			if weather and not live:

@@ -205,6 +205,8 @@ private:
 	PackedVector3Array fall_exclusions; // lip and foot pairs of faces drawn by another node (PhysXWaterfalls3D)
 	bool fall_spray = true;
 	bool fall_mist = true;
+	bool fall_sound = true;
+	float fall_sound_volume_db = 0.0f; // added to the level from the fall's acoustic power
 	float fall_mist_amount = 1.0f; // scales the mist each fall makes (its own grid, without a PhysXFlow3D)
 	Ref<ShaderMaterial> fall_material;
 	LocalVector<Fall> falls;
@@ -352,6 +354,10 @@ public:
 	bool get_fall_spray() const { return fall_spray; }
 	void set_fall_mist(bool p_enabled);
 	bool get_fall_mist() const { return fall_mist; }
+	void set_fall_sound(bool p_enabled);
+	bool get_fall_sound() const { return fall_sound; }
+	void set_fall_sound_volume_db(float p_db);
+	float get_fall_sound_volume_db() const { return fall_sound_volume_db; }
 	void set_fall_mist_amount(float p_amount);
 	float get_fall_mist_amount() const { return fall_mist_amount; }
 	void set_fall_material(const Ref<ShaderMaterial> &p_material);

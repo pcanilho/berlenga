@@ -34,6 +34,9 @@
 #include "flow_poisson.h"
 #include "physx_water_mist_3d.h"
 #include "physx_water_surface_3d.h"
+#include "water_fall_sound.h"
+
+#include "scene/3d/audio_stream_player_3d.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
@@ -543,6 +546,10 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fall_spray"), &PhysXRiver3D::get_fall_spray);
 	ClassDB::bind_method(D_METHOD("set_fall_mist", "enabled"), &PhysXRiver3D::set_fall_mist);
 	ClassDB::bind_method(D_METHOD("get_fall_mist"), &PhysXRiver3D::get_fall_mist);
+	ClassDB::bind_method(D_METHOD("set_fall_sound", "enabled"), &PhysXRiver3D::set_fall_sound);
+	ClassDB::bind_method(D_METHOD("get_fall_sound"), &PhysXRiver3D::get_fall_sound);
+	ClassDB::bind_method(D_METHOD("set_fall_sound_volume_db", "db"), &PhysXRiver3D::set_fall_sound_volume_db);
+	ClassDB::bind_method(D_METHOD("get_fall_sound_volume_db"), &PhysXRiver3D::get_fall_sound_volume_db);
 	ClassDB::bind_method(D_METHOD("set_fall_mist_amount", "amount"), &PhysXRiver3D::set_fall_mist_amount);
 	ClassDB::bind_method(D_METHOD("get_fall_mist_amount"), &PhysXRiver3D::get_fall_mist_amount);
 	ClassDB::bind_method(D_METHOD("set_fall_material", "material"), &PhysXRiver3D::set_fall_material);
@@ -626,6 +633,8 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_spray"), "set_fall_spray", "get_fall_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_mist"), "set_fall_mist", "get_fall_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_mist_amount", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater"), "set_fall_mist_amount", "get_fall_mist_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_sound"), "set_fall_sound", "get_fall_sound");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_sound_volume_db", PROPERTY_HINT_RANGE, "-40,20,0.1,suffix:dB"), "set_fall_sound_volume_db", "get_fall_sound_volume_db");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fall_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_fall_material", "get_fall_material");
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
@@ -3294,7 +3303,7 @@ void PhysXRiver3D::_build_fall_effects() {
 		}
 	}
 	fall_effects.clear();
-	if (Engine::get_singleton()->is_editor_hint() || (!fall_spray && !fall_mist)) {
+	if (Engine::get_singleton()->is_editor_hint() || (!fall_spray && !fall_mist && !fall_sound)) {
 		return;
 	}
 	const Ref<Curve3D> c = get_curve();
@@ -3389,6 +3398,28 @@ void PhysXRiver3D::_build_fall_effects() {
 				fall_effects.push_back(mist);
 			}
 		}
+		if (fall_sound) {
+			// The roar is the ringing of the bubbles the plunge drags under (Minnaert resonators): synthesised once per
+			// fall as a seamless loop (WaterFallSound), at a level from the fall's acoustic power, about 3e-7 of the
+			// jet's kinetic power. A free field over the pool spreads it on a half sphere: the level at unit_size
+			// (10 m) is 10 log10(W / (2 pi 100) / 1e-12) dB SPL, mapped so 80 dB SPL plays at 0 dB.
+			const float q_total = fall.q * fall.width;
+			const uint32_t seed = uint32_t(Math::abs(fall.lip.x * 73.0f + fall.lip.z * 151.0f)) + uint32_t(fall_effects.size());
+			AudioStreamPlayer3D *snd = memnew(AudioStreamPlayer3D);
+			snd->set_name("FallSound");
+			Transform3D sxf = xf;
+			sxf.origin += Vector3(0, 0.5f * MIN(fall.height, 4.0f), 0);
+			snd->set_transform(sxf);
+			snd->set_stream(WaterFallSound::make(fall.impact_speed, q_total, seed));
+			const float w = WaterFallSound::sound_power(fall.impact_speed, q_total);
+			const float spl = 10.0f * Math::log(MAX(w, 1e-12f) / (Math::TAU * 100.0f) / 1e-12f) / Math::log(10.0f);
+			snd->set_unit_size(10.0f);
+			snd->set_volume_db(CLAMP(spl - 80.0f + fall_sound_volume_db, -60.0f, 12.0f));
+			snd->set_max_db(12.0f);
+			snd->set_autoplay(true);
+			add_child(snd, false, INTERNAL_MODE_BACK);
+			fall_effects.push_back(snd);
+		}
 	}
 	(void)c;
 }
@@ -3410,6 +3441,16 @@ void PhysXRiver3D::set_fall_spray(bool p_enabled) {
 
 void PhysXRiver3D::set_fall_mist(bool p_enabled) {
 	fall_mist = p_enabled;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_sound(bool p_enabled) {
+	fall_sound = p_enabled;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_sound_volume_db(float p_db) {
+	fall_sound_volume_db = p_db;
 	_queue_build();
 }
 
