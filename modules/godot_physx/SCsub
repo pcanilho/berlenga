@@ -250,9 +250,11 @@ _mpm_bs_glsl = (
     "mpm_bs_surface.glsl",
     "mpm_bs_march.glsl",
     "mpm_bs_render.glsl",
+    "mpm_bs_diffuse_advect.glsl",
+    "mpm_bs_diffuse_spawn.glsl",
 )
 _mpm_glsl_dep = [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"]
-_mpm_bs_glsl_dep = [os.path.join("particles", "mpm_block_inc.glsl"), "#glsl_builders.py"]
+_mpm_bs_glsl_dep = [os.path.join("particles", "mpm_block_inc.glsl"), os.path.join("particles", "mpm_bs_diffuse_inc.glsl"), "#glsl_builders.py"]
 for _glsl in _mpm_glsl:
     env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
     env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_glsl_dep)

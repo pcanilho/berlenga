@@ -46,7 +46,8 @@ class MPMFluidSolver;
 //   * MPM  -- a weakly-compressible MLS-MPM solver on plain compute shaders
 //             (RenderingDevice, no CUDA), so it runs on any Vulkan/Metal/D3D12
 //             device and needs no physics engine. Emission, analytic colliders
-//             (mpm_colliders) and a GPU-marched isosurface; no foam yet.
+//             (mpm_colliders), a GPU-marched isosurface, and spray, foam and
+//             bubbles (Ihmsen et al. 2012 diffuse particles on the grid).
 // "Solver" picks one; Auto uses PBD when a CUDA device is available, else MPM.
 class PhysXParticleFluid3D : public GeometryInstance3D {
 	GDCLASS(PhysXParticleFluid3D, GeometryInstance3D);
@@ -238,6 +239,11 @@ private:
 	void _free_fluid();
 	void _apply_params();
 	void _apply_foam();
+	// MPM spray, foam and bubbles: a lit sphere MultiMesh fed from the solver's diffuse buffer.
+	void _make_mpm_foam();
+	void _mpm_update_diffuse();
+	int _mpm_live_diffuse = 0;
+	int _mpm_foam_slots = 0; // instances allocated in foam_multimesh on the MPM path
 	void _update_render();
 	void _update_surface_mesh();
 	void _commit_iso_mesh(RID p_mesh, PackedVector3Array &verts, PackedVector3Array &normals, PackedInt32Array &indices, const Ref<Material> &p_material, bool p_to_local, bool p_keep_largest_component, float p_feature_size);
@@ -248,6 +254,7 @@ private:
 	void _apply_gi_mode(RID p_instance) const;
 	void _make_surface_shadow_instance();
 	void _emit_step(double p_delta);
+	Vector3 _emission_spread(const Vector3 &p_world_vel, double p_delta, int p_count) const;
 
 protected:
 	void _notification(int p_what);

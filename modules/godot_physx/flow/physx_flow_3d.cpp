@@ -56,6 +56,10 @@
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_default.h"
 
+#ifdef MODULE_GROUND_ENABLED
+#include "modules/ground/ground_height_query.h"
+#endif
+
 #ifdef TOOLS_ENABLED
 #include "editor/editor_interface.h"
 #endif
@@ -823,6 +827,116 @@ void PhysXFlow3D::_fill_render_settings(FlowBackend::Settings &r_settings) {
 	r_settings.shadow_steps = shadow_steps;
 }
 
+// The ground under a grid node (x, z = node * spacing), cached. NaN: no ground, or ground that is already a
+// solid through collide_with_bodies (a box, sphere or capsule).
+float PhysXFlow3D::_terrain_height_at(const Vector2i &p_node, float p_spacing, float p_top, void *p_query) {
+	if (const float *cached = terrain_heights.getptr(p_node)) {
+		return *cached;
+	}
+	const Vector3 p(p_node.x * p_spacing, p_top, p_node.y * p_spacing);
+	float h = Math::NaN;
+#ifdef MODULE_GROUND_ENABLED
+	const GroundHeightQuery *q = (const GroundHeightQuery *)p_query;
+	if (q != nullptr && q->has_source()) {
+		h = q->height(p);
+	}
+#endif
+	if (!Math::is_finite(h) && get_world_3d().is_valid()) {
+		// A ray straight down that only counts static ground: a car or a crate under the gas is a moving
+		// solid already, and must not become a floor tile.
+		PhysicsDirectSpaceState3D *space = get_world_3d()->get_direct_space_state();
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		if (space != nullptr) {
+			PhysicsDirectSpaceState3D::RayParameters rp;
+			rp.from = p;
+			rp.to = p - Vector3(0, 4000.0f, 0);
+			rp.collision_mask = collision_mask;
+			rp.collide_with_areas = false;
+			for (int tries = 0; tries < 6; tries++) {
+				PhysicsDirectSpaceState3D::RayResult rr;
+				if (!space->intersect_ray(rp, rr)) {
+					break;
+				}
+				if (ps->body_get_mode(rr.rid) != PhysicsServer3D::BODY_MODE_STATIC) {
+					rp.exclude.insert(rr.rid);
+					continue;
+				}
+				const RID shape = rr.shape >= 0 ? ps->body_get_shape(rr.rid, rr.shape) : RID();
+				const PhysicsServer3D::ShapeType type = shape.is_valid() ? ps->shape_get_type(shape) : PhysicsServer3D::SHAPE_CUSTOM;
+				const bool already_solid = collide_with_bodies && (type == PhysicsServer3D::SHAPE_BOX || type == PhysicsServer3D::SHAPE_SPHERE || type == PhysicsServer3D::SHAPE_CAPSULE);
+				if (!already_solid) {
+					h = rr.position.y;
+				}
+				break;
+			}
+		}
+	}
+	terrain_heights.insert(p_node, h);
+	return h;
+}
+
+// The TERRAIN FLOOR: one solid box per grid cell of the ground under the region, its top laid on the plane
+// through the cell's four corner heights (tilted to the slope, so the gas meets a smooth ground, not steps),
+// a little wider than the cell so neighbours overlap and nothing leaks between them. Solids reserve no blocks.
+void PhysXFlow3D::_gather_terrain_floor(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) {
+	if (!terrain_floor || !p_region.has_volume() || !is_inside_tree()) {
+		return;
+	}
+	// At most MAX_TILES a side: a wide region gets coarser cells (power-of-two steps of the spacing, so the
+	// height cache keeps its keys while the region drifts).
+	constexpr int MAX_TILES = 32;
+	const float extent = MAX(p_region.size.x, p_region.size.z);
+	float s = terrain_floor_spacing;
+	while (extent / s > MAX_TILES) {
+		s *= 2.0f;
+	}
+	// Heights are re-read once a second (deformed ground changes), or when the spacing changes.
+	const uint64_t now = OS::get_singleton()->get_ticks_msec();
+	if (s != terrain_heights_spacing || now - terrain_heights_msec > 1000 || terrain_heights.size() > 16384) {
+		terrain_heights.clear();
+		terrain_heights_spacing = s;
+		terrain_heights_msec = now;
+	}
+	void *query = nullptr;
+#ifdef MODULE_GROUND_ENABLED
+	GroundHeightQuery q = GroundHeightQuery::make(this, terrain_path, collision_mask);
+	q.space = nullptr; // its ray counts moving bodies too: ours (above) does not
+	query = &q;
+#endif
+	const float top = p_region.get_end().y + 1.0f;
+	const Vector2i a(Math::floor(p_region.position.x / s), Math::floor(p_region.position.z / s));
+	const Vector2i b(Math::ceil(p_region.get_end().x / s), Math::ceil(p_region.get_end().z / s));
+	const float thick = MAX(s, 0.5f); // half thickness: fast gas can't cross it in a step
+	for (int j = a.y; j < b.y; j++) {
+		for (int i = a.x; i < b.x; i++) {
+			const float h00 = _terrain_height_at(Vector2i(i, j), s, top, query);
+			const float h10 = _terrain_height_at(Vector2i(i + 1, j), s, top, query);
+			const float h01 = _terrain_height_at(Vector2i(i, j + 1), s, top, query);
+			const float h11 = _terrain_height_at(Vector2i(i + 1, j + 1), s, top, query);
+			if (!Math::is_finite(h00) || !Math::is_finite(h10) || !Math::is_finite(h01) || !Math::is_finite(h11)) {
+				continue;
+			}
+			const float hc = (h00 + h10 + h01 + h11) * 0.25f;
+			if (hc > top) {
+				continue; // ground above the gas: nothing for it to lie on
+			}
+			const float dhx = ((h10 - h00) + (h11 - h01)) / (2.0f * s);
+			const float dhz = ((h01 - h00) + (h11 - h10)) / (2.0f * s);
+			const Vector3 n = Vector3(-dhx, 1.0f, -dhz).normalized();
+			const Vector3 tx = Vector3(1.0f, dhx, 0.0f).normalized();
+			const Vector3 tz = tx.cross(n);
+			const float half = 0.5f * s * Math::sqrt(1.0f + MAX(dhx * dhx, dhz * dhz)) * 1.15f;
+			const Vector3 center = Vector3((i + 0.5f) * s, hc, (j + 0.5f) * s) - n * thick;
+			FlowBackend::Emitter e = make_solid(Transform3D(Basis(tx, n, tz), center), Vector3());
+			e.shape = FlowBackend::Emitter::SHAPE_BOX;
+			e.half_size[0] = half;
+			e.half_size[1] = thick;
+			e.half_size[2] = half;
+			r_emitters.push_back(e);
+		}
+	}
+}
+
 void PhysXFlow3D::_step(double p_delta) {
 	if (grid == nullptr) {
 		return;
@@ -853,6 +967,7 @@ void PhysXFlow3D::_step(double p_delta) {
 		region = region.has_volume() ? region.merge(gas.grow(1.0)) : gas.grow(1.0);
 	}
 	_gather_colliders(region, emitters);
+	_gather_terrain_floor(region, emitters);
 	_gather_scatter_lights();
 	if (floor_enabled) {
 		// The FLOOR: one wide solid box whose top is floor_height, under everything this grid can reach. A solid
@@ -870,6 +985,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	FlowBackend::Settings settings;
 	settings.cell_size = cell_size;
 	settings.buoyancy = buoyancy;
+	settings.smoke_buoyancy = smoke_buoyancy;
 	settings.cooling_rate = cooling_rate;
 	settings.smoke_fade = smoke_fade;
 	settings.vorticity = vorticity;
@@ -1076,6 +1192,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cell_size"), &PhysXFlow3D::get_cell_size);
 	ClassDB::bind_method(D_METHOD("set_buoyancy", "buoyancy"), &PhysXFlow3D::set_buoyancy);
 	ClassDB::bind_method(D_METHOD("get_buoyancy"), &PhysXFlow3D::get_buoyancy);
+	ClassDB::bind_method(D_METHOD("set_smoke_buoyancy", "buoyancy"), &PhysXFlow3D::set_smoke_buoyancy);
+	ClassDB::bind_method(D_METHOD("get_smoke_buoyancy"), &PhysXFlow3D::get_smoke_buoyancy);
 	ClassDB::bind_method(D_METHOD("set_cooling_rate", "rate"), &PhysXFlow3D::set_cooling_rate);
 	ClassDB::bind_method(D_METHOD("get_cooling_rate"), &PhysXFlow3D::get_cooling_rate);
 	ClassDB::bind_method(D_METHOD("set_smoke_fade", "fade"), &PhysXFlow3D::set_smoke_fade);
@@ -1093,6 +1211,12 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collision_range", "range"), &PhysXFlow3D::set_collision_range);
 	ClassDB::bind_method(D_METHOD("set_floor_enabled", "enabled"), &PhysXFlow3D::set_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_floor_enabled"), &PhysXFlow3D::is_floor_enabled);
+	ClassDB::bind_method(D_METHOD("set_terrain_floor", "enabled"), &PhysXFlow3D::set_terrain_floor);
+	ClassDB::bind_method(D_METHOD("is_terrain_floor"), &PhysXFlow3D::is_terrain_floor);
+	ClassDB::bind_method(D_METHOD("set_terrain_path", "path"), &PhysXFlow3D::set_terrain_path);
+	ClassDB::bind_method(D_METHOD("get_terrain_path"), &PhysXFlow3D::get_terrain_path);
+	ClassDB::bind_method(D_METHOD("set_terrain_floor_spacing", "spacing"), &PhysXFlow3D::set_terrain_floor_spacing);
+	ClassDB::bind_method(D_METHOD("get_terrain_floor_spacing"), &PhysXFlow3D::get_terrain_floor_spacing);
 	ClassDB::bind_method(D_METHOD("set_floor_height", "height"), &PhysXFlow3D::set_floor_height);
 	ClassDB::bind_method(D_METHOD("get_floor_height"), &PhysXFlow3D::get_floor_height);
 	ClassDB::bind_method(D_METHOD("get_collision_range"), &PhysXFlow3D::get_collision_range);
@@ -1147,6 +1271,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cell_size", PROPERTY_HINT_RANGE, "0.005,1,0.001,or_greater,suffix:m"), "set_cell_size", "get_cell_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_blocks", PROPERTY_HINT_RANGE, "64,16384,1,or_greater"), "set_max_blocks", "get_max_blocks");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buoyancy", PROPERTY_HINT_RANGE, "-10,10,0.01"), "set_buoyancy", "get_buoyancy");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_buoyancy", PROPERTY_HINT_RANGE, "-20,20,0.01,or_less,or_greater"), "set_smoke_buoyancy", "get_smoke_buoyancy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cooling_rate", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_cooling_rate", "get_cooling_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_fade", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_smoke_fade", "get_smoke_fade");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vorticity", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_vorticity", "get_vorticity");
@@ -1158,6 +1283,9 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_range", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_collision_range", "get_collision_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floor_enabled"), "set_floor_enabled", "is_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "floor_height", PROPERTY_HINT_NONE, "suffix:m"), "set_floor_height", "get_floor_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "terrain_floor"), "set_terrain_floor", "is_terrain_floor");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_path"), "set_terrain_path", "get_terrain_path");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_floor_spacing", PROPERTY_HINT_RANGE, "0.05,8,0.05,or_greater,suffix:m"), "set_terrain_floor_spacing", "get_terrain_floor_spacing");
 	ADD_GROUP("Look", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_density", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater"), "set_smoke_density", "get_smoke_density");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "smoke_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_smoke_color", "get_smoke_color");

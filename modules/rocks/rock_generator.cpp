@@ -2302,7 +2302,7 @@ uniform float contact_height = 0.08;
 // Ground blending (docs/ideas/rocks.md): the foot eased into the ground's own surface over a band this high (metres,
 // grown with the stone's size), the ground's layer from the generator's geology, coloured as the landscape's layers.
 uniform bool ground_blend = false;
-uniform float ground_blend_height = 0.25;
+uniform float ground_blend_height = 0.45;
 // Forms set into a terrain cliff (cave mouths): the rock keeps its own mottling, beds and marks but takes the
 // cliff's colour (ground_rock, the landscape's rock layer), so the block reads as part of the wall around it.
 uniform bool cliff_match = false;

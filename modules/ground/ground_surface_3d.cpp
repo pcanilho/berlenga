@@ -2257,6 +2257,28 @@ void GroundSurface3D::add_spray(const Spray &p_spray) {
 	}
 }
 
+void GroundSurface3D::add_dust(Vector3 p_position, Vector3 p_velocity, float p_strength) {
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	if (frame > dust_frame + 2) {
+		dust.clear();
+	}
+	dust_frame = frame;
+	const float share = get_blown_at(p_position.x, p_position.z);
+	if (share <= 0.0f || p_strength <= 0.0f || dust.size() >= 256) {
+		return;
+	}
+	Dust d;
+	d.position = p_position;
+	d.velocity = p_velocity;
+	d.rate = dust_emission * share * p_strength;
+	dust.push_back(d);
+}
+
+void GroundSurface3D::take_dust(LocalVector<Dust> &r_dust) {
+	r_dust = dust;
+	dust.clear();
+}
+
 Array GroundSurface3D::take_sprays() {
 	Array out;
 	for (const Spray &s : sprays) {
@@ -2267,6 +2289,8 @@ Array GroundSurface3D::take_sprays() {
 		d["slip_speed"] = s.slip_speed;
 		d["reach_center"] = s.reach_center;
 		d["reach_radius"] = s.reach_radius;
+		d["side_share"] = s.side_share;
+		d["side_volume_rate"] = s.side_volume_rate;
 		out.push_back(d);
 	}
 	sprays.clear();
@@ -2775,6 +2799,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("deposit", "position", "radius", "depth"), &GroundSurface3D::deposit);
 	ClassDB::bind_method(D_METHOD("take_sprays"), &GroundSurface3D::take_sprays);
 	ClassDB::bind_method(D_METHOD("set_ploughing", "enabled"), &GroundSurface3D::set_ploughing);
+	ClassDB::bind_method(D_METHOD("set_dust_emission", "rate"), &GroundSurface3D::set_dust_emission);
+	ClassDB::bind_method(D_METHOD("get_dust_emission"), &GroundSurface3D::get_dust_emission);
 	ClassDB::bind_method(D_METHOD("is_ploughing"), &GroundSurface3D::is_ploughing);
 	ClassDB::bind_method(D_METHOD("set_gpu_simulation", "enabled"), &GroundSurface3D::set_gpu_simulation);
 	ClassDB::bind_method(D_METHOD("is_gpu_simulation"), &GroundSurface3D::is_gpu_simulation);
@@ -2817,6 +2843,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "deform_groups"), "set_deform_groups", "get_deform_groups");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ploughing"), "set_ploughing", "is_ploughing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "contact_tolerance", PROPERTY_HINT_RANGE, "0,0.2,0.001,suffix:m"), "set_contact_tolerance", "get_contact_tolerance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dust_emission", PROPERTY_HINT_RANGE, "0,0.2,0.001,or_greater,suffix:kg/m2"), "set_dust_emission", "get_dust_emission");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_mass", PROPERTY_HINT_RANGE, "0,500,0.5,suffix:kg"), "set_character_mass", "get_character_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_contact_area", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m²"), "set_character_contact_area", "get_character_contact_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_cached_tiles", PROPERTY_HINT_RANGE, "0,65536,1"), "set_max_cached_tiles", "get_max_cached_tiles");

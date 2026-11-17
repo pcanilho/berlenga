@@ -93,6 +93,9 @@ public:
 		PASS_BS_SURFACE,
 		PASS_BS_MARCH,
 		PASS_BS_RENDER,
+		// Diffuse particles (spray, foam, bubbles), block-sparse fluid only.
+		PASS_BS_DIFFUSE_ADVECT,
+		PASS_BS_DIFFUSE_SPAWN,
 		PASS_MAX };
 
 	RenderingDevice *rd = nullptr;
@@ -128,6 +131,10 @@ public:
 	// lose their indirect-read barrier and the dispatch reads stale counts.
 	RID buf_bargs;
 	RID buf_sdf; // every baked collider's grid
+	RID buf_diffuse; // diffuse particles: 2 vec4 / slot (see mpm_bs_diffuse_inc.glsl)
+	RID buf_dhead; // diffuse ring write head
+	RID buf_dout; // diffuse particles packed for drawing: 1 vec4 / slot
+	int diffuse_capacity = 0; // 0 = no diffuse particles
 
 	bool block_sparse = false; // this build uses the mpm_bs_* passes (fluid, boundless-capable)
 	int capacity = 0;
@@ -139,6 +146,7 @@ public:
 	// Readback caches. cache_mtx guards all of them.
 	Mutex cache_mtx;
 	PackedFloat32Array mm_cache;
+	PackedFloat32Array dout_cache; // 4 floats / diffuse slot: position, drawn radius (0 = none)
 	LocalVector<Vector3> imp_cache;
 	PackedVector3Array surf_verts_cache;
 	PackedVector3Array surf_norms_cache;
@@ -151,7 +159,7 @@ public:
 	// Every call binds a Ref to this object (p_self) so it outlives work in
 	// flight; args are individually Variant-marshalled (no struct payloads).
 	void rt_compile(Ref<MPMFluidSolverGPU> p_self);
-	void rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots, PackedByteArray p_sdf);
+	void rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots, PackedByteArray p_sdf, int p_diffuse_capacity);
 	void rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_colliders, int p_ncol, int p_pcount, int p_node_count, Vector3i p_grid_dims, int p_substeps, bool p_want_surface, bool p_bench);
 	void rt_emit(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_blob, int p_head_bytes, int p_first_bytes);
 	void rt_kill(Ref<MPMFluidSolverGPU> p_self, PackedInt32Array p_slots);
@@ -162,6 +170,7 @@ public:
 	// Async readback callbacks: RenderingDevice invokes them with the data as the
 	// runtime arg; Callable::bind APPENDS the bound args, so the data comes first.
 	void rt_on_mm(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self);
+	void rt_on_dout(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self);
 	void rt_on_impulses(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self, int p_ncol);
 	void rt_on_surf_count(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self);
 	void rt_on_surf_verts(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self);
@@ -207,6 +216,12 @@ public:
 		Vector3 gravity = Vector3(0, -9.8f, 0);
 		Vector3 domain = Vector3(3, 3, 3); // MPM sim box / boundary, centered on the solver transform
 		Vector3 spawn_region = Vector3(1, 1, 1); // prefill fills this, centered on the transform (clamped to the domain)
+		// Diffuse particles: spray, foam and air bubbles (Ihmsen et al. 2012). Fluid only.
+		int diffuse_capacity = 0; // ring size; 0 = off
+		float diffuse_lifetime = 1.5f; // mean foam lifetime, seconds
+		float diffuse_rate = 160.0f; // most spawned per fluid particle per second, at full potential
+		float diffuse_buoyancy = 1.0f; // scales the bubbles' buoyancy (1 = physical)
+		float diffuse_radius = 0.0035f; // largest bubble / foam radius, metres
 	};
 
 	// An analytic collider coupled to the fluid.
@@ -288,6 +303,15 @@ public:
 	// 12 floats / particle: MultiMesh TRANSFORM_3D rows (origin at 3, 7, 11), from
 	// the last reaped step. Empty until the first readback lands.
 	PackedFloat32Array get_multimesh_buffer() const;
+	// 4 floats / diffuse slot: world position and drawn radius (0 = an empty slot),
+	// from the last reaped step. Empty when diffuse particles are off.
+	PackedFloat32Array get_diffuse_buffer() const;
+	// Live diffuse-particle tweaks (the ring size needs a configure()).
+	void set_diffuse_params(float p_lifetime, float p_buoyancy, float p_radius) {
+		settings.diffuse_lifetime = p_lifetime;
+		settings.diffuse_buoyancy = p_buoyancy;
+		settings.diffuse_radius = p_radius;
+	}
 	// Blocking: forces a render sync. Test / query helper only.
 	PackedVector3Array get_positions() const;
 	// The volume of fluid one particle stands for at rest (particles are seeded, and given mass, at dx / 2 spacing).
@@ -318,6 +342,8 @@ private:
 	float dx = 0.0f;
 	float pmass = 0.0f;
 	float surf_iso_density = 500.0f; // settings.surface_iso resolved to a kg/m^3 threshold
+	double frame_dt = 1.0 / 60.0; // this step's whole frame (the diffuse passes run once a frame)
+	uint32_t frame_seed = 0;
 
 	struct BakedField {
 		int offset = -1;
@@ -330,7 +356,7 @@ private:
 	void _compute_scales();
 	void _recompute_surface_iso();
 	LocalVector<float> _seed_block(int &r_count) const;
-	void _pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes) const;
+	void _pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes, bool p_warn = true) const;
 	void _pack_colliders(const LocalVector<SphereCollider> &p_colliders, PackedByteArray &r_bytes) const;
 	// Run render work now (local device) or hand it to the render thread (shared).
 	void _dispatch(const Callable &p_call) const;

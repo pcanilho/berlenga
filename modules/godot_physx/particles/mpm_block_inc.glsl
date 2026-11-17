@@ -50,6 +50,9 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 extra; // x collider count, y collider friction, z surface iso density, w surface kernel
 	vec4 gran; // unused on this path
 	vec4 blockp; // x = hash slot count (pow2), y = block-pool capacity (MAX_BLOCKS)
+	vec4 diffuse_a; // diffuse particles: x frame dt, y spawn rate, z frame seed, w capacity (0 = off)
+	vec4 diffuse_b; // x mean lifetime, y buoyancy scale, z largest bubble radius, w smallest
+	vec4 diffuse_c; // potential clamps: x/y trapped air (m/s), z/w kinetic energy (J/kg)
 };
 
 layout(set = 0, binding = 1, std430) restrict buffer Particles {

@@ -72,7 +72,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Moraines** (`moraine_age`, years, 0 = off): debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.
 - **Ice-worn rock** (`ice_worn_detail`): faces toward the old ice flow are smoothed, faces away are stepped, with striations.
 - **Cliff ledges** (`cliff_ledge_spacing`, `cliff_ledge_strength`): rock beds of uneven thickness step faces steeper than 40 degrees into ledges.
-- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks, with gravel and fines between them up close.
+- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks; up close, each is an angular stone standing in a bed of gravel and fines.
 - **Fallen blocks** (`get_boulders(rect, density)`): blocks shed by cliffs rest below them, the largest furthest out.
 
 ## Rivers, coasts and lakes
@@ -165,9 +165,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Footprints: deepest in mud, shallow in dry sand where the walls slump.*
 
 - **Soft ground** (PhysXVehicle3D `soft_soil`, on by default; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`, on by default): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.
-- **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept.
+- **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.
 - **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.
 - **Blowing sand** (`GroundStreamers3D`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.
+- **Dust** (`GroundDust3D`, `GroundSurface3D.dust_emission`): the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.
 - **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.
 
   ![Dry sand 40 cm from the camera at full resolution, without and with sand glints, raster](media/sand-glints.jpg)

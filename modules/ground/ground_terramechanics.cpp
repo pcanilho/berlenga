@@ -93,6 +93,16 @@ float bulldozing_resistance(const GroundSoil &p_soil, float p_width, float p_sin
 	return 1000.0f * p_width * (0.67f * p_soil.cohesion * z * kpc + 0.5f * z * z * p_soil.unit_weight * kpg);
 }
 
+float wheel_bulldozing_resistance(const GroundSoil &p_soil, float p_width, float p_radius, float p_sinkage, float p_already) {
+	// Bekker's compaction resistance (the pressure on the wheel's front arc) holds for sinkage up to about a sixth
+	// of the diameter (Bekker 1969; Wong, "Theory of Ground Vehicles", sec. 2.4.1). Within it the wheel presses
+	// the soil down and the field moves what it displaces to the rims, as in Chrono's SCM, which has no separate
+	// bulldozing force; bulldozing is marginal at small sinkage (NSF PAR 10304353, 2021). Past D/6 the soil ahead
+	// fails in passive earth pressure and the wheel pushes a wedge of it: Bekker's bulldozing on that depth.
+	const float onset = p_radius / 3.0f;
+	return bulldozing_resistance(p_soil, p_width, p_sinkage, MAX(p_already, onset));
+}
+
 float janosi_hanamoto(float p_j_end, float p_shear_k) {
 	const float j = Math::abs(p_j_end);
 	const float k = MAX(p_shear_k, 1e-4f);
@@ -121,7 +131,7 @@ GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, fl
 	}
 	r.contact_length = MAX(length, 0.01f);
 	r.compaction = compaction_resistance(p_soil, p_width, z, p_already_pressed);
-	r.bulldozing = bulldozing_resistance(p_soil, p_width, z, p_already_pressed);
+	r.bulldozing = wheel_bulldozing_resistance(p_soil, p_width, p_radius, z, p_already_pressed);
 	const float area = p_width * r.contact_length;
 	r.shear_limit = 1000.0f * area * p_soil.cohesion + p_load * p_soil.tan_phi;
 	r.traction = r.shear_limit * janosi_hanamoto(CLAMP(Math::abs(p_slip), 0.0f, 1.0f) * r.contact_length, p_soil.shear_k);

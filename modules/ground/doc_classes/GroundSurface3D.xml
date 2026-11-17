@@ -369,6 +369,9 @@
 		<member name="drying_time" type="float" setter="set_drying_time" getter="get_drying_time" default="900.0">
 			How long freshly turned ground takes to dry to a third of its darkening, in seconds.
 		</member>
+		<member name="dust_emission" type="float" setter="set_dust_emission" getter="get_dust_emission" default="0.06">
+			The dust a tyre lifts from fully dry, bare sand, in kilograms per second per metre of tyre width per metre per second of speed (sliding counts twice). Scaled by how much of the ground the wind could move there; damp sand gives none. Carried by a [GroundDust3D].
+		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.
 		</member>
@@ -408,7 +411,7 @@
 		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
 			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.
 		</member>
-		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
+		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.06">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.
 		</member>
 		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">

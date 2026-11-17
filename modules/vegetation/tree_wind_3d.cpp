@@ -277,14 +277,33 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 	const uint32_t per_axis = MAX(wave_count / 3, 1u);
 	for (uint32_t b = 1; b < count; b++) {
 		const Bone &bone = p_rig.bones[b];
-		if (bone.length < p_min_length && !(p_touch && p_touch->active)) {
-			// Too small on screen to see its own sway: it rides its parent.
-			r_bones[b] = r_bones[MIN(uint32_t(bone.parent), b - 1)];
-			continue;
-		}
 		const Vector3 load_local = bone.pivot + bone.centroid;
 		const Vector3 at = p_world.xform(load_local);
 		const WindSample ws = sample_wind(at, MAX(load_local.y * scale, 0.5f));
+		// Too small on screen to see its own sway (its length and foliage reach under the LOD's
+		// bound): it keeps the lean the mean wind gives it and drops the gusts and resonance (the
+		// costly part). Riding its parent unbent, a twig lost its whole lean, up to the bend cap,
+		// where the bound assumed 0.15 rad: the bench measured 1.4 px against 1 px.
+		const bool lean_only = bone.length + bone.reach < p_min_length && !(p_touch && p_touch->active);
+		if (lean_only) {
+			const Vector3 v = to_local.xform(ws.mean);
+			const float vs = v.length();
+			Transform3D local;
+			if (vs > 1e-4f) {
+				const float cd = DRAG_COEFFICIENT * (vs > RECONFIGURATION_SPEED ? Math::pow(vs / RECONFIGURATION_SPEED, p_rig.vogel) : 1.0f);
+				const Vector3 force = v * (0.5f * AIR_DENSITY * cd * bone.area * scale * scale * vs * drag_scale);
+				Vector3 theta = bone.centroid.cross(force) / MAX(bone.stiffness * scale * scale * stiffness_scale, 1e-3f);
+				theta -= bone.dir * theta.dot(bone.dir);
+				const float angle = theta.length();
+				if (angle > 1e-6f) {
+					const float bent = max_bend * Math::tanh(angle / max_bend);
+					const Basis turn(theta / angle, bent);
+					local = Transform3D(turn, bone.pivot - turn.xform(bone.pivot));
+				}
+			}
+			r_bones[b] = r_bones[MIN(uint32_t(bone.parent), b - 1)] * local;
+			continue;
+		}
 		const float omega0 = MAX(bone.omega / scale * Math::sqrt(stiffness_scale), 1e-3f);
 		const float zeta = bone.zeta;
 

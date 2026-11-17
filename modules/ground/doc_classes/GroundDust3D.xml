@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GroundDust3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Dust lifted from dry sand by tyres, carried by the wind and settling back.
+	</brief_description>
+	<description>
+		The silt a tyre lifts as it rolls and slides over dry, bare sand ([method GroundSurface3D.add_dust], linear in speed, sliding counts twice, none from damp sand), carried on a small grid that follows a target: advection by the wind and the plume's own jet, eddy diffusion, Stokes settling and deposition. Drawn as a [FogVolume] whose density texture is the dust's extinction, so the [Environment] needs volumetric fog enabled; the path tracer sees it on camera rays.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_dust">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="velocity" type="Vector3" />
+			<param index="2" name="mass" type="float" />
+			<description>
+				Adds [param mass] kilograms of dust at [param position] with a starting jet of [param velocity].
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes all dust and resets the tallies.
+			</description>
+		</method>
+		<method name="get_airborne_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dust in the air, in kilograms.
+			</description>
+		</method>
+		<method name="get_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dust concentration at [param position], in kilograms per cubic meter.
+			</description>
+		</method>
+		<method name="get_deposited_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dust settled back to the ground since the last [method clear], in kilograms.
+			</description>
+		</method>
+		<method name="get_emitted_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dust lifted since the last [method clear], in kilograms.
+			</description>
+		</method>
+		<method name="get_mass_extinction" qualifiers="const">
+			<return type="float" />
+			<description>
+				The extinction per kilogram of dust of [member grain_diameter], in square meters per kilogram.
+			</description>
+		</method>
+		<method name="get_settling_speed" qualifiers="const">
+			<return type="float" />
+			<description>
+				The Stokes settling speed of [member grain_diameter] grains, in meters per second.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="billow" type="float" setter="set_billow" getter="get_billow" default="0.9">
+			How much the dust breaks into billows: 3D Worley noise erodes thin edges and thickens cores, so a plume reads as rolling clumps rather than a smooth haze. 0 draws the plain grid density.
+		</member>
+		<member name="billow_size" type="float" setter="set_billow_size" getter="get_billow_size" default="2.0">
+			Size of the largest billows, in meters. The noise drifts with the wind and rises slowly.
+		</member>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.5">
+			The size of the dust grid's cells, in meters.
+		</member>
+		<member name="diffusivity" type="float" setter="set_diffusivity" getter="get_diffusivity" default="0.15">
+			Eddy diffusion near the ground, in square meters per second: how fast a plume spreads.
+		</member>
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.82, 0.72, 0.56, 1)">
+			The colour of the dust (its scattering albedo).
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Simulates and draws the dust.
+		</member>
+		<member name="extent" type="Vector3" setter="set_extent" getter="get_extent" default="Vector3(32, 10, 32)">
+			The size of the dust grid, in meters. It follows [member follow_target], trailing it along its travel.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the dust grid follows, usually a vehicle. Empty: this node.
+		</member>
+		<member name="grain_diameter" type="float" setter="set_grain_diameter" getter="get_grain_diameter" default="15.0">
+			The dust's grain diameter, in micrometers. Sets the Stokes settling speed and the extinction per kilogram.
+		</member>
+		<member name="ground_surface" type="NodePath" setter="set_ground_surface" getter="get_ground_surface" default="NodePath(&quot;&quot;)">
+			The [GroundSurface3D] whose wheels lift the dust. Empty: the active one.
+		</member>
+		<member name="jet_time" type="float" setter="set_jet_time" getter="get_jet_time" default="0.5">
+			How fast the air slows a plume's own jet, in seconds.
+		</member>
+		<member name="visibility" type="float" setter="set_visibility" getter="get_visibility" default="1.0">
+			Scales the drawn extinction; 1 is physical.
+		</member>
+	</members>
+</class>
