@@ -3273,6 +3273,18 @@
    "topic": ""
   },
   {
+   "name": "Fire light and embers",
+   "settings": [
+    "PhysXFlow3D.fire_light",
+    "embers"
+   ],
+   "note": "",
+   "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Particle fluid surface",
    "settings": [
     "PhysXParticleFluid3D.render_mode",
