@@ -2031,6 +2031,29 @@
    "topic": "Placement"
   },
   {
+   "name": "Cereal crops",
+   "settings": [
+    "GrassField3D.crop",
+    "crop_stage"
+   ],
+   "note": "",
+   "what": "wheat, barley, oats and rye as real plants in drill rows, through their growth stages from green rows to gold ears and stubble.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Crop fields",
+   "settings": [
+    "GrassField3D.fields"
+   ],
+   "note": "",
+   "what": "field outlines with their own drill direction, sowing date, tramlines and headland; the ground carries the crop's colour into the distance.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Clear of boulders",
    "settings": [
     "VegetationField3D.obstacles",
