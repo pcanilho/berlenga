@@ -383,7 +383,7 @@
 			The width of the field, in metres. Prints are made only where the terrain is fully lowered: [member terrain_margin] plus [member skirt_fade] inside its edge.
 		</member>
 		<member name="deform_groups" type="PackedStringArray" setter="set_deform_groups" getter="get_deform_groups" default="PackedStringArray(&quot;ground_deform&quot;, &quot;snow_deform&quot;, &quot;grass_trample&quot;)">
-			Groups whose nodes press the ground. A node's first collision shape gives its footprint; rigid bodies press by their mass, characters by [member character_mass], others only to their underside. The metas [code]ground_mass[/code], [code]ground_contact_area[/code] and [code]ground_radius[/code] (or the snow ones) override.
+			Groups whose nodes press the ground. A node's first collision shape gives its footprint; rigid bodies press by their mass, characters by [member character_mass], others only to their underside. The metas [code]ground_mass[/code], [code]ground_contact_area[/code] and [code]ground_radius[/code] (or the snow ones) override. A [BoxShape3D] with the meta [code]ground_sole[/code] set prints a boot sole (heel, waist, toe and lug tread, the toe toward the box's longer side) instead of a block.
 		</member>
 		<member name="deform_resolution" type="int" setter="set_deform_resolution" getter="get_deform_resolution" default="512">
 			Texels across the field (a multiple of 64).

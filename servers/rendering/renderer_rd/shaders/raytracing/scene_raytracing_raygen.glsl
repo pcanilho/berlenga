@@ -2104,7 +2104,7 @@ void main() {
 				if (nmap != 0u && nsize > 0.0) {
 					vec2 n0 = vec2(get_rt_param(RT_PARAM_GROUND_NEAR_X), get_rt_param(RT_PARAM_GROUND_NEAR_Z));
 					vec2 ne = min(gpos.xz - n0, n0 + nsize - gpos.xz);
-					float nw = smoothstep(0.0, 0.5, min(ne.x, ne.y));
+					float nw = smoothstep(0.0, 1.0, min(ne.x, ne.y));
 					if (nw > 0.0) {
 						g = mix(g, textureLod(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), (gpos.xz - n0) / nsize, 0.0), nw);
 					}

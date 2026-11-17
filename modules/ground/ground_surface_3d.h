@@ -251,7 +251,7 @@ private:
 	bool near_ground_dirty = true;
 	bool near_cells_dirty = true;
 	double near_slow_accum = 0.0;
-	static constexpr float NEAR_BLEND = 0.5f; // m over which the near field fades into the main one
+	static constexpr float NEAR_BLEND = 1.0f; // m over which the near field fades into the main one (material.cpp, raygen)
 	bool _near_on() const;
 	void _near_follow();
 	void _near_seed(Vector2i p_origin);

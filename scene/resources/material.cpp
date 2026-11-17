@@ -3852,13 +3852,16 @@ global uniform sampler2D ground_wet_map : filter_linear, repeat_disable; // pore
 		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
 	}
 	code += R"(
-// The near field's weight at p_xz: 1 inside its square, faded to 0 over its outer half metre.
+// The near field's weight at p_xz: 1 inside its square, faded to 0 over its outer metre
+// (GroundSurface3D::NEAR_BLEND). A metre, not less: a rut or print row coming in from outside starts fresh
+// at the near field's edge (its first stamps shove up a heap the main field made long before), and that
+// start must lie where the main field still shows.
 float ground_deform_near_weight(vec2 p_xz) {
 	if (ground_deform_near_rect.z <= 0.0) {
 		return 0.0;
 	}
 	vec2 e = min(p_xz - ground_deform_near_rect.xy, ground_deform_near_rect.xy + ground_deform_near_rect.z - p_xz);
-	return smoothstep(0.0, 0.5, min(e.x, e.y));
+	return smoothstep(0.0, 1.0, min(e.x, e.y));
 }
 vec4 ground_deform_sample(vec2 p_xz) {
 	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;

@@ -43,7 +43,8 @@ extends Node3D
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
-#   --cam=x,y,z,tx,ty,tz camera for --view=roost and --view=ripples
+#   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
+#   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
 #   --out=path.png      save the frame and quit
@@ -72,6 +73,7 @@ var gpu := true
 var bounces := 3
 var cam_arg := PackedFloat32Array()
 var wind_arg := 9.0
+var sun_arg := PackedFloat32Array()
 var fails := 0
 var height: Node3D
 var surface: GroundSurface3D
@@ -100,6 +102,9 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--gpu=0": gpu = false
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
+		elif a.begins_with("--sun="):
+			for v in a.substr(6).split(","):
+				sun_arg.append(float(v))
 		elif a.begins_with("--cam="):
 			for v in a.substr(6).split(","):
 				cam_arg.append(float(v))
@@ -1211,16 +1216,19 @@ func _build_trail() -> void:
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-18.0, 140.0, 0.0)
+	sun.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-18.0, 140.0, 0.0)
+	if sun_arg.size() >= 3:
+		env.tonemap_exposure = sun_arg[2]
 	sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
 	var cam := Camera3D.new()
 	add_child(cam)
-	cam.position = Vector3(1.2, 1.05, 3.4)
-	cam.look_at(Vector3(-1.2, 0.0, 0.7))
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.2, 1.05, 3.4, -1.2, 0.0, 0.7])
+	cam.position = Vector3(c[0], c[1], c[2])
+	cam.look_at(Vector3(c[3], c[4], c[5]))
 	cam.fov = 55.0
 	# The walker: a capsule on the ground's collider, its two boots (boxes in ground_deform, 80 kg on
-	# 0.035 m2) printing by Bekker sinkage; a ball and a cart wheel roll through at set depths.
+	# 0.035 m2) printing by Bekker sinkage; a ball and a 25 cm tyre roll through at set depths.
 	var dark := StandardMaterial3D.new()
 	dark.albedo_color = Color(0.15, 0.17, 0.22)
 	walker = CharacterBody3D.new()
@@ -1240,6 +1248,8 @@ func _build_trail() -> void:
 		foot.add_child(fs)
 		foot.set_meta("ground_mass", 80.0)
 		foot.set_meta("ground_contact_area", 0.035)
+		# A boot's sole: heel, waist, toe and lugs instead of a block.
+		foot.set_meta("ground_sole", true)
 		foot.add_to_group("ground_deform")
 		foot.position = Vector3(0, 100, 0)
 		add_child(foot)
@@ -1266,14 +1276,14 @@ func _build_trail() -> void:
 	var wc := CollisionShape3D.new()
 	wc.shape = CylinderShape3D.new()
 	(wc.shape as CylinderShape3D).radius = 0.4
-	(wc.shape as CylinderShape3D).height = 0.12
+	(wc.shape as CylinderShape3D).height = 0.25
 	wc.rotation_degrees = Vector3(90, 0, 0)
 	wheel.add_child(wc)
 	var wmi := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.4
 	cyl.bottom_radius = 0.4
-	cyl.height = 0.12
+	cyl.height = 0.25
 	wmi.mesh = cyl
 	wmi.rotation_degrees = Vector3(90, 0, 0)
 	wmi.material_override = dark
@@ -1286,11 +1296,15 @@ func _build_trail() -> void:
 	for i in int(6.5 * 60.0):
 		await get_tree().physics_frame
 	walking = false
+	# Off the frame: only their tracks are shown (their shadows would cross it at a low sun).
+	for nm in ["Ball", "Wheel", "Foot0", "Foot1"]:
+		(get_node(nm) as Node3D).global_position = Vector3(0, 100, 0)
+	walker.global_position = Vector3(0, 100, 0)
 	# Let the walls settle as they would in the second after.
 	for i in 60:
 		await get_tree().physics_frame
 	surface.sync_deformation()
-	print("ground %s: step %.2f ms on the %s, moved %s m3" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume()])
+	print("ground %s: step %.2f ms on the %s, moved %s m3, near rect %s" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume(), surface.get_near_rect()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
@@ -1660,11 +1674,11 @@ func _physics_process(delta: float) -> void:
 		else:
 			foot.global_position = Vector3(0, 100, 0)
 	var b: Node3D = get_node("Ball")
-	var bp := Vector3(-6.0 + 1.2 * walk_t, 0, -0.6)
+	var bp := Vector3(-6.0 + 1.2 * walk_t, 0, -0.6 + 0.12 * sin(walk_t * 0.8))
 	b.global_position = Vector3(bp.x, _undisturbed(bp) - 0.06 + 0.25, bp.z)
 	b.rotation.z = -bp.x / 0.25
 	var w: Node3D = get_node("Wheel")
-	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -2.4)
+	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -2.4 + 0.2 * sin(walk_t * 0.6 + 1.0))
 	w.global_position = Vector3(wp.x, _undisturbed(wp) - 0.03 + 0.4, wp.z)
 	w.rotation.z = -wp.x / 0.4
 

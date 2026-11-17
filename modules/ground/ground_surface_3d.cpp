@@ -473,12 +473,29 @@ void GroundSurface3D::_build_mesh() {
 		ring_w = MAX(ring_w, 0.5f * ripples.n * ripples.cell);
 		ring_s = ring_s > 0.0f ? MIN(ring_s, ripples.cell) : ripples.cell;
 	}
+	// Inner vertices on the main field's texel centres, half a detail step off its corners: a vertex on a
+	// corner reads the mean of four texels, so the coarse grid showed a 2x2 box blur of the field while the
+	// finer ring read it unblurred, and a rut changed shape where it crossed the ring (a seam at the near
+	// field's edge). On the centres both grids show the same bilinear field. The shift is a whole number of
+	// fine steps, so the ring's vertices stay on the ripple cells (2.5 cm with 1.25 cm cells, within 0.6 cm
+	// of the centres). The outer edge stays on the patch's rim.
+	float shift = 0.5f * detail_spacing;
+	if (ring_s > 0.0f) {
+		shift = Math::floor(shift / ring_s + 1e-3f) * ring_s;
+	}
+	for (int i = 1; i + 1 < n; i++) {
+		c[i] += shift;
+	}
+	for (int i = 0; i < n * n; i++) {
+		verts.set(i, Vector3(c[i % n], 0.0f, c[i / n]));
+		uvs.set(i, Vector2(c[i % n], c[i / n]));
+	}
 	if (ring_w > 0.0f && ring_s > 0.0f) {
 		for (int i = 0; i < n; i++) {
-			if (Math::abs(c[i] + ring_w) < 1e-3f) {
+			if (Math::abs(c[i] + ring_w - shift) < 1e-3f) {
 				hole_lo = i;
 			}
-			if (Math::abs(c[i] - ring_w) < 1e-3f) {
+			if (Math::abs(c[i] - ring_w - shift) < 1e-3f) {
 				hole_hi = i;
 			}
 		}
@@ -492,7 +509,6 @@ void GroundSurface3D::_build_mesh() {
 	}
 	const int fine_base = n * n;
 	if (fine_m > 0) {
-		const float w = -c[hole_lo];
 		verts.resize(fine_base + fine_m * fine_m);
 		normals.resize(fine_base + fine_m * fine_m);
 		tangents.resize((fine_base + fine_m * fine_m) * 4);
@@ -500,7 +516,7 @@ void GroundSurface3D::_build_mesh() {
 		for (int z = 0; z < fine_m; z++) {
 			for (int xi = 0; xi < fine_m; xi++) {
 				const int i = fine_base + z * fine_m + xi;
-				const Vector3 p(-w + xi * ring_s, 0.0f, -w + z * ring_s);
+				const Vector3 p(c[hole_lo] + xi * ring_s, 0.0f, c[hole_lo] + z * ring_s);
 				verts.set(i, p);
 				normals.set(i, Vector3(0, 1, 0));
 				uvs.set(i, Vector2(p.x, p.z));
@@ -742,6 +758,7 @@ Rect2 GroundSurface3D::get_near_rect() const {
 }
 
 void GroundSurface3D::_near_release() {
+	field.stamp_step = 0.0f;
 	near_host.release();
 	near_fld.invalidate();
 	near_fld.clear();
@@ -773,6 +790,7 @@ void GroundSurface3D::_near_follow() {
 	}
 	near_host.shift_to(near_fld, want, near_resolution, max_cached_tiles);
 	near_fld.shift(want);
+	field.stamp_step = near_fld.texel();
 	globals_published = false;
 }
 

@@ -117,6 +117,9 @@ public:
 		return MAX(base, p_reach * width);
 	}
 	StampSink *stamp_sink = nullptr;
+	// The finest texel the stamps land on (a near field fed through stamp_sink), 0 for this field's own: a
+	// moving body is pressed at least once per such texel, or each press leaves its own tooth in the rim.
+	float stamp_step = 0.0f;
 
 	Vector2i origin; // texel index of the first texel
 	bool valid = false;
@@ -163,6 +166,8 @@ public:
 	}
 	float amount_scale(Vector3 p_position, float p_radius, bool p_tent = false) const;
 	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f);
+	static float sole_sd(float p_lx, float p_lz, Vector2 p_half);
+	static float sole_relief(float p_lx, float p_lz, Vector2 p_half);
 	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity = Vector2());
 	// Bodies in p_groups press along the path they moved since the last call.
 	void press_bodies(SceneTree *p_tree, const PackedStringArray &p_groups, const Columns &p_columns, float p_character_mass, float p_character_area, float p_contact_tolerance, double p_delta);

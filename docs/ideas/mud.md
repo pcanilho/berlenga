@@ -163,7 +163,7 @@ forwards to it, and direct presses update its CPU copy too. Slumping spreads lik
 field runs (texel ratio) squared slump passes, at most 16, each spending only its share of the owed time,
 which keeps repose times equal to the main field's. Tiles entering the near field are seeded from the main
 field's copy, so prints made far away arrive intact. The material blends the near map over the main one in
-its outer 0.5 m (globals `ground_deform_near_map`, `ground_deform_near_rect`), the patch mesh gets a fine
+its outer 1 m (globals `ground_deform_near_map`, `ground_deform_near_rect`), the patch mesh gets a fine
 ring at the near texel, and the path tracer reads the same map (rt params 70-73).
 
 Found on the way:
@@ -181,6 +181,24 @@ Found on the way:
   round pit. Grid amounts now keep the main field's soft edge on the near field. Rills are still as wide
   as the runoff grid draws them: sharp rills need the runoff routed on the near field's own grid (sand
   thread).
+
+Docs review fixes (prints frame):
+- Prints were blocks. A box stamp marked `ground_sole` (meta on the body) is a boot: heel and forefoot
+  ellipses in a smooth union, toe toward the longer half axis; the shank under the arch and chevron lug
+  grooves (5 mm deep, 22 mm apart) inside a solid rand raise the print's floor where the sole does not
+  bear (`GroundDeformField::sole_sd()`, `sole_relief()`, the same in ground_deform.glsl).
+- A rut changed shape at the near field's edge. The patch's coarse vertices sat on the main field's
+  texel corners, where a sample is the mean of four texels: the whole main field was drawn with a 2x2 box
+  blur, the fine ring without it. Inner vertices now sit on texel centres (half a detail step in, a whole
+  number of fine steps so ripple cells still land on the ring's vertices); ruts and prints are sharper on
+  the main field too. The hand-over band is 1 m, so a track entering the near field (which starts it
+  fresh at its edge) does so where the main field still shows.
+- Rims on the near field came out toothed: a body pressed once per frame (2.8 cm at 1.7 m/s) left one
+  tooth per press, finer than the main field could show. Bodies are pressed once per finest texel
+  (`GroundDeformField::stamp_step`).
+- A moving body's pushed soil goes half to each side of its path, so a tyre throws up two even berms.
+  A tyre narrower than two main texels still leaves rims that swap sides on the main field (aliasing of
+  the rim ring); the bench tyre is now 25 cm wide.
 
 Bench `--test=near` (6 checks, `--near=0` for A/B): a boot print's wall is 0.8 cm wide against 5.5 cm on
 the main field, volume kept, dry sand still slumps to 35 degrees in 3 s, prints seeded on arrival. Slope

@@ -342,6 +342,41 @@ void run_amount_stamp(Stamp s) {
 	barrier();
 }
 
+// A boot's sole (GroundDeformField::sole_sd(), sole_relief()): a box stamp flagged round as well. Local p in the box's
+// frame, the toe toward + along its longer side. The outline: a heel and a forefoot ellipse joined by a smooth
+// union through the waist; the relief raises the print's floor where the sole does not bear: the shank between
+// heel and ball, and the grooves between chevron lugs (a few millimetres), with a solid rand round the edge.
+float sole_ellipse(vec2 p, vec2 r) {
+	return (length(p / r) - 1.0) * min(r.x, r.y);
+}
+vec2 sole_frame(vec2 p_local, vec2 p_half, out float r_len, out float r_wid) {
+	bool along_x = p_half.x > p_half.y;
+	r_len = along_x ? p_half.x : p_half.y;
+	r_wid = along_x ? p_half.y : p_half.x;
+	return along_x ? vec2(p_local.x, p_local.y) : vec2(p_local.y, p_local.x);
+}
+float sole_sd(vec2 p_local, vec2 p_half) {
+	float len;
+	float wid;
+	vec2 q = sole_frame(p_local, p_half, len, wid);
+	float heel = sole_ellipse(vec2(q.x + 0.62 * len, q.y), vec2(0.38 * len, 0.8 * wid));
+	float fore = sole_ellipse(vec2(q.x - 0.28 * len, q.y), vec2(0.72 * len, wid));
+	float k = 0.25 * wid;
+	float hh = clamp(0.5 + 0.5 * (fore - heel) / k, 0.0, 1.0);
+	return mix(fore, heel, hh) - k * hh * (1.0 - hh);
+}
+float sole_relief(vec2 p_local, vec2 p_half) {
+	float len;
+	float wid;
+	vec2 q = sole_frame(p_local, p_half, len, wid);
+	float u = q.x / len;
+	float shank = smoothstep(-0.36, -0.3, u) * (1.0 - smoothstep(-0.14, -0.08, u));
+	float rand = smoothstep(-0.008, -0.004, sole_sd(p_local, p_half));
+	float g = fract((q.x + 0.6 * abs(q.y)) / 0.022);
+	float groove = (1.0 - rand) * smoothstep(0.05, 0.12, g) * (1.0 - smoothstep(0.38, 0.45, g));
+	return max(0.008 * shank, 0.005 * groove);
+}
+
 void run_stamp(Stamp s) {
 	if ((uint(s.d.y) & STAMP_AMOUNT) != 0u) {
 		run_amount_stamp(s);
@@ -366,6 +401,11 @@ void run_stamp(Stamp s) {
 	float settle = ground ? s.d.w : params.relax.z; // seconds of slumping a pressed texel owes
 	bool box = (flags & STAMP_BOX) != 0u;
 	bool round_ = (flags & STAMP_ROUND) != 0u;
+	// A box flagged round is a boot's sole.
+	bool sole = box && round_;
+	if (sole) {
+		round_ = false;
+	}
 	int x0 = s.e.x;
 	int x1 = s.e.y;
 	int z0 = s.e.z;
@@ -396,11 +436,12 @@ void run_stamp(Stamp s) {
 		vec2 d = wp - pos.xz;
 		float d2 = dot(d, d);
 		float sd;
-		if (box) {
-			float lx = cy * d.x - sy * d.y;
-			float lz = sy * d.x + cy * d.y;
-			float qx = abs(lx) - half_.x;
-			float qz = abs(lz) - half_.y;
+		vec2 lp = vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y);
+		if (sole) {
+			sd = sole_sd(lp, half_);
+		} else if (box) {
+			float qx = abs(lp.x) - half_.x;
+			float qz = abs(lp.y) - half_.y;
 			sd = sqrt(max(qx, 0.0) * max(qx, 0.0) + max(qz, 0.0) * max(qz, 0.0)) + min(max(qx, qz), 0.0);
 		} else {
 			sd = sqrt(d2) - radius;
@@ -415,6 +456,9 @@ void run_stamp(Stamp s) {
 		}
 		int i = z * n + x;
 		float prof = round_ ? bottom + radius - sqrt(max(r2 - d2, 0.0)) : bottom;
+		if (sole) {
+			prof += sole_relief(lp, half_);
+		}
 		if (prof <= c.surface - state[i].x + state[i].y + tol) {
 			atomicOr(touch_flag, 1u);
 		}
@@ -435,11 +479,12 @@ void run_stamp(Stamp s) {
 		vec2 d = wp - pos.xz;
 		float d2 = dot(d, d);
 		float sd;
-		if (box) {
-			float lx = cy * d.x - sy * d.y;
-			float lz = sy * d.x + cy * d.y;
-			float qx = abs(lx) - half_.x;
-			float qz = abs(lz) - half_.y;
+		vec2 lp = vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y);
+		if (sole) {
+			sd = sole_sd(lp, half_);
+		} else if (box) {
+			float qx = abs(lp.x) - half_.x;
+			float qz = abs(lp.y) - half_.y;
 			sd = sqrt(max(qx, 0.0) * max(qx, 0.0) + max(qz, 0.0) * max(qz, 0.0)) + min(max(qx, qz), 0.0);
 		} else {
 			sd = sqrt(d2) - radius;
@@ -457,9 +502,11 @@ void run_stamp(Stamp s) {
 		float sfc = c.surface - st.x + st.y;
 		float dd = min(d2, r2);
 		float target = round_ ? bottom + radius - sqrt(max(r2 - dd, 0.0)) : bottom;
+		float relief = sole ? sole_relief(lp, half_) : 0.0;
+		target += relief;
 		if (sink > 0.0) {
 			float wgt = round_ ? sqrt(max(1.0 - d2 / r2, 0.0)) : 1.0;
-			target = min(target, c.surface - sink * wgt);
+			target = min(target, c.surface - sink * wgt + relief);
 		}
 		target = max(target, c.surface - c.max_dent);
 		if (target >= sfc) {
@@ -495,7 +542,9 @@ void run_stamp(Stamp s) {
 			vec2 wp = texel_world(x, z);
 			vec2 d = wp - pos.xz;
 			float o;
-			if (box) {
+			if (sole) {
+				o = max(sole_sd(vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y), half_), 0.0);
+			} else if (box) {
 				float lx = cy * d.x - sy * d.y;
 				float lz = sy * d.x + cy * d.y;
 				float ox = max(abs(lx) - half_.x, 0.0);
@@ -540,13 +589,16 @@ void run_stamp(Stamp s) {
 		barrier();
 	}
 
-	// The rim: the pushed share spread over the ring, thickest at the edge.
+	// The rim: the pushed share spread over the ring, thickest at the edge. A moving body sends half to each
+	// side of its path (GroundDeformField::press()), as a tyre or blade throws up two even berms.
 	if (pushed <= 0.0) {
 		return;
 	}
-	float wsum = 0.0;
+	float fl = 0.0;
+	float fr = 0.0;
 	for (int pass = 0; pass < 2; pass++) {
 		float local_sum = 0.0;
+		float local_sum_r = 0.0;
 		for (int k = int(t); k < count; k += WG) {
 			int x = x0 + k % w;
 			int z = z0 + k / w;
@@ -554,7 +606,9 @@ void run_stamp(Stamp s) {
 			vec2 d = wp - pos.xz;
 			float d2 = dot(d, d);
 			float o;
-			if (box) {
+			if (sole) {
+				o = max(sole_sd(vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y), half_), 0.0);
+			} else if (box) {
 				float lx = cy * d.x - sy * d.y;
 				float lz = sy * d.x + cy * d.y;
 				float ox = max(abs(lx) - half_.x, 0.0);
@@ -588,12 +642,15 @@ void run_stamp(Stamp s) {
 				float plate = max(0.1 + 1.8 * hgt + tilt * along / plate_size, 0.0);
 				wgt *= 1.0 + min(c.crust / 0.02, 1.0) * (plate - 1.0);
 			}
+			float lat = bow > 0.0 ? d.x * heading.y - d.y * heading.x : 1.0;
+			float wl = wgt * (lat > 1e-4 ? 1.0 : (lat < -1e-4 ? 0.0 : 0.5));
 			if (pass == 0) {
-				local_sum += wgt;
+				local_sum += wl;
+				local_sum_r += wgt - wl;
 			} else {
 				int i = z * n + x;
 				vec4 st = state[i];
-				st.y += pushed * wgt / (wsum * area);
+				st.y += pushed * (wl * fl + (wgt - wl) * fr) / area;
 				st.z = max(st.z, settle);
 				if (ground) {
 					st.w = max(st.w, wgt);
@@ -602,10 +659,13 @@ void run_stamp(Stamp s) {
 			}
 		}
 		if (pass == 0) {
-			wsum = reduce3(local_sum, 0.0, 0.0).x;
-			if (wsum <= 0.0) {
+			vec3 sums = reduce3(local_sum, local_sum_r, 0.0);
+			if (sums.x + sums.y <= 0.0) {
 				return; // nowhere to push: it all compacts in place
 			}
+			float half_share = sums.x > 0.0 && sums.y > 0.0 ? 0.5 : 1.0;
+			fl = sums.x > 0.0 ? half_share / sums.x : 0.0;
+			fr = sums.y > 0.0 ? half_share / sums.y : 0.0;
 		}
 	}
 	memoryBarrierBuffer();
