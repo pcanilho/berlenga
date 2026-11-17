@@ -84,7 +84,7 @@
 			When enabled, a burning fire (see [member embers]) lights the scene in raster through a shadowed point light in its flames, coloured by [member heat_ramp] and pulsing at the frequency real flames puff at for the fire's width, [code]1.5 / sqrt(width)[/code] times a second (Cetegen and Ahmed 1993), about twice a second for a campfire. The gas's own glow lights nothing in raster, so without it a fire leaves the ground around it dark. The path tracer uses it too, as the flame's light source: the gas's glow would light the ground only when a bounce ray happens to hit it, so its glow then shows only to camera and mirror rays and the fire is not counted twice.
 		</member>
 		<member name="fire_light_energy" type="float" setter="set_fire_light_energy" getter="get_fire_light_energy" default="1.0">
-			Scales the [member fire_light]. It already grows with the burning area.
+			Scales the [member fire_light]. It already grows with the burning area. The light scatters in the gas at a tenth of its strength ([member Light3D.light_volumetric_fog_energy]), so it does not wash the flames it stands in into an orange haze.
 		</member>
 		<member name="floor_enabled" type="bool" setter="set_floor_enabled" getter="is_floor_enabled" default="false">
 			When enabled, gas never goes below [member floor_height]: a wide solid lies under it (it reserves no blocks and holds no gas). Colliders can't describe terrain heightmaps or trimeshes, so without a floor gas sinks into the ground and spends the grid's blocks there.
@@ -93,7 +93,7 @@
 			The world height of the floor's top (used when [member floor_enabled] is on).
 		</member>
 		<member name="heat_ramp" type="Gradient" setter="set_heat_ramp" getter="get_heat_ramp">
-			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a built-in fire ramp (transparent when cool, deep orange when warm, yellow-white when hot).
+			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a blackbody: [code]0[/code] to [member temperature_range] spans 600 K to 1,500 K, coloured as a blackbody at that temperature and as bright as Planck's law makes it at 580 nm (alpha above [code]1[/code] at the top), so a flame has a bright core and sharp tongues and the cooler gas over it reads as smoke.
 		</member>
 		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="0.05">
 			The temperature above which fuel burns (see [member combustion]).

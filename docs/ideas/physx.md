@@ -374,6 +374,19 @@ the ground, smoke resting on the slope.
   stayed dark (first PT check). With the proxy on, the glow is dropped on rays
   leaving a diffuse bounce or a smoke scatter, so the fire is not counted
   twice; camera and mirror rays still see it.
+- Flame look (docs review: "a soft orange smoke column, no tongues or core").
+  Two causes. The default heat ramp rose linearly, so all warm gas glowed
+  orange; it is now soot as a blackbody (Nguyen, Fedkiw and Jensen 2002;
+  Pegoraro and Parker 2006): colour from the blackbody's chromaticity,
+  brightness from Planck's law in Wien's approximation at 580 nm, about
+  twentyfold per 100 K, so the flame has a sharp edge and a bright core and the
+  cooler gas reads as smoke. And the fire light, standing inside the smoke, lit
+  it brighter than the flame's own glow (its near field is inverse square); it
+  now scatters at `light_volumetric_fog_energy` 0.1, which the path tracer
+  honours too (stored in the light's free word).
+- Embers are velocity-aligned streaks (a camera shutter's motion blur), 0.4-1.5x
+  sizes, in linear blackbody colours whose brightness falls as they cool.
+- Showcase sticks char towards the fuel bed with glowing Voronoi cracks.
 - Embers (`embers`, on): GPU particles from the fire's base, drag and a weak
   net gravity with turbulence, coloured along the blackbody colours of a
   cooling ember (about 1,300 K to 800 K), emissive billboards that PT draws.

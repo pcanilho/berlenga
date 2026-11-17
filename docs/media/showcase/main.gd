@@ -656,7 +656,8 @@ func shot_campfire() -> void:
 	sun.light_energy = 0.25
 	sun.shadow_enabled = true
 	add_child(sun)
-	camera(Vector3(1.7, campfire_h(1.7, 2.2) + 1.35, 2.2), Vector3(0.0, 0.2, -0.15), 40)
+	# Looking down at the fire, so the frame ends on firelit and dark ground, not at a horizon.
+	camera(Vector3(1.7, campfire_h(1.7, 2.2) + 1.6, 2.2), Vector3(0.0, 0.12, -0.15), 30)
 
 	# Ground: forest floor, burned black in a ring round the fire (one shader, so raster and PT agree).
 	var st := SurfaceTool.new()
@@ -738,10 +739,61 @@ void fragment() {
 	for c in sticks.find_children("*", "MeshInstance3D", true, false):
 		stick_meshes.append(c)
 	var base_y := campfire_h(0, 0)
+	# The burning ends char and glow: the wood's own textures, blackened towards the fuel bed, with glowing cracks
+	# (Voronoi cell edges, the alligator pattern of charred wood) whose glow is the blackbody colour of the heat.
+	var char_sh := Shader.new()
+	char_sh.code = """shader_type spatial;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D rough_tex : filter_linear_mipmap, repeat_enable;
+uniform vec3 fire = vec3(0.0);
+varying vec3 wpos;
+vec3 hash3(vec3 p) {
+	p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)));
+	return fract(sin(p) * 43758.5453);
+}
+// Distance to the nearest Voronoi cell edge (F2 - F1).
+float cell_edge(vec3 p) {
+	vec3 i = floor(p);
+	float f1 = 8.0, f2 = 8.0;
+	for (int z = -1; z <= 1; z++) for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+		vec3 c = vec3(float(x), float(y), float(z));
+		float d = length(i + c + hash3(i + c) - p);
+		if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+	}
+	return f2 - f1;
+}
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	vec3 d = wpos - fire;
+	float heat = (1.0 - smoothstep(0.04, 0.24, length(d.xz))) * (1.0 - smoothstep(0.02, 0.32, d.y));
+	float charred = smoothstep(0.0, 0.35, heat + 0.15 * (hash3(floor(wpos * 60.0)).x - 0.5));
+	vec3 wood = texture(albedo_tex, UV).rgb;
+	ALBEDO = mix(wood, vec3(0.025, 0.022, 0.02), charred);
+	NORMAL_MAP = texture(normal_tex, UV).rgb;
+	ROUGHNESS = mix(texture(rough_tex, UV).g, 0.9, charred);
+	float crack = 1.0 - smoothstep(0.02, 0.09, cell_edge(wpos * 55.0));
+	float glow = crack * smoothstep(0.35, 0.9, heat);
+	EMISSION = vec3(1.0, 0.33, 0.04) * glow * 6.0;
+}
+"""
 	for k in 7:
 		var src: MeshInstance3D = stick_meshes[k % stick_meshes.size()]
 		var m := MeshInstance3D.new()
 		m.mesh = src.mesh
+		var std := src.mesh.surface_get_material(0) as StandardMaterial3D
+		if std == null:
+			std = src.get_active_material(0) as StandardMaterial3D
+		if std:
+			var cm := ShaderMaterial.new()
+			cm.shader = char_sh
+			cm.set_shader_parameter("albedo_tex", std.albedo_texture)
+			cm.set_shader_parameter("normal_tex", std.normal_texture)
+			cm.set_shader_parameter("rough_tex", std.roughness_texture)
+			cm.set_shader_parameter("fire", Vector3(0, base_y, 0))
+			m.material_override = cm
 		var a := TAU * k / 7 + 0.3
 		# Leaned into a cone: foot on the ground, tip over the fire's centre.
 		var foot := Vector3(cos(a) * 0.3, base_y, sin(a) * 0.3)
@@ -754,15 +806,16 @@ void fragment() {
 	sticks.free()
 
 	var flow = ClassDB.instantiate("PhysXFlow3D")
-	flow.cell_size = 0.02
-	flow.smoke_density = 1.5
+	flow.cell_size = 0.015
+	flow.smoke_density = 0.7
 	flow.combustion = true
 	# Flames about 0.7 m tall, as Heskestad's flame-height correlation gives for a ~50 kW campfire 0.4 m across:
 	# the gas cools out of its glow in about a third of a second of rise.
-	flow.cooling_rate = 4.5
+	flow.cooling_rate = 7.0
 	flow.vorticity = 4.0
 	flow.buoyancy = 4.0 # hot gas rises fast and stretches into tongues
-	flow.temperature_range = 1.4
+	flow.emission_strength = 8.0 # a campfire's flame against dusk exposure
+	flow.temperature_range = 1.0 # the fuel bed's gas at the ramp's top, a sooty flame's ~1,500 K core
 	flow.smoke_buoyancy = -0.4 # cooled smoke is heavier than the dusk air and drifts down the slope
 	for k in flow_props:
 		flow.set(k, flow_props[k])

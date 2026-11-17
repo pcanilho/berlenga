@@ -164,16 +164,27 @@ void PhysXFlow3D::_rt_step() {
 }
 
 Color PhysXFlow3D::_default_heat_at(float p_t) {
-	// Used while heat_ramp is empty (a resource can't be a property default):
-	// cool -> nothing, warm -> deep orange glow, hot -> yellow-white.
-	const Color cool(0, 0, 0, 0);
-	const Color warm(0.9, 0.25, 0.03, 0.6);
-	const Color hot(1.0, 0.85, 0.5, 1.0);
-	constexpr float WARM_AT = 0.35f;
-	if (p_t < WARM_AT) {
-		return cool.lerp(warm, p_t / WARM_AT);
+	// Used while heat_ramp is empty (a resource can't be a property default): the glow of soot as a blackbody,
+	// the established way to colour fire (Nguyen, Fedkiw and Jensen 2002, "Physically Based Modeling and Animation
+	// of Fire"; Pegoraro and Parker 2006). The ramp spans 600 K (no visible glow) to 1,500 K (a sooty flame's
+	// core). Colour: the blackbody's sRGB chromaticity (Charity's CIE 1964 table). Brightness (alpha, may exceed 1):
+	// Planck's law in Wien's approximation at 580 nm, exp(-c2 / (lambda T)), normalised to 1 at 1,400 K. It rises
+	// about twentyfold per 100 K at flame temperatures, so a flame has a bright core and tongues with a sharp
+	// edge, and the cooler gas above them reads as smoke, not as an orange glow.
+	static const float KELVIN[] = { 600.0f, 800.0f, 1000.0f, 1200.0f, 1400.0f, 1600.0f };
+	static const Color CHROMA[] = {
+		Color(1.0f, 0.10f, 0.0f), Color(1.0f, 0.16f, 0.0f), Color(1.0f, 0.22f, 0.0f),
+		Color(1.0f, 0.33f, 0.0f), Color(1.0f, 0.40f, 0.0f), Color(1.0f, 0.45f, 0.0f)
+	};
+	const float t_k = 600.0f + 900.0f * CLAMP(p_t, 0.0f, 1.0f);
+	int i = 0;
+	while (i < 4 && t_k > KELVIN[i + 1]) {
+		i++;
 	}
-	return warm.lerp(hot, (p_t - WARM_AT) / (1.0f - WARM_AT));
+	Color c = CHROMA[i].lerp(CHROMA[i + 1], CLAMP((t_k - KELVIN[i]) / (KELVIN[i + 1] - KELVIN[i]), 0.0f, 1.0f));
+	constexpr float C2_OVER_LAMBDA = 14388.0f / 0.58f; // second radiation constant (um K) over 580 nm
+	c.a = Math::exp(C2_OVER_LAMBDA * (1.0f / 1400.0f - 1.0f / t_k));
+	return c;
 }
 
 PhysXFlow3D::~PhysXFlow3D() {
@@ -1269,6 +1280,10 @@ void PhysXFlow3D::_update_fire(double p_delta) {
 		fire_light_node = memnew(OmniLight3D);
 		fire_light_node->set_shadow(true);
 		fire_light_node->set_param(Light3D::PARAM_SHADOW_BIAS, 0.05f);
+		// It stands in the flames, inside the smoke: at full strength its inverse-square near field lights the gas
+		// round it brighter than the flame's own glow and washes the tongues into an orange haze (first campfire
+		// shots). Smoke above a fire is lit by it only faintly next to the glow, so it scatters a tenth.
+		fire_light_node->set_param(Light3D::PARAM_VOLUMETRIC_FOG_ENERGY, 0.1f);
 		add_child(fire_light_node, false, INTERNAL_MODE_BACK);
 	}
 	if (fire_light_node) {
@@ -1317,16 +1332,24 @@ void PhysXFlow3D::_update_fire(double p_delta) {
 		pm->set_turbulence_noise_scale(1.5f);
 		pm->set_param_min(ParticleProcessMaterial::PARAM_TURB_INFLUENCE_OVER_LIFE, 0.05f);
 		pm->set_param_max(ParticleProcessMaterial::PARAM_TURB_INFLUENCE_OVER_LIFE, 0.15f);
-		pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.5f);
-		pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 1.2f);
+		// Sizes from fine sparks to the odd large flake, and a spread of starting temperatures.
+		pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.4f);
+		pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 1.5f);
+		pm->set_param_min(ParticleProcessMaterial::PARAM_HUE_VARIATION, -0.025f);
+		pm->set_param_max(ParticleProcessMaterial::PARAM_HUE_VARIATION, 0.02f);
 		pm->set_lifetime_randomness(0.6);
-		// Blackbody colours of a cooling ember (1,300 K to 800 K), fading out as it goes dark.
+		// Each spark's Y axis follows its velocity: drawn as a streak along its flight, the motion blur a camera
+		// shutter gives a fast spark (velocity-aligned sprites, as Unreal's Niagara and film spark passes draw them).
+		pm->set_particle_flag(ParticleProcessMaterial::PARTICLE_FLAG_ALIGN_Y_TO_VELOCITY, true);
+		// Blackbody colours of a cooling ember, 1,300 K yellow-orange to 800 K dull red. Alpha is brightness: it
+		// falls with temperature as the visible blackbody radiance does (Wien), so cooled embers are dim red points.
 		Ref<Gradient> g;
 		g.instantiate();
-		g->set_color(0, Color(1.0f, 0.62f, 0.26f, 1.0f));
-		g->set_color(1, Color(0.35f, 0.02f, 0.0f, 0.0f));
-		g->add_point(0.35f, Color(1.0f, 0.42f, 0.1f, 1.0f));
-		g->add_point(0.75f, Color(0.75f, 0.12f, 0.02f, 0.8f));
+		// Linear RGB of the blackbody's sRGB chromaticity: 1,300 K (1, 0.36, 0), 1,000 K (1, 0.22, 0), 800 K (1, 0.16, 0).
+		g->set_color(0, Color(1.0f, 0.11f, 0.004f, 1.0f));
+		g->set_color(1, Color(1.0f, 0.02f, 0.0f, 0.0f));
+		g->add_point(0.25f, Color(1.0f, 0.075f, 0.0f, 0.45f));
+		g->add_point(0.6f, Color(1.0f, 0.04f, 0.0f, 0.12f));
 		Ref<GradientTexture1D> gt;
 		gt.instantiate();
 		gt->set_gradient(g);
@@ -1334,19 +1357,32 @@ void PhysXFlow3D::_update_fire(double p_delta) {
 		ember_node->set_process_material(pm);
 		Ref<QuadMesh> quad;
 		quad.instantiate();
-		quad->set_size(Vector2(0.012f, 0.012f));
+		quad->set_size(Vector2(1.0f, 1.0f));
 		Ref<Shader> sh;
 		sh.instantiate();
 		sh->set_code(R"(shader_type spatial;
-render_mode billboard_particles, cull_disabled, shadows_disabled;
-uniform float energy = 8.0;
+render_mode cull_disabled, shadows_disabled;
+uniform float energy = 2.5;
+uniform float width = 0.004;
+uniform float streak_length = 0.03;
+void vertex() {
+	// A streak facing the camera around the spark's velocity (its Y axis).
+	vec3 pos = MODEL_MATRIX[3].xyz;
+	float s = length(MODEL_MATRIX[0].xyz);
+	vec3 axis = normalize(MODEL_MATRIX[1].xyz);
+	vec3 to_cam = normalize(INV_VIEW_MATRIX[3].xyz - pos);
+	vec3 side = normalize(cross(axis, to_cam));
+	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(vec4(side * width * s, 0.0), vec4(axis * streak_length * s, 0.0), vec4(cross(side, axis), 0.0), vec4(pos, 1.0));
+	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+}
 void fragment() {
-	float r = length(UV - 0.5) * 2.0;
-	if (r > 1.0 || COLOR.a < 0.02) {
+	vec2 q = (UV - 0.5) * 2.0;
+	if (length(q) > 1.0 || COLOR.a < 0.004) {
 		discard;
 	}
 	ALBEDO = vec3(0.0);
-	EMISSION = COLOR.rgb * energy * COLOR.a * (1.0 - r * r);
+	// Brightest at the head (UV.y 0, the way it flies), fading along the tail (where it was).
+	EMISSION = COLOR.rgb * energy * COLOR.a * mix(1.0, 0.25, UV.y);
 }
 )");
 		Ref<ShaderMaterial> sm;

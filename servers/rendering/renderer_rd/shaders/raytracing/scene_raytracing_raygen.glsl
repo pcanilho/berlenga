@@ -430,7 +430,7 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, inout uint
 			}
 			vec3 to_l;
 			float dist;
-			vec3 e = plight_positional(light, x, to_l, dist) * rt_volume_hg(dot(to_l, p_dir), g);
+			vec3 e = plight_positional(light, x, to_l, dist) * rt_volume_hg(dot(to_l, p_dir), g) * light.volume_energy;
 			float w = plight_luma(e) * (n <= PLIGHT_CANDIDATES ? 1.0 : float(n) / float(m));
 			if (!(w > 0.0) || isinf(w)) {
 				continue;

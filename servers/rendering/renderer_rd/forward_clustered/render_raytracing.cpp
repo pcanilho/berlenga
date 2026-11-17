@@ -7132,6 +7132,9 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 			ld.spot.inv_attenuation = rt_half(1.0f / MAX(0.001f, ls->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION)));
 		}
 		ld.projector_texture.index = _light_projector_texture(base);
+		// How strongly it lights participating media, as raster volumetric fog and Flow's scattering read it.
+		const float volume_energy_m1 = ls->light_get_param(base, RSE::LIGHT_PARAM_VOLUMETRIC_FOG_ENERGY) - 1.0f;
+		memcpy(&ld.reserved[0], &volume_energy_m1, sizeof(float));
 		if (r_instances) {
 			r_instances->push_back(light_instance);
 		}

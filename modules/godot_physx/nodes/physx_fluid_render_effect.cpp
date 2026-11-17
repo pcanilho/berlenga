@@ -523,6 +523,7 @@ render_mode blend_mix, depth_draw_never, depth_test_disabled, cull_disabled, ski
 uniform sampler2D surf_a : filter_nearest, repeat_disable;
 uniform sampler2D surf_b : filter_nearest, repeat_disable;
 uniform sampler2D screen : hint_screen_texture, filter_linear, repeat_disable;
+uniform sampler2D scene_depth : hint_depth_texture, filter_nearest, repeat_disable;
 uniform vec3 absorption = vec3(0.45, 0.12, 0.06);
 uniform vec4 body = vec4(0.0); // rgb: colour, a: opacity per meter of fluid
 uniform float refraction = 0.04;
@@ -559,6 +560,14 @@ void fragment() {
 	// colour rather than going clear.
 	float own = 1.0 - exp(-body.a * max(T, 0.05));
 	vec2 ruv = clamp(SCREEN_UV + n.xy * refraction * min(T / 0.07, 1.0), vec2(0.0), vec2(1.0));
+	// Screen-space refraction may only show what lies behind the surface: where the offset lands on something
+	// nearer the camera (a bucket's front wall below a tilted pool surface), it would paint that object into
+	// the liquid, so the ray falls back to the unrefracted pixel (Sousa, "Generic Refraction Simulation", GPU
+	// Gems 2, ch. 19: the refraction mask).
+	vec4 behind = INV_PROJECTION_MATRIX * vec4(ruv * 2.0 - 1.0, textureLod(scene_depth, ruv, 0.0).r, 1.0);
+	if (-behind.z / behind.w < b.x - 0.01) {
+		ruv = SCREEN_UV;
+	}
 	vec3 through = textureLod(screen, ruv, 0.0).rgb * exp(-absorption * T);
 	ALBEDO = mix(body.rgb * own, foam_color.rgb, foam);
 	// (Godot's own specular adds the reflection on top; it doesn't take the

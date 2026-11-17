@@ -565,7 +565,7 @@ struct alignas(16) RT_LightData {
 		uint32_t index : RT_MaterialData::TEXTURE_INDEX_BITS; // Bindless sRGB projector, RT_LIGHT_NO_PROJECTOR when unset.
 		uint32_t unused : 8;
 	} projector_texture;
-	uint32_t reserved[3]; // Directional projector: float corner u, v (metres, relative to rt_origin), fp16 size u, v. Else free; keeps the 64-byte stride.
+	uint32_t reserved[3]; // Directional projector: float corner u, v (metres, relative to rt_origin), fp16 size u, v. Positional: float volumetric fog energy - 1 in [0]. Keeps the 64-byte stride.
 };
 static_assert(sizeof(RT_LightData) == 64, "RT_LightData must be 64 bytes for std430, with every bitfield struct in one uint");
 
