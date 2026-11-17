@@ -126,6 +126,13 @@
 				The volume pressed down (x) and piled into rims (y) over the live field, in m³. Their difference is what was compacted.
 			</description>
 		</method>
+		<method name="get_mud_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of the soft mud layer at [param position], in metres (0 where the ground is not mud or not wet enough; see [member mud_layer]).
+			</description>
+		</method>
 		<method name="get_near_moved_volume" qualifiers="const">
 			<return type="Vector2" />
 			<description>
@@ -284,22 +291,36 @@
 				The time the last wind step (shelter, flux and deposition, twice a second) took, in microseconds.
 			</description>
 		</method>
-		<method name="is_near_active" qualifiers="const">
-			<return type="bool" />
-			<description>
-				[code]true[/code] when the near field ([member near_field]) is running (it needs the field on the GPU).
-			</description>
-		</method>
 		<method name="is_gpu_active" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
 			</description>
 		</method>
+		<method name="is_near_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] when the near field ([member near_field]) is running (it needs the field on the GPU).
+			</description>
+		</method>
 		<method name="is_ripples_ready" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] once the first ripple field grown in the background has filled the window.
+			</description>
+		</method>
+		<method name="mud_viscosity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="concentration" type="float" />
+			<description>
+				The Bingham viscosity of mud, in Pa s, at a volumetric sediment concentration from 0.40 (slurry) to 0.56 (stiff), after O'Brien and Julien (1988).
+			</description>
+		</method>
+		<method name="mud_yield_stress" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="concentration" type="float" />
+			<description>
+				The yield stress of mud, in Pa, at a volumetric sediment concentration from 0.40 (slurry) to 0.56 (stiff), after O'Brien and Julien (1988). Below it mud stands; above it flows.
 			</description>
 		</method>
 		<method name="press">
@@ -379,6 +400,9 @@
 		<member name="contact_tolerance" type="float" setter="set_contact_tolerance" getter="get_contact_tolerance" default="0.03">
 			How close a body's underside must come to the surface to press it, in metres.
 		</member>
+		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
+			A [code]TerrainDataMap3D[/code] whose wetness index, slope and distance to water place mud by themselves ([member mud_auto_depth]). Empty: the height source, when it is one.
+		</member>
 		<member name="deform_extent" type="float" setter="set_deform_extent" getter="get_deform_extent" default="32.0">
 			The width of the field, in metres. Prints are made only where the terrain is fully lowered: [member terrain_margin] plus [member skirt_fade] inside its edge.
 		</member>
@@ -430,6 +454,27 @@
 		<member name="moisture" type="float" setter="set_moisture" getter="get_moisture" default="-1.0">
 			The ground's moisture from 0 (dry) to 1 (soaked); -1 takes the [code]WeatherMap3D[/code] wetness.
 		</member>
+		<member name="mud_auto_depth" type="float" setter="set_mud_auto_depth" getter="get_mud_auto_depth" default="0.5">
+			The mud layer's depth where water gathers by itself, in metres: valley floors, hollows and flats below slopes (a high topographic wetness index) and the first metres of a bank, on ground under about 10 degrees. Needs [member data_map].
+		</member>
+		<member name="mud_layer" type="bool" setter="set_mud_layer" getter="is_mud_layer" default="true">
+			Deep mud: where the ground is wet, a soft layer of clay and silt over the firm base, as deep as [member mud_map] and the rules of [member mud_auto_depth] give. It flows as a Bingham fluid (stiff mud holds a rut, slurry closes it), bears and grips as clay, and lets wheels sink to the base.
+		</member>
+		<member name="mud_map" type="Image" setter="set_mud_map" getter="get_mud_map">
+			A painted mud depth over [member mud_map_rect]: the red channel times [member mud_max_depth].
+		</member>
+		<member name="mud_map_rect" type="Rect2" setter="set_mud_map_rect" getter="get_mud_map_rect" default="Rect2(0, 0, 0, 0)">
+			The world rectangle (x, z, width, depth) [member mud_map] covers.
+		</member>
+		<member name="mud_max_depth" type="float" setter="set_mud_max_depth" getter="get_mud_max_depth" default="1.2">
+			The mud depth where [member mud_map] is white, in metres.
+		</member>
+		<member name="mud_wet_full" type="float" setter="set_mud_wet_full" getter="get_mud_wet_full" default="0.55">
+			The moisture at which the mud layer reaches its full depth.
+		</member>
+		<member name="mud_wet_start" type="float" setter="set_mud_wet_start" getter="get_mud_wet_start" default="0.35">
+			The moisture where the ground starts turning to mud. Mud is stiff (a solid share of 0.56) at a moisture of 0.35 and slurry (0.40) soaked.
+		</member>
 		<member name="near_extent" type="float" setter="set_near_extent" getter="get_near_extent" default="8.0">
 			The near field's side, in metres, centred on the field. A multiple of twice the [member detail_spacing], so the patch's fine ring lines up with its grid.
 		</member>
@@ -445,7 +490,7 @@
 		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
 			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.
 		</member>
-		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.06">
+		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.
 		</member>
 		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">
