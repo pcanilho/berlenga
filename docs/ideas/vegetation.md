@@ -438,6 +438,12 @@ rockrose, kermes oak, lentisk and fan palm the same rules. Flowering windows are
 a mild coastal year (rosemary 0 to 900, lavender 300 to 1,300, thyme 600 to 1,500, rockrose 550
 to 1,100); rosemary's autumn flowers before the year turns are not modelled (forcing restarts
 on 1 January).
+Woody shrubs (17 Nov): TreeGenerator builds gorse, broom, gum rockrose, kermes oak and lentisk
+(`make_shrub_species`); the sets place them first, in clumps, under their own rules
+(`make_woody_shrub`): gorse (mature and young) and broom on dry heath, gorse cushions on cliff-top
+heath (Rodwell 1991, H7/H8), none on wet heath; lentisk, kermes oak and gum rockrose in the maquis,
+kermes oak cushions and young gum rockrose in the garrigue. Two variants each: mature gorse is
+about 2M triangles with real spines.
 
 Worn paths and trampling (built 17 Nov). Where people and animals walk, plants thin out,
 get shorter and flatter, and the walked line turns to bare, compacted soil; the edges keep the

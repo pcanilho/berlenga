@@ -576,14 +576,19 @@ public:
 		HEATH_MARITIME, // Exposed cliff tops: wind-pruned heather and bell heather, thrift, crowberry.
 		HEATH_MAX,
 	};
-	static TypedArray<Resource> make_heath(HeathStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// p_shrubs: TreeGenerator's woody shrubs too (gorse, broom; heavy meshes, two variants each).
+	static TypedArray<Resource> make_heath(HeathStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary(), bool p_shrubs = true);
 	// Mediterranean scrub on summer-dry, mild ground (plant_scrub.cpp).
 	enum ScrubStand {
 		SCRUB_GARRIGUE, // Thin soil and rock: open rosemary, thyme and rockrose with bare ground between.
 		SCRUB_MAQUIS, // Deeper soil: closed rockrose and lavender under the tall shrubs.
 		SCRUB_MAX,
 	};
-	static TypedArray<Resource> make_scrub(ScrubStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// p_shrubs: TreeGenerator's woody shrubs too (gum rockrose, kermes oak, lentisk).
+	static TypedArray<Resource> make_scrub(ScrubStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary(), bool p_shrubs = true);
+	// A TreeGenerator shrub (TreeGenerator::Preset, ShrubForm) for a heath or scrub set: its own meshes,
+	// footprint, crown and far colour, at most two variants, in clumps; rules are the caller's.
+	static Ref<PlantSpecies> make_woody_shrub(int p_tree_preset, int p_form, int p_variants, const Dictionary &p_season, float p_density, float p_patch_scale, float p_patch_cover, int p_seed);
 	// The scrub's climate and soil rules on any species (TreeGenerator's woody scrub shrubs).
 	static void apply_scrub_rules(const Ref<PlantSpecies> &p_species, ScrubStand p_stand);
 	// Passes a year on a worn path that halve the preset's cover, by its growth form (0: not trampled).
