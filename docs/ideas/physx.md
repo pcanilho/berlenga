@@ -547,6 +547,49 @@ building it:
   30 s, fireline intensity up to about 440 kW/m, as BehavePlus gives for
   fuel model 1.
 
+### Flow gas pushes cloth, flags and debris, two-way (picked 17 Nov)
+
+Goal: a fire's updraft, a blast or a gust carried by Flow lifts a flag,
+flaps a tarp and rolls light debris, and those bodies push the gas back.
+
+How others do it:
+- NVIDIA APEX Turbulence (Batman Arkham City, Borderlands 2, Hawken and
+  PlanetSide 2; GDC 2013 "Enhancing Hawken and PlanetSide 2 Through
+  Turbulence and Destruction"): a GPU velocity grid whose samples drive APEX
+  particles and clothing; moving rigid bodies are collision shapes in the
+  grid. That is the real-time pattern: sample the grid's velocity at the
+  body, apply aerodynamic force; bodies enter the grid as moving solids.
+- Unreal: Chaos Cloth's aerodynamics (per-triangle drag and lift
+  coefficients from the relative wind), Niagara Fluids sampling its grid for
+  particles; the gas is not pushed by cloth.
+- Offline: Guendelman, Selle, Losasso and Fedkiw 2005 ("Coupling water and
+  smoke to thin deformable and rigid shells", SIGGRAPH) solve thin shells and
+  smoke together; too costly here, but it names the two directions: the shell
+  takes the fluid's pressure, the fluid sees the shell as a moving boundary.
+
+Technique: grid sampling plus moving solids, as APEX Turbulence.
+1. Flow velocity readback: Flow's NanoVDB export already reads back velocity
+   (velocityEnabled, as it does temperature and smoke); add
+   `PhysXFlow3D.sample_velocity(position)` beside sample_temperature.
+2. Gas to cloth: PhysXCloth3D's existing drag and lift model (per-triangle,
+   Keckeisen et al. 2004) takes the wind at each triangle from the Flow grid
+   when a flow is set, falling back to its wind.
+3. Gas to debris: rigid bodies in the gas get drag
+   F = 0.5 rho Cd A |u - v| (u - v) at their centre, u the gas velocity, plus
+   hot-gas buoyancy for light ones (paper, leaves); Blast pieces through the
+   rocks' piece velocity, centre and mass getters.
+4. Debris and cloth to gas: bodies already enter Flow as moving solids
+   (collide_with_bodies, with body velocity). Cloth adds a few sphere solids
+   along its particles carrying their velocity, so a flapping flag stirs the
+   smoke.
+Cost: a velocity readback (a few frames late, as the others) and a few
+hundred samples a frame on the CPU.
+
+Sources: https://gdcvault.com/play/1017851/ ;
+https://docs.nvidia.com/gameworks/content/gameworkslibrary/physx/apexsdk/APEX_Turbulence/Turbulence_Module.html ;
+http://physbam.stanford.edu/~fedkiw/papers/stanford2005-02.pdf ;
+https://dev.epicgames.com/documentation/unreal-engine/niagara-fluids-in-unreal-engine
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

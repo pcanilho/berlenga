@@ -65,6 +65,7 @@ class GodotPhysXCloth3D {
 	LocalVector<int32_t> indices; // cooked triangle list, for the node's mesh
 	LocalVector<uint8_t> pinned; // 1 == pinned
 	LocalVector<Vector3> pin_target; // world position, NAN.x == none
+	Vector<Vector3> air; // per vertex, m/s
 
 	void *host_pos = nullptr; // pinned host mirror (PxVec4*): pos.xyz + invMass.w
 	void *host_vel = nullptr; // pinned host mirror (PxVec4*): velocity.xyz
@@ -102,6 +103,8 @@ public:
 	void set_pinned(const Vector<int32_t> &p_pinned_indices);
 	void set_pin_targets(const Vector<Vector3> &p_world_targets); // NAN.x releases
 	void apply_wind(const Vector3 &p_wind, float p_drag, float p_lift, float p_dt);
+	// Air velocity per vertex on top of the wind (a gas sampled at the cloth); empty: none.
+	void set_air(const Vector<Vector3> &p_air) { air = p_air; }
 	void clear();
 
 	// Called by the space after fetchResults().

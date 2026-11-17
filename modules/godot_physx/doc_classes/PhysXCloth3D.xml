@@ -87,6 +87,9 @@
 		<member name="drag" type="float" setter="set_drag" getter="get_drag" default="1.0">
 			How hard air pushes on a triangle face-on. Drives the billow.
 		</member>
+		<member name="flow" type="NodePath" setter="set_flow_path" getter="get_flow_path" default="NodePath(&quot;&quot;)">
+			A [PhysXFlow3D] whose gas blows the cloth: each vertex takes the gas velocity there (on top of [member wind]) for the [member drag] and [member lift] model, so a fire's updraft lifts a tarp and a blast's front snaps a flag. The cloth stirs the gas back: some of its moving particles enter it as moving solids ([method PhysXFlow3D.add_transient_solid]).
+		</member>
 		<member name="grid_columns" type="int" setter="set_grid_columns" getter="get_grid_columns" default="24">
 			Vertices across the generated grid. Ignored when [member source_mesh] is set.
 		</member>

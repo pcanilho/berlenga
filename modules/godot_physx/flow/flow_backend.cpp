@@ -383,6 +383,8 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim.nanoVdbExport.readbackEnabled = p_settings.readback ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 	sim.nanoVdbExport.temperatureEnabled = NV_FLOW_TRUE;
 	sim.nanoVdbExport.smokeEnabled = NV_FLOW_TRUE;
+	// Velocity only for a CPU copy (bodies and cloth the gas pushes): the renderer does not need it.
+	sim.nanoVdbExport.velocityEnabled = p_settings.readback ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 
 	p_grid->render = NvFlowGridRenderLayerParams_default;
 	p_grid->render.rayMarch.attenuation = p_settings.attenuation / s;
@@ -494,6 +496,15 @@ bool grid_get_readback(Grid *p_grid, const uint8_t **r_temperature, uint64_t *r_
 	return *r_temperature != nullptr || *r_smoke != nullptr;
 }
 
+bool grid_get_velocity_readback(Grid *p_grid, const uint8_t **r_velocity, uint64_t *r_velocity_size) {
+	if (p_grid == nullptr || p_grid->readback == nullptr || p_grid->readback->velocityNanoVdbReadback == nullptr) {
+		return false;
+	}
+	*r_velocity = p_grid->readback->velocityNanoVdbReadback;
+	*r_velocity_size = p_grid->readback->velocityNanoVdbReadbackSize;
+	return true;
+}
+
 bool nanovdb_bounds(const uint8_t *p_nanovdb, uint64_t p_size, float r_min[3], float r_max[3]) {
 	if (p_nanovdb == nullptr || p_size < PNANOVDB_GRID_SIZE + PNANOVDB_TREE_SIZE) {
 		return false;
@@ -518,6 +529,27 @@ bool nanovdb_bounds(const uint8_t *p_nanovdb, uint64_t p_size, float r_min[3], f
 	r_max[1] = fmaxf(wa.y, wb.y) * inv;
 	r_max[2] = fmaxf(wa.z, wb.z) * inv;
 	return true;
+}
+
+void sample_velocity(const uint8_t *p_nanovdb, uint64_t p_size, const float p_position[3], float r_velocity[3]) {
+	r_velocity[0] = r_velocity[1] = r_velocity[2] = 0.0f;
+	if (p_nanovdb == nullptr || p_size < PNANOVDB_GRID_SIZE + PNANOVDB_TREE_SIZE) {
+		return;
+	}
+	pnanovdb_buf_t buf = pnanovdb_make_buf((uint32_t *)p_nanovdb, p_size / 4u);
+	pnanovdb_grid_handle_t grid = { pnanovdb_address_null() };
+	if (pnanovdb_grid_get_grid_type(buf, grid) != PNANOVDB_GRID_TYPE_VEC3F) {
+		return;
+	}
+	pnanovdb_root_handle_t root = pnanovdb_tree_get_root(buf, pnanovdb_grid_get_tree(buf, grid));
+	const float s = UNITS_PER_METER;
+	pnanovdb_vec3_t w = { p_position[0] * s, p_position[1] * s, p_position[2] * s };
+	const pnanovdb_vec3_t idx = pnanovdb_grid_world_to_indexf(buf, grid, &w);
+	pnanovdb_coord_t ijk = { (int)floorf(idx.x), (int)floorf(idx.y), (int)floorf(idx.z) };
+	const pnanovdb_vec3_t v = pnanovdb_read_vec3(buf, pnanovdb_root_get_value_address(PNANOVDB_GRID_TYPE_VEC3F, buf, root, &ijk));
+	r_velocity[0] = v.x / s;
+	r_velocity[1] = v.y / s;
+	r_velocity[2] = v.z / s;
 }
 
 void sample_dense(const uint8_t *p_nanovdb, uint64_t p_size, const float p_origin[3], float p_cell, const int p_dims[3], int p_z_begin, int p_z_end, float *r_out, int p_stride) {

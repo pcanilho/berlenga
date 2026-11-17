@@ -162,6 +162,8 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 // The newest completed readback; false until the first one lands. The
 // pointers stay valid until the next grid_step.
 bool grid_get_readback(Grid *p_grid, const uint8_t **r_temperature, uint64_t *r_temperature_size, const uint8_t **r_smoke, uint64_t *r_smoke_size);
+// The same readback's velocity grid (NanoVDB Vec3f, Flow units a second); null when the export has none yet.
+bool grid_get_velocity_readback(Grid *p_grid, const uint8_t **r_velocity, uint64_t *r_velocity_size);
 
 // World-space bounds (meters) of a NanoVDB grid's active region; false if
 // it's empty.
@@ -171,6 +173,9 @@ bool nanovdb_bounds(const uint8_t *p_nanovdb, uint64_t p_size, float r_min[3], f
 // cells (x fastest) whose min corner is p_origin (meters), p_cell meters
 // apart -- only z slices [p_z_begin, p_z_end). Values land p_stride floats
 // apart in r_out (indexed over the whole box, not the slice range).
+// Gas velocity in metres a second at a world point (meters) of a NanoVDB Vec3f velocity grid; zero outside it.
+void sample_velocity(const uint8_t *p_nanovdb, uint64_t p_size, const float p_position[3], float r_velocity[3]);
+
 void sample_dense(const uint8_t *p_nanovdb, uint64_t p_size, const float p_origin[3], float p_cell, const int p_dims[3], int p_z_begin, int p_z_end, float *r_out, int p_stride);
 
 } // namespace FlowBackend

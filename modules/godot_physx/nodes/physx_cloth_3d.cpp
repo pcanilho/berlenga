@@ -40,6 +40,10 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
+#ifdef GODOT_PHYSX_FLOW
+#include "../flow/physx_flow_3d.h"
+#endif
+
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
@@ -339,6 +343,7 @@ void PhysXCloth3D::_step(double p_delta) {
 	}
 
 	const Vector3 wind_now = _sample_wind(p_delta);
+	_couple_flow(p_delta);
 
 	// --- GPU path: the deformable surface is stepped by the physics server. ---
 	if (gpu_cloth.is_valid()) {
@@ -404,6 +409,70 @@ void PhysXCloth3D::_step(double p_delta) {
 		_collide();
 	}
 	_update_mesh();
+}
+
+// Two-way coupling with a Flow gas, as APEX Turbulence drove APEX Clothing: each vertex takes the gas velocity there
+// (read back a few frames late) as extra air for the drag and lift model, and a few of the moving particles enter
+// the gas as sphere solids carrying their velocity, so a flapping flag stirs smoke and parts it.
+void PhysXCloth3D::_couple_flow(double p_delta) {
+#ifdef GODOT_PHYSX_FLOW
+	PhysXFlow3D *flow = flow_path.is_empty() ? nullptr : Object::cast_to<PhysXFlow3D>(get_node_or_null(flow_path));
+	if (flow == nullptr || p_delta <= 0.0) {
+		if (!flow_prev_positions.is_empty()) {
+			// Unhooked: no gas air any more.
+			flow_prev_positions.clear();
+			solver.set_air(LocalVector<Vector3>());
+			if (gpu_cloth.is_valid() && GodotPhysXServer3D::get_singleton()) {
+				GodotPhysXServer3D::get_singleton()->cloth_set_air(gpu_cloth, Vector<Vector3>());
+			}
+		}
+		return;
+	}
+	flow->request_velocity();
+	LocalVector<Vector3> world;
+	if (gpu_cloth.is_valid()) {
+		const Transform3D gt = get_global_transform();
+		world.resize(render_verts.size());
+		for (int i = 0; i < render_verts.size(); i++) {
+			world[i] = gt.xform(render_verts[i]);
+		}
+	} else {
+		world = solver.get_positions();
+	}
+	const uint32_t n = world.size();
+	if (n == 0) {
+		return;
+	}
+	LocalVector<Vector3> air_local;
+	air_local.resize(n);
+	for (uint32_t i = 0; i < n; i++) {
+		air_local[i] = flow->sample_velocity(world[i]);
+	}
+	if (gpu_cloth.is_valid()) {
+		GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
+		if (server) {
+			Vector<Vector3> air;
+			air.resize(n);
+			memcpy(air.ptrw(), air_local.ptr(), n * sizeof(Vector3));
+			server->cloth_set_air(gpu_cloth, air);
+		}
+	} else {
+		solver.set_air(air_local);
+	}
+	// The cloth into the gas: up to 32 particles that move, a cell or so across.
+	if (flow_prev_positions.size() == n) {
+		const uint32_t stride = MAX(1u, n / 32u);
+		const float radius = MAX(flow->get_cell_size(), 0.03f);
+		const float inv_dt = 1.0f / (float)p_delta;
+		for (uint32_t i = 0; i < n; i += stride) {
+			const Vector3 v = (world[i] - flow_prev_positions[i]) * inv_dt;
+			if (v.length_squared() > 0.09f) { // 0.3 m/s: still cloth is left out
+				flow->add_transient_solid(world[i], radius, v);
+			}
+		}
+	}
+	flow_prev_positions = world;
+#endif
 }
 
 void PhysXCloth3D::_update_gpu_mesh() {
@@ -933,6 +1002,8 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_area"), &PhysXCloth3D::get_wind_area);
 	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXCloth3D::set_wind);
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXCloth3D::get_wind);
+	ClassDB::bind_method(D_METHOD("set_flow_path", "path"), &PhysXCloth3D::set_flow_path);
+	ClassDB::bind_method(D_METHOD("get_flow_path"), &PhysXCloth3D::get_flow_path);
 	ClassDB::bind_method(D_METHOD("set_weather_wind", "enabled"), &PhysXCloth3D::set_weather_wind);
 	ClassDB::bind_method(D_METHOD("get_weather_wind"), &PhysXCloth3D::get_weather_wind);
 	ClassDB::bind_method(D_METHOD("set_wind_turbulence", "turbulence"), &PhysXCloth3D::set_wind_turbulence);
@@ -983,6 +1054,7 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_turbulence", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_wind_turbulence", "get_wind_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wind"), "set_weather_wind", "get_weather_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_drag", "get_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lift", "get_lift");
 	ADD_GROUP("Tearing", "tear_");

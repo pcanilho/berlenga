@@ -111,6 +111,8 @@ public:
 	// Advance the simulation. p_wind is a world-space air velocity.
 	// Returns how many vertices tore apart (split) at the end of this step (settings.tear_factor).
 	int step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind);
+	// Air velocity per particle on top of p_wind (a gas sampled at the cloth); empty: none.
+	void set_air(const LocalVector<Vector3> &p_air) { air = p_air; }
 
 	// Mutable access for the node's post-step world-collision pass.
 	LocalVector<Vector3> &positions_mut() { return positions; }
@@ -159,6 +161,7 @@ private:
 	LocalVector<float> base_inv_mass; // inv_mass with pinning ignored
 	LocalVector<int> pinned; // 1 == pinned
 	LocalVector<Vector3> pin_target; // NaN component == no target
+	LocalVector<Vector3> air; // per particle, m/s
 	LocalVector<DistanceConstraint> constraints;
 	LocalVector<int> indices;
 	LocalVector<Vector2> uvs;
