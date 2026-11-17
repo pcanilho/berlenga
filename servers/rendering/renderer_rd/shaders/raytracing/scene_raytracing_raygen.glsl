@@ -2130,12 +2130,15 @@ void vmud_apply(float p_cover, vec3 p_color, float p_wet, inout vec3 r_albedo, i
 vec4 ground_water_look(float p_depth, float p_wet) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
+	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
+	// the top grains and its surface is smooth (Lagarde 2013's accumulated water), though the grains still show.
+	float gloss = smoothstep(0.00002, 0.0003, p_depth);
 	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
 	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
 	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
-	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, 0.0);
+	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, gloss);
 }
 
 // Sand grains (the functions of the same names in material.cpp; docs/ideas/sand.md, sand glints).
@@ -2678,9 +2681,9 @@ void main() {
 	if (g_water > 0.0) {
 		vec4 gwl = ground_water_look(g_water, g_wet);
 		m.albedo *= gwl.x;
-		m.roughness = mix(m.roughness, gwl.z, gwl.y);
-		m.specular = mix(m.specular, 0.25, gwl.y);
-		m.normal = normalize(mix(m.normal, h.geometry_normal, gwl.y));
+		m.roughness = mix(m.roughness, gwl.z, max(gwl.y, 0.85 * gwl.w));
+		m.specular = mix(m.specular, 0.25, max(gwl.y, gwl.w));
+		m.normal = normalize(mix(m.normal, h.geometry_normal, max(gwl.y, 0.6 * gwl.w)));
 		g_grain *= 1.0 - gwl.y;
 	}
 	// Desiccation cracks (material.cpp): the mesh carries those its spacing can; the shading the slopes and the slots'
