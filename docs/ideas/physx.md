@@ -477,6 +477,58 @@ used to let gas sink into the ground.
     overhangs.
   - Worth it where gas must get under or into things.
 
+### Spreading fire on surfaces (picked 17 Nov)
+
+Goal: a fire that leaves the campfire and runs through grass and litter,
+faster downwind and uphill, slowed by wet fuel, leaving char behind, with
+the flames and smoke drawn by Flow (raster and path traced).
+
+How others do it:
+- Games: Far Cry 2 (Levesque, interview 2008) spreads cell to cell over
+  10 m patches, faster downwind and uphill, slower when humid, and caps
+  spread for cost. Zelda BotW's chemistry engine (GDC 2017) is a similar
+  grid of states. Both are rules, not a rate of spread.
+- Graphics papers: Pirk et al. 2017 ("Interactive Wood Combustion for
+  Botanical Tree Models", SIGGRAPH Asia), Hadrich et al. 2021 ("Fire in
+  Paradise", SIGGRAPH) and Kokosza et al. 2023 ("Scintilla", TOG) burn
+  modules of plants coupled to an air grid: moisture must evaporate before
+  ignition, mass is lost and char insulates. Interactive, but CUDA-heavy
+  and per-plant.
+- Wildfire science, run in real time for decades: a level-set fire front
+  (Osher and Sethian 1988) moved at Rothermel's rate of spread (Rothermel
+  1972, USDA INT-115), as WRF-SFIRE does (Mandel, Beezley and Kochanski
+  2011, Geosci. Model Dev. 4). Fuel left after ignition decays as
+  exp(-t / T_f), with T_f per fuel; the heat released drives the
+  atmosphere above.
+
+Technique: the WRF-SFIRE surface model on a 2D grid over the ground, with
+Flow as its atmosphere.
+1. Level set phi (negative = burnt or burning) on a grid (0.25 m cells,
+   one or two hundred a side), first-order upwind (Osher-Sethian), updated
+   only in a narrow band round the front, reinitialised now and then.
+2. Rate of spread R = R0 * eta_M * (1 + phi_w + phi_s) along the front
+   normal: phi_w from Rothermel's wind coefficients for the fuel's
+   surface-to-volume ratio (C, B, E), with the wind along the normal (Flow's
+   wind where readable, else a wind vector); phi_s = 5.275 beta^-0.3
+   tan^2(slope) from the terrain; eta_M Rothermel's moisture damping, zero
+   at the moisture of extinction.
+3. Fuel per cell: load (kg/m2), moisture, R0, T_f and sigma from a fuel
+   type (short grass, tall grass, litter, wood) or an image map. Burning
+   fraction exp(-(t - t_ig) / T_f); char = 1 - fuel left.
+4. Coupling: the heat released per cell (-dF/dt * load * heat content)
+   becomes Flow emitters over the burning band (a small pool, burning cells
+   merged into tiles), so flames rise, lean in the wind and light through
+   the existing fire light. Hot gas from Flow (cpu_readback temperature)
+   above the ignition temperature ignites cells under it, so a campfire's
+   heat or a fallen burning branch can start the ground burning.
+5. Look: a char and glow map (texture, global shader uniforms with its
+   transform) that ground and vegetation shaders read: black char, glowing
+   embers in the burning band, grass hidden where burnt. Path tracing sees
+   the same materials and the Flow volumes.
+Cost: CPU, narrow band only (a few thousand cells); the map upload is a
+small texture. Wood and Blast pieces catching fire, and moisture from the
+weather map, are later steps.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
