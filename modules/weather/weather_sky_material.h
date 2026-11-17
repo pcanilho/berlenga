@@ -89,6 +89,8 @@ public:
 	// The stars: p_celestial turns the J2000 equator frame (x to RA 0h, z to the north pole) into the world
 	// (SkyClock.get_celestial_basis()); p_energy_per_lux turns their illuminance above the air into light energy.
 	void set_star_sky(const Basis &p_celestial, float p_energy_per_lux);
+	// The moon's angular diameter (radians), from its distance.
+	void set_moon_angular_size(float p_radians);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

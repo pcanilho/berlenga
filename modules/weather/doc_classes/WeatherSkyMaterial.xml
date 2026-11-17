@@ -24,6 +24,13 @@
 				Lights the scattering atmosphere with two bodies above the air: directions toward them, and their irradiance in light energy units before the air. [SkyClock] calls this when [member SkyClock.drive_light_energy] is on. Until it is called, the sky takes the first directional light as the sun above the air.
 			</description>
 		</method>
+		<method name="set_moon_angular_size">
+			<return type="void" />
+			<param index="0" name="radians" type="float" />
+			<description>
+				The moon disc's angular diameter. [SkyClock] sets it from the moon's distance. The disc is shaded by Lommel-Seeliger from the sun's direction (so its phase and terminator follow the clock), with earthshine on its dark side, and sums to the moon's illuminance. The shader parameter [code]moon_disc_enabled[/code] (on) switches it.
+			</description>
+		</method>
 		<method name="set_star_sky">
 			<return type="void" />
 			<param index="0" name="celestial" type="Basis" />

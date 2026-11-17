@@ -110,6 +110,11 @@ uniform vec3 lightning_color = vec3(0.82, 0.86, 1.0);
 // (WeatherSkyMaterial::_bake_stars()).
 uniform bool stars_enabled = true;
 uniform float star_brightness : hint_range(0, 16) = 1.0;
+uniform float star_glare : hint_range(0, 4) = 1.0;
+// The moon's disc (Lommel-Seeliger, lit from the sun's direction: the phase and the terminator follow), earthshine
+// on its dark side; its angular diameter from SkyClock (by distance).
+uniform bool moon_disc_enabled = true;
+uniform float atmo_moon_angular_size = 0.00904; // rad, diameter
 uniform float star_energy_per_lux = 0.0; // set by SkyClock (0: no stars)
 uniform mat3 star_sky_basis = mat3(1.0);
 uniform sampler2D star_data : filter_nearest, repeat_disable;
@@ -228,6 +233,10 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	}
 	t1 = min(t1, t0 + far);
 	float depth_sum = 0.0;
+	// Long grazing paths through the deck get more steps (up to three times, by the root of the length past
+	// 5 km), so the far clouds near the horizon are not sampled kilometres apart into dithered, stepped
+	// edges (Hillaire 2016 and Schneider's Nubis both scale the step count with the path).
+	steps = int(clamp(float(steps) * sqrt((t1 - t0) / 5000.0), float(steps), float(steps) * 3.0));
 	float ds = (t1 - t0) / float(steps);
 	float cos_theta = dot(rd, sun_dir);
 	vec3 radiance = vec3(0.0);
@@ -345,6 +354,36 @@ ivec3 star_cell(vec3 d) {
 	return ivec3(face, c);
 }
 
+// The moon's radiance toward p_dir (above the air) and how much of the pixel it covers. The disc-integrated
+// Lommel-Seeliger phase function divides the shape out, so the disc sums to the clock's moon illuminance
+// p_e (its magnitude already carries the phase): L = p_e / disc solid angle x 2 mu0 / (mu0 + mu) / Phi(a).
+vec3 moon_radiance(vec3 p_dir, vec3 p_l_sun, vec3 p_l_moon, vec3 p_e, float p_pixel_angle, out float r_cover) {
+	r_cover = 0.0;
+	float r = 0.5 * atmo_moon_angular_size;
+	float c1 = dot(p_dir, p_l_moon);
+	float th = acos(clamp(c1, -1.0, 1.0));
+	if (th > r + p_pixel_angle) {
+		return vec3(0.0);
+	}
+	r_cover = 1.0 - smoothstep(r - 0.5 * p_pixel_angle, r + 0.5 * p_pixel_angle, th);
+	vec3 x = (p_dir - c1 * p_l_moon) / sin(r);
+	float x2 = min(dot(x, x), 1.0);
+	vec3 n = x - p_l_moon * sqrt(1.0 - x2); // the surface's normal, on the side toward the eye
+	float mu = max(dot(n, -p_l_moon), 1e-3);
+	float mu0 = dot(n, p_l_sun);
+	float ca = clamp(dot(p_l_sun, -p_l_moon), -1.0, 1.0);
+	float a = acos(ca);
+	float phi = 1.0;
+	if (a > 1e-3) {
+		phi = 1.0 - sin(0.5 * a) * tan(0.5 * a) * log(1.0 / tan(0.25 * a));
+	}
+	phi = max(phi, 2e-3);
+	vec3 full = p_e / (PI * r * r) / phi;
+	// Earthshine: the earth, nearly full from a new moon, lights the dark side about 1/5000 of a full moon.
+	vec3 earthshine = full * 2e-4 * 0.5 * (1.0 - ca);
+	return (mu0 > 0.0 ? full * 2.0 * mu0 / (mu0 + mu) : vec3(0.0)) + earthshine;
+}
+
 // The stars' radiance toward p_dir (world), above the air. Each star's illuminance spread by a normalised
 // Gaussian a pixel wide (at least the half arcminute of seeing), so the pixels round it sum to the star.
 vec3 star_radiance(vec3 p_dir, float p_pixel_angle) {
@@ -364,8 +403,11 @@ vec3 star_radiance(vec3 p_dir, float p_pixel_angle) {
 		float c = dot(d, s.xyz);
 		float th2 = 2.0 * max(1.0 - c, 0.0); // the angle squared, for small angles
 		float w = th2 * inv2s2;
-		if (w < 9.0) {
-			sum += s.w * norm * exp(-w) * texelFetch(star_data, px + ivec2(1, 0), 0).rgb;
+		if (w < 9.0 * 64.0) {
+			// The core, and veiling glare as three wider Gaussians, each twice as wide and half the weight
+			// (Schneegans et al. 2025's pyramid for the eye's 1/theta^2 glare); only bright stars show it.
+			float k = exp(-w) + star_glare * (0.5 * 0.25 * exp(-0.25 * w) + 0.25 * 0.0625 * exp(-0.0625 * w) + 0.125 * 0.015625 * exp(-0.015625 * w));
+			sum += s.w * norm * k * texelFetch(star_data, px + ivec2(1, 0), 0).rgb;
 		}
 	}
 	return sum;
@@ -443,10 +485,18 @@ void sky() {
 		if (sundisk > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
 			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * sundisk;
 		}
-		// The stars through the air, behind the clouds (not in the radiance map: they light nothing).
-		if (stars_enabled && star_energy_per_lux > 0.0 && atmo_driven && !AT_CUBEMAP_PASS && !atmo_hits_ground(r_cam, EYEDIR.y)) {
-			float pixel_angle = max(length(dFdx(EYEDIR)), length(dFdy(EYEDIR)));
-			disc += star_radiance(EYEDIR, pixel_angle) * (star_energy_per_lux * star_brightness) * atmo_transmittance_to_top(r_cam, EYEDIR.y);
+		// The moon and the stars through the air, behind the clouds (the stars not in the radiance map: they
+		// light nothing).
+		if (atmo_driven && !atmo_hits_ground(r_cam, EYEDIR.y)) {
+			float pixel_angle = max(max(length(dFdx(EYEDIR)), length(dFdy(EYEDIR))), 1e-5);
+			vec3 t_top = atmo_transmittance_to_top(r_cam, EYEDIR.y);
+			float cover = 0.0;
+			if (moon_disc_enabled && dot(e1, vec3(1.0)) > 0.0) {
+				disc += moon_radiance(EYEDIR, l0, l1, e1, pixel_angle, cover) * t_top;
+			}
+			if (stars_enabled && star_energy_per_lux > 0.0 && !AT_CUBEMAP_PASS) {
+				disc += star_radiance(EYEDIR, pixel_angle) * (star_energy_per_lux * star_brightness * (1.0 - cover)) * t_top;
+			}
 		}
 		vec3 glow = vec3(0.0);
 		if (lightning_count > 0 && !AT_CUBEMAP_PASS) {
@@ -651,9 +701,9 @@ static Vector3 _star_colour(float p_bv) {
 }
 
 // Bins the catalogue by cube-face cell (32 x 32 a face, about 3 deg). A star near a cell's edge goes into
-// the cells within its glow's reach too, so a pixel reads one cell's list.
+// the cells within its glare's reach too, so a pixel reads one cell's list.
 void WeatherSkyMaterial::_bake_stars() {
-	const float margin = Math::deg_to_rad(0.5f);
+	const float margin = Math::deg_to_rad(1.0f);
 	LocalVector<LocalVector<int>> cells;
 	cells.resize(192 * 32);
 	LocalVector<Vector3> dirs;
@@ -724,6 +774,10 @@ void WeatherSkyMaterial::set_star_sky(const Basis &p_celestial, float p_energy_p
 	rs->material_set_param(m, "star_energy_per_lux", p_energy_per_lux);
 }
 
+void WeatherSkyMaterial::set_moon_angular_size(float p_radians) {
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_moon_angular_size", p_radians);
+}
+
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {
 	if (atmosphere_model == p_model) {
 		return;
@@ -765,6 +819,7 @@ void WeatherSkyMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_atmosphere_model", "model"), &WeatherSkyMaterial::set_atmosphere_model);
 	ClassDB::bind_method(D_METHOD("get_atmosphere_model"), &WeatherSkyMaterial::get_atmosphere_model);
 	ClassDB::bind_method(D_METHOD("set_star_sky", "celestial", "energy_per_lux"), &WeatherSkyMaterial::set_star_sky);
+	ClassDB::bind_method(D_METHOD("set_moon_angular_size", "radians"), &WeatherSkyMaterial::set_moon_angular_size);
 	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "atmosphere_model", PROPERTY_HINT_ENUM, "Physical Sky,Scattering"), "set_atmosphere_model", "get_atmosphere_model");
 	BIND_ENUM_CONSTANT(ATMOSPHERE_PHYSICAL_SKY);

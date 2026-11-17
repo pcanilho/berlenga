@@ -268,6 +268,17 @@ temperature (Ballesteros 2012), a black body through the CIE observer (Wyman, Sl
 linear sRGB at unit luminance. Checked: at latitude 45 deg the brightest star in an 8 deg view centred on the
 pole is 0.7 deg from it (Polaris, 0.65 deg in 2026). Not drawn in the radiance map. Two 64 KB textures.
 
+**Built (17 Nov): the moon's disc, star glare, horizon clouds.** The disc (diameter from the clock's distance)
+is shaded by Lommel-Seeliger, `2 mu0 / (mu0 + mu)`, lit from the sun's direction, so its phase and terminator
+follow the clock; divided by the disc-integrated Lommel-Seeliger phase function
+`1 - sin(a/2) tan(a/2) ln(cot(a/4))`, the disc sums to the clock's moon illuminance (whose magnitude already
+carries the phase). Earthshine lights the dark side at 2e-4 of a full moon times the earth's phase. Plain albedo
+until the LRO map is in Gitea LFS. Stars hide behind it. Bright stars get glare: three wider Gaussians, each twice
+the width and half the weight (Schneegans' pyramid), on top of the core, so Sirius and Betelgeuse stand out and
+Orion reads. Clouds near the horizon: a grazing path through the deck is up to 200 km, sampled 64 times, so far
+holes showed dithered, stepped edges (worst at night under high exposure); the step count now grows with the
+root of the path past 5 km, up to three times (about 9% on the sky-only bench).
+
 **Pre-exposure.** A night sky in light energy units (1e-5 per lux) is below half floats: the quarter and half
 resolution passes stored the air in visible bands and dropped every star fainter than about V 3. The sky's
 `exposure` now applies in each pass before the buffers (Frostbite's pre-exposure, Lagarde and de Rousiers 2014),
