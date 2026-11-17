@@ -1370,6 +1370,17 @@
    "topic": "Shapes"
   },
   {
+   "name": "Moss cushions",
+   "settings": [
+    "moss_cushions"
+   ],
+   "note": "",
+   "what": "on near stones, moss grows as real cushions 1 to 3.5 cm thick, with tufts that hold up under path tracing.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Rock fields",
    "settings": [
     "RockField3D",
@@ -1408,6 +1419,17 @@
    ],
    "note": "",
    "what": "cliff blocks fall in frost, thaw and rain, and break on impact.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Rockfall dust",
+   "settings": [
+    "rockfall_dust"
+   ],
+   "note": "",
+   "what": "falling and breaking stones throw up dust where they hit.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
