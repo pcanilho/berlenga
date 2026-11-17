@@ -1255,6 +1255,8 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					// sampler2D and sampler2D array and vec2 UV and vec3 UV.
 					bool multiview_uv_needed = false;
 					bool is_normal_roughness_texture = false;
+					String screen_uv_code; // a screen texture lookup's UV, for the two-layer wrap
+					static const HashSet<StringName> peel_texture_funcs = { "texture", "textureLod", "textureGrad", "textureOffset", "textureLodOffset", "textureGradOffset" };
 
 					for (int i = 1; i < onode->arguments.size(); i++) {
 						if (i > 1) {
@@ -1413,6 +1415,9 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 							}
 						} else if (multiview_uv_needed && !texture_func_no_uv && i == 2) {
 							// UV coordinate after using color, depth or normal roughness texture.
+							if (is_screen_texture) {
+								screen_uv_code = node_code;
+							}
 							node_code = "multiview_uv(" + node_code + ".xy)";
 
 							code += node_code;
@@ -1430,6 +1435,16 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						}
 					}
 					code += ")";
+					if (is_screen_texture && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && peel_texture_funcs.has(vnode->name)) {
+						// Two-layer refraction: the same lookup in the copy holding the second layer where
+						// peel_screen_ok() allows (scene_forward_clustered.glsl), the opaque copy elsewhere.
+						static const String plain = "Sampler(color_buffer,"; // multiviewSampler(…)
+						const int at = code.find(plain);
+						if (at >= 0) {
+							const String peeled = code.substr(0, at) + "Sampler(color_buffer_peel," + code.substr(at + plain.length());
+							code = "(peel_screen_ok((" + screen_uv_code + ").xy) ? " + peeled + " : " + code + ")";
+						}
+					}
 					if (is_screen_texture && !texture_func_returns_data && actions.apply_luminance_multiplier) {
 						if (RS::get_singleton()->is_low_end()) {
 							code = "(" + code + " / vec4(vec3(scene_data_block.data.luminance_multiplier), 1.0))";

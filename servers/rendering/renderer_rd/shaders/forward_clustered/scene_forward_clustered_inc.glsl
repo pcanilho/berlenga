@@ -507,6 +507,12 @@ layout(set = 1, binding = 36) uniform texture2D ssr_mip_level_buffer;
 // plight_update): irradiance and its luminance-weighted direction, a froxel grid.
 layout(set = 1, binding = 37) uniform texture3D pt_light_cache_irradiance;
 layout(set = 1, binding = 38) uniform texture3D pt_light_cache_direction;
+// Two-layer refraction: the front screen-reading surfaces' depth (reverse Z; 0 where none), for the second-layer pass.
+layout(set = 1, binding = 39) uniform texture2D peel_depth;
+// The screen copy with the second layer in it (see peel_screen_ok()).
+layout(set = 1, binding = 40) uniform texture2D color_buffer_peel;
+// Two-layer refraction: the second layer's depth (reverse Z; 0 where none), for the transparent pass.
+layout(set = 1, binding = 41) uniform texture2D peel_depth_second;
 
 #endif
 

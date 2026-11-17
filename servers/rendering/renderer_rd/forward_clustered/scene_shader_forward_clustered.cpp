@@ -303,6 +303,10 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 #endif
 	pipeline_hash_map.clear_pipelines();
 
+	if (gen_code.uses_screen_texture) {
+		// The two-layer peel passes keep only screen-reading surfaces (see SCENE_DATA_FLAGS_PEEL_*).
+		gen_code.defines.push_back("#define SCREEN_TEXTURE_USED\n");
+	}
 	SceneShaderForwardClustered::singleton->shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines);
 
 	ubo_size = gen_code.uniform_total_size;
@@ -1233,6 +1237,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.instance_uniform_index_variable = "instances.data[instance_index_interp].instance_uniforms_ofs";
 
 		actions.check_multiview_samplers = true;
+		actions.screen_texture_second_layer = true;
 
 		compiler.initialize(actions);
 	}
