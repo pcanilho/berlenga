@@ -366,6 +366,58 @@ the British Isles (2019) for sizes and flowering.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
 
+## Salt marsh and shingle plants (built 17 Nov)
+
+Where the land meets a sheltered sea the ground is mud and the plants sort by how often the tide
+covers them; on open coasts the backshore is sand or shingle with a strandline flora. Both are
+zoned by height in the tidal frame far more sharply than by anything else (Adam 1990, "Saltmarsh
+Ecology"; Rodwell 2000, British Plant Communities vol. 5, "Maritime communities"; Silvestri,
+Defina and Marani 2005, "Tidal regime, salinity and salt marsh plant zonation"). Lower limits are
+set by flooding stress, upper limits by competition (Bertness and Ellison 1987; Pennings and
+Callaway 1992).
+
+Salt marsh, low to high (heights for a mesotidal coast, as metres above mean sea level):
+- Pioneer zone, about mean high water neaps (0 to 0.7 m): glasswort (Salicornia europaea agg.:
+  leafless, jointed, succulent green stems 10 to 30 cm, branching like little candelabra, turning
+  red and purple in autumn) scattered on bare mud, and common cord-grass (Spartina anglica: stiff
+  grey-green leaves 30 to 100 cm in dense clonal clumps that trap mud).
+- Low to mid marsh (0.5 to 1.3 m): sea purslane (Atriplex portulacoides: a silvery-grey, mealy
+  low shrub 20 to 60 cm lining the creek edges), sea aster (Tripolium pannonicum: fleshy leaves,
+  pale lilac daisies in late summer), sea lavender (Limonium vulgare: rosettes of leathery
+  leaves, flat-topped sprays of lavender flowers in July and August that colour the marsh), common
+  saltmarsh-grass (here: a low sward of dry grass).
+- High marsh (1.1 to 1.9 m): thrift cushions, sea lavender, sea aster, red fescue sward, sea rush.
+Creek levees carry sea purslane; pans (shallow hollows) stay bare or carry glasswort. Marshes form
+only on sheltered, low-energy coasts on nearly level mud (slopes under about 2 degrees).
+
+Shingle and the strandline (above the highest tides, 1.8 to 4 m, on the beach's backshore):
+sea kale (Crambe maritima: huge, waxy, glaucous, crinkled cabbage leaves in a low mound 30 to
+75 cm, white honey-scented flower heads in June), sea campion (Silene uniflora: trailing glaucous
+mats with white bladder-calyxed flowers), yellow horned-poppy (Glaucium flavum: grey-blue
+crinkled hairy rosettes, yellow poppies and seed pods up to 30 cm long, curved like horns), with
+thrift (Scott 1963, "The ecology of shingle beach plants"; Randall 1977; Packham and Willis
+1997, "Ecology of Dunes, Salt Marsh and Shingle").
+
+Built (plant_saltmarsh.cpp):
+- Eight presets, real geometry: glasswort as jointed succulent candelabras (each segment swelling
+  from a narrow node), cord-grass as stiff two-ranked clumps with pressed spikes, sea purslane as a
+  sprawling mealy shrublet with opposite spoon leaves, sea aster with a fleshy rosette and a
+  corymb of lilac daisies (a quarter rayless), sea lavender with zigzag sprays of one-sided spikes,
+  sea kale as a mound of big cupped, waved, lobed leaves with flat flower heads then pods, sea
+  campion as trailing mats with bladder calyces and notched petals, horned-poppy with lobed grey
+  rosettes, silk poppies and long curved pods.
+- `make_saltmarsh(SALTMARSH_PIONEER | SALTMARSH_MID | SALTMARSH_HIGH | SALTMARSH_SHINGLE)`; the
+  mid and high swards reuse dry grass in saltmarsh-grass and fescue colours, sea rush is the rush
+  preset in its grey-green.
+- Three rules, all from the map's geology source when it has a sea: `RULE_TIDE_HEIGHT` (ground
+  over `sea_level + height_offset`), `RULE_COAST_EXPOSURE` (`get_coast_exposure_at`) and
+  `RULE_BEACH` (`get_beach_at`). A species using any of them is not placed without a sea. Marsh:
+  exposure under 0.3, beach under 0.3, slope under 3 degrees. Shingle: beach over 0.15, 1.8 to
+  4 m, slopes to 15 degrees.
+- Seasons: phenology per preset (marsh late, shingle from June); glasswort reddens from late
+  August to purple-red by October and browns into winter; cord-grass spikes and sea lavender
+  calyces stand through winter. Cord-grass sheds pollen (`VegetationPollen3D`).
+
 ## Ground mist and pollen with PhysX Flow (built 17 Nov)
 
 Two things in the air just above the plants, both carried by Flow (docs/ideas/physx.md) so they swirl

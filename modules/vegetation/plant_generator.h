@@ -134,6 +134,15 @@ public:
 		PRESET_ALPINE_SEDGE,
 		PRESET_DWARF_WILLOW,
 		PRESET_ALPINE_TOADFLAX,
+		// Salt marsh and shingle plants (plant_saltmarsh.cpp).
+		PRESET_GLASSWORT,
+		PRESET_CORD_GRASS,
+		PRESET_SEA_PURSLANE,
+		PRESET_SEA_ASTER,
+		PRESET_SEA_LAVENDER,
+		PRESET_SEA_KALE,
+		PRESET_SEA_CAMPION,
+		PRESET_HORNED_POPPY,
 		PRESET_MAX,
 	};
 
@@ -310,6 +319,15 @@ private:
 	void _build_alpine_sedge();
 	void _build_dwarf_willow();
 	void _build_alpine_toadflax();
+	// Salt marsh and shingle plants (plant_saltmarsh.cpp).
+	void _build_glasswort();
+	void _build_cord_grass();
+	void _build_sea_purslane();
+	void _build_sea_aster();
+	void _build_sea_lavender();
+	void _build_sea_kale();
+	void _build_sea_campion();
+	void _build_horned_poppy();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -520,6 +538,15 @@ public:
 		ALPINE_MAX,
 	};
 	static TypedArray<Resource> make_alpine(AlpineStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Salt marsh by height in the tidal frame, and the shingle backshore above it (plant_saltmarsh.cpp).
+	enum SaltmarshStand {
+		SALTMARSH_PIONEER, // Bare mud about mean high water neaps: glasswort and cord-grass.
+		SALTMARSH_MID, // Low to mid marsh: sea purslane, sea aster, sea lavender.
+		SALTMARSH_HIGH, // High marsh: thrift, sea lavender, sea rush, a fine sward.
+		SALTMARSH_SHINGLE, // The backshore above the tides: sea kale, sea campion, horned-poppy.
+		SALTMARSH_MAX,
+	};
+	static TypedArray<Resource> make_saltmarsh(SaltmarshStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -530,3 +557,4 @@ VARIANT_ENUM_CAST(PlantGenerator::BankStand);
 VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
+VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);

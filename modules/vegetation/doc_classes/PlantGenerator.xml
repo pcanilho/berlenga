@@ -99,6 +99,16 @@
 				Returns the plants of a sand dune zone as [PlantSpecies], placed by distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) on slopes under dry sand's angle of repose: lyme grass and a little marram on the embryo dunes of the strandline, marram tussocks with lyme grass and sea holly on the mobile foredunes, thinning marram with a dry sward and moss on the fixed dunes behind. Grasses grow in clonal patches. Put the [VegetationField3D] in [code]GroundSurface3D.wind_shelters[/code] and the plants shelter the sand and trap it ([method VegetationField3D.sample_lateral_cover]). They do not colour the far ground. Each species has the meta [code]dunes[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering.
 			</description>
 		</method>
+		<method name="make_saltmarsh" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.SaltmarshStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the plants of a salt marsh zone or a shingle backshore as [PlantSpecies], zoned by height above the sea ([constant PlantSpecies.RULE_TIDE_HEIGHT], metres for a mesotidal coast; Adam 1990, Rodwell 2000): glasswort and cord-grass on the pioneer mud (0 to 0.7 m), sea purslane, sea aster and sea lavender in a saltmarsh-grass sward on the low to mid marsh (0.5 to 1.3 m), thrift, sea lavender and sea rush in a fescue sward on the high marsh (1.1 to 1.9 m). The marsh keeps to sheltered coasts ([constant PlantSpecies.RULE_COAST_EXPOSURE] under 0.3), off the beaches and on ground under 3 degrees. Shingle plants (sea kale, sea campion, yellow horned-poppy and thrift) grow on the beach's backshore ([constant PlantSpecies.RULE_BEACH]) above the highest tides (1.8 to 4 m). The sets need a [member TerrainDataMap3D.geology_source] with a sea, and are not placed without one. Glasswort reddens from late August. They do not colour the far ground. Each species has the meta [code]saltmarsh[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and colour.
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -423,7 +433,31 @@
 		<constant name="PRESET_ALPINE_TOADFLAX" value="67" enum="Preset">
 			Alpine toadflax ([i]Linaria alpina[/i]): blue-grey, whorled, fleshy leaves on sprawling shoots that wander through moving scree, with violet snapdragon flowers with an orange palate.
 		</constant>
-		<constant name="PRESET_MAX" value="68" enum="Preset">
+		<constant name="PRESET_GLASSWORT" value="68" enum="Preset">
+			Glasswort ([i]Salicornia europaea[/i] agg.): leafless candelabras of jointed, fleshy green segments 3 to 5 mm thick on bare marsh mud, turning red and purple in autumn.
+		</constant>
+		<constant name="PRESET_CORD_GRASS" value="69" enum="Preset">
+			Common cord-grass ([i]Spartina anglica[/i]): dense clonal clumps of stiff stems with flat, grey-green leaves spreading stiffly, and erect yellow-brown spikes that stand into winter.
+		</constant>
+		<constant name="PRESET_SEA_PURSLANE" value="70" enum="Preset">
+			Sea purslane ([i]Atriplex portulacoides[/i]): a low, sprawling shrublet densely clothed in opposite, silvery-grey, mealy leaves, lining the marsh creeks.
+		</constant>
+		<constant name="PRESET_SEA_ASTER" value="71" enum="Preset">
+			Sea aster ([i]Tripolium pannonicum[/i]): fleshy, narrow leaves and a flat-topped spray of pale lilac daisies with yellow discs (some rayless), late summer.
+		</constant>
+		<constant name="PRESET_SEA_LAVENDER" value="72" enum="Preset">
+			Common sea lavender ([i]Limonium vulgare[/i]): a rosette of leathery leaves and stiff, zigzag-branched stems with one-sided spikes of small lavender flowers whose papery calyces stand through winter.
+		</constant>
+		<constant name="PRESET_SEA_KALE" value="73" enum="Preset">
+			Sea kale ([i]Crambe maritima[/i]): a low mound of huge, waxy, glaucous, crinkled leaves on shingle, with dense flat heads of white four-petalled flowers in June, then round pods.
+		</constant>
+		<constant name="PRESET_SEA_CAMPION" value="74" enum="Preset">
+			Sea campion ([i]Silene uniflora[/i]): trailing mats of glaucous, fleshy leaves with white, notched-petalled flowers over swollen bladder calyces.
+		</constant>
+		<constant name="PRESET_HORNED_POPPY" value="75" enum="Preset">
+			Yellow horned-poppy ([i]Glaucium flavum[/i]): grey-blue, crinkled, deeply lobed rosettes, branched stems with yellow poppies and long, curved seed pods.
+		</constant>
+		<constant name="PRESET_MAX" value="76" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -518,6 +552,21 @@
 		</constant>
 		<constant name="ALPINE_MAX" value="4" enum="AlpineStand">
 			Number of alpine stand types.
+		</constant>
+		<constant name="SALTMARSH_PIONEER" value="0" enum="SaltmarshStand">
+			Pioneer marsh about mean high water neaps: glasswort scattered on bare mud, cord-grass in clonal clumps.
+		</constant>
+		<constant name="SALTMARSH_MID" value="1" enum="SaltmarshStand">
+			Low to mid marsh: sea purslane, sea aster and sea lavender in a saltmarsh-grass sward.
+		</constant>
+		<constant name="SALTMARSH_HIGH" value="2" enum="SaltmarshStand">
+			High marsh: thrift, sea lavender, sea rush and a little sea aster in a fine fescue sward.
+		</constant>
+		<constant name="SALTMARSH_SHINGLE" value="3" enum="SaltmarshStand">
+			Shingle backshore above the highest tides: sea kale, sea campion, yellow horned-poppy and thrift.
+		</constant>
+		<constant name="SALTMARSH_MAX" value="4" enum="SaltmarshStand">
+			Number of salt marsh stand types.
 		</constant>
 	</constants>
 </class>
