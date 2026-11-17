@@ -7,7 +7,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
 - **Sun and moon clock** (`SkyClock`): date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).
 - **Sky atmosphere** (`WeatherSkyMaterial.atmosphere_model`, `SkyClock.drive_light_energy`): multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.
-- **Stars and moon** (`stars_enabled`, `moon_disc_enabled`): the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine.
+- **Night sky** (`stars_enabled`, `moon_disc_enabled`, `airglow_enabled`): the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine; on moonless nights the faint green airglow of the upper air brightens toward the horizon and lights cloud tops.
 
   ![The sea horizon at midday under the old sky and the new atmosphere](media/sky-atmosphere.jpg)
 

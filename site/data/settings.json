@@ -3004,13 +3004,14 @@
    "topic": ""
   },
   {
-   "name": "Stars and moon",
+   "name": "Night sky",
    "settings": [
     "stars_enabled",
-    "moon_disc_enabled"
+    "moon_disc_enabled",
+    "airglow_enabled"
    ],
    "note": "",
-   "what": "the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine.",
+   "what": "the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine; on moonless nights the faint green airglow of the upper air brightens toward the horizon and lights cloud tops.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
