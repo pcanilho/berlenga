@@ -647,8 +647,9 @@ void vertex() {
 			vec3 hang = normalize(vec3(0.0, -1.0, 0.0) + bd * 0.25 + vec3(wl.x, 0.0, wl.y) * 0.02);
 			p = c + bd * bl + vec3(0.0, -1.0, 0.0) * bl * 0.3 + hang * 0.022 * crop_growth.z * t;
 			axis = hang;
-			view_w = 0.0035 * sin(3.1416 * min(t * 0.85 + 0.12, 1.0)) * sqrt(bulk);
-			ripe = clamp(crop_age.x + lag, 0.0, 1.0);
+			view_w = 0.0024 * sin(3.1416 * min(t * 0.85 + 0.12, 1.0)) * sqrt(bulk);
+			// Papery glumes: pale long before the grain is ripe.
+			ripe = clamp(crop_age.x + lag + 0.3 * smoothstep(55.0, 70.0, stage), 0.0, 1.0);
 		}
 	}
 	if (view_w > 0.0) {
