@@ -146,7 +146,7 @@ void PlantGenerator::_build_moss_campion() {
 // cups 10 to 20 mm at the shoot ends, the first flowers after the snow melts.
 void PlantGenerator::_build_purple_saxifrage() {
 	leaf_wear = 0.1f;
-	const int shoots = int(_rand(16.0f, 28.0f));
+	const int shoots = int(_rand(26.0f, 42.0f));
 	const float spin = _rand(0.0f, Math::TAU);
 	Leaf l;
 	l.shape = LEAF_OVATE;
@@ -162,9 +162,9 @@ void PlantGenerator::_build_purple_saxifrage() {
 	const Bloom bloom = _bloom(false, &progress, &dead);
 	for (int s = 0; s < shoots; s++) {
 		const float az = spin + s * ALP_GOLDEN;
-		const float len = _rand(0.04f, 0.11f);
+		const float len = _rand(0.03f, 0.075f);
 		// Prostrate: out along the ground, the tip rising a little.
-		const Transform3D base(alp_frame(alp_dir(az, _rand(0.0f, 0.15f)), Vector3(0, 1, 0)), Vector3(_rand(-0.015f, 0.015f), 0.003f, _rand(-0.015f, 0.015f)));
+		const Transform3D base(alp_frame(alp_dir(az, _rand(0.0f, 0.15f)), Vector3(0, 1, 0)), Vector3(_rand(-0.03f, 0.03f), 0.003f, _rand(-0.03f, 0.03f)));
 		const LocalVector<Transform3D> frames = _stem_frames(base, len, _rand(-0.3f, -0.05f), 6);
 		_add_stem_along(frames, 0.0008f, 0.0006f, 0.0f);
 		// Leaves overlap like tiles and hide the stem.
@@ -352,7 +352,7 @@ void PlantGenerator::_build_alpine_sedge() {
 // 0.5 to 2 cm, net-veined; tiny red-tinged catkins in June and July. Carpets snowbeds.
 void PlantGenerator::_build_dwarf_willow() {
 	leaf_wear = 0.15f;
-	const int shoots = int(_rand(10.0f, 22.0f));
+	const int shoots = int(_rand(18.0f, 34.0f));
 	Leaf l;
 	l.shape = LEAF_ROUND;
 	l.petiole = 0.2f;
@@ -364,13 +364,13 @@ void PlantGenerator::_build_dwarf_willow() {
 	l.segments = 4;
 	for (int s = 0; s < shoots; s++) {
 		const float a = _rand(0.0f, Math::TAU);
-		const Vector3 at = Vector3(Math::cos(a), 0.0f, Math::sin(a)) * Math::sqrt(_rand(0.0f, 1.0f)) * 0.07f;
-		const Transform3D top = _add_stem(Transform3D(alp_frame(alp_dir(_rand(0.0f, Math::TAU), _rand(1.0f, 1.45f)), Vector3(0, 1, 0)), at), _rand(0.008f, 0.025f), 0.0012f, 0.0009f, 0.2f, 3, 0.0f);
+		const Vector3 at = Vector3(Math::cos(a), 0.0f, Math::sin(a)) * Math::sqrt(_rand(0.0f, 1.0f)) * 0.08f;
+		const Transform3D top = _add_stem(Transform3D(alp_frame(alp_dir(_rand(0.0f, Math::TAU), _rand(0.6f, 1.2f)), Vector3(0, 1, 0)), at), _rand(0.004f, 0.012f), 0.0012f, 0.0009f, 0.2f, 3, 0.0f);
 		const int leaves = int(_rand(2.0f, 4.99f));
 		const float spin = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < leaves; k++) {
 			const float b = spin + k * ALP_GOLDEN;
-			const Vector3 d = (alp_dir(b, 0.0f) + Vector3(0, _rand(0.15f, 0.5f), 0)).normalized();
+			const Vector3 d = (alp_dir(b, 0.0f) + Vector3(0, _rand(0.05f, 0.3f), 0)).normalized();
 			l.length = _rand(0.009f, 0.018f);
 			l.width = l.length * 0.95f;
 			_add_leaf(SURFACE_LEAF, Transform3D(alp_frame(d, Vector3(0, 1, 0)), top.origin), l, 0.3f);
