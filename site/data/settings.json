@@ -2455,6 +2455,17 @@
    "topic": "Wood and leaves"
   },
   {
+   "name": "Branch-scar chevrons",
+   "settings": [
+    "bark_chevrons"
+   ],
+   "note": "",
+   "what": "living beech and birch carry dark chevrons below shed limbs, longer and flatter with age, black on birch.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
    "name": "Bark moss",
    "settings": [
     "moss_cover"
