@@ -2257,6 +2257,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Mediterranean scrub",
+   "settings": [
+    "PlantGenerator.make_scrub()"
+   ],
+   "note": "",
+   "what": "rosemary, French lavender, thyme and sage-leaved rockrose, as garrigue on thin soil and maquis on deeper soil where winters are mild and summers dry; the rockrose folds and greys its leaves in drought.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Dune plants",
    "settings": [
     "PlantGenerator.make_dunes()",
