@@ -421,6 +421,17 @@ func _checks() -> void:
 			if lr.x > 0.0 and not (lr.x - sp.get_rule_fade(PlantSpecies.RULE_LITTER) > 0.0):
 				open_litter.append(sp.resource_name)
 	_check("litter: no fallen leaves or twigs on open ground away from crowns", open_litter.is_empty(), open_litter)
+	# Dunes on a generator's dunes (RULE_DUNE): embryo and mobile sets on moving sand, fixed on held
+	# sand, none off the dune sand (-1).
+	var dune_bad := []
+	for stand in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
+		for sp in PlantGenerator.make_dunes(stand, 1, false):
+			var off: float = sp.rule_weight(PlantSpecies.RULE_DUNE, -1.0)
+			var dr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_DUNE)
+			var moving: bool = stand != PlantGenerator.DUNES_FIXED
+			if dr.x - sp.get_rule_fade(PlantSpecies.RULE_DUNE) <= -1.0 or off > 0.0 or (moving and dr.y > 0.85) or (not moving and dr.x < 0.5):
+				dune_bad.append([stand, dr])
+	_check("dunes: dune sets follow the generator's dune stability, none off the dune sand", dune_bad.is_empty(), dune_bad)
 	var trees := field.get_placements(0)
 	var bushes := field.get_placements(1)
 	var reeds := field.get_placements(2)

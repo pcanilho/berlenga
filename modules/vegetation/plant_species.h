@@ -63,6 +63,7 @@ public:
 		RULE_CONIFER, // Share of the canopy overhead that is needle-leaved, 0 broadleaf to 1 conifer (VegetationField3D).
 		RULE_SPRAY, // Waterfall spray potential, 0 to 1 (geology from a TerrainGenerator3D).
 		RULE_LITTER, // Leaf fall from the placed canopy, 0 none to 1 under closed crowns, drifting past the crowns (VegetationField3D).
+		RULE_DUNE, // Coastal dune stability (TerrainGenerator3D marram cover), 0 bare to 1 fixed; -1 off the dune sand. Only where the map's geology_source has dunes.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -215,6 +216,7 @@ public:
 	// True when the shade rule is narrower than "anywhere", so placement must compute shade.
 	bool uses_shade() const { return ranges[RULE_SHADE].x > 0.0f || ranges[RULE_SHADE].y < 1.0f; }
 	bool uses_litter() const { return ranges[RULE_LITTER].x > 0.0f || ranges[RULE_LITTER].y < 1.0f; }
+	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
 	void set_spacing(float p_spacing);
 	float get_spacing() const { return spacing; }
 	void set_footprint(float p_footprint);

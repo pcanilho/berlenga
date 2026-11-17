@@ -95,6 +95,7 @@ class VegetationField3D : public Node3D {
 	static constexpr float WOOD_FEEDER_REACH = 0.6f; // How far along a log a wood feeder looks for a crack or bark edge to root in.
 	static constexpr float WOOD_FEEDER_INSET = 0.015f; // How far a wood feeder's foot sits into the log's side (its moss and bark).
 	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
+	static constexpr float DUNE_SAND_MIN = 0.3f; // Metres of dune sand (TerrainGenerator3D.get_dune_height()) that count as a dune for RULE_DUNE.
 	static constexpr float ROOT_STONE_MARGIN = 0.04f; // Floor plants keep this far off a stone a tree's roots grow over.
 	LocalVector<Deadwood> deadwood;
 	HashMap<Vector2i, LocalVector<int>> deadwood_grid;
@@ -208,6 +209,7 @@ class VegetationField3D : public Node3D {
 		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
 		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
 		VegetationHoles holes; // Openings in the ground (cave mouths): no plant there (a copy).
+		const TerrainGenerator3D *dunes = nullptr; // The map's geology source when it has coastal dunes (PlantSpecies.RULE_DUNE); read only.
 	};
 	struct FarAdd {
 		Vector2 xz;

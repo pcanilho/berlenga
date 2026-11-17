@@ -366,6 +366,23 @@ the British Isles (2019) for sizes and flowering.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
 
+## Dune plants on generated dunes (built 17 Nov)
+
+The terrain generator now builds coastal dunes (TerrainGenerator3D `dunes_enabled`, on): Werner's
+slab model with marram after Nield and Baas 2008, so each dune cell carries a stability, the
+marram cover that holds its sand (0 bare and moving, 1 fixed). That is the ecological sequence the
+dune sets stand for (embryo dunes on the strandline, mobile yellow dunes under young marram, fixed
+grey dunes behind where the sand has stopped; Ranwell 1972, Maun 2009), so it places them better
+than distance from the water alone.
+
+- `PlantSpecies.RULE_DUNE` (`dune_range`, `dune_fade`): the generator's `get_dune_stability()`, or
+  -1 where it has less than 0.3 m of dune sand. Applied only when the map's geology source has
+  built dunes; elsewhere the dune sets keep placing by distance from the water as before.
+- `make_dunes()`: embryo 0 to 0.3, mobile 0.15 to 0.8, fixed 0.6 to 1 (fade 0.1); their water
+  distances widened (embryo to 40 to 60 m, mobile to 250 m, fixed from 30 m) so the generator's
+  foredunes, tens of metres behind the beach, fall inside them.
+- Blowouts and parabolic dune noses, where cover failed, read as bare or embryo sand.
+
 ## Far colour matched to the plants on screen (built 16 Nov)
 
 The showcase scene showed a lighter ring of ground where the cover plants (bracken, heather) end.

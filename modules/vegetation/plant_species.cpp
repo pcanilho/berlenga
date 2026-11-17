@@ -59,6 +59,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_SPRAY] = Vector2(0.0f, 0.5f);
 	fades[RULE_SPRAY] = 0.15f;
 	ranges[RULE_LITTER] = Vector2(0.0f, 1.0f);
+	ranges[RULE_DUNE] = Vector2(-1.0f, 1.0f);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -437,6 +438,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "spray_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SPRAY);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "litter_range"), "set_rule_range", "get_rule_range", RULE_LITTER);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "litter_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_LITTER);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "dune_range"), "set_rule_range", "get_rule_range", RULE_DUNE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "dune_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_DUNE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -456,6 +459,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_CONIFER);
 	BIND_ENUM_CONSTANT(RULE_SPRAY);
 	BIND_ENUM_CONSTANT(RULE_LITTER);
+	BIND_ENUM_CONSTANT(RULE_DUNE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

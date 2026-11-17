@@ -223,6 +223,7 @@ TypedArray<Resource> PlantGenerator::make_dunes(DuneStand p_stand, int p_variant
 		Preset preset;
 		float spacing, footprint, density, scale_min, scale_max;
 		Vector2 distance; // Metres from the water.
+		Vector2 stability; // Dune stability (PlantSpecies.RULE_DUNE, marram cover) where a generator built the dunes.
 		float patch_scale; // 0: no patches (rhizome clones in patches otherwise).
 		float patch_cover;
 		float visibility;
@@ -231,24 +232,24 @@ TypedArray<Resource> PlantGenerator::make_dunes(DuneStand p_stand, int p_variant
 	switch (p_stand) {
 		case DUNES_EMBRYO:
 			// Embryo dunes on the strandline: lyme grass first, sea couch's role; a few marram.
-			set = LocalVector<DuneSpec>({ { P::PRESET_LYME_GRASS, 0.6f, 0.2f, 0.7f, 0.8f, 1.2f, Vector2(2.0f, 25.0f), 5.0f, 0.45f, 70.0f },
-					{ P::PRESET_MARRAM, 0.7f, 0.25f, 0.35f, 0.7f, 1.0f, Vector2(6.0f, 30.0f), 6.0f, 0.4f, 80.0f },
-					{ P::PRESET_SEA_HOLLY, 0.9f, 0.15f, 0.25f, 0.8f, 1.1f, Vector2(4.0f, 30.0f), 0.0f, 0.0f, 40.0f } });
+			set = LocalVector<DuneSpec>({ { P::PRESET_LYME_GRASS, 0.6f, 0.2f, 0.7f, 0.8f, 1.2f, Vector2(2.0f, 40.0f), Vector2(0.0f, 0.3f), 5.0f, 0.45f, 70.0f },
+					{ P::PRESET_MARRAM, 0.7f, 0.25f, 0.35f, 0.7f, 1.0f, Vector2(6.0f, 60.0f), Vector2(0.0f, 0.3f), 6.0f, 0.4f, 80.0f },
+					{ P::PRESET_SEA_HOLLY, 0.9f, 0.15f, 0.25f, 0.8f, 1.1f, Vector2(4.0f, 60.0f), Vector2(0.0f, 0.3f), 0.0f, 0.0f, 40.0f } });
 			break;
 		case DUNES_MOBILE:
 			// Mobile (yellow) foredunes: marram dominant, its tussocks with bare sand between, lyme
 			// grass on the seaward foot, sea holly.
-			set = LocalVector<DuneSpec>({ { P::PRESET_MARRAM, 0.45f, 0.2f, 0.85f, 0.8f, 1.3f, Vector2(8.0f, 120.0f), 7.0f, 0.65f, 80.0f },
-					{ P::PRESET_LYME_GRASS, 0.6f, 0.2f, 0.4f, 0.8f, 1.1f, Vector2(5.0f, 30.0f), 5.0f, 0.35f, 70.0f },
-					{ P::PRESET_SEA_HOLLY, 0.8f, 0.15f, 0.35f, 0.8f, 1.2f, Vector2(8.0f, 100.0f), 0.0f, 0.0f, 40.0f } });
+			set = LocalVector<DuneSpec>({ { P::PRESET_MARRAM, 0.45f, 0.2f, 0.85f, 0.8f, 1.3f, Vector2(8.0f, 250.0f), Vector2(0.15f, 0.8f), 7.0f, 0.65f, 80.0f },
+					{ P::PRESET_LYME_GRASS, 0.6f, 0.2f, 0.4f, 0.8f, 1.1f, Vector2(5.0f, 60.0f), Vector2(0.15f, 0.8f), 5.0f, 0.35f, 70.0f },
+					{ P::PRESET_SEA_HOLLY, 0.8f, 0.15f, 0.35f, 0.8f, 1.2f, Vector2(8.0f, 250.0f), Vector2(0.15f, 0.8f), 0.0f, 0.0f, 40.0f } });
 			break;
 		case DUNES_FIXED:
 			// Fixed (grey) dunes behind: marram thinning out without fresh sand, a dry sward,
 			// moss between.
-			set = LocalVector<DuneSpec>({ { P::PRESET_MARRAM, 0.9f, 0.2f, 0.4f, 0.6f, 0.95f, Vector2(80.0f, 400.0f), 6.0f, 0.4f, 80.0f },
-					{ P::PRESET_DRY_GRASS, 0.18f, 0.05f, 0.8f, 0.6f, 0.9f, Vector2(80.0f, 400.0f), 0.0f, 0.0f, 30.0f },
-					{ P::PRESET_SEA_HOLLY, 1.2f, 0.15f, 0.2f, 0.7f, 1.0f, Vector2(80.0f, 300.0f), 0.0f, 0.0f, 40.0f },
-					{ P::PRESET_MOSS, 0.3f, 0.0f, 0.5f, 0.8f, 1.4f, Vector2(80.0f, 400.0f), 4.0f, 0.5f, 25.0f } });
+			set = LocalVector<DuneSpec>({ { P::PRESET_MARRAM, 0.9f, 0.2f, 0.4f, 0.6f, 0.95f, Vector2(30.0f, 400.0f), Vector2(0.6f, 1.0f), 6.0f, 0.4f, 80.0f },
+					{ P::PRESET_DRY_GRASS, 0.18f, 0.05f, 0.8f, 0.6f, 0.9f, Vector2(30.0f, 400.0f), Vector2(0.6f, 1.0f), 0.0f, 0.0f, 30.0f },
+					{ P::PRESET_SEA_HOLLY, 1.2f, 0.15f, 0.2f, 0.7f, 1.0f, Vector2(30.0f, 300.0f), Vector2(0.6f, 1.0f), 0.0f, 0.0f, 40.0f },
+					{ P::PRESET_MOSS, 0.3f, 0.0f, 0.5f, 0.8f, 1.4f, Vector2(30.0f, 400.0f), Vector2(0.6f, 1.0f), 4.0f, 0.5f, 25.0f } });
 			break;
 		case DUNES_MAX:
 			break;
@@ -278,6 +279,11 @@ TypedArray<Resource> PlantGenerator::make_dunes(DuneStand p_stand, int p_variant
 		sp->set_align_to_ground(0.3f);
 		sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, f.distance);
 		sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 2.0f);
+		// On a generator's dunes, the dune's stability under marram places the sets: embryo and
+		// mobile dunes where the sand still moves, fixed (grey) dunes where marram has held it.
+		// Off the dune sand (RULE_DUNE -1) none of them grow.
+		sp->set_rule_range(PlantSpecies::RULE_DUNE, f.stability);
+		sp->set_rule_fade(PlantSpecies::RULE_DUNE, 0.1f);
 		sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 34.0f)); // Dry sand's angle of repose.
 		sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
 		if (f.patch_scale > 0.0f) {

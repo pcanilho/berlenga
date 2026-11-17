@@ -300,6 +300,10 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	r_setup.obstacles = obstacle_grid;
 	_follow_holes(map);
 	r_setup.holes.read(VegetationHoles::source_of(map));
+	{
+		const TerrainGenerator3D *gen = VegetationHoles::source_of(map);
+		r_setup.dunes = gen && gen->get_dune_rect().has_area() ? gen : nullptr;
+	}
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -819,6 +823,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool shade_rule = sp->uses_shade();
 		const bool conifer_rule = sp->uses_conifer();
 		const bool litter_rule = sp->uses_litter();
+		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = sp->get_visibility_range();
 		const bool is_log = ps.deadwood_reach > 0.0f;
@@ -900,6 +905,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (conifer_rule) {
 							suit *= sp->rule_weight(PlantSpecies::RULE_CONIFER, conifer);
 						}
+					}
+					if (dune_rule && suit > 0.0f) {
+						// Coastal dunes (TerrainGenerator3D): the dune's stability under marram, -1
+						// off the dune sand (less than DUNE_SAND_MIN of it).
+						const Vector3 dp(xz.x, 0.0f, xz.y);
+						const float dune = p_setup.dunes->get_dune_height(dp) >= DUNE_SAND_MIN ? float(p_setup.dunes->get_dune_stability(dp)) : -1.0f;
+						suit *= sp->rule_weight(PlantSpecies::RULE_DUNE, dune);
 					}
 					if (litter_rule && suit > 0.0f) {
 						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + p_setup.litter_reach, CROWN_CELL, xz, p_setup.litter_skew);
