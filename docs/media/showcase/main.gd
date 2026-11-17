@@ -562,6 +562,24 @@ func shot_flowslope() -> void:
 	flow.add_child(em)
 	em.flow = em.get_path_to(flow)
 	camera(Vector3(3.0, 4.2, 5.0), Vector3(-1.8, 1.0, -1.5), 50)
+	if OS.get_cmdline_user_args().has("--mover"):
+		# A crate sliding down the flank through the dust: it must push the gas, and never become floor.
+		var crate := RigidBody3D.new()
+		var cc := CollisionShape3D.new()
+		var cbs := BoxShape3D.new()
+		cbs.size = Vector3(0.8, 0.8, 0.8)
+		cc.shape = cbs
+		crate.add_child(cc)
+		var cm := MeshInstance3D.new()
+		var cbm := BoxMesh.new()
+		cbm.size = cbs.size
+		cbm.material = mat(Color(0.55, 0.42, 0.28), 0.8)
+		cm.mesh = cbm
+		crate.add_child(cm)
+		crate.physics_material_override = PhysicsMaterial.new()
+		crate.physics_material_override.friction = 0.05
+		crate.position = Vector3(-6.5, valley_h(-6.5, -1.6) + 0.7, -1.6)
+		add_child(crate)
 
 func shot_fluid() -> void:
 	if not ClassDB.class_exists("PhysXParticleFluid3D"):
