@@ -526,6 +526,17 @@ void PhysXDestructible3D::_notification(int p_what) {
 				// chunk geometry once the body has moved away from it. The
 				// NOTIFICATION_TRANSFORM_CHANGED handler above only pushes
 				// node->body when !dynamic, so this doesn't loop back on itself.
+				if (pieces[0].body.is_valid() && !get_global_transform().is_equal_approx(synced)) {
+					// Moved by a script since the last step: the body goes there at rest.
+					PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+					spawn_scale = get_global_transform().basis.get_scale();
+					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
+					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, Vector3());
+					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, Vector3());
+					ps->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_SLEEPING, false);
+					RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, get_global_transform());
+					synced = get_global_transform();
+				}
 				PhysicsDirectBodyState3D *state = PhysicsServer3D::get_singleton()->body_get_direct_state(pieces[0].body);
 				if (state) {
 					Transform3D t = state->get_transform();
@@ -540,6 +551,7 @@ void PhysXDestructible3D::_notification(int p_what) {
 						// local axes before this goes anywhere, or it's lost.
 						t.basis = t.basis.scaled_local(spawn_scale);
 						set_global_transform(t);
+						synced = get_global_transform();
 						RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
 						_check_impact_fracture();
 						_record_piece_velocities();
@@ -938,6 +950,7 @@ void PhysXDestructible3D::_spawn_intact() {
 	// could ever own this piece's transform, so it's the last clean read of
 	// the node's real intended scale.
 	spawn_scale = get_global_transform().basis.get_scale();
+	synced = get_global_transform();
 	_spawn_piece({ 0 }, get_global_transform(), Vector3(), physics, PhysicsServer3D::BODY_MODE_RIGID, live_actors.is_empty() ? nullptr : live_actors[0]);
 	if (physics) {
 		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
