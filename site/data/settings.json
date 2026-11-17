@@ -1755,6 +1755,7 @@
     "fall_mist_amount",
     "PhysXWaterMist3D",
     "wet_surfaces",
+    "PhysXRiver3D.fall_sound",
     "edge_lap_height",
     "edge_relief",
     "edge_foam"
