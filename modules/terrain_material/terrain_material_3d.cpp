@@ -406,10 +406,20 @@ float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
 // Rock detail on steep faces and scree with no textures (rock_detail_enabled): a height in metres from 3D noise in
 // world space, so no projection stretches on any face, turned into a normal by Mikkelsen's (2010) surface gradient.
 // Faces: joint blocks (3D Worley cells stretched into beds about 1.2 m thick and joints 2.5 m apart, Priest 1993
-// spacing), their cracks, and two octaves of roughness. Scree: loose stones 0.2 to 0.6 m (rounded cells).
+// spacing), their cracks, and two octaves of roughness. Scree: loose angular stones 0.15 to 0.5 m in a bed of gravel
+// and fines.
+// pcg3d (Jarzynski and Olano 2020, Hash Functions for GPU Rendering) on the integer cell: exact at any distance from
+// the origin, where the old fract(sin()) hash lost its precision and left patches of the same cell values.
 vec3 tm_rd_hash3(vec3 p) {
-	p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)));
-	return fract(sin(p) * 43758.5453123);
+	uvec3 v = uvec3(ivec3(floor(p))) * 1664525u + 1013904223u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	v ^= v >> 16u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	return vec3(v) * (1.0 / 4294967296.0);
 }
 // F1, F2 and the nearest cell's hash.
 vec3 tm_rd_worley(vec3 p) {
@@ -501,19 +511,23 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 		shade = mix(shade, crack_shade * (1.0 + kb * 0.14 * (bh.x - 0.5)), face);
 	}
 	if (scree > 0.0) {
+		// Angular clasts: each cell's polygon inset from its borders (half of F2 - F1 is the distance to the border)
+		// by 5 to 12% of a cell, with a rounded edge 12% wide and a low dome, so neighbouring stones never meet in a
+		// crease and the gravel bed shows between them (open-work talus, angular as rockfall breaks it).
 		vec3 wv = tm_rd_worley(p / (0.35 * tm_rock_detail_scale));
-		float r = 0.55 + 0.3 * wv.z;
-		float dome = sqrt(max(1.0 - (wv.x / r) * (wv.x / r), 0.0));
 		float ks = tm_rd_clamp(wmax, 0.35);
-		float x2 = min((wv.x / r) * (wv.x / r), 1.0);
-		hgt += scree * ks * (1.0 - x2) * sqrt(1.0 - x2) * 0.08 * tm_rock_detail_scale; // flat at the rim: no edge to alias
-		// 0.958 is the stones' mean shade (measured over the cells), so the mean stays 1.
-		float st_shade = mix(0.78, 1.0, smoothstep(0.0, 0.5, dome)) * (0.92 + 0.16 * wv.z) / 0.958;
+		float se = 0.5 * (wv.y - wv.x) - (0.05 + 0.07 * wv.z);
+		float sb = clamp(se / 0.12, 0.0, 1.0);
+		float bev = sb * (2.0 - sb);
+		float top = 0.6 + 0.4 * clamp(1.0 - (wv.x / 0.7) * (wv.x / 0.7), 0.0, 1.0);
+		hgt += scree * ks * top * bev * 0.08 * tm_rock_detail_scale;
+		// 0.869 is the mean of stones and gravel together (measured over the cells), so the mean stays 1.
+		float st_shade = (0.8 + 0.2 * bev) * (0.92 + 0.16 * wv.z) / 0.869;
 		// Between the stones, a matrix of gravel and fines (talus is poorly sorted: Fuller-like grading, each size
 		// filling the gaps of the next, so the clasts stand in a finer bed). Gravel: a second octave of rounded
 		// cells 3 to 10 cm, dipped in the bed; fines: grain roughness under a centimetre. Each fades by frequency
 		// clamping as the pixel grows, and the gap share comes from the stones' own profile.
-		float gap = smoothstep(0.55, 1.0, x2);
+		float gap = 1.0 - smoothstep(0.0, 0.03, se);
 		float kg = tm_rd_clamp(wmax, 0.08);
 		float gs = 1.0;
 		if (kg > 0.0 && gap > 0.0) {
