@@ -28,7 +28,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   *Precipitation haze: in a blizzard the blowing snow hides the distance.*
 
 - **Haze and cloud shadow in fog** (`aerosol_haze`, `haze_visibility`): volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.
-- **Shafts across the sky** (`atmo_cloud_shadow_steps`): the air under the clouds takes their shadow, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.
+- **Shafts across the sky** (`atmo_cloud_shadow_steps`): the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.
 
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 
