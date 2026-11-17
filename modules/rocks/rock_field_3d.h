@@ -159,7 +159,7 @@ private:
 	bool mineral_glints = true;
 	bool coast_seabed_dirty = false;
 	void _remeasure_sea();
-	real_t ground_blend_height = 0.25;
+	real_t ground_blend_height = 0.45;
 	Ref<ShaderMaterial> ground_material;
 	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
 	mutable bool auto_ground_found = false;
