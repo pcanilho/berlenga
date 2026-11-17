@@ -447,6 +447,12 @@ static String _get_global_shader_uniform_from_type_and_index(const String &p_buf
 	}
 }
 
+// Screen and depth texture lookups that take a 2D UV as their second argument (two-layer refraction wraps them).
+static bool _is_peel_texture_func(const StringName &p_name) {
+	const String name = p_name;
+	return name == "texture" || name == "textureLod" || name == "textureGrad" || name == "textureOffset" || name == "textureLodOffset" || name == "textureGradOffset";
+}
+
 String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, GeneratedCode &r_gen_code, IdentifierActions &p_actions, const DefaultIdentifierActions &p_default_actions, bool p_assigning, bool p_use_scope) {
 	String code;
 
@@ -1257,7 +1263,6 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					bool is_normal_roughness_texture = false;
 					String screen_uv_code; // a screen or depth texture lookup's UV, for the two-layer wrap
 					bool is_depth_lookup = false;
-					static const HashSet<StringName> peel_texture_funcs = { "texture", "textureLod", "textureGrad", "textureOffset", "textureLodOffset", "textureGradOffset" };
 
 					for (int i = 1; i < onode->arguments.size(); i++) {
 						if (i > 1) {
@@ -1437,7 +1442,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						}
 					}
 					code += ")";
-					if (is_screen_texture && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && peel_texture_funcs.has(vnode->name)) {
+					if (is_screen_texture && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && _is_peel_texture_func(vnode->name)) {
 						// Two-layer refraction: the same lookup in the copy holding the second layer where
 						// peel_screen_ok() allows (scene_forward_clustered.glsl), the opaque copy elsewhere.
 						static const String plain = "Sampler(color_buffer,"; // multiviewSampler(…)
@@ -1447,7 +1452,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 							code = "(peel_screen_ok((" + screen_uv_code + ").xy) ? " + peeled + " : " + code + ")";
 						}
 					}
-					if (is_depth_lookup && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && peel_texture_funcs.has(vnode->name)) {
+					if (is_depth_lookup && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && _is_peel_texture_func(vnode->name)) {
 						// Two-layer refraction: a screen-reading surface's depth lookups see the layer its screen
 						// lookups see, so its refracted ray stops at the pool, not the bucket floor beneath it.
 						code = "peel_depth_merge((" + screen_uv_code + ").xy, " + code + ")";
