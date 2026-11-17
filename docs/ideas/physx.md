@@ -312,31 +312,37 @@ tracer can bind them directly: no NanoVDB conversion or copy each frame.
   PhysX splashes and floating props read their height rather than drawing a
   second surface.
 
-### MPM fluid: two-layer screen-space water (proposed)
+### MPM fluid: two-layer water in raster (picked 17 Nov)
 
-Problem (bucket pour, docs review 17 Nov): the raster fluid is one
-screen-space layer (van der Laan, Green and Sainz 2009, curvature flow). A
-stream falling in front of the pool refracts the screen copy, which holds
-only opaque geometry, so through the stream shows the bucket wall under the
-pool instead of the pool's surface and its reflections: a faint brown band.
-The path tracer shows it right. A refraction mask (Sousa, GPU Gems 2 ch. 19)
-went in (0e459f27) but cannot fix this: the pool is not in any buffer.
+Problem (bucket pour, docs review 17 Nov): a stream falling in front of the
+pool shows the bucket wall behind the pool, a faint brown band, where the path
+tracer shows the pool's surface. The shot draws the isosurface mesh with the
+clear-water material (Transmission, not thin-walled): raster transmission
+reads the screen copy taken before the transparent pass, which holds opaque
+geometry only, so the stream sees through the pool as if it were not there.
+(A debug render ruled out the screen-space proxy: the shot does not use it.
+The refraction mask added there in 0e459f27 stays: it fixes a real leak for
+screen-space fluid.) The same limit hides a river behind a waterfall's sheet,
+or one glass behind another, in every engine that refracts a single screen
+copy (Unreal and HDRP document it for translucency behind translucency).
 
-Technique: depth-peeled layers, as in Imai, Kanamori, Mitani et al.,
-"Real-time screen-space liquid rendering with complex refractions", CAVW 27,
-2016 (multiple refraction through peeled liquid layers), the fluid analogue
-of Everitt's depth peeling (NVIDIA 2001).
-- Splat pass 2: each particle sphere writes its front depth only where it lies
-  more than a gap (about 2 particle radii) behind layer 1's depth: layer 2,
-  the first liquid surface behind the stream.
-- Smooth and take normals for layer 2 as for layer 1 (same bilateral filter).
-- Shade layer 2 first (reflection, specular, refraction of the screen copy,
-  absorption by the thickness behind it), then layer 1 refracts layer 2's
-  result where layer 2 exists, else the screen copy.
-- Two layers cover stream-over-pool, splash-over-pool and waterfall-over-
-  plunge-pool; more layers buy little (Imai et al. stop at a few).
-Cost: one more splat, filter and composite at the liquid's pixels only;
-memory: one depth, one normal/thickness target. PT unchanged.
+Technique: depth peeling (Everitt, "Interactive Order-Independent
+Transparency", NVIDIA 2001), as screen-space liquid renderers do for layered
+refraction (Imai, Kanamori, Mitani et al., "Real-Time Screen-Space Liquid
+Rendering with Complex Refractions", CAVW 27, 2016). Two layers, in the
+forward renderer:
+1. Front depth: the screen-reading transparent surfaces (Transmission,
+   refraction) drawn depth-only, front faces, into a scratch depth D1.
+2. Second layer: the same surfaces drawn in colour into the scene colour,
+   each fragment discarded unless it lies behind D1 (plus a small bias); their
+   transmission reads the opaque screen copy as now.
+3. The screen copy is taken again, so it now holds layer 2.
+4. The normal transparent pass: the front layer reads the new copy and shows
+   the pool behind the stream, lit and reflecting, as the path tracer does.
+Only frames with such surfaces pay: one depth-only and one extra colour pass
+over them, and one more screen copy. Back faces stay culled, so a closed
+water mesh's second front-facing layer is the next body of water. PT is
+unchanged.
 
 ### MPM fluid: spray, foam and bubbles
 
