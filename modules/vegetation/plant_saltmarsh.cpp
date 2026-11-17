@@ -701,11 +701,11 @@ TypedArray<Resource> PlantGenerator::make_saltmarsh(SaltmarshStand p_stand, int 
 			sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 15.0f));
 			sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
 		} else {
-			// Marshes form only on sheltered, low-energy coasts, on nearly level mud, off the beaches.
+			// Marshes form only on sheltered, low-energy coasts, on nearly level ground: wave energy, not
+			// the sediment's grain, decides it (Allen 2000), and a sheltered beach's head fines to mud.
+			// So no beach rule: the generator's beach mask runs along every coast, sheltered or not.
 			sp->set_rule_range(PlantSpecies::RULE_COAST_EXPOSURE, Vector2(0.0f, 0.3f));
 			sp->set_rule_fade(PlantSpecies::RULE_COAST_EXPOSURE, 0.1f);
-			sp->set_rule_range(PlantSpecies::RULE_BEACH, Vector2(0.0f, 0.3f));
-			sp->set_rule_fade(PlantSpecies::RULE_BEACH, 0.1f);
 			sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 3.0f));
 			sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 1.5f);
 		}

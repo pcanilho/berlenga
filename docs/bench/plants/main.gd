@@ -554,7 +554,7 @@ func _saltmarsh_checks() -> void:
 			if st == P.SALTMARSH_SHINGLE:
 				ok = ok and s.beach_range.x > 0.0 and t.x >= 1.79
 			else:
-				ok = ok and s.slope_range.y <= 3.01 and s.coast_exposure_range.y <= 0.31 and s.beach_range.y <= 0.31 and t.y <= 2.0
+				ok = ok and s.slope_range.y <= 3.01 and s.coast_exposure_range.y <= 0.31 and t.y <= 2.0
 		lows.append(lo)
 		_check("saltmarsh set %d: on its own band of the tidal frame, marsh sheltered and level, shingle on the backshore" % st, ok, set.size())
 	_check("saltmarsh sets run up the shore: pioneer, mid, high, shingle", lows[0] < lows[1] and lows[1] < lows[2] and lows[2] < lows[3], lows)

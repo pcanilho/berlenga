@@ -487,8 +487,11 @@ Built (plant_saltmarsh.cpp):
 - Three rules, all from the map's geology source when it has a sea: `RULE_TIDE_HEIGHT` (ground
   over `sea_level + height_offset`), `RULE_COAST_EXPOSURE` (`get_coast_exposure_at`) and
   `RULE_BEACH` (`get_beach_at`). A species using any of them is not placed without a sea. Marsh:
-  exposure under 0.3, beach under 0.3, slope under 3 degrees. Shingle: beach over 0.15, 1.8 to
-  4 m, slopes to 15 degrees.
+  exposure under 0.3, slope under 3 degrees. No beach rule for the marsh: a scout of the showcase
+  map (17 Nov) found every sheltered, level cell in the tidal band under the generator's beach
+  mask (it runs along every coast), and wave energy, not grain size, sets where marsh forms
+  (Allen 2000, "Morphodynamics of Holocene salt marshes"); a sheltered beach head fines to mud.
+  Shingle: beach over 0.15, 1.8 to 4 m, slopes to 15 degrees.
 - Seasons: phenology per preset (marsh late, shingle from June); glasswort reddens from late
   August to purple-red by October and browns into winter; cord-grass spikes and sea lavender
   calyces stand through winter. Cord-grass sheds pollen (`VegetationPollen3D`).
