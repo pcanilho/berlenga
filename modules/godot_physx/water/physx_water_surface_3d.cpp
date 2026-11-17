@@ -176,6 +176,7 @@ uniform bool detail_geometry = false;
 uniform float mesh_near_step = 0.0;
 uniform float mesh_growth = 0.08;
 uniform float mesh_core_step = 0.6; // the even core's spacing (m), kept out to its half-size
+uniform bool mesh_open = false; // the camera-centred open sea mesh (its step grows with distance)
 uniform float mesh_core_half = 20.0;
 uniform vec2 detail_domain = vec2(5.0);
 uniform float detail_texel = 0.04;
@@ -1490,6 +1491,44 @@ void vertex() {
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_rest_xz = world_pos.xz;
 	vec3 so = surface_offset(world_pos.xz);
+	if (mesh_open) {
+		// Only the waves this vertex step can carry (four steps a wavelength: the share of each cascade's band
+		// far_shown() gives a pixel that size). Past that the far rings sample the chop too sparsely to draw it:
+		// their vertices took it at random phases, as spikes whose faces caught the low sun in thin bright
+		// posts along distant crests. The pixel's normal still has their slope, the roughness the rest
+		// (Bruneton, Neyret and Holzschuch 2010).
+		float r_core_g = mesh_near_step > 0.0 ? (mesh_core_step - mesh_near_step) / mesh_growth : 0.0;
+		float vstep_g = ring_r < r_core_g ? mesh_near_step + mesh_growth * ring_r : (ring_r < mesh_core_half ? mesh_core_step : mesh_core_step + 0.15 * (ring_r - mesh_core_half));
+		vec2 cuv_g = clamp((world_pos.xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+		vec3 lost = vec3(0.0);
+		float l = 1.0 - far_shown(0, vstep_g);
+		if (l > 0.0) {
+			vec2 dd = ocean_tex(ocean_disp_tex, world_pos.xz).rg;
+			lost += l * vec3(-choppiness * dd.x, ocean_tex(ocean_height_tex, world_pos.xz).r, -choppiness * dd.y);
+		}
+		if (wave_cascade_count > 1) {
+			l = 1.0 - far_shown(1, vstep_g);
+			if (l > 0.0) {
+				vec2 dd = cascade_tex(cascade_disp_1, cascade_domain_1, world_pos.xz).rg;
+				lost += l * vec3(-choppiness * dd.x, cascade_tex(cascade_height_1, cascade_domain_1, world_pos.xz).r, -choppiness * dd.y);
+			}
+		}
+		if (wave_cascade_count > 2) {
+			l = 1.0 - far_shown(2, vstep_g);
+			if (l > 0.0) {
+				vec2 dd = cascade_tex(cascade_disp_2, cascade_domain_2, world_pos.xz).rg;
+				lost += l * vec3(-choppiness * dd.x, cascade_tex(cascade_height_2, cascade_domain_2, world_pos.xz).r, -choppiness * dd.y);
+			}
+		}
+		if (wave_cascade_count > 3) {
+			l = 1.0 - far_shown(3, vstep_g);
+			if (l > 0.0) {
+				vec2 dd = cascade_tex(cascade_disp_3, cascade_domain_3, world_pos.xz).rg;
+				lost += l * vec3(-choppiness * dd.x, cascade_tex(cascade_height_3, cascade_domain_3, world_pos.xz).r, -choppiness * dd.y);
+			}
+		}
+		so -= lost * fade_r(world_pos.xz, cuv_g);
+	}
 	VERTEX += so;
 	// The chop's own crest height (the two shortest cascades, from their own mean, as roller_crest()): a crest thin
 	// enough to pass light is a wave of the chop, wherever the long swell under it puts it.
@@ -2492,6 +2531,7 @@ void PhysXWaterSurface3D::_update_detail_material() {
 	water_material->set_shader_parameter("detail_geometry", on && open_mesh);
 	water_material->set_shader_parameter("mesh_near_step", open_mesh ? near_mesh_step / (float)mesh_detail : 0.0f);
 	water_material->set_shader_parameter("mesh_growth", NEAR_MESH_GROWTH);
+	water_material->set_shader_parameter("mesh_open", surface_mesh.is_null() && render_extent > MAX(ocean_domain_size.x, ocean_domain_size.y));
 	water_material->set_shader_parameter("mesh_core_step", MIN(ocean_domain_size.x, ocean_domain_size.y) / (float)MAX(ocean_grid_resolution * mesh_detail, 1));
 	water_material->set_shader_parameter("mesh_core_half", MAX(ocean_domain_size.x, ocean_domain_size.y) * 0.5f);
 	{

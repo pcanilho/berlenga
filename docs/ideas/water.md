@@ -3282,3 +3282,17 @@ k_peak = 0.77 g / U^2). The fragment finds the wavenumber a pixel can still show
 the hidden fraction's variance to the roughness (sqrt(sqrt(a^2 + hidden))). Foam still reads the full field.
 `far_filter` (shader uniform, on) turns it off for comparisons.
 Status: in every crest glow render (on); a dedicated far-sea before/after and PT pair are next.
+
+### Round 3: artefacts in the low-sun frame (17 Nov, docs review)
+
+Docs passed the glow but declined the frame for artefacts. Found and fixed:
+- Dark hard-edged holes in the sun's path: the raster glitter was D F / (4 n.v) with no masking term, so it
+  peaked as a facet turned from a low sun and then cut to nothing at n.l = 0. Now the height-correlated Smith
+  visibility (Heitz 2014) times n.l, which fades both ways (water_raster_sun_light()).
+- Thin bright posts along distant crests: the far rings of the open sea mesh (steps growing 15% a ring) took the
+  short chop at their sparse vertices as random spikes, whose faces caught the sun. Each vertex now keeps only the
+  share of each cascade its step can carry (four steps a wavelength, far_shown() at the step), on the open mesh
+  with or without a near step; the normal and roughness keep the rest (Bruneton 2010).
+- Aliased horizon dashes and stair-stepped foam rims: the bench rendered without anti-aliasing; storm_crest
+  shots use --taa (as the game does), and far_filter keeps the far glitter as roughness.
+- The sun: a warm (1.0, 0.84, 0.64) disc 0.8 degrees across with a tight glow, not a grey blob.

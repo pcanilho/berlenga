@@ -107,7 +107,8 @@ vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p
 	vec3 n_w = p_glint.xyz;
 	float a2 = p_a2;
 	float weight = p_glint.w;
-	if (weight > 0.0 && dot(n_w, l) > 0.0) {
+	float nl = dot(n_w, l);
+	if (weight > 0.0 && nl > 0.0) {
 		vec3 v = normalize(mat3(p_inv_view) * p_view);
 		float nv = clamp(dot(n_w, v), 1e-3, 1.0);
 		vec3 hv = normalize(l + v);
@@ -115,7 +116,11 @@ vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p
 		float den = nh * nh * (a2 - 1.0) + 1.0;
 		float d_ggx = a2 / (PI * den * den);
 		float fh = 0.02 + 0.98 * pow(1.0 - clamp(dot(hv, v), 0.0, 1.0), 5.0);
-		add += p_irradiance * (fh * d_ggx / (4.0 * nv)) * weight;
+		// Height-correlated Smith masking and shadowing (Heitz 2014) times n.l: the glitter fades out as a facet
+		// turns from the sun or the eye. Without it (G = 1, D F / 4 n.v) it peaked right where the normal turned
+		// away from a low sun and then cut to nothing, as dark hard-edged holes in the sun's path.
+		float vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 1e-5);
+		add += p_irradiance * (fh * d_ggx * vis * nl) * weight;
 	}
 	return add;
 }
