@@ -31,8 +31,31 @@
 #pragma once
 
 #include "core/io/resource.h"
+#include "core/object/ref_counted.h"
+#include "core/os/mutex.h"
+#include "core/templates/local_vector.h"
 #include "core/variant/array.h"
 #include "core/variant/variant.h"
+#include "servers/rendering/rendering_server_types.h"
+
+// Render meshes of an asset's chunks, one per chunk, shared by every PhysXDestructible3D drawing that asset: a piece
+// is drawn as instances of its chunks' meshes, so a split moves instances instead of rebuilding a mesh. Each mesh
+// is built the first time a piece needs it; PhysXBlastAsset.prepare_render() converts every chunk's arrays to GPU
+// format ahead of time, from any thread, so the main thread then only uploads.
+class PhysXBlastRenderCache : public RefCounted {
+	GDSOFTCLASS(PhysXBlastRenderCache, RefCounted);
+
+public:
+	struct Surface {
+		int slot = 0;
+		RenderingServerTypes::SurfaceData data;
+	};
+	Mutex mutex;
+	// prepared[c]: chunk c's surfaces in GPU format (from prepare_render), consumed when its mesh is built.
+	LocalVector<LocalVector<Surface>> prepared;
+	LocalVector<RID> meshes; // RID() until built
+	~PhysXBlastRenderCache();
+};
 
 // A fractured Blast asset, saveable/loadable as a normal Godot Resource
 // (.tres/.res) -- the real replacement for the two-file (.asset/.chunks)
@@ -59,7 +82,10 @@ public:
 	// GodotPhysXBlastProbe/PhysXDestructible3D already parse from the old
 	// .chunks text format -- here it's just real Resource-serialized data,
 	// no text parsing needed.
-	void set_chunk_points(const Array &p_points) { chunk_points = p_points; }
+	void set_chunk_points(const Array &p_points) {
+		chunk_points = p_points;
+		render_cache.unref();
+	}
 	Array get_chunk_points() const { return chunk_points; }
 
 	int get_chunk_count() const { return chunk_points.size(); }
@@ -70,11 +96,17 @@ public:
 	// An entry may also be a Mesh, or an Array of surfaces (each a Mesh arrays Array, or a Dictionary with "arrays"
 	// and "slot"), for chunks with several materials (bark, wood, moss, leaves): surface s draws with materials[slot],
 	// its slot being s unless given (a Mesh surface whose material is in materials takes that slot).
-	void set_chunk_meshes(const Array &p_meshes) { chunk_meshes = p_meshes; }
+	void set_chunk_meshes(const Array &p_meshes) {
+		chunk_meshes = p_meshes;
+		render_cache.unref();
+	}
 	Array get_chunk_meshes() const { return chunk_meshes; }
 
 	// Materials by surface slot for chunk_meshes; a PhysXDestructible3D's material_override still wins over them.
-	void set_materials(const Array &p_materials) { materials = p_materials; }
+	void set_materials(const Array &p_materials) {
+		materials = p_materials;
+		render_cache.unref();
+	}
 	Array get_materials() const { return materials; }
 
 	// Optional initial health of each bond, in the asset's bond order, as a multiple of the destructible's health
@@ -87,7 +119,16 @@ public:
 	void set_chunk_hulls(const Array &p_hulls) { chunk_hulls = p_hulls; }
 	Array get_chunk_hulls() const { return chunk_hulls; }
 
+	// Converts every chunk's render arrays to GPU format now (the costly part of building them), so a
+	// destructible spawning from this asset later uploads them without stalling. Safe to call from a worker
+	// thread (WorkerThreadPool) while nothing edits the asset; calling it again does nothing.
+	void prepare_render();
+	// The shared per-chunk render meshes (see PhysXBlastRenderCache), made on first use.
+	Ref<PhysXBlastRenderCache> get_render_cache();
+
 private:
+	Ref<PhysXBlastRenderCache> render_cache;
+	Mutex render_cache_mutex;
 	PackedByteArray asset_bytes;
 	Array chunk_points;
 	Array chunk_meshes;

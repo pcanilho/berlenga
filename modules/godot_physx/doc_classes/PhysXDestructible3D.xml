@@ -93,6 +93,12 @@
 		<member name="impact_damage_scale" type="float" setter="set_impact_damage_scale" getter="get_impact_damage_scale" default="1.0">
 			[member dynamic]-only. Once a collision's impulse clears [member impact_strength], this scales how much extra damage the excess produces: [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (before the [member health] × 1.5 floor -- see [method apply_radial_damage]'s note). Raise it so impacts that do clear the threshold break things more decisively; it has no effect on whether an impact counts as a hit at all, only on how much damage a qualifying one deals.
 		</member>
+		<member name="initial_angular_velocity" type="Vector3" setter="set_initial_angular_velocity" getter="get_initial_angular_velocity" default="Vector3(0, 0, 0)">
+			[member dynamic]-only. The angular velocity the intact body starts with, in radians per second. Set it before the node enters the tree, or while it is still intact after: the body then takes it at once. Use it with [member initial_linear_velocity] when swapping a moving object for a destructible, so it keeps its motion.
+		</member>
+		<member name="initial_linear_velocity" type="Vector3" setter="set_initial_linear_velocity" getter="get_initial_linear_velocity" default="Vector3(0, 0, 0)">
+			[member dynamic]-only. The linear velocity the intact body starts with (a falling tree swapped for a destructible mid-fall keeps falling). Set it before the node enters the tree, or while it is still intact after: the body then takes it at once.
+		</member>
 		<member name="impact_radius" type="float" setter="set_impact_radius" getter="get_impact_radius" default="5.0">
 			[member dynamic]-only. The [code]max_radius[/code] passed to the auto-triggered [method apply_radial_damage] call on a qualifying impact, centered on the contact point ([code]min_radius[/code] is always [code]0[/code] for this path -- full damage right at the contact, falling off to [member impact_radius]). How far a hard impact's damage reaches into the rest of the object, not how hard the impact needs to be.
 		</member>

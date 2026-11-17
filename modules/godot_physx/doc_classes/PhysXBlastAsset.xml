@@ -15,6 +15,12 @@
 				Returns how many chunks this asset has, including chunk [code]0[/code] (the whole unfractured mesh) -- so this is always one more than the number of pieces a full fracture actually produces.
 			</description>
 		</method>
+		<method name="prepare_render">
+			<return type="void" />
+			<description>
+				Converts every chunk's render arrays to GPU format now, the costly part of building them, so a [PhysXDestructible3D] using this asset later only uploads them instead of stalling the frame it spawns or splits in. Safe to call from a worker thread (for example with [WorkerThreadPool]) while nothing edits the asset. The chunk meshes are built once and shared by every destructible using this asset; calling it again does nothing.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="asset_bytes" type="PackedByteArray" setter="set_asset_bytes" getter="get_asset_bytes" default="PackedByteArray()">
