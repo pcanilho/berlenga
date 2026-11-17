@@ -100,12 +100,48 @@
 				Microseconds the last contact map took to draw on its worker thread.
 			</description>
 		</method>
+		<method name="get_moss_pending" qualifiers="const">
+			<return type="int" />
+			<description>
+				Moss shells still building on worker threads (see [member moss_cushions]).
+			</description>
+		</method>
+		<method name="get_moss_shell_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Moss shells drawn on the close-up stones now (see [member moss_cushions]).
+			</description>
+		</method>
+		<method name="get_moss_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Triangles in the moss shells drawn now.
+			</description>
+		</method>
 		<method name="get_obstacles">
 			<return type="PackedVector4Array" />
 			<param index="0" name="rect" type="Rect2" />
 			<param index="1" name="min_size" type="float" default="0.25" />
 			<description>
 				Stones in [param rect] of b-axis diameter at least [param min_size], as [code](x, ground y, z, footprint radius)[/code], for vegetation obstacles and water flow. Placement is deterministic, so this works for cells not built yet. Each placement cell is placed once and kept (16 bytes a stone) until [method rebuild], so repeated and overlapping queries are fast. Cliff blocks are left out.
+			</description>
+		</method>
+		<method name="get_rockfall_dust_impacts" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many impacts of falling or broken pieces have thrown up dust since the field entered the tree.
+			</description>
+		</method>
+		<method name="get_rockfall_dust_node" qualifiers="const">
+			<return type="Node" />
+			<description>
+				The [PhysXRockDust3D] the field made for its rockfall dust, or [code]null[/code] when [member rockfall_dust] is off or the engine was built without NVIDIA Flow.
+			</description>
+		</method>
+		<method name="get_rockfall_dust_total" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of fines the field's falling and broken stones have thrown up since it entered the tree.
 			</description>
 		</method>
 		<method name="get_rockfall_trigger" qualifiers="const">
@@ -328,6 +364,9 @@
 		<member name="moss_cover" type="float" setter="set_moss_cover" getter="get_moss_cover" default="0.4">
 			Moss on upper, shaded and wet faces, from 0 to 1.
 		</member>
+		<member name="moss_cushions" type="bool" setter="set_moss_cushions" getter="is_moss_cushions_enabled" default="true">
+			Moss as real geometry on the close-up stones (within [member close_up_radius], 30 cm and bigger). Each stone gets a shell lifted off its close-up shape where the rock shader paints moss: on tops, in hollows, on the pole-facing side and near damp ground, with the same noise. The shell is about 1 cm deep as a mat and up to 3.5 cm as a cushion, lumpy, with a ragged margin sunk into the rock. Its material draws the moss shoots a few millimetres across. The shells are built on worker threads and kept while the stone stays close. Off, the moss is the shader's tint only.
+		</member>
 		<member name="river_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many river stones are placed.
 		</member>
@@ -345,6 +384,12 @@
 		</member>
 		<member name="rockfall_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many rockfall blocks are placed.
+		</member>
+		<member name="rockfall_dust" type="bool" setter="set_rockfall_dust" getter="is_rockfall_dust" default="true">
+			Dust where falling and broken stones hit, break and slide: the kinetic energy an impact takes out of a piece times [member rockfall_dust_per_joule], a little from each new fracture face, and a trickle from pieces sliding or rolling on the ground, less in rain. The field makes its own [PhysXRockDust3D] to carry it in NVIDIA Flow when the engine has Flow.
+		</member>
+		<member name="rockfall_dust_per_joule" type="float" setter="set_rockfall_dust_per_joule" getter="get_rockfall_dust_per_joule" default="2e-05">
+			Kilograms of airborne fines per joule of kinetic energy an impact takes out of a piece.
 		</member>
 		<member name="rockfall_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
 			Blocks fallen from cliffs where [code skip-lint]TerrainGenerator3D.get_boulders()[/code] puts them.

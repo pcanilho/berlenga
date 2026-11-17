@@ -33,6 +33,7 @@
 #include "cave_network_3d.h"
 #include "rock_field_3d.h"
 #include "rock_generator.h"
+#include "rock_moss.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
@@ -65,4 +66,5 @@ void uninitialize_rocks_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	RockGenerator::finish();
+	RockMoss::finish();
 }

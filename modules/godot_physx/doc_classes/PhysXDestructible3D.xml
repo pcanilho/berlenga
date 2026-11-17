@@ -24,6 +24,13 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
+		<method name="get_piece_center" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns the world position of the piece's centroid (its first chunk's), from its live body. [code]Vector3(0, 0, 0)[/code] for an out-of-range index or a dead body.
+			</description>
+		</method>
 		<method name="get_piece_chunks" qualifiers="const">
 			<return type="PackedInt32Array" />
 			<param index="0" name="index" type="int" />
@@ -35,6 +42,20 @@
 			<return type="int" />
 			<description>
 				Returns how many pieces are live right now: [code]1[/code] while intact (the chunk-0 placeholder), then one per still-simulating piece, dropping as debris passes [member kill_y] or reaches its [member piece_lifetime]. A chunk's piece is always freed before that chunk can be spawned again (e.g. when a still-bonded group's later split re-emits chunks that were already live), so this never exceeds the asset's visible chunk count no matter how many times it fractures.
+			</description>
+		</method>
+		<method name="get_piece_linear_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns the piece's linear velocity from its live body, for effects that follow debris (dust at impacts). [code]Vector3(0, 0, 0)[/code] for an out-of-range index or a dead body.
+			</description>
+		</method>
+		<method name="get_piece_mass" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns the mass of the piece's live body. [code]0.0[/code] for an out-of-range index or a dead body.
 			</description>
 		</method>
 		<method name="is_fractured" qualifiers="const">

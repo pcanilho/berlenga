@@ -17,6 +17,11 @@ extends Node3D
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --no-ground-contact   no damp ring or banked fines on the ground round the stones (for a before frame)
+#   --fall-dust           with --fall: keep drawing while it falls, so the Flow rockfall dust is in the shot (run
+#                         godot with --fixed-fps 60: Flow steps once a drawn frame); --no-dust
+#                         turns the field's rockfall_dust off
+#   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
@@ -333,6 +338,10 @@ func _world() -> void:
 		# On by default; --no-ground-blend for an A/B.
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.ground_contact = not args.has("no-ground-contact")
+		rocks.moss_cushions = not args.has("no-moss")
+		rocks.rockfall_dust = not args.has("no-dust")
+		if args.has("moss"):
+			rocks.moss_cover = float(args["moss"])
 		# Live falls serve only the rockfall runs (--live, the test turns them on itself): off here so frames stay still.
 		rocks.live_rockfall = false
 		rocks.mineral_glints = not args.has("no-glints")
@@ -890,7 +899,14 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) ->
 	var max_speed := 0.0
 	var last := start
 	var broke_at := -1
-	RenderingServer.render_loop_enabled = false
+	var dust0: float = rocks.get_rockfall_dust_total()
+	var hits0: int = rocks.get_rockfall_dust_impacts()
+	# --fall-dust keeps drawing while it falls: the Flow dust steps with the frames, drawn small (a full-size frame
+	# of the world takes half a minute in the cloud) and full size again for the shot.
+	RenderingServer.render_loop_enabled = args.has("fall-dust")
+	var full_size := get_window().size
+	if args.has("fall-dust"):
+		get_window().size = Vector2i(maxi(full_size.x / 4, 64), maxi(full_size.y / 4, 36))
 	for i in p_ticks:
 		await get_tree().physics_frame
 		var c := _pieces_centre(node)
@@ -903,14 +919,19 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) ->
 		if p_log and i % 60 == 59:
 			print("  tick %d: %d pieces, centre %s, %.1f m below the start, ground there %.1f" % [i + 1, node.get_piece_count(), c, top - c.y, gen.get_height(c)])
 	RenderingServer.render_loop_enabled = true
+	get_window().size = full_size
 	var below := 0
 	for i in node.get_piece_count():
 		var o: Vector3 = node.get_piece_transform(i).origin
 		if o.y < gen.get_height(o) - 1.0:
 			below += 1
 	var r := {"node": node, "start": start, "end": last, "drop": top - last.y, "travel": Vector2(last.x - start.x, last.z - start.z).length(), "pieces": node.get_piece_count(), "fractured": node.is_fractured(), "fired": fired.size(), "ms": ms, "max_speed": max_speed, "below": below}
+	r["dust"] = rocks.get_rockfall_dust_total() - dust0
+	r["hits"] = rocks.get_rockfall_dust_impacts() - hits0
 	if p_log:
 		print("fell %.1f m and %.1f m out, top speed %.1f m/s, %d pieces (%s), %d under the ground" % [r["drop"], r["travel"], max_speed, r["pieces"], "broke" if r["fractured"] else "whole", below])
+		var dn: Node = rocks.get_rockfall_dust_node()
+		print("dust: %.1f kg of fines from %d impacts; Flow node %s, %.1f kg taken, %d bursts running" % [r["dust"], r["hits"], "yes" if dn else "none (engine without Flow)", dn.get_total_dust() if dn else 0.0, dn.get_active_sources() if dn else 0])
 	return r
 
 
@@ -1417,6 +1438,12 @@ func _test() -> void:
 	check(shapes > 0, "collision hulls near the follow target: %d" % shapes)
 	# Close-up shapes for the stones within close_up_radius of the follow target.
 	check(rocks.get_close_up_shape_count() > 0, "close-up shapes near the follow target: %d shapes, %d triangles, %.1f MB" % [rocks.get_close_up_shape_count(), rocks.get_close_up_triangle_count(), close_bytes / 1048576.0])
+	# Moss shells on the close-up stones where the shader paints moss (real geometry, rock_moss.cpp).
+	var moss_bytes := 0
+	for n in rocks.get_children(true):
+		if n is MeshInstance3D and n.has_meta("rock_moss"):
+			moss_bytes += _mesh_bytes({0: (n as MeshInstance3D).mesh})
+	check(rocks.get_moss_shell_count() > 0 and rocks.get_moss_pending() == 0, "moss shells: %d on the close-up stones, %d triangles, %.1f MB" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), moss_bytes / 1048576.0])
 	# Close-up shapes by family and size octave (what drives their count and memory).
 	var hist := {}
 	for l in [RockField3D.LAYER_ROCKFALL, RockField3D.LAYER_SCREE, RockField3D.LAYER_GLACIAL]:
@@ -1477,6 +1504,7 @@ func _test() -> void:
 			check(not r.is_empty() and r["fired"] == 1 and rocks.get_broken_count() == before + 1, "trigger_rockfall: a block loosed (signal %d, broken %d), %.1f ms" % [r.get("fired", 0), rocks.get_broken_count() - before, r.get("ms", 0.0)])
 			if not r.is_empty():
 				check(r["drop"] > 0.5 and r["below"] == 0, "the fall: %.1f m down, %.1f m out, top speed %.1f m/s, %d pieces, none under the ground" % [r["drop"], r["travel"], r["max_speed"], r["pieces"]])
+				check(r["hits"] > 0 and r["dust"] > 0.1, "rockfall dust: %.1f kg of fines from %d impacts" % [r["dust"], r["hits"]])
 			# Live: with the rate turned right up, blocks come loose by themselves (fracture on a worker first).
 			var live := [0]
 			var cb := func(_p: Vector3, _m: float) -> void: live[0] += 1
@@ -1529,6 +1557,8 @@ func _render_later() -> void:
 		if OS.is_stdout_verbose() or args.has("frame-log"):
 			print("frame %d at %d ms" % [i, Time.get_ticks_msec() - tf])
 	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
+	if rocks and rocks.moss_cushions:
+		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
 		var ci: Image = rocks.get_contact_texture().get_image()
 		var lit := 0
