@@ -4,7 +4,7 @@ extends Node3D
 #   --sky [--model=scattering|physical] [--time=H] [--out=path.png] [--frames=N]
 #            the sky alone (WeatherSkyMaterial, clouds from the defaults, sun from SkyClock), looking south-west
 #            and a little up; prints the mean frame time, saves the last frame
-#            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars]
+#            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars] [--month=M --day=D] [--look-moon]
 
 var fails := 0
 
@@ -54,10 +54,14 @@ func _sky(kv: Dictionary) -> void:
 	add_child(clock)
 	clock.latitude = 45.0
 	clock.longitude = 0.0
-	clock.month = 5
-	clock.day = 31
+	clock.month = int(kv.get("month", "5"))
+	clock.day = int(kv.get("day", "31"))
 	clock.time_of_day = float(kv.get("time", "19.0"))
 	clock.sun_light = clock.get_path_to(sun)
+	if kv.has("look-moon"):
+		# --look-moon: the camera on the moon (with a narrow --fov to see its phase).
+		cam.look_at(cam.global_position + clock.get_moon_direction())
+		print("[sky] moon alt %.2f deg, phase angle %.1f deg" % [rad_to_deg(asin(clock.get_moon_direction().y)), clock.get_moon_phase_angle()])
 	for i in 20:
 		await get_tree().process_frame
 	var n := int(kv.get("frames", "30"))
