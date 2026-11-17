@@ -4841,6 +4841,27 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 void RenderingDeviceDriverVulkan::shader_free(ShaderID p_shader) {
 	ShaderInfo *shader_info = (ShaderInfo *)p_shader.id;
 
+#if VULKAN_RAYTRACING_ENABLED
+	{
+		// Hit-group libraries are cached by shader identity: drop the ones built from this shader,
+		// or they stay in memory for the whole run (a CPU driver keeps every one in system memory),
+		// and a later shader allocated at the same address would be handed this one's library.
+		MutexLock lock(rt_hit_group_library_cache_mutex);
+		LocalVector<RTHitGroupLibraryKey> stale;
+		for (const KeyValue<RTHitGroupLibraryKey, RaytracingPipelineID> &kv : rt_hit_group_library_cache) {
+			if (kv.key.closest_hit.shader_id == p_shader.id || kv.key.any_hit.shader_id == p_shader.id || kv.key.intersection.shader_id == p_shader.id) {
+				stale.push_back(kv.key);
+				// Linked pipelines do not need their libraries once created, and the caller frees a
+				// shader only after the frames that traced with it are done.
+				vkDestroyPipeline(vk_device, (VkPipeline)kv.value.id, nullptr);
+			}
+		}
+		for (const RTHitGroupLibraryKey &key : stale) {
+			rt_hit_group_library_cache.erase(key);
+		}
+	}
+#endif
+
 	for (uint32_t i = 0; i < shader_info->vk_descriptor_set_layouts.size(); i++) {
 		vkDestroyDescriptorSetLayout(vk_device, shader_info->vk_descriptor_set_layouts[i], VKC::get_allocation_callbacks(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT));
 	}
