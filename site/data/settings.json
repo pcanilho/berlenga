@@ -1291,12 +1291,13 @@
    "settings": [
     "contact_height",
     "aspect_strength",
+    "ground_contact",
     "ground_blend",
     "ground_blend_height",
     "ground_material"
    ],
    "note": "",
-   "what": "stones blend into the ground with a soil band at their foot, or take the ground's own layer over a band (the landscape's TerrainMaterial3D when `ground_material` is unset), and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
+   "what": "stones sit in the soil, with damp, gritty ground and fines banked uphill round each foot; the foot blends into the ground with a soil band, or takes the ground's own grain with a damp, darker foot (the landscape's TerrainMaterial3D when `ground_material` is unset), and stones take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
