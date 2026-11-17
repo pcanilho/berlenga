@@ -236,7 +236,10 @@ void PhysXTank3D::_notification(int p_what) {
 			}
 			VehicleTrack &v = impl->vehicle;
 			v.setDriverInput((PxReal)left_ratio, (PxReal)right_ratio, (PxReal)brake);
-			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			// Engine.time_scale 0 gives a zero step: the vehicle holds still (PhysX rejects a step that is not positive).
+			if (get_physics_process_delta_time() > 0.0) {
+				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			}
 			// Same CoM-vs-actor-origin frame notes as PhysXVehicle3D/
 			// PhysXMotorcycle3D's own identical code -- see PhysXVehicle3D's
 			// comment for the SDK source citations that confirmed this.

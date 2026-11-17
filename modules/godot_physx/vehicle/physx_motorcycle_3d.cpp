@@ -269,7 +269,10 @@ void PhysXMotorcycle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			_engine_controls();
-			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			// Engine.time_scale 0 gives a zero step: the vehicle holds still (PhysX rejects a step that is not positive).
+			if (get_physics_process_delta_time() > 0.0) {
+				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			}
 			// Same CoM-vs-actor-origin frame notes as PhysXVehicle3D's own
 			// identical code -- see that class's comment for the SDK source
 			// citations that confirmed this.

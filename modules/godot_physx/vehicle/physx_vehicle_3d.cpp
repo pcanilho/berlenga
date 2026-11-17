@@ -572,7 +572,10 @@ void PhysXVehicle3D::_notification(int p_what) {
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
 			}
-			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			// Engine.time_scale 0 gives a zero step: the vehicle holds still (PhysX rejects a step that is not positive).
+			if (get_physics_process_delta_time() > 0.0) {
+				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
+			}
 			// v.rigidBodyState.pose is CoM-relative, not the actor's real
 			// origin (confirmed directly by comparing it against a raw
 			// getGlobalPose() read while root-causing the chassis-collision
