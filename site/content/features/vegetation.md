@@ -34,7 +34,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Grass in wind: gusts sweep across the field downwind.*
 
-- **Grass on the GPU** (`GrassField3D.gpu_fill`, on by default): grass tiles are filled in compute, about 40% less main-thread cost per tile.
+- **Grass on the GPU** (`GrassField3D.gpu_fill`): grass tiles are filled in compute, about 40% less main-thread cost per tile.
 - **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.
 
   ![Grass seen from above its radius: a hard edge before, a fade after](media/grass-outer-band.jpg)
@@ -42,7 +42,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Grass edge fade: the band where grass ends blends into the ground.*
 
 - **Far grass in sunlight** (`GrassField3D.sun_light`): distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.
-- **Grass edge match** (`GrassField3D.far_match_view`, on by default): after each bake the ground past the grass is matched to the blades in view, so there is no brightness step where the blades end.
+- **Grass edge match** (`GrassField3D.far_match_view`): after each bake the ground past the grass is matched to the blades in view, so there is no brightness step where the blades end.
 
 - **Grass under undergrowth** (`GrassField3D.undergrowth_field`, `PlantSpecies.sward_shade`, `PlantSpecies.litter_color`): grass thins and shortens under bracken and bramble stands, as their shade kills the sward, and the stands lay their own litter beneath; thin margins keep their grass.
 
