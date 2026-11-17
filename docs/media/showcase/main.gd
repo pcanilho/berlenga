@@ -496,6 +496,73 @@ func static_box(size: Vector3, xform: Transform3D) -> void:
 	body.transform = xform
 	add_child(body)
 
+# Cold, heavy smoke released on the flank of a valley built as a trimesh (not a box), so only the Flow
+# terrain_floor keeps it out of the ground: it should slide down the slope and pool along the valley floor.
+# Compare with --flow=terrain_floor:0.
+func valley_h(x: float, z: float) -> float:
+	return 0.45 * abs(x) + 0.12 * z
+
+func shot_flowslope() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	var s := Sky.new()
+	s.sky_material = ProceduralSkyMaterial.new()
+	env.sky = s
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, -60, 0)
+	sun.light_energy = 1.6
+	sun.shadow_enabled = true
+	add_child(sun)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var n := 48
+	var half := 9.0
+	var faces := PackedVector3Array()
+	for j in n:
+		for i in n:
+			var x0 := -half + 2.0 * half * i / n
+			var x1 := -half + 2.0 * half * (i + 1) / n
+			var z0 := -half + 2.0 * half * j / n
+			var z1 := -half + 2.0 * half * (j + 1) / n
+			var q := [Vector3(x0, valley_h(x0, z0), z0), Vector3(x1, valley_h(x1, z0), z0), Vector3(x1, valley_h(x1, z1), z1), Vector3(x0, valley_h(x0, z1), z1)]
+			for v in [q[0], q[1], q[2], q[0], q[2], q[3]]:
+				st.add_vertex(v)
+				faces.append(v)
+	st.generate_normals()
+	st.set_material(mat(Color(0.42, 0.40, 0.36), 0.9))
+	var ground := MeshInstance3D.new()
+	ground.mesh = st.commit()
+	add_child(ground)
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var tri := ConcavePolygonShape3D.new()
+	tri.set_faces(faces)
+	cs.shape = tri
+	body.add_child(cs)
+	add_child(body)
+	var flow = ClassDB.instantiate("PhysXFlow3D")
+	flow.cell_size = 0.08
+	flow.smoke_density = 6.0
+	flow.smoke_fade = 0.15
+	flow.combustion = false
+	flow.smoke_buoyancy = -3.0 # heavier than air
+	for k in flow_props:
+		flow.set(k, flow_props[k])
+	add_child(flow)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.position = Vector3(-4.0, valley_h(-4.0, -2.0) + 0.5, -2.0)
+	em.radius = 0.5
+	em.velocity = Vector3(1.5, -0.5, 0.0)
+	em.smoke = 1.0
+	em.temperature = 0.0
+	flow.add_child(em)
+	em.flow = em.get_path_to(flow)
+	camera(Vector3(3.0, 4.2, 5.0), Vector3(-1.8, 1.0, -1.5), 50)
+
 func shot_fluid() -> void:
 	if not ClassDB.class_exists("PhysXParticleFluid3D"):
 		push_error("This build has no PhysX module.")

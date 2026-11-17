@@ -32,7 +32,9 @@
 
 #include "flow_scatter_rd.h"
 
+#include "core/math/vector2i.h"
 #include "core/os/mutex.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/paged_array.h"
 #include "scene/3d/node_3d.h"
@@ -76,6 +78,7 @@ private:
 	int max_blocks = 1024;
 	bool max_blocks_warned = false;
 	float buoyancy = 2.0f;
+	float smoke_buoyancy = 0.0f; // Flow's buoyancyPerSmoke: below 0 the smoke itself is heavy (dust), whatever its temperature
 	float cooling_rate = 1.5f;
 	float smoke_fade = 0.65f;
 	float vorticity = 0.6f;
@@ -93,6 +96,18 @@ private:
 	bool floor_enabled = false;
 	float floor_height = 0.0f;
 	RID query_shape;
+	// TERRAIN FLOOR: solid tiles laid on the ground under the gas, each tilted to the local slope, from a terrain
+	// node (terrain_path: TerrainDeformer3D, TerrainDataMap3D, TerrainGenerator3D, Terrain3D or anything with
+	// get_height) or else a downward ray that only counts static bodies. Ground already made of boxes, spheres or
+	// capsules is skipped (those are solids through collide_with_bodies).
+	bool terrain_floor = true;
+	NodePath terrain_path;
+	float terrain_floor_spacing = 0.5f;
+	HashMap<Vector2i, float> terrain_heights; // ground height at grid nodes (NaN: none, or already a collider)
+	float terrain_heights_spacing = 0.0f;
+	uint64_t terrain_heights_msec = 0;
+	void _gather_terrain_floor(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters);
+	float _terrain_height_at(const Vector2i &p_node, float p_spacing, float p_top, void *p_query);
 
 	// Look.
 	float smoke_density = 4.0f; // per meter, per unit of smoke
@@ -235,6 +250,8 @@ public:
 	int get_max_blocks() const { return max_blocks; }
 	void set_buoyancy(float p_v) { buoyancy = p_v; }
 	float get_buoyancy() const { return buoyancy; }
+	void set_smoke_buoyancy(float p_v) { smoke_buoyancy = p_v; }
+	float get_smoke_buoyancy() const { return smoke_buoyancy; }
 	void set_cooling_rate(float p_v) { cooling_rate = MAX(p_v, 0.0f); }
 	float get_cooling_rate() const { return cooling_rate; }
 	void set_smoke_fade(float p_v) { smoke_fade = MAX(p_v, 0.0f); }
@@ -256,6 +273,18 @@ public:
 	bool is_floor_enabled() const { return floor_enabled; }
 	void set_floor_height(float p_v) { floor_height = p_v; }
 	float get_floor_height() const { return floor_height; }
+	void set_terrain_floor(bool p_v) { terrain_floor = p_v; }
+	bool is_terrain_floor() const { return terrain_floor; }
+	void set_terrain_path(const NodePath &p_path) {
+		terrain_path = p_path;
+		terrain_heights.clear();
+	}
+	NodePath get_terrain_path() const { return terrain_path; }
+	void set_terrain_floor_spacing(float p_v) {
+		terrain_floor_spacing = MAX(p_v, 0.05f);
+		terrain_heights.clear();
+	}
+	float get_terrain_floor_spacing() const { return terrain_floor_spacing; }
 
 	void set_smoke_density(float p_v) { smoke_density = MAX(p_v, 0.0f); }
 	float get_smoke_density() const { return smoke_density; }

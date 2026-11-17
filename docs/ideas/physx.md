@@ -329,6 +329,31 @@ extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
 - GPU cost: two passes a frame (one over the fluid, one over a 16k ring);
   the PC queue measures it.
 
+### Flow: terrain under the gas
+
+Flow solids are boxes, spheres and capsules only, so heightmaps and trimeshes
+used to let gas sink into the ground.
+
+- Built (17 Nov 2026, `terrain_floor`, on): solid tiles on the ground under
+  the gas, each tilted to the plane through its cell's four corner heights,
+  1.15x wide so they overlap. Heights come from the terrain node or a
+  static-only ray, are cached and re-read once a second, with at most 32
+  tiles a side. Cost: a few KB and under 1 ms of CPU; the GPU time of up to
+  1,024 box solids is on the PC queue.
+- Limits: no overhangs or caves (it is a heightmap), and bumps smaller than
+  a tile are smoothed away.
+- Future improvement (Paulo, 17 Nov: document, do not build yet): the exact
+  terrain as a narrow-band signed distance field, a NanoVDB emitter or an
+  SDF texture the solid test reads.
+  - Estimate for a 40 x 40 m dust volume: a +-3-cell shell is about 15 MB
+    at 5 cm (4 MB at 10 cm); a dense grid would be about 500 MB.
+  - Rebuilding the shell costs about 20-50 ms of CPU every few metres as the
+    region moves, so it must run in the background.
+  - GPU cost is close to the tiles.
+  - Gains: 5-10 cm accuracy (rocks, ruts) and, built from meshes, caves and
+    overhangs.
+  - Worth it where gas must get under or into things.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
