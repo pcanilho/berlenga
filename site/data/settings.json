@@ -3451,6 +3451,18 @@
    "topic": ""
   },
   {
+   "name": "Gas pushes bodies",
+   "settings": [
+    "PhysXFlow3D.push_bodies",
+    "PhysXCloth3D.flow"
+   ],
+   "note": "",
+   "what": "Flow smoke, blasts and fire updrafts blow debris, Blast pieces, flags and tarps, and the cloth stirs the gas back.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Spreading fire",
    "settings": [
     "PhysXFireSpread3D"
