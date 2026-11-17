@@ -109,6 +109,11 @@ public:
 	void set_initial_angular_velocity(const Vector3 &p_velocity);
 	Vector3 get_initial_angular_velocity() const { return initial_angular_velocity; }
 
+	// How fast overlapping pieces may be pushed apart (m/s, PhysX only). Split pieces start touching at the break;
+	// uncapped, PhysX threw them apart at tens of m/s and through the ground. 0: uncapped (or the project setting).
+	void set_max_depenetration_velocity(float p_velocity);
+	float get_max_depenetration_velocity() const { return max_depenetration_velocity; }
+
 	void set_asset_path(const String &p_path);
 	String get_asset_path() const { return asset_path; }
 	void set_chunks_path(const String &p_path);
@@ -363,6 +368,11 @@ public:
 	// The asset chunk indices a piece carries (an island holds several; for build_prefractured, chunk i + 1 is piece i).
 	PackedInt32Array get_piece_chunks(int p_index) const;
 	uint32_t get_piece_chunk(int p_index) const;
+	// The piece's body state, for effects that follow debris (rockfall dust): its linear velocity, the world
+	// position of its chunks' centroid, and its mass. Zero for an out-of-range index or a dead body.
+	Vector3 get_piece_linear_velocity(int p_index) const;
+	Vector3 get_piece_center(int p_index) const;
+	float get_piece_mass(int p_index) const;
 
 	PackedStringArray get_configuration_warnings() const override;
 
@@ -472,6 +482,8 @@ private:
 	RID _chunk_mesh(uint32_t p_chunk);
 	Vector3 initial_linear_velocity;
 	Vector3 initial_angular_velocity;
+	float max_depenetration_velocity = 3.0f;
+	void _apply_depenetration_cap(RID p_body) const;
 	void _free_chunk_cache();
 	// Whether an island made of p_chunks stays STATIC under `anchor`.
 	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;

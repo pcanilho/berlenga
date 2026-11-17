@@ -46,6 +46,12 @@
 				The internal grains node of wet clay this node throws sticky sprays with, or [code]null[/code] (see [member mud_spray]).
 			</description>
 		</method>
+		<method name="get_stuck_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				Of [method get_deposited_volume], the volume (m³) of mud clods that stuck to vehicles' bodies instead of landing (see [method PhysXVehicle3D.add_mud_splat]).
+			</description>
+		</method>
 		<method name="kick">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />

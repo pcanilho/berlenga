@@ -19,6 +19,15 @@
 				Stops the car and [param body] (a [PhysicsBody3D] or another PhysX vehicle) colliding: they pass through each other, its wheels included, as with [method PhysicsBody3D.add_collision_exception_with]. Either side having the exception is enough, so a [RigidBody3D] or [CharacterBody3D] needs nothing of its own.
 			</description>
 		</method>
+		<method name="add_mud_splat">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="velocity" type="Vector3" />
+			<param index="2" name="volume" type="float" />
+			<description>
+				Sticks a clod of [param volume] m³ of mud to the body at world [param position], spread into a splat along its flight [param velocity]. A [PhysXGroundGrains3D]'s mud clods call it when they meet the chassis box. The body keeps the last 32. See [member body_mud].
+			</description>
+		</method>
 		<method name="apply_central_force">
 			<return type="void" />
 			<param index="0" name="force" type="Vector3" />
@@ -133,6 +142,12 @@
 			<return type="Vector3" />
 			<description>
 				The chassis's world-space linear velocity. It reads the chassis itself, so a velocity just set with [method set_linear_velocity] or changed by an impulse reads back at once.
+			</description>
+		</method>
+		<method name="get_mud_splat_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many clods are stuck to the body (at most 32). See [method add_mud_splat].
 			</description>
 		</method>
 		<method name="get_rid" qualifiers="const">

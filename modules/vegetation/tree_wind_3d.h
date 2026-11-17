@@ -176,6 +176,7 @@ private:
 		uint64_t key = 0;
 		LocalVector<uint8_t> exclude; // Bones broken off before (not part of it).
 		Transform3D butt; // Its fracture cap, tree space (none for a thrown tree).
+		Vector3 fall; // Downwind, tree space: the way it fell.
 		bool swapped = false;
 		// A hard hit that came before its Blast asset was ready: swapped when it is.
 		bool hit = false;
@@ -202,6 +203,7 @@ private:
 		int bone = 0;
 		LocalVector<uint8_t> exclude;
 		Transform3D butt;
+		Vector3 fall;
 		Ref<Resource> asset;
 		Array materials;
 		uint64_t task = 0;
@@ -274,7 +276,7 @@ private:
 	Ref<ArrayMesh> _piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude = nullptr, uint64_t p_key = 0);
 	Ref<ArrayMesh> _kit_mesh(const Rig &p_rig, bool p_plate);
 	RigidBody3D *_make_part(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Transform3D &p_at, const LocalVector<uint8_t> &p_exclude, uint64_t p_key);
-	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, Array &r_materials);
+	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, Array &r_materials);
 	static void _blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> &p_exclude, LocalVector<int> &r_chunk_of, LocalVector<int> &r_chunk_bone);
 	void _storm_settle(double p_delta);
 	void _blast_request(const StormPart &p_part);

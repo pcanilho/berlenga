@@ -1,0 +1,1 @@
+- Path tracing: pipeline variants no longer traced (the start-up guess, an old sample count or debug view) stop being rebuilt as materials arrive and are freed after about 20 seconds; cached hit-group pipelines are freed with their shader. Less memory and shorter start-up, most of all on CPU drivers.

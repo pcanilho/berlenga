@@ -133,6 +133,7 @@ private:
 	float water_seen = 0.0f; // the deepest standing water at the last read back, m
 	float _evaporation() const;
 	int _water_passes(const GroundDeformField &p_field, double p_delta) const;
+	int _morph_passes() const;
 	// Drying and desiccation cracks (docs/ideas/mud.md, stage 2b): per lattice cell (1 + the share of its water the
 	// drying layer still holds, or 0 where it was never soaked; the wetting and drying cycles it has cracked in; the
 	// deepest water that stood on it, m, which sets the layer of clay it settled).
@@ -278,6 +279,9 @@ private:
 	double gpu_slow_accum = 0.0;
 	double gpu_readback_accum = 0.0;
 	bool _gpu_on() const;
+	bool _runoff_on_gpu() const { return runoff_channels && _gpu_on(); }
+	float _runoff_seep(int p_i) const;
+	bool runoff_seep_any = false; // some lattice cell seeps (GPU runoff)
 	void _gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync);
 	void _gpu_submit_field(GroundDeformGPUHost &r_host, const GroundDeformField &p_field, bool &r_ground_dirty, bool &r_cells_dirty, double &r_slow_accum, int p_passes, float p_edge_margin, double p_delta, double p_age, bool p_readback, bool p_sync);
 	void _gpu_take();

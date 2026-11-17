@@ -70,6 +70,7 @@ class PhysXGroundGrains3D : public PhysXGranular3D {
 	double carry = 0.0; // dug volume not yet whole particles
 	double dug_volume = 0.0;
 	double deposited_volume = 0.0;
+	double stuck_volume = 0.0; // of that, stuck to vehicles' bodies (mud)
 	int live = 0;
 
 	GroundSurface3D *_ground() const;
@@ -107,6 +108,7 @@ public:
 	float kick(const Vector3 &p_position, float p_radius, float p_depth, const Vector3 &p_velocity);
 	float get_dug_volume() const { return (float)dug_volume; }
 	float get_deposited_volume() const { return (float)deposited_volume; }
+	float get_stuck_volume() const { return (float)stuck_volume; }
 	float get_airborne_volume() const;
 	int get_airborne_count() const { return live; }
 	PackedVector3Array get_airborne_positions() const;

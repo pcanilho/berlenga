@@ -505,6 +505,32 @@ Plan (needs a card before building, it replaces the runoff routing on the near f
 4. Checks: `--test=runoff` (channels, mass kept, fans), a new rill spacing check (tens of cm on a 1 in 12 face,
    field observations of beach rills), cost under 2 ms GPU; `--view=rills` raster and path-traced pair.
 
+### Water-sim rills on the near field (built 17 Nov 2026)
+
+Paulo picked the water-sim rills. On the GPU near field (8 m at 1.56 cm) the runoff is now the standing water's
+own shallow water with sediment (`ground_deform.glsl`, modes WATER_ERODE and WATER_SED after each water substep);
+the CPU steady-state routing stays for CPU-only runs.
+- Water: local inertial shallow water (Bates, Horritt and Fewtrell 2010) with semi-implicit Manning friction
+  (n 0.025) per pipe, replacing the damped pipe model while runoff is on; velocity from the face fluxes, held to
+  Froude 2. Sources: the seepage face (Darcy k sin b below the falling table, Turner 1993), rain; the sea and lakes
+  are sinks.
+- Microtopography: fixed value noise (3 cm, 2 mm) on the water's bed only, so the flow starts irregularly
+  (RillGrow, Favis-Mortlock 1998).
+- Bed load: Meyer-Peter and Mueller at the Manning bed shear rho g n^2 u^2 / h^(1/3), turned downhill by 1.5 times
+  the bed slope (Bagnold 1966; Koch and Flokstra 1981). Taken from the flow round each texel (1-2-1 weights):
+  per texel, sand stranded wherever the film thinned and grew mounds with scour pits beside them.
+- Bed: Exner in flux form with upwind faces (porosity 0.4), so the sand is kept exactly; sped up by the
+  morphological factor (Roelvink 2006) `runoff_time_scale`. The transport is held to the bed's own wave
+  (3 q / (0.6 h)) crossing half a texel a substep, past which the explicit update breaks into chains of pits; the
+  factor is split over substeps of at most 40 (up to 32).
+- The cut goes into the field's dent and rim, so it draws, collides and slumps to repose like any print.
+
+Result (`--test=runoff`, time x120): a braided, diamond-shaped net of rills down the face, 4 mm at the 99th
+percentile against a zero median, sand laid at the foot, net change under 5% of what moved. The net is the
+rhomboid rill pattern of a draining beach face (Woodford 1935; Hoyt and Henry 1963), not the straight branching
+seepage rills of a steeper face. The run's depth does not grow with the time scale, since the table also drains
+on it. `--view=rills` now runs at x120 from a higher camera. Left: rill spacing check, water drawn in the rills.
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.

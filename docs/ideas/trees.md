@@ -852,11 +852,22 @@ microtopography; Schaetzl et al. 1989, Norman, Schaetzl and Small 1995).
   (cached per break, by tree, bone and wind bearing): one chunk per bone of 3 cm and up, thinner
   bones riding the chunk below, every surface of its wood and foliage per chunk, a closed hull
   of its wood (cylinders at 0.85 of the bone's radius, starting clear of the wood they grow from
-  so pieces never start inside each other; no hull for a root plate, which lands half in the
+  so pieces never start inside each other; a root plate's hull is a thin disc of 0.8 of its
+  radius, so the thrown tree lies propped on its plate standing on edge, the butt held off the
   ground) and a bond to the chunk it grows from with the wood's breaking moment as its health.
   At the part's first hard hit (a contact impulse over 1.5 m/s of its mass) it is swapped for a
   `PhysXDestructible3D` in the same pose, and the hit breaks the joints around it by its
-  impulse over a metre's lever, against each joint's strength.
+  impulse over a metre's lever, against each joint's strength. A thrown tree swaps only once
+  it has turned 30 degrees on its hinge (earlier, the plate's disc starts in the ground and the
+  tree is stood back up on it), on a hit or once it rests propped on its crown.
+  Pieces weigh by hull volume, so the plate's disc is thin (a full-thickness one outweighs the
+  stem and rights the tree). The plate's soil is a lens, about a quarter of its disc's volume
+  (Krisans et al. 2020: 0.5-1.5 m3 for spruce plates of 1.4-2 m radius); old trees' plates
+  reach 3.6 m radius (7 m across).
+- **Depenetration.** Blast pieces that split start touching at the break, and PhysX by default
+  pushes overlapping bodies apart at any speed: limbs flew off at 30 m/s and through the ground.
+  A project using storms sets `physics/physx_3d/simulation/max_depenetration_velocity` to 3 m/s
+  (the trees bench does).
 - **Crown crush.** While a fallen part rests propped (its centre of mass 1 m or more above
   what it rests on), the limb under it carries the share of its weight the foot does not; from
   that rest toward the foot, the first joint whose wood cannot carry that load's moment breaks,
@@ -866,10 +877,9 @@ microtopography; Schaetzl et al. 1989, Norman, Schaetzl and Small 1995).
   ms per limb, on a worker thread, then `PhysXBlastAsset.prepare_render` there too (0.3-0.7 s),
   so the swap only uploads: about 0.25 s on add_child and 0.3 s on the first hit for a thrown
   tree (was 1.1 and 1.2 s before the PhysX thread's per-chunk meshes), 1 ms for a limb. The
-  destructible starts with the part's velocity. Under path tracing a thrown tree costs about
-  twice its standing memory (the uprooted MultiMesh instance is still skinned, zero-sized,
-  beside the destructible's chunks): a beech in the cloud's 15 GB did not fit. PC timings and
-  that memory are on its queue.
+  destructible starts with the part's velocity. Under path tracing a zero-sized skinned instance
+  still costs its full BLAS, so once every placement of a MultiMesh is uprooted the MultiMesh is
+  hidden (a thrown birch 9.9 GB to 8.1 GB in the cloud). PC timings and memory are on its queue.
 - **For terrain and plants.** Mesh meta `tree_root_pit`: centre (the old foot, mesh space),
   radius (0.9 of the plate's), depth (1.6 plate thicknesses, 0.35-0.95 m, shallower with decay).
   The bench's ground is flat, so the pit shows only where the terrain digs it. The deadwood reach

@@ -30,6 +30,9 @@
 
 #include "physx_destructible_3d.h"
 
+#include "../godot_physx_server_3d.h"
+#include "../objects/godot_physx_body_3d.h"
+
 #include "core/config/engine.h"
 #include "core/io/file_access.h"
 #include "core/math/triangle_mesh.h"
@@ -138,10 +141,15 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_initial_linear_velocity"), &PhysXDestructible3D::get_initial_linear_velocity);
 	ClassDB::bind_method(D_METHOD("set_initial_angular_velocity", "velocity"), &PhysXDestructible3D::set_initial_angular_velocity);
 	ClassDB::bind_method(D_METHOD("get_initial_angular_velocity"), &PhysXDestructible3D::get_initial_angular_velocity);
+	ClassDB::bind_method(D_METHOD("set_max_depenetration_velocity", "velocity"), &PhysXDestructible3D::set_max_depenetration_velocity);
+	ClassDB::bind_method(D_METHOD("get_max_depenetration_velocity"), &PhysXDestructible3D::get_max_depenetration_velocity);
 	ClassDB::bind_method(D_METHOD("get_piece_count"), &PhysXDestructible3D::get_piece_count);
 	ClassDB::bind_method(D_METHOD("get_piece_transform", "index"), &PhysXDestructible3D::get_piece_transform);
 	ClassDB::bind_method(D_METHOD("get_piece_chunks", "index"), &PhysXDestructible3D::get_piece_chunks);
 	ClassDB::bind_method(D_METHOD("get_piece_chunk", "index"), &PhysXDestructible3D::get_piece_chunk);
+	ClassDB::bind_method(D_METHOD("get_piece_linear_velocity", "index"), &PhysXDestructible3D::get_piece_linear_velocity);
+	ClassDB::bind_method(D_METHOD("get_piece_center", "index"), &PhysXDestructible3D::get_piece_center);
+	ClassDB::bind_method(D_METHOD("get_piece_mass", "index"), &PhysXDestructible3D::get_piece_mass);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
@@ -181,6 +189,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "initial_linear_velocity", PROPERTY_HINT_NONE, "suffix:m/s"), "set_initial_linear_velocity", "get_initial_linear_velocity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "initial_angular_velocity", PROPERTY_HINT_NONE, "radians_as_degrees,suffix:\u00B0/s"), "set_initial_angular_velocity", "get_initial_angular_velocity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_depenetration_velocity", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m/s"), "set_max_depenetration_velocity", "get_max_depenetration_velocity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buried_below_y", PROPERTY_HINT_RANGE, "-10000,10000,0.01,or_less,or_greater,suffix:m"), "set_buried_below_y", "get_buried_below_y");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
@@ -233,6 +242,22 @@ void PhysXDestructible3D::set_initial_angular_velocity(const Vector3 &p_velocity
 	if (dynamic && !fractured && pieces.size() == 1 && pieces[0].body.is_valid()) {
 		PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, p_velocity);
 		pieces[0].last_angular_velocity = p_velocity;
+	}
+}
+
+void PhysXDestructible3D::set_max_depenetration_velocity(float p_velocity) {
+	max_depenetration_velocity = MAX(p_velocity, 0.0f);
+	for (const ChunkVisual &piece : pieces) {
+		_apply_depenetration_cap(piece.body);
+	}
+}
+
+void PhysXDestructible3D::_apply_depenetration_cap(RID p_body) const {
+	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
+	GodotPhysXBody3D *body = (server && p_body.is_valid()) ? server->get_body(p_body) : nullptr;
+	if (body) {
+		// 0 hands it back to the project setting (itself 0, uncapped, by default).
+		body->set_max_depenetration_velocity(max_depenetration_velocity > 0.0f ? max_depenetration_velocity : -1.0f);
 	}
 }
 
@@ -1212,6 +1237,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 			piece_mass += _chunk_mass(ci);
 		}
 		ps->body_set_param(body, PhysicsServer3D::BODY_PARAM_MASS, piece_mass);
+		_apply_depenetration_cap(body);
 		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM, p_transform);
 		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, p_linear_velocity);
 		if (is_inside_world() && get_world_3d().is_valid()) {
@@ -1649,6 +1675,31 @@ Transform3D PhysXDestructible3D::get_piece_transform(int p_index) const {
 		return Transform3D();
 	}
 	return PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+}
+
+Vector3 PhysXDestructible3D::get_piece_linear_velocity(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return Vector3();
+	}
+	return PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
+}
+
+Vector3 PhysXDestructible3D::get_piece_center(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return Vector3();
+	}
+	const Transform3D xf = PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+	if (pieces[p_index].chunk_indices.is_empty()) {
+		return xf.origin;
+	}
+	return xf.xform(_chunk_centroid_local(pieces[p_index].chunk_indices[0]));
+}
+
+float PhysXDestructible3D::get_piece_mass(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return 0.0f;
+	}
+	return PhysicsServer3D::get_singleton()->body_get_param(pieces[p_index].body, PhysicsServer3D::BODY_PARAM_MASS);
 }
 
 uint32_t PhysXDestructible3D::get_piece_chunk(int p_index) const {

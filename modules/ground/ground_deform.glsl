@@ -19,6 +19,8 @@
 #define MODE_WATER_FLUX 9
 #define MODE_WATER_DEPTH 10
 #define MODE_WATER_COPY 11
+#define MODE_WATER_ERODE 12
+#define MODE_WATER_SED 13
 
 #define STAMP_BOX 1u
 #define STAMP_ROUND 2u
@@ -56,6 +58,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, slump passes this step (0 = 1)
 	vec4 water; // standing water (docs/ideas/mud.md, stage 2): rain m/s, substep s, flux damping per s, evaporation m/s
 	vec4 water2; // seepage length m, compaction's share of the conductivity kept, conductivity scale, thinnest film kept m
+	vec4 water3; // runoff channels (sand): on (1), morphological factor, bed roughness m, source landing factor
 }
 params;
 
@@ -100,7 +103,7 @@ layout(set = 0, binding = 11, std430) restrict writeonly buffer Packed {
 	uint packed[]; // per texel stride() uints, then for the ground one more each: (water depth, 0)
 };
 // Standing water (ground only): per texel the outflows to -x, +x, -z, +z (m/s: m3/s over the texel's area) and
-// (depth m, 0, 0, 0). The virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007).
+// (depth m, bed load along x m2/s, bed cut by the runoff m, bed load along z m2/s). The virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007).
 struct WaterCell {
 	vec4 flux;
 	vec4 w;
@@ -865,9 +868,32 @@ float field_sample(vec2 p, int ch) {
 
 const float WATER_G = 9.81;
 
+// Runoff channels start from the bed's own roughness (RillGrow, Favis-Mortlock 1998): a few millimetres of fixed
+// relief per place, value noise at 3 cm (grain clusters, the swash's and rain's marks), which the water sees and
+// follows; the cuts it makes are then the channels.
+float runoff_hash(ivec2 c) {
+	uint h = (uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ 0x5bd1e995u;
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h & 0xffffu) / 65535.0;
+}
+float runoff_rough(vec2 p) {
+	vec2 q = p / 0.03;
+	ivec2 c = ivec2(floor(q));
+	vec2 f = q - vec2(c);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = mix(runoff_hash(c), runoff_hash(c + ivec2(1, 0)), f.x);
+	float b = mix(runoff_hash(c + ivec2(0, 1)), runoff_hash(c + ivec2(1, 1)), f.x);
+	return params.water3.z * (mix(a, b, f.y) - 0.5);
+}
+
 float water_bed(int x, int z) {
 	vec4 st = state[z * fn() + x];
-	return ground_at(texel_world(x, z)) + st.y - st.x;
+	vec2 p = texel_world(x, z);
+	return ground_at(p) + st.y - st.x + (params.water3.x > 0.5 ? runoff_rough(p) : 0.0);
 }
 
 void water_flux(int x, int z) {
@@ -881,18 +907,32 @@ void water_flux(int x, int z) {
 	float dt = params.water.y;
 	float l = texel();
 	float h = water_bed(x, z) + d;
-	vec4 f = water[i].flux * max(1.0 - params.water.z * dt, 0.0);
+	bool runoff = params.water3.x > 0.5;
+	// Runoff channels: the local inertial shallow water equations (Bates, Horritt and Fewtrell 2010), each pipe's
+	// unit discharge q = f l gaining g h dt (dh / l) over the flowing depth h, with Manning's bed friction (n 0.025,
+	// a sand bed) taken semi-implicitly: a sheet a fraction of a millimetre deep runs at a few centimetres a
+	// second, as a seepage film does. Otherwise the pipe model for standing water (its cross-section a texel).
+	vec4 f = water[i].flux * (runoff ? 1.0 : max(1.0 - params.water.z * dt, 0.0));
+	float hf = max(d, 1e-6);
+	float fr = WATER_G * 0.025 * 0.025 * dt / pow(hf, 7.0 / 3.0);
 	ivec2 nb[4] = ivec2[](ivec2(x - 1, z), ivec2(x + 1, z), ivec2(x, z - 1), ivec2(x, z + 1));
 	for (int k = 0; k < 4; k++) {
 		ivec2 q = nb[k];
+		float dh;
 		if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) {
 			// The field's edge is open: water runs on past it as over the ground beyond (its bed as this
 			// texel's, dry), and is lost to the field; a wall there pooled the field's runoff along its edge.
-			f[k] = max(f[k] + dt * WATER_G * d / l, 0.0);
-			continue;
+			dh = d;
+		} else {
+			dh = h - (water_bed(q.x, q.y) + water[q.y * n + q.x].w.x);
 		}
-		float hq = water_bed(q.x, q.y) + water[q.y * n + q.x].w.x;
-		f[k] = max(f[k] + dt * WATER_G * (h - hq) / l, 0.0);
+		if (runoff) {
+			float qk = f[k] * l;
+			qk = (qk + dt * WATER_G * hf * dh / l) / (1.0 + fr * abs(qk));
+			f[k] = max(qk / l, 0.0);
+		} else {
+			f[k] = max(f[k] + dt * WATER_G * dh / l, 0.0);
+		}
 	}
 	float out_sum = (f.x + f.y + f.z + f.w) * dt;
 	if (out_sum > d) {
@@ -923,6 +963,19 @@ void water_depth(int x, int z) {
 	vec2 wp = texel_world(x, z);
 	vec4 m2 = ground_cell(wp, 2); // conductivity m/s, water table depth m, moisture deficit
 	float rain = params.water.x;
+	// Runoff channels: a seepage face (GroundSurface3D::_gpu_cells), where the soaked beach's water table meets the
+	// surface and Darcy outflow k sin(beta) leaves it; the ground there is saturated and takes none back.
+	float seep = params.water3.x > 0.5 ? m2.w * params.water3.w : 0.0;
+	if (params.water3.x > 0.5 && m2.w < 0.0) {
+		// The sea or a lake over this cell (-1): the runoff joins it.
+		water[i].w.x = 0.0;
+		return;
+	}
+	if (seep > 0.0) {
+		d = max(d + (rain + seep - (d > 0.0 ? params.water.w : 0.0)) * dt, 0.0);
+		water[i].w.x = d;
+		return;
+	}
 	if (m2.x <= 0.0 && d <= 0.0 && rain <= 0.0) {
 		water[i].w.x = 0.0;
 		return;
@@ -950,6 +1003,144 @@ void water_depth(int x, int z) {
 	}
 	bool fed = src > 0.0 || level < table;
 	water[i].w.x = d < params.water2.w && !fed ? 0.0 : d;
+}
+
+// Runoff channels (docs/ideas/sand.md): the water moves the sand as bed load, Meyer-Peter and Mueller's
+// transport rate at the bed shear of the flow's own friction, along the flow; the bed follows the divergence of
+// that transport (Exner, porosity 0.4), so what is cut upstream is laid where the transport falls off: where the
+// water soaks in, slows on the flat or reaches the sea. Transport-limited and in flux form, it keeps the sand
+// exactly. The bed moves by the morphological factor (Roelvink 2006): a scaled run cuts in minutes what takes
+// hours, the water's own flow unchanged. Where flow gathers it cuts, gathers more and cuts on: rills (Schorghofer
+// et al. 2004).
+vec2 water_velocity(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	float d = water[i].w.x;
+	if (d <= 1e-5) {
+		return vec2(0.0);
+	}
+	vec4 f = water[i].flux;
+	float fl = x > 0 ? water[i - 1].flux.y : 0.0;
+	float fr = x < n - 1 ? water[i + 1].flux.x : 0.0;
+	float fd = z > 0 ? water[i - n].flux.w : 0.0;
+	float fu = z < n - 1 ? water[i + n].flux.z : 0.0;
+	vec2 q = 0.5 * vec2((fl - f.x) + (f.y - fr), (fd - f.z) + (f.w - fu)) * texel();
+	vec2 u = q / d;
+	// A sheet a few hundredths of a millimetre deep has no meaningful velocity of its own (flux over depth runs
+	// away): held to twice its shallow-water wave speed, Froude 2, past what sheet flow on a beach reaches.
+	float um = 2.0 * sqrt(WATER_G * d);
+	float lu = length(u);
+	return lu > um && lu > 0.0 ? u * (um / lu) : u;
+}
+
+float bed_load_shear(float tau) {
+	float dg = 0.00025;
+	float theta = tau / (1650.0 * WATER_G * dg);
+	if (theta <= 0.047) {
+		return 0.0;
+	}
+	return 8.0 * sqrt(1.65 * WATER_G * dg * dg * dg) * pow(theta - 0.047, 1.5);
+}
+
+// The bed load (m2/s, along the flow) at each texel, into w.yw.
+void water_erode(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	if (params.water3.x < 0.5) {
+		return;
+	}
+	vec2 qs = vec2(0.0);
+	vec2 wp = texel_world(x, z);
+	if (x >= 1 && z >= 1 && x < n - 1 && z < n - 1 && ground_cell(wp, 2).w >= 0.0 && ground_deformable(wp)) {
+		// The transport of the flow round the texel (1-2-1 weights), not of the texel alone: a grain moving in a
+		// sheet does not stop dead at a texel the film has thinned out of, and a texel-sized pit cannot capture
+		// the flow's whole load (the pit-and-mound breakdown of a grid-scale bed under thin flow).
+		vec2 qv = vec2(0.0);
+		float dm = 0.0;
+		float wsum = 0.0;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				float wgt = float((2 - abs(dx)) * (2 - abs(dz)));
+				wsum += wgt;
+				float dj = water[i + dz * n + dx].w.x;
+				if (dj <= 1e-5) {
+					continue;
+				}
+				vec2 u = water_velocity(x + dx, z + dz);
+				float speed = length(u);
+				if (speed <= 0.0) {
+					continue;
+				}
+				// The bed shear from the flow's own friction (Manning, n 0.025): rho g n^2 u^2 / h^(1/3).
+				float tau = 1000.0 * WATER_G * 0.025 * 0.025 * speed * speed / pow(dj, 1.0 / 3.0);
+				qv += wgt * bed_load_shear(tau) * u / speed;
+				dm += wgt * dj;
+			}
+		}
+		qv /= wsum;
+		dm /= wsum;
+		float qb = length(qv);
+		if (qb > 0.0) {
+			// Down the bed's own slope the grains go further (Bagnold 1966; Koch and Flokstra 1981): the transport
+			// turns downhill by 1.5 times the slope, which keeps a cut's floor smooth.
+			float l = texel();
+			vec2 gb = vec2(water_bed(x + 1, z) - water_bed(x - 1, z), water_bed(x, z + 1) - water_bed(x, z - 1)) / (2.0 * l);
+			qs = qv - 1.5 * qb * gb;
+			// The bed's own wave (celerity 3 q / (0.6 h) for transport going as u^3) kept under half a texel a
+			// substep at the morphological factor: past it the explicit bed update overshoots into a chain of
+			// pits. Held on the transport itself, so the sand is still kept exactly.
+			float qmax = 0.1 * max(dm, 2e-4) * l / max(params.water.y * params.water3.y, 1e-6);
+			float lq = length(qs);
+			if (lq > qmax) {
+				qs *= qmax / lq;
+			}
+		}
+	}
+	if (any(isnan(qs)) || any(isinf(qs))) {
+		qs = vec2(0.0);
+	}
+	water[i].w.y = qs.x;
+	water[i].w.w = qs.y;
+}
+
+// The bed change from the transport's divergence, the faces' transport taken from upwind.
+void water_sed(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	if (params.water3.x < 0.5 || x < 1 || z < 1 || x >= n - 1 || z >= n - 1) {
+		return;
+	}
+	vec2 q0 = vec2(water[i].w.y, water[i].w.w);
+	float qxl = water[i - 1].w.y;
+	float qxr = water[i + 1].w.y;
+	float qzd = water[i - n].w.w;
+	float qzu = water[i + n].w.w;
+	if (q0 == vec2(0.0) && qxl <= 0.0 && qxr >= 0.0 && qzd <= 0.0 && qzu >= 0.0) {
+		return;
+	}
+	float fl = (qxl + q0.x) > 0.0 ? max(qxl, 0.0) : min(q0.x, 0.0); // through the -x face, + into this texel
+	float frt = (q0.x + qxr) > 0.0 ? max(q0.x, 0.0) : min(qxr, 0.0); // through the +x face, + out of it
+	float fd = (qzd + q0.y) > 0.0 ? max(qzd, 0.0) : min(q0.y, 0.0);
+	float fu = (q0.y + qzu) > 0.0 ? max(q0.y, 0.0) : min(qzu, 0.0);
+	float div = (frt - fl + fu - fd) / texel();
+	float dz = -div * params.water.y * params.water3.y / 0.6;
+	if (dz == 0.0 || isnan(dz) || isinf(dz)) {
+		return;
+	}
+	water[i].w.z -= dz;
+	vec4 st = state[i];
+	if (dz < 0.0) {
+		float r = min(st.y, -dz);
+		st.y -= r;
+		st.x = min(st.x - dz - r, 0.3);
+	} else {
+		float f = min(st.x, dz);
+		st.x -= f;
+		st.y += dz - f;
+	}
+	// The cut's walls slump to the sand's repose like any other (two seconds owed, as a fresh press).
+	st.z = max(st.z, 2.0);
+	state[i] = st;
 }
 
 void main() {
@@ -1018,6 +1209,11 @@ void main() {
 	} else if (push.mode == MODE_WATER_COPY) {
 		water[i].flux = vec4(0.0);
 		water[i].w = vec4(water_tmp[i], 0.0, 0.0, 0.0);
+	} else if (push.mode == MODE_WATER_ERODE) {
+		water_erode(x, z);
+	} else if (push.mode == MODE_WATER_SED) {
+		water_sed(x, z);
+
 	} else if (push.mode == MODE_SLUMP_GIVE) {
 		slump_give(x, z);
 	} else if (push.mode == MODE_SLUMP_TAKE) {
@@ -1106,7 +1302,7 @@ void main() {
 		packed[i * sw] = packHalf2x16(st.xy);
 		if (sw == 2) {
 			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
-			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, 0.0));
+			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, water[i].w.z));
 		}
 	}
 }

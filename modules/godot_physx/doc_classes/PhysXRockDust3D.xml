@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXRockDust3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Rockfall dust simulated in NVIDIA Flow.
+	</brief_description>
+	<description>
+		Takes the dust a [RockField3D]'s falling and broken stones throw up (where their pieces hit, break and slide) within [member near_range] of [member follow_target], and feeds it into a [PhysXFlow3D] of its own as short bursts through a pool of sphere emitters. The dust swells out of each impact and runs on along the piece's path. It is heavier than the air, rests on the terrain floor (the field's generator), curls round the moving pieces, drifts with the [WeatherMap3D]'s wind and fades over tens of seconds.
+		A [RockField3D] with [member RockField3D.rockfall_dust] on makes one itself.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_active_sources" qualifiers="const">
+			<return type="int" />
+			<description>
+				Emitters with a burst running this physics frame.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="PhysXFlow3D" />
+			<description>
+				The node's own [PhysXFlow3D].
+			</description>
+		</method>
+		<method name="get_total_dust" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of fines taken into Flow so far.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="burst_time" type="float" setter="set_burst_time" getter="get_burst_time" default="1.0">
+			Seconds an impact's dust takes to come out.
+		</member>
+		<member name="carry" type="float" setter="set_carry" getter="get_carry" default="0.3">
+			Share of the piece's speed the cloud keeps along its path.
+		</member>
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.72, 0.69, 0.64, 1)">
+			The dust's colour.
+		</member>
+		<member name="dust_heaviness" type="float" setter="set_dust_heaviness" getter="get_dust_heaviness" default="0.3">
+			How heavy the dust is in the air: the flow's smoke buoyancy is minus this, so the cloud slumps and runs out along the ground.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Off: no new dust (what is in the air settles).
+		</member>
+		<member name="expansion" type="float" setter="set_expansion" getter="get_expansion" default="18.0">
+			How fast the cloud swells out of an impact (emitter divergence, per second).
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			Dust within [member near_range] of this node goes into Flow. Empty: the viewport's camera.
+		</member>
+		<member name="max_sources" type="int" setter="set_max_sources" getter="get_max_sources" default="8">
+			Emitters in the pool: bursts running at once.
+		</member>
+		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="120.0">
+			How far from [member follow_target] dust goes into Flow.
+		</member>
+		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
+			The [RockField3D] whose dust this takes. Empty: the parent.
+		</member>
+		<member name="smoke_per_kg" type="float" setter="set_smoke_per_kg" getter="get_smoke_per_kg" default="3.0">
+			Emitter smoke per kilogram a second of fines.
+		</member>
+		<member name="turbulence" type="float" setter="set_turbulence" getter="get_turbulence" default="5.0">
+			Metres a second of gusting on each burst's jet, so the cloud rolls.
+		</member>
+		<member name="wind_coupling" type="float" setter="set_wind_coupling" getter="get_wind_coupling" default="0.4">
+			How hard the weather's wind drives the air round the dust.
+		</member>
+	</members>
+</class>

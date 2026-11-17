@@ -637,6 +637,8 @@ void BaseMaterial3D::init_shaders() {
 		// Its finer near field (docs/ideas/mud.md, stage 0), used inside its own square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_near_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_near_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The clods stuck to vehicles' bodies (docs/ideas/mud.md, stage 4b): a row per PhysXVehicle3D.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/vehicle_mud_splats", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// And its wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the patch.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -992,6 +994,8 @@ instance uniform vec4 mud_fill : instance_index(7);
 instance uniform vec4 mud_spray : instance_index(8);
 instance uniform vec4 mud_body : instance_index(9);
 instance uniform vec4 mud_color : instance_index(10);
+instance uniform vec4 mud_splat : instance_index(11);
+global uniform sampler2D vehicle_mud_splats;
 
 )";
 	code += R"(// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
@@ -1054,34 +1058,98 @@ float vmud_level(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fi
 	lvl = max(lvl, vmud_wheel(p_p, p_w3, p_fill.w, p_spray.w));
 	return lvl;
 }
-// The level thresholds the splat field: a low level keeps only the splats' peaks, a full one covers all.
+// The level thresholds the splat field: a low level keeps only the splats' peaks, a full one covers all. The cake lies
+// where the field f = splat + 1.2 level passes 1.075; its edge is a ramp p_w wide in f, at least 0.15 and wider where a
+// footprint holds more of the field (a filtered step), so outlines stay smooth at any distance and in both renderers.
+float vmud_cover_f(float p_f, float p_w) {
+	return smoothstep(1.075 - 0.5 * p_w, 1.075 + 0.5 * p_w, p_f);
+}
 float vmud_cover(float p_level, float p_splat) {
-	return p_level <= 0.0 ? 0.0 : smoothstep(1.0 - 1.2 * p_level, 1.15 - 1.2 * p_level, p_splat);
+	return p_level <= 0.0 ? 0.0 : vmud_cover_f(p_splat + 1.2 * p_level, 0.15);
 }
-// The cake's relief (m): thickest inside a splat, lumpy; its edge a step.
-float vmud_height(float p_level, float p_splat) {
-	float c = vmud_cover(p_level, p_splat);
-	return c * (0.004 + 0.0015 * p_splat);
+// The cake's relief (m): thicker where it lies deep (a splat's middle, below the mud line), lumpy, and with a lip a few
+// mm wide just inside its edge where a splash's crown piles up; its edge a step.
+float vmud_height(float p_f, float p_w, float p_level, float p_splat) {
+	float c = vmud_cover_f(p_f, p_w);
+	float lip = 1.0 - smoothstep(0.05, 0.35, p_f - 1.075);
+	return c * (0.0015 + 0.0024 * clamp(p_level, 0.0, 1.25) + 0.002 * p_splat + 0.0015 * lip);
 }
-// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows): (cover, relief gradient in world
-// space (x, y, z) per m). The gradient fades out over a footprint p_fw too wide to hold the lumps.
-vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
+// A clod that stuck to the body (mud stage 4b; p_a: where, in the vehicle's frame, and its radius; p_b: its flight
+// direction and amount): a splat spread along the flight, a short tail ahead of the hit and a shorter rim behind it.
+float vmud_splat_one(vec3 p_p, vec4 p_a, vec4 p_b) {
+	vec3 d = p_p - p_a.xyz;
+	float along = dot(d, p_b.xyz);
+	float e = length(d - along * p_b.xyz) / p_a.w + max(along, 0.0) / (2.5 * p_a.w) + max(-along, 0.0) / (0.7 * p_a.w);
+	// A ragged rim (the splash's fingers) and a halo of droplets thrown past it, thresholded by the splat field. The
+	// core is a dome, deepest in the middle.
+	e *= 0.75 + 0.5 * vmud_noise(p_p * 22.0 + 7.0);
+	float core = 1.25 * (1.0 - smoothstep(0.3, 1.0, e));
+	float halo = 0.5 * (1.0 - smoothstep(1.0, 2.2, e));
+	float lvl = p_b.w * max(core, halo);
+	// Drip runs: wet clay sags down the panel from the splat's lower half in a few narrow runs of different lengths,
+	// each thinning to its end, on the panel the clod hit only. None from a clod that hit a roof or a floor.
+	vec3 tn = cross(vec3(0.0, 1.0, 0.0), p_b.xyz);
+	float tl = length(tn);
+	if (d.y < 0.0 && tl > 0.3 && abs(dot(d, cross(tn, vec3(0.0, 1.0, 0.0)))) < 0.5 * p_a.w * tl) {
+		float t = dot(d, tn) / tl;
+		float seed = dot(p_a.xyz, vec3(13.1, 7.7, 5.3));
+		float col = vmud_noise(vec3(t * 60.0, seed, 0.5));
+		float run = p_a.w * (0.8 + 2.4 * vmud_noise(vec3(t * 60.0, seed, 3.5)));
+		float down = -d.y / run;
+		float drip = smoothstep(0.6 + 0.12 * down, 0.66 + 0.12 * down, col) * (1.0 - smoothstep(0.85, 1.0, down)) * (1.0 - smoothstep(0.5, 0.8, abs(t) / p_a.w));
+		lvl = max(lvl, 1.1 * p_b.w * drip);
+	}
+	return lvl;
+}
+)";
+	code += R"(// The clods stuck to this vehicle (mud stage 4b): its row of PhysXVehicle3D's splat texture, two texels a clod.
+float vmud_splats_level(vec3 p_p, vec4 p_splat) {
+	float lvl = 0.0;
+	int row = int(p_splat.x);
+	int n = int(p_splat.y);
+	for (int k = 0; k < n; k++) {
+		lvl = max(lvl, vmud_splat_one(p_p, texelFetch(vehicle_mud_splats, ivec2(2 * k, row), 0), texelFetch(vehicle_mud_splats, ivec2(2 * k + 1, row), 0)));
+	}
+	return lvl;
+}
+)";
+	code += R"(// Every region's level and the stuck clods'.
+float vmud_all(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat) {
+	float lvl = vmud_level(p_p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body);
+	if (p_splat.y > 0.0) {
+		lvl = max(lvl, vmud_splats_level(p_p, p_splat));
+	}
+	return lvl;
+}
+// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows; p_splat: its row of stuck clods
+// and their count, see vmud_splats_level()): (cover, relief gradient in world space (x, y, z) per m). The cover's edge
+// is filtered over the footprint p_fw; the gradient fades out over a footprint too wide to hold the lumps.
+vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat) {
 	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
-	float lvl = vmud_level(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body);
+	float lvl = vmud_all(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat);
 	if (lvl <= 0.0) {
 		return vec4(0.0);
 	}
 	float fw = max(p_fw, 1e-4);
+	const float e = 0.003;
 	float s = vmud_splat(p, fw);
-	float c = vmud_cover(lvl, s);
+	float f = s + 1.2 * lvl;
+	vec3 px = p + vec3(e, 0.0, 0.0);
+	vec3 py = p + vec3(0.0, e, 0.0);
+	vec3 pz = p + vec3(0.0, 0.0, e);
+	vec3 ls = vec3(vmud_all(px, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat), vmud_all(py, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat),
+			vmud_all(pz, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat));
+	vec3 ss = vec3(vmud_splat(px, fw), vmud_splat(py, fw), vmud_splat(pz, fw));
+	vec3 fs = ss + 1.2 * ls;
+	// The edge's ramp: as wide as the field changes over one and a half footprints, and no softer: clay is there or
+	// not, so where the field rises slowly its edge stays crisp rather than fading over centimetres.
+	float w = max(0.03, 1.5 * length(fs - f) / e * fw);
+	float c = vmud_cover_f(f, w);
 	if (c <= 0.0) {
 		return vec4(0.0);
 	}
-	const float e = 0.003;
-	float h0 = vmud_height(lvl, s);
-	vec3 g = vec3(vmud_height(lvl, vmud_splat(p + vec3(e, 0.0, 0.0), fw)), vmud_height(lvl, vmud_splat(p + vec3(0.0, e, 0.0), fw)),
-					 vmud_height(lvl, vmud_splat(p + vec3(0.0, 0.0, e), fw))) -
-			h0;
+	float h0 = vmud_height(f, w, lvl, s);
+	vec3 g = vec3(vmud_height(fs.x, w, ls.x, ss.x), vmud_height(fs.y, w, ls.y, ss.y), vmud_height(fs.z, w, ls.z, ss.z)) - h0;
 	g *= (1.0 - smoothstep(0.004, 0.02, fw)) / e;
 	// Back to world space: the frame's rows are a rotation.
 	vec3 gw = g.x * p_frame0.xyz + g.y * p_frame1.xyz + g.z * p_frame2.xyz;
@@ -1091,8 +1159,8 @@ vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_fram
 void vmud_apply(float p_cover, vec3 p_color, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
 	vec3 dry = p_color * 1.6;
 	dry = mix(dry, vec3(dot(dry, vec3(0.299, 0.587, 0.114))), 0.2);
-	r_albedo = mix(r_albedo, mix(dry, p_color * 0.6, p_wet), p_cover);
-	r_roughness = mix(r_roughness, mix(0.95, 0.3, p_wet), p_cover);
+	r_albedo = mix(r_albedo, mix(dry, p_color * 0.5, p_wet), p_cover);
+	r_roughness = mix(r_roughness, mix(0.95, 0.18, p_wet), p_cover);
 	r_metallic = mix(r_metallic, 0.0, p_cover);
 	r_specular = mix(r_specular, 0.5, p_cover);
 }
@@ -2818,7 +2886,7 @@ void fragment() {)";
 	{
 		float vmud_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 		float vmud_fp = PROJECTION_MATRIX[3][3] != 0.0 ? vmud_pix : length(VERTEX) * vmud_pix;
-		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body);
+		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body, mud_splat);
 		if (vmud.x > 0.0) {
 			float vmud_specular = SPECULAR;
 			vmud_apply(vmud.x, mud_color.rgb, mud_body.z, ALBEDO, ROUGHNESS, METALLIC, vmud_specular);

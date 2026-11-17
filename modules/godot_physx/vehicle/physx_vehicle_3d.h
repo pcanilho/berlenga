@@ -207,6 +207,12 @@ public:
 	real_t get_wheel_mud_spray(int p_wheel) const; // 0..1, the spray level round the wheel
 	real_t get_body_mud_line() const; // m above the chassis bottom
 	real_t get_body_mud_wetness() const; // 1 fresh, 0 dry
+	// Clods that stuck to the body (mud stage 4b): a splat at p_world, spread along p_velocity, of p_volume m3.
+	void add_mud_splat(const Vector3 &p_world, const Vector3 &p_velocity, float p_volume);
+	int get_mud_splat_count() const;
+	// For a grains node: the live vehicles, and whether a point is inside one's chassis box.
+	static void get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles);
+	bool mud_box_contains(const Vector3 &p_world) const;
 	Vector3 get_actor_position() const;
 
 	PackedStringArray get_configuration_warnings() const override;
@@ -242,6 +248,7 @@ private:
 	void _belly_step(float p_delta);
 	void _body_mud_step(float p_delta);
 	void _body_mud_meshes();
+	void _mud_register(bool p_on);
 
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;

@@ -438,6 +438,22 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   raises the mud level round it with a radial streak along the clod's flight. Clod sizes: three meshes (2, 3.5,
   6 cm) chosen by slot.
 - Checks: clods thrown at a parked car stick, volume kept (dug = air + landed + stuck); raster vs PT crop.
+- **Built.** As proposed, with these choices: the splat texture is 64 x 16 RGBA float (32 clods a vehicle, 16
+  vehicles), published as the global `vehicle_mud_splats` and to the path tracer as rt_param 74; the row and count
+  are instance-uniform slot 11. A clod landing within half a radius of a splat merges into it (it widens), so the
+  ring is not filled by one spot. Splats have a ragged rim and a halo of droplets (the splat noise thresholds them),
+  and wash off in standing water. Clod sizes: the MPM render already scales each slot 0.75 to 1.25 and tumbles it.
+  `PhysXVehicle3D.add_mud_splat()`, `get_mud_splat_count()`; `PhysXGroundGrains3D.get_stuck_volume()`. Bench:
+  `--test=clog` (a kick at a parked car's side sticks, volume kept), `--view=bodymud --splat`.
+- **Fixed after review.** Splat outlines stair-stepped and the splats read as flat paint. The cover is now a filtered
+  step (the analytic antialiasing of procedural textures, as in Quilez's "filtering procedurals" and shader-side
+  `fwidth` edges): the field is splat + 1.2 level, and its edge ramp (0.03 at least, so it stays crisp where the field
+  rises slowly) widens to the field's change across one and a half pixel footprints (the same footprint in raster and
+  in the path tracer's cone), so outlines stay smooth at any distance. The finite differences now also move the level,
+  so the relief has the splat's own edge: a dome deepest in the middle, a lip just inside the rim where the crown
+  piles up, lumps, and a step at the edge. Wet clay is darker and glossier (roughness 0.18). Drip runs sag down the
+  panel the clod hit, a few narrow runs of different lengths that thin to their ends (none from roof or floor hits).
+  Bench: `--pair` saves the raster and path traced frames from one run, so both show the same clods.
 
 #### Research (4c: splashes in standing water)
 

@@ -1149,37 +1149,89 @@ vec3 relief_sun_direction() {
 	return sun_direction();
 }
 
-// Two-layer refraction (depth peeling): a screen texture lookup reads the copy with the second layer in it
-// (color_buffer_peel) only where that layer lies clearly behind this surface and no other screen-reading surface
-// lies clearly in front of this one there, so the pool shows through the stream in front of it but a surface never
-// refracts its own image as another one's second layer. Elsewhere the opaque copy, as without peeling. peel_depth
-// and peel_depth_second hold the front and second layers' depths (reverse Z, 0 where none). The shader compiler
-// wraps screen texture lookups with this.
+// Two-layer refraction (depth peeling). color_buffer_peel holds, per pixel, the second screen-reading layer where
+// there is one, else the front one, else the opaque scene; peel_depth and peel_depth_second hold the front and second
+// layers' depths (reverse Z, 0 where none). A screen texture lookup reads it only where the layer it shows there is
+// another sheet clearly behind this surface: the pool under or beside the falling stream, a second pane of glass.
+// Elsewhere it reads the opaque copy, as without peeling, so a surface never refracts its own image. The shader
+// compiler wraps screen texture lookups with this.
 #if defined(MODE_RENDER_SDF) || defined(USE_MULTIVIEW)
 #define color_buffer_peel color_buffer
 #endif
-bool peel_screen_ok(vec2 uv) {
+float peel_linear_depth(float z) {
+	// inv_projection_matrix is a macro needing a local scene_data here; view 0 is the same matrix.
+	vec4 v = scene_data_block.data.inv_projection_matrix_view[0] * vec4(0.0, 0.0, z, 1.0);
+	return -v.z / v.w;
+}
+// The depth (reverse Z) of the layer color_buffer_peel shows at uv when this surface may refract it, else 0.
+float peel_layer_depth(vec2 uv) {
 #if defined(MODE_RENDER_SDF) || defined(USE_MULTIVIEW)
-	return false;
+	return 0.0;
 #else
 	if (!bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_ACTIVE)) {
-		return false;
+		return 0.0;
 	}
-	float second = textureLod(sampler2D(peel_depth_second, SAMPLER_NEAREST_CLAMP), uv, 0.0).r;
-	if (second <= 0.0) {
-		return false; // no second layer there: both copies match
+	// The 2x2 texels a filtered colour lookup at uv blends: all must agree, judged by the nearest of them, so the
+	// edge of a layer never lets in a pixel of this surface's own image.
+	vec4 second4 = textureGather(sampler2D(peel_depth_second, SAMPLER_NEAREST_CLAMP), uv, 0);
+	vec4 front4 = textureGather(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), uv, 0);
+	float second = max(max(second4.x, second4.y), max(second4.z, second4.w));
+	float front = max(max(front4.x, front4.y), max(front4.z, front4.w));
+	if (second > 0.0 && min(min(second4.x, second4.y), min(second4.z, second4.w)) <= 0.0) {
+		return 0.0; // the edge of the second layer
 	}
-	float front = textureLod(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), uv, 0.0).r;
-	// Linear depths (inv_projection_matrix is a macro needing a local scene_data here; view 0 is the same).
-	mat4 inv_projection = scene_data_block.data.inv_projection_matrix_view[0];
-	vec4 a = inv_projection * vec4(0.0, 0.0, gl_FragCoord.z, 1.0);
-	vec4 b = inv_projection * vec4(0.0, 0.0, second, 1.0);
-	vec4 c = inv_projection * vec4(0.0, 0.0, front, 1.0);
-	float own_lin = -a.z / a.w;
-	float second_lin = -b.z / b.w;
-	float front_lin = -c.z / c.w;
-	return second_lin - own_lin > 0.02 + 0.02 * own_lin && own_lin - front_lin < 0.1 + 0.1 * own_lin;
+	float own_lin = peel_linear_depth(gl_FragCoord.z);
+	if (second > 0.0) {
+		// The second layer: it must lie clearly behind this surface, and no other screen-reading surface clearly in
+		// front of this one there (else that second layer may be this very surface).
+		bool ok = peel_linear_depth(second) - own_lin > 0.01 + 0.01 * own_lin && own_lin - peel_linear_depth(front) < 0.1 + 0.1 * own_lin;
+		return ok ? second : 0.0;
+	}
+	if (front <= 0.0) {
+		return 0.0; // nothing screen-reading there: both copies match
+	}
+	if (min(min(front4.x, front4.y), min(front4.z, front4.w)) <= 0.0) {
+		return 0.0; // the edge of the front layer
+	}
+	// The front layer: it must lie clearly behind this surface and be another sheet, not this one curving away. Walk
+	// the front depth from here to there: this surface continues smoothly, another sheet starts at a jump or a gap.
+	if (peel_linear_depth(front) - own_lin <= 0.01 + 0.01 * own_lin) {
+		return 0.0;
+	}
+	vec2 start = gl_FragCoord.xy * scene_data_block.data.screen_pixel_size;
+	// A jump: a step well beyond the last one (a curved surface's slope grows smoothly, even toward its rim).
+	float prev = own_lin;
+	float prev_step = 0.01 + 0.01 * own_lin;
+	for (int i = 1; i <= 8; i++) {
+		float d = textureLod(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), mix(start, uv, float(i) * 0.125), 0.0).r;
+		if (d <= 0.0) {
+			return front;
+		}
+		float l = peel_linear_depth(d);
+		float step = l - prev;
+		float jump = 3.0 * abs(prev_step) + 0.005 + 0.005 * l;
+		if (step < -jump) {
+			return 0.0; // another surface in front on the way: can't tell, keep the opaque copy
+		}
+		if (step > 3.0 * max(prev_step, 0.0) + 0.005 + 0.005 * l) {
+			return front;
+		}
+		prev = l;
+		prev_step = step;
+	}
+	return 0.0;
 #endif
+}
+bool peel_screen_ok(vec2 uv) {
+	return peel_layer_depth(uv) > 0.0;
+}
+// A screen-reading surface's depth texture lookups also see that layer (nearer in reverse Z), so a refracted ray
+// stops at the pool's surface rather than the bucket floor under it.
+vec4 peel_depth_merge(vec2 uv, vec4 depth) {
+#ifdef SCREEN_TEXTURE_USED
+	depth.r = max(depth.r, peel_layer_depth(uv));
+#endif
+	return depth;
 }
 
 #GLOBALS
@@ -3412,7 +3464,7 @@ void main() {
 	// Two-layer refraction (depth peeling, Everitt 2001): the front-depth and second-layer passes draw only
 	// screen-reading surfaces (water, glass), and the second layer only the nearest of them behind the front one,
 	// so the front layer's refraction can show it.
-	if (bool(scene_data_block.data.flags & (SCENE_DATA_FLAGS_PEEL_FRONT | SCENE_DATA_FLAGS_PEEL_BEHIND))) {
+	if (bool(scene_data_block.data.flags & (SCENE_DATA_FLAGS_PEEL_FRONT | SCENE_DATA_FLAGS_PEEL_BEHIND | SCENE_DATA_FLAGS_PEEL_FRONT_COLOR))) {
 #ifndef SCREEN_TEXTURE_USED
 		discard;
 #else
@@ -3420,6 +3472,11 @@ void main() {
 			float front = texelFetch(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
 			if (gl_FragCoord.z >= front * (1.0 - 1.0e-3)) {
 				discard; // the front layer itself, or nothing in front (front 0: no screen-reading surface here)
+			}
+		} else if (bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_FRONT_COLOR)) {
+			float front = texelFetch(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
+			if (gl_FragCoord.z < front * (1.0 - 1.0e-3)) {
+				discard; // behind the front layer
 			}
 		}
 #endif

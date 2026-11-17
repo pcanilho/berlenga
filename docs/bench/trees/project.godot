@@ -22,3 +22,4 @@ pathtracing/async_shader_compilation=false
 [physics]
 
 3d/physics_engine="PhysX"
+physx_3d/simulation/max_depenetration_velocity=3.0

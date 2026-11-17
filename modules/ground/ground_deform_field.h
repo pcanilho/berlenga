@@ -127,6 +127,7 @@ public:
 	LocalVector<float> rim; // m on top
 	LocalVector<float> fresh;
 	LocalVector<float> water; // standing water, m (the ground on the GPU: read back with the field, not shifted)
+	LocalVector<float> water_cut; // the bed the runoff cut (+) or filled (-) since the field last moved, m (GPU runoff)
 	LocalVector<uint8_t> tile_active; // something deformed in the tile
 	LocalVector<float> tile_settle; // seconds of slumping owed (0: asleep)
 	LocalVector<float> tile_wait; // seconds a slow tile has saved up before its next pass

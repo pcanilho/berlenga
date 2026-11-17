@@ -4427,8 +4427,8 @@ void TreeGenerator::_storm_kit(const Ref<ArrayMesh> &p_mesh, const Array &p_stat
 		}
 	}
 	// The plate a standing tree throws (5k, Krisans et al. 2020): radius about 11 stem radii,
-	// thickness about a fifth of that; a small tree's down to half a metre.
-	const float plate_radius = CLAMP(11.0f * trunk_r * Math::lerp(0.9f, 1.2f, kr.randf()), 0.5f, 2.8f);
+	// thickness about a fifth of that; a small tree's down to half a metre, an old one's up to 3.6 m (7 m across).
+	const float plate_radius = CLAMP(11.0f * trunk_r * Math::lerp(0.9f, 1.2f, kr.randf()), 0.5f, 3.6f);
 	const float plate_thick = CLAMP(0.22f * plate_radius, 0.15f, 0.6f);
 	const Builder saved_wood = wood_b;
 	wood_b = Builder();

@@ -357,6 +357,19 @@ screen-reading surface lies clearly in front of it, the opaque copy elsewhere
 passes and one colour pass over those surfaces, one more screen copy with mips,
 and two depth fetches per lookup. GPU bench on the PC queue.
 
+Round 2 (docs: the band barely changed). Debug renders showed why: the
+stream's refracted lookups mostly land beside it, where the pool is the front
+layer, which the copy did not hold. Now the copy holds the front layer too
+(drawn before the second layer, then the scene colour is restored), a lookup
+takes it when it lies clearly behind the surface and is another sheet (a
+depth walk from the fragment to the sample finds a jump or a gap, so a
+sphere never sees its own far side), a 2x2 gather rejects layer edges, and
+the material's depth lookups see the same layer so its refracted ray stops at
+the pool. What stays brown in the bucket shot is where the stream's
+refraction (the solid-thickness model, a sphere of transmission_thickness)
+bends the ray up onto the wall above the waterline; a synthetic stream over
+a pool shows the pool through the stream end to end.
+
 ### MPM fluid: spray, foam and bubbles
 
 Technique: Ihmsen, Akinci, Akinci and Teschner 2012, "Unified spray, foam

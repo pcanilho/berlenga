@@ -21,6 +21,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
 - **Mineral glints** (`RockField3D.mineral_glints`): glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.
 - **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_contact`, `ground_blend`, `ground_blend_height`, `ground_material`): stones sit in the soil, with damp, gritty ground and fines banked uphill round each foot; the foot blends into the ground with a soil band, or takes the ground's own grain with a damp, darker foot (the landscape's TerrainMaterial3D when `ground_material` is unset), and stones take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
+- **Moss cushions** (`moss_cushions`): on near stones, moss grows as real cushions 1 to 3.5 cm thick, with tufts that hold up under path tracing.
 
 ## Placement
 
@@ -32,6 +33,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
   *Breakable stones: the block breaks into a pile of angular pieces where it stood.*
 
 - **Live rockfall** (`RockField3D.live_rockfall`; `live_rockfall_rate`, `live_rockfall_radius`, `live_rockfall_max`): cliff blocks fall in frost, thaw and rain, and break on impact.
+- **Rockfall dust** (`rockfall_dust`; needs PhysX Flow): falling and breaking stones throw up dust where they hit.
 
 - **Tors and coasts** (`layer_enabled`: `LAYER_TOR`, `LAYER_COAST`): tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.
 - **Landforms** (`layer_enabled`: `LAYER_LANDFORM`): hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.

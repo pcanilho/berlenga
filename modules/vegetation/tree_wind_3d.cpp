@@ -34,6 +34,7 @@
 #include "tree_generator.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -1293,13 +1294,13 @@ RigidBody3D *TreeWind3D::_make_part(Target &r_target, int p_instance, const Tran
 	Vector3 com = total > 1e-6f ? moment / total : bone.pivot + bone.dir * (bone.length * 0.5f);
 	float mass = total * scale * scale * scale;
 	if (p_bone == 0 && rig.storm_data.size() >= 9) {
-		// The root plate: about half of its disc is soil (Krisans et al. 2020: 0.5-1.5 m3 for
-		// spruce plates of 1.4-2 m radius), at 1,400 kg/m3 moist.
+		// The root plate: a lens thinning to its rim, about a quarter of its disc in soil (Krisans
+		// et al. 2020: 0.5-1.5 m3 for spruce plates of 1.4-2 m radius), at 1,400 kg/m3 moist.
 		MeshInstance3D *pm = memnew(MeshInstance3D);
 		pm->set_mesh(_kit_mesh(rig, true));
 		pm->set_scale(Vector3(scale, scale, scale));
 		body->add_child(pm);
-		const float plate = 0.5f * float(Math::PI) * rig.plate_radius * rig.plate_radius * rig.plate_thick * 1400.0f * scale * scale * scale;
+		const float plate = 0.25f * float(Math::PI) * rig.plate_radius * rig.plate_radius * rig.plate_thick * 1400.0f * scale * scale * scale;
 		com = (com * mass + Vector3(0.0f, -0.5f * rig.plate_thick, 0.0f) * plate) / MAX(mass + plate, 1e-3f);
 		mass += plate;
 	}
@@ -1469,6 +1470,7 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 		sp.exclude[c] = exclude[c];
 	}
 	sp.butt = butt_xf;
+	sp.fall = dw;
 	float area = 0.0f;
 	Vector3 load;
 	for (uint32_t c = 1; c < n; c++) {
@@ -1516,6 +1518,17 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	_collapse(r_target, p_instance, p_world);
 	if (thrown) {
 		storm_throws++;
+		// A MultiMesh whose every tree is thrown draws nothing but still costs its skinned copy under
+		// path tracing (the fallen trees are drawn by their destructibles): hide it.
+		bool all = true;
+		for (uint32_t i = 0; i < r_target.placements.size() && all; i++) {
+			const Touch *t = r_target.touch.getptr(int(i));
+			all = t && t->uprooted;
+		}
+		MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(r_target.node);
+		if (all && mmi) {
+			mmi->set_visible(false);
+		}
 	} else {
 		storm_breaks++;
 	}
@@ -1657,7 +1670,7 @@ void TreeWind3D::_blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<u
 // node's health). The whole tree's root plate rides the stem's foot.
 // Pure (no node, server or cache state): it runs on a worker thread, from the break on, so the asset is
 // ready by the time the part lands.
-Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, Array &r_materials) {
+Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, Array &r_materials) {
 	const uint64_t t_start = OS::get_singleton()->get_ticks_usec();
 	Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
 	if (!authoring) {
@@ -1912,8 +1925,13 @@ Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_
 		Soup h;
 		hull(c, h);
 		const bool foot = p_bone == 0 && c == chunk_of[0];
-		// No hull for the root plate: it falls turning on its edge, half in the ground, and a hull
-		// there would be thrown out of the ground at the swap.
+		// The root plate's hull: a thin disc nearly its full width, so a thrown tree lies propped on
+		// its plate standing on edge, the butt held off the ground (Mitchell 2013). Thin, because the
+		// pieces weigh by hull volume: a full-thickness disc outweighs the stem and swings the tree
+		// back upright on it.
+		if (foot) {
+			cylinder(h, Vector3(0, -0.25f * p_rig.plate_thick, 0), Vector3(), 0.8f * p_rig.plate_radius);
+		}
 		Array piece;
 		Dictionary hs;
 		hs["arrays"] = soup_arrays(h);
@@ -2004,7 +2022,7 @@ Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_
 }
 
 void TreeWind3D::_blast_job(BlastJob *p_job) {
-	p_job->asset = _blast_asset(p_job->rig, p_job->surface_arrays, p_job->bone, p_job->exclude, p_job->butt, p_job->materials);
+	p_job->asset = _blast_asset(p_job->rig, p_job->surface_arrays, p_job->bone, p_job->exclude, p_job->butt, p_job->fall, p_job->materials);
 	if (p_job->asset.is_valid() && p_job->asset->has_method("prepare_render")) {
 		// Its chunks' render arrays in GPU format now, so the swap only uploads them.
 		const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -2037,6 +2055,7 @@ void TreeWind3D::_blast_request(const StormPart &p_part) {
 	job->bone = p_part.bone;
 	job->exclude = p_part.exclude;
 	job->butt = p_part.butt;
+	job->fall = p_part.fall;
 	job->task = WorkerThreadPool::get_singleton()->add_template_task(this, &TreeWind3D::_blast_job, job, false, String("TreeWind3D Blast"));
 	blast_jobs[p_part.key] = job;
 }
@@ -2084,6 +2103,10 @@ void TreeWind3D::_blast_swap(StormPart &r_part, RigidBody3D *p_body, const Vecto
 		return;
 	}
 	const Ref<Resource> asset = *found;
+	// Pieces that split start touching at the break; uncapped, PhysX throws them apart.
+	if (float(ProjectSettings::get_singleton()->get_setting("physics/physx_3d/simulation/max_depenetration_velocity", 0.0f)) <= 0.0f) {
+		WARN_PRINT_ONCE("TreeWind3D: set physics/physx_3d/simulation/max_depenetration_velocity (3 m/s) or broken trees fly apart when they split.");
+	}
 	Object *obj = ClassDB::instantiate("PhysXDestructible3D");
 	Node3D *node = Object::cast_to<Node3D>(obj);
 	if (!node) {
@@ -2186,7 +2209,7 @@ void TreeWind3D::_storm_settle(double p_delta) {
 		StormFall &fall = storm_settling[k];
 		Node3D *node = ObjectDB::get_instance<Node3D>(fall.node);
 		fall.age += float(p_delta);
-		if (!node || fall.age > 12.0f) {
+		if (!node || fall.age > 20.0f) {
 			storm_settling.remove_at(k);
 			continue;
 		}
@@ -2217,6 +2240,9 @@ void TreeWind3D::_storm_settle(double p_delta) {
 			bool has_foot = false;
 			int low_chunk = -1;
 			Vector3 low;
+			// Each chunk's lowest end, world space.
+			LocalVector<int> ids;
+			LocalVector<Vector3> ends;
 			for (int ci = 0; ci < chunks.size(); ci++) {
 				const int c = chunks[ci] - 1; // Asset chunk 0 is the whole.
 				if (c < 0 || c >= int(fall.mass.size())) {
@@ -2229,12 +2255,13 @@ void TreeWind3D::_storm_settle(double p_delta) {
 					has_foot = true;
 					continue;
 				}
-				for (int e = 0; e < 2; e++) {
-					const Vector3 p = world(e == 0 ? fall.low_a[c] : fall.low_b[c]);
-					if (low_chunk < 0 || p.y < low.y) {
-						low = p;
-						low_chunk = c;
-					}
+				const Vector3 pa = world(fall.low_a[c]), pb = world(fall.low_b[c]);
+				const Vector3 p = pa.y < pb.y ? pa : pb;
+				ids.push_back(c);
+				ends.push_back(p);
+				if (low_chunk < 0 || p.y < low.y) {
+					low = p;
+					low_chunk = c;
 				}
 			}
 			if (mass <= 0.0f || low_chunk < 0) {
@@ -2246,29 +2273,47 @@ void TreeWind3D::_storm_settle(double p_delta) {
 			if (com.y - low.y < 1.0f) {
 				continue;
 			}
-			// The rest's share of the weight: the foot takes the rest, by the levers about the centre.
+			// What it rests on: every limb end within 25 cm of the lowest (the ground there).
+			LocalVector<int> rests;
+			Vector3 rest_mid;
+			for (uint32_t k2 = 0; k2 < ids.size(); k2++) {
+				if (ends[k2].y < low.y + 0.25f) {
+					rests.push_back(int(k2));
+					rest_mid += ends[k2];
+				}
+			}
+			rest_mid /= float(rests.size());
+			// The rests' share of the weight: the foot takes the rest, by the levers about the centre.
 			float share = 1.0f;
 			if (has_foot) {
-				const Vector2 c2(com.x, com.z), f2(foot.x, foot.z), l2(low.x, low.z);
+				const Vector2 c2(com.x, com.z), f2(foot.x, foot.z), l2(rest_mid.x, rest_mid.z);
 				const float lf = f2.distance_to(c2), ll = l2.distance_to(c2);
 				share = lf + ll > 1e-3f ? CLAMP(lf / (lf + ll), 0.0f, 1.0f) : 0.5f;
 			}
-			const float load = mass * g * share; // N, upward at the rest.
-			// Up the limb from the rest toward the foot, the first joint whose wood cannot carry the
-			// load's moment about it (its lever across the ground) breaks.
-			const float s3 = fall.scale * fall.scale * fall.scale;
+			const float load = mass * g * share / float(rests.size()); // N, upward at each rest.
 			HashSet<int> mine;
 			for (int ci = 0; ci < chunks.size(); ci++) {
 				mine.insert(chunks[ci] - 1);
 			}
-			for (int c = low_chunk; c >= 0 && c != fall.butt && mine.has(c) && fall.parent[c] >= 0 && mine.has(fall.parent[c]); c = fall.parent[c]) {
-				const Vector3 at = world(fall.low_a[c]);
-				const float moment = load * Vector2(at.x - low.x, at.z - low.z).length() / 1000.0f / s3; // kN m at scale 1
-				if (moment > fall.strength[c]) {
-					const int broke = node->call("apply_radial_damage", at, moment, 0.05f, 0.3f);
-					print_verbose(vformat("TreeWind3D: settle piece %d (%.0f kg) on chunk %d: joint %d breaks, %.1f over %.1f kN m (%d pieces)", i, mass, low_chunk, c, moment, fall.strength[c], broke));
-					break;
+			// Up each limb from its rest toward the foot, the first joint whose wood cannot carry
+			// that load's moment about it (its lever across the ground) breaks.
+			const float s3 = fall.scale * fall.scale * fall.scale;
+			int broken = 0;
+			for (int r : rests) {
+				const Vector3 at_rest = ends[r];
+				for (int c = ids[r]; c >= 0 && c != fall.butt && mine.has(c) && fall.parent[c] >= 0 && mine.has(fall.parent[c]); c = fall.parent[c]) {
+					const Vector3 at = world(fall.low_a[c]);
+					const float moment = load * Vector2(at.x - at_rest.x, at.z - at_rest.z).length() / 1000.0f / s3; // kN m at scale 1
+					if (moment > fall.strength[c]) {
+						node->call("apply_radial_damage", at, moment, 0.05f, 0.3f);
+						broken++;
+						break;
+					}
 				}
+			}
+			print_verbose(vformat("TreeWind3D: settle piece %d (%.0f kg, centre %.2f m up): %d rests, %.1f kN each, %d joints break", i, mass, com.y - low.y, rests.size(), load / 1000.0f, broken));
+			if (broken > 0) {
+				break; // The pieces changed: the next check sees them anew.
 			}
 		}
 		fall.last = seen;
@@ -2299,12 +2344,24 @@ void TreeWind3D::_storm_impacts() {
 				at = state->get_contact_local_position(c);
 			}
 		}
+		// A thrown tree swaps only once it has turned 30 degrees on its plate's hinge: the plate's
+		// hull (nearly its full disc) is then clear of the ground but at its hinge edge, and the
+		// tree cannot be stood back up on it as on a pedestal. It swaps on a hit past that, or once
+		// it comes to rest (propped on its crown, which the crush then breaks).
+		float turned = 2.0f;
+		if (sp.bone == 0) {
+			turned = Quaternion((sp.start.inverse() * body->get_global_transform().basis).orthonormalized()).get_angle();
+		}
 		// A hit that changes the part's whole speed by 1.5 m/s or more (a crown landing, not
 		// rolling or sliding).
-		if (!sp.hit && best > 1.5f * float(body->get_mass())) {
+		if (!sp.hit && turned > 0.5f && best > 1.5f * float(body->get_mass())) {
 			sp.hit = true;
 			sp.hit_local = body->get_global_transform().affine_inverse().xform(at);
 			sp.hit_impulse = best;
+		} else if (!sp.hit && turned > 0.5f && sp.age > 1.0f && body->get_angular_velocity().length() < 0.15f) {
+			sp.hit = true;
+			sp.hit_local = body->get_center_of_mass();
+			sp.hit_impulse = float(body->get_mass()) * 1.5f;
 		}
 		// Swapped once its asset is built (it almost always is by the landing).
 		if (sp.hit && _blast_ready(sp.key)) {
