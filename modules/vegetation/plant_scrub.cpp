@@ -269,7 +269,7 @@ void PlantGenerator::_build_thyme() {
 	leaf_wear = 0.1f;
 	Leaf lf;
 	lf.shape = LEAF_LANCEOLATE;
-	lf.width = 0.0035f;
+	lf.width = 0.003f;
 	lf.fold = 0.4f;
 	lf.bend = 0.2f;
 	lf.segments = 1;
@@ -287,7 +287,7 @@ void PlantGenerator::_build_thyme() {
 			const float a0 = (k & 1) * Math::PI * 0.5f;
 			for (int q = 0; q < 2; q++) {
 				const Vector3 radial = sc_radial(at, a0 + q * Math::PI);
-				lf.length = _rand(0.005f, 0.0075f);
+				lf.length = _rand(0.0045f, 0.0065f);
 				_add_leaf(SURFACE_LEAF, Transform3D(sc_frame((radial + at.basis.get_column(2) * 0.7f).normalized(), at.basis.get_column(2)), at.origin), lf, Math::lerp(p_wind, 1.0f, s));
 				if (_rand(0.0f, 1.0f) < 0.35f) {
 					lf.length = _rand(0.003f, 0.0045f);
@@ -309,25 +309,31 @@ void PlantGenerator::_build_thyme() {
 		const Transform3D end = p_fr[p_fr.size() - 1];
 		const Transform3D tip = _add_stem(Transform3D(sc_frame((end.basis.get_column(2) * 0.3f + Vector3(0, 1, 0)).normalized(), Vector3(0, 1, 0)), end.origin), _rand(0.004f, 0.012f), 0.0006f, 0.0005f, 0.0f, 2, 0.8f);
 		const Vector3 ax = tip.basis.get_column(2);
-		const float hr = _rand(0.0025f, 0.0032f);
+		const float hr = _rand(0.0022f, 0.0028f);
 		_add_head(SURFACE_CENTRE, Transform3D(sc_frame(ax, Vector3(0, 1, 0)), tip.origin), hr, hr * 1.6f, Color(1, 1, 1), 3, 6);
 		if (bloom == BLOOM_SEED) {
 			return;
 		}
-		const int nf = int(_rand(14.0f, 20.0f));
+		// The flowers stand out all over the head, not in one ring: each a short tube 2 to 3 mm
+		// with its small spreading lower lip, so the head reads as a little pink ball.
+		const int nf = int(_rand(10.0f, 15.0f));
+		const Vector3 centre = tip.origin + ax * hr * 0.8f;
 		for (int f = 0; f < nf; f++) {
 			const float a = f * SC_GOLDEN;
-			const float hgt = _rand(0.15f, 0.95f);
+			const float el = Math::asin(_rand(-0.3f, 0.95f));
 			const Vector3 rd = sc_radial(tip, a);
-			const Vector3 d = (rd + ax * 0.35f).normalized();
-			const Vector3 at = tip.origin + ax * hr * 1.5f * hgt + rd * hr * 0.9f;
-			petal.length = _rand(0.0026f, 0.0034f);
-			petal.width = petal.length * 1.1f;
-			_add_leaf(SURFACE_PETAL, Transform3D(sc_frame(d, ax), at), petal, 1.0f);
+			const Vector3 d = (rd * Math::cos(el) + ax * Math::sin(el)).normalized();
+			const Vector3 at = centre + d * hr * 0.8f;
+			const float tl = _rand(0.002f, 0.0026f);
+			_add_head(SURFACE_PETAL, Transform3D(sc_frame(d, ax), at), 0.001f, tl, Color(0.95f, 0.95f, 0.95f), 2, 5);
+			petal.length = _rand(0.002f, 0.0026f);
+			petal.width = petal.length * 1.2f;
+			_add_leaf(SURFACE_PETAL, Transform3D(sc_frame((d - ax * 0.4f).normalized(), d), at + d * tl), petal, 1.0f);
 		}
 	};
-	const float h = _rand(0.07f, 0.13f);
-	_scrub_mound(h * _rand(1.4f, 2.0f), h, int(_rand(20.0f, 26.0f)), 0.002f, 0.03f, 0.01f, 0.15f, shoot);
+	// A low, tight cushion: about as wide as it is tall, twice at most, the shoots short and packed.
+	const float h = _rand(0.06f, 0.11f);
+	_scrub_mound(h * _rand(1.1f, 1.5f), h, int(_rand(26.0f, 34.0f)), 0.0018f, 0.02f, 0.0065f, 0.35f, shoot);
 	plant_height = MAX(plant_height, 0.05f);
 }
 
@@ -354,7 +360,10 @@ void PlantGenerator::_build_sage_rockrose() {
 	// Summer dormancy (July and August, into September): smaller, folded, greyer leaves, fewer of them.
 	const int day = bloom_day;
 	const float drought = (day >= 180 && day <= 270) ? Math::sin(Math::PI * float(day - 180) / 90.0f) : 0.0f;
-	const Color summer = Color(1, 1, 1).lerp(Color(0.97f, 0.88f, 0.7f), drought); // Vertex colours are unorm: a tint can only darken, so the drought shows olive-grey.
+	// The drought's grey-white cast: the folded leaves show their felted undersides (Harley 1985).
+	// From the fixed preset colour, so a generator reused across the year never drifts.
+	leaf_color = Color(0.25f, 0.3f, 0.18f).lerp(Color(0.56f, 0.57f, 0.52f), drought * 0.9f);
+	const Color summer = Color(1, 1, 1);
 	lf.fold = Math::lerp(0.3f, 0.65f, drought);
 	float progress = 0.0f, dead = 0.0f;
 	const Bloom bloom = _bloom(false, &progress, &dead);
@@ -423,7 +432,7 @@ void PlantGenerator::_build_sage_rockrose() {
 		}
 	};
 	const float h = _rand(0.28f, 0.42f);
-	_scrub_mound(h * _rand(1.2f, 1.6f), h, int(_rand(11.0f, 15.0f)), 0.0045f, 0.08f, 0.03f, 0.2f, shoot);
+	_scrub_mound(h * _rand(1.0f, 1.3f), h, int(_rand(17.0f, 22.0f)), 0.0045f, 0.075f, 0.02f, 0.4f, shoot);
 	plant_height = MAX(plant_height, 0.15f);
 }
 

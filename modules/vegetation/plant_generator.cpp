@@ -5620,7 +5620,7 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.16f, 0.07f, 0.2f); // The dark purple spike.
 			break;
 		case PRESET_THYME:
-			leaf_color = Color(0.22f, 0.28f, 0.17f); // Grey-green.
+			leaf_color = Color(0.3f, 0.36f, 0.26f); // Grey-green.
 			stem_color = Color(0.3f, 0.2f, 0.15f); // Wiry, red-brown.
 			petal_color = Color(0.8f, 0.62f, 0.78f); // Pale pink-mauve.
 			centre_color = Color(0.46f, 0.32f, 0.38f); // The purplish, hairy calyces.
