@@ -2202,6 +2202,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Alpine and scree plants",
+   "settings": [
+    "PlantGenerator.make_alpine()"
+   ],
+   "note": "",
+   "what": "fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Leaf wear",
    "settings": [
     "PlantGenerator.leaf_wear"
