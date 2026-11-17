@@ -980,13 +980,13 @@ void fragment() {
 		if (all(greaterThanEqual(kuv, vec2(0.0))) && all(lessThanEqual(kuv, vec2(1.0)))) {
 			vec2 k = textureLod(rock_contact_map, kuv, 0.0).rg;
 			float kn = tm_vn(wp * 3.1 + 17.0);
-			float soft = smoothstep(0.35, 0.75, wn.y);
-			float damp = smoothstep(0.0, 1.0, k.r * (0.75 + 0.5 * kn)) * soft;
+			float soft = smoothstep(0.5, 0.85, wn.y); // ground, not rock faces
+			float damp = smoothstep(0.0, 0.8, k.r * (0.8 + 0.4 * kn)) * soft;
 			float fines = smoothstep(0.15, 0.85, k.g * (0.7 + 0.6 * tm_vn(wp * 7.3 + 5.0))) * soft;
 			float grit = tm_vn(wp * 38.0 + 3.0);
-			vec3 fcol = albedo * vec3(0.82, 0.76, 0.66) * (grit > 0.74 ? 1.5 : (grit < 0.22 ? 0.65 : 1.0));
+			vec3 fcol = albedo * vec3(0.72, 0.62, 0.48) * (grit > 0.74 ? 1.5 : (grit < 0.22 ? 0.65 : 1.0));
 			albedo = mix(albedo, fcol, fines);
-			albedo *= mix(1.0, 0.5, damp);
+			albedo *= mix(1.0, 0.42, damp);
 			rough = mix(rough, rough * 0.75, damp);
 		}
 	}
