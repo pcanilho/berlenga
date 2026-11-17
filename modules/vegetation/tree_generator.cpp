@@ -50,6 +50,14 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom"
 };
 
+// Bank trees (trees.md 5q) step through four slopes for placement to pick from. A stand asked for
+// one variant (scouts and tests on the cloud) gets one bank tree: four slope variants of three
+// bank species added some 47M triangles to make_woodland(1) (a bank willow is about 10M) and the
+// forest no longer fit in 15 GB.
+static int _bank_variants(int p_variants) {
+	return p_variants <= 0 ? 0 : (p_variants == 1 ? 1 : MAX(p_variants, 4));
+}
+
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row"
@@ -5205,29 +5213,36 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			// yellow-green) or a quarter (broom, glabrous, green). Pods 10-20 mm, villous (gorse);
 			// 15-60 mm, black, hairy on the margins (broom). Webb et al. 1988.
 			const float L = gorse ? 0.017f : 0.02f;
-			const Color petal_c = gorse ? lin(1.0f, 0.83f, 0.12f) : lin(1.0f, 0.86f, 0.16f);
-			const Color banner_c = gorse ? lin(1.0f, 0.79f, 0.08f) : lin(1.0f, 0.82f, 0.1f);
-			const Color keel_c = petal_c.lerp(lin(1.0f, 0.9f, 0.45f), 0.3f);
-			// A petal or calyx lip: three stations, rounded (four triangles), cupped by p_fold.
-			auto petal = [&](const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_width, float p_len, float p_w, float p_fold, const Color &p_c0, const Color &p_c1) {
+			// Egg-yolk to golden yellow (gorse deeper, a little orange in the banner; broom a
+			// clear golden yellow). Paler values read as a dull ochre once shaded.
+			const Color petal_c = gorse ? lin(1.0f, 0.86f, 0.06f) : lin(1.0f, 0.88f, 0.1f);
+			const Color banner_c = gorse ? lin(1.0f, 0.8f, 0.0f) : lin(1.0f, 0.84f, 0.04f);
+			const Color keel_c = petal_c.lerp(lin(1.0f, 0.92f, 0.3f), 0.3f);
+			// A petal or calyx lip: three stations of three points, folded along the midline by
+			// p_fold (the edges rise off the midrib, so the petal is a V, not a flat card) and
+			// curled back at the tip by p_curl (eight triangles).
+			auto petal = [&](const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_width, float p_len, float p_w, float p_fold, const Color &p_c0, const Color &p_c1, float p_curl = 0.0f) {
 				const Vector3 nrm = p_dir.cross(p_width).normalized();
 				static const float prof[3] = { 0.35f, 1.0f, 0.55f };
 				static const float ts[3] = { 0.0f, 0.55f, 1.0f };
 				const int v0 = r_b.verts.size();
 				for (int k = 0; k < 3; k++) {
-					const Vector3 c = p_at + p_dir * (p_len * ts[k]);
+					const Vector3 c = p_at + p_dir * (p_len * ts[k]) + nrm * (p_curl * p_len * ts[k] * ts[k]);
 					const float w = p_w * prof[k] * 0.5f;
 					const Color col = p_c0.lerp(p_c1, ts[k]);
 					vert(c - p_width * w + nrm * (p_fold * w), Vector2(0.0f, ts[k]), col);
+					vert(c, Vector2(0.5f, ts[k]), col * 0.92f);
 					vert(c + p_width * w + nrm * (p_fold * w), Vector2(1.0f, ts[k]), col);
 				}
 				for (int k = 0; k < 2; k++) {
-					const int q = v0 + k * 2;
-					tri(q, q + 2, q + 1);
-					tri(q + 1, q + 2, q + 3);
+					const int q = v0 + k * 3;
+					for (int e = 0; e < 2; e++) {
+						tri(q + e, q + 3 + e, q + e + 1);
+						tri(q + e + 1, q + 3 + e, q + 4 + e);
+					}
 				}
 			};
-			const Color calyx_c = gorse ? lin(0.66f, 0.62f, 0.3f) : lin(0.32f, 0.44f, 0.16f);
+			const Color calyx_c = gorse ? lin(0.8f, 0.72f, 0.22f) : lin(0.32f, 0.44f, 0.16f);
 			const Color stalk_c = gorse ? lin(0.38f, 0.42f, 0.24f) : lin(0.3f, 0.42f, 0.16f);
 			const Color pod_green = gorse ? lin(0.4f, 0.42f, 0.28f) : lin(0.3f, 0.4f, 0.14f);
 			const Color pod_black = gorse ? lin(0.13f, 0.1f, 0.08f) : lin(0.07f, 0.06f, 0.05f);
@@ -5280,11 +5295,19 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 						const float jit = Math::lerp(0.85f, 1.15f, float((h >> 4) & 255u) / 255.0f);
 						if (is_flower) {
 							// Out from the shoot and a little forward; the banner on its upper side.
-							const Vector3 a = (radial * 0.8f + d * 0.45f + Vector3(0, 0.15f, 0)).normalized();
+							// Each turned its own way (a cluster of flowers along a shoot, not a row of
+							// cards facing alike).
+							const float tw = float((h >> 12) & 255u) / 255.0f - 0.5f;
+							const Vector3 a = (radial * 0.8f + d * (0.45f + 0.3f * tw) + Vector3(0, 0.15f, 0)).normalized();
 							Vector3 u = Vector3(0, 1, 0) - a * a.y;
-							u = u.length_squared() > 1e-4f ? u.normalized() : perp(a);
+							u = u.length_squared() > 1e-4f ? u.normalized().rotated(a, tw * 1.4f) : perp(a);
 							const Vector3 sd = a.cross(u).normalized();
 							const float l = L * jit;
+							// Each flower its own brightness, and its throat shaded: the base of each
+							// petal sits in the calyx and its neighbours' shadow, which a shadow map
+							// cannot resolve at a centimetre (the path tracer finds it anyway).
+							const float fb = Math::lerp(0.82f, 1.08f, float((h >> 20) & 255u) / 255.0f);
+							const Color pc = petal_c * fb, bc = banner_c * fb, kc = keel_c * fb;
 							const Vector3 c0 = at + a * (gorse ? 0.05f * l : 0.3f * l);
 							if (!gorse) {
 								stalk(at, c0, 0.0007f, stalk_c);
@@ -5292,16 +5315,17 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 							// Calyx: two lips, hairy and nearly the corolla's length in gorse, a short cup in
 							// broom; each lip a small folded blade.
 							const float cl = gorse ? 0.7f * l : 0.28f * l;
-							petal(c0, (a + u * 0.12f).normalized(), sd, cl, 0.32f * l, 0.3f, calyx_c * 0.85f, calyx_c);
-							petal(c0, (a - u * 0.12f).normalized(), sd, cl * 0.95f, 0.3f * l, -0.3f, calyx_c * 0.85f, calyx_c);
+							petal(c0, (a + u * 0.06f).normalized(), sd, cl, 0.24f * l, 0.7f, calyx_c * 0.85f, calyx_c);
+							petal(c0, (a - u * 0.06f).normalized(), sd, cl * 0.95f, 0.22f * l, -0.7f, calyx_c * 0.85f, calyx_c);
 							const Vector3 k0 = c0 + a * (gorse ? 0.25f * l : 0.1f * l);
 							// Wings and keel: a boat along the flower's axis, closed over the stamens.
 							for (int side = -1; side <= 1; side += 2) {
 								const Vector3 wd = (u * -0.75f + sd * (0.65f * side)).normalized();
-								petal(k0 + sd * (0.04f * l * side), (a - u * 0.08f).normalized(), wd, 0.85f * l, 0.4f * l, -0.12f * side, keel_c, petal_c);
+								petal(k0 + sd * (0.04f * l * side), (a - u * 0.08f).normalized(), wd, 0.85f * l, 0.4f * l, -0.6f * side, kc * 0.6f, pc, 0.1f * side);
 							}
-							// The banner: standing up and back over the boat, a little cupped.
-							petal(k0 + u * (0.08f * l), (u * 0.85f + a * 0.55f).normalized(), sd, 0.9f * l, 0.75f * l, 0.18f, banner_c * 0.9f, banner_c);
+							// The banner: standing up and back over the boat, folded along its midline
+							// and its tip turned back.
+							petal(k0 + u * (0.08f * l), (u * 0.85f + a * 0.55f).normalized(), sd, 0.9f * l, 0.7f * l, 0.65f, bc * 0.6f, bc, -0.25f);
 						} else if (split > 0.0f && float((h >> 8) & 255u) / 255.0f < split) {
 							// A burst broom pod: two black valves twisted into spirals.
 							const Vector3 a = (radial * 0.5f + d * 0.6f + Vector3(0, -0.2f, 0)).normalized();
@@ -13656,6 +13680,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			m->set_feature(BaseMaterial3D::FEATURE_SNOW, false);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 			m->set_backlight(Color(0.12f, 0.14f, 0.05f));
+			if (preset == PRESET_GORSE || preset == PRESET_BROOM) {
+				// Mostly petals: thin, they glow golden against the light, and their satin
+				// sheen is weak (a plain 0.5 specular laid the sky's grey-blue over the yellow
+				// and turned it mustard).
+				m->set_backlight(Color(0.3f, 0.26f, 0.02f));
+				m->set_specular(0.25f);
+			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "crown_parts");
 		} else if (s == 9) {
 			// Resin runs and beads on a conifer's wounds (trees.md 5p): vertex colour, glossy.
@@ -14438,7 +14469,9 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		// a sensible tree. The steeper the bank the more of the soil has washed from under the
 		// downhill roots (Gartner 2007); one steep variant in eight stands over a boulder, as on
 		// stony stream banks and gorge sides.
-		static const float slopes[4] = { 0.0f, 0.35f, 0.6f, 0.85f };
+		// The 34 degree bank first: a single-variant stand (scouts, tests) gets that one; the
+		// level tree is the stand's own open-grown form.
+		static const float slopes[4] = { 0.6f, 0.0f, 0.85f, 0.35f };
 		const uint32_t h = uint32_t(seed) * 2654435761u;
 		const float t = float((h >> 8) & 255u) / 255.0f;
 		ground_slope = slopes[p_variant % 4];
@@ -15045,7 +15078,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_BEECH, 0.3f);
 			// Ravine woods on the gorge sides (Tilio-Acerion: sycamore, ash and lime on steep,
 			// unstable, stony slopes; Ellenberg 1988): sycamore bank trees past about 25 degrees.
-			Ref<PlantSpecies> ravine = _stand_species(PRESET_SYCAMORE_MAPLE, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			Ref<PlantSpecies> ravine = _stand_species(PRESET_SYCAMORE_MAPLE, false, _bank_variants(p_variants), FORM_BANK);
 			ravine->set_density(0.4f);
 			ravine->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(25.0f, 90.0f));
 			ravine->set_rule_fade(PlantSpecies::RULE_SLOPE, 6.0f);
@@ -15143,14 +15176,14 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_BLACK_ALDER, 0.4f);
 			// On the banks themselves, alder and willow lean out over the water with their roots
 			// washed bare (trees.md 5q). Placement picks each tree's slope variant.
-			Ref<PlantSpecies> alder_bank = _stand_species(PRESET_BLACK_ALDER, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			Ref<PlantSpecies> alder_bank = _stand_species(PRESET_BLACK_ALDER, false, _bank_variants(p_variants), FORM_BANK);
 			alder_bank->set_density(0.5f);
 			alder_bank->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 12.0f));
 			alder_bank->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 6.0f);
 			alder_bank->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			alder_bank->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(alder_bank);
-			Ref<PlantSpecies> willow_bank = _stand_species(PRESET_WHITE_WILLOW, false, p_variants > 0 ? MAX(p_variants, 4) : 0, FORM_BANK);
+			Ref<PlantSpecies> willow_bank = _stand_species(PRESET_WHITE_WILLOW, false, _bank_variants(p_variants), FORM_BANK);
 			willow_bank->set_density(0.3f);
 			willow_bank->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 8.0f));
 			willow_bank->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 4.0f);

@@ -2633,8 +2633,11 @@ void fragment() {
 	col = mix(col, lic_col * (0.8 + 0.4 * rk_noise3(mp * 60.0)), lic);
 	rough = mix(rough, 0.9, lic);
 
-	// Moss: on the tops and in the hollows, more near the ground and where it stays damp.
-	float moss_place = smoothstep(0.35, 0.85, wn.y + 0.35 * (1.0 - cavity) + 0.3 * contact + 0.45 * shade_side) * (1.0 - fresh);
+	// Moss: where the stone stays damp and shaded (Bates 2000; Glime, Bryophyte Ecology): the faces turned from the
+	// sun, cracks and the joints between blocks, and the foot where it meets the soil. Open, sunlit tops dry out
+	// between rains and carry lichen instead; overhangs get no rain.
+	float moss_term = 0.9 * shade_side + 0.45 * (1.0 - cavity) + 0.8 * contact * (1.0 - smoothstep(0.4, 0.85, wn.y)) + 0.25 * max(wn.y, 0.0) - 0.4 * max(-wn.y - 0.3, 0.0);
+	float moss_place = smoothstep(0.2, 0.7, moss_term) * (1.0 - fresh);
 	float moss = moss_cover * moss_place * smoothstep(0.42, 0.58, rk_fbm3(mp * 2.2 + 17.0) + 0.25 * moss_cover - 0.12);
 	col = mix(col, moss_color * (0.7 + 0.6 * rk_fbm3(mp * 25.0)), moss);
 	rough = mix(rough, 0.95, moss);

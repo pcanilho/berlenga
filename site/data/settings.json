@@ -2576,6 +2576,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Gorse and broom",
+   "settings": [
+    "TreeGenerator.make_shrub_species()"
+   ],
+   "note": "",
+   "what": "real spines, flowers and pods, flowering by season, in young, mature, old, thicket and cushion forms.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Wind, bank and rock trees",
    "settings": [
     "wind_exposure",

@@ -31,6 +31,7 @@
 
 #include "rock_moss.h"
 
+#include "core/math/random_pcg.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/surface_tool.h"
 
@@ -39,6 +40,7 @@
 namespace RockMoss {
 
 static Ref<ShaderMaterial> shared_material;
+static Ref<ShaderMaterial> shoot_material;
 
 // The rock shader's noise (rk_hash3, rk_noise3, rk_fbm3), in floats as the GPU runs it, so the shell lies exactly
 // where the shader paints its moss.
@@ -117,22 +119,64 @@ void build(void *p_job) {
 			const float above = wp.y - (cd.r + v_slope.dot(Vector2(wp.x - origin.x, wp.z - origin.z)));
 			contact = 1.0f - smooth(0.0f, pm.contact_height * MAX(v_scale, 0.25f), above);
 			if (above < -0.01f) {
-				weight[i] = 0.0f; // under the ground
-				depth[i] = -0.003f;
+				weight[i] = -1.0f; // under the ground
 				continue;
 			}
 		}
 		const float shade_side = pm.aspect_strength * (wn.x * pole_n.x + wn.z * pole_n.z);
-		const float place = smooth(0.35f, 0.85f, wn.y + 0.35f * (1.0f - cavity) + 0.3f * contact + 0.45f * shade_side) * (1.0f - fresh);
+		const float term = 0.9f * shade_side + 0.45f * (1.0f - cavity) + 0.8f * contact * (1.0f - smooth(0.4f, 0.85f, wn.y)) + 0.25f * MAX(wn.y, 0.0f) - 0.4f * MAX(-wn.y - 0.3f, 0.0f);
+		const float place = smooth(0.2f, 0.7f, term) * (1.0f - fresh);
 		const float w = pm.moss_cover * place * smooth(0.42f, 0.58f, fbm3(mp * 2.2f + Vector3(17, 17, 17)) + 0.25f * pm.moss_cover - 0.12f);
 		weight[i] = w;
+	}
+	// The weight smoothed over the shape a few centimetres (Jacobi passes over its edges): the cavity term follows
+	// the grain at millimetres, and a weight that flickers vertex to vertex leaves a shell of single raised corners
+	// sunk in the rock. Moss grows in patches.
+	{
+		LocalVector<float> sum, cnt;
+		sum.resize(nv);
+		cnt.resize(nv);
+		for (int pass = 0; pass < 6; pass++) {
+			for (int i = 0; i < nv; i++) {
+				sum[i] = MAX(weight[i], 0.0f);
+				cnt[i] = 1.0f;
+			}
+			for (int t = 0; t + 2 < src.indices.size(); t += 3) {
+				const int a = src.indices[t], c = src.indices[t + 1], d = src.indices[t + 2];
+				const float wa = MAX(weight[a], 0.0f), wc = MAX(weight[c], 0.0f), wd = MAX(weight[d], 0.0f);
+				sum[a] += wc + wd;
+				sum[c] += wa + wd;
+				sum[d] += wa + wc;
+				cnt[a] += 2.0f;
+				cnt[c] += 2.0f;
+				cnt[d] += 2.0f;
+			}
+			for (int i = 0; i < nv; i++) {
+				if (weight[i] >= 0.0f) {
+					weight[i] = sum[i] / cnt[i];
+				}
+			}
+		}
+	}
+	for (int i = 0; i < nv; i++) {
+		const float w = weight[i];
+		if (w < 0.0f) {
+			weight[i] = 0.0f;
+			depth[i] = -0.003f;
+			continue;
+		}
+		const Vector3 mp = Vector3(src.uv[i].x, src.uv2[i].x, src.uv[i].y) * v_scale + Vector3(seed, seed, seed);
 		if (w < thr) {
 			depth[i] = -0.003f;
 		} else {
-			const float grow = smooth(thr, thr + 0.25f, w);
-			const float full = Math::lerp(0.01f, 0.035f, smooth(0.45f, 0.85f, w));
-			const float lump = 0.55f + 0.9f * fbm3(mp * 9.0f + Vector3(3, 3, 3));
-			depth[i] = MAX(full * grow * lump, 0.0015f);
+			// A cushion stands up at its edge within a centimetre or two (a rounded rim that shades the rock beside
+			// it), then swells to its full depth inside; the thickest moss where it is most at home.
+			const float rel = CLAMP((w - thr) / MAX(pm.moss_cover - thr, 0.02f), 0.0f, 1.0f);
+			const float grow = smooth(0.0f, 0.04f, rel);
+			const float full = Math::lerp(0.012f, 0.035f, smooth(0.15f, 0.8f, rel));
+			// Lumps: cushions of a few centimetres, each a dome of shoots, on a slower swell.
+			const float lump = 0.45f + 0.7f * fbm3(mp * 7.0f + Vector3(3, 3, 3)) + 0.45f * fbm3(mp * 22.0f + Vector3(9, 1, 5));
+			depth[i] = MAX(full * grow * lump, 0.005f * grow + 0.0015f);
 		}
 	}
 
@@ -163,8 +207,11 @@ void build(void *p_job) {
 				const Vector3 mp = Vector3(src.uv[i].x, src.uv2[i].x, src.uv[i].y) * v_scale + Vector3(seed, seed, seed);
 				out_uv.push_back(Vector2(mp.x, mp.z));
 				out_uv2.push_back(Vector2(mp.y, 0.0f));
-				// r: the moss weight (thick moss greener), g: the depth over the full cushion, b: how much it faces up.
-				out_c.push_back(Color(weight[i], CLAMP(depth[i] / 0.035f, 0.0f, 1.0f), up[i] * 0.5f + 0.5f, 1));
+				// r: how much at home the moss is (0 at its edge, 1 at its best; thick moss greener), g: the depth over a
+				// full cushion, b: how much it faces up, a: the edge (0.5 on the moss's contour; the material cuts it
+				// ragged there).
+				const float rel = (weight[i] - thr) / MAX(pm.moss_cover - thr, 0.02f);
+				out_c.push_back(Color(CLAMP(rel, 0.0f, 1.0f), CLAMP(depth[i] / 0.035f, 0.0f, 1.0f), up[i] * 0.5f + 0.5f, CLAMP(0.5f + 3.0f * rel, 0.0f, 1.0f)));
 			}
 			out_i.push_back(remap[i]);
 		}
@@ -231,6 +278,101 @@ void build(void *p_job) {
 	for (int i = 0; i < out_n.size(); i++) {
 		nw[i] = nw[i].length_squared() > 1e-20f ? nw[i].normalized() : Vector3(0, 1, 0);
 	}
+	// Shoots (as the trees' moss on lying wood): tufts of tapered blades a centimetre or two long over the cushion,
+	// lit yellow-green at their tips and dark between, standing up from it and arching over. Towards the edge they get
+	// shorter and sparser, and a few stand alone on the bare rock past it, so the moss thins out raggedly instead of
+	// ending at a line. One triangle per blade face, both faces.
+	{
+		RandomPCG rng;
+		rng.seed(uint64_t(Math::abs(seed) * 1000.0f) * 2654435761u + uint64_t(nv) * 97u + 11u);
+		PackedVector3Array sv, sn;
+		PackedVector2Array suv;
+		PackedColorArray sc;
+		const float density = 2200.0f; // tufts per m^2 over a full cushion (one per 2 cm square)
+		const int max_blades = 7000;
+		int blades_made = 0;
+		auto tufts_on = [&](const Vector3 &a, const Vector3 &b, const Vector3 &c, const Vector3 &na, const Vector3 &nb, const Vector3 &nc, float carpet, float tone, float area_m2) {
+			float want = area_m2 * density * carpet;
+			int n = int(want);
+			if (rng.randf() < want - float(n)) {
+				n++;
+			}
+			for (int k = 0; k < n && blades_made < max_blades; k++) {
+				float u = rng.randf(), v = rng.randf();
+				if (u + v > 1.0f) {
+					u = 1.0f - u;
+					v = 1.0f - v;
+				}
+				const Vector3 p = a + (b - a) * u + (c - a) * v;
+				const Vector3 nn = (na * (1.0f - u - v) + nb * u + nc * v).normalized();
+				const Vector3 t1 = nn.cross(Math::abs(nn.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).normalized();
+				const Vector3 t2 = nn.cross(t1);
+				const int blades = 3 + int(rng.randf() * (1.0f + 3.0f * carpet));
+				const float len = Math::lerp(0.006f, 0.016f, rng.randf()) * (0.7f + 0.8f * tone) * Math::lerp(0.4f, 1.0f, carpet) / s;
+				const float az0 = rng.randf() * float(Math::TAU);
+				const float sh = Math::lerp(0.8f, 1.25f, rng.randf());
+				// Tip and root colours (linear): yellow-green lit tips, dark olive in the tuft.
+				const Color tip_c = Color(0.095f * sh, 0.13f * sh, 0.025f * sh).lerp(Color(0.14f, 0.13f, 0.05f), 0.4f * (1.0f - tone));
+				const Color root_c = Color(0.018f, 0.035f, 0.008f);
+				for (int bl = 0; bl < blades; bl++) {
+					const float az = az0 + float(Math::TAU) * (float(bl) + 0.4f * rng.randf()) / float(blades);
+					const float tilt = Math::lerp(0.15f, 0.75f, rng.randf());
+					const Vector3 side = t1 * Math::cos(az) + t2 * Math::sin(az);
+					const Vector3 dir = (nn * Math::cos(tilt) + side * Math::sin(tilt)).normalized();
+					const float l = len * Math::lerp(0.7f, 1.15f, rng.randf());
+					const float wd = Math::lerp(0.0012f, 0.0022f, rng.randf()) / s;
+					const Vector3 across = dir.cross(nn).normalized() * wd;
+					const Vector3 tip = p + dir * (0.55f * l) + (dir * 0.6f + side * 0.5f - nn * 0.1f).normalized() * (0.45f * l);
+					const Vector3 bn = nn; // shaded as the cushion's surface
+					const Vector3 vp[3] = { p - across, p + across, tip };
+					const Color vc[3] = { root_c, root_c, tip_c };
+					const float vy[3] = { 0.0f, 0.0f, 1.0f };
+					for (int face = 0; face < 2; face++) {
+						for (int j = 0; j < 3; j++) {
+							const int jj = face == 0 ? j : (j == 0 ? 0 : 3 - j);
+							sv.push_back(vp[jj]);
+							sn.push_back(bn);
+							suv.push_back(Vector2(0.0f, vy[jj]));
+							sc.push_back(vc[jj]);
+						}
+					}
+					blades_made++;
+				}
+			}
+		};
+		const float s2 = s * s;
+		// Over the cushion: its own triangles, the carpet thinning towards the edge.
+		for (int t = 0; t + 2 < out_i.size(); t += 3) {
+			const int a = out_i[t], b = out_i[t + 1], c = out_i[t + 2];
+			const float rel = (out_c[a].r + out_c[b].r + out_c[c].r) / 3.0f;
+			const float edge = (out_c[a].a + out_c[b].a + out_c[c].a) / 3.0f;
+			if (edge < 0.5f) {
+				continue;
+			}
+			const float tone = (out_c[a].g + out_c[b].g + out_c[c].g) / 3.0f;
+			const float area = 0.5f * (out_v[b] - out_v[a]).cross(out_v[c] - out_v[a]).length() * s2;
+			tufts_on(out_v[a], out_v[b], out_v[c], out_n[a], out_n[b], out_n[c], smooth(0.0f, 0.5f, rel), tone, area);
+		}
+		// Past the edge, on the bare rock: a few short lone tufts where the moss nearly reaches.
+		for (int t = 0; t < nt; t++) {
+			const int a = src.indices[t * 3], c = src.indices[t * 3 + 1], d = src.indices[t * 3 + 2];
+			const float wmax = MAX(weight[a], MAX(weight[c], weight[d]));
+			if (wmax >= thr || wmax < thr * 0.7f) {
+				continue;
+			}
+			const float carpet = 0.12f * smooth(thr * 0.7f, thr, wmax);
+			const float area = 0.5f * (src.vertices[c] - src.vertices[a]).cross(src.vertices[d] - src.vertices[a]).length() * s2;
+			tufts_on(src.vertices[a], src.vertices[c], src.vertices[d], src.normals[a].normalized(), src.normals[c].normalized(), src.normals[d].normalized(), carpet, 0.2f, area);
+		}
+		if (!sv.is_empty()) {
+			job->shoot_arrays.resize(Mesh::ARRAY_MAX);
+			job->shoot_arrays[Mesh::ARRAY_VERTEX] = sv;
+			job->shoot_arrays[Mesh::ARRAY_NORMAL] = sn;
+			job->shoot_arrays[Mesh::ARRAY_TEX_UV] = suv;
+			job->shoot_arrays[Mesh::ARRAY_COLOR] = sc;
+			job->shoots = blades_made;
+		}
+	}
 	job->arrays.resize(Mesh::ARRAY_MAX);
 	job->arrays[Mesh::ARRAY_VERTEX] = out_v;
 	job->arrays[Mesh::ARRAY_NORMAL] = out_n;
@@ -238,7 +380,7 @@ void build(void *p_job) {
 	job->arrays[Mesh::ARRAY_TEX_UV2] = out_uv2;
 	job->arrays[Mesh::ARRAY_COLOR] = out_c;
 	job->arrays[Mesh::ARRAY_INDEX] = out_i;
-	job->triangles = out_i.size() / 3;
+	job->triangles = out_i.size() / 3 + job->shoots * 2;
 }
 
 Ref<Material> get_material() {
@@ -303,7 +445,13 @@ void fragment() {
 	vec3 col = mix(moss_deep, tip * (0.8 + 0.4 * patch), clamp(lit, 0.0, 1.0));
 	// The cushion's thin edge lets the rock's dark show through between sparse shoots.
 	col *= mix(0.6, 1.0, smoothstep(0.0, 0.35, h));
+	// Colour drifts over a cushion: greener and darker in its dips, yellower on its lit domes.
+	col *= mix(0.75, 1.15, smoothstep(0.2, 0.9, h));
 	ALBEDO = col;
+	// A ragged edge: the cushion ends along its contour (COLOR.a 0.5) broken at a few millimetres to a centimetre.
+	float rag = mn(m_pos * 90.0) * 0.6 + mn(m_pos * 260.0) * 0.4;
+	ALPHA = COLOR.a + (rag - 0.5) * 0.7;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
 	ROUGHNESS = 0.82 + 0.1 * (1.0 - u);
 	SPECULAR = 0.3;
 	// The tufts as relief: tops up, gaps down (bump from the same field, 2 mm steps).
@@ -315,7 +463,8 @@ void fragment() {
 	vec3 n = normalize(NORMAL);
 	g -= n * dot(g, n);
 	NORMAL = normalize(n - 0.006 * g);
-	AO = mix(0.45, 1.0, u);
+	// The tuft gaps and the low edge of the cushion in their own shade.
+	AO = mix(0.45, 1.0, u) * mix(0.55, 1.0, smoothstep(0.5, 0.9, COLOR.a));
 	// Light through thin shoots (a leaf a cell or two thick).
 	BACKLIGHT = col * 0.6;
 }
@@ -325,8 +474,31 @@ void fragment() {
 	return shared_material;
 }
 
+// The shoots: vertex colour (dark olive root to lit tip), matte, light through the thin blades.
+Ref<Material> get_shoot_material() {
+	if (shoot_material.is_valid()) {
+		return shoot_material;
+	}
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(R"(shader_type spatial;
+render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+void fragment() {
+	ALBEDO = COLOR.rgb;
+	ROUGHNESS = 0.8;
+	SPECULAR = 0.3;
+	AO = mix(0.5, 1.0, UV.y);
+	BACKLIGHT = COLOR.rgb * 0.7;
+}
+)");
+	shoot_material.instantiate();
+	shoot_material->set_shader(sh);
+	return shoot_material;
+}
+
 void finish() {
 	shared_material.unref();
+	shoot_material.unref();
 }
 
 } // namespace RockMoss

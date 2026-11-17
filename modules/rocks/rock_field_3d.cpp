@@ -2373,6 +2373,10 @@ void RockField3D::_finish_moss(bool p_wait) {
 			mesh.instantiate();
 			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, job->arrays);
 			mesh->surface_set_material(0, RockMoss::get_material());
+			if (!job->shoot_arrays.is_empty()) {
+				mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, job->shoot_arrays);
+				mesh->surface_set_material(1, RockMoss::get_shoot_material());
+			}
 			MeshInstance3D *mi = memnew(MeshInstance3D);
 			mi->set_mesh(mesh);
 			mi->set_meta("rock_moss", true);

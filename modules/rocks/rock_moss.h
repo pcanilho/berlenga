@@ -66,11 +66,14 @@ struct Job {
 	Source source; // a copy: the job owns it while it runs
 	Params params;
 	Array arrays; // the shell, in the stone's own space; empty if no moss
+	Array shoot_arrays; // its shoots (blade tufts), a second surface; empty if none
+	int shoots = 0; // blades
 	int triangles = 0;
 };
 
 void build(void *p_job);
 Ref<Material> get_material();
+Ref<Material> get_shoot_material();
 void finish();
 
 } // namespace RockMoss
