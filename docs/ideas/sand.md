@@ -498,7 +498,7 @@ Asked: a fast slide through a sharp turn should throw sand, and dry sand should 
   jet, eddy diffusion, gravitational settling, deposition at the ground. A small grid follows the vehicle
   (`GroundDust3D`, CPU, about 40k cells) and is drawn as a FogVolume density texture, so raster volumetric
   fog and the path tracer's camera segments both see it. NVIDIA Flow (the fork's smoke) was the other
-  candidate, but its libraries load only on Windows.
+  candidate; it builds on Linux too (lavapipe in the cloud), so it becomes the near-field dust (below).
 - **Built (16 Nov 2026).** Vehicle: contact slide velocity drives bow, throw and dust; prints laid along the
   travel; side bulldozing (`get_wheel_soil_side_force`). `GroundSurface3D.dust_emission` (0.02, tuned for the
   look: a sliding 1500 kg 4x4 lifts a few kg a second, far above unpaved-road PM10 data, because the plume is
@@ -506,3 +506,10 @@ Asked: a fast slide through a sharp turn should throw sand, and dry sand should 
   48 cells at 0.5 m, trailing its target). `--test=drift` (8 checks): Stokes 0.0180 m/s, a still puff sinks at
   it, wind carries a puff, 60 um dust settles out, sideways throw 3.1 m/s, sidewall 475 N, plume to 2.5 m on
   dry sand, none on damp. Raster and path-traced frames match (the path tracer sees it on camera rays only).
+- **Round 2 (17 Nov 2026).** Billows: the fog shader erodes the grid's density with tiling 3D Worley fBm
+  (Schneider 2015, Horizon Zero Dawn clouds; `billow` 0.9, `billow_size` 2 m), drifting with the wind. Grid 64 x
+  20 x 64 at 0.5 m (32 x 10 x 32 m), `dust_emission` 0.06, a stronger upward jet with ground speed. Sideways
+  throw now leaves as grains (side bulldozed volume), and `PhysXGroundGrains3D` no longer turns on MPM auto
+  colliders, so grains land on the field instead of resting on its static collider.
+- **Next: Flow near field.** Paulo (17 Nov) wants the near dust in PhysX Flow: ground shadows by density, the car
+  body as a solid, scene wind, every wheel. Grid stays for distance and platforms without Flow.

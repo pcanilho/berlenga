@@ -242,6 +242,10 @@ public:
 				spray.slip_speed = slip_speed;
 				spray.reach_center = Vector3(contact.x, contact.y, contact.z);
 				spray.reach_radius = 0.5f * MAX(width, probe.contact_length) + 0.1f;
+				// The sidewall sweeps a prism one contact length long and the sinkage deep through the sand per
+				// metre of side slide; about half of it heaps into the berm (the press's bow), half is thrown.
+				spray.side_share = Math::abs(back.dot(lat));
+				spray.side_volume_rate = 0.5f * probe.contact_length * sw.sinkage * Math::abs(v_lat);
 				ground->add_spray(spray);
 			}
 			// Dust: the fines of dry, bare sand lifted by a tyre rolling and sliding over it (Gillies et al. 2005:
@@ -251,7 +255,7 @@ public:
 				const PxVec3 cv = lng * v_lng + lat * v_lat;
 				// The car's wake stirs the plume up to about its own height: an upward jet growing with speed, which
 				// the air slows within the dust node's jet_time.
-				const PxVec3 jet = (slip_speed > 0.5f ? slide * (0.5f / slip_speed) * MIN(slip_speed, 8.0f) : PxVec3(0.0f)) + cv * 0.3f + n * (0.3f + 0.2f * ground_speed + 0.1f * slip_speed);
+				const PxVec3 jet = (slip_speed > 0.5f ? slide * (0.5f / slip_speed) * MIN(slip_speed, 8.0f) : PxVec3(0.0f)) + cv * 0.3f + n * (0.5f + 0.35f * ground_speed + 0.15f * slip_speed);
 				ground->add_dust(Vector3(contact.x, contact.y - sw.sinkage + 0.05f, contact.z), Vector3(jet.x, jet.y, jet.z), width * (ground_speed + 2.0f * slip_speed));
 			}
 			sw.last_print = at;

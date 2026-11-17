@@ -63,10 +63,16 @@
 		</method>
 	</methods>
 	<members>
+		<member name="billow" type="float" setter="set_billow" getter="get_billow" default="0.9">
+			How much the dust breaks into billows: 3D Worley noise erodes thin edges and thickens cores, so a plume reads as rolling clumps rather than a smooth haze. 0 draws the plain grid density.
+		</member>
+		<member name="billow_size" type="float" setter="set_billow_size" getter="get_billow_size" default="2.0">
+			Size of the largest billows, in meters. The noise drifts with the wind and rises slowly.
+		</member>
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.5">
 			The size of the dust grid's cells, in meters.
 		</member>
-		<member name="diffusivity" type="float" setter="set_diffusivity" getter="get_diffusivity" default="0.3">
+		<member name="diffusivity" type="float" setter="set_diffusivity" getter="get_diffusivity" default="0.15">
 			Eddy diffusion near the ground, in square meters per second: how fast a plume spreads.
 		</member>
 		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.82, 0.72, 0.56, 1)">
@@ -75,7 +81,7 @@
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			Simulates and draws the dust.
 		</member>
-		<member name="extent" type="Vector3" setter="set_extent" getter="get_extent" default="Vector3(24, 8, 24)">
+		<member name="extent" type="Vector3" setter="set_extent" getter="get_extent" default="Vector3(32, 10, 32)">
 			The size of the dust grid, in meters. It follows [member follow_target], trailing it along its travel.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">

@@ -54,6 +54,10 @@ PhysXGroundGrains3D::PhysXGroundGrains3D() {
 	set_mpm_grid_resolution(128);
 	mpm_free_flight = true;
 	mpm_physics_tick = true;
+	// The ground under the grains is the field, which a rut takes below the static collider's surface: grains
+	// meeting the collider would rest on it a few centimetres up and never land (PhysXParticleFluid3D turned
+	// its auto colliders on, statics included, in 9131450c).
+	set_mpm_auto_colliders(false);
 }
 
 // A clump of sand in flight: thrown sand dilates to a few percent solids and its fine grains make a roost
@@ -265,7 +269,15 @@ void PhysXGroundGrains3D::_deposit_pass(double p_delta) {
 			continue;
 		}
 		// One leaving the box flies on as a lone grain (no drag, nothing else to meet) to where it comes down.
-		const Vector3 at = outside ? _ballistic_landing(p, vel[i]) : p;
+		Vector3 at = outside ? _ballistic_landing(p, vel[i]) : p;
+		if (!outside && down && vel[i].y < -0.1f) {
+			// Seen only after it passed through the surface (read backs come every few frames): back along its
+			// path to where it crossed.
+			const float under = ground->get_surface_height_at(p) - p.y;
+			if (under > 0.0f) {
+				at = p - vel[i] * MIN(under / -vel[i].y, 0.2f);
+			}
+		}
 		land[Vector2i((int)Math::floor(at.x / tex), (int)Math::floor(at.z / tex))] += pvol;
 		killed.push_back(i);
 		alive[i] = 0;
@@ -359,7 +371,10 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 				const float reach_r = MAX(d.has("reach_radius") ? (float)d["reach_radius"] : r, r);
 				// Past ~10 m/s of slip the tread is a cutter at its full depth: more speed throws the same sand
 				// faster rather than more of it.
-				const double volume = width * tread_depth * MIN(slip, 10.0f) * dt;
+				// A sideways slide's tread throws less (the lugs drag across) and its sidewall shoves a wedge out.
+				const float side = d.has("side_share") ? (float)d["side_share"] : 0.0f;
+				const float side_rate = d.has("side_volume_rate") ? (float)d["side_volume_rate"] : 0.0f;
+				const double volume = (width * tread_depth * MIN(slip, 10.0f) * (1.0f - side) + side_rate) * dt;
 				// Dug over the sand the tread reaches, the loose rim first (dig takes rim before dent): a spinning
 				// wheel throws its own bow wave and berm back rather than heaping them round itself.
 				const float depth = (float)(volume / (Math::PI * reach_r * reach_r));

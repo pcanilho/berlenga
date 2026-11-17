@@ -34,12 +34,103 @@
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/fog_volume.h"
-#include "scene/resources/3d/fog_material.h"
+#include "core/math/random_pcg.h"
+#include "scene/resources/material.h"
 
 static constexpr float DUST_DENSITY = 2650.0f; // kg/m3, quartz
 static constexpr float AIR_DENSITY = 1.2f;
 static constexpr float AIR_VISCOSITY = 1.8e-5f; // Pa s
 static constexpr float SAND_ROUGHNESS = 0.001f; // m, z0 over a sand bed
+
+// Tiling Worley fBm (three octaves of inverted cell distance), the puff shapes of the plume's edges.
+static Ref<ImageTexture3D> _worley_texture() {
+	static Ref<ImageTexture3D> tex;
+	if (tex.is_valid()) {
+		return tex;
+	}
+	const int n = 48;
+	const int cells[3] = { 3, 6, 12 };
+	const float weight[3] = { 0.6f, 0.27f, 0.13f };
+	LocalVector<float> v;
+	v.resize(n * n * n);
+	for (uint32_t i = 0; i < v.size(); i++) {
+		v[i] = 0.0f;
+	}
+	for (int o = 0; o < 3; o++) {
+		const int c = cells[o];
+		LocalVector<Vector3> pts;
+		pts.resize(c * c * c);
+		RandomPCG rng(1234 + o);
+		for (int i = 0; i < c * c * c; i++) {
+			pts[i] = Vector3(rng.randf(), rng.randf(), rng.randf());
+		}
+		for (int z = 0; z < n; z++) {
+			for (int y = 0; y < n; y++) {
+				for (int x = 0; x < n; x++) {
+					const Vector3 p = Vector3(x + 0.5f, y + 0.5f, z + 0.5f) * (float(c) / n);
+					const Vector3i ci(int(p.x), int(p.y), int(p.z));
+					float best = 9.0f;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dy = -1; dy <= 1; dy++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const Vector3i k = ci + Vector3i(dx, dy, dz);
+								const Vector3i w((k.x + c) % c, (k.y + c) % c, (k.z + c) % c);
+								const Vector3 f = Vector3(k) + pts[(w.z * c + w.y) * c + w.x];
+								best = MIN(best, p.distance_squared_to(f));
+							}
+						}
+					}
+					v[(z * n + y) * n + x] += weight[o] * (1.0f - CLAMP(Math::sqrt(best), 0.0f, 1.0f));
+				}
+			}
+		}
+	}
+	Vector<Ref<Image>> slices;
+	for (int z = 0; z < n; z++) {
+		Ref<Image> img = Image::create_empty(n, n, false, Image::FORMAT_L8);
+		for (int y = 0; y < n; y++) {
+			for (int x = 0; x < n; x++) {
+				const float f = CLAMP(v[(z * n + y) * n + x], 0.0f, 1.0f);
+				img->set_pixel(x, y, Color(f, f, f));
+			}
+		}
+		slices.push_back(img);
+	}
+	tex.instantiate();
+	tex->create(Image::FORMAT_L8, n, n, n, false, slices);
+	return tex;
+}
+
+static const char *DUST_FOG_SHADER = R"(
+shader_type fog;
+
+uniform sampler3D density_texture : filter_linear, repeat_disable;
+uniform sampler3D puffs : filter_linear, repeat_enable;
+uniform vec3 albedo = vec3(0.82, 0.72, 0.56);
+uniform float billow = 0.9;
+uniform float billow_size = 2.0;
+uniform vec3 noise_offset;
+
+void fog() {
+	float ext = texture(density_texture, UVW).r;
+	if (ext <= 0.0) {
+		DENSITY = 0.0;
+	} else {
+		// Schneider 2015: the base remapped by the noise. Coverage is how solid the plume is here (its optical
+		// depth over a puff); thin parts break into puffs, the core stays whole; mass kept on average.
+		vec3 p = WORLD_POSITION / billow_size - noise_offset;
+		float w = 0.65 * texture(puffs, p).r + 0.35 * texture(puffs, p * 2.3 + vec3(0.37, 0.11, 0.73) - noise_offset * 0.6).r;
+		float coverage = 1.0 - exp(-ext * billow_size * 0.5);
+		float cut = (1.0 - w) * billow;
+		float shaped = clamp((coverage - cut) / max(1.0 - cut, 1e-3), 0.0, 1.0);
+		DENSITY = ext * shaped / max(coverage, 1e-4) * mix(1.0, 0.3 + 1.4 * w, billow);
+		// The grid's own box must not show: fade over its outer eighth at the sides and top.
+		vec2 side = min(UVW.xz, 1.0 - UVW.xz);
+		DENSITY *= smoothstep(0.0, 0.12, min(side.x, side.y)) * smoothstep(0.0, 0.15, 1.0 - UVW.y);
+	}
+	ALBEDO = albedo;
+}
+)";
 
 GroundDust3D::GroundDust3D() {
 	set_notify_transform(false);
@@ -101,7 +192,7 @@ void GroundDust3D::_allocate() {
 	density.instantiate();
 	density->create(Image::FORMAT_RF, nx, ny, nz, false, slices);
 	if (fog.is_valid()) {
-		fog->set_density_texture(density);
+		fog->set_shader_parameter("density_texture", density);
 	}
 	if (volume) {
 		volume->set_size(Vector3(nx, ny, nz) * cell_size);
@@ -346,6 +437,15 @@ void GroundDust3D::_draw() {
 		}
 	}
 	density->update(slices);
+	if (fog.is_valid()) {
+		// The puffs ride the wind at a metre up and rise with the warm, stirred air of the wake.
+		GroundSurface3D *surface = _surface();
+		const Vector2 w10 = surface ? surface->get_wind_10m() : Vector2();
+		const float prof = Math::log(1.0f / SAND_ROUGHNESS) / Math::log(10.0f / SAND_ROUGHNESS);
+		const float dt = (float)get_process_delta_time();
+		noise_offset += Vector3(w10.x * prof, 0.25f, w10.y * prof) * (dt / billow_size);
+		fog->set_shader_parameter("noise_offset", noise_offset);
+	}
 	volume->set_global_position((Vector3(origin) + Vector3(nx, ny, nz) * 0.5f) * cell_size);
 	volume->set_visible(airborne > 1e-7);
 }
@@ -375,20 +475,38 @@ void GroundDust3D::set_cell_size(float p_size) {
 	}
 }
 
+void GroundDust3D::set_billow(float p_v) {
+	billow = CLAMP(p_v, 0.0f, 1.0f);
+	if (fog.is_valid()) {
+		fog->set_shader_parameter("billow", billow);
+	}
+}
+
+void GroundDust3D::set_billow_size(float p_v) {
+	billow_size = CLAMP(p_v, 0.1f, 20.0f);
+	if (fog.is_valid()) {
+		fog->set_shader_parameter("billow_size", billow_size);
+	}
+}
+
 void GroundDust3D::set_dust_color(const Color &p_color) {
 	dust_color = p_color;
 	if (fog.is_valid()) {
-		fog->set_albedo(dust_color);
+		fog->set_shader_parameter("albedo", Vector3(dust_color.r, dust_color.g, dust_color.b));
 	}
 }
 
 void GroundDust3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
+			fog_shader.instantiate();
+			fog_shader->set_code(DUST_FOG_SHADER);
 			fog.instantiate();
-			fog->set_density(1.0f);
-			fog->set_albedo(dust_color);
-			fog->set_edge_fade(0.1f);
+			fog->set_shader(fog_shader);
+			fog->set_shader_parameter("albedo", Vector3(dust_color.r, dust_color.g, dust_color.b));
+			fog->set_shader_parameter("puffs", _worley_texture());
+			fog->set_shader_parameter("billow", billow);
+			fog->set_shader_parameter("billow_size", billow_size);
 			volume = memnew(FogVolume);
 			volume->set_shape(RSE::FOG_VOLUME_SHAPE_BOX);
 			volume->set_material(fog);
@@ -429,6 +547,10 @@ void GroundDust3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_dust_color"), &GroundDust3D::get_dust_color);
 	ClassDB::bind_method(D_METHOD("set_visibility", "visibility"), &GroundDust3D::set_visibility);
 	ClassDB::bind_method(D_METHOD("get_visibility"), &GroundDust3D::get_visibility);
+	ClassDB::bind_method(D_METHOD("set_billow", "billow"), &GroundDust3D::set_billow);
+	ClassDB::bind_method(D_METHOD("get_billow"), &GroundDust3D::get_billow);
+	ClassDB::bind_method(D_METHOD("set_billow_size", "size"), &GroundDust3D::set_billow_size);
+	ClassDB::bind_method(D_METHOD("get_billow_size"), &GroundDust3D::get_billow_size);
 	ClassDB::bind_method(D_METHOD("get_settling_speed"), &GroundDust3D::get_settling_speed);
 	ClassDB::bind_method(D_METHOD("get_mass_extinction"), &GroundDust3D::get_mass_extinction);
 	ClassDB::bind_method(D_METHOD("get_airborne_mass"), &GroundDust3D::get_airborne_mass);
@@ -447,5 +569,7 @@ void GroundDust3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "diffusivity", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:m2/s"), "set_diffusivity", "get_diffusivity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "jet_time", PROPERTY_HINT_RANGE, "0.01,5,0.01,suffix:s"), "set_jet_time", "get_jet_time");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dust_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dust_color", "get_dust_color");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "billow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_billow", "get_billow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "billow_size", PROPERTY_HINT_RANGE, "0.1,20,0.01,suffix:m"), "set_billow_size", "get_billow_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_visibility", "get_visibility");
 }

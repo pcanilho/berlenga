@@ -37,7 +37,8 @@
 #include "scene/resources/image_texture.h"
 
 class FogVolume;
-class FogMaterial;
+class ShaderMaterial;
+class Shader;
 
 // Dust from dry sand (docs/ideas/sand.md, "Drifting on sand"): the silt and fine sand a tyre lifts as it rolls
 // and slides over dry, bare sand, carried off by the wind and settling back.
@@ -50,20 +51,26 @@ class FogMaterial;
 // at 40 um; whatever settles through the ground is deposited. It is drawn as a FogVolume whose density
 // texture is the dust's extinction, the concentration times the mass extinction of grains this size,
 // 3 Q / (2 rho_p d) with Q = 2: raster volumetric fog and the path tracer's camera segments both see it (the
-// Environment needs volumetric fog on).
+// Environment needs volumetric fog on). The grid's half-metre cells hold the plume's mass; its billows are
+// sub-grid detail added where it is drawn, as cloud renderers do: the density eroded by a tiling Worley fBm
+// that drifts with the wind and rises (Schneider 2015, "The real-time volumetric cloudscapes of Horizon Zero
+// Dawn": base density remapped by the noise, which leaves rounded puffs at thin edges and a solid core), the
+// role wavelet turbulence (Kim et al. 2008) plays for offline smoke.
 class GroundDust3D : public Node3D {
 	GDCLASS(GroundDust3D, Node3D);
 
 	NodePath ground_surface;
 	NodePath follow_target;
 	bool enabled = true;
-	Vector3 extent = Vector3(24.0f, 8.0f, 24.0f); // m
+	Vector3 extent = Vector3(32.0f, 10.0f, 32.0f); // m
 	float cell_size = 0.5f; // m
 	float grain_diameter = 15.0f; // um, the silt that makes the visible plume
-	float diffusivity = 0.3f; // m2/s, eddy diffusion near the ground
+	float diffusivity = 0.15f; // m2/s, eddy diffusion near the ground
 	float jet_time = 0.5f; // s, how fast the air slows a plume's jet
 	Color dust_color = Color(0.82, 0.72, 0.56);
 	float visibility = 1.0f; // scales the drawn extinction (1: physical)
+	float billow = 0.9f; // how deeply the noise erodes the plume's edges into puffs
+	float billow_size = 2.0f; // m, the size of the largest puffs
 
 	int nx = 0, ny = 0, nz = 0;
 	Vector3i origin; // cell index of the grid's corner
@@ -81,7 +88,9 @@ class GroundDust3D : public Node3D {
 	bool has_last = false;
 
 	FogVolume *volume = nullptr;
-	Ref<FogMaterial> fog;
+	Ref<ShaderMaterial> fog;
+	Ref<Shader> fog_shader;
+	Vector3 noise_offset;
 	Ref<ImageTexture3D> density;
 	Vector<Ref<Image>> slices;
 	bool texture_dirty = false;
@@ -122,6 +131,10 @@ public:
 	Color get_dust_color() const { return dust_color; }
 	void set_visibility(float p_v) { visibility = MAX(p_v, 0.0f); }
 	float get_visibility() const { return visibility; }
+	void set_billow(float p_v);
+	float get_billow() const { return billow; }
+	void set_billow_size(float p_v);
+	float get_billow_size() const { return billow_size; }
 
 	float get_settling_speed() const; // m/s
 	float get_mass_extinction() const; // m2/kg

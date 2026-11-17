@@ -2289,6 +2289,8 @@ Array GroundSurface3D::take_sprays() {
 		d["slip_speed"] = s.slip_speed;
 		d["reach_center"] = s.reach_center;
 		d["reach_radius"] = s.reach_radius;
+		d["side_share"] = s.side_share;
+		d["side_volume_rate"] = s.side_volume_rate;
 		out.push_back(d);
 	}
 	sprays.clear();

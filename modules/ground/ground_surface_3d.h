@@ -127,6 +127,10 @@ public:
 		// The loose sand the tread reaches: the contact and the rim heaped before and behind it.
 		Vector3 reach_center;
 		float reach_radius = 0.0f;
+		// A wheel sliding sideways: the share of the slide that is sideways, and the sand its sidewall shoves
+		// out of the side of the turn, m3/s (beside what its tread throws).
+		float side_share = 0.0f;
+		float side_volume_rate = 0.0f;
 	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {
@@ -140,7 +144,7 @@ private:
 	LocalVector<Spray> sprays;
 	LocalVector<Dust> dust;
 	uint64_t dust_frame = 0;
-	float dust_emission = 0.02f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
+	float dust_emission = 0.06f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
 	uint64_t spray_frame = 0;
 	void _plough_bodies();
 	float contact_tolerance = 0.03f;
