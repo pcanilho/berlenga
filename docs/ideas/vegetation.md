@@ -442,7 +442,7 @@ Woody shrubs (17 Nov): TreeGenerator builds gorse, broom, gum rockrose, kermes o
 (`make_shrub_species`); the sets place them first, in clumps, under their own rules
 (`make_woody_shrub`): gorse (mature and young) and broom on dry heath, gorse cushions on cliff-top
 heath (Rodwell 1991, H7/H8), none on wet heath; lentisk, kermes oak and gum rockrose in the maquis,
-kermes oak cushions and young gum rockrose in the garrigue. Two variants each: mature gorse is
+kermes oak cushions and young gum rockrose in the garrigue; dwarf fan palm in both where January averages 7 C or more. Two variants each: mature gorse is
 about 2M triangles with real spines.
 
 Worn paths and trampling (built 17 Nov). Where people and animals walk, plants thin out,
@@ -491,6 +491,34 @@ fields as instanced crop rows with terrain colour matched under them). Field mar
 poppies, cornflowers, mayweed; hedgerows are a linear stand of hawthorn, blackthorn, hazel and
 bramble (trees thread for the woody part) with a grassy bank. Cost: rows are dense (60 to 400
 stems per m2), so the near band needs the same GPU fill and far colour as grass.
+
+Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
+- Facts. Winter wheat: drilled in rows 12 to 15 cm apart at 250 to 350 seeds/m2, tillers to 450 to
+  650 ears/m2; modern straw 0.8 to 1.0 m, heritage and medieval wheats and rye 1.2 to 1.8 m
+  (lodging in storms). Stages on the BBCH (Zadoks) scale drive the look: emergence and tillering
+  (low blue-green rows, soil showing, Oct to Mar), stem elongation (closing canopy, Apr to May),
+  heading and flowering (ears out, anthers, June), grain fill (green ears turn yellow from the
+  top, glaucous to golden, July), ripe (straw gold, ears nodding in barley, upright in wheat),
+  harvest leaves stubble 10 to 20 cm with straw rows, then ploughed brown soil. Barley: long awns
+  that bend over; oats: open drooping panicles; rye: tallest, blue-grey. Modern fields show
+  tramlines (paired wheel tracks every 12 to 24 m) and headlands turned at the ends; medieval
+  open fields are strips (selions) about 200 m long and 5 to 20 m wide in furlongs, ploughed into
+  ridge and furrow 0.3 to 0.6 m high (Wikipedia "Selion", "Open-field system").
+- Margins and hedgerows (hedgelink.org.uk "Hedgerow components"): arable margin weeds strongest in
+  the outer 2 to 6 m (poppy, cornflower, corn marigold, scentless mayweed, charlock), a grass
+  strip, then the hedge: 2 to 4 m tall and wide, hawthorn and blackthorn with hazel, field maple,
+  dog rose and bramble, on a bank with a ditch, standard oaks every 50 to 100 m.
+- Engine. Stage 1: crops as real geometry built like the grass blades, a CropField3D on the
+  GrassField3D tile and GPU fill code: each record a tiller (stem, two to four leaves, the ear or
+  panicle as a short swept mesh), bent by the same damped-oscillator wind so ripe fields roll in
+  waves; rows along a drill direction; near band real, then the far colour by stage. Stage 2: the
+  field layout (polygons with crop, sowing day and drill angle; tramlines, headlands, stubble and
+  ploughed soil; ridge and furrow for strip fields) and the seasons (BBCH from the WeatherMap3D
+  day). Stage 3: margins (a make_margin set) and hedgerows as polylines like paths, woody
+  shrubs from the trees thread, a bank and ditch through the ground module or terrain.
+- References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
+  instanced rows); Ghost of Tsushima, GDC 2021 (blades and wind); Butler and Ebert, "Procedural
+  field grasses".
 
 **Burnt ground and recovery (with Flow fire).** After a heath or scrub fire the ground is black
 with ash and charred stems standing; heather regrows through pioneer, building, mature and
