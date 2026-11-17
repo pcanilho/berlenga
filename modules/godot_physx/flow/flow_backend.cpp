@@ -173,6 +173,10 @@ void grid_destroy(Grid *p_grid) {
 }
 
 bool acquire_library(char *r_error, int p_error_size) {
+	return acquire_library_named(nullptr, nullptr, r_error, p_error_size);
+}
+
+bool acquire_library_named(const char *p_nvflow, const char *p_nvflowext, char *r_error, int p_error_size) {
 	std::lock_guard<std::mutex> lock(device_mutex);
 	if (library != nullptr) {
 		library->refs++;
@@ -180,14 +184,34 @@ bool acquire_library(char *r_error, int p_error_size) {
 	}
 	Library *l = new Library();
 	load_error[0] = '\0';
-	NvFlowLoaderInit(&l->loader, on_load_error, nullptr);
-	if (l->loader.module_nvflow == nullptr || l->loader.module_nvflowext == nullptr) {
+	if (p_nvflow != nullptr && p_nvflowext != nullptr) {
+		NvFlowLoaderInitCustom(&l->loader, on_load_error, nullptr, p_nvflow, p_nvflow, p_nvflowext, p_nvflowext);
+	} else {
+		NvFlowLoaderInit(&l->loader, on_load_error, nullptr);
+	}
+	// Both libraries loaded, and they hand out the entry points we call (an old or mismatched build can
+	// load and still lack them).
+	const bool loaded = l->loader.module_nvflow != nullptr && l->loader.module_nvflowext != nullptr;
+	const bool complete = loaded && l->loader.opList_orig != nullptr && l->loader.extOpList_orig != nullptr &&
+			l->loader.gridInterface.createGrid != nullptr && l->loader.gridParamsInterface.createGridParamsNamed != nullptr;
+	if (!complete) {
+		if (!loaded) {
 #ifdef _WIN32
-		snprintf(r_error, p_error_size, "nvflow.dll / nvflowext.dll not found next to the executable (%s)", load_error);
+			snprintf(r_error, p_error_size, "nvflow.dll / nvflowext.dll not found next to the executable (%s)", load_error);
 #else
-		snprintf(r_error, p_error_size, "libnvflow.so / libnvflowext.so not found next to the executable (%s)", load_error);
+			snprintf(r_error, p_error_size, "libnvflow.so / libnvflowext.so not found next to the executable (%s)", load_error);
 #endif
-		NvFlowLoaderDestroy(&l->loader);
+		} else {
+			snprintf(r_error, p_error_size, "the Flow libraries next to the executable are missing entry points (a different Flow version?)");
+		}
+		// Close only what opened: NvFlowLoaderDestroy() closes both handles unconditionally, and
+		// dlclose(NULL) crashes.
+		if (l->loader.module_nvflow != nullptr) {
+			NvFlowFreeLibrary(l->loader.module_nvflow);
+		}
+		if (l->loader.module_nvflowext != nullptr) {
+			NvFlowFreeLibrary(l->loader.module_nvflowext);
+		}
 		delete l;
 		return false;
 	}

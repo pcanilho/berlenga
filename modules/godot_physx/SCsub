@@ -198,6 +198,9 @@ if flow_sdk:
     # ("nvflow/nanovdb/PNanoVDB.h" from the include root).
     env_physx.Append(CPPPATH=[flow_inc, os.path.join(flow_inc, "nvflow"), os.path.join(flow_inc, "nvflowext")])
     env_physx.Append(CPPDEFINES=["GODOT_PHYSX_FLOW"])
+    if env["tests"]:
+        # The module's doctest headers compile in tests/, outside env_physx (tests/test_flow_loader.h).
+        env.Append(CPPDEFINES=["GODOT_PHYSX_FLOW"])
     if env["platform"] == "windows":
         flow_bin = os.path.join(flow_sdk, "_build", "windows-x86_64", "release")
         for _flow_dll in ("nvflow.dll", "nvflowext.dll"):
