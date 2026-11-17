@@ -2979,6 +2979,17 @@
    "topic": ""
   },
   {
+   "name": "Path traced haze",
+   "settings": [
+    "WeatherMap3D.traced_haze"
+   ],
+   "note": "",
+   "what": "under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wet surfaces and puddles",
    "settings": [
     "surface_storage",
