@@ -1547,7 +1547,7 @@
     "bubble_strength"
    ],
    "note": "",
-   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
+   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width, and the far sea mirrors the sky through their mean Fresnel instead of turning into a pale sheet; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -2999,6 +2999,17 @@
    ],
    "note": "",
    "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Stars",
+   "settings": [
+    "stars_enabled"
+   ],
+   "note": "",
+   "what": "the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
