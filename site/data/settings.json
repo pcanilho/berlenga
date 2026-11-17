@@ -2598,6 +2598,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Dwarf fan palm",
+   "settings": [
+    "PRESET_DWARF_FAN_PALM"
+   ],
+   "note": "",
+   "what": "clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks and a skirt of dead leaves.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Wind, bank and rock trees",
    "settings": [
     "wind_exposure",
