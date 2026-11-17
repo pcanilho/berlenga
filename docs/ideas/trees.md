@@ -1646,8 +1646,15 @@ Petioles are green tubes on the leaves surface (the bark skips them), rewound si
 for the bark's later flip (inside-out faces sparkled under the path tracer), with forward
 spines on their lower two thirds; trunks carry rings of leaf-base stubs and hanging fibre. LODs: a fan's
 parts are sized so stochastic pruning keeps them whole and unscaled (grown about its base a fan
-reached metres out); spines are LOD 0 only. Flowers and fruit are not built yet. Mature 1.5 m,
-43k triangles; thicket 108k (on the optimisation list: segments could merge in far LODs).
+reached metres out); spines are LOD 0 only. Flowers and dates (crown parts, kept by the coarser LODs): dioecious by seed;
+one to four short branched inflorescences a crown between the leaf bases, March to June
+(`get_bloom`), sheathed in a bract, male plants' rachillae crowded with 3-4 mm yellow flowers
+(octahedra, 8 triangles), female plants' fewer and greener; female plants then carry clusters of
+smooth globose to oblong dates 1.6-2.8 cm, green from June, yellow, then red-brown by November,
+the stalks bowing under them, a few left into January. The trunk is dark fibre: four to six
+strands a leaf-base stub hang or lie across it as the sheaths' net. Segments are 2-3.5 cm wide,
+16-23 a leaf, the tips drooping (docs, 17 Nov). Mature 1.3 m,
+39k triangles (46k in flower); thicket 150k (on the optimisation list: segments could merge in far LODs).
 
 ## 6. What the games at Paulo's bar do
 

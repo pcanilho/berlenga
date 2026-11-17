@@ -704,7 +704,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_SIZE] = 0.3f; // Blade radius.
 			p[PARAM_LEAF_WIDTH] = 0.1f;
 			p[PARAM_LEAF_YEARS] = 3;
-			bark_color = Color(0.36f, 0.27f, 0.19f); // Brown fibre over the old leaf bases.
+			bark_color = Color(0.24f, 0.18f, 0.12f); // Dark brown fibre over the old leaf bases.
 			leaf_color = Color(0.12f, 0.2f, 0.1f); // Green, a little glaucous.
 			break;
 		case PRESET_MAX:
@@ -1699,7 +1699,7 @@ void TreeGenerator::_grow_palm() {
 			PalmFrond fr;
 			fr.node = pp;
 			fr.blade = blade * (is_dead ? 0.85f : Math::lerp(0.75f, 1.0f, MIN(1.0f, t * 3.0f)));
-			fr.segments = int(_rand(14.0f, 22.0f));
+			fr.segments = int(_rand(16.0f, 23.0f)); // Close-set near the hastula.
 			fr.dead = is_dead;
 			palm_fronds.push_back(fr);
 		}
@@ -1716,7 +1716,7 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 	pr.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + 0x70616c6du);
 	const Vector3 up(0, 1, 0);
 	const Color live = leaf_color;
-	const Color dead_c = Color(0.29f, 0.22f, 0.13f); // Straw-brown (on the leaf scale: live is 0.12, 0.2, 0.1).
+	const Color dead_c = Color(0.23f, 0.16f, 0.09f); // Straw-brown (on the leaf scale: live is 0.12, 0.2, 0.1).
 	const Color spine_c = Color(0.55f, 0.47f, 0.3f);
 	for (const PalmFrond &f : palm_fronds) {
 		const Node &n = nodes[f.node];
@@ -1800,8 +1800,8 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 		// face normal, so the crease shows in the shading) and a right margin. 1.5-2.5 cm wide,
 		// widest a tenth of the way out, tapering to a fine tip; stiff, the tip bending down a
 		// little (a dead leaf's hang straight).
-		const int STEPS = 6;
-		const float wmax = R * 0.03f;
+		const int STEPS = 4;
+		const float wmax = R * 0.045f; // 2-3.5 cm wide.
 		for (int k = 0; k < K; k++) {
 			if (torn[k]) {
 				continue;
@@ -1825,7 +1825,7 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 			for (int i = 0; i <= STEPS; i++) {
 				const float t = float(i) / STEPS;
 				const float w = (t < 0.1f ? Math::lerp(w0, wk, t / 0.1f) : wk * Math::pow((1.0f - t) / 0.9f, 0.6f));
-				const float droop = (f.dead ? 0.0f : -0.18f) * L * t * t;
+				const float droop = (f.dead ? 0.0f : -0.32f) * L * t * t * t; // The tips droop.
 				const Vector3 mid = base + dir * (t * L) + up * droop - sn * (pleat * w);
 				const Vector3 lm = mid + side * w + sn * (pleat * w);
 				const Vector3 rm = mid - side * w + sn * (pleat * w);
@@ -1925,8 +1925,10 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 		}
 	}
 	// Leaf-base stubs and fibre on the trunks, in rings up each trunk.
-	const Color stub_c = Color(0.27f, 0.2f, 0.14f);
-	const Color fibre_c = Color(0.2f, 0.15f, 0.1f);
+	// Bark vertex colours are linear (as the bark builder's own): the leaf bases mid brown, the
+	// fibre dark brown.
+	const Color stub_c = Color(0.3f, 0.22f, 0.15f).srgb_to_linear();
+	const Color fibre_c = Color(0.2f, 0.14f, 0.09f).srgb_to_linear();
 	for (const int ti : palm_trunks) {
 		const Node &n = nodes[ti];
 		if (n.length < 0.08f) {
@@ -1956,17 +1958,30 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 				r_bark.begin(part);
 				_tube(r_bark, pts, rad, 4, 0.0f, stub_c * (0.85f + 0.3f * pr.randf()));
 				r_bark.end(part, rad[0]);
-				if (pr.randf() < 0.5f) {
-					// Fibre: a few dark strands hanging from between the stubs.
+				// Fibre: the leaf sheaths' dark brown net, frayed into strands that hang from between
+				// the stubs and mat the trunk (most on old trunks): three to five a stub, wavy.
+				const int strands = 2 + int(pr.randf() * 2.5f);
+				for (int fs = 0; fs < strands; fs++) {
+					// Half hang from the stub's foot; half lie across the trunk, the sheath's net.
+					const float fa = a + Math::TAU / per * (pr.randf() - 0.5f);
+					const Vector3 frd = sx * Math::cos(fa) + sz * Math::sin(fa);
+					const Vector3 tang = n.dir.cross(frd).normalized() * (pr.randf() < 0.5f ? 1.0f : -1.0f);
+					const bool across = fs & 1;
+					const Vector3 f0 = n.start + n.dir * (n.length * t) + frd * (n.radius * Math::lerp(0.98f, 1.1f, pr.randf()));
+					const float fl = Math::lerp(0.06f, 0.16f, pr.randf());
+					const Vector3 run = across ? (tang * 0.75f - n.dir * 0.65f).normalized() : (-n.dir + frd * 0.15f).normalized();
 					LocalVector<Vector3> fp;
 					LocalVector<float> fr;
-					fp.push_back(b + rd * 0.01f);
-					fp.push_back(b + rd * 0.02f - n.dir * Math::lerp(0.04f, 0.1f, pr.randf()));
-					fr.push_back(0.003f);
-					fr.push_back(0.0015f);
+					fp.push_back(f0);
+					// Hugging the trunk: pulled back to its surface along the way.
+					fp.push_back(f0 + run * (fl * 0.5f) - frd * (across ? 0.006f : -0.004f));
+					fp.push_back(f0 + run * fl - frd * (across ? 0.012f : -0.01f) + tang * Math::lerp(-0.01f, 0.01f, pr.randf()));
+					fr.push_back(Math::lerp(0.0025f, 0.005f, pr.randf()));
+					fr.push_back(0.0025f);
+					fr.push_back(0.0012f);
 					Vector4i fpart;
 					r_bark.begin(fpart);
-					_tube(r_bark, fp, fr, 3, 0.0f, fibre_c);
+					_tube(r_bark, fp, fr, 3, 0.0f, fibre_c * (0.8f + 0.4f * pr.randf()));
 					r_bark.end(fpart, 0.003f);
 				}
 			}
@@ -5260,6 +5275,9 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 			// April to June, peaking late April and May (Flora iberica); each flower lasts a day,
 			// so a shrub in flower shows a share of its buds open at once.
 			return ramp(90.0f, 110.0f, 145.0f, 175.0f);
+		case PRESET_DWARF_FAN_PALM:
+			// March to June, peaking in April (Flora iberica; Herrera 1989).
+			return ramp(65.0f, 90.0f, 130.0f, 170.0f);
 		default:
 			return 0.0f;
 	}
@@ -6102,6 +6120,147 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				}
 			}
 			close_part(part, 0.1f);
+		}
+		// Dwarf fan palm flowers and dates (trees.md 5w; Flora iberica vol. 18; Herrera 1989).
+		// Dioecious: short, dense, branched inflorescences come out between the leaf bases,
+		// sheathed at the foot in a flattened bract, March to June: male plants' a crowd of
+		// small bright yellow flowers, female plants' fewer, greener ones. Female plants then
+		// set dates, globose to oblong drupes 1.5-4 cm in dense clusters on the short stalks
+		// that bow under them: green through summer, yellow, then orange-brown to red-brown
+		// when ripe, September to November, a few hanging on into winter.
+		if (fruit_cover > 0.0f && preset == PRESET_DWARF_FAN_PALM && !palm_crowns.is_empty()) {
+			const float bloom = get_bloom(preset, day);
+			const bool male = (uint32_t(seed) * 2654435761u >> 18) % 2 == 0;
+			// Fruit set from June, swelling to full size by August, ripe in autumn; the birds and
+			// foxes take most by midwinter (Herrera 1989).
+			const float fruit = male ? 0.0f : (in_days(160.0f, 40.0f) ? (in_days(330.0f, 40.0f) ? 0.35f : 1.0f) : 0.0f);
+			const float swell = day >= 160.0f ? CLAMP((day - 160.0f) / 70.0f, 0.3f, 1.0f) : 1.0f;
+			const float ripe = day >= 160.0f ? CLAMP((day - 220.0f) / 80.0f, 0.0f, 1.0f) : 1.0f;
+			const Color fl_y = lin(0.95f, 0.78f, 0.12f), fl_f = lin(0.72f, 0.7f, 0.25f), axis_c = lin(0.62f, 0.55f, 0.22f);
+			const Color bract_c = lin(0.5f, 0.42f, 0.26f);
+			const Color d_green = lin(0.45f, 0.5f, 0.2f), d_yel = lin(0.8f, 0.62f, 0.16f), d_ripe = lin(0.5f, 0.24f, 0.08f);
+			const Color date_c = ripe < 0.5f ? d_green.lerp(d_yel, ripe * 2.0f) : d_yel.lerp(d_ripe, ripe * 2.0f - 1.0f);
+			const bool flowers = bloom > 0.0f;
+			if (flowers || fruit > 0.0f) {
+				Vector4i part;
+				r_b.begin(part);
+				uint32_t slot = 0;
+				for (const int top : palm_crowns) {
+					const Node &cn = nodes[top];
+					const Vector3 ax = cn.dir;
+					const Vector3 s0 = perp(ax);
+					// Grown crowns flower; seedlings and cushions in their first years less.
+					const int count = int(Math::round((flowers ? Math::lerp(1.0f, 4.0f, bloom) : 3.0f * fruit) * fruit_cover * (height > 0.6f ? 1.0f : 0.5f)));
+					r_b.bone = bone_of(top);
+					for (int q = 0; q < count; q++) {
+						const uint32_t h = hash_murmur3_one_32(slot++, uint32_t(seed) * 2654435761u + 0x70616c6du);
+						const float roll = float(h & 0xffff) / 65535.0f * float(Math::TAU);
+						const Vector3 out = s0.rotated(ax, roll);
+						// From between the leaf bases, a little below the crown's top.
+						const Vector3 base = cn.end() - ax * Math::lerp(0.03f, 0.08f, float((h >> 16) & 255u) / 255.0f) + out * 0.04f;
+						// Erect to spreading in flower; bowed out and down by the fruit.
+						const float bow = flowers ? 0.15f : 0.55f + 0.3f * swell;
+						const Vector3 d0 = (ax * (1.0f - bow) + out * 0.8f - Vector3(0, bow * 0.6f, 0)).normalized();
+						const float len = Math::lerp(0.1f, 0.2f, float((h >> 8) & 255u) / 255.0f);
+						// The peduncle in its bract.
+						LocalVector<Vector3> pts;
+						LocalVector<float> rad;
+						LocalVector<Color> col;
+						pts.push_back(base);
+						pts.push_back(base + d0 * (len * 0.45f));
+						pts.push_back(base + (d0 - Vector3(0, bow * 0.3f, 0)).normalized() * len);
+						rad.push_back(0.006f);
+						rad.push_back(0.005f);
+						rad.push_back(0.003f);
+						col.push_back(axis_c);
+						col.push_back(axis_c);
+						col.push_back(axis_c);
+						tube(pts, rad, 4, col);
+						{
+							// The bract: a flattened sheath round the foot, split at its end.
+							LocalVector<Vector3> bp;
+							LocalVector<float> br;
+							LocalVector<Color> bc;
+							bp.push_back(base - d0 * 0.01f);
+							bp.push_back(base + d0 * (len * 0.3f));
+							br.push_back(0.011f);
+							br.push_back(0.007f);
+							bc.push_back(bract_c);
+							bc.push_back(bract_c * 1.1f);
+							tube(bp, br, 5, bc);
+						}
+						// The branches: five to eight short rachillae along the outer half.
+						const int nb = 5 + int((h >> 4) % 4u);
+						for (int b = 0; b < nb; b++) {
+							const float t = 0.45f + 0.55f * float(b) / MAX(nb - 1, 1);
+							const Vector3 at = pts[1].lerp(pts[2], (t - 0.45f) / 0.55f);
+							const Vector3 bd = (d0 + perp(d0).rotated(d0, roll + b * 2.4f) * 0.9f - Vector3(0, flowers ? 0.0f : 0.4f, 0)).normalized();
+							const float bl = Math::lerp(0.025f, 0.05f, 1.0f - t * 0.6f);
+							stalk(at, at + bd * bl, 0.0018f, axis_c);
+							if (flowers) {
+								// Male: a dense crowd of 3-4 mm flowers; female: few, 2-3 a branch.
+								const int nf = male ? 7 : 3;
+								for (int k = 0; k < nf; k++) {
+									const float u = (k + 0.5f) / nf;
+									const uint32_t hk = hash_murmur3_one_32(uint32_t(k + b * 16), h);
+									const Vector3 jit = perp(bd).rotated(bd, float(hk & 255u) / 255.0f * float(Math::TAU)) * 0.004f;
+									const float r = (male ? 0.0022f : 0.003f) * (bloom > 0.4f ? 1.0f : 0.75f);
+									// A few millimetres across: an octahedron (8 triangles) is round enough.
+									const Vector3 fc = at + bd * (bl * u) + jit;
+									const Color fcol = male ? fl_y * (0.9f + 0.2f * float((hk >> 8) & 255u) / 255.0f) : fl_f;
+									const Vector3 ox[6] = { Vector3(r, 0, 0), Vector3(-r, 0, 0), Vector3(0, r, 0), Vector3(0, -r, 0), Vector3(0, 0, r), Vector3(0, 0, -r) };
+									int oi[6];
+									for (int o = 0; o < 6; o++) {
+										oi[o] = vert(fc + ox[o], Vector2(), fcol);
+									}
+									const int of[8][3] = { { 0, 2, 4 }, { 2, 1, 4 }, { 1, 3, 4 }, { 3, 0, 4 }, { 2, 0, 5 }, { 1, 2, 5 }, { 3, 1, 5 }, { 0, 3, 5 } };
+									for (int o = 0; o < 8; o++) {
+										tri(oi[of[o][0]], oi[of[o][1]], oi[of[o][2]]);
+									}
+								}
+							} else {
+								// Dates: one to three a branch, clustered at its end.
+								const int nd = 1 + int((h >> (b % 16)) % 3u);
+								for (int k = 0; k < nd; k++) {
+									const uint32_t hk = hash_murmur3_one_32(uint32_t(k + b * 16 + 1000), h);
+									const float hv = float(hk & 255u) / 255.0f;
+									if (hv > fruit + 0.15f) {
+										continue; // Taken.
+									}
+									const float r = Math::lerp(0.008f, 0.014f, float((hk >> 8) & 255u) / 255.0f) * swell;
+									const Vector3 side = perp(bd).rotated(bd, float((hk >> 16) & 255u) / 255.0f * float(Math::TAU));
+									const Vector3 c = at + bd * bl + side * (r * 1.1f * k) - Vector3(0, r * 0.9f, 0);
+									stalk(at + bd * bl, c, 0.0012f, axis_c);
+									// Globose to oblong, smooth and glossy: a UV sphere on shared vertices (the
+									// part's averaged face normals then shade it round), stretched along the hang.
+									const Color dc = date_c * (0.9f + 0.2f * float((hk >> 4) & 15u) / 15.0f);
+									const float stretch = (hk & 1u) ? 1.35f : 1.05f;
+									const int RS = 6, SS = 8;
+									const int s0 = r_b.verts.size();
+									for (int ri = 0; ri <= RS; ri++) {
+										const float th = float(Math::PI) * ri / RS;
+										for (int si = 0; si < SS; si++) {
+											const float ph = float(Math::TAU) * si / SS;
+											const Vector3 p(Math::sin(th) * Math::cos(ph) * r, -Math::cos(th) * r * stretch, Math::sin(th) * Math::sin(ph) * r);
+											vert(c + p, Vector2(float(si) / SS, float(ri) / RS), dc);
+										}
+									}
+									for (int ri = 0; ri < RS; ri++) {
+										for (int si = 0; si < SS; si++) {
+											const int a0 = s0 + ri * SS + si, a1 = s0 + ri * SS + (si + 1) % SS;
+											const int b0 = a0 + SS, b1 = a1 + SS;
+											// Outward faces under close_part's (c - a) x (b - a).
+											tri(a0, a1, b0);
+											tri(a1, b1, b0);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				close_part(part, 0.15f);
+			}
 		}
 		big_end = r_b.indices.size();
 	}
