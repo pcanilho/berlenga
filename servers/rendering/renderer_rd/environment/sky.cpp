@@ -1392,7 +1392,12 @@ void SkyRD::update_radiance_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, 
 			}
 			sky->processing_layer = 1;
 		}
-		sky->baked_exposure = p_luminance_multiplier;
+		// The map was drawn with the brightness multiplier, which holds the camera's exposure (its pre-exposure, and
+		// the physical units' normalization) as well as the background's energy: the exposure goes into the baked
+		// value, so that IBL_exposure_normalization (current over baked) does not apply it a second time. Without
+		// this, ambient and reflected sky light took the pre-exposure squared (white at night under x4e4).
+		const float bg_energy = RendererSceneRenderRD::get_singleton()->environment_get_bg_energy_multiplier(p_env);
+		sky->baked_exposure = p_luminance_multiplier * (bg_energy > 0.0f ? p_brightness_multiplier / bg_energy : 1.0f);
 		sky->reflection.dirty = false;
 
 	} else {

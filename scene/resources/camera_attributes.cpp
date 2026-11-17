@@ -66,6 +66,32 @@ void CameraAttributes::_update_exposure() {
 	RS::get_singleton()->camera_attributes_set_exposure(camera_attributes, exposure_multiplier, exposure_normalization);
 }
 
+// Night vision: the eye's shift from cones to rods in dim light (tonemap.glsl, night_vision()). It needs the scene's
+// luminance in cd/m2, so it is on only once luminance_per_energy says what a unit of light energy is.
+void CameraAttributes::_update_night_vision() {
+	RS::get_singleton()->camera_attributes_set_night_vision(camera_attributes, night_vision ? luminance_per_energy : 0.0f);
+}
+
+void CameraAttributes::set_night_vision(bool p_enabled) {
+	night_vision = p_enabled;
+	_update_night_vision();
+	emit_changed();
+}
+
+bool CameraAttributes::is_night_vision_enabled() const {
+	return night_vision;
+}
+
+void CameraAttributes::set_luminance_per_energy(float p_luminance) {
+	luminance_per_energy = MAX(p_luminance, 0.0f);
+	_update_night_vision();
+	emit_changed();
+}
+
+float CameraAttributes::get_luminance_per_energy() const {
+	return luminance_per_energy;
+}
+
 void CameraAttributes::set_auto_exposure_enabled(bool p_enabled) {
 	auto_exposure_enabled = p_enabled;
 	_update_auto_exposure();
@@ -119,6 +145,11 @@ void CameraAttributes::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_exposure_sensitivity", "sensitivity"), &CameraAttributes::set_exposure_sensitivity);
 	ClassDB::bind_method(D_METHOD("get_exposure_sensitivity"), &CameraAttributes::get_exposure_sensitivity);
 
+	ClassDB::bind_method(D_METHOD("set_night_vision", "enabled"), &CameraAttributes::set_night_vision);
+	ClassDB::bind_method(D_METHOD("is_night_vision_enabled"), &CameraAttributes::is_night_vision_enabled);
+	ClassDB::bind_method(D_METHOD("set_luminance_per_energy", "luminance"), &CameraAttributes::set_luminance_per_energy);
+	ClassDB::bind_method(D_METHOD("get_luminance_per_energy"), &CameraAttributes::get_luminance_per_energy);
+
 	ClassDB::bind_method(D_METHOD("set_auto_exposure_enabled", "enabled"), &CameraAttributes::set_auto_exposure_enabled);
 	ClassDB::bind_method(D_METHOD("is_auto_exposure_enabled"), &CameraAttributes::is_auto_exposure_enabled);
 	ClassDB::bind_method(D_METHOD("set_auto_exposure_speed", "exposure_speed"), &CameraAttributes::set_auto_exposure_speed);
@@ -129,6 +160,10 @@ void CameraAttributes::_bind_methods() {
 	ADD_GROUP("Exposure", "exposure_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "exposure_sensitivity", PROPERTY_HINT_RANGE, "0.1,32000.0,0.1,suffix:ISO"), "set_exposure_sensitivity", "get_exposure_sensitivity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "exposure_multiplier", PROPERTY_HINT_RANGE, "0.0,8.0,0.001,or_greater"), "set_exposure_multiplier", "get_exposure_multiplier");
+
+	ADD_GROUP("", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "night_vision"), "set_night_vision", "is_night_vision_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "luminance_per_energy", PROPERTY_HINT_RANGE, "0,100000,0.1,or_greater,suffix:cd/m²"), "set_luminance_per_energy", "get_luminance_per_energy");
 
 	ADD_GROUP("Auto Exposure", "auto_exposure_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_exposure_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_auto_exposure_enabled", "is_auto_exposure_enabled");

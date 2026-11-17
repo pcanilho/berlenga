@@ -4,6 +4,8 @@ extends Node3D
 #   --sky [--model=scattering|physical] [--time=H] [--out=path.png] [--frames=N]
 #            the sky alone (WeatherSkyMaterial, clouds from the defaults, sun from SkyClock), looking south-west
 #            and a little up; prints the mean frame time, saves the last frame
+#            [--chart]  colour patches on grey ground in front of the camera, lit by the clock's sun and moon
+#                       (CameraAttributes.night_vision; --no-night-vision for the A/B, --lamp=E a warm lamp, --pt)
 #            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars] [--no-airglow] [--milky-way=path] [--month=M --day=D] [--look-moon]
 
 var fails := 0
@@ -79,8 +81,49 @@ func _sky(kv: Dictionary) -> void:
 	clock.day = int(kv.get("day", "31"))
 	clock.time_of_day = float(kv.get("time", "19.0"))
 	clock.sun_light = clock.get_path_to(sun)
+	if kv.has("chart"):
+		# --chart: a colour chart on grey ground under the clock's sun and moon (night vision checks).
+		var moon := DirectionalLight3D.new()
+		moon.shadow_enabled = true
+		add_child(moon)
+		clock.moon_light = clock.get_path_to(moon)
+		var ground := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(200, 200)
+		ground.mesh = pm
+		var gm := StandardMaterial3D.new()
+		gm.albedo_color = Color(0.35, 0.35, 0.35)
+		ground.material_override = gm
+		add_child(ground)
+		var cols := [Color(0.7, 0.1, 0.1), Color(0.85, 0.55, 0.1), Color(0.85, 0.8, 0.15), Color(0.15, 0.55, 0.15), Color(0.15, 0.25, 0.75), Color(0.45, 0.2, 0.6), Color(0.9, 0.9, 0.9), Color(0.05, 0.05, 0.05)]
+		for i in cols.size():
+			var b := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(0.9, 0.9, 0.9)
+			b.mesh = bm
+			var m := StandardMaterial3D.new()
+			m.albedo_color = cols[i]
+			b.material_override = m
+			b.position = Vector3(-3.5 + i, 0.45, -5.0)
+			add_child(b)
+		# A lamp-lit patch: a warm omni light near the white box keeps its colour (photopic) at night.
+		var lamp := OmniLight3D.new()
+		lamp.light_color = Color(1.0, 0.75, 0.45)
+		lamp.position = Vector3(2.5, 1.6, -4.0)
+		lamp.omni_range = 4.0
+		lamp.light_energy = float(kv.get("lamp", "0"))
+		add_child(lamp)
+		cam.position = Vector3(0, 1.6, 0)
+		cam.rotation_degrees = Vector3(-12, 0, 0)
+		cam.fov = 60.0
+		if kv.has("pt"):
+			env.pathtracing_enabled = true
 	# The clock drives the camera's exposure (an adapting eye) unless the bench sets one.
 	clock.drive_exposure = not (kv.has("exposure") or kv.has("pre-exposure"))
+	if kv.has("no-night-vision"):
+		await get_tree().process_frame
+		if cam.attributes:
+			cam.attributes.night_vision = false
 	if kv.has("look-sun"):
 		# --look-sun: the camera turned to the sun's azimuth, keeping --pitch.
 		await get_tree().process_frame
