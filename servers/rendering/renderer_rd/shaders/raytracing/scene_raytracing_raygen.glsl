@@ -2110,7 +2110,8 @@ void main() {
 					}
 				}
 				m.albedo *= g.b;
-				m.roughness = clamp(m.roughness * g.a, 0.0, 1.0);
+				// The fresh sheen on floors only (material.cpp: torn walls keep their roughness).
+				m.roughness = clamp(m.roughness * mix(1.0, g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
 			}
 		}
 		// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with

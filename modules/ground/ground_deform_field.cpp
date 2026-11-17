@@ -445,9 +445,9 @@ static float smooth01(float p_a, float p_b, float p_x) {
 float GroundDeformField::sole_sd(float p_lx, float p_lz, Vector2 p_half) {
 	float qx, qy, len, wid;
 	sole_frame(p_lx, p_lz, p_half, qx, qy, len, wid);
-	const float heel = sole_ellipse(qx + 0.62f * len, qy, 0.38f * len, 0.8f * wid);
+	const float heel = sole_ellipse(qx + 0.64f * len, qy, 0.36f * len, 0.74f * wid);
 	const float fore = sole_ellipse(qx - 0.28f * len, qy, 0.72f * len, wid);
-	const float k = 0.25f * wid;
+	const float k = 0.12f * wid;
 	const float hh = CLAMP(0.5f + 0.5f * (fore - heel) / k, 0.0f, 1.0f);
 	return Math::lerp(fore, heel, hh) - k * hh * (1.0f - hh);
 }
@@ -455,12 +455,12 @@ float GroundDeformField::sole_relief(float p_lx, float p_lz, Vector2 p_half) {
 	float qx, qy, len, wid;
 	sole_frame(p_lx, p_lz, p_half, qx, qy, len, wid);
 	const float u = qx / len;
-	const float shank = smooth01(-0.36f, -0.3f, u) * (1.0f - smooth01(-0.14f, -0.08f, u));
+	const float shank = smooth01(-0.4f, -0.32f, u) * (1.0f - smooth01(-0.12f, -0.04f, u));
 	const float rand = smooth01(-0.008f, -0.004f, sole_sd(p_lx, p_lz, p_half));
-	const float gv = (qx + 0.6f * Math::abs(qy)) / 0.022f;
+	const float gv = (qx + 0.6f * Math::abs(qy)) / 0.045f;
 	const float g = gv - Math::floor(gv);
-	const float groove = (1.0f - rand) * smooth01(0.05f, 0.12f, g) * (1.0f - smooth01(0.38f, 0.45f, g));
-	return MAX(0.008f * shank, 0.005f * groove);
+	const float groove = (1.0f - rand) * smooth01(0.0f, 0.12f, g) * (1.0f - smooth01(0.5f, 0.62f, g));
+	return MAX(0.012f * shank, 0.007f * groove);
 }
 
 float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
@@ -693,7 +693,11 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				if (!c.deformable) {
 					continue;
 				}
-				float w = (1.0f - o / reach) * (1.0f + BOW_GAIN * ahead);
+				// The ground's lip is rounded, highest a little out from the wall: peaked at the wall's top it made
+				// a knife edge a texel wide that a low sun drew as a bright line along every rut.
+				const float xo = o / reach;
+				const float lip = rim_reach > 0.0f ? 0.35f + 0.65f * Math::smoothstep(0.0f, 0.3f, xo) : 1.0f;
+				float w = (1.0f - xo) * lip * (1.0f + BOW_GAIN * ahead);
 				if (c.crust > 0.0f) {
 					// A broken crust: the rim is heaped in plates, each a tilted slab of its own height.
 					const int px = int(Math::floor(wx / PLATE));

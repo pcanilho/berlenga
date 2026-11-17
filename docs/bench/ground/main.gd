@@ -442,6 +442,35 @@ func _run_near_tests() -> void:
 	surface.near_field = true
 	for i in 3:
 		await get_tree().physics_frame
+	# A boot sole (a body with the ground_sole meta) prints its tread: lug bars stand in the forefoot's floor.
+	surface.clear_deformation()
+	var boot := Node3D.new()
+	var bs := CollisionShape3D.new()
+	bs.shape = BoxShape3D.new()
+	(bs.shape as BoxShape3D).size = Vector3(0.11, 0.06, 0.29)
+	boot.add_child(bs)
+	boot.set_meta("ground_mass", 80.0)
+	boot.set_meta("ground_contact_area", 0.035)
+	boot.set_meta("ground_sole", true)
+	boot.add_to_group("ground_deform")
+	add_child(boot)
+	boot.global_position = Vector3(o.x, _undisturbed(o) + 0.03, o.z)
+	for i in 20:
+		await get_tree().physics_frame
+	boot.queue_free()
+	for i in 3:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var lo := 1.0
+	var hi := -1.0
+	var row := ""
+	for j in 13:
+		var q := o + Vector3(0, 0, 0.0 + j * 0.008)
+		var hq := surface.get_surface_height_at(q) - _undisturbed(q)
+		row += "%.1f " % (hq * 100.0)
+		lo = minf(lo, hq)
+		hi = maxf(hi, hq)
+	_check("a boot sole prints its lug bars", hi - lo > 0.004, "forefoot floor %s cm" % row)
 	# A ball's pit in dry sand slumps to the repose on the near field too, in the same 3 s.
 	surface.ground_type = GroundSurface3D.GROUND_SAND
 	surface.moisture = 0.0

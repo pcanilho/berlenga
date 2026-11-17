@@ -359,9 +359,9 @@ float sole_sd(vec2 p_local, vec2 p_half) {
 	float len;
 	float wid;
 	vec2 q = sole_frame(p_local, p_half, len, wid);
-	float heel = sole_ellipse(vec2(q.x + 0.62 * len, q.y), vec2(0.38 * len, 0.8 * wid));
+	float heel = sole_ellipse(vec2(q.x + 0.64 * len, q.y), vec2(0.36 * len, 0.74 * wid));
 	float fore = sole_ellipse(vec2(q.x - 0.28 * len, q.y), vec2(0.72 * len, wid));
-	float k = 0.25 * wid;
+	float k = 0.12 * wid;
 	float hh = clamp(0.5 + 0.5 * (fore - heel) / k, 0.0, 1.0);
 	return mix(fore, heel, hh) - k * hh * (1.0 - hh);
 }
@@ -370,11 +370,11 @@ float sole_relief(vec2 p_local, vec2 p_half) {
 	float wid;
 	vec2 q = sole_frame(p_local, p_half, len, wid);
 	float u = q.x / len;
-	float shank = smoothstep(-0.36, -0.3, u) * (1.0 - smoothstep(-0.14, -0.08, u));
+	float shank = smoothstep(-0.4, -0.32, u) * (1.0 - smoothstep(-0.12, -0.04, u));
 	float rand = smoothstep(-0.008, -0.004, sole_sd(p_local, p_half));
-	float g = fract((q.x + 0.6 * abs(q.y)) / 0.022);
-	float groove = (1.0 - rand) * smoothstep(0.05, 0.12, g) * (1.0 - smoothstep(0.38, 0.45, g));
-	return max(0.008 * shank, 0.005 * groove);
+	float g = fract((q.x + 0.6 * abs(q.y)) / 0.045);
+	float groove = (1.0 - rand) * smoothstep(0.0, 0.12, g) * (1.0 - smoothstep(0.5, 0.62, g));
+	return max(0.012 * shank, 0.007 * groove);
 }
 
 void run_stamp(Stamp s) {
@@ -629,7 +629,9 @@ void run_stamp(Stamp s) {
 			if (!c.deformable) {
 				continue;
 			}
-			float wgt = (1.0 - o / reach) * (1.0 + params.bow.y * ahead);
+			// The ground's lip is rounded (GroundDeformField::press()): highest a little out from the wall.
+			float lip = params.bow.w > 0.0 ? 0.35 + 0.65 * smoothstep(0.0, 0.3, o / reach) : 1.0;
+			float wgt = (1.0 - o / reach) * lip * (1.0 + params.bow.y * ahead);
 			if (c.crust > 0.0) {
 				float plate_size = params.crust_consts.y;
 				int px = int(floor(wp.x / plate_size));

@@ -185,7 +185,7 @@ Found on the way:
 Docs review fixes (prints frame):
 - Prints were blocks. A box stamp marked `ground_sole` (meta on the body) is a boot: heel and forefoot
   ellipses in a smooth union, toe toward the longer half axis; the shank under the arch and chevron lug
-  grooves (5 mm deep, 22 mm apart) inside a solid rand raise the print's floor where the sole does not
+  bars (7 mm, 45 mm apart: a finer tread aliases on the 1.56 cm grid) inside a solid rand raise the print's floor where the sole does not
   bear (`GroundDeformField::sole_sd()`, `sole_relief()`, the same in ground_deform.glsl).
 - A rut changed shape at the near field's edge. The patch's coarse vertices sat on the main field's
   texel corners, where a sample is the mean of four texels: the whole main field was drawn with a 2x2 box
@@ -196,6 +196,10 @@ Docs review fixes (prints frame):
 - Rims on the near field came out toothed: a body pressed once per frame (2.8 cm at 1.7 m/s) left one
   tooth per press, finer than the main field could show. Bodies are pressed once per finest texel
   (`GroundDeformField::stamp_step`).
+- Second review: a hot white spot at every heel was the fresh-ground sheen on the print's curved wall;
+  the sheen now stays on floors (raster and path tracer). A thin bright line along ruts was a lip
+  peaked a texel wide at the wall's top; the ground's lip is now highest a little out from the wall.
+  Tread shows with the sun above about 30 degrees: at 15 degrees a print's floor is all shadow.
 - A moving body's pushed soil goes half to each side of its path, so a tyre throws up two even berms.
   A tyre narrower than two main texels still leaves rims that swap sides on the main field (aliasing of
   the rim ring); the bench tyre is now 25 cm wide.
