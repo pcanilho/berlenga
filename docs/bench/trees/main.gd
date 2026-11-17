@@ -29,22 +29,23 @@ extends Node3D
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
 #   --storm ...       storm breaks and windthrow: see storm.gd
-#   --shrubs ...      heath shrubs (gorse, broom) in their forms: see shrubs.gd
+#   --shrubs ...      heath and scrub shrubs (gorse, broom, gum rockrose, kermes oak, lentisk) in their forms: see shrubs.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
 		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
-		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom"]
-const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32] # Shrubs and evergreens that stay leafy low in a stand.
+		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk"]
+const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
 const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5,
-		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6]
+		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
 		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6),
 		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
-		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6), Vector2(1.0, 2.6), Vector2(1.0, 2.6)]
+		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6), Vector2(1.0, 2.6), Vector2(1.0, 2.6),
+		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0)]
 
 var junction_side := 1 # --junction-side=-1: the junction view from the limb's other side.
 var test := false
@@ -383,12 +384,16 @@ func _build_scene() -> void:
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
 	# Raster: screen-space occlusion, as games draw it (the path tracer finds it by itself).
+	# Without it dense foliage and flower clusters were flat-lit to their core and the
+	# raster/path-traced pair differed more than lighting should.
 	if raster and not OS.has_environment("NO_SSAO"):
 		env.ssao_enabled = true
 	# Needles are a few millimetres wide, far under a pixel at lineup distance: without
 	# multisampling most miss every sample point and conifers read as bare sticks. Games run TAA
 	# or DLSS, which integrate that coverage; 8x MSAA stands in for it here.
 	get_viewport().msaa_3d = Viewport.MSAA_8X
+	if OS.has_environment("LOD0"):
+		get_viewport().mesh_lod_threshold = 0.0
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -630,6 +635,13 @@ func _render_later() -> void:
 	if OS.has_environment("WIRE"):
 		get_viewport().debug_draw = Viewport.DEBUG_DRAW_WIREFRAME
 	var frames := 8 if raster else 12
+	if not raster:
+		# The path tracer captures and builds wind-animated surfaces under a per-frame budget:
+		# wait until none is pending before the counted frames, or the shot can miss geometry.
+		for i in 600:
+			await RenderingServer.frame_post_draw
+			if get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) == 0:
+				break
 	var t0 := 0
 	for i in frames:
 		if i == frames - 4:
