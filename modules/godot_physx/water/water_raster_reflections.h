@@ -166,11 +166,25 @@ vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_wo
 		float rs = (nv_k - 1.33 * ct) / (nv_k + 1.33 * ct);
 		float rp = (1.33 * nv_k - ct) / (1.33 * nv_k + ct);
 		float f_k = 0.5 * (rs * rs + rp * rp);
+		// A mirror ray turned down into the sea by a steep facet (far wave backs at a low sun) does not see the
+		// sky: it meets the next wave, taken as the level sea, and only that wave's Fresnel share of it goes on
+		// up to the sky (mirrored again); the rest enters the water and comes back as the body. Continuous at the
+		// horizon, where the second Fresnel is 1. Before, these rays read the horizon sky at full Fresnel and
+		// showed as bright blobs on the far sea.
+		vec3 r = reflect(-v, n_k);
+		if (r.y < 0.0) {
+			float c2 = clamp(-r.y, 1e-3, 1.0);
+			float st2 = sqrt(max(1.0 - c2 * c2, 0.0)) / 1.33;
+			float ct2 = sqrt(max(1.0 - st2 * st2, 0.0));
+			float rs2 = (c2 - 1.33 * ct2) / (c2 + 1.33 * ct2);
+			float rp2 = (1.33 * c2 - ct2) / (1.33 * c2 + ct2);
+			f_k *= 0.5 * (rs2 * rs2 + rp2 * rp2);
+			r.y = -r.y;
+		}
 		f_eff += w_k * f_k;
 		wsum += w_k;
 		if (raster_sky_energy > 0.0) {
-			vec3 r = reflect(-v, n_k);
-			r.y = max(r.y, 0.01); // a ray turned down by a steep wave sees the horizon's sky
+			r.y = max(r.y, 0.01);
 			r = normalize(r);
 			vec2 pc = vec2(atan(r.x, -r.z) + PI, acos(clamp(r.y, -1.0, 1.0))) / vec2(2.0 * PI, PI);
 			add += w_k * f_k * textureLod(raster_sky_panorama, pc, 0.0).rgb * raster_sky_energy;
