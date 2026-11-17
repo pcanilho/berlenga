@@ -395,10 +395,51 @@ with RULE_COAST_EXPOSURE, and gorse scrub where soil is deeper. Calluna's growth
 (pioneer, building, mature, degenerate; Watt 1947, Gimingham 1972) give a heath's patchwork of
 bush sizes and gaps: a per-patch age drawn from the patch noise.
 
-Mediterranean scrub (garrigue and maquis): cistus, rosemary, lavender, thyme, dwarf fan palm on
-dry, sunny, rocky slopes (aridity and sunlight rules). Worn paths and trampling: desire lines
-where plants thin, shorten and flatten along walked routes (Cole 1995, trampling resistance;
-Bayfield 1979), driven by the trample field and a path mask.
+Mediterranean scrub, garrigue and maquis (researching 17 Nov). Evergreen, aromatic, sclerophyll
+shrubs on summer-dry ground, from the Algarve and the Tagus hills round the basin (Blondel et
+al. 2010, "The Mediterranean Region: Biological Diversity in Space and Time"; Flora iberica,
+Castroviejo et al.; Rivas-Martinez 2011 for the bioclimate belts). Maquis is the tall, closed
+scrub (1 to 4 m) on deeper soil; garrigue the low, open, broken cover (under 1 m) on thin soil and
+limestone with rock showing between the bushes. Plants, real geometry:
+- Gum rockrose (Cistus ladanifer): an erect shrub 1 to 2.5 m of few, upright, sticky branches;
+  opposite, linear-lanceolate, dark glossy leaves 4 to 8 cm, varnished with labdanum resin (high
+  specular sheen, grey felt below); white crinkled-silk flowers 5 to 10 cm, often with a maroon
+  blotch at each petal base, April to June; woody, ten-celled capsules stand after. On acid soils,
+  the dominant shrub of the Portuguese and Spanish interior jaras.
+- Sage-leaved rockrose (Cistus salviifolius): a low, sprawling shrub 30 to 60 cm, small, wrinkled,
+  grey-green ovate leaves, white flowers 4 to 5 cm.
+- Rosemary (Salvia rosmarinus): 0.5 to 1.5 m, dense, linear, rolled leaves 1.5 to 4 cm, dark above,
+  white felt below; pale blue two-lipped flowers along the shoots, winter to spring. Limestone.
+- French lavender (Lavandula stoechas): 30 to 100 cm, grey-green linear leaves, dense flower heads
+  topped by a tuft of purple bracts ("rabbit ears"), March to June. Acid soils.
+- Thyme (Thymus spp.) and other dwarf aromatics: cushions 10 to 30 cm.
+- Kermes oak (Quercus coccifera) and lentisk (Pistacia lentiscus): dense, small-leaved, spiny or
+  leathery evergreen mounds that make most of the maquis' bulk.
+- Dwarf fan palm (Chamaerops humilis): clumps of fan leaves on short trunks, 1 to 2 m, on the
+  Algarve's coastal limestone; the only native palm of Europe.
+Placement: the climate map's aridity and summer drought (RULE_ARIDITY, RULE_PRECIPITATION) and
+mild winters (RULE_JANUARY_TEMPERATURE over about 2 C); maquis where the soil is deeper, garrigue
+on thin soil and rock (RULE_SOIL_DEPTH, RULE_ROCK), sunny slopes first (RULE_SUNLIGHT); bare
+ground between the bushes is part of the look. Summer dormancy: the cistus leaves fold and turn
+grey-brown in July and August (summer semi-deciduous), a season the phenology must carry.
+
+Worn paths and trampling (researching 17 Nov). Where people and animals walk, plants thin out,
+get shorter and flatter, and the walked line turns to bare, compacted soil; the edges keep the
+low, tough plants (Cole 1995, "Experimental trampling of vegetation", J. Appl. Ecol. 32: two
+measures, resistance to the first passes and tolerance to recover; Cole and Bayfield 1993, the
+standard trampling protocol; Liddle 1997, "Recreation Ecology"). What sets the damage:
+- Passes: cover falls steeply with the first 25 to 100 passes a year, then levels off; the
+  centre of a used path is bare, a band either side keeps a shortened, trampled sward.
+- Growth form (Cole 1995): tufted grasses, sedges and rosette plants (plantain, the "path weeds")
+  resist and recover; erect forbs, ferns and dwarf shrubs (heather, bilberry) break and die. So
+  the edge of a path is plantain, rye-grass and pearlwort, not taller meadow plants.
+- Ground: wet and soft ground widens a path (walkers step round mud), steep ground cuts it into a
+  rut with braids.
+Engine pieces: a path mask (a texture or curves) and the existing trample field (VegetationField3D
+already bends plants under bodies) for passes; per-species trample resistance as a PlantSpecies
+value from the growth form; the plants' scale and density fall with passes, the resistant set
+taking over at the edges; GroundSurface3D or the terrain material shows bare, compacted soil in
+the middle. Desire lines could come from the mud and sand threads' tracks over time.
 
 ## Salt marsh and shingle plants (built 17 Nov)
 
