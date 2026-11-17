@@ -481,6 +481,60 @@ void PhysXWaterMist3D::advance(float p_seconds) {
 		_step(dt);
 	}
 	_upload();
+	_wet_surfaces();
+}
+
+float PhysXWaterMist3D::deposition_velocity(float p_radius_um, float p_wind_speed) {
+	return settling_speed(p_radius_um) + 0.02f * MAX(p_wind_speed, 0.0f);
+}
+
+// Mist wetting rock (docs/ideas/water.md, waterfall stage 3). A surface in mist takes drops at the flux
+// LWC v_d (g/m^2/s, v_d the deposition velocity) and holds about 50 g/m^2 before it looks wet (a film that
+// fills the pores near the surface; Lagarde 2013); it dries over the weather's contact drying time T. The
+// wetness where the two balance is F / (F + C / T). Each column of the box takes its densest cell (a face
+// standing in the column meets it) and the air's speed there, the source's jet plus the wind.
+void PhysXWaterMist3D::_wet_surfaces() {
+#ifdef MODULE_WEATHER_ENABLED
+	if (!wet_surfaces || dims.x <= 0 || dims.z <= 0 || density.size() != uint32_t(dims.x * dims.y * dims.z)) {
+		return;
+	}
+	WeatherMap3D *weather = WeatherMap3D::get_active();
+	if (!weather || !weather->is_contact_wetness_enabled()) {
+		return;
+	}
+	const float dry_time = weather->get_contact_drying_time();
+	if (dry_time <= 0.0f) {
+		return; // raining: the rain keeps it wet
+	}
+	const float capacity = 50.0f; // g/m^2
+	const float ambient = _ambient_wind().length();
+	wet_cells.resize(dims.x * dims.z);
+	bool any = false;
+	for (int z = 0; z < dims.z; z++) {
+		for (int x = 0; x < dims.x; x++) {
+			float flux = 0.0f;
+			for (int y = 0; y < dims.y; y++) {
+				const int c = (z * dims.y + y) * dims.x + x;
+				const float lwc = density[c];
+				if (lwc <= 0.0f) {
+					continue;
+				}
+				const float u = (jet.size() == density.size() ? jet[c].length() : 0.0f) + ambient;
+				flux = MAX(flux, lwc * deposition_velocity(drop_radius, u));
+			}
+			const float w = flux / (flux + capacity / dry_time);
+			wet_cells[z * dims.x + x] = w;
+			any = any || w > 0.002f;
+		}
+	}
+	if (any) {
+		weather->add_contact_wetness_cells(wet_cells.ptr(), dims.x, dims.z, Rect2(Vector2(grid_min.x, grid_min.z), Vector2(dims.x, dims.z) * cell));
+	}
+#endif
+}
+
+void PhysXWaterMist3D::set_wet_surfaces(bool p_enabled) {
+	wet_surfaces = p_enabled;
 }
 
 // Soft walls: what is drawn fades to nothing over the last cells at the sides and the top of the box, so the box
@@ -553,6 +607,11 @@ void PhysXWaterMist3D::_notification(int p_what) {
 			accum = MIN(accum, (double)dt);
 			if (steps > 0) {
 				_upload();
+			}
+			wet_accum += get_physics_process_delta_time();
+			if (wet_accum >= 0.5) {
+				wet_accum = 0.0;
+				_wet_surfaces();
 			}
 		} break;
 	}
@@ -648,6 +707,9 @@ void PhysXWaterMist3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_update_rate"), &PhysXWaterMist3D::get_update_rate);
 	ClassDB::bind_method(D_METHOD("set_emitting", "emitting"), &PhysXWaterMist3D::set_emitting);
 	ClassDB::bind_method(D_METHOD("is_emitting"), &PhysXWaterMist3D::is_emitting);
+	ClassDB::bind_method(D_METHOD("set_wet_surfaces", "enabled"), &PhysXWaterMist3D::set_wet_surfaces);
+	ClassDB::bind_method(D_METHOD("get_wet_surfaces"), &PhysXWaterMist3D::get_wet_surfaces);
+	ClassDB::bind_static_method("PhysXWaterMist3D", D_METHOD("deposition_velocity", "radius_um", "wind_speed"), &PhysXWaterMist3D::deposition_velocity);
 	ClassDB::bind_method(D_METHOD("sample_density", "world_position"), &PhysXWaterMist3D::sample_density);
 	ClassDB::bind_method(D_METHOD("get_max_density"), &PhysXWaterMist3D::get_max_density);
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &PhysXWaterMist3D::advance);
@@ -670,6 +732,7 @@ void PhysXWaterMist3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "diffusion", PROPERTY_HINT_RANGE, "0,5,0.05,suffix:m²/s"), "set_diffusion", "get_diffusion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "1,60,1,suffix:Hz"), "set_update_rate", "get_update_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wet_surfaces"), "set_wet_surfaces", "get_wet_surfaces");
 }
 
 PhysXWaterMist3D::PhysXWaterMist3D() {
