@@ -85,6 +85,20 @@ origin), and the per-step GPU sync from finding 1.
 - Linux binaries need the glibc of the build machine or newer.
 - Shared libraries (`PhysXGpu_64`, Blast, Flow) ship next to the editor and
   go into the release zips with their notices.
+- Flow in a fresh Linux cloud container: in the PhysX checkout's `flow/`
+  directory run `bash build.sh`. Then build the engine with
+  `flow_sdk=<that flow dir>`; SCsub copies
+  `_build/linux-x86_64/release/libnvflow.so` and `libnvflowext.so` into
+  `bin/`. If the libraries were built after the engine, copy them next to
+  the executable by hand. The binary finds them through `$ORIGIN` in its
+  RPATH, so no environment variable is needed.
+- Without those libraries a Flow build still runs: it prints one error
+  ("NVIDIA Flow unavailable") and every Flow node stays inert. Before
+  17 Nov 2026 it crashed in `dlclose(NULL)` inside Flow's loader.
+- PhysX is linked statically. Blast is linked dynamically, so a binary
+  without the Blast `.so` files does not start (the system loader names the
+  missing library). The GPU PhysX library (`libPhysXGpu_64.so`) is optional
+  and loaded at run time.
 
 ## Options when the work starts
 

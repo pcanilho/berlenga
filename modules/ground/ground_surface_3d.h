@@ -88,11 +88,21 @@ public:
 		float wheel_n = 1.0f;
 		float wheel_kc = 1.0f;
 		float wheel_kphi = 1000.0f;
+		// Deep mud (docs/ideas/mud.md, stage 1): the soft layer's thickness over the firm base, m (0: none).
+		float mud = 0.0f;
 		bool deformable = true;
 	};
 	// p_saturation: pore water in the top layer, 0..1 (< 0: none known, p_moisture alone); p_water_speed: water
 	// flowing over it, m/s (sand stage 4).
-	static Cell material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation = -1.0f, float p_water_speed = 0.0f);
+	// p_mud: deep mud over the firm base, m (stage 1 of docs/ideas/mud.md), already scaled by how wet it is.
+	static Cell material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation = -1.0f, float p_water_speed = 0.0f, float p_mud = 0.0f);
+	// Mud as a Bingham fluid (O'Brien and Julien 1988, Aspen Pit 1): yield stress (Pa) and viscosity (Pa s) at a
+	// volumetric sediment concentration p_cv (0.40 slurry to 0.56 stiff).
+	static float mud_yield_stress(float p_cv);
+	static float mud_viscosity(float p_cv);
+	// The sediment concentration of mud at a moisture: stiff (0.56) where the ground first turns to mud (0.35),
+	// slurry (0.40) soaked.
+	static float mud_concentration(float p_moisture) { return Math::lerp(0.56f, 0.40f, CLAMP((p_moisture - 0.35f) / 0.65f, 0.0f, 1.0f)); }
 	// Bed load under flowing water (Meyer-Peter and Mueller 1948) for fine sand, m2/s per m across the flow.
 	static float bed_load(float p_water_speed);
 
@@ -108,6 +118,18 @@ private:
 	bool rock_from_geology = true;
 	Ref<Image> type_map; // R: sand share, G: bare rock
 	Rect2 type_map_rect;
+	// Deep mud (docs/ideas/mud.md, stage 1): painted (mud_map R times mud_max_depth over mud_map_rect, as
+	// MudRunner's mud brush) and from the terrain (a TerrainDataMap3D's wetness index and distance to water, at
+	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
+	bool mud_layer = true;
+	Ref<Image> mud_map;
+	Rect2 mud_map_rect;
+	float mud_max_depth = 1.2f;
+	float mud_auto_depth = 0.5f;
+	float mud_wet_start = 0.35f;
+	float mud_wet_full = 0.55f;
+	NodePath data_map;
+	float _mud_depth_at(const Vector3 &p_position, float p_moisture, bool p_sand_or_rock, const Node *p_data_map) const;
 
 	float deform_extent = 32.0f;
 	int deform_resolution = 512;
@@ -271,6 +293,7 @@ private:
 		float sand = 0.0f;
 		float moisture = 0.0f;
 		float litter = 0.0f;
+		float mud = 0.0f; // deep mud, m (stage 1 of docs/ideas/mud.md)
 		bool fixed = false; // rock or snow: never deforms
 	};
 	LocalVector<CellInput> cell_inputs;
@@ -482,6 +505,23 @@ public:
 	Vector2 get_wind_override() const { return wind_override; }
 	void set_wind_ripples(bool p_enabled);
 	bool is_wind_ripples() const { return wind_ripples; }
+	void set_mud_layer(bool p_enabled);
+	bool is_mud_layer() const { return mud_layer; }
+	void set_mud_map(const Ref<Image> &p_map);
+	Ref<Image> get_mud_map() const { return mud_map; }
+	void set_mud_map_rect(const Rect2 &p_rect);
+	Rect2 get_mud_map_rect() const { return mud_map_rect; }
+	void set_mud_max_depth(float p_m);
+	float get_mud_max_depth() const { return mud_max_depth; }
+	void set_mud_auto_depth(float p_m);
+	float get_mud_auto_depth() const { return mud_auto_depth; }
+	void set_mud_wet_start(float p_m);
+	float get_mud_wet_start() const { return mud_wet_start; }
+	void set_mud_wet_full(float p_m);
+	float get_mud_wet_full() const { return mud_wet_full; }
+	void set_data_map(const NodePath &p_path);
+	NodePath get_data_map() const { return data_map; }
+	float get_mud_depth_at(Vector3 p_position) const;
 	void set_near_field(bool p_enabled);
 	bool is_near_field() const { return near_field; }
 	void set_near_extent(float p_extent);

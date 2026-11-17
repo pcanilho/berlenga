@@ -35,6 +35,7 @@
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
+#include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "scene/3d/camera_3d.h"
@@ -70,7 +71,15 @@ float GroundSurface3D::bed_load_shear(float p_tau) {
 	return 8.0f * Math::sqrt(1.65f * 9.81f * d * d * d) * Math::pow(theta - 0.047f, 1.5f);
 }
 
-GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation, float p_water_speed) {
+float GroundSurface3D::mud_yield_stress(float p_cv) {
+	return 0.0181f * Math::exp(25.7f * p_cv); // 0.181 exp(25.7 Cv) dyn/cm2
+}
+
+float GroundSurface3D::mud_viscosity(float p_cv) {
+	return 0.0036f * Math::exp(22.1f * p_cv); // 0.0360 exp(22.1 Cv) poise
+}
+
+GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moisture, float p_litter, float p_saturation, float p_water_speed, float p_mud) {
 	// Pore water (stage 4) wets the ground as rain does, and more where it is wetter.
 	const float sat = CLAMP(p_saturation, 0.0f, 1.0f);
 	const float m = CLAMP(p_saturation >= 0.0f ? MAX(p_moisture, sat) : p_moisture, 0.0f, 1.0f);
@@ -154,6 +163,62 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 			c.rate = MAX(c.rate, k);
 			c.tan_repose = Math::lerp(c.tan_repose, 0.05f, s);
 		}
+	}
+	// Deep mud (docs/ideas/mud.md, stage 1): a soft layer of clay and silt over the firm base, a Bingham fluid whose
+	// yield stress and viscosity climb steeply with the solid share (O'Brien and Julien 1988).
+	if (p_mud > 0.0f && s < 0.5f) {
+		const float mw = Math::smoothstep(0.02f, 0.1f, p_mud) * (1.0f - 2.0f * s);
+		const float cv = mud_concentration(m);
+		const float stiff = CLAMP((cv - 0.40f) / 0.135f, 0.0f, 1.0f); // 0 slurry; 1 stiff, at Cv 0.535: clay at 32% water by mass
+		const float tau_y = mud_yield_stress(cv);
+		const float mu = mud_viscosity(cv);
+		const float rho = 2650.0f * cv + 1000.0f * (1.0f - cv);
+		Cell mud;
+		// A rut's wall stands where the mud's own weight down its slope stays under the yield stress: the
+		// critical slope tau_y / (rho g h) for the mass that would move, about the rut's depth (half the
+		// layer, at most 30 cm). Steeper than that it flows at Bingham's rate, the depth-averaged plug flow's
+		// diffusivity D = rho g h^3 / (3 mu) over the main field's texel (6.25 cm; the near field takes
+		// more passes for its own).
+		const float h = CLAMP(0.5f * p_mud, 0.05f, 0.3f);
+		mud.tan_repose = CLAMP(tau_y / (rho * 9.81f * h), 0.03f, Math::tan(Math::deg_to_rad(70.0f)));
+		const float diff = rho * 9.81f * h * h * h / (3.0f * MAX(mu, 1e-3f));
+		mud.rate = CLAMP(2.0f * diff / (0.0625f * 0.0625f), 1.0f / 600.0f, 1000.0f);
+		// Nearly incompressible: what a wheel pushes down squeezes up beside it.
+		mud.rim_share = 0.97f;
+		mud.max_dent = MAX(c.max_dent, p_mud);
+		// Pressure-sinkage: stiff mud as lean clay at 32% (Wong table 2.2: n 0.5, kc 13.19, kphi 692.15); slurry
+		// fitted so a boot (21 kPa) sinks about 15 cm (n 0.5, kphi 54) and a loaded tyre goes to the base.
+		mud.n = 0.5f;
+		mud.kc = Math::lerp(0.0f, 13.19f, stiff);
+		mud.kphi = lerp_log(54.0f, 692.15f, stiff);
+		mud.wheel_n = mud.n;
+		mud.wheel_kc = mud.kc;
+		mud.wheel_kphi = mud.kphi;
+		// Shear: clay carries load by cohesion, friction small (lean clay c 4.14 kPa, phi 13 deg); a slurry
+		// only its yield stress and a couple of degrees.
+		mud.cohesion = Math::lerp(tau_y * 0.001f, 4.14f, stiff);
+		mud.tan_phi = Math::tan(Math::deg_to_rad(Math::lerp(2.0f, 13.0f, stiff)));
+		mud.shear_k = 0.02f;
+		mud.unit_weight = rho * 9.81f * 0.001f;
+		mud.darken = 0.25f;
+		mud.gloss = Math::lerp(0.35f, 0.7f, stiff);
+		c.n = Math::lerp(c.n, mud.n, mw);
+		c.kc = Math::lerp(c.kc, mud.kc, mw);
+		c.kphi = lerp_log(c.kphi, mud.kphi, mw);
+		c.wheel_n = Math::lerp(c.wheel_n, mud.wheel_n, mw);
+		c.wheel_kc = Math::lerp(c.wheel_kc, mud.wheel_kc, mw);
+		c.wheel_kphi = lerp_log(c.wheel_kphi, mud.wheel_kphi, mw);
+		c.tan_repose = Math::lerp(c.tan_repose, mud.tan_repose, mw);
+		c.rate = lerp_log(c.rate, mud.rate, mw);
+		c.rim_share = Math::lerp(c.rim_share, mud.rim_share, mw);
+		c.max_dent = Math::lerp(c.max_dent, mud.max_dent, mw);
+		c.cohesion = Math::lerp(c.cohesion, mud.cohesion, mw);
+		c.tan_phi = Math::lerp(c.tan_phi, mud.tan_phi, mw);
+		c.shear_k = Math::lerp(c.shear_k, mud.shear_k, mw);
+		c.unit_weight = Math::lerp(c.unit_weight, mud.unit_weight, mw);
+		c.darken = Math::lerp(c.darken, mud.darken, mw);
+		c.gloss = Math::lerp(c.gloss, mud.gloss, mw);
+		c.mud = p_mud * mw;
 	}
 	// Wind moves only dry sand: a few percent of water binds the grains and the threshold climbs out of reach
 	// (Belly 1964; McKenna Neuman and Nickling 1989).
@@ -357,6 +422,10 @@ void GroundSurface3D::_update_cells() {
 	if (snow && !snow->has_method("get_depth_at")) {
 		snow = nullptr;
 	}
+	const Node *dmap = data_map.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(data_map);
+	if (!Object::cast_to<TerrainDataMap3D>(dmap)) {
+		dmap = Object::cast_to<TerrainDataMap3D>(hs);
+	}
 	const float base_sand = ground_type == GROUND_SAND ? 1.0f : 0.0f;
 	const bool map = type_map.is_valid() && !type_map->is_empty() && type_map_rect.size.x > 0.0f && type_map_rect.size.y > 0.0f;
 	for (int z = 0; z < n; z++) {
@@ -385,7 +454,8 @@ void GroundSurface3D::_update_cells() {
 			// Under more than a few centimetres of snow the snow surface takes the print.
 			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
 			const bool wet = water_coupling && (int)pore.size() == n * n && (pore[i] > 0.0f || water_speed[i] > 0.0f);
-			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i]) : material_cell(in.sand, in.moisture, in.litter);
+			in.mud = in.fixed ? 0.0f : _mud_depth_at(p, wet ? MAX(m, pore[i]) : m, sand > 0.5f, dmap);
+			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
 			if (wet) {
 				cell_water[i * 2 + 0] = pore[i];
 				cell_water[i * 2 + 1] = water_speed[i];
@@ -394,6 +464,85 @@ void GroundSurface3D::_update_cells() {
 			cells[i] = c;
 		}
 	}
+}
+
+float GroundSurface3D::_mud_depth_at(const Vector3 &p_position, float p_moisture, bool p_sand_or_rock, const Node *p_data_map) const {
+	if (!mud_layer || p_sand_or_rock) {
+		return 0.0f;
+	}
+	float depth = 0.0f;
+	if (mud_map.is_valid() && !mud_map->is_empty() && mud_map_rect.size.x > 0.0f && mud_map_rect.size.y > 0.0f) {
+		const Vector2 uv = (Vector2(p_position.x, p_position.z) - mud_map_rect.position) / mud_map_rect.size;
+		if (uv.x >= 0.0f && uv.y >= 0.0f && uv.x <= 1.0f && uv.y <= 1.0f) {
+			const float fx = uv.x * mud_map->get_width() - 0.5f;
+			const float fy = uv.y * mud_map->get_height() - 0.5f;
+			const int x0 = CLAMP((int)Math::floor(fx), 0, mud_map->get_width() - 1);
+			const int y0 = CLAMP((int)Math::floor(fy), 0, mud_map->get_height() - 1);
+			const int x1 = MIN(x0 + 1, mud_map->get_width() - 1);
+			const int y1 = MIN(y0 + 1, mud_map->get_height() - 1);
+			const float tx = CLAMP(fx - x0, 0.0f, 1.0f);
+			const float ty = CLAMP(fy - y0, 0.0f, 1.0f);
+			const float r = Math::lerp(Math::lerp(mud_map->get_pixel(x0, y0).r, mud_map->get_pixel(x1, y0).r, tx), Math::lerp(mud_map->get_pixel(x0, y1).r, mud_map->get_pixel(x1, y1).r, tx), ty);
+			depth = MAX(depth, r * mud_max_depth);
+		}
+	}
+	if (Object::cast_to<TerrainDataMap3D>(p_data_map) && mud_auto_depth > 0.0f) {
+		// Where water gathers: a high topographic wetness index (Beven and Kirkby 1979; valley floors, hollows,
+		// flats below slopes) and the first few metres of a bank. Slopes drain, so steep ground keeps none.
+		const TerrainDataMap3D *dm = Object::cast_to<TerrainDataMap3D>(p_data_map);
+		const float twi = dm->get_wetness_at(p_position);
+		const float dist = dm->get_water_distance_at(p_position);
+		const float slope = dm->get_slope_at(p_position); // radians
+		const float gather = MAX(Math::smoothstep(8.0f, 13.0f, twi), 1.0f - Math::smoothstep(0.5f, 4.0f, dist));
+		const float flat = 1.0f - Math::smoothstep(Math::deg_to_rad(4.0f), Math::deg_to_rad(12.0f), slope);
+		depth = MAX(depth, mud_auto_depth * gather * flat);
+	}
+	// Only wet mud is soft: a dry track bears like soil (MudRunner's hidden mud, "Extrudes To Wetness").
+	return depth * Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture);
+}
+
+float GroundSurface3D::get_mud_depth_at(Vector3 p_position) const {
+	return _cell_at(p_position.x, p_position.z).mud;
+}
+
+void GroundSurface3D::set_mud_layer(bool p_enabled) {
+	mud_layer = p_enabled;
+	_update_cells();
+}
+
+void GroundSurface3D::set_mud_map(const Ref<Image> &p_map) {
+	mud_map = p_map;
+	_update_cells();
+}
+
+void GroundSurface3D::set_mud_map_rect(const Rect2 &p_rect) {
+	mud_map_rect = p_rect;
+	_update_cells();
+}
+
+void GroundSurface3D::set_mud_max_depth(float p_m) {
+	mud_max_depth = MAX(p_m, 0.0f);
+	_update_cells();
+}
+
+void GroundSurface3D::set_mud_auto_depth(float p_m) {
+	mud_auto_depth = MAX(p_m, 0.0f);
+	_update_cells();
+}
+
+void GroundSurface3D::set_mud_wet_start(float p_m) {
+	mud_wet_start = CLAMP(p_m, 0.0f, 1.0f);
+	_update_cells();
+}
+
+void GroundSurface3D::set_mud_wet_full(float p_m) {
+	mud_wet_full = CLAMP(p_m, 0.0f, 1.0f);
+	_update_cells();
+}
+
+void GroundSurface3D::set_data_map(const NodePath &p_path) {
+	data_map = p_path;
+	_update_cells();
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1239,7 +1388,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 			float &bv = cell_water[i * 2 + 1];
 			if (Math::abs(s - bs) > 0.02f || Math::abs(water_speed[i] - bv) > 0.05f || (s == 0.0f && bs != 0.0f)) {
 				const CellInput &in = cell_inputs[i];
-				Cell c = material_cell(in.sand, in.moisture, in.litter, s, water_speed[i]);
+				Cell c = material_cell(in.sand, in.moisture, in.litter, s, water_speed[i], in.mud);
 				c.deformable = !in.fixed;
 				cells[i] = c;
 				bs = s;
@@ -3178,6 +3327,25 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_drying_time"), &GroundSurface3D::get_drying_time);
 	ClassDB::bind_method(D_METHOD("set_wind_override", "wind"), &GroundSurface3D::set_wind_override);
 	ClassDB::bind_method(D_METHOD("get_wind_override"), &GroundSurface3D::get_wind_override);
+	ClassDB::bind_method(D_METHOD("set_mud_layer", "enabled"), &GroundSurface3D::set_mud_layer);
+	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
+	ClassDB::bind_method(D_METHOD("set_mud_map", "map"), &GroundSurface3D::set_mud_map);
+	ClassDB::bind_method(D_METHOD("get_mud_map"), &GroundSurface3D::get_mud_map);
+	ClassDB::bind_method(D_METHOD("set_mud_map_rect", "rect"), &GroundSurface3D::set_mud_map_rect);
+	ClassDB::bind_method(D_METHOD("get_mud_map_rect"), &GroundSurface3D::get_mud_map_rect);
+	ClassDB::bind_method(D_METHOD("set_mud_max_depth", "depth"), &GroundSurface3D::set_mud_max_depth);
+	ClassDB::bind_method(D_METHOD("get_mud_max_depth"), &GroundSurface3D::get_mud_max_depth);
+	ClassDB::bind_method(D_METHOD("set_mud_auto_depth", "depth"), &GroundSurface3D::set_mud_auto_depth);
+	ClassDB::bind_method(D_METHOD("get_mud_auto_depth"), &GroundSurface3D::get_mud_auto_depth);
+	ClassDB::bind_method(D_METHOD("set_mud_wet_start", "moisture"), &GroundSurface3D::set_mud_wet_start);
+	ClassDB::bind_method(D_METHOD("get_mud_wet_start"), &GroundSurface3D::get_mud_wet_start);
+	ClassDB::bind_method(D_METHOD("set_mud_wet_full", "moisture"), &GroundSurface3D::set_mud_wet_full);
+	ClassDB::bind_method(D_METHOD("get_mud_wet_full"), &GroundSurface3D::get_mud_wet_full);
+	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &GroundSurface3D::set_data_map);
+	ClassDB::bind_method(D_METHOD("get_data_map"), &GroundSurface3D::get_data_map);
+	ClassDB::bind_method(D_METHOD("get_mud_depth_at", "position"), &GroundSurface3D::get_mud_depth_at);
+	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_yield_stress", "concentration"), &GroundSurface3D::mud_yield_stress);
+	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_viscosity", "concentration"), &GroundSurface3D::mud_viscosity);
 	ClassDB::bind_method(D_METHOD("set_near_field", "enabled"), &GroundSurface3D::set_near_field);
 	ClassDB::bind_method(D_METHOD("is_near_field"), &GroundSurface3D::is_near_field);
 	ClassDB::bind_method(D_METHOD("set_near_extent", "extent"), &GroundSurface3D::set_near_extent);
@@ -3282,6 +3450,16 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "near_field"), "set_near_field", "is_near_field");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_extent", PROPERTY_HINT_RANGE, "2,16,1,suffix:m"), "set_near_extent", "get_near_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "near_resolution", PROPERTY_HINT_RANGE, "128,2048,64"), "set_near_resolution", "get_near_resolution");
+	ADD_GROUP("Mud", "mud_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_map", "get_mud_map");
+	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "mud_map_rect"), "set_mud_map_rect", "get_mud_map_rect");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_max_depth", PROPERTY_HINT_RANGE, "0,3,0.05,suffix:m"), "set_mud_max_depth", "get_mud_max_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_auto_depth", PROPERTY_HINT_RANGE, "0,2,0.05,suffix:m"), "set_mud_auto_depth", "get_mud_auto_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_wet_start", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mud_wet_start", "get_mud_wet_start");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_wet_full", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mud_wet_full", "get_mud_wet_full");
+	ADD_GROUP("", "");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_spacing", PROPERTY_HINT_RANGE, "0.05,4,0.05,suffix:m"), "set_ground_spacing", "get_ground_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "deform_groups"), "set_deform_groups", "get_deform_groups");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ploughing"), "set_ploughing", "is_ploughing");

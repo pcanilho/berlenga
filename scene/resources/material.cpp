@@ -2503,7 +2503,10 @@ void fragment() {)";
 	{
 		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		ALBEDO *= gd_tint.x;
-		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
+		// The sheen of freshly pressed ground is the sole's smear on the floor: the walls it tears keep their
+		// roughness. On a print's curved wall the sheen made a mirror-sharp spot of sun.
+		float gd_up = smoothstep(0.5, 0.85, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
+		ROUGHNESS = clamp(ROUGHNESS * mix(1.0, gd_tint.y, gd_up), 0.0, 1.0);
 		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
 		if (gr_far != vec2(0.0)) {
 			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);

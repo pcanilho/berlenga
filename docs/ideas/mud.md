@@ -185,7 +185,7 @@ Found on the way:
 Docs review fixes (prints frame):
 - Prints were blocks. A box stamp marked `ground_sole` (meta on the body) is a boot: heel and forefoot
   ellipses in a smooth union, toe toward the longer half axis; the shank under the arch and chevron lug
-  grooves (5 mm deep, 22 mm apart) inside a solid rand raise the print's floor where the sole does not
+  bars (7 mm, 45 mm apart: a finer tread aliases on the 1.56 cm grid) inside a solid rand raise the print's floor where the sole does not
   bear (`GroundDeformField::sole_sd()`, `sole_relief()`, the same in ground_deform.glsl).
 - A rut changed shape at the near field's edge. The patch's coarse vertices sat on the main field's
   texel corners, where a sample is the mean of four texels: the whole main field was drawn with a 2x2 box
@@ -196,6 +196,10 @@ Docs review fixes (prints frame):
 - Rims on the near field came out toothed: a body pressed once per frame (2.8 cm at 1.7 m/s) left one
   tooth per press, finer than the main field could show. Bodies are pressed once per finest texel
   (`GroundDeformField::stamp_step`).
+- Second review: a hot white spot at every heel was the fresh-ground sheen on the print's curved wall;
+  the sheen now stays on floors (raster and path tracer). A thin bright line along ruts was a lip
+  peaked a texel wide at the wall's top; the ground's lip is now highest a little out from the wall.
+  Tread shows with the sun above about 30 degrees: at 15 degrees a print's floor is all shadow.
 - A moving body's pushed soil goes half to each side of its path, so a tyre throws up two even berms.
   A tyre narrower than two main texels still leaves rims that swap sides on the main field (aliasing of
   the rim ring); the bench tyre is now 25 cm wide.
@@ -222,6 +226,28 @@ two thirds (the wider lip sits farther from the hole). GPU cost of the near fiel
   follow, a second field box follows it (or the field grows to 64 m on the GPU).
 - Checks: a 4x4 sinks to its axles in 1 m of slurry and not in stiff mud; a rut in stiff mud keeps its
   walls for hours, one in slurry closes in under a minute; volume kept; traction against Wong's clay curves.
+
+**Built.** GroundSurface3D `mud_layer` (on), `mud_map` and `mud_map_rect` (painted depth up to
+`mud_max_depth`, 1.2 m), `data_map` and `mud_auto_depth` (0.5 m where a TerrainDataMap3D's wetness index is
+high or within a few metres of water, on ground under about 10 degrees), counted only when wet between
+`mud_wet_start` 0.35 and `mud_wet_full` 0.55. `get_mud_depth_at()`.
+- The solid share runs from 0.56 where ground first turns to mud to 0.40 soaked; O'Brien and Julien's
+  fits give the yield stress and viscosity (`mud_yield_stress()`, `mud_viscosity()`).
+- Bingham flow rides on the field's slumping rather than a pass of its own: a wall stands up to the
+  critical slope tau_y / (rho g h) for the mass that would move (about half the layer, at most 30 cm),
+  and past it moves at the depth-averaged plug flow's diffusivity rho g h^3 / (3 mu). Mass is kept.
+- Bearing and grip as clay: at the stiff end Wong's lean clay at 32% water (n 0.5, kc 13.19, kphi 692,
+  c 4.14 kPa, phi 13 deg); slurry fitted so a boot sinks about 15 cm and a loaded tyre reaches the base.
+  Nearly incompressible (97% of what is pressed squeezes up beside it); the deepest dent is the layer.
+- Bekker on that clay gives a 1500 kg 4x4 on 26 cm tyres a thrust only just above its compaction
+  resistance (about 0.16 of the load), and slip sinkage tips it over when floored: stiff mud is a crawl
+  at part throttle, slurry bogs it to the axles. That is the MudRunner feel, from measured soil.
+- Not yet: belly drag (the chassis rests on the collider at the undisturbed top, which carries it but
+  does not drag), adhesion drag on the wheel, a second field box following a fast vehicle.
+
+Bench `--test=mud` (10 checks): Bingham numbers, painted mud only when wet, boot 15 cm in slurry and
+0.1 cm in stiff mud, a 25 cm rut in stiff mud keeps 70 degree walls for a minute while one in slurry
+closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 
 ### Stage 2: water in ruts, drying and cracks
 

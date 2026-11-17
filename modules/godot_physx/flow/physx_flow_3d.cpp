@@ -190,7 +190,12 @@ void PhysXFlow3D::_start() {
 		library_acquired = FlowBackend::acquire_library(err, sizeof(err));
 		if (!library_acquired) {
 			device_error = String::utf8(err);
-			WARN_PRINT("PhysXFlow3D: NVIDIA Flow unavailable: " + device_error);
+			// Once a run: every Flow node in the scene fails the same way, and stays inert (no-op).
+			static bool warned = false;
+			if (!warned) {
+				warned = true;
+				ERR_PRINT("PhysXFlow3D: NVIDIA Flow unavailable, Flow nodes do nothing: " + device_error);
+			}
 			update_configuration_warnings();
 			return;
 		}
