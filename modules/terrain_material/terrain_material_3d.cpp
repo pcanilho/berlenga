@@ -716,7 +716,12 @@ void fragment() {
 	// Layer weights. Geology from the generator: bare rock, scree on it, the rest soil, alluvium where much water
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
 	float w[5];
-	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08, tm_rock_cos + 0.04, wn.y);
+	// The slope bands widen with the pixel's footprint: a far hill's mesh normal wanders by more than the band
+	// within a pixel or two, and a narrow band drew thin rock-coloured lines along its slope contours there (the
+	// far "swirls"). Close up they are as before.
+	float tm_fp0 = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+	float tm_sb = 1.0 + 2.0 * smoothstep(0.05, 0.6, tm_fp0);
+	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, wn.y);
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
@@ -724,18 +729,19 @@ void fragment() {
 		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
-		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y);
+		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, wn.y);
 		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
 		// Moraine till (negative talus): unsorted debris under a thin soil, soil with stones through it (the height
 		// blend lets the scree's stones stand out of the soil).
 		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
 		tm_till = till;
 		// Talus edges are lobed tongues of debris, not the geology map's smooth ovals: the cover is pushed in and
-		// out by noise stretched down the fall line (8 to 40 m), so a fan reads as streaks and lobes from afar.
+		// out by noise 7 to 40 m across, so a fan reads as lobes from afar. Not stretched down the fall line: turning
+		// world coordinates by the pixel's own normal swung them by tens of metres per metre kilometres from the
+		// origin, which drew moire swirls and speckle over far slopes.
 		float sg = clamp(g.z, 0.0, 1.0);
 		if (sg > 0.0) {
-			vec2 fall = normalize(wn.xz + vec2(1e-4));
-			vec3 sp = vec3(dot(wp.xz, vec2(-fall.y, fall.x)) / 9.0, wp.y / 40.0, dot(wp.xz, fall) / 40.0);
+			vec3 sp = vec3(wp.x / 20.0, wp.y / 40.0, wp.z / 20.0);
 			float edge = min(sg * 3.0, 1.0) * min((1.0 - sg) * 3.0, 1.0); // none inside the fan or off it
 			sg = clamp(sg + edge * ((tm_vn(sp) - 0.5) * 0.9 + (tm_vn(sp * 3.1 + 7.0) - 0.5) * 0.3), 0.0, 1.0);
 		}
@@ -800,11 +806,10 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_scree(wp, wn, cliff, a, r, d, h);
-		// Debris streaks down the fall line and patches of older, lichened blocks: a tone that varies by about a
-		// fifth over 5 to 30 m (mean kept), so a talus slope is not one flat colour at a distance.
+		// Patches of fresher and older, lichened blocks: a tone that varies by about a fifth over 10 to 30 m (mean
+		// kept), so a talus slope is not one flat colour at a distance (world coordinates, unrotated, as above).
 		{
-			vec2 fall = normalize(wn.xz + vec2(1e-4));
-			vec3 sp = vec3(dot(wp.xz, vec2(-fall.y, fall.x)) / 5.0, wp.y / 30.0, dot(wp.xz, fall) / 30.0);
+			vec3 sp = vec3(wp.x / 12.0, wp.y / 30.0, wp.z / 12.0);
 			a *= 0.9 + 0.2 * tm_vn(sp + 3.0);
 		}
 		tm_stone_h = h;
