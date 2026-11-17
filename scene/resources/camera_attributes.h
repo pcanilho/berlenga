@@ -47,6 +47,10 @@ protected:
 	float exposure_sensitivity = 100.0; // In ISO.
 	void _update_exposure();
 
+	bool night_vision = true;
+	float luminance_per_energy = 0.0; // cd/m2 of one unit of light energy; 0: the scene's units are unknown
+	void _update_night_vision();
+
 	bool auto_exposure_enabled = false;
 	float auto_exposure_min = 0.01;
 	float auto_exposure_max = 64.0;
@@ -62,6 +66,11 @@ public:
 	float get_exposure_multiplier() const;
 	void set_exposure_sensitivity(float p_sensitivity);
 	float get_exposure_sensitivity() const;
+
+	void set_night_vision(bool p_enabled);
+	bool is_night_vision_enabled() const;
+	void set_luminance_per_energy(float p_luminance);
+	float get_luminance_per_energy() const;
 
 	void set_auto_exposure_enabled(bool p_enabled);
 	bool is_auto_exposure_enabled() const;

@@ -306,6 +306,32 @@ et al. 2001 and Thompson, Shirley and Ferwerda 2002 tone-map night scenes by ble
 luminance below about 0.01 cd/m2. Exposure from the clock's light levels, pre-exposed in every pass (lights and
 emission, not only the sky), since moonlit scenes in light energy units also fall below half floats.
 
+**Built (17 Nov): night vision (step 4b).** Kirk and O'Brien's model (thesis, Berkeley EECS-2011-91, ch. 5) and
+Ghost of Tsushima's real-time version (Patry 2021) give the rod-to-cone gains, but neither prints its RGB to LMSR
+matrix or the units the gains expect, so their constants cannot be applied to physical luminance as published.
+Built instead on the published, calibrated pieces:
+- **Where it applies:** the CIE mesopic range (CIE 191:2010). Above 5 cd/m2 the cones work alone, and below
+  0.005 cd/m2 the rods do. In between the mix is log-linear in the pixel's photopic luminance, so lamps, lit windows
+  and the moon's disc keep their colour while the moonlit ground goes blue-grey.
+- **What the rods see:** scotopic luminance from XYZ by Larson, Rushmeier and Piatko's fit to V'(lambda) (1997),
+  in the single blue-grey hue of Thompson, Shirley and Ferwerda 2002 (1.05, 0.97, 1.27). It is scaled so a D65
+  white keeps its brightness (the fit's S/P of D65 is 2.573). Reds drop to about a sixth against white and blues
+  rise about 2.8 times: the Purkinje shift.
+- **Units:** `CameraAttributes.luminance_per_energy` (cd/m2 of a white surface under one unit of light energy).
+  SkyClock sets it to 1 / (pi energy_per_lux) whenever it drives the exposure. The tonemap divides out the
+  pre-exposure, so the eye's state follows the real light and not the exposure. `CameraAttributes.night_vision`
+  (on) does nothing until the units are known.
+- It runs in the tonemap before exposure (also in its FXAA path), so raster and PT get the same treatment. It does
+  not run in the mobile renderer yet.
+- Found on the way: Godot baked the sky's radiance map with the camera's exposure and then scaled it again by
+  `IBL_exposure_normalization`, so ambient and reflected sky light took the pre-exposure squared. At full moon
+  (x4.5e4) the ground went white. The bake now records the exposure it was drawn with (sky.cpp).
+- Checked with the sky bench `--sky --chart` (full moon 24 Nov, new moon 9 Nov, noon): noon is unchanged. At full
+  moon (about 0.02 cd/m2 on the grey ground) the chart goes blue-grey, red near black and blue the brightest
+  colour.
+- Open: on the new moon the ground reads about four times darker than the sky's own brightness implies. The
+  radiance map may lack the airglow or the stars; to check.
+
 **Pre-exposure.** A night sky in light energy units (1e-5 per lux) is below half floats: the quarter and half
 resolution passes stored the air in visible bands and dropped every star fainter than about V 3. The sky's
 `exposure` now applies in each pass before the buffers (Frostbite's pre-exposure, Lagarde and de Rousiers 2014),

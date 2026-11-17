@@ -447,6 +447,12 @@ void SkyClock::_apply_lights() {
 				cam->set_attributes(attributes);
 			}
 			attributes->set_exposure_multiplier(float(get_exposure_multiplier()));
+			// The scene's luminance, for night vision: a white surface under E lux is E / pi cd/m2 and E
+			// energy_per_lux of light energy.
+			const float per_energy = float(1.0 / (Math::PI * energy_per_lux));
+			if (attributes->get_luminance_per_energy() != per_energy) {
+				attributes->set_luminance_per_energy(per_energy);
+			}
 		}
 	}
 }

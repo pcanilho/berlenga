@@ -111,6 +111,14 @@
 				[/codeblock]
 			</description>
 		</method>
+		<method name="camera_attributes_set_night_vision">
+			<return type="void" />
+			<param index="0" name="camera_attributes" type="RID" />
+			<param index="1" name="luminance_per_energy" type="float" />
+			<description>
+				Sets the scene luminance, in cd/m², of one unit of light energy before exposure, which turns on night vision (see [member CameraAttributes.night_vision]). [code]0[/code] turns it off.
+			</description>
+		</method>
 		<method name="camera_create">
 			<return type="RID" />
 			<description>

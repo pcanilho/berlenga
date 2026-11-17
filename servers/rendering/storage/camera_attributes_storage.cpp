@@ -141,6 +141,17 @@ float RendererCameraAttributes::camera_attributes_get_exposure_normalization_fac
 	return cam_attributes->exposure_multiplier * cam_attributes->exposure_normalization;
 }
 
+void RendererCameraAttributes::camera_attributes_set_night_vision(RID p_camera_attributes, float p_luminance_per_energy) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL(cam_attributes);
+	cam_attributes->night_vision_luminance = MAX(p_luminance_per_energy, 0.0f);
+}
+
+float RendererCameraAttributes::camera_attributes_get_night_vision(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	return cam_attributes ? cam_attributes->night_vision_luminance : 0.0f;
+}
+
 void RendererCameraAttributes::camera_attributes_set_auto_exposure(RID p_camera_attributes, bool p_enable, float p_min_sensitivity, float p_max_sensitivity, float p_speed, float p_scale) {
 	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
 	ERR_FAIL_NULL(cam_attributes);
