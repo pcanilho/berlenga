@@ -1968,6 +1968,7 @@ func _build_vegetation() -> void:
 	grass.name = "Grass"
 	grass.rules = meadow
 	grass.radius = float(args.get("grass-radius", "40"))
+	grass.ground_tint_enabled = args.get("ground-tint", "1") != "0" # --ground-tint=0: no sward colour on the ground (isolates the terrain material)
 	var desert: bool = args.get("layout", "range") == "desert"
 	if desert:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.

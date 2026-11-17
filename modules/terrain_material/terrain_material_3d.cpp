@@ -507,10 +507,20 @@ float tm_rd_clamp(float w, float per) {
 // 12% of a cell, with a rounded edge 12% wide and a low dome, so neighbouring stones never meet in a crease and the
 // gravel bed shows between them (open-work talus, angular as rockfall breaks it).
 float tm_rd_stone(vec3 p, out vec3 wv, out float se) {
-	wv = tm_rd_worley(p / (0.35 * tm_rock_detail_scale));
-	se = 0.5 * (wv.y - wv.x) - (0.05 + 0.07 * wv.z);
-	float sb = clamp(se / 0.12, 0.0, 1.0);
-	float top = 0.6 + 0.4 * clamp(1.0 - (wv.x / 0.7) * (wv.x / 0.7), 0.0, 1.0);
+	// Cells of 0.45 m, warped so they fall in no rows, each stone inset from its cell by its own 3 to 20 cm: sizes
+	// run from fist-sized chips to 0.4 m blocks with gravel between (talus is poorly sorted). Each stone is an
+	// angular block: a flat top tilted its own way (a broken face, not a dome), with a narrow bevel to the bed.
+	vec3 q = p / (0.45 * tm_rock_detail_scale);
+	q += (vec3(tm_rd_noise(q * 0.37), tm_rd_noise(q * 0.41 + 5.0), tm_rd_noise(q * 0.33 + 9.0)) - 0.5) * 0.9;
+	vec3 n, c, cb;
+	vec4 w4 = tm_rd_worley2(q, n, c, cb);
+	wv = w4.xyz;
+	float h2 = fract(w4.z * 17.31), h3 = fract(w4.z * 5.77);
+	se = 0.5 * (wv.y - wv.x) - mix(0.03, 0.2, h2 * h2);
+	float sb = clamp(se / 0.06, 0.0, 1.0);
+	vec3 g = (vec3(h3, fract(w4.z * 9.13), fract(w4.z * 3.71)) - 0.5) * 1.5;
+	// Larger stones stand taller (a block 0.4 m across shows some 0.2 m of side, a chip a few centimetres).
+	float top = clamp(0.4 + 0.5 * (1.0 - h2) + dot(-c, g), 0.2, 1.0);
 	return top * sb * (2.0 - sb);
 }
 // One block's relief (x, metres) and tone (y, 0 to 1) at q (metres over tm_rock_detail_scale), from its hash h and the
@@ -522,8 +532,8 @@ vec4 tm_rd_block(vec3 q, float h, vec3 c) {
 	float facet = dot(-c * vec3(2.6, 1.3, 3.4), bg);
 	return vec4((bh.x - 0.5) * 0.10 + tilt + facet, h, 0.0, 0.0);
 }
-// Stones stand up to 0.14 m (of a 0.35 m cell) out of the bed.
-const float TM_RD_STONE_H = 0.14;
+// Stones stand up to 0.2 m out of the bed.
+const float TM_RD_STONE_H = 0.2;
 // Height (m) and shade (mean 1 over any area, so the detail never darkens the ground) at p. dx and dy are the axes of
 // the pixel's footprint on the ground: the filter widths are anisotropic, long along a face seen edge-on.
 vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
@@ -535,8 +545,9 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 		// own shape, as jointed sedimentary and granitic walls break (Priest 1993: joint spacings vary widely within
 		// a set). Straight parallel joint sets drew a regular grid of panels over whole faces.
 		vec3 q = p / tm_rock_detail_scale;
-		float strike = tm_rd_noise(q * 0.004) * 6.2832;
-		vec2 da = vec2(cos(strike), sin(strike)), db = vec2(-da.y, da.x);
+		// One regional strike: an angle that varies over the ground, applied to world coordinates kilometres from
+		// the origin, swung them by tens of metres per metre and crushed the blocks into dense black hatching.
+		const vec2 da = vec2(0.766, 0.643), db = vec2(-0.643, 0.766);
 		vec3 warp = vec3(tm_rd_noise(q * 0.21), tm_rd_noise(q * 0.23 + 3.0), tm_rd_noise(q * 0.19 + 7.0)) - 0.5;
 		vec3 bq = vec3(dot(q.xz, da) / 2.6, q.y / 1.3, dot(q.xz, db) / 3.4) + warp * vec3(0.35, 0.5, 0.35);
 		vec3 bn, bc, bc2;
@@ -589,12 +600,12 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 		vec3 wv;
 		float se;
 		float stone = tm_rd_stone(p, wv, se);
-		float ks = tm_rd_clamp(wmax, 0.35);
+		float ks = tm_rd_clamp(wmax, 0.45);
 		float sb = clamp(se / 0.12, 0.0, 1.0);
 		float bev = sb * (2.0 - sb);
 		hgt += scree * ks * stone * TM_RD_STONE_H * tm_rock_detail_scale;
-		// 0.869 is the mean of stones and gravel together (measured over the cells), so the mean stays 1.
-		float st_shade = (0.8 + 0.2 * bev) * (0.92 + 0.16 * wv.z) / 0.869;
+		// 0.875 is the mean of stones and gravel together (measured over the cells), so the mean stays 1.
+		float st_shade = (0.8 + 0.2 * bev) * (0.92 + 0.16 * wv.z) / 0.875;
 		// Between the stones, a matrix of gravel and fines (talus is poorly sorted: Fuller-like grading, each size
 		// filling the gaps of the next, so the clasts stand in a finer bed). Gravel: a second octave of rounded
 		// cells 3 to 10 cm, dipped in the bed; fines: grain roughness under a centimetre. Each fades by frequency
@@ -632,6 +643,12 @@ vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, v
 	float hz = tm_rd_height(p + vec3(0.0, 0.0, e), face, scree, dx, dy).x;
 	vec3 grad = vec3(hx - h0.x, hy - h0.x, hz - h0.x) / e;
 	vec3 sg = grad - n * dot(n, grad);
+	// Once a pixel spans more than a few centimetres no detail tilts the normal past about 35 degrees: block edges
+	// and crack lips are steeper than that over a few centimetres, and seen at a grazing angle or from afar those
+	// slopes turned the normal away from every light, drawing hard black hatching over far faces. Up close the
+	// stones keep their steep sides.
+	float sgl = length(sg);
+	sg *= min(1.0, mix(4.0, 0.7, smoothstep(0.01, 0.05, wmax)) / max(sgl, 1e-6));
 	shade = h0.y;
 	return normalize(sn - sg);
 }
@@ -906,8 +923,11 @@ void fragment() {
 		float rd_scree = clamp(w[1], 0.0, 1.0);
 		vec3 rd_p = wp;
 		// Scree stones in parallax up close: full while a pixel spans under 4 mm, gone by 12 mm (about 10 m at
-		// 1080p), where the normal alone carries them.
-		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.004, 0.012, rd_cone / tm_rock_detail_scale));
+		// 1080p looking down on them), where the normal alone carries them.
+		// The footprint's long axis, not the cone's width: at a grazing angle the parallax of stones a pixel cannot
+		// resolve along the view stretched into hard black hatching across far slopes.
+		float rd_fp = max(length(rd_dx), length(rd_dy));
+		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.004, 0.012, rd_fp / tm_rock_detail_scale));
 		if (rd_h > 0.002) {
 			float rd_j = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
 			float rd_depth;
