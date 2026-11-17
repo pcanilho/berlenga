@@ -1161,7 +1161,7 @@
     "GroundSurface3D.dust_emission"
    ],
    "note": "",
-   "what": "the wind lifts dust off dry sand and carries it until it settles; needs volumetric fog.",
+   "what": "the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3092,7 +3092,7 @@
     "foam_enabled"
    ],
    "note": "",
-   "what": "particle fluids draw as a real isosurface mesh that casts shadows, shows in reflections and is path traced, with foam; Screen Space is the lighter alternative.",
+   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray, foam and air bubbles rise where the water is agitated.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
