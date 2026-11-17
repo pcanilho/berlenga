@@ -975,6 +975,18 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "Sand seas",
+   "settings": [
+    "sand_sea_rect",
+    "sand_sea_kind"
+   ],
+   "note": "",
+   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Geology maps",
    "settings": [
     "terrain_geology()"
@@ -2257,6 +2269,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Mediterranean scrub",
+   "settings": [
+    "PlantGenerator.make_scrub()"
+   ],
+   "note": "",
+   "what": "rosemary, French lavender, thyme and sage-leaved rockrose, as garrigue on thin soil and maquis on deeper soil where winters are mild and summers dry; the rockrose folds and greys its leaves in drought.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Dune plants",
    "settings": [
     "PlantGenerator.make_dunes()",
@@ -2746,6 +2769,17 @@
    ],
    "note": "",
    "what": "trees sway in the weather map's wind and gusts, each limb at its own frequency.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
+  },
+  {
+   "name": "Storm damage",
+   "settings": [
+    "TreeWind3D.storm_enabled"
+   ],
+   "note": "",
+   "what": "storm wind breaks limbs and throws trees by wood strength and root anchorage; they fall and break apart on landing.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wind and touch"
@@ -3348,6 +3382,31 @@
    ],
    "note": "",
    "what": "overstretched edges split and the rip runs.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Blast materials",
+   "settings": [
+    "PhysXBlastAsset.materials",
+    "bond_healths"
+   ],
+   "note": "",
+   "what": "pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Blast without stalls",
+   "settings": [
+    "PhysXBlastAsset.prepare_render()",
+    "initial_linear_velocity",
+    "initial_angular_velocity"
+   ],
+   "note": "",
+   "what": "piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

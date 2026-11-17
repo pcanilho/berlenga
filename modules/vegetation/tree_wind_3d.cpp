@@ -29,7 +29,6 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-
 #include "tree_wind_3d.h"
 
 #include "tree_generator.h"
@@ -40,17 +39,20 @@
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
-#include "modules/weather/weather_map_3d.h"
+#include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/multimesh_instance_3d.h"
+#include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/main/scene_tree.h"
+#include "scene/main/viewport.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
-#include "scene/3d/multimesh_instance_3d.h"
-#include "scene/main/viewport.h"
 #include "servers/rendering/rendering_server.h"
+
+#include "modules/weather/weather_map_3d.h"
 
 namespace {
 constexpr float AIR_DENSITY = 1.2f; // kg/m3
@@ -62,6 +64,8 @@ constexpr int RECORD_FLOATS = 20; // Transform 12, colour 4, custom 4.
 constexpr float KAIMAL_L[3] = { 8.1f * 7.0f, 2.7f * 7.0f, 0.66f * 7.0f };
 constexpr float KAIMAL_SIGMA[3] = { 1.0f, 0.8f, 0.5f };
 constexpr int WAVES_PER_AXIS = 8;
+constexpr float BLAST_CHUNK_RADIUS = 0.03f; // m: thinner bones ride the Blast chunk below them.
+constexpr float BLAST_NODE_HEALTH = 1.0e6f; // Chunks never wear out; bonds carry the wood's strength.
 
 uint32_t hash_u32(uint32_t p_x) {
 	p_x ^= p_x >> 16;
@@ -70,6 +74,10 @@ uint32_t hash_u32(uint32_t p_x) {
 	p_x *= 0x846ca68bu;
 	p_x ^= p_x >> 16;
 	return p_x;
+}
+
+float hash01(uint32_t p_seed, uint32_t p_salt) {
+	return float(hash_u32(p_seed * 0x9e3779b9u + p_salt * 0x85ebca6bu) >> 8) / 16777216.0f;
 }
 
 float hash_phase(uint32_t p_seed, uint32_t p_salt) {
@@ -205,6 +213,65 @@ const TreeWind3D::Rig *TreeWind3D::_rig_for(const Ref<Mesh> &p_mesh) {
 		if (p_mesh->has_meta(SNAME("tree_colliders"))) {
 			rig.colliders = p_mesh->get_meta(SNAME("tree_colliders"));
 		}
+		if (p_mesh->has_meta(SNAME("tree_static_materials"))) {
+			rig.static_materials = p_mesh->get_meta(SNAME("tree_static_materials"));
+		}
+		if (p_mesh->has_meta(SNAME("tree_storm"))) {
+			// Storm breaks and windthrow (docs/ideas/trees.md section 5t). A part breaks when the
+			// wind's bending moment at its base passes its strength, the tree is thrown when the
+			// overturning moment at its foot passes its anchorage. Strength from the wood: MOR pi r^3
+			// / 4, less 15% for knots (GALES, Gardiner et al. 2000); anchorage from the roots: C_reg
+			// times the stem's mass (Nicoll et al. 2006; the stem some three quarters of the mass).
+			// Trees build both to the loads they meet (Mattheck's uniform stress; thigmomorphogenesis):
+			// across sizes and species they fail at much the same wind, about 42 m/s in gusts (Virot
+			// et al. 2016). The growth model sizes wood by the pipe model alone (its thin leaders far
+			// too weak, its old stems far too heavy), so each part's strength is held within 1-1.6
+			// times a design load (the roots' within 1-1.2), scaled by the species' wood (MOR over
+			// 50 MPa) or roots (C_reg over 150 N m/kg).
+			const PackedFloat32Array sd = p_mesh->get_meta(SNAME("tree_storm"));
+			if (sd.size() >= 9) {
+				const float mor = sd[0];
+				const float creg = sd[1];
+				// The everyday wind each part grew in: 15 m/s at 10 m on the log law over short
+				// vegetation (z0 3 cm) with turbulence 0.2, as the solver's fallback blows, at its peak:
+				// three sigmas of gust and the crest of its own resonant sway (solve_pose's terms).
+				// Trees hold about twice that peak load before failing; calibrated so the median
+				// tree's weakest part goes at gusts near 42 m/s in a storm of turbulence 0.25 (Virot).
+				const float safety = 2.1f;
+				auto q_ref = [&](const Bone &p_bone) {
+					const float z0 = 0.03f;
+					const float h = (p_bone.pivot + p_bone.centroid).y;
+					const float u = 15.0f * Math::log(MAX(h, 1.5f * z0) / z0) / Math::log(10.0f / z0);
+					const float sigma = 0.2f * u;
+					const float f0 = MAX(p_bone.omega, 0.01f) / float(Math::TAU);
+					const float band = float(Math::PI) * f0 / (4.0f * MAX(p_bone.zeta, 0.02f));
+					const float res = Math::sqrt(kaimal_density(f0, sigma * KAIMAL_SIGMA[0], KAIMAL_L[0], u) * band);
+					const float v = u + 3.0f * sigma + 2.0f * res;
+					return 0.5f * AIR_DENSITY * DRAG_COEFFICIENT * Math::pow(MAX(v, RECONFIGURATION_SPEED) / RECONFIGURATION_SPEED, rig.vogel) * v * v;
+				};
+				float stem_mass = 0.0f;
+				float base_ref = 0.0f;
+				for (uint32_t b = 1; b < rig.bones.size(); b++) {
+					Bone &bone = rig.bones[b];
+					const float wood = 0.85f * mor * float(Math::PI) * bone.radius * bone.radius * bone.radius * 0.25f;
+					const float lo = safety * q_ref(bone) * bone.area * bone.centroid.length() * (mor / 50.0e6f);
+					bone.strength = CLAMP(wood, lo, 1.6f * lo);
+					if (bone.parent == 0) {
+						stem_mass += bone.mass;
+						base_ref += q_ref(bone) * bone.area * (bone.pivot + bone.centroid).length();
+					}
+				}
+				const float lo_root = safety * 1.15f * base_ref * (creg / 150.0f);
+				rig.anchorage = CLAMP(creg * 0.75f * stem_mass, lo_root, 1.2f * lo_root);
+				rig.plate_radius = sd[2];
+				rig.plate_thick = sd[3];
+				rig.storm_data = sd;
+				rig.storm = rig.bones.size() > 1;
+				if (p_mesh->has_meta(SNAME("tree_fracture_cap"))) {
+					rig.cap_kit = p_mesh->get_meta(SNAME("tree_fracture_cap"));
+				}
+			}
+		}
 		rig.mesh = p_mesh;
 		rigs[id] = rig;
 	}
@@ -260,7 +327,7 @@ void TreeWind3D::_gather_waves() {
 	}
 }
 
-void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch, float p_min_length) const {
+void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch, float p_min_length, StormLoad *r_storm) const {
 	const uint32_t count = p_rig.bones.size();
 	if (count == 0) {
 		return;
@@ -275,6 +342,12 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 	r_bones[0] = Transform3D();
 	const uint32_t wave_count = waves.size();
 	const uint32_t per_axis = MAX(wave_count / 3, 1u);
+	const bool storm = r_storm && p_rig.storm;
+	const float scale3 = scale * scale * scale;
+	Vector3 base_moment;
+	Vector3 base_wind;
+	const bool has_broken = p_touch && p_touch->broken.size() == count;
+	const bool has_flat = p_touch && p_touch->flat.size() == count;
 	for (uint32_t b = 1; b < count; b++) {
 		const Bone &bone = p_rig.bones[b];
 		const Vector3 load_local = bone.pivot + bone.centroid;
@@ -347,6 +420,25 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 		const float cd = DRAG_COEFFICIENT * (vs > RECONFIGURATION_SPEED ? Math::pow(vs / RECONFIGURATION_SPEED, p_rig.vogel) : 1.0f);
 		// Force in tree space at world scale: area scales with scale^2.
 		const Vector3 force = v * (0.5f * AIR_DENSITY * cd * bone.area * scale * scale * vs * drag_scale);
+		if (storm && !(has_broken && p_touch->broken[b])) {
+			// The bending moment at the bone's base (N m): its lever in tree space times scale.
+			const Vector3 moment = bone.centroid.cross(force) * scale;
+			if (bone.parent == 0) {
+				base_moment += (bone.pivot + bone.centroid).cross(force) * scale;
+				base_wind = v_world;
+			}
+			// A stem's first segment fails at the foot: the roots' test below covers it.
+			if (bone.parent != 0 && bone.strength > 0.0f && bone.radius * scale >= storm_min_radius) {
+				// Knots, old wounds and rot: each part of each tree is 65-115% as strong as clear wood.
+				const float defect = 0.65f + 0.5f * hash01(p_seed, b);
+				const float ratio = moment.length() / MAX(bone.strength * scale3 * storm_strength * defect, 1e-3f);
+				if (ratio > r_storm->ratio) {
+					r_storm->ratio = ratio;
+					r_storm->bone = int(b);
+					r_storm->wind = v_world;
+				}
+			}
+		}
 		// theta = moment / stiffness; the lever scales with scale and the stiffness with scale^3.
 		Vector3 theta = bone.centroid.cross(force) / MAX(bone.stiffness * scale * scale * stiffness_scale, 1e-3f);
 		theta -= bone.dir * theta.dot(bone.dir); // Bending only, no twist.
@@ -361,22 +453,52 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 			local = Transform3D(turn, bone.pivot - turn.xform(bone.pivot));
 		}
 		r_bones[b] = r_bones[MIN(uint32_t(bone.parent), b - 1)] * local;
-		if (p_touch && b < p_touch->broken.size() && p_touch->broken[b]) {
+		if (has_flat && p_touch->flat[b]) {
+			// A stem segment snapped at its joint by a storm: its own wood is pressed flat onto the
+			// joint's plane (under the fracture cap), so the stem below keeps its full girth up to the
+			// break where its skin blends into this bone; collapsed to a point, it pinched to a cone.
+			const Vector3 d = bone.dir.normalized();
+			const Basis flat(Vector3(1.0f - d.x * d.x, -d.x * d.y, -d.x * d.z), Vector3(-d.y * d.x, 1.0f - d.y * d.y, -d.y * d.z), Vector3(-d.z * d.x, -d.z * d.y, 1.0f - d.z * d.z));
+			r_bones[b] = r_bones[MIN(uint32_t(bone.parent), b - 1)] * Transform3D(flat, d * d.dot(bone.pivot));
+		} else if (has_broken && p_touch->broken[b]) {
 			// Snapped off: the bone's geometry collapses to its pivot (the piece is a rigid body now).
 			r_bones[b] = Transform3D(Basis(Vector3(), Vector3(), Vector3()), r_bones[b].xform(bone.pivot));
+		}
+	}
+	if (storm && p_rig.anchorage > 0.0f && !(has_broken && p_touch->broken[1])) {
+		// The overturning moment at the foot, 15% more for the crown's weight carried out over the
+		// lean (HWIND, Peltola et al. 1999); each tree's roots and soil 70-130% of the mean.
+		const float defect = 0.7f + 0.6f * hash01(p_seed, 0x51u);
+		r_storm->root_ratio = base_moment.length() * 1.15f / MAX(p_rig.anchorage * scale3 * storm_anchorage * defect, 1e-3f);
+		if (r_storm->root_ratio > r_storm->ratio) {
+			r_storm->wind = base_wind;
 		}
 	}
 }
 
 void TreeWind3D::_solve_job(uint32_t p_index, int p_unused) {
-	const Job &job = jobs[p_index];
+	Job &job = jobs[p_index];
 	Target &t = *job.target;
 	const Transform3D &placement = t.placements[job.instance];
 	Transform3D bones[256];
 	const Vector3 o = placement.origin;
 	const uint32_t seed = hash_u32(uint32_t(int(o.x * 16.0f)) * 73856093u ^ uint32_t(int(o.z * 16.0f)) * 19349663u);
-	solve_pose(*t.rig, job.world * placement, seed, bones, t.touch.getptr(job.instance), job.min_length);
+	const Touch *tc = t.touch.getptr(job.instance);
 	float *w = t.write + size_t(job.instance) * t.bones * RECORD_FLOATS;
+	if (tc && tc->uprooted) {
+		// Thrown by a storm: the tree is a body now; the instance draws nothing.
+		for (int b = 0; b < t.bones; b++) {
+			float *f = w + b * RECORD_FLOATS;
+			for (int k = 0; k < 12; k++) {
+				f[k] = 0.0f;
+			}
+			f[3] = placement.origin.x;
+			f[7] = placement.origin.y;
+			f[11] = placement.origin.z;
+		}
+		return;
+	}
+	solve_pose(*t.rig, job.world * placement, seed, bones, tc, job.min_length, job.storm ? &job.load : nullptr);
 	for (int b = 0; b < t.bones; b++) {
 		const Transform3D r = placement * bones[b];
 		float *f = w + b * RECORD_FLOATS;
@@ -587,6 +709,8 @@ void TreeWind3D::update(double p_delta) {
 	}
 	frame_index++;
 	const float dt = CLAMP(float(p_delta), 1.0f / 240.0f, 0.1f);
+	// Storm loads are tested only while gusts (about 1.6 times the mean) can pass storm_min_wind.
+	const bool storm_frame = storm_enabled && base_speed * 1.6f >= storm_min_wind && is_inside_tree();
 	int skipped = 0;
 	jobs.clear();
 	_gather_contacts(p_delta);
@@ -641,7 +765,13 @@ void TreeWind3D::update(double p_delta) {
 					// own turn moves its tip less than the error on screen.
 					min_length = err / (0.15f * px_per_m * scale);
 				}
-				jobs.push_back({ &t, int(i), world, min_length });
+				Job job;
+				job.target = &t;
+				job.instance = int(i);
+				job.world = world;
+				job.min_length = min_length;
+				job.storm = storm_frame && t.rig->storm;
+				jobs.push_back(job);
 				t.moving[i] = 1;
 				any = true;
 			} else if (t.moving[i]) {
@@ -673,6 +803,17 @@ void TreeWind3D::update(double p_delta) {
 	if (!jobs.is_empty()) {
 		WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_template_group_task(this, &TreeWind3D::_solve_job, 0, jobs.size(), -1, true, String("TreeWind3D"));
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	}
+	if (storm_frame) {
+		for (uint32_t j = 0; j < jobs.size(); j++) {
+			const Job &job = jobs[j];
+			if (job.storm && (job.load.ratio > 1.0f || job.load.root_ratio > 1.0f)) {
+				_storm_fail(*job.target, job.instance, job.world, job.load);
+			}
+		}
+	}
+	if (!storm_parts.is_empty() || !caps.is_empty()) {
+		_storm_parts(p_delta);
 	}
 	for (Target *t : changed) {
 		RenderingServer::get_singleton()->multimesh_set_buffer(t->multimesh->get_rid(), t->buffer);
@@ -834,8 +975,8 @@ bool TreeWind3D::_touch_instance(Target &r_target, int p_instance, const Transfo
 }
 
 // The bones on a snapped branch, as a mesh of their own (cut from the tree's surfaces once).
-Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone) {
-	const uint64_t key = (p_rig.mesh.is_valid() ? uint64_t(p_rig.mesh->get_instance_id()) : 0u) * 1315423911u + uint64_t(p_bone);
+Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude, uint64_t p_key) {
+	const uint64_t key = p_key ? p_key : (p_rig.mesh.is_valid() ? uint64_t(p_rig.mesh->get_instance_id()) : 0u) * 1315423911u + uint64_t(p_bone);
 	if (piece_meshes.has(key)) {
 		return piece_meshes[key];
 	}
@@ -849,6 +990,9 @@ Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone) {
 	inside.resize(n);
 	for (uint32_t b = 0; b < n; b++) {
 		inside[b] = b == uint32_t(p_bone) || (b > uint32_t(p_bone) && b > 0 && inside[p_rig.bones[b].parent]);
+		if (b > 0 && p_exclude && p_exclude->size() == n && (*p_exclude)[b]) {
+			inside[b] = 0; // Broken off before, its own part.
+		}
 	}
 	for (int s = 0; s < p_rig.mesh->get_surface_count(); s++) {
 		const Array arr = p_rig.mesh->surface_get_arrays(s);
@@ -858,6 +1002,12 @@ Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone) {
 		const PackedColorArray colors = arr[Mesh::ARRAY_COLOR];
 		const PackedInt32Array bones = arr[Mesh::ARRAY_BONES];
 		const PackedInt32Array index = arr[Mesh::ARRAY_INDEX];
+		const PackedVector2Array uv2s = arr[Mesh::ARRAY_TEX_UV2];
+		const PackedFloat32Array tangents = arr[Mesh::ARRAY_TANGENT];
+		const bool has_uv2 = uv2s.size() == verts.size();
+		const bool has_tan = tangents.size() == verts.size() * 4;
+		PackedVector2Array ou2;
+		PackedFloat32Array ot;
 		if (bones.size() != verts.size() * 4 || index.is_empty()) {
 			continue;
 		}
@@ -884,6 +1034,14 @@ Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone) {
 				on.push_back(v < normals.size() ? normals[v] : Vector3(0, 1, 0));
 				ou.push_back(v < uvs.size() ? uvs[v] : Vector2());
 				oc.push_back(v < colors.size() ? colors[v] : Color(1, 1, 1));
+				if (has_uv2) {
+					ou2.push_back(uv2s[v]);
+				}
+				if (has_tan) {
+					for (int q = 0; q < 4; q++) {
+						ot.push_back(tangents[v * 4 + q]);
+					}
+				}
 				oi.push_back(ni);
 			}
 		}
@@ -897,7 +1055,22 @@ Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone) {
 		out[Mesh::ARRAY_TEX_UV] = ou;
 		out[Mesh::ARRAY_COLOR] = oc;
 		out[Mesh::ARRAY_INDEX] = oi;
+		if (has_uv2) {
+			out[Mesh::ARRAY_TEX_UV2] = ou2;
+		}
+		if (has_tan) {
+			out[Mesh::ARRAY_TANGENT] = ot;
+		}
 		piece->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, out);
+		if (s < p_rig.static_materials.size() && Ref<Material>(p_rig.static_materials[s]).is_valid()) {
+			// The generator's unskinned twin of the surface's material (lichen and flutter shaders too).
+			piece->surface_set_material(piece->get_surface_count() - 1, p_rig.static_materials[s]);
+			const Ref<ArrayMesh> am = p_rig.mesh;
+			if (am.is_valid()) {
+				piece->surface_set_name(piece->get_surface_count() - 1, am->surface_get_name(s));
+			}
+			continue;
+		}
 		Ref<BaseMaterial3D> m = p_rig.mesh->surface_get_material(s);
 		if (m.is_valid()) {
 			m = m->duplicate();
@@ -963,6 +1136,1184 @@ void TreeWind3D::_snap(Target &r_target, int p_instance, const Transform3D &p_tr
 	}
 }
 
+static Transform3D read_record(const float *p_f) {
+	Transform3D r;
+	r.basis.rows[0] = Vector3(p_f[0], p_f[1], p_f[2]);
+	r.basis.rows[1] = Vector3(p_f[4], p_f[5], p_f[6]);
+	r.basis.rows[2] = Vector3(p_f[8], p_f[9], p_f[10]);
+	r.origin = Vector3(p_f[3], p_f[7], p_f[11]);
+	return r;
+}
+
+static void write_record(float *p_f, const Transform3D &p_r) {
+	p_f[0] = p_r.basis.rows[0][0];
+	p_f[1] = p_r.basis.rows[0][1];
+	p_f[2] = p_r.basis.rows[0][2];
+	p_f[3] = p_r.origin.x;
+	p_f[4] = p_r.basis.rows[1][0];
+	p_f[5] = p_r.basis.rows[1][1];
+	p_f[6] = p_r.basis.rows[1][2];
+	p_f[7] = p_r.origin.y;
+	p_f[8] = p_r.basis.rows[2][0];
+	p_f[9] = p_r.basis.rows[2][1];
+	p_f[10] = p_r.basis.rows[2][2];
+	p_f[11] = p_r.origin.z;
+}
+
+// A storm kit's [name, arrays, material] triples (TreeGenerator storm_kit) as a mesh, made once.
+Ref<ArrayMesh> TreeWind3D::_kit_mesh(const Rig &p_rig, bool p_plate) {
+	const uint64_t key = (p_rig.mesh.is_valid() ? uint64_t(p_rig.mesh->get_instance_id()) : 0u) * 2u + (p_plate ? 1u : 0u);
+	if (kit_meshes.has(key)) {
+		return kit_meshes[key];
+	}
+	Ref<ArrayMesh> m;
+	m.instantiate();
+	// The root plate is built only when a tree is thrown (some 80-100k triangles, a few hundred ms).
+	const Array kit = p_plate ? TreeGenerator::build_storm_plate(p_rig.storm_data) : p_rig.cap_kit;
+	Ref<Material> bark;
+	const Ref<ArrayMesh> am = p_rig.mesh;
+	for (int s = 0; am.is_valid() && s < am->get_surface_count() && s < p_rig.static_materials.size(); s++) {
+		if (am->surface_get_name(s) == "bark") {
+			bark = p_rig.static_materials[s];
+		}
+	}
+	for (int i = 0; i < kit.size(); i++) {
+		const Array e = kit[i];
+		if (e.size() < 3) {
+			continue;
+		}
+		m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, e[1]);
+		m->surface_set_name(m->get_surface_count() - 1, e[0]);
+		const Ref<Material> mat = e[2];
+		m->surface_set_material(m->get_surface_count() - 1, mat.is_valid() ? mat : bark);
+	}
+	kit_meshes[key] = m;
+	return m;
+}
+
+// Writes an instance's pose now (after a break), so the frame never shows the part twice.
+void TreeWind3D::_collapse(Target &r_target, int p_instance, const Transform3D &p_world) {
+	const Transform3D &placement = r_target.placements[p_instance];
+	const Touch *tc = r_target.touch.getptr(p_instance);
+	float *w = r_target.write + size_t(p_instance) * r_target.bones * RECORD_FLOATS;
+	if (tc && tc->uprooted) {
+		for (int b = 0; b < r_target.bones; b++) {
+			write_record(w + b * RECORD_FLOATS, Transform3D(Basis(Vector3(), Vector3(), Vector3()), placement.origin));
+		}
+		return;
+	}
+	Transform3D bones[256];
+	const Vector3 o = placement.origin;
+	const uint32_t seed = hash_u32(uint32_t(int(o.x * 16.0f)) * 73856093u ^ uint32_t(int(o.z * 16.0f)) * 19349663u);
+	solve_pose(*r_target.rig, p_world * placement, seed, bones, tc, 0.0f);
+	for (int b = 0; b < r_target.bones; b++) {
+		write_record(w + b * RECORD_FLOATS, placement * bones[b]);
+	}
+}
+
+// The part of a tree above bone p_bone (the whole tree for 0) as a rigid body at p_at, with all its
+// surfaces, the capsules of its wood, and its mass and centre of mass from the rig.
+RigidBody3D *TreeWind3D::_make_part(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Transform3D &p_at, const LocalVector<uint8_t> &p_exclude, uint64_t p_key) {
+	const Rig &rig = *r_target.rig;
+	const uint32_t n = rig.bones.size();
+	const float scale = MAX(Math::pow(float(Math::abs(p_tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+	LocalVector<uint8_t> inside;
+	inside.resize(n);
+	for (uint32_t b = 0; b < n; b++) {
+		inside[b] = b == uint32_t(p_bone) || (b > uint32_t(p_bone) && b > 0 && inside[rig.bones[b].parent]);
+		if (b > 0 && p_exclude.size() == n && p_exclude[b]) {
+			inside[b] = 0;
+		}
+	}
+	RigidBody3D *body = memnew(RigidBody3D);
+	body->set_name("TreePart");
+	body->set_as_top_level(true);
+	// Its contacts, for the Blast swap at its first hard impact.
+	body->set_contact_monitor(true);
+	body->set_max_contacts_reported(8);
+	MeshInstance3D *mi = memnew(MeshInstance3D);
+	mi->set_mesh(_piece_mesh(rig, p_bone, &p_exclude, p_key));
+	mi->set_scale(Vector3(scale, scale, scale));
+	body->add_child(mi);
+	// Its wood's capsules (TreeGenerator collider_radius and up).
+	int shapes = 0;
+	const float *c = rig.colliders.ptr();
+	for (int k = 0; k < rig.colliders.size() / 8; k++) {
+		const float *o = c + k * 8;
+		const int bone = int(o[7]);
+		if (bone < 0 || bone >= int(n) || !inside[bone] || (p_bone > 0 && bone == 0)) {
+			continue;
+		}
+		const Vector3 a = Vector3(o[0], o[1], o[2]) * scale;
+		const Vector3 bb = Vector3(o[3], o[4], o[5]) * scale;
+		const float r = o[6] * scale;
+		if (a.distance_to(bb) < 1e-3f) {
+			continue;
+		}
+		Ref<CapsuleShape3D> cap;
+		cap.instantiate();
+		cap->set_radius(r);
+		cap->set_height(a.distance_to(bb) + 2.0f * r);
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		cs->set_shape(cap);
+		cs->set_transform(Transform3D(Basis(Quaternion(Vector3(0, 1, 0), (bb - a).normalized())), (a + bb) * 0.5f));
+		body->add_child(cs);
+		shapes++;
+	}
+	const Bone &bone = rig.bones[p_bone];
+	if (shapes == 0) {
+		Ref<CapsuleShape3D> cap;
+		cap.instantiate();
+		const float r = MAX(bone.reach * 0.5f, 0.05f) * scale;
+		cap->set_radius(r);
+		cap->set_height(MAX(bone.length * scale, 2.0f * r + 0.01f));
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		cs->set_shape(cap);
+		cs->set_transform(Transform3D(Basis(Quaternion(Vector3(0, 1, 0), bone.dir.normalized())), (bone.pivot + bone.dir * (bone.length * 0.5f)) * scale));
+		body->add_child(cs);
+	}
+	// Mass and its centre from each bone's own mass (carried less what its children carry), at
+	// the middle of its wood.
+	float total = 0.0f;
+	Vector3 moment;
+	for (uint32_t b = MAX(uint32_t(p_bone), 1u); b < n; b++) {
+		if (!inside[b]) {
+			continue;
+		}
+		float own = rig.bones[b].mass;
+		for (uint32_t e = b + 1; e < n; e++) {
+			if (rig.bones[e].parent == int(b)) {
+				own -= rig.bones[e].mass;
+			}
+		}
+		own = MAX(own, 0.0f);
+		total += own;
+		moment += (rig.bones[b].pivot + rig.bones[b].dir * (rig.bones[b].length * 0.5f)) * own;
+	}
+	Vector3 com = total > 1e-6f ? moment / total : bone.pivot + bone.dir * (bone.length * 0.5f);
+	float mass = total * scale * scale * scale;
+	if (p_bone == 0 && rig.storm_data.size() >= 9) {
+		// The root plate: about half of its disc is soil (Krisans et al. 2020: 0.5-1.5 m3 for
+		// spruce plates of 1.4-2 m radius), at 1,400 kg/m3 moist.
+		MeshInstance3D *pm = memnew(MeshInstance3D);
+		pm->set_mesh(_kit_mesh(rig, true));
+		pm->set_scale(Vector3(scale, scale, scale));
+		body->add_child(pm);
+		const float plate = 0.5f * float(Math::PI) * rig.plate_radius * rig.plate_radius * rig.plate_thick * 1400.0f * scale * scale * scale;
+		com = (com * mass + Vector3(0.0f, -0.5f * rig.plate_thick, 0.0f) * plate) / MAX(mass + plate, 1e-3f);
+		mass += plate;
+	}
+	body->set_center_of_mass_mode(RigidBody3D::CENTER_OF_MASS_MODE_CUSTOM);
+	body->set_center_of_mass(com * scale);
+	body->set_mass(MAX(mass, 0.5f));
+	add_child(body);
+	body->set_global_transform(p_at);
+	// Parts of one tree start touching where they broke apart.
+	Touch &tc = r_target.touch[p_instance];
+	for (const ObjectID &id : tc.parts) {
+		CollisionObject3D *other = ObjectDB::get_instance<CollisionObject3D>(id);
+		if (other) {
+			PhysicsServer3D::get_singleton()->body_add_collision_exception(body->get_rid(), other->get_rid());
+			PhysicsServer3D::get_singleton()->body_add_collision_exception(other->get_rid(), body->get_rid());
+		}
+	}
+	tc.parts.push_back(body->get_instance_id());
+	return body;
+}
+
+// A storm broke a part of a tree or threw it (docs/ideas/trees.md section 5t): the part becomes a
+// rigid body turning on a hinge (the last fibres on the break's compression side, or the root
+// plate's leeward edge) while the wind still pushes it; a fracture cap closes the stub.
+void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D &p_world, const StormLoad &p_load) {
+	const Rig &rig = *r_target.rig;
+	const uint32_t n = rig.bones.size();
+	Touch &tc = r_target.touch[p_instance];
+	if (tc.uprooted) {
+		return;
+	}
+	if (tc.broken.size() != n) {
+		tc.broken.resize(n);
+		memset(tc.broken.ptr(), 0, n);
+	}
+	if (tc.flat.size() != n) {
+		tc.flat.resize(n);
+		memset(tc.flat.ptr(), 0, n);
+	}
+	const bool thrown = p_load.root_ratio > 1.0f && p_load.root_ratio >= p_load.ratio;
+	const int b = thrown ? 0 : p_load.bone;
+	if (b < 0 || (b > 0 && tc.broken[b])) {
+		return;
+	}
+	const Transform3D tree = p_world * r_target.placements[p_instance];
+	const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+	const Basis rot = tree.basis.orthonormalized();
+	// The part's pose now, from this frame's solve (the record holds placement times the bone).
+	const Transform3D posed = b == 0 ? tree : p_world * read_record(r_target.write + (size_t(p_instance) * r_target.bones + b) * RECORD_FLOATS);
+	const Transform3D at(posed.basis.orthonormalized(), posed.origin);
+	// Downwind in the tree's own space.
+	Vector3 dw = rot.transposed().xform(p_load.wind);
+	dw.y = 0.0f;
+	dw = dw.length_squared() > 1e-8f ? dw.normalized() : Vector3(1, 0, 0);
+	RandomPCG rr;
+	rr.seed(uint64_t(hash_u32(uint32_t(p_instance) * 2654435761u + uint32_t(b))) + frame_index);
+
+	// Parts broken off before stay their own; the key names this part's mesh and Blast asset.
+	LocalVector<uint8_t> exclude;
+	exclude.resize(n);
+	for (uint32_t c = 0; c < n; c++) {
+		exclude[c] = tc.broken[c];
+	}
+	uint64_t key = hash_u32(uint32_t(rig.mesh.is_valid() ? uint64_t(rig.mesh->get_instance_id()) : 0u) ^ 0x5bd1e995u) * 2654435761ull + uint64_t(b) * 40503u;
+	for (uint32_t c = 0; c < n; c++) {
+		if (exclude[c]) {
+			key = key * 1099511628211ull + c;
+		}
+	}
+	for (uint32_t c = MAX(uint32_t(b), 1u); c < n; c++) {
+		if (c == uint32_t(b) || b == 0 || tc.broken[rig.bones[c].parent]) {
+			tc.broken[c] = 1;
+		}
+	}
+	const Bone &bone = rig.bones[b];
+	const Vector3 dir = b == 0 ? Vector3(0, 1, 0) : bone.dir.normalized();
+	// A stem segment (not the first of its axis) snaps at its joint and is drawn flat there; a
+	// limb tears out at its collar and goes whole.
+	const bool stem_joint = b > 0 && rig.groups.size() == n && rig.groups[b] != b;
+	if (stem_joint) {
+		tc.flat[b] = 1;
+	}
+	if (thrown) {
+		tc.uprooted = true;
+	}
+	tc.active = true;
+	// Parts hung on their fibres above this break (or on a tree now thrown) hang from nothing now.
+	for (StormPart &other : storm_parts) {
+		if (!other.joint.is_valid() || tc.parts.find(other.body) < 0) {
+			continue;
+		}
+		int up = other.bone;
+		while (up > b && up > 0) {
+			up = rig.bones[up].parent;
+		}
+		if (up == b) {
+			PhysicsServer3D::get_singleton()->free_rid(other.joint);
+			other.joint = RID();
+		}
+	}
+
+	RigidBody3D *body = _make_part(r_target, p_instance, tree, b, at, exclude, key);
+	// The torn side faces the wind (tension), the crumpled side away from it; its bearing in 16
+	// steps, so parts broken alike share a Blast asset.
+	Vector3 tens = -dw - dir * dir.dot(-dw);
+	if (tens.length_squared() < 1e-6f) {
+		tens = dir.cross(Vector3(0, 0, 1));
+	}
+	tens.normalize();
+	{
+		const float az = Math::round(Math::atan2(tens.z, tens.x) / (float(Math::TAU) / 16.0f));
+		key = key * 31u + uint64_t(int(az) + 16);
+		Vector3 q(Math::cos(az * float(Math::TAU) / 16.0f), 0.0f, Math::sin(az * float(Math::TAU) / 16.0f));
+		q = q - dir * dir.dot(q);
+		if (q.length_squared() > 1e-4f) {
+			tens = q.normalized();
+		}
+	}
+	const float parent_r = b > 0 ? rig.bones[bone.parent].radius : 0.0f;
+	const float cap_r = stem_joint ? bone.radius * 1.05f : bone.radius;
+	const Vector3 cap_at = stem_joint ? bone.pivot : bone.pivot + dir * (0.9f * parent_r);
+	const Array &cap_kit = rig.cap_kit;
+	Transform3D butt_xf = Transform3D(Basis(Vector3(), Vector3(), Vector3()), Vector3());
+	if (b > 0 && cap_kit.size() > 0) {
+		Basis cb;
+		cb.set_column(0, tens * cap_r);
+		cb.set_column(1, dir * cap_r);
+		cb.set_column(2, tens.cross(dir) * cap_r);
+		MeshInstance3D *cap = memnew(MeshInstance3D);
+		cap->set_name("TreeStub");
+		cap->set_mesh(_kit_mesh(rig, false));
+		cap->set_as_top_level(true);
+		add_child(cap);
+		Cap cp;
+		cp.node = cap->get_instance_id();
+		cp.target = r_target.node;
+		cp.instance = p_instance;
+		cp.bone = bone.parent;
+		cp.local = Transform3D(cb, cap_at);
+		cap->set_global_transform(p_world * read_record(r_target.write + (size_t(p_instance) * r_target.bones + cp.bone) * RECORD_FLOATS) * cp.local);
+		caps.push_back(cp);
+		// The part's butt: the matching face, turned the other way along the wood.
+		Basis pb;
+		pb.set_column(0, tens * cap_r);
+		pb.set_column(1, -dir * cap_r);
+		pb.set_column(2, tens.cross(-dir) * cap_r);
+		MeshInstance3D *butt = memnew(MeshInstance3D);
+		butt->set_mesh(_kit_mesh(rig, false));
+		butt->set_transform(Transform3D(pb * scale, cap_at * scale));
+		body->add_child(butt);
+		butt_xf = Transform3D(pb, cap_at);
+	}
+
+	// The hinge: on the leeward edge of the break (its compression side holds longest), or the root
+	// plate's leeward edge, three quarters of its radius out and a little under the old surface.
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	StormPart sp;
+	sp.body = body->get_instance_id();
+	sp.vogel = rig.vogel;
+	sp.start = at.basis;
+	sp.mesh = rig.mesh;
+	sp.bone = b;
+	sp.scale = scale;
+	sp.key = key;
+	sp.exclude.resize(n);
+	for (uint32_t c = 0; c < n; c++) {
+		sp.exclude[c] = exclude[c];
+	}
+	sp.butt = butt_xf;
+	float area = 0.0f;
+	Vector3 load;
+	for (uint32_t c = 1; c < n; c++) {
+		if ((b == 0 && rig.bones[c].parent == 0) || int(c) == b) {
+			area += rig.bones[c].area;
+			load += (rig.bones[c].pivot + rig.bones[c].centroid) * rig.bones[c].area;
+		}
+	}
+	sp.area = area * scale * scale;
+	sp.load = (area > 1e-6f ? load / area : bone.pivot) * scale;
+	Vector3 hinge_at, hinge_axis;
+	if (thrown) {
+		hinge_at = Vector3(0, 0, 0) + dw * (0.75f * rig.plate_radius) - Vector3(0, 0.1f, 0);
+		hinge_axis = Vector3(0, 1, 0).cross(dw);
+		sp.release = 0.0f;
+	} else {
+		Vector3 lee = dw - dir * dir.dot(dw);
+		lee = lee.length_squared() > 1e-6f ? lee.normalized() : -tens;
+		hinge_at = cap_at + lee * cap_r;
+		hinge_axis = dir.cross(lee);
+		// Green wood holds a while as it folds (a greenstick break, van Casteren et al. 2012): the
+		// part tears free after turning 30-75 degrees; a light one may stay hung on its fibres
+		// (a hanger, about a third of limbs under 300 kg).
+		const float kg = rig.bones[b].mass * scale * scale * scale;
+		sp.release = (kg < 300.0f && rr.randf() < 0.35f) ? 0.0f : Math::lerp(0.5f, 1.3f, rr.randf());
+	}
+	if (hinge_axis.length_squared() > 1e-8f) {
+		const Vector3 pa = hinge_at * scale;
+		const Vector3 aa = hinge_axis.normalized();
+		sp.joint = ps->joint_create();
+		ps->joint_make_hinge_simple(sp.joint, body->get_rid(), pa, aa, RID(), at.xform(pa), at.basis.xform(aa));
+	}
+	_blast_request(sp);
+	storm_parts.push_back(sp);
+
+	// The stub's colliders are rebuilt without the broken wood (and none for a thrown tree).
+	Target::Body *have = r_target.bodies.getptr(p_instance);
+	if (have) {
+		ps->free_rid(have->body);
+		for (const RID &sh : have->shapes) {
+			ps->free_rid(sh);
+		}
+		r_target.bodies.erase(p_instance);
+	}
+	_collapse(r_target, p_instance, p_world);
+	if (thrown) {
+		storm_throws++;
+	} else {
+		storm_breaks++;
+	}
+	Dictionary pit;
+	if (thrown) {
+		// The pit the plate leaves (5k, tree_root_pit): its centre, radius and depth, world space.
+		pit["center"] = tree.origin;
+		pit["radius"] = 0.9f * rig.plate_radius * scale;
+		pit["depth"] = CLAMP(1.6f * rig.plate_thick * scale, 0.35f, 0.95f);
+	}
+	emit_signal(SNAME("storm_damage"), tree.xform(cap_at), (thrown ? rig.bones[1].radius : bone.radius) * scale, thrown, pit);
+}
+
+// Wind on the parts a storm broke off, while they fall (the drag of the crown they carry, with
+// its Vogel streamlining, on the wind relative to the part), the hinges that let go, and the
+// stubs' caps following the stems they close.
+void TreeWind3D::_storm_parts(double p_delta) {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	for (int k = int(storm_parts.size()) - 1; k >= 0; k--) {
+		StormPart &sp = storm_parts[k];
+		RigidBody3D *body = ObjectDB::get_instance<RigidBody3D>(sp.body);
+		if (!body || !body->is_inside_tree()) {
+			if (sp.joint.is_valid()) {
+				ps->free_rid(sp.joint);
+			}
+			storm_parts.remove_at(k);
+			continue;
+		}
+		sp.age += float(p_delta);
+		const Transform3D g = body->get_global_transform();
+		if (sp.joint.is_valid() && sp.release > 0.0f) {
+			const float angle = Quaternion((sp.start.inverse() * g.basis).orthonormalized()).get_angle();
+			if (angle > sp.release) {
+				ps->free_rid(sp.joint);
+				sp.joint = RID();
+			}
+		}
+		if (sp.age < 8.0f) {
+			const Vector3 at = g.xform(sp.load);
+			const WindSample ws = sample_wind(at, MAX(sp.load.y, 2.0f));
+			// Storm gusts run about a quarter over the mean through a fall of a few seconds.
+			Vector3 v = ws.mean * 1.25f - body->get_linear_velocity();
+			const float vs = v.length();
+			const float cd = DRAG_COEFFICIENT * (vs > RECONFIGURATION_SPEED ? Math::pow(vs / RECONFIGURATION_SPEED, sp.vogel) : 1.0f);
+			const Vector3 f = v * (0.5f * AIR_DENSITY * cd * sp.area * vs * drag_scale);
+			body->set_constant_force(f);
+			body->set_constant_torque((at - g.xform(body->get_center_of_mass())).cross(f));
+		} else {
+			body->set_constant_force(Vector3());
+			body->set_constant_torque(Vector3());
+			if (!sp.joint.is_valid() && body->is_sleeping()) {
+				// At rest: frozen, so a fallen tree costs a static body.
+				body->set_freeze_enabled(true);
+				storm_parts.remove_at(k);
+			}
+		}
+	}
+	for (int k = int(caps.size()) - 1; k >= 0; k--) {
+		const Cap &cp = caps[k];
+		Node3D *node = ObjectDB::get_instance<Node3D>(cp.node);
+		const Target *found = nullptr;
+		for (const Target &t : targets) {
+			if (t.node == cp.target) {
+				found = &t;
+				break;
+			}
+		}
+		MultiMeshInstance3D *mmi = found ? ObjectDB::get_instance<MultiMeshInstance3D>(found->node) : nullptr;
+		if (!node || !mmi || cp.instance >= int(found->placements.size())) {
+			if (node) {
+				node->queue_free();
+			}
+			caps.remove_at(k);
+			continue;
+		}
+		const float *rec = found->buffer.ptr() + (size_t(cp.instance) * found->bones + cp.bone) * RECORD_FLOATS;
+		node->set_global_transform(mmi->get_global_transform() * read_record(rec) * cp.local);
+	}
+}
+
+Dictionary TreeWind3D::get_storm_load(const Ref<Mesh> &p_mesh, const Transform3D &p_placement, int p_seed) {
+	Dictionary d;
+	const Rig *rig = _rig_for(p_mesh);
+	if (!rig) {
+		return d;
+	}
+	_gather_waves();
+	Transform3D bones[256];
+	StormLoad sl;
+	solve_pose(*rig, p_placement, uint32_t(p_seed), bones, nullptr, 0.0f, &sl);
+	d["bone"] = sl.bone;
+	d["ratio"] = sl.ratio;
+	d["root_ratio"] = sl.root_ratio;
+	d["radius"] = sl.bone >= 0 ? rig->bones[sl.bone].radius : 0.0f;
+	d["height"] = sl.bone >= 0 ? rig->bones[sl.bone].pivot.y : 0.0f;
+	d["storm"] = rig->storm;
+	return d;
+}
+
+// The chunks of a broken part: one per bone of 3 cm and up (and the part's own first bone), thinner
+// bones riding the chunk below them; a thrown tree's foot rides its stem's first segment.
+void TreeWind3D::_blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> &p_exclude, LocalVector<int> &r_chunk_of, LocalVector<int> &r_chunk_bone) {
+	const uint32_t n = p_rig.bones.size();
+	LocalVector<uint8_t> inside;
+	inside.resize(n);
+	for (uint32_t b = 0; b < n; b++) {
+		inside[b] = b == uint32_t(p_bone) || (b > uint32_t(p_bone) && b > 0 && inside[p_rig.bones[b].parent]);
+		if (b > 0 && p_exclude.size() == n && p_exclude[b]) {
+			inside[b] = 0;
+		}
+	}
+	r_chunk_of.resize(n);
+	r_chunk_bone.clear();
+	for (uint32_t b = 0; b < n; b++) {
+		r_chunk_of[b] = -1;
+	}
+	for (uint32_t b = 0; b < n; b++) {
+		if (!inside[b] || b == 0) {
+			continue;
+		}
+		const int parent = p_rig.bones[b].parent;
+		if (b == uint32_t(p_bone) || p_rig.bones[b].radius >= BLAST_CHUNK_RADIUS || r_chunk_of[parent] < 0) {
+			r_chunk_of[b] = r_chunk_bone.size();
+			r_chunk_bone.push_back(int(b));
+			if (parent == 0 && r_chunk_of[0] < 0 && p_bone == 0) {
+				r_chunk_of[0] = r_chunk_of[b];
+			}
+		} else {
+			r_chunk_of[b] = r_chunk_of[parent];
+		}
+	}
+}
+
+// A broken part as a Blast asset (docs/ideas/trees.md section 5t), for its fall's impact: one chunk
+// per bone of 3 cm and up (thinner bones ride the chunk below them), each chunk carrying every
+// surface of its wood and foliage, a closed hull of its wood (cylinders at 0.85 of the bone's radius,
+// inside the bark: the chunk's collision, volume and, where it breaks, its wood face) and a bond to
+// the chunk it grows from with the health of the wood there (its breaking moment in kN m, over the
+// node's health). The whole tree's root plate rides the stem's foot.
+// Pure (no node, server or cache state): it runs on a worker thread, from the break on, so the asset is
+// ready by the time the part lands.
+Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, Array &r_materials) {
+	const uint64_t t_start = OS::get_singleton()->get_ticks_usec();
+	Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
+	if (!authoring) {
+		return Ref<Resource>();
+	}
+	Ref<RefCounted> holder(Object::cast_to<RefCounted>(authoring));
+	const uint32_t n = p_rig.bones.size();
+	LocalVector<int> chunk_of;
+	LocalVector<int> chunk_bone; // First bone of each chunk.
+	_blast_chunks(p_rig, p_bone, p_exclude, chunk_of, chunk_bone);
+	const int chunks = chunk_bone.size();
+	if (chunks < 2 || p_rig.mesh.is_null()) {
+		return Ref<Resource>(); // One chunk: nothing to break; it stays the body it is.
+	}
+	// Materials: the tree's unskinned surfaces, then the broken wood (the fracture cap's).
+	const int surfaces = p_rig.mesh->get_surface_count();
+	Array mats;
+	for (int s = 0; s < surfaces; s++) {
+		mats.push_back(s < p_rig.static_materials.size() ? p_rig.static_materials[s] : Variant(p_rig.mesh->surface_get_material(s)));
+	}
+	Ref<Material> wood;
+	if (p_rig.cap_kit.size() > 0) {
+		const Array e = p_rig.cap_kit[0];
+		wood = e[2];
+	}
+	const int wood_slot = mats.size();
+	mats.push_back(wood);
+	// Per chunk, per surface: the triangles whose first bone is in the chunk.
+	struct Soup {
+		LocalVector<Vector3> v, nrm;
+		LocalVector<Vector2> uv, uv2;
+		LocalVector<Color> col;
+		LocalVector<float> tan;
+		LocalVector<int32_t> idx;
+		bool has_uv2 = false, has_tan = false;
+	};
+	LocalVector<LocalVector<Soup>> soups;
+	soups.resize(chunks);
+	for (int c = 0; c < chunks; c++) {
+		soups[c].resize(surfaces);
+	}
+	const uint64_t t_soup = OS::get_singleton()->get_ticks_usec();
+	for (int s = 0; s < surfaces && s < p_surface_arrays.size(); s++) {
+		const Array arr = p_surface_arrays[s];
+		if (arr.size() != Mesh::ARRAY_MAX) {
+			continue;
+		}
+		const PackedVector3Array verts = arr[Mesh::ARRAY_VERTEX];
+		const PackedVector3Array normals = arr[Mesh::ARRAY_NORMAL];
+		const PackedVector2Array uvs = arr[Mesh::ARRAY_TEX_UV];
+		const PackedVector2Array uv2s = arr[Mesh::ARRAY_TEX_UV2];
+		const PackedColorArray colors = arr[Mesh::ARRAY_COLOR];
+		const PackedFloat32Array tangents = arr[Mesh::ARRAY_TANGENT];
+		const PackedInt32Array bones = arr[Mesh::ARRAY_BONES];
+		const PackedInt32Array index = arr[Mesh::ARRAY_INDEX];
+		if (bones.size() != verts.size() * 4 || index.is_empty()) {
+			continue;
+		}
+		const int vn = verts.size();
+		const bool has_uv2 = uv2s.size() == vn;
+		const bool has_tan = tangents.size() == vn * 4;
+		const bool has_n = normals.size() == vn, has_uv = uvs.size() == vn, has_col = colors.size() == vn;
+		const Vector3 *vp = verts.ptr();
+		const int32_t *bp = bones.ptr();
+		const int32_t *ip = index.ptr();
+		// Each vertex's copy in the chunk that took it last (a vertex on a chunk's border is copied
+		// once per chunk it serves).
+		LocalVector<int> remap_chunk, remap_index;
+		remap_chunk.resize(vn);
+		remap_index.resize(vn);
+		for (int v = 0; v < vn; v++) {
+			remap_chunk[v] = -1;
+		}
+		for (int i = 0; i + 2 < index.size(); i += 3) {
+			const int bb = bp[ip[i] * 4];
+			if (bb < 0 || bb >= int(n) || chunk_of[bb] < 0) {
+				continue;
+			}
+			const int c = chunk_of[bb];
+			Soup &so = soups[c][s];
+			so.has_uv2 = has_uv2;
+			so.has_tan = has_tan;
+			for (int k = 0; k < 3; k++) {
+				const int v = ip[i + k];
+				if (remap_chunk[v] == c) {
+					so.idx.push_back(remap_index[v]);
+					continue;
+				}
+				const int ni = so.v.size();
+				remap_chunk[v] = c;
+				remap_index[v] = ni;
+				so.v.push_back(vp[v]);
+				so.nrm.push_back(has_n ? normals[v] : Vector3(0, 1, 0));
+				so.uv.push_back(has_uv ? uvs[v] : Vector2());
+				so.col.push_back(has_col ? colors[v] : Color(1, 1, 1));
+				if (has_uv2) {
+					so.uv2.push_back(uv2s[v]);
+				}
+				if (has_tan) {
+					for (int q = 0; q < 4; q++) {
+						so.tan.push_back(tangents[v * 4 + q]);
+					}
+				}
+				so.idx.push_back(ni);
+			}
+		}
+	}
+	auto soup_arrays = [](const Soup &p_s) {
+		Array a;
+		a.resize(Mesh::ARRAY_MAX);
+		PackedVector3Array v, nrm;
+		PackedVector2Array uv, uv2;
+		PackedColorArray col;
+		PackedFloat32Array tan;
+		PackedInt32Array idx;
+		v.resize(p_s.v.size());
+		memcpy(v.ptrw(), p_s.v.ptr(), sizeof(Vector3) * p_s.v.size());
+		nrm.resize(p_s.nrm.size());
+		memcpy(nrm.ptrw(), p_s.nrm.ptr(), sizeof(Vector3) * p_s.nrm.size());
+		uv.resize(p_s.uv.size());
+		memcpy(uv.ptrw(), p_s.uv.ptr(), sizeof(Vector2) * p_s.uv.size());
+		col.resize(p_s.col.size());
+		memcpy(col.ptrw(), p_s.col.ptr(), sizeof(Color) * p_s.col.size());
+		idx.resize(p_s.idx.size());
+		memcpy(idx.ptrw(), p_s.idx.ptr(), sizeof(int32_t) * p_s.idx.size());
+		a[Mesh::ARRAY_VERTEX] = v;
+		a[Mesh::ARRAY_NORMAL] = nrm;
+		a[Mesh::ARRAY_TEX_UV] = uv;
+		a[Mesh::ARRAY_COLOR] = col;
+		if (p_s.has_uv2) {
+			uv2.resize(p_s.uv2.size());
+			memcpy(uv2.ptrw(), p_s.uv2.ptr(), sizeof(Vector2) * p_s.uv2.size());
+			a[Mesh::ARRAY_TEX_UV2] = uv2;
+		}
+		if (p_s.has_tan) {
+			tan.resize(p_s.tan.size());
+			memcpy(tan.ptrw(), p_s.tan.ptr(), sizeof(float) * p_s.tan.size());
+			a[Mesh::ARRAY_TANGENT] = tan;
+		}
+		a[Mesh::ARRAY_INDEX] = idx;
+		return a;
+	};
+	// The hull: a closed eight-sided cylinder along each bone of the chunk, with end caps.
+	auto cylinder = [](Soup &r_h, const Vector3 &a0, const Vector3 &a1, float r) {
+		const Color wc(0.6f, 0.5f, 0.38f);
+		{
+			const Vector3 d = (a1 - a0).normalized();
+			Vector3 u = d.cross(Vector3(0, 1, 0));
+			if (u.length_squared() < 1e-4f) {
+				u = d.cross(Vector3(1, 0, 0));
+			}
+			u.normalize();
+			const Vector3 w = d.cross(u);
+			const int base = r_h.v.size();
+			for (int end = 0; end < 2; end++) {
+				const Vector3 c = end == 0 ? a0 : a1;
+				for (int k = 0; k < 8; k++) {
+					const float t = float(Math::TAU) * k / 8.0f;
+					const Vector3 rd = u * Math::cos(t) + w * Math::sin(t);
+					r_h.v.push_back(c + rd * r);
+					r_h.nrm.push_back(rd);
+					r_h.uv.push_back(Vector2(k / 8.0f, end));
+					r_h.col.push_back(wc);
+				}
+				r_h.v.push_back(c);
+				r_h.nrm.push_back(end == 0 ? -d : d);
+				r_h.uv.push_back(Vector2(0.5f, end));
+				r_h.col.push_back(wc);
+			}
+			// Godot front faces wind clockwise seen from outside.
+			for (int k = 0; k < 8; k++) {
+				const int k1 = (k + 1) % 8;
+				const int s0 = base + k, s1 = base + k1, t0 = base + 9 + k, t1 = base + 9 + k1;
+				r_h.idx.push_back(s0);
+				r_h.idx.push_back(t0);
+				r_h.idx.push_back(s1);
+				r_h.idx.push_back(s1);
+				r_h.idx.push_back(t0);
+				r_h.idx.push_back(t1);
+				r_h.idx.push_back(base + 8);
+				r_h.idx.push_back(s0);
+				r_h.idx.push_back(s1);
+				r_h.idx.push_back(base + 17);
+				r_h.idx.push_back(t1);
+				r_h.idx.push_back(t0);
+			}
+		}
+	};
+	auto hull = [&](int p_chunk, Soup &r_h) {
+		for (uint32_t b = 1; b < n; b++) {
+			if (chunk_of[b] != p_chunk) {
+				continue;
+			}
+			// Wood of chunk size only: twigs fold on landing rather than prop the limb up, and
+			// thousands of them would make a hull slow to cook.
+			const Bone &bone = p_rig.bones[b];
+			if (bone.radius < BLAST_CHUNK_RADIUS && chunk_bone[p_chunk] != int(b)) {
+				continue;
+			}
+			// Starting clear of the wood it grows from, and a little short of its tip: hulls that
+			// overlap push apart when they come to be in different pieces.
+			const Vector3 d = bone.dir.normalized();
+			float start = 0.005f;
+			if (bone.parent > 0) {
+				const Bone &pb = p_rig.bones[bone.parent];
+				const float sine = d.cross(pb.dir.normalized()).length();
+				if (sine > 0.3f) {
+					start = pb.radius * 0.85f / sine + bone.radius * 0.85f * Math::sqrt(MAX(1.0f - sine * sine, 0.0f)) / sine;
+				}
+			}
+			start = MIN(start, 0.4f * bone.length);
+			cylinder(r_h, bone.pivot + d * start, bone.pivot + d * MAX(bone.length - 0.005f, start + 0.01f), MAX(bone.radius * 0.85f, 0.005f));
+		}
+	};
+	// The thrown tree's root plate (5k), drawn on the stem's foot.
+	Array plate;
+	int bark_slot = -1;
+	for (int s = 0; s < surfaces; s++) {
+		const Ref<ArrayMesh> am = p_rig.mesh;
+		if (am.is_valid() && am->surface_get_name(s) == "bark") {
+			bark_slot = s;
+		}
+	}
+	const uint64_t t_plate = OS::get_singleton()->get_ticks_usec();
+	if (p_bone == 0 && chunk_of[0] >= 0) {
+		plate = TreeGenerator::build_storm_plate(p_rig.storm_data);
+	}
+	const uint64_t t_plate_end = OS::get_singleton()->get_ticks_usec();
+	// The part's butt: its fracture cap (unit size, placed by p_butt), on the part's first chunk.
+	Array butt;
+	if (p_bone > 0 && p_butt.basis.determinant() != 0.0f && p_rig.cap_kit.size() > 0) {
+		const Array e = p_rig.cap_kit[0];
+		Array a = Array(e[1]).duplicate(true);
+		PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
+		PackedVector3Array nn = a[Mesh::ARRAY_NORMAL];
+		const Basis nb = p_butt.basis.inverse().transposed();
+		for (int i = 0; i < v.size(); i++) {
+			v.write[i] = p_butt.xform(v[i]);
+			if (i < nn.size()) {
+				nn.write[i] = nb.xform(nn[i]).normalized();
+			}
+		}
+		a[Mesh::ARRAY_VERTEX] = v;
+		a[Mesh::ARRAY_NORMAL] = nn;
+		a[Mesh::ARRAY_TANGENT] = Variant();
+		butt = a;
+	}
+	Array pieces;
+	Array root;
+	Soup root_hull;
+	for (int c = 0; c < chunks; c++) {
+		Soup h;
+		hull(c, h);
+		const bool foot = p_bone == 0 && c == chunk_of[0];
+		// No hull for the root plate: it falls turning on its edge, half in the ground, and a hull
+		// there would be thrown out of the ground at the swap.
+		Array piece;
+		Dictionary hs;
+		hs["arrays"] = soup_arrays(h);
+		hs["slot"] = wood_slot;
+		piece.push_back(hs);
+		for (int s = 0; s < surfaces; s++) {
+			if (soups[c][s].idx.is_empty()) {
+				continue;
+			}
+			Dictionary sd;
+			sd["arrays"] = soup_arrays(soups[c][s]);
+			sd["slot"] = s;
+			piece.push_back(sd);
+			Dictionary rd;
+			rd["arrays"] = sd["arrays"];
+			rd["slot"] = s;
+			root.push_back(rd);
+		}
+		auto extra = [&](const Array &p_arrays, int p_slot) {
+			Dictionary d;
+			d["arrays"] = p_arrays;
+			d["slot"] = p_slot;
+			piece.push_back(d);
+			root.push_back(d);
+		};
+		if (foot) {
+			for (int i = 0; i < plate.size(); i++) {
+				const Array e = plate[i];
+				const String name = e[0];
+				int slot = wood_slot;
+				if (name == "bark" && bark_slot >= 0) {
+					slot = bark_slot;
+				} else if (name == "soil") {
+					slot = mats.size();
+					mats.push_back(e[2]);
+				}
+				extra(e[1], slot);
+			}
+		}
+		if (c == chunk_of[p_bone] && butt.size() > 0) {
+			extra(butt, wood_slot);
+		}
+		pieces.push_back(piece);
+		const int off = root_hull.v.size();
+		for (uint32_t k = 0; k < h.v.size(); k++) {
+			root_hull.v.push_back(h.v[k]);
+			root_hull.nrm.push_back(h.nrm[k]);
+			root_hull.uv.push_back(h.uv[k]);
+			root_hull.col.push_back(h.col[k]);
+		}
+		for (uint32_t k = 0; k < h.idx.size(); k++) {
+			root_hull.idx.push_back(h.idx[k] + off);
+		}
+	}
+	Dictionary rh;
+	rh["arrays"] = soup_arrays(root_hull);
+	rh["slot"] = wood_slot;
+	root.insert(0, rh);
+	// Bonds: each chunk to the one it grows from, at its first bone's pivot.
+	Array bonds;
+	for (int c = 0; c < chunks; c++) {
+		const int fb = chunk_bone[c];
+		if (fb == p_bone || p_rig.bones[fb].parent == 0) {
+			continue;
+		}
+		const int pc = chunk_of[p_rig.bones[fb].parent];
+		if (pc < 0 || pc == c) {
+			continue;
+		}
+		const Bone &bone = p_rig.bones[fb];
+		Dictionary bd;
+		bd["chunks"] = Vector2i(c, pc);
+		bd["centroid"] = bone.pivot;
+		bd["normal"] = -bone.dir.normalized();
+		bd["area"] = float(Math::PI) * bone.radius * bone.radius;
+		bd["health"] = MAX(bone.strength / 1000.0f, 0.01f) / BLAST_NODE_HEALTH;
+		bonds.push_back(bd);
+	}
+	const uint64_t t_cook = OS::get_singleton()->get_ticks_usec();
+	const Variant res = authoring->call("build_prefractured", root, pieces, bonds, mats);
+	print_verbose(vformat("TreeWind3D: Blast asset bone %d, %d chunks: soups %d ms, plate %d ms, arrays %d ms, authoring %d ms", p_bone, chunks, (t_plate - t_soup) / 1000, (t_plate_end - t_plate) / 1000, (t_cook - t_start) / 1000, (OS::get_singleton()->get_ticks_usec() - t_cook) / 1000));
+	Ref<Resource> asset = res;
+	if (asset.is_null()) {
+		WARN_PRINT(vformat("TreeWind3D: Blast asset for bone %d failed: %s", p_bone, String(authoring->call("get_last_error"))));
+	}
+	r_materials = mats;
+	return asset;
+}
+
+void TreeWind3D::_blast_job(BlastJob *p_job) {
+	p_job->asset = _blast_asset(p_job->rig, p_job->surface_arrays, p_job->bone, p_job->exclude, p_job->butt, p_job->materials);
+	if (p_job->asset.is_valid() && p_job->asset->has_method("prepare_render")) {
+		// Its chunks' render arrays in GPU format now, so the swap only uploads them.
+		const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+		p_job->asset->call("prepare_render");
+		print_verbose(vformat("TreeWind3D: Blast asset bone %d: prepare_render %d ms", p_job->bone, (OS::get_singleton()->get_ticks_usec() - t0) / 1000));
+	}
+}
+
+// At the break: start building the part's Blast asset (cached by its key) on a worker thread.
+void TreeWind3D::_blast_request(const StormPart &p_part) {
+	if (blast_assets.has(p_part.key) || blast_jobs.has(p_part.key) || p_part.mesh.is_null() || !ClassDB::class_exists("PhysXBlastAuthoring")) {
+		return;
+	}
+	const Rig *rig = _rig_for(p_part.mesh);
+	if (!rig) {
+		return;
+	}
+	// The mesh's arrays come from the rendering server: read them here, once per mesh.
+	const uint64_t mid = p_part.mesh->get_instance_id();
+	if (!mesh_arrays.has(mid)) {
+		Array arrays;
+		for (int s = 0; s < p_part.mesh->get_surface_count(); s++) {
+			arrays.push_back(p_part.mesh->surface_get_arrays(s));
+		}
+		mesh_arrays[mid] = arrays;
+	}
+	BlastJob *job = memnew(BlastJob);
+	job->rig = *rig;
+	job->surface_arrays = mesh_arrays[mid];
+	job->bone = p_part.bone;
+	job->exclude = p_part.exclude;
+	job->butt = p_part.butt;
+	job->task = WorkerThreadPool::get_singleton()->add_template_task(this, &TreeWind3D::_blast_job, job, false, String("TreeWind3D Blast"));
+	blast_jobs[p_part.key] = job;
+}
+
+// Whether the key's asset is built (or failed): collects a finished job.
+bool TreeWind3D::_blast_ready(uint64_t p_key) {
+	if (blast_assets.has(p_key)) {
+		return true;
+	}
+	BlastJob **job = blast_jobs.getptr(p_key);
+	if (!job) {
+		return true; // Never requested (no Blast): the swap finds no asset and leaves the body be.
+	}
+	if (!WorkerThreadPool::get_singleton()->is_task_completed((*job)->task)) {
+		return false;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_task_completion((*job)->task);
+	if ((*job)->asset.is_valid()) {
+		blast_assets[p_key] = (*job)->asset;
+		blast_materials[p_key] = (*job)->materials;
+	}
+	memdelete(*job);
+	blast_jobs.erase(p_key);
+	return true;
+}
+
+void TreeWind3D::_blast_wait_all() {
+	for (KeyValue<uint64_t, BlastJob *> &kv : blast_jobs) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(kv.value->task);
+		memdelete(kv.value);
+	}
+	blast_jobs.clear();
+}
+
+// A falling part that hits hard becomes a dynamic Blast destructible of its chunks in the same pose,
+// and the impact breaks the bonds near the contact by how hard it was: limbs snap where the crown
+// lands, the stem goes on down.
+void TreeWind3D::_blast_swap(StormPart &r_part, RigidBody3D *p_body, const Vector3 &p_contact, float p_impulse) {
+	if (!ClassDB::class_exists("PhysXDestructible3D")) {
+		WARN_PRINT_ONCE("TreeWind3D: no PhysXDestructible3D (or rig) for a storm part's impact.");
+		return;
+	}
+	const Ref<Resource> *found = blast_assets.getptr(r_part.key);
+	if (!found || found->is_null()) {
+		return;
+	}
+	const Ref<Resource> asset = *found;
+	Object *obj = ClassDB::instantiate("PhysXDestructible3D");
+	Node3D *node = Object::cast_to<Node3D>(obj);
+	if (!node) {
+		if (obj) {
+			memdelete(obj);
+		}
+		return;
+	}
+	const Transform3D g = p_body->get_global_transform();
+	node->set_name("TreeFall");
+	node->set("blast_asset", asset);
+	node->set("health", BLAST_NODE_HEALTH);
+	node->set("auto_mass", false);
+	node->set("mass", p_body->get_mass());
+	node->set("dynamic", true);
+	node->set("anchor", 2); // ANCHOR_NONE
+	// Only the impacts below break it (each scaled to the wood); its own landings do not.
+	node->set("impact_strength", 1.0e12);
+	node->set("shatter_speed", 0.5);
+	node->set("freeze_when_asleep", true);
+	// It goes on falling as the part was.
+	node->set("initial_linear_velocity", p_body->get_linear_velocity());
+	node->set("initial_angular_velocity", p_body->get_angular_velocity());
+	node->set_as_top_level(true);
+	node->set_transform(Transform3D(g.basis.scaled_local(Vector3(r_part.scale, r_part.scale, r_part.scale)), g.origin));
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	add_child(node, false, INTERNAL_MODE_BACK);
+	const uint64_t t1 = OS::get_singleton()->get_ticks_usec();
+	// The impact: the momentum the contact took, over a lever of a metre, against the wood's
+	// breaking moment (kN m), spread over a few metres around the contact.
+	const float damage = p_impulse * 0.05f;
+	node->call("apply_radial_damage", p_contact, damage, 1.5f, 4.0f); // Radii in tree space.
+	print_verbose(vformat("TreeWind3D: Blast swap bone %d: enter tree %d ms, damage %d ms", r_part.bone, (t1 - t0) / 1000, (OS::get_singleton()->get_ticks_usec() - t1) / 1000));
+	if (r_part.joint.is_valid()) {
+		PhysicsServer3D::get_singleton()->free_rid(r_part.joint);
+		r_part.joint = RID();
+	}
+	r_part.body = ObjectID();
+	p_body->queue_free();
+	storm_falls++;
+	// For its settling: each chunk's mass, centre and wood (the segment it can rest on).
+	const Rig *rig = _rig_for(r_part.mesh);
+	if (rig) {
+		StormFall fall;
+		fall.node = node->get_instance_id();
+		fall.scale = r_part.scale;
+		LocalVector<int> chunk_of, chunk_bone;
+		_blast_chunks(*rig, r_part.bone, r_part.exclude, chunk_of, chunk_bone);
+		const uint32_t n = rig->bones.size();
+		const uint32_t chunks = chunk_bone.size();
+		fall.mass.resize(chunks);
+		fall.center.resize(chunks);
+		fall.low_a.resize(chunks);
+		fall.low_b.resize(chunks);
+		for (uint32_t c = 0; c < chunks; c++) {
+			fall.mass[c] = 0.0f;
+			fall.center[c] = Vector3();
+			const Bone &fb = rig->bones[chunk_bone[c]];
+			fall.low_a[c] = fb.pivot;
+			fall.low_b[c] = fb.pivot + fb.dir.normalized() * fb.length;
+		}
+		fall.butt = chunk_of[r_part.bone];
+		fall.parent.resize(chunks);
+		fall.strength.resize(chunks);
+		for (uint32_t c = 0; c < chunks; c++) {
+			const Bone &fb = rig->bones[chunk_bone[c]];
+			fall.parent[c] = (int(c) == fall.butt || fb.parent < 0) ? -1 : chunk_of[fb.parent];
+			fall.strength[c] = MAX(fb.strength / 1000.0f, 0.01f);
+		}
+		for (uint32_t b = 1; b < n; b++) {
+			const int c = chunk_of[b];
+			if (c < 0) {
+				continue;
+			}
+			float own = rig->bones[b].mass;
+			for (uint32_t e = b + 1; e < n; e++) {
+				if (rig->bones[e].parent == int(b)) {
+					own -= rig->bones[e].mass;
+				}
+			}
+			own = MAX(own, 0.0f);
+			fall.mass[c] += own;
+			fall.center[c] += (rig->bones[b].pivot + rig->bones[b].dir * (rig->bones[b].length * 0.5f)) * own;
+		}
+		const float s3 = r_part.scale * r_part.scale * r_part.scale;
+		for (uint32_t c = 0; c < chunks; c++) {
+			fall.center[c] = fall.mass[c] > 1e-6f ? fall.center[c] / fall.mass[c] : (fall.low_a[c] + fall.low_b[c]) * 0.5f;
+			fall.mass[c] *= s3;
+		}
+		storm_settling.push_back(fall);
+	}
+}
+
+// A fallen part at rest on its crown: the limb it rests on carries the share of its weight the
+// foot does not, and breaks under it if that is more than its wood holds (a windthrown crown
+// crushes into the ground until it lies on wood strong enough).
+void TreeWind3D::_storm_settle(double p_delta) {
+	const float g = 9.81f;
+	for (int k = int(storm_settling.size()) - 1; k >= 0; k--) {
+		StormFall &fall = storm_settling[k];
+		Node3D *node = ObjectDB::get_instance<Node3D>(fall.node);
+		fall.age += float(p_delta);
+		if (!node || fall.age > 12.0f) {
+			storm_settling.remove_at(k);
+			continue;
+		}
+		if (fall.age < fall.next) {
+			continue;
+		}
+		fall.next = fall.age + 0.25f;
+		HashMap<int, Transform3D> seen;
+		const int count = node->call("get_piece_count");
+		for (int i = 0; i < count; i++) {
+			const Transform3D t = node->call("get_piece_transform", i);
+			const PackedInt32Array chunks = node->call("get_piece_chunks", i);
+			if (chunks.size() < 2) {
+				continue;
+			}
+			const int key = chunks[0];
+			seen[key] = t;
+			// Only a piece at rest (moved under 2 cm and half a degree in the last quarter second).
+			const Transform3D *was = fall.last.getptr(key);
+			const bool rest = was && was->origin.distance_to(t.origin) < 0.02f && Quaternion((was->basis.inverse() * t.basis).orthonormalized()).get_angle() < 0.01f;
+			if (!rest) {
+				continue;
+			}
+			auto world = [&](const Vector3 &p) { return t.origin + t.basis.xform(p * fall.scale); };
+			float mass = 0.0f;
+			Vector3 com;
+			Vector3 foot;
+			bool has_foot = false;
+			int low_chunk = -1;
+			Vector3 low;
+			for (int ci = 0; ci < chunks.size(); ci++) {
+				const int c = chunks[ci] - 1; // Asset chunk 0 is the whole.
+				if (c < 0 || c >= int(fall.mass.size())) {
+					continue;
+				}
+				mass += fall.mass[c];
+				com += world(fall.center[c]) * fall.mass[c];
+				if (c == fall.butt) {
+					foot = world(fall.low_a[c]);
+					has_foot = true;
+					continue;
+				}
+				for (int e = 0; e < 2; e++) {
+					const Vector3 p = world(e == 0 ? fall.low_a[c] : fall.low_b[c]);
+					if (low_chunk < 0 || p.y < low.y) {
+						low = p;
+						low_chunk = c;
+					}
+				}
+			}
+			if (mass <= 0.0f || low_chunk < 0) {
+				continue;
+			}
+			com /= mass;
+			// Propped: the centre of mass well above what it rests on (a stem lying on the ground
+			// has it a radius up).
+			if (com.y - low.y < 1.0f) {
+				continue;
+			}
+			// The rest's share of the weight: the foot takes the rest, by the levers about the centre.
+			float share = 1.0f;
+			if (has_foot) {
+				const Vector2 c2(com.x, com.z), f2(foot.x, foot.z), l2(low.x, low.z);
+				const float lf = f2.distance_to(c2), ll = l2.distance_to(c2);
+				share = lf + ll > 1e-3f ? CLAMP(lf / (lf + ll), 0.0f, 1.0f) : 0.5f;
+			}
+			const float load = mass * g * share; // N, upward at the rest.
+			// Up the limb from the rest toward the foot, the first joint whose wood cannot carry the
+			// load's moment about it (its lever across the ground) breaks.
+			const float s3 = fall.scale * fall.scale * fall.scale;
+			HashSet<int> mine;
+			for (int ci = 0; ci < chunks.size(); ci++) {
+				mine.insert(chunks[ci] - 1);
+			}
+			for (int c = low_chunk; c >= 0 && c != fall.butt && mine.has(c) && fall.parent[c] >= 0 && mine.has(fall.parent[c]); c = fall.parent[c]) {
+				const Vector3 at = world(fall.low_a[c]);
+				const float moment = load * Vector2(at.x - low.x, at.z - low.z).length() / 1000.0f / s3; // kN m at scale 1
+				if (moment > fall.strength[c]) {
+					const int broke = node->call("apply_radial_damage", at, moment, 0.05f, 0.3f);
+					print_verbose(vformat("TreeWind3D: settle piece %d (%.0f kg) on chunk %d: joint %d breaks, %.1f over %.1f kN m (%d pieces)", i, mass, low_chunk, c, moment, fall.strength[c], broke));
+					break;
+				}
+			}
+		}
+		fall.last = seen;
+	}
+}
+
+// Contacts of the falling parts, in the physics step: the first hard hit swaps a part for Blast.
+void TreeWind3D::_storm_impacts() {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	for (StormPart &sp : storm_parts) {
+		if (sp.swapped || sp.age < 0.2f) {
+			continue;
+		}
+		RigidBody3D *body = ObjectDB::get_instance<RigidBody3D>(sp.body);
+		if (!body || !body->is_inside_tree()) {
+			continue;
+		}
+		PhysicsDirectBodyState3D *state = ps->body_get_direct_state(body->get_rid());
+		if (!state) {
+			continue;
+		}
+		float best = 0.0f;
+		Vector3 at;
+		for (int c = 0; c < state->get_contact_count(); c++) {
+			const float j = state->get_contact_impulse(c).length();
+			if (j > best) {
+				best = j;
+				at = state->get_contact_local_position(c);
+			}
+		}
+		// A hit that changes the part's whole speed by 1.5 m/s or more (a crown landing, not
+		// rolling or sliding).
+		if (!sp.hit && best > 1.5f * float(body->get_mass())) {
+			sp.hit = true;
+			sp.hit_local = body->get_global_transform().affine_inverse().xform(at);
+			sp.hit_impulse = best;
+		}
+		// Swapped once its asset is built (it almost always is by the landing).
+		if (sp.hit && _blast_ready(sp.key)) {
+			sp.swapped = true;
+			_blast_swap(sp, body, body->get_global_transform().xform(sp.hit_local), sp.hit_impulse);
+		}
+	}
+}
+
 // Static colliders of trunks and limbs (capsules from TreeGenerator.get_collision_capsules()),
 // only for instances inside collision_range, on their own collision layer.
 void TreeWind3D::_update_colliders(Target &r_target, const Transform3D &p_world, const Vector3 &p_eye) {
@@ -976,7 +2327,8 @@ void TreeWind3D::_update_colliders(Target &r_target, const Transform3D &p_world,
 	const float *c = rig.colliders.ptr();
 	for (uint32_t i = 0; i < r_target.placements.size(); i++) {
 		const Transform3D tree = p_world * r_target.placements[i];
-		const bool near = tree.origin.distance_to(p_eye) <= collision_range;
+		const Touch *tcu = r_target.touch.getptr(int(i));
+		const bool near = !(tcu && tcu->uprooted) && tree.origin.distance_to(p_eye) <= collision_range;
 		Target::Body *have = r_target.bodies.getptr(int(i));
 		if (near == (have != nullptr)) {
 			continue;
@@ -998,6 +2350,10 @@ void TreeWind3D::_update_colliders(Target &r_target, const Transform3D &p_world,
 		const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
 		for (int k = 0; k < caps; k++) {
 			const float *o = c + k * 8;
+			const int bone = int(o[7]);
+			if (tcu && bone >= 0 && bone < int(tcu->broken.size()) && tcu->broken[bone]) {
+				continue; // Broken off by a storm or a body: the part has its own.
+			}
 			const Vector3 a = Vector3(o[0], o[1], o[2]) * scale;
 			const Vector3 b = Vector3(o[3], o[4], o[5]) * scale;
 			const float r = o[6] * scale;
@@ -1015,6 +2371,16 @@ void TreeWind3D::_update_colliders(Target &r_target, const Transform3D &p_world,
 		}
 		ps->body_set_state(nb.body, PhysicsServer3D::BODY_STATE_TRANSFORM, Transform3D(tree.basis.orthonormalized(), tree.origin));
 		ps->body_set_space(nb.body, space);
+		if (tcu) {
+			// The stub and the parts broken off it start touching at the break.
+			for (const ObjectID &id : tcu->parts) {
+				const CollisionObject3D *part = ObjectDB::get_instance<CollisionObject3D>(id);
+				if (part) {
+					ps->body_add_collision_exception(nb.body, part->get_rid());
+					ps->body_add_collision_exception(part->get_rid(), nb.body);
+				}
+			}
+		}
 		r_target.bodies[int(i)] = nb;
 	}
 }
@@ -1108,10 +2474,26 @@ void TreeWind3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
 			set_process_internal(true);
+			set_physics_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			for (Target &t : targets) {
 				_free_colliders(t);
+			}
+			for (StormPart &sp : storm_parts) {
+				if (sp.joint.is_valid()) {
+					PhysicsServer3D::get_singleton()->free_rid(sp.joint);
+				}
+			}
+			storm_parts.clear();
+			_blast_wait_all();
+		} break;
+		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			if (!storm_parts.is_empty()) {
+				_storm_impacts();
+			}
+			if (!storm_settling.is_empty()) {
+				_storm_settle(get_physics_process_delta_time());
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
@@ -1172,6 +2554,20 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_break_radius", "radius"), &TreeWind3D::set_break_radius);
 	ClassDB::bind_method(D_METHOD("get_break_radius"), &TreeWind3D::get_break_radius);
 	ClassDB::bind_method(D_METHOD("get_collider_count"), &TreeWind3D::get_collider_count);
+	ClassDB::bind_method(D_METHOD("set_storm_enabled", "enabled"), &TreeWind3D::set_storm_enabled);
+	ClassDB::bind_method(D_METHOD("is_storm_enabled"), &TreeWind3D::is_storm_enabled);
+	ClassDB::bind_method(D_METHOD("set_storm_strength", "scale"), &TreeWind3D::set_storm_strength);
+	ClassDB::bind_method(D_METHOD("get_storm_strength"), &TreeWind3D::get_storm_strength);
+	ClassDB::bind_method(D_METHOD("set_storm_anchorage", "scale"), &TreeWind3D::set_storm_anchorage);
+	ClassDB::bind_method(D_METHOD("get_storm_anchorage"), &TreeWind3D::get_storm_anchorage);
+	ClassDB::bind_method(D_METHOD("set_storm_min_radius", "radius"), &TreeWind3D::set_storm_min_radius);
+	ClassDB::bind_method(D_METHOD("get_storm_min_radius"), &TreeWind3D::get_storm_min_radius);
+	ClassDB::bind_method(D_METHOD("set_storm_min_wind", "speed"), &TreeWind3D::set_storm_min_wind);
+	ClassDB::bind_method(D_METHOD("get_storm_min_wind"), &TreeWind3D::get_storm_min_wind);
+	ClassDB::bind_method(D_METHOD("get_storm_break_count"), &TreeWind3D::get_storm_break_count);
+	ClassDB::bind_method(D_METHOD("get_storm_throw_count"), &TreeWind3D::get_storm_throw_count);
+	ClassDB::bind_method(D_METHOD("get_storm_fall_count"), &TreeWind3D::get_storm_fall_count);
+	ClassDB::bind_method(D_METHOD("get_storm_load", "mesh", "placement", "seed"), &TreeWind3D::get_storm_load);
 	ClassDB::bind_method(D_METHOD("get_piece_count"), &TreeWind3D::get_piece_count);
 	ClassDB::bind_method(D_METHOD("get_touch_bends", "target", "instance"), &TreeWind3D::get_touch_bends);
 	ClassDB::bind_method(D_METHOD("rescan"), &TreeWind3D::rescan);
@@ -1209,7 +2605,18 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "touch_stiffness", PROPERTY_HINT_RANGE, "10,100000,1,exp,suffix:N m/rad"), "set_touch_stiffness", "get_touch_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_speed", PROPERTY_HINT_RANGE, "0,30,0.1,suffix:m/s"), "set_break_speed", "get_break_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_radius", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_break_radius", "get_break_radius");
+	ADD_GROUP("Storm", "storm_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "storm_enabled"), "set_storm_enabled", "is_storm_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_strength", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_storm_strength", "get_storm_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_anchorage", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_storm_anchorage", "get_storm_anchorage");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_radius", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_storm_min_radius", "get_storm_min_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_wind", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:m/s"), "set_storm_min_wind", "get_storm_min_wind");
+	ADD_SIGNAL(MethodInfo("storm_damage", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "radius"), PropertyInfo(Variant::BOOL, "uprooted"), PropertyInfo(Variant::DICTIONARY, "pit")));
 }
 
 TreeWind3D::TreeWind3D() {
+}
+
+TreeWind3D::~TreeWind3D() {
+	_blast_wait_all();
 }

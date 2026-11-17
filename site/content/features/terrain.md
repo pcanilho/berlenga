@@ -109,6 +109,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Coast and lakes: beaches, a shelving seabed and lakes behind dams, from one seed.*
 
 - **Coastal dunes** (TerrainGenerator3D `dunes_enabled`): beaches feed wind-blown sand inland; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails.
+- **Sand seas** (TerrainGenerator3D `sand_sea_rect`, `sand_sea_kind`): a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers.
 
 ## Maps
 

@@ -31,13 +31,14 @@
 
 #pragma once
 
+#include "plant_species.h"
+
 #include "core/io/resource.h"
 #include "core/math/random_pcg.h"
+#include "core/object/worker_thread_pool.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
-#include "core/object/worker_thread_pool.h"
 #include "core/templates/local_vector.h"
-#include "plant_species.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
@@ -345,7 +346,7 @@ private:
 	Ref<Texture2D> wood_normal_texture;
 	Ref<Texture2D> _wood_texture(bool p_normal);
 	Builder wood_b; // Broken wood: fracture faces, splinters, torn bark (surface "wood").
-	void _fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed);
+	void _fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed, const Vector3 &p_tension = Vector3());
 	PackedFloat32Array fungi_points; // Mesh meta tree_fungi: 8 floats per cluster.
 	int64_t fungi_index_end = 0; // Fungi surface indices before the lichen strands (LOD 1 keeps these).
 	Ref<Texture2D> _fungus_texture();
@@ -421,7 +422,6 @@ public:
 	}
 
 private:
-
 	Preset preset = PRESET_OAK;
 	int seed = 0;
 	float params[PARAM_MAX] = {};
@@ -512,6 +512,12 @@ private:
 	void _break_limbs();
 	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
 	void _root_plate(Builder &r_bark);
+	// Storm breaks and windthrow at run time (section 5t): a unit fracture cap and the root plate a
+	// standing tree would throw, with the tree's surface materials.
+	void _storm_kit(const Ref<ArrayMesh> &p_mesh, const Array &p_static_materials);
+	static void _storm_pack(Builder &r_b, bool p_flip, const String &p_name, const Ref<Material> &p_m, Array &r_out);
+	Ref<StandardMaterial3D> _wood_material();
+	Ref<StandardMaterial3D> _soil_material() const;
 	int _main_stem() const;
 	void _settle_log(float p_ground, float p_trunk_r);
 	void _cut_back(bool p_first, int p_year);
@@ -600,6 +606,7 @@ public:
 		LocalVector<float> top;
 		int gn = 0;
 	} stone;
+	bool storm_kit = true; // Rigged trees carry a fracture cap and a root plate for storm breaks (section 5t).
 	float bark_chevrons = 1.0f; // Branch-scar chevrons below shed limbs on smooth and papery bark (section 5r); 0 none.
 	float bark_wounds = 1.0f; // How often living stems carry lightning scars, frost cracks, stripping (section 5p); 0 none.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
@@ -856,6 +863,9 @@ public:
 	float get_krummholz() const { return krummholz; }
 	void set_bark_wounds(float p_wounds) { bark_wounds = MAX(p_wounds, 0.0f); }
 	float get_bark_wounds() const { return bark_wounds; }
+	void set_storm_kit(bool p_on) { storm_kit = p_on; }
+	bool get_storm_kit() const { return storm_kit; }
+	static Array build_storm_plate(const PackedFloat32Array &p_storm);
 	void set_bark_chevrons(float p_amount) { bark_chevrons = CLAMP(p_amount, 0.0f, 2.0f); }
 	float get_bark_chevrons() const { return bark_chevrons; }
 	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }

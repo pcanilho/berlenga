@@ -848,6 +848,28 @@ microtopography; Schaetzl et al. 1989, Norman, Schaetzl and Small 1995).
   crown along the underside, mostly bared, to torn ends past the rim that hang down; side roots;
   3-5 sinkers torn under the stem; about 30 fine roots per metre of radius hanging off the
   underside. Torn ends over 1.2 cm get a fracture (5j).
+- **On landing (Blast).** From the break on, a worker thread builds the part's Blast asset
+  (cached per break, by tree, bone and wind bearing): one chunk per bone of 3 cm and up, thinner
+  bones riding the chunk below, every surface of its wood and foliage per chunk, a closed hull
+  of its wood (cylinders at 0.85 of the bone's radius, starting clear of the wood they grow from
+  so pieces never start inside each other; no hull for a root plate, which lands half in the
+  ground) and a bond to the chunk it grows from with the wood's breaking moment as its health.
+  At the part's first hard hit (a contact impulse over 1.5 m/s of its mass) it is swapped for a
+  `PhysXDestructible3D` in the same pose, and the hit breaks the joints around it by its
+  impulse over a metre's lever, against each joint's strength.
+- **Crown crush.** While a fallen part rests propped (its centre of mass 1 m or more above
+  what it rests on), the limb under it carries the share of its weight the foot does not; from
+  that rest toward the foot, the first joint whose wood cannot carry that load's moment breaks,
+  and it settles further, until it lies on wood that holds. Limbs hung on their fibres let go
+  when the wood below them breaks or the tree is thrown.
+- **Cost (cloud, software renderer, 960x540).** Asset build 0.5-1.2 s per thrown tree and 20-50
+  ms per limb, on a worker thread, then `PhysXBlastAsset.prepare_render` there too (0.3-0.7 s),
+  so the swap only uploads: about 0.25 s on add_child and 0.3 s on the first hit for a thrown
+  tree (was 1.1 and 1.2 s before the PhysX thread's per-chunk meshes), 1 ms for a limb. The
+  destructible starts with the part's velocity. Under path tracing a thrown tree costs about
+  twice its standing memory (the uprooted MultiMesh instance is still skinned, zero-sized,
+  beside the destructible's chunks): a beech in the cloud's 15 GB did not fit. PC timings and
+  that memory are on its queue.
 - **For terrain and plants.** Mesh meta `tree_root_pit`: centre (the old foot, mesh space),
   radius (0.9 of the plate's), depth (1.6 plate thicknesses, 0.35-0.95 m, shallower with decay).
   The bench's ground is flat, so the pit shows only where the terrain digs it. The deadwood reach
@@ -1355,6 +1377,80 @@ for optimisation (needle count is the lever).
 
 **Open.** From up close the mat is still porous, with ground showing between the sprays. A
 denser skin would need either more shoots per node or a needle-card shell.
+
+### 5t. Storm breaks and windthrow (17 Nov; Paulo's pick, third of three)
+
+Living rigged trees break and are thrown at run time when the wind (`TreeWind3D`) loads them
+past what their wood or roots hold; what breaks falls as PhysX bodies.
+
+**Research.**
+- **When wood breaks.** A part fails when the bending moment at its base passes the stem's
+  strength, MOR x pi r^3 / 4 for a round section, less about 15% for knots (GALES, Gardiner et
+  al. 2000; HWIND, Peltola et al. 1999). Green-wood MOR per species from the Wood Handbook
+  (FPL-GTR-282, 2021): 33 MPa (willow) to 70 MPa (box).
+- **When roots let go.** Overturning resistance is about C_reg x stem mass (Nicoll et al. 2006,
+  Can. J. For. Res. 36:1871): about 145 N m/kg for spruce on free-draining mineral soil, less on
+  wet or shallow soil, more for tap-rooted species. The crown's weight leaning out adds about
+  15% to the moment (HWIND).
+- **How strong trees are.** Trees build their wood to the loads they meet (Mattheck 1991,
+  uniform stress; thigmomorphogenesis). Across sizes and species they fail at much the same wind:
+  gusts of about 42 m/s (Virot et al. 2016, Phys. Rev. E 93:023001). Conifers, tall and with
+  stiffer foliage (less streamlining), go first, which matches the big European storms (Lothar
+  1999, Gudrun 2005).
+- **How a stem breaks.** Green wood fails as a greenstick (van Casteren et al. 2012): the
+  tension side tears long splinters, the compression side crumples and holds longest, so a
+  snapped top folds over on its last fibres before it falls or hangs (a hanger).
+- **How a tree is thrown.** The root plate hinges about its leeward edge and stands up on end,
+  leaving a pit (5k; Schaetzl et al. 1989).
+- **Blast.** NVIDIA Blast breaks a support graph of chunks joined by bonds, each bond with its
+  own health, under damage programs (radial falloff here). The fork's `PhysXDestructible3D`
+  takes prefractured assets with several surfaces per chunk and a health per bond
+  (`PhysXBlastAuthoring.build_prefractured`, from the PhysX thread for this), so a limb chunk
+  draws bark, wood and leaves and a twig joint breaks long before a trunk joint. A tree breaks
+  at its branch joints, so its chunks follow the rig's bones rather than Voronoi cuts.
+- **A fallen crown.** A windthrown broadleaf comes down on its crown and its lower limbs snap or
+  bury under it until it lies on wood that holds; a conifer comes down on its whorls, which bend
+  and break (Mitchell 2013, Forestry 86:147, on windthrow).
+
+**As built.**
+- **Strength.** `TreeGenerator.storm_kit` (on with `rigged`) stores per mesh the species' MOR,
+  C_reg, root plate size and a unit fracture cap (meta `tree_storm`, `tree_fracture_cap`) and
+  unskinned twins of every surface material (`tree_static_materials`; pieces broken off by
+  touch use them too, so lichen bark keeps its shader). Each bone's strength is the wood's
+  (MOR x pi r^3 / 4 x 0.85), held within 1-1.6 times a design load: 2.1 times the moment of a
+  15 m/s wind (turbulence 0.2) at its peak (3 sigma gust plus the crest of the bone's own
+  resonant sway, the solver's own terms), scaled by MOR / 50 MPa. The roots' anchorage is
+  C_reg x 0.75 x stem mass held within 1-1.2 times the same design at the foot, scaled by C_reg /
+  150. The band is there because the pipe model gives thin leaders far too weak and old stems
+  far too heavy. Each part of each tree is 65-115% as strong as clear wood (knots, rot), each
+  tree's roots 70-130%.
+- **Load.** The solver adds up the wind's moment on each bone (its carried drag about its
+  pivot) and on the foot while it poses the tree; only when gusts can pass `storm_min_wind`
+  (12 m/s) and only for bones of at least `storm_min_radius` (3 cm).
+- **Calibrated.** Worst of five trees over 30 s at turbulence 0.25: first breaks at 18-20 m/s
+  mean for spruce, fir, pine and birch, 25 m/s for oak, beech and ash. Throws at 30-35 m/s on
+  normal soil, 23-27 m/s with `storm_anchorage` 0.6 (wet soil). Nothing breaks at 10 m/s.
+- **A break.** The part above the failed bone becomes a rigid body. It carries every surface,
+  its wood's capsules, and its mass and centre of mass from the rig. It hinges on the leeward
+  edge of the break, the compression side, and folds downwind. It tears free after 30-75
+  degrees, or about a third of parts under 300 kg stay hung on their fibres. The wind pushes it
+  as it falls: the drag of its crown with Vogel streamlining, on the wind relative to the part,
+  for 8 s. Once asleep it is frozen to a static body.
+- **The stub.** A limb tears out at its collar and goes whole. A stem snaps at a segment
+  joint: that segment is pressed flat onto the joint's plane, so the stem keeps its girth up to
+  the break (collapsed to a point it pinched into a cone). Fracture caps (5j's break, unit size,
+  torn on the windward side) close the stub, following the bone below it, and the part's butt.
+  The stub's colliders are rebuilt without the broken wood.
+- **A throw.** The whole tree turns on a hinge at its root plate's leeward edge (three
+  quarters of the plate's radius out, 10 cm under the old surface) with the plate's soil mass,
+  and lies down with the plate on end. The plate (5k's roots, soil and torn root ends, some
+  80-100k triangles) is built when a tree is thrown (`TreeGenerator.build_storm_plate`), in
+  about 0.2 s, not stored on every tree.
+- **For terrain and plants.** Signal `storm_damage(position, radius, uprooted, pit)`; a throw's
+  pit has a world centre, radius (0.9 of the plate's) and depth (1.6 plate thicknesses,
+  0.35-0.95 m), as `tree_root_pit`.
+- **Bench.** `docs/bench/trees --storm` (storm.gd): a clip of a storm on a few trees, or checks
+  with `--test`.
 
 ## 6. What the games at Paulo's bar do
 

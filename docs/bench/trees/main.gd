@@ -28,6 +28,7 @@ extends Node3D
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
+#   --storm ...       storm breaks and windthrow: see storm.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
@@ -65,6 +66,16 @@ var day := -1
 var fails := 0
 
 func _ready() -> void:
+	if "--storm" in OS.get_cmdline_user_args():
+		# Storm breaks and windthrow on rigged trees: storm.gd.
+		var sargs := {}
+		for a in OS.get_cmdline_user_args():
+			var kv := a.trim_prefix("--").split("=", true, 1)
+			sargs[kv[0]] = kv[1] if kv.size() > 1 else ""
+		var sb: Node3D = load("res://storm.gd").new()
+		add_child(sb)
+		sb.run(sargs)
+		return
 	if "--wind" in OS.get_cmdline_user_args():
 		# Wind on rigged trees: wind.gd.
 		var wargs := {}
