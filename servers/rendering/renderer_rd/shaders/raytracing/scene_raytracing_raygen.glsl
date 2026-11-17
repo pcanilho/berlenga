@@ -2367,7 +2367,7 @@ void main() {
 				g_grain = clamp(gw.z, 0.0, 1.0);
 				float gup = smoothstep(-0.6, 0.2, h.geometry_normal.y);
 				g_wet = clamp(gw.x, 0.0, 1.0) * gup;
-				g_sheen = clamp(gw.y, 0.0, 1.0) * smoothstep(0.7, 0.95, h.geometry_normal.y);
+				g_sheen = clamp(gw.y, 0.0, 1.0) * smoothstep(0.35, 0.7, h.geometry_normal.y);
 				if (!rt_material_ground_deform(mat)) {
 					g_grain = 0.0;
 				}

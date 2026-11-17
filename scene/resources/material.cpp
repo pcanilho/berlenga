@@ -4019,7 +4019,7 @@ vec3 ground_wet_at(vec3 p_world, vec3 p_normal) {
 	vec4 wn = ground_wet_block(p_world.xz, r, 0, ts, rows);
 	vec4 wf = far ? ground_wet_block(p_world.xz, rf, 1, ts, rows) : vec4(0.0);
 	vec3 w = vec3(mix(wf.xy, wn.xy, wn.w), wn.z * wn.w);
-	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), clamp(w.y, 0.0, 1.0) * smoothstep(0.7, 0.95, p_normal.y), clamp(w.z, 0.0, 1.0));
+	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), clamp(w.y, 0.0, 1.0) * smoothstep(0.35, 0.7, p_normal.y), clamp(w.z, 0.0, 1.0));
 }
 // Desiccation cracks (docs/ideas/mud.md, stage 2b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
 // Drying clay cracks into plates whose size follows the drying layer's thickness (Groisman and Kaplan 1994). The

@@ -1358,6 +1358,23 @@ static void ground_water_at(const LocalVector<Node *> &p_sources, const Vector3 
 			const Vector3 f = src->call(s_flow, p);
 			v = Vector2(f.x, f.z).length();
 		}
+		if (d > 0.0f && film <= d && src->has_method(s_swash)) {
+			// The inner surf: broken waves cross the shallows as bores, the wave height held at 0.8 of the depth
+			// (saturated breaking, Thornton and Guza 1983). Behind a bore of height H on depth h, which runs at
+			// c = sqrt(g (h + H)), mass conservation gives the water u = c H / (h + H) (Stoker 1957; Svendsen
+			// 1984): 0.6 sqrt(g h). That sweeps prints flat that the sea's mean flow alone would leave standing.
+			// Shoreward of where the shore waves break (h < H / 0.8).
+			static const StringName s_shore = "shore_waves";
+			static const StringName s_shore_h = "shore_wave_height";
+			bool valid = false;
+			const Variant on = src->get(s_shore, &valid);
+			if (valid && bool(on)) {
+				const float hb = float(src->get(s_shore_h)) / 0.8f;
+				if (d < hb) {
+					v = MAX(v, 0.6f * Math::sqrt(9.81f * d));
+				}
+			}
+		}
 		if (film > d) {
 			// The swash's run-up: a thin bore moves at about twice the shallow-water speed of its film.
 			v = MAX(v, 2.0f * Math::sqrt(9.81f * film));
