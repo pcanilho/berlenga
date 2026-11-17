@@ -32,6 +32,7 @@
 #include "register_types.h"
 
 #include "ground_streamers_3d.h"
+#include "ground_dust_3d.h"
 #include "ground_surface_3d.h"
 
 #include "core/object/class_db.h"
@@ -43,6 +44,7 @@ void initialize_ground_module(ModuleInitializationLevel p_level) {
 	// The ground_deform_* shader globals are declared with BaseMaterial3D's (material.cpp).
 	GDREGISTER_CLASS(GroundSurface3D);
 	GDREGISTER_CLASS(GroundStreamers3D);
+	GDREGISTER_CLASS(GroundDust3D);
 }
 
 void uninitialize_ground_module(ModuleInitializationLevel p_level) {

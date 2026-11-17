@@ -81,6 +81,7 @@ struct Settings {
 	float cell_size = 0.05f; // meters
 	float gravity[3] = { 0, -9.81f, 0 }; // m/s^2, sets "up" for buoyancy
 	float buoyancy = 2.0f; // per unit temperature
+	float smoke_buoyancy = 0.0f; // per unit smoke: below 0, the smoke is heavier than air (dust)
 	float cooling_rate = 1.5f;
 	float smoke_fade = 0.65f;
 	float vorticity = 0.6f;

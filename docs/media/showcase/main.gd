@@ -436,11 +436,74 @@ func shot_physx() -> void:
 
 # A small lit scene --far metres from the world origin on x and z (try 65536), for
 # rendering/pathtracing/relative_origin_grid on and off.
-# Water poured from a spout into a stone basin on a tiled floor, under a low side sun, at the
-# PhysXParticleFluid3D defaults (clear water, isosurface, foam); the basin and the floor are static
-# boxes the fluid finds by itself (mpm_auto_colliders). A fine particle size keeps the surface smooth.
-func shot_fluid() -> void:
-	if not ClassDB.class_exists("PhysXParticleFluid3D"):
+# Water from a pipe in a plastered wall pouring into a wooden bucket on a tiled floor, under a low side
+# sun, at the PhysXParticleFluid3D defaults (clear water, isosurface). The bucket's walls, the floor and the
+# wall are static boxes the fluid finds by itself (mpm_auto_colliders). A fine particle size keeps the
+# surface smooth. Needs the CC0 Poly Haven assets fetch_ext.sh downloads into ext/.
+func ext_material(name: String, uv_scale: float, metallic := 0.0) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	var dir := "res://ext/%s/" % name
+	m.albedo_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "Diffuse.jpg"))
+	m.normal_enabled = true
+	m.normal_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "nor_gl.jpg"))
+	m.roughness_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "Rough.jpg"))
+	m.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+	m.ao_enabled = true
+	m.ao_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "AO.jpg"))
+	m.metallic = metallic
+	m.uv1_triplanar = true
+	m.uv1_world_triplanar = true
+	m.uv1_scale = Vector3.ONE * uv_scale
+	return m
+
+# A pipe along +Z with a real bore: outer and inner walls and the ring at the open end.
+func pipe_mesh(r_out: float, r_in: float, length: float, m: Material) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var seg := 32
+	for k in seg:
+		var a0 := TAU * k / seg
+		var a1 := TAU * (k + 1) / seg
+		var d0 := Vector3(cos(a0), sin(a0), 0)
+		var d1 := Vector3(cos(a1), sin(a1), 0)
+		for wall in [[r_out, 1.0], [r_in, -1.0]]:
+			var r: float = wall[0]
+			var sgn: float = wall[1]
+			var p00 := d0 * r
+			var p01 := d1 * r
+			var p10 := d0 * r + Vector3(0, 0, length)
+			var p11 := d1 * r + Vector3(0, 0, length)
+			var tri := [p00, p10, p11, p00, p11, p01] if sgn > 0.0 else [p00, p11, p10, p00, p01, p11]
+			for v in tri:
+				var vv: Vector3 = v
+				st.set_normal(Vector3(vv.x, vv.y, 0).normalized() * sgn)
+				st.set_uv(Vector2(vv.z, atan2(vv.y, vv.x)))
+				st.add_vertex(vv)
+		var z := Vector3(0, 0, length)
+		for v in [d0 * r_in + z, d1 * r_out + z, d0 * r_out + z, d0 * r_in + z, d1 * r_in + z, d1 * r_out + z]:
+			st.set_normal(Vector3(0, 0, 1))
+			st.add_vertex(v)
+	st.set_material(m)
+	return st.commit()
+
+func static_box(size: Vector3, xform: Transform3D) -> void:
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = size
+	cs.shape = bs
+	body.add_child(cs)
+	body.transform = xform
+	add_child(body)
+
+# Cold, heavy smoke released on the flank of a valley built as a trimesh (not a box), so only the Flow
+# terrain_floor keeps it out of the ground: it should slide down the slope and pool along the valley floor.
+# Compare with --flow=terrain_floor:0.
+func valley_h(x: float, z: float) -> float:
+	return 0.45 * abs(x) + 0.12 * z
+
+func shot_flowslope() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D"):
 		push_error("This build has no PhysX module.")
 		get_tree().quit(1)
 		return
@@ -449,69 +512,131 @@ func shot_fluid() -> void:
 	env.sky = s
 	env.background_mode = Environment.BG_SKY
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ssr_enabled = true
-	camera(Vector3(0.75, 0.38, 0.85), Vector3(0.0, 0.16, 0.02), 42)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-28, -35, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.rotation_degrees = Vector3(-35, -60, 0)
+	sun.light_energy = 1.6
+	sun.shadow_enabled = true
+	add_child(sun)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var n := 48
+	var half := 9.0
+	var faces := PackedVector3Array()
+	for j in n:
+		for i in n:
+			var x0 := -half + 2.0 * half * i / n
+			var x1 := -half + 2.0 * half * (i + 1) / n
+			var z0 := -half + 2.0 * half * j / n
+			var z1 := -half + 2.0 * half * (j + 1) / n
+			var q := [Vector3(x0, valley_h(x0, z0), z0), Vector3(x1, valley_h(x1, z0), z0), Vector3(x1, valley_h(x1, z1), z1), Vector3(x0, valley_h(x0, z1), z1)]
+			for v in [q[0], q[1], q[2], q[0], q[2], q[3]]:
+				st.add_vertex(v)
+				faces.append(v)
+	st.generate_normals()
+	st.set_material(mat(Color(0.42, 0.40, 0.36), 0.9))
+	var ground := MeshInstance3D.new()
+	ground.mesh = st.commit()
+	add_child(ground)
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var tri := ConcavePolygonShape3D.new()
+	tri.set_faces(faces)
+	cs.shape = tri
+	body.add_child(cs)
+	add_child(body)
+	var flow = ClassDB.instantiate("PhysXFlow3D")
+	flow.cell_size = 0.08
+	flow.smoke_density = 6.0
+	flow.smoke_fade = 0.15
+	flow.combustion = false
+	flow.smoke_buoyancy = -3.0 # heavier than air
+	for k in flow_props:
+		flow.set(k, flow_props[k])
+	add_child(flow)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.position = Vector3(-4.0, valley_h(-4.0, -2.0) + 0.5, -2.0)
+	em.radius = 0.5
+	em.velocity = Vector3(1.5, -0.5, 0.0)
+	em.smoke = 1.0
+	em.temperature = 0.0
+	flow.add_child(em)
+	em.flow = em.get_path_to(flow)
+	camera(Vector3(3.0, 4.2, 5.0), Vector3(-1.8, 1.0, -1.5), 50)
+
+func shot_fluid() -> void:
+	if not ClassDB.class_exists("PhysXParticleFluid3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	if not FileAccess.file_exists("res://ext/bucket/wooden_bucket_01_1k.gltf"):
+		push_error("Run fetch_ext.sh first: the fluid shot uses CC0 Poly Haven assets.")
+		get_tree().quit(1)
+		return
+	var s := Sky.new()
+	s.sky_material = ProceduralSkyMaterial.new()
+	env.sky = s
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ssr_enabled = true
+	camera(Vector3(0.75, 1.0, 0.8), Vector3(0.0, 0.4, -0.22), 44)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-28, -65, 0) if sun_rotation == Vector3.INF else sun_rotation
 	sun.light_energy = 1.8
 	sun.shadow_enabled = true
 	add_child(sun)
-	# Tiles: 20 cm, light grout lines, a slight per-tile shade.
-	var img := Image.create(512, 512, false, Image.FORMAT_RGB8)
-	for ty in 8:
-		for tx in 8:
-			var shade := 0.62 + 0.06 * sin(float(tx * 7 + ty * 13))
-			img.fill_rect(Rect2i(tx * 64, ty * 64, 64, 64), Color(shade, shade * 0.97, shade * 0.92))
-	for k in 8:
-		img.fill_rect(Rect2i(k * 64, 0, 3, 512), Color(0.85, 0.84, 0.8))
-		img.fill_rect(Rect2i(0, k * 64, 512, 3), Color(0.85, 0.84, 0.8))
-	var tiles := mat(Color(1, 1, 1), 0.35)
-	tiles.albedo_texture = ImageTexture.create_from_image(img)
-	tiles.uv1_triplanar = true
-	tiles.uv1_scale = Vector3(0.625, 0.625, 0.625) # 1.6 m per texture: 20 cm tiles
-	var stone := mat(Color(0.55, 0.52, 0.48), 0.75)
-	var parts := [
-		[Vector3(8, 0.2, 8), Vector3(0, -0.1, 0), tiles],
-		[Vector3(8, 3, 0.2), Vector3(0, 1.5, -1.2), tiles],
-		[Vector3(0.7, 0.03, 0.7), Vector3(0, 0.015, 0), stone],
-		[Vector3(0.7, 0.16, 0.05), Vector3(0, 0.08, -0.325), stone],
-		[Vector3(0.7, 0.16, 0.05), Vector3(0, 0.08, 0.325), stone],
-		[Vector3(0.05, 0.16, 0.6), Vector3(-0.325, 0.08, 0), stone],
-		[Vector3(0.05, 0.16, 0.6), Vector3(0.325, 0.08, 0), stone],
-	]
-	for b in parts:
-		var body := StaticBody3D.new()
-		var cs := CollisionShape3D.new()
-		var bs := BoxShape3D.new()
-		bs.size = b[0]
-		cs.shape = bs
-		body.add_child(cs)
-		body.position = b[1]
-		add_child(body)
-		box(b[0], b[1], b[2])
-	# The spout: a pipe out of the back, ending above the basin.
+	# Floor and wall.
+	box(Vector3(20, 0.2, 20), Vector3(0, -0.1, 0), ext_material("large_grey_tiles", 0.5))
+	static_box(Vector3(20, 0.2, 20), Transform3D(Basis(), Vector3(0, -0.1, 0)))
+	box(Vector3(20, 4, 0.2), Vector3(0, 2.0, -0.7), ext_material("plastered_stone_wall", 0.5))
+	static_box(Vector3(20, 4, 0.2), Transform3D(Basis(), Vector3(0, 2.0, -0.7)))
+	# The pipe out of the wall: a flange on the wall and an open bore at its end.
+	var metal := ext_material("metal_plate", 4.0, 0.85)
 	var pipe := MeshInstance3D.new()
-	var pm := CylinderMesh.new()
-	pm.top_radius = 0.03
-	pm.bottom_radius = 0.03
-	pm.height = 0.9
-	pm.material = mat(Color(0.35, 0.3, 0.25), 0.3)
-	pipe.mesh = pm
-	pipe.rotation_degrees = Vector3(90, 0, 0)
-	pipe.position = Vector3(0.0, 0.55, -0.68)
+	pipe.mesh = pipe_mesh(0.026, 0.02, 0.32, metal)
+	pipe.position = Vector3(0, 0.78, -0.6)
 	add_child(pipe)
+	var flange := MeshInstance3D.new()
+	var fm := CylinderMesh.new()
+	fm.top_radius = 0.06
+	fm.bottom_radius = 0.06
+	fm.height = 0.02
+	fm.material = metal
+	flange.mesh = fm
+	flange.rotation_degrees = Vector3(90, 0, 0)
+	flange.position = Vector3(0, 0.78, -0.59)
+	add_child(flange)
+	# The bucket: Poly Haven's wooden_bucket_01, its walls held by a ring of boxes and a bottom.
+	var doc := GLTFDocument.new()
+	var gstate := GLTFState.new()
+	doc.append_from_file("res://ext/bucket/wooden_bucket_01_1k.gltf", gstate)
+	var bucket: Node3D = doc.generate_scene(gstate)
+	var bucket_pos := Vector3(0, 0, -0.16)
+	bucket.position = bucket_pos
+	bucket.rotation_degrees = Vector3(0, 40, 0)
+	add_child(bucket)
+	# The staves lean out: about 13 cm inside at the bottom, 16 cm at the rim.
+	var ring := 16
+	var lean := atan2(0.03, 0.33)
+	for k in ring:
+		var a := TAU * k / ring
+		var r := 0.145 + 0.0175
+		var basis := Basis(Vector3.UP, a) * Basis(Vector3(0, 0, 1), -lean)
+		static_box(Vector3(0.035, 0.36, 2.0 * r * tan(PI / ring) + 0.02), Transform3D(basis, bucket_pos + Vector3(cos(a) * r, 0.17, -sin(a) * r)))
+	static_box(Vector3(0.3, 0.04, 0.3), Transform3D(Basis(), bucket_pos + Vector3(0, 0.02, 0)))
 	var fluid = ClassDB.instantiate("PhysXParticleFluid3D")
-	fluid.position = Vector3(0.0, 0.55, -0.21)
-	fluid.particle_size = 0.008
-	fluid.particle_count = 80000
-	fluid.mpm_domain_size = Vector3(1.5, 1.5, 1.5)
+	fluid.position = Vector3(0, 0.78, -0.27)
+	fluid.particle_size = 0.007
+	fluid.particle_count = 120000
+	fluid.mpm_domain_size = Vector3(1.2, 1.6, 1.2)
 	fluid.spawn_on_ready = false
 	fluid.emitting = true
-	fluid.emission_radius = 0.024
-	fluid.emission_velocity = Vector3(0.0, -0.3, 1.4)
+	fluid.emission_radius = 0.016
+	fluid.emission_velocity = Vector3(0.0, 0.0, 0.5)
 	fluid.emission_rate = 8000.0
 	for k in flow_props:
 		fluid.set(k, flow_props[k])
+	if OS.get_cmdline_user_args().has("--fluid-opaque"):
+		fluid.material_override = mat(Color(0.9, 0.9, 0.9), 0.5)
 	add_child(fluid)
 
 func shot_far() -> void:

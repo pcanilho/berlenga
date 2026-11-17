@@ -159,8 +159,17 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 		s.cell_size = MAX(particle_size * 2.0f, 0.001f);
 	}
 	_mpm_surface_params(s.surface_iso, s.surface_kernel, s.surface_boost);
+	// Spray, foam and bubbles (fluid only).
+	s.diffuse_capacity = (foam_enabled && !s.granular) ? foam_particle_count : 0;
+	s.diffuse_lifetime = foam_lifetime;
+	s.diffuse_buoyancy = foam_buoyancy;
+	s.diffuse_radius = _effective_foam_size() * 0.5f;
 
 	mpm->configure(s, get_global_transform(), p_prefill);
+	if (foam_multimesh.is_valid()) {
+		_mpm_foam_slots = MAX(foam_particle_count, 1);
+		RenderingServer::get_singleton()->multimesh_allocate_data(foam_multimesh, _mpm_foam_slots, RSE::MULTIMESH_TRANSFORM_3D);
+	}
 	// The GPU build runs on the render thread; is_available() only flips true a
 	// frame or two later. Capacity is known synchronously, so treat "configure
 	// requested" as configured and let the per-step is_available() guards handle
@@ -198,7 +207,6 @@ static Ref<StandardMaterial3D> make_clear_water_material() {
 	// Splashes and puddles are a few centimetres thick: the raster refraction bends the view again
 	// where it leaves, as the path tracer does.
 	m->set_transmission_thickness(0.05f);
-	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 	return m;
 }
 
@@ -536,6 +544,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 	// Granular runs async (visuals a frame late, GPU overlapped); fluid syncs so
 	// its coupling reaction stays in phase with the rigid bodies.
 	mpm->step(p_delta, cols, &impulses, want_surface, _is_granular());
+	_mpm_update_diffuse();
 
 	// Reaction: push the coupled bodies back with the fluid's impulse. Clamp to a
 	// sane per-frame velocity change so a solver blow-up can't launch anything
@@ -706,6 +715,10 @@ void PhysXParticleFluid3D::_make_fluid() {
 			_make_surface_shadow_instance();
 		}
 
+		if (!_is_granular()) {
+			_make_mpm_foam();
+		}
+
 		mpm = memnew(MPMFluidSolver);
 		if (!mpm->has_device()) {
 			WARN_PRINT_ONCE("PhysXParticleFluid3D: the MPM compute solver could not start (no RenderingDevice / compute support).");
@@ -825,7 +838,83 @@ void PhysXParticleFluid3D::_make_fluid() {
 	}
 }
 
+void PhysXParticleFluid3D::_make_mpm_foam() {
+	// Diffuse particles drawn as small lit spheres, as Wretborn et al. 2022 render
+	// their bubbles and foam. Opaque, so the path tracer and the water's refraction
+	// see them.
+	Ref<SphereMesh> sphere;
+	sphere.instantiate();
+	sphere->set_radius(0.5); // unit diameter: each instance is scaled to its own size
+	sphere->set_height(1.0);
+	sphere->set_radial_segments(6);
+	sphere->set_rings(3);
+	Ref<StandardMaterial3D> mat;
+	mat.instantiate();
+	mat->set_albedo(Color(0.93, 0.95, 0.96));
+	mat->set_roughness(0.45);
+	sphere->set_material(mat);
+	foam_mesh = sphere;
+
+	RenderingServer *rs = RenderingServer::get_singleton();
+	foam_multimesh = rs->multimesh_create();
+	_mpm_foam_slots = MAX(foam_particle_count, 1);
+	rs->multimesh_allocate_data(foam_multimesh, _mpm_foam_slots, RSE::MULTIMESH_TRANSFORM_3D);
+	rs->multimesh_set_mesh(foam_multimesh, foam_mesh->get_rid());
+	rs->multimesh_set_visible_instances(foam_multimesh, 0);
+	foam_instance = rs->instance_create2(foam_multimesh, get_world_3d()->get_scenario());
+	rs->instance_set_transform(foam_instance, Transform3D());
+	rs->instance_set_custom_aabb(foam_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+	_apply_gi_mode(foam_instance);
+}
+
+void PhysXParticleFluid3D::_mpm_update_diffuse() {
+	if (foam_multimesh.is_null() || mpm == nullptr) {
+		return;
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const PackedFloat32Array d = mpm->get_diffuse_buffer();
+	const int slots = MIN((int)(d.size() / 4), _mpm_foam_slots);
+	if (!foam_enabled || slots == 0) {
+		rs->multimesh_set_visible_instances(foam_multimesh, 0);
+		return;
+	}
+	// Compact the live slots (radius > 0) into the instance buffer.
+	PackedFloat32Array buf;
+	buf.resize(_mpm_foam_slots * 12);
+	float *b = buf.ptrw();
+	const float *s = d.ptr();
+	int n = 0;
+	for (int i = 0; i < slots; i++) {
+		const float r = s[i * 4 + 3];
+		if (!(r > 0.0f)) {
+			continue;
+		}
+		const float sc = r * 2.0f;
+		float *t = &b[n * 12];
+		t[0] = sc;
+		t[1] = 0;
+		t[2] = 0;
+		t[3] = s[i * 4 + 0];
+		t[4] = 0;
+		t[5] = sc;
+		t[6] = 0;
+		t[7] = s[i * 4 + 1];
+		t[8] = 0;
+		t[9] = 0;
+		t[10] = sc;
+		t[11] = s[i * 4 + 2];
+		n++;
+	}
+	_mpm_live_diffuse = n;
+	rs->multimesh_set_buffer(foam_multimesh, buf);
+	rs->multimesh_set_visible_instances(foam_multimesh, n);
+}
+
 void PhysXParticleFluid3D::_apply_foam() {
+	if (mpm != nullptr) {
+		mpm->set_diffuse_params(foam_lifetime, foam_buoyancy, _effective_foam_size() * 0.5f);
+		return;
+	}
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server || fluid.is_null()) {
 		return;
@@ -1484,7 +1573,7 @@ void PhysXParticleFluid3D::_validate_property(PropertyInfo &p_property) const {
 	// Each solver's own settings only -- for Auto, the solver it picks on this
 	// machine (named in the solver dropdown). Hidden values are still saved.
 	const bool uses_mpm = _resolved_solver() == SOLVER_MPM;
-	if (uses_mpm && (name.begins_with("foam_") || name == "surface_tension" || name == "cohesion" || name == "vorticity" || name == "adhesion" || name == "surface_friction" || name == "surface_anisotropy")) {
+	if (uses_mpm && (name == "foam_threshold" || name == "surface_tension" || name == "cohesion" || name == "vorticity" || name == "adhesion" || name == "surface_friction" || name == "surface_anisotropy")) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 	if (!uses_mpm && name.begins_with("mpm_")) {
@@ -2041,6 +2130,9 @@ void PhysXParticleFluid3D::set_foam_size(float p_v) {
 }
 
 int PhysXParticleFluid3D::get_live_foam_count() const {
+	if (mpm != nullptr) {
+		return _mpm_live_diffuse;
+	}
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server || fluid.is_null()) {
 		return 0;
@@ -2092,9 +2184,6 @@ PackedStringArray PhysXParticleFluid3D::get_configuration_warnings() const {
 	}
 	if (on_mpm && surface_anisotropy) {
 		warnings.push_back(RTR("\"Surface Anisotropy\" only applies to the PBD solver's isosurface; the MPM solver ignores it."));
-	}
-	if (on_mpm && foam_enabled && !_is_granular()) {
-		warnings.push_back(RTR("Foam is enabled, but only the PBD solver makes foam; the MPM solver ignores the Foam settings."));
 	}
 	if (surface_anisotropy && emitting) {
 		warnings.push_back(RTR("\"Surface Anisotropy\" sharpens the isosurface but can mesh fast particles along the emission stream as thin spikes. It is meant for a settled pool; disable it while emitting."));

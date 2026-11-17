@@ -298,6 +298,62 @@ tracer can bind them directly: no NanoVDB conversion or copy each frame.
   PhysX splashes and floating props read their height rather than drawing a
   second surface.
 
+### MPM fluid: spray, foam and bubbles
+
+Technique: Ihmsen, Akinci, Akinci and Teschner 2012, "Unified spray, foam
+and air bubbles for particle-based fluids" (The Visual Computer 28). It is
+still the base of FleX, Houdini and Blender FLIP whitewater. The newer
+production method, Wretborn, Flynn and Stomakhin 2022, "Guided bubbles and
+wet foam for realistic whitewater simulation" (ACM TOG 41(4), Weta FX),
+extends it offline (about 15 s to 90 s a frame). We take its cheap parts.
+
+- Spawn (Ihmsen): trapped-air, wave-crest and kinetic-energy potentials,
+  each clamped to [0, 1]. On MPM, the neighbours are the 27 grid nodes of
+  the B-spline stencil, weighted by each node's liquid fraction. The crest
+  curvature proxy is how far the particle sits from the local centre of
+  liquid mass. New particles are placed in the cylinder that the fluid
+  particle sweeps that frame.
+- Sort: by the grid's liquid fraction (Ihmsen's neighbour count): spray
+  below 0.12, bubbles above 0.7, foam in between.
+- Spray: ballistic.
+- Bubbles (Wretborn): carried by the water at the slip speed where
+  buoyancy meets their Eq. 5 drag, mu r (6 pi + pi/2 rho r |dv| / mu) dv.
+  A 1 mm bubble rises at about 0.16 m/s. Radii follow the inverse-cubic
+  size distribution (Deike et al. 2016).
+- Foam (Wretborn): advected with the surface and projected back onto it,
+  the move capped at half a cell. Lifetimes are normally distributed
+  (sd 0.4 of the mean).
+- Drawing: lit white spheres, as in both papers.
+- Not done (cost): two-way bubble coupling, SPH wet-foam forces, screen
+  space or volumetric foam.
+- GPU cost: two passes a frame (one over the fluid, one over a 16k ring);
+  the PC queue measures it.
+
+### Flow: terrain under the gas
+
+Flow solids are boxes, spheres and capsules only, so heightmaps and trimeshes
+used to let gas sink into the ground.
+
+- Built (17 Nov 2026, `terrain_floor`, on): solid tiles on the ground under
+  the gas, each tilted to the plane through its cell's four corner heights,
+  1.15x wide so they overlap. Heights come from the terrain node or a
+  static-only ray, are cached and re-read once a second, with at most 32
+  tiles a side. Cost: a few KB and under 1 ms of CPU; the GPU time of up to
+  1,024 box solids is on the PC queue.
+- Limits: no overhangs or caves (it is a heightmap), and bumps smaller than
+  a tile are smoothed away.
+- Future improvement (Paulo, 17 Nov: document, do not build yet): the exact
+  terrain as a narrow-band signed distance field, a NanoVDB emitter or an
+  SDF texture the solid test reads.
+  - Estimate for a 40 x 40 m dust volume: a +-3-cell shell is about 15 MB
+    at 5 cm (4 MB at 10 cm); a dense grid would be about 500 MB.
+  - Rebuilding the shell costs about 20-50 ms of CPU every few metres as the
+    region moves, so it must run in the background.
+  - GPU cost is close to the tiles.
+  - Gains: 5-10 cm accuracy (rocks, ruts) and, built from meshes, caves and
+    overhangs.
+  - Worth it where gas must get under or into things.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

@@ -207,9 +207,16 @@ kc 102, kphi 5301), while the boot values (and so the prints' look) stay as they
 - `--test=soil` (17 checks, GPU and CPU paths): rigid wheel 7.7 cm in dry sand (Bekker 7.7), Rc 874 N
   (Bekker 874), 50 kPa tyre 4.5 cm, slip sinkage x2.0 at 50%, Janosi share 0.37 at 10% and 0.93 at 80%,
   second pass in the rut 0 N, walking effort 2.11 dry and 1.30 damp, 3.9 m/s2 slide on a 50 degree face.
-  A 1500 kg 4x4 at half throttle for 4 s: 20.5 m firm, 5.3 m damp sand (2 cm ruts), 0.3 m dry sand at
-  200 kPa (12 cm), 1.2 m aired down to 60 kPa (6.4 cm); floored on dry sand the wheels spin (slip 0.94) and
-  dig to 13 cm. A 300 kg stone block shoved at 3 m/s stops in 1.15 m against 1.41 m.
+  A 1500 kg 4x4 at half throttle for 4 s: 20.5 m firm, 8.0 m damp sand (2 cm ruts), 0.5 m dry sand at
+  200 kPa (12 cm), 8.3 m aired down to 60 kPa (7 cm); floored on dry sand the wheels spin (slip 0.93) and
+  dig to 15 cm.
+- **Wheel bulldozing only past D/6 (16 Nov).** Bulldozing was applied at every depth, on top of compaction,
+  which the plan above never meant ("once sinkage passes a fraction of the radius"): a rear-drive 800 kg
+  buggy on 55 kPa tyres met 0.38 of its weight in dry-sand resistance before slip and crawled at 0.15 m/s at
+  any torque. Bekker's compaction theory holds to sinkage D/6; within it the field moves the displaced sand
+  to the rims (SCM has no bulldozing force at all) and bulldozing is marginal at small sinkage. Wheels now
+  bulldoze only the depth past D/6 (`wheel_bulldozing_resistance`); bodies ploughing keep the full term.
+  Buggy, full throttle on dry sand: 40 kPa 12 m/s after 9.5 s, 55 kPa about 0.6 m/s, 200 kPa bogged. A 300 kg stone block shoved at 3 m/s stops in 1.15 m against 1.41 m.
 - Known: motion resistance follows Bekker (damp sand 0.13 to 0.23 of the load, dry 0.5 at road pressure),
   inside Wong's 0.15 to 0.3 for sand except loose dry sand at road pressure, where cars do bog. Floored on
   damp sand the wheels dig in too, which real packed sand likely resists better. Light crates barely sink,
@@ -467,3 +474,42 @@ rills cut 9 mm (99th percentile) against a 2 mm median in 84 minutes, about 100 
 above the waterline, net volume within 1%, 10 ms a step on the CPU (twice a second), 0.5 ms with no water.
 `--view=rills` (--runoff=0 for the A/B). Not modelled yet: headward sapping at rill heads, the rills' braided
 rhomboid fans, a finer near field (rills are 2 grid cells wide at 12.5 cm), water drawn in the rills.
+
+### Drifting on sand (Paulo, 16 Nov 2026)
+
+Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.
+- **Sideways slip throws and shoves sand.** Spray only came from spinning wheels (longitudinal slip). Now the
+  contact's sliding velocity over the ground, longitudinal slip plus side slip, drives the throw direction
+  and speed, the usual way game tyre emitters are driven (rate and direction from the contact's slip velocity),
+  and as the physics has it: a sliding tread drags the sand
+  with it. The same velocity drives the press's bow wave, so a sliding wheel heaps a berm on the outside
+  of the turn, and the print is stamped along the travel at the width the tyre sweeps across it
+  (`width |cos a| + contact length |sin a|`), so a drift leaves a wide scuffed track.
+- **Side bulldozing.** A wheel sliding sideways in loose soil pushes a wedge of soil with its sidewall; on
+  loose soil that is a large share of the lateral force (Ishigami, Miwa, Nagatani, Yoshida 2007,
+  "Terramechanics-based model for steering maneuver of planetary exploration rovers on loose soil", J. Field
+  Robotics: Hegedus bulldozing on the side face). Added against the side slip, Bekker's bulldozing on a face
+  one contact length long and the sinkage deep, eased in over 0.3 m/s: sand scrubs a drift down.
+- **Dust.** The silt and fine sand in dry sand (tens of microns) leaves the tread as a plume, rides the wind and
+  settles at its Stokes speed, w = (rho_p - rho_a) g d^2 / (18 mu): 0.13 m/s at 40 um. Emission follows the
+  unpaved-road form, linear in vehicle speed (Gillies et al. 2005, Atmospheric Environment 39), times the
+  share of the ground the wind could move (dry, bare sand; damp sand gives none), plus the sand thrown by
+  slip. Transport is the standard Eulerian dispersion model: advection by the wind and the plume's own decaying
+  jet, eddy diffusion, gravitational settling, deposition at the ground. A small grid follows the vehicle
+  (`GroundDust3D`, CPU, about 40k cells) and is drawn as a FogVolume density texture, so raster volumetric
+  fog and the path tracer's camera segments both see it. NVIDIA Flow (the fork's smoke) was the other
+  candidate; it builds on Linux too (lavapipe in the cloud), so it becomes the near-field dust (below).
+- **Built (16 Nov 2026).** Vehicle: contact slide velocity drives bow, throw and dust; prints laid along the
+  travel; side bulldozing (`get_wheel_soil_side_force`). `GroundSurface3D.dust_emission` (0.02, tuned for the
+  look: a sliding 1500 kg 4x4 lifts a few kg a second, far above unpaved-road PM10 data, because the plume is
+  modelled as 15 um silt alone, which settles at 1.8 cm/s and lingers for a minute). `GroundDust3D` (48 x 16 x
+  48 cells at 0.5 m, trailing its target). `--test=drift` (8 checks): Stokes 0.0180 m/s, a still puff sinks at
+  it, wind carries a puff, 60 um dust settles out, sideways throw 3.1 m/s, sidewall 475 N, plume to 2.5 m on
+  dry sand, none on damp. Raster and path-traced frames match (the path tracer sees it on camera rays only).
+- **Round 2 (17 Nov 2026).** Billows: the fog shader erodes the grid's density with tiling 3D Worley fBm
+  (Schneider 2015, Horizon Zero Dawn clouds; `billow` 0.9, `billow_size` 2 m), drifting with the wind. Grid 64 x
+  20 x 64 at 0.5 m (32 x 10 x 32 m), `dust_emission` 0.06, a stronger upward jet with ground speed. Sideways
+  throw now leaves as grains (side bulldozed volume), and `PhysXGroundGrains3D` no longer turns on MPM auto
+  colliders, so grains land on the field instead of resting on its static collider.
+- **Next: Flow near field.** Paulo (17 Nov) wants the near dust in PhysX Flow: ground shadows by density, the car
+  body as a solid, scene wind, every wheel. Grid stays for distance and platforms without Flow.

@@ -127,10 +127,24 @@ public:
 		// The loose sand the tread reaches: the contact and the rim heaped before and behind it.
 		Vector3 reach_center;
 		float reach_radius = 0.0f;
+		// A wheel sliding sideways: the share of the slide that is sideways, and the sand its sidewall shoves
+		// out of the side of the turn, m3/s (beside what its tread throws).
+		float side_share = 0.0f;
+		float side_volume_rate = 0.0f;
 	};
+	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
+	struct Dust {
+		Vector3 position;
+		Vector3 velocity; // the plume's starting jet, m/s
+		float rate = 0.0f; // kg/s
+	};
+
 
 private:
 	LocalVector<Spray> sprays;
+	LocalVector<Dust> dust;
+	uint64_t dust_frame = 0;
+	float dust_emission = 0.06f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
 	uint64_t spray_frame = 0;
 	void _plough_bodies();
 	float contact_tolerance = 0.03f;
@@ -368,6 +382,12 @@ public:
 	float deposit(Vector3 p_position, float p_radius, float p_depth);
 	// Sand thrown by spinning wheels since the last call (press_wheel with slip): Array of Dictionaries
 	// (position, velocity, width, slip_speed, reach_center, reach_radius). For a grains node to dig and spawn (sand stage 2).
+	// Dust from a tyre: p_strength is tyre width times (ground speed + 2 slip speed), m2/s; scaled by how much
+	// of the ground there the wind could move (dry, bare sand; none from damp sand). Taken by GroundDust3D.
+	void add_dust(Vector3 p_position, Vector3 p_velocity, float p_strength);
+	void take_dust(LocalVector<Dust> &r_dust);
+	void set_dust_emission(float p_v) { dust_emission = MAX(p_v, 0.0f); }
+	float get_dust_emission() const { return dust_emission; }
 	Array take_sprays();
 	void add_spray(const Spray &p_spray);
 	// Rigid bodies in deform_groups moving through soft ground feel its resistance (on).

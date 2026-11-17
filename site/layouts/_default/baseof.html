@@ -7,13 +7,19 @@
 <meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ with .Params.summary }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}{{ end }}">
 <meta name="color-scheme" content="light dark">
 {{ $desc := or .Params.summary .Description site.Params.description }}
-{{ $img := "media/many-lights.jpg" }}{{ with findRESubmatch `\]\((media/[^)\s]+\.(?:jpg|jpeg|png|webp))\)` .RawContent 1 }}{{ $img = index (index . 0) 1 }}{{ end }}
+{{ $img := "media/berlenga-social.png" }}
 <link rel="canonical" href="{{ .Permalink }}">
 <meta property="og:title" content="{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}">
 <meta property="og:description" content="{{ $desc }}">
 <meta property="og:url" content="{{ .Permalink }}">
 <meta property="og:image" content="{{ $img | absURL }}">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Berlenga: path tracing for large open worlds">
+<meta property="og:site_name" content="{{ site.Title }}">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{ $img | absURL }}">
 <meta property="og:type" content="website">
 <script>
 (function(){try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();

@@ -840,7 +840,7 @@
     "scree_age"
    ],
    "note": "",
-   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks, with gravel and fines between them up close.",
+   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks; up close, each is an angular stone standing in a bed of gravel and fines.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1126,7 +1126,7 @@
     "kick()"
    ],
    "note": "",
-   "what": "spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept.",
+   "what": "spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1150,6 +1150,18 @@
    ],
    "note": "",
    "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Dust",
+   "settings": [
+    "GroundDust3D",
+    "GroundSurface3D.dust_emission"
+   ],
+   "note": "",
+   "what": "the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1498,7 +1510,7 @@
     "crest_glow"
    ],
    "note": "",
-   "what": "low sun shines through thin wave crests in the water's own colour, in raster; path tracing already scatters through them.",
+   "what": "low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1518,10 +1530,11 @@
    "name": "Ocean detail",
    "settings": [
     "detail_waves",
+    "far_filter",
     "bubble_strength"
    ],
    "note": "",
-   "what": "short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
+   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1577,7 +1590,7 @@
     "shore_waves"
    ],
    "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only.",
    "page": "water",
    "title": "Water",
    "topic": "Shore"
@@ -3073,13 +3086,25 @@
    "topic": ""
   },
   {
+   "name": "Smoke on the ground",
+   "settings": [
+    "terrain_floor",
+    "smoke_buoyancy"
+   ],
+   "note": "",
+   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Particle fluid surface",
    "settings": [
     "PhysXParticleFluid3D.render_mode",
     "foam_enabled"
    ],
    "note": "",
-   "what": "particle fluids draw as a real isosurface mesh that casts shadows, shows in reflections and is path traced, with foam; Screen Space is the lighter alternative.",
+   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray, foam and air bubbles rise where the water is agitated.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

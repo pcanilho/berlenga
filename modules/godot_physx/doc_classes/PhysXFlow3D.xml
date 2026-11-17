@@ -121,6 +121,9 @@
 		<member name="shadow_steps" type="int" setter="set_shadow_steps" getter="get_shadow_steps" default="48">
 			How far the self-shadowing reaches toward the light, in steps of three quarters of a cell (48 is about 1.8 m at the default [member cell_size]). Too few for the gas's width leaves it lit almost evenly. [code]0[/code] turns self-shadowing off.
 		</member>
+		<member name="smoke_buoyancy" type="float" setter="set_smoke_buoyancy" getter="get_smoke_buoyancy" default="0.0">
+			The lift per unit of smoke, whatever its temperature (Flow's buoyancy per smoke). Below [code]0[/code] the smoke is heavier than air and sinks, slides down slopes and pools in hollows, like dust, sand or cold fog; above [code]0[/code] it rises on its own. [member buoyancy] still adds the lift from heat.
+		</member>
 		<member name="smoke_color" type="Color" setter="set_smoke_color" getter="get_smoke_color" default="Color(0.8, 0.8, 0.8, 1)">
 			The smoke's color, lit by the scene's sun: white steam, gray or black smoke, brown dust, colored signal smoke. See also [member smoke_ramp].
 		</member>
@@ -138,6 +141,15 @@
 		</member>
 		<member name="temperature_range" type="float" setter="set_temperature_range" getter="get_temperature_range" default="2.0">
 			The temperature at the end of [member heat_ramp].
+		</member>
+		<member name="terrain_floor" type="bool" setter="set_terrain_floor" getter="is_terrain_floor" default="true">
+			When enabled, the ground under the gas is a solid for it, so smoke and dust lie on slopes, run down them and pool in hollows instead of sinking into the terrain. The ground is laid as tiles of [member terrain_floor_spacing], each tilted to the local slope and overlapping its neighbours, in the region the gas and its emitters cover. The heights come from [member terrain_path], or else from a ray straight down that only counts static bodies on [member collision_mask]; ground made of boxes, spheres or capsules is already a solid through [member collide_with_bodies] and gets no tiles. Heights are re-read once a second. A heightmap has no overhangs, so gas can't go under arches or into caves on the terrain itself.
+		</member>
+		<member name="terrain_floor_spacing" type="float" setter="set_terrain_floor_spacing" getter="get_terrain_floor_spacing" default="0.5">
+			The width of a [member terrain_floor] tile, in meters. A wide region uses wider tiles (doubling) so it stays within 32 tiles a side.
+		</member>
+		<member name="terrain_path" type="NodePath" setter="set_terrain_path" getter="get_terrain_path" default="NodePath(&quot;&quot;)">
+			The terrain the [member terrain_floor] reads heights from: a TerrainDeformer3D, a baked TerrainDataMap3D, a TerrainGenerator3D, Terrain3D, or any node with [code]get_height(position)[/code]. Empty: a ray down onto static bodies.
 		</member>
 		<member name="vorticity" type="float" setter="set_vorticity" getter="get_vorticity" default="0.6">
 			Vorticity confinement: keeps small swirls alive for rolling, billowing gas.

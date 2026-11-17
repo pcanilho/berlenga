@@ -158,6 +158,13 @@
 				The motion resistance the soft ground puts on wheel [param wheel] (compaction and bulldozing of the soil it moves into), in newtons.
 			</description>
 		</method>
+		<method name="get_wheel_soil_side_force" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The push of the soft ground against wheel [param wheel]'s sidewall while it slides sideways (side bulldozing, as in a drift), in newtons.
+			</description>
+		</method>
 		<method name="get_wheel_soil_traction" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />

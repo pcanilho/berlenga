@@ -23,6 +23,8 @@ extends Node3D
 #   --view=storm_foam_close 22 m/s, 1.5 m above the foam riding the sea, low side sun: the foam's edges and rims
 #   --view=storm_sheets 22 m/s, 2 m up across the wind, low sun behind: the torn spray sheets in profile, backlit
 #                   (with --node=crest_sheets:true)
+#   --view=storm_crest 12 m/s, 1.3 m above the sea riding it, into a sun 10 degrees up under a clear sky: near
+#                   crests in silhouette, the crest glow in their thin tops (--water=crest_glow:0 for off)
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
@@ -272,6 +274,15 @@ func _ready() -> void:
 		# 15 degrees up, from the side (along the wind): rims light on one side, shade on the other.
 		var wdf2 := Vector2(-0.3, 1.0).normalized()
 		sun.look_at_from_position(Vector3.ZERO, Vector3(-wdf2.x, -tan(deg_to_rad(15.0)), -wdf2.y))
+	elif view == "storm_crest":
+		# 10 degrees up, straight ahead: the light comes through the near crests toward the lens.
+		var wdg := Vector2(-0.3, 1.0).normalized()
+		var fwd_g := Vector3(wdg.y, 0.0, -wdg.x)
+		sun.look_at_from_position(Vector3.ZERO, -fwd_g + Vector3(0, -tan(deg_to_rad(10.0)), 0))
+		sky_mat.sky_top_color = Color(0.16, 0.36, 0.72)
+		sky_mat.sky_horizon_color = Color(0.62, 0.72, 0.84)
+		sky_mat.ground_horizon_color = Color(0.62, 0.72, 0.84)
+		sky_mat.sun_angle_max = 2.0 # a crisp low sun, not a haze
 	elif view == "storm_sheets":
 		# 10 degrees up, behind the sheets and a little to the side: they backlight against the darker sea.
 		var wds2 := Vector2(-0.3, 1.0).normalized()
@@ -354,6 +365,8 @@ func _ready() -> void:
 			water.set("wind_speed", 20.0)
 		elif view == "storm_foam" or view == "storm_plume" or view == "storm_roller":
 			water.set("wind_speed", 13.0) # Beaufort 6: whitecaps everywhere, no gale streaks yet
+		elif view == "storm_crest":
+			water.set("wind_speed", 12.0) # Beaufort 6: steep crests, no gale streaks
 		elif view == "storm_glitter":
 			water.set("wind_speed", 8.0)
 			water.set("wave_cascades", 3)
@@ -465,6 +478,11 @@ func _ready() -> void:
 			pass # follows the boat (_process)
 		"storm":
 			cam.look_at_from_position(Vector3(0, 7.0, 0.0), Vector3(-15.0, 2.0, -80.0))
+		"storm_crest":
+			# 1.3 m above the sea (riding it), into the low sun: the near crests stand against the bright water.
+			var wdk := Vector2(-0.3, 1.0).normalized()
+			var fwd_k := Vector3(wdk.y, 0.0, -wdk.x)
+			cam.look_at_from_position(Vector3(0, 1.3, 0.0), fwd_k * 30.0 + Vector3(0, 0.2, 0))
 		"storm_sheets":
 			# 2 m up in the gale, looking across the wind: torn spray sheets (--node=crest_sheets:true) stream sideways
 			# in profile against the wave faces behind, lit from behind by the low sun.
@@ -752,7 +770,7 @@ func _process(_delta: float) -> void:
 			_save_wake()
 			if out == "":
 				get_tree().quit()
-	if (view == "storm_sheets" or view == "storm_foam_close") and cam_set.size() != 6:
+	if (view == "storm_sheets" or view == "storm_foam_close" or view == "storm_crest") and cam_set.size() != 6:
 		# Ride the sea 2 m above it (a gale's waves are far taller than that), eased like a boat's deck.
 		# The highest water under and just ahead of the lens: up at once (never under a crest), down slowly.
 		var fwd_c := -bench_cam.global_transform.basis.z
@@ -763,7 +781,7 @@ func _process(_delta: float) -> void:
 			sea_y = maxf(sea_y, float(water.call("sample_height", Vector3(p.x, 0.0, p.z))))
 		if is_finite(sea_y):
 			ride_y = sea_y if (n <= 1 or sea_y > ride_y) else lerpf(ride_y, sea_y, 0.05)
-			bench_cam.position.y = ride_y + (1.5 if view == "storm_foam_close" else 2.0) + cam_dy
+			bench_cam.position.y = ride_y + (1.5 if view == "storm_foam_close" else (1.3 if view == "storm_crest" else 2.0)) + cam_dy
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)

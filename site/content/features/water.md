@@ -20,7 +20,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Murky water: a green glow fills the deep end.*
 
-- **Caustics** (`rendering/pathtracing/caustics`; raster `caustics_enabled`, off by default): sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.
+- **Caustics** (`rendering/pathtracing/caustics`; raster `caustics_enabled`): sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.
 
   ![A rippled pool, caustics off and on](media/caustics.jpg)
 
@@ -66,7 +66,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
 
-- **Torn spray sheets** (`crest_sheets`, off by default): in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.
+- **Torn spray sheets** (`crest_sheets`): in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.
 
   ![A gale sea from 2 m up across the wind, without and with torn spray sheets, raster](media/water-spray-sheets.jpg)
 
@@ -78,9 +78,9 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Crisp sea foam: soft foam turns into torn patches with ragged holes, floating rafts and raised bubble relief.*
 
-- **Crest glow** (`crest_glow`, on by default): low sun shines through thin wave crests in the water's own colour, in raster; path tracing already scatters through them.
+- **Crest glow** (`crest_glow`, on by default): low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.
 - **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
-- **Ocean detail** (`detail_waves`, on; `bubble_strength`): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
+- **Ocean detail** (`detail_waves`, `far_filter`; `bubble_strength`): short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 
   ![Sun glitter on a moderate sea from 2 m up, without and with detail waves, raster](media/water-ocean-detail.jpg)
 
@@ -119,7 +119,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 ## Shore
 
-- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
+- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only.
 
   ![Waves breaking on a beach, raster](media/shore-waves.gif)
 

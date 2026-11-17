@@ -1,0 +1,1 @@
+- Water and weather: torn spray sheets (`crest_sheets`), raster caustics (`caustics_enabled`), shore waves (`shore_waves`), evolving clouds (`cloud_evolution`) and aerosol haze (`aerosol_haze`) are on by default. Enclosed water gets shore waves only from its own wind sea.

@@ -350,6 +350,7 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim.advection.combustionEnabled = p_settings.combustion ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 	sim.advection.gravity = { p_settings.gravity[0] * s, p_settings.gravity[1] * s, p_settings.gravity[2] * s };
 	sim.advection.buoyancyPerTemp = p_settings.buoyancy;
+	sim.advection.buoyancyPerSmoke = p_settings.smoke_buoyancy;
 	sim.advection.coolingRate = p_settings.cooling_rate;
 	sim.advection.smoke.fade = p_settings.smoke_fade;
 	sim.advection.ignitionTemp = p_settings.ignition_temperature;

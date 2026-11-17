@@ -186,6 +186,7 @@ public:
 	real_t get_wheel_sinkage(int p_wheel) const;
 	real_t get_wheel_soil_resistance(int p_wheel) const;
 	real_t get_wheel_soil_traction(int p_wheel) const;
+	real_t get_wheel_soil_side_force(int p_wheel) const; // N, sidewall bulldozing against a side slide
 	real_t get_wheel_slip(int p_wheel) const;
 	bool is_wheel_on_soft_soil(int p_wheel) const;
 	Vector3 get_actor_position() const;
