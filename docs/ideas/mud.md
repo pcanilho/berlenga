@@ -439,6 +439,47 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   6 cm) chosen by slot.
 - Checks: clods thrown at a parked car stick, volume kept (dug = air + landed + stuck); raster vs PT crop.
 
+#### Research (4c: splashes in standing water)
+
+- **How others do it.** Saber keeps water as two swapped RGBA textures that the GPU spreads (height, foam,
+  "water-mud" carried to neighbours), with decorative CPU particles on top. The standard real-time recipe is a height
+  field for the bulk and particles where it breaks: Chentanez and Muller 2010 ("Real-time simulation of large bodies
+  of water with small scale details", SCA) spawn spray particles where the field's surface is steep or fast and
+  return them to it on landing; Holz, Beer and Kuhlen 2009 do the same for soil (our grains). Engineering wading
+  studies (GPU SPH, e.g. the vehicle wading papers on arXiv; Particleworks with RecurDyn) show the bow wave and side
+  sheets of a wheel and a body, a reference for shape, far too costly as the answer.
+- **Ours.** The standing water is already a GPU virtual-pipe field (2a). A wheel in it pushes a bow wave into the
+  field (a moving source, volume kept) and, past a Froude number of about 1 (speed over sqrt(g depth)), throws sheets
+  off the tread and the sidewalls: water taken from the field becomes MPM fluid particles (the clear-water solver
+  PhysX already runs, foam and spray on), coloured by the mud the field carries, and lands back into the field.
+  Muddy water also lifts the body's spray level and washes the body. Rings in the field from the bow wave.
+- **Dependency.** Sand owns the water passes and WaterCell for rills this week: build after they land, through
+  the field's own source term, not a second solver.
+
+#### Research (4d: streaked spatter and local clay colour)
+
+- **How others do it.** Forza Motorsport (2023) builds each car's dirt live, thrown by its own tyres and the track,
+  so it gathers where the flow carries it; MSFS 2024 blends dirt and grime layers by level and region; BeamNG's dirt
+  mods and Codemasters use authored directional masks. Real spatter is elongated along its flight, with a tail away
+  from the source, and wet mud runs down in drips that dry in place.
+- **Ours.** Stretch the splat noise along each wheel's spray direction in the vehicle frame (anisotropic sampling:
+  the noise coordinate compressed along the flight from the wheel), add a tail streak and, while wet, short drip
+  runs downward that freeze as the mud dries. Clay colour: the vehicle averages the ground's albedo (GroundSurface3D
+  tint and material colour) at its wheels' contacts over the last metres driven and writes it into `mud_color`, so
+  red laterite gives red mud and grey clay grey.
+
+#### Research (4e: mud on boots and legs)
+
+- **How others do it.** RDR2 layers dirt, mud, snow, blood and wet masks on characters and horses, raised by
+  region from contact (no talk published). FFXV's character effects (Flagrum wiki) keep per-region dirt and wetness.
+  CryEngine's Dirt Layer and UE's forum recipes paint a mask by overlap. Arkham Origins' deformable snow (GDC 2014)
+  pairs it with the ground's prints.
+- **Ours.** The same BaseMaterial3D Mud layer: a mud line rising from the soles by how deep the boot sank (the boot
+  prints already know, meta `ground_sole`) and spatter up the shins from walking speed. Skinned meshes need a stable
+  frame: the vertex's rest position (baked into CUSTOM0 at import), read by raster and by the path tracer's captured
+  vertices, so the mud does not slide as the legs move. Open question: the path tracer reads per-vertex custom data
+  only for some meshes (a known limit on MultiMeshes), to check before building.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
