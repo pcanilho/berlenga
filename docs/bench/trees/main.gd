@@ -382,6 +382,9 @@ func _build_scene() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
+	# Raster: screen-space occlusion, as games draw it (the path tracer finds it by itself).
+	if raster and not OS.has_environment("NO_SSAO"):
+		env.ssao_enabled = true
 	# Needles are a few millimetres wide, far under a pixel at lineup distance: without
 	# multisampling most miss every sample point and conifers read as bare sticks. Games run TAA
 	# or DLSS, which integrate that coverage; 8x MSAA stands in for it here.
