@@ -275,6 +275,13 @@ void main() {
 
 #endif //USE_CUBEMAP_PASS
 
+	// The lower resolution passes were written after the brightness (exposure) multiplier below, like the
+	// luminance multiplier: undo it here, or a sky that adds them up takes the multiplier once per pass. Godot's
+	// camera exposure multiplier is a pre-exposure (it scales lights and the sky before the buffers).
+	float inv_brightness = params.brightness_multiplier > 0.0 ? 1.0 / params.brightness_multiplier : 0.0;
+	half_res_color.rgb *= inv_brightness;
+	quarter_res_color.rgb *= inv_brightness;
+
 	{
 #CODE : SKY
 	}
