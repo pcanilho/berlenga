@@ -132,7 +132,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Bending: the nettles part round the body.*
 
 - **Ground mist** (`VegetationMist3D`, `mist_amount`; needs PhysX Flow): at dawn, low mist pools in hollows and drifts through the grass, set by the weather and sun; bodies part it, and it burns off as the sun climbs.
-- **Pollen puffs** (`VegetationPollen3D`; needs PhysX Flow): brushing plants in flower releases a puff of pollen or spores; each plant recharges, and wet plants stay still.
+- **Pollen puffs** (`VegetationPollen3D`; needs PhysX Flow): brushing grasses and other wind-pollinated plants in flower releases a puff of pollen; each plant recharges, and wet plants stay still.
 
 - **Sun and shade growth** (always on): grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
