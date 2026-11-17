@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VegetationMist3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Ground mist in the near field, simulated with NVIDIA Flow.
+	</brief_description>
+	<description>
+		Radiation fog lying over the ground around the camera (or [member follow_target]), as a real gas in a [code]PhysXFlow3D[/code] of its own: it parts round bodies that walk through it, drifts with the ground wind and drains into hollows, since it is heavier than the air above it. A round patch of [member mist_range] is cut into cells of [member mist_cell]; each cell holds a flat box emitter on the ground that keeps the layer at its level and refills what a walker stirs away. Cells in hollows (lower than a ring 10 m round them) get more mist and cells on crests less, as cooled air pools in hollows.
+		With [member mist_amount] below [code]0[/code], the level comes from [member weather_map]: radiation fog needs air near saturation (humidity over about 0.88), calm air (under about 3 m/s at 10 m), a clear sky, and no sun to burn it off, so it fades as [member sun_light] climbs from 4 to 18 degrees.
+		Beyond the patch, wide haze belongs to the environment's fog. Flow is drawn by its own ray marcher and is not path traced yet. Needs an engine built with [code]flow_sdk=[/code] and the Flow libraries beside it; without them this node shows a warning and does nothing.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_active_cells" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many cells held mist last step.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="Node3D" />
+			<description>
+				The internal [code]PhysXFlow3D[/code], or [code]null[/code] without Flow.
+			</description>
+		</method>
+		<method name="get_mist_level" qualifiers="const">
+			<return type="float" />
+			<description>
+				The mist level in use: [member mist_amount], or the weather's level when that is below [code]0[/code].
+			</description>
+		</method>
+		<method name="get_propensity_at">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How much mist the cell at [param position] gathers relative to level ground: above [code]1[/code] in hollows, below it on crests (0.15 to 2).
+			</description>
+		</method>
+		<method name="is_flow_available" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether this engine has Flow ([code]PhysXFlow3D[/code]).
+			</description>
+		</method>
+		<method name="weather_mist_level" qualifiers="const">
+			<return type="float" />
+			<description>
+				The mist level the weather and the sun give now (0 to 1), whatever [member mist_amount] is.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Off: the cells stop feeding the gas and the mist evaporates.
+		</member>
+		<member name="extinction" type="float" setter="set_extinction" getter="get_extinction" default="0.06">
+			Extinction per metre at level [code]1[/code]. Thin ground fog is 0.01 to 0.05 per metre, thick valley fog up to 0.2 (Kunkel 1984): hardly visible across a metre, closing the view along the ground over tens of metres.
+		</member>
+		<member name="flow_cell_size" type="float" setter="set_flow_cell_size" getter="get_flow_cell_size" default="0.25">
+			The gas's cell size in metres.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			Centre of the mist patch. Empty: the viewport's camera.
+		</member>
+		<member name="heaviness" type="float" setter="set_heaviness" getter="get_heaviness" default="0.15">
+			How much heavier than the air the mist is: the flow's [code]smoke_buoyancy[/code] is minus this. Air a few degrees colder is 1 to 2 % denser, so the mist slides down slopes and pools.
+		</member>
+		<member name="mist_amount" type="float" setter="set_mist_amount" getter="get_mist_amount" default="-1.0">
+			The mist level, 0 to 2. Below [code]0[/code]: from the weather (see [method weather_mist_level]).
+		</member>
+		<member name="mist_cell" type="float" setter="set_mist_cell" getter="get_mist_cell" default="6.0">
+			Size of a mist cell (one emitter) in metres.
+		</member>
+		<member name="mist_color" type="Color" setter="set_mist_color" getter="get_mist_color" default="Color(0.92, 0.93, 0.95, 1)">
+			Colour of the mist, lit by the sun. Its droplets scatter strongly forward, so it glows looking towards a low sun.
+		</member>
+		<member name="mist_depth" type="float" setter="set_mist_depth" getter="get_mist_depth" default="1.2">
+			Depth of the layer the cells hold, in metres; shallow ground fog is under 2 m.
+		</member>
+		<member name="mist_range" type="float" setter="set_mist_range" getter="get_mist_range" default="24.0">
+			Radius of the mist patch in metres. Its GPU memory grows with its area.
+		</member>
+		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
+			The [DirectionalLight3D] whose height burns the mist off. Empty: the sun does not count.
+		</member>
+		<member name="terrain" type="NodePath" setter="set_terrain" getter="get_terrain" default="NodePath(&quot;&quot;)">
+			The terrain the cells stand on and the gas lies on: any node with [code]get_height(position)[/code] (TerrainGenerator3D, Terrain3D). Empty: a ray down onto static bodies.
+		</member>
+		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
+			The [WeatherMap3D] for the mist level and the ground wind.
+		</member>
+	</members>
+</class>

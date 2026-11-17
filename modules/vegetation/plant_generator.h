@@ -443,6 +443,13 @@ public:
 	void set_season(const Dictionary &p_season);
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
+	// Wind pollination (docs/ideas/vegetation.md, "Ground mist and pollen"): how much pollen a brushed
+	// plant of the preset sheds at full flower (0 for insect-pollinated plants), and the share of it
+	// shedding on the season's day.
+	static float get_pollen_amount(Preset p_preset);
+	static float get_pollen_release(Preset p_preset, const Dictionary &p_season);
+	// Sets the meta plant_preset, and pollen for wind-pollinated presets, on a species a make_* returns.
+	static void tag_species(const Ref<Resource> &p_species, Preset p_preset);
 	static float get_presence(Preset p_preset, const Dictionary &p_season);
 	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
 	static bool is_mushroom(Preset p_preset) { return p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS; }

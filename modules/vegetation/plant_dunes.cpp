@@ -293,6 +293,7 @@ TypedArray<Resource> PlantGenerator::make_dunes(DuneStand p_stand, int p_variant
 		}
 		sp->set_visibility_range(f.visibility);
 		sp->set_meta("dunes", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 13;
 	}

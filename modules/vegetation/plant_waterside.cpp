@@ -607,6 +607,7 @@ TypedArray<Resource> PlantGenerator::make_banks(BankStand p_stand, int p_variant
 		sp->set_visibility_range(f.visibility);
 		sp->set_far_color(Color(0, 0, 0, 0)); // A narrow band along the water: the ground's colour carries it far.
 		sp->set_meta("banks", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}

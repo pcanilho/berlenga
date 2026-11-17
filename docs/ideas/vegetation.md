@@ -366,6 +366,81 @@ the British Isles (2019) for sizes and flowering.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
 
+## Ground mist and pollen with PhysX Flow (built 17 Nov)
+
+Two things in the air just above the plants, both carried by Flow (docs/ideas/physx.md) so they swirl
+round the bodies that walk through them and drift with the ground wind instead of hanging as cards.
+
+### Ground mist
+
+What it is. Radiation fog: on clear, calm nights the ground and the grass tips lose heat by longwave
+radiation, the air touching them cools to its dew point and condenses. It starts as a shallow layer
+under 2 m (the WMO's "shallow fog", METAR MIFG), thickest in hollows because the cooled air is
+denser and drains down slopes into them (cold-air pooling; Whiteman 2000, "Mountain Meteorology";
+Clements et al. 2003, Peter Sinks). Fog needs relative humidity near 100 %, wind under about
+3 m/s (stronger wind mixes the cold layer away) and little cloud; it lifts or burns off within one to
+three hours after sunrise as the sun warms the ground (Roach et al. 1976, Cardington; Duynkerke 1991,
+"Radiation fog: a comparison of model simulation with detailed observations"; Gultepe et al. 2007,
+"Fog research: a review"; Price 2011, "Radiation fog. Part I"). Grass makes it first: the canopy top
+is the coldest surface.
+
+How thick it looks. Fog droplets are about 10 um; extinction follows liquid water content,
+beta = 144.7 LWC^0.88 per km with LWC in g/m3 (Kunkel 1984). Mist (visibility over 1 km) is
+beta under 0.004 per metre; thin ground fog 0.01 to 0.05; thick valley fog up to 0.2 (20 m
+visibility). So a ground mist is hardly visible across a metre but closes off the view along the
+ground over tens of metres; that is how it should read. Droplets that size scatter strongly forward
+(Henyey-Greenstein g about 0.8), so mist glows when looking towards a low sun.
+
+What games do. Red Dead Redemption 2 uses froxel volumetric fog with a height layer and noise
+(Bauer, SIGGRAPH 2019 Advances, "Creating the atmospheric world of RDR2"); Unreal has Exponential
+Height Fog plus Local Fog Volumes; Frostbite unified froxel volumetrics (Hillaire 2015). All of
+these are static density with scrolling noise: nothing parts round a walker or rolls into a hollow.
+The near field here is a real fluid instead; the wide haze beyond it stays with the environment's
+fog (Valence's weather side).
+
+Build: `VegetationMist3D`, in the vegetation module, using Flow by class name (no build
+dependency on PhysX; without Flow it warns and stays inert).
+- One `PhysXFlow3D` with 25 cm cells, no combustion, no heat, heavier-than-air gas
+  (`smoke_buoyancy` -0.15: a 1 to 2 % density excess of air a few degrees colder), a slow fade
+  (evaporation), little vorticity (calm air), terrain floor on, forward scattering 0.75, white.
+  `smoke_density` is set so one unit of smoke is the extinction the weather asks for.
+- A ring of flat box emitters on a world-snapped 8 m grid round the camera (or a target), each
+  sitting on the ground and coupling gently towards its cell's mist level, so the layer is held
+  where it should be and anything that stirs it recovers over seconds. Each cell's level is the
+  zone's mist amount times its propensity: hollows (the ground below the mean of a ring 8 m out)
+  get more, crests less, wet ground more.
+- The mist amount comes from the weather when a `WeatherMap3D` is set: humidity over 0.88,
+  wind under 3 m/s at 10 m, little cloud, and the sun under 15 degrees (it burns off as the sun
+  climbs). `mist_amount` overrides it.
+- One wide box emitter puts the ground wind (0.6 of the 10 m wind) into the air with no smoke, so
+  the mist drifts and curls round stems' bodies.
+
+### Pollen puffs
+
+What it is. Wind-pollinated plants (grasses, sedges, rushes, reedmace, nettle, docks, plantain)
+hold ripe pollen in dangling anthers; a shake releases a puff. Release needs a jolt past a threshold
+(Urzay et al. 2009, "Wind gusts and plant aeroelasticity effects on the aerodynamics of pollen
+shedding", J Theor Biol), and walking through a meadow in flower lifts visible pale clouds. Grass
+pollen grains are 25 to 40 um and settle at 2 to 3 cm/s (Gregory 1973; Klahs 2019 for
+Diarrhena), so a puff hangs and drifts for many seconds and fades as it spreads. Anthesis is in the
+morning on warm, dry days; plants shed only while in flower (`PlantGenerator.get_bloom_shares`).
+
+Build: `VegetationPollen3D`.
+- Species made by the `make_*` functions carry their preset (meta `plant_preset`) and, for the
+  wind-pollinated ones, a pollen amount (meta `pollen`).
+- It watches the bodies in the trample group (the same movers that press the grass). For each one
+  moving faster than a slow walk, it looks up flowering plants of pollen species within reach in
+  the `VegetationField3D` placements (a spatial hash rebuilt when the placement changes) and fires a
+  short puff at their flower height: smoke by pollen amount, share in flower and speed, the jet
+  along the mover's motion and a little up.
+- One `PhysXFlow3D` with 4 cm cells, cream-yellow, very slightly heavy, slow fade, more swirl; a
+  small pool of sphere emitters.
+
+Checks: the bench `--mist` runs a dawn hollow with mist and a walker through it; `--pollen`
+walks a body through flowering cocksfoot and timothy. Tests check that mist gathers more in the
+hollow than on the crest, that it clears with the sun high or a strong wind, that puffs fire only
+from plants in flower and only when brushed, and that both nodes stay inert without Flow.
+
 ## Alpine and scree plants (built 17 Nov)
 
 Above the treeline the ground is not turf. The alpine belt starts where the growing season's mean

@@ -582,6 +582,85 @@ Vector3 PlantGenerator::get_bloom_shares(Preset p_preset, const Dictionary &p_se
 	return shares;
 }
 
+// Wind-pollinated plants hold ripe pollen in dangling anthers that a jolt empties (Urzay et al. 2009).
+// Relative amounts: reedmace and the meadow grasses shed clouds, sedges and rushes less.
+float PlantGenerator::get_pollen_amount(Preset p_preset) {
+	switch (p_preset) {
+		case PRESET_CATTAIL:
+			return 1.0f;
+		case PRESET_COCKSFOOT:
+		case PRESET_TIMOTHY:
+			return 0.9f;
+		case PRESET_REED:
+		case PRESET_NETTLE:
+			return 0.7f;
+		case PRESET_MARRAM:
+		case PRESET_LYME_GRASS:
+		case PRESET_DRY_GRASS:
+			return 0.6f;
+		case PRESET_DOCK:
+		case PRESET_PLANTAIN:
+		case PRESET_SORREL:
+			return 0.5f;
+		case PRESET_SEDGE:
+		case PRESET_ALPINE_SEDGE:
+			return 0.4f;
+		case PRESET_RUSH:
+		case PRESET_COTTONGRASS:
+			return 0.25f;
+		default:
+			return 0.0f;
+	}
+}
+
+float PlantGenerator::get_pollen_release(Preset p_preset, const Dictionary &p_season) {
+	if (get_pollen_amount(p_preset) <= 0.0f) {
+		return 0.0f;
+	}
+	Phenology ph;
+	if (_phenology(p_preset, ph)) {
+		return get_bloom_shares(p_preset, p_season).y;
+	}
+	// No flowering window in the look: the anthesis months by day of year (Stace 2019; northern
+	// temperate). Grasses late May to July, nettle and docks June to September, plantain May to August.
+	if (!p_season.has("day_of_year")) {
+		return 1.0f;
+	}
+	const float day = float(int(p_season["day_of_year"]));
+	float a = 145.0f, b = 210.0f;
+	switch (p_preset) {
+		case PRESET_NETTLE:
+		case PRESET_DOCK:
+			a = 160.0f;
+			b = 260.0f;
+			break;
+		case PRESET_PLANTAIN:
+			a = 130.0f;
+			b = 235.0f;
+			break;
+		case PRESET_CATTAIL:
+		case PRESET_REED:
+			a = 170.0f;
+			b = 240.0f;
+			break;
+		default:
+			break;
+	}
+	const float ramp = 12.0f;
+	return Math::smoothstep(a - ramp, a + ramp, day) * (1.0f - Math::smoothstep(b - ramp, b + ramp, day));
+}
+
+void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
+	if (p_species.is_null()) {
+		return;
+	}
+	p_species->set_meta("plant_preset", int(p_preset));
+	const float pollen = get_pollen_amount(p_preset);
+	if (pollen > 0.0f) {
+		p_species->set_meta("pollen", pollen);
+	}
+}
+
 static float smoothstep_f(float p_a, float p_b, float p_x) {
 	return Math::smoothstep(p_a, p_b, p_x);
 }
@@ -6430,6 +6509,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
 		}
 		sp->set_meta("floor", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}
@@ -6540,6 +6620,7 @@ TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_varia
 		// Too sparse and low to colour the far ground; the stones are what shows there.
 		sp->set_far_color(Color(0, 0, 0, 0));
 		sp->set_meta("stones", true);
+		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}
@@ -6585,6 +6666,8 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_bloom_shares", "preset", "season"), &PlantGenerator::get_bloom_shares);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_amount", "preset"), &PlantGenerator::get_pollen_amount);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_release", "preset", "season"), &PlantGenerator::get_pollen_release);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_presence", "preset", "season"), &PlantGenerator::get_presence);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
