@@ -424,6 +424,21 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - Next: clods of several sizes, wet clods sticking to the body they hit (they pass through it now: the grains have
   no colliders), slurry splashes in standing water.
 
+#### Research (4b: clods sticking to bodies)
+
+- **How others do it.** Saber raises per-vertex mud data on the truck where a particle touches it. Splatoon-style
+  games paint hits into a texture in the mesh's UV space (render-target unwrap); Unity's skinned-mesh decals and
+  CryEngine's mud-splatter decals project a decal at the hit. MSFS 2024 blends authored dirt and grime layers by a
+  level. Our body mud is computed in the vehicle's frame with no UVs, so hits are best kept the same way.
+- **Proposal.** The grains have no colliders; the mud child tests each live clod against every PhysXVehicle3D's
+  chassis box (grown by the wheel radius). A clod inside it sticks: it is killed, its volume kept as a splat in that
+  vehicle's frame (position, radius from volume, wetness). The vehicle keeps a ring of splats and publishes them as
+  a small texture shared by all vehicles (one row of RGBA float texels per vehicle, its row index in a spare
+  instance-uniform slot), read the same way in raster (a global sampler) and in the raygen (bindless). Each splat
+  raises the mud level round it with a radial streak along the clod's flight. Clod sizes: three meshes (2, 3.5,
+  6 cm) chosen by slot.
+- Checks: clods thrown at a parked car stick, volume kept (dug = air + landed + stuck); raster vs PT crop.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
