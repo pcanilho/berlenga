@@ -2022,11 +2022,43 @@ float vmud_height(float p_level, float p_splat) {
 	float c = vmud_cover(p_level, p_splat);
 	return c * (0.004 + 0.0015 * p_splat);
 }
-// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows): (cover, relief gradient in world
+// A clod that stuck to the body (mud stage 4b; p_a: where, in the vehicle's frame, and its radius; p_b: its flight
+// direction and amount): a splat spread along the flight, a short tail ahead of the hit and a shorter rim behind it.
+float vmud_splat_one(vec3 p_p, vec4 p_a, vec4 p_b) {
+	vec3 d = p_p - p_a.xyz;
+	float along = dot(d, p_b.xyz);
+	float e = length(d - along * p_b.xyz) / p_a.w + max(along, 0.0) / (2.5 * p_a.w) + max(-along, 0.0) / (0.7 * p_a.w);
+	// A ragged rim (the splash's fingers) and a halo of droplets thrown past it, thresholded by the splat field.
+	e *= 0.75 + 0.5 * vmud_noise(p_p * 22.0 + 7.0);
+	float core = 1.0 - smoothstep(0.6, 1.0, e);
+	float halo = 0.5 * (1.0 - smoothstep(1.0, 2.2, e));
+	return p_b.w * max(core, halo);
+}
+// The clods stuck to this vehicle (mud stage 4b), as the raster shader's vmud_splats_level().
+float vmud_splats_level(vec3 p_p, vec4 p_splat) {
+	uint tex = uint(get_rt_param(RT_PARAM_VEHICLE_MUD_SPLATS));
+	if (tex == 0u) {
+		return 0.0;
+	}
+	float lvl = 0.0;
+	int row = int(p_splat.x);
+	int n = int(p_splat.y);
+	for (int k = 0; k < n; k++) {
+		vec4 a = texelFetch(sampler2D(bindless_textures[nonuniformEXT(tex)], SAMPLER_NEAREST_CLAMP), ivec2(2 * k, row), 0);
+		vec4 b = texelFetch(sampler2D(bindless_textures[nonuniformEXT(tex)], SAMPLER_NEAREST_CLAMP), ivec2(2 * k + 1, row), 0);
+		lvl = max(lvl, vmud_splat_one(p_p, a, b));
+	}
+	return lvl;
+}
+// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows; p_splat: its row of stuck clods
+// and their count, see vmud_splats_level()): (cover, relief gradient in world
 // space (x, y, z) per m). The gradient fades out over a footprint p_fw too wide to hold the lumps.
-vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
+vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat) {
 	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
 	float lvl = vmud_level(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body);
+	if (p_splat.y > 0.0) {
+		lvl = max(lvl, vmud_splats_level(p, p_splat));
+	}
 	if (lvl <= 0.0) {
 		return vec4(0.0);
 	}
@@ -2795,7 +2827,7 @@ void main() {
 	}
 
 	// Mud on a vehicle's body (BaseMaterial3D Mud, docs/ideas/mud.md, stage 3b): the same lines as the raster shader,
-	// from the same instance uniforms (BaseMaterial3D::get_mud_functions_code(), slots 0-10).
+	// from the same instance uniforms (BaseMaterial3D::get_mud_functions_code(), slots 0-11).
 	if (rt_material_mud(mat) && geometries[h.geometry_idx].instance_uniforms_ofs != 0xFFFFFFFFu) {
 		uint vmo = geometries[h.geometry_idx].instance_uniforms_ofs;
 		float vmfp;
@@ -2811,7 +2843,7 @@ void main() {
 		vec4 vm = vmud_at(h.hit_pos + rt_origin.xyz, vmfp, global_shader_uniforms.data[vmo], global_shader_uniforms.data[vmo + 1u],
 				global_shader_uniforms.data[vmo + 2u], global_shader_uniforms.data[vmo + 3u], global_shader_uniforms.data[vmo + 4u],
 				global_shader_uniforms.data[vmo + 5u], global_shader_uniforms.data[vmo + 6u], global_shader_uniforms.data[vmo + 7u],
-				global_shader_uniforms.data[vmo + 8u], vmb);
+				global_shader_uniforms.data[vmo + 8u], vmb, global_shader_uniforms.data[vmo + 11u]);
 		if (vm.x > 0.0) {
 			vmud_apply(vm.x, global_shader_uniforms.data[vmo + 10u].rgb, vmb.z, m.albedo, m.roughness, m.metalness, m.specular);
 			m.normal = normalize(mix(m.normal, h.geometry_normal, vm.x));

@@ -1149,6 +1149,39 @@ vec3 relief_sun_direction() {
 	return sun_direction();
 }
 
+// Two-layer refraction (depth peeling): a screen texture lookup reads the copy with the second layer in it
+// (color_buffer_peel) only where that layer lies clearly behind this surface and no other screen-reading surface
+// lies clearly in front of this one there, so the pool shows through the stream in front of it but a surface never
+// refracts its own image as another one's second layer. Elsewhere the opaque copy, as without peeling. peel_depth
+// and peel_depth_second hold the front and second layers' depths (reverse Z, 0 where none). The shader compiler
+// wraps screen texture lookups with this.
+#if defined(MODE_RENDER_SDF) || defined(USE_MULTIVIEW)
+#define color_buffer_peel color_buffer
+#endif
+bool peel_screen_ok(vec2 uv) {
+#if defined(MODE_RENDER_SDF) || defined(USE_MULTIVIEW)
+	return false;
+#else
+	if (!bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_ACTIVE)) {
+		return false;
+	}
+	float second = textureLod(sampler2D(peel_depth_second, SAMPLER_NEAREST_CLAMP), uv, 0.0).r;
+	if (second <= 0.0) {
+		return false; // no second layer there: both copies match
+	}
+	float front = textureLod(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), uv, 0.0).r;
+	// Linear depths (inv_projection_matrix is a macro needing a local scene_data here; view 0 is the same).
+	mat4 inv_projection = scene_data_block.data.inv_projection_matrix_view[0];
+	vec4 a = inv_projection * vec4(0.0, 0.0, gl_FragCoord.z, 1.0);
+	vec4 b = inv_projection * vec4(0.0, 0.0, second, 1.0);
+	vec4 c = inv_projection * vec4(0.0, 0.0, front, 1.0);
+	float own_lin = -a.z / a.w;
+	float second_lin = -b.z / b.w;
+	float front_lin = -c.z / c.w;
+	return second_lin - own_lin > 0.02 + 0.02 * own_lin && own_lin - front_lin < 0.1 + 0.1 * own_lin;
+#endif
+}
+
 #GLOBALS
 
 // POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow
@@ -3375,5 +3408,22 @@ void main() {
 	}
 #endif
 
+#ifndef MODE_RENDER_SDF
+	// Two-layer refraction (depth peeling, Everitt 2001): the front-depth and second-layer passes draw only
+	// screen-reading surfaces (water, glass), and the second layer only the nearest of them behind the front one,
+	// so the front layer's refraction can show it.
+	if (bool(scene_data_block.data.flags & (SCENE_DATA_FLAGS_PEEL_FRONT | SCENE_DATA_FLAGS_PEEL_BEHIND))) {
+#ifndef SCREEN_TEXTURE_USED
+		discard;
+#else
+		if (bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_BEHIND)) {
+			float front = texelFetch(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
+			if (gl_FragCoord.z >= front * (1.0 - 1.0e-3)) {
+				discard; // the front layer itself, or nothing in front (front 0: no screen-reading surface here)
+			}
+		}
+#endif
+	}
+#endif
 	fragment_shader(scene_data_block.data);
 }

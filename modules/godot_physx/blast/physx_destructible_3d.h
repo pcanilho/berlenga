@@ -363,6 +363,11 @@ public:
 	// The asset chunk indices a piece carries (an island holds several; for build_prefractured, chunk i + 1 is piece i).
 	PackedInt32Array get_piece_chunks(int p_index) const;
 	uint32_t get_piece_chunk(int p_index) const;
+	// The piece's body state, for effects that follow debris (rockfall dust): its linear velocity, the world
+	// position of its chunks' centroid, and its mass. Zero for an out-of-range index or a dead body.
+	Vector3 get_piece_linear_velocity(int p_index) const;
+	Vector3 get_piece_center(int p_index) const;
+	float get_piece_mass(int p_index) const;
 
 	PackedStringArray get_configuration_warnings() const override;
 

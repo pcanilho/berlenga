@@ -31,6 +31,7 @@
 #pragma once
 
 #include "rock_generator.h"
+#include "rock_moss.h"
 
 #include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
@@ -271,6 +272,21 @@ private:
 	};
 	LocalVector<CloseJob> close_jobs;
 
+	// Moss as geometry on the close-up stones (rock_moss.h): one shell per stone, built on a worker.
+	bool moss_cushions = true;
+	struct MossShell {
+		Node3D *node = nullptr;
+		RockMoss::Job *job = nullptr;
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+		bool wanted = true;
+		int triangles = 0;
+	};
+	HashMap<Vector3i, MossShell> moss_shells; // by the stone's origin in cm
+	HashMap<uint64_t, RockMoss::Source> moss_sources; // the close-up shapes' surfaces (library << 16 | slot)
+	void _update_moss(const HashMap<uint64_t, LocalVector<Transform3D>> &p_near_xf, const HashMap<uint64_t, LocalVector<Color>> &p_near_cd, bool p_wait);
+	void _finish_moss(bool p_wait);
+	void _clear_moss();
+
 	TerrainGenerator3D *_get_generator() const;
 	Vector3 _target_position() const;
 	real_t _cell_size(Layer p_layer) const;
@@ -282,6 +298,38 @@ private:
 
 public:
 	RockGenerator::RockType get_rock_type_at(const Vector3 &p_position) const { return _type_at(_get_generator(), p_position); }
+
+	// Rockfall dust (docs/ideas/rocks.md, "Rockfall dust with PhysX Flow"): fines thrown up where falling pieces hit
+	// (kinetic energy lost times rockfall_dust_per_joule), shed by new fracture faces, and abraded by pieces sliding
+	// or rolling on the ground. PhysXRockDust3D takes them into Flow.
+	struct Dust {
+		Vector3 position; // the piece's underside
+		Vector3 velocity; // the piece's motion before the hit (m/s)
+		float mass = 0.0f; // kg of fines
+		float radius = 0.3f; // the piece's size (m)
+	};
+
+private:
+	bool rockfall_dust = true;
+	real_t dust_per_joule = 2e-5; // kg of airborne fines per joule an impact takes out of a piece
+	struct PieceTrack {
+		Vector3 velocity;
+		uint64_t tick = 0;
+		int seen = 0;
+	};
+	struct DustTrack {
+		HashMap<uint32_t, PieceTrack> pieces; // by chunk
+		int ticks = 0;
+	};
+	HashMap<uint64_t, DustTrack> dust_tracks; // by the breakable's ObjectID
+	LocalVector<Dust> dust_events;
+	real_t dust_total = 0.0; // kg, since the field entered the tree
+	int dust_impacts = 0;
+	uint64_t dust_tick = 0;
+	ObjectID dust_node;
+	void _update_dust(double p_delta);
+	void _add_dust(const Vector3 &p_position, const Vector3 &p_velocity, float p_mass, float p_radius);
+	void _update_dust_node();
 
 private:
 	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones);
@@ -331,6 +379,11 @@ public:
 	bool is_cave_mouths() const { return cave_mouths; }
 	void set_ground_blend(bool p_enabled);
 	void set_ground_contact(bool p_enabled);
+	void set_moss_cushions(bool p_enabled);
+	bool is_moss_cushions_enabled() const { return moss_cushions; }
+	int get_moss_shell_count() const;
+	int get_moss_triangle_count() const;
+	int get_moss_pending() const;
 	bool is_ground_contact_enabled() const { return ground_contact; }
 	// The contact map's side (m) and resolution (texels a side).
 	static constexpr real_t CONTACT_SIZE = 64.0;
@@ -398,6 +451,16 @@ public:
 	void set_live_rockfall_max(int p_count) { rockfall_max = MAX(p_count, 1); }
 	int get_live_rockfall_max() const { return rockfall_max; }
 	real_t get_rockfall_trigger() const;
+	// Rockfall dust: on by default; the field makes its own PhysXRockDust3D when the engine has Flow.
+	void set_rockfall_dust(bool p_enabled);
+	bool is_rockfall_dust() const { return rockfall_dust; }
+	void set_rockfall_dust_per_joule(real_t p_v) { dust_per_joule = MAX(p_v, real_t(0.0)); }
+	real_t get_rockfall_dust_per_joule() const { return dust_per_joule; }
+	real_t get_rockfall_dust_total() const { return dust_total; }
+	int get_rockfall_dust_impacts() const { return dust_impacts; }
+	Node *get_rockfall_dust_node() const;
+	// The dust thrown up since the last call (PhysXRockDust3D drains it every physics tick).
+	void take_rockfall_dust(LocalVector<Dust> &r_events);
 	Node *trigger_rockfall(const Vector3 &p_position, real_t p_radius = 30.0);
 
 	// Drop every built cell and the river cache (after the generator ran again); streaming builds them anew.

@@ -884,6 +884,23 @@ func _run_clog_tests() -> void:
 	var mk := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
 	_check("the thrown clay flies as mud clods and lands, volume kept", md > 0.5 * (shed - shed0) / 1700.0 and absf(mk - md) < 0.05 * md + 1e-5,
 			"%.1f l of clay thrown as clods, %.1f l in the air or landed (%.1f l of the dry ground thrown as sand)" % [md * 1000.0, mk * 1000.0, grains.get_dug_volume() * 1000.0])
+	# Clods thrown at the parked car's side stick to it as splats (stage 4b), their volume kept.
+	car.throttle = 0.0
+	car.brake = 1.0
+	for i in 60:
+		await get_tree().physics_frame
+	var side := car.global_transform.basis.x.normalized()
+	var stuck0 := mud_grains.get_stuck_volume() if mud_grains else 0.0
+	if mud_grains:
+		# Aimed to meet the side at about 80 cm over the ground.
+		mud_grains.kick(car.global_position + side * 2.5, 0.15, 0.03, -side * 5.0 + Vector3(0, 4.2, 0))
+	for i in 90:
+		await get_tree().physics_frame
+	var stuck := (mud_grains.get_stuck_volume() - stuck0) if mud_grains else 0.0
+	var md2 := mud_grains.get_dug_volume() if mud_grains else 0.0
+	var mk2 := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
+	_check("clods thrown at the body stick to it as splats, volume kept", car.get_mud_splat_count() > 0 and stuck > 0.5 * 0.15 * 0.15 * PI * 0.03 and absf(mk2 - md2) < 0.05 * md2 + 1e-5,
+			"%d splats, %.2f l stuck" % [car.get_mud_splat_count(), stuck * 1000.0])
 	# The clay thrown off lands up the arches (stage 3b): the body's material carries the Mud layer, fed by the car.
 	var spray := 0.0
 	for w in 4:
@@ -1000,8 +1017,23 @@ func _build_bodymud() -> void:
 		for i in 60:
 			await get_tree().physics_frame
 	var mg: PhysXGroundGrains3D = grains.get_mud_grains()
+	if mg and not "--spray" in OS.get_cmdline_user_args():
+		# A few clods thrown at the right side (stage 4b), as from a passing wheel, to stick there.
+		var side := car.global_transform.basis.x.normalized()
+		var fwd := car.global_transform.basis.z.normalized()
+		for k in 3:
+			mg.kick(car.global_position + side * 2.5 - fwd * (0.6 + 0.5 * k), 0.12, 0.03, -side * 6.0 + Vector3(0, 4.0, 0))
+			for i in 10:
+				await get_tree().physics_frame
+		for i in 60:
+			await get_tree().physics_frame
+		# --splat: one big clod placed on the side, a check of the splat drawing alone
+		if "--splat" in OS.get_cmdline_user_args():
+			car.add_mud_splat(car.global_transform * Vector3(0.9, 0.5, -0.6), -side * 5.0 + Vector3(0, 1.0, 0), 3e-4)
+			for i in 5:
+				await get_tree().physics_frame
 	if mg:
-		print("bodymud: %.1f l of clay thrown, %d clods in the air" % [mg.get_dug_volume() * 1000.0, mg.get_airborne_count()])
+		print("bodymud: %.1f l of clay thrown, %d clods in the air, %d splats stuck" % [mg.get_dug_volume() * 1000.0, mg.get_airborne_count(), car.get_mud_splat_count()])
 	var spray := []
 	var fill := []
 	for w in 4:

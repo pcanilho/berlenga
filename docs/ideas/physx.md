@@ -344,6 +344,19 @@ over them, and one more screen copy. Back faces stay culled, so a closed
 water mesh's second front-facing layer is the next body of water. PT is
 unchanged.
 
+Status: done. Project setting `rendering/transparency/refraction_second_layer`
+(on). A two-sphere glass test found one flaw in step 3 as written: a surface
+that is itself a second layer somewhere (the far sphere, where the near one
+covers it) refracted its own image out of the new copy, a small ghost. So the
+peeled copy goes into its own texture beside the opaque one, a third depth-only
+pass (2b) keeps the second layer's depth, and every screen texture lookup is
+wrapped by the shader compiler to pick per sample: the peeled copy only where
+the second layer there lies clearly behind this surface and no other
+screen-reading surface lies clearly in front of it, the opaque copy elsewhere
+(as before). Cost when a screen-reading surface is visible: two depth-only
+passes and one colour pass over those surfaces, one more screen copy with mips,
+and two depth fetches per lookup. GPU bench on the PC queue.
+
 ### MPM fluid: spray, foam and bubbles
 
 Technique: Ihmsen, Akinci, Akinci and Teschner 2012, "Unified spray, foam

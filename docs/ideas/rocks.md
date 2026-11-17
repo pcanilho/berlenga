@@ -848,3 +848,67 @@ Plan:
   TerrainMaterial3D reads it the same way it reads `terrain_cover_map`: wet darkening and lower roughness from R,
   and a fines tint with a little grit from G. Under the path tracer it is the same shader, so the two match.
 - Setting: `ground_contact` (on). It is redrawn when the target moves 8 m or cells change.
+
+## Moss cushions as real geometry (Paulo, 17 Nov: "all three, in that order", first)
+
+Moss on stones is a painted tint today (`moss_cover` in the rock shader). Up close it reads flat,
+and Paulo prefers real geometry to texture tricks (fungi, ivy, mushrooms). Vegetation already
+grows separate cushion plants on stone tops (`stone_top` species on `get_stone_caps`). What is
+missing is the moss mat itself: the layer that wraps a stone's damp, shaded faces and hollows.
+
+What is known:
+- **Where it grows**: epilithic bryophytes follow moisture. They grow on the shaded (pole-facing)
+  sides, tops that hold water, hollows, and the foot near damp ground. Fresh breaks stay bare
+  (Bates 2000, "Bryophyte ecology"; Glime, "Bryophyte Ecology", ch. 8 on substrate).
+- **Growth forms** (Mägdefrau 1982): mats (Hypnum on sides), cushions (Grimmia and Racomitrium
+  on tops), and turfs. Mats are 0.5 to 2 cm deep and cushions 2 to 5 cm, with ragged, lobed
+  margins.
+- **How others build it**:
+  - Shell or fur layers (Lengyel 2001) fake depth with stacked textures. That is the texture
+    trick we want to avoid, and it is wrong under the path tracer.
+  - Megascans and the UE5 demos use scanned moss meshes.
+  - Our trees thread (trees.md 5c, round 6) builds moss on logs as an offset shell of the bark
+    mesh. The shell thins to nothing at a ragged margin, and shoots are carried by the material.
+    That pattern holds under PT.
+
+Plan (`moss_cushions`, on):
+- **Placement**: stones drawn with their close-up shape (within `close_up_radius`) get a moss
+  shell built on a worker from that shape. The moss weight is computed per vertex with the
+  shader's own moss terms (up-facing, hollow, pole-facing, near the ground, not fresh, the same
+  noise), so the shell sits exactly where the tint is.
+- **Shape**: the shell is lifted along the normal by a lumpy depth (mats about 1 cm, cushions up
+  to 3 to 4 cm where the weight is high). It sinks 3 mm into the rock at its ragged margin, so it
+  grows out of the stone with no seam or z-fight.
+- **Material**: moss with shoots of a few millimetres (domain-warped noise in the normal),
+  greener in hollows and yellow-olive on sunny tops, matte, with soft thin-shoot transmission.
+  The shoots grow in tufts about 12 mm across (lit tops, dark gaps, relief), the scale a mat reads at from a metre:
+  the 2 mm shoots are under a pixel there, so the path tracer averages them out and raster aliases them. The
+  pattern space is the stone's rest position in UV and UV2 (metres, seeded per stone), as the rock shader's.
+  The same shader runs under PT.
+- **Cost**: one mesh per near stone, built once and kept while it is near.
+
+## Rockfall dust with PhysX Flow (Paulo, 17 Nov: second of the three)
+
+What a real fall does. A block that hits a slope throws up a dust cloud at each impact, not a steady trail. The
+cloud's fines come from the fresh fracture and crushed contact surfaces, so the dust grows with the impact energy and
+with fragmentation (Ruiz-Carulla et al. 2015, fragmentation against impact energy; the 2017 Pousset rockfall, De Biagi,
+Crosta et al.: dust clouds from fragmentation at the impact points). The biggest falls make an air blast that carries
+the cloud downslope (Morrissey et al. 1999, the 1996 Happy Isles event, Yosemite). Rolling and sliding blocks abrade
+a little dust between hits. Dust is heavier than air: it slumps, rolls out along the ground, and settles over tens of
+seconds. Wet rock in rain makes far less of it.
+
+How engines drive it. Unreal's Chaos destruction feeds Niagara through the Chaos Destruction data interface: collision,
+break and trailing events, each filtered by a minimum impulse or speed, spawn the dust. Frostbite's destruction works
+the same way, with impulse-driven dust emitters. We do the same, but the dust goes into a fluid solver rather than into
+sprites.
+
+What we build:
+- RockField3D measures every live piece of its falls on the physics tick (PhysXDestructible3D pieces, tracked by
+  chunk). An impact is a speed change of more than 2.5 m/s in one tick. Its dust is the kinetic energy it lost times
+  `rockfall_dust_per_joule` (kg/J), placed at the piece's underside. A piece that breaks off sheds a little more (new
+  fracture faces), and a piece sliding or rolling on the ground sheds a trickle. Rain on the rock cuts all of it.
+- PhysXRockDust3D (godot_physx, Flow) claims those events near the follow target. It feeds them through a pool of
+  sphere emitters, each a short burst about the size of the piece, with a jet along the piece's motion plus an outward
+  swell. The dust is heavier than air (negative smoke buoyancy), fades slowly, rests on the terrain floor (the
+  generator's heights), curls round the moving pieces as solids, and drifts with the weather's wind.
+- RockField3D makes one itself when Flow is built in (`rockfall_dust`, on).

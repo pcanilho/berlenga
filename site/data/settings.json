@@ -975,6 +975,18 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "Sand seas",
+   "settings": [
+    "sand_sea_rect",
+    "sand_sea_kind"
+   ],
+   "note": "",
+   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Geology maps",
    "settings": [
     "terrain_geology()"
@@ -1176,6 +1188,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud splats",
+   "settings": [
+    "PhysXVehicle3D.add_mud_splat()"
+   ],
+   "note": "",
+   "what": "clods that hit a vehicle stick as splats and wash off in water.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
@@ -1347,6 +1370,17 @@
    "topic": "Shapes"
   },
   {
+   "name": "Moss cushions",
+   "settings": [
+    "moss_cushions"
+   ],
+   "note": "",
+   "what": "on near stones, moss grows as real cushions 1 to 3.5 cm thick, with tufts that hold up under path tracing.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Rock fields",
    "settings": [
     "RockField3D",
@@ -1385,6 +1419,17 @@
    ],
    "note": "",
    "what": "cliff blocks fall in frost, thaw and rain, and break on impact.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Rockfall dust",
+   "settings": [
+    "rockfall_dust"
+   ],
+   "note": "",
+   "what": "falling and breaking stones throw up dust where they hit.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1448,6 +1493,17 @@
    ],
    "note": "",
    "what": "water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Two-layer refraction",
+   "settings": [
+    "rendering/transparency/refraction_second_layer"
+   ],
+   "note": "",
+   "what": "in raster, water and glass refract the water or glass behind them, so a pool shows through a falling stream.",
    "page": "water",
    "title": "Water",
    "topic": "Light in water"
@@ -2762,6 +2818,17 @@
    "topic": "Wind and touch"
   },
   {
+   "name": "Storm damage",
+   "settings": [
+    "TreeWind3D.storm_enabled"
+   ],
+   "note": "",
+   "what": "storm wind breaks limbs and throws trees by wood strength and root anchorage; they fall and break apart on landing.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
+  },
+  {
    "name": "Leaf flutter",
    "settings": [
     "leaf_flutter"
@@ -3359,6 +3426,31 @@
    ],
    "note": "",
    "what": "overstretched edges split and the rip runs.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Blast materials",
+   "settings": [
+    "PhysXBlastAsset.materials",
+    "bond_healths"
+   ],
+   "note": "",
+   "what": "pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Blast without stalls",
+   "settings": [
+    "PhysXBlastAsset.prepare_render()",
+    "initial_linear_velocity",
+    "initial_angular_velocity"
+   ],
+   "note": "",
+   "what": "piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

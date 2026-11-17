@@ -238,6 +238,7 @@ public:
 	static constexpr int RT_PARAM_GROUND_NEAR_X = 71;
 	static constexpr int RT_PARAM_GROUND_NEAR_Z = 72;
 	static constexpr int RT_PARAM_GROUND_NEAR_SIZE = 73;
+	static constexpr int RT_PARAM_VEHICLE_MUD_SPLATS = 74;
 	static constexpr int RT_PARAM_HAZE_SIGMA = 80; // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
 	static constexpr int RT_PARAM_HAZE_ALBEDO = 81;
 	static constexpr int RT_PARAM_HAZE_HEIGHT = 82; // scale height (m)
@@ -585,9 +586,19 @@ public:
 
 		bool dirty = false;
 		bool initial_pipeline_built = false;
+
+		// Last traced frame (bundle_tick) and time this variant was asked for. A variant nobody asks
+		// for any more (the start-up guess, a sample count or debug view changed since) is not
+		// rebuilt when materials arrive, and is freed after a while: each holds a full set of
+		// hit-group pipelines, which a CPU driver keeps in system memory.
+		uint64_t last_used_tick = 0;
+		uint64_t last_used_usec = 0;
 	};
 
 	HashMap<uint32_t, PipelineBundle> pipeline_bundles;
+	uint64_t bundle_tick = 2; // Advanced once per traced frame by drain_completed_compiles().
+	void _mark_bundle_used(PipelineBundle &r_bundle);
+	void _evict_unused_bundles();
 
 	// Single-lane async bundle rebuild (worker: SPIR-V + raytracing_pipeline_create; main: SBT + swap).
 	// No queue: a dirty bundle IS the target state (SceneShaderRaytracing::PipelineBundle::dirty), always

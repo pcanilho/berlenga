@@ -31,6 +31,7 @@
 #include "physx_ground_grains_3d.h"
 
 #include "../particles/mpm_fluid_solver.h"
+#include "../vehicle/physx_vehicle_3d.h"
 
 #include "core/config/engine.h"
 #include "core/math/random_number_generator.h"
@@ -268,6 +269,11 @@ void PhysXGroundGrains3D::_deposit_pass(double p_delta) {
 	const float tex = 0.0625f;
 	HashMap<Vector2i, double> land;
 	LocalVector<int> killed;
+	// Mud clods meeting a vehicle's body stick to it (mud stage 4b): the grains have no colliders.
+	LocalVector<PhysXVehicle3D *> vehicles;
+	if (mud) {
+		PhysXVehicle3D::get_mud_vehicles(vehicles);
+	}
 	for (int i = 0; i < capacity; i++) {
 		if (!alive[i]) {
 			continue;
@@ -294,6 +300,24 @@ void PhysXGroundGrains3D::_deposit_pass(double p_delta) {
 			}
 		}
 		const Vector3 p = last[i];
+		if (alive[i] == 2 && age[i] > 0.05f && !vehicles.is_empty()) {
+			PhysXVehicle3D *hit = nullptr;
+			for (PhysXVehicle3D *veh : vehicles) {
+				if (veh->mud_box_contains(p)) {
+					hit = veh;
+					break;
+				}
+			}
+			if (hit) {
+				hit->add_mud_splat(p, vel[i], (float)pvol);
+				stuck_volume += pvol;
+				deposited_volume += pvol;
+				killed.push_back(i);
+				alive[i] = 0;
+				live--;
+				continue;
+			}
+		}
 		const Vector3 o = (p - center).abs();
 		const bool outside = alive[i] == 2 && (o.x > half.x || o.y > half.y || o.z > half.z);
 		const bool flown = p.y > from_y[i] + size || age[i] > 0.25f;
@@ -583,6 +607,7 @@ void PhysXGroundGrains3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_mud_spray", "enabled"), &PhysXGroundGrains3D::set_mud_spray);
 	ClassDB::bind_method(D_METHOD("is_mud_spray"), &PhysXGroundGrains3D::is_mud_spray);
 	ClassDB::bind_method(D_METHOD("get_mud_grains"), &PhysXGroundGrains3D::get_mud_grains);
+	ClassDB::bind_method(D_METHOD("get_stuck_volume"), &PhysXGroundGrains3D::get_stuck_volume);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_spray"), "set_mud_spray", "is_mud_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_flight_time", PROPERTY_HINT_RANGE, "0.1,30,0.1,suffix:s"), "set_max_flight_time", "get_max_flight_time");
 }

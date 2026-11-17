@@ -438,6 +438,13 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   raises the mud level round it with a radial streak along the clod's flight. Clod sizes: three meshes (2, 3.5,
   6 cm) chosen by slot.
 - Checks: clods thrown at a parked car stick, volume kept (dug = air + landed + stuck); raster vs PT crop.
+- **Built.** As proposed, with these choices: the splat texture is 64 x 16 RGBA float (32 clods a vehicle, 16
+  vehicles), published as the global `vehicle_mud_splats` and to the path tracer as rt_param 74; the row and count
+  are instance-uniform slot 11. A clod landing within half a radius of a splat merges into it (it widens), so the
+  ring is not filled by one spot. Splats have a ragged rim and a halo of droplets (the splat noise thresholds them),
+  and wash off in standing water. Clod sizes: the MPM render already scales each slot 0.75 to 1.25 and tumbles it.
+  `PhysXVehicle3D.add_mud_splat()`, `get_mud_splat_count()`; `PhysXGroundGrains3D.get_stuck_volume()`. Bench:
+  `--test=clog` (a kick at a parked car's side sticks, volume kept), `--view=bodymud --splat`.
 
 #### Research (4c: splashes in standing water)
 

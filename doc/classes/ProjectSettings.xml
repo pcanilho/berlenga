@@ -3777,6 +3777,10 @@
 		<member name="rendering/textures/webp_compression/lossless_compression_factor" type="float" setter="" getter="" default="25">
 			The default compression factor for lossless WebP. Decompression speed is mostly unaffected by the compression factor. Supported values are 0 to 100.
 		</member>
+		<member name="rendering/transparency/refraction_second_layer" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], the Forward+ renderer depth-peels the transparent pass once before it is drawn, so a refractive surface (one reading [code]hint_screen_texture[/code], such as a [BaseMaterial3D] with refraction or transmission) also sees the refractive or transparent surface directly behind it, for example the pool under a stream of water or a second pane of glass. A lookup reads that layer only where it lies clearly behind the surface doing the lookup, so a surface never refracts its own image. Costs two depth-only passes and one colour pass over the screen-reading surfaces and one more screen copy, and only when a visible material reads the screen texture.
+			[b]Note:[/b] Only one extra layer is peeled; a third refractive layer still sees the opaque scene. Not used in multiview (XR).
+		</member>
 		<member name="rendering/viewport/hdr_2d" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], enables [member Viewport.use_hdr_2d] on the root Viewport. 2D rendering will use a high dynamic range (HDR) [code]RGBA16[/code] format framebuffer. Additionally, 2D rendering will be performed on linear values and will be converted using the appropriate transfer function immediately before blitting to the screen.
 			Practically speaking, this means that the end result of the Viewport will not be clamped to the [code]0-1[/code] range and can be used in 3D rendering without color encoding adjustments. This allows 2D rendering to take advantage of effects requiring high dynamic range (e.g. 2D glow) as well as substantially improves the appearance of effects requiring highly detailed gradients.

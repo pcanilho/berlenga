@@ -42,6 +42,7 @@
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 
@@ -2087,6 +2088,7 @@ void RockField3D::_update_streaming(bool p_all) {
 // are built on worker threads as they are first wanted and dropped when no stone has wanted them for a while.
 void RockField3D::_update_close_up(bool p_wait) {
 	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	_finish_moss(p_wait);
 	// Finished builds.
 	for (int i = int(close_jobs.size()) - 1; i >= 0; i--) {
 		CloseJob &cj = close_jobs[i];
@@ -2227,6 +2229,9 @@ void RockField3D::_update_close_up(bool p_wait) {
 			mm->set_instance_custom_data(int(k), cd[k]);
 		}
 	}
+	if (moss_cushions) {
+		_update_moss(near_xf, near_cd, p_wait);
+	}
 	// Drop close-up shapes nothing has wanted for half a minute, oldest first, beyond the budget.
 	int ready = 0;
 	for (KeyValue<uint32_t, Library> &kv : libraries) {
@@ -2254,6 +2259,179 @@ void RockField3D::_clear_close_up() {
 	}
 	close_instances.clear();
 	close_dirty = true;
+	_clear_moss();
+}
+
+// Moss shells (docs/ideas/rocks.md, "Moss cushions as real geometry"): each close-up stone 30 cm or bigger gets a
+// shell built from its close-up shape where the rock shader paints moss; built two at a time on workers, kept
+// while the stone stays close.
+void RockField3D::_update_moss(const HashMap<uint64_t, LocalVector<Transform3D>> &p_near_xf, const HashMap<uint64_t, LocalVector<Color>> &p_near_cd, bool p_wait) {
+	for (KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		kv.value.wanted = false;
+	}
+	int building = 0;
+	for (const KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		building += kv.value.job ? 1 : 0;
+	}
+	for (const KeyValue<uint64_t, LocalVector<Transform3D>> &kv : p_near_xf) {
+		const uint32_t lk = uint32_t(kv.key >> 16);
+		const int slot = int(kv.key & 0xFFFF);
+		Library *lib = libraries.getptr(lk);
+		if (!lib || slot >= int(lib->close.size()) || lib->close[slot].is_null()) {
+			continue;
+		}
+		const LocalVector<Color> *cds = p_near_cd.getptr(kv.key);
+		if (!cds) {
+			continue;
+		}
+		for (uint32_t k = 0; k < kv.value.size(); k++) {
+			const Transform3D &xf = kv.value[k];
+			const Color &cd = (*cds)[k];
+			if (cd.b < 0.15f) {
+				continue; // stones under 30 cm: their moss stays the shader's
+			}
+			const Vector3i key = Vector3i((xf.origin * 100.0).round());
+			if (MossShell *ms = moss_shells.getptr(key)) {
+				ms->wanted = true;
+				continue;
+			}
+			if (building >= (p_wait ? 16 : 2)) {
+				continue; // two at a time at walking pace; more when a build waits for the finished picture
+			}
+			RockMoss::Source *src = moss_sources.getptr(kv.key);
+			if (!src) {
+				const Array arr = lib->close[slot]->surface_get_arrays(0);
+				RockMoss::Source ns;
+				ns.vertices = arr[Mesh::ARRAY_VERTEX];
+				ns.normals = arr[Mesh::ARRAY_NORMAL];
+				ns.uv = arr[Mesh::ARRAY_TEX_UV];
+				ns.uv2 = arr[Mesh::ARRAY_TEX_UV2];
+				ns.color = arr[Mesh::ARRAY_COLOR];
+				ns.indices = arr[Mesh::ARRAY_INDEX];
+				src = &moss_sources.insert(kv.key, ns)->value;
+			}
+			RockMoss::Job *job = memnew(RockMoss::Job);
+			job->source = *src;
+			job->params.xform = xf;
+			job->params.custom = cd;
+			job->params.moss_cover = float(moss_cover);
+			const Ref<ShaderMaterial> mat = _material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH);
+			if (mat.is_valid()) {
+				const Variant pd = mat->get_shader_parameter("pole_direction");
+				if (pd.get_type() == Variant::VECTOR3) {
+					job->params.pole_direction = pd;
+				}
+				const Variant as = mat->get_shader_parameter("aspect_strength");
+				if (as.get_type() == Variant::FLOAT) {
+					job->params.aspect_strength = float(as);
+				}
+				const Variant ch = mat->get_shader_parameter("contact_height");
+				if (ch.get_type() == Variant::FLOAT) {
+					job->params.contact_height = float(ch);
+				}
+			}
+			MossShell ms;
+			ms.job = job;
+			ms.task = WorkerThreadPool::get_singleton()->add_native_task(&RockMoss::build, job, false, "RockField3D moss");
+			moss_shells.insert(key, ms);
+			building++;
+		}
+	}
+	// Shells of stones no longer close go (a building one when it finishes).
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		if (!kv.value.wanted && !kv.value.job) {
+			if (kv.value.node) {
+				kv.value.node->queue_free();
+			}
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		moss_shells.erase(k);
+	}
+}
+
+void RockField3D::_finish_moss(bool p_wait) {
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		MossShell &ms = kv.value;
+		if (!ms.job) {
+			continue;
+		}
+		if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(ms.task)) {
+			continue;
+		}
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(ms.task);
+		RockMoss::Job *job = ms.job;
+		ms.job = nullptr;
+		ms.task = WorkerThreadPool::INVALID_TASK_ID;
+		if (!ms.wanted) {
+			drop.push_back(kv.key);
+		} else if (job->triangles > 0 && is_inside_tree()) {
+			Ref<ArrayMesh> mesh;
+			mesh.instantiate();
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, job->arrays);
+			mesh->surface_set_material(0, RockMoss::get_material());
+			MeshInstance3D *mi = memnew(MeshInstance3D);
+			mi->set_mesh(mesh);
+			mi->set_meta("rock_moss", true);
+			add_child(mi, false, INTERNAL_MODE_BACK);
+			mi->set_as_top_level(true);
+			mi->set_global_transform(job->params.xform);
+			ms.node = mi;
+			ms.triangles = job->triangles;
+		}
+		memdelete(job);
+	}
+	for (const Vector3i &k : drop) {
+		moss_shells.erase(k);
+	}
+}
+
+void RockField3D::_clear_moss() {
+	for (KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		if (kv.value.job) {
+			WorkerThreadPool::get_singleton()->wait_for_task_completion(kv.value.task);
+			memdelete(kv.value.job);
+		}
+		if (kv.value.node) {
+			kv.value.node->queue_free();
+		}
+	}
+	moss_shells.clear();
+}
+
+void RockField3D::set_moss_cushions(bool p_enabled) {
+	moss_cushions = p_enabled;
+	if (!moss_cushions) {
+		_clear_moss();
+	}
+	close_dirty = true;
+}
+
+int RockField3D::get_moss_shell_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		n += kv.value.node ? 1 : 0;
+	}
+	return n;
+}
+
+int RockField3D::get_moss_triangle_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		n += kv.value.triangles;
+	}
+	return n;
+}
+
+int RockField3D::get_moss_pending() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, MossShell> &kv : moss_shells) {
+		n += kv.value.job ? 1 : 0;
+	}
+	return n;
 }
 
 int RockField3D::get_close_up_shape_count() const {
@@ -2787,6 +2965,164 @@ void RockField3D::set_live_rockfall(bool p_enabled) {
 
 void RockField3D::_update_process() {
 	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall || ground_contact));
+	set_physics_process_internal(!Engine::get_singleton()->is_editor_hint() && rockfall_dust);
+}
+
+/* Rockfall dust */
+
+void RockField3D::set_rockfall_dust(bool p_enabled) {
+	if (rockfall_dust == p_enabled) {
+		return;
+	}
+	rockfall_dust = p_enabled;
+	if (!rockfall_dust) {
+		dust_tracks.clear();
+		dust_events.clear();
+	}
+	if (is_inside_tree()) {
+		_update_dust_node();
+		_update_process();
+	}
+}
+
+Node *RockField3D::get_rockfall_dust_node() const {
+	return Object::cast_to<Node>(ObjectDB::get_instance(dust_node));
+}
+
+// The field's own PhysXRockDust3D (godot_physx, built with Flow), called by name so the module builds without it.
+void RockField3D::_update_dust_node() {
+	Node *n = get_rockfall_dust_node();
+	if (!rockfall_dust || Engine::get_singleton()->is_editor_hint()) {
+		if (n) {
+			n->queue_free();
+		}
+		dust_node = ObjectID();
+		return;
+	}
+	if (n || !ClassDB::class_exists("PhysXRockDust3D")) {
+		return;
+	}
+	Object *obj = ClassDB::instantiate("PhysXRockDust3D");
+	Node3D *node = Object::cast_to<Node3D>(obj);
+	if (!node) {
+		if (obj) {
+			memdelete(obj);
+		}
+		return;
+	}
+	node->set_name("RockfallDust");
+	add_child(node, false, INTERNAL_MODE_BACK);
+	node->set("rock_field", node->get_path_to(this));
+	dust_node = node->get_instance_id();
+}
+
+void RockField3D::take_rockfall_dust(LocalVector<Dust> &r_events) {
+	r_events = dust_events;
+	dust_events.clear();
+}
+
+void RockField3D::_add_dust(const Vector3 &p_position, const Vector3 &p_velocity, float p_mass, float p_radius) {
+	if (p_mass <= 0.0f) {
+		return;
+	}
+	dust_total += p_mass;
+	if (dust_events.size() >= 256) {
+		return; // nobody is draining them
+	}
+	Dust d;
+	d.position = p_position;
+	d.velocity = p_velocity;
+	d.mass = p_mass;
+	d.radius = p_radius;
+	dust_events.push_back(d);
+}
+
+// Every live piece of every broken stone, on the physics tick (its body's own velocity). An impact is a change of
+// more than 2.5 m/s in one tick (gravity adds 0.16 m/s at 60 Hz); its fines are the kinetic energy it took out of
+// the piece times dust_per_joule. A piece that appears in a stone already tracked broke off: its new faces shed
+// 0.01% of its mass. A piece moving over 0.8 m/s with its underside on the ground abrades 2e-6 of its mass per metre.
+// Rain on the rock damps it all (wet fines stick): 1 / (1 + rain / 2 mm/h).
+void RockField3D::_update_dust(double p_delta) {
+	if (!rockfall_dust || p_delta <= 0.0) {
+		return;
+	}
+	if (!get_rockfall_dust_node()) {
+		dust_events.clear(); // no Flow to take them: keep only the totals
+	}
+	dust_tick++;
+	const float dt = float(p_delta);
+	const WeatherMap3D *w = WeatherMap3D::get_active();
+	const TerrainGenerator3D *gen = _get_generator();
+	HashSet<uint64_t> live;
+	for (const ObjectID &id : breakables) {
+		Node *node = Object::cast_to<Node>(ObjectDB::get_instance(id));
+		if (!node) {
+			continue;
+		}
+		const uint64_t key = uint64_t(id);
+		live.insert(key);
+		DustTrack &tr = dust_tracks[key];
+		const int n = node->call("get_piece_count");
+		for (int i = 0; i < n; i++) {
+			const uint32_t chunk = uint32_t(int64_t(node->call("get_piece_chunk", i)));
+			const float m = node->call("get_piece_mass", i);
+			if (chunk == UINT32_MAX || m <= 0.0f) {
+				continue;
+			}
+			const Vector3 v = node->call("get_piece_linear_velocity", i);
+			const Vector3 c = node->call("get_piece_center", i);
+			const float r = Math::pow(3.0f * m / (4.0f * float(Math::PI) * float(break_density)), 1.0f / 3.0f);
+			const float wet = w ? 1.0f / (1.0f + MAX(float(w->get_rain_at(c)), 0.0f) / 2.0f) : 1.0f;
+			const Vector3 under = c - Vector3(0, r * 0.8f, 0);
+			PieceTrack *pt = tr.pieces.getptr(chunk);
+			if (!pt) {
+				if (tr.ticks > 0) {
+					_add_dust(c, v, m * 1e-4f * wet, r);
+				}
+				PieceTrack t;
+				t.velocity = v;
+				t.tick = dust_tick;
+				t.seen = 1;
+				tr.pieces.insert(chunk, t);
+				continue;
+			}
+			if (pt->tick + 1 == dust_tick && pt->seen >= 2) {
+				const Vector3 dv = v - pt->velocity;
+				if (dv.length() > 2.5f) {
+					const float lost = 0.5f * m * (pt->velocity.length_squared() - v.length_squared());
+					if (lost > 0.0f) {
+						_add_dust(under, pt->velocity, lost * float(dust_per_joule) * wet, r);
+						dust_impacts++;
+					}
+				} else if (gen && v.length() > 0.8f && gen->get_height(c) > c.y - r * 1.4f) {
+					_add_dust(under, v, m * 2e-6f * v.length() * dt * wet, r);
+				}
+			}
+			pt->velocity = v;
+			pt->tick = dust_tick;
+			pt->seen++;
+		}
+		// Pieces gone (merged, killed, freed) leave the track.
+		LocalVector<uint32_t> gone;
+		for (const KeyValue<uint32_t, PieceTrack> &kv : tr.pieces) {
+			if (kv.value.tick != dust_tick) {
+				gone.push_back(kv.key);
+			}
+		}
+		for (uint32_t g : gone) {
+			tr.pieces.erase(g);
+		}
+		tr.ticks++;
+	}
+	LocalVector<uint64_t> dead;
+	for (const KeyValue<uint64_t, DustTrack> &kv : dust_tracks) {
+		if (!live.has(kv.key)) {
+			dead.push_back(kv.key);
+		}
+	}
+	for (uint64_t k : dead) {
+		dust_tracks.erase(k);
+	}
 }
 
 void RockField3D::restore_broken() {
@@ -2865,14 +3201,18 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	// Close-up shapes too, waiting for them (stills and benches want the finished picture): two passes, the first
 	// starts the builds, the second places them.
 	if (close_up_enabled) {
-		for (int pass = 0; pass < 8; pass++) {
+		for (int pass = 0; pass < 64; pass++) {
 			close_dirty = true;
 			_update_close_up(true);
 			if (close_jobs.is_empty()) {
 				close_dirty = true;
 				_update_close_up(true);
-				if (close_jobs.is_empty()) {
-					break;
+				if (close_jobs.is_empty() && get_moss_pending() == 0) {
+					close_dirty = true;
+					_update_close_up(true); // the moss of stones whose shapes the last pass placed
+					if (get_moss_pending() == 0) {
+						break;
+					}
 				}
 			}
 		}
@@ -3509,6 +3849,7 @@ void RockField3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			auto_ground_found = false;
 			_update_process();
+			_update_dust_node();
 			fall_rng.seed(uint64_t(seed) * 2654435761u + 17);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
@@ -3522,9 +3863,14 @@ void RockField3D::_notification(int p_what) {
 				_update_contact(false);
 			}
 		} break;
+		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			_update_dust(get_physics_process_delta_time());
+		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			clear();
 			_clear_contact();
+			dust_tracks.clear();
+			dust_events.clear();
 		} break;
 	}
 }
@@ -3599,6 +3945,13 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_live_rockfall_max"), &RockField3D::get_live_rockfall_max);
 	ClassDB::bind_method(D_METHOD("get_rockfall_trigger"), &RockField3D::get_rockfall_trigger);
 	ClassDB::bind_method(D_METHOD("trigger_rockfall", "position", "radius"), &RockField3D::trigger_rockfall, DEFVAL(30.0));
+	ClassDB::bind_method(D_METHOD("set_rockfall_dust", "enabled"), &RockField3D::set_rockfall_dust);
+	ClassDB::bind_method(D_METHOD("is_rockfall_dust"), &RockField3D::is_rockfall_dust);
+	ClassDB::bind_method(D_METHOD("set_rockfall_dust_per_joule", "mass"), &RockField3D::set_rockfall_dust_per_joule);
+	ClassDB::bind_method(D_METHOD("get_rockfall_dust_per_joule"), &RockField3D::get_rockfall_dust_per_joule);
+	ClassDB::bind_method(D_METHOD("get_rockfall_dust_total"), &RockField3D::get_rockfall_dust_total);
+	ClassDB::bind_method(D_METHOD("get_rockfall_dust_impacts"), &RockField3D::get_rockfall_dust_impacts);
+	ClassDB::bind_method(D_METHOD("get_rockfall_dust_node"), &RockField3D::get_rockfall_dust_node);
 	ClassDB::bind_method(D_METHOD("set_collision_enabled", "enabled"), &RockField3D::set_collision_enabled);
 	ClassDB::bind_method(D_METHOD("is_collision_enabled"), &RockField3D::is_collision_enabled);
 	ClassDB::bind_method(D_METHOD("set_collision_min_size", "metres"), &RockField3D::set_collision_min_size);
@@ -3624,6 +3977,11 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
 	ClassDB::bind_method(D_METHOD("set_ground_contact", "enabled"), &RockField3D::set_ground_contact);
+	ClassDB::bind_method(D_METHOD("set_moss_cushions", "enabled"), &RockField3D::set_moss_cushions);
+	ClassDB::bind_method(D_METHOD("is_moss_cushions_enabled"), &RockField3D::is_moss_cushions_enabled);
+	ClassDB::bind_method(D_METHOD("get_moss_shell_count"), &RockField3D::get_moss_shell_count);
+	ClassDB::bind_method(D_METHOD("get_moss_triangle_count"), &RockField3D::get_moss_triangle_count);
+	ClassDB::bind_method(D_METHOD("get_moss_pending"), &RockField3D::get_moss_pending);
 	ClassDB::bind_method(D_METHOD("is_ground_contact_enabled"), &RockField3D::is_ground_contact_enabled);
 	ClassDB::bind_method(D_METHOD("get_contact_texture"), &RockField3D::get_contact_texture);
 	ClassDB::bind_method(D_METHOD("get_last_contact_usec"), &RockField3D::get_last_contact_usec);
@@ -3654,6 +4012,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_blend_height", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_ground_blend_height", "get_ground_blend_height");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_ground_material", "get_ground_material");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_contact"), "set_ground_contact", "is_ground_contact_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "moss_cushions"), "set_moss_cushions", "is_moss_cushions_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_stones_per_cell", PROPERTY_HINT_RANGE, "1,100000,1"), "set_max_stones_per_cell", "get_max_stones_per_cell");
@@ -3673,6 +4032,8 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_rockfall_rate", PROPERTY_HINT_RANGE, "0,60,0.1,or_greater"), "set_live_rockfall_rate", "get_live_rockfall_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_rockfall_radius", PROPERTY_HINT_RANGE, "10,1000,1,suffix:m"), "set_live_rockfall_radius", "get_live_rockfall_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_rockfall_max", PROPERTY_HINT_RANGE, "1,128,1"), "set_live_rockfall_max", "get_live_rockfall_max");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rockfall_dust"), "set_rockfall_dust", "is_rockfall_dust");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rockfall_dust_per_joule", PROPERTY_HINT_RANGE, "0,0.001,0.000001,suffix:kg/J"), "set_rockfall_dust_per_joule", "get_rockfall_dust_per_joule");
 	ADD_SIGNAL(MethodInfo("rockfall", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "mass")));
 	ADD_GROUP("Collision", "collision_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");

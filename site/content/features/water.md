@@ -9,6 +9,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 - **Shadows on water** (always on): rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).
 - **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.
+- **Two-layer refraction** (`rendering/transparency/refraction_second_layer`): in raster, water and glass refract the water or glass behind them, so a pool shows through a falling stream.
 
   ![A pool with a checkered floor and coloured posts, refraction off and on](media/water-refraction.jpg)
 

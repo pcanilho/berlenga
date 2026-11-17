@@ -142,6 +142,9 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_piece_transform", "index"), &PhysXDestructible3D::get_piece_transform);
 	ClassDB::bind_method(D_METHOD("get_piece_chunks", "index"), &PhysXDestructible3D::get_piece_chunks);
 	ClassDB::bind_method(D_METHOD("get_piece_chunk", "index"), &PhysXDestructible3D::get_piece_chunk);
+	ClassDB::bind_method(D_METHOD("get_piece_linear_velocity", "index"), &PhysXDestructible3D::get_piece_linear_velocity);
+	ClassDB::bind_method(D_METHOD("get_piece_center", "index"), &PhysXDestructible3D::get_piece_center);
+	ClassDB::bind_method(D_METHOD("get_piece_mass", "index"), &PhysXDestructible3D::get_piece_mass);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
@@ -1649,6 +1652,31 @@ Transform3D PhysXDestructible3D::get_piece_transform(int p_index) const {
 		return Transform3D();
 	}
 	return PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+}
+
+Vector3 PhysXDestructible3D::get_piece_linear_velocity(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return Vector3();
+	}
+	return PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
+}
+
+Vector3 PhysXDestructible3D::get_piece_center(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return Vector3();
+	}
+	const Transform3D xf = PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+	if (pieces[p_index].chunk_indices.is_empty()) {
+		return xf.origin;
+	}
+	return xf.xform(_chunk_centroid_local(pieces[p_index].chunk_indices[0]));
+}
+
+float PhysXDestructible3D::get_piece_mass(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return 0.0f;
+	}
+	return PhysicsServer3D::get_singleton()->body_get_param(pieces[p_index].body, PhysicsServer3D::BODY_PARAM_MASS);
 }
 
 uint32_t PhysXDestructible3D::get_piece_chunk(int p_index) const {

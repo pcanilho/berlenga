@@ -637,6 +637,8 @@ void BaseMaterial3D::init_shaders() {
 		// Its finer near field (docs/ideas/mud.md, stage 0), used inside its own square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_near_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_near_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The clods stuck to vehicles' bodies (docs/ideas/mud.md, stage 4b): a row per PhysXVehicle3D.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/vehicle_mud_splats", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// And its wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the patch.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -992,6 +994,8 @@ instance uniform vec4 mud_fill : instance_index(7);
 instance uniform vec4 mud_spray : instance_index(8);
 instance uniform vec4 mud_body : instance_index(9);
 instance uniform vec4 mud_color : instance_index(10);
+instance uniform vec4 mud_splat : instance_index(11);
+global uniform sampler2D vehicle_mud_splats;
 
 )";
 	code += R"(// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
@@ -1063,11 +1067,39 @@ float vmud_height(float p_level, float p_splat) {
 	float c = vmud_cover(p_level, p_splat);
 	return c * (0.004 + 0.0015 * p_splat);
 }
-// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows): (cover, relief gradient in world
+// A clod that stuck to the body (mud stage 4b; p_a: where, in the vehicle's frame, and its radius; p_b: its flight
+// direction and amount): a splat spread along the flight, a short tail ahead of the hit and a shorter rim behind it.
+float vmud_splat_one(vec3 p_p, vec4 p_a, vec4 p_b) {
+	vec3 d = p_p - p_a.xyz;
+	float along = dot(d, p_b.xyz);
+	float e = length(d - along * p_b.xyz) / p_a.w + max(along, 0.0) / (2.5 * p_a.w) + max(-along, 0.0) / (0.7 * p_a.w);
+	// A ragged rim (the splash's fingers) and a halo of droplets thrown past it, thresholded by the splat field.
+	e *= 0.75 + 0.5 * vmud_noise(p_p * 22.0 + 7.0);
+	float core = 1.0 - smoothstep(0.6, 1.0, e);
+	float halo = 0.5 * (1.0 - smoothstep(1.0, 2.2, e));
+	return p_b.w * max(core, halo);
+}
+)";
+	code += R"(// The clods stuck to this vehicle (mud stage 4b): its row of PhysXVehicle3D's splat texture, two texels a clod.
+float vmud_splats_level(vec3 p_p, vec4 p_splat) {
+	float lvl = 0.0;
+	int row = int(p_splat.x);
+	int n = int(p_splat.y);
+	for (int k = 0; k < n; k++) {
+		lvl = max(lvl, vmud_splat_one(p_p, texelFetch(vehicle_mud_splats, ivec2(2 * k, row), 0), texelFetch(vehicle_mud_splats, ivec2(2 * k + 1, row), 0)));
+	}
+	return lvl;
+}
+)";
+	code += R"(// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows; p_splat: its row of stuck clods
+// and their count, see vmud_splats_level()): (cover, relief gradient in world
 // space (x, y, z) per m). The gradient fades out over a footprint p_fw too wide to hold the lumps.
-vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
+vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat) {
 	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
 	float lvl = vmud_level(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body);
+	if (p_splat.y > 0.0) {
+		lvl = max(lvl, vmud_splats_level(p, p_splat));
+	}
 	if (lvl <= 0.0) {
 		return vec4(0.0);
 	}
@@ -2818,7 +2850,7 @@ void fragment() {)";
 	{
 		float vmud_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 		float vmud_fp = PROJECTION_MATRIX[3][3] != 0.0 ? vmud_pix : length(VERTEX) * vmud_pix;
-		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body);
+		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body, mud_splat);
 		if (vmud.x > 0.0) {
 			float vmud_specular = SPECULAR;
 			vmud_apply(vmud.x, mud_color.rgb, mud_body.z, ALBEDO, ROUGHNESS, METALLIC, vmud_specular);

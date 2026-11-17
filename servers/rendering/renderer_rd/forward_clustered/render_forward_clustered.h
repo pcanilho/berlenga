@@ -517,7 +517,16 @@ protected:
 		RID irradiance;
 		RID direction;
 	} pt_light_cache;
+	// Two-layer refraction: the front screen-reading surfaces' depth, bound at set 1 binding 39 while the
+	// second-layer pass draws (RID(): a black default).
+	RID peel_depth_bound;
+	RID peel_depth_second_bound; // the second layer's depth, set 1 binding 41, for the transparent pass
+	RID peel_screen_bound; // the screen copy with the second layer, set 1 binding 40 (RID(): the plain screen copy)
+	bool peel_front_pass = false; // the front-depth pass draws with each surface's own material
 
+	// Two-layer refraction (depth peeling): draws the screen-reading surfaces behind the front ones into the scene
+	// and into a second screen copy beside the opaque one, so the transparent pass's refraction (water, glass) shows them.
+	void _render_refraction_second_layer(const RenderDataRD *p_render_data, const Ref<RenderSceneBuffersRD> &p_rb, const Ref<RenderBufferDataForwardClustered> &p_rb_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_color_pass_flags, bool p_reverse_cull, const SceneShaderForwardClustered::ShaderSpecialization &p_base_specialization, bool p_no_fog, const Size2i &p_screen_size, const Color &p_default_bg_color);
 	uint32_t _setup_environment(const RenderDataRD *p_render_data, bool p_no_fog, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, bool p_opaque_render_buffers = false, bool p_apply_alpha_multiplier = false, bool p_pancake_shadows = false, float p_frag_coord_scale = 1.0f);
 	void _setup_voxelgis(const PagedArray<RID> &p_voxelgis);
 	void _setup_lightmaps(const RenderDataRD *p_render_data, const PagedArray<RID> &p_lightmaps, const Transform3D &p_cam_transform);
