@@ -1656,6 +1656,35 @@ strands a leaf-base stub hang or lie across it as the sheaths' net. Segments are
 16-23 a leaf, the tips drooping (docs, 17 Nov). Mature 1.3 m,
 39k triangles (46k in flower); thicket 150k (on the optimisation list: segments could merge in far LODs).
 
+### 5x. Next round after the shrubs (research, 17 Nov; on a card)
+
+The heath and scrub list is done (5u-5w). What the trees still lack, in order of what a scene
+would show first:
+
+1. **Mediterranean trees over the scrub.** The scrub has no canopy of its own. The Algarve and
+   Iberian coast species (European Atlas of Forest Tree Species, 2016: chapters on Pinus pinea,
+   P. pinaster, Quercus suber, Q. ilex, Olea europaea, Ceratonia siliqua; Flora iberica):
+   - *Stone pine*: a flat umbrella crown on a clear, often leaning stem, the lower limbs shed
+     early; long needles in pairs, big glossy cones three years ripening; deep red-brown plates.
+   - *Maritime pine*: tall, open, crooked on dunes and cliffs; thick deeply furrowed bark; long
+     stiff needles, clustered cones that stay shut for years.
+   - *Cork oak*: a broad, open evergreen crown of grey-green leaves; the cork bark, thick and
+     corky-ridged, and on harvested trees the stripped stem in red-brown, darkening over the
+     nine years to the next cut, the year painted on (a story the bark builder can tell).
+   - *Holm oak*: a dense, dark, rounded evergreen crown; small holly-like leaves (spiny when
+     young or browsed), grey-felted beneath; smooth then finely checkered grey bark.
+   - *Wild olive* and *carob*: low, gnarled, many-stemmed small trees on limestone, the olive
+     silver-backed and twisted, the carob dark glossy pinnate with long brown pods.
+   Built as presets through the shoot growth model (as the scrub); stone pine needs a new
+   crown habit (apical dominance lost early: the flat umbrella), cork oak a new bark kind.
+2. **Triangle diet for shrubs and far LODs.** Thicket forms reach 150k (palm) and more (gorse
+   spines); the open white willow is 10M. Merging a palm fan's segments and a gorse shoot's
+   spines in the coarser LODs, and capping per-form budgets, measured in the cloud (triangles
+   and memory; GPU cost stays on the PC queue). Helps scene's forest stay under 15 GB.
+3. **Coppice cutting in stands.** 5l's "not yet": coppice-with-standards (hazel stools under
+   scattered oak standards) cut in coupes of different ages, so a stand shows fresh-cut
+   stools, young regrowth and full-grown poles side by side.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
