@@ -140,7 +140,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Sky occlusion** (`TerrainGenerator3D.sky_occlusion`, `TerrainMaterial3D.sky_occlusion`): raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.
 
-- **Rock detail** (`rock_detail_enabled`): steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.
+- **Rock detail** (`rock_detail_enabled`): steep rock shows bedding planes and breaks into irregular jointed blocks, and scree and till show loose stones that stand out of the gravel in parallax with their own shadows, also path traced; no textures and no stretching on any face.
 
 - **Cliff relief** (Landscape3D `cliff_relief`, metres, 0.6 m by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`).
 
