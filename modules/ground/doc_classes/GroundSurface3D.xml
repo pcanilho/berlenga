@@ -73,7 +73,7 @@
 			<return type="Vector4" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The desiccation cracks at [param position] (see [member desiccation_cracks]): how far open they are (0 to 1), the plate size in metres, how regular the pattern has grown (0 to 1) and how dry the crust is (0 to 1).
+				The desiccation cracks at [param position] (see [member desiccation_cracks]): how far open they are (0 to 1), the plate size in metres, how regular the pattern has grown (0 to 1) and how dry the crust is (0 to 1), or, negative, how damp the drying layer still is (to -1).
 			</description>
 		</method>
 		<method name="get_dent_at" qualifiers="const">

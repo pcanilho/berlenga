@@ -293,21 +293,34 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 
 - **Drying.** Per lattice cell, clay-rich bare ground (not sand, litter, rock, snow) soaked by standing water or
   to saturation keeps the share of water its drying layer still holds; once the ground round it is no longer
-  wet (moisture under `mud_wet_start`) it loses it to evaporation (Penman, as the standing water), from a layer
-  3 cm thick (to 6 cm over deep mud) at 40% porosity. `runoff_time_scale` speeds it up like the rest.
-- **Cracks.** Past a third of its water lost the top cracks, fully open at four fifths. The pattern is the
-  Voronoi cells of a hexagonal seed lattice, the crack distance Quilez's two-pass Voronoi border distance:
-  plates about four times the drying layer (spacing in proportion to thickness, Groisman and Kaplan 1994),
-  primary cracks to 8% of the plate (clay's linear shrinkage), secondary ones at half the size from half way
-  (hierarchical cracking, Bohn et al. 2005), plate rims curled up by up to 3% of the plate as the top shrinks
-  first (Allen 1986). Wetting closes them and counts a cycle; the seed jitter falls with the cycles, so the
-  junctions drift towards 120 degrees and the plates towards hexagons (Goehring et al. 2010).
-- **Drawn.** A third block in the ground wet map (opening, plate size, regularity, crust) read by
-  `ground_crack_*()` in material.cpp and the raygen alike. The patch's vertices carry the cracks their spacing
-  can (`ground_deform_top()`: 1.6 cm in the near field), the finer ones darken as slots that let little light
-  down (only what the mesh cannot show), and the dry crust goes matte.
-- **Checks** (`--test=cracks`): soaked clay stays whole; dried, it cracks with 10 cm plates; rain closes the
-  cracks; the next drying cracks again, more regular; sand never cracks. `--view=ruts --water=mm --dry` shoots it.
+  wet (moisture under `mud_wet_start`) it loses it to evaporation (Penman, as the standing water) at 40%
+  porosity. The layer is the soft top the water worked: about 6 mm where the ground was only saturated, plus
+  0.6 of the deepest water that stood on it (to 5 cm), thinner in sandier soil. So a dried puddle's thin rim dries
+  first, into small plates and fine cracks, and its deep centre stays dark with water longer and cracks into
+  large plates; a layer under about 1 cm (ground only saturated) shows none. `runoff_time_scale` speeds it up like the rest.
+- **Cracks in generations** (first version, Voronoi at two overlapping scales, read as a drawn net: replaced).
+  Past a third of its water lost the top cracks, fully open at four fifths, plates about four times the layer
+  (Groisman and Kaplan 1994). Hierarchical domain division (Bohn, Pauchard and Couder 2005, PRE 71 046214/5):
+  first-generation cracks meet at about 120 degrees (Voronoi cells of a jittered hexagonal lattice, Quilez's
+  two-pass border distance); each domain splits across its long axis (a line through its seed towards its nearest
+  neighbour, so square to the shared edge: T junctions); each half splits again square to that, the third
+  generation free to end short and taper out. Widths share the clay's ~8% linear shrinkage (0.5, 0.3, 0.17 of it)
+  and open in turn as the layer dries; depths 1, 0.75, 0.45 of the layer; widths wander along each crack and the
+  whole pattern meanders (a smooth warp). Plate rims curl up to 35% of the layer over an eighth of a domain
+  (Allen 1986). Wetting closes them and counts a cycle; with cycles the jitter and the later generations fade,
+  so the plates go hexagonal with Y junctions (Goehring et al. 2010; Goehring 2013, "Evolving fracture patterns").
+- **Drawn as geometry first.** A third block in the ground wet map (opening, plate size, regularity, crust or
+  minus dampness) read by `ground_cracks()` and `ground_crack_height()` in material.cpp and the raygen alike. The
+  height is box-filtered to a footprint: a crack narrower than it becomes a dip of the same volume. The patch's
+  vertices take it filtered to 1.5 vertex spacings (`ground_deform_top()`: real walls and rims in the 1.6 cm near
+  field, which PT shadows); the shading adds only what the mesh cannot carry: the slope difference between the
+  pixel's footprint and the mesh's, and a slot's sky view w / (w + 2 d) on the unresolved share. The dry crust is
+  pale (x1.7, 15% desaturated) and matte, the crack walls the darker soil under it; the drying layer is
+  dark and a little glossy while damp.
+- **Checks** (`--test=cracks`): soaked clay stays whole; dried, it cracks, plates 4x the layer and finer on the
+  flat beside the pool; rain closes the cracks; the next drying cracks again, more regular; sand never cracks.
+  `--view=ruts --water=mm --dry[=frames]` shoots it (fewer frames: part dried, centre still damp) and prints the
+  deepest pool for `--cam`.
 
 ### Stage 3: mud on wheels and bodies
 
