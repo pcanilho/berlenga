@@ -947,7 +947,6 @@ void fragment() {
 			vec4 cover = textureLod(terrain_cover_map, cuv, 0.0);
 			vec3 cs = cover.rgb;
 			vec3 cover_lin = mix(cs / 12.92, pow((cs + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), cs));
-			float tm_cover_shade = 1.0;
 )";
 		if (grass_tint_enabled) {
 			// The same sun-azimuth lobes as grass_ground()'s far sward (the bake of the blades): brighter looking
@@ -961,13 +960,10 @@ void fragment() {
 			// The cover map holds the far colour at a 30 degree sun; this scales it to the sun's elevation, as the
 			// grass fields' own far colour does.
 			cover_lin *= grass_ground_far_scale.rgb;
-			// The darkening the plants give the ground under them within their range, as vegetation_far() applies it
-			// (VegetationField3D's vegetation_far_shade), so the far blend past the vegetation's far map matches it.
-			tm_cover_shade = mix(1.0, vegetation_far_shade, cover.a);
 )";
 		}
 		c += R"(
-			albedo = mix(albedo, mix(tm_bare, cover_lin, cover.a) * tm_cover_shade, far_t);
+			albedo = mix(albedo, mix(tm_bare, cover_lin, cover.a), far_t);
 			tm_far_t = far_t;
 			tm_far_cover = cover.a;
 		}
