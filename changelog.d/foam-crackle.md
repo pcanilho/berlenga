@@ -1,0 +1,1 @@
+- Water: close foam no longer shows a dark crackle of cells (the bubbles' grain tilts its normal less, and foam damps the short waves under it).

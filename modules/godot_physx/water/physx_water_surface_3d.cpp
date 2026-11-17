@@ -264,6 +264,7 @@ uniform float foam_crisp : hint_range(0.0, 1.0) = 1.0;
 // The foam's thickness lights its rims (Crest's foam 3D lighting): its gradient tilts the normal as a skin this
 // share of 3 cm thick.
 uniform float foam_relief : hint_range(0.0, 2.0) = 0.5;
+uniform float foam_grain_tilt : hint_range(0.0, 2.0) = 0.15; // how far the bubbles' domes tilt the foam's normal
 // Foam streaks (Beaufort 8 and up, "foam blown in well-marked streaks along the direction of the wind"): set
 // from the wind by PhysXWaterSurface3D. 0 = none; toward 1 fading foam breaks up along foam_streak_dir
 // (downwind) instead of into lace, and trails downwind of the patches it leaves.
@@ -1652,6 +1653,13 @@ void fragment() {
 			// The roller is fresh, churning foam right through: no aged lace holes in it.
 			foam = max(foam, max(smoothstep(0.15, 0.6, fold), smoothstep(0.02, 0.2, v_roller)));
 		}
+		// Foam damps the short waves under it (the film's surface elasticity, as slicks do: Alpers and Huhnerfuss
+		// 1989), so a sheet of foam keeps only the mesh's longer waves.
+		{
+			float nl = length(v_world_normal);
+			vec3 smooth_n = nl > 1e-3 ? v_world_normal / nl : vec3(0.0, 1.0, 0.0);
+			world_normal = normalize(mix(world_normal, smooth_n, clamp(foam, 0.0, 1.0)));
+		}
 		// The relief below reads the foam before its pixel step: the step's one-pixel jump would tilt the normal
 		// hard over the rim and draw a dark outline round every patch and hole.
 		float foam_soft = foam;
@@ -1669,7 +1677,7 @@ void fragment() {
 			// The foam's bubbles tilt the normal under it: its grain catches the light.
 			vec2 fw = fwidth(v_rest_xz);
 			vec3 bn = foam_bubble_normal(v_rest_xz, max(fw.x, fw.y));
-			world_normal = normalize(world_normal + vec3(bn.x, 0.0, bn.z) * foam * 0.6);
+			world_normal = normalize(world_normal + vec3(bn.x, 0.0, bn.z) * foam * foam_grain_tilt);
 		}
 		// The foam as a skin on the water: its gradient over the surface (from the screen derivatives, solved for
 		// world xz) tilts the normal, so the rims of patches and holes catch the sun on one side.
