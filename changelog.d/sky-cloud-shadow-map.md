@@ -1,0 +1,1 @@
+- Weather: the sky's shafts read from a baked 40 km cloud shadow map (`WeatherSkyMaterial.set_cloud_shadow_map`, from `WeatherMap3D`), so they show as clear bands from the cloud gaps; `atmo_cloud_shadow_steps` now 48.

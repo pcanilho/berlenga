@@ -207,6 +207,12 @@ uniform float atmo_far_water : hint_range(0, 1) = 0.0; // how much of the ground
 // scattering and extinction at the ground (1/m), its scale height (m), and the distance along the eye's rays
 // where it starts (the froxels' reach). Not in the tables: its own multiple scattering is left out.
 uniform vec4 atmo_aerosol = vec4(0.0, 0.0, 1200.0, 0.0);
+// The clouds' shadow map (WeatherMap3D bakes it in the sun's plane; size 0: none, the shader marches the
+// clouds itself): red the beam's transmittance, green the diffuse. Axes in xyz, the square's corner in w.
+uniform sampler2D atmo_cloud_shadow_map : filter_linear, repeat_disable, hint_default_white;
+uniform vec4 atmo_cloud_shadow_u = vec4(1.0, 0.0, 0.0, 0.0);
+uniform vec4 atmo_cloud_shadow_v = vec4(0.0, 0.0, 1.0, 0.0);
+uniform float atmo_cloud_shadow_size = 0.0;
 
 float atmo_ray_sphere(float r, float mu, float radius, bool far_hit) {
 	float b = r * mu;
@@ -311,6 +317,19 @@ vec2 atmo_cloud_transmittance(vec3 q, vec3 l, vec2 cam_xz, float p_step, float p
 	if (s0 < 0.0 || s1 <= s0) {
 		return vec2(1.0);
 	}
+	if (atmo_cloud_shadow_size > 0.0) {
+		// The map: one read, sharp to its texels (160 m), out to its edge, then the mean.
+		vec3 w = vec3(cam_xz.x + q.x, r - atmo_radii.x, cam_xz.y + q.z);
+		vec2 uv = (vec2(dot(w, atmo_cloud_shadow_u.xyz), dot(w, atmo_cloud_shadow_v.xyz)) - vec2(atmo_cloud_shadow_u.w, atmo_cloud_shadow_v.w)) / atmo_cloud_shadow_size;
+		vec2 e = abs(uv - 0.5) * 2.0;
+		float edge = smoothstep(0.8, 0.98, max(e.x, e.y));
+		vec2 c = edge < 1.0 ? textureLod(atmo_cloud_shadow_map, uv, 0.0).rg : vec2(1.0);
+		if (edge > 0.0) {
+			float cover = wc_cover_type(w.xz).x;
+			c = mix(c, vec2(1.0 - 0.9 * cover, 1.0 - 0.5 * cover), edge);
+		}
+		return c;
+	}
 	float far_mean = smoothstep(20000.0, 60000.0, p_dist);
 	vec2 mean = vec2(1.0);
 	if (far_mean > 0.0) {
@@ -321,9 +340,11 @@ vec2 atmo_cloud_transmittance(vec3 q, vec3 l, vec2 cam_xz, float p_step, float p
 			return mean;
 		}
 	}
-	const int n = 3;
+	// The shape read near its own scale (a cloud's edge, 50 to 200 m), not at the steps' length: read at
+	// a kilometre the noise's mips are a uniform grey and the shadow a uniform dimming, with no shafts.
+	const int n = 5;
 	float ds = (s1 - s0) / float(n);
-	float lod_step = max(ds, p_step);
+	float lod_step = clamp(p_step, 50.0, 200.0);
 	float tau = 0.0;
 	for (int i = 0; i < n; i++) {
 		vec3 lq = q + l * (s0 + (float(i) + 0.5) * ds);
@@ -420,7 +441,10 @@ vec4 atmo_scatter(float cam_h, vec3 rd, vec3 l0, vec3 e0, vec3 l1, vec3 e1, floa
 	}
 	vec3 lum = vec3(0.0);
 	vec3 thr = vec3(1.0);
-	atmo_march(origin, rd, 0.0, t_low, shadow_steps, jitter, true, cam_xz, l0, e0, l1, e1, phases, aerosol_from, lum, thr);
+	// The shadow's shafts read within some tens of kilometres: most of the steps there, a few for the rest.
+	float t_near = min(t_low, 60000.0);
+	atmo_march(origin, rd, 0.0, t_near, shadow_steps, jitter, true, cam_xz, l0, e0, l1, e1, phases, aerosol_from, lum, thr);
+	atmo_march(origin, rd, t_near, t_low, shadow_steps > 0 ? 8 : 0, jitter, true, cam_xz, l0, e0, l1, e1, phases, aerosol_from, lum, thr);
 	atmo_march(origin, rd, t_low, t_max, steps, jitter, false, cam_xz, l0, e0, l1, e1, phases, aerosol_from, lum, thr);
 	if (ground && t_max < max_dist) {
 		// The ground beyond, lit by the bodies through the air and by the sky (multiple scattering).
