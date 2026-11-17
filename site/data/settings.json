@@ -2955,6 +2955,17 @@
    "topic": ""
   },
   {
+   "name": "Shafts across the sky",
+   "settings": [
+    "atmo_cloud_shadow_steps"
+   ],
+   "note": "",
+   "what": "the air under the clouds takes their shadow, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wet surfaces and puddles",
    "settings": [
     "surface_storage",
