@@ -122,6 +122,13 @@ private:
 	// MudRunner's mud brush) and from the terrain (a TerrainDataMap3D's wetness index and distance to water, at
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
+	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
+	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
+	bool standing_water = true;
+	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
+	float water_seen = 0.0f; // the deepest standing water at the last read back, m
+	float _evaporation() const;
+	int _water_passes(const GroundDeformField &p_field, double p_delta) const;
 	Ref<Image> mud_map;
 	Rect2 mud_map_rect;
 	float mud_max_depth = 1.2f;
@@ -297,6 +304,8 @@ private:
 		bool fixed = false; // rock or snow: never deforms
 	};
 	LocalVector<CellInput> cell_inputs;
+	float _water_conductivity(const CellInput &p_in) const;
+	float _water_table_depth(int p_i) const;
 	// Sand and water (docs/ideas/sand.md, stage 4): pore water and the water over each cell.
 	TypedArray<NodePath> water_sources;
 	bool water_coupling = true;
@@ -507,6 +516,9 @@ public:
 	bool is_wind_ripples() const { return wind_ripples; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
+	void set_standing_water(bool p_enabled);
+	bool is_standing_water() const { return standing_water; }
+	float get_standing_water_at(Vector3 p_position) const;
 	void set_mud_map(const Ref<Image> &p_map);
 	Ref<Image> get_mud_map() const { return mud_map; }
 	void set_mud_map_rect(const Rect2 &p_rect);

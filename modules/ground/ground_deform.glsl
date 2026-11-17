@@ -16,6 +16,9 @@
 #define MODE_STORE 6
 #define MODE_SHIFT 7
 #define MODE_PACK 8
+#define MODE_WATER_FLUX 9
+#define MODE_WATER_DEPTH 10
+#define MODE_WATER_COPY 11
 
 #define STAMP_BOX 1u
 #define STAMP_ROUND 2u
@@ -51,6 +54,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	ivec4 shift; // texel offset of the old field in the new one's tiles: old tile index = new tile index + shift.xy
 	vec4 kind; // 1 for the ground (else snow), slow slumping seconds this step, fresh kept by ageing, sand drift per hour
 	vec4 age; // rain softening per hour, hours of ageing, distance from the field's edge where prints start, slump passes this step (0 = 1)
+	vec4 water; // standing water (docs/ideas/mud.md, stage 2): rain m/s, substep s, flux damping per s, evaporation m/s
+	vec4 water2; // seepage length m, compaction's share of the conductivity kept, conductivity scale, thinnest film kept m
 }
 params;
 
@@ -92,7 +97,19 @@ layout(set = 0, binding = 10, std430) restrict readonly buffer TileOps {
 	ivec4 tile_ops[]; // store: (tile x, tile z, slot, 0); shift: per new tile (source kind, index, 0, 0)
 };
 layout(set = 0, binding = 11, std430) restrict writeonly buffer Packed {
-	uint packed[];
+	uint packed[]; // per texel stride() uints, then for the ground one more each: (water depth, 0)
+};
+// Standing water (ground only): per texel the outflows to -x, +x, -z, +z (m/s: m3/s over the texel's area) and
+// (depth m, 0, 0, 0). The virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007).
+struct WaterCell {
+	vec4 flux;
+	vec4 w;
+};
+layout(set = 0, binding = 12, std430) restrict buffer Water {
+	WaterCell water[];
+};
+layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
+	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY
 };
 
 const float SWE_MIN = 0.01;
@@ -193,7 +210,7 @@ vec4 ground_cell(vec2 p, int part) {
 	if (x < 0 || z < 0 || x >= n || z >= n) {
 		return vec4(0.0);
 	}
-	return cover_cells[(z * n + x) * 2 + part];
+	return cover_cells[(z * n + x) * 3 + part];
 }
 
 bool ground_deformable(vec2 p) {
@@ -840,6 +857,101 @@ float field_sample(vec2 p, int ch) {
 	return mix(a, b, az);
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and seepage gather in ruts and prints as a depth per
+// texel over the deformed surface, moved by the virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and
+// Hu 2007): each texel's outflows to its four neighbours grow with the head difference, are scaled down so no
+// texel sends more than it holds, and the depths change by the net flow, so water runs downhill and stands level.
+
+const float WATER_G = 9.81;
+
+float water_bed(int x, int z) {
+	vec4 st = state[z * fn() + x];
+	return ground_at(texel_world(x, z)) + st.y - st.x;
+}
+
+void water_flux(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	float d = water[i].w.x;
+	if (d <= 0.0) {
+		water[i].flux = vec4(0.0);
+		return;
+	}
+	float dt = params.water.y;
+	float l = texel();
+	float h = water_bed(x, z) + d;
+	vec4 f = water[i].flux * max(1.0 - params.water.z * dt, 0.0);
+	ivec2 nb[4] = ivec2[](ivec2(x - 1, z), ivec2(x + 1, z), ivec2(x, z - 1), ivec2(x, z + 1));
+	for (int k = 0; k < 4; k++) {
+		ivec2 q = nb[k];
+		if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) {
+			// The field's edge is open: water runs on past it as over the ground beyond (its bed as this
+			// texel's, dry), and is lost to the field; a wall there pooled the field's runoff along its edge.
+			f[k] = max(f[k] + dt * WATER_G * d / l, 0.0);
+			continue;
+		}
+		float hq = water_bed(q.x, q.y) + water[q.y * n + q.x].w.x;
+		f[k] = max(f[k] + dt * WATER_G * (h - hq) / l, 0.0);
+	}
+	float out_sum = (f.x + f.y + f.z + f.w) * dt;
+	if (out_sum > d) {
+		f *= d / out_sum;
+	}
+	water[i].flux = f;
+}
+
+void water_depth(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	float dt = params.water.y;
+	vec4 f = water[i].flux;
+	float flow = -(f.x + f.y + f.z + f.w);
+	if (x > 0) {
+		flow += water[i - 1].flux.y;
+	}
+	if (x < n - 1) {
+		flow += water[i + 1].flux.x;
+	}
+	if (z > 0) {
+		flow += water[i - n].flux.w;
+	}
+	if (z < n - 1) {
+		flow += water[i + n].flux.z;
+	}
+	float d = water[i].w.x + flow * dt;
+	vec2 wp = texel_world(x, z);
+	vec4 m2 = ground_cell(wp, 2); // conductivity m/s, water table depth m, moisture deficit
+	float rain = params.water.x;
+	if (m2.x <= 0.0 && d <= 0.0 && rain <= 0.0) {
+		water[i].w.x = 0.0;
+		return;
+	}
+	vec4 st = state[i];
+	float g = ground_at(wp);
+	float level = g + st.y - st.x + max(d, 0.0);
+	float table = g - m2.y;
+	// Ground pressed by a tyre or a boot drains slower: compaction closes the large pores.
+	float k = m2.x * params.water2.z * (st.x > 0.0 ? params.water2.y : 1.0);
+	float src = rain;
+	if (level > table + 1e-3) {
+		// Above the water table: rain the ground takes, and standing water soaking in, and evaporating. Green and
+		// Ampt (1911): the rate is the conductivity times (1 + suction head x moisture deficit / water taken in).
+		// Dry ground under rain: the wetting front a few centimetres down, about 1 + 4 x the deficit (m2.z) for
+		// loamy soil. Under standing water the top is soaked and the front deep: the conductivity.
+		src -= k * (d > 0.0 ? 1.0 : 1.0 + 4.0 * m2.z);
+		src -= d > 0.0 ? params.water.w : 0.0;
+	}
+	d = max(d + src * dt, 0.0);
+	if (level < table) {
+		// Below it: ground water seeps in through the hollow's walls (Darcy over the seepage length), up to the
+		// table and no further.
+		d += min(k * (table - level) / params.water2.x * dt, table - level);
+	}
+	bool fed = src > 0.0 || level < table;
+	water[i].w.x = d < params.water2.w && !fed ? 0.0 : d;
+}
+
 void main() {
 	int n = fn();
 	uint gid = gl_GlobalInvocationID.x;
@@ -889,7 +1001,7 @@ void main() {
 		int sw = stride();
 		cache[(o.z * TILE * TILE + k) * sw] = packHalf2x16(st.xy);
 		if (sw == 2) {
-			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, 0.0));
+			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, water[z * n + x].w.x));
 		}
 		return;
 	}
@@ -899,7 +1011,14 @@ void main() {
 	int x = int(gid) % n;
 	int z = int(gid) / n;
 	int i = int(gid);
-	if (push.mode == MODE_SLUMP_GIVE) {
+	if (push.mode == MODE_WATER_FLUX) {
+		water_flux(x, z);
+	} else if (push.mode == MODE_WATER_DEPTH) {
+		water_depth(x, z);
+	} else if (push.mode == MODE_WATER_COPY) {
+		water[i].flux = vec4(0.0);
+		water[i].w = vec4(water_tmp[i], 0.0, 0.0, 0.0);
+	} else if (push.mode == MODE_SLUMP_GIVE) {
 		slump_give(x, z);
 	} else if (push.mode == MODE_SLUMP_TAKE) {
 		slump_take(x, z);
@@ -946,7 +1065,12 @@ void main() {
 			vec4 m1 = ground_cell(texel_world(x, z), 1);
 			tint = vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
 		}
-		imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
+		if (is_ground()) {
+			// The ground's map: the net depression (dent less rim) and the standing water over it.
+			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y, water[i].w.x, tint));
+		} else {
+			imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
+		}
 	} else if (push.mode == MODE_SHIFT) {
 		// state is the old field, state_out the new one. tile_ops[new tile] = (kind, index): kind 1 an old
 		// tile's index, 2 a cache slot, 0 empty.
@@ -956,25 +1080,33 @@ void main() {
 		int lx = x % TILE;
 		int lz = z % TILE;
 		vec4 v = vec4(0.0);
+		float wd = 0.0;
 		if (o.x == 1) {
 			int ox = (o.y % nt) * TILE + lx;
 			int oz = (o.y / nt) * TILE + lz;
 			v = state[oz * n + ox];
+			wd = is_ground() ? water[oz * n + ox].w.x : 0.0;
 		} else if (o.x == 2) {
 			int sw = stride();
 			int ci = (o.y * TILE * TILE + lz * TILE + lx) * sw;
 			v.xy = unpackHalf2x16(cache[ci]);
 			if (sw == 2) {
-				v.w = unpackHalf2x16(cache[ci + 1]).x;
+				vec2 fw = unpackHalf2x16(cache[ci + 1]);
+				v.w = fw.x;
+				wd = fw.y;
 			}
 		}
 		state_out[i] = v;
+		if (is_ground()) {
+			water_tmp[i] = wd;
+		}
 	} else if (push.mode == MODE_PACK) {
 		vec4 st = state[i];
 		int sw = stride();
 		packed[i * sw] = packHalf2x16(st.xy);
 		if (sw == 2) {
 			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
+			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, 0.0));
 		}
 	}
 }

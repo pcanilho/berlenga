@@ -133,6 +133,7 @@ void GroundDeformField::shift(Vector2i p_origin) {
 	const int n = resolution;
 	const int nt = tiles();
 	const bool keep = valid && int(dent.size()) == n * n && (!track_fresh || int(fresh.size()) == n * n);
+	water.clear(); // the GPU's: the next read back after the move brings it again
 	if (!keep) {
 		dent.resize(n * n);
 		rim.resize(n * n);
@@ -868,8 +869,14 @@ void GroundDeformField::upload(Ref<Image> &r_image, Ref<ImageTexture> &r_texture
 	bytes.resize(n * n * c * 2);
 	uint16_t *w = reinterpret_cast<uint16_t *>(bytes.ptrw());
 	for (int i = 0; i < n * n; i++) {
-		w[i * c + 0] = Math::make_half_float(dent[i]);
-		w[i * c + 1] = Math::make_half_float(rim[i]);
+		if (four) {
+			// The ground's map (material.cpp): the net depression and the standing water over it.
+			w[i * c + 0] = Math::make_half_float(dent[i] - rim[i]);
+			w[i * c + 1] = Math::make_half_float(int(water.size()) == n * n ? water[i] : 0.0f);
+		} else {
+			w[i * c + 0] = Math::make_half_float(dent[i]);
+			w[i * c + 1] = Math::make_half_float(rim[i]);
+		}
 		if (four) {
 			w[i * c + 2] = Math::make_half_float(p_b ? (*p_b)[i] : 1.0f);
 			w[i * c + 3] = Math::make_half_float(p_a ? (*p_a)[i] : 1.0f);

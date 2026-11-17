@@ -259,6 +259,36 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   geometry in the near field, curled plate edges; rewetting closes them, and each cycle rounds the
   pattern towards hexagons (Goehring 2010).
 
+#### Built (2a: standing water)
+
+- **Technique.** Shallow water on the print field itself, by the virtual pipe model (O'Brien and Hodgins
+  1995; Mei, Decaudin and Hu 2007; Št'ava et al. 2008), the method of most GPU terrain water (and of Fluid
+  Flux in Unreal). Per texel a depth and four outflows; an outflow grows with the head difference to its
+  neighbour, the four are scaled so no texel sends more than it holds, depths change by the net flow. Two
+  compute passes per substep in `ground_deform.glsl` (`MODE_WATER_FLUX`, `MODE_WATER_DEPTH`), on the main
+  field and the near field alike; substeps from the shallow-water wave speed for water up to 20 cm (at most
+  4 a frame), light damping so pools settle in a second or two. The water rides with the field: tile moves,
+  the GPU tile cache and the near field's seeding all carry it (the cache's spare half).
+- **Sources and sinks.** Rain from the `WeatherMap3D`; soaking in at the cell's saturated conductivity
+  (clay-rich soil 1e-6 m/s to sand 1e-4 m/s, Rawls et al. 1982; litter fast; puddled mud a third; pressed
+  ground a third again, as tyres close the large pores, Horn et al. 1995), so heavy rain on clay ponds
+  (Horton overland flow) and sand never does. Ground water seeps in (Darcy over 2 cm) wherever a print
+  reaches below the water table: soaked ground has it at the surface, ground at mud's wetness a few
+  decimetres down, a beach its sea's (`runoff_channels`). Evaporation by Penman's open-water wind function
+  (as the weather map's film). `runoff_time_scale` speeds the sources and sinks up for benches.
+- **Drawn as real geometry.** The ground map's channels are now the net depression (dent less rim) and the
+  water depth; the patch's vertices rise to the water's level, so the water is the surface there, flat, in
+  both renderers and in shadow. Its look (`ground_water_look()`, material.cpp and the raygen alike): water's
+  F0 (0.02) and roughness 0.03, no relief, the bed under it soaked (Lagarde 2013), and rut water carries clay,
+  so the bed fades out within about a centimetre (Beer-Lambert, e-folding 1 cm) to a darker soil colour.
+  Clear water over gravel would want transmission; rut water is turbid, so this is the right default.
+- **Coupling.** Standing water saturates the ground under it (the pore model), which softens the mud there.
+- **Not chosen.** PhysX MPM (particles) for this: millimetre to decimetre films over 64 m2 would need millions
+  of particles; it stays for splashes (stage 4). No GPU: no standing water (the CPU field keeps prints only).
+- **Checks** (`--test=puddles`): a 12 cm rut in soaked soil fills to the 6 cm water table and stands level;
+  a new print cut into the pool draws water in and the volume holds; rain gathers in a rut, the flat soaks its
+  sheet up first after the rain, the rut empties within a day.
+
 ### Stage 3: mud on wheels and bodies
 
 - **Tyres clog.** Per wheel a tread fill fraction, filled by slip in sticky mud, lowering traction

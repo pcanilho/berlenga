@@ -510,6 +510,81 @@ void GroundSurface3D::set_mud_layer(bool p_enabled) {
 	_update_cells();
 }
 
+void GroundSurface3D::set_standing_water(bool p_enabled) {
+	standing_water = p_enabled;
+	if (!p_enabled) {
+		// Drop what stands: a reset clears the GPU field's water with the rest.
+		gpu_host.reset = true;
+		near_host.reset = true;
+		field.water.clear();
+		near_fld.water.clear();
+	}
+}
+
+float GroundSurface3D::get_standing_water_at(Vector3 p_position) const {
+	if (is_near_active() && _near_inside(p_position.x, p_position.z) && int(near_fld.water.size()) == near_fld.resolution * near_fld.resolution) {
+		return near_fld.sample(near_fld.water, p_position.x, p_position.z);
+	}
+	if (field.valid && int(field.water.size()) == field.resolution * field.resolution) {
+		return field.sample(field.water, p_position.x, p_position.z);
+	}
+	return 0.0f;
+}
+
+// Saturated hydraulic conductivity (m/s) of a cell's top layer: clay-rich soil 1e-6 to sand 1e-4 (Rawls,
+// Brakensiek and Saxton 1982), forest litter as fast as sand, puddled mud a third of its soil's; rock and snow
+// none (they shed it).
+float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
+	if (p_in.fixed) {
+		return 0.0f;
+	}
+	float k = Math::exp(Math::lerp(Math::log(1e-6f), Math::log(1e-4f), CLAMP(p_in.sand, 0.0f, 1.0f)));
+	k = Math::lerp(k, 1e-4f, Math::smoothstep(0.0f, 0.03f, p_in.litter));
+	if (p_in.mud > 0.0f) {
+		k *= 1.0f / 3.0f;
+	}
+	return k;
+}
+
+// How far below the ground the water table lies at lattice cell p_i (m): a sea's or lake's (runoff_channels),
+// else from the wetness: soaked ground has it at the surface, ground at mud's wetness a few decimetres down.
+float GroundSurface3D::_water_table_depth(int p_i) const {
+	const CellInput &in = cell_inputs[p_i];
+	if (in.fixed) {
+		return 10.0f;
+	}
+	// Not the top layer's pore water: standing water soaks that, and must not raise the table it stands on.
+	float d = (1.0f - CLAMP(in.moisture, 0.0f, 1.0f)) * 0.6f;
+	if (runoff_channels && (int)water_table.size() > p_i) {
+		d = MIN(d, MAX(water_table[p_i], 0.0f));
+	}
+	return d;
+}
+
+// Evaporation from open water (m/s): Penman's (1948) wind function, as WeatherMap3D's surface film; none in rain.
+float GroundSurface3D::_evaporation() const {
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (!wm) {
+		return 2e-8f; // a mild day's, about 2 mm a day
+	}
+	const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
+	if (wm->get_rain_at(at) > 0.1f) {
+		return 0.0f;
+	}
+	const float t = wm->get_air_temperature();
+	const float es = 6.112f * Math::exp(17.62f * t / (243.12f + t));
+	const float deficit = MAX(es * (1.0f - CLAMP(wm->get_air_humidity(), 0.0f, 1.0f)), 0.0f);
+	const float u2 = _wind_10m().length() * 0.75f; // 10 m to 2 m on the log law over short grass
+	return 0.26f * (1.0f + 0.54f * u2) * deficit / 24.0f / 3.6e6f;
+}
+
+// Pipe-model substeps for a step: the shallow-water wave (sqrt(g h), for water up to 20 cm) crossing half a
+// texel each, at most 4 (past that the water just moves slower).
+int GroundSurface3D::_water_passes(const GroundDeformField &p_field, double p_delta) const {
+	const float limit = 0.5f * p_field.texel() / Math::sqrt(9.81f * 0.2f);
+	return CLAMP(int(Math::ceil(float(p_delta) / limit)), 1, 4);
+}
+
 void GroundSurface3D::set_mud_map(const Ref<Image> &p_map) {
 	mud_map = p_map;
 	_update_cells();
@@ -972,10 +1047,11 @@ void GroundSurface3D::_near_seed(Vector2i p_origin) {
 					const float dn = field.dent_at(wx, wz);
 					const float rm = field.rim_at(wx, wz);
 					const float fr = field.sample(field.fresh, wx, wz);
-					any = any || dn > 0.0f || rm > 0.0f || fr > 0.0f;
+					const float wd = int(field.water.size()) == field.resolution * field.resolution ? field.sample(field.water, wx, wz) : 0.0f;
+					any = any || dn > 0.0f || rm > 0.0f || fr > 0.0f || wd > 0.0f;
 					const int k = z * T + x;
 					data[k * 2 + 0] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
-					data[k * 2 + 1] = uint32_t(Math::make_half_float(fr));
+					data[k * 2 + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
 				}
 			}
 			if (any) {
@@ -1377,7 +1453,11 @@ void GroundSurface3D::_water_update(double p_delta) {
 			auto bil = [&](const LocalVector<float> &g) {
 				return Math::lerp(Math::lerp(g[z0 * gn + x0], g[z0 * gn + x0 + 1], tx), Math::lerp(g[(z0 + 1) * gn + x0], g[(z0 + 1) * gn + x0 + 1], tx), tz);
 			};
-			const float depth = bil(g_depth);
+			float depth = bil(g_depth);
+			if (standing_water) {
+				// Standing water in a rut soaks the ground under it (and so softens the mud there).
+				depth = MAX(depth, get_standing_water_at(Vector3((ground_origin.x + x) * ground_spacing, 0.0f, (ground_origin.y + z) * ground_spacing)));
+			}
 			cell_depth[i] = depth;
 			const float contact = bil(g_contact);
 			const float s = _pore_step(pore[i], depth, contact, dt, water_table[i]);
@@ -2844,19 +2924,29 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 	if (!ground_valid || int(cells.size()) != n * n) {
 		return out;
 	}
-	out.resize(n * n * 32);
+	out.resize(n * n * 48);
 	float *w = reinterpret_cast<float *>(out.ptrw());
+	const bool inputs = int(cell_inputs.size()) == n * n;
+	bool seep = false;
 	for (int i = 0; i < n * n; i++) {
 		const Cell &c = cells[i];
-		w[i * 8 + 0] = c.rim_share;
-		w[i * 8 + 1] = c.tan_repose;
-		w[i * 8 + 2] = c.rate;
-		w[i * 8 + 3] = c.max_dent;
-		w[i * 8 + 4] = c.darken;
-		w[i * 8 + 5] = c.gloss;
-		w[i * 8 + 6] = c.blown * ((int)shelter_flux.size() == n * n ? shelter_flux[i] : 1.0f);
-		w[i * 8 + 7] = c.deformable ? 1.0f : 0.0f;
+		float *o = w + i * 12;
+		o[0] = c.rim_share;
+		o[1] = c.tan_repose;
+		o[2] = c.rate;
+		o[3] = c.max_dent;
+		o[4] = c.darken;
+		o[5] = c.gloss;
+		o[6] = c.blown * ((int)shelter_flux.size() == n * n ? shelter_flux[i] : 1.0f);
+		o[7] = c.deformable ? 1.0f : 0.0f;
+		// Standing water's inputs: conductivity and the water table's depth.
+		o[8] = inputs ? _water_conductivity(cell_inputs[i]) : 0.0f;
+		o[9] = inputs ? _water_table_depth(i) : 10.0f;
+		o[10] = inputs ? 1.0f - CLAMP(MAX(cell_inputs[i].moisture, (int)pore.size() == n * n ? pore[i] : 0.0f), 0.0f, 1.0f) : 0.0f;
+		o[11] = 0.0f;
+		seep = seep || (c.deformable && o[9] < c.max_dent);
 	}
+	const_cast<GroundSurface3D *>(this)->water_seep = seep;
 	return out;
 }
 
@@ -2895,6 +2985,21 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	const float dry = p_age > 0.0 ? Math::exp(-float(p_age) / drying_time) : 1.0f;
 	put(11, 1.0f, float(p_slow), dry, drift);
 	put(12, soften, float(p_age) / 3600.0f, p_edge_margin, float(p_field.valid && &p_field == &near_fld ? _near_passes() : 1));
+	// Standing water: the rain, a pipe-model substep, damping, evaporation (rates sped up by runoff_time_scale);
+	// then the seepage length, the conductivity compaction keeps, on, the thinnest film kept once its source stops.
+	if (standing_water && p_delta > 0.0) {
+		const WeatherMap3D *wm = WeatherMap3D::get_active();
+		const float rain = wm ? MAX(wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)), 0.0f) / 3.6e6f : 0.0f;
+		const int passes = _water_passes(p_field, p_delta);
+		const float sub = MIN(float(p_delta) / passes, 0.5f * p_field.texel() / Math::sqrt(9.81f * 0.2f));
+		// A long step moves the water only as far as the substeps reach, but its sources and sinks get the
+		// whole step: their rates are scaled to land the step's water in the substeps.
+		const float gain = runoff_time_scale * float(p_delta) / (sub * passes);
+		// Damping: puddles settle in a second or two rather than sloshing on (the pipe model has no friction).
+		put(13, rain * gain, sub, 2.0f, _evaporation() * gain);
+		// Compacted ruts drain slower: tyres cut the conductivity several fold (Horn et al. 1995): a third kept.
+		put(14, 0.02f, 1.0f / 3.0f, gain, 2e-5f);
+	}
 	return b;
 }
 
@@ -2961,7 +3066,17 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	if (p_age > 0.0) {
 		flags |= GroundDeformGPU::STEP_RELAX;
 	}
-	if (flags & (GroundDeformGPU::STEP_RESET | GroundDeformGPU::STEP_SHIFT | GroundDeformGPU::STEP_STAMPS | GroundDeformGPU::STEP_SLUMP | GroundDeformGPU::STEP_RELAX | GroundDeformGPU::STEP_COVER)) {
+	// Standing water runs while there is some, rain falls, or ground water can seep into a print.
+	int water_passes = 0;
+	if (standing_water && p_delta > 0.0) {
+		const WeatherMap3D *wm = WeatherMap3D::get_active();
+		const bool rain = wm && wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) > 0.0f;
+		if (rain || water_seen > 0.0f || water_seep) {
+			flags |= GroundDeformGPU::STEP_WATER;
+			water_passes = _water_passes(p_field, p_delta);
+		}
+	}
+	if (flags & (GroundDeformGPU::STEP_RESET | GroundDeformGPU::STEP_SHIFT | GroundDeformGPU::STEP_STAMPS | GroundDeformGPU::STEP_SLUMP | GroundDeformGPU::STEP_RELAX | GroundDeformGPU::STEP_COVER | GroundDeformGPU::STEP_WATER)) {
 		flags |= GroundDeformGPU::STEP_BLIT;
 		r_host.changed = true;
 	}
@@ -2980,6 +3095,8 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	d.coll_w = 0;
 	d.stride = 2;
 	d.slump_passes = p_passes;
+	d.cover_vec4s = 3;
+	d.water_passes = water_passes;
 	r_host.gpu->step(d, flags, _gpu_params(p_field, p_edge_margin, p_delta, p_age, slow), ground_bytes, cell_bytes, r_host.stamps, r_host.stores, r_host.shift, p_field.origin, Vector2(), r_host.uploads);
 	r_host.stamps.clear();
 	r_host.stores.clear();
@@ -2998,8 +3115,17 @@ void GroundSurface3D::_gpu_take() {
 	// Slumping goes on while any texel still owes some (neighbours of a texel that moved are marked again,
 	// as on the CPU).
 	float owed = 0.0f;
-	if (gpu_host.take_field(field, 2, &owed) && owed > 0.0f) {
+	const bool took = gpu_host.take_field(field, 2, &owed);
+	if (took && owed > 0.0f) {
 		gpu_host.slump_until = MAX(gpu_host.slump_until, gpu_host.time + owed + 0.1);
+	}
+	if (took) {
+		// The deepest standing water (the near field holds no water the main one lacks for long).
+		float deepest = 0.0f;
+		for (float w : field.water) {
+			deepest = MAX(deepest, w);
+		}
+		water_seen = deepest;
 	}
 	if (is_near_active() && near_host.gpu.is_valid()) {
 		if (near_host.take_texture()) {
@@ -3330,6 +3456,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_mud_layer", "enabled"), &GroundSurface3D::set_mud_layer);
 	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
 	ClassDB::bind_method(D_METHOD("set_mud_map", "map"), &GroundSurface3D::set_mud_map);
+	ClassDB::bind_method(D_METHOD("set_standing_water", "enabled"), &GroundSurface3D::set_standing_water);
+	ClassDB::bind_method(D_METHOD("is_standing_water"), &GroundSurface3D::is_standing_water);
+	ClassDB::bind_method(D_METHOD("get_standing_water_at", "position"), &GroundSurface3D::get_standing_water_at);
 	ClassDB::bind_method(D_METHOD("get_mud_map"), &GroundSurface3D::get_mud_map);
 	ClassDB::bind_method(D_METHOD("set_mud_map_rect", "rect"), &GroundSurface3D::set_mud_map_rect);
 	ClassDB::bind_method(D_METHOD("get_mud_map_rect"), &GroundSurface3D::get_mud_map_rect);
@@ -3483,6 +3612,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_glints"), "set_sand_glints", "is_sand_glints");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_channels"), "set_runoff_channels", "is_runoff_channels");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");

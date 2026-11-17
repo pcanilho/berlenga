@@ -53,6 +53,9 @@ enum {
 	MODE_STORE = 6,
 	MODE_SHIFT = 7,
 	MODE_PACK = 8,
+	MODE_WATER_FLUX = 9,
+	MODE_WATER_DEPTH = 10,
+	MODE_WATER_COPY = 11,
 };
 
 bool GroundDeformGPU::is_available() {
@@ -117,6 +120,8 @@ void GroundDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArra
 	d.push_back(p_dims.coll_w);
 	d.push_back(p_dims.stride);
 	d.push_back(MAX(p_dims.slump_passes, 1));
+	d.push_back(p_dims.cover_vec4s);
+	d.push_back(p_dims.water_passes);
 	rs->call_on_render_thread(callable_mp(this, &GroundDeformGPU::rt_step).bind(d, p_flags, p_params, p_ground, p_cover, p_stamps, p_stores, p_shift, p_origin, p_collision_center, p_uploads));
 	if (p_flags & STEP_SYNC) {
 		rs->sync();
@@ -163,7 +168,7 @@ void GroundDeformGPU::_rt_free_buffers() {
 		}
 		uset[i] = RID();
 	}
-	RID *bufs[] = { &buf_state[0], &buf_state[1], &buf_give, &buf_ground, &buf_cover, &buf_stamps, &buf_collision, &buf_cache, &buf_tile_ops, &buf_packed, &tex_out };
+	RID *bufs[] = { &buf_state[0], &buf_state[1], &buf_give, &buf_ground, &buf_cover, &buf_stamps, &buf_collision, &buf_cache, &buf_tile_ops, &buf_packed, &buf_water, &buf_water_tmp, &tex_out };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
@@ -200,20 +205,25 @@ void GroundDeformGPU::_rt_make_sets() {
 		add(9, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_cache);
 		add(10, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_tile_ops);
 		add(11, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_packed);
+		add(12, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_water);
+		add(13, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_water_tmp);
 		uset[i] = rd->uniform_set_create(uniforms, shader, 0);
 	}
 }
 
 void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 	bool remake = false;
-	if (p_dims.n != dims.n || p_dims.slots != dims.slots || p_dims.stride != dims.stride) {
+	if (p_dims.n != dims.n || p_dims.slots != dims.slots || p_dims.stride != dims.stride || p_dims.cover_vec4s != dims.cover_vec4s) {
 		// The field itself: start over.
 		_rt_free_buffers();
 		const int n = p_dims.n;
 		buf_state[0] = _rt_storage(n * n * 16);
 		buf_state[1] = _rt_storage(n * n * 16);
 		buf_give = _rt_storage(n * n * 8);
-		buf_packed = _rt_storage(n * n * 4 * p_dims.stride);
+		buf_packed = _rt_storage(n * n * 4 * packed_uints(p_dims.stride));
+		// Standing water is the ground's: snow binds a token buffer.
+		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 32 : 16);
+		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 : 16);
 		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * p_dims.stride);
 		RD::TextureFormat tf;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
@@ -223,7 +233,7 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		tex_out = rd->texture_create(tf, RD::TextureView());
 		rd->texture_clear(tex_out, Color(0, 0, 1, 1), 0, 1, 0, 1);
 		buf_ground = _rt_storage(MAX(p_dims.gn * p_dims.gn, 1) * 4);
-		buf_cover = _rt_storage(MAX(p_dims.cn * p_dims.cn, 1) * 32);
+		buf_cover = _rt_storage(MAX(p_dims.cn * p_dims.cn, 1) * 16 * p_dims.cover_vec4s);
 		buf_collision = _rt_storage(MAX(p_dims.coll_w * p_dims.coll_w, 1) * 4);
 		stamps_capacity = 16;
 		buf_stamps = _rt_storage(stamps_capacity * STAMP_BYTES);
@@ -246,7 +256,7 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		}
 	};
 	grow(buf_ground, MAX(p_dims.gn * p_dims.gn, 1) * 4, MAX(dims.gn * dims.gn, 1) * 4);
-	grow(buf_cover, MAX(p_dims.cn * p_dims.cn, 1) * 32, MAX(dims.cn * dims.cn, 1) * 32);
+	grow(buf_cover, MAX(p_dims.cn * p_dims.cn, 1) * 16 * p_dims.cover_vec4s, MAX(dims.cn * dims.cn, 1) * 16 * dims.cover_vec4s);
 	grow(buf_collision, MAX(p_dims.coll_w * p_dims.coll_w, 1) * 4, MAX(dims.coll_w * dims.coll_w, 1) * 4);
 	dims = p_dims;
 	if (remake) {
@@ -267,7 +277,7 @@ void GroundDeformGPU::_dispatch(int64_t p_list, int p_mode, int p_count, int p_g
 
 void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center, const PackedByteArray &p_uploads) {
 	_rt_compile();
-	if (failed || p_dims.size() < 7 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
+	if (failed || p_dims.size() < 9 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
 		return;
 	}
 	Dims d;
@@ -278,6 +288,8 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	d.coll_w = p_dims[4];
 	d.stride = p_dims[5];
 	d.slump_passes = p_dims[6];
+	d.cover_vec4s = CLAMP(p_dims[7], 2, 3);
+	d.water_passes = MAX(p_dims[8], 0);
 	_rt_ensure(d);
 	const int n = d.n;
 	const int field_groups = (n * n + WG - 1) / WG;
@@ -285,12 +297,15 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	if ((p_flags & STEP_GROUND) && p_ground.size() == d.gn * d.gn * 4) {
 		rd->buffer_update(buf_ground, 0, p_ground.size(), p_ground.ptr());
 	}
-	if ((p_flags & STEP_COVER) && p_cover.size() == d.cn * d.cn * 32) {
+	if ((p_flags & STEP_COVER) && p_cover.size() == d.cn * d.cn * 16 * d.cover_vec4s) {
 		rd->buffer_update(buf_cover, 0, p_cover.size(), p_cover.ptr());
 	}
 	if (p_flags & STEP_RESET) {
 		rd->buffer_clear(buf_state[0], 0, n * n * 16);
 		rd->buffer_clear(buf_state[1], 0, n * n * 16);
+		if (d.stride == 2) {
+			rd->buffer_clear(buf_water, 0, n * n * 32);
+		}
 	}
 	const int stamp_count = p_stamps.size() / STAMP_BYTES;
 	if ((p_flags & STEP_STAMPS) && stamp_count > 0) {
@@ -335,6 +350,9 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		RD::ComputeListID cl = rd->compute_list_begin();
 		rd->compute_list_bind_compute_pipeline(cl, pipeline);
 		_dispatch(cl, MODE_SHIFT, shift_count, field_groups);
+		if (d.stride == 2) {
+			_dispatch(cl, MODE_WATER_COPY, 0, field_groups);
+		}
 		rd->compute_list_end();
 		cur = 1 - cur;
 	}
@@ -354,6 +372,12 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 			cur = 1 - cur;
 		}
 	}
+	if ((p_flags & STEP_WATER) && d.stride == 2) {
+		for (int k = 0; k < d.water_passes; k++) {
+			_dispatch(cl, MODE_WATER_FLUX, 0, field_groups);
+			_dispatch(cl, MODE_WATER_DEPTH, 0, field_groups);
+		}
+	}
 	if (p_flags & STEP_BLIT) {
 		_dispatch(cl, MODE_BLIT, 0, field_groups);
 	}
@@ -366,7 +390,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	rd->compute_list_end();
 
 	if (p_flags & STEP_SYNC) {
-		const Vector<uint8_t> fdata = rd->buffer_get_data(buf_packed, 0, n * n * 4 * d.stride);
+		const Vector<uint8_t> fdata = rd->buffer_get_data(buf_packed, 0, n * n * 4 * packed_uints(d.stride));
 		rt_on_field(fdata, p_origin);
 		if (d.coll_w > 0) {
 			const Vector<uint8_t> cdata = rd->buffer_get_data(buf_collision, 0, d.coll_w * d.coll_w * 4);
@@ -383,7 +407,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	}
 	if ((p_flags & STEP_READBACK) && !field_in_flight) {
 		field_in_flight = true;
-		rd->buffer_get_data_async(buf_packed, callable_mp(this, &GroundDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4 * d.stride);
+		rd->buffer_get_data_async(buf_packed, callable_mp(this, &GroundDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4 * packed_uints(d.stride));
 	}
 }
 
@@ -681,8 +705,11 @@ bool GroundDeformGPUHost::take_field(GroundDeformField &r_field, int p_stride, f
 	}
 	const int fn = r_field.resolution;
 	const bool fresh = p_stride == 2 && int(r_field.fresh.size()) == fn * fn;
-	if (packed.size() != fn * fn * 4 * p_stride || int(r_field.dent.size()) != fn * fn) {
+	if (packed.size() != fn * fn * 4 * GroundDeformGPU::packed_uints(p_stride) || int(r_field.dent.size()) != fn * fn) {
 		return false;
+	}
+	if (fresh && int(r_field.water.size()) != fn * fn) {
+		r_field.water.resize(fn * fn);
 	}
 	const int T = GroundDeformField::TILE;
 	const uint16_t *h = reinterpret_cast<const uint16_t *>(packed.ptr());
@@ -702,6 +729,9 @@ bool GroundDeformGPUHost::take_field(GroundDeformField &r_field, int p_stride, f
 			if (fresh) {
 				r_field.fresh[i] = fr;
 				owed = MAX(owed, Math::half_to_float(h[i * 4 + 3]));
+			}
+			if (fresh) {
+				r_field.water[i] = Math::half_to_float(h[(fn * fn * 2 + i) * 2]);
 			}
 			if (dn > 0.0f || rm > 0.0f || fr > 0.0f) {
 				r_field.tile_active[(z / T) * nt + x / T] = 1;

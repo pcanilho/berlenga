@@ -65,8 +65,9 @@ public:
 		STEP_GROUND = 1 << 8, // new ground heights
 		STEP_COVER = 1 << 9, // new cover cells
 		STEP_SYNC = 1 << 10, // read back now, blocking (tests)
+		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
 	};
-	static constexpr int PARAMS_BYTES = 224;
+	static constexpr int PARAMS_BYTES = 256;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -79,6 +80,8 @@ public:
 		int coll_w = 0;
 		int stride = 1; // uints per texel in the cache and the read back: 1 (dent, rim), 2 (and fresh)
 		int slump_passes = 1; // slumping passes per step (a finer field needs more to move as far in a second)
+		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 3 ground (the third: water inputs)
+		int water_passes = 0; // pipe-model substeps this step (STEP_WATER)
 	};
 
 	static bool is_available();
@@ -98,9 +101,11 @@ public:
 	uint64_t get_texture_serial() const { return texture_serial.get(); }
 	// The latest collision heights (already divided by the spacing) and the centre they were taken at.
 	bool take_collision(PackedFloat32Array &r_heights, Vector2 &r_center);
-	// The latest packed field (half floats dent, rim per texel, then fresh and 0 with a stride of 2) and the
-	// origin it was taken at.
+	// The latest packed field (half floats dent, rim per texel, then fresh and the slumping owed with a stride of
+	// 2, then for the ground a block of (water depth, 0) per texel) and the origin it was taken at.
 	bool take_field(PackedByteArray &r_packed, Vector2i &r_origin);
+	// uints per texel in the packed read back.
+	static int packed_uints(int p_stride) { return p_stride == 2 ? 3 : 1; }
 
 private:
 	RenderingDevice *rd = nullptr;
@@ -119,6 +124,8 @@ private:
 	RID buf_tile_ops;
 	int tile_ops_capacity = 0;
 	RID buf_packed;
+	RID buf_water; // ground: per texel the pipe model's outflows and depth (2 vec4)
+	RID buf_water_tmp; // ground: the shifted depth
 	RID tex_out;
 	RID uset[2]; // state = buf_state[i], out = buf_state[1 - i]
 	Dims dims;

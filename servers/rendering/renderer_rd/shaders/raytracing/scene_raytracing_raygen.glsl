@@ -1684,6 +1684,20 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's raster shader, there
 // with its comments. Returns a facet normal and its weight (0: none) for a footprint in metres.
+// Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
+// scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
+// ground with pore water p_wet.
+vec4 ground_water_look(float p_depth, float p_wet) {
+	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
+	float cover = smoothstep(0.0003, 0.002, p_depth);
+	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
+	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
+	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
+	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
+	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
+	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, 0.0);
+}
+
 // Sand grains (the functions of the same names in material.cpp; docs/ideas/sand.md, sand glints).
 uint ground_grain_hash(ivec3 p_q, uint p_level) {
 	uint h = (uint(p_q.x) * 73856093u) ^ (uint(p_q.y) * 19349663u) ^ (uint(p_q.z) * 83492791u) ^ (p_level * 2654435761u);
@@ -2052,6 +2066,7 @@ void main() {
 	float g_wet = 0.0; // the ground's pore water (sand stage 4), as wetness, and its standing-water sheen
 	float g_sheen = 0.0;
 	float g_grain = 0.0; // the share of loose dry sand showing its grains (sand_glints)
+	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
@@ -2109,6 +2124,7 @@ void main() {
 						g = mix(g, textureLod(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), (gpos.xz - n0) / nsize, 0.0), nw);
 					}
 				}
+				g_water = max(g.g, 0.0);
 				m.albedo *= g.b;
 				// The fresh sheen on floors only (material.cpp: torn walls keep their roughness).
 				m.roughness = clamp(m.roughness * mix(1.0, g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
@@ -2202,6 +2218,17 @@ void main() {
 	if (g_sheen > 0.0) {
 		m.normal = normalize(mix(m.normal, h.geometry_normal, 0.85 * g_sheen));
 		m.roughness = mix(m.roughness, 0.2, 0.6 * g_sheen);
+	}
+	// Standing water in ruts and prints (material.cpp ground_water_look()): the patch already lies on the water's
+	// level there; the surface is water's (F0 0.02, smooth, no relief), the bed under it soaked and, deeper, hidden
+	// by the clay the water carries.
+	if (g_water > 0.0) {
+		vec4 gwl = ground_water_look(g_water, g_wet);
+		m.albedo *= gwl.x;
+		m.roughness = mix(m.roughness, gwl.z, gwl.y);
+		m.specular = mix(m.specular, 0.25, gwl.y);
+		m.normal = normalize(mix(m.normal, h.geometry_normal, gwl.y));
+		g_grain *= 1.0 - gwl.y;
 	}
 	// Loose dry sand: its grains' colours and the grains that mirror a light (sand_glints), sized by the
 	// footprint as the snow's sparkle is (camera rays: pixel angle times distance; others: their ray cone).
