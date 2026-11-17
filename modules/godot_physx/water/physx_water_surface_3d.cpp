@@ -1274,11 +1274,14 @@ float shore_signal(vec2 world_xz, float time) {
 	vec2 p = world_xz * 0.45;
 	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
 	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
-	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
+	// Still water (no waves to run up: shore_wave_activity 0) has no swash, so its edge is the still-water line.
+	// Pulled back by the swash's reach, a pool shallower than it lost its whole surface (cut out by alpha; under
+	// path tracing only the outline stayed, a strip that let rays into the water with no way out).
+	float offset = swash_reach * shore_wave_activity * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
 	vec2 q = world_xz * shore_detail_scale;
 	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
 	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
-	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
+	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup * shore_wave_activity;
 	// On dry sand the jitter may only pull the edge back, never add water
 	// past what the swash covers -- or it left a permanent fringe of rim
 	// foam just above the still-water line.

@@ -1,0 +1,1 @@
+- Water: still water (no waves) has no swash, so its edge stays at the still-water line. Pools shallower than the swash's reach kept no surface: under path tracing they vanished, leaving bright-blue strips along their outlines, and in raster their edge was stair-stepped.
