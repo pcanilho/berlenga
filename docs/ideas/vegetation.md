@@ -368,7 +368,9 @@ the British Isles (2019) for sizes and flowering.
 
 ## Next round candidates (17 Nov): Atlantic heath, Mediterranean scrub, worn paths
 
-Atlantic heath and gorse (researching 17 Nov, awaiting Paulo's pick). Dwarf-shrub heath covers
+Atlantic heath and gorse (Paulo picked all three in order, 17 Nov; dwarf shrubs and sets built
+17 Nov in plant_heath.cpp, gorse and broom come from TreeGenerator as shrub species and join
+the sets when they land). Dwarf-shrub heath covers
 acid, nutrient-poor ground from the Atlantic coasts of Portugal to Norway, on sea cliffs, sandy
 plateaux and upland moor (Gimingham 1972, "Ecology of Heathlands"; Webb 1986, "Heathlands";
 Rodwell 1991, British Plant Communities vol. 2, H1 to H22). The engine has heather already; the
@@ -388,7 +390,11 @@ heath needs its other woody plants, each real geometry:
   hairy leaves in fours, pale pink bells in terminal clusters (Bannister 1966).
 - Crowberry (Empetrum nigrum): prostrate mats of needle-like rolled leaves and black berries on
   windy upland and coastal heath (Bell and Tallis 1973, Biological Flora).
-Placement: heath sets by aridity, soil depth and exposure: dry heath (heather, bell heather,
+Built: `make_heath(HEATH_DRY | HEATH_WET | HEATH_MARITIME)`; real needles (whorls of three or
+four, bell heather's axillary leafy tufts), about 35 to 45k triangles a plant; rules: rain over
+700 mm, January over -4 C, growing season over 6.4 C (alpine above), shade under 0.3, wetness
+under 7.5 (dry) or 7 to 10 (wet), maritime on exposure over 0.4 at 6 to 150 m above the sea.
+Planned placement as researched: heath sets by aridity, soil depth and exposure: dry heath (heather, bell heather,
 gorse) on free-draining slopes, wet heath (cross-leaved heath, cottongrass, sphagnum) in hollows
 with the bog set, maritime heath (dwarf gorse, heather and thrift, wind-pruned) on cliff tops
 with RULE_COAST_EXPOSURE, and gorse scrub where soil is deeper. Calluna's growth phases

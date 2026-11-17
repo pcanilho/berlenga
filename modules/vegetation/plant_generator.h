@@ -143,6 +143,10 @@ public:
 		PRESET_SEA_KALE,
 		PRESET_SEA_CAMPION,
 		PRESET_HORNED_POPPY,
+		// Atlantic heath dwarf shrubs (plant_heath.cpp).
+		PRESET_BELL_HEATHER,
+		PRESET_CROSS_LEAVED_HEATH,
+		PRESET_CROWBERRY,
 		PRESET_MAX,
 	};
 
@@ -328,6 +332,10 @@ private:
 	void _build_sea_kale();
 	void _build_sea_campion();
 	void _build_horned_poppy();
+	// Atlantic heath (plant_heath.cpp).
+	void _build_bell_heather();
+	void _build_cross_leaved_heath();
+	void _build_crowberry();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
@@ -547,6 +555,14 @@ public:
 		SALTMARSH_MAX,
 	};
 	static TypedArray<Resource> make_saltmarsh(SaltmarshStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Atlantic heath on acid, oceanic, open ground (plant_heath.cpp).
+	enum HeathStand {
+		HEATH_DRY, // Free-draining ground: heather, bell heather, crowberry, wiry grasses.
+		HEATH_WET, // Where water gathers, short of bog: cross-leaved heath, heather, cottongrass, sphagnum.
+		HEATH_MARITIME, // Exposed cliff tops: wind-pruned heather and bell heather, thrift, crowberry.
+		HEATH_MAX,
+	};
+	static TypedArray<Resource> make_heath(HeathStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -558,3 +574,4 @@ VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
+VARIANT_ENUM_CAST(PlantGenerator::HeathStand);

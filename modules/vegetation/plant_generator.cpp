@@ -479,6 +479,12 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_HORNED_POPPY:
 			r_phenology = { 700.0f, 1900.0f, 600.0f, false }; // June to September; the horns after.
 			return true;
+		case PRESET_BELL_HEATHER:
+			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September, before heather; brown bells stand.
+			return true;
+		case PRESET_CROSS_LEAVED_HEATH:
+			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September.
+			return true;
 		default:
 			return false;
 	}
@@ -3847,6 +3853,12 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		} else if (preset == PRESET_SEA_CAMPION) {
 			t.aspect = 0.75f;
 			t.base_tint = Color(0.95f, 0.9f, 0.92f, 0.2f);
+		} else if (preset == PRESET_BELL_HEATHER || preset == PRESET_CROSS_LEAVED_HEATH) {
+			l.shape = LEAF_OVATE;
+			t.aspect = 0.75f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+			t.base_tint = Color(0.6f, 0.5f, 0.55f, 0.35f); // Darker at the mouth's lobes and the calyx.
 		} else if (preset == PRESET_HORNED_POPPY) {
 			l.shape = LEAF_ROUND;
 			t.aspect = 1.0f;
@@ -4065,6 +4077,17 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.vein = Color(0.38f, 0.45f, 0.3f); // Ivy's pale, raised veins.
 			t.yellowing = 0.1f;
 			t.spots = 0.15f;
+			break;
+		case PRESET_BELL_HEATHER:
+		case PRESET_CROSS_LEAVED_HEATH:
+		case PRESET_CROWBERRY:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.45f; // The needle fills its narrow card.
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.vein = leaf_color.lerp(Color(0.8f, 0.82f, 0.75f), 0.35f); // The pale rolled-under margin line.
+			t.yellowing = 0.1f;
+			t.spots = 0.05f;
 			break;
 		case PRESET_HEATHER:
 			l.shape = LEAF_LINEAR;
@@ -5512,6 +5535,21 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.62f, 0.16f, 0.09f); // Red flowers.
 			centre_color = Color(0.4f, 0.14f, 0.08f); // The panicle's red branches.
 			break;
+		case PRESET_BELL_HEATHER:
+			leaf_color = Color(0.1f, 0.19f, 0.06f); // Dark, glossy.
+			stem_color = Color(0.27f, 0.17f, 0.11f);
+			petal_color = Color(0.55f, 0.08f, 0.32f); // Crimson-purple.
+			break;
+		case PRESET_CROSS_LEAVED_HEATH:
+			leaf_color = Color(0.34f, 0.42f, 0.3f); // Grey-green, downy.
+			stem_color = Color(0.3f, 0.22f, 0.15f);
+			petal_color = Color(0.86f, 0.58f, 0.64f); // Pale rose.
+			break;
+		case PRESET_CROWBERRY:
+			leaf_color = Color(0.09f, 0.2f, 0.05f); // Glossy dark green.
+			stem_color = Color(0.3f, 0.16f, 0.1f); // Red-brown.
+			centre_color = Color(0.03f, 0.03f, 0.04f); // Black berries.
+			break;
 		case PRESET_HEATHER:
 			leaf_color = Color(0.13f, 0.22f, 0.07f); // Dark, dull green.
 			stem_color = Color(0.25f, 0.18f, 0.12f);
@@ -5953,6 +5991,15 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_HORNED_POPPY:
 			_build_horned_poppy();
 			break;
+		case PRESET_BELL_HEATHER:
+			_build_bell_heather();
+			break;
+		case PRESET_CROSS_LEAVED_HEATH:
+			_build_cross_leaved_heath();
+			break;
+		case PRESET_CROWBERRY:
+			_build_crowberry();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -6023,7 +6070,12 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			leaf_rough = 0.42f; // Thick, waxy.
 			break;
 		case PRESET_SEA_PURSLANE:
-			leaf_rough = 0.85f; // The mealy bladder hairs scatter.
+		case PRESET_CROSS_LEAVED_HEATH:
+			leaf_rough = 0.85f; // Mealy or downy hairs scatter.
+			break;
+		case PRESET_BELL_HEATHER:
+		case PRESET_CROWBERRY:
+			leaf_rough = 0.35f; // Glossy needles.
 			break;
 		default:
 			break;
@@ -6936,12 +6988,16 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_SEA_KALE);
 	BIND_ENUM_CONSTANT(PRESET_SEA_CAMPION);
 	BIND_ENUM_CONSTANT(PRESET_HORNED_POPPY);
+	BIND_ENUM_CONSTANT(PRESET_BELL_HEATHER);
+	BIND_ENUM_CONSTANT(PRESET_CROSS_LEAVED_HEATH);
+	BIND_ENUM_CONSTANT(PRESET_CROWBERRY);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
@@ -6987,5 +7043,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SALTMARSH_HIGH);
 	BIND_ENUM_CONSTANT(SALTMARSH_SHINGLE);
 	BIND_ENUM_CONSTANT(SALTMARSH_MAX);
+	BIND_ENUM_CONSTANT(HEATH_DRY);
+	BIND_ENUM_CONSTANT(HEATH_WET);
+	BIND_ENUM_CONSTANT(HEATH_MARITIME);
+	BIND_ENUM_CONSTANT(HEATH_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -349,6 +349,7 @@ func _checks() -> void:
 	_dune_checks()
 	_alpine_checks()
 	_saltmarsh_checks()
+	_heath_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -562,6 +563,41 @@ func _saltmarsh_checks() -> void:
 	var green := PlantGenerator.make_saltmarsh(P.SALTMARSH_PIONEER, 1, false, {"forcing": 900.0, "day_of_year": 190, "senescence": 0.0})
 	_check("glasswort and cord-grass carry pollen tags; cord-grass sheds pollen", (green[1] as PlantSpecies).get_meta("pollen", 0.0) > 0.0 and int((green[0] as PlantSpecies).get_meta("plant_preset", -1)) == P.PRESET_GLASSWORT, [green[1].get_meta("pollen", 0.0)])
 	_check("both glasswort seasons build", (red[0] as PlantSpecies).meshes.size() == 1 and (green[0] as PlantSpecies).meshes.size() == 1, null)
+
+# Atlantic heath (docs/ideas/vegetation.md, "Next round candidates (17 Nov)"): the dwarf shrubs'
+# sizes in leaf and in flower, and the sets on their own water and coast bands.
+func _heath_checks() -> void:
+	var P := PlantGenerator
+	var sizes := {P.PRESET_BELL_HEATHER: [0.08, 0.6, 0.7], P.PRESET_CROSS_LEAVED_HEATH: [0.06, 0.6, 0.7], P.PRESET_CROWBERRY: [0.01, 0.15, 0.75]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for season in [{"forcing": 500.0, "day_of_year": 160, "senescence": 0.0}, {"forcing": 1300.0, "day_of_year": 230, "senescence": 0.0}]:
+			g.season = season
+			for sd in 3:
+				g.seed = sd
+				var m := g.generate()
+				var bb := m.get_aabb()
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 50000 and bb.position.y > -0.05 # Real needles: dense dwarf shrubs.
+				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 50k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	for st in P.HEATH_MAX:
+		var set := P.make_heath(st, 1, false)
+		var ok := set.size() >= 3
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("heath") and s.precipitation_range.x >= 600.0 and s.season_temperature_range.x > 6.0 and s.shade_range.y <= 0.31
+			var w: Vector2 = s.wetness_range
+			if st == P.HEATH_DRY:
+				ok = ok and w.y <= 8.0
+			elif st == P.HEATH_WET:
+				ok = ok and w.x >= 6.5
+			else:
+				ok = ok and s.coast_exposure_range.x >= 0.39 and s.tide_height_range.x >= 5.0
+		_check("heath set %d: oceanic, open, below the alpine belt, on its own water or coast band" % st, ok, set.size())
 
 func _alpine_checks() -> void:
 	var P := PlantGenerator

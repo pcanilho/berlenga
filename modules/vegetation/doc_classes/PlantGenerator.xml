@@ -99,6 +99,16 @@
 				Returns the plants of a sand dune zone as [PlantSpecies], placed by distance to the water ([constant PlantSpecies.RULE_WATER_DISTANCE]) on slopes under dry sand's angle of repose: lyme grass and a little marram on the embryo dunes of the strandline, marram tussocks with lyme grass and sea holly on the mobile foredunes, thinning marram with a dry sward and moss on the fixed dunes behind. Grasses grow in clonal patches. Put the [VegetationField3D] in [code]GroundSurface3D.wind_shelters[/code] and the plants shelter the sand and trap it ([method VegetationField3D.sample_lateral_cover]). They do not colour the far ground. Each species has the meta [code]dunes[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering.
 			</description>
 		</method>
+		<method name="make_heath" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.HeathStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Returns the dwarf shrubs of an Atlantic heath zone as [PlantSpecies] (Gimingham 1972; Rodwell 1991). Heath is oceanic and open: over about 700 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), January means over about -4 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), out of the shade of crowns ([constant PlantSpecies.RULE_SHADE] under 0.3), off bare rock, and below the alpine belt (growing season over 6.4 C, [constant PlantSpecies.RULE_SEASON_TEMPERATURE], where [method make_alpine] takes over). Dry heath (heather in patches of different ages, bell heather on the sunniest slopes, crowberry on the shaded ones, wiry grasses) keeps to free-draining ground ([constant PlantSpecies.RULE_WETNESS] under 7.5); wet heath (cross-leaved heath, heather, cottongrass, sphagnum) to where water gathers, short of the bog (7 to 10); maritime heath (wind-pruned heather and bell heather, thrift, crowberry) to cliff tops open to the sea ([constant PlantSpecies.RULE_COAST_EXPOSURE] over 0.4, 6 to 150 m above it, needing a geology source with a sea). They do not colour the far ground. Each species has the meta [code]heath[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and berries.
+			</description>
+		</method>
 		<method name="make_saltmarsh" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.SaltmarshStand" />
@@ -457,7 +467,16 @@
 		<constant name="PRESET_HORNED_POPPY" value="75" enum="Preset">
 			Yellow horned-poppy ([i]Glaucium flavum[/i]): grey-blue, crinkled, deeply lobed rosettes, branched stems with yellow poppies and long, curved seed pods.
 		</constant>
-		<constant name="PRESET_MAX" value="76" enum="Preset">
+		<constant name="PRESET_BELL_HEATHER" value="76" enum="Preset">
+			Bell heather ([i]Erica cinerea[/i]): a dwarf shrub of wiry stems, dark glossy needle leaves in whorls of three with leafy tufts in their axils, and crimson-purple bells in short spikes, July to September. The driest, sunniest heath.
+		</constant>
+		<constant name="PRESET_CROSS_LEAVED_HEATH" value="77" enum="Preset">
+			Cross-leaved heath ([i]Erica tetralix[/i]): a straggling dwarf shrub of the wet heath, grey-green downy leaves in whorls of four, and pale rose bells nodding in a tight cluster at each shoot tip.
+		</constant>
+		<constant name="PRESET_CROWBERRY" value="78" enum="Preset">
+			Crowberry ([i]Empetrum nigrum[/i]): prostrate mats of trailing stems crowded with glossy, rolled needle leaves; black berries from August to October.
+		</constant>
+		<constant name="PRESET_MAX" value="79" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -567,6 +586,18 @@
 		</constant>
 		<constant name="SALTMARSH_MAX" value="4" enum="SaltmarshStand">
 			Number of salt marsh stand types.
+		</constant>
+		<constant name="HEATH_DRY" value="0" enum="HeathStand">
+			Dry heath on free-draining ground: heather, bell heather, crowberry and wiry grasses.
+		</constant>
+		<constant name="HEATH_WET" value="1" enum="HeathStand">
+			Wet heath where water gathers, short of the bog: cross-leaved heath, heather, cottongrass and sphagnum.
+		</constant>
+		<constant name="HEATH_MARITIME" value="2" enum="HeathStand">
+			Maritime heath on exposed cliff tops: heather and bell heather pruned low by salt wind, thrift and crowberry.
+		</constant>
+		<constant name="HEATH_MAX" value="3" enum="HeathStand">
+			Number of heath stand types.
 		</constant>
 	</constants>
 </class>
