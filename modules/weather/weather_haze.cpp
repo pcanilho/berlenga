@@ -280,8 +280,9 @@ float WeatherMap3D::aerosol_extinction(float p_dry_visibility_km, float p_humidi
 void WeatherMap3D::_update_aerosol() {
 	if (!aerosol_haze) {
 		if (applied_aerosol >= 0.0f) {
-			clear_precipitation_extinction(this);
+			// Marked cleared first: clearing re-applies the haze (_apply_haze), which comes back here.
 			applied_aerosol = -1.0f;
+			clear_precipitation_extinction(this);
 		}
 		return;
 	}
