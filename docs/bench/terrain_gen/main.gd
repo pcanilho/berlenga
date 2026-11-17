@@ -729,6 +729,28 @@ func _coast_checks() -> void:
 	for r in rivers:
 		ends[r["ends_in"]] = ends.get(r["ends_in"], 0) + 1
 	check(not ends.has("edge") and ends.get("sea", 0) >= 3, "every river reaches the sea, a lake or another river %s" % str(ends))
+	# Beach mask and wave exposure for plant rules: along rays in from each edge, the first dry ground is open to the
+	# ocean round an island (exposure high), some of it beach; the island's middle is neither.
+	var ex_max := 0.0
+	var ex_bad := 0
+	var beach_hits := 0
+	for e in 4:
+		for t in [-0.25, 0.0, 0.25]:
+			var dir := [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)][e] as Vector3
+			var start: Vector3 = -dir * 2040.0 + Vector3(dir.z, 0, dir.x) * WORLD * float(t)
+			for k in 400:
+				var q: Vector3 = start + dir * (k * 8.0)
+				if is_nan(gen.get_water_level(q)):
+					var shore := q + dir * 8.0
+					var ex := gen.get_coast_exposure_at(shore)
+					var b := gen.get_beach_at(shore)
+					if ex < 0.0 or ex > 1.0 or b < 0.0 or b > 1.0:
+						ex_bad += 1
+					ex_max = maxf(ex_max, ex)
+					if b > 0.0:
+						beach_hits += 1
+					break
+	check(ex_bad == 0 and ex_max > 0.6 and gen.get_coast_exposure_at(Vector3.ZERO) == 0.0 and gen.get_beach_at(Vector3.ZERO) == 0.0, "coast exposure open on an island's shore (%.2f), none inland; beach at %d of 12 landfalls" % [ex_max, beach_hits])
 	var lakes := gen.get_lake_results()
 	check(lakes.size() >= 1, "lakes form behind natural dams (%d)" % lakes.size())
 	var held := true

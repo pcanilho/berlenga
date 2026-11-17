@@ -2604,6 +2604,7 @@ void TerrainGenerator3D::clear_result() {
 	rock.clear();
 	talus.clear();
 	beach.clear();
+	coast_exposure.clear();
 	receivers.clear();
 	channel_area.clear();
 	water_body.clear();
@@ -5615,6 +5616,105 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			}
 		}
 	}
+	_coast_exposure(p_sea, to_sea.data());
+}
+
+// Wave exposure along the coast from the fetch (the open water a wind blows over towards a point, the classic
+// measure of exposure: Burrows et al. 2008, "Wave exposure indices from digital coastlines"; Keddy 1982). From every
+// cell within COAST_EXPOSURE_REACH of the sea, 32 rays: each crosses up to that reach of land to the water, then counts
+// the open water until land again, out to FETCH_MAX (or the grid's edge, the open ocean beyond it). Exposure is the mean
+// over the rays of log(1 + fetch / 100 m) against the same for FETCH_MAX: 0 in an enclosed inlet, about 0.5 behind a
+// headland or in a bay a few hundred metres across, 1 on a coast open to the ocean. Salt marsh grows only on the
+// sheltered end; shingle and strandlines on exposed backshores.
+static constexpr double COAST_EXPOSURE_REACH = 300.0;
+static constexpr double FETCH_MAX = 5000.0;
+
+struct CoastExposureJob {
+	const TerrainGenerator3D *gen = nullptr;
+	const uint8_t *sea = nullptr;
+	const int *cells = nullptr;
+	float *out = nullptr;
+};
+
+void TerrainGenerator3D::_coast_exposure_task(void *p_userdata, uint32_t p_index) {
+	const CoastExposureJob *job = static_cast<const CoastExposureJob *>(p_userdata);
+	const int i = job->cells[p_index];
+	job->out[i] = job->gen->_coast_exposure_cell(job->sea, i);
+}
+
+float TerrainGenerator3D::_coast_exposure_cell(const uint8_t *p_sea, int p_i) const {
+	constexpr int DIRS = 32;
+	const double step = 0.5 * cell_size;
+	const double norm = Math::log(1.0 + FETCH_MAX / 100.0);
+	const double x0 = (p_i % nx) * cell_size, z0 = (p_i / nx) * cell_size;
+	double sum = 0.0;
+	for (int d = 0; d < DIRS; d++) {
+		const double a = (d + 0.5) * Math::TAU / DIRS;
+		const double dx = Math::cos(a) * step, dz = Math::sin(a) * step;
+		double t = 0.0, fetch = 0.0;
+		bool wet = false;
+		double x = x0, z = z0;
+		while (true) {
+			x += dx;
+			z += dz;
+			t += step;
+			const int ix = int(Math::round(x / cell_size)), iz = int(Math::round(z / cell_size));
+			if (ix < 0 || iz < 0 || ix >= nx || iz >= ny) {
+				fetch = wet ? FETCH_MAX : 0.0; // off the grid: open ocean once at sea, unknown land otherwise
+				break;
+			}
+			if (p_sea[iz * nx + ix]) {
+				wet = true;
+				fetch += step;
+				if (fetch >= FETCH_MAX) {
+					break;
+				}
+			} else if (wet || t > COAST_EXPOSURE_REACH) {
+				break; // land again, or too far inland to see the sea this way
+			}
+		}
+		sum += Math::log(1.0 + MIN(fetch, FETCH_MAX) / 100.0) / norm;
+	}
+	return float(sum / DIRS);
+}
+
+void TerrainGenerator3D::_coast_exposure(const LocalVector<uint8_t> &p_sea, const double *p_to_sea) {
+	const int n = nx * ny;
+	coast_exposure.resize(n);
+	memset(coast_exposure.ptr(), 0, sizeof(float) * n);
+	// Land cells near the sea (vegetation asks on land; the shoreline cell is land).
+	LocalVector<int> cells;
+	for (int i = 0; i < n; i++) {
+		if (!p_sea[i] && p_to_sea[i] < COAST_EXPOSURE_REACH) {
+			cells.push_back(i);
+		}
+	}
+	if (cells.is_empty()) {
+		return;
+	}
+	CoastExposureJob job;
+	job.gen = this;
+	job.sea = p_sea.ptr();
+	job.cells = cells.ptr();
+	job.out = coast_exposure.ptr();
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_coast_exposure_task, &job, int(cells.size()), -1, true, SNAME("TerrainGenerator3D coast exposure"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+}
+
+real_t TerrainGenerator3D::get_beach_at(const Vector3 &p_global_position) const {
+	if (beach.size() != heights.size()) {
+		return 0.0;
+	}
+	const float v = _sample(beach, p_global_position.x, p_global_position.z);
+	return Math::is_nan(v) ? 0.0 : CLAMP(v, 0.0f, 1.0f);
+}
+
+real_t TerrainGenerator3D::get_coast_exposure_at(const Vector3 &p_global_position) const {
+	if (coast_exposure.size() != heights.size()) {
+		return 0.0;
+	}
+	const float v = _sample(coast_exposure, p_global_position.x, p_global_position.z);
+	return Math::is_nan(v) ? 0.0 : CLAMP(v, 0.0f, 1.0f);
 }
 
 // A marker's downstream dam face: "face_slope" metadata (rise over run), or "rock_lip" for a bedrock sill (a steep
@@ -7802,6 +7902,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_dune_vegetation"), &TerrainGenerator3D::get_dune_vegetation);
 	ClassDB::bind_method(D_METHOD("get_dune_height", "global_position"), &TerrainGenerator3D::get_dune_height);
 	ClassDB::bind_method(D_METHOD("get_dune_stability", "global_position"), &TerrainGenerator3D::get_dune_stability);
+	ClassDB::bind_method(D_METHOD("get_beach_at", "global_position"), &TerrainGenerator3D::get_beach_at);
+	ClassDB::bind_method(D_METHOD("get_coast_exposure_at", "global_position"), &TerrainGenerator3D::get_coast_exposure_at);
 	ClassDB::bind_method(D_METHOD("get_dune_rect"), &TerrainGenerator3D::get_dune_rect);
 	ClassDB::bind_method(D_METHOD("get_last_dune_msec"), &TerrainGenerator3D::get_last_dune_msec);
 	ClassDB::bind_method(D_METHOD("get_last_dune_volume"), &TerrainGenerator3D::get_last_dune_volume);

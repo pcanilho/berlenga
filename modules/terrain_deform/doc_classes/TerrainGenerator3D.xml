@@ -118,6 +118,20 @@
 				The world x and z rectangle the dunes' grid covers; empty without dunes.
 			</description>
 		</method>
+		<method name="get_beach_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The beach at [param global_position] (x and z): 1 on the beach face, fading to 0 over the backshore; 0 inland, at sea and on coasts with no beach. For plant rules: strandline and shingle plants on the backshore.
+			</description>
+		</method>
+		<method name="get_coast_exposure_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Wave exposure of the land near the coast at [param global_position] (x and z), from the fetch: the open water in 32 directions, out to 5 km (or the grid's edge, open ocean), on a log scale. 0 in an enclosed inlet, about 0.5 in a bay a few hundred metres across, 1 on a coast open to the ocean; 0 more than 300 m from the sea and at sea. For plant rules: salt marsh only on sheltered shores.
+			</description>
+		</method>
 		<method name="get_dune_stability" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
