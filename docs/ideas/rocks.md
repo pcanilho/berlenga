@@ -957,3 +957,24 @@ evaporates (`evaporation` 0.25), and it never jets up, so it spills out level an
 frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it is still to be framed (PC queue).
 - Sea-cave mouths: cold mist in PhysX Flow. Spray and saturated air pushed out of the cave by the swell, where the
   sea is in the mouth. A slow, heavy, pale Flow emitter at the mouth, pulsing with the swell, near the target only.
+
+## Next options (17 Nov research, nothing built before Paulo picks)
+
+1. Tafoni and honeycomb weathering as real geometry. Coastal sandstone and granite boulders hollow out into
+   cavernous pits (tafoni, decimetres to metres) and cell-like honeycombs (centimetres) where salt crystallises in
+   the drying zone just inside the surface. The 2023 model of moisture transport and salt deposition (Geosciences
+   13(6) 161, "Mathematical Simulation of Honeycomb Weathering via Moisture Transport and Salt Deposition") grows them
+   from wetting and drying: hollows deepen where the rock dries slowly, and walls between them survive where it dries
+   fast. Plan: carve the hollows into the stone's own mesh (RockGenerator, coast and sea-spray zones and dry faces),
+   with sizes from exposure to salt (the sea's spray reach) and aspect; small honeycombs on the fins and stacks,
+   large tafoni on boulders and cliff feet. Real geometry, so PT keeps the cavities' shadow and occlusion.
+2. Rain-wet rock with rivulets. Under rain, rock darkens and gains a water film first where water collects. Then thin
+   rivulets run down the fall lines of faces and drip from overhangs, and the stone dries from the tops and the sunny
+   faces after the rain (Tatarchuk, "Artist-Directable Real-Time Rain Rendering in City Environments", 2006;
+   fxguide's "Game environments: making wet environments"). Plan: wetness per stone from WeatherMap3D rain and
+   drying, a flow field down each stone's faces baked with the mesh (steepest descent on the surface), rivulets
+   along its converging lines with a thin film and lit drops at the lips, in raster and PT.
+3. Cave streams. Vadose canyons and keyhole trenches carry streams; sea caves take the swell. Plan: a PhysXRiver3D
+   along the trench floors of passages above the water table (from the network's own segments), sinks and resurgences
+   at its key points, and the swell running in and out of sea caves (the sea surface reaching in), so the mist and
+   the cave's sound follow real water.
