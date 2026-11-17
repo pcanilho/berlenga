@@ -543,7 +543,7 @@ func _alpine_checks() -> void:
 		var ok := set.size() >= 3
 		for sp in set:
 			var s := sp as PlantSpecies
-			ok = ok and s.meshes.size() == 1 and s.has_meta("alpine") and s.temperature_range.y <= 2.0 and s.temperature_range.x < -5.0
+			ok = ok and s.meshes.size() == 1 and s.has_meta("alpine") and s.season_temperature_range.y <= 7.5 and s.temperature_range.y >= 100.0
 			var c: Vector2 = s.curvature_range
 			if st == P.ALPINE_FELLFIELD:
 				ok = ok and c.y < 0.0
@@ -554,6 +554,12 @@ func _alpine_checks() -> void:
 			else:
 				ok = ok and s.talus_range.y <= 0.21 and s.soil_depth_range.x > 0.0
 		_check("alpine set %d: above the treeline, on its own relief (ridges, slopes, hollows, scree)" % st, ok, set.size())
+	# The treeline by the growing season (Paulsen and Koerner 2014), so an oceanic mountain (mild
+	# winters, cool summers) carries alpine plants where its mean annual is still 2 to 3 C.
+	var oceanic := PlantSpecies.season_temperature(-4.3, 9.3) # 1180 m on a Jan 1 C, Jul 17 C coast.
+	var lowland := PlantSpecies.season_temperature(3.0, 15.0)
+	var arctic := PlantSpecies.season_temperature(-25.0, 3.0) # Too short a season: counted as -10.
+	_check("treeline by the growing season: an oceanic summit is alpine, lowland is not, a short season counts as cold", oceanic < 6.4 and lowland > 8.0 and arctic == -10.0, [oceanic, lowland, arctic])
 
 func _surface_tris(m: Mesh, name: String) -> int:
 	for si in m.get_surface_count():

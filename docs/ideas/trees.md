@@ -1202,8 +1202,7 @@ species meta `wind_flag`, so placement turns +X down the prevailing wind instead
 - Forms FORM_FLAGGED (exposure 0.6-0.95 over the variants) and FORM_KRUMMHOLZ (0.8-1) in
   STAND_SUBALPINE past its closed forest: flagged spruce at -2.3 to -0.8 C annual mean, mats at
   -3.2 to -1.7 C.
-- Open: the krummholz pine still reads as a table on a thick stem; mats need a look in the
-  showcase valley's tree line.
+- Open: the krummholz pine still reads as a table on a thick stem (redone in 5s).
 
 As built, part 2 (16 Nov): `ground_slope` (radians, the ground falling toward +Z) and
 `bank_erosion` (0-1); meta `tree_ground_slope` (Vector2: slope, erosion) so placement turns +Z
@@ -1299,6 +1298,63 @@ triangles. Open-grown trees keep their low limbs and gain few or none.
 
 **Check.** Raster against PT at 100% crop on a forest beech at 1 m: the arms, eye and creases
 hold under PT.
+
+### 5s. Krummholz mats as layered skirts (17 Nov; Paulo's pick, second of three)
+
+**Problem.** The 5q mat read as a flat table of thick limbs on one stem, about a metre up,
+with sparse needles hanging under it. Branch-collision deflection could also swing a 3 m
+limb up 30 degrees, out of the mat.
+
+**What a mat is.** Spruce and fir mats at the tree line (Marr 1977; Holtmeier 2009; Korner
+2012) are cushions 0.5-1.5 m high, the height of the winter snowpack. They are domed over
+their oldest stems and longest downwind, where snow lies deepest. Tree islands migrate to the
+lee (Marr 1977; Benedict 1984). Limbs pressed to the ground under snow root and send up new
+stems (layering; Cooper 1911; Laberge et al. 2000), so a mat stands on many stems. Everything
+above the snow is killed back each winter by abrasion and drying (Hadley and Smith 1986). The
+outside is a dense skin of short needled shoots over a frame of old wood. At the tree line,
+needles stay 8-12 years (Reich et al. 1996).
+
+**As built** (`krummholz` 0-1, unchanged API):
+- **The dome** (`_krumm_cap`):
+  - Height 0.75-3 m by `krummholz`, lumpy.
+  - Falls to 12% at the rim, which is 2.5-9 m out.
+  - Stretched 1.6x downwind (+X) and shortened 0.65x upwind with `wind_exposure`.
+- **Limbs (order 2 and under)** run 30% of the cap height below the surface. When they reach
+  that level they turn outward along the dome's own slope instead of running level.
+- **At the surface:** stems' leaders and shoots of order 3 and up stop. Each tip lives on as a
+  spur for up to 12 years and pushes again each year.
+- **Layering:** from year 6, each year has a 50% chance (times `krummholz`) that a limb lying
+  within 10 cm of the ground roots and sends up a stem. It roots at least 0.5 m from the root
+  and 0.6 m from other layer roots, up to 20 times. A layered stem grows as a stem: apical
+  control and extension of order 0, trunk gravitropism. Its first bud is fed by the limb.
+- **Growth:**
+  - Shoots are dwarfed to 0.55x length.
+  - Twig droop is cut by 85%, since twigs lie flat under snow.
+  - The mat grows over 1.9x the preset's years.
+  - The pipe exponent is raised 0.6, so limbs are a few centimetres thick rather than logs.
+  - Needles stay 4 more years, with 1.9x as many per shoot.
+  - Every live shoot in the top 35% of the cap carries needles (the skin).
+- **Collision deflection** on a mat swings limbs about the vertical only.
+
+**Tree line by the growing season** (with vegetation's alpine plants, eec6cbff). Trees stop
+where the growing season's mean falls to 6.4 C (Paulsen and Korner 2014), whatever the annual
+mean, so an oceanic mountain gets its tree line in the right place.
+- Every species gets `season_temperature_range` (7.2, 100) with a 0.8 C fade. This mirrors the
+  alpine plants' (-100, 6.4) with 0.8 C, so the two cross-fade with no overlap and no bare
+  band.
+- Flagged spruce: 6.4-8.2 C.
+- Mats: 5.2-7 C, among the alpine plants past the tree line (the tree species line).
+- The subalpine belt's annual-mean cold end is gone, since the season rule sets it.
+- Region bench check: no tree under 5.2 C, and nothing but mats under 6.4 C.
+
+**Cost.** Mat variant at krummholz 0.9: 1.8-1.9M triangles against 0.57M before (more
+needles and more nodes), and generation takes 2.8 s instead of 1.2 s. This is on the PC queue
+for optimisation (needle count is the lever).
+
+**Check.** Raster against PT at 960x540: the needle skin and frame hold under PT.
+
+**Open.** From up close the mat is still porous, with ground showing between the sprays. A
+denser skin would need either more shoots per node or a needle-card shell.
 
 ## 6. What the games at Paulo's bar do
 

@@ -400,10 +400,28 @@ reads hollow) under a surface of packed rosettes, the way a cushion is built (KÃ
 Plan:
 - Six presets: moss campion, purple saxifrage, mountain avens, curved sedge, dwarf willow, alpine
   toadflax. Phenology from snowmelt: early flowers (saxifrage) on low degree-day sums.
-- `make_alpine(ALPINE_FELLFIELD | ALPINE_GRASSLAND | ALPINE_SNOWBED | ALPINE_SCREE)`, placed by mean
-  annual temperature (the climate map: -8 to 2 C, faded 1.5 C so the treeline is an ecotone),
-  curvature (convex ridges for fellfield, hollows for snowbeds), sunlight (snowbeds on the shaded
+- `make_alpine(ALPINE_FELLFIELD | ALPINE_GRASSLAND | ALPINE_SNOWBED | ALPINE_SCREE)`, placed above
+  the map's own treeline (see below), by curvature (convex ridges for fellfield, hollows for snowbeds), sunlight (snowbeds on the shaded
   side), talus (scree) and slope.
+
+### Fix 17 Nov: the treeline from the growing season, not the mean annual
+
+The first build used a mean annual band (-8 to 1.5 C). The showcase's climate (January 1 C, July
+17 C at the coast) leaves its 1180 m summit at 2.8 C mean annual, so nothing placed, yet real
+oceanic mountains at that climate carry alpine heath far lower (Scotland: treeline about 600 to
+650 m, alpine heath on summits whose mean annual is 0 to 3 C). The mean annual is the wrong
+measure: mild winters raise it without warming the summer that trees grow in. The global treeline
+model (Paulsen and KÃ¶rner 2014, "A climate-based model to predict potential treeline position
+around the globe", Alpine Botany) puts it where the growing season, the days with a mean over
+0.9 C, averages 6.4 C, with at least 94 such days. That one rule gives the Alps' treeline near
+2000 m and Scotland's near 650 m. Wind lowers it further on exposed oceanic ridges (Grace 1989;
+Crawford 2008, "Plants at the Margin").
+
+So `PlantSpecies.RULE_SEASON_TEMPERATURE` works the growing-season mean out from the map's January
+and July means on the annual harmonic (closed form: the season is where a - b cos(theta) >= 0.9;
+its mean is a + b sin(t0) / (pi - t0)), only for species that use it. The alpine sets take it
+under 6.4 C, faded 0.8 C; fellfield 1 C lower down for the wind. On the showcase climate that
+places alpine plants from about 950 m, fellfield on ridges from about 850 m.
 
 ## Dune plants on generated dunes (built 17 Nov)
 

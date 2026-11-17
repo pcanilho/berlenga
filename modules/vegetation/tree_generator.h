@@ -202,6 +202,7 @@ private:
 		bool removed = false;
 		bool leafy = false;
 		bool pole = false; // A resprout's axis after a cut (section 5l): vigorous and straight.
+		bool layered = false; // A krummholz stem from a limb rooted in the ground (section 5s): grows as a stem.
 		Vector3 end() const { return start + dir * length; }
 	};
 
@@ -214,6 +215,7 @@ private:
 		float light = 0.0f;
 		float vigor = 0.0f;
 		bool sprout = false; // A cut stem's resprout (section 5l): keeps its node's order.
+		bool layer = false; // A stem rising where a krummholz limb rooted (section 5s).
 	};
 
 	struct Builder {
@@ -382,6 +384,7 @@ private:
 	LocalVector<float> wound_arc;
 	// Per wound_surf bin, the bark vertex that set its radius and that vertex's part (x -1: none).
 	LocalVector<Vector2i> wound_vtx;
+	float _krumm_cap(const Vector3 &p_q, float *r_slope) const;
 	void _plan_wounds();
 	void _plan_chevrons();
 	void _grow_chevrons(Builder &r_bark);

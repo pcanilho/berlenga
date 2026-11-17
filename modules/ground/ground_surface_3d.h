@@ -130,11 +130,14 @@ private:
 	float _evaporation() const;
 	int _water_passes(const GroundDeformField &p_field, double p_delta) const;
 	// Drying and desiccation cracks (docs/ideas/mud.md, stage 2b): per lattice cell (1 + the share of its water the
-	// drying layer still holds, or 0 where it was never soaked; the wetting and drying cycles it has cracked in).
+	// drying layer still holds, or 0 where it was never soaked; the wetting and drying cycles it has cracked in; the
+	// deepest water that stood on it, m, which sets the layer of clay it settled).
+	static constexpr int CRACK_FLOATS = 3;
 	bool desiccation_cracks = true;
 	LocalVector<float> crack_state;
 	void _crack_update(double p_delta);
-	Vector4 _crack_at_cell(int p_i) const; // opening 0..1, plate size m, regularity 0..1, crust 0..1
+	float _crack_layer(int p_i) const; // the drying layer's thickness, m
+	Vector4 _crack_at_cell(int p_i, float *r_damp = nullptr) const; // opening 0..1, plate size m, regularity 0..1, crust 0..1
 	Ref<Image> mud_map;
 	Rect2 mud_map_rect;
 	float mud_max_depth = 1.2f;
@@ -527,7 +530,8 @@ public:
 	float get_standing_water_at(Vector3 p_position) const;
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
-	// The crack state at a point: (opening 0..1, plate size m, regularity 0..1, crust 0..1).
+	// The crack state at a point: (opening 0..1, plate size m, regularity 0..1, crust 0..1 or, negative, how damp
+	// the drying layer still is).
 	Vector4 get_crack_at(Vector3 p_position) const;
 	void set_mud_map(const Ref<Image> &p_map);
 	Ref<Image> get_mud_map() const { return mud_map; }

@@ -38,7 +38,8 @@ extends Node3D
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
-#   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b)
+#   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
+#                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
@@ -88,6 +89,7 @@ var sun_arg := PackedFloat32Array()
 var mud_arg := PackedFloat32Array()
 var water_arg := 0.0
 var dry_arg := false
+var dry_frames := 600
 var fails := 0
 var height: Node3D
 var surface: GroundSurface3D
@@ -121,6 +123,9 @@ func _ready() -> void:
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--water="): water_arg = float(a.substr(8))
 		elif a == "--dry": dry_arg = true
+		elif a.begins_with("--dry="):
+			dry_arg = true
+			dry_frames = int(a.substr(6))
 		elif a.begins_with("--mud="):
 			for v in a.substr(6).split(","):
 				mud_arg.append(float(v))
@@ -608,7 +613,8 @@ func _run_crack_tests() -> void:
 	print("  soil: %.1f mm of water in the rut; cracks %s soaked, %s dried" % [r[2] * 1000.0, wet, dry])
 	_check("soaked clay does not crack", r[2] > 0.001 and wet.x == 0.0, "opening %.2f under %.1f mm of water" % [wet.x, r[2] * 1000.0])
 	_check("dried, it cracks open", dry.x > 0.9 and dry.w > 0.9, "opening %.2f, crust %.2f" % [dry.x, dry.w])
-	_check("plates about four times the drying layer (Groisman and Kaplan 1994)", dry.y > 0.09 and dry.y < 0.25, "%.0f cm" % (dry.y * 100.0))
+	var flat: Vector4 = surface.get_crack_at(o + Vector3(1.5, 0, 0))
+	_check("plates about four times the drying layer (Groisman and Kaplan 1994), finer outside the pool", dry.y > 0.04 and dry.y < 0.25 and (flat.x == 0.0 or flat.y < 0.7 * dry.y), "%.1f cm in the rut, %.1f cm on the flat beside it (opening %.2f)" % [dry.y * 100.0, flat.y * 100.0, flat.x])
 	# Rain again: it swells shut, and the cycle makes the next pattern more regular (Goehring et al. 2010).
 	var wm: WeatherMap3D = r[3]
 	wm.cloud_cover = 1.0
@@ -1716,10 +1722,53 @@ func _build_ruts() -> void:
 		if dry_arg:
 			surface.desiccation_cracks = true
 			surface.runoff_time_scale = 1e5
-			for i in 600:
+			# --dry=0: until the deepest pool's crust starts (its rim cracked, its centre still damp).
+			var deep0 := Vector3()
+			var plate0 := 0.0
+			for xi in range(-32, 33):
+				for zi in range(-32, 33):
+					var q := Vector3(0.25 * xi, 0, -1.0 + 0.25 * zi)
+					var c := surface.get_crack_at(q)
+					if c.y > plate0:
+						plate0 = c.y
+						deep0 = q
+			var frames := 0
+			while (dry_frames > 0 and frames < dry_frames) or (dry_frames == 0 and frames < 1200 and surface.get_crack_at(deep0).w < -0.5):
 				await get_tree().physics_frame
+				frames += 1
+			print("dried: %d frames" % frames)
 			surface.runoff_time_scale = 1.0
 			print("dried: cracks %s in the left rut" % surface.get_crack_at(Vector3(-1.6, 0, 0.0)))
+			# The deepest dried pool (the largest plates), for framing --cam.
+			var deep := Vector3()
+			var deep_plate := 0.0
+			for xi in range(-32, 33):
+				for zi in range(-32, 33):
+					var q := Vector3(0.25 * xi, 0, -1.0 + 0.25 * zi)
+					var c := surface.get_crack_at(q)
+					if c.y > deep_plate and (c.x > 0.0 or c.w > 0.0 or surface.get_standing_water_at(q) > 0.0):
+						deep_plate = c.y
+						deep = q
+			print("dried: deepest pool at %s, plate %.1f cm, %s" % [deep, deep_plate * 100.0, surface.get_crack_at(deep)])
+			# A map, 0.5 m a character, x across from -8, z down from -9: '.' no pool, '~' water standing; pool beds
+			# by plate size (2-6, 6-10, 10-14, over 14 cm): '1'-'4' still damp, 'A'-'D' drying, 'a'-'d' cracked.
+			for zi in range(0, 33):
+				var row := ""
+				for xi in range(0, 33):
+					var q := Vector3(-8.0 + 0.5 * xi, 0, -9.0 + 0.5 * zi)
+					var c := surface.get_crack_at(q)
+					var bin := clampi(int((c.y * 100.0 - 2.0) / 4.0), 0, 3)
+					if surface.get_standing_water_at(q) > 0.001:
+						row += "~"
+					elif c.y < 0.05:
+						row += "."
+					elif c.x > 0.5:
+						row += "abcd"[bin]
+					elif c.w < -0.5:
+						row += "1234"[bin]
+					else:
+						row += "ABCD"[bin]
+				print("map %5.1f %s" % [-9.0 + 0.5 * zi, row])
 			# Where the dried pools are, round the view (for framing --cam).
 			var sum := Vector3()
 			var cnt := 0
@@ -1954,13 +2003,22 @@ func _build_shore() -> void:
 		var p := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.3 * k)
 		p.y = _undisturbed(p)
 		surface.press_box(p, Vector2(0.11, 0.29), 0.0, p.y, 0.045)
-	# A few swashes only: prints at the top of the swash are softened, not yet gone.
-	for i in 300:
+	# A few swashes only: prints at the top of the swash are softened, not yet gone (--swash-frames=N, 300).
+	var swash_frames := 300
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--swash-frames="):
+			swash_frames = int(a.substr(15))
+	for i in swash_frames:
 		await get_tree().physics_frame
 		if OS.get_environment("SHORE_TRACE") != "" and i % 60 == 0:
 			var q := Vector3(0.0, _undisturbed(Vector3(0, 0, 5)), 5.0)
 			var pw := Vector3(-0.12, _undisturbed(Vector3(-0.12, 0, 0.66)), 0.66)
 			print("t%d sat %.2f depth %.3f swash %s | z0.66 print %.1f cm sat %.2f speed %.2f swash %s" % [i, surface.get_saturation_at(q), sea.call("sample_depth", q), str(sea.call("sample_swash", q)), surface.get_dent_at(pw) * 100.0, surface.get_saturation_at(pw), surface.get_water_speed_at(pw), str(sea.call("sample_swash", pw))])
+	if OS.get_environment("SHORE_TRACE") != "":
+		for k in 16:
+			var pk := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.3 * k)
+			var m: Dictionary = surface.get_material_at(pk)
+			print("print %d z%.1f dent %.1f cm speed %.2f sat %.2f repose %.0f rate %.2f" % [k, pk.z, surface.get_dent_at(pk) * 100.0, surface.get_water_speed_at(pk), surface.get_saturation_at(pk), m["repose"], m["rate"]])
 	var cam := Camera3D.new()
 	add_child(cam)
 	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.9, 0.9, 3.4, -0.1, 0.0, 1.2])

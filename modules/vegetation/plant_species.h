@@ -64,6 +64,7 @@ public:
 		RULE_SPRAY, // Waterfall spray potential, 0 to 1 (geology from a TerrainGenerator3D).
 		RULE_LITTER, // Leaf fall from the placed canopy, 0 none to 1 under closed crowns, drifting past the crowns (VegetationField3D).
 		RULE_DUNE, // Coastal dune stability (TerrainGenerator3D marram cover), 0 bare to 1 fixed; -1 off the dune sand. Only where the map's geology_source has dunes.
+		RULE_SEASON_TEMPERATURE, // Growing season mean, C (Paulsen and Koerner 2014: days over 0.9 C; under 94 of them counts as -10). Trees stop at 6.4 C.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -216,6 +217,10 @@ public:
 	// True when the shade rule is narrower than "anywhere", so placement must compute shade.
 	bool uses_shade() const { return ranges[RULE_SHADE].x > 0.0f || ranges[RULE_SHADE].y < 1.0f; }
 	bool uses_litter() const { return ranges[RULE_LITTER].x > 0.0f || ranges[RULE_LITTER].y < 1.0f; }
+	// The growing season's mean temperature from a January and July mean on the annual harmonic:
+	// the days with a mean of at least 0.9 C, -10 when there are fewer than 94 of them (Paulsen and
+	// Koerner 2014, the treeline model: trees need 6.4 C over at least 94 days).
+	static float season_temperature(float p_january, float p_july);
 	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
 	void set_spacing(float p_spacing);
 	float get_spacing() const { return spacing; }
