@@ -1132,8 +1132,11 @@ decal's edge, moss as flat round discs):
   match; the walls carry their own normals, so no terminator slits.
 - Moss margins are ragged (weight noise at 13 and 31 per metre, plus or minus 0.13) and the
   shell is thin at its margin, thickening inward (15% of the cushion depth at the edge).
-- Still open: beech bark reads as soft mottling at a hand's distance (beech is smooth, but
-  real bark has lenticels and fine wrinkles); the log waits for the showcase forest for docs.
+- Beech bark (17 Nov): the big soft blotches that read as cloud noise are toned down; the
+  elephant-skin creases run across the stem in patches (noise stretched round the stem, its
+  zero lines as sharp folds; isotropic noise drew wandering contour loops); faint lenticel
+  striations across the stem in dashes; a millimetre grain so the skin reads matt and crisp at a
+  hand's distance. PT keeps every feature. The log waits for the showcase forest for docs.
 
 ### 5p. Bark stories (16 Nov; Paulo's third pick)
 
