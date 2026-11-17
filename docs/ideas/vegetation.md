@@ -366,6 +366,45 @@ the British Isles (2019) for sizes and flowering.
 - Next: pool edges (bog pools with bogbean, a Valence water read), and hummocks raising the
   ground itself rather than sitting on it.
 
+## Alpine and scree plants (built 17 Nov)
+
+Above the treeline the ground is not turf. The alpine belt starts where the growing season's mean
+soil temperature falls to about 6.4 C, which is about 0 to 2 C mean annual air temperature in the
+Alps (Körner and Paulsen 2004, "A world-wide study of high altitude treeline temperatures"; Körner
+2003, "Alpine Plant Life"). The plants are low, because the air within 5 to 10 cm of the ground is
+several degrees warmer than the air above (Körner and De Moraes 1979, cushion microclimate). They
+sort by snow and wind along the micro-relief (Billings and Bliss 1959; Gjaerevoll 1956):
+
+- Fellfield, the exposed convex ridges blown free of snow: cushion plants (moss campion, Silene
+  acaulis: a hemispherical dome 5 to 30 cm across of densely packed shoots, each a tiny rosette of
+  linear leaves, pink flowers sessile on the surface; Morris and Doak 1998) and purple saxifrage
+  mats (Saxifraga oppositifolia: trailing stems with four ranks of tiny opposite leaves, purple
+  cups the first flowers after the thaw), and Dryas octopetala mats on lime (Elkington 1971,
+  Biological Flora: scalloped leaves, dark above, white-felted below, eight white petals, then
+  twisted feathery plumes).
+- Alpine grassland on the slopes: curved sedge (Carex curvula, "Krummseggenrasen" of acid soils:
+  dense tufts of thin curved leaves whose dead tips curl and brown the sward; Grabherr 1987).
+- Snowbeds, the hollows where snow lies into July: dwarf willow (Salix herbacea, the smallest
+  tree: underground stems sending up two to four round, scalloped, glossy leaves 0.5 to 2 cm, tiny
+  red catkins; Beerling 1998, Biological Flora) carpets with moss (Björk and Molau 2007).
+- Scree: Jenny-Lips (1930) sorted scree plants by how they live with moving stones: wanderers
+  creep over and through it (alpine toadflax, Linaria alpina: trailing glaucous stems with whorls
+  of fleshy linear leaves, violet snapdragon flowers with an orange palate), stabilisers hold it
+  with mats (purple saxifrage), coverers lie over it (Dryas). The existing crevice set
+  (`make_stones(STONES_SCREE)`) stays for the gaps between blocks.
+
+Games: KCD2 and Crysis paint upland grass and stop; the alpine look most shooters show is turf with
+rocks. Real geometry for cushions follows the shoot structure: a closed dome core (so it never
+reads hollow) under a surface of packed rosettes, the way a cushion is built (Körner 2003).
+
+Plan:
+- Six presets: moss campion, purple saxifrage, mountain avens, curved sedge, dwarf willow, alpine
+  toadflax. Phenology from snowmelt: early flowers (saxifrage) on low degree-day sums.
+- `make_alpine(ALPINE_FELLFIELD | ALPINE_GRASSLAND | ALPINE_SNOWBED | ALPINE_SCREE)`, placed by mean
+  annual temperature (the climate map: -8 to 2 C, faded 1.5 C so the treeline is an ecotone),
+  curvature (convex ridges for fellfield, hollows for snowbeds), sunlight (snowbeds on the shaded
+  side), talus (scree) and slope.
+
 ## Dune plants on generated dunes (built 17 Nov)
 
 The terrain generator now builds coastal dunes (TerrainGenerator3D `dunes_enabled`, on): Werner's

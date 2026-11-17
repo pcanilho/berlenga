@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -347,6 +347,7 @@ func _checks() -> void:
 	_bank_checks()
 	_bog_checks()
 	_dune_checks()
+	_alpine_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
@@ -516,6 +517,43 @@ func _dune_checks() -> void:
 		near.append(lo)
 		_check("dune set %d: on land by the water, gentle enough for sand, sheltering it" % st, ok, [set.size(), lo])
 	_check("dune sets run inland: embryo, mobile, fixed", near[0] < near[1] + 0.01 and near[1] < near[2], near)
+
+# Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants"): sizes (all low,
+# hugging the ground), the sets above the treeline, sorted by relief, snow and scree.
+func _alpine_checks() -> void:
+	var P := PlantGenerator
+	var summer := {"forcing": 600.0, "day_of_year": 200, "senescence": 0.0}
+	var sizes := {P.PRESET_MOSS_CAMPION: [0.015, 0.08, 0.26], P.PRESET_PURPLE_SAXIFRAGE: [0.008, 0.06, 0.3], P.PRESET_MOUNTAIN_AVENS: [0.02, 0.13, 0.32], P.PRESET_ALPINE_SEDGE: [0.03, 0.16, 0.3], P.PRESET_DWARF_WILLOW: [0.008, 0.05, 0.2], P.PRESET_ALPINE_TOADFLAX: [0.015, 0.1, 0.3]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		g.season = summer
+		var ok := true
+		var info := []
+		for sd in 4:
+			g.seed = sd
+			var m := g.generate()
+			var bb := m.get_aabb()
+			ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 30000
+			info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 30k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	for st in P.ALPINE_MAX:
+		var set := P.make_alpine(st, 1, false)
+		var ok := set.size() >= 3
+		for sp in set:
+			var s := sp as PlantSpecies
+			ok = ok and s.meshes.size() == 1 and s.has_meta("alpine") and s.temperature_range.y <= 2.0 and s.temperature_range.x < -5.0
+			var c: Vector2 = s.curvature_range
+			if st == P.ALPINE_FELLFIELD:
+				ok = ok and c.y < 0.0
+			elif st == P.ALPINE_SNOWBED:
+				ok = ok and c.x > 0.0
+			elif st == P.ALPINE_SCREE:
+				ok = ok and s.talus_range.x >= 0.3
+			else:
+				ok = ok and s.talus_range.y <= 0.21 and s.soil_depth_range.x > 0.0
+		_check("alpine set %d: above the treeline, on its own relief (ridges, slopes, hollows, scree)" % st, ok, set.size())
 
 func _surface_tris(m: Mesh, name: String) -> int:
 	for si in m.get_surface_count():
