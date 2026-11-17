@@ -62,6 +62,7 @@ extends Node3D
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
+#   --pair              --view=bodymud: save the raster frame as <out>_raster.png, then the path traced one, from one run
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
 #   --gpu=0             the field on the CPU (default: compute shaders where there is a GPU; --headless
@@ -1048,6 +1049,18 @@ func _build_bodymud() -> void:
 	cam.look_at(xf * Vector3(c[3], c[4], c[5]))
 	cam.fov = 45.0
 	get_window().size = full
+	if "--pair" in OS.get_cmdline_user_args() and not out.is_empty():
+		# The same clods for both renderers: the raster frame first, then the path traced one, the bodies held still.
+		var pt_out := out
+		out = pt_out.get_basename() + "_raster.png"
+		env.pathtracing_enabled = false
+		await _save_frame()
+		get_tree().paused = true
+		out = pt_out
+		env.pathtracing_enabled = true
+		await _save_frame()
+		get_tree().quit()
+		return
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()
