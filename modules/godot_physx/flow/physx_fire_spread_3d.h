@@ -71,7 +71,7 @@ private:
 	NodePath heat_source; // a PhysXFlow3D whose hot gas ignites the ground under it
 	float ignition_temperature = 0.35f; // in the heat source's temperature units
 	NodePath flow_path; // empty: one of its own
-	int max_emitters = 16;
+	int max_emitters = 32;
 	float flame_strength = 1.0f;
 	float char_darkness = 0.95f;
 	float glow_energy = 4.0f;

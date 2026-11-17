@@ -430,42 +430,46 @@ void PhysXFireSpread3D::_ignite_from_heat_source() {
 	}
 }
 
-// Flames: the burning cells merged into tiles, the strongest tiles each given an emitter: a box over the tile, as tall
-// as a share of Byram's flame length (L = 0.0775 I^0.46 m, I in kW/m), fuel and heat by the tile's heat release.
+// Flames: the flaming front (cells lit less than a burn time ago) merged into half-metre tiles, each of the strongest
+// given a sphere emitter of hot fuel gas that Flow's combustion burns. Tiles are picked so that the emitters spread
+// along the whole front (a first pass skips tiles next to one already picked), and each is fed by its tile's Byram
+// fireline intensity, so the flames stand in a line along the leading arc, tallest at the head fire downwind and low
+// at the back. Spheres, not boxes: an emitter holds the gas inside it at its own values, and a box left a block of
+// flame with straight sides.
 void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 	if (!flow) {
 		return;
 	}
-	const int tile = MAX(1, (int)Math::round(1.0f / cell_size)); // ~1 m tiles
+	const int tile = MAX(1, (int)Math::round(0.5f / cell_size)); // ~0.5 m tiles
+	const float tile_w = tile * cell_size;
 	const int tx = (nx + tile - 1) / tile, tz = (nz + tile - 1) / tile;
 	struct Tile {
 		float heat = 0.0f; // W
 		Vector3 centre;
 		float weight = 0.0f;
-		float max_flux = 0.0f; // W/m2
 	};
 	LocalVector<Tile> tiles;
 	tiles.resize(tx * tz);
 	const float cell_area = cell_size * cell_size;
+	const float burn_time = _model(fuel_type).burn_time;
 	if (band_x1 >= band_x0) {
 		for (int z = band_z0; z <= band_z1; z++) {
 			for (int x = band_x0; x <= band_x1; x++) {
-				const float q = heat[z * nx + x];
-				if (q <= 0.0f) {
-					continue;
+				const uint32_t i = z * nx + x;
+				const float q = heat[i];
+				if (q <= 0.0f || time - t_ignite[i] > burn_time) {
+					continue; // not burning, or past its flaming phase (embers glow on the ground map)
 				}
 				Tile &t = tiles[(z / tile) * tx + x / tile];
 				t.heat += q * cell_area;
 				t.centre += _cell_world(x, z) * q;
 				t.weight += q;
-				t.max_flux = MAX(t.max_flux, q);
 			}
 		}
 	}
-	// The strongest tiles.
 	LocalVector<int> order;
 	for (uint32_t i = 0; i < tiles.size(); i++) {
-		if (tiles[i].heat > 1000.0f) {
+		if (tiles[i].heat > 500.0f) {
 			order.push_back(i);
 		}
 	}
@@ -478,30 +482,60 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 	if (!order.is_empty()) {
 		sorter.sort(order.ptr(), order.size());
 	}
+	// Spread the picks: strongest first, but not next to a picked tile; then the rest by strength.
+	LocalVector<int> picked;
+	LocalVector<uint8_t> taken;
+	taken.resize(tiles.size());
+	memset(taken.ptr(), 0, taken.size());
+	for (int pass = 0; pass < 2 && picked.size() < emitters.size(); pass++) {
+		for (uint32_t k = 0; k < order.size() && picked.size() < emitters.size(); k++) {
+			const int ti = order[k];
+			if (taken[ti] == 1) {
+				continue;
+			}
+			const int x = ti % tx, z = ti / tx;
+			if (pass == 0) {
+				bool near = false;
+				for (int dz = -1; dz <= 1 && !near; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int nxx = x + dx, nzz = z + dz;
+						if (nxx >= 0 && nzz >= 0 && nxx < tx && nzz < tz && taken[nzz * tx + nxx] == 1) {
+							near = true;
+							break;
+						}
+					}
+				}
+				if (near) {
+					continue;
+				}
+			}
+			taken[ti] = 1;
+			picked.push_back(ti);
+		}
+	}
 	for (uint32_t k = 0; k < emitters.size(); k++) {
 		PhysXFlowEmitter3D *em = emitters[k];
-		if (k >= order.size()) {
+		if (k >= picked.size()) {
 			em->set_enabled(false);
 			continue;
 		}
-		const Tile &t = tiles[order[k]];
+		const Tile &t = tiles[picked[k]];
 		const Vector3 c = t.centre / t.weight;
 		// Byram's fireline intensity across the tile's width, kW/m, and the flame length it gives.
-		const float intensity = t.heat / 1000.0f / (tile * cell_size);
+		const float intensity = t.heat / 1000.0f / tile_w;
 		const float flame = CLAMP(0.0775f * Math::pow(intensity, 0.46f), 0.1f, 6.0f);
-		const float s = flame_strength * CLAMP(t.max_flux / 400000.0f, 0.1f, 1.0f);
+		const float s = flame_strength * CLAMP(intensity / 300.0f, 0.15f, 1.0f);
 		em->set_enabled(true);
-		em->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
-		// A thin bed of hot fuel gas on the ground that Flow's combustion burns into flame and smoke (the smoke comes
-		// from the burn); the flame's height comes from its rise and cooling.
-		em->set_size(Vector3(tile * cell_size, 0.15f, tile * cell_size));
-		em->set_global_position(c + Vector3(0, 0.1f, 0));
+		em->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
+		em->set_radius(0.6f * tile_w);
+		em->set_global_position(c + Vector3(0, 0.15f, 0));
 		em->set_temperature(1.0f);
 		em->set_fuel(s);
 		em->set_burn(0.0f);
 		em->set_smoke(0.0f);
-		em->set_velocity(p_wind * 0.3f + Vector3(0, CLAMP(flame * 0.5f, 0.3f, 1.0f), 0));
-		em->set_couple_rate(4.0f);
+		// Rising at a share of the flame's buoyant speed and leaning with the wind.
+		em->set_velocity(p_wind * 0.4f + Vector3(0, CLAMP(flame * 0.6f, 0.3f, 1.2f), 0));
+		em->set_couple_rate(2.0f);
 	}
 	if (air) {
 		air->set_enabled(!order.is_empty() && p_wind.length_squared() > 1.0e-4f);
@@ -613,7 +647,7 @@ void PhysXFireSpread3D::_build_decal() {
 }
 
 void PhysXFireSpread3D::set_max_emitters(int p_v) {
-	max_emitters = CLAMP(p_v, 1, 64);
+	max_emitters = CLAMP(p_v, 1, 128);
 	if (!flow) {
 		return;
 	}
@@ -792,7 +826,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_ignition_temperature", "get_ignition_temperature");
 	ADD_GROUP("Flames", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_emitters", PROPERTY_HINT_RANGE, "1,64,1"), "set_max_emitters", "get_max_emitters");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_emitters", PROPERTY_HINT_RANGE, "1,128,1"), "set_max_emitters", "get_max_emitters");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flame_strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_flame_strength", "get_flame_strength");
 	ADD_GROUP("Char", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "char_darkness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_char_darkness", "get_char_darkness");

@@ -95,8 +95,8 @@
 		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="0.35">
 			Temperature of the [member heat_source]'s gas, in its own units, that sets the ground alight.
 		</member>
-		<member name="max_emitters" type="int" setter="set_max_emitters" getter="get_max_emitters" default="16">
-			Flame emitters at most: the burning ground is merged into tiles of about a metre, and the strongest tiles get one each.
+		<member name="max_emitters" type="int" setter="set_max_emitters" getter="get_max_emitters" default="32">
+			Flame emitters at most: the flaming front is merged into tiles of about half a metre, and the strongest get one each, spread along the whole front.
 		</member>
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(20, 20)">
 			The area that can burn, in metres along the node's X and Z, centred on it.
