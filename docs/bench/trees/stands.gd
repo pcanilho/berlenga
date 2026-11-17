@@ -741,12 +741,20 @@ func _region(path: String) -> void:
 		var sa: Vector2 = mean_h[TreeGenerator.STAND_SUBALPINE]
 		var mo: Vector2 = mean_h[TreeGenerator.STAND_MONTANE_CONIFER]
 		_check(sa.x / sa.y > mo.x / mo.y, "subalpine belt above the montane belt")
+	# The tree line by the growing season's mean (Paulsen and Korner 2014), the alpine plants' rule:
+	# upright trees fade out by 6.4 C, krummholz mats reach to 5.2 C.
 	var bare := 0
+	var upright_above := 0
 	for s in sps.size():
+		var mat: bool = sps[s].resource_name.ends_with("(krummholz)")
 		for p in f.get_placements(s):
-			if map.get_temperature_at(p) < -3.5:
+			var season := PlantSpecies.season_temperature(map.get_temperature_at(p, 15.0), map.get_temperature_at(p, 15.0 + 365.0 * 0.5))
+			if season < 5.2:
 				bare += 1
-	_check(bare == 0, "no trees above the tree line (%d)" % bare)
+			elif season < 6.4 and not mat:
+				upright_above += 1
+	_check(bare == 0, "no trees above the tree species line, season mean 5.2 C (%d)" % bare)
+	_check(upright_above == 0, "only krummholz mats above the tree line, season mean 6.4 C (%d)" % upright_above)
 	img.save_png(path)
 	print("saved ", path)
 
