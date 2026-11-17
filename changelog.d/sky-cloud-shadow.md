@@ -1,0 +1,1 @@
+- Weather: shafts across the sky. The sky's air under the cloud deck takes the clouds' shadow (`atmo_cloud_shadow_steps`, 24), and carries the weather's aerosol haze past the volumetric fog's reach (`WeatherSkyMaterial.set_aerosol`, set by `WeatherMap3D.aerosol_haze`).

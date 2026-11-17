@@ -6,7 +6,7 @@
 	<description>
 		An atmosphere ([member atmosphere_model]) with clouds raymarched through it, after Guerrilla's Nubis and Frostbite: a layer on a round planet, Beer-Lambert steps that conserve energy, a forward and a back Henyey-Greenstein lobe, Wrenninge's multiple scattering octaves and a two-stream diffuse term, and six steps towards the sun from each sample. The clouds are drawn in the half resolution pass, with fewer steps for the radiance map that lights the scene. With [member cloud_reprojection], a sixteenth of the screen's pixels are marched a frame and the rest are kept from the frames before.
 		A [WeatherMap3D] in the scene sends it the cloud cover, type, storms and drift at its [member WeatherMap3D.update_rate]; without one, the sky shows the defaults. Set the [Sky]'s [member Sky.process_mode] to [constant Sky.PROCESS_MODE_INCREMENTAL] or [constant Sky.PROCESS_MODE_REALTIME] so the lighting follows the moving clouds.
-		Its uniforms are under [b]Shader Parameters[/b]: the older atmosphere's (as [PhysicalSkyMaterial]); the [code]atmosphere[/code] group ([code]atmo_steps[/code], [code]atmo_radiance_steps[/code], [code]atmo_cloud_air_steps[/code], and [code]atmo_far_water[/code], 1 when open sea runs on past the scene to the horizon); and [code]cloud_steps[/code], [code]cloud_radiance_steps[/code], [code]cloud_light_steps[/code], [code]cloud_far[/code] and [code]cloud_brightness[/code]. The [code]weather_map[/code] group is set by the map.
+		Its uniforms are under [b]Shader Parameters[/b]: the older atmosphere's (as [PhysicalSkyMaterial]); the [code]atmosphere[/code] group ([code]atmo_steps[/code], [code]atmo_radiance_steps[/code], [code]atmo_cloud_air_steps[/code], [code]atmo_cloud_shadow_steps[/code] (steps through the air under the cloud tops, each reading the clouds' shadow, which draws shafts across the sky; 0 for none), and [code]atmo_far_water[/code], 1 when open sea runs on past the scene to the horizon); and [code]cloud_steps[/code], [code]cloud_radiance_steps[/code], [code]cloud_light_steps[/code], [code]cloud_far[/code] and [code]cloud_brightness[/code]. The [code]weather_map[/code] group is set by the map.
 		Under path tracing, bounce rays see the clouds through the radiance map. Enable [member Environment.pathtracing_sky_shader_enabled] for camera rays to see them at full detail.
 		Dusk and night skies are dark, smooth gradients that 8-bit output steps into bands: enable [member Viewport.use_debanding] (or [code]rendering/anti_aliasing/quality/use_debanding[/code]), which dithers after tonemapping. The sky adds no dither of its own, since noise added before exposure and tonemapping is scaled by them.
 		[b]Note:[/b] The moon lights the air but is not drawn yet, and there are no stars yet.
@@ -29,6 +29,16 @@
 			<param index="0" name="radians" type="float" />
 			<description>
 				The moon disc's angular diameter. [SkyClock] sets it from the moon's distance. The disc is shaded by Lommel-Seeliger from the sun's direction (so its phase and terminator follow the clock), with earthshine on its dark side, and sums to the moon's illuminance. The shader parameter [code]moon_disc_enabled[/code] (on) switches it.
+			</description>
+		</method>
+		<method name="set_aerosol">
+			<return type="void" />
+			<param index="0" name="extinction" type="float" />
+			<param index="1" name="albedo" type="float" />
+			<param index="2" name="height" type="float" />
+			<param index="3" name="from" type="float" />
+			<description>
+				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze].
 			</description>
 		</method>
 		<method name="set_star_sky">

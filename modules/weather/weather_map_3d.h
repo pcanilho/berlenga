@@ -271,6 +271,8 @@ private:
 	float haze_height = 1200.0f; // m, the aerosol's scale height (the boundary layer)
 	float applied_aerosol = -1.0f;
 	void _update_aerosol();
+	Vector2 applied_sky_aerosol = Vector2(-1.0f, -1.0f); // extinction and froxel reach last given to the sky
+	void _apply_sky_aerosol(float p_extinction, float p_from);
 	bool drive_environment_fog = true;
 	struct FogBase {
 		bool saved = false;

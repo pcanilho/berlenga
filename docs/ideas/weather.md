@@ -795,3 +795,22 @@ Stages:
    Unreal's "cloud shadow on atmosphere"), for rays beyond the froxel range.
 3. **Traced haze under path tracing**: a real medium with equiangular sampling of the sun's segment
    (Kulla and Fajardo 2012), its shadow rays reading the cloud projector.
+
+Stage 2 built (17 Nov 2026). The sky's march (atmosphere.cpp, `atmo_scatter`) now runs in two stretches:
+under the cloud tops, `atmo_cloud_shadow_steps` (24; 12 for the air in front of a cloud, none for the
+radiance map) steps, each reading the sun's transmittance through the deck: three steps of the base cloud
+shape (`wc_extinction` without the detail erosion, as the shadow bake) along the sun's ray, read at the
+step's scale. The beam takes exp(-tau); the multiply scattered light takes the deck's diffuse transmission
+1 / (1 + 3/4 (1 - g) tau) (two-stream, as the clouds' own diffuse term), so air under overcast is not lit as
+if clear. Past 20 to 60 km the steps are kilometres apart and single shadows would band at the horizon, so
+the shadow turns to its mean over the cover there (1 - 0.9 cover for the beam). The ground past the scene
+takes the shadow too.
+Found on the way: the sky's air had only Hillaire's clear-air Mie (visibility about 200 km) while the froxels
+drew the weather's aerosol (`haze_visibility`, 40 km dry, more with humidity) out to 1.5 km, so the haze, and
+any shaft in it, stopped where the froxels end. WeatherMap3D now hands the sky its aerosol
+(`WeatherSkyMaterial.set_aerosol`: extinction, albedo 0.9, scale height, and the froxels' reach as where it
+starts, so the two never overlap): scattering with g 0.6 as the froxels do, the sun's light through it by
+the air mass of a thin exponential layer (1 / sqrt(mu^2 + 2H / (pi R))), and the sun's disc and the stars
+dimmed by it. It is left out of the transmittance and multiple scattering tables (baked once for all skies).
+Bench: `docs/bench/weather --view=shafts` (`--no-sky-shadow` for the air without it); `docs/bench/sky
+--aerosol=km --look-sun --params=name:value,...`.

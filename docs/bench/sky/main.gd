@@ -38,6 +38,14 @@ func _sky(kv: Dictionary) -> void:
 		mat.set_shader_parameter("milky_way", ImageTexture.create_from_image(img))
 	if kv.has("no-airglow"):
 		mat.set_shader_parameter("airglow_enabled", false)
+	if kv.has("aerosol"):
+		# --aerosol=km: the weather's aerosol haze for that visibility (Koschmieder, 3.912 / V), as WeatherMap3D gives it.
+		mat.set_aerosol(3.912 / (float(kv["aerosol"]) * 1000.0), 0.9, 1200.0, 0.0)
+	if kv.has("params"):
+		# --params=name:value,...: any of the sky's shader parameters (e.g. cloud_cover:0.5,atmo_cloud_shadow_steps:0).
+		for pair in String(kv["params"]).split(","):
+			var nv := pair.split(":")
+			mat.set_shader_parameter(nv[0], float(nv[1]))
 	var sky := Sky.new()
 	sky.sky_material = mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
@@ -73,6 +81,11 @@ func _sky(kv: Dictionary) -> void:
 	clock.sun_light = clock.get_path_to(sun)
 	# The clock drives the camera's exposure (an adapting eye) unless the bench sets one.
 	clock.drive_exposure = not (kv.has("exposure") or kv.has("pre-exposure"))
+	if kv.has("look-sun"):
+		# --look-sun: the camera turned to the sun's azimuth, keeping --pitch.
+		await get_tree().process_frame
+		var d := sun.global_transform.basis.z # toward the sun
+		cam.rotation_degrees.y = rad_to_deg(atan2(-d.x, -d.z))
 	if kv.has("look-moon"):
 		# --look-moon: the camera on the moon (with a narrow --fov to see its phase).
 		cam.look_at(cam.global_position + clock.get_moon_direction())

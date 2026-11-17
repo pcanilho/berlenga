@@ -23,6 +23,9 @@ extends Node3D
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
 #   --view=clouds_wide fair-weather cumulus (cover 0.3, type 0.4) from 520 m, 10 degrees down, low sun behind:
 #                     the landscape bench's clear wide shot (distant clouds at grazing angles)
+#   --view=shafts     broken cumulus from a rise toward a sun 20 degrees up, aerosol haze: shafts under the clouds
+#                     and across the sky (docs/ideas/weather.md, "Godrays", stages 1 and 2)
+#   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
 #                     (--strike-frames=K: K frames after the flash)
 #   --haze=uniform|layer|both  clouds view: precipitation haze pushed into the map (uniform 2 km
@@ -58,6 +61,7 @@ var only_shelter := false
 var only_lightning := false
 var only_haze := false
 var haze := ""
+var no_sky_shadow := false
 var strike_frames := 1
 var light_scale := 1.0
 var thunder_out := ""
@@ -81,6 +85,7 @@ func _ready() -> void:
 		elif a.begins_with("--pan="): pan = float(a.substr(6))
 		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
 		elif a == "--frozen": frozen = true
+		elif a == "--no-sky-shadow": no_sky_shadow = true
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a == "--test=lightning": test = true; only_lightning = true
@@ -121,7 +126,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_wide"]:
+	if view in ["clouds", "clouds_low", "clouds_wide", "shafts"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -959,6 +964,8 @@ func _build_street() -> void:
 func _build_clouds() -> void:
 	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
 	sky_mat.cloud_reprojection = reprojection
+	if no_sky_shadow:
+		sky_mat.set_shader_parameter("atmo_cloud_shadow_steps", 0)
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
@@ -984,6 +991,8 @@ func _build_clouds() -> void:
 	add_child(sun)
 	if view == "clouds_wide":
 		sun.look_at_from_position(Vector3(-2500, 1500, 2500), Vector3.ZERO) # low, behind the camera
+	elif view == "shafts":
+		sun.look_at_from_position(Vector3(-600, 950, -2600), Vector3.ZERO) # 20 degrees up, ahead
 
 	var cam := Camera3D.new()
 	cam.far = 60000.0
@@ -992,6 +1001,9 @@ func _build_clouds() -> void:
 		cam.fov = 55
 		cam.position = Vector3(0, 520, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 0, -3000), Vector3.UP) # 10 degrees down
+	elif view == "shafts":
+		cam.position = Vector3(0, 60, 0)
+		cam.look_at_from_position(cam.position, Vector3(-200, 230, -1000), Vector3.UP)
 	elif view == "clouds_low":
 		# Looking down on the fields: the shadows.
 		cam.position = Vector3(0, 220, 0)

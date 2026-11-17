@@ -145,6 +145,20 @@ void WeatherMap3D::_restore_fog() {
 	fog_base.saved = false;
 	fog_environment.unref();
 	applied_haze = -1.0f;
+	_apply_sky_aerosol(0.0f, 0.0f);
+}
+
+void WeatherMap3D::_apply_sky_aerosol(float p_extinction, float p_from) {
+	const Vector2 state(p_extinction, p_from);
+	if (state == applied_sky_aerosol) {
+		return;
+	}
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
+	if (sky_material.is_null()) {
+		return;
+	}
+	sky_material->set_aerosol(p_extinction, 0.9f, haze_height, p_from);
+	applied_sky_aerosol = state;
 }
 
 void WeatherMap3D::_apply_haze() {
@@ -227,6 +241,8 @@ void WeatherMap3D::_apply_haze() {
 		// Falling rain and snow are as forward or more, so the layers share it.
 		env->set_volumetric_fog_anisotropy(aerosol_haze ? 0.6f : fog_base.volumetric_anisotropy);
 	}
+	// The aerosol past the froxels' reach, in the sky's air (its shafts across the sky, its haze at the horizon).
+	_apply_sky_aerosol(aerosol_haze && applied_aerosol > 0.0f ? applied_aerosol : 0.0f, env->is_volumetric_fog_enabled() ? env->get_volumetric_fog_length() : 0.0f);
 	// Falling and blowing snow is lit mostly by the sky (single-scatter albedo about 0.97), so the
 	// layers take the ambient light in full unless the project set its own share.
 	if (fog_base.volumetric_ambient_inject <= 0.0f) {
@@ -308,4 +324,5 @@ void WeatherMap3D::set_haze_visibility(float p_km) {
 void WeatherMap3D::set_haze_height(float p_m) {
 	haze_height = MAX(p_m, 10.0f);
 	applied_aerosol = aerosol_haze ? 0.0f : applied_aerosol;
+	applied_sky_aerosol = Vector2(-1.0f, -1.0f);
 }
