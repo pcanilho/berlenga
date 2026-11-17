@@ -240,15 +240,15 @@ public:
 	float get_sward_shade() const { return sward_shade; }
 	void set_trample_resistance(float p_passes) { trample_resistance = MAX(p_passes, 0.0f); }
 	float get_trample_resistance() const { return trample_resistance; }
-	// Trampling (Cole 1995): cover falls steeply over the first passes and levels off, halved at
-	// trample_resistance passes a year; the plants left are shorter and flatter, halfway to their
+	// Trampling (Cole 1995): cover falls along a log-logistic curve of the passes (slope 2), halved
+	// at trample_resistance passes a year and near bare at ten times that; the plants left are shorter and flatter, halfway to their
 	// trodden height (0.45) at the same passes.
 	float trample_cover(float p_passes) const {
 		if (trample_resistance <= 0.0f || p_passes <= 0.0f) {
 			return 1.0f;
 		}
 		const float x = p_passes / trample_resistance;
-		return 1.0f / (1.0f + x * Math::sqrt(x));
+		return 1.0f / (1.0f + x * x);
 	}
 	float trample_scale(float p_passes) const {
 		if (trample_resistance <= 0.0f || p_passes <= 0.0f) {

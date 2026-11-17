@@ -157,7 +157,9 @@ struct GrassFillGPU {
 };
 GrassFillGPU grass_fill_gpu;
 
-constexpr int FILL_HEADER = 40;
+constexpr int FILL_HEADER = 44;
+// Worn paths: walkers a year on a grid this fine (a path's tread is about a metre wide).
+constexpr float FILL_WEAR_STEP = 0.25f;
 constexpr float FILL_SUIT_STEP = 0.5f;
 
 // A value on a 1 m grid of p_n x p_n over a tile, at tile-local metres.
@@ -641,15 +643,16 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			}
 		}
 	}
-	// Worn paths: the trodden height on the same grid (1 where no path reaches); the cover is
-	// taken with the suitability.
-	const bool trodden = !path_grid.is_empty() && path_grid.any_in(Rect2(x0, z0, tile_size, tile_size).grow(path_grid.max_reach));
+	// Worn paths: the walkers a year each blade gets (GPU fill: on a fine grid), which thin the
+	// blades and shorten and lay over the ones left.
+	const bool trodden = !path_grid.is_empty() && trample_resistance > 0.0f && path_grid.any_in(Rect2(x0, z0, tile_size, tile_size).grow(path_grid.max_reach));
 	LocalVector<float> wear_grid;
 	if (trodden) {
-		wear_grid.resize(lg * lg);
-		for (int gz = 0; gz < lg; gz++) {
-			for (int gx = 0; gx < lg; gx++) {
-				wear_grid[gz * lg + gx] = _trample_scale(path_grid.passes_at(Vector2(x0 + gx, z0 + gz)));
+		const int wn = int(Math::ceil(tile_size / FILL_WEAR_STEP)) + 1;
+		wear_grid.resize(wn * wn);
+		for (int j = 0; j < wn; j++) {
+			for (int i = 0; i < wn; i++) {
+				wear_grid[j * wn + i] = path_grid.passes_at(Vector2(x0 + i * FILL_WEAR_STEP, z0 + j * FILL_WEAR_STEP));
 			}
 		}
 	}
@@ -682,6 +685,10 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
 				continue;
 			}
+			const float passes = trodden ? path_grid.passes_at(Vector2(x, z)) : 0.0f;
+			if (passes > 0.0f && rank >= keep * _trample_cover(passes)) {
+				continue;
+			}
 			const Vector3 p(x, ground_y, z);
 			float y = ground_y;
 			if (p_map) {
@@ -692,8 +699,8 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				if (!sward_grid.is_empty() && suit > 0.0f) {
 					suit *= 1.0f - grid_bilinear(sward_grid, lg, x - x0, z - z0);
 				}
-				if (trodden && suit > 0.0f) {
-					suit *= _trample_cover(path_grid.passes_at(Vector2(x, z)));
+				if (passes > 0.0f && suit > 0.0f) {
+					suit *= _trample_cover(passes);
 				}
 				if (rank >= keep * suit) {
 					continue;
@@ -716,7 +723,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			// sunny slope, shorter.
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
 			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * (trodden ? grid_bilinear(wear_grid, lg, x - x0, z - z0) : 1.0f);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes);
 			const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 			const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z));
 			xforms.push_back(to_local * world);
@@ -724,7 +731,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			// so the last blades left are evenly spread too), the blade's random value in the fraction.
 			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
 			// z: the light in its integer part over 4 (VegetationLight::pack), the rest lean (under 4).
-			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)) * (1.0f + 0.8f * shade_t), 3.99f);
+			// Trodden blades lie over (wear 0.45 at the most-walked: flat).
+			const float flat = CLAMP((1.0f - _trample_scale(passes)) / 0.55f, 0.0f, 1.0f);
+			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)) * (1.0f + 0.8f * shade_t) + 2.6f * Math::sqrt(flat) * (0.7f + 0.6f * Math::fmod(rnd * 7.31f, 1.0f)), 3.99f);
 			customs.push_back(Color(height, width, VegetationLight::pack(light) * 4.0f + blade_lean, order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
 		}
 	}
@@ -831,9 +840,6 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 				if (!p_sward.is_empty() && v > 0.0f) {
 					v *= 1.0f - grid_bilinear(p_sward, p_lg, q.x - x0, q.z - z0);
 				}
-				if (!p_wear.is_empty() && v > 0.0f) {
-					v *= _trample_cover(path_grid.passes_at(Vector2(q.x, q.z)));
-				}
 				suit[j * sg_n + i] = v;
 			}
 		}
@@ -916,7 +922,10 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 	h[37] = float(off_light);
 	h[38] = float(off_height);
 	const int off_wear = off_height + int(heights.size());
-	h[39] = p_wear.is_empty() ? 0.0f : float(off_wear); // The trodden height grid (worn paths), on the light grid's cells.
+	h[39] = p_wear.is_empty() ? 0.0f : float(off_wear); // Worn paths: walkers a year on a fine grid.
+	h[40] = float(int(Math::ceil(tile_size / FILL_WEAR_STEP)) + 1);
+	h[41] = FILL_WEAR_STEP;
+	h[42] = trample_resistance;
 	in.resize(off_wear + int(p_wear.size()));
 	float *w = in.ptrw();
 	memcpy(w + off_cand, cand.ptr(), cand.size() * sizeof(float));
@@ -1859,7 +1868,8 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		// No map: grass everywhere.
 		Vector<uint8_t> data;
 		data.push_back(255);
-		_ground_bake_publish(Vector4(-1e6f, -1e6f, 2e6f, 2e6f), Image::create_from_data(1, 1, false, Image::FORMAT_L8, data), Ref<Image>());
+		data.push_back(0);
+		_ground_bake_publish(Vector4(-1e6f, -1e6f, 2e6f, 2e6f), Image::create_from_data(1, 1, false, Image::FORMAT_RG8, data), Ref<Image>());
 		return;
 	}
 	GroundJob &j = ground_job;
@@ -1869,7 +1879,7 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	j.rect = Vector4(c.x - size * 0.5f, c.z - size * 0.5f, size, size);
 	j.row = 0;
 	j.any_litter = false;
-	j.data.resize(j.res * j.res);
+	j.data.resize(j.res * j.res * 2); // r: the sward's cover, g: the tread of worn paths.
 	j.ldata.resize(_get_undergrowth() ? j.res * j.res * 4 : 0);
 	if (j.ldata.size() > 0) {
 		memset(j.ldata.ptrw(), 0, j.ldata.size());
@@ -1919,11 +1929,16 @@ void GrassField3D::_ground_bake_rows(TerrainDataMap3D *p_map, uint64_t p_budget_
 				o[3] = uint8_t(CLAMP(lc.a, 0.0f, 1.0f) * 255.0f + 0.5f);
 				j.any_litter = j.any_litter || o[3] > 0;
 			}
-			if (suit > 0.0f && !path_grid.is_empty()) {
-				// Worn paths: the trodden line shows the bare soil the walkers have opened.
-				suit *= _trample_cover(path_grid.passes_at(Vector2(p.x, p.z)));
+			float tread = 0.0f;
+			if (!path_grid.is_empty()) {
+				// Worn paths: the trodden line shows the bare, compacted soil the walkers have
+				// opened (grass_ground_tread()), and the sward is thinned there.
+				const float cover = _trample_cover(path_grid.passes_at(Vector2(p.x, p.z)));
+				suit *= cover;
+				tread = 1.0f - cover;
 			}
-			w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
+			w[(z * res + x) * 2] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
+			w[(z * res + x) * 2 + 1] = uint8_t(CLAMP(tread, 0.0f, 1.0f) * 255.0f + 0.5f);
 		}
 		j.row++;
 		if (p_budget_usec > 0 && OS::get_singleton()->get_ticks_usec() - t0 >= p_budget_usec) {
@@ -1932,7 +1947,7 @@ void GrassField3D::_ground_bake_rows(TerrainDataMap3D *p_map, uint64_t p_budget_
 	}
 	j.active = false;
 	const Ref<Image> litter = j.any_litter ? Image::create_from_data(res, res, false, Image::FORMAT_RGBA8, j.ldata) : Ref<Image>();
-	_ground_bake_publish(j.rect, Image::create_from_data(res, res, false, Image::FORMAT_L8, j.data), litter);
+	_ground_bake_publish(j.rect, Image::create_from_data(res, res, false, Image::FORMAT_RG8, j.data), litter);
 	j.data.clear();
 	j.ldata.clear();
 }
@@ -1966,7 +1981,7 @@ String GrassField3D::get_ground_shader_code() {
 // grass on it): the blades' own root colour with the same colour patches as the blades, fine
 // streaks of out-of-focus blades, dead thatch, and the dark of the roots. A gap in the carpet then
 // shows more grass, not ground.
-global uniform sampler2D grass_ground_map : filter_linear;
+global uniform sampler2D grass_ground_map : filter_linear; // r: the sward's cover, g: worn paths' tread.
 global uniform sampler2D grass_ground_litter : hint_default_black, filter_linear; // sqrt of premultiplied rgb, a: cover.
 global uniform vec4 grass_ground_rect;
 global uniform vec4 grass_ground_color; // rgb: the sward's root colour; a: how much it covers the soil.
@@ -1995,6 +2010,18 @@ float grass_ground_cover(vec3 world_pos) {
 	vec2 outside = max(half_texel - uv, uv - (1.0 - half_texel));
 	float inside = 1.0 - clamp(max(outside.x, outside.y) / half_texel.x, 0.0, 1.0);
 	return textureLod(grass_ground_map, clamp(uv, half_texel, 1.0 - half_texel), 0.0).r * inside;
+}
+
+// The tread of worn paths (GrassField3D.paths): 1 where walkers have worn the sward away.
+float grass_ground_tread(vec3 world_pos) {
+	if (grass_ground_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (world_pos.xz - grass_ground_rect.xy) / grass_ground_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 0.0;
+	}
+	return textureLod(grass_ground_map, uv, 0.0).g;
 }
 
 // The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
@@ -2049,6 +2076,8 @@ float grass_ground_weight(vec3 world_pos) {
 // the blades turned pale grey against them (grass bench --far-match: the sheen was most of the
 // step at the grass edge; 0.1 matches the blades).
 float grass_ground_specular(vec3 world_pos, float specular) {
+	// Trodden soil: a dull, fine crumb (the bench's pale grey tread was its sheen).
+	specular = mix(specular, min(specular, 0.2), grass_ground_tread(world_pos));
 	return mix(specular, min(specular, 0.1), grass_ground_weight(world_pos));
 }
 
@@ -2077,11 +2106,35 @@ vec3 grass_ground_undergrowth(vec3 world_pos, vec3 albedo) {
 	return mix(albedo, c, l.a);
 }
 
+// Trodden soil: compacted, so darker and browner than loose ground (bulk density up, pores and
+// the pale dry crumb gone; Liddle 1997, ch. 2), damp in the hollows feet press into it, the fines
+// washed and kicked off to leave grit and small stones standing in it, and a few crushed stems
+// at the edges.
+vec3 grass_path_soil(vec3 world_pos, vec3 albedo, float tread) {
+	vec2 xz = world_pos.xz;
+	vec3 soil = mix(albedo, vec3(0.085, 0.062, 0.042), 0.65) * (0.85 + 0.3 * grass_noise(xz * 2.3 + 9.1));
+	// Damp patches in the hollows: darker (water fills the pores; Lagarde 2013).
+	float damp = smoothstep(0.55, 0.75, grass_noise(xz * 0.7 + 4.4) * 0.7 + grass_noise(xz * 3.1) * 0.3) * smoothstep(0.5, 0.9, tread);
+	soil *= mix(1.0, 0.62, damp);
+	// Grit and small stones: 2 to 15 mm, pale grey-brown, most where the tread is barest.
+	float stones = grass_noise(xz * 38.0 + 1.7);
+	float grit = grass_noise(xz * 110.0 + 5.3);
+	vec3 stone_c = vec3(0.2, 0.185, 0.155) * (0.7 + 0.5 * grass_noise(xz * 61.0));
+	float bare = smoothstep(0.35, 0.85, tread);
+	soil = mix(soil, stone_c, smoothstep(0.8, 0.85, stones) * bare * 0.85);
+	soil = mix(soil, stone_c * 0.9, smoothstep(0.82, 0.9, grit) * bare * 0.6);
+	return mix(albedo, soil, smoothstep(0.0, 0.6, tread));
+}
+
 // The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), the
 // undergrowth's litter under its stands, then the sward's turf where grass grows.
 vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	albedo = forest_floor(world_pos, albedo);
 	albedo = grass_ground_undergrowth(world_pos, albedo);
+	float tread = grass_ground_tread(world_pos);
+	if (tread > 0.0) {
+		albedo = grass_path_soil(world_pos, albedo, tread);
+	}
 	float cover = grass_ground_cover(world_pos);
 	if (cover <= 0.0) {
 		return albedo;
@@ -2534,7 +2587,7 @@ float GrassField3D::_trample_cover(float p_passes) const {
 		return 1.0f;
 	}
 	const float x = p_passes / trample_resistance;
-	return 1.0f / (1.0f + x * Math::sqrt(x));
+	return 1.0f / (1.0f + x * x);
 }
 
 float GrassField3D::_trample_scale(float p_passes) const {

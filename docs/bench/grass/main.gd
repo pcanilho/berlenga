@@ -42,7 +42,7 @@ extends Node3D
 #   --rocks=N        N boulders (lumpy weathered rocks) 3 to 10 m in front of the camera; the fields keep
 #                    out of them (obstacles) unless --rocks-through
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
-#   --path[=P]       a worn path winding away from the camera, P passes a year (default 1000; GrassField3D.paths,
+#   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
 #   --no-rock-foot   with --rocks: the floor species without PlantSpecies.rock_foot
@@ -173,7 +173,7 @@ func _ready() -> void:
 		elif a == "--no-margin": no_margin = true
 		elif a == "--undergrowth-edge": ug_edge = true
 		elif a == "--grazed": grazed = true
-		elif a == "--path": path_passes = 1000.0
+		elif a == "--path": path_passes = 3000.0
 		elif a.begins_with("--path="): path_passes = float(a.get_slice("=", 1))
 		elif a == "--no-rock-foot": no_rock_foot = true
 		elif a == "--far=0": no_far = true
@@ -1097,6 +1097,12 @@ func _cover_biome() -> Biome:
 			(sp as PlantSpecies).far_color = Color(0, 0, 0, 0)
 	else:
 		_set_far_colors(b)
+	# Worn paths: each plant resists trampling by its growth form (PlantGenerator presets; make_*
+	# species are tagged already, the bench's own are not).
+	for sp in b.species:
+		var ps := sp as PlantSpecies
+		if ps.trample_resistance <= 0.0 and not ps.meshes.is_empty() and ps.meshes[0].has_meta("preset"):
+			ps.trample_resistance = PlantGenerator.get_trample_resistance(ps.meshes[0].get_meta("preset"))
 	return b
 
 # Hydrosere zonation (Spence 1982; Keddy 2010): floating-leaved plants in deeper water,
