@@ -2246,6 +2246,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Atlantic heath",
+   "settings": [
+    "PlantGenerator.make_heath()"
+   ],
+   "note": "",
+   "what": "bell heather, cross-leaved heath and crowberry in dry, wet and cliff-top heath, placed by rain, winter cold and wetness.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Dune plants",
    "settings": [
     "PlantGenerator.make_dunes()",

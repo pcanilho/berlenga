@@ -116,6 +116,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Waterside plants** (`PlantGenerator.make_banks()`, `PlantSpecies.stone_top_water`, `follow_flow`): marsh marigold, meadowsweet and butterbur line streams, lakes and falls by distance to water; river stones carry river moss and liverwort by height over the water, the moss trailing downstream.
 - **Bog plants** (`PlantGenerator.make_bog()`, BOG_BLANKET or BOG_VALLEY): sphagnum hummocks, cotton grass, bog asphodel and sundew on wet level ground.
+- **Atlantic heath** (`PlantGenerator.make_heath()`): bell heather, cross-leaved heath and crowberry in dry, wet and cliff-top heath, placed by rain, winter cold and wetness.
 - **Dune plants** (`PlantGenerator.make_dunes()`; `GroundSurface3D.wind_shelters`): marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.
 - **Salt marsh and shingle plants** (`PlantGenerator.make_saltmarsh()`): glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.
 - **Alpine and scree plants** (`PlantGenerator.make_alpine()`): fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.
