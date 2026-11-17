@@ -34,6 +34,12 @@
 #include "core/object/class_db.h"
 #include "core/string/string_name.h"
 
+// Grains are drawn as particles: the fluid's Isosurface default (and its foam) would draw them as clear water.
+PhysXGranular3D::PhysXGranular3D() {
+	set_surface_mesh(false);
+	set_foam_enabled(false);
+}
+
 void PhysXGranular3D::_reconfigure_if_live() {
 	if (spawned && _mpm_path()) {
 		_mpm_configure(!_mpm_emit_mode);

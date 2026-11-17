@@ -28,18 +28,18 @@
 /* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 
-
 #include "physx_ground_grains_3d.h"
-
-#include "core/config/engine.h"
 
 #include "../particles/mpm_fluid_solver.h"
 
+#include "core/config/engine.h"
 #include "core/math/random_number_generator.h"
 #include "core/object/class_db.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
+#include "scene/resources/shader.h"
+
 #include "modules/ground/ground_surface_3d.h"
 
 PhysXGroundGrains3D::PhysXGroundGrains3D() {
@@ -74,6 +74,8 @@ Ref<Mesh> PhysXGroundGrains3D::_make_mpm_particle_mesh() {
 	rng->set_seed(7);
 	PackedVector3Array verts;
 	PackedVector3Array normals;
+	PackedVector2Array centre_xy; // UV: the speck's centre x, y; UV2: its centre z and radius, for the shader's
+	PackedVector2Array centre_zr; // minimum on-screen size
 	PackedInt32Array indices;
 	for (int grain = 0; grain < 56; grain++) {
 		const Vector3 at = Vector3(rng->randfn(0, 1), rng->randfn(0, 1), rng->randfn(0, 1)) * (1.2f * s);
@@ -84,6 +86,8 @@ Ref<Mesh> PhysXGroundGrains3D::_make_mpm_particle_mesh() {
 			const Vector3 d = turn.xform(Vector3(octa[v][0], octa[v][1], octa[v][2]));
 			verts.push_back(at + d * r * rng->randf_range(0.7f, 1.3f));
 			normals.push_back(d);
+			centre_xy.push_back(Vector2(at.x, at.y));
+			centre_zr.push_back(Vector2(at.z, r));
 		}
 		for (int t = 0; t < 8; t++) {
 			indices.push_back(first + tri[t][0]);
@@ -95,16 +99,42 @@ Ref<Mesh> PhysXGroundGrains3D::_make_mpm_particle_mesh() {
 	arrays.resize(Mesh::ARRAY_MAX);
 	arrays[Mesh::ARRAY_VERTEX] = verts;
 	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = centre_xy;
+	arrays[Mesh::ARRAY_TEX_UV2] = centre_zr;
 	arrays[Mesh::ARRAY_INDEX] = indices;
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 	Ref<Material> m = grain_material;
 	if (m.is_null()) {
-		Ref<StandardMaterial3D> sand;
+		// Dry sand, each speck kept at least ~1.3 pixels across: real specks of a few mm fall under a pixel past a
+		// few metres and the spray vanishes (a minimum screen-size clamp, as for particle LOD); a clump seen from
+		// afar draws as a few bigger specks, close up as the real ones.
+		Ref<Shader> shader;
+		{
+			shader.instantiate();
+			shader->set_code(R"(shader_type spatial;
+render_mode cull_disabled;
+uniform vec3 albedo : source_color = vec3(0.78, 0.68, 0.5);
+uniform float min_pixels = 1.3;
+void vertex() {
+	vec3 c = vec3(UV.x, UV.y, UV2.x);
+	float scale = length(MODEL_MATRIX[0].xyz);
+	vec3 cw = (MODEL_MATRIX * vec4(c, 1.0)).xyz;
+	float dist = length(cw - CAMERA_POSITION_WORLD);
+	float pixel = 2.0 * dist / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+	float k = clamp(min_pixels * 0.5 * pixel / max(UV2.y * scale, 1e-6), 1.0, 6.0);
+	VERTEX = c + (VERTEX - c) * k;
+}
+void fragment() {
+	ALBEDO = albedo;
+	ROUGHNESS = 0.95;
+}
+)");
+		}
+		Ref<ShaderMaterial> sand;
 		sand.instantiate();
-		sand->set_albedo(Color(0.78f, 0.68f, 0.5f));
-		sand->set_roughness(0.95f);
+		sand->set_shader(shader);
 		m = sand;
 	}
 	mesh->surface_set_material(0, m);
