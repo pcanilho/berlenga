@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "water_contact_map.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
 
@@ -274,6 +275,29 @@ public:
 	// from the seabed) leave a foamy sheet at the waterline. 0 = none.
 	void set_shore_foam_band(float p_depth);
 	float get_shore_foam_band() const { return shore_foam_band; }
+	// Rock contact foam (docs/ideas/water.md "Rock contact foam"): a ring of white water where the sea meets a
+	// steep face -- a stack, a boulder, a cliff foot -- contact_foam_width wide, widening as each crest arrives,
+	// and wash over rock tops up to contact_foam_depth under the surface. Read from a top-down map of the static
+	// bodies in contact_foam_mask over contact_foam_extent round the camera (rays, re-measured as it moves).
+	// Gentle beaches are left to the shore foam.
+	void set_contact_foam(bool p_enabled);
+	bool get_contact_foam() const { return contact_foam; }
+	void set_contact_foam_mask(uint32_t p_mask);
+	uint32_t get_contact_foam_mask() const { return contact_foam_mask; }
+	void set_contact_foam_width(float p_width);
+	float get_contact_foam_width() const { return contact_foam_width; }
+	void set_contact_foam_strength(float p_strength);
+	float get_contact_foam_strength() const { return contact_foam_strength; }
+	void set_contact_foam_depth(float p_depth);
+	float get_contact_foam_depth() const { return contact_foam_depth; }
+	void set_contact_foam_extent(float p_extent);
+	float get_contact_foam_extent() const { return contact_foam_extent; }
+	void remeasure_contact_foam();
+	// Cells of the last map with a contact ring on the water, and the rays it took (benches, tests).
+	int get_contact_foam_cells() const { return contact_map.get_contact_cells(); }
+	int get_contact_foam_rays() const { return contact_map.get_last_ray_count(); }
+	// True once the map is measured, including the second measure after the start (benches wait for it).
+	bool is_contact_foam_ready() const { return contact_shown && contact_settle_ticks == 0 && !contact_dirty && !contact_map.is_busy(); }
 	void set_open_sea_beyond(bool p_open);
 	// Wind / direction / height / fetch at once — ONE in-place spectrum update (no rebuild once built).
 	void set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
@@ -653,6 +677,19 @@ private:
 	void _push_foam_settings();
 	float foam_persistence = 2.5f;
 	float shore_foam_band = 0.5f;
+	bool contact_foam = true;
+	uint32_t contact_foam_mask = 0xFFFFFFFF;
+	float contact_foam_width = 1.2f;
+	float contact_foam_strength = 0.9f;
+	float contact_foam_depth = 0.6f;
+	float contact_foam_extent = 96.0f;
+	WaterContactMap contact_map;
+	Ref<ImageTexture> contact_texture;
+	bool contact_shown = false;
+	bool contact_dirty = true; // measure again at the next tick
+	int contact_settle_ticks = 30; // one more measure this many physics ticks after the start (bodies built late)
+	void _update_contact_foam();
+	void _push_contact_foam();
 	// Open water past the simulated square (render_extent > domain, no surface_mesh): true = it is open, deep sea
 	// everywhere past the square (full chop, wet, never lifted onto the ground) -- for a sea whose ripple square
 	// follows a focus that may sit over land; false = the square's edge seabed carries on outward (a beach scene).
