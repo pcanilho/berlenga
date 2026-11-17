@@ -1423,7 +1423,9 @@ void WeatherMap3D::ShadowBake::row(uint32_t p_row, void *) {
 		bytes_w[k * 4 + 0] = v;
 		bytes_w[k * 4 + 1] = v;
 		bytes_w[k * 4 + 2] = v;
-		bytes_w[k * 4 + 3] = 255;
+		// 254 marks a cloud map: the volumetric fog takes the beam, exp(-tau), back out of it (the surfaces
+		// lose a 0.4%).
+		bytes_w[k * 4 + 3] = 254;
 	}
 }
 
