@@ -20,7 +20,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 - **Shrubs and hedges** (`stems`, `envelope`): many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.
 - **Gorse and broom** (`TreeGenerator.make_shrub_species()`): real spines, flowers and pods, flowering by season, in young, mature, old, thicket and cushion forms.
 - **Mediterranean shrubs** (`TreeGenerator.make_shrub_species()`): gum rockrose, kermes oak and lentisk, with flowers, acorns and drupes as geometry.
-- **Dwarf fan palm** (`PRESET_DWARF_FAN_PALM`): clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks and a skirt of dead leaves.
+- **Dwarf fan palm** (`PRESET_DWARF_FAN_PALM`): clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks, a skirt of dead leaves, spring flower clusters and dates that ripen from green to red-brown.
 - **Wind, bank and rock trees** (`wind_exposure`, `krummholz`, `ground_slope`, `bank_erosion`, `root_stone`): at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.
 - **Clearings** (`mask_channel`): painted clearings and paths keep trees and shrubs out.
 
