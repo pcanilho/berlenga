@@ -1,0 +1,1 @@
+- Water: a mirror ray that a steep wave turns down into the sea now meets the next wave instead of reading the horizon sky at full strength, so far wave backs at a low sun no longer show bright blobs.
