@@ -85,6 +85,30 @@ protected:
 	void _validate_property(PropertyInfo &p_property) const;
 
 public:
+	// Render data of one chunk surface (one material slot), object-local. Public for PhysXBlastAsset.prepare_render.
+	struct ChunkSurface {
+		int slot = 0;
+		PackedVector3Array vertices;
+		PackedVector3Array normals;
+		// From the asset's chunk_meshes, when it has them (empty otherwise).
+		PackedFloat32Array tangents;
+		PackedColorArray colors;
+		PackedVector2Array uv, uv2;
+		// Indexed chunk_meshes keep their index (a third of the vertices to copy and upload); empty: a soup.
+		PackedInt32Array indices;
+	};
+	// Each chunk's surfaces, from its triangle soup (flat normals) or the asset's chunk_meshes.
+	static void build_chunk_surfaces(const LocalVector<PackedVector3Array> &p_points, const Array &p_meshes, const Array &p_materials, LocalVector<LocalVector<ChunkSurface>> &r_surfaces);
+	// A ChunkSurface as Mesh arrays.
+	static Array chunk_surface_arrays(const ChunkSurface &p_surface);
+
+	// Velocity a dynamic destructible starts with (a falling tree swapped in mid-fall keeps its motion). Set before
+	// it enters the tree, or while intact after: the intact body takes it at once.
+	void set_initial_linear_velocity(const Vector3 &p_velocity);
+	Vector3 get_initial_linear_velocity() const { return initial_linear_velocity; }
+	void set_initial_angular_velocity(const Vector3 &p_velocity);
+	Vector3 get_initial_angular_velocity() const { return initial_angular_velocity; }
+
 	void set_asset_path(const String &p_path);
 	String get_asset_path() const { return asset_path; }
 	void set_chunks_path(const String &p_path);
@@ -441,19 +465,13 @@ private:
 	// ~190 chunks was ~190 draw calls). A chunk's surfaces take their slots
 	// from the asset's chunk_meshes (several for a multi-material chunk,
 	// drawn with PhysXBlastAsset.materials); everything else is slot 0.
-	struct ChunkSurface {
-		int slot = 0;
-		PackedVector3Array vertices;
-		PackedVector3Array normals;
-		// From the asset's chunk_meshes, when it has them (empty otherwise).
-		PackedFloat32Array tangents;
-		PackedColorArray colors;
-		PackedVector2Array uv, uv2;
-		// Indexed chunk_meshes keep their index (a third of the vertices to copy and upload); empty: a soup.
-		PackedInt32Array indices;
-	};
 	LocalVector<LocalVector<ChunkSurface>> chunk_surfaces;
 	void _compute_chunk_surfaces();
+	// The asset's shared render cache, or this node's own for asset_path/chunks_path.
+	Ref<PhysXBlastRenderCache> render_cache;
+	RID _chunk_mesh(uint32_t p_chunk);
+	Vector3 initial_linear_velocity;
+	Vector3 initial_angular_velocity;
 	void _free_chunk_cache();
 	// Whether an island made of p_chunks stays STATIC under `anchor`.
 	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;
@@ -461,8 +479,9 @@ private:
 
 	struct ChunkVisual {
 		RID body; // its shapes are the shared chunk_shapes[] of chunk_indices, not owned
-		RID mesh;
-		RID instance;
+		// One render instance per chunk, of the shared per-chunk meshes (PhysXBlastRenderCache): a split moves
+		// instances instead of rebuilding a merged mesh (about a second for a tree).
+		LocalVector<RID> instances;
 		// Which asset chunks this piece renders/collides, aligned with
 		// `shapes`. One entry while intact (chunk 0, the placeholder) and
 		// for a single-chunk (leaf) split product; an island split product
@@ -496,6 +515,7 @@ private:
 		bool shrinking = false;
 		Vector3 shrink_pivot;
 	};
+	void _set_piece_transform(const ChunkVisual &p_piece, const Transform3D &p_transform) const;
 	// Frees pieces[p_index] and retires its Blast actor (so a later hit can't
 	// split it and bring its chunks back): kill_y and piece_lifetime.
 	void _retire_piece(uint32_t p_index);

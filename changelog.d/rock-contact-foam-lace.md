@@ -1,0 +1,1 @@
+- Water: rock contact foam breaks into lace and holes, thicker on the side the waves strike; clear water no longer shows a ghost of a rock's outline behind it.

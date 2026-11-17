@@ -3419,3 +3419,20 @@ face has no shallow band for the depth threshold to find.
    before the normal damping and the crisp step, so it shades, damps the chop and path traces as the other foam does.
 
 On by default (`contact_foam`), mask all layers; the rays skip anything not static, as the seabed's do.
+
+### Round 2: lace, the wave side, and a ghost over a boulder (17 Nov, docs review)
+
+Docs declined the first frames: the foam read as a flat, even, hard-edged sheet, and a translucent ghost of the
+right boulder's outline sat on the water behind it.
+- The ring is now the open sea's own foam structure (foam_structure, the crisp foam's holes and torn strands) read at
+  a contact amount that drains with distance, so it is churned against the rock and opens into lace further out.
+  The lace had first come out flat because its pixel footprint was measured from the ripple grid's centre (hundreds
+  of metres away on a large sea): it now takes the pixel's own size where the water is drawn.
+- Thicker where the waves strike: the side of the rock facing the wave direction (the distance field's gradient
+  against the wind) gets 1.7 times the width, the lee a longer, thinner trail.
+- Rock shoulders just under the surface stay churned between crests (aerated water over shallow rock).
+- The ghost was the clear water's refraction (not the foam): where a rock hides the refracted point, the shortened
+  offset it falls back to was used for the path length too, a point off the refracted ray, which tinted the water
+  there deeper in the rock's outline; and the filtered colour read pulled the rock's edge into a dotted outline. The
+  fallback keeps the refracted path's length, reads the colour at the texel it tested, and the test covers all four
+  texels the filtered read blends (textureGather).
