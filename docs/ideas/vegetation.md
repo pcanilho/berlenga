@@ -476,6 +476,43 @@ than loose ground, damp patches, grit and small stones. The grass field thins an
 its ground tint shows bare soil along the line. Left for the terrain material: a compacted-soil
 layer read from the same paths.
 
+## Next round candidates (17 Nov evening): farmland, burnt ground, arid ground, climbers
+
+Researched for the next pick; nothing built yet.
+
+**Farmland: crops by season, stubble, field margins and hedgerows.** The open-world bar (KCD2) is
+mostly cultivated land, which the fork has none of. Crops grow as rows of real plants whose look
+is set by the growth stage (the BBCH scale: tillering, stem elongation, heading, ripening; winter
+wheat sown in October, green by April, golden in July, stubble after harvest), so a field reads by
+season like the meadow does. Rendering follows the grass path: GPU-filled rows on a field's own
+grid and drill direction (sowing lines show from afar), wind as a damped oscillator (honami waves
+roll across a ripe field), far colour by stage (Serious Sam 4, GDC 2019, "4 million acres":
+fields as instanced crop rows with terrain colour matched under them). Field margins carry
+poppies, cornflowers, mayweed; hedgerows are a linear stand of hawthorn, blackthorn, hazel and
+bramble (trees thread for the woody part) with a grassy bank. Cost: rows are dense (60 to 400
+stems per m2), so the near band needs the same GPU fill and far colour as grass.
+
+**Burnt ground and recovery (with Flow fire).** After a heath or scrub fire the ground is black
+with ash and charred stems standing; heather regrows through pioneer, building, mature and
+degenerate phases over 6 to 30 years (Gimingham 1972, "Ecology of heathlands"), Mediterranean
+scrub resprouts (kermes oak, lentisk) within months while seeders (rockroses) germinate from the
+soil seed bank (Calvo et al., "dynamics of Mediterranean shrub species after fire"). A `burn`
+age per area would swap sets: ash and char, then resprouts and seedlings, then the full stand.
+Ties to PhysX Flow fire and the trees thread's charred wood.
+
+**Arid ground: desert and steppe plants for the new sand seas.** Terrain built desert sand seas,
+which have no plants yet. Dune vegetation sorts by sand mobility (crests bare; tussock grasses such
+as Stipagrostis on flanks and interdunes; shrubs on stable plinths), and stable desert ground is
+covered by biological soil crust, a dark, knobbly skin of cyanobacteria, lichens and mosses that
+crunches under tyres and stays broken for decades (Belnap and Lange, "Biological soil crusts";
+Kidron, crust dynamics on dunes). Plants: Stipagrostis tussocks, saltbush, sparse annuals after
+rain, crust as ground detail that the sand and ground modules can break.
+
+**Climbers and ivy carpets.** Ivy as ground cover in woods and over rocks and walls, its leaves
+juvenile-lobed on the ground and entire on flowering shoots; ivy and old man's beard on trunks
+(the trees thread owns the stems, this thread the leaves). Placed on rock faces and tree trunks
+by their surface normal and shade.
+
 ## Salt marsh and shingle plants (built 17 Nov)
 
 Where the land meets a sheltered sea the ground is mud and the plants sort by how often the tide
