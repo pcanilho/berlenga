@@ -282,7 +282,7 @@ bool is_closed(const LocalVector<uint32_t> &p_indices) {
 void PhysXBlastAuthoring::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed", "pattern", "cutout_pattern"), &PhysXBlastAuthoring::fracture_mesh, DEFVAL(PATTERN_VORONOI), DEFVAL(Ref<Texture2D>()));
 
-	ClassDB::bind_method(D_METHOD("build_prefractured", "root", "pieces", "bonds"), &PhysXBlastAuthoring::build_prefractured);
+	ClassDB::bind_method(D_METHOD("build_prefractured", "root", "pieces", "bonds", "materials"), &PhysXBlastAuthoring::build_prefractured, DEFVAL(Array()));
 	ClassDB::bind_method(D_METHOD("get_last_error"), &PhysXBlastAuthoring::get_last_error);
 	ClassDB::bind_method(D_METHOD("get_last_warnings"), &PhysXBlastAuthoring::get_last_warnings);
 
@@ -655,9 +655,29 @@ bool blast_soup(const Array &p_arrays, PackedVector3Array &r_points, double &r_v
 	return r_volume > 0.0;
 }
 
+// A chunk_meshes entry's first surface (a Mesh's surface 0, the first of an Array of surfaces, or a single arrays
+// Array as it is): the closed shell that gives the chunk its collision, volume and centroid.
+Array blast_first_surface(const Variant &p_piece) {
+	const Ref<Mesh> mesh = p_piece;
+	if (mesh.is_valid()) {
+		return mesh->get_surface_count() > 0 ? mesh->surface_get_arrays(0) : Array();
+	}
+	const Array a = p_piece;
+	if (a.size() == Mesh::ARRAY_MAX && a[Mesh::ARRAY_VERTEX].get_type() == Variant::PACKED_VECTOR3_ARRAY) {
+		return a;
+	}
+	if (a.is_empty()) {
+		return Array();
+	}
+	if (a[0].get_type() == Variant::DICTIONARY) {
+		return Dictionary(a[0]).get("arrays", Array());
+	}
+	return a[0];
+}
+
 } // namespace
 
-Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root, const Array &p_pieces, const Array &p_bonds) {
+Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Variant &p_root, const Array &p_pieces, const Array &p_bonds, const Array &p_materials) {
 	last_error = String();
 	last_warnings.clear();
 	const int leaves = p_pieces.size();
@@ -671,7 +691,7 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root
 		PackedVector3Array soup;
 		double volume = 0.0;
 		Vector3 centroid;
-		if (!blast_soup(c == 0 ? p_root : Array(p_pieces[c - 1]), soup, volume, centroid)) {
+		if (!blast_soup(blast_first_surface(c == 0 ? p_root : p_pieces[c - 1]), soup, volume, centroid)) {
 			return _fail(vformat("PhysXBlastAuthoring: build_prefractured: chunk %d is not a closed triangle mesh.", c));
 		}
 		points[c] = soup;
@@ -685,6 +705,8 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root
 		d.userData = uint32_t(c);
 	}
 	std::vector<NvBlastBondDesc> bonds;
+	// Per-bond health by chunk pair (asset chunk indices, low << 32 | high), when any bond gives one.
+	HashMap<uint64_t, float> pair_health;
 	for (int b = 0; b < p_bonds.size(); b++) {
 		const Dictionary bd = p_bonds[b];
 		const Vector2i pair = bd.get("chunks", Vector2i(-1, -1));
@@ -706,6 +728,10 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root
 		desc.bond.centroid[2] = c.z;
 		desc.bond.userData = 0;
 		bonds.push_back(desc);
+		if (bd.has("health")) {
+			const uint64_t lo = MIN(desc.chunkIndices[0], desc.chunkIndices[1]), hi = MAX(desc.chunkIndices[0], desc.chunkIndices[1]);
+			pair_health[(lo << 32) | hi] = MAX(float(bd["health"]), 0.0f);
+		}
 	}
 	if (bonds.empty()) {
 		return _fail("PhysXBlastAuthoring: build_prefractured: no bonds, the pieces would never hold together.");
@@ -726,6 +752,26 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root
 		Memory::free_aligned_static(mem);
 		return _fail("PhysXBlastAuthoring: build_prefractured: NvBlastCreateAsset failed.");
 	}
+	// Bond healths in the asset's own bond order (NvBlastCreateAsset orders bonds by the support graph), found
+	// through the graph's node pairs; chunks keep their authored index in userData.
+	PackedFloat32Array bond_healths;
+	if (!pair_health.is_empty()) {
+		bond_healths.resize(NvBlastAssetGetBondCount(asset, blast_authoring_log));
+		bond_healths.fill(1.0f);
+		const NvBlastSupportGraph graph = NvBlastAssetGetSupportGraph(asset, blast_authoring_log);
+		const NvBlastChunk *asset_chunks = NvBlastAssetGetChunks(asset, blast_authoring_log);
+		for (uint32_t node = 0; node < graph.nodeCount; node++) {
+			for (uint32_t a = graph.adjacencyPartition[node]; a < graph.adjacencyPartition[node + 1]; a++) {
+				const uint32_t bond = graph.adjacentBondIndices[a];
+				const uint64_t c0 = asset_chunks[graph.chunkIndices[node]].userData;
+				const uint64_t c1 = asset_chunks[graph.chunkIndices[graph.adjacentNodeIndices[a]]].userData;
+				const float *h = pair_health.getptr((MIN(c0, c1) << 32) | MAX(c0, c1));
+				if (h && bond < uint32_t(bond_healths.size())) {
+					bond_healths.set(bond, *h);
+				}
+			}
+		}
+	}
 	const uint32_t asset_size = NvBlastAssetGetSize(asset, blast_authoring_log);
 	PackedByteArray bytes;
 	bytes.resize(asset_size);
@@ -742,5 +788,7 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::build_prefractured(const Array &p_root
 	result->set_asset_bytes(bytes);
 	result->set_chunk_points(points);
 	result->set_chunk_meshes(meshes);
+	result->set_materials(p_materials);
+	result->set_bond_healths(bond_healths);
 	return result;
 }

@@ -12,12 +12,15 @@
 	<methods>
 		<method name="build_prefractured">
 			<return type="PhysXBlastAsset" />
-			<param index="0" name="root" type="Array" />
+			<param index="0" name="root" type="Variant" />
 			<param index="1" name="pieces" type="Array" />
 			<param index="2" name="bonds" type="Array" />
+			<param index="3" name="materials" type="Array" default="[]" />
 			<description>
 				Builds an asset from pieces cut outside Blast, such as a procedural rock split along its own rough breaks. [param root] holds the whole object's [Mesh] arrays, and [param pieces] holds one [Mesh] arrays [Array] per leaf piece; every mesh must be closed. [param bonds] is a list of [Dictionary]s with [code]chunks[/code] ([Vector2i], two piece indices), [code]centroid[/code], [code]normal[/code] (pointing from the first piece to the second) and [code]area[/code], all in the meshes' space.
 				Chunk 0 is the root and chunk [code]i + 1[/code] is piece [code]i[/code]; every leaf is a support chunk. The arrays are kept as [member PhysXBlastAsset.chunk_meshes], so pieces keep their normals, tangents, colours and UVs. Returns a null reference on failure, and [method get_last_error] says why.
+				A piece with several materials (a tree limb's bark, wood, moss and leaves) may be a [Mesh] or an [Array] of surfaces instead (see [member PhysXBlastAsset.chunk_meshes]); its first surface must be the closed shell, which gives the chunk its collision and volume. [param materials] becomes [member PhysXBlastAsset.materials], one material per surface slot.
+				A bond may also carry [code]health[/code]: its initial health as a multiple of [member PhysXDestructible3D.health], so a twig joint breaks before a trunk joint (see [member PhysXBlastAsset.bond_healths]).
 			</description>
 		</method>
 		<method name="fracture_mesh">

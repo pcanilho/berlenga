@@ -42,9 +42,15 @@ void PhysXBlastAsset::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_chunk_meshes"), &PhysXBlastAsset::get_chunk_meshes);
 	ClassDB::bind_method(D_METHOD("set_chunk_hulls", "hulls"), &PhysXBlastAsset::set_chunk_hulls);
 	ClassDB::bind_method(D_METHOD("get_chunk_hulls"), &PhysXBlastAsset::get_chunk_hulls);
+	ClassDB::bind_method(D_METHOD("set_materials", "materials"), &PhysXBlastAsset::set_materials);
+	ClassDB::bind_method(D_METHOD("get_materials"), &PhysXBlastAsset::get_materials);
+	ClassDB::bind_method(D_METHOD("set_bond_healths", "healths"), &PhysXBlastAsset::set_bond_healths);
+	ClassDB::bind_method(D_METHOD("get_bond_healths"), &PhysXBlastAsset::get_bond_healths);
 
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_BYTE_ARRAY, "asset_bytes"), "set_asset_bytes", "get_asset_bytes");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_points"), "set_chunk_points", "get_chunk_points");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_meshes"), "set_chunk_meshes", "get_chunk_meshes");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_hulls"), "set_chunk_hulls", "get_chunk_hulls");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "materials", PROPERTY_HINT_ARRAY_TYPE, "Material"), "set_materials", "get_materials");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "bond_healths"), "set_bond_healths", "get_bond_healths");
 }

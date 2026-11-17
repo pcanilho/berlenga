@@ -24,6 +24,13 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
+		<method name="get_piece_chunks" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns the asset chunk indices piece [param index] carries: one for a lone chunk, several for an island that is still bonded. For an asset from [method PhysXBlastAuthoring.build_prefractured], chunk [code]i + 1[/code] is piece [code]i[/code].
+			</description>
+		</method>
 		<method name="get_piece_count">
 			<return type="int" />
 			<description>
