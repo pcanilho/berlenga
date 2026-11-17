@@ -92,6 +92,7 @@ public:
 		PRESET_KERMES_OAK, // Quercus coccifera.
 		PRESET_LENTISK, // Pistacia lentiscus.
 		PRESET_DWARF_FAN_PALM, // Chamaerops humilis (trees.md 5w).
+		PRESET_STONE_PINE, // Pinus pinea (trees.md 5y).
 		PRESET_MAX,
 	};
 
