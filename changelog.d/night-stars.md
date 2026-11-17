@@ -1,0 +1,1 @@
+- Weather: the night sky has stars, the 9,100 of the Yale Bright Star Catalogue placed by SkyClock, coloured by temperature, dimmed by the air and hidden by clouds (`stars_enabled`, on); the sky's exposure applies before its half-float passes, so a dark sky no longer bands.

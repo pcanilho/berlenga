@@ -424,6 +424,7 @@ void SkyClock::_apply_lights() {
 		const double e_sun = get_sun_illuminance_top() * energy_per_lux;
 		const double e_moon = get_moon_illuminance_top() * energy_per_lux;
 		sky_mat->set_atmosphere_lights(get_sun_direction(), Vector3(e_sun, e_sun, e_sun), get_moon_direction(), Vector3(e_moon, e_moon, e_moon));
+		sky_mat->set_star_sky(get_celestial_basis(), float(energy_per_lux));
 	}
 }
 

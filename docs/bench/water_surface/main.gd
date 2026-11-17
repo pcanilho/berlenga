@@ -386,6 +386,9 @@ func _ready() -> void:
 	if view == "waterline":
 		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
+		# A shader uniform (far_filter, crest_glow ...) goes through --water=; a wrong --node= key did nothing.
+		if not (k in water):
+			push_error("--node=%s: the water has no such property (a shader uniform takes --water=)" % k)
 		water.set(k, node_params[k])
 	add_child(water)
 	var wm: ShaderMaterial = water.call("get_water_material")

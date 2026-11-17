@@ -221,6 +221,58 @@ the same model; the half resolution pass puts the clouds over it.
   goes black within about 3 deg below the horizon, as it should: exposure is step 4. Raster open water's body
   colour is unlit emission, so it glows at dusk; that is a water fix, next.
 
+### Step 3: the night sky, research update (16 Nov)
+
+Newer work on drawing stars in real time, read before building:
+- **Bruneton 2020** ("A Real-time Rendering of the Night Sky", arXiv 2010.08735, his precomputed atmosphere's
+  successor demo): Gaia DR2 and Tycho-2 (3.6 million stars) baked into two cube maps (RGB9E5, 6 x 2048 x 2048),
+  each texel holding at most one star's colour; the mip chain sums colours rather than averaging them, so a star
+  never fades with distance in the chain. The lookup treats each star as a 1 x 1 texel area and weighs it by its
+  overlap with the pixel's footprint (from the screen derivatives of the view direction, with analytic cube-face
+  coordinates to avoid seams), picking the mip level that keeps the footprint under 9 x 9 texels. Bright stars get a
+  glare (a point spread function after Spencer et al. 1995, applied before tone mapping). 2.99 ms at 1080p on a GTX 960;
+  a few stars still flicker as the camera moves. Point sprites were slower there (overdraw).
+- **Schneegans, Kreskowski and Gerndt 2025** ("Smaller than Pixels: Rendering Millions of Stars in Real-Time",
+  Eurographics short paper, CosmoScout VR): a star's luminance from its magnitude and an assumed disc of solid angle
+  A, `S = m + 2.5 log10(A)` (A in square arcseconds) and `L = 10.8e4 * 10^(-0.4 S)` cd/m2, splatted over 2 x 2
+  pixels by distance to the pixel centres; glare as a pyramid of Gaussians (each level twice the width and half the
+  weight, summing to the 1/theta^2 fall-off of veiling glare), 0.34 ms at 1080p.
+- **Gaia Sky** (ARI Heidelberg): apparent magnitude to a billboard's size; quads rather than GL points so that
+  stars keep their size with the field of view.
+- **The moon's surface**: Hapke-Lommel-Seeliger (Jensen et al. 2001's parameters) or the full Hapke model; Menon
+  et al. (CU Boulder, lunar regolith for VR) implement both and find both convincing, with no frame time measured.
+
+What fits the fork (the plan above, refined): everything in `WeatherSkyMaterial`, so the path tracer, which
+draws the same sky shader (`pathtracing_sky_shader_enabled`), sees the same stars and moon.
+1. **Stars**: the Yale Bright Star Catalogue (public domain; about 9,100 stars down to magnitude 6.5, what the eye
+   sees) as a small data table built into the module, baked once into a star cube map Bruneton's way (one star per
+   texel, summed mips) and looked up per pixel with his footprint weighting, in the sky's full resolution pass.
+   Each star's illuminance `E = 10^(-0.4 (m + 13.98))` lux above the air (Jensen's formula in lux), times the
+   air's transmittance along it (the same table as the sun), colour from B-V as a black body at
+   `7000 K / (B-V + 0.56)`, turned by `SkyClock.get_celestial_basis()` so the sky wheels round the pole.
+   Twinkle from scintillation near the horizon, small. Glare: a few pixels of point spread around the brightest
+   (Schneegans' pyramid would be a post pass; later, with exposure, if needed).
+2. **Moon disc**: 0.52 deg, shaded by Hapke-Lommel-Seeliger from the sun's direction with the clock's phase and
+   bright limb angle, earthshine on the dark side; albedo and normals from the NASA LRO CGI Moon Kit (public
+   domain) as art in Gitea LFS, with a plain grey disc of mean albedo 0.12 as the fallback.
+3. **Milky Way** (ESO panorama, CC BY 4.0, via Gitea LFS) and Jensen's airglow and zodiacal light.
+4. Exposure across the day is step 4, as planned.
+
+**Built (17 Nov): stars.** Not Bruneton's cube map: 9,096 stars fit a smaller scheme. The catalogue
+(`modules/weather/bright_stars_data.h`, from `tools/make_bright_stars.py`) is binned once into a cube-face grid
+(6 x 32 x 32 cells, about 3 deg); a star within 0.5 deg of a cell's edge goes into the neighbours too, so a pixel
+reads one cell's short list (1.5 stars on average). Each star is its illuminance (`10^(-0.4 (V + 13.99))` lux)
+spread by a normalised Gaussian half a pixel wide (at least half an arcminute), so the pixels round a star sum to
+it at any resolution (Schneegans et al. 2025), times the air's transmittance, behind the clouds. Colour: B-V to a
+temperature (Ballesteros 2012), a black body through the CIE observer (Wyman, Sloan and Shirley 2013 fit) to
+linear sRGB at unit luminance. Checked: at latitude 45 deg the brightest star in an 8 deg view centred on the
+pole is 0.7 deg from it (Polaris, 0.65 deg in 2026). Not drawn in the radiance map. Two 64 KB textures.
+
+**Pre-exposure.** A night sky in light energy units (1e-5 per lux) is below half floats: the quarter and half
+resolution passes stored the air in visible bands and dropped every star fainter than about V 3. The sky's
+`exposure` now applies in each pass before the buffers (Frostbite's pre-exposure, Lagarde and de Rousiers 2014),
+the same result by day. The sky bench's `--exposure` sets it; step 4 drives it from the camera.
+
 ### Checks
 
 - Positions against published almanac values. The JPL Horizons ephemeris gives the sun and the moon for a
@@ -249,3 +301,8 @@ the same model; the half resolution pass puts the clouds over it.
 - Sky3D (TokisanGames, MIT): https://github.com/TokisanGames/Sky3D
 - Hoffleit and Warren, The Bright Star Catalogue, 5th revised ed. (Yale), 1991.
 - NASA SVS, CGI Moon Kit (LRO): https://svs.gsfc.nasa.gov/4720
+- Bruneton, A Real-time Rendering of the Night Sky, 2020: https://arxiv.org/abs/2010.08735
+- Schneegans, Kreskowski and Gerndt, Smaller than Pixels: Rendering Millions of Stars in Real-Time, Eurographics
+  2025 short paper.
+- Gaia Sky documentation, star rendering: https://gaia.ari.uni-heidelberg.de/gaiasky/docs/3.7.3/Star-rendering.html
+- Menon et al., Efficient Photometric Models of the Lunar Regolith for Virtual Reality Simulation (CU Boulder).
