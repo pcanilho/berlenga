@@ -399,6 +399,11 @@ private:
 		Vector2 peak_pos;
 		double mark_time = -1e9;
 		Vector2 mark_pos;
+		// The marks still on the sand along this transect (its stretch of each line: from, mark, to), newest last.
+		struct Laid {
+			Vector2 from, at, to;
+		};
+		LocalVector<Laid> laid;
 	};
 	bool swash_marks = true;
 	LocalVector<SwashTransect> swash_tr;
@@ -408,9 +413,11 @@ private:
 	double swash_time = 0.0;
 	double swash_frame_age = 1e9;
 	int swash_mark_count = 0;
+	uint32_t swash_wave = 0; // counts the waves that left a mark: each draws its own lobes
+	double swash_last_mark = -1e9;
 	float swash_usec = 0.0f;
 	void _swash_update(double p_delta);
-	void _swash_lay(const Vector2 &p_from, const Vector2 &p_to);
+	void _swash_lay(const Vector2 &p_from, const Vector2 &p_to, bool p_erase = false);
 	float _shelter_flux_at(float p_x, float p_z) const;
 	float _lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const;
 	void _shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride);

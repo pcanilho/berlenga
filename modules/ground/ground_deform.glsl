@@ -343,7 +343,13 @@ void run_amount_stamp(Stamp s) {
 		vec4 st = state[i];
 		float sa = depth * cover;
 		float a = abs(sa);
-		if (sa > 0.0) {
+		if (sa > 0.0 && s.c.z < 0.0) {
+			// A line being washed away: only what was laid on the surface goes, and its tint with it.
+			st.y -= min(st.y, a);
+			if (ground) {
+				st.w *= 1.0 - cover;
+			}
+		} else if (sa > 0.0) {
 			float take = min(st.y, a);
 			st.y -= take;
 			st.x = min(st.x + a - take, c.max_dent);
@@ -354,6 +360,9 @@ void run_amount_stamp(Stamp s) {
 			float fill = min(st.x, a);
 			st.x -= fill;
 			st.y += a - fill;
+			if (ground && s.c.z > 0.0) {
+				st.w = max(st.w, s.c.z * cover); // a marked deposit (a swash mark's lip)
+			}
 		}
 		st.z = max(st.z, settle);
 		state[i] = st;

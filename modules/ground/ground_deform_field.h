@@ -105,6 +105,7 @@ public:
 	float extent = 32.0f;
 	int resolution = 512;
 	int max_cached_tiles = 1024;
+	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (swash marks' lip); below 0, digs take only laid sand (rim) and its tint
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
 	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).

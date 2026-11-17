@@ -572,12 +572,18 @@ Built first of the three. `swash_marks` (on): ten times a second the near field 
 10 cm apart (the beach's downhill direction there); along each, the water's landward edge (swash film or sea over
 1 mm, from the water sources' `sample_swash` and `sample_depth`) is found to 6 mm. When a swash that was climbing
 falls back 5 cm from its highest reach, that reach is the uprush limit (Komar 1998): a ridge of sand is laid along
-it, 3 mm high and about 2.5 cm wide (two near-field texels; a narrower one is lost between texels), joined halfway
-to the neighbouring transects' marks of the same wave (within 20 cm) so each wave draws one scalloped line. The
+it, 4 mm high and about 2.5 cm wide (two near-field texels; a narrower one is lost between texels), joined halfway
+to the neighbouring transects' marks of the same wave (within 25 cm) so each wave draws one line. The
 next swash that reaches higher smooths it as it does prints; the highest lines stay. About 0.7 ms a step on the
-CPU. `--view=shore` prints the count; `SWASH_DUMP=file.f32` writes the ground's change over x -3..3, z -1..3.
-Left for later: the foam-tinted line that dries pale (needs a lasting tint channel; the deposit's fresh tint
-fades).
+CPU.
+Docs round 1: one smooth mark read as a pencil stroke, and its long curve as a ring. The film is followed only past
+1 mm and smoothly along the beach, but a swash's thin leading edge breaks into tongues: lobes convex landward meeting
+in seaward-pointing cusps (Reineck and Singh 1980). Each wave now draws its own lobes, 0.5 to 1.2 m long and 4 to
+10 cm beyond the followed reach. `--ebb=from,to` lowers the sea's `swash_run_up` over the run, as a falling tide, so
+later waves leave their marks below the earlier ones and the beach keeps a ladder of lines. The lip is the swash's
+finest load (mica, heavy minerals, bits of debris), so it is laid with the fresh tint and reads darker than the sand
+round it until it dries (`drying_time`); deposits carry that tint only when asked (`GroundDeformField::amount_fresh`).
+`--view=shore` prints the count; `SWASH_DUMP=file.f32` writes the ground's change over x -3..3, z -1..3.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
