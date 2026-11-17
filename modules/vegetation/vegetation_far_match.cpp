@@ -61,6 +61,13 @@ void VegetationField3D::_publish_far_shade() {
 	}
 }
 
+// Once the shade has settled: the cover map (the terrain's far blend) takes it on its plants' share.
+void VegetationField3D::_far_cover_sync() {
+	if (cover_map_enabled && cover_texture.is_valid() && Math::abs(far_shade - cover_shade) > 0.02f) {
+		_on_grass_far_color();
+	}
+}
+
 void VegetationField3D::set_far_match_view(bool p_enabled) {
 	if (far_match_view == p_enabled) {
 		return;
@@ -81,6 +88,7 @@ void VegetationField3D::set_far_match_view(bool p_enabled) {
 	if (far_image.is_valid()) {
 		_publish_far_shade();
 	}
+	_far_cover_sync();
 }
 
 Dictionary VegetationField3D::get_far_match_stats() const {
@@ -337,6 +345,7 @@ void VegetationField3D::_far_view_apply(float p_ratio, int p_groups) {
 			_publish_far_shade();
 			print_verbose(vformat("VegetationField3D \"%s\": far match: the ground past the range does not follow the far colour (gain %.3f), shade left at 1.", get_name(), gain));
 			far_view_round = 0;
+			_far_cover_sync();
 			return;
 		}
 		far_view_gain = CLAMP(gain, 0.05f, 1.0f);
@@ -357,5 +366,6 @@ void VegetationField3D::_far_view_apply(float p_ratio, int p_groups) {
 		_far_view_start(10);
 	} else {
 		far_view_round = 0;
+		_far_cover_sync();
 	}
 }

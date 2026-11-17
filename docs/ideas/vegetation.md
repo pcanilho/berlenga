@@ -414,8 +414,10 @@ talks); the cover plants now get the same.
   noisy without a denoiser): the raster shade stays.
 - Needs 6 sample groups; fewer (no cover in view, or all one kind) retries, then gives up and
   keeps the last shade. `get_far_match_stats()` reports shade, ratio, groups, round, state.
-- Past the vegetation far map the terrain's own far blend (terrain_material's cover map) does not
-  yet multiply by `vegetation_far_shade`; that is terrain_material's file, routed to its owner.
+- Past the vegetation far map, the terrain's far blend reads the cover map, whose cover also counts
+  grass (matched on its own, `grass_ground_far_scale`) and crowns. So the shade is baked into the
+  cover plants' share of the cover map only, which is rebuilt once the match settles on a new shade
+  (more than 2% from the one it was built with).
 
 ## Waterside and wet-stone plants (built 16 Nov)
 

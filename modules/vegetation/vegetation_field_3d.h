@@ -286,7 +286,9 @@ class VegetationField3D : public Node3D {
 		// size between the passes; pass 1 adds the plants and grass under them.
 		int pass = 0;
 		LocalVector<float> crowns; // 5 per texel.
+		float plant_shade = 1.0f; // The far match's shade (far_match_view) on the plants' colour, as vegetation_far() gives it.
 	};
+	float cover_shade = 1.0f; // The far shade the published cover map was built with.
 	static void _cover_row(void *p_job, uint32_t p_row);
 	void _build_cover(const PlaceSetup &p_setup);
 	void _on_grass_far_color();
@@ -402,6 +404,7 @@ class VegetationField3D : public Node3D {
 	void _far_view_on_data(const PackedByteArray &p_data, int p_width, int p_height, int p_format);
 	void _far_view_apply(float p_ratio, int p_groups);
 	void _publish_far_shade();
+	void _far_cover_sync();
 	bool _far_view_active() const { return far_match_view && far_image.is_valid() && far_image_range > 0.0f; }
 	// The plants' frontal area per square metre (Raupach's lambda) on a 1 m grid, for sand
 	// sheltered from the wind (GroundSurface3D.wind_shelters); rebuilt on demand once plants change.

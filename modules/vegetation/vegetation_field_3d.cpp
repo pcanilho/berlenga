@@ -2133,7 +2133,7 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		}
 		const float a_plants = 1.0f - Math::exp(-c_sum);
 		if (c_sum > 0.0f) {
-			plants /= c_sum;
+			plants *= job.plant_shade / c_sum;
 		}
 		// The grass under them, layer by layer from the top: a tall sward in patches over an
 		// undercoat that fills the gaps between them reads as the undercoat there, not bare soil.
@@ -2180,6 +2180,10 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	CoverJob job;
 	job.setup = &p_setup;
+	// The plants' share carries the far match's darkening (vegetation_far_shade), as vegetation_far()
+	// gives it to the same plants nearer: the grass and crowns have their own far colours.
+	job.plant_shade = far_shade;
+	cover_shade = far_shade;
 	job.rect = p_setup.rect;
 	job.w = CLAMP(int(Math::ceil(job.rect.size.x / cover_cell)), 1, 4096);
 	job.h = CLAMP(int(Math::ceil(job.rect.size.y / cover_cell)), 1, 4096);
