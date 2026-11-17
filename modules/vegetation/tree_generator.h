@@ -86,6 +86,8 @@ public:
 		PRESET_YELLOW_BIRCH,
 		PRESET_WITCH_HAZEL,
 		PRESET_MOUNTAIN_LAUREL,
+		PRESET_GORSE,
+		PRESET_BROOM,
 		PRESET_MAX,
 	};
 
@@ -698,6 +700,7 @@ private:
 	Ref<Texture2D> leaflet_texture;
 	Ref<Texture2D> _leaflet_texture();
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
+	void _add_spine(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash, bool p_branched);
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
 	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
 	Ref<Texture2D> _spray_texture();
@@ -765,6 +768,8 @@ private:
 		FORM_FLAGGED, // Open-grown in a hard prevailing wind: limbs on the lee side (section 5q).
 		FORM_KRUMMHOLZ, // The tree line's low wind- and snow-shorn mat (section 5q).
 		FORM_BANK, // On a stream bank or gorge side: variants over slopes 0 to 0.85 rad, roots eroded (section 5q).
+		FORM_THICKET, // Heath shrubs grown into one: wider than tall, flat-topped (section 5u).
+		FORM_OLD, // A heath shrub near the end of its life: leggy, leaning out, its centre dead and grey (5u).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -933,6 +938,19 @@ public:
 	// a species with generated variants, and stands as Biomes for VegetationField3D.
 	void apply_habitat(const Ref<PlantSpecies> &p_species) const;
 	Ref<PlantSpecies> make_species(bool p_stand_grown, int p_variants);
+	// Heath shrubs for vegetation's placement (trees.md 5u): meshes, footprint, canopy radius and
+	// far colour, no climate or terrain rules.
+	enum ShrubForm {
+		SHRUB_YOUNG,
+		SHRUB_MATURE,
+		SHRUB_OLD,
+		SHRUB_THICKET,
+		SHRUB_CUSHION,
+		SHRUB_MAX,
+	};
+	static Ref<PlantSpecies> make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season);
+	// Open share of a heath shrub's flowers on a day of the year (0 for other presets).
+	static float get_bloom(Preset p_preset, float p_day_of_year);
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);
 	Ref<Biome> make_woodland(int p_variants, Region p_region = REGION_EUROPE);
 	void clear_cache();
@@ -963,3 +981,4 @@ VARIANT_ENUM_CAST(TreeGenerator::Region);
 VARIANT_ENUM_CAST(TreeGenerator::Climber);
 VARIANT_ENUM_CAST(TreeGenerator::LeafKind);
 VARIANT_ENUM_CAST(TreeGenerator::RigField);
+VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);

@@ -198,11 +198,16 @@ func _test() -> void:
 	_check(wind.get_storm_break_count() + wind.get_storm_throw_count() > 0, "34 m/s on wet soil: %d breaks, %d thrown" % [wind.get_storm_break_count(), wind.get_storm_throw_count()])
 	var low := 1e9
 	var bodies := 0
-	for c in wind.get_children():
+	# Falling parts are bodies; landed ones become (internal) Blast destructibles.
+	for c in wind.get_children(true):
 		if c is RigidBody3D:
 			bodies += 1
 			low = minf(low, (c.global_transform * c.center_of_mass).y)
-	_check(bodies > 0, "%d parts are bodies" % bodies)
+		elif c.has_method("get_piece_count"):
+			for i in c.get_piece_count():
+				bodies += 1
+				low = minf(low, c.get_piece_center(i).y)
+	_check(bodies > 0, "%d parts are bodies or Blast pieces" % bodies)
 	_check(low > -2.0, "no part fell through the ground (lowest centre of mass %.2f m)" % low)
 	for e in events:
 		if e.uprooted:
