@@ -130,7 +130,7 @@
 			<param index="4" name="shrubs" type="bool" default="true" />
 			<description>
 				Returns the low aromatic shrubs of a Mediterranean scrub zone as [PlantSpecies] (Blondel et al. 2010; Flora iberica). Scrub is summer-dry and mild in winter: January means over about 3 C ([constant PlantSpecies.RULE_JANUARY_TEMPERATURE]), 250 to 1,100 mm of rain a year ([constant PlantSpecies.RULE_PRECIPITATION]), aridity 0.2 to 0.75 ([constant PlantSpecies.RULE_ARIDITY]), out of the shade of crowns and off wet ground. Garrigue (open rosemary, thyme cushions and sage-leaved rockrose with bare stony ground between, and dry grass) keeps to thin soil ([constant PlantSpecies.RULE_SOIL_DEPTH] under 0.45 m) and rock; maquis (closed sage-leaved rockrose and French lavender, a little rosemary) to deeper soil (over 0.35 m), under the tall shrubs added with [method apply_scrub_rules]. Thyme and lavender take the sunniest ground. Each species has the meta [code]scrub[/code] set to its stand. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the rockrose's summer drought.
-				With [param shrubs], TreeGenerator's lentisk, kermes oak and gum rockrose lead the maquis, and kermes oak cushions and young gum rockrose the garrigue ([method make_woody_shrub]).
+				With [param shrubs], TreeGenerator's lentisk, kermes oak, gum rockrose and dwarf fan palm lead the maquis, and kermes oak cushions, young fan palms and young gum rockrose the garrigue (the palm only where January averages 7 C or more) ([method make_woody_shrub]).
 			</description>
 		</method>
 		<method name="make_stones" qualifiers="static">

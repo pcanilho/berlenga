@@ -650,8 +650,8 @@ func _scrub_checks() -> void:
 		for i in set.size():
 			if (set[i] as PlantSpecies).has_meta("woody_shrub"):
 				woody += 1
-				ok = ok and i < 3
-		_check("scrub set %d: woody shrubs first (kermes oak, gum rockrose, lentisk)" % st, woody == [2, 3][st] and ok, woody)
+				ok = ok and i < 4
+		_check("scrub set %d: woody shrubs first (kermes oak, gum rockrose, lentisk, fan palm)" % st, woody == [3, 4][st] and ok, woody)
 	# TreeGenerator's woody shrubs take the same rules.
 	var extra := PlantSpecies.new()
 	P.apply_scrub_rules(extra, P.SCRUB_MAQUIS)

@@ -1660,9 +1660,14 @@ void TreeGenerator::_grow_palm() {
 		const Vector3 crown_axis = nodes[top].dir;
 		// The leaves: fewer and smaller on a young plant; cushions keep many short ones.
 		const int alive = cushion ? int(_rand(9.0f, 13.0f)) : int(Math::lerp(6.0f, 15.0f, grown) + _rand(0.0f, 4.0f));
-		const int dead = cushion ? 0 : (age > 1.0f ? int(_rand(3.0f, 7.0f)) : (age > 0.45f ? int(_rand(0.0f, 3.0f)) : 0));
+		int dead = cushion ? 0 : (age > 1.0f ? int(_rand(5.0f, 10.0f)) : (age > 0.45f ? int(_rand(0.0f, 3.0f)) : 0));
 		const float blade = (cushion ? _rand(0.17f, 0.22f) : Math::lerp(0.16f, params[PARAM_LEAF_SIZE], grown) * _rand(0.9f, 1.1f));
 		const float pet = cushion ? _rand(0.1f, 0.16f) : Math::lerp(0.18f, 0.55f, grown) * _rand(0.85f, 1.15f);
+		// Dead leaves hang against the trunk below the crown; a crown too low for them to hang
+		// clear of the ground has shed them (they lay on the ground as loose fans).
+		if (nodes[top].end().y - root.y < pet * 0.3f + blade * 0.85f + 0.05f) {
+			dead = 0;
+		}
 		const Vector3 ref = Math::abs(crown_axis.y) < 0.95f ? up : Vector3(1, 0, 0);
 		const Vector3 cx = crown_axis.cross(ref).normalized();
 		const Vector3 cz = cx.cross(crown_axis).normalized();
@@ -1673,10 +1678,10 @@ void TreeGenerator::_grow_palm() {
 			// dead hang along the trunk.
 			const float t = is_dead ? 1.0f : float(f) / MAX(alive - 1, 1);
 			roll += 2.39996f;
-			const float elev = is_dead ? _rand(-1.25f, -0.85f) : Math::lerp(1.35f, cushion ? 0.15f : 0.3f, Math::pow(t, 0.8f)) + _rand(-0.12f, 0.12f);
+			const float elev = is_dead ? _rand(-1.0f, -0.65f) : Math::lerp(1.35f, cushion ? 0.15f : 0.3f, Math::pow(t, 0.8f)) + _rand(-0.12f, 0.12f);
 			const Vector3 h = cx * Math::cos(roll) + cz * Math::sin(roll);
 			Vector3 d = (h * Math::cos(elev) + crown_axis * Math::sin(elev)).normalized();
-			const float plen = pet * (is_dead ? 0.8f : Math::lerp(0.75f, 1.05f, t)) / 3.0f;
+			const float plen = pet * (is_dead ? 0.3f : Math::lerp(0.75f, 1.05f, t)) / 3.0f;
 			int pp = top;
 			Vector3 q = nodes[top].end() - crown_axis * (0.02f + 0.05f * t) + h * (trunk_r * 0.6f);
 			for (int k = 0; k < 3; k++) {
@@ -1686,7 +1691,7 @@ void TreeGenerator::_grow_palm() {
 				}
 				const int idx = _add_node(pp, q, d, plen, 1, 1, k > 0);
 				nodes[idx].leafy = false;
-				nodes[idx].radius = Math::lerp(0.009f, 0.006f, float(k) / 2.0f) * Math::lerp(0.6f, 1.0f, grown);
+				nodes[idx].radius = Math::lerp(0.006f, 0.004f, float(k) / 2.0f) * Math::lerp(0.6f, 1.0f, grown); // 0.5-1.2 cm wide.
 				nodes[idx].dead = is_dead;
 				q = nodes[idx].end();
 				pp = idx;
@@ -1711,7 +1716,7 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 	pr.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + 0x70616c6du);
 	const Vector3 up(0, 1, 0);
 	const Color live = leaf_color;
-	const Color dead_c = Color(0.42f, 0.33f, 0.21f);
+	const Color dead_c = Color(0.29f, 0.22f, 0.13f); // Straw-brown (on the leaf scale: live is 0.12, 0.2, 0.1).
 	const Color spine_c = Color(0.55f, 0.47f, 0.3f);
 	for (const PalmFrond &f : palm_fronds) {
 		const Node &n = nodes[f.node];
@@ -1721,18 +1726,20 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 		nb = nb.length_squared() > 1e-4f ? nb.normalized() : fwd.cross(Vector3(1, 0, 0)).normalized();
 		const float R = f.blade;
 		const int K = f.segments;
-		const float span = Math::deg_to_rad(f.dead ? 200.0f : 270.0f);
+		const float span = Math::deg_to_rad(f.dead ? 220.0f : 270.0f);
 		r_leaves.bone = node_bone.size() > uint32_t(f.node) ? node_bone[f.node] : 0;
-		// Plicate fan (Dransfield et al., Genera Palmarum, 2008: induplicate, the segments V-shaped
-		// with the margins up): the inner part a pleated disc, segments fused to about a third of
-		// the radius (the palman), then free, stiff, tapering segments. Midribs are the
-		// valleys, the seams between segments the ridges; each segment a leaf part, sized so the
-		// LODs keep the fan whole.
-		const float rp = R * (f.dead ? 0.25f : 0.33f); // Free from here: split two thirds down.
+		// Plicate fan (Dransfield et al., Genera Palmarum, 2008; Flora iberica: Chamaerops's blade
+		// divided nearly to the base): stiff, narrow, induplicate segments, each V-folded with the
+		// margins up and a midrib crease below, free almost from the hastula, where a small pleated
+		// disc joins them. Each segment is a leaf part, sized so the LODs keep the fan whole. A dead
+		// leaf folds shut and hangs, straw-brown, along its petiole.
+		const float rp = R * 0.08f; // The hastula: the segments are free beyond it.
 		const float seg_a = span / K;
-		const float pleat = 0.55f; // Pleat depth over the half-width.
+		const float pleat = 0.7f; // Fold depth over the half-width: about 35 degrees each side.
 		auto ray = [&](float p_ang) {
-			return fwd.rotated(nb, p_ang);
+			const Vector3 r = fwd.rotated(nb, p_ang);
+			// A dead leaf's fan half closes and hangs.
+			return f.dead ? (r + fwd * 0.4f - up * 0.35f).normalized() : r;
 		};
 		auto tri = [&](int a, int b, int c, const Vector3 &p_n) {
 			// Godot's front faces wind clockwise: (c - a) x (b - a) along the normal.
@@ -1760,23 +1767,23 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 			const float jit = 0.88f + 0.24f * pr.randf();
 			sc.push_back(f.dead ? Color(dead_c.r * jit, dead_c.g * jit, dead_c.b * jit) : Color(live.r * jit, live.g * jit, live.b * (0.95f + 0.2f * pr.randf())));
 			sl.push_back(R * Math::lerp(1.0f, 0.62f, Math::pow(Math::abs(u), 1.5f)) * (0.92f + 0.16f * pr.randf()));
-			torn.push_back(f.dead && pr.randf() < 0.3f);
+			torn.push_back(f.dead && pr.randf() < 0.25f);
 		}
-		// The palman: three rings out to rp, vertices on the seams (up) and midribs (down).
-		const int RINGS = 3;
+		// The hastula: a small pleated disc, vertices on the seams (up) and midribs (down).
+		const int RINGS = 2;
 		{
 			Vector4i part;
 			r_leaves.begin(part);
 			LocalVector<int> prev;
 			for (int j = 0; j <= RINGS; j++) {
-				const float r = Math::lerp(R * 0.03f, rp, float(j) / RINGS);
+				const float r = Math::lerp(R * 0.02f, rp, float(j) / RINGS);
 				const float hw = r * seg_a * 0.5f;
 				LocalVector<int> ring;
 				for (int q = 0; q <= 2 * K; q++) {
 					const float ang = -span * 0.5f + seg_a * 0.5f * q;
 					const bool seam = (q & 1) == 0;
 					const int k = MIN(q / 2, K - 1);
-					const Vector3 p = hast + ray(ang) * r + nb * ((seam ? 1.0f : -1.0f) * pleat * hw) - up * (0.05f * r);
+					const Vector3 p = hast + ray(ang) * r + nb * ((seam ? 1.0f : -1.0f) * pleat * hw);
 					ring.push_back(vert(p, nb, Vector2(seam ? 0.0f : 0.5f, 0.3f * r / rp), sc[k]));
 				}
 				if (j > 0) {
@@ -1789,9 +1796,12 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 			}
 			r_leaves.end(part, R);
 		}
-		// The free segments: rows of midrib and two margins, the margins up (the V), stiff and
-		// straight with the tip bending down a little.
-		const int STEPS = 4;
+		// The segments: rows of a left margin, the midrib (twice: each half of the V has its own
+		// face normal, so the crease shows in the shading) and a right margin. 1.5-2.5 cm wide,
+		// widest a tenth of the way out, tapering to a fine tip; stiff, the tip bending down a
+		// little (a dead leaf's hang straight).
+		const int STEPS = 6;
+		const float wmax = R * 0.03f;
 		for (int k = 0; k < K; k++) {
 			if (torn[k]) {
 				continue;
@@ -1806,35 +1816,47 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 			sn = sn.length_squared() > 1e-6f ? sn.normalized() : up;
 			const Vector3 side = sn.cross(dir).normalized();
 			const float w0 = rp * seg_a * 0.5f;
-			const float L = MAX(sl[k] - rp, R * 0.15f);
-			const Vector3 base = hast + ray(ang) * rp - up * (0.05f * rp);
+			const float L = MAX(sl[k] - rp, R * 0.3f);
+			const Vector3 base = hast + ray(ang) * rp;
+			const float wk = wmax * (0.85f + 0.3f * pr.randf());
 			Vector4i part;
 			r_leaves.begin(part);
-			int pm = -1, pl = -1, pr_ = -1;
+			int il = -1, iml = -1, imr = -1, ir = -1;
 			for (int i = 0; i <= STEPS; i++) {
 				const float t = float(i) / STEPS;
-				const float w = w0 * 0.85f * Math::pow(1.0f - t, 0.45f);
-				const float droop = (f.dead ? -0.05f : -0.18f) * L * t * t;
+				const float w = (t < 0.1f ? Math::lerp(w0, wk, t / 0.1f) : wk * Math::pow((1.0f - t) / 0.9f, 0.6f));
+				const float droop = (f.dead ? 0.0f : -0.18f) * L * t * t;
 				const Vector3 mid = base + dir * (t * L) + up * droop - sn * (pleat * w);
-				const Vector2 uvy(0, 0.3f + 0.7f * t);
-				const int m = vert(mid, sn, Vector2(0.5f, uvy.y), sc[k]);
+				const Vector3 lm = mid + side * w + sn * (pleat * w);
+				const Vector3 rm = mid - side * w + sn * (pleat * w);
+				const float vy = 0.3f + 0.7f * t;
+				// Each half's face normal: across the half, crossed with the segment's run.
+				const Vector3 nl0 = (lm - mid).cross(dir).normalized();
+				const Vector3 nl = nl0.dot(sn) < 0.0f ? -nl0 : nl0;
+				const Vector3 nr0 = (rm - mid).cross(dir).normalized();
+				const Vector3 nr = nr0.dot(sn) < 0.0f ? -nr0 : nr0;
+				const Color crease = f.dead ? sc[k] : sc[k] * 1.08f;
 				if (i == STEPS) {
-					tri(pm, pl, m, sn);
-					tri(pm, m, pr_, sn);
+					const int tl = vert(mid, nl, Vector2(0.5f, vy), crease);
+					const int tr = vert(mid, nr, Vector2(0.5f, vy), crease);
+					tri(iml, il, tl, nl);
+					tri(imr, tr, ir, nr);
 					break;
 				}
-				const Vector3 fold = sn * (pleat * w);
-				const int l = vert(mid + side * w + fold, (sn - side * 0.35f).normalized(), Vector2(1.0f, uvy.y), sc[k]);
-				const int rr = vert(mid - side * w + fold, (sn + side * 0.35f).normalized(), Vector2(0.0f, uvy.y), sc[k]);
+				const int l = vert(lm, nl, Vector2(1.0f, vy), sc[k]);
+				const int ml = vert(mid, nl, Vector2(0.5f, vy), crease);
+				const int mr = vert(mid, nr, Vector2(0.5f, vy), crease);
+				const int rr = vert(rm, nr, Vector2(0.0f, vy), sc[k]);
 				if (i > 0) {
-					tri(pm, pl, l, sn);
-					tri(pm, l, m, sn);
-					tri(pm, m, rr, sn);
-					tri(pm, rr, pr_, sn);
+					tri(iml, il, l, nl);
+					tri(iml, l, ml, nl);
+					tri(imr, mr, rr, nr);
+					tri(imr, rr, ir, nr);
 				}
-				pm = m;
-				pl = l;
-				pr_ = rr;
+				il = l;
+				iml = ml;
+				imr = mr;
+				ir = rr;
 			}
 			r_leaves.end(part, R);
 		}
@@ -1859,11 +1881,22 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 				node_drag[x] += 2.0f * nodes[x].radius * nodes[x].length;
 				node_mass[x] += float(Math::PI) * nodes[x].radius * nodes[x].radius * nodes[x].length * 900.0f;
 			}
-			const Color pet_c = f.dead ? dead_c * 0.9f : Color(live.r * 1.25f + 0.04f, live.g * 1.2f + 0.03f, live.b * 0.9f);
+			const Color pet_c = f.dead ? dead_c * 0.9f : Color(live.r * 1.05f + 0.02f, live.g * 1.12f + 0.02f, live.b * 0.95f);
 			r_leaves.bone = node_bone.size() > uint32_t(pc[0]) ? node_bone[pc[0]] : 0;
 			Vector4i pp;
 			r_leaves.begin(pp);
 			_tube(r_leaves, pts, rad, 5, 0.0f, pet_c);
+			// _tube winds for the bark surface, which is flipped when the mesh is built; the leaves
+			// are not, so the petiole's faces pointed in against its outward normals, and the path
+			// tracer, trusting the winding, lit them as seen from inside: green sparkle. Rewind.
+			for (int i = pp.x; i + 2 < r_leaves.indices.size(); i += 3) {
+				SWAP(r_leaves.indices.write[i + 1], r_leaves.indices.write[i + 2]);
+			}
+			// One texel of the leaf texture (its midrib's plain light line): the venation squeezed
+			// round a centimetre-thin tube would alias without mips.
+			for (int v = pp.z; v < r_leaves.uvs.size(); v++) {
+				r_leaves.uvs.write[v] = Vector2(0.5f, 0.5f);
+			}
 			r_leaves.end(pp, 1.0f); // Sized: kept whole in every LOD.
 		}
 		// Spines along the petiole's lower two thirds, both edges, pointing forward.

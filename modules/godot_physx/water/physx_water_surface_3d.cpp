@@ -3235,9 +3235,7 @@ Ref<Material> PhysXWaterSurface3D::_breaker_material() {
 		return water_material;
 	}
 	if (breaker_material.is_null()) {
-		Ref<Shader> shader;
-		shader.instantiate();
-		shader->set_code(String("#define BREAKER_LIP\n") + water_shader_src());
+		Ref<Shader> shader = water_shared_shader(String("#define BREAKER_LIP\n") + water_shader_src());
 		breaker_material.instantiate();
 		breaker_material->set_shader(shader);
 		List<PropertyInfo> uniforms;
@@ -4097,9 +4095,7 @@ void PhysXWaterSurface3D::_update_crest_sheets(float p_dt) {
 		add_child(sheet_instance, false, INTERNAL_MODE_BACK);
 		sheet_mesh.instantiate();
 		sheet_instance->set_mesh(sheet_mesh);
-		Ref<Shader> sh;
-		sh.instantiate();
-		sh->set_code(CREST_SHEET_SHADER_SRC);
+		Ref<Shader> sh = water_shared_shader(CREST_SHEET_SHADER_SRC);
 		sheet_material.instantiate();
 		sheet_material->set_shader(sh);
 		// After the sea in the transparent pass (it is sorted with it by distance, and its huge box would draw over).
@@ -5932,16 +5928,12 @@ void PhysXWaterSurface3D::_set_underwater_shown(bool p_shown) {
 	underwater_shown = p_shown;
 	if (p_shown && underwater_fog_material.is_null()) {
 		// The same source as the surface, built twice more (see WATER_SHADER_SRC's head).
-		Ref<Shader> fog_shader;
-		fog_shader.instantiate();
-		fog_shader->set_code(String("#define UNDERWATER_FOG\n") + water_shader_src());
+		Ref<Shader> fog_shader = water_shared_shader(String("#define UNDERWATER_FOG\n") + water_shader_src());
 		underwater_fog_material.instantiate();
 		underwater_fog_material->set_shader(fog_shader);
 		// Before the surface's underside among the transparent draws, which then covers it.
 		underwater_fog_material->set_render_priority(-1);
-		Ref<Shader> surface_shader;
-		surface_shader.instantiate();
-		surface_shader->set_code(String("#define UNDERWATER_SURFACE\n") + water_shader_src());
+		Ref<Shader> surface_shader = water_shared_shader(String("#define UNDERWATER_SURFACE\n") + water_shader_src());
 		underwater_surface_material.instantiate();
 		underwater_surface_material->set_shader(surface_shader);
 		List<PropertyInfo> uniforms;
@@ -6267,9 +6259,7 @@ void PhysXWaterSurface3D::_rebuild() {
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (water_material.is_null()) {
-		Ref<Shader> shader;
-		shader.instantiate();
-		shader->set_code(water_shader_src());
+		Ref<Shader> shader = water_shared_shader(water_shader_src());
 		Ref<ShaderMaterial> m;
 		m.instantiate();
 		m->set_shader(shader);

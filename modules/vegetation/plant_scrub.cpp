@@ -519,7 +519,7 @@ TypedArray<Resource> PlantGenerator::make_scrub(ScrubStand p_stand, int p_varian
 		// The tall shrubs first, so their crowns claim the ground. Maquis: lentisk, kermes oak and
 		// gum rockrose closing to a 1.5 to 3 m canopy (Quezel 1981; Di Castri 1981). Garrigue: low
 		// kermes oak (grazed and burnt into cushions, the "garrigue a chene kermes") and young gum
-		// rockrose between the rosemary and thyme.
+		// rockrose between the rosemary and thyme; dwarf fan palm in both on the warmest coasts.
 		using T = TreeGenerator;
 		struct ShrubSpec {
 			int preset, form;
@@ -529,15 +529,26 @@ TypedArray<Resource> PlantGenerator::make_scrub(ScrubStand p_stand, int p_varian
 		if (p_stand == SCRUB_MAQUIS) {
 			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_LENTISK, T::SHRUB_MATURE, 0.5f, 14.0f, 0.55f },
 					{ T::PRESET_KERMES_OAK, T::SHRUB_MATURE, 0.45f, 12.0f, 0.5f },
-					{ T::PRESET_GUM_ROCKROSE, T::SHRUB_MATURE, 0.4f, 10.0f, 0.45f } });
+					{ T::PRESET_GUM_ROCKROSE, T::SHRUB_MATURE, 0.4f, 10.0f, 0.45f },
+					{ T::PRESET_DWARF_FAN_PALM, T::SHRUB_MATURE, 0.2f, 9.0f, 0.3f } });
 		} else {
 			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_KERMES_OAK, T::SHRUB_CUSHION, 0.35f, 10.0f, 0.35f },
+					{ T::PRESET_DWARF_FAN_PALM, T::SHRUB_YOUNG, 0.3f, 9.0f, 0.35f },
 					{ T::PRESET_GUM_ROCKROSE, T::SHRUB_YOUNG, 0.25f, 8.0f, 0.3f } });
 		}
 		for (const ShrubSpec &w : shrubs) {
 			Ref<PlantSpecies> sp = make_woody_shrub(w.preset, w.form, p_variants, p_season, w.density, w.patch_scale, w.patch_cover, seed_base + 7 * w.form + w.preset);
 			if (sp.is_valid()) {
 				apply_scrub_rules(sp, p_stand);
+				if (w.preset == T::PRESET_DWARF_FAN_PALM) {
+					// The thermo-Mediterranean belt: warm coastal garrigue and maquis on rocky, sunny
+					// ground, rarer inland where winters are colder (Herrera 1989; Blondel et al.
+					// 2010, "The Mediterranean Region", ch. 6).
+					sp->set_rule_range(PlantSpecies::RULE_JANUARY_TEMPERATURE, Vector2(7.0f, 100.0f));
+					sp->set_rule_fade(PlantSpecies::RULE_JANUARY_TEMPERATURE, 2.0f);
+					sp->set_rule_range(PlantSpecies::RULE_SUNLIGHT, Vector2(140.0f, 2000.0f));
+					sp->set_rule_fade(PlantSpecies::RULE_SUNLIGHT, 25.0f);
+				}
 				out.push_back(sp);
 			}
 		}

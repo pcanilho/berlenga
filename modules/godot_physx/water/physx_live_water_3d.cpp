@@ -32,6 +32,7 @@
 #include "physx_live_water_3d.h"
 
 #include "physx_river_3d.h"
+#include "water_raster_reflections.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -735,9 +736,7 @@ void PhysXLiveWater3D::_update_mesh() {
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (water_material.is_null()) {
-		Ref<Shader> shader;
-		shader.instantiate();
-		shader->set_code(physx_river_water_shader_src());
+		Ref<Shader> shader = water_shared_shader(physx_river_water_shader_src());
 		water_material.instantiate();
 		water_material->set_shader(shader);
 	}
