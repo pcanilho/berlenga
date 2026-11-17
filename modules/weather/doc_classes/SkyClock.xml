@@ -90,6 +90,18 @@
 				Fraction of the moon's disc that is lit, 0 (new) to 1 (full).
 			</description>
 		</method>
+		<method name="get_exposure_multiplier">
+			<return type="float" />
+			<description>
+				The exposure multiplier [member drive_exposure] puts on the camera: 1 at 10,000 lux and above (daylight keeps the scene's own exposure), rising as [method get_ground_illuminance] falls, to the power [member adaptation].
+			</description>
+		</method>
+		<method name="get_ground_illuminance">
+			<return type="float" />
+			<description>
+				Illuminance on level ground, in lux: the sun and the moon through the air, the sky's light through twilight (published values from day to astronomical twilight), and a floor of 0.002 lux of starlight and airglow.
+			</description>
+		</method>
 		<method name="get_moon_magnitude">
 			<return type="float" />
 			<description>
@@ -155,6 +167,12 @@
 		</member>
 		<member name="drive_light_energy" type="bool" setter="set_drive_light_energy" getter="get_drive_light_energy" default="true">
 			The clock sets each light's colour and [member Light3D.light_energy] from its body's brightness above the air ([method get_sun_illuminance_top], [method get_moon_illuminance_top]) times [method air_transmittance] at its altitude, scaled by [member energy_per_lux]. It also gives both bodies to the [WeatherSkyMaterial] of the scene's environment, whose scattering atmosphere then lights the sky, twilight and the Earth's shadow from them. Off, the lights keep the colour and energy set by hand.
+		</member>
+		<member name="adaptation" type="float" setter="set_adaptation" getter="get_adaptation" default="1.0">
+			How fully the exposure adapts below 10,000 lux: 1 shows a white surface under twilight, moonlight or starlight as under an overcast day (about a twelfth of a sunny noon), lower values keep the night darker.
+		</member>
+		<member name="drive_exposure" type="bool" setter="set_drive_exposure" getter="get_drive_exposure" default="true">
+			Sets [member CameraAttributes.exposure_multiplier] on the current camera's attributes (the camera's, else the world's; a [CameraAttributesPractical] is added to the camera when it has none) to [method get_exposure_multiplier]. Godot applies that multiplier to lights, emission and the sky before the frame buffers (a pre-exposure), so night scenes stay inside half floats; auto exposure, if on, works on top of it. Not in the editor.
 		</member>
 		<member name="energy_per_lux" type="float" setter="set_energy_per_lux" getter="get_energy_per_lux" default="1e-05">
 			[member Light3D.light_energy] for one lux. The default puts the noon sun near 1.1 and the full moon near 2.5e-6, a real ratio of about 450,000 to 1: night needs the exposure to follow (see [code]docs/ideas/exposure.md[/code]).

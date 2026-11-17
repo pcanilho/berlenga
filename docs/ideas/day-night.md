@@ -286,6 +286,15 @@ lights the cloud tops, so a moonless overcast reads as dark grey-green shapes, n
 where it shows (about 2e7 in the bench), stars saturate with glare, as in a long-exposure photograph. The Milky
 Way waits for its panorama in Gitea LFS (ESO, CC BY 4.0, galactic coordinates, rotated to the equator).
 
+**Built (17 Nov): step 4, exposure from the clock.** Godot already has a pre-exposure: the camera's
+`exposure_multiplier` scales lights, emission, probes and the sky before the buffers. SkyClock (`drive_exposure`,
+on) sets it from the ground illuminance (sun and moon through the air, the sky's light through twilight from
+published values, a 0.002 lux floor): 1 at 10,000 lux and up, `(10000 / E)^adaptation` below (`adaptation` 1:
+twilight, moonlight and starlight read like an overcast day, a twelfth of noon). Moonless night x5e6, full moon
+about x4e4. Engine fix found on the way: the sky's half and quarter resolution passes were written after the
+brightness multiplier and read back without undoing it, so a sky that composites them took the exposure once per
+pass (white at night). Histogram metering (exposure.md) can sit on top later.
+
 **Step 4 notes (next).** The eye at night: scotopic vision loses colour and shifts toward blue (Purkinje); Jensen
 et al. 2001 and Thompson, Shirley and Ferwerda 2002 tone-map night scenes by blending toward a blue-grey scotopic
 luminance below about 0.01 cd/m2. Exposure from the clock's light levels, pre-exposed in every pass (lights and

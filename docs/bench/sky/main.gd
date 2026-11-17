@@ -52,6 +52,12 @@ func _sky(kv: Dictionary) -> void:
 	add_child(cam)
 	cam.rotation_degrees = Vector3(float(kv.get("pitch", "12")), float(kv.get("yaw", "135")), 0) # south-west
 	cam.make_current()
+	if kv.has("pre-exposure"):
+		# --pre-exposure=k: the camera's exposure multiplier (Godot scales lights and the sky by it before the
+		# buffers), instead of the sky's own exposure.
+		var ca := CameraAttributesPractical.new()
+		ca.exposure_multiplier = float(kv["pre-exposure"])
+		cam.attributes = ca
 	var clock := SkyClock.new()
 	add_child(clock)
 	clock.latitude = 45.0
@@ -60,6 +66,8 @@ func _sky(kv: Dictionary) -> void:
 	clock.day = int(kv.get("day", "31"))
 	clock.time_of_day = float(kv.get("time", "19.0"))
 	clock.sun_light = clock.get_path_to(sun)
+	# The clock drives the camera's exposure (an adapting eye) unless the bench sets one.
+	clock.drive_exposure = not (kv.has("exposure") or kv.has("pre-exposure"))
 	if kv.has("look-moon"):
 		# --look-moon: the camera on the moon (with a narrow --fov to see its phase).
 		cam.look_at(cam.global_position + clock.get_moon_direction())
@@ -71,7 +79,7 @@ func _sky(kv: Dictionary) -> void:
 	for i in n:
 		await RenderingServer.frame_post_draw
 	var ms := (Time.get_ticks_usec() - t0) / 1000.0 / n
-	print("[sky] %s at %.2f h (sun %.2f deg): %.2f ms a frame" % [kv.get("model", "scattering"), clock.time_of_day, clock.get_sun_altitude(), ms])
+	print("[sky] %s at %.2f h (sun %.2f deg): %.2f ms a frame; ground %s lux, exposure x%s" % [kv.get("model", "scattering"), clock.time_of_day, clock.get_sun_altitude(), ms, str(clock.get_ground_illuminance()), str(clock.get_exposure_multiplier())])
 	if kv.has("out"):
 		get_viewport().get_texture().get_image().save_png(kv["out"])
 

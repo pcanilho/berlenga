@@ -37,7 +37,11 @@
 #include "core/config/engine.h"
 #include "core/math/math_funcs.h"
 #include "core/object/class_db.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/3d/world_3d.h"
+#include "scene/resources/camera_attributes.h"
 
 namespace {
 
@@ -427,6 +431,65 @@ void SkyClock::_apply_lights() {
 		sky_mat->set_star_sky(get_celestial_basis(), float(energy_per_lux));
 		sky_mat->set_moon_angular_size(float(2.0 * Math::asin(1737.4 / sky.moon.dist_km)));
 	}
+	if (drive_exposure && !Engine::get_singleton()->is_editor_hint()) {
+		Viewport *vp = get_viewport();
+		Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+		Ref<CameraAttributes> attributes;
+		if (cam) {
+			attributes = cam->get_attributes();
+			if (attributes.is_null() && vp->find_world_3d().is_valid()) {
+				attributes = vp->find_world_3d()->get_camera_attributes();
+			}
+			if (attributes.is_null()) {
+				Ref<CameraAttributesPractical> practical;
+				practical.instantiate();
+				attributes = practical;
+				cam->set_attributes(attributes);
+			}
+			attributes->set_exposure_multiplier(float(get_exposure_multiplier()));
+		}
+	}
+}
+
+// Log-linear through published values: the sky's light on level ground against the sun's altitude, from
+// full day through civil, nautical and astronomical twilight (Bond and Henderson 1963; Seidelmann 1992).
+static double _sky_illuminance(double p_sun_alt_deg) {
+	static const double alt[] = { -18.0, -12.0, -9.0, -6.0, -4.0, -2.0, 0.0, 10.0, 30.0, 90.0 };
+	static const double lux[] = { 6e-4, 8e-3, 0.1, 3.4, 15.0, 100.0, 400.0, 5000.0, 15000.0, 20000.0 };
+	if (p_sun_alt_deg <= alt[0]) {
+		return 0.0;
+	}
+	for (int i = 1; i < 10; i++) {
+		if (p_sun_alt_deg <= alt[i]) {
+			const double f = (p_sun_alt_deg - alt[i - 1]) / (alt[i] - alt[i - 1]);
+			return Math::exp(Math::lerp(Math::log(lux[i - 1]), Math::log(lux[i]), f));
+		}
+	}
+	return lux[9];
+}
+
+double SkyClock::get_ground_illuminance() {
+	_update();
+	double e = 2e-3; // starlight and airglow on a moonless night
+	e += _sky_illuminance(sky.sun_alt / DEG);
+	if (sky.sun_alt > 0.0) {
+		const Vector3 t = air_transmittance(sky.sun_alt / DEG, 1.0);
+		e += get_sun_illuminance_top() * Math::sin(sky.sun_alt) * t.y;
+	}
+	if (sky.moon_alt > 0.0) {
+		const Vector3 t = air_transmittance(sky.moon_alt / DEG, 1.0);
+		e += 1.1 * get_moon_illuminance_top() * Math::sin(sky.moon_alt) * t.y; // and its sky, a tenth more
+	}
+	return e;
+}
+
+// An adapting eye: daylight (10,000 lux and up, an overcast day) keeps the scene's own exposure; below that
+// the multiplier rises as the light falls, to the power `adaptation`. At 1 (full adaptation) a white surface
+// under twilight, moonlight or starlight reads as under an overcast day, about a twelfth of a sunny noon, so
+// night stays darker than day; lower values keep night darker still.
+double SkyClock::get_exposure_multiplier() {
+	const double e = MAX(get_ground_illuminance(), 1e-4);
+	return MAX(1.0, Math::pow(1e4 / e, adaptation));
 }
 
 Vector3 SkyClock::air_transmittance(double p_altitude_deg, double p_height) {
@@ -467,6 +530,8 @@ SKY_CLOCK_SETTER(refraction, bool, refraction)
 SKY_CLOCK_SETTER(hide_below_horizon, bool, hide_below_horizon)
 SKY_CLOCK_SETTER(drive_light_energy, bool, drive_light_energy)
 SKY_CLOCK_SETTER(energy_per_lux, double, energy_per_lux)
+SKY_CLOCK_SETTER(drive_exposure, bool, drive_exposure)
+SKY_CLOCK_SETTER(adaptation, double, adaptation)
 
 void SkyClock::set_year(int p_year) {
 	year = p_year;
@@ -696,4 +761,12 @@ void SkyClock::_bind_methods() {
 	ClassDB::bind_static_method("SkyClock", D_METHOD("air_transmittance", "altitude_degrees", "height"), &SkyClock::air_transmittance);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drive_light_energy"), "set_drive_light_energy", "get_drive_light_energy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "energy_per_lux", PROPERTY_HINT_RANGE, "0,0.001,0.0000001,or_greater"), "set_energy_per_lux", "get_energy_per_lux");
+	ClassDB::bind_method(D_METHOD("set_drive_exposure", "drive"), &SkyClock::set_drive_exposure);
+	ClassDB::bind_method(D_METHOD("get_drive_exposure"), &SkyClock::get_drive_exposure);
+	ClassDB::bind_method(D_METHOD("set_adaptation", "adaptation"), &SkyClock::set_adaptation);
+	ClassDB::bind_method(D_METHOD("get_adaptation"), &SkyClock::get_adaptation);
+	ClassDB::bind_method(D_METHOD("get_ground_illuminance"), &SkyClock::get_ground_illuminance);
+	ClassDB::bind_method(D_METHOD("get_exposure_multiplier"), &SkyClock::get_exposure_multiplier);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drive_exposure"), "set_drive_exposure", "get_drive_exposure");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "adaptation", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_adaptation", "get_adaptation");
 }

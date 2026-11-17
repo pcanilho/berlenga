@@ -86,6 +86,8 @@ private:
 	bool hide_below_horizon = true;
 	bool drive_light_energy = true;
 	double energy_per_lux = 1e-5; // light_energy for one lux above the air (sun at noon about 1.1)
+	bool drive_exposure = true;
+	double adaptation = 1.0;
 
 	Sky sky;
 	bool dirty = true;
@@ -137,6 +139,17 @@ public:
 	bool get_drive_light_energy() const { return drive_light_energy; }
 	void set_energy_per_lux(double p_scale);
 	double get_energy_per_lux() const { return energy_per_lux; }
+	// The camera's exposure multiplier from the light on the ground, as an adapting eye (see
+	// get_exposure_multiplier()); Godot scales lights, emission and the sky by it before the buffers, so a
+	// moonlit or starlit scene stays inside half floats.
+	void set_drive_exposure(bool p_drive);
+	bool get_drive_exposure() const { return drive_exposure; }
+	void set_adaptation(double p_adaptation);
+	double get_adaptation() const { return adaptation; }
+	// Illuminance on level ground (lux): the sun and the moon through the air, the sky's light (twilight
+	// included) and the night's floor of starlight and airglow.
+	double get_ground_illuminance();
+	double get_exposure_multiplier();
 	// Transmittance of the air toward a body at this apparent altitude (deg) from height p_height (m).
 	static Vector3 air_transmittance(double p_altitude_deg, double p_height);
 	void set_hide_below_horizon(bool p_hide);
