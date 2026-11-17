@@ -2258,6 +2258,29 @@
    "topic": "Plants"
   },
   {
+   "name": "Ground mist",
+   "settings": [
+    "VegetationMist3D",
+    "mist_amount"
+   ],
+   "note": "",
+   "what": "at dawn, low mist pools in hollows and drifts through the grass, set by the weather and sun; bodies part it, and it burns off as the sun climbs.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Pollen puffs",
+   "settings": [
+    "VegetationPollen3D"
+   ],
+   "note": "",
+   "what": "brushing plants in flower releases a puff of pollen or spores; each plant recharges, and wet plants stay still.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Sun and shade growth",
    "settings": [],
    "note": "always on",
