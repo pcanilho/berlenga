@@ -1465,6 +1465,17 @@
    "topic": "Light in water"
   },
   {
+   "name": "Two-layer refraction",
+   "settings": [
+    "rendering/transparency/refraction_second_layer"
+   ],
+   "note": "",
+   "what": "in raster, water and glass refract the water or glass behind them, so a pool shows through a falling stream.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
    "name": "Murky water",
    "settings": [
     "IOR",
