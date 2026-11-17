@@ -1165,6 +1165,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud spray",
+   "settings": [
+    "PhysXGroundGrains3D.mud_spray"
+   ],
+   "note": "",
+   "what": "spinning wheels fling clods of wet clay that land back in the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
