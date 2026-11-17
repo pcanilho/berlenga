@@ -66,6 +66,9 @@ PhysXGroundGrains3D::PhysXGroundGrains3D() {
 // clouds read alike. Grains are deposited back into the field when they land, so the cloud is never seen
 // at rest.
 Ref<Mesh> PhysXGroundGrains3D::_make_mpm_particle_mesh() {
+	if (mud) {
+		return _make_clod_mesh();
+	}
 	static const float octa[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
 	static const int tri[8][3] = { { 0, 2, 4 }, { 2, 1, 4 }, { 1, 3, 4 }, { 3, 0, 4 }, { 2, 0, 5 }, { 1, 2, 5 }, { 3, 1, 5 }, { 0, 3, 5 } };
 	const float s = get_particle_size();
@@ -317,7 +320,9 @@ void PhysXGroundGrains3D::_deposit_pass(double p_delta) {
 		return;
 	}
 	mpm_solver->kill(killed);
-	const float r = 0.5642f * tex; // a disc of one texel's area
+	// A disc of one texel's area; a clod of clay splats wider (it does not roll and slump as sand does, and stiff
+	// mud holds a heap's walls).
+	const float r = mud ? 0.12f : 0.5642f * tex;
 	for (const KeyValue<Vector2i, double> &kv : land) {
 		const Vector3 at((kv.key.x + 0.5f) * tex, 0.0f, (kv.key.y + 0.5f) * tex);
 		ground->deposit(at, r, (float)(kv.value / (Math::PI * r * r)));
@@ -369,6 +374,9 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process(true);
+				if (mud_spray && !mud) {
+					_make_mud_child();
+				}
 			}
 		} break;
 		case NOTIFICATION_PHYSICS_PROCESS: {
@@ -379,6 +387,10 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 			const double dt = get_physics_process_delta_time();
 			_follow();
 			_deposit_pass(dt);
+			if (mud) {
+				// The mud child: its sprays come from the node that made it.
+				break;
+			}
 			// Sand thrown by spinning wheels: the tread's layer over the slip, dug and thrown (none dug before
 			// the solver can take it, so no volume is lost).
 			const Array sprays = ground->take_sprays();
@@ -387,36 +399,160 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 			}
 			for (int i = 0; i < sprays.size(); i++) {
 				const Dictionary d = sprays[i];
-				const float width = d["width"];
-				const float slip = d["slip_speed"];
-				Vector3 at = d["position"];
-				const Vector3 throw_v = d["velocity"];
-				const Vector3 flat = Vector3(throw_v.x, 0.0f, throw_v.z);
-				if (flat.length() > 0.5f) {
-					throw_dir = throw_dir.lerp(flat.normalized(), (float)MIN(dt / 0.5, 1.0));
-					throw_dir = throw_dir.limit_length(1.0f);
-				}
-				const float r = 0.5f * width;
-				const Vector3 reach = d.has("reach_center") ? (Vector3)d["reach_center"] : at;
-				const float reach_r = MAX(d.has("reach_radius") ? (float)d["reach_radius"] : r, r);
-				// Past ~10 m/s of slip the tread is a cutter at its full depth: more speed throws the same sand
-				// faster rather than more of it.
-				// A sideways slide's tread throws less (the lugs drag across) and its sidewall shoves a wedge out.
-				const float side = d.has("side_share") ? (float)d["side_share"] : 0.0f;
-				const float side_rate = d.has("side_volume_rate") ? (float)d["side_volume_rate"] : 0.0f;
-				const double volume = (width * tread_depth * MIN(slip, 10.0f) * (1.0f - side) + side_rate) * dt;
-				// Dug over the sand the tread reaches, the loose rim first (dig takes rim before dent): a spinning
-				// wheel throws its own bow wave and berm back rather than heaping them round itself.
-				const float depth = (float)(volume / (Math::PI * reach_r * reach_r));
-				const float v = ground->dig(reach, reach_r, depth);
-				if (v > 0.0f) {
-					dug_volume += v;
-					// Thrown from the sand's surface there (the rut's floor): below it a grain counts as landed.
-					at.y = ground->get_surface_height_at(at);
-					_emit(at, r * 0.6f, throw_v, v, (float)dt);
+				// Sticky clay goes to the mud child (mud stage 4); the rest is sand.
+				if (mud_child && d.has("stickiness") && (float)d["stickiness"] >= 0.3f) {
+					mud_child->_take_spray(d, dt);
+				} else if (!d.has("volume") || (float)d["volume"] <= 0.0f) {
+					_take_spray(d, dt);
 				}
 			}
 		} break;
+	}
+}
+
+void PhysXGroundGrains3D::set_as_mud() {
+	// Wet clay (docs/ideas/mud.md, stage 4): about 1700 kg/m3, a low friction angle and some cohesion (the
+	// Drucker-Prager cohesion term), so a clod lands and slumps rather than piling like sand; 3.5 cm particles
+	// drawn as clods.
+	mud = true;
+	mud_spray = false;
+	set_friction(20.0f);
+	set_density(1700.0f);
+	set_grain_cohesion(0.02f);
+	set_particle_size(0.035f);
+	set_particle_count(8000);
+	spray_spread = 0.12f;
+	// Sticky clay mostly packs into the tread (stage 3a) rather than flying off it: a slipping tread throws a quarter
+	// of the depth it throws of sand.
+	tread_depth = 0.002f;
+}
+
+void PhysXGroundGrains3D::_make_mud_child() {
+	if (mud_child) {
+		return;
+	}
+	mud_child = memnew(PhysXGroundGrains3D);
+	mud_child->set_as_mud();
+	mud_child->set_name("MudSpray");
+	mud_child->set_mpm_domain_size(get_mpm_domain_size());
+	mud_child->set_mpm_grid_resolution(get_mpm_grid_resolution());
+	mud_child->set_max_flight_time(max_flight_time);
+	add_child(mud_child, false, INTERNAL_MODE_FRONT);
+	mud_child->set_as_top_level(true);
+	if (GroundSurface3D *g = _ground()) {
+		mud_child->set_ground_surface(mud_child->get_path_to(g));
+	}
+	if (!follow_target.is_empty()) {
+		if (Node *t = get_node_or_null(follow_target)) {
+			mud_child->set_follow_target(mud_child->get_path_to(t));
+		}
+	}
+	mud_child->set_global_position(get_global_position());
+}
+
+// A clod of wet clay: two or three lumpy blobs stuck together, about the particle's size. Real geometry (path tracing
+// keeps it), dark and glossy with water.
+Ref<Mesh> PhysXGroundGrains3D::_make_clod_mesh() {
+	const float s = get_particle_size();
+	Ref<RandomNumberGenerator> rng;
+	rng.instantiate();
+	rng->set_seed(11);
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedInt32Array indices;
+	const int RINGS = 5;
+	const int SEGS = 8;
+	for (int blob = 0; blob < 3; blob++) {
+		const Vector3 at = blob == 0 ? Vector3() : Vector3(rng->randfn(0, 1), rng->randfn(0, 1), rng->randfn(0, 1)).normalized() * (0.45f * s);
+		const float r = s * (blob == 0 ? 0.55f : rng->randf_range(0.3f, 0.42f));
+		const Vector3 squash(rng->randf_range(0.8f, 1.2f), rng->randf_range(0.7f, 1.0f), rng->randf_range(0.8f, 1.2f));
+		const int first = verts.size();
+		for (int j = 0; j <= RINGS; j++) {
+			const float th = Math::PI * float(j) / RINGS;
+			for (int i = 0; i < SEGS; i++) {
+				const float ph = Math::TAU * float(i) / SEGS;
+				const Vector3 d(Math::sin(th) * Math::cos(ph), Math::cos(th), Math::sin(th) * Math::sin(ph));
+				const float lump = (j == 0 || j == RINGS) ? 1.0f : rng->randf_range(0.82f, 1.12f);
+				verts.push_back(at + d * squash * (r * lump));
+				normals.push_back((d / squash).normalized());
+			}
+		}
+		for (int j = 0; j < RINGS; j++) {
+			for (int i = 0; i < SEGS; i++) {
+				const int a = first + j * SEGS + i;
+				const int b = first + j * SEGS + (i + 1) % SEGS;
+				const int c = a + SEGS;
+				const int d = b + SEGS;
+				indices.push_back(a);
+				indices.push_back(c);
+				indices.push_back(b);
+				indices.push_back(b);
+				indices.push_back(c);
+				indices.push_back(d);
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	Ref<Material> m = grain_material;
+	if (m.is_null()) {
+		Ref<StandardMaterial3D> clay;
+		clay.instantiate();
+		// The clay of the body mud (BaseMaterial3D Mud), wet.
+		clay->set_albedo(Color(0.42f, 0.34f, 0.26f) * 0.75f);
+		clay->set_roughness(0.3f);
+		m = clay;
+	}
+	mesh->surface_set_material(0, m);
+	return mesh;
+}
+
+void PhysXGroundGrains3D::_take_spray(const Dictionary &d, double dt) {
+	GroundSurface3D *ground = _ground();
+	if (!ground || !_mpm_ready_for_emit()) {
+		return;
+	}
+	if (d.has("volume") && (float)d["volume"] > 0.0f) {
+		// Clay flung off a tyre (mud stage 4): thrown as it is. It came out of the field into the tread, so it
+		// counts as dug.
+		const double fv = (float)d["volume"];
+		dug_volume += fv;
+		_emit(d["position"], 0.25f * (float)d["width"], d["velocity"], fv, (float)dt);
+		return;
+	}
+	const float width = d["width"];
+	const float slip = d["slip_speed"];
+	Vector3 at = d["position"];
+	const Vector3 throw_v = d["velocity"];
+	const Vector3 flat = Vector3(throw_v.x, 0.0f, throw_v.z);
+	if (flat.length() > 0.5f) {
+		throw_dir = throw_dir.lerp(flat.normalized(), (float)MIN(dt / 0.5, 1.0));
+		throw_dir = throw_dir.limit_length(1.0f);
+	}
+	const float r = 0.5f * width;
+	const Vector3 reach = d.has("reach_center") ? (Vector3)d["reach_center"] : at;
+	const float reach_r = MAX(d.has("reach_radius") ? (float)d["reach_radius"] : r, r);
+	// Past ~10 m/s of slip the tread is a cutter at its full depth: more speed throws the same sand
+	// faster rather than more of it.
+	// A sideways slide's tread throws less (the lugs drag across) and its sidewall shoves a wedge out.
+	const float side = d.has("side_share") ? (float)d["side_share"] : 0.0f;
+	const float side_rate = d.has("side_volume_rate") ? (float)d["side_volume_rate"] : 0.0f;
+	const double volume = (width * tread_depth * MIN(slip, 10.0f) * (1.0f - side) + side_rate) * dt;
+	// Dug over the sand the tread reaches, the loose rim first (dig takes rim before dent): a spinning
+	// wheel throws its own bow wave and berm back rather than heaping them round itself.
+	const float depth = (float)(volume / (Math::PI * reach_r * reach_r));
+	const float v = ground->dig(reach, reach_r, depth);
+	if (v > 0.0f) {
+		dug_volume += v;
+		// Thrown from the sand's surface there (the rut's floor): below it a grain counts as landed.
+		at.y = ground->get_surface_height_at(at);
+		_emit(at, r * 0.6f, throw_v, v, (float)dt);
 	}
 }
 
@@ -444,5 +580,9 @@ void PhysXGroundGrains3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_grain_material", "material"), &PhysXGroundGrains3D::set_grain_material);
 	ClassDB::bind_method(D_METHOD("get_grain_material"), &PhysXGroundGrains3D::get_grain_material);
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "grain_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_grain_material", "get_grain_material");
+	ClassDB::bind_method(D_METHOD("set_mud_spray", "enabled"), &PhysXGroundGrains3D::set_mud_spray);
+	ClassDB::bind_method(D_METHOD("is_mud_spray"), &PhysXGroundGrains3D::is_mud_spray);
+	ClassDB::bind_method(D_METHOD("get_mud_grains"), &PhysXGroundGrains3D::get_mud_grains);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_spray"), "set_mud_spray", "is_mud_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_flight_time", PROPERTY_HINT_RANGE, "0.1,30,0.1,suffix:s"), "set_max_flight_time", "get_max_flight_time");
 }

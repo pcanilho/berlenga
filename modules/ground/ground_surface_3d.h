@@ -172,6 +172,10 @@ public:
 		// out of the side of the turn, m3/s (beside what its tread throws).
 		float side_share = 0.0f;
 		float side_volume_rate = 0.0f;
+		// The soil's stickiness there (0 sand .. 1 sticky clay): a grains node throws sticky sprays as mud.
+		float stickiness = 0.0f;
+		// Clay flung off a tyre's tread (mud stage 4), m3: thrown as it is, not dug from the field.
+		float volume = 0.0f;
 	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {

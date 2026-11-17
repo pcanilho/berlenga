@@ -312,6 +312,7 @@ public:
 				// metre of side slide; about half of it heaps into the berm (the press's bow), half is thrown.
 				spray.side_share = Math::abs(back.dot(lat));
 				spray.side_volume_rate = 0.5f * probe.contact_length * sw.sinkage * Math::abs(v_lat);
+				spray.stickiness = sw.soil.stickiness;
 				ground->add_spray(spray);
 			}
 			// Dust: the fines of dry, bare sand lifted by a tyre rolling and sliding over it (Gillies et al. 2005:
@@ -973,6 +974,24 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		const float thrown = MAX(sw.shed - impl->mud_shed_seen[i], 0.0f);
 		impl->mud_shed_seen[i] = sw.shed;
 		spray += thrown / MUD_SPRAY_KG;
+#ifdef MODULE_GROUND_ENABLED
+		if (thrown > 0.0f && ground) {
+			// The shed clay leaves the rear of the tread, up and back at the tread's speed (mud stage 4): the
+			// rooster tail of a wheel spun clean. A grains node throws it as mud clods.
+			const PhysXVehicleWheel3D *wn = wheels[impl->wheel_order[i]];
+			const float r = v.wheelParams[i].radius;
+			const float tread = v.wheelRigidBody1dStates[i].rotationSpeed * r;
+			const Vector3 up = get_global_basis().get_column(1).normalized();
+			const Vector3 fwd = get_global_basis().get_column(2).normalized() * (tread >= 0.0f ? 1.0f : -1.0f);
+			GroundSurface3D::Spray fling;
+			fling.position = wn->get_global_position() - fwd * (0.9f * r) + up * (0.25f * r);
+			fling.velocity = get_linear_velocity() + (up * 0.85f - fwd * 0.5f).normalized() * Math::abs(tread);
+			fling.width = 2.0f * v.wheelParams[i].halfWidth;
+			fling.stickiness = 1.0f;
+			fling.volume = thrown / 1700.0f;
+			ground->add_spray(fling);
+		}
+#endif
 #ifdef MODULE_GROUND_ENABLED
 		if (sw.soft && sw.soil.stickiness > 0.0f) {
 			// Ploughing through sticky slurry splashes the arch too, more as the tread turns faster.

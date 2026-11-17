@@ -51,6 +51,13 @@ class PhysXGroundGrains3D : public PhysXGranular3D {
 	float spray_spread = 0.2f; // velocity jitter, as a share of the throw speed
 	float max_flight_time = 8.0f;
 	Ref<Material> grain_material; // empty: dry sand
+	// Mud (docs/ideas/mud.md, stage 4): sticky sprays go to a child grains node of wet clay this node makes.
+	bool mud_spray = true;
+	bool mud = false; // this node is that child: clay clods, not sand
+	PhysXGroundGrains3D *mud_child = nullptr;
+	void _make_mud_child();
+	void _take_spray(const Dictionary &p_spray, double p_delta);
+	Ref<Mesh> _make_clod_mesh();
 
 	LocalVector<uint8_t> alive;
 	LocalVector<Vector3> last;
@@ -90,6 +97,11 @@ public:
 	float get_max_flight_time() const { return max_flight_time; }
 	void set_grain_material(const Ref<Material> &p_material) { grain_material = p_material; }
 	Ref<Material> get_grain_material() const { return grain_material; }
+	void set_mud_spray(bool p_enabled) { mud_spray = p_enabled; }
+	bool is_mud_spray() const { return mud_spray; }
+	PhysXGroundGrains3D *get_mud_grains() const { return mud_child; }
+	// Makes this node the clay one (before it enters the tree): heavier, cohesive, drawn as wet clods.
+	void set_as_mud();
 
 	// Digs p_radius by p_depth out of the ground at p_position and throws it at p_velocity. Returns the volume.
 	float kick(const Vector3 &p_position, float p_radius, float p_depth, const Vector3 &p_velocity);

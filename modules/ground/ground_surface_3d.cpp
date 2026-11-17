@@ -3077,6 +3077,8 @@ Array GroundSurface3D::take_sprays() {
 		d["reach_radius"] = s.reach_radius;
 		d["side_share"] = s.side_share;
 		d["side_volume_rate"] = s.side_volume_rate;
+		d["stickiness"] = s.stickiness;
+		d["volume"] = s.volume;
 		out.push_back(d);
 	}
 	sprays.clear();

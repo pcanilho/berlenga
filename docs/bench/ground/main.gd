@@ -34,7 +34,8 @@ extends Node3D
 #                         flung off when spun fast on dry ground; a low car high-centres in slurry and ploughs a trough
 #   --view=bodymud      mud on a car's body (mud stage 3b): a dressed 4x4 crawls through stiff clay, then is floored
 #                         so its tyres throw the clay up the arches; a close frame on the rear wheel and side.
-#                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear)
+#                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear); --spray: the
+#                         frame mid-throw, the clods in the air
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -863,6 +864,8 @@ func _run_clog_tests() -> void:
 		before += car.get_wheel_mud(w) / 4.0
 	surface.moisture = 0.1
 	surface.settle(2.0, 0.5)
+	# The clay thrown off flies as mud clods (stage 4): a grains node routes it to its mud child.
+	var grains := _make_grains(car)
 	var shed0 := 0.0
 	for w in 4:
 		shed0 += car.get_wheel_mud_shed(w)
@@ -874,6 +877,13 @@ func _run_clog_tests() -> void:
 		shed += car.get_wheel_mud_shed(w)
 	_check("on dry ground the tread clears, its clay thrown off", after < 0.3 * before and shed > shed0,
 			"%.0f%% to %.0f%% full; %.1f kg thrown" % [before * 100.0, after * 100.0, shed - shed0])
+	for i in 120:
+		await get_tree().physics_frame
+	var mud_grains: PhysXGroundGrains3D = grains.get_mud_grains()
+	var md := mud_grains.get_dug_volume() if mud_grains else 0.0
+	var mk := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
+	_check("the thrown clay flies as mud clods and lands, volume kept", md > 0.5 * (shed - shed0) / 1700.0 and absf(mk - md) < 0.05 * md + 1e-5,
+			"%.1f l of clay thrown as clods, %.1f l in the air or landed (%.1f l of the dry ground thrown as sand)" % [md * 1000.0, mk * 1000.0, grains.get_dug_volume() * 1000.0])
 	# The clay thrown off lands up the arches (stage 3b): the body's material carries the Mud layer, fed by the car.
 	var spray := 0.0
 	for w in 4:
@@ -972,6 +982,7 @@ func _build_bodymud() -> void:
 	var car := _make_car(1500.0, 700.0, Vector3(0.0, _undisturbed(Vector3.ZERO) + 0.9, 0.0))
 	_dress_car(car)
 	surface.follow_target = surface.get_path_to(car)
+	var grains := _make_grains(car)
 	var full := get_window().size
 	get_window().size = Vector2i(160, 90)
 	for i in 30:
@@ -980,12 +991,17 @@ func _build_bodymud() -> void:
 	for i in 300:
 		await get_tree().physics_frame
 	car.throttle = 1.0
-	for i in 180:
+	# --spray: the frame mid-throw (the clods in the air), else after it lands
+	for i in (120 if "--spray" in OS.get_cmdline_user_args() else 180):
 		await get_tree().physics_frame
-	car.throttle = 0.0
-	car.brake = 1.0
-	for i in 60:
-		await get_tree().physics_frame
+	if not "--spray" in OS.get_cmdline_user_args():
+		car.throttle = 0.0
+		car.brake = 1.0
+		for i in 60:
+			await get_tree().physics_frame
+	var mg: PhysXGroundGrains3D = grains.get_mud_grains()
+	if mg:
+		print("bodymud: %.1f l of clay thrown, %d clods in the air" % [mg.get_dug_volume() * 1000.0, mg.get_airborne_count()])
 	var spray := []
 	var fill := []
 	for w in 4:

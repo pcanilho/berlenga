@@ -404,6 +404,26 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - Large clods as PhysX rigid bodies that break up, as MudRunner's chunks; MPM grains (built for sand)
   for wet mud ploughed by a blade or a bucket, with a cohesive Drucker-Prager setting.
 
+#### Built (4a: mud spray on the grains node)
+
+- **PhysX first.** Flow is gas (dust and smoke); it already carries the dust of dry ground (GroundDust3D far,
+  PhysXGroundDust3D near). Liquid mud and clods are PhysX MPM: the sand roost's PhysXGroundGrains3D (Holz, Beer and
+  Kuhlen 2009 hybrid: dug out of the field, flown as MPM grains, deposited where they land, volume kept) already
+  takes every wheel's spray on any soft ground. Mud needs its own material on it: heavier, cohesive (the
+  Drucker-Prager cohesion term), drawn as wet clods rather than sand clouds.
+- **Routing.** Each spray carries the soil's stickiness; a grains node routes sticky sprays to a mud child it makes
+  (`mud_spray`, on): clay, 1700 kg/m3, friction 20 degrees, cohesive, 3.5 cm particles drawn as clumps of two or three
+  lumpy blobs in a wet clay material (real geometry, so path tracing keeps them). Landed clods go back into the field
+  as the sand does: splats round the car.
+- **Clods off the tyre.** The clay a clogged tread sheds (3a's shed kg) leaves from the rear of the tread, up and back
+  at the tread speed (the rooster tail of a wheel spun clean), as a spray with its own volume (not dug: it came out
+  of the tread).
+- Checks (`--test=clog`): floored out of the clay, the shed clay flies as mud clods and lands, volume kept.
+  `--view=bodymud --spray` frames them mid-throw; raster and path traced match. Sticky clay throws a quarter of
+  sand's tread depth, and landed clods splat over 12 cm (stiff mud would otherwise keep each texel's heap as a spike).
+- Next: clods of several sizes, wet clods sticking to the body they hit (they pass through it now: the grains have
+  no colliders), slurry splashes in standing water.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
