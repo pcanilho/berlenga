@@ -1188,6 +1188,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud splats",
+   "settings": [
+    "PhysXVehicle3D.add_mud_splat()"
+   ],
+   "note": "",
+   "what": "clods that hit a vehicle stick as splats and wash off in water.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
