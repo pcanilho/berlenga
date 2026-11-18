@@ -99,6 +99,8 @@ void PhysXFireSpread3D::_allocate() {
 	rate.resize(n);
 	peak_flame.resize(n);
 	peak_scorch.resize(n);
+	crown_char.resize(n);
+	crown_glow.resize(n);
 	heavy.resize(n);
 	heavy_d.resize(n);
 	heavy_left.resize(n);
@@ -177,6 +179,8 @@ void PhysXFireSpread3D::_allocate() {
 			heat[i] = 0.0f;
 			peak_flame[i] = 0.0f;
 			peak_scorch[i] = 0.0f;
+			crown_char[i] = 0.0f;
+			crown_glow[i] = 0.0f;
 		}
 	}
 	band_x0 = 0;
@@ -199,6 +203,7 @@ void PhysXFireSpread3D::_allocate() {
 		decal->set_texture(Decal::TEXTURE_ALBEDO, char_texture);
 		decal->set_texture(Decal::TEXTURE_EMISSION, glow_texture);
 	}
+	_gather_trees();
 }
 
 Vector3 PhysXFireSpread3D::_cell_world(int p_x, int p_z) const {
@@ -552,6 +557,219 @@ void PhysXFireSpread3D::_burn_heavy(float p_delta) {
 	}
 }
 
+// Crowns (docs/ideas/physx.md, "Trees catch fire from a ground fire"). Crown fine fuel, foliage and twigs under 6 mm,
+// from the crown's volume (a cone for a conifer, a paraboloid for a broadleaf) at a bulk density inside the crown of
+// about 0.5 kg/m3 for conifers and 0.25 for broadleaves (Cruz et al. 2003 give 0.05 to 0.3 for whole stands, gaps
+// included); broadleaf foliage holds more water than needles (Van Wagner's 100% is a conifer's).
+static float _crown_fuel(float p_radius, float p_top, float p_base, bool p_conifer) {
+	const float depth = MAX(p_top - p_base, 0.1f);
+	return (p_conifer ? 0.5f / 3.0f : 0.25f / 2.0f) * Math::PI * p_radius * p_radius * depth;
+}
+
+void PhysXFireSpread3D::_gather_trees() {
+	for (int64_t k = int64_t(trees.size()) - 1; k >= 0; k--) {
+		if (!trees[k].scripted) {
+			trees.remove_at(k);
+		} else {
+			Tree &t = trees[k];
+			t.t_ignite = -1.0f;
+			t.burnt = 0.0f;
+			t.hrr = 0.0f;
+			t.grounded = false;
+		}
+	}
+	crowns_lit = 0;
+	Node3D *veg = vegetation_field.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<Node3D>(get_node_or_null(vegetation_field));
+	if (!veg || !veg->has_method("get_crowns_in")) {
+		return;
+	}
+	const Vector3 c0 = get_global_transform().xform(Vector3(-size.x * 0.5f, 0, -size.y * 0.5f));
+	const Vector3 c1 = get_global_transform().xform(Vector3(size.x * 0.5f, 0, size.y * 0.5f));
+	const Rect2 rect(Vector2(MIN(c0.x, c1.x), MIN(c0.z, c1.z)), Vector2(Math::abs(c1.x - c0.x), Math::abs(c1.z - c0.z)));
+	const PackedFloat32Array c = veg->call("get_crowns_in", rect);
+	for (int k = 0; k + 6 < c.size(); k += 7) {
+		Tree t;
+		t.pos = Vector3(c[k], get_global_position().y, c[k + 1]);
+		t.radius = MAX(c[k + 2], 0.1f);
+		t.top = MAX(c[k + 3], 0.2f);
+		t.base = CLAMP(c[k + 4], 0.0f, t.top * 0.9f);
+		t.conifer = c[k + 5] > 0.5f;
+		// A sparse crown (a bare winter broadleaf) holds less.
+		t.fuel = _crown_fuel(t.radius, t.top, t.base, t.conifer) * CLAMP(c[k + 6] * 1.25f, 0.2f, 1.0f);
+		trees.push_back(t);
+	}
+}
+
+void PhysXFireSpread3D::add_tree(const Vector3 &p_position, float p_height, float p_crown_base, float p_crown_radius, bool p_conifer) {
+	Tree t;
+	t.pos = p_position;
+	t.top = MAX(p_height, 0.2f);
+	t.base = CLAMP(p_crown_base, 0.0f, t.top * 0.9f);
+	t.radius = MAX(p_crown_radius, 0.1f);
+	t.conifer = p_conifer;
+	t.fuel = _crown_fuel(t.radius, t.top, t.base, t.conifer);
+	t.scripted = true;
+	trees.push_back(t);
+}
+
+void PhysXFireSpread3D::clear_trees() {
+	trees.clear();
+	crowns_lit = 0;
+}
+
+int PhysXFireSpread3D::get_crowns_burning() const {
+	int n = 0;
+	for (const Tree &t : trees) {
+		n += t.t_ignite >= 0.0f && t.burnt < 0.98f ? 1 : 0;
+	}
+	return n;
+}
+
+float PhysXFireSpread3D::get_tree_burnt(int p_index) const {
+	if (p_index < 0 || p_index >= int(trees.size())) {
+		return -1.0f;
+	}
+	return trees[p_index].burnt;
+}
+
+// Crown fire initiation (Van Wagner 1977, as FARSITE, FlamMap and BehavePlus use it): a surface fire lights the
+// crown above it once its fireline intensity reaches I0 = (0.010 CBH (460 + 25.9 FMC))^1.5 kW/m, CBH the crown base
+// height in m and FMC the foliar moisture in %: about 480 kW/m for a crown 2 m up at 100%, 2,500 at 6 m. A lit crown
+// burns as a torching tree does (Albini 1979; the NIST burns of whole trees, Mell et al. 2009): its fine fuel goes as
+// a gamma curve, 1 - (1 + t/T) e^(-t/T), heat release peaking at T (8 s) and nearly all gone in 45 s, with a flame
+// about one and a half times the tree's height, leaning with the wind by U / sqrt(g Hf). The flame lights the crowns
+// it reaches (crown to crown spread, the passive to active crown fire that dense stands carry), the ground under it,
+// and throws brands from the crown, lofted by the tree's own column.
+template <typename F>
+void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, const F &p_intensity, LocalVector<PhysXFirebrands::Plume> &r_plumes) {
+	if (!crown_fire || trees.is_empty()) {
+		return;
+	}
+	const Vector3 up = get_global_transform().basis.get_column(1).normalized();
+	const Vector2 wind2(p_wind.x, p_wind.z);
+	const float u = wind2.length();
+	const Vector2 wdir = u > 1.0e-3f ? wind2 / u : Vector2();
+	const float t_air = _air_temperature();
+	// Burning crowns this step.
+	LocalVector<uint32_t> burning;
+	for (uint32_t k = 0; k < trees.size(); k++) {
+		Tree &t = trees[k];
+		if (!t.grounded && heights_ready) {
+			int x, z;
+			if (_world_cell(t.pos, x, z)) {
+				t.pos.y = height[z * nx + x];
+			}
+			t.grounded = true;
+		}
+		t.hrr = 0.0f;
+		if (t.t_ignite >= 0.0f && t.burnt < 0.98f) {
+			burning.push_back(k);
+		}
+	}
+	// Lighting.
+	for (uint32_t k = 0; k < trees.size(); k++) {
+		Tree &t = trees[k];
+		if (t.t_ignite >= 0.0f || t.fuel <= 0.0f) {
+			continue;
+		}
+		const float fmc = foliar_moisture * (t.conifer ? 1.0f : 1.6f);
+		const float i0 = Math::pow(0.010f * MAX(t.base, 0.1f) * (460.0f + 25.9f * fmc * 100.0f), 1.5f);
+		bool lit = p_intensity(t.pos, MAX(0.75f, 0.5f * t.radius)) >= i0;
+		for (uint32_t b = 0; b < burning.size() && !lit; b++) {
+			const Tree &o = trees[burning[b]];
+			if (o.burnt < 0.02f) {
+				continue; // still catching
+			}
+			const float hf = 1.5f * o.top;
+			if (t.base > hf) {
+				continue;
+			}
+			Vector2 d(t.pos.x - o.pos.x, t.pos.z - o.pos.z);
+			const float dist = d.length();
+			const float gap = dist - o.radius - t.radius;
+			const float lean = u / Math::sqrt(9.8f * hf);
+			const float down = dist > 1.0e-3f ? MAX(d.dot(wdir) / dist, 0.0f) : 0.0f;
+			// The flame's reach grows as the crown flares (a few seconds).
+			const float reach = (0.5f + down * hf * lean) * MIN((time - o.t_ignite) / 4.0f, 1.0f);
+			lit = gap <= reach;
+		}
+		if (lit) {
+			t.t_ignite = time;
+			crowns_lit++;
+			ignite(t.pos, t.radius); // burning needles and twigs fall and light the ground under it
+		}
+	}
+	// Burning.
+	const float brands_per_kg = spotting ? 20.0f * spotting_scale : 0.0f;
+	for (uint32_t k = 0; k < trees.size(); k++) {
+		Tree &t = trees[k];
+		if (t.t_ignite < 0.0f || t.burnt >= 0.98f) {
+			continue;
+		}
+		const float a = (time - t.t_ignite) / CROWN_TIME;
+		const float c = 1.0f - (1.0f + a) * Math::exp(-a);
+		const float kg = MAX(c - t.burnt, 0.0f) * t.fuel;
+		t.burnt = c >= 0.98f ? 1.0f : c;
+		t.hrr = kg * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
+		const float depth = t.top - t.base;
+		const Vector3 centre = t.pos + up * (t.base + 0.4f * depth);
+		if (spotting && kg > 0.0f) {
+			const float w = kg * brands_per_kg * 0.25f;
+			for (int q = 0; q < 4; q++) {
+				const float ang = Math::TAU * (q + 0.5f * (k & 1)) / 4.0f;
+				const Vector3 off(Math::cos(ang) * 0.5f * t.radius, (0.1f + 0.25f * q) * depth, Math::sin(ang) * 0.5f * t.radius);
+				brand_points.push_back({ t.pos + up * t.base + off, w });
+				brand_count += w;
+			}
+		}
+		if (spotting && t.hrr > 0.0f) {
+			PhysXFirebrands::Plume pl;
+			pl.base = centre;
+			pl.w0 = PhysXFirebrands::plume_speed(t.hrr / 1000.0f / (2.0f * t.radius), t_air);
+			pl.width = 2.0f * t.radius;
+			r_plumes.push_back(pl);
+		}
+		// What the plants see: the crown charred upward as it flares (fire_state_map's flame length over its
+		// footprint), foliage around it killed by the column, and a glow while it flames.
+		const float flame_top = MIN(t.base + (1.3f * t.top - t.base) * MIN(c / 0.4f, 1.0f), 32.0f);
+		const float glow = c < 0.9f ? 1.0f : 0.0f;
+		const float reach = 1.6f * t.radius;
+		int x0, z0, x1, z1;
+		const bool in0 = _world_cell(t.pos - Vector3(reach, 0, reach), x0, z0);
+		const bool in1 = _world_cell(t.pos + Vector3(reach, 0, reach), x1, z1);
+		if (!in0 || !in1) {
+			// Partly outside the grid: clamp to it.
+			const Vector3 l0 = get_global_transform().affine_inverse().xform(t.pos - Vector3(reach, 0, reach));
+			const Vector3 l1 = get_global_transform().affine_inverse().xform(t.pos + Vector3(reach, 0, reach));
+			x0 = CLAMP(int((MIN(l0.x, l1.x) + size.x * 0.5f) / cell_size), 0, nx - 1);
+			x1 = CLAMP(int((MAX(l0.x, l1.x) + size.x * 0.5f) / cell_size), 0, nx - 1);
+			z0 = CLAMP(int((MIN(l0.z, l1.z) + size.y * 0.5f) / cell_size), 0, nz - 1);
+			z1 = CLAMP(int((MAX(l0.z, l1.z) + size.y * 0.5f) / cell_size), 0, nz - 1);
+		}
+		if (x0 > x1) {
+			SWAP(x0, x1);
+		}
+		if (z0 > z1) {
+			SWAP(z0, z1);
+		}
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector3 wp = _cell_world(x, z);
+				const float d = Vector2(wp.x - t.pos.x, wp.z - t.pos.z).length();
+				const uint32_t i = z * nx + x;
+				if (d <= t.radius * 1.05f) {
+					peak_flame[i] = MAX(peak_flame[i], flame_top);
+					crown_char[i] = MAX(crown_char[i], MIN(c * 2.5f, 1.0f));
+					crown_glow[i] = glow > 0.0f ? MAX(crown_glow[i], glow) : crown_glow[i] * 0.9f;
+				}
+				if (d <= reach) {
+					peak_scorch[i] = MAX(peak_scorch[i], MIN(1.5f * t.top * MIN(c / 0.4f, 1.0f), 48.0f));
+				}
+			}
+		}
+	}
+}
+
 float PhysXFireSpread3D::get_heavy_fuel_at(const Vector3 &p_position) const {
 	int x, z;
 	if (!_world_cell(p_position, x, z) || heavy.is_empty()) {
@@ -725,8 +943,8 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 				}
 				const float flame = 0.0775f * Math::pow(intensity, 0.46f);
 				const float scorch = 4.483f * Math::pow(intensity, 7.0f / 6.0f) / (Math::sqrt(0.107f * intensity + u * u * u) * MAX(60.0f - _air_temperature(), 10.0f));
-				peak_flame[i] = MAX(peak_flame[i], MIN(flame, 8.0f));
-				peak_scorch[i] = MAX(peak_scorch[i], MIN(MAX(scorch, flame), 24.0f));
+				peak_flame[i] = MAX(peak_flame[i], MIN(flame, 32.0f));
+				peak_scorch[i] = MAX(peak_scorch[i], MIN(MAX(scorch, flame), 48.0f));
 			}
 		}
 	}
@@ -776,9 +994,44 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 			picked.push_back(ti);
 		}
 	}
+	// Crowns: lit by the surface fire's intensity near their stems (the strongest tile within reach) or by a burning
+	// neighbour.
+	LocalVector<PhysXFirebrands::Plume> plumes;
+	const auto tile_intensity = [&](const Vector3 &p_at, float p_reach) {
+		const Vector3 l = get_global_transform().affine_inverse().xform(p_at);
+		const int x0 = int((l.x - p_reach + size.x * 0.5f) / tile_w), x1 = int((l.x + p_reach + size.x * 0.5f) / tile_w);
+		const int z0 = int((l.z - p_reach + size.y * 0.5f) / tile_w), z1 = int((l.z + p_reach + size.y * 0.5f) / tile_w);
+		float best = 0.0f;
+		for (int z = MAX(z0, 0); z <= MIN(z1, tz - 1); z++) {
+			for (int x = MAX(x0, 0); x <= MIN(x1, tx - 1); x++) {
+				best = MAX(best, tiles[z * tx + x].heat / 1000.0f / tile_w);
+			}
+		}
+		return best;
+	};
+	_update_trees(float(get_physics_process_delta_time()), p_wind, tile_intensity, plumes);
+	float crown_width = 0.0f;
+	LocalVector<uint32_t> crown_em;
+	for (uint32_t k = 0; k < trees.size(); k++) {
+		// Flaming while it gives off a twentieth of its peak; the last of it glows (fire_state_map).
+		if (trees[k].hrr > 0.05f * trees[k].fuel * HEAT_CONTENT / (CROWN_TIME * Math::E)) {
+			crown_em.push_back(k);
+			crown_width += 2.0f * trees[k].radius;
+		}
+	}
+	struct Hotter {
+		const LocalVector<Tree> *trees;
+		bool operator()(uint32_t a, uint32_t b) const { return (*trees)[a].hrr > (*trees)[b].hrr; }
+	};
+	if (crown_em.size() > 1) {
+		SortArray<uint32_t, Hotter> hs;
+		hs.compare.trees = &trees;
+		hs.sort(crown_em.ptr(), crown_em.size());
+	}
+	// Burning crowns take up to half the emitters, the hottest first.
+	const uint32_t n_crown = MIN(crown_em.size(), emitters.size() / 2 + (emitters.size() == 1 ? 1 : 0));
 	// The convection columns over the strongest stretches of front, for the firebrands.
 	if (spotting) {
-		LocalVector<PhysXFirebrands::Plume> plumes;
 		const float t_air = _air_temperature();
 		for (uint32_t k = 0; k < order.size() && k < 128; k++) {
 			const Tile &t = tiles[order[k]];
@@ -789,15 +1042,34 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 			plumes.push_back(pl);
 		}
 		// Flaming tiles lie along the front, a tile or two deep: their count over the depth is about its length.
-		firebrands.set_plumes(plumes, order.size() * tile_w * 0.5f);
+		firebrands.set_plumes(plumes, MAX(order.size() * tile_w * 0.5f, crown_width));
 	}
+	const Vector3 up = get_global_transform().basis.get_column(1).normalized();
 	for (uint32_t k = 0; k < emitters.size(); k++) {
 		PhysXFlowEmitter3D *em = emitters[k];
-		if (k >= picked.size()) {
+		if (k < n_crown) {
+			// A flaring crown: the gas fills the crown and burns through it, fed by its heat release against the
+			// peak of its burn (fuel / (T e)).
+			const Tree &tr = trees[crown_em[k]];
+			const float depth = tr.top - tr.base;
+			const float peak = tr.fuel * HEAT_CONTENT / (CROWN_TIME * Math::E);
+			em->set_enabled(true);
+			em->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
+			em->set_radius(CLAMP(MIN(tr.radius, 0.5f * depth), 0.3f, 4.0f));
+			em->set_global_position(tr.pos + up * (tr.base + (tr.conifer ? 0.3f : 0.45f) * depth));
+			em->set_temperature(1.0f);
+			em->set_fuel(flame_strength * CLAMP(tr.hrr / MAX(peak, 1.0f), 0.0f, 1.0f));
+			em->set_burn(0.0f);
+			em->set_smoke(0.0f);
+			em->set_velocity(p_wind * 0.4f + up * CLAMP(0.25f * Math::sqrt(9.8f * tr.top), 1.0f, 4.0f));
+			em->set_couple_rate(2.0f);
+			continue;
+		}
+		if (k - n_crown >= picked.size()) {
 			em->set_enabled(false);
 			continue;
 		}
-		const Tile &t = tiles[picked[k]];
+		const Tile &t = tiles[picked[k - n_crown]];
 		const Vector3 c = t.centre / t.weight;
 		// Byram's fireline intensity across the tile's width, kW/m, and the flame length it gives.
 		const float intensity = t.heat / 1000.0f / tile_w;
@@ -816,7 +1088,7 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 		em->set_couple_rate(2.0f);
 	}
 	if (air) {
-		air->set_enabled(!order.is_empty() && p_wind.length_squared() > 1.0e-4f);
+		air->set_enabled((!order.is_empty() || n_crown > 0) && p_wind.length_squared() > 1.0e-4f);
 		air->set_velocity(p_wind);
 		air->set_global_position(get_global_position() + Vector3(0, 2.0f, 0));
 		air->set_size(Vector3(size.x, 4.0f, size.y));
@@ -870,7 +1142,10 @@ void PhysXFireSpread3D::_update_maps() {
 			}
 			// A blackbody near 1,000 K (linear sRGB, as Flow's heat ramp), yellower while flaming.
 			glow_image->set_pixel(x, z, Color(1.0f * g, 0.32f * g * g, 0.06f * g * g * g, 1.0f));
-			state_image->set_pixel(x, z, Color(cover * MAX(burnt, 0.3f), wood_g, peak_flame[i] / 8.0f, peak_scorch[i] / 24.0f));
+			if (!crown_char.is_empty()) {
+				wood_g = MAX(wood_g, crown_glow[i]);
+			}
+			state_image->set_pixel(x, z, Color(MAX(cover * MAX(burnt, 0.3f), crown_char.is_empty() ? 0.0f : crown_char[i]), wood_g, Math::sqrt(MIN(peak_flame[i] / 32.0f, 1.0f)), Math::sqrt(MIN(peak_scorch[i] / 48.0f, 1.0f))));
 		}
 	}
 	char_texture->update(char_image);
@@ -1158,6 +1433,16 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fuel_moisture"), &PhysXFireSpread3D::get_fuel_moisture);
 	ClassDB::bind_method(D_METHOD("get_moisture_at", "position"), &PhysXFireSpread3D::get_moisture_at);
 	ClassDB::bind_method(D_METHOD("get_heavy_fuel_at", "position"), &PhysXFireSpread3D::get_heavy_fuel_at);
+	ClassDB::bind_method(D_METHOD("set_crown_fire", "enabled"), &PhysXFireSpread3D::set_crown_fire);
+	ClassDB::bind_method(D_METHOD("is_crown_fire"), &PhysXFireSpread3D::is_crown_fire);
+	ClassDB::bind_method(D_METHOD("set_foliar_moisture", "moisture"), &PhysXFireSpread3D::set_foliar_moisture);
+	ClassDB::bind_method(D_METHOD("get_foliar_moisture"), &PhysXFireSpread3D::get_foliar_moisture);
+	ClassDB::bind_method(D_METHOD("add_tree", "position", "height", "crown_base", "crown_radius", "conifer"), &PhysXFireSpread3D::add_tree, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("clear_trees"), &PhysXFireSpread3D::clear_trees);
+	ClassDB::bind_method(D_METHOD("get_tree_count"), &PhysXFireSpread3D::get_tree_count);
+	ClassDB::bind_method(D_METHOD("get_crowns_lit"), &PhysXFireSpread3D::get_crowns_lit);
+	ClassDB::bind_method(D_METHOD("get_crowns_burning"), &PhysXFireSpread3D::get_crowns_burning);
+	ClassDB::bind_method(D_METHOD("get_tree_burnt", "index"), &PhysXFireSpread3D::get_tree_burnt);
 	ClassDB::bind_method(D_METHOD("get_moisture_of_extinction"), &PhysXFireSpread3D::get_moisture_of_extinction);
 	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &PhysXFireSpread3D::get_ground_height_at);
 	ClassDB::bind_method(D_METHOD("set_use_weather_moisture", "enable"), &PhysXFireSpread3D::set_use_weather_moisture);
@@ -1213,6 +1498,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_ignition_temperature", "get_ignition_temperature");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spotting"), "set_spotting", "is_spotting");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spotting_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_spotting_scale", "get_spotting_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crown_fire"), "set_crown_fire", "is_crown_fire");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foliar_moisture", PROPERTY_HINT_RANGE, "0.3,3,0.01"), "set_foliar_moisture", "get_foliar_moisture");
 	ADD_GROUP("Flames", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_emitters", PROPERTY_HINT_RANGE, "1,128,1"), "set_max_emitters", "get_max_emitters");
