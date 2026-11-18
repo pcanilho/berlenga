@@ -46,6 +46,7 @@
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
+class GroundClods3D;
 class MeshInstance3D;
 class WorldWeather;
 
@@ -216,6 +217,14 @@ public:
 		// The clay that water carries, kg/m3 (muddy water, round 3).
 		float water_mud = 0.0f;
 	};
+	// Clay thrown and landed (track_mud with no print): for GroundClods3D, which stands the bigger ones up as lumps.
+	struct ClodDrop {
+		Vector3 position;
+		float radius = 0.0f;
+		float volume = 0.0f; // m3
+		Color color; // the clay's (get_mud_color_at)
+		float wet = 0.0f;
+	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {
 		Vector3 position;
@@ -233,6 +242,10 @@ private:
 	uint64_t dust_claim_frame = 0;
 	float dust_emission = 0.06f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
 	uint64_t spray_frame = 0;
+	LocalVector<ClodDrop> clod_drops;
+	uint64_t clod_frame = 0;
+	bool clods = true; // GroundClods3D: lumps of clay near the camera (ground detail)
+	GroundClods3D *clods_node = nullptr;
 	void _plough_bodies();
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
@@ -644,6 +657,11 @@ public:
 	void set_dust_emission(float p_v) { dust_emission = MAX(p_v, 0.0f); }
 	float get_dust_emission() const { return dust_emission; }
 	Array take_sprays();
+	// The clay landed since the last call (GroundClods3D); kept for a couple of physics frames when nobody takes it.
+	void take_clod_drops(LocalVector<ClodDrop> &r_drops);
+	void set_clods(bool p_enabled);
+	bool is_clods() const { return clods; }
+	GroundClods3D *get_clods_node() const { return clods_node; }
 	void add_spray(const Spray &p_spray);
 	// A tyre moving through standing water this physics frame (mud stage 4c): the GPU water passes push the water
 	// ahead of it (a bow wave) and draw it in behind. p_id: the tyre's (a later call with the same replaces it);
