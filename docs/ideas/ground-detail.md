@@ -282,3 +282,26 @@ Cost (lavapipe, trail bench, `--settled`, about 5,000 clumps lying): main thread
 update at 6 Hz (about 0.25 ms a frame); 48 bytes per clump. Bench: docs/bench/snow
 `--view=trail --settled --clumps-close [--no-clumps]`. Follow-ups: the scan on a worker; cornice debris
 (`SnowCover3D.cornice_failed`) as large blocks.
+
+## Mud clods (18 Nov)
+
+`GroundClods3D` (modules/ground), made by every `GroundSurface3D` (`clods`, on by default). Two sources:
+
+- Thrown clay that lands (`track_mud` with no print, from MudSpray's MPM grains): the surface keeps a per-frame drop
+  list (`take_clod_drops`, dropped after two physics frames when nobody takes it); a landing holding a lump's
+  volume stands up as one to three clods instead of lying only as the film the field draws.
+- Lumps torn out of a rim where a tyre or a boot heaves sticky soil: the print field's rim is scanned round the camera
+  at 6 Hz as snow clumps do; the share torn out (`break_share` 0.2) follows the soil's stickiness (above 0.3, as
+  MudSpray's "mud"): plastic clay holds together, sand crumbles and slurry flows.
+
+Sizes log-normal, median 2.5 cm, sigma 0.55, 0.8 to 9 cm (soil aggregates, Gardner 1956). Eight angular shapes (an
+icosphere with two or three fracture planes: clay breaks along planes, Dexter 1988), each clod stretched its own way
+and in a shade of its own of the clay's colour (`get_mud_color_at`, the surface's `mud_color` where the map holds
+none), sent as the instance colour (linear). Crushed by a later print, slaked by water standing over it (Emerson
+1967). One rt_instanced MultiMesh per shape.
+
+Cost (lavapipe, ground trail bench on sticky soil, about 2,500 clods lying): main thread 1.4 ms mean, 3 to 5 ms worst
+per update at 6 Hz (about 0.25 ms a frame); 64 bytes per clod. The ground bench needs the PhysX build; the cloud
+check ran its trail view with moisture 0.4 soil (`--ground=clay` locally) and `--prop=clods:false` for the A/B.
+Follow-ups: the scan on a worker (shared with snow clumps); clods kept with kept ruts (a GroundCellStore file);
+drying (lighter, crumbling) and rain slaking them over hours.
