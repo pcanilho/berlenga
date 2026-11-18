@@ -2735,6 +2735,11 @@ func _run_wind_tests() -> void:
 	for i in 3:
 		await get_tree().physics_frame
 	var grow_s := (Time.get_ticks_msec() - t0) / 1000.0
+	# The ground contract's sand reads (docs/ideas/world-contracts.md) answer from this sand.
+	var wgp := Vector3(0.3, 0, 0.2)
+	var wg: WorldGround = WorldContracts.get_ground()
+	_check("the ground contract reads sand, ripples and blown sand from the ground", wg.sand_at(wgp) > 0.9 and wg.ripple_at(wgp) == surface.get_ripple_at(wgp) and wg.blown_sand_at(wgp) == surface.get_blown_at(wgp.x, wgp.z) and wg.blown_sand_at(wgp) > 0.0,
+			"sand %.2f, ripple %.1f mm, blown %.2f" % [wg.sand_at(wgp), wg.ripple_at(wgp) * 1000.0, wg.blown_sand_at(wgp)])
 	var st := _ripple_stats()
 	print("  grown in %.1f s (a worker); 8 m/s along x: wavelength %.1f cm along, %.1f cm across, slope energy %.0fx along, %.1f mm peak to peak" % [grow_s, st[0] * 100.0, st[1] * 100.0, st[2], st[3] * 1000.0])
 	_check("ripples 5 to 15 cm long along the wind (Bagnold 1941; Andreotti 2006)", st[0] > 0.05 and st[0] < 0.15, "%.1f cm" % (st[0] * 100.0))

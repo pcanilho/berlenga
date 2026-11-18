@@ -89,6 +89,9 @@ the live ground.
 | `mud_depth_at(pos)` | m of slurry | 0 |
 | `needle_ice_at(pos)` | (height m, crumbs 0..1) | 0 |
 | `rut_guidance_at(contact, lateral, half_width)` | (cross slope along lateral, wall m on -lateral, wall m on +lateral) | 0 |
+| `sand_at(pos)` | loose sand's share of the top, 0..1 | 0 |
+| `ripple_at(pos)` | wind ripples' height about their mean, m | 0 |
+| `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
 | pressing | | through the `world_contact` group |
 
 Consumers: vehicles, snow, grass (ruts tear the sward), fire (fuel on bare ground), water (wet sand), ground mud on
