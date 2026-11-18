@@ -770,6 +770,15 @@ Technique: a `PhysXBurnable3D` node on a prop, log, crate or Blast piece.
 5. Rain (the weather step) puts it out as it does the ground.
 Cost: a few samples per burnable a tick, a few hundred embers.
 
+Status (18 Nov): built as above (1192aad2). Checks: crates in a grass fire
+catch at about 30 s of flame contact and reach about 320 kW by 50 s; a crate
+off the fire's path stays unburnt. The first char cracks (the difference of
+two noises) read as lava worms; they are now the cell edges of a Voronoi
+pattern, as alligator char splits into blocks, thin and dull red to orange,
+faded by the pixel footprint so they do not alias at a distance. Embers stay
+few without Flow's updraft (headless runs). Raster and path tracer both keep
+the char and cracks.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
