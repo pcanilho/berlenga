@@ -390,6 +390,11 @@ float shape_at(const State &p_state, const Vector3 &p_pos) {
 	return even_sum(sample_tiled(noise, SHAPE_SIZE, Vector3(a.x, y, a.y)), sample_tiled(noise, SHAPE_SIZE, Vector3(b.x + p_state.shift.x, y * SHAPE_SECOND + 0.53f, b.y + p_state.shift.y)));
 }
 
+Vector2 shear_offset(const State &p_state, float p_y) {
+	const float z = MAX(p_y - p_state.base_height, 0.0f) / MAX(p_state.thickness, 1.0f);
+	return p_state.shear * MIN(z * z, 9.0f);
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_height || p_pos.y > p_state.top_max) {
 		return 0.0f;
@@ -406,7 +411,8 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// Domed tops through the remap, a flat base after it (wc_extinction in the shader).
 	const float dome = 1.0f - smoothstep(1.0f - Math::lerp(0.15f, 0.6f, cu), 1.0f, h);
 	const float base = smoothstep(0.0f, Math::lerp(0.2f, 0.03f, cu), h);
-	const float n = shape_at(p_state, p_pos);
+	const Vector2 so = shear_offset(p_state, p_pos.y);
+	const float n = shape_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y));
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
 	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
 	// small clouds of a fair sky are thin and light, where the remap alone made every one as dense as
@@ -470,6 +476,7 @@ uniform float cloud_variation = 0.35;
 uniform float cloud_cover_scale = 6000.0;
 uniform float cloud_shape_scale = 3000.0;
 uniform vec2 cloud_drift = vec2(0.0);
+uniform vec2 cloud_shear = vec2(0.0); // m, the tops' lean one thickness up (shear_offset() on the CPU)
 // Step 3e: the cover noise's time in lifetimes (below 0: frozen), how far the shape's second read has slid
 // (xy) and the detail noise risen (z), in texture units, wrapped.
 uniform float cloud_evolve = -1.0;
@@ -597,6 +604,11 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	float dome = 1.0 - smoothstep(1.0 - mix(0.15, 0.6, cu), 1.0, h);
 	float base = smoothstep(0.0, mix(0.2, 0.03, cu), h);
 	float texel = cloud_shape_scale / 128.0;
+	// Wind shear: the tissue higher up was carried further downwind (and veered) while it rose, so the
+	// tower leans and its top streams out (Schneider 2015's cloud top offset), squared in height so the
+	// base stays upright. The cover stays read at the column's base.
+	float zs = max(p.y - cloud_base_height, 0.0) / max(cloud_thickness, 1.0);
+	p.xz -= cloud_shear * min(zs * zs, 9.0);
 	float n = wc_shape(p, p_step);
 	float shape = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base;
 	if (p_detail && shape > 0.0) {

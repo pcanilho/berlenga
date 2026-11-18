@@ -1,1 +1,2 @@
 - Water: the breaking crest's white water is torn in patches into streaks running with the wave, so surf a few tens of metres out no longer reads as an even white band.
+- Water: the surf's torn streaks start about 15 m from the camera, so the near white water keeps its own lace instead of straight bars.

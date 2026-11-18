@@ -800,10 +800,16 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		// wave (a metre or so across, several long), so even fresh white water opens in places rather than
 		// reading as an even white band from a few tens of metres.
 		// Wandering streaks, only in patches along the crest (an even comb otherwise).
-		vec2 rq = vec2(dot(world_xz, dir) * 0.25, dot(world_xz, vec2(-dir.y, dir.x)) * 0.7);
-		rq.y += 1.6 * flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7));
+		// Warped at two scales so they tear raggedly rather than run as straight parallel bars.
+		vec2 rq = vec2(dot(world_xz, dir) * 0.4, dot(world_xz, vec2(-dir.y, dir.x)) * 0.75);
+		rq += vec2(0.8, 1.6) * (vec2(flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7)), flow_value_noise(world_xz * 0.12 - vec2(float(i) * 3.3, 7.9))) - 0.5) * 2.0;
+		rq.y += 0.5 * (flow_value_noise(world_xz * 0.6 + vec2(4.1, float(i))) - 0.5);
 		float torn = smoothstep(0.35, 0.65, flow_value_noise(world_xz * 0.08 + vec2(float(i) * 9.1, 6.2)));
-		float rip = 1.0 - 0.6 * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
+		// Only past about 15 m from the camera (as foam_at_with's view_dist): nearer, the foam's own holes and
+		// lace are resolved, and streaks cut in its amount meet the crisp edge as hard straight bars.
+		vec2 rel_c = world_xz - grid_center;
+		float rip_far = smoothstep(12.0, 25.0, length(mesh_open ? rel_c - mesh_offset : rel_c));
+		float rip = 1.0 - 0.6 * rip_far * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
 		r_white = max(r_white, brk * vary * spill * max(rip * smoothstep(0.35, 0.95, cos(ps)), trail));
 		// The lip turns white as it falls, and the plunge throws up a splash.
 		r_white = max(r_white, drop_w * lip);
