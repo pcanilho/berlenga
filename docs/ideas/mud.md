@@ -825,6 +825,29 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Needle ice on bare soil.** Frosty nights on wet bare soil grow needle ice (pipkrake) that lifts the top
   centimetres; the thaw collapses it into loose, fluffy soil that prints easily and washes away. Ground-only,
   beside the frozen ground just built.
+  *Built (18 Nov):* research: needle ice (pipkrake) grows where the soil surface falls below 0 C while the soil under
+  it is unfrozen and wet: water drawn up to the freezing front freezes in columns and its latent heat holds the front
+  at the surface (Outcalt 1971; Lawler 1988, "Environmental limits of needle ice"); typically 1 to 4 cm a night on
+  bare silty soil near field capacity, none under litter or vegetation, and colder nights freeze the ground solid
+  instead. The thaw drops the cap as loose crumbs of low bulk density, a known erosion agent on river banks and
+  trails (Lawler 1986). Ours, in the frozen ground's lattice (`needle_ice`, on): the needles grow by Stefan through
+  the mat (half ice, k 1 W/(m K)) while the frost front is under 1 cm and the cell is bare (litter under 5 mm), wet
+  (moisture 0.25 to 0.4 and up) and fine (sand under half), between about -0.5 and -8 C; the front stays put while
+  they grow. Their height is laid on the deformation field as bilinear tents a lattice step wide (a new
+  `GroundDeformField.amount_tent`, so equal needles rise flat; the first try with discs left a dimpled grid), in
+  steps of 2 mm, taking turns round the lattice, and taken off as they melt. Weak: cells with needles or crumbs
+  take Bekker k and cohesion x0.4, so a boot sinks about three times as deep; runoff picks the crumbs up as it
+  does loose sand. Crumbs settle over a week. Look (wet map ice block B and A, both shaders, `ground_needle_look`):
+  the cap's Voronoi clods 4 cm across with thin dark cracks, a few tipped clods showing a white band of needles on
+  their raised side (the first look, white gaps at every joint, read as a net), crumbs as rough tilted grains after
+  the thaw. A foot on the needles does not clear the lattice (a cell is 25 cm, a boot 10): the print is the press's
+  own, deeper in the weak mat. No repeat (Paulo's rule for anything that repeats): the growth varies by two
+  octaves of value noise (1.7 and 0.6 m, x0.5 to 1.5, the soil's patchy water and silt), so the lift is real
+  uneven geometry; the clod lattice is domain-warped by a noise about a metre across and the crack width and the
+  share of tipped clods vary in patches of 1 to 2 m. Checks in `--test=frost` (`_run_needle_tests`): 1.7 cm in
+  10 h at -3 C at the test point, the front held, the ground 1.7 cm higher, a boot 50 mm deep against 16.5 before,
+  gone after about 2.6 h at +5 C leaving crumbs 0.84 and the ground within 0.3 mm of where it was, the crumbs
+  50 mm. `--view=needle [--thaw] --pair` shoots it.
 
 
 ### Look (any stage)

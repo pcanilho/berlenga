@@ -2478,6 +2478,54 @@ vec4 ground_ice_look(vec2 p_xz, float p_h, float p_depth, float p_broken, float 
 	float white = cover * clamp(milk + 0.5 * rim, 0.0, 0.9);
 	return vec4(white, cover, mix(0.12, 0.45, white / max(cover, 1e-3)), 0.0);
 }
+// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
+// needles p_h tall (m) lift the top soil as a cap that tears into clods 3 to 5 cm across as it rises (Outcalt 1971;
+// Lawler 1988), with thin dark cracks between them; a few clods tip and show the white needles on their raised side.
+// After the thaw the cap lies as loose crumbs (p_loose) a few millimetres across, each tilted, rough and a little
+// uneven in colour. Returns (the share that is needle ice showing, the soil's albedo factor, the crumbs' weight for a
+// rough matte surface, 0); r_slope the clods' and crumbs' tilt.
+// The clods' lattice at p_xz (in cells 4 cm across), warped by a smooth noise about a metre across so their size and
+// shape wander and the network shows no repeat.
+vec2 ground_needle_q(vec2 p_xz) {
+	vec2 w = vec2(ground_flow_noise(p_xz / 0.9 + vec2(13.0, 71.0)).x, ground_flow_noise(p_xz / 0.9 + vec2(97.0, 29.0)).x);
+	return p_xz / 0.04 + 1.5 * w;
+}
+vec4 ground_needle_look(vec2 p_xz, float p_h, float p_loose, float p_fp, out vec2 r_slope) {
+	r_slope = vec2(0.0);
+	float lift = smoothstep(0.002, 0.015, p_h);
+	float s = 0.04;
+	vec4 c = ground_ice_cells(ground_needle_q(p_xz));
+	float e = c.x * s;
+	// Patches a metre or two across where the cap tore wider and more clods tipped, and quieter ones.
+	float macro = clamp(0.5 + 0.8 * ground_flow_noise(p_xz / 1.6 + vec2(5.0, 3.0)).x, 0.0, 1.0);
+	// The cap tears along its joints: thin dark cracks (the shadowed gap under the cap).
+	float gw = (0.0003 + 0.03 * p_h) * mix(0.6, 1.5, macro);
+	float crack = lift * (1.0 - smoothstep(gw, gw + p_fp, e));
+	// A few clods tip over as they rise and show the needles on their raised side: a white band along that edge (the
+	// side away from the clod's middle along its tilt).
+	float share = (0.04 + 0.06 * lift) * mix(0.3, 1.7, macro);
+	float tip = lift * step(c.y, share);
+	vec2 tilt = vec2(c.y - 0.5, c.z - 0.5);
+	float band = 0.002 + 0.15 * p_h;
+	float far_ = smoothstep(0.003, 0.02, p_fp);
+	float white = 0.0;
+	if (tip > 0.0 && e < band + p_fp && far_ < 1.0) {
+		// The way out from the clod's middle: the gradient of the distance to its site.
+		float d = 0.002;
+		vec2 out_ = vec2(ground_ice_cells(ground_needle_q(p_xz + vec2(d, 0.0))).w - c.w, ground_ice_cells(ground_needle_q(p_xz + vec2(0.0, d))).w - c.w);
+		float side = smoothstep(0.0, 0.5, dot(normalize(out_ + 1e-6), normalize(tilt + 1e-6)));
+		white = tip * side * (1.0 - smoothstep(band, band + p_fp, e)) * (1.0 - crack);
+	}
+	// Past a few millimetres a pixel both average out to their share of the area.
+	crack = mix(crack, lift * clamp(3.7 * gw / s, 0.0, 0.3), far_);
+	white = mix(white, lift * share * clamp(0.5 * band / s, 0.0, 0.3), far_);
+	r_slope = lift * (1.0 - crack) * (0.15 + 0.5 * tip) * tilt;
+	vec4 k = ground_ice_cells(p_xz / 0.006);
+	float fine = 1.0 - smoothstep(0.002, 0.008, p_fp);
+	r_slope += p_loose * fine * 0.5 * vec2(k.y - 0.5, k.z - 0.5);
+	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.6 * crack);
+	return vec4(white, shade, p_loose, 0.0);
+}
 
 // Sand grains (the functions of the same names in material.cpp; docs/ideas/sand.md, sand glints).
 uint ground_grain_hash(ivec3 p_q, uint p_level) {
@@ -2853,7 +2901,7 @@ void main() {
 	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
 	float g_mud = 0.0; // the clay it carries, kg/m3 (mud round 3)
 	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
-	vec2 g_ice = vec2(0.0); // puddle ice: thickness m, broken share (mud round 7)
+	vec4 g_ice = vec4(0.0); // puddle ice: thickness m, broken share (mud round 7); needle ice: height m, crumbs (round 9)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
@@ -2901,7 +2949,7 @@ void main() {
 					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
 					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
 						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0)) * grows;
-						g_ice = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0).xy;
+						g_ice = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
 					}
 				}
 				g_grain = clamp(gw.z, 0.0, 1.0);
@@ -3070,6 +3118,26 @@ void main() {
 		if (gfs != vec2(0.0)) {
 			m.normal = normalize(m.normal - vec3(gfs.x, 0.0, gfs.y));
 		}
+	}
+	// Needle ice and its thaw's crumbs (material.cpp ground_needle_look()).
+	if (g_ice.z > 0.0 || g_ice.w > 0.0) {
+		vec3 gnp = h.hit_pos + rt_origin.xyz;
+		float gnfp;
+		if (get_total_bounces(payload.packed_bounces_flags) == 0u) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+					scene_data_block.data.inv_view_matrix[2].w);
+			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+			gnfp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+			gnfp /= max(abs(dot(normalize(cam - h.hit_pos), h.geometry_normal)), 0.15);
+		} else {
+			gnfp = exp2(rt_cone_footprint_log2);
+		}
+		vec2 gnsl;
+		vec4 gnl = ground_needle_look(gnp.xz, g_ice.z, clamp(g_ice.w, 0.0, 1.0), gnfp, gnsl);
+		m.albedo = mix(m.albedo * gnl.y, vec3(0.75, 0.78, 0.81), gnl.x);
+		m.roughness = mix(mix(m.roughness, 1.0, 0.6 * gnl.z), 0.3, gnl.x);
+		m.specular = mix(m.specular, 0.22, gnl.x);
+		m.normal = normalize(m.normal - vec3(gnsl.x, 0.0, gnsl.y));
 	}
 	// Desiccation cracks (material.cpp): the mesh carries those its spacing can; the shading the slopes and the slots'
 	// darkness of the finer ones.

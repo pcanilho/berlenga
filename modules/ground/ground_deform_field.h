@@ -186,6 +186,8 @@ public:
 		}
 		return CLAMP(0.5f - (Math::sqrt(p_dx * p_dx + p_dz * p_dz) - p_radius) / p_texel, 0.0f, 1.0f);
 	}
+	// add_amount() lays a bilinear tent p_radius wide instead of a disc: the tents of a lattice p_radius apart sum flat.
+	bool amount_tent = false;
 	float amount_scale(Vector3 p_position, float p_radius, bool p_tent = false) const;
 	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f);
 	static float sole_sd(float p_lx, float p_lz, Vector2 p_half);

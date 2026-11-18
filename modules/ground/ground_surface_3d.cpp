@@ -511,6 +511,20 @@ void GroundSurface3D::_update_cells() {
 				cell_water[i * 2 + 1] = water_speed[i];
 			}
 			c.deformable = !in.fixed && in.frozen < 0.95f;
+			if (!in.fixed && (int)frost_state.size() == n * n * FROST_FLOATS) {
+				// Needle ice and the crumbs its thaw leaves (round 9): the needles bear almost nothing, the crumbs
+				// little (a bulk density well below the soil's), so either prints deep and easily.
+				const float *fr = &frost_state[i * FROST_FLOATS];
+				const float soft = MAX(Math::smoothstep(0.0f, 0.01f, fr[3]), fr[4]);
+				if (soft > 0.0f) {
+					const float k = 1.0f - 0.6f * soft;
+					c.kc *= k;
+					c.kphi *= k;
+					c.wheel_kc *= k;
+					c.wheel_kphi *= k;
+					c.cohesion *= 1.0f - 0.6f * soft;
+				}
+			}
 			if (in.frozen > 0.0f) {
 				// Frozen soil: ice-bonded, far stiffer and stronger (frozen silt's cohesion is hundreds of kPa), no
 				// slumping; the ruts already in it stay as they are.
@@ -1038,6 +1052,9 @@ void GroundSurface3D::_frost_seed(int p_from) {
 			f[0] = 0.0f;
 			f[1] = depth;
 			f[2] = 0.0f;
+			f[3] = 0.0f;
+			f[4] = 0.0f;
+			f[5] = 0.0f;
 		}
 	}
 }
@@ -1064,18 +1081,41 @@ void GroundSurface3D::_frost_update(double p_delta) {
 		float &a = f[0];
 		float &b = f[1];
 		float &w = f[2];
+		float &nd = f[3];
+		float &loose = f[4];
 		if (in.fixed) {
 			continue; // rock, or snow over it
 		}
 		const float l = 334e6f * (0.1f + 0.3f * CLAMP(in.moisture, 0.0f, 1.0f));
+		// Needle ice (round 9): on wet, bare, fine soil whose frost front sits at the surface, a frosty night grows
+		// ice needles instead of driving the front down; the latent heat of the water drawn up to it holds the front
+		// there (Outcalt 1971; Lawler 1988). Stefan through the needle mat (about half ice, k 1 W/(m K)): about 2 cm
+		// in a night at -3 C. Too cold (below about -8 C) the front runs down as concrete frost instead.
+		const float needle = needle_ice && a <= 0.0f && b < 0.01f && in.sand < 0.5f && in.litter < 0.005f ? Math::smoothstep(0.25f, 0.4f, in.moisture) * Math::smoothstep(0.0f, 1.5f, -t) * (1.0f - Math::smoothstep(6.0f, 10.0f, -t)) : 0.0f;
 		if (t < 0.0f) {
 			if (a > 0.0f) {
 				// The wet top refreezes first, under a crust as thin as it is.
 				a = MAX(a - 2.0f * -t / (l * 0.03f) * dt, 0.0f);
 			} else {
-				b = MIN(b + 2.0f * -t / (l * (b + 0.02f)) * dt, 1.0f);
+				// The soil's own patchiness (its water, its silt) over a metre or two: no field of equal needles.
+				const float cx = (ground_origin.x + i % n) * ground_spacing;
+				const float cz = (ground_origin.y + i / n) * ground_spacing;
+				const float patch = 0.5f + 1.0f * (0.65f * _value_noise(cx / 1.7f, cz / 1.7f) + 0.35f * _value_noise(cx / 0.6f + 17.0f, cz / 0.6f + 5.0f));
+				nd = MIN(nd + needle * patch * -t / (167e6f * (nd + 0.02f)) * dt, 0.08f);
+				b = MIN(b + (1.0f - needle) * 2.0f * -t / (l * (b + 0.02f)) * dt, 1.0f);
 			}
-		} else if (b > 0.0f) {
+		} else if (nd > 0.0f) {
+			// A thaw melts the needles from the top and the soil cap they lifted collapses into loose, fluffy crumbs
+			// that print easily and wash away (Lawler 1986's needle ice erosion of river banks).
+			loose = MAX(loose, MIN(nd / 0.02f, 1.0f));
+			nd = MAX(nd - 1.2f * t / (167e6f * 0.02f) * dt, 0.0f);
+		}
+		if (loose > 0.0f && nd <= 0.0f) {
+			// It settles back over about a week (and a print compacts it at once).
+			loose *= Math::exp(-dt / (7.0f * 86400.0f));
+			loose = loose < 0.01f ? 0.0f : loose;
+		}
+		if (t >= 0.0f && b > 0.0f) {
 			a += 1.2f * t / (l * (a + 0.02f)) * dt;
 			if (a >= b) {
 				a = 0.0f;
@@ -1090,6 +1130,28 @@ void GroundSurface3D::_frost_update(double p_delta) {
 			w = w < 0.01f ? 0.0f : w;
 		}
 	}
+	// The needles lift the ground: laid on the field (and taken off as they melt) in steps of 2 mm, at most 8192
+	// cells a step, taking turns round the lattice (a whole field grows together). Each cell's share is a bilinear
+	// tent a lattice step wide, so a field of equal needles rises flat. A foot or wheel on them presses the soft mat
+	// (the cells' weak needles let it sink deeper) and the press's own print takes the crushed cap.
+	if (!field.valid) {
+		return;
+	}
+	const int nn = n * n;
+	int writes = 0;
+	field.amount_tent = true;
+	for (int k = 0; k < nn && writes < 8192; k++) {
+		const int i = (needle_cursor + k) % nn;
+		float *f = &frost_state[i * FROST_FLOATS];
+		if (Math::abs(f[3] - f[5]) >= 0.002f || (f[3] <= 0.0f && f[5] > 0.0f)) {
+			const Vector3 at((ground_origin.x + i % n) * ground_spacing, ground[i], (ground_origin.y + i / n) * ground_spacing);
+			_amount(at, ground_spacing, -(f[3] - f[5]), ground_spacing);
+			f[5] = f[3];
+			writes++;
+			needle_cursor = (i + 1) % nn;
+		}
+	}
+	field.amount_tent = false;
 }
 
 // How far the frozen ground holds as a crust at lattice cell p_i, 0..1: a frozen layer from 2 cm thick (a boot
@@ -1112,6 +1174,33 @@ Vector3 GroundSurface3D::get_frost_at(Vector3 p_position) const {
 	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
 	const float *f = &frost_state[(z * n + x) * FROST_FLOATS];
 	return Vector3(MAX(f[0], 0.0f), MAX(f[1], 0.0f), f[2]);
+}
+
+void GroundSurface3D::set_needle_ice(bool p_enabled) {
+	needle_ice = p_enabled;
+	cells_accum = 2.0;
+}
+
+// The needle ice's height (m) and the loose soil a thaw left (0..1) at a place.
+Vector2 GroundSurface3D::get_needle_ice_at(Vector3 p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)frost_state.size() != n * n * FROST_FLOATS) {
+		return Vector2();
+	}
+	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+	const float *f = &frost_state[(z * n + x) * FROST_FLOATS];
+	return Vector2(f[3], f[4]);
+}
+
+float GroundSurface3D::_needle_loose_at(float p_x, float p_z) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)frost_state.size() != n * n * FROST_FLOATS) {
+		return 0.0f;
+	}
+	const int x = int(Math::round(p_x / ground_spacing)) - ground_origin.x;
+	const int z = int(Math::round(p_z / ground_spacing)) - ground_origin.y;
+	return x >= 0 && z >= 0 && x < n && z < n ? frost_state[(z * n + x) * FROST_FLOATS + 4] : 0.0f;
 }
 
 void GroundSurface3D::set_plant_mud(bool p_enabled) {
@@ -2239,11 +2328,19 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			cracks = crack_state[i * CRACK_FLOATS] > 0.0f && crack_state[i * CRACK_FLOATS] < 1.999f;
 		}
 	}
-	// Then, with puddle ice, its block (thickness m, broken share; texel 3's tag 5.5).
+	// Then, with puddle ice or needle ice, the ice block (puddle ice's thickness m, its broken share; needle ice's
+	// height m, the loose crumbs its thaw left; texel 3's tag 5.5).
 	bool ice = false;
-	if (on && puddle_ice && (int)ice_state.size() == n * n * ICE_FLOATS && n >= 4) {
+	const bool pice = on && puddle_ice && (int)ice_state.size() == n * n * ICE_FLOATS && n >= 4;
+	const bool nice = on && needle_ice && (int)frost_state.size() == n * n * FROST_FLOATS && n >= 4;
+	if (pice) {
 		for (int i = 0; i < n * n && !ice; i++) {
 			ice = ice_state[i * ICE_FLOATS] > 0.0f;
+		}
+	}
+	if (nice) {
+		for (int i = 0; i < n * n && !ice; i++) {
+			ice = frost_state[i * FROST_FLOATS + 3] > 0.0f || frost_state[i * FROST_FLOATS + 4] > 0.0f;
 		}
 	}
 	// Then, with mud on plants, its block (share, the clay's linear colour; texel 4's tag 6.5).
@@ -2296,8 +2393,14 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 		if (ice) {
 			float *id = d + (1 + (far ? 1 : 0) + (cracks ? 1 : 0)) * n * n * 4;
 			for (int i = 0; i < n * n; i++) {
-				id[i * 4 + 0] = ice_state[i * ICE_FLOATS];
-				id[i * 4 + 1] = ice_state[i * ICE_FLOATS + 1];
+				if (pice) {
+					id[i * 4 + 0] = ice_state[i * ICE_FLOATS];
+					id[i * 4 + 1] = ice_state[i * ICE_FLOATS + 1];
+				}
+				if (nice) {
+					id[i * 4 + 2] = frost_state[i * FROST_FLOATS + 3];
+					id[i * 4 + 3] = frost_state[i * FROST_FLOATS + 4];
+				}
 			}
 			r[15] = 5.5f;
 		}
@@ -2590,7 +2693,8 @@ void GroundSurface3D::_runoff_update(double p_delta) {
 		const float wx = (origin.x + x + 0.5f) * c;
 		const float wz = (origin.y + z + 0.5f) * c;
 		const Cell &cell = _cell_at(wx, wz);
-		const float loose = cell.deformable ? CLAMP(cell.sand, 0.0f, 1.0f) : 0.0f;
+		// Loose: sand, or the crumbs a needle ice thaw left (round 9).
+		const float loose = cell.deformable ? CLAMP(MAX(cell.sand, _needle_loose_at(wx, wz)), 0.0f, 1.0f) : 0.0f;
 		const float cap = bed_load_shear(1000.0f * 9.81f * depth * MIN(slope, 1.0f)) * c;
 		float sand_out = sand_in;
 		if (sand_in < cap * loose) {
@@ -4092,15 +4196,17 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 }
 
 void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell) {
-	// On the near field a grid's cell is a tent one cell wide (GroundDeformField::amount_cover()).
-	const bool tent = is_near && p_cell > 0.0f;
+	// On the near field a grid's cell is a tent one cell wide (GroundDeformField::amount_cover()); on either with
+	// amount_tent a tent p_radius wide.
+	const bool main_tent = surface->field.amount_tent;
+	const bool tent = (is_near && p_cell > 0.0f) || main_tent;
 	if (next && surface->is_near_active()) {
 		// The depth was scaled for the main field's texels (amount_scale): the near field's own scale instead, the
 		// same volume.
-		const float main_scale = surface->field.amount_scale(p_position, p_radius);
+		const float main_scale = surface->field.amount_scale(p_position, p_radius, main_tent);
 		const float depth = main_scale > 0.0f ? p_depth / main_scale : p_depth;
 		if (p_cell > 0.0f) {
-			const float to_cell = (float)Math::PI * p_radius * p_radius / (p_cell * p_cell);
+			const float to_cell = (main_tent ? 1.0f : (float)Math::PI) * p_radius * p_radius / (p_cell * p_cell);
 			next->amount(p_columns, p_position, p_cell, depth * to_cell * surface->near_fld.amount_scale(p_position, p_cell, true), p_cell);
 		} else {
 			next->amount(p_columns, p_position, p_radius, depth * surface->near_fld.amount_scale(p_position, p_radius), 0.0f);
@@ -4134,7 +4240,7 @@ float GroundSurface3D::_amount(Vector3 p_position, float p_radius, float p_depth
 	const Cell &c = _cell_at(p_position.x, p_position.z);
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 	if (_gpu_on()) {
-		gpu_sink.amount(cols, p_position, p_radius, p_depth * field.amount_scale(p_position, p_radius), p_cell);
+		gpu_sink.amount(cols, p_position, p_radius, p_depth * field.amount_scale(p_position, p_radius, field.amount_tent), p_cell);
 		// The GPU applies it; what it moves is the disc's, short only where the dent bottoms out.
 		return c.deformable ? (float)Math::PI * p_radius * p_radius * Math::abs(p_depth) : 0.0f;
 	}
@@ -5475,6 +5581,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);
 	ClassDB::bind_method(D_METHOD("get_ice_at", "position"), &GroundSurface3D::get_ice_at);
 	ClassDB::bind_method(D_METHOD("get_rut_guidance", "contact", "lateral", "half_width"), &GroundSurface3D::get_rut_guidance);
+	ClassDB::bind_method(D_METHOD("set_needle_ice", "enabled"), &GroundSurface3D::set_needle_ice);
+	ClassDB::bind_method(D_METHOD("is_needle_ice"), &GroundSurface3D::is_needle_ice);
+	ClassDB::bind_method(D_METHOD("get_needle_ice_at", "position"), &GroundSurface3D::get_needle_ice_at);
 	ClassDB::bind_method(D_METHOD("set_frozen_ground", "enabled"), &GroundSurface3D::set_frozen_ground);
 	ClassDB::bind_method(D_METHOD("is_frozen_ground"), &GroundSurface3D::is_frozen_ground);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &GroundSurface3D::get_frost_at);
@@ -5693,6 +5802,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "puddle_ice"), "set_puddle_ice", "is_puddle_ice");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plant_mud"), "set_plant_mud", "is_plant_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frozen_ground"), "set_frozen_ground", "is_frozen_ground");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needle_ice"), "set_needle_ice", "is_needle_ice");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");

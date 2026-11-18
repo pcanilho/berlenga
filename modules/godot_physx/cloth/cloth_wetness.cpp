@@ -96,4 +96,30 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 	evap *= CLAMP(wetness / 0.2f, 0.1f, 1.0f);
 	water = CLAMP(water - evap * p_dt, 0.0f, capacity);
 	wetness = water / capacity;
+
+	// Wading: fabric under the water's surface soaks in seconds (a woven fabric's wicking takes up its fill in a few
+	// seconds once immersed, Kissa 1996), and the water climbs a few centimetres above the line by capillarity. The
+	// soaked band then dries as the rest does.
+	const float lowest = p_world_box.position.y;
+	const float tall = MAX(p_world_box.size.y, 0.01f);
+	float surface = -float(Math::INF);
+	if (p_node && p_node->is_inside_tree()) {
+		if (WorldWater *ww = WorldContracts::water()) {
+			if (ww->has_provider()) {
+				surface = ww->height_at(Vector3(p_world_box.get_center().x, lowest, p_world_box.get_center().z));
+			}
+		}
+	}
+	if (surface > lowest) {
+		wade_depth = MIN(MAX(wade_depth, surface - lowest + 0.03f), tall);
+		wade_wet += (1.0f - wade_wet) * (1.0f - Math::exp(-p_dt / 2.0f));
+	} else if (wade_wet > 0.0f) {
+		wade_wet = MAX(wade_wet - evap * p_dt / capacity, 0.0f);
+		if (wade_wet <= 0.01f) {
+			wade_wet = 0.0f;
+			wade_depth = 0.0f;
+		}
+	}
+	wade_share = CLAMP(wade_depth / tall, 0.0f, 1.0f);
+	wade_line = wade_wet > 0.0f ? lowest + wade_depth : -1.0e6f;
 }

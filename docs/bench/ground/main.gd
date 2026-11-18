@@ -191,6 +191,7 @@ func _ready() -> void:
 	if frost_test:
 		await _run_frost_tests()
 		await _run_rut_guidance_tests()
+		await _run_needle_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -305,6 +306,9 @@ func _ready() -> void:
 		return
 	if view == "ice":
 		await _build_ice()
+		return
+	if view == "needle":
+		await _build_needle()
 		return
 	if view == "tracked":
 		await _build_legs(true)
@@ -490,9 +494,12 @@ func _run_tests() -> void:
 	surface.clear_deformation()
 	surface.moisture = 0.4
 	surface.press(o, 0.15, -0.12, 0.0, true)
+	var damp_before := _max_slope(o, 0.3)
 	surface.settle(3.0)
 	var damp_wall := _max_slope(o, 0.3)
-	_check("damp sand keeps steep walls", damp_wall > 60.0, "steepest wall %.0f degrees after 3 s" % damp_wall)
+	# Against its own walls before settling: the CPU field (headless) presses on a coarser texel, so its walls start
+	# near 52 degrees rather than the GPU's 70.
+	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > damp_before - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s" % [damp_before, damp_wall])
 	# Mud creeps back slowly.
 	surface.clear_deformation()
 	surface.ground_type = GroundSurface3D.GROUND_SOIL
@@ -1405,6 +1412,68 @@ func _run_plant_mud_tests() -> void:
 	near_on = true
 
 
+# Needle ice (mud round 9): a frosty night on wet bare soil grows needles that lift the top (the frost front held at
+# the surface), a boot sinks deeper into the weak mat, and the thaw leaves loose crumbs that print deeper still.
+func _run_needle_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	surface.mud_layer = false
+	surface.frozen_ground = true
+	surface.needle_ice = true
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.9
+	wm.temperature = 5.0
+	wm.season_day = 300
+	add_child(wm)
+	wm.snap_to_settings()
+	for i in 150:
+		await get_tree().physics_frame
+	# A boot's Bekker sinkage on the unfrozen soil first, for scale.
+	var plain := surface.get_sinkage_at(Vector3(-2, 0, -2), 80.0, 0.03, 0.1)
+	var q := Vector3(0, 0, -2)
+	var g0 := surface.get_surface_height_at(q)
+	wm.temperature = -3.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	for i in 430: # about 10 h
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	for i in 150:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var nd := surface.get_needle_ice_at(q)
+	var fr := surface.get_frost_at(q)
+	var lift := surface.get_surface_height_at(q) - g0
+	print("  needle ice: %.1f cm after a night at -3 C, frost %.1f cm deep, the ground %.1f cm higher" % [nd.x * 100.0, fr.y * 100.0, lift * 100.0])
+	_check("a frosty night on wet bare soil grows needle ice, 1 to 4 cm (Outcalt, Lawler)", nd.x > 0.01 and nd.x < 0.04, "%.1f cm" % (nd.x * 100.0))
+	_check("the needles hold the frost front at the surface", fr.y < 0.01, "%.1f cm" % (fr.y * 100.0))
+	_check("and lift the ground by their height", absf(lift - nd.x) < 0.004, "%.1f cm for %.1f cm" % [lift * 100.0, nd.x * 100.0])
+	for i in 150: # the cells take it (every 2 s)
+		await get_tree().physics_frame
+	var on_needles := surface.get_sinkage_at(Vector3(2, 0, -2), 80.0, 0.03, 0.1)
+	_check("a boot sinks deeper into the needle mat than into the soil before", on_needles > 1.5 * plain, "%.1f mm (%.1f mm before)" % [on_needles * 1000.0, plain * 1000.0])
+	# The thaw: the needles melt, the cap drops back as loose crumbs.
+	wm.temperature = 5.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	var frames := 0
+	while frames < 1500 and surface.get_needle_ice_at(q).x > 0.0:
+		await get_tree().physics_frame
+		frames += 1
+	surface.runoff_time_scale = 1.0
+	for i in 150:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	nd = surface.get_needle_ice_at(q)
+	var back := surface.get_surface_height_at(q) - g0
+	print("  thaw: needles gone after %.1f h, crumbs %.2f, the ground %.1f mm off where it was" % [frames / 60.0 * 5000.0 / 3600.0, nd.y, back * 1000.0])
+	_check("the thaw melts them and the ground drops back, left as loose crumbs", nd.x == 0.0 and nd.y > 0.5 and absf(back) < 0.003, "crumbs %.2f, %.1f mm" % [nd.y, back * 1000.0])
+	var loose := surface.get_sinkage_at(Vector3(-2, 0, -2), 80.0, 0.03, 0.1)
+	_check("the crumbs print deeper than the soil did", loose > 1.2 * plain, "%.1f mm (%.1f mm before)" % [loose * 1000.0, plain * 1000.0])
+	wm.queue_free()
+
 # Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
 # as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.
 func _run_frost_tests() -> void:
@@ -1412,6 +1481,7 @@ func _run_frost_tests() -> void:
 	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
 	surface.mud_layer = true
 	surface.frozen_ground = true
+	surface.needle_ice = false # its own test (_run_needle_tests)
 	var wm := WeatherMap3D.new()
 	wm.cloud_cover = 0.0
 	wm.rain_rate = 0.0
@@ -2092,6 +2162,86 @@ func _build_ice() -> void:
 	await _save_view(env)
 	get_tree().quit()
 
+
+# Needle ice (mud round 9): a night at -3 C on wet bare soil, then a line of boot prints crushing it; --thaw: the next
+# day's thaw, the crumbs it leaves (--cam=x,y,z,tx,ty,tz).
+func _build_needle() -> void:
+	kind = "soil"
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	_apply(kind)
+	surface.moisture = 0.4 # wet: needle ice wants a soil near field capacity
+	surface.mud_layer = false
+	surface.frozen_ground = true
+	surface.needle_ice = true
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-25.0, 200.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 10.0
+	add_child(sun)
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.9
+	wm.temperature = -3.0
+	wm.season_day = 300
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	for i in 430:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	for i in 150:
+		await get_tree().physics_frame
+	# Boot prints walked across it, left and right.
+	for k in 8:
+		var q := Vector3(-1.4 + 0.35 * k, 0, 0.09 if k % 2 == 0 else -0.09)
+		var g := surface.get_surface_height_at(q)
+		surface.press_box(q, Vector2(0.29, 0.11), 0.0, g - 0.03, 0.01)
+	for i in 30:
+		await get_tree().physics_frame
+	if OS.get_cmdline_user_args().has("--thaw"):
+		wm.temperature = 6.0
+		wm.snap_to_settings()
+		surface.runoff_time_scale = 5000.0
+		var frames := 0
+		while frames < 1500 and surface.get_needle_ice_at(Vector3(1, 0, 1)).x > 0.0:
+			await get_tree().physics_frame
+			frames += 1
+		surface.runoff_time_scale = 1.0
+		for i in 150:
+			await get_tree().physics_frame
+	print("needle ice: %s away from the prints, %s in one" % [surface.get_needle_ice_at(Vector3(1, 0, 1)), surface.get_needle_ice_at(Vector3(-1.4, 0, 0.09))])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.9, 0.55, 1.1, -0.2, 0.0, 0.0])
+	cam.position = Vector3(c[0], c[1], c[2])
+	cam.look_at(Vector3(c[3], c[4], c[5]))
+	cam.fov = 45.0
+	surface.follow_target = surface.get_path_to(cam)
+	surface.sync_deformation()
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
 
 # Mud stage 4e: a pair of legs walked 4 m through 15 cm of slurry, stopped mid-stride (--cam=x,y,z,tx,ty,tz from the
 # legs).

@@ -3125,7 +3125,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3747,7 +3747,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3809,7 +3809,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less and clings to the body.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
