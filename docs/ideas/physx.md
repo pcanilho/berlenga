@@ -1136,6 +1136,30 @@ longer light anything. Test: a 2 x 1.5 x 1.2 m woodpile reaching 2 MW in a
 6 m/s wind (28 C, 25%) started 14 spot fires in dry grass 4 to 44 m
 downwind in 90 s, which burnt 420 m2.
 
+### Next-round options (card, 18 Nov evening)
+
+1. Embers light props and buildings. Most homes lost in wildland-urban
+   interface fires are lit by embers, not the front (Cohen 2000; Manzello
+   et al. 2008 and 2020, NIST ember storms: brands collect in corners,
+   gutters and on decks, smoulder in beds of litter and light them).
+   Here: a brand landing on a PhysXBurnable3D adds its glow to the
+   surface's heat dose where it rests (pile-up in corners and on top
+   faces), so a woodpile, a fence or a cabin catches downwind of a fire.
+2. Water puts fires out. Fire models take water as moisture added to the
+   fuel (WRF-SFIRE's rain term, already used for rain); suppression drops
+   coat the fuel ahead (FARSITE's suppression, Fire Dynamics Simulator's
+   water spray: droplets absorb 2.6 MJ/kg). Here: MPM water and spray
+   landing on the fire grid wet its cells (quenching burning ones) and
+   cool burnables, so buckets, hoses and a burst pipe stop a fire.
+3. Burnt crowns shed their needles. After a crown fire the fine fuel is
+   gone: bare black branches, needles fallen as a grey ash layer, and
+   burning twigs falling while it torches. Here: the tree shaders cut
+   leaves by the crown's burnt share (alpha), the fire state map darkens
+   the ground under it, a few PhysX debris twigs fall burning.
+Sources: Cohen 2000, "Preventing disaster: home ignitability in the
+wildland-urban interface", J. Forestry 98; Manzello et al. 2008, Fire
+Safety J. 43; McGrattan et al., FDS technical reference (water spray).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
