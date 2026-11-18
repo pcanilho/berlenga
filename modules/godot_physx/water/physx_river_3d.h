@@ -156,6 +156,8 @@ private:
 	float wall_friction = 1.5f; // 1/s, along rocks and banks
 	float flow_foam = 0.25f; // a river runs fast everywhere: less than the sea's 1
 	float flow_foam_persistence = 4.0f; // s
+	bool flow_foam_impact = true; // also where the water runs into things (water_ripple.glsl)
+	bool live_advected_ripples = true; // ripples carried along the live flow's real paths (water_flow_offset.glsl)
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
 
@@ -166,6 +168,7 @@ private:
 	Vector2 live_center;
 	Ref<Texture2DRD> live_height_tex;
 	Ref<Texture2DRD> live_flow_tex;
+	Ref<Texture2DRD> live_offset_tex;
 	Vector<float> live_height_cache;
 	Vector<float> live_velocity_cache;
 	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
@@ -332,6 +335,10 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	void set_flow_foam_impact(bool p_enabled);
+	bool get_flow_foam_impact() const { return flow_foam_impact; }
+	void set_live_advected_ripples(bool p_enabled);
+	bool get_live_advected_ripples() const { return live_advected_ripples; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);
