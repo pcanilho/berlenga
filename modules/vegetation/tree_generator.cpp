@@ -3125,6 +3125,29 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		hdata = reinterpret_cast<const float *>(hbuf.ptr());
 		hn = p_height->get_width();
 	}
+	// Macro variation (Paulo, 18 Nov: the cork's 1.2 m tile visibly repeats). The tile's relief
+	// and colour are the same everywhere it repeats, so a world-space noise at about a metre,
+	// unrelated to the tile, deepens and shallows the relief (0.65-1.35) and shifts the bark's
+	// tone (+-12%, a little warmer or greyer): the detail-breakup or macro-variation layer of
+	// terrain texturing (e.g. Unreal's landscape macro variation; Frostbite terrain, Andersson,
+	// GDC 2007). Geometry and colour both, so the path tracer sees the same bark as raster.
+	auto macro_relief = [&](const Vector3 &p_p) -> float {
+		const float m = 0.6f * moss_noise(p_p * 0.9f + Vector3(13.1f, 0.0f, 7.7f), 0x6d61636fu) + 0.4f * moss_noise(p_p * 2.3f, 0x6d616371u);
+		return Math::lerp(0.65f, 1.35f, m);
+	};
+	auto macro_tint = [&](const Vector3 &p_p, const Color &p_c) -> Color {
+		const float b = moss_noise(p_p * 1.3f + Vector3(3.3f, 0.0f, 9.1f), 0x6d616372u);
+		const float w = moss_noise(p_p * 0.7f + Vector3(5.9f, 0.0f, 1.7f), 0x6d616373u) - 0.5f;
+		const float k = Math::lerp(0.88f, 1.12f, b);
+		return Color(p_c.r * k * (1.0f + 0.08f * w), p_c.g * k, p_c.b * k * (1.0f - 0.08f * w), p_c.a);
+	};
+	// And the tile itself slides round the stem by a slow world-space amount (up to a third of a
+	// tile over a couple of metres, like a gentle spiral grain), so the copy a tile above or
+	// beside never lines up with this one. One value a ring keeps the seam closed; the crotch
+	// evaluates it at the same points (the bole's ring centre, the stem's axis).
+	auto twist = [&](const Vector3 &p_p) -> float {
+		return 0.6f * (moss_noise(p_p * 0.45f + Vector3(2.7f, 0.0f, 6.1f), 0x74776973u) - 0.5f);
+	};
 	auto relief_at = [&](float p_u, float p_v) -> float {
 		const float x = (p_u - Math::floor(p_u)) * hn - 0.5f, y = (p_v - Math::floor(p_v)) * hn - 0.5f;
 		const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
@@ -3234,7 +3257,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				if (r > 0) {
 					side_v[s] += c_pos.distance_to(r_b.verts[base + (r - 1) * (p_sides + 1) + s]) / circumference;
 				}
-				const Vector2 ub(float(s) / p_sides * repeats, side_v[s]);
+				const Vector2 ub(float(s) / p_sides * repeats + twist(p_points[r]), side_v[s]);
 				Vector3 tb = bin * Math::cos(ang) - nrm * Math::sin(ang);
 				c_uv = ub;
 				c_tan = tb;
@@ -3256,7 +3279,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 					if (a < 0.0f) {
 						a += float(Math::TAU);
 					}
-					const Vector2 us(a / float(Math::TAU) * st.repeats, (st.arc[seg] + tt * ab.length()) / st.circ);
+					const Vector2 us(a / float(Math::TAU) * st.repeats + twist(st.p[seg] + ab * tt), (st.arc[seg] + tt * ab.length()) / st.circ);
 					// The stem's UVs shifted by whole tiles to the bole's: shifting the bole's instead
 					// squeezed whole tiles into the row under the crotch's first ring, a band.
 					const Vector2 uss(us.x - Math::round(us.x - ub.x), us.y - Math::round(us.y - ub.y));
@@ -3279,7 +3302,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				const float gy = p_points[r].y + dir.y * rr;
 				// None on a cap's end face: the furrows ran into its centre as pleats.
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
+				rr += p_relief * macro_relief(p_points[r] + dir * p_radii[r]) * relief_at(float(s) / p_sides * repeats + twist(p_points[r]), v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
 						(tube_fade_r > 0.0f ? Math::smoothstep(tube_fade_r0, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
 			}
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
@@ -3310,7 +3333,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				while (r_b.relief_off.size() < uint32_t(r_b.verts.size())) {
 					r_b.relief_off.push_back(Vector2());
 				}
-				r_b.relief_off.push_back(Vector2(cring ? 0.0f : rr - p_radii[r], p_relief));
+				r_b.relief_off.push_back(Vector2(cring ? 0.0f : rr - p_radii[r], p_relief * macro_relief(p_points[r] + dir * p_radii[r])));
 			}
 			r_b.verts.push_back(cring ? c_pos : p_points[r] + dir * rr + tongue);
 			r_b.normals.push_back(cring ? c_nrm : n_out);
@@ -3320,8 +3343,8 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				r_b.uvs.push_back(Vector2(0.5f + rf * Math::cos(ang), 0.5f + rf * Math::sin(ang)));
 				r_b.colors.push_back(p_color.lerp(Color(0.3f, 0.24f, 0.17f), 0.7f));
 			} else {
-				r_b.uvs.push_back(cring ? c_uv : Vector2(float(s) / p_sides * repeats, v));
-				r_b.colors.push_back(p_color);
+				r_b.uvs.push_back(cring ? c_uv : Vector2(float(s) / p_sides * repeats + twist(p_points[r]), v));
+				r_b.colors.push_back(hdata ? macro_tint(p_points[r] + dir * p_radii[r], p_color) : p_color);
 			}
 			if (r_b.use_tangents) {
 				// Along u; the binormal (normal x tangent) then runs along the stem, with v. On the

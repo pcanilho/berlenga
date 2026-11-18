@@ -376,8 +376,13 @@ void run_amount_stamp(Stamp s) {
 		float sa = depth * cover;
 		float a = abs(sa);
 		if (sa > 0.0 && s.c.z < 0.0) {
-			// A line being washed away: only what was laid on the surface goes, and its tint with it.
+			// A line being washed away: what was laid on the surface goes, and its tint with it; the swash that
+			// spread it had also filled the hollow beside it, so with -2 (a swash line) that is levelled too (a
+			// smeared line is a ghost).
 			st.y -= min(st.y, a);
+			if (s.c.z < -1.5) {
+				st.x -= min(st.x, a);
+			}
 			if (ground) {
 				if (st.w >= 4.0) {
 					vec2 sq = mud_band_share_wet(st.w);
