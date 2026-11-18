@@ -71,6 +71,8 @@ uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_en
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform float roughness : hint_range(0.0, 1.0) = 0.9;
 uniform float cloth_wetness = 0.0; // PhysXSkinnedCloth3D's wetness, 0 dry .. 1 soaked
+uniform float cloth_wade_line = -1000000.0; // world y: fabric below it has been under water (wading)
+uniform float cloth_wade_wet = 0.0; // that band's wetness
 
 void vertex() {
 	int i = int(CUSTOM0.x + 0.5);
@@ -92,8 +94,13 @@ void fragment() {
 	// Wet fabric: water in the weave lowers the index contrast at each fibre, so light scatters deeper and more of it is
 	// absorbed (Lekner and Dorf 1988, n = 1.33); a soaked surface turns a little glossier only near saturation.
 	vec3 wet_albedo = c.rgb * 0.4 / (1.0 - 0.6 * c.rgb);
-	ALBEDO = mix(c.rgb, wet_albedo, clamp(2.0 * cloth_wetness, 0.0, 1.0));
-	ROUGHNESS = roughness * (1.0 - 0.12 * smoothstep(0.8, 1.0, cloth_wetness));
+	// Waded: soaked up to the band's top, a ragged 2 cm tide line where the wicking stops.
+	float wet_y = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y;
+	// The wicking front climbs unevenly along the weave: a wavering edge, a couple of centimetres.
+	float wet_line = cloth_wade_line + 0.012 * sin(UV.x * 41.0 + 2.0 * sin(UV.x * 13.0)) + 0.007 * sin(UV.x * 117.0 + UV.y * 9.0);
+	float wet_here = max(cloth_wetness, cloth_wade_wet * (1.0 - smoothstep(wet_line - 0.012, wet_line, wet_y)));
+	ALBEDO = mix(c.rgb, wet_albedo, clamp(2.0 * wet_here, 0.0, 1.0));
+	ROUGHNESS = roughness * (1.0 - 0.12 * smoothstep(0.8, 1.0, wet_here));
 	// Single-layer cloth shows both sides (capes, open hems): light the back
 	// faces from their own side.
 	if (!FRONT_FACING) {
@@ -1254,7 +1261,7 @@ void PhysXSkinnedCloth3D::_advance(double p_delta) {
 	// Wet: the fabric weighs (1 + water_capacity w) as much, so the same push (extra_acceleration: wind, force
 	// fields) moves it less; the water film holds it to the body (a slight drive toward the skinned pose, more
 	// friction on the colliders) and damps its swing.
-	const float w = wet.wetness;
+	const float w = wet.effective();
 	SkinnedClothSolver::Settings s;
 	s.stiffness = stiffness;
 	s.damping = 1.0f - (1.0f - damping) * (1.0f - 0.3f * w);
@@ -1476,6 +1483,11 @@ void PhysXSkinnedCloth3D::_update_wetness(float p_delta) {
 	if (copy_material.is_valid() && (Math::abs(wet.wetness - wet_applied) > 0.01f || (wet.wetness == 0.0f && wet_applied != 0.0f))) {
 		copy_material->set_shader_parameter("cloth_wetness", wet.wetness);
 		wet_applied = wet.wetness;
+	}
+	if (copy_material.is_valid() && (wet.wade_wet > 0.0f || wade_applied > 0.0f)) {
+		copy_material->set_shader_parameter("cloth_wade_line", wet.wade_line);
+		copy_material->set_shader_parameter("cloth_wade_wet", wet.wade_wet);
+		wade_applied = wet.wade_wet;
 	}
 }
 
