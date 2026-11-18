@@ -819,6 +819,45 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 	}
 }
 
+// What shows of one plant of the small ground presets (m), for the pixel reach (vegetation_detail.h;
+// docs/ideas/ground-detail-vegetation.md): a fallen leaf's or a twig's length, a moss cushion's or a
+// rosette's width, a seedling's height; 0 for the rest, which keep their hand-set range.
+static float _preset_detail_size(PlantGenerator::Preset p_preset) {
+	using P = PlantGenerator;
+	switch (p_preset) {
+		case P::PRESET_LEAF_LITTER:
+			return 0.1f;
+		case P::PRESET_NEEDLE_LITTER:
+			return 0.05f;
+		case P::PRESET_TWIGS:
+			return 0.12f;
+		case P::PRESET_MOSS:
+		case P::PRESET_RIVER_MOSS:
+		case P::PRESET_SPHAGNUM:
+			return 0.06f;
+		case P::PRESET_FEATHER_MOSS:
+			return 0.08f;
+		case P::PRESET_LIVERWORT:
+		case P::PRESET_STONECROP:
+		case P::PRESET_SUNDEW:
+		case P::PRESET_PURPLE_SAXIFRAGE:
+			return 0.04f;
+		case P::PRESET_SAXIFRAGE:
+		case P::PRESET_MOSS_CAMPION:
+			return 0.05f;
+		case P::PRESET_CLOVER:
+		case P::PRESET_THYME:
+			return 0.06f;
+		case P::PRESET_WOOD_SORREL:
+		case P::PRESET_VIOLET:
+			return 0.07f;
+		case P::PRESET_SEEDLING:
+			return 0.15f;
+		default:
+			return 0.0f;
+	}
+}
+
 void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
 	if (p_species.is_null()) {
 		return;
@@ -827,6 +866,9 @@ void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset
 	PlantSpecies *sp = Object::cast_to<PlantSpecies>(p_species.ptr());
 	if (sp && sp->get_trample_resistance() <= 0.0f) {
 		sp->set_trample_resistance(get_trample_resistance(p_preset));
+	}
+	if (sp && sp->get_detail_size() <= 0.0f) {
+		sp->set_detail_size(_preset_detail_size(p_preset));
 	}
 	const float pollen = get_pollen_amount(p_preset);
 	if (pollen > 0.0f) {

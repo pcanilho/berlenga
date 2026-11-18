@@ -186,6 +186,7 @@ private:
 	// Placement, split so tiles can be placed on worker threads (docs/ideas/vegetation-lod-streaming.md).
 	struct PlaceSpecies {
 		Ref<PlantSpecies> sp;
+		float range = 0.0f; // The range it is drawn to (_species_range()).
 		LocalVector<Ref<Mesh>> meshes;
 		LocalVector<Ref<Mesh>> near_meshes;
 		Pattern pattern;
@@ -266,6 +267,7 @@ private:
 	};
 	void _publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists);
 	bool _make_setup(PlaceSetup &r_setup);
+	float _species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const;
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
@@ -300,6 +302,12 @@ private:
 	// a voxel shell per tile and species, from the range out to far_volume_range.
 	bool far_volume = true;
 	float far_volume_range = 150.0f;
+	// Small species (PlantSpecies.detail_size > 0) drawn out to where they are still detail_pixels tall
+	// (vegetation_detail.h; docs/ideas/ground-detail-vegetation.md).
+	bool detail_reach = true;
+	float detail_pixels = 3.0f;
+	int detail_reference_height = 0; // px; 0: the viewport's own height.
+	float detail_max_range = 40.0f;
 	float far_volume_cell = 0.3f;
 	Ref<StandardMaterial3D> far_volume_material;
 	Ref<ArrayMesh> _build_far_volume(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species) const;
@@ -529,6 +537,17 @@ public:
 	bool is_far_volume() const { return far_volume; }
 	void set_far_volume_range(float p_range) { far_volume_range = MAX(p_range, 0.0f); }
 	float get_far_volume_range() const { return far_volume_range; }
+	void set_detail_reach(bool p_enabled) { detail_reach = p_enabled; }
+	bool get_detail_reach() const { return detail_reach; }
+	void set_detail_pixels(float p_pixels) { detail_pixels = MAX(p_pixels, 0.25f); }
+	float get_detail_pixels() const { return detail_pixels; }
+	void set_detail_reference_height(int p_height) { detail_reference_height = MAX(p_height, 0); }
+	int get_detail_reference_height() const { return detail_reference_height; }
+	void set_detail_max_range(float p_range) { detail_max_range = MAX(p_range, 0.0f); }
+	float get_detail_max_range() const { return detail_max_range; }
+	// The range a species is drawn to: its visibility_range, or for a small species the pixel reach of its
+	// detail_size when that is further (up to detail_max_range).
+	float get_species_range(int p_species) const;
 	void set_far_volume_cell(float p_cell) { far_volume_cell = CLAMP(p_cell, 0.05f, 4.0f); }
 	float get_far_volume_cell() const { return far_volume_cell; }
 	float get_cover_cell() const { return cover_cell; }

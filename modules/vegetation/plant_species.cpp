@@ -306,6 +306,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sward_shade"), &PlantSpecies::get_sward_shade);
 	ClassDB::bind_method(D_METHOD("set_trample_resistance", "passes"), &PlantSpecies::set_trample_resistance);
 	ClassDB::bind_method(D_METHOD("get_trample_resistance"), &PlantSpecies::get_trample_resistance);
+	ClassDB::bind_method(D_METHOD("set_detail_size", "size"), &PlantSpecies::set_detail_size);
+	ClassDB::bind_method(D_METHOD("get_detail_size"), &PlantSpecies::get_detail_size);
 	ClassDB::bind_method(D_METHOD("trample_cover", "passes"), &PlantSpecies::trample_cover);
 	ClassDB::bind_method(D_METHOD("trample_scale", "passes"), &PlantSpecies::trample_scale);
 	ClassDB::bind_method(D_METHOD("get_patch_depth", "position"), &PlantSpecies::get_patch_depth_at);
@@ -388,6 +390,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "footprint", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m"), "set_footprint", "get_footprint");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sward_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sward_shade", "get_sward_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_resistance", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:passes/yr"), "set_trample_resistance", "get_trample_resistance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_size", PROPERTY_HINT_RANGE, "0,1,0.005,or_greater,suffix:m"), "set_detail_size", "get_detail_size");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "litter_color"), "set_litter_color", "get_litter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_foot", PROPERTY_HINT_RANGE, "0,8,0.1"), "set_rock_foot", "get_rock_foot");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stone_gap", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_stone_gap", "get_stone_gap");

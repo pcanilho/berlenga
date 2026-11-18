@@ -85,6 +85,7 @@ private:
 	float footprint = 0.5f;
 	float sward_shade = 0.0f; // How much of the grass a stand of it shades out under it (bracken, bramble).
 	float trample_resistance = 0.0f; // Passes a year on a worn path that halve its cover (Cole 1995); 0: not trampled.
+	float detail_size = 0.0f; // m; > 0: a small item whose range the field takes from its pixel reach (vegetation_detail.h).
 public:
 	// Ground litter colours for undergrowth (linear): dead bracken fronds, sRGB about (150, 100, 60);
 	// bramble's leaf litter over soil, sRGB about (115, 92, 64), not covering all of it.
@@ -242,6 +243,8 @@ public:
 	float get_sward_shade() const { return sward_shade; }
 	void set_trample_resistance(float p_passes) { trample_resistance = MAX(p_passes, 0.0f); }
 	float get_trample_resistance() const { return trample_resistance; }
+	void set_detail_size(float p_size) { detail_size = MAX(p_size, 0.0f); }
+	float get_detail_size() const { return detail_size; }
 	// Trampling (Cole 1995): cover falls along a log-logistic curve of the passes (slope 2), halved
 	// at trample_resistance passes a year and near bare at ten times that; the plants left are shorter and flatter, halfway to their
 	// trodden height (0.45) at the same passes.
