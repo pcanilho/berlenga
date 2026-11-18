@@ -177,7 +177,7 @@ private:
 	// The detail layers' radii are set from the camera (_update_detail_radii) while ground_detail is on.
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0, 20.0, 10.0, 5.0 };
 	// Ground detail (docs/ideas/ground-detail.md): opt-in, an experiment.
-	bool ground_detail = false;
+	bool ground_detail = true;
 	real_t ground_detail_pixels = 3.0; // a class is drawn out to where its mean stone is this many pixels tall
 	int ground_detail_reference_height = 0; // px; 0: the viewport's own height
 	real_t ground_detail_max_radius = 40.0; // m
@@ -193,6 +193,37 @@ private:
 		float r;
 	};
 	void _detail_seeds(Layer p_layer, const Rect2 &p_rect, LocalVector<DetailSeed> &r_seeds) const;
+	// Ground detail cells are placed on worker threads (docs/ideas/ground-detail.md, "Stage 2"): the main thread
+	// snapshots what the placement reads (the shape libraries and the coarser stones the grains rest against), a
+	// worker places the grains and packs each shape's MultiMesh records, and the main thread adds the result.
+	struct DetailGroup {
+		uint32_t library = 0;
+		int variant = 0;
+		Vector<float> buffer; // MultiMesh records: 3x4 transform, custom data
+		LocalVector<Transform3D> xforms;
+		LocalVector<Color> custom;
+		LocalVector<real_t> reach;
+	};
+	struct DetailJob {
+		RockField3D *field = nullptr;
+		Vector3i key;
+		TerrainGenerator3D *gen = nullptr;
+		HashMap<uint32_t, Library *> libs;
+		LocalVector<DetailSeed> seeds;
+		LocalVector<DetailGroup> groups;
+		int stones = 0;
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+	};
+	HashMap<Vector3i, DetailJob *> detail_jobs;
+	bool detail_threads = true;
+	void _detail_prepare(DetailJob &r_job);
+	void _detail_compute(DetailJob &r_job);
+	static void _detail_job(void *p_job);
+	void _detail_commit(DetailJob &r_job);
+	void _detail_finish(bool p_wait, real_t p_budget_msec);
+	void _detail_cancel();
+	Color _stone_custom(const TerrainGenerator3D *p_gen, const Stone &p_stone, const Vector3 &p_axes, RandomPCG &r_rng) const;
+	MultiMeshInstance3D *_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin);
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
 	real_t river_min_area = 2.0e5;
 	int max_stones_per_cell = 20000;
@@ -220,6 +251,7 @@ private:
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;
+	double last_detail_msec = 0.0; // the main thread's share of the ground detail in the last streaming update
 	double last_library_msec = 0.0;
 	int stone_count = 0;
 	HashMap<uint64_t, MultiMeshInstance3D *> close_instances; // (library << 16 | variant)
@@ -357,7 +389,8 @@ private:
 	void _update_dust_node();
 
 private:
-	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones);
+	// p_libs and p_seeds: the ground detail's snapshot (DetailJob) when placing off the main thread.
+	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs = nullptr, const LocalVector<DetailSeed> *p_seeds = nullptr);
 	void _rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const;
 	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, bool p_cliff = false);
 	void _build_cell(const Vector3i &p_key);
@@ -454,6 +487,10 @@ public:
 	uint32_t get_collision_layer() const { return collision_layer; }
 	void set_build_budget_msec(real_t p_msec) { build_budget_msec = MAX(p_msec, real_t(0.1)); }
 	real_t get_build_budget_msec() const { return build_budget_msec; }
+	void set_ground_detail_threads(bool p_enabled);
+	bool is_ground_detail_threads() const { return detail_threads; }
+	int get_ground_detail_pending() const { return int(detail_jobs.size()); }
+	double get_last_detail_msec() const { return last_detail_msec; }
 	void set_close_up_enabled(bool p_enabled);
 	bool is_close_up_enabled() const { return close_up_enabled; }
 	void set_close_up_radius(real_t p_radius) { close_up_radius = MAX(p_radius, real_t(0.0)); close_dirty = true; }

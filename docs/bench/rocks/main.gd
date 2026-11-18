@@ -46,8 +46,12 @@ extends Node3D
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
 #   --only-layer          with --world: only the view's layer is placed
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
-#   --ground-detail       with --world: RockField3D.ground_detail (stones of 1 to 8 cm round the camera as geometry);
-#                         --detail-ref=px image height the reach is set for (1080), --detail-pixels=n (3)
+#   --no-ground-detail    with --world: RockField3D.ground_detail off (on by default: stones of 1 to 8 cm round the
+#                         camera as geometry; off for --test); --detail-ref=px image height the reach is set for (1080),
+#                         --detail-pixels=n (3);
+#                         --detail-sync places the detail cells on the main thread (ground_detail_threads off)
+#   --walk=m              with --world: stream while the camera walks m metres forward (--walk-step=m a frame, 0.1),
+#                         then print the main thread's streaming time per frame (mean, 95th percentile, worst)
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
@@ -500,13 +504,14 @@ func _world() -> void:
 				rocks.set_layer_enabled(i, LAYERS[i] == view)
 		if args.has("stone-density"):
 			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
-		# --ground-detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
+		# Ground detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
 		# --detail-ref=px the image height the reach is set for (0: the window's), --detail-pixels=n the smallest drawn.
-		if args.has("ground-detail"):
+		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
+		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
 			if args.has("detail-pixels"):
 				rocks.ground_detail_pixels = float(args["detail-pixels"])
-			rocks.ground_detail = true
+			rocks.ground_detail_threads = not args.has("detail-sync")
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
@@ -1848,6 +1853,38 @@ func _test() -> void:
 			rocks.live_rockfall = false
 			rocks.rockfall.disconnect(cb)
 			check(live[0] > 0, "live_rockfall: %d falls by themselves in 6 frames" % live[0])
+	# 6. Ground detail (on by default; off above for speed): every size class on the shingle beach, placed on workers
+	# while streaming as on the main thread.
+	var shore_at := _densest(RockField3D.LAYER_SHORE)
+	cam.position = shore_at + Vector3(0, 1.7, 3)
+	cam.look_at(shore_at)
+	rocks.collision_enabled = false
+	rocks.ground_detail_reference_height = 1080
+	rocks.ground_detail = true
+	rocks.ground_detail_threads = false
+	rocks.build_area(Rect2(shore_at.x - 40, shore_at.z - 40, 80, 80))
+	var sync_counts := []
+	for l in [RockField3D.LAYER_DETAIL_PEBBLE, RockField3D.LAYER_DETAIL_GRAVEL, RockField3D.LAYER_DETAIL_FINE]:
+		sync_counts.append(rocks.get_ground_detail_count(l))
+	check(sync_counts.min() > 0, "ground detail on the beach: pebbles %d, gravel %d, fine gravel %d" % sync_counts)
+	rocks.rebuild()
+	rocks.ground_detail_threads = true
+	rocks.streaming = true
+	var frames := 0
+	var still := 0
+	var last := -1
+	while frames < 400 and still < 10:
+		await get_tree().process_frame
+		frames += 1
+		var n := rocks.get_ground_detail_count()
+		still = still + 1 if n == last and n > 0 and rocks.get_ground_detail_pending() == 0 else 0
+		last = n
+	rocks.streaming = false
+	var thr_counts := []
+	for l in [RockField3D.LAYER_DETAIL_PEBBLE, RockField3D.LAYER_DETAIL_GRAVEL, RockField3D.LAYER_DETAIL_FINE]:
+		thr_counts.append(rocks.get_ground_detail_count(l))
+	check(thr_counts.min() > 0, "ground detail streamed on workers in %d frames: pebbles %d, gravel %d, fine gravel %d" % ([frames] + thr_counts))
+	rocks.ground_detail = false
 
 
 # What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.
@@ -1865,8 +1902,53 @@ func _mesh_bytes(meshes: Dictionary) -> int:
 	return bytes
 
 
+# --walk=m: the camera walks forward with the field streaming; the main thread's streaming time per frame.
+func _walk() -> void:
+	var cam := get_viewport().get_camera_3d()
+	var dist := float(args["walk"])
+	var step := float(args.get("walk-step", "0.1"))
+	var dir := -cam.global_transform.basis.z
+	dir.y = 0.0
+	dir = dir.normalized()
+	rocks.streaming = true
+	# The first updates fill the coarse layers' full streaming radius (build_area covered less): not walking cost.
+	var warm := 0
+	while warm < 300 and (warm < 10 or rocks.get_last_build_msec() > 2.0 * rocks.build_budget_msec):
+		await get_tree().process_frame
+		warm += 1
+	var ms: Array[float] = []
+	var dms: Array[float] = []
+	var walked := 0.0
+	while walked < dist:
+		cam.global_position += dir * step
+		walked += step
+		await get_tree().process_frame
+		ms.append(rocks.get_last_build_msec())
+		dms.append(rocks.get_last_detail_msec())
+	# Let the last cells land.
+	var settle := 0
+	while rocks.get_ground_detail_pending() > 0 and settle < 600:
+		await get_tree().process_frame
+		ms.append(rocks.get_last_build_msec())
+		dms.append(rocks.get_last_detail_msec())
+		settle += 1
+	rocks.streaming = false
+	var stats := func(a: Array[float]) -> String:
+		var s := a.duplicate()
+		s.sort()
+		var total := 0.0
+		for v in a:
+			total += v
+		return "mean %.2f ms, p95 %.2f ms, worst %.2f ms" % [total / a.size(), s[int(s.size() * 0.95)], s[-1]]
+	print("walk: %.1f m in %d frames after %d warm-up (%s): streaming %s; ground detail %s; %d stones" % [
+		dist, ms.size(), warm, "detail on the main thread" if not rocks.ground_detail_threads else "detail on workers",
+		stats.call(ms), stats.call(dms), rocks.get_stone_count()])
+
+
 func _render_later() -> void:
 	await get_tree().process_frame
+	if args.has("walk") and rocks:
+		await _walk()
 	while breaking:
 		await get_tree().process_frame
 	while args.has("plants") and rocks and not plants_ready:
