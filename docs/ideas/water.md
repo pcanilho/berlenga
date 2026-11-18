@@ -3459,3 +3459,18 @@ or sky fallback. Here the fallback is the dark around: the water is underground,
   march cannot meet the surface it starts from.
 - PhysXRiver3D now keeps clear water with `raster_reflections` off.
 - Cost: up to 29 depth reads per water pixel, only on sky-less water.
+
+## Crisp river surface (18 Nov, Paulo: "like the ocean ... crispy foam, ripples ... too smooth")
+
+The river shader gets the open sea's techniques (see "Crisp foam on the open sea" and "Ocean detail"):
+- `foam_crisp` (1): the white water's soft amount is torn by the sea's foam structure (holes at three scales,
+  strands along their borders, rafts, bubble grain), its edge stepped against a ragged threshold and again at
+  the pixel's own scale; a third of the soft amount stays as milky haze. `foam_relief` (0.5) and
+  `foam_grain_tilt` (0.15) tilt the normal at the rims and over the bubbles; foam damps the ripples under it.
+  Not rotated to the local current: turning world coordinates by an angle that varies over the water combs
+  the pattern into hairlines wherever the current turns (seen on the creek bench).
+- `ripple_detail` (1): three capillary octaves (about 5, 2.3 and 1 cm) under the ripples, each faded where
+  finer than the pixel, the faded slope variance added to the raster GGX alpha squared (Bruneton, Neyret and
+  Holzschuch 2010). The path tracer draws every octave.
+Shader uniforms; benches switch them off with `--water=foam_crisp:0.0 --water=ripple_detail:0.0`.
+Shots: /mnt/project-files/fork/water/river-crisp/ (creek bench, raster and PT, 100% crops).
