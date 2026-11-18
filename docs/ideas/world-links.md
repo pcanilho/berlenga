@@ -157,6 +157,12 @@ copy of shared state is listed under "Private copies" until it moves onto the so
   much colder than water lies over it (sea smoke).
 - Fire on the ground: the fire grid's heat dries the surface film, melts snow (energy balance), steams where it
   meets water; fuel moisture starts from the surface film.
-- Heat shimmer: refraction through the gas's temperature gradient.
+- Heat shimmer: hot air's refractive index falls about 1e-6 per kelvin (Gladstone-Dale, n - 1 = 2.9e-4 at 15 C
+  scaling with density), so light bends along the temperature gradient. Raster engines fake it as a screen-space
+  offset over a hot region (UE's refraction/distortion pass, Frostbite's heat haze); the physical version bends each
+  ray through the gas's temperature field (as background-oriented schlieren measures it). For the fork: Flow already
+  carries temperature; under path tracing march the ray through the Flow grid and bend it by the gradient of n,
+  and in raster offset the scene colour by the same gradient integrated along the view ray. Waiting on Paulo's pick
+  (card, 18 Nov).
 - One contact group: every system reads `world_contact` as well as its own group; vehicles, characters and PhysX
   bodies join it.
