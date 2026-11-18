@@ -131,7 +131,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 ## Shore
 
-- **Shore waves** (`shore_waves`; `open_sea_beyond`, `terrain_source`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast.
+- **Shore waves** (`shore_waves`; `open_sea_beyond`, `terrain_source`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill and open into lace foam.
 
   ![Waves breaking on a beach, raster](media/shore-waves.gif)
 
