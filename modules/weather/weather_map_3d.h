@@ -130,6 +130,7 @@ private:
 	bool cloud_evolution = true;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
+	float cloud_shear = 1.0f; // scale on the wind shear's lean of the cloud tops (0: upright)
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -499,6 +500,8 @@ public:
 	float get_cloud_lifetime() const { return cloud_lifetime; }
 	void set_cloud_churn(float p_speed);
 	float get_cloud_churn() const { return cloud_churn; }
+	void set_cloud_shear(float p_scale);
+	float get_cloud_shear() const { return cloud_shear; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
