@@ -1201,6 +1201,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud on legs",
+   "settings": [
+    "GroundLegMud3D"
+   ],
+   "note": "",
+   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Standing water",
    "settings": [
     "GroundSurface3D.standing_water"
@@ -2630,6 +2641,17 @@
    ],
    "note": "",
    "what": "many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Field hedges",
+   "settings": [
+    "SHRUB_HEDGE"
+   ],
+   "note": "",
+   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

@@ -2035,7 +2035,38 @@ float vmud_wheel(vec3 p_p, vec4 p_w, float p_fill, float p_spray) {
 	return max(tyre, spray);
 }
 // The accumulation level at p_p (0 clean, 1 caked). p_body: chassis bottom (y), mud line above it (m).
+// A leg (mud stage 4e), p_p in its shin's frame (x across, y up from the sole, z forward; see vmud_at()); p_leg: mud
+// line above the sole (m), shin length (m), shin radius (m), flecks (0..1). The boot below the ankle reaches forward
+// to the toe.
+float vmud_leg(vec3 p_p, vec4 p_leg) {
+	if (p_leg.x <= 0.0 && p_leg.w <= 0.0) {
+		return 0.0;
+	}
+	float up = p_p.y;
+	float boot = 1.0 - smoothstep(0.1, 0.16, up);
+	// Within the shin (a little proud of it), or within the boot's footprint, reaching 22 cm forward to the toe.
+	vec2 q = vec2(p_p.x, p_p.z - boot * clamp(p_p.z, 0.0, 0.14));
+	float r = mix(1.3 * p_leg.z, 0.09, boot);
+	float on = (1.0 - smoothstep(r, 1.4 * r, length(q))) * step(-0.06, up) * (1.0 - smoothstep(p_leg.y, p_leg.y + 0.04, up));
+	if (on <= 0.0) {
+		return 0.0;
+	}
+	// The line ragged round the leg and higher at the front (the toe throws it up the shin).
+	float line = p_leg.x * (0.7 + 0.5 * vmud_noise(vec3(p_p.x * 30.0, 0.0, p_p.z * 30.0) + 61.0)) * (1.0 + 0.25 * smoothstep(-0.02, 0.05, p_p.z));
+	float lvl = p_leg.x > 0.0 ? 1.0 - clamp((up - line) / (0.03 + 0.3 * p_leg.x), 0.0, 1.0) : 0.0;
+	// Flecks thrown up the shin by the stride, thinning upwards.
+	float fleck = p_leg.w * (1.0 - smoothstep(0.0, 0.4, up - line)) * smoothstep(0.72, 0.8, vmud_noise(p_p * 45.0 + 7.0));
+	return on * max(lvl, fleck);
+}
+float vmud_seg(vec3 p_p, vec3 p_a, vec3 p_b) {
+	vec3 ab = p_b - p_a;
+	float t = clamp(dot(p_p - p_a, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
+	return length(p_p - p_a - ab * t);
+}
 float vmud_level(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
+	if (p_body.w > 0.5) {
+		return vmud_leg(p_p, p_fill);
+	}
 	float lvl = 0.0;
 	if (p_body.y > 0.0) {
 		// Caked below the line, flecked above it, the line's edge ragged.
@@ -2181,6 +2212,26 @@ float vmud_all(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill
 // is filtered over the footprint p_fw; the gradient fades out over a footprint too wide to hold the lumps.
 vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat, out vec2 r_tone) {
 	r_tone = vec2(1.0, 0.0);
+	bool legs = p_body.w > 0.5;
+	if (legs) {
+		// Legs (mud stage 4e): p_w0/p_w1 the left sole and knee (w: its mud line, its flecks), p_w2/p_w3 the right,
+		// p_frame0.xyz the way the character faces, p_fill.x the shin radius. The nearer leg's own frame: along the
+		// shin, across it, towards the toe, so the mud moves with the bones through the stride.
+		bool left = vmud_seg(p_world, p_w0.xyz, p_w1.xyz) <= vmud_seg(p_world, p_w2.xyz, p_w3.xyz);
+		vec4 sole = left ? p_w0 : p_w2;
+		vec4 knee = left ? p_w1 : p_w3;
+		vec3 ax = knee.xyz - sole.xyz;
+		float len = length(ax);
+		ax = len > 1e-4 ? ax / len : vec3(0.0, 1.0, 0.0);
+		vec3 across = cross(ax, p_frame0.xyz);
+		across = dot(across, across) > 1e-6 ? normalize(across) : normalize(cross(ax, abs(ax.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0)));
+		vec3 front = cross(across, ax);
+		p_fill = vec4(sole.w, len, p_fill.x, knee.w);
+		p_frame0 = vec4(across, -dot(across, sole.xyz));
+		p_frame1 = vec4(ax, -dot(ax, sole.xyz));
+		p_frame2 = vec4(front, -dot(front, sole.xyz));
+		p_splat = vec4(0.0);
+	}
 	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
 	float lvl = vmud_all(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat);
 	if (lvl <= 0.0) {
@@ -2189,7 +2240,7 @@ vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_fram
 	float fw = max(p_fw, 1e-4);
 	// The differences' step follows the footprint, fine enough near to hold the grit.
 	float e = clamp(1.5 * fw, 0.0008, 0.003);
-	vec3 flow = vmud_flow(p, p_w0, p_w1, p_w2, p_w3);
+	vec3 flow = legs ? vec3(0.0, -1.0, 0.0) : vmud_flow(p, p_w0, p_w1, p_w2, p_w3);
 	float s = vmud_streaked(p, flow, fw);
 	float f = s + 1.2 * lvl;
 	vec3 px = p + vec3(e, 0.0, 0.0);

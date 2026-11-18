@@ -767,12 +767,12 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_SHED_RATIO] = 0.04f;
 			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
 			p[PARAM_ROOT_FLARE] = 0.7f;
-			p[PARAM_DEAD_BRANCH_KEEP] = 0.03f; // Worked trees are pruned of dead wood.
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f; // Worked trees are pruned of dead wood.
 			p[PARAM_LEAF_SIZE] = 0.07f; // 3-7 cm.
 			p[PARAM_LEAF_WIDTH] = 0.45f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 34;
 			p[PARAM_LEAF_YEARS] = 4; // Leaves kept up to two years, on short shoots of the last four.
-			bark_color = Color(0.48f, 0.47f, 0.45f); // Virgin cork: pale grey.
+			bark_color = Color(0.36f, 0.34f, 0.31f); // Virgin cork: grey-buff, darker in the fissures.
 			leaf_color = Color(0.05f, 0.13f, 0.05f); // Dark, glossy above; grey felt below.
 			break;
 		case PRESET_HOLM_OAK: // Quercus ilex (trees.md 5ab): evergreen, a short bole and a dense, dark,
@@ -1416,15 +1416,17 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.lift = 0.55f;
 		r.side = 0.5f;
 	} else if (preset == PRESET_CORK_OAK && forest_shade <= 0.0f) {
-		// A bole of 2-4 m, then three or four thick limbs (Natividade 1950).
+		// A bole of 2-4 m, then three or four thick, sinuous limbs spreading wide (Natividade
+		// 1950). One split only: a second gave sixteen limbs, a broom of thin pale stems (docs,
+		// 18 Nov); their side branches stay under them.
 		r.fork_height = 3.0f;
 		r.stems = 4;
 		r.fork_every = 10;
-		r.levels = 2;
-		r.angle = 45.0f;
-		r.gravitropism = 0.06f;
+		r.levels = 1;
+		r.angle = 55.0f;
+		r.gravitropism = 0.02f;
 		r.lift = 0.22f; // Pruned up to the cork harvest height in the montado.
-		r.side = 0.7f;
+		r.side = 0.35f;
 	} else if (preset == PRESET_MARITIME_PINE && forest_shade <= 0.0f) {
 		// A strong leader to about 16 m, then it loses its dominance and the top breaks into a
 		// few stems: the mature crown, irregular and rounded, sits in the top third over a long
@@ -3817,7 +3819,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
-		{ 5, 3, 0.35f, 0.045f, 0.003f, 0.68f, 0.14f }, // Cork: long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
+		{ 3, 2, 0.35f, 0.02f, 0.003f, 0.8f, 0.14f }, // Cork: long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3844,9 +3846,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 2.5f : 1.0f));
 				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4, 4, 2, salt + 21u);
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4, 4, 2, salt + 27u);
-				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.35f : 0.0f)));
+				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.45f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_CORK ? 0.5f : -1.0f), p_kind == BARK_PINEA ? 1.8f : 1.0f);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_CORK ? 0.75f : -1.0f), p_kind == BARK_PINEA ? 1.8f : 1.0f);
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
@@ -3869,8 +3871,21 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// wide (5 by 3 to a tile, wide soft valleys between), half the walls up and down never split, so ridges
 					// run on for two or three cells; a 3 by 2 grid read as a honeycomb of pointed
 					// scales and noise zero lines as loops (docs, 18 Nov). Soft, rounded shoulders.
-					open = Math::smoothstep(0.0f, 1.0f, open);
-					plate = Math::sqrt(open) * (0.88f + 0.24f * (lumps + 0.5f));
+					// Swollen pillows (docs, 18 Nov: sharp facets and knife-cut slits read wrong): the
+					// whole cell is the ridge's rounded profile, rising from a soft, shallow valley
+					// floor with no flat top and no wall.
+					// From the wall distance with only a coarse wobble: the fine ragged-rim noise, spread over
+					// the whole pillow, printed its value-noise grid as a lattice of small diamonds.
+					float o = CLAMP((c.edge + 0.08f * bark_fbm(u, v, 6, 4, 2, salt + 85u)) / MAX(crack_w * 1.6f, 1e-4f), 0.0f, 1.0f);
+					// Long, wandering fissures up the stem cut across the network, so the blocks
+					// are of every size and the pattern does not read as a lattice of scales.
+					const float lng = bark_fbm(wu, wv, 3, 1, 2, salt + 51u);
+					o = MIN(o, Math::lerp(0.15f, 1.0f, Math::smoothstep(0.0f, 0.07f, Math::abs(lng))));
+					open = Math::smoothstep(0.0f, 1.0f, o);
+					// Spongy: small pits and bumps over the ridge (the cork's lenticel channels and
+					// growth flaws), not a smooth skin.
+					const float pits = bark_fbm(u, v, 14, 9, 3, salt + 59u);
+					plate = Math::pow(open, 0.65f) * (0.86f + 0.24f * (lumps + 0.5f) + 0.05f * pits);
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
 					// and splitting like an oak's interlaced ridges. The cells only add the shallower
@@ -3896,7 +3911,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				a = Color(shade, shade, shade);
 				if (p_kind == BARK_CORK) {
 					// Cork's fissures are warm red-brown under the grey-buff, weathered ridges.
-					a = Color(1.15f, 0.82f, 0.62f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.0f, 0.25f, open)) * shade;
+					a = Color(1.08f, 0.88f, 0.72f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.0f, 0.25f, open)) * shade;
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -4128,6 +4143,41 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			rw[k] = CLAMP(r, 0.0f, 1.0f);
 		}
 	}
+	if (p_kind == BARK_CORK) {
+		// A pillow shaped from the distance to its cell's straight walls has sharp creases along
+		// the cell's medial axis: a faceted pyramid (docs, 18 Nov: faceted flakes, a reptile's
+		// scales). Blurring the relief over about a centimetre rounds them into swollen ridges;
+		// the spongy pitting goes back on top, unblurred.
+		LocalVector<float> tmp;
+		tmp.resize(N * N);
+		const int R = 12;
+		for (int pass = 0; pass < 3; pass++) {
+			for (int y = 0; y < N; y++) {
+				for (int x = 0; x < N; x++) {
+					float sum = 0.0f;
+					for (int k = -R; k <= R; k++) {
+						sum += hw[y * N + (x + k + N) % N];
+					}
+					tmp[y * N + x] = sum / (2 * R + 1);
+				}
+			}
+			for (int y = 0; y < N; y++) {
+				for (int x = 0; x < N; x++) {
+					float sum = 0.0f;
+					for (int k = -R; k <= R; k++) {
+						sum += tmp[((y + k + N) % N) * N + x];
+					}
+					hw[y * N + x] = sum / (2 * R + 1);
+				}
+			}
+		}
+		for (int y = 0; y < N; y++) {
+			for (int x = 0; x < N; x++) {
+				const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
+				hw[y * N + x] += 0.0012f * bark_fbm(u, v, 20, 14, 3, salt + 171u);
+			}
+		}
+	}
 	Vector<uint8_t> abytes, nbytes, rbytes;
 	abytes.resize(N * N * 3);
 	nbytes.resize(N * N * 3);
@@ -4184,6 +4234,36 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	set.albedo = ImageTexture::create_from_image(ai);
 	set.normal = ImageTexture::create_from_image(ni);
 	set.roughness = ImageTexture::create_from_image(ri);
+	if (p_kind == BARK_CORK) {
+		// Cork's pillows are wider than the relief tube's grid, but their sampled heights still
+		// pick up the pits and the ridges' rims and fold the tube into sharp facets (docs, 18 Nov:
+		// faceted flakes and knife-cut slits). The tube takes a prefiltered map, about the grid's
+		// size; the normal map keeps the fine relief.
+		float *H = reinterpret_cast<float *>(hbytes.ptrw());
+		LocalVector<float> tmp;
+		tmp.resize(N * N);
+		const int R = 10;
+		for (int pass = 0; pass < 2; pass++) {
+			for (int y = 0; y < N; y++) {
+				for (int x = 0; x < N; x++) {
+					float sum = 0.0f;
+					for (int k = -R; k <= R; k++) {
+						sum += H[y * N + (x + k + N) % N];
+					}
+					tmp[y * N + x] = sum / (2 * R + 1);
+				}
+			}
+			for (int y = 0; y < N; y++) {
+				for (int x = 0; x < N; x++) {
+					float sum = 0.0f;
+					for (int k = -R; k <= R; k++) {
+						sum += tmp[((y + k + N) % N) * N + x];
+					}
+					H[y * N + x] = sum / (2 * R + 1);
+				}
+			}
+		}
+	}
 	set.height = Image::create_from_data(N, N, false, Image::FORMAT_RF, hbytes);
 	// What the displaced near tube adds over a smooth one (trees.md 2g). The relief tube samples
 	// this map on a grid about 2.5 cm around and 5 cm along (32 x 64 texels); bilinear between
@@ -4219,6 +4299,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		// long ridges): the longest spacing whose error stays within half a millimetre of 5 cm.
 		set.relief_along = 0.05f;
 		for (int kv : { 96, 128 }) {
+			if (p_kind == BARK_CORK) {
+				break; // Long rings over the cork's pillows read as diamond facets.
+			}
 			if (grid_error(32, kv) <= grid + 0.0005f) {
 				set.relief_along = kv * texel;
 			}

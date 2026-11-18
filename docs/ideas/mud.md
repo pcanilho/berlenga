@@ -553,6 +553,50 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   frame: the vertex's rest position (baked into CUSTOM0 at import), read by raster and by the path tracer's captured
   vertices, so the mud does not slide as the legs move. Open question: the path tracer reads per-vertex custom data
   only for some meshes (a known limit on MultiMeshes), to check before building.
+- **Plan (4e).** Instead of rest positions (a mesh attribute every character would need, and per-vertex data the
+  tracer reads only for some meshes), the mud is laid in each shin's own bone space, as skeletal decals are attached
+  to a bone (UE's skinned decals, the bone-space blood masks of fighting games): per leg the sole and knee points from
+  the skeleton make a frame (along the shin, across it towards the character's facing), the fragment is taken into
+  the nearer leg's frame, and the level is a mud line measured up the shin from the sole, ragged in that frame, with
+  flecks above it from walking speed. The frame moves with the bones, so the mud stays on the leg through the walk
+  cycle; the shader is the vehicle's Mud layer with a legs mode (mud_body.w), so raster and path tracer share it.
+  A GroundLegMud3D node on the character finds the foot and lower leg bones, raises each leg's line by how deep its
+  foot sank in mud (the field's dent and mud depth there) and splashes with speed, wets and dries it as the body
+  mud does, washes it below standing water, and feeds the uniforms of the character's meshes (Mud turned on in copies
+  of their materials). Checks: walking through mud raises the line to about the sinkage, a walk on dry ground leaves
+  none, standing in water washes it; raster vs PT of a leg mid-stride.
+- **Built (4e).** GroundLegMud3D (modules/ground) as planned, with sole and knee marker nodes as an alternative to
+  bones. A planted foot (sole within 5 cm of the surface) on sticky or muddy soil raises its line to the deeper of
+  the slurry's depth, the Bekker sinkage of a boot (40 kg on 0.03 m2) and the sole's own depth under the surface,
+  plus 2 cm; flecks follow walking speed (full at 4 m/s) times the soil's stickiness. Water over 3 cm deposits
+  nothing (held 0.5 s, as the field's read back can miss a frame while it recentres) and washes the leg below its
+  surface at the body's rate. Bench `--test=legs` (dry ground clean, 15 cm slurry coats to 17 cm, running throws
+  more flecks than walking, the Mud layer is on in legs mode with the local clay, wading 14 cm of water rinses an
+  8.7 cm line to 1.2 cm) and `--view=legs --pair` (raster and PT keep the same line, lumps and grit at 100% crop).
+  Limit: the shader's coverage is a cylinder round the shin plus a boot block 14 cm long, so very wide trousers
+  or long boots stay partly clean; a docs image needs a real rigged character.
+
+### Next round: research (18 Nov, awaiting a pick)
+
+- **Muddy splash water.** Natural water is never clear: suspended sediment both absorbs and scatters, so turbid
+  water turns brown and opaque within a few cm (USGS Water Science School, "Water color"; turbidity and total
+  suspended solids, Fondriest). Build: a suspended sediment channel in the standing water field, stirred up by
+  waders, feet and landing spray in proportion to the excess shear on the clay bed (as the body wash), carried by
+  the water flux and settling out at a Stokes rate for silt (clear in minutes). The water's look reads it as
+  Beer-Lambert absorption plus a single-scatter albedo of the local clay colour, so raster and the tracer agree
+  (the same Transmission path every water body uses; one water technique). Sheets and drops thrown carry the
+  concentration where they were taken; landing on a body they leave a thin stain splat (the 4b splat with a
+  low volume and no relief). Check: a stirred puddle browns and clears again; sheets show against the sky.
+- **Mud tracked onto firm ground.** Construction stormwater rules size tracking pads at about 15 m because a tyre
+  sheds most of its carried mud over the first few tens of metres (Minnesota PCA vehicle tracking BMPs; NCDOT
+  RP2023-13 on mud on highways); light-vehicle tyre studies on unpaved roads measure the material thrown around the
+  tyre (SAE 2024-01-5032). Build: the clogged tread (get_wheel_mud) and the leg mud lose a share each revolution
+  or step on firm ground, printed as a thin mud layer with the tread or sole pattern, decaying with distance;
+  printed mud is a mud depth in the field (so it dries and cracks as any other) or, off the field, a decal.
+- **Ruts kept across the world.** MudRunner and SnowRunner keep their deformation in the map's save; ours lives
+  in a session tile cache. Build: write touched tiles (height delta, mud depth, water, crack state; 16-bit,
+  zstd) to user:// as they leave the cache and on save, read them back when the field recentres onto them, with
+  an LRU budget. Matters most for the open-world game's scale.
 
 ### Look (any stage)
 
