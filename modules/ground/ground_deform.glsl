@@ -333,6 +333,8 @@ vec3 reduce3(float a, float b, float c) {
 // Grains leaving the field (dig, depth > 0) or landing on it (deposit, depth < 0): the set depth over the
 // disc, rim first when digging, dent first when depositing, the dent within the deepest. Exact volume except
 // where a dig reaches the deepest dent.
+float mud_print_mask(vec4 p_b, vec2 p_wp, vec2 p_pos); // below, with the sole
+
 void run_amount_stamp(Stamp s) {
 	uint t = gl_LocalInvocationIndex;
 	int n = fn();
@@ -393,7 +395,7 @@ void run_amount_stamp(Stamp s) {
 			if (ground && s.c.z >= 4.0) {
 				// Tracked mud: the film's share, the wetter of the two where it lands on another.
 				vec2 sq = mud_band_share_wet(s.c.z);
-				float laid = sq.x * cover;
+				float laid = sq.x * cover * mud_print_mask(s.b, wp, pos.xz);
 				if (st.w >= 4.0) {
 					vec2 o = mud_band_share_wet(st.w);
 					st.w = mud_band(max(o.x, laid), max(o.y, sq.y));
@@ -447,6 +449,28 @@ float sole_relief(vec2 p_local, vec2 p_half) {
 	float g = fract((q.x + 0.6 * abs(q.y)) / 0.045);
 	float groove = (1.0 - rand) * smoothstep(0.0, 0.12, g) * (1.0 - smoothstep(0.5, 0.62, g));
 	return max(0.012 * shank, 0.007 * groove);
+}
+
+// Tracked mud's print (mud round 4, GroundDeformField::mud_print_mask()): the share of a film laid round p_pos that
+// a tread or sole leaves at p_wp. p_b.x: 0 a plain disc; 1 a tyre's chevron lugs, 45 mm bars 9 cm apart across its
+// heading (p_b.y the yaw: heading (cos, -sin)), fixed on the ground so the frames of a rolling tyre agree; 2 a sole
+// (yaw p_b.y, half extents p_b.zw): what its lugs and rand bear, not the shank or grooves.
+float mud_print_mask(vec4 p_b, vec2 p_wp, vec2 p_pos) {
+	if (p_b.x < 0.5) {
+		return 1.0;
+	}
+	float cy = cos(p_b.y);
+	float sy = sin(p_b.y);
+	vec2 d = p_wp - p_pos;
+	vec2 lp = vec2(cy * d.x - sy * d.y, sy * d.x + cy * d.y);
+	if (p_b.x < 1.5) {
+		float u = dot(p_wp, vec2(cy, -sy));
+		float g = fract((u + 0.6 * abs(lp.y)) / 0.09);
+		float bar = smoothstep(0.0, 0.06, g) * (1.0 - smoothstep(0.44, 0.5, g));
+		return mix(0.15, 1.0, bar);
+	}
+	float inside = 1.0 - smoothstep(-0.003, 0.003, sole_sd(lp, p_b.zw));
+	return inside * (1.0 - smoothstep(0.002, 0.005, sole_relief(lp, p_b.zw)));
 }
 
 void run_stamp(Stamp s) {

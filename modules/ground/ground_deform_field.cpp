@@ -434,7 +434,7 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				if (track_fresh && amount_fresh >= 4.0f) {
 					// Tracked mud: the film's share, the wetter of the two where it lands on another.
 					const Vector2 sq = mud_band_share_wet(amount_fresh);
-					const float laid = sq.x * cover;
+					const float laid = sq.x * cover * mud_print_mask(amount_print, wx, wz, p_position);
 					if (fresh[i] >= 4.0f) {
 						const Vector2 o = mud_band_share_wet(fresh[i]);
 						fresh[i] = mud_band(MAX(o.x, laid), MAX(o.y, sq.y));
@@ -472,6 +472,29 @@ static float smooth01(float p_a, float p_b, float p_x) {
 	const float t = CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f);
 	return t * t * (3.0f - 2.0f * t);
 }
+float GroundDeformField::mud_print_mask(const Vector4 &p_b, float p_x, float p_z, Vector3 p_pos) {
+	// ground_deform.glsl mud_print_mask().
+	if (p_b.x < 0.5f) {
+		return 1.0f;
+	}
+	const float cy = Math::cos(p_b.y);
+	const float sy = Math::sin(p_b.y);
+	const float dx = p_x - p_pos.x;
+	const float dz = p_z - p_pos.z;
+	const float lx = cy * dx - sy * dz;
+	const float lz = sy * dx + cy * dz;
+	if (p_b.x < 1.5f) {
+		const float u = p_x * cy - p_z * sy;
+		const float v = (u + 0.6f * Math::abs(lz)) / 0.09f;
+		const float g = v - Math::floor(v);
+		const float bar = smooth01(0.0f, 0.06f, g) * (1.0f - smooth01(0.44f, 0.5f, g));
+		return Math::lerp(0.15f, 1.0f, bar);
+	}
+	const Vector2 half(p_b.z, p_b.w);
+	const float inside = 1.0f - smooth01(-0.003f, 0.003f, sole_sd(lx, lz, half));
+	return inside * (1.0f - smooth01(0.002f, 0.005f, sole_relief(lx, lz, half)));
+}
+
 float GroundDeformField::sole_sd(float p_lx, float p_lz, Vector2 p_half) {
 	float qx, qy, len, wid;
 	sole_frame(p_lx, p_lz, p_half, qx, qy, len, wid);

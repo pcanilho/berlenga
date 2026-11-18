@@ -3563,7 +3563,7 @@ void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_column
 	}
 	const float v[12] = {
 		p_position.x, p_position.y, p_position.z, p_radius,
-		0.0f, 0.0f, 0.0f, 0.0f,
+		surface->field.amount_print.x, surface->field.amount_print.y, surface->field.amount_print.z, surface->field.amount_print.w,
 		p_depth, tent ? 1.0f : 0.0f, surface->field.amount_fresh, 0.0f
 	};
 	const float settle = MAX(surface->field.press_settle, 0.0f);
@@ -3828,7 +3828,7 @@ Vector2 GroundSurface3D::get_tracked_mud_at(Vector3 p_position) const {
 	return GroundDeformField::mud_band_share_wet(f.fresh[z * n + x]);
 }
 
-float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet) {
+float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet, Vector4 p_print) {
 	if (!tracked_mud || !(p_depth > 0.0f)) {
 		return 0.0f;
 	}
@@ -3836,8 +3836,14 @@ float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_dep
 	// or sole runs clean.
 	const float before = field.amount_fresh;
 	field.amount_fresh = GroundDeformField::mud_band(CLAMP(p_depth / 0.001f, 0.1f, 1.0f), p_wet);
-	const float v = deposit(p_position, p_radius, p_depth);
+	field.amount_print = p_print;
+	near_fld.amount_print = p_print;
+	// A sole's disc is about five times the sole's own area: the relief is spread over the disc by that, the volume
+	// the sole's (the share, from the film's thickness, stays the sole's).
+	const float v = deposit(p_position, p_radius, p_print.x > 1.5f ? 0.2f * p_depth : p_depth);
 	field.amount_fresh = before;
+	field.amount_print = Vector4();
+	near_fld.amount_print = Vector4();
 	return v;
 }
 
@@ -4580,7 +4586,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume", "mud"), &GroundSurface3D::add_water, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("stir_water", "position", "radius", "mass"), &GroundSurface3D::stir_water);
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
-	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet"), &GroundSurface3D::track_mud, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &GroundSurface3D::track_mud, DEFVAL(1.0f), DEFVAL(Vector4()));
 	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
 	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
 	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);

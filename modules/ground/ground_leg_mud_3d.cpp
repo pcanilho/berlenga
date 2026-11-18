@@ -283,8 +283,9 @@ void GroundLegMud3D::_step(double p_delta) {
 				// heel and forefoot, and the boot comes cleaner (a boot sheds its mud over a dozen steps or so).
 				const Vector3 fwd = Vector3(facing.x, 0.0f, facing.z).normalized();
 				const float film = 0.001f * MIN(line[leg] / 0.15f, 1.0f); // a full sole prints solid, a cleaner one patchy
-				ground->track_mud(p - fwd * 0.08f, 0.045f, film, wet);
-				ground->track_mud(p + fwd * 0.06f, 0.055f, film, wet);
+				// Through the sole's lugs and rand (mud round 4): heel and forefoot, not the shank.
+				const float yaw = Math::atan2(-fwd.z, fwd.x);
+				ground->track_mud(p, 0.16f, film, wet, Vector4(2.0f, yaw, 0.15f, 0.055f));
 				line[leg] *= 0.85f;
 			}
 			if (water > 0.01f && planted && speed > 0.1f) {

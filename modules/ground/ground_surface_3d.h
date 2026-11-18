@@ -605,7 +605,9 @@ public:
 	float get_water_mud_at(Vector3 p_position) const;
 	// Lays a film of clay p_depth m thick over a disc (a tyre or a boot leaving mud on firm ground; mud round 3):
 	// dark and glossy as wet as p_wet, a pale film once it dries, and it stays until a wash takes it.
-	float track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet = 1.0f);
+	// p_print: the film's print (ground_deform.glsl mud_print_mask()): (0) a plain disc, (1, yaw) a tyre's lugs on its
+	// heading (cos yaw, -sin yaw), (2, yaw, half length, half width) a boot's sole, toe along the heading.
+	float track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet = 1.0f, Vector4 p_print = Vector4());
 	// The tracked mud film at a place (the texel under it): (its share 0..1, its wetness 0..1), (0, 0) for none.
 	Vector2 get_tracked_mud_at(Vector3 p_position) const;
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }

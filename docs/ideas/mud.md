@@ -648,6 +648,12 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   layer as before. Check in `--test=clog` (clay film points within 5 m grow as the clods land).
 - **Tread and sole patterns.** The film is laid through the tyre's or sole's pattern mask (the lug bars and boot
   sole already used for prints), so it reads as a tread mark rather than a smudge; share stays the coverage.
+  **Built (prints).** `track_mud(..., print)`: the amount stamp's spare vec4 carries a print kind
+  (ground_deform.glsl `mud_print_mask()`, mirrored on the CPU): a tyre's chevron lugs, 45 mm bars 9 cm apart across
+  the wheel's heading and fixed on the ground so a rolling tyre's frames agree (15% between them); a boot's sole,
+  heel and forefoot through `sole_sd()`/`sole_relief()` (no shank, no grooves), one disc per footfall with the relief
+  spread over it. The share mask sets the film; the near field's 1.56 cm texels resolve the tyre lugs, the sole's
+  grooves only soften.
 
 ### Look (any stage)
 

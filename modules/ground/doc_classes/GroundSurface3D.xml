@@ -495,8 +495,9 @@
 			<param index="1" name="radius" type="float" />
 			<param index="2" name="depth" type="float" />
 			<param index="3" name="wet" type="float" default="1.0" />
+			<param index="4" name="print" type="Vector4" default="Vector4(0, 0, 0, 0)" />
 			<description>
-				Presses a film of mud [param depth] m thick over a disc of [param radius] at [param position] onto firm ground (a tyre or boot coming out of the mud, see [member tracked_mud]). A film under a millimetre covers the ground in patches, by its share. [param wet] is how wet it is laid (1 fresh). Returns the volume laid, m³.
+				Presses a film of mud [param depth] m thick over a disc of [param radius] at [param position] onto firm ground (a tyre or boot coming out of the mud, see [member tracked_mud]). A film under a millimetre covers the ground in patches, by its share. [param wet] is how wet it is laid (1 fresh). [param print] shapes it: [code]Vector4(0, 0, 0, 0)[/code] a plain disc; [code]Vector4(1, yaw, 0, 0)[/code] a tyre's chevron lugs across the heading [code](cos(yaw), -sin(yaw))[/code]; [code]Vector4(2, yaw, half_length, half_width)[/code] a boot's sole, heel and forefoot, toe along the heading. Returns the volume laid, m³.
 			</description>
 		</method>
 		<method name="stir_water">
