@@ -2113,6 +2113,14 @@ Blossom days: blackthorn 70-120, hawthorn 118-158, dog rose 150-196. Sloes days 
 240-45, haws as before. A 2 m segment is 200-310k triangles at LOD 0 in flower, 70-250k out of
 it. Laid hedges are left for a later round.
 
+Round 2 (docs, 18 Nov: a thin leafy shell over bare stems, an upright box for the A, a flat lid
+of long whips, blossom as scattered dots, oversized hazel and rose leaves): each year after the
+second, buds wake at an eighth of the shoots within half a metre of a face, pointing out to the
+nearer face (level near the foot), so the hedge fills to an opaque twiggy mass and the A widens
+at the foot. Regrowth internodes are 0.6 of the bush's, leaves 0.65 (hazel, field maple) or
+0.85 of it. Hawthorn corymbs are tighter (2.4 cm across), 16-32 cream flowers. A segment is now
+160-540k triangles at LOD 0.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

@@ -1497,6 +1497,44 @@ void TreeGenerator::_grow_year(int p_year) {
 			}
 		}
 	}
+	if (envelope_sprouts > 0 && envelope.size.x > 0.0f && p_year > 2) {
+		// A flailed hedge (trees.md 5ad): the cut wakes buds all through the outer half metre,
+		// not only at the cut ends, and the side cuts push the low wood out sideways; the hedge
+		// fills to an opaque twiggy mass out to its faces, widest at the foot (docs, 18 Nov: a
+		// thin leafy shell over bare stems, an upright box where an A was asked for).
+		const float top = envelope.position.y + envelope.size.y;
+		const float zc = envelope.position.z + envelope.size.z * 0.5f;
+		const int count0 = int(nodes.size());
+		LocalVector<Bud> wake;
+		for (int i = 1; i < count0; i++) {
+			const Node &n = nodes[i];
+			if (n.removed || n.dead || n.radius > 0.03f) {
+				continue;
+			}
+			const Vector3 q = n.end();
+			if (!_in_envelope(q)) {
+				continue;
+			}
+			const float t = CLAMP(q.y / MAX(top, 0.01f), 0.0f, 1.0f);
+			const float half = envelope.size.z * 0.5f * (1.0f - envelope_batter * t);
+			const float side_gap = half - Math::abs(q.z - zc);
+			const float top_gap = top - q.y;
+			const float gap = MIN(side_gap, top_gap);
+			if (gap > 0.5f || _rand(0.0f, 1.0f) > 0.12f) {
+				continue;
+			}
+			Bud b;
+			b.node = i;
+			// Out toward the nearer face, and level more than up near the foot.
+			Vector3 out = side_gap < top_gap ? Vector3(0, 0.15f, q.z >= zc ? 1.0f : -1.0f) : Vector3(0, 1, 0);
+			b.dir = (out.normalized() + _random_unit() * 0.6f).normalized();
+			b.terminal = true;
+			wake.push_back(b);
+		}
+		for (const Bud &b : wake) {
+			buds.push_back(b);
+		}
+	}
 	const float a = params[PARAM_SHADOW_STRENGTH];
 	const int node_count = int(nodes.size());
 
@@ -7527,9 +7565,9 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				// along the bare twig, orange anthers; dog rose 4-6 cm, one to three, pale pink with
 				// a paler eye and a yellow boss (Stace 2019).
 				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE;
-				const int k = haw ? 24 + int(cr.randf() * 24.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : 8 + int(cr.randf() * 9.0f));
+				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : 8 + int(cr.randf() * 9.0f));
 				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf()));
-				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : lin(0.96f, 0.95f, 0.91f);
+				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : (haw ? lin(0.97f, 0.94f, 0.84f) : lin(0.96f, 0.95f, 0.91f));
 				const Color eye_c = rose ? lin(0.99f, 0.95f, 0.88f) : petal_c;
 				const Color boss_c = haw ? lin(0.55f, 0.22f, 0.32f) : lin(0.95f, 0.75f, 0.2f);
 				for (int q = 0; q < k; q++) {
@@ -7537,7 +7575,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					if (haw) {
 						// Flat-topped corymbs, two to a shoot (its end and a spur half way along):
 						// flowers spread over a disc above each.
-						const float a = cr.randf() * float(Math::TAU), rr = 0.035f * Math::sqrt(cr.randf());
+						const float a = cr.randf() * float(Math::TAU), rr = 0.024f * Math::sqrt(cr.randf());
 						fc = (q % 2 == 0 ? at : n.start + n.dir * (n.length * 0.5f) + sd.rotated(d, 2.0f) * 0.02f) + d * 0.01f + (sd * Math::cos(a) + d.cross(sd) * Math::sin(a)) * rr + Vector3(0, 0.008f, 0);
 					} else if (rose) {
 						fc = at + sd.rotated(d, q * 2.4f) * (0.02f * q) + d * 0.01f;
@@ -16555,6 +16593,11 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		// thick as an uncut tree's; a hedge's stems stay a few centimetres.
 		params[PARAM_PIPE_EXPONENT] = MAX(look.params[PARAM_PIPE_EXPONENT], 2.5f);
 		params[PARAM_GRAVITY_BENDING] = MIN(look.params[PARAM_GRAVITY_BENDING], 0.2f);
+		// Regrowth after the flail is short and stubby, shattered ends with tufts of shoots, not
+		// long single whips over a flat lid (docs, 18 Nov).
+		params[PARAM_INTERNODE_LENGTH] = look.params[PARAM_INTERNODE_LENGTH] * 0.6f;
+		// Leaves on cut hedges run small, many to a short shoot.
+		params[PARAM_LEAF_SIZE] = look.params[PARAM_LEAF_SIZE] * (p_preset == PRESET_HAZEL || p_preset == PRESET_FIELD_MAPLE ? 0.65f : 0.85f);
 	} else if (p_form == FORM_THICKET || p_form == FORM_OLD) {
 		// Heath shrubs (trees.md 5u), from the preset's own numbers each variant.
 		TreeGenerator look;
