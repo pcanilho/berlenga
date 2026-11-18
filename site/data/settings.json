@@ -3866,7 +3866,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash. Fire chars the stem feet, and a charred tree can snap there in a later storm.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
