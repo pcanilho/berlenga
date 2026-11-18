@@ -340,7 +340,7 @@ protected:
 	GDVIRTUAL1RC(Vector2, _lake_ice_at, Vector3)
 
 public:
-	bool has_provider() const { return provider != nullptr; }
+	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_snow) counts
 	// Snow on the ground at the point (m); 0 with no snow system.
 	float depth_at(const Vector3 &p_position) const;
 	// Its bulk density (kg/m3): about 100 for new powder, 250 to 350 settled, 400 to 550 old or wet; 0 bare.

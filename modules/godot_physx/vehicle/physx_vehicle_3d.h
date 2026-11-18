@@ -90,6 +90,8 @@ protected:
 	void _validate_property(PropertyInfo &p_property) const;
 
 public:
+	// The grip share firm ground gives a tread at a point (wet, ice, snow from the world contracts), for tests.
+	static float get_firm_grip_at(const Vector3 &p_position, float p_speed, int p_tread);
 	void set_mass(real_t p_mass);
 	real_t get_mass() const { return mass; }
 	void set_moment_of_inertia(const Vector3 &p_moi);

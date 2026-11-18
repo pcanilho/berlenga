@@ -52,6 +52,15 @@ class PoolStub extends WorldWater:
 		return Vector3(0.5, 0, 0)
 
 
+# Packed snow 10 cm deep over x > 0.
+class SnowStub extends WorldSnow:
+	func _depth_at(p: Vector3) -> float:
+		return 0.1 if p.x > 0.0 else 0.0
+
+	func _density_at(_p: Vector3) -> float:
+		return 350.0
+
+
 # A fire stub: 50 kW/m2 burning over x > 0.
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
@@ -110,6 +119,7 @@ func _ready() -> void:
 	_fire_tests()
 	await _contact_tests()
 	await _snow_fire_tests()
+	_tyre_snow_tests()
 	await _contract_tests()
 	await _shimmer_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -336,8 +346,9 @@ func _contact_tests() -> void:
 	# A stream's current lays the sward downstream where it runs, nothing on the dry bank.
 	WorldContracts.clear_overrides()
 	WorldContracts.add_water_stub(StreamStub.new())
-	for i in 5:
-		await get_tree().process_frame
+	# The current is resampled every 0.25 s: wait in time, not frames (headless frames are far shorter).
+	await get_tree().create_timer(0.6).timeout
+	await get_tree().process_frame
 	var wet: Vector2 = g.get_trample_at(Vector3(-4, 0, 3))
 	var dry: Vector2 = g.get_trample_at(Vector3(4, 0, 3))
 	_check("current: a stream lays grass downstream, not on the bank", wet.y > 0.5 and absf(wet.x) < 0.05 and dry.length() < 0.01, "bend (%.2f, %.2f) in the stream, %.2f on the bank" % [wet.x, wet.y, dry.length()])
@@ -356,6 +367,20 @@ func _contact_tests() -> void:
 		_check("contact: plants bend under bodies where there is no grass", tv.length() > 0.1, "bend %.2f" % tv.length())
 		v.queue_free()
 	body.queue_free()
+
+
+# Tyres on snow (WorldSnow): grip falls to packed snow's, and chains win much of it back.
+func _tyre_snow_tests() -> void:
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		_skip("tyres: snow grip", "no PhysX in this build")
+		return
+	WorldContracts.clear_overrides()
+	WorldContracts.set_snow(SnowStub.new())
+	var road: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", Vector3(-5, 0, 0), 10.0, 0)
+	var on_snow: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", Vector3(5, 0, 0), 10.0, 0)
+	var chains: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", Vector3(5, 0, 0), 10.0, 3)
+	_check("tyres: packed snow takes a road tyre's grip down, chains bring much of it back", on_snow < 0.4 * road and chains > 1.8 * on_snow, "road %.2f, snow %.2f, snow with chains %.2f" % [road, on_snow, chains])
+	WorldContracts.clear_overrides()
 
 
 # Fire on lying snow: the fire contract's heat melts the pack under it, whatever the air.
