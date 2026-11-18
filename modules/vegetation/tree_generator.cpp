@@ -4165,18 +4165,25 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float wn = bark_fbm(u, v, 4, 6, 2, salt + 33u) + 0.25f; // 0..0.5
 					const float w1 = 0.034f + 0.04f * wn; // Nominal: the first-order distance runs about twice the true one at this noise.
 					const float dep = 0.045f + 0.05f * wn;
-					const float c1 = cut(zero_dist(u, v, 8, 1, salt + 51u), w1);
+					const float d1 = zero_dist(u, v, 8, 1, salt + 51u);
+					const float c1 = cut(d1, w1);
 					// The second family only where it splits a ridge (half the stem).
 					const float m2 = Math::smoothstep(-0.02f, 0.06f, bark_fbm(u, v, 3, 4, 2, salt + 63u));
-					const float c2 = m2 * cut(zero_dist(u, v, 6, 1, salt + 55u), 0.8f * w1);
+					const float d2 = zero_dist(u, v, 6, 1, salt + 55u);
+					const float c2 = m2 * cut(d2, 0.8f * w1);
 					// Cross fissures, about every 15-25 cm, on most of the ridges.
 					const float m3 = Math::smoothstep(-0.08f, 0.02f, bark_fbm(u, v, 5, 3, 2, salt + 67u));
-					const float c3 = m3 * cut(zero_dist(u, v, 3, 8, salt + 59u), 0.6f * w1);
+					const float d3 = zero_dist(u, v, 3, 8, salt + 59u);
+					const float c3 = m3 * cut(d3, 0.6f * w1);
 					const float depth = dep * MAX(MAX(c1, 0.8f * c2), 0.65f * c3);
 					cork_open = 1.0f - MAX(MAX(c1, c2), 0.85f * c3);
 					// Lumpy, crumbly ridge tops, at the scale of a thumb.
 					const float lumps = bark_fbm(u, v, 30, 20, 3, salt + 57u);
-					plate = 1.0f - depth / L.depth + 0.05f * lumps;
+					// Each block swells from its fissures to a rounded crown (flat between grooves, it
+					// read as carved plaster).
+					const float dm = MIN(d1, MIN(m2 > 0.5f ? d2 : 1.0f, m3 > 0.5f ? d3 : 1.0f));
+					const float crown = 0.03f * Math::smoothstep(0.3f * w1, 2.2f * w1, dm);
+					plate = 1.0f - (depth + 0.03f - crown) / L.depth + 0.05f * lumps;
 					open = cork_open;
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
