@@ -346,6 +346,9 @@ public:
 	bool get_seabed_from_floor() const { return seabed_from_floor; }
 	void set_seabed_collision_mask(uint32_t p_mask);
 	uint32_t get_seabed_collision_mask() const { return seabed_collision_mask; }
+	// How far above the water the seabed rays start (m): under a roof (a cave) keep it below the roof.
+	void set_seabed_probe_height(real_t p_height);
+	real_t get_seabed_probe_height() const { return seabed_probe_height; }
 	// A terrain with holes (TerrainGenerator3D: is_hole, get_height, signal holes_changed): where a seabed ray
 	// falls through a hole (a cave mouth) onto nothing, the terrain's own height closes it, so the sea never shows
 	// through an open hole above the waterline; a static floor under the hole (a sea cave's) is used as it is.
@@ -728,10 +731,12 @@ private:
 	void _update_cell_fade();
 	bool seabed_from_floor = false;
 	uint32_t seabed_collision_mask = 1;
+	real_t seabed_probe_height = 100.0;
 	float shallow_fade_depth = 1.0f;
 	// Seabed rays need the floor in the physics space, so with
 	// seabed_from_floor the solver is configured on the first physics tick.
 	bool seabed_pending = false;
+	int seabed_tries = 0;
 	bool seabed_remeasure_pending = false;
 	NodePath terrain_source;
 	ObjectID terrain_connected;
@@ -883,7 +888,7 @@ private:
 	void _reinit_spectrum();
 	void _set_spreading();
 	// Casts the seabed rays; fills cell_depth.
-	void _sample_seabed();
+	int _sample_seabed(bool p_quiet = false);
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
 	// Plane over [-extent/2, extent/2]^2: uniform cells over the simulated
 	// p_inner size, then spacing growing geometrically outward.
