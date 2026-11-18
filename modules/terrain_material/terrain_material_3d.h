@@ -104,6 +104,7 @@ private:
 	bool grass_tint_enabled = true;
 	bool rock_detail_enabled = true;
 	float rock_detail_scale = 1.0f;
+	float scree_blocks_distance = 0.0f;
 	bool wetness_enabled = true;
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
@@ -158,6 +159,8 @@ public:
 	bool is_rock_detail_enabled() const { return rock_detail_enabled; }
 	void set_rock_detail_scale(float p_scale);
 	float get_rock_detail_scale() const { return rock_detail_scale; }
+	void set_scree_blocks_distance(float p_value);
+	float get_scree_blocks_distance() const { return scree_blocks_distance; }
 	void set_sky_occlusion_enabled(bool p_enabled);
 	bool is_sky_occlusion_enabled() const { return sky_occlusion_enabled; }
 	void set_sky_occlusion(float p_amount);

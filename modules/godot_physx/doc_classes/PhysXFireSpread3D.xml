@@ -6,6 +6,7 @@
 	<description>
 		Burns the ground under it over a [member size] area, as wildfire models do (the WRF-SFIRE surface model): a fire front moves at Rothermel's rate of spread for the [member fuel_type], faster downwind and uphill, slowed by [member fuel_moisture] and stopped when the fuel is too wet. A fire in the wind grows into an ellipse whose length-to-width ratio follows the wind speed (Anderson 1983), as fire spread tools such as FARSITE draw it.
 		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map. Plants read [code]fire_state_map[/code] over the same rect (red: share of the fuel burnt, green: glow, blue: the peak flame length over 8 m, alpha: the peak crown scorch height over 24 m, from Van Wagner 1973): [GrassField3D] blades burn down to charred stubble, [PlantGenerator] plants char under the flame and scorch brown above it, and [TreeGenerator] bark chars to the flame length and leaves brown up to the scorch height.
+		With [member spotting], burning fuel throws up glowing firebrands that the plume lofts and the wind carries; where one lands on unburnt fuel of any [PhysXFireSpread3D] it may start a spot fire ahead of the front.
 		Start a fire with [method ignite], or set [member heat_source] so that hot gas from another [PhysXFlow3D] (a campfire, a burning wreck) sets the ground alight.
 	</description>
 	<tutorials>
@@ -43,6 +44,12 @@
 				The longest flame the front had at [param position], in metres (Byram's flame length from its fireline intensity). Plants under it are charred.
 			</description>
 		</method>
+		<method name="get_firebrand_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Firebrands in the air now.
+			</description>
+		</method>
 		<method name="get_flow" qualifiers="const">
 			<return type="PhysXFlow3D" />
 			<description>
@@ -54,6 +61,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The ground height the fire grid holds at [param position] (world Y), or the node's own height outside the grid.
+			</description>
+		</method>
+		<method name="get_spot_fire_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Spot fires this node's firebrands have started so far.
 			</description>
 		</method>
 		<method name="get_heavy_fuel_at" qualifiers="const">
@@ -148,6 +161,12 @@
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(20, 20)">
 			The area that can burn, in metres along the node's X and Z, centred on it.
 		</member>
+		<member name="spotting" type="bool" setter="set_spotting" getter="is_spotting" default="true">
+			When enabled, what burns throws up firebrands (bark, twig and grass flakes of 2 to 10 mm): the fire's plume in its [PhysXFlow3D] lofts them, the wind at their height carries them, and they fall at their terminal velocity, which drops as they burn away (Tarifa et al. 1965, Tohidi et al. 2015). Grass throws few, litter more, burning logs the most. One that lands on unburnt fuel of any [PhysXFireSpread3D] starts a spot fire with Schroeder's (1969) probability of ignition for the fuel's moisture and the air temperature, so dry fuel in a strong wind catches ahead of the front and damp fuel does not. They show as short glowing streaks.
+		</member>
+		<member name="spotting_scale" type="float" setter="set_spotting_scale" getter="get_spotting_scale" default="1.0">
+			Scales how many firebrands the fire throws.
+		</member>
 		<member name="spread_scale" type="float" setter="set_spread_scale" getter="get_spread_scale" default="1.0">
 			Speeds the fire up or slows it down, for a game's pace.
 		</member>
@@ -158,7 +177,7 @@
 			When enabled, the wind comes from the active [WeatherMap3D] where there is one; [member wind] is used otherwise.
 		</member>
 		<member name="vegetation_field" type="NodePath" setter="set_vegetation_field" getter="get_vegetation_field" default="NodePath(&quot;&quot;)">
-			Optional [VegetationField3D] the fuel follows: worn paths ([method VegetationField3D.get_path_passes_at]) are bare, leaf litter ([method VegetationField3D.get_litter_at]) adds fuel, and its logs and fallen branches ([method VegetationField3D.get_deadwood_at]) are large wood: a log catches from the fire burning under it unless too wet, flames for about Anderson's residence time (about 5 minutes per centimetre of diameter), then smoulders, glowing, for longer. Read when the grid is built.
+			Optional [VegetationField3D] the fuel follows: worn paths ([method VegetationField3D.get_path_passes_at]) are bare, leaf litter ([method VegetationField3D.get_litter_at]) adds fuel, and its logs and fallen branches ([method VegetationField3D.get_deadwood_at]) are large wood: a log catches from the fire burning under it unless too wet, flames for about Anderson's residence time (about 3 minutes per centimetre of diameter), then smoulders, glowing, for longer. Read when the grid is built.
 		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			The wind over the fire, in metres a second, when no weather map gives one.

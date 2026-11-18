@@ -116,6 +116,8 @@ public:
 		const float b = Math::floor(v * 16.0f + 1e-4f);
 		return Vector2((b + 1.0f) / 16.0f, CLAMP((v - b / 16.0f) / 0.06f, 0.0f, 1.0f));
 	}
+	Vector4 amount_print; // a tracked-mud film's print (mud_print_mask(): kind, yaw, sole half extents)
+	static float mud_print_mask(const Vector4 &p_b, float p_x, float p_z, Vector3 p_pos);
 	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
@@ -159,6 +161,7 @@ public:
 	void clear();
 	int cached_tile_count() const { return cache.size(); }
 	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
+	void forget_cached(Vector2i p_tile) { cache.erase(p_tile); }
 
 	float sample(const LocalVector<float> &p_field, float p_x, float p_z) const;
 	float dent_at(float p_x, float p_z) const { return valid ? sample(dent, p_x, p_z) : 0.0f; }

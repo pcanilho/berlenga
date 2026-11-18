@@ -38,6 +38,7 @@ extends Node3D
 #                         frame mid-throw, the clods in the air
 #   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
 #   --test=ruts         kept ruts (mud round 3): a print back after the field drives 600 m off and in a new node
+#   --meadow            --view=ruts: the patch drawn with a TerrainMaterial3D under a full sward (its grass globals set by hand)
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -99,6 +100,7 @@ var legs_test := false
 var muddy_test := false
 var tracked_test := false
 var ruts_test := false
+var ruts_scale := 1.0 # kept ruts' world seconds per real second while away
 var ruts_on := false # kept ruts (written to user://): off on the bench, or one run's prints turn up in the next
 var near_on := true
 var out := ""
@@ -313,6 +315,9 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.near_field = near_on
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
 	surface.keep_ruts = ruts_on
+	surface.ruts_time_scale = ruts_scale
+	if OS.get_cmdline_user_args().has("--meadow"):
+		_meadow(surface)
 	surface.ruts_path = "user://bench_ruts"
 	# Everything ships on; each check turns on what it is about (--defaults keeps the shipped settings).
 	if not OS.get_cmdline_user_args().has("--defaults"):
@@ -327,6 +332,27 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 			surface.set(pkv[0], str_to_var(pkv[1]))
 	add_child(surface)
 	await get_tree().physics_frame
+
+
+# --meadow: the patch drawn with a TerrainMaterial3D under a full sward's turf (the grass cover globals set by
+# hand, as a GrassField3D publishes them), so ruts, puddles and mud show what they do to a meadow's cover.
+func _meadow(p_surface: GroundSurface3D) -> void:
+	var tm := TerrainMaterial3D.new()
+	tm.grass_tint_enabled = true
+	tm.ground_deform_enabled = true
+	tm.sea_level = -100.0
+	var soil := TerrainMaterialLayer.new()
+	soil.color = Color(0.36, 0.27, 0.19)
+	soil.roughness = 0.9
+	tm.soil_layer = soil
+	tm.set_shader_parameter("ground_deform_patch", true)
+	p_surface.material = tm
+	RenderingServer.global_shader_parameter_set("grass_ground_color", Color(0.16, 0.28, 0.07, 1.0))
+	RenderingServer.global_shader_parameter_set("grass_ground_params", Vector4(0.0, 0.0, 0.0, 0.0))
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 0, 0, 1))
+	RenderingServer.global_shader_parameter_set("grass_ground_map", ImageTexture.create_from_image(img))
+	RenderingServer.global_shader_parameter_set("grass_ground_rect", Vector4(-200, -200, 400, 400))
 
 
 func _apply(kind_name: String) -> void:
@@ -1096,6 +1122,27 @@ func _run_ruts_tests() -> void:
 	var e2 := -surface.get_surface_height_at(b)
 	_check("and in the next session, both prints as they were", absf(d2 - d0) < 0.1 * d0 and absf(e2 - e0) < 0.1 * e0,
 			"%.1f and %.1f cm, %.1f and %.1f cm before" % [d2 * 100.0, e2 * 100.0, d0 * 100.0, e0 * 100.0])
+	# Weeks away (the world's clock run fast while the tiles were on disk): rain has softened them (mud round 4).
+	var away_s := 3.0e6 # 35 days
+	var t_left := Time.get_unix_time_from_system()
+	ruts_scale = away_s / 4.0
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var real_away := Time.get_unix_time_from_system() - t_left
+	var d5 := -surface.get_surface_height_at(a)
+	var want := d0 * exp(-surface.rain_smoothing * surface.ruts_away_rain * real_away * ruts_scale / 3600.0)
+	_check("kept ruts come back aged by the time away: rain has softened them", d5 < 0.9 * d0 and d5 > 0.05 * d0 and absf(d5 - want) < 0.25 * want,
+			"%.1f cm after %.0f days away (%.1f cm expected), %.1f cm when left" % [d5 * 100.0, real_away * ruts_scale / 86400.0, want * 100.0, d0 * 100.0])
+	ruts_scale = 1.0
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 3:
+		await get_tree().physics_frame
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
 	# Flattened (cleared) and left: its file goes, so a later visit finds it flat.
 	surface.clear_deformation()
 	for i in 3:
@@ -1162,6 +1209,17 @@ func _run_tracked_tests() -> void:
 	surface.settle(3600.0, 10.0)
 	var w1 := _film_wetness()
 	_check("the film dries in place and stays", w0.y > 100 and w1.y > 0.7 * w0.y and w1.x < w0.x - 0.4, "wetness %.2f to %.2f over %d to %d points" % [w0.x, w1.x, w0.y, w1.y])
+
+
+# Points 4 cm apart within p_reach of p_at (XZ) carrying a tracked clay film.
+func _film_points(p_at: Vector3, p_reach: float) -> int:
+	var hits := 0
+	var n := int(p_reach / 0.04)
+	for j in range(-n, n + 1):
+		for i in range(-n, n + 1):
+			if surface.get_tracked_mud_at(p_at + Vector3(i * 0.04, 0.0, j * 0.04)).x > 0.0:
+				hits += 1
+	return hits
 
 
 # The tracked mud film's mean wetness and the points it covers, 0.6 to 1.8 m out.
@@ -1320,6 +1378,7 @@ func _run_clog_tests() -> void:
 	var shed0 := 0.0
 	for w in 4:
 		shed0 += car.get_wheel_mud_shed(w)
+	var film0 := _film_points(car.global_position, 5.0)
 	await _drive(car, 4.0, 1.0)
 	var after := 0.0
 	var shed := 0.0
@@ -1335,6 +1394,9 @@ func _run_clog_tests() -> void:
 	var mk := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
 	_check("the thrown clay flies as mud clods and lands, volume kept", md > 0.5 * (shed - shed0) / 1700.0 and absf(mk - md) < 0.05 * md + 1e-5,
 			"%.1f l of clay thrown as clods, %.1f l in the air or landed (%.1f l of the dry ground thrown as sand)" % [md * 1000.0, mk * 1000.0, grains.get_dug_volume() * 1000.0])
+	# Landed on the dry ground, the clods lie there as cakes of wet clay (mud round 4): more of it filmed with clay.
+	var film1 := _film_points(car.global_position, 5.0)
+	_check("landed clods lie as cakes of clay on the dry ground", film1 > film0 + 20, "clay at %d points within 5 m, %d before the clods" % [film1, film0])
 	# Clods thrown at the parked car's side stick to it as splats (stage 4b), their volume kept.
 	car.throttle = 0.0
 	car.brake = 1.0
@@ -2581,7 +2643,8 @@ func _build_ruts() -> void:
 	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
 	_apply(kind)
 	var mat := _ground_material(kind)
-	surface.material = mat
+	if not OS.get_cmdline_user_args().has("--meadow"):
+		surface.material = mat
 	_add_terrain(96.0, 192, mat)
 	var env := Environment.new()
 	var sky := Sky.new()

@@ -1278,8 +1278,15 @@ float contact_foam_at(vec2 world_xz, float footprint) {
 	float reach = w * mix(1.0, 1.8, max(-facing, 0.0));
 	float fall = 1.0 - smoothstep(0.0, 2.2 * reach, d);
 	float amount = c.g * 0.75 * fall * fall * mix(0.7, 1.0, max(facing, 0.0));
-	// Over a shoulder of rock just under the surface the water stays churned (aerated), most as a crest crosses it.
-	amount = max(amount, c.b * mix(0.45, 0.8, smoothstep(0.25, 0.85, pump)));
+	// On the rock's own top (its cells stand above the still water, so the distance is nil there): only a crest
+	// washing over it draws water there, poured off as torn lace rather than the full sheet of the waterline (a
+	// sheet laid on the top read as a white slab pasted on the rock, not wrapping round it).
+	float top = 1.0 - smoothstep(0.0, 1.5 * contact_extent * texel.x, d);
+	amount *= mix(1.0, 0.2 + 0.6 * smoothstep(0.5, 1.0, pump), top);
+	// Over a shoulder of rock just under the surface the water stays churned (aerated), most as a crest crosses it:
+	// thin, torn lace between crests (a solid sheet there read as a white slab laid on the rock), closing up only
+	// as a crest pours over.
+	amount = max(amount, c.b * mix(0.12, 0.6, smoothstep(0.3, 0.95, pump)));
 	if (amount < 0.01) {
 		return 0.0;
 	}
