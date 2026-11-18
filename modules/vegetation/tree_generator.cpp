@@ -752,19 +752,20 @@ void TreeGenerator::set_preset(Preset p_preset) {
 		case PRESET_CORK_OAK: // Quercus suber (trees.md 5aa): evergreen, a short bole under a few thick,
 			// sinuous, spreading limbs (the leader split, _fork_rule), a broad, low, rounded crown.
 			p[PARAM_YEARS] = 60;
-			p[PARAM_INTERNODE_LENGTH] = 0.4f;
-			p[PARAM_LEADER_GROWTH] = 0.6f;
+			p[PARAM_INTERNODE_LENGTH] = 0.3f;
+			p[PARAM_LEADER_GROWTH] = 0.5f;
 			p[PARAM_APICAL_DOMINANCE] = 0.6f;
-			p[PARAM_APICAL_DOMINANCE_OLD] = 0.46f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
 			p[PARAM_MATURITY] = 25;
 			p[PARAM_BRANCH_ANGLE] = 62;
 			p[PARAM_DIRECTION_NOISE] = 16;
 			p[PARAM_GRAVITROPISM] = 0.0f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.6f;
-			p[PARAM_APICAL_CONTROL] = 0.92f;
+			p[PARAM_APICAL_CONTROL] = 0.95f; // As the holm oak's dome: strong side shoots fill it.
+			// A broad, low dome (docs, 18 Nov: a vase of long thin limbs read as eucalyptus).
 			// A dense, dark crown: shade-tolerant buds and little shedding keep leaves deep inside
 			// (with shed 0.1 the crown read thin over bare twiggy limbs, docs 18 Nov).
-			p[PARAM_SHED_RATIO] = 0.04f;
+			p[PARAM_SHED_RATIO] = 0.02f;
 			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
 			p[PARAM_ROOT_FLARE] = 0.7f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f; // Worked trees are pruned of dead wood.
@@ -1423,10 +1424,10 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.stems = 4;
 		r.fork_every = 10;
 		r.levels = 1;
-		r.angle = 55.0f;
+		r.angle = 62.0f; // Limbs spread out more than up.
 		r.gravitropism = 0.02f;
 		r.lift = 0.22f; // Pruned up to the cork harvest height in the montado.
-		r.side = 0.35f;
+		r.side = 0.8f; // Their branches fill a dense dome; the single split keeps the limbs few.
 	} else if (preset == PRESET_MARITIME_PINE && forest_shade <= 0.0f) {
 		// A long clear bole under the crown (Alia et al. 1996; the Landes pine): open-grown, the
 		// crown starts at about 40% of the height.
@@ -3856,7 +3857,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
-		{ 3, 2, 0.35f, 0.02f, 0.003f, 0.8f, 0.14f }, // Cork: long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
+		{ 3, 2, 0.35f, 0.04f, 0.003f, 0.6f, 0.14f }, // Cork: long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4187,8 +4188,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		// the spongy pitting goes back on top, unblurred.
 		LocalVector<float> tmp;
 		tmp.resize(N * N);
-		const int R = 12;
-		for (int pass = 0; pass < 3; pass++) {
+		const int R = 5;
+		for (int pass = 0; pass < 2; pass++) {
 			for (int y = 0; y < N; y++) {
 				for (int x = 0; x < N; x++) {
 					float sum = 0.0f;
@@ -4211,7 +4212,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		for (int y = 0; y < N; y++) {
 			for (int x = 0; x < N; x++) {
 				const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
-				hw[y * N + x] += 0.0012f * bark_fbm(u, v, 20, 14, 3, salt + 171u);
+				hw[y * N + x] += 0.003f * bark_fbm(u, v, 20, 14, 3, salt + 171u);
 			}
 		}
 	}
@@ -4541,7 +4542,7 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.6f, 0.5f, 0.1f }, // Lentisk.
 	{ 0.1f, 0.3f, 0.05f }, // Dwarf fan palm.
 	{ 0.08f, 0.15f, 0.0f }, // Stone pine: thick flaking plates hold little.
-	{ 0.4f, 0.4f, 0.05f }, // Cork oak: crusts and leafy lichens on the cork's ridges.
+	{ 0.2f, 0.25f, 0.05f }, // Cork oak: thin crusts on the ridges (worked trees are stripped every nine years; docs 18 Nov: big patches read as decals).
 	{ 0.5f, 0.3f, 0.05f }, // Holm oak: grey crusts on the dark bark.
 	{ 0.6f, 0.3f, 0.15f }, // Wild olive: crusts and Xanthoria on old trunks.
 	{ 0.1f, 0.2f, 0.0f }, // Maritime pine: thick, flaking plates.
