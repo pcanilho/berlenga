@@ -1070,6 +1070,7 @@ struct RTInstanceSource {
 	Vector3 dead_position; // Node-space point dead particles collapse to; keeps BLAS bounds near the emitter.
 	bool particles = false; // Particle systems have no triangle cap and no CPU fallback.
 	bool world_space = false; // Records are already in world space; the TLAS instance uses identity.
+	bool instanced = false; // multimesh_set_rt_instanced(): one TLAS entry per record, never a merged BLAS.
 };
 
 // One billboard entry of multimesh_merge.glsl (std430 layout). Bases are columns in MultiMesh node space.

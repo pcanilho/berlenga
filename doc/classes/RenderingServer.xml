@@ -3024,6 +3024,13 @@
 				This is useful when moving all instances to new locations, to give instantaneous changes rather than interpolation from the previous locations.
 			</description>
 		</method>
+		<method name="multimesh_is_rt_instanced" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="multimesh" type="RID" />
+			<description>
+				Returns [code]true[/code] if the path tracer gives every instance of [param multimesh] its own top-level entry. See [method multimesh_set_rt_instanced].
+			</description>
+		</method>
 		<method name="multimesh_mark_buffer_rd_changed">
 			<return type="void" />
 			<param index="0" name="multimesh" type="RID" />
@@ -3107,6 +3114,14 @@
 			<description>
 				Sets the physics interpolation quality for the [MultiMesh].
 				A value of [constant MULTIMESH_INTERP_QUALITY_FAST] gives fast but low quality interpolation, a value of [constant MULTIMESH_INTERP_QUALITY_HIGH] gives slower but higher quality interpolation.
+			</description>
+		</method>
+		<method name="multimesh_set_rt_instanced">
+			<return type="void" />
+			<param index="0" name="multimesh" type="RID" />
+			<param index="1" name="instanced" type="bool" />
+			<description>
+				If [code]true[/code], the path tracer gives every instance of [param multimesh] its own top-level entry over the shared mesh, even when the multimesh is small enough to be merged into one baked structure (see [member ProjectSettings.rendering/pathtracing/multimesh_merged_blas_max_triangles]). Use it for many small multimeshes of a few shapes, such as ground detail, where merging would store a copy of every instance's triangles.
 			</description>
 		</method>
 		<method name="multimesh_set_visible_instances">

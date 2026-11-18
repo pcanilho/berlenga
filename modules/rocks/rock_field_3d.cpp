@@ -2122,6 +2122,11 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		mm->set_use_custom_data(true);
 		mm->set_mesh(lib->meshes[v]);
 		mm->set_instance_count(int(g.value.size()));
+		if (_is_detail(layer)) {
+			// Hundreds of grains of one shape sit under the merged BLAS cap, which would bake a copy of every grain's
+			// triangles: give each its own TLAS entry over the shared shape instead.
+			RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+		}
 		Group grp;
 		grp.library = lk;
 		grp.variant = v;

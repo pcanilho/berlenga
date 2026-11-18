@@ -285,6 +285,8 @@ public:
 	virtual void multimesh_mark_buffer_rd_changed(RID p_multimesh) = 0;
 	virtual void multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) = 0;
 	virtual int multimesh_get_bones_per_instance(RID p_multimesh) const = 0;
+	virtual void multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) = 0;
+	virtual bool multimesh_is_rt_instanced(RID p_multimesh) const = 0;
 	virtual Vector<float> multimesh_get_buffer(RID p_multimesh) const = 0;
 
 	// Interpolation.
