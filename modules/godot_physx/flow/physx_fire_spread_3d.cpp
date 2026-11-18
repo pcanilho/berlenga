@@ -98,6 +98,7 @@ void PhysXFireSpread3D::_allocate() {
 	wet.resize(n);
 	rain_water.resize(n);
 	quenched.resize(n);
+	steamed.resize(n);
 	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
@@ -177,6 +178,7 @@ void PhysXFireSpread3D::_allocate() {
 			rate[i] = rate_mul;
 			rain_water[i] = 0.0f;
 			quenched[i] = 0;
+			steamed[i] = 0;
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -967,9 +969,64 @@ void PhysXFireSpread3D::_apply_fluid_water(float p_delta, bool p_weather_dried) 
 		const float on_fuel = MIN(e.value / cell_area / MAX(load[i], 0.05f), 2.5f); // kg water per kg fuel
 		rain_water[i] = MAX(rain_water[i], on_fuel);
 		const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
+		// Steam: the water takes the hot bed's heat, once: its fuel and char near 600 C (1.5 kJ/kg K), a
+		// burning log's more, and about a second of the flames' output where it still burns; no more than the
+		// water there can boil.
+		const bool hot = burning || (t_ignite[i] >= 0.0f && time - t_ignite[i] < 3.0f * m.burn_time);
+		if (hot && !steamed[i]) {
+			steamed[i] = 1;
+			float j = cell_area * (load[i] * MAX(fuel_left[i], 0.3f) + (heavy.is_empty() ? 0.0f : MIN(heavy[i], 20.0f) * 0.25f)) * 1500.0f * 600.0f;
+			j += heat[i] * cell_area;
+			j = MIN(j, e.value * PhysXSteam::BOIL_HEAT);
+			steam.add_heat(_cell_world(int(i % nx), int(i / nx)), j, 0.5f);
+		}
 		if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
 			quenched[i] = 1;
 			quenched_by_water++;
+		}
+	}
+}
+
+// Fire meeting standing or running water (WorldContracts' water: a river bank, a lake shore, a flooded hollow):
+// fuel under the surface cannot burn and a cell the front reaches there goes out in a burst of steam; flames
+// beside the water boil some of it off, a tenth of their heat going into the water a metre away (radiation and
+// the hot gas over it), as a thin steady steam along the shore.
+void PhysXFireSpread3D::_water_edge(float p_delta) {
+	WorldWater *ww = WorldContracts::water();
+	if (!ww || !ww->has_provider() || height.is_empty()) {
+		return;
+	}
+	const float cell_area = cell_size * cell_size;
+	const float step = MAX(1.0f, cell_size);
+	const Vector3 offs[4] = { Vector3(step, 0, 0), Vector3(-step, 0, 0), Vector3(0, 0, step), Vector3(0, 0, -step) };
+	for (int z = 0; z < nz; z++) {
+		for (int x = 0; x < nx; x++) {
+			const uint32_t i = z * nx + x;
+			if (t_ignite[i] < 0.0f || fuel_left[i] <= 0.0f || quenched[i]) {
+				continue;
+			}
+			Vector3 wp = _cell_world(x, z);
+			wp.y = height[i];
+			const float h = ww->height_at(wp);
+			if (Math::is_finite(h) && h >= wp.y - 0.02f) {
+				quenched[i] = 1;
+				if (!steamed[i]) {
+					steamed[i] = 1;
+					steam.add_heat(wp, heat[i] * cell_area + cell_area * load[i] * 1500.0f * 600.0f, 0.4f);
+				}
+				continue;
+			}
+			if (heat[i] <= 0.0f || ((x + z) & 1)) {
+				continue; // a checkerboard is enough to find the shore
+			}
+			for (const Vector3 &o : offs) {
+				const Vector3 q = wp + o;
+				const float hq = ww->height_at(q);
+				if (Math::is_finite(hq) && hq >= q.y - 0.3f && hq <= q.y + 1.0f) {
+					steam.add_heat(Vector3(q.x, hq, q.z), 0.1f * heat[i] * cell_area * 2.0f * p_delta, 0.4f, 1.0f);
+					break;
+				}
+			}
 		}
 	}
 }
@@ -1511,6 +1568,7 @@ void PhysXFireSpread3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			fires.erase(this);
 			WorldContracts::unregister_fire(this);
+			steam.clear();
 		} break;
 		case NOTIFICATION_READY: {
 			// Once per run, unless the project declares them (global_shader_parameter_get_list is editor only).
@@ -1542,12 +1600,16 @@ void PhysXFireSpread3D::_notification(int p_what) {
 				sample_timer = 0.25f;
 				_ignite_from_heat_source();
 				_apply_fluid_water(0.25f, _update_moisture(0.25f));
+				_water_edge(0.25f);
 				_ignite_from_lightning();
 			}
 			_step(dt);
 			_update_emitters(_wind());
 			if (spotting && brand_count > 0.0f) {
 				firebrands.release(brand_count, brand_points, flow);
+			}
+			if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
+				steam.step(this, _wind(), dt);
 			}
 			if (firebrands.get_count() > 0) {
 				firebrands.step(this, flow, _wind(), dt, glow_energy);
@@ -1574,6 +1636,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXFireSpread3D::get_firebrand_count);
 	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXFireSpread3D::get_spot_fire_count);
 	ClassDB::bind_method(D_METHOD("get_doused_cells"), &PhysXFireSpread3D::get_doused_cells);
+	ClassDB::bind_method(D_METHOD("get_steam_mass"), &PhysXFireSpread3D::get_steam_mass);
 	ClassDB::bind_method(D_METHOD("set_spotting", "enabled"), &PhysXFireSpread3D::set_spotting);
 	ClassDB::bind_method(D_METHOD("is_spotting"), &PhysXFireSpread3D::is_spotting);
 	ClassDB::bind_method(D_METHOD("set_spotting_scale", "scale"), &PhysXFireSpread3D::set_spotting_scale);

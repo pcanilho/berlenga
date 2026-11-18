@@ -73,19 +73,27 @@ groups counts once.
 
 ### Ground (`WorldGround`; producer `GroundSurface3D`)
 
+Built 18 Nov (mud thread; sand adds its own reads on top). `WorldContracts::ground()` in C++,
+`WorldContracts.get_ground()` in scripts; `set_ground(stub)` for a test, where the stub's unset methods fall back to
+the live ground.
+
 | Member | Unit | Default |
 | --- | --- | --- |
-| `height_at(pos)` | m | the ray to the physics floor |
-| `soil_at(pos)` | Soil (soft, cohesion, friction angle, stickiness) | firm |
+| `height_at(pos)` | m, the deformed surface | the first physics surface under the point, else -INF |
+| `soil_at(pos)` | soft, cohesion kPa, friction angle degrees, stickiness 0..1 | firm (soft false) |
 | `standing_water_at(pos)` | m | 0 |
 | `ice_at(pos)` | (thickness m, broken share) | 0 |
-| `frost_at(pos)` | (thawed top m, frost depth m, weakening) | 0 |
+| `frost_at(pos)` | (thawed top m, frost depth m, weakening 0..1) | 0 |
 | `dent_at(pos)`, `rim_at(pos)` | m | 0 |
 | `runoff_at(pos)` | (depth m, speed m/s) | 0 |
-| `press(body)` | | through the contact group |
+| `mud_depth_at(pos)` | m of slurry | 0 |
+| `needle_ice_at(pos)` | (height m, crumbs 0..1) | 0 |
+| `rut_guidance_at(contact, lateral, half_width)` | (cross slope along lateral, wall m on -lateral, wall m on +lateral) | 0 |
+| pressing | | through the `world_contact` group |
 
 Consumers: vehicles, snow, grass (ruts tear the sward), fire (fuel on bare ground), water (wet sand), ground mud on
-legs.
+legs. Moving the vehicle's direct GroundSurface3D calls onto it is the next step (they also need the richer
+terramechanics and pressing calls, which stay on the producer for now).
 
 ### Snow (`WorldSnow`; producers `SnowCover3D`, `SnowSurface3D`)
 

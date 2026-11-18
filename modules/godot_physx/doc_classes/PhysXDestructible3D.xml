@@ -58,10 +58,32 @@
 				Returns the mass of the piece's live body. [code]0.0[/code] for an out-of-range index or a dead body.
 			</description>
 		</method>
+		<method name="get_render_materials" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The materials its chunks draw with: [member material_override] alone when set, else the asset's materials by slot. For effects that restyle every piece (see [method set_material_remap]).
+			</description>
+		</method>
 		<method name="is_fractured" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] once a hit has broken anything off this object. It stays [code]true[/code] from then on, even after every piece is gone. See also [signal fractured].
+			</description>
+		</method>
+		<method name="set_instance_shader_parameter">
+			<return type="void" />
+			<param index="0" name="name" type="StringName" />
+			<param index="1" name="value" type="Variant" />
+			<description>
+				Sets an instance shader parameter on every piece, live and spawned later (a [PhysXBurnable3D] sets its char front this way).
+			</description>
+		</method>
+		<method name="set_material_remap">
+			<return type="void" />
+			<param index="0" name="from" type="Material" />
+			<param index="1" name="to" type="Material" />
+			<description>
+				Draws [param to] wherever a piece would draw [param from] (one of [method get_render_materials]), on every piece, live and spawned later: a [PhysXBurnable3D] swaps in its burning look this way, so the char stays on the pieces as the structure breaks.
 			</description>
 		</method>
 	</methods>

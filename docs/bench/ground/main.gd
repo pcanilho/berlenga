@@ -1472,6 +1472,18 @@ func _run_needle_tests() -> void:
 	_check("the thaw melts them and the ground drops back, left as loose crumbs", nd.x == 0.0 and nd.y > 0.5 and absf(back) < 0.003, "crumbs %.2f, %.1f mm" % [nd.y, back * 1000.0])
 	var loose := surface.get_sinkage_at(Vector3(-2, 0, -2), 80.0, 0.03, 0.1)
 	_check("the crumbs print deeper than the soil did", loose > 1.2 * plain, "%.1f mm (%.1f mm before)" % [loose * 1000.0, plain * 1000.0])
+	# The ground contract (docs/ideas/world-contracts.md) answers from this ground; a stub overrides only what it sets.
+	var wg: WorldGround = WorldContracts.get_ground()
+	var p := Vector3(-2, 0, -2)
+	var same: bool = wg.has_provider() and absf(wg.height_at(p) - surface.get_surface_height_at(p)) < 1e-5 and wg.needle_ice_at(p) == surface.get_needle_ice_at(p) and bool(wg.soil_at(p)["soft"])
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _standing_water_at(_p: Vector3) -> float:\n\treturn 0.5\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	var stubbed: WorldGround = WorldContracts.get_ground()
+	var mixed: bool = stubbed.standing_water_at(p) == 0.5 and absf(stubbed.height_at(p) - surface.get_surface_height_at(p)) < 1e-5
+	WorldContracts.clear_overrides()
+	_check("the ground contract answers from the ground, and a stub replaces only what it overrides", same and mixed and WorldContracts.get_ground().standing_water_at(p) == surface.get_standing_water_at(p), "live %s, stubbed %s" % [same, mixed])
 	wm.queue_free()
 
 # Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
@@ -1591,6 +1603,41 @@ func _run_rut_guidance_tests() -> void:
 			car.queue_free()
 		print("  a car driven straight: %.1f cm sideways on unmarked soil, %.1f cm with its wheels 15 cm inside old ruts" % [drift[0] * 100.0, drift[1] * 100.0])
 		_check("old ruts pull the wheels into them", drift[1] - drift[0] > 0.05 and absf(drift[0]) < 0.05, "%.1f cm, %.1f cm unmarked" % [drift[1] * 100.0, drift[0] * 100.0])
+		# The centre ridge (mud round 10): deep old ruts with the soil between them standing 25 cm proud. The wheels drop
+		# into the ruts, the belly lands on the ridge and takes the car's weight off them: it hangs up where it drives
+		# on along shallow ruts.
+		var hang := {}
+		for deep in [false, true]:
+			await _soil_scene("soil")
+			surface.moisture = 0.3
+			surface.mud_layer = false
+			for side in [-1.0, 1.0]:
+				for k in 30:
+					var q := Vector3(side * 0.8, 0, -1.0 + 0.45 * k)
+					var g := surface.get_surface_height_at(q)
+					surface.press_box(q, Vector2(0.3, 0.5), 0.0, g - (0.35 if deep else 0.12), 0.0)
+			if deep:
+				for k in 40:
+					surface.deposit(Vector3(0, 0, 0.5 + 0.3 * k), 0.4, 0.25)
+			for i in 40:
+				await get_tree().physics_frame
+			surface.sync_deformation()
+			var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+			surface.follow_target = surface.get_path_to(car)
+			for i in 30:
+				await get_tree().physics_frame
+			var start := car.global_position
+			car.throttle = 0.5
+			var held := 0.0
+			for i in 240:
+				await get_tree().physics_frame
+				held += car.get_belly_support() / 240.0
+			car.throttle = 0.0
+			hang[deep] = [(car.global_position - start).length(), held]
+			car.queue_free()
+		print("  ruts: %.1f m along shallow ones; %.1f m along deep ones over a ridge, the belly holding %.0f N of %.0f on average" % [hang[false][0], hang[true][0], hang[true][1], 1500.0 * 9.81])
+		_check("a ridge between deep ruts lifts the car onto its belly and it hangs up", hang[true][1] > 0.3 * 1500.0 * 9.81 and hang[true][0] < 0.3 * hang[false][0] and hang[false][1] == 0.0,
+				"%.1f m, belly %.0f N; %.1f m in shallow ruts" % [hang[true][0], hang[true][1], hang[false][0]])
 	near_on = true
 
 

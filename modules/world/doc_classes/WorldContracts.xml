@@ -35,6 +35,12 @@
 				The fire contract now: the stub a test set, else the one over every live fire producer.
 			</description>
 		</method>
+		<method name="get_ground" qualifiers="const">
+			<return type="WorldGround" />
+			<description>
+				The ground contract: the stub set with [method set_ground], else the live ground's.
+			</description>
+		</method>
 		<method name="get_water" qualifiers="const">
 			<return type="WorldWater" />
 			<description>
@@ -52,6 +58,13 @@
 			<return type="void" />
 			<description>
 				Replaces the fire for every system with [param stub], a script extending [WorldFire].
+			</description>
+		</method>
+		<method name="set_ground">
+			<param index="0" name="stub" type="WorldGround" />
+			<return type="void" />
+			<description>
+				Replaces the ground contract with [param stub] (a script extending [WorldGround]); the virtual methods it does not override fall back to the live ground. [method clear_overrides] removes it.
 			</description>
 		</method>
 		<method name="set_water">

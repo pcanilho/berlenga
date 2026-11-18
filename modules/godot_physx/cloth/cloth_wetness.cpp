@@ -107,6 +107,9 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 		if (WorldWater *ww = WorldContracts::water()) {
 			if (ww->has_provider()) {
 				surface = ww->height_at(Vector3(p_world_box.get_center().x, lowest, p_world_box.get_center().z));
+				if (surface > lowest) {
+					water_flow = ww->flow_at(Vector3(p_world_box.get_center().x, 0.5f * (lowest + MIN(surface, lowest + p_world_box.size.y)), p_world_box.get_center().z));
+				}
 			}
 		}
 	}
@@ -119,6 +122,10 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 			wade_wet = 0.0f;
 			wade_depth = 0.0f;
 		}
+	}
+	water_surface = surface > lowest ? surface : -1.0e9f;
+	if (surface <= lowest) {
+		water_flow = Vector3();
 	}
 	wade_share = CLAMP(wade_depth / tall, 0.0f, 1.0f);
 	wade_line = wade_wet > 0.0f ? lowest + wade_depth : -1.0e6f;

@@ -479,7 +479,8 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	// at twice that.
 	in.wind_factor = 0.0f;
 	in.drift_norm = 1.0f;
-	last_wind = driven ? driven_wind : (in.weather ? in.weather->get_mean_wind_at(center) : Vector2());
+	// The flat-ground wind: the cover applies its own terrain terms (Liston curvature, Winstral Sx) on it.
+	last_wind = driven ? driven_wind : (in.weather ? in.weather->get_mean_wind_at(center, false) : Vector2());
 	if (drift_enabled && (in.weather || driven)) {
 		const Vector2 wind = last_wind;
 		const float u = wind.length();

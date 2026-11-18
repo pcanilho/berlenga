@@ -32,6 +32,9 @@
 #include "physx_burnable_3d.h"
 
 #include "../nodes/physx_particle_fluid_3d.h"
+#ifdef GODOT_PHYSX_BLAST
+#include "../blast/physx_destructible_3d.h"
+#endif
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
 #include "physx_flow_emitter_3d.h"
@@ -133,6 +136,16 @@ void PhysXBurnable3D::_gather() {
 			stack.push_back(n->get_child(i));
 		}
 	}
+#ifdef GODOT_PHYSX_BLAST
+	if (PhysXDestructible3D *d = Object::cast_to<PhysXDestructible3D>(t)) {
+		destructible_id = d->get_instance_id();
+		const AABB box = d->get_aabb();
+		if (box.has_volume()) {
+			bounds = first ? box : bounds.merge(box);
+			first = false;
+		}
+	}
+#endif
 	if (first) {
 		bounds = AABB(Vector3(-0.25f, -0.25f, -0.25f), Vector3(0.5f, 0.5f, 0.5f));
 	}
@@ -194,6 +207,14 @@ void PhysXBurnable3D::_wet_from_fluids(const Transform3D &p_xf) {
 	rain_water = MAX(rain_water, kg / _surface_area());
 	if (rain_water >= 0.5f) {
 		brand_spots.clear();
+	}
+	// Steam (PhysXSteam): the water takes the burning patch's heat once: its char layer, about a centimetre at some
+	// 500 C (200 kg/m3, 1.2 kJ/kg K: 1.2 MJ/m2), and a second of its flames' output, while the water lasts.
+	if (!steamed && (state == STATE_FLAMING || (state == STATE_SMOULDERING && smoulder > 0.1f))) {
+		steamed = true;
+		const float area = MIN(Math::PI * burn_radius * burn_radius, _surface_area());
+		const float j = MIN(area * 1.2e6f * (state == STATE_FLAMING ? 1.0f : smoulder) + hrr, kg * PhysXSteam::BOIL_HEAT);
+		steam.add_heat(p_xf.xform(origin_local.lerp(bounds.get_center(), 0.3f)), j, CLAMP(burn_radius, 0.3f, 1.5f), 4.0f);
 	}
 }
 
@@ -359,6 +380,7 @@ void PhysXBurnable3D::ignite(const Vector3 &p_position) {
 	burn_radius = MAX(burn_radius, 0.05f);
 	state = STATE_FLAMING;
 	rain_water = 0.0f;
+	steamed = false;
 }
 
 void PhysXBurnable3D::extinguish() {
@@ -366,6 +388,41 @@ void PhysXBurnable3D::extinguish() {
 		state = fuel_left > 0.0f ? STATE_SMOULDERING : STATE_BURNT_OUT;
 		hrr = 0.0f;
 	}
+}
+
+// A burning structure gives way (docs/ideas/physx.md, "Burning buildings break apart"). Timber keeps its strength in
+// the wood left under the char: EN 1995-1-2's reduced cross-section takes off the char depth (a notional 0.8 mm a
+// minute for softwood members, corners included) and a zero-strength layer behind it growing to 7 mm over the first
+// 20 minutes. A member exposed on both faces (a board, a plank wall, a post standing in the fire) loses twice that
+// from its thickness (the box's smallest side), and a frame loaded near half its capacity fails once about 40% of the
+// section is gone (collapse_share). For a Blast target the bonds in the burning patch take damage as the section
+// goes, up to their full health at collapse_share, gently (no shatter speed); the support graph lets what is cut
+// loose fall. A 4 cm board wall gives way after about 7 minutes of flaming, a 12 cm solid one after about 25.
+void PhysXBurnable3D::_weaken(float p_delta) {
+#ifdef GODOT_PHYSX_BLAST
+	PhysXDestructible3D *d = Object::cast_to<PhysXDestructible3D>(ObjectDB::get_instance(destructible_id));
+	if (!d || state == STATE_UNBURNT || state == STATE_BURNT_OUT) {
+		return;
+	}
+	if (state == STATE_FLAMING) {
+		char_time += p_delta;
+	}
+	const Vector3 sz = bounds.size;
+	const float thickness = MAX(MIN(sz.x, MIN(sz.y, sz.z)), 0.005f);
+	const float depth = 0.8e-3f / 60.0f * char_time + 0.007f * MIN(char_time / 1200.0f, 1.0f);
+	const float lost = CLAMP(2.0f * depth / thickness, 0.0f, 1.0f);
+	if (lost - weakened < 0.02f) {
+		return;
+	}
+	const float dmg = d->get_health() * (lost - weakened) / MAX(collapse_share, 0.05f);
+	weakened = lost;
+	const Vector3 at = _target_xform().xform(origin_local);
+	const float r = MAX(burn_radius, 0.2f);
+	const float shatter = d->get_shatter_speed();
+	d->set_shatter_speed(0.0f);
+	d->apply_radial_damage(at, dmg, r * 0.6f, r);
+	d->set_shatter_speed(shatter);
+#endif
 }
 
 // Flaming: the burning patch grows from the ignition point at flame_spread; it gives off heat_release over its
@@ -628,6 +685,31 @@ void PhysXBurnable3D::_update_look() {
 		}
 	}
 	const float band = CLAMP(bounds.size.length() * 0.08f, 0.02f, 0.3f);
+#ifdef GODOT_PHYSX_BLAST
+	if (PhysXDestructible3D *d = Object::cast_to<PhysXDestructible3D>(ObjectDB::get_instance(destructible_id))) {
+		// Its pieces draw in the destructible's own space, so the char stays on them as they fall.
+		if (!destructible_look) {
+			destructible_look = true;
+			const Array mats = d->get_render_materials();
+			for (int k = 0; k < mats.size(); k++) {
+				const Ref<Material> base = mats[k];
+				const Ref<Material> m = _burn_material(base);
+				if (base.is_valid() && m.is_valid() && m != base) {
+					d->set_material_remap(base, m);
+				}
+			}
+		}
+		const float lit = state == STATE_UNBURNT ? 0.0f : 1.0f;
+		const Vector4 o(origin_local.x, origin_local.y, origin_local.z, burn_radius * lit);
+		const Vector4 st(state == STATE_FLAMING ? glow_energy : 0.0f, smoulder * glow_energy * 0.5f, band, lit);
+		if (o != applied_origin || st != applied_state) {
+			applied_origin = o;
+			applied_state = st;
+			d->set_instance_shader_parameter("burn_origin", o);
+			d->set_instance_shader_parameter("burn_state", st);
+		}
+	}
+#endif
 	for (const MeshRef &r : meshes) {
 		MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(r.id));
 		if (!mi) {
@@ -803,6 +885,7 @@ void PhysXBurnable3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			burnables.erase(this);
 			brands.clear();
+			steam.clear();
 			for (ObjectID &id : emitters) {
 				if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(id))) {
 					e->queue_free();
@@ -823,6 +906,10 @@ void PhysXBurnable3D::_notification(int p_what) {
 				_sample_heat(0.1f);
 			}
 			_burn(dt);
+			_weaken(dt);
+			if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
+				steam.step(this, brand_wind, dt);
+			}
 			_update_emitter();
 			_update_embers(dt);
 			_update_look();
@@ -872,6 +959,8 @@ void PhysXBurnable3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_heat_release_rate", "kw_per_m2"), &PhysXBurnable3D::set_heat_release);
 	ClassDB::bind_method(D_METHOD("get_heat_release_rate"), &PhysXBurnable3D::get_heat_release_rate);
 	ClassDB::bind_method(D_METHOD("set_flame_spread", "speed"), &PhysXBurnable3D::set_flame_spread);
+	ClassDB::bind_method(D_METHOD("set_collapse_share", "share"), &PhysXBurnable3D::set_collapse_share);
+	ClassDB::bind_method(D_METHOD("get_collapse_share"), &PhysXBurnable3D::get_collapse_share);
 	ClassDB::bind_method(D_METHOD("get_flame_spread"), &PhysXBurnable3D::get_flame_spread);
 	ClassDB::bind_method(D_METHOD("set_ignition_temperature", "celsius"), &PhysXBurnable3D::set_ignition_temperature);
 	ClassDB::bind_method(D_METHOD("get_ignition_temperature"), &PhysXBurnable3D::get_ignition_temperature);
@@ -890,6 +979,7 @@ void PhysXBurnable3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fuel_mass", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater,suffix:kg"), "set_fuel_mass", "get_fuel_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "heat_release_rate", PROPERTY_HINT_RANGE, "1,500,1,suffix:kW/m²"), "set_heat_release_rate", "get_heat_release_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flame_spread", PROPERTY_HINT_RANGE, "0,0.5,0.001,suffix:m/s"), "set_flame_spread", "get_flame_spread");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collapse_share", PROPERTY_HINT_RANGE, "0.05,1,0.01"), "set_collapse_share", "get_collapse_share");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "100,700,1,suffix:°C"), "set_ignition_temperature", "get_ignition_temperature");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flame_strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_flame_strength", "get_flame_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "embers"), "set_embers", "has_embers");

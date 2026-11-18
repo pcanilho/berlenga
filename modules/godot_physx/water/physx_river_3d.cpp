@@ -194,6 +194,37 @@ vec2 ripple_slope(vec2 p) {
 	return s;
 }
 
+// Gust ripples (docs/ideas/wind.md): the shared wind roughens the water where it blows. The short waves' mean
+// square slope follows the local wind as Cox and Munk (1954) measured it (0.00512 U10 beyond the calm), and
+// vanishes below the capillary onset (about 1 m/s), so lulls leave glassy patches and gusts sweep darker cat's
+// paws over the river. The wavelets' crests lie across the wind; they ride the current and creep downwind at
+// about the slowest capillary-gravity phase speed (0.23 m/s). Narrow water is fetch-limited: wind_ripple_strength.
+uniform bool wind_ripples = true;
+uniform float wind_ripple_strength : hint_range(0.0, 2.0, 0.01) = 0.5;
+vec2 river_wind_slope(vec2 xz, vec2 flow) {
+#ifdef RIVER_WEATHER
+	if (!wind_ripples || weather_map_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec3 w = weather_wind(vec3(xz.x, 0.0, xz.y), 2.0);
+	float u10 = length(w.xz) / max(weather_open_profile(2.0, z0), 1e-3);
+	float var = (0.0025 + 0.00512 * u10) * smoothstep(0.7, 2.5, u10);
+	if (var <= 1e-6) {
+		return vec2(0.0);
+	}
+	vec2 d = w.xz / max(length(w.xz), 1e-4);
+	vec2 c = vec2(-d.y, d.x);
+	vec2 q = xz - (flow + d * 0.23) * water_time;
+	// Short along the wind (crests across it), longer across it.
+	vec2 g = ripple_slope(vec2(dot(q, d) * 9.0, dot(q, c) * 4.0) + vec2(31.7, 3.3));
+	// ripple_slope's rms is about 0.35 per axis: scale it to the Cox-Munk rms.
+	return (d * g.x + c * g.y * 0.6) * (sqrt(var) * wind_ripple_strength / 0.35);
+#else
+	return vec2(0.0);
+#endif
+}
+
 // The two phases' offsets and the first one's weight.
 float flow_phases(vec2 p, vec2 flow, out vec2 o_a, out vec2 o_b) {
 	float t = water_time / max(flow_period, 0.05) + r_noise(p * 0.05);
@@ -282,6 +313,7 @@ void fragment() {
 	depth += edge_relief * (relief - 0.5) * 2.0;
 	// Calm at the waterline: ripples die out over the last 15 cm.
 	slope *= (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
+	slope += river_wind_slope(v_world.xz, flow) * smoothstep(0.0, 0.15, depth);
 	vec3 n_mesh = normalize(v_normal);
 	if (n_mesh.y < 0.0) {
 		n_mesh = -n_mesh;
@@ -411,9 +443,18 @@ void light() {
 #endif
 )";
 
-// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+// The shared wind for the gust ripples (river_wind_slope), when the weather module is in.
+static String _river_wind_src() {
+#ifdef MODULE_WEATHER_ENABLED
+	return "\n#define RIVER_WEATHER\n" + WeatherMap3D::get_wind_shader_code();
+#else
+	return String();
+#endif
+}
+
+// The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
 	return src;
 }
 

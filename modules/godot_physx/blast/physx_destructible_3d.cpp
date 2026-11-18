@@ -137,6 +137,9 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_kill_y", "y"), &PhysXDestructible3D::set_kill_y);
 	ClassDB::bind_method(D_METHOD("get_kill_y"), &PhysXDestructible3D::get_kill_y);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
+	ClassDB::bind_method(D_METHOD("get_render_materials"), &PhysXDestructible3D::get_render_materials);
+	ClassDB::bind_method(D_METHOD("set_material_remap", "from", "to"), &PhysXDestructible3D::set_material_remap);
+	ClassDB::bind_method(D_METHOD("set_instance_shader_parameter", "name", "value"), &PhysXDestructible3D::set_instance_shader_parameter);
 	ClassDB::bind_method(D_METHOD("set_initial_linear_velocity", "velocity"), &PhysXDestructible3D::set_initial_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_initial_linear_velocity"), &PhysXDestructible3D::get_initial_linear_velocity);
 	ClassDB::bind_method(D_METHOD("set_initial_angular_velocity", "velocity"), &PhysXDestructible3D::set_initial_angular_velocity);
@@ -1255,6 +1258,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		draw_transform.basis = p_transform.basis.orthonormalized().scaled_local(spawn_scale);
 	}
 	LocalVector<RID> instances;
+	LocalVector<RID> instance_meshes;
 	for (uint32_t ci : p_chunk_indices) {
 		const RID mesh = _chunk_mesh(ci);
 		if (!mesh.is_valid() || rs->mesh_get_surface_count(mesh) == 0) {
@@ -1265,9 +1269,11 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		if (material_override_res.is_valid()) {
 			rs->instance_geometry_set_material_override(instance, material_override_res->get_rid());
 		}
+		_apply_remap_and_params(rs, instance, mesh);
 		_apply_gi_mode(rs, instance);
 		_apply_extra_render_settings(rs, instance);
 		instances.push_back(instance);
+		instance_meshes.push_back(mesh);
 	}
 
 	// U24: an island actor's later split re-emits chunks that were already
@@ -1299,6 +1305,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 	ChunkVisual piece;
 	piece.body = body;
 	piece.instances = instances;
+	piece.instance_meshes = instance_meshes;
 	piece.chunk_indices = chunk_indices_storage;
 	piece.actor = p_actor;
 	piece.last_linear_velocity = p_linear_velocity;
@@ -1709,6 +1716,55 @@ uint32_t PhysXDestructible3D::get_piece_chunk(int p_index) const {
 	// A piece represents one actor; an island piece covers several chunks,
 	// so the first (lowest-index) visible chunk stands in for it.
 	return pieces[p_index].chunk_indices.is_empty() ? UINT32_MAX : pieces[p_index].chunk_indices[0];
+}
+
+Array PhysXDestructible3D::get_render_materials() const {
+	if (material_override_res.is_valid()) {
+		Array a;
+		a.push_back(material_override_res);
+		return a;
+	}
+	return blast_asset.is_valid() ? blast_asset->get_materials() : Array();
+}
+
+void PhysXDestructible3D::_apply_remap_and_params(RenderingServer *p_rs, RID p_instance, RID p_mesh) const {
+	if (!material_remap.is_empty()) {
+		if (material_override_res.is_valid()) {
+			if (const Ref<Material> *to = material_remap.getptr(material_override_res->get_rid())) {
+				p_rs->instance_geometry_set_material_override(p_instance, (*to).is_valid() ? (*to)->get_rid() : RID());
+			}
+		} else if (p_mesh.is_valid()) {
+			for (int s = 0; s < p_rs->mesh_get_surface_count(p_mesh); s++) {
+				if (const Ref<Material> *to = material_remap.getptr(p_rs->mesh_surface_get_material(p_mesh, s))) {
+					p_rs->instance_set_surface_override_material(p_instance, s, (*to).is_valid() ? (*to)->get_rid() : RID());
+				}
+			}
+		}
+	}
+	for (const KeyValue<StringName, Variant> &e : instance_params) {
+		p_rs->instance_geometry_set_shader_parameter(p_instance, e.key, e.value);
+	}
+}
+
+void PhysXDestructible3D::set_material_remap(const Ref<Material> &p_from, const Ref<Material> &p_to) {
+	ERR_FAIL_COND(p_from.is_null());
+	material_remap[p_from->get_rid()] = p_to;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		for (uint32_t k = 0; k < piece.instances.size(); k++) {
+			_apply_remap_and_params(rs, piece.instances[k], k < piece.instance_meshes.size() ? piece.instance_meshes[k] : RID());
+		}
+	}
+}
+
+void PhysXDestructible3D::set_instance_shader_parameter(const StringName &p_name, const Variant &p_value) {
+	instance_params[p_name] = p_value;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		for (const RID &instance : piece.instances) {
+			rs->instance_geometry_set_shader_parameter(instance, p_name, p_value);
+		}
+	}
 }
 
 int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius) {

@@ -394,6 +394,10 @@ RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint3
 				static const float pebble_bins[4] = { 1.5f, 2.5f, 4.0f, 6.0f };
 				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * pebble_bins[CLAMP(key_bin(k), 0, 3)];
 				j.seed += 131 * key_bin(k);
+			} else if (key_bin(k) >= RF_DETAIL_BIN) {
+				// Ground detail classes (pebbles, gravel, fine gravel): each its own shapes, so a finer class is not
+				// the coarser one shrunk, and no shape repeats across the scales.
+				j.seed += 131 * key_bin(k);
 			}
 			jobs.push_back(j);
 		}

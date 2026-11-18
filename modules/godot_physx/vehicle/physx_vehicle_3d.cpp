@@ -917,8 +917,11 @@ void PhysXVehicle3D::_belly_step(float p_delta) {
 		for (int ix = 0; ix < NX; ix++) {
 			const Vector3 local((float(ix) + 0.5f) / NX * wx - 0.5f * wx, -h.y, (float(iz) + 0.5f) / NZ * wz - 0.5f * wz);
 			const Vector3 p = box.xform(local);
-			// Under the undisturbed surface: the trough the belly presses is mud packed under it, still bearing.
-			const float z = ground->get_ground_height_at(p) - p.y;
+			// Under the undisturbed surface: the trough the belly presses is mud packed under it, still bearing. Above
+			// it, the berms and the centre ridge the wheels shoved up between their ruts (mud round 10): soil the belly
+			// rides up on and ploughs (high-centring, the "hang-up" failure of mobility models: Rula and Nuttall
+			// 1971; Wong 2008 on ground clearance), so deep old ruts leave a ridge that lifts the car off its wheels.
+			const float z = ground->get_ground_height_at(p) + MAX(ground->get_rim_at(p) - ground->get_dent_at(p), 0.0f) - p.y;
 			if (z <= 0.0f) {
 				continue;
 			}

@@ -108,6 +108,12 @@ public:
 		float self_collision_thickness = 0.0f; // > 0: particles keep this far apart (self collision)
 		float backstop = 0.02f; // how far (m) the cloth may sink inward past its animated position; < 0 = off
 		Transform3D output_xform; // world -> the space the output textures are written in
+		// Water around the garment (WorldContracts' water): particles below water_height feel water_gravity of their
+		// weight and are dragged toward water_flow at water_drag per second.
+		float water_height = -1.0e9f;
+		float water_drag = 0.0f;
+		float water_gravity = 1.0f;
+		Vector3 water_flow;
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
