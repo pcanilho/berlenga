@@ -865,6 +865,33 @@ Next, if the hitch matters on the PC: create a streamed region's bodies
 over several frames (Unreal's time-budgeted physics state creation), and
 batch removals the same way. GPU broad phase numbers go on the PC queue.
 
+### Next-round options (card posted 18 Nov)
+
+Logs and deadwood burn. Trees mark deadwood meshes (PlantSpecies meta
+"deadwood", mesh meta "tree_deadwood_axis"); a PhysXFireSpread3D could
+attach a burnable to each such mesh in its area itself, so fallen trunks
+and stumps catch from the ground fire with no setup. A log is a cylinder,
+not a box: char by distance along and around the axis, flames along its
+top line. Large logs smoulder for hours in the wild (heavy fuels, the
+1000-hour time lag class); here, a long smoulder with glowing cracks.
+
+Cloth burns and tears. Melek and Keyser (2003, "Interactive simulation of
+burning objects"; 2007, "Driving object deformations from internal
+physical processes") burn a surface by spreading a front over its mesh,
+charring ahead of it and removing material behind; thin fabric burns
+through, leaving a hole with a glowing, curling edge. Here: a front over
+the cloth's particles (heat from the fire's flux, as burnables take it),
+char in the cloth shader by the particle's burn state, and burnt-through
+triangles removed through the cloth tearing already built, so the cloth
+falls apart under its own weight and the hot gas pushes it.
+
+Smoother streaming. Unreal registers a streamed level's components over
+several frames within a budget (s.LevelStreamingComponentsRegistration
+Granularity and the streaming time limit). Here: bodies entering a space
+already wait in a batch; creating their PhysX shapes and actors could also
+be split over frames within a time budget, with queries flushing the rest
+first so nothing is missed, and removals batched with removeActors.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
