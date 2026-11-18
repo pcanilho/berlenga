@@ -214,3 +214,31 @@ it).
 - Tokuyoshi and Kaplanyan 2021, "Stable geometric specular antialiasing with projected-space NDF filtering" (JCGT).
 - In the fork: gpu-multimesh-records.md, instanced-forests.md, persistent-instances.md, open-world-geometry.md,
   displaced-hit-varyings.md, rocks.md, forest-floor.md, mud.md.
+
+## Stage 1 as built (18 Nov): an experiment, off by default
+
+Paulo picked the instanced approach as an experiment to assess by eye before anything reaches main
+(branch `claude/project-thread-tmrbzz`).
+
+- `RockField3D.ground_detail` (off): three more layers, `LAYER_DETAIL_PEBBLE` (4 cm to `min_size`, on talus to
+  the scree layer's own smallest), `LAYER_DETAIL_GRAVEL` (2 to 4 cm), `LAYER_DETAIL_FINE` (1 to 2 cm), in 8, 4 and
+  2 m cells round the camera.
+- Amounts continue the big layers' own size laws below `min_size`: the shore's log-normal (sigma 0.35 round the
+  beach-slope median, Bujan et al. 2019) and the talus's power law (exponent 2.5), so a coarse beach has few fine
+  grains and a sand beach none. Each class's cover is held under about half the ground.
+- Placement reuses the field's sequential deposition (Visscher and Bolsterli 1972) on a finer grid, seeded with the
+  stones of the coarser layers already down, so grains rest against and around the big stones and never inside one.
+  Cells are built coarse to fine for that.
+- Reach: each class is drawn out to where its mean stone is `ground_detail_pixels` (3) tall, from the camera's field
+  of view and `ground_detail_reference_height` (or the viewport's height). At 1080p: pebbles 32 m (capped by
+  `ground_detail_max_radius`), gravel 11.7 m, fine gravel 5.8 m.
+- Shapes are the field's own libraries (pebble and scree families), drawn from one of their LODs (320, 140 and 64
+  triangles): a MultiMesh takes one LOD for the whole cell, so the grains carry theirs. The path tracer builds one
+  BLAS per shape and one TLAS entry per stone (the expanded MultiMesh path); nothing is built per stone.
+- Stones under 50 cm had a ground-blend band sized for a 50 cm stone, which covers a pebble whole. With
+  `ground_detail` on, `small_linear` shrinks the band in proportion below 50 cm (unchanged above), so the pebbles and
+  the grains share one dusted foot. Off, the shader is as before.
+- GPU fill (the compute pass) is not in this stage: placement runs with the field's cells on the CPU, the same
+  deterministic way. It comes with the GPU-written TLAS entries if the experiment is kept.
+
+Bench: `docs/bench/rocks --world --view=shore|scree --ground-detail [--detail-ref=1080 --detail-pixels=3]`.

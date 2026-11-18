@@ -46,6 +46,8 @@ extends Node3D
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
 #   --only-layer          with --world: only the view's layer is placed
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
+#   --ground-detail       with --world: RockField3D.ground_detail (stones of 1 to 8 cm round the camera as geometry);
+#                         --detail-ref=px image height the reach is set for (1080), --detail-pixels=n (3)
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
@@ -498,9 +500,21 @@ func _world() -> void:
 				rocks.set_layer_enabled(i, LAYERS[i] == view)
 		if args.has("stone-density"):
 			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
+		# --ground-detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
+		# --detail-ref=px the image height the reach is set for (0: the window's), --detail-pixels=n the smallest drawn.
+		if args.has("ground-detail"):
+			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
+			if args.has("detail-pixels"):
+				rocks.ground_detail_pixels = float(args["detail-pixels"])
+			rocks.ground_detail = true
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if rocks.ground_detail:
+			print("ground detail: pebbles %d within %.1f m, gravel %d within %.1f m, fine gravel %d within %.1f m" % [
+				rocks.get_ground_detail_count(RockField3D.LAYER_DETAIL_PEBBLE), rocks.get_layer_radius(RockField3D.LAYER_DETAIL_PEBBLE),
+				rocks.get_ground_detail_count(RockField3D.LAYER_DETAIL_GRAVEL), rocks.get_layer_radius(RockField3D.LAYER_DETAIL_GRAVEL),
+				rocks.get_ground_detail_count(RockField3D.LAYER_DETAIL_FINE), rocks.get_layer_radius(RockField3D.LAYER_DETAIL_FINE)])
 		if gen.get_hole_count() > 0:
 			print("holes: %d in the generator, %d landscape chunks, %d quads" % [gen.get_hole_count(), land.get_hole_chunk_count(), land.get_hole_quad_count()])
 			if args.has("hole-dump"):
