@@ -1271,6 +1271,17 @@ void PhysXSkinnedCloth3D::_advance(double p_delta) {
 	s.friction = s.friction + (1.0f - s.friction) * 0.6f * w;
 	s.gravity = get_effective_gravity() - extra_acceleration * (water_capacity * w / (1.0f + water_capacity * w));
 	s.self_collision_thickness = self_collision ? self_collision_thickness : 0.0f;
+	// Under water (wading, docs/ideas/physx.md "River current drags clothing"): woven fibre is denser than water
+	// (cotton 1.54, polyester 1.38, wool 1.31 g/cm3), so soaked fabric keeps about 30% of its weight; the current
+	// drags it at Morison's 0.5 rho Cd |u| per its areal mass (Cd about 1.2 for a sheet across the flow), the
+	// speed relative to the fabric taken as the current's plus a little for its own sway.
+	if (wet.water_surface > -1.0e8f) {
+		const float areal = fabric_density * (1.0f + water_capacity);
+		s.water_height = wet.water_surface;
+		s.water_flow = wet.water_flow;
+		s.water_drag = MIN(0.5f * 1000.0f * 1.2f * (wet.water_flow.length() + 0.1f) / MAX(areal, 0.05f), 200.0f);
+		s.water_gravity = 0.3f;
+	}
 	s.output_xform = source->get_global_transform_interpolated().affine_inverse(); // (as drawn — matches the capture)
 	solver->step(captured_bones, capsule_data, box_data, p_delta, substeps, s);
 

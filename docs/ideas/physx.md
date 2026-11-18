@@ -1289,6 +1289,22 @@ broke at 7 minutes and was all pieces by 8, as the section model says.
 Left: flames stay at the intact shape's place after it breaks (the Flow
 emitters do not follow pieces yet).
 
+### River current drags clothing (picked 18 Nov night, third of four)
+
+Built for worn clothing (PhysXSkinnedCloth3D). ClothWetness keeps the
+water's surface under the garment and its current at the wet band's mid
+depth (WorldContracts' water: height_at, flow_at). The cloth solver takes
+both: particles under the surface keep 30% of their weight (woven fibre is
+denser than water: cotton 1.54, polyester 1.38, wool 1.31 g/cm3, so soaked
+fabric sinks slowly) and are dragged toward the current at Morison's
+0.5 rho Cd |u| over the fabric's soaked areal mass (Cd about 1.2 for a
+sheet across the flow, |u| the current plus 0.1 m/s for its own sway),
+capped at 200/s. Test: a 60 cm skirt standing in water to 35 cm below the
+waist, then in a 0.8 m/s current: the upstream panel pressed 16 cm in
+against the legs while the downstream side held out, and it all hung back
+once out of the water. Left: free PhysXCloth3D (flags and sheets dipping in
+a river) does not take the current yet.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
