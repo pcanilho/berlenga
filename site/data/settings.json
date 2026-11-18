@@ -1027,7 +1027,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
