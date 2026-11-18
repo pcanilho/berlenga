@@ -35,6 +35,7 @@
 #include "scene/3d/visual_instance_3d.h"
 
 #ifdef GODOT_PHYSX_FLOW
+#include "../cloth/cloth_wetness.h"
 #include "../flow/physx_cloth_burn.h"
 #endif
 #include "scene/resources/mesh.h"
@@ -87,6 +88,8 @@ private:
 	NodePath flow_path;
 	LocalVector<Vector3> flow_prev_positions; // world, last step, for the cloth's own velocity
 	void _couple_flow(double p_delta);
+	void _eddy_air(const Vector3 &p_wind); // wind_turbulence's eddies across the cloth, when no Flow gas drives it
+	bool eddies_on = false;
 	float drag = 1.0;
 	float lift = 0.2;
 
@@ -107,13 +110,10 @@ private:
 
 	// Wet from the weather (docs/ideas/physx.md, "Rain soaks cloth"): rain soaks the fabric up to water_capacity times
 	// its own weight; wet, it is heavier, limper, darker and clings to what it touches, then dries in the air.
-	float wetness = 0.0f; // 0 dry, 1 soaked
+	ClothWetness wet;
 	bool weather_wetting = true;
 	float water_capacity = 1.0f; // kg of water a kg of fabric holds soaked (cotton about 1, wool more, polyester less)
 	float wet_applied = 0.0f; // the wetness the solver's masses and stiffness last took
-	float rain_catch = 1.0f; // rain caught per m2 of fabric over rain per m2 of ground, from its facing and the wind
-	float rain_shelter = 1.0f; // 0 under a roof
-	float rain_timer = 0.0f;
 	void _update_wetness(double p_delta, const Vector3 &p_wind);
 
 	PinMode pin_mode = PIN_TOP_EDGE;
@@ -152,6 +152,7 @@ private:
 	void _resolve_pins();
 	void _step(double p_delta);
 	void _collide();
+	LocalVector<Vector3> pre_step_positions; // world, before the solver step, for swept collision
 	void _update_mesh(); // CPU: from the solver
 	bool _fill_uvs(int p_count);
 	void _update_gpu_mesh(); // GPU: from the server readback
@@ -236,15 +237,16 @@ public:
 	// Local-space positions of the currently pinned vertices (for the editor gizmo).
 	PackedVector3Array get_pinned_positions() const;
 	int release_pins(const PackedInt32Array &p_vertices);
+	void move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions);
 	int tear(const Vector3 &p_from, const Vector3 &p_to);
 	void set_wetness(float p_v);
-	float get_wetness() const { return wetness; }
+	float get_wetness() const { return wet.wetness; }
 	void set_weather_wetting(bool p_v) { weather_wetting = p_v; }
 	bool is_weather_wetting() const { return weather_wetting; }
 	void set_water_capacity(float p_v);
 	float get_water_capacity() const { return water_capacity; }
 	// Water held, kg/m2.
-	float get_water_load() const { return wetness * density * water_capacity; }
+	float get_water_load() const { return wet.wetness * density * water_capacity; }
 
 	void set_burnable(bool p_v);
 	bool is_burnable() const { return burnable; }

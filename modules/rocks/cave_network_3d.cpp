@@ -2316,21 +2316,22 @@ void vertex() {
 // Returned as groove depth 0..1; the shading comes from the bump (the groove's sides catch and lose the light), not
 // from painting a line.
 float groove(float a, float w) { return smoothstep(1.0 - w, 1.0, a); }
-float joints(vec3 p) {
+float joints_w(vec3 p, float p_wide) {
 	// Real joints wander and die out: the planes are warped by up to a third of their spacing, and each set opens
 	// only along a minority of its length (dissolution follows the few that carried water).
 	// A crack is never a ruled line: it kinks at the centimetre (the grains it breaks round) as well as the metre, and
 	// its width runs from a hairline to a few centimetres where solution opened it.
 	float wob = 0.6 * (fbm(p * 0.35 + 2.0) - 0.5) + 0.12 * (fbm(p * 1.9) - 0.5) + 0.03 * (vn(p * 9.0 + 5.0) - 0.5);
-	float wv = 0.005 + 0.045 * smoothstep(0.35, 0.85, fbm(p * 1.3 + 41.0));
+	float wv = (0.008 + 0.06 * smoothstep(0.35, 0.85, fbm(p * 1.3 + 41.0))) * p_wide;
 	float a = abs(fract(dot(p.xz, vec2(0.94, 0.34)) / 1.7 + wob) - 0.5) * 2.0;
 	float b = abs(fract(dot(p.xz, vec2(-0.17, 0.98)) / 2.3 + wob * 1.3) - 0.5) * 2.0;
 	float c = abs(fract(p.y / 1.1 + 0.5 * wob + 0.4 * fbm(p * 0.2)) - 0.5) * 2.0;
-	float ma = smoothstep(0.55, 0.62, fbm(p * 0.35 + 3.0)), mb = smoothstep(0.58, 0.65, fbm(p * 0.3 + 9.0)), mc = smoothstep(0.5, 0.58, fbm(p * 0.25 + 15.0));
+	float ma = smoothstep(0.45, 0.55, fbm(p * 0.35 + 3.0)), mb = smoothstep(0.48, 0.58, fbm(p * 0.3 + 9.0)), mc = smoothstep(0.45, 0.55, fbm(p * 0.25 + 15.0));
 	// Each length dies out and starts again (en echelon), a few decimetres to metres long.
 	float brk = smoothstep(0.3, 0.42, vn(p * 1.6 + 23.0));
 	return brk * max(max(ma * groove(a, wv), mb * groove(b, wv * 0.8)), mc * groove(c, wv * 1.5));
 }
+float joints(vec3 p) { return joints_w(p, 1.0); }
 // Worley distances (nearest, second) and the nearest cell's id, for scallops and the stream's clasts.
 vec3 wor(vec3 p, out vec3 r_id) {
 	vec3 i = floor(p), f = fract(p);
@@ -2383,6 +2384,13 @@ float chips(vec3 p, float p_size, out vec3 r_id) {
 float relief(vec3 p, float p_joint, float p_near, float p_wall, float p_bed) {
 	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0) + 0.08 * vn(p * 48.0);
 	h += p_near * (0.2 * vn(p * 26.0 + 2.0) + 0.04 * vn(p * 90.0 + 9.0));
+	if (p_near > 0.01) {
+		// Close up, solution pits and vugs a few millimetres across, sharp-edged, in the micrite.
+		vec3 pid;
+		vec3 pw = wor(p * 70.0, pid);
+		float pr = mix(0.1, 0.3, h3(pid + 5.0));
+		h -= p_near * 0.12 * step(0.85, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.08, pr, pw.x));
+	}
 	float bed = fract(p.y / 1.1 + 0.4 * fbm(p * 0.6));
 	h += 0.3 * smoothstep(0.0, 0.08, bed) * (1.0 - bed);
 	h -= 0.3 * p_joint * joints(p);
@@ -2409,7 +2417,7 @@ void fragment() {
 	// stains seep orange-brown from joints and bedding, and dark manganese films coat the lower walls where floods sat.
 	float purity = fbm(vec3(w_pos.x * 0.12, w_pos.y * 0.9, w_pos.z * 0.12) + 61.0);
 	col *= mix(vec3(0.82, 0.8, 0.78), vec3(1.18, 1.12, 1.0), smoothstep(0.3, 0.7, purity));
-	float iron = smoothstep(0.6, 0.78, fbm(vec3(w_pos.x * 1.1, w_pos.y * 0.25, w_pos.z * 1.1) + 77.0));
+	float iron = smoothstep(0.6, 0.78, fbm(vec3(w_pos.x * 1.1, w_pos.y * 0.6, w_pos.z * 1.1) + 77.0));
 	col = mix(col, col * vec3(1.25, 0.95, 0.65), 0.55 * iron);
 	float floor_w = smoothstep(0.55, 0.85, w_nrm.y);
 	// Joints stop at the floor: its sediment fills over them.
@@ -2417,6 +2425,8 @@ void fragment() {
 	float crack = joints(w_pos) * joint_w;
 	// The crack's mouth is a shadowed slot with silt and dark manganese in it: dark, recessed, never a bright line.
 	col *= mix(1.0, 0.22, crack);
+	// Water seeping out of the crack stains a hand's width round it darker (the slot reads as a recess, not a line).
+	col *= 1.0 - 0.3 * joints_w(w_pos, 4.0) * joint_w;
 	// The floor's fill: brown cave earth, or beach sand where the sea carries it in (a few metres over the sea, the
 	// same sand as the beach outside, so a sea cave's floor runs on from the shore with no seam).
 	float sandy = (1.0 - smoothstep(3.5, 5.0, w_pos.y - sea_level)) * smoothstep(0.82, 0.95, w_nrm.y);
@@ -2428,17 +2438,25 @@ void fragment() {
 	if (bank > 0.0) {
 		vec3 bid;
 		float ch = chips(w_pos, 0.03, bid);
-		vec3 chip_col = rock_color * mix(0.95, 1.7, h3(bid)) * (0.85 + 0.3 * grain);
-		col = mix(col, mix(fill * 0.9, chip_col, smoothstep(0.05, 0.3, ch)), bank * 0.85);
+		// Near the fill's own tone (pale discs read as droplets): the spalls are the geometry's, this only grits it.
+		vec3 chip_col = mix(fill, rock_color, 0.5) * mix(0.8, 1.15, h3(bid)) * (0.85 + 0.3 * grain);
+		col = mix(col, mix(fill * 0.95, chip_col, smoothstep(0.05, 0.3, ch)), bank * 0.6);
 	}
 	// Close up, the micrite's own crisp speckle (a few millimetres), so a near wall never reads as smeared.
 	float near_c = 1.0 - smoothstep(1.5, 4.0, length(VERTEX));
-	col *= mix(1.0, 0.86 + 0.28 * vn(w_pos * 420.0 + 3.0), near_c * (1.0 - floor_w));
+	col *= mix(1.0, (0.8 + 0.4 * vn(w_pos * 420.0 + 3.0)) * (0.9 + 0.2 * vn(w_pos * 130.0 + 8.0)), near_c * (1.0 - floor_w));
+	// Its pits dark (the relief's own, at 70 per metre).
+	if (near_c > 0.01) {
+		vec3 pid;
+		vec3 pw = wor(w_pos * 70.0, pid);
+		float pr = mix(0.1, 0.3, h3(pid + 5.0));
+		col *= 1.0 - near_c * (1.0 - floor_w) * 0.3 * step(0.85, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.08, pr, pw.x));
+	}
 	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler calcite in vertical streaks
 	// (noise stretched along the fall line).
 	float wall = 1.0 - abs(w_nrm.y);
-	float streak = smoothstep(0.62, 0.8, fbm(vec3(w_pos.x * 1.7, w_pos.y * 0.18, w_pos.z * 1.7) + 23.0)) * wall;
-	col = mix(col, vec3(0.48, 0.42, 0.34) * (0.85 + 0.3 * fine), streak * 0.7);
+	float streak = smoothstep(0.68, 0.82, fbm(vec3(w_pos.x * 1.7, w_pos.y * 0.3, w_pos.z * 1.7) + 23.0)) * wall;
+	col = mix(col, vec3(0.48, 0.42, 0.34) * (0.85 + 0.3 * fine), streak * 0.4);
 	// Flowstone mounds and bosses round the formations (the mesher's red): smooth calcite.
 	float flow = clamp(COLOR.r, 0.0, 1.0);
 	col = mix(col, vec3(0.46, 0.38, 0.28) * (0.8 + 0.35 * fine), flow * 0.8);
@@ -3066,7 +3084,10 @@ void CaveNetwork3D::_update_stream_nodes() {
 					cave_profile(sg.type, 0.0, 0.0, r, floor_v);
 					const real_t ch = cave_stream_half_width(sg.type, r);
 					pts.push_back(line + u_axis * cave_stream_u(line, uint32_t(seed), ch) + v_axis * (floor_v - cave_stream_cut(r) + cave_stream_depth(r)));
-					wid.push_back(float(2.0 * ch * 1.05));
+					// Wide enough that its edges run under the banks: the washed floor rises to the fill between 0.7 and
+					// 1.3 half-widths and meets the water's level at about 1.15, so a narrower ribbon ended in the air
+					// over the bed as a cut edge.
+					wid.push_back(float(2.0 * ch * 1.3));
 					dep.push_back(float(cave_stream_depth(r)));
 				}
 			}
@@ -3259,7 +3280,7 @@ void CaveNetwork3D::_scatter_clasts(const LocalVector<Vector3> &p_pts, const Loc
 			xf[p_shape].push_back(Transform3D(p_rot.scaled(Vector3(p_sc, p_sc, p_sc)), pos));
 			cu[p_shape].push_back(Color(p_ground, p_wet, p_sc, rng.randf() * 0.98));
 		};
-		const real_t hw0 = 0.5 * real_t(p_wid[j]) / 1.05, hw1 = 0.5 * real_t(p_wid[j + 1]) / 1.05;
+		const real_t hw0 = 0.5 * real_t(p_wid[j]) / 1.3, hw1 = 0.5 * real_t(p_wid[j + 1]) / 1.3;
 		const real_t water0 = a.y, water1 = b.y;
 		// Darts over the channel: about one try per 3.5 cm square (the spacing test thins them).
 		const int tries = int(sl * (hw0 + hw1) / 0.0012);
@@ -3327,7 +3348,7 @@ void CaveNetwork3D::_scatter_clasts(const LocalVector<Vector3> &p_pts, const Loc
 					// Fallen any way up, tilted by the bank and by landing on each other.
 					Basis bs = Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
 					bs = Basis(Vector3(rng.randf() - 0.5, 0, rng.randf() - 0.5).normalized(), Math::deg_to_rad(10.0 + 25.0 * rng.randf())) * bs;
-					put(kCobbles + kAllo + int(rng.rand() % uint32_t(kChips)), Vector3(c.x, fy, c.z), bs, sc, 0.1 + 0.15 * rng.randf(), fy - 1.0, fy < c0.y + 0.02 ? 0.6 : 0.0);
+					put(kCobbles + kAllo + int(rng.rand() % uint32_t(kChips)), Vector3(c.x, fy, c.z), bs, sc, 0.3 + 0.15 * rng.randf(), fy - 1.0, fy < c0.y + 0.02 ? 0.6 : 0.0);
 				}
 			}
 		}

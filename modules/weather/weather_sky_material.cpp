@@ -254,6 +254,9 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	steps = int(clamp(float(steps) * sqrt((t1 - t0) / 5000.0), float(steps), float(steps) * 3.0));
 	float ds = (t1 - t0) / float(steps);
 	float cos_theta = dot(rd, sun_dir);
+	// A low sun's light crosses the deck for kilometres: two more doubling steps (to 6.4 km) under 15 degrees,
+	// so a cloud stands in its neighbours' shadow at sunset rather than every cloud lit whole.
+	int light_steps = cloud_light_steps + (sun_dir.y < 0.26 ? 2 : 0);
 	vec3 radiance = vec3(0.0);
 	float transmittance = 1.0;
 	for (int i = 0; i < steps; i++) {
@@ -269,7 +272,7 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		float tau = 0.0;
 		float d = 0.0;
 		float step_l = 25.0;
-		for (int j = 0; j < cloud_light_steps; j++) {
+		for (int j = 0; j < light_steps; j++) {
 			vec3 lp = p + sun_dir * (d + 0.5 * step_l);
 			tau += wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
 			d += step_l;
@@ -291,7 +294,12 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		// two-stream approximation (Bohren 1987). The down stream at optical depth tau carries
 		// 1 / (1 + 3/4 (1 - g) tau) of the sun's flux, and the up stream about as much again near the lit
 		// side, spread evenly over directions.
-		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau);
+		// The light march reads the shape without its eroded edges, at steps doubling to hundreds of metres:
+		// it finds about half the optical depth the body has (a cumulus is some 50 per kilometre, Stephens
+		// 1978). With the march's own tau a cloud's shaded side kept two thirds of its lit side's light, so every
+		// cloud was one flat tone, a cut-out; at twice it the shaded side darkens while an overcast deck (whose
+		// diffuse light this also is) keeps most of its brightness (four times darkened decks to a storm).
+		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
 		light += sun_radiance * diffuse * (2.0 / (4.0 * PI));
 		float hf = clamp((p.y - cloud_base_height) / wc_top_height(ct.y), 0.0, 1.0);
 		light += mix(ambient_bottom, ambient_top, hf);

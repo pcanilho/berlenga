@@ -15458,6 +15458,24 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		leaf_area_index = lai * keep;
 	}
+	// Foliage clumping (trees.md 5ad, docs 18 Nov: hedge shrubs from above read as one even
+	// green carpet). Shrub crowns hold their leaves in clumps round the short shoots and spurs,
+	// with gaps between them where light reaches the inner twigs: the clumping index of broadleaf
+	// shrub canopies is about 0.6-0.8 (Chen and Black, Agric. For. Meteorol. 60, 1992; He et al.,
+	// Remote Sens. Environ. 119, 2012). A 3D noise over the crown, a clump about a fifth of the crown's
+	// radius across, empties the twigs in its low quarter: lobed crown edges with sky between, the stems seen in the gaps.
+	if (!needles && per > 0 && hedge_shrub(preset)) {
+		// Clumps scale with the crown: a hand's breadth on a cut hedge, a metre or more on a grown
+		// tree (at 0.5 m an 8 m crown's clumps fell below a pixel from the field's view).
+		const float clump_m = CLAMP(0.2f * crown_radius, 0.3f, 1.6f) * Math::lerp(0.85f, 1.15f, float((uint32_t(seed) * 2654435761u) >> 24) / 255.0f);
+		const float f = 1.0f / clump_m;
+		const Vector3 off(float(seed % 97) * 1.37f, 0.0f, float(seed % 89) * 2.11f);
+		for (int i = 1; i < int(nodes.size()); i++) {
+			const Vector3 q = nodes[i].end() * f + off;
+			const float c = 0.7f * moss_noise(q, 0x636c6d70u) + 0.3f * moss_noise(q * 2.3f, 0x636c6d71u);
+			node_keep[i] *= Math::smoothstep(0.38f, 0.46f, c);
+		}
+	}
 	// Leaves inside a crown shelter each other: the mean exposure through a canopy of leaf area
 	// index L is (1 - exp(-L/2)) / (L/2) (Beer-Lambert with G = 0.5), about 0.37 at L = 5.
 	const float crown_lai = leaf_area_index > 0.0f ? leaf_area_index : 4.0f;
@@ -15511,6 +15529,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		return true;
 	};
+	const int leaf_v_start = int(leaves.verts.size());
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
 		if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
@@ -15714,6 +15733,42 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 
+	if (!needles && hedge_shrub(preset) && crown_radius > 0.0f) {
+		// Clump normals (trees.md 5ad): each leaf's shading normal leans out from its clump and
+		// from the crown, the bent-normal treatment game foliage uses so a crown reads as lumps
+		// with lit tops and shaded undersides rather than per-leaf noise (Sousa, GDC 2013 foliage
+		// in Crysis 3; SpeedTree's hull-blended normals). The clump field is the one that thinned
+		// the twigs above; its outward direction is minus its gradient.
+		const float clump_m = CLAMP(0.2f * crown_radius, 0.3f, 1.6f) * Math::lerp(0.85f, 1.15f, float((uint32_t(seed) * 2654435761u) >> 24) / 255.0f);
+		const float f = 1.0f / clump_m;
+		const Vector3 off(float(seed % 97) * 1.37f, 0.0f, float(seed % 89) * 2.11f);
+		auto field = [&](const Vector3 &p_q) {
+			return 0.7f * moss_noise(p_q, 0x636c6d70u) + 0.3f * moss_noise(p_q * 2.3f, 0x636c6d71u);
+		};
+		AABB box;
+		for (int v = leaf_v_start; v < int(leaves.verts.size()); v++) {
+			if (v == leaf_v_start) {
+				box = AABB(leaves.verts[v], Vector3());
+			} else {
+				box.expand_to(leaves.verts[v]);
+			}
+		}
+		const Vector3 centre = box.get_center();
+		const Vector3 half = (box.size * 0.5f).maxf(0.1f);
+		for (int v = leaf_v_start; v < int(leaves.verts.size()) && v < int(leaves.normals.size()); v++) {
+			const Vector3 q = leaves.verts[v] * f + off;
+			const float e = 0.15f;
+			const Vector3 g(field(q + Vector3(e, 0, 0)) - field(q - Vector3(e, 0, 0)), field(q + Vector3(0, e, 0)) - field(q - Vector3(0, e, 0)), field(q + Vector3(0, 0, e)) - field(q - Vector3(0, 0, e)));
+			const Vector3 hull = ((leaves.verts[v] - centre) / half).normalized();
+			const Vector3 lump = g.length_squared() > 1e-10f ? -g.normalized() : hull;
+			const Vector3 out = (hull * 0.6f + lump * 0.4f).normalized();
+			Vector3 n = leaves.normals[v];
+			if (n.dot(out) < 0.0f) {
+				n = -n; // A leaf is seen from either side: lean the side that faces out.
+			}
+			leaves.normals.write[v] = n.lerp(out, 0.55f).normalized();
+		}
+	}
 	if (preset == PRESET_DWARF_FAN_PALM) {
 		_palm_geometry(bark, leaves);
 	}
@@ -17176,6 +17231,29 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 	// quarter of rough- and smooth-barked broadleaves (and their snags), lianas on another
 	// share in rich woods, honeysuckle twining in shrubs. The generator's climber_cover
 	// scales them (0: none).
+	if (p_form == FORM_OPEN && hedge_shrub(p_preset)) {
+		// Hedgerow shrubs and trees grown out (trees.md 5ad, docs 18 Nov: every variant the
+		// same round lollipop). Each variant takes its own habit: one stem or a few, upright or
+		// spreading, a leader held or lost, so the crowns run from tall and narrow to broad,
+		// flat-topped and lopsided, as hawthorns and field maples left to grow in a hedge do.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const uint32_t h = uint32_t(seed) * 2246822519u + 374761393u;
+		auto r = [&](int p_shift) {
+			return float((h >> p_shift) & 255u) / 255.0f;
+		};
+		for (int k = 0; k < PARAM_MAX; k++) {
+			params[k] = look.params[k];
+		}
+		params[PARAM_STEMS] = Math::round(MAX(look.params[PARAM_STEMS], 1.0f) + (p_variant % 3 == 0 ? 0.0f : float(1 + int(r(0) * 1.99f))));
+		params[PARAM_STEM_SPREAD] = Math::lerp(10.0f, 35.0f, r(4));
+		params[PARAM_APICAL_DOMINANCE] = look.params[PARAM_APICAL_DOMINANCE] * Math::lerp(0.85f, 1.2f, r(8));
+		params[PARAM_APICAL_DOMINANCE_OLD] = look.params[PARAM_APICAL_DOMINANCE_OLD] * Math::lerp(0.85f, 1.2f, r(8));
+		params[PARAM_BRANCH_ANGLE] = look.params[PARAM_BRANCH_ANGLE] + Math::lerp(-12.0f, 15.0f, r(12));
+		params[PARAM_DIRECTION_NOISE] = look.params[PARAM_DIRECTION_NOISE] * Math::lerp(1.0f, 1.7f, r(16));
+		params[PARAM_GRAVITY_BENDING] = look.params[PARAM_GRAVITY_BENDING] * Math::lerp(0.6f, 1.8f, r(20));
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.8f, 1.1f, r(24)));
+	}
 	climber = CLIMBER_NONE;
 	if (p_base_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG || p_form == FORM_UNDERSTORY)) {
 		// 64 bits: presets run past 31 (a 32-bit shift by them was undefined).

@@ -36,6 +36,8 @@
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
+#include "core/math/random_pcg.h"
+#include "core/templates/hashfuncs.h"
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -351,9 +353,6 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		}
 		_shift_lattice(water_speed, ground_origin, p_origin, p_n, 1);
 		_shift_lattice(cell_water, ground_origin, p_origin, p_n, 2);
-		if ((int)crack_state.size() == p_n * p_n * CRACK_FLOATS) {
-			_shift_lattice(crack_state, ground_origin, p_origin, p_n, CRACK_FLOATS); // new cells: never soaked (0)
-		}
 		if ((int)water_table.size() == p_n * p_n) {
 			_shift_lattice(water_table, ground_origin, p_origin, p_n, 1);
 			for (int i = 0; i < p_n * p_n; i++) {
@@ -381,6 +380,7 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	sand_flux.clear();
 	sand_dep_rate.clear();
 	wind_order.clear();
+	_cracks_move(p_origin, p_n); // the crack state moves with it, kept cells read back (new ones: never soaked, 0)
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
@@ -1354,8 +1354,10 @@ void GroundSurface3D::_near_seed(Vector2i p_origin) {
 	const Vector2i old0 = near_fld.origin / T;
 	const Vector2i new0 = p_origin / T;
 	const float t = near_fld.texel();
+	const int S = GroundRutStore::STRIDE;
+	const bool clay = int(field.water.size()) == field.resolution * field.resolution && int(field.water_mud.size()) == field.resolution * field.resolution;
 	LocalVector<uint32_t> data;
-	data.resize(T * T * 2);
+	data.resize(T * T * S);
 	for (int tz = 0; tz < nt; tz++) {
 		for (int tx = 0; tx < nt; tx++) {
 			const Vector2i w = new0 + Vector2i(tx, tz);
@@ -1376,13 +1378,15 @@ void GroundSurface3D::_near_seed(Vector2i p_origin) {
 					const float fr = field.sample(field.fresh, wx, wz);
 					const float wd = int(field.water.size()) == field.resolution * field.resolution ? field.sample(field.water, wx, wz) : 0.0f;
 					any = any || dn > 0.0f || rm > 0.0f || fr > 0.0f || wd > 0.0f;
+					const float cl = clay ? MAX(field.sample(field.water_mud, wx, wz), 0.0f) * wd : 0.0f;
 					const int k = z * T + x;
-					data[k * 2 + 0] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
-					data[k * 2 + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
+					data[k * S + 0] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
+					data[k * S + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
+					data[k * S + 2] = uint32_t(Math::make_half_float(cl));
 				}
 			}
 			if (any) {
-				near_host.seed_tile(w, data.ptr(), 2, max_cached_tiles);
+				near_host.seed_tile(w, data.ptr(), S, max_cached_tiles);
 			}
 		}
 	}
@@ -3209,6 +3213,9 @@ void GroundSurface3D::_notification(int p_what) {
 				active = this;
 			}
 			_follow(_follow_position());
+			if (!pending_puddles.is_empty()) {
+				_puddles_update(delta);
+			}
 			cells_accum += delta;
 			if (cells_accum >= 2.0) {
 				cells_accum = 0.0;
@@ -3593,6 +3600,87 @@ float GroundSurface3D::dig(Vector3 p_position, float p_radius, float p_depth) {
 	return p_depth > 0.0f ? _amount(p_position, p_radius, p_depth, 0.0f) : 0.0f;
 }
 
+// A puddle where a scene or a world generator wants one: a hollow of overlapping lobes dug into the ground (an
+// irregular, rounded rim, no spoil), below a level the lowest point of its rim sets (on a slope, a low bank laid on
+// the downhill side holds it), so its water stands level; then, once the field holds the hollow, filled to that level with water
+// carrying p_mud kg/m3 of clay. The ground slumps its walls to their repose as it would any dig.
+void GroundSurface3D::add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud) {
+	if (p_radius <= 0.0f || p_depth <= 0.0f || !field.valid) {
+		return;
+	}
+	const float r = p_radius;
+	float rim_low = 1e30f;
+	float rim[16];
+	for (int k = 0; k < 16; k++) {
+		const float a = Math::TAU * k / 16.0f;
+		rim[k] = _ground_at(p_position.x + 1.1f * r * Math::cos(a), p_position.z + 1.1f * r * Math::sin(a));
+		rim_low = MIN(rim_low, rim[k]);
+	}
+	// The water's level: the rim's lowest point, or on a slope half the depth below the middle's ground, held by a
+	// low bank of soil laid along the downhill rim (a puddle on a slope is dammed: a track's own berm, a root).
+	const float level = MAX(rim_low - 0.005f, _ground_at(p_position.x, p_position.z) - 0.5f * p_depth);
+	for (int k = 0; k < 16; k++) {
+		const float bank = level + 0.03f - rim[k];
+		if (bank > 0.0f) {
+			const float a = Math::TAU * k / 16.0f;
+			deposit(Vector3(p_position.x + 1.1f * r * Math::cos(a), 0.0f, p_position.z + 1.1f * r * Math::sin(a)), 0.3f * r, bank);
+		}
+	}
+	// Lobes from the position's own hash: the same puddle each time it is asked for there.
+	RandomPCG rng(uint64_t(hash_murmur3_one_float(p_position.x, hash_murmur3_one_float(p_position.z))));
+	auto lobe = [&](float x, float z, float rr, float d) {
+		const float below = MAX(_ground_at(x, z) - level, 0.0f);
+		dig(Vector3(x, 0.0f, z), rr, below + d);
+	};
+	// A centre and a ring of lobes that do not reach it (so the depth does not stack), shallower towards the rim.
+	lobe(p_position.x, p_position.z, 0.6f * r, p_depth);
+	const int lobes = 6;
+	const float a0 = rng.randf() * Math::TAU;
+	for (int k = 0; k < lobes; k++) {
+		const float a = a0 + Math::TAU * (k + 0.35f * (rng.randf() - 0.5f)) / lobes;
+		const float d = r * (0.45f + 0.1f * rng.randf());
+		const float rr = MIN(r * (0.3f + 0.15f * rng.randf()), r - d);
+		lobe(p_position.x + d * Math::cos(a), p_position.z + d * Math::sin(a), rr, p_depth * (0.4f + 0.3f * rng.randf()));
+	}
+	PendingPuddle pp;
+	pp.position = p_position;
+	pp.radius = r;
+	pp.level = level;
+	pp.mud = MAX(p_mud, 0.0f);
+	pp.wait = 2.0; // dug, and its walls slumped to their repose
+	pending_puddles.push_back(pp);
+}
+
+void GroundSurface3D::_puddles_update(double p_delta) {
+	for (int k = int(pending_puddles.size()) - 1; k >= 0; k--) {
+		PendingPuddle &pp = pending_puddles[k];
+		pp.wait -= p_delta;
+		if (pp.wait > 0.0) {
+			continue;
+		}
+		// The water the hollow holds up to the level, less what already stands in it.
+		const float t = field.texel();
+		const float reach = 1.2f * pp.radius;
+		double vol = 0.0;
+		for (float x = Math::floor((pp.position.x - reach) / t) * t + 0.5f * t; x <= pp.position.x + reach; x += t) {
+			for (float z = Math::floor((pp.position.z - reach) / t) * t + 0.5f * t; z <= pp.position.z + reach; z += t) {
+				if (Vector2(x - pp.position.x, z - pp.position.z).length() > reach) {
+					continue;
+				}
+				const Vector3 q(x, 0.0f, z);
+				const float fill = pp.level - 0.002f - get_surface_height_at(q) - get_standing_water_at(q);
+				if (fill > 0.0f) {
+					vol += double(fill) * t * t;
+				}
+			}
+		}
+		if (vol > 0.0) {
+			add_water(pp.position, 0.7f * pp.radius, float(vol), pp.mud);
+		}
+		pending_puddles.remove_at_unordered(k);
+	}
+}
+
 float GroundSurface3D::deposit(Vector3 p_position, float p_radius, float p_depth) {
 	return p_depth > 0.0f ? _amount(p_position, p_radius, -p_depth, 0.0f) : 0.0f;
 }
@@ -3609,6 +3697,104 @@ void GroundSurface3D::_ruts_configure() {
 	const String dir = _ruts_on() ? ruts_path : String();
 	rut_main.configure(dir, "m", field.texel());
 	rut_near.configure(dir, "n", near_fld.texel());
+	crack_store.configure(desiccation_cracks ? dir : String(), "c", ground_spacing);
+}
+
+// The lattice moves to p_origin (p_n per side; a new size or the first sample starts it over): the cells it leaves
+// keep their crack state on disk with the ruts, the cells it comes onto read theirs back, aged for the time away.
+void GroundSurface3D::_cracks_move(Vector2i p_origin, int p_n) {
+	const int n = ground_n;
+	const bool had = ground_valid && n > 0 && (int)crack_state.size() == n * n * CRACK_FLOATS;
+	const bool kept = had && n == p_n;
+	_ruts_configure();
+	const bool store = crack_store.is_on();
+	const Vector2i d = p_origin - ground_origin;
+	if (had && store) {
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int lx = x - d.x;
+				const int lz = z - d.y;
+				if (kept && lx >= 0 && lz >= 0 && lx < p_n && lz < p_n) {
+					continue; // staying
+				}
+				crack_store.put(ground_origin + Vector2i(x, z), &crack_state[(z * n + x) * CRACK_FLOATS], CRACK_FLOATS);
+			}
+		}
+	}
+	if (kept) {
+		_shift_lattice(crack_state, ground_origin, p_origin, p_n, CRACK_FLOATS);
+	} else {
+		crack_state.clear();
+	}
+	if (!store || !desiccation_cracks) {
+		return;
+	}
+	float v[CRACK_FLOATS];
+	for (int z = 0; z < p_n; z++) {
+		for (int x = 0; x < p_n; x++) {
+			const int ox = x + d.x;
+			const int oz = z + d.y;
+			if (kept && ox >= 0 && oz >= 0 && ox < p_n && oz < p_n) {
+				continue; // was in the lattice already
+			}
+			double age = 0.0;
+			if (!crack_store.get(p_origin + Vector2i(x, z), v, CRACK_FLOATS, &age)) {
+				continue;
+			}
+			if ((int)crack_state.size() != p_n * p_n * CRACK_FLOATS) {
+				crack_state.resize(p_n * p_n * CRACK_FLOATS);
+				for (float &c : crack_state) {
+					c = 0.0f;
+				}
+			}
+			_cracks_age(v, age);
+			for (int k = 0; k < CRACK_FLOATS; k++) {
+				crack_state[(z * p_n + x) * CRACK_FLOATS + k] = v[k];
+			}
+		}
+	}
+}
+
+// A kept cell's drying over the time away, as _crack_update would have stepped it: soaked while the pool that stood
+// on it lasts (its water goes as _ruts_age() takes the kept water: evaporation less the mean rain), then its layer
+// dries at the evaporation rate until it has cracked through. Rain while away does not close it again: what the
+// weather does now, on the way back, does (the live update).
+void GroundSurface3D::_cracks_age(float *r_cell, double p_seconds) const {
+	double t = p_seconds * double(ruts_time_scale);
+	float &st = r_cell[0];
+	const float pool = r_cell[2];
+	if (t < 1.0 || st <= 1.0f) {
+		return;
+	}
+	const float evap = _evaporation();
+	if (st >= 2.0f) {
+		const float net = evap - ruts_away_rain / 3.6e6f;
+		if (net <= 0.0f) {
+			return; // the pool never dries out while away
+		}
+		t -= double(pool / net);
+		if (t <= 0.0) {
+			return;
+		}
+		st = 1.999f;
+	}
+	const float thick = CLAMP(0.006f + 0.6f * pool, 0.006f, 0.05f) * 0.8f; // _crack_layer() at a typical clay share
+	st = MAX(st - float(double(evap) * t / (0.4 * double(MAX(thick, 0.002f)))), 1.0f);
+}
+
+void GroundSurface3D::_cracks_save() {
+	const int n = ground_n;
+	if (!crack_store.is_on()) {
+		return;
+	}
+	if (ground_valid && (int)crack_state.size() == n * n * CRACK_FLOATS) {
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				crack_store.put(ground_origin + Vector2i(x, z), &crack_state[(z * n + x) * CRACK_FLOATS], CRACK_FLOATS);
+			}
+		}
+	}
+	crack_store.flush(false);
 }
 
 void GroundSurface3D::_ruts_leave(const GroundDeformField &p_field, GroundRutStore &r_store, Vector2i p_origin, const LocalVector<Vector2i> &p_pending) {
@@ -3698,7 +3884,7 @@ void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRut
 		double age = 0.0;
 		if (r_store.load(w, data, &age)) {
 			_ruts_age(data, age);
-			r_host.seed_tile(w, data.ptr(), 2, max_cached_tiles);
+			r_host.seed_tile(w, data.ptr(), GroundRutStore::STRIDE, max_cached_tiles);
 		}
 	}
 	if (r_host.pull_cached(p_field, r_pending)) {
@@ -3708,7 +3894,9 @@ void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRut
 
 // A kept tile read back after time away is stepped over it as _age() would have (mud round 4): the turned ground's
 // tint and the tracked film dry, rain over the time softens soil prints (at the mean rate ruts_away_rain), and the
-// water in them goes as evaporation beats that rain. Exact for these exponential decays however long the absence.
+// water in them goes as evaporation beats that rain, and the clay in that water settles out of it (round 5: the
+// floc's 0.1 mm/s over the water's depth, all of it where the water went). Exact for these exponential decays however
+// long the absence.
 void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const {
 	const double secs = MIN(p_seconds * double(ruts_time_scale), 3.0e7); // a year at most
 	if (secs < 60.0) {
@@ -3717,12 +3905,16 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 	const float dry = float(Math::exp(-secs / double(drying_time)));
 	const float keep = float(Math::exp(-double(rain_smoothing * ruts_away_rain) * secs / 3600.0));
 	const float loss = float(double(MAX(_evaporation() - ruts_away_rain / 3.6e6f, 0.0f)) * secs);
-	const int count = int(r_data.size()) / 2;
+	const int S = GroundRutStore::STRIDE;
+	const int count = int(r_data.size()) / S;
 	for (int k = 0; k < count; k++) {
-		float dn = Math::half_to_float(uint16_t(r_data[k * 2] & 0xffff)) * keep;
-		float rm = Math::half_to_float(uint16_t(r_data[k * 2] >> 16)) * keep;
-		float fr = Math::half_to_float(uint16_t(r_data[k * 2 + 1] & 0xffff));
-		float wd = Math::half_to_float(uint16_t(r_data[k * 2 + 1] >> 16));
+		float dn = Math::half_to_float(uint16_t(r_data[k * S] & 0xffff)) * keep;
+		float rm = Math::half_to_float(uint16_t(r_data[k * S] >> 16)) * keep;
+		float fr = Math::half_to_float(uint16_t(r_data[k * S + 1] & 0xffff));
+		float wd = Math::half_to_float(uint16_t(r_data[k * S + 1] >> 16));
+		float cl = Math::half_to_float(uint16_t(r_data[k * S + 2] & 0xffff));
+		// Settling (Stokes, as the water step): the clay falls out over the water's own depth.
+		cl = wd > 1e-4f ? cl * float(Math::exp(-1.0e-4 * secs / double(wd))) : 0.0f;
 		if (fr >= 4.0f) {
 			const Vector2 sq = GroundDeformField::mud_band_share_wet(fr);
 			fr = GroundDeformField::mud_band(sq.x, sq.y * dry);
@@ -3730,10 +3922,12 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 			fr *= dry;
 		}
 		wd = MAX(wd - loss, 0.0f);
+		cl = wd > 1e-4f && cl > 1e-4f ? cl : 0.0f;
 		dn = dn < 1e-5f ? 0.0f : dn;
 		rm = rm < 1e-5f ? 0.0f : rm;
-		r_data[k * 2] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
-		r_data[k * 2 + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
+		r_data[k * S] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
+		r_data[k * S + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
+		r_data[k * S + 2] = uint32_t(Math::make_half_float(cl));
 	}
 }
 
@@ -3780,6 +3974,7 @@ void GroundSurface3D::save_ruts() {
 	if (near_fld.valid) {
 		_ruts_save_field(near_fld, rut_near, rut_near_pending);
 	}
+	_cracks_save();
 }
 
 void GroundSurface3D::clear_saved_ruts() {
@@ -3790,7 +3985,7 @@ void GroundSurface3D::clear_saved_ruts() {
 			LocalVector<String> files;
 			da->list_dir_begin();
 			for (String f = da->get_next(); !f.is_empty(); f = da->get_next()) {
-				if (!da->current_is_dir() && f.ends_with(".rut")) {
+				if (!da->current_is_dir() && (f.ends_with(".rut") || f.ends_with(".cel"))) {
 					files.push_back(f);
 				}
 			}
@@ -3804,6 +3999,8 @@ void GroundSurface3D::clear_saved_ruts() {
 	rut_near_pending.clear();
 	rut_main.configure(String(), "m", 0.0f);
 	rut_near.configure(String(), "n", 0.0f);
+	crack_store.clear();
+	crack_store.configure(String(), "c", 0.0f);
 	_ruts_configure();
 }
 
@@ -4584,6 +4781,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mud_color_at", "position"), &GroundSurface3D::get_mud_color_at);
 	ClassDB::bind_method(D_METHOD("add_wader", "id", "axle", "radius", "half_width", "velocity"), &GroundSurface3D::add_wader);
 	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume", "mud"), &GroundSurface3D::add_water, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("add_puddle", "position", "radius", "depth", "mud"), &GroundSurface3D::add_puddle, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("stir_water", "position", "radius", "mass"), &GroundSurface3D::stir_water);
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &GroundSurface3D::track_mud, DEFVAL(1.0f), DEFVAL(Vector4()));

@@ -327,6 +327,11 @@ private:
 	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
 	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
 	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
+	// Crack state kept with the ruts (mud round 5): the lattice cells it moves off and onto.
+	GroundCellStore crack_store;
+	void _cracks_move(Vector2i p_origin, int p_n);
+	void _cracks_age(float *r_cell, double p_seconds) const;
+	void _cracks_save();
 	GroundRutStore rut_main;
 	GroundRutStore rut_near;
 	LocalVector<Vector2i> rut_main_pending; // world tiles in the field waiting to be read in from disk
@@ -386,6 +391,15 @@ private:
 	};
 	LocalVector<StirDisc> stir_discs; // stir_water()'s, applied by the next water step
 	LocalVector<WaterDisc> water_discs; // add_water()'s, applied by the next water step
+	struct PendingPuddle {
+		Vector3 position;
+		float radius = 0.0f;
+		float level = 0.0f; // the water's surface, m (world y)
+		float mud = 0.0f;
+		double wait = 0.0; // s until the dug hollow is in the field's read back
+	};
+	LocalVector<PendingPuddle> pending_puddles; // add_puddle()'s, filled once dug
+	void _puddles_update(double p_delta);
 	double water_added = 0.0; // m3, the discs applied so far (taken < 0)
 	// What takes could not find (the GPU's ledger, read back), and how much of it later water added has paid.
 	uint32_t water_owed_seen[2] = { 0, 0 };
@@ -598,6 +612,7 @@ public:
 	// Adds p_volume m3 of standing water spread over a disc (taken where negative, never below dry): spray landing
 	// and water thrown up (mud stage 4c). Applied by the next water step on the GPU.
 	void add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud = 0.0f);
+	void add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud = 0.0f);
 	// Stirs p_mass kg of the bed's clay into the standing water over a disc (feet, clods landing), where the bed is
 	// cohesive; muddy water (round 3). Applied by the next water step on the GPU.
 	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);

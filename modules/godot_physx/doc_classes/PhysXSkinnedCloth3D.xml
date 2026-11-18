@@ -108,6 +108,9 @@
 		<member name="extra_acceleration" type="Vector3" setter="set_extra_acceleration" getter="get_extra_acceleration" default="Vector3(0, 0, 0)">
 			A world-space acceleration added to the gravity, in m/s²: a game's own force field or a gust of wind, set every frame from script.
 		</member>
+		<member name="fabric_density" type="float" setter="set_fabric_density" getter="get_fabric_density" default="0.2">
+			The dry fabric's weight per area, kg/m². With [member water_capacity] it sets how much water the garment holds when soaked.
+		</member>
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity the cloth uses when [member use_world_gravity] is off, in m/s².
 		</member>
@@ -186,6 +189,15 @@
 		</member>
 		<member name="use_world_gravity" type="bool" setter="set_use_world_gravity" getter="get_use_world_gravity" default="true">
 			If [code]true[/code], the cloth falls with its world's gravity: the physics space's default (the [code]physics/3d/default_gravity[/code] project settings, or a change made to the space at run time). If [code]false[/code], it uses [member fixed_gravity].
+		</member>
+		<member name="water_capacity" type="float" setter="set_water_capacity" getter="get_water_capacity" default="1.0">
+			Water held when soaked, kg per kg of dry fabric: about 1 for cotton, 0.3 for wool felt or tight synthetics. A wet garment is pushed less by [member extra_acceleration] (wind) by its added weight.
+		</member>
+		<member name="weather_wetting" type="bool" setter="set_weather_wetting" getter="is_weather_wetting" default="true">
+			If [code]true[/code], the active [WeatherMap3D]'s rain over the garment (less under a canopy or a roof) soaks it, and it dries in the air by the map's temperature, humidity and wind. A worn garment catches rain as an upright figure does: its sides by the slant of the drops in the wind, its shoulders by all that falls on them.
+		</member>
+		<member name="wetness" type="float" setter="set_wetness" getter="get_wetness" default="0.0">
+			How wet the garment is, 0 dry to 1 soaked. Wet fabric draws darker (water in the weave, Lekner and Dorf) and a little glossier near soaked, swings less and clings to the body: more friction on its colliders, more damping, and a slight pull to its skinned pose. A custom [member render_material] darkens too if its shader has a [code]cloth_wetness[/code] uniform.
 		</member>
 	</members>
 </class>
