@@ -762,6 +762,19 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   `--ruts=mud`.
 
 
+### Round 8: proposed (18 Nov, card posted)
+
+- **Frozen ground holds its ruts.** WeatherSeason's soil frost (freezing degree days, none under snow) stiffens the
+  soil: wheels and boots barely sink, old ruts freeze rigid and jolt a vehicle crossing them; the thaw then leaves
+  the top wetter and weaker than before (thaw weakening, the spring mud season of forest roads), so ruts form
+  deeper for a while. Build: a frost depth per lattice cell from the weather, scaling the cell's rate and bearing.
+- **Raindrop rings on puddles.** Rain falling on standing water draws expanding rings (Lagarde's 2013 rain ripple
+  texture approach, rings per drop cell timed by the rain rate), in both renderers, on ruts, puddles and ice-free
+  water.
+- **Hoar frost.** Clear, still nights below 0 C rime the grass, plants and bare ground white (deposition when the
+  surface cools under the dew point), thickest in hollows; the low sun melts it off from the lit side first.
+
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
