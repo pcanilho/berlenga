@@ -2066,6 +2066,14 @@ to 0.6, a pinch hidden under the stems' bases; a split leader now keeps its girt
 and runs on half a metre as a blunt cone the stems leave from, the saddles of the crotch, with
 the stems' bases swollen to 0.8 of the bole and starting narrower inside it.
 
+Cork oak round 7 (18 Nov; r6 kept a collar at the split: the bole's displaced ridges stood
+through the stems' furrows as teeth over a ledge, and the ridges read thin and stringy): the
+displaced relief fades out within 1.6 bole radii of the split, on the bole and on its stems, so
+the two smooth surfaces meet in the saddle curves of a crotch (the normal map keeps the bark);
+the stems rise just inside the bole's surface and take the bole's tone. The cork has fewer,
+fatter ridges (six noise cycles a tile), fissures twice as wide and 8 cm deep, and broad shallow
+cross breaks that cut the ridges into blocks without darkening (dark, they read as dashes).
+
 Maritime pine round 3 (18 Nov): no excurrent crown cone (it kept the top a sparse spire over a
 wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the height; apical
 control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in
