@@ -46,7 +46,3 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 - **Landforms** (`layer_enabled`: `LAYER_LANDFORM`): hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.
 - **Caves** (`CaveNetwork3D.build_meshes()` or `follow_target`, `speleothems`, `scallops`, `cave_streams`, `add_sea_cave()`; `terrain3d`): cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.
 
-  ![Looking out of a sea cave onto a beach and the sea, raster](media/rocks-sea-cave.jpg)
-
-  *Sea caves: a passage cut along a joint, with jointed walls, opens onto the beach.*
-
