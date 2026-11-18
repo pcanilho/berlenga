@@ -722,6 +722,14 @@ public:
 	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
 	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
 	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
+	Vector3 contract_mean_wind_at(const Vector3 &p_position) const override {
+		const Vector2 m = get_mean_wind_at(p_position);
+		return Vector3(m.x, 0.0f, m.y);
+	}
+	Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const override {
+		const Vector2 m = get_wind_aloft(p_position, p_altitude);
+		return Vector3(m.x, 0.0f, m.y);
+	}
 
 	void set_sky_clock(const NodePath &p_path);
 	NodePath get_sky_clock() const { return sky_clock; }

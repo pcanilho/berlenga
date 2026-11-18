@@ -28,11 +28,12 @@ contract returns with no provider.
 
 | Member | Unit | Default | Guarantee |
 | --- | --- | --- | --- |
-| `air_temperature_at(pos)` | C | 15 | The live air (season, day's cycle, lapse rate above the map's ground height). Without a clock and a climate it equals the `temperature` setting, eased |
+| `air_temperature_at(pos)` | C | 15 | The live air (season, day's cycle, 6.5 K/km above the map's ground height). Without a clock and a climate it equals the `temperature` setting, eased |
 | `air_humidity_at(pos)` | 0..1 | 0.7 | Relative, at the live air temperature |
 | `dew_point_at(pos)` | C | from the two above | |
-| `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles; height < 0 means 10 m |
-| `wind_aloft_at(pos, height)` | m/s, Vector3 | 0 | Free wind over the terrain (clouds, smoke columns) |
+| `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles, with the terrain's speed-up, turning and updraught; height < 0 is measured from the ground under pos |
+| `mean_wind_at(pos)` | m/s, Vector3 (y 0) | 0 | 10 m mean, terrain included, no gusts |
+| `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
@@ -41,11 +42,20 @@ contract returns with no provider.
 | `sun_direction()`, `sun_visibility_at(pos)` | unit vector, 0..1 | (0,1,0), 1 | Cloud shadow |
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
-| `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (planned) |
+| `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 
 Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather_state_map`, `weather_map_rect`,
-`weather_contact_map`, `weather_shelter_map`, `weather_precip_phase`; formats in weather.md.
+`weather_contact_map`, `weather_shelter_map`, `weather_frost_map` (R frost mm, G surface cooling K),
+`weather_precip_phase`; formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
+`weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
+globals are declared at start, so a shader compiles with no weather and has no wind.
+
+The full wind side (gust parts and waves for solvers, terrain getters `get_terrain_speed_factor_at`,
+`get_terrain_divert_at`, `get_terrain_lee_at`, `get_terrain_ground_at`, consumers' settings) is in wind.md, "The
+wind contract"; solvers that filter the turbulence themselves still read `WeatherMap3D` for `get_wind_parts` and
+`get_gust_waves`. Stub for the terrain under the wind: `docs/bench/weather/hill.gd` (any node with
+`get_height(position)`).
 
 Consumers: ground, snow, rocks, grass, plants, trees, pollen, mist, fire, firebrands, Flow dust, cloth, hair,
 water (sea wind, mist, falls), vehicles, lightning.

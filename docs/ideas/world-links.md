@@ -95,7 +95,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 
 | Pair | Status | Source | Note |
 | --- | --- | --- | --- |
-| Wind → waves | one-way | sea's own wind | `follow_weather` defaults off: private copy |
+| Wind → waves | linked (18 Nov) | wind | `follow_weather` on (wind work) |
 | Rain → ripples | rain work | | |
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
@@ -120,7 +120,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → firebrands → spot fires | linked | wind | |
 | Fire → drying, snow melt | missing | fire_state_map | link 8 |
 | Fire → heat shimmer | missing | Flow temperature | link 10 |
-| Weather wind → free-standing Flow smoke | missing | wind | wind work |
+| Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies
 
@@ -146,7 +146,6 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 
 ## Private copies of shared state
 
-- `PhysXWaterSurface3D.follow_weather` defaults to false: the sea keeps its own wind. Owner: wind work.
 - `VegetationField3D` placement skew reads the wind setting: placement time only, harmless.
 
 ## Techniques for the planned links

@@ -72,6 +72,9 @@ float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
 
+Vector3 WorldWeather::mean_wind_at(const Vector3 &p_position) const WW_CALL(_mean_wind_at, contract_mean_wind_at(p_position), Vector3(), p_position)
+Vector3 WorldWeather::wind_aloft_at(const Vector3 &p_position, float p_altitude) const WW_CALL(_wind_aloft_at, contract_wind_aloft_at(p_position, p_altitude), Vector3(), p_position, p_altitude)
+
 #undef WW_CALL
 
 void WorldWeather::add_contact_wetness(const Vector3 &p_position, float p_radius, float p_amount) {
@@ -105,6 +108,8 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sun_visibility_at", "position"), &WorldWeather::sun_visibility_at);
 	ClassDB::bind_method(D_METHOD("canopy_closure_at", "position"), &WorldWeather::canopy_closure_at);
 	ClassDB::bind_method(D_METHOD("frost_at", "position"), &WorldWeather::frost_at);
+	ClassDB::bind_method(D_METHOD("mean_wind_at", "position"), &WorldWeather::mean_wind_at);
+	ClassDB::bind_method(D_METHOD("wind_aloft_at", "position", "altitude"), &WorldWeather::wind_aloft_at);
 	ClassDB::bind_method(D_METHOD("rainfall_at", "position"), &WorldWeather::rainfall_at);
 	ClassDB::bind_method(D_METHOD("snowfall_at", "position"), &WorldWeather::snowfall_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
@@ -124,6 +129,8 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_sun_visibility_at, "position");
 	GDVIRTUAL_BIND(_canopy_closure_at, "position");
 	GDVIRTUAL_BIND(_frost_at, "position");
+	GDVIRTUAL_BIND(_mean_wind_at, "position");
+	GDVIRTUAL_BIND(_wind_aloft_at, "position", "altitude");
 	GDVIRTUAL_BIND(_rainfall_at, "position");
 	GDVIRTUAL_BIND(_snowfall_at, "position");
 	GDVIRTUAL_BIND(_canopy_water_at, "position");

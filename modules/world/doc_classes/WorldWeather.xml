@@ -81,6 +81,13 @@
 				Override in a stub to replace [method ground_water_input_at].
 			</description>
 		</method>
+		<method name="_mean_wind_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method mean_wind_at].
+			</description>
+		</method>
 		<method name="_precipitation_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -128,6 +135,14 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub to replace [method surface_wetness_at].
+			</description>
+		</method>
+		<method name="_wind_aloft_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="altitude" type="float" />
+			<description>
+				Override in a stub to replace [method wind_aloft_at].
 			</description>
 		</method>
 		<method name="_wind_at" qualifiers="virtual const">
@@ -223,6 +238,13 @@
 				Whether a producer (a [WeatherMap3D] in the tree) stands behind this contract.
 			</description>
 		</method>
+		<method name="mean_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mean wind at 10 m over [param position] in m/s (y 0), with the terrain's speed-up and turning but no gusts. Zero with no weather.
+			</description>
+		</method>
 		<method name="precipitation_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -270,6 +292,14 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How wet open surfaces are at [param position] (0..1: the water film over its storage; 1 where puddles stand). Default 0.
+			</description>
+		</method>
+		<method name="wind_aloft_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="altitude" type="float" />
+			<description>
+				The free wind over the terrain at [param altitude] (m) in m/s (y 0), for clouds and smoke columns. Zero with no weather.
 			</description>
 		</method>
 		<method name="wind_at" qualifiers="const">
