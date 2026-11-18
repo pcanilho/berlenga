@@ -3163,6 +3163,10 @@ void CaveNetwork3D::_update_stream_nodes() {
 			// Past the banks a ray starting inside the rock goes on down through it to a passage below; a stream
 			// a metre or so deep finds its bed within 3 m, and none past the banks reads as dry.
 			river->set("ground_probe_depth", 3.0);
+			// The waterline is cut between the ribbon's samples: at a river's 1 m by 12 across it ran in straight
+			// segments up a cave stream's steep banks (hard edges, a sheet left over a bank) under the path tracer.
+			river->set("step_length", 0.35);
+			river->set("cross_segments", 32);
 			river->set("carve", false);
 			river->set("raster_reflections", false); // underground: nothing to reflect but the walls (as the pools)
 			river->set("contact_wetness", false);
