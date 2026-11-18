@@ -408,6 +408,9 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				const float take = MIN(rim[i], a);
 				rim[i] -= take;
 				volume += take * t * t;
+				if (amount_fresh < -1.5f) {
+					dent[i] -= MIN(dent[i], a); // a swash line (-2): the hollow beside it levelled too, as ground_deform.glsl
+				}
 				if (track_fresh) {
 					if (fresh[i] >= 4.0f) {
 						const Vector2 sq = mud_band_share_wet(fresh[i]);

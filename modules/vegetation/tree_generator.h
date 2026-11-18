@@ -963,6 +963,10 @@ public:
 	// Phenology from the shared season state (WeatherMap3D.get_season()): leaf_out, autumn,
 	// fallen_fraction and autumn_color for one species. docs/ideas/trees.md 2c.
 	static Dictionary get_leaf_season(Preset p_preset, const Dictionary &p_season);
+	// One detached leaf (or needle fascicle) at true size with the canopy's leaf material, for
+	// falling and blown leaves; and its flight figures.
+	static Ref<ArrayMesh> make_leaf_mesh(Preset p_preset, const Dictionary &p_season = Dictionary(), int p_variant = 0);
+	static Dictionary get_leaf_physics(Preset p_preset);
 	void set_season(const Dictionary &p_season) {
 		season = p_season;
 		mesh_cache.clear();

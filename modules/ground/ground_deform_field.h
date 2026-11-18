@@ -120,7 +120,7 @@ public:
 	}
 	Vector4 amount_print; // a tracked-mud film's print (mud_print_mask(): kind, yaw, sole half extents)
 	static float mud_print_mask(const Vector4 &p_b, float p_x, float p_z, Vector3 p_pos);
-	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint
+	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint, and at -2 level the dent too (a washed swash line)
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
 	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).
