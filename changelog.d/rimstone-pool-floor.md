@@ -1,0 +1,1 @@
+- Water: cave pool water measures the real floor under it (`PhysXWaterSurface3D.seabed_probe_height` starts the rays under a roof), so a shallow pool thins out at its rim instead of drawing as a tinted slab; a pool's grid is laid out where the pool is.

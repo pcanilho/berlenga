@@ -2045,6 +2045,35 @@ growth 0.5) on the one four-way split, limbs at 62 degrees and side branches at 
 15 m, a broad, low, dense dome. Fissures 4 cm deep again, the relief blurred half as much (two
 passes of 5 texels), spongy noise 3 mm; fewer, thinner lichen crusts.
 
+Cork oak round 5 (18 Nov; r4 bark read as fish-scale tiles in a diagonal lattice with rows of
+dashes, and the split pinched into a neck): the lattice was the 0.4 m bark tile repeating five
+times round a 2 m bole, whatever the pattern. Cork now has its own 1.2 m tile at 1024 texels
+(the moss layer scales to match), and its ridges are the furrowed family's: zero lines of two
+noises stretched along the stem, 9 and 6 cycles round a tile, so a few dozen irregular ridges
+5-8 cm wide merge and split round the trunk between dark furrows 6 cm deep, with lumpy, pitted
+tops. The Voronoi pillows and the cross breaks (the dashes) are gone. At the split, the stems
+of a leader's fork (stem_level above their parent's) now enter as a fork crotch whatever their
+share, their bases swollen to 0.7 of the bole and easing back over a bole radius and a half,
+and the bole's last two radii narrow to 0.6 under a low cap: the bole flows into the limbs.
+
+Cork oak round 6 (18 Nov; r5 read as waxy clay, with green lichen decals, a smooth root flare,
+a collar of tape at the split and leopard blotches on the limbs): cork's texture gains its
+spongy mass (Pereira 2007): crumbs a few millimetres across, open pores, matte throughout, and
+weathering from pale grey to ochre. The main furrows run the whole tile (one noise cycle along
+it), and only they darken: the side family's partings, dark too, broke the ridges into blotches.
+No lichen on cork. The collar was the leader's end: like any shoot tip its last internode tapered
+to 0.6, a pinch hidden under the stems' bases; a split leader now keeps its girth to the split
+and runs on half a metre as a blunt cone the stems leave from, the saddles of the crotch, with
+the stems' bases swollen to 0.8 of the bole and starting narrower inside it.
+
+Cork oak round 7 (18 Nov; r6 kept a collar at the split: the bole's displaced ridges stood
+through the stems' furrows as teeth over a ledge, and the ridges read thin and stringy): the
+displaced relief fades out within 1.6 bole radii of the split, on the bole and on its stems, so
+the two smooth surfaces meet in the saddle curves of a crotch (the normal map keeps the bark);
+the stems rise just inside the bole's surface and take the bole's tone. The cork has fewer,
+fatter ridges (six noise cycles a tile), fissures twice as wide and 8 cm deep, and broad shallow
+cross breaks that cut the ridges into blocks without darkening (dark, they read as dashes).
+
 Maritime pine round 3 (18 Nov): no excurrent crown cone (it kept the top a sparse spire over a
 wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the height; apical
 control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in

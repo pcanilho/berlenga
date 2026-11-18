@@ -454,6 +454,7 @@ private:
 	double last_sand_sea_msec = 0.0;
 	double last_sand_sea_max = 0.0;
 	static void _sand_sea_band(void *p_sea, uint32_t p_band);
+	static void _sand_sea_shear(void *p_sea, uint32_t p_part);
 	void _build_sand_sea();
 	float _sea_sample(real_t p_x, real_t p_z) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;

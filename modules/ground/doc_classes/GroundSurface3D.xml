@@ -27,8 +27,9 @@
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="radius" type="float" />
 			<param index="2" name="volume" type="float" />
+			<param index="3" name="mud" type="float" default="0.0" />
 			<description>
-				Adds [param volume] m³ of standing water spread evenly over a disc of [param radius] at [param position], or takes it where [param volume] is negative (thrown spray landing, and water a tyre throws up). Applied by the next water step on the GPU, the disc's area counted in the field's own texels, so the volume is exact. A take that finds less water than it asks for is owed (see [method get_water_owed]) and paid back by the next water added.
+				Adds [param volume] m³ of standing water spread evenly over a disc of [param radius] at [param position], or takes it where [param volume] is negative (thrown spray landing, and water a tyre throws up). Applied by the next water step on the GPU, the disc's area counted in the field's own texels, so the volume is exact. A take that finds less water than it asks for is owed (see [method get_water_owed]) and paid back by the next water added. Added water carries [param mud] kg/m³ of clay (see [member muddy_water]); a take carries off the clay of the water it takes.
 			</description>
 		</method>
 		<method name="bed_load" qualifiers="static">
@@ -308,6 +309,13 @@
 				The printed ground height at [param position]: the undisturbed ground plus the rim minus the dent.
 			</description>
 		</method>
+		<method name="get_water_mud_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The clay the standing water carries at [param position], kg/m³, as last read back (see [member muddy_water]).
+			</description>
+		</method>
 		<method name="get_water_added" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -456,6 +464,15 @@
 				The sand thrown by spinning wheels since the last call (from [PhysXVehicle3D] on soft soil), as Dictionaries: [code]position[/code], [code]velocity[/code], [code]width[/code], [code]slip_speed[/code], [code]reach_center[/code] and [code]reach_radius[/code] (the loose sand the tread reaches). Taken by a [PhysXGroundGrains3D]; with none, they are dropped after a couple of physics frames.
 			</description>
 		</method>
+		<method name="stir_water">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="mass" type="float" />
+			<description>
+				Stirs [param mass] kg of the bed's clay into the standing water over a disc of [param radius] at [param position] (a boot through a puddle, a clod landing in it), where the bed is cohesive (see [member muddy_water]). Applied by the next water step on the GPU.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="character_contact_area" type="float" setter="set_character_contact_area" getter="get_character_contact_area" default="0.035">
@@ -592,6 +609,9 @@
 		</member>
 		<member name="standing_water" type="bool" setter="set_standing_water" getter="is_standing_water" default="true">
 			If [code]true[/code], water stands in ruts and prints: rain the ground cannot take, and ground water where a print reaches below the water table (soaked ground has it at the surface), run downhill over the printed ground and gather level in its hollows, then soak in and evaporate. The water is the surface there in both renderers: flat, smooth and murky with the clay it carries, and it softens the mud under it. Needs the GPU field ([member gpu_simulation]). [member runoff_time_scale] speeds up its rain, soaking and evaporation.
+		</member>
+		<member name="muddy_water" type="bool" setter="set_muddy_water" getter="is_muddy_water" default="true">
+			If [code]true[/code], the standing water carries clay: tyres rolling on a soft clay bed under it churn a couple of millimetres of slurry into the water as they pass, feet and landing clods stir more in ([method stir_water]), the flow carries it, it settles out at a silt floc's speed (0.1 mm/s, so a stirred puddle clears over minutes) and drying leaves it on the bed. Sand beds leave the water clear. Both renderers draw the water by its clay: the bed hidden within a millimetre or so and the water milky brown with the ground's colour past some tens of kg/m³. Water thrown up carries it ([method get_water_mud_at]), so tyre sheets fly brown and stain what they hit.
 		</member>
 		<member name="skirt" type="float" setter="set_skirt" getter="get_skirt" default="0.5">
 			How far the terrain is lowered under the patch, in metres.

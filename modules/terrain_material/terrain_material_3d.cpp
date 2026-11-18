@@ -669,7 +669,9 @@ vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, v
 		return sn; // every feature has faded to its mean (shade 1, flat)
 	}
 	// The difference step grows with the pixel, so it never samples across an edge the pixel cannot resolve.
-	float e = max(0.006, 0.5 * wmax * tm_rock_detail_scale); // fine enough for the gravel up close
+	// Within the pixel: a step wider than it reached across a stone's foot from the bed (or onto the bed from a
+	// side) and flipped the normal from pixel to pixel, a saw-tooth fringe along the stones' bases.
+	float e = max(0.0015, 0.5 * wmax * tm_rock_detail_scale);
 	vec2 h0 = tm_rd_height(p, face, scree, dx, dy);
 	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, dx, dy).x;
 	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, dx, dy).x;
@@ -692,20 +694,24 @@ vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, v
 vec3 tm_rd_stone_color(vec3 p, float wmax) {
 	float ks = tm_rd_clamp(wmax, 0.45);
 	if (ks <= 0.0) {
-		return vec3(1.0);
+		return vec3(1.25);
 	}
 	vec3 wv;
 	float se;
 	float st = tm_rd_stone(p, tm_rd_clamp(wmax, 0.18), 0.05, wv, se);
+	// The bed: dry fines, paler and a little warmer than the blocks' weathered faces (dust); 1.25 is the mean
+	// over blocks and bed, which the far ground keeps once the stones fade.
+	const vec3 bed = vec3(1.3, 1.27, 1.2);
+	const vec3 mean = vec3(1.25);
 	float on = smoothstep(0.0, 0.02, se) * step(1e-3, st);
 	if (on <= 0.0) {
-		return vec3(1.0);
+		return mix(mean, bed, ks);
 	}
 	float hid = wv.z;
 	float fresh = step(fract(hid * 7.71), 0.2);
 	float tone = fract(hid * 3.37);
-	vec3 col = mix(0.72, 1.38, tone) * mix(vec3(1.04, 1.0, 0.94), vec3(0.97, 1.0, 1.04), fract(hid * 19.3));
-	col = mix(col, vec3(1.45, 1.47, 1.52), fresh);
+	vec3 col = mix(0.75, 1.5, tone) * mix(vec3(1.04, 1.0, 0.94), vec3(0.97, 1.0, 1.04), fract(hid * 19.3));
+	col = mix(col, vec3(1.75, 1.78, 1.85), fresh);
 	vec3 q = mod(p, 64.0) / tm_rock_detail_scale; // wrapped, as for the grit
 	float kg = tm_rd_clamp(wmax, 0.006);
 	col *= 1.0 + kg * (tm_rd_noise(q * 140.0) - 0.5) * 0.3 + tm_rd_clamp(wmax, 0.02) * (tm_rd_noise(q * 45.0 + 7.0) - 0.5) * 0.15;
@@ -714,22 +720,22 @@ vec3 tm_rd_stone_color(vec3 p, float wmax) {
 	float lichen = kl * (1.0 - fresh) * smoothstep(0.62, 0.68, ln) * step(0.35, fract(hid * 13.1));
 	vec3 lc = fract(hid * 23.9) < 0.25 ? vec3(1.05, 1.15, 0.55) : vec3(1.1, 1.16, 1.0);
 	col = mix(col, lc, lichen);
-	return mix(vec3(1.0), col, on * ks);
+	return mix(mean, mix(bed, col, on), ks);
 }
 // Parallax occlusion mapping for the scree's stones (Tatarchuk 2006, Practical parallax occlusion mapping with
 // approximate soft shadows), against the procedural stone profile instead of a height texture. The ground's mesh is
 // the stones' tops; the gravel bed lies h below it. The view ray v steps down from p until it passes under a stone,
 // then refines linearly between the last two steps. Returns the hit's ground position (on the base plane) and its
 // depth below the mesh. j is a 0-1 jitter for the steps.
-vec3 tm_rd_pom(vec3 p, vec3 n, vec3 v, float h, float j, float kc, out float depth) {
+vec3 tm_rd_pom(vec3 p, vec3 n, vec3 v, float h, float j, float kc, float fp, out float depth) {
 	float down = max(-dot(v, n), 0.08); // metres of depth per metre along the ray
 	vec3 lat = v - n * dot(v, n); // the ray's drift across the plane per metre along it
 	// Long enough to reach the bed, but never drifting more than a stone and a half across the plane.
 	float t_max = min(h / down, 0.5 * tm_rock_detail_scale / max(length(lat), 1e-4));
-	// Steps of at most 3 mm across the ground (more the more grazing the view, as Tatarchuk 2006 scales them): a
+	// Steps of at most 3 mm across the ground (or a pixel's footprint, where that is wider) (more the more grazing the view, as Tatarchuk 2006 scales them): a
 	// step passing clean over a stone's corner or side drew the bed behind it, a comb of teeth along the stones'
 	// outlines, wherever a step spanned more than a side's width.
-	int STEPS = clamp(int(t_max * length(lat) / (0.003 * tm_rock_detail_scale)) + 8, 12, 96);
+	int STEPS = clamp(int(t_max * length(lat) / max(0.003 * tm_rock_detail_scale, fp)) + 8, 12, 96);
 	float t0 = 0.0, d0 = 0.0, s0 = 0.0;
 	vec3 wv;
 	float se;
@@ -1029,19 +1035,20 @@ void fragment() {
 		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.55, 0.72, wn.y));
 		float rd_scree = clamp(w[1], 0.0, 1.0);
 		vec3 rd_p = wp;
-		// Scree stones in parallax up close: full while a pixel spans under 6 mm, gone by 2 cm (about 16 m at
-		// 1080p looking down on them), where the normal alone carries them.
+		// Scree stones in parallax: full while a pixel spans under 3 cm, gone by 8 cm, where the stones themselves
+		// have faded to their mean; past a few metres the steps grow with the pixel, so the far blocks keep their sides
+		// (the normal alone drew them as flat slabs) at a bounded cost.
 		// The footprint's long axis, not the cone's width: at a grazing angle the parallax of stones a pixel cannot
 		// resolve along the view stretched into hard black hatching across far slopes.
 		float rd_fp = max(length(rd_dx), length(rd_dy));
-		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.006, 0.02, rd_fp / tm_rock_detail_scale));
+		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.03, 0.08, rd_fp / tm_rock_detail_scale));
 		if (rd_h > 0.002) {
 			// No per-pixel jitter of the steps: the bisection finds the stones' sides without it, and jitter drew a
 			// dither over the stones and their shadows wherever no temporal filter averages it out.
 			const float rd_j = 0.5;
 			float rd_depth;
 			// The chips fade as in the normal (tm_rd_height): at full height past their clamp they beat into rings.
-			rd_p = tm_rd_pom(wp, wn, rd_v, rd_h, rd_j, tm_rd_clamp(rd_fp / tm_rock_detail_scale, 0.18), rd_depth);
+			rd_p = tm_rd_pom(wp, wn, rd_v, rd_h, rd_j, tm_rd_clamp(rd_fp / tm_rock_detail_scale, 0.18), rd_fp, rd_depth);
 			// The stones shade the bed and each other from the sun, under the path tracer too (no faces to trace).
 			vec3 rd_l = relief_sun_direction();
 			if (dot(rd_l, rd_l) > 0.5) {

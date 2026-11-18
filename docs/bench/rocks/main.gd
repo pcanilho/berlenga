@@ -127,6 +127,12 @@ func _environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sk
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	if args.get("cave-view", "outside") in ["inside", "spel", "chamber", "rimstone", "stream"]:
+		# Underground: no sky light reaches here, so none in raster either (the path tracer already has none).
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0, 0, 0)
+		env.ambient_light_energy = 0.0
+		env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
@@ -801,7 +807,7 @@ func _caves(cam: Camera3D) -> void:
 				var best_air_r := -1.0
 				seed(11)
 				for ii in 400:
-					var cand := pc + Vector3(randf_range(-3, 3), randf_range(0.8, 1.8), randf_range(-3, 3))
+					var cand := pc + Vector3(randf_range(-3, 3), randf_range(0.25, 0.45) if args.has("low") else randf_range(0.8, 1.8), randf_range(-3, 3))
 					var dd := Vector2(cand.x - pc.x, cand.z - pc.z).length()
 					if dd < float(args.get("dist", "1.6")) * 0.8 or dd > float(args.get("dist", "1.6")) * 1.3:
 						continue
@@ -810,7 +816,8 @@ func _caves(cam: Camera3D) -> void:
 						best_air_r = minf(air, 1.0)
 						eye_r = cand
 				cam.position = eye_r
-				cam.look_at(pc)
+				# --low: a grazing view across the pool, so it mirrors the roof and its stalactites beyond.
+				cam.look_at(pc + (Vector3(pc.x - eye_r.x, 0, pc.z - eye_r.z).normalized() * 1.5 + Vector3(0, 0.15, 0) if args.has("low") else Vector3.ZERO))
 				cam.fov = 60.0
 				var lamp_r := OmniLight3D.new()
 				lamp_r.omni_range = 14.0
@@ -827,6 +834,7 @@ func _caves(cam: Camera3D) -> void:
 				print("  rimstone view: pool %d of %d (%d within 3 m) at %s, camera %s" % [best_k, pools_v.size(), best_c, pc, eye_r])
 				get_tree().create_timer(1.0).timeout.connect(func():
 					print("  rimstone water: %d pools with live water" % net.get_rimstone_water_count())
+					_screen_reflections(net)
 					# The drawn floor under each pool's middle against its level (the floor must lie under the water).
 					var space := get_world_3d().direct_space_state
 					for pl in pools_v:
@@ -850,6 +858,24 @@ func _caves(cam: Camera3D) -> void:
 								if dy > 0.0:
 									above += 1
 					print("    focal pool: floor over the water at %d of %d samples, highest %.3f m" % [above, total, worst])
+					# Hanging edges: rays whose floor at the outline lies well under the level (the sheet's edge in the air).
+					for pi2 in pools_v.size():
+						var pc2: Vector3 = pools_v[pi2]["center"]
+						if pc2.distance_to(fc) > 5.0:
+							continue
+						var hang := 0
+						var lowest := 0.0
+						for v2 in (pools_v[pi2]["outline"] as PackedVector2Array):
+							var q2: Vector3 = pc2 + Vector3(v2.x, 0, v2.y) * 0.97
+							var h3 := space.intersect_ray(PhysicsRayQueryParameters3D.create(q2 + Vector3(0, 0.5, 0), q2 - Vector3(0, 1.0, 0)))
+							var q4: Vector3 = pc2 + Vector3(v2.x, 0, v2.y) * 1.08
+							var h4 := space.intersect_ray(PhysicsRayQueryParameters3D.create(q4 + Vector3(0, 0.5, 0), q4 - Vector3(0, 1.0, 0)))
+							if OS.get_environment("POOL_DEBUG") == "1":
+								print("      ray r=%.2f in %.3f out %s" % [v2.length(), (h3["position"].y - pc2.y) if h3 else 9.0, ("%.3f" % (h4["position"].y - pc2.y)) if h4 else "none"])
+							if h3 and h3["position"].y - pc2.y < -0.03:
+								hang += 1
+								lowest = minf(lowest, h3["position"].y - pc2.y)
+						print("    pool %d at %s: %d of 32 edge rays hang, floor down to %.3f m" % [pi2, pc2, hang, lowest])
 					for nd in net.find_children("Pool *", "", true, false):
 						var wmi: MeshInstance3D = null
 						for ch in nd.find_children("*", "MeshInstance3D", true, false):
@@ -881,13 +907,18 @@ func _caves(cam: Camera3D) -> void:
 				if sb.y > sa.y:
 					dir = -dir # look downstream
 				var eye_s := mid - dir * float(args.get("dist", "2.5")) + Vector3(0, -0.2 * rr_s, 0)
+				# Low over the water, as a caver crouched in the stream: 0.5 m over the bed under the eye.
+				var fl_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(eye_s + Vector3(0, 1.0, 0), eye_s - Vector3(0, 3.0 * rr_s, 0)))
+				if fl_hit:
+					eye_s.y = fl_hit["position"].y + float(args.get("eye-height", "0.5"))
+				print("  stream view: bed under the eye %s" % ("found" if fl_hit else "not found (collision not in the space yet)"))
 				# Inside the air, with room round the lens.
 				for k in 10:
 					if net.get_rock_distance(eye_s) < -0.35:
 						break
 					eye_s = eye_s.lerp(mid, 0.25)
 				cam.position = eye_s
-				cam.look_at(mid + dir * 1.5 - Vector3(0, 1.1 * rr_s, 0))
+				cam.look_at(Vector3(mid.x, eye_s.y, mid.z) + dir * 3.0 - Vector3(0, 0.6, 0))
 				cam.fov = 65.0
 				var lamp_st := OmniLight3D.new()
 				lamp_st.omni_range = 14.0
@@ -895,12 +926,14 @@ func _caves(cam: Camera3D) -> void:
 				lamp_st.shadow_enabled = true
 				add_child(lamp_st)
 				# Overhead and a little behind the camera, as a helmet lamp: no wall close enough to burn out.
-				lamp_st.global_position = eye_s - dir * 0.3 + Vector3(0, 0.25, 0)
+				lamp_st.global_position = eye_s - dir * 0.2 + Vector3(0, 0.15, 0)
 				var n_stream := 0
 				for sgx in st_segs:
 					n_stream += 1 if sgx["stream"] else 0
 				print("  stream view: segment %d (%d of %d segments carry streams), radius %.2f, camera %s" % [best_s, n_stream, st_segs.size(), rr_s, eye_s])
-				get_tree().create_timer(0.5).timeout.connect(func(): print("  cave streams: %d" % net.get_stream_count()))
+				get_tree().create_timer(0.5).timeout.connect(func():
+					print("  cave streams: %d" % net.get_stream_count())
+					_screen_reflections(net))
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)
 				cam.look_at(pos, f)
@@ -915,6 +948,21 @@ func _caves(cam: Camera3D) -> void:
 			var c: Vector3 = e["position"] - o * net.cave_length * 0.45
 			cam.position = c + o * net.cave_length * 0.9 + Vector3(0, net.cave_length * 0.7, 0)
 			cam.look_at(c)
+
+
+# --no-screen-reflections: the cave water without its screen-space reflections (the water shader's uniform), for an
+# off/on pair from one camera.
+func _screen_reflections(root: Node) -> void:
+	var on := not args.has("no-screen-reflections")
+	var n := 0
+	for w in root.find_children("*", "", true, false):
+		if w.get_class() in ["PhysXWaterSurface3D", "PhysXRiver3D"]:
+			for mi in w.find_children("*", "MeshInstance3D", true, false):
+				var m := (mi as MeshInstance3D).material_override as ShaderMaterial
+				if m:
+					m.set_shader_parameter("screen_reflections", on)
+					n += 1
+	print("  screen reflections %s on %d water meshes" % ["on" if on else "off", n])
 
 
 # The pieces against the stone: their total volume and the box round them as drawn (each chunk through its

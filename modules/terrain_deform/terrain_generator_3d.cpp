@@ -29,16 +29,16 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "terrain_brush_3d.h"
-#include "terrain_guide_3d.h"
 #include "terrain_generator_3d.h"
 
+#include "terrain_brush_3d.h"
 #include "terrain_coast.h"
 #include "terrain_deformer_3d.h"
 #include "terrain_dunes.h"
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_glacial.h"
+#include "terrain_guide_3d.h"
 #include "terrain_hydraulic.h"
 #include "terrain_runoff.h"
 #include "terrain_sky.h"
@@ -2199,9 +2199,9 @@ bool TerrainGenerator3D::generate() {
 			}
 		}
 		scree_pass();
-			meander_pass();
-			outwash_pass();
-			unfilled.resize(n);
+		meander_pass();
+		outwash_pass();
+		unfilled.resize(n);
 		memcpy(unfilled.ptr(), h.ptr(), sizeof(double) * n);
 	} else {
 		scree_pass();
@@ -2945,7 +2945,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 void TerrainGenerator3D::_bucket_channels() {
 	chan_buckets.clear();
 	if (channels.is_empty()) {
-	return;
+		return;
 	}
 	const Vector2 world0 = result_rect.position;
 	{
@@ -3392,7 +3392,8 @@ void TerrainGenerator3D::_build_dunes() {
 	print_verbose(vformat("TerrainGenerator3D: dunes on %dx%d at %.1f m in %d tiles, %.0f m3, highest %.1f m, %.0f ms.", w, h, dc, tiles_x * tiles_z, vol, mx, last_dune_msec));
 }
 
-// Desert sand seas: TerrainDuneSea (Paris et al. 2019) over sand_sea_rect on cells of sand_sea_scale, heights in the
+// Desert sand seas: TerrainDuneSea (Paris et al. 2019, with the wind's shear over the dunes after Kroy 2002) over
+// sand_sea_rect on cells of sand_sea_scale, heights in the
 // same unit (so the dunes keep their angles at any scale), over the generated ground: the sand fills hollows and
 // slides off slopes past its repose. The grid wraps; the sand thins out over sand_sea_edge at the rect's edge, off
 // water and out of river channels. The bands of each phase run on the
@@ -3406,6 +3407,12 @@ struct SandSeaJob {
 void TerrainGenerator3D::_sand_sea_band(void *p_job, uint32_t p_band) {
 	SandSeaJob *job = static_cast<SandSeaJob *>(p_job);
 	job->sea->run_band(job->step, int(p_band) * 2 + job->phase);
+}
+
+// The wind's shear over the sand, 16 rows a task.
+void TerrainGenerator3D::_sand_sea_shear(void *p_sea, uint32_t p_part) {
+	TerrainDuneSea *sea = static_cast<TerrainDuneSea *>(p_sea);
+	sea->shear_rows(int(p_part) * 16, MIN(int(p_part + 1) * 16, sea->h));
 }
 
 float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
@@ -3530,6 +3537,10 @@ void TerrainGenerator3D::_build_sand_sea() {
 	}
 	const int bands = sea.band_count();
 	for (int step = 0; step < sand_sea_steps; step++) {
+		if (sea.begin_shear(step)) {
+			WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sand_sea_shear, &sea, (h + 15) / 16, -1, true, SNAME("TerrainGenerator3D sand shear"));
+			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+		}
 		if (bands == 0) {
 			sea.run_band(step, 0);
 			continue;

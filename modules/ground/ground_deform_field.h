@@ -105,7 +105,7 @@ public:
 	float extent = 32.0f;
 	int resolution = 512;
 	int max_cached_tiles = 1024;
-	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (swash marks' lip); below 0, digs take only laid sand (rim) and its tint
+	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
 	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).
@@ -128,6 +128,7 @@ public:
 	LocalVector<float> rim; // m on top
 	LocalVector<float> fresh;
 	LocalVector<float> water; // standing water, m (the ground on the GPU: read back with the field, not shifted)
+	LocalVector<float> water_mud; // the clay the standing water carries, kg/m3 (mud round 3)
 	LocalVector<float> water_cut; // the bed the runoff cut (+) or filled (-) since the field last moved, m (GPU runoff)
 	LocalVector<uint8_t> tile_active; // something deformed in the tile
 	LocalVector<float> tile_settle; // seconds of slumping owed (0: asleep)

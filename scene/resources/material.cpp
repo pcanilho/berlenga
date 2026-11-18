@@ -2906,12 +2906,18 @@ void fragment() {)";
 		code += R"(	{
 		float gwd = ground_deform_water((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		if (gwd > 0.0) {
-			vec4 gwl = ground_water_look(gwd, ground_wet.x);
+			vec4 gwl = ground_water_look(gwd, ground_wet.x, ground_deform_water_mud((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));
 			ALBEDO *= gwl.x;
 			ROUGHNESS = mix(ROUGHNESS, gwl.z, max(gwl.y, 0.85 * gwl.w));
 			SPECULAR = mix(SPECULAR, 0.25, max(gwl.y, gwl.w));
 			NORMAL_MAP_DEPTH *= 1.0 - max(gwl.y, 0.6 * gwl.w);
 			ground_wet.z *= 1.0 - gwl.y;
+			// Running water's ripples, swept downstream (ground_water_flow()).
+			vec3 gwn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+			vec2 gfs = ground_water_flow((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, gwn, gwd, TIME, ground_fp) * max(gwl.y, gwl.w);
+			if (gfs != vec2(0.0)) {
+				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gfs.x, 0.0, gfs.y, 0.0)).xyz);
+			}
 		}
 	}
 )";
@@ -4385,7 +4391,9 @@ vec3 ground_wet_at(vec3 p_world, vec3 p_normal) {
 	vec4 wn = ground_wet_block(p_world.xz, r, 0, ts, rows);
 	vec4 wf = far ? ground_wet_block(p_world.xz, rf, 1, ts, rows) : vec4(0.0);
 	vec3 w = vec3(mix(wf.xy, wn.xy, wn.w), wn.z * wn.w);
-	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), clamp(w.y, 0.0, 1.0) * smoothstep(0.35, 0.7, p_normal.y), clamp(w.z, 0.0, 1.0));
+	// G is the saturation; the standing film is classified here, after filtering, so its edge runs smoothly between
+	// the lattice's points.
+	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), smoothstep(0.95, 1.0, w.y) * smoothstep(0.35, 0.7, p_normal.y), clamp(w.z, 0.0, 1.0));
 }
 // Desiccation cracks (docs/ideas/mud.md, stage 2b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
 // Drying clay cracks into plates whose size follows the drying layer's thickness (Groisman and Kaplan 1994). The
@@ -4610,8 +4618,8 @@ float ground_deform_top(vec2 p_xz) {
 }
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
-// ground with pore water p_wet.
-vec4 ground_water_look(float p_depth, float p_wet) {
+// ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
+vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
 	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
@@ -4621,8 +4629,89 @@ vec4 ground_water_look(float p_depth, float p_wet) {
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
 	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
-	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
-	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, gloss);
+	// Stirred, it carries more: the attenuation grows with the clay (Beer-Lambert in the concentration), so at some
+	// 40 kg/m3 it hides the bed under a millimetre.
+	float murk = 1.0 - exp(-2.0 * p_depth * (3.0 + max(p_mud, 0.0)) / 0.03);
+	// Thick with clay it no longer shows the soaked bed darker: it scatters back the clay's own colour (the dry
+	// ground's, a little darker: the pore water's darkening, Lagarde's 0.52 with p_wet of it already applied, undone),
+	// milky brown, as the slurry it is.
+	float slurry = max(p_mud, 0.0) / (max(p_mud, 0.0) + 30.0);
+	float bed = soak * mix(1.0, 0.75, murk * cover);
+	float clay = 0.8 / mix(1.0, 0.52, clamp(p_wet, 0.0, 1.0));
+	return vec4(mix(bed, clay, slurry * murk * cover), cover, 0.03, gloss);
+}
+// Flowing water (docs/ideas/sand.md, flowing rills): the sheet's surface carries small ripples that the flow
+// sweeps downstream, drawn as a flow map does (Vlachos 2010, Water Flow in Portal 2): a ripple pattern advected by
+// the water's velocity over a one-second cycle, two copies half a cycle apart cross-faded so neither's reset shows.
+// The velocity is the shallow water's own, by Manning (n 0.025, as the GPU's water) from the depth and the surface's
+// slope (its normal): downhill, d^(2/3) sqrt(S) / n. The same lines are in material.cpp and
+// scene_raytracing_raygen.glsl.
+vec2 ground_flow_grad(vec2 p_cell) {
+	uvec2 q = uvec2(ivec2(floor(p_cell)) + ivec2(1 << 20));
+	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float a = float(h) * (6.2831853 / 4294967296.0);
+	return vec2(cos(a), sin(a));
+}
+// Gradient noise and its slope, p in cells (quintic fade).
+vec3 ground_flow_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+	vec2 ga = ground_flow_grad(i);
+	vec2 gb = ground_flow_grad(i + vec2(1.0, 0.0));
+	vec2 gc = ground_flow_grad(i + vec2(0.0, 1.0));
+	vec2 gd = ground_flow_grad(i + vec2(1.0, 1.0));
+	float va = dot(ga, f);
+	float vb = dot(gb, f - vec2(1.0, 0.0));
+	float vc = dot(gc, f - vec2(0.0, 1.0));
+	float vd = dot(gd, f - vec2(1.0, 1.0));
+	float k = va - vb - vc + vd;
+	float v = va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * k;
+	vec2 d = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (u.yx * k + vec2(vb, vc) - va);
+	return vec3(v, d);
+}
+// The ripples' slope (d/dx, d/dz) on water p_depth deep (m) whose surface normal is p_n (world), at time p_t (s);
+// p_fp is the pixel's footprint (m): ripples finer than two pixels fade out rather than alias.
+vec2 ground_water_flow(vec2 p_xz, vec3 p_n, float p_depth, float p_t, float p_fp) {
+	float s = length(p_n.xz) / max(p_n.y, 0.2);
+	float speed = min(pow(max(p_depth, 0.0), 2.0 / 3.0) * sqrt(s) / 0.025, 1.5);
+	// Ripples stand up once the sheet runs (a few cm/s); still water stays a mirror.
+	float run = smoothstep(0.03, 0.25, speed);
+	if (run <= 0.0 || s < 1e-4) {
+		return vec2(0.0);
+	}
+	vec2 dir = p_n.xz / length(p_n.xz);
+	vec2 v = dir * speed;
+	// Stretched across the flow, as the small transverse ripples on sheet flow are: cells twice as long across.
+	vec2 side = vec2(-dir.y, dir.x);
+	float ph0 = fract(p_t);
+	float ph1 = fract(p_t + 0.5);
+	float w0 = 1.0 - abs(2.0 * ph0 - 1.0);
+	vec2 slope = vec2(0.0);
+	for (int o = 0; o < 2; o++) {
+		// Wavelengths 2 cm and 7 mm, heights a twentieth of them.
+		float l = o == 0 ? 0.02 : 0.007;
+		float fade = 1.0 - smoothstep(0.25 * l, 0.5 * l, p_fp);
+		if (fade <= 0.0) {
+			continue;
+		}
+		for (int k = 0; k < 2; k++) {
+			float ph = k == 0 ? ph0 : ph1;
+			float w = k == 0 ? w0 : 1.0 - w0;
+			vec2 q = p_xz - v * ph;
+			vec2 c = vec2(dot(q, dir), 0.5 * dot(q, side)) / l + vec2(17.0 * float(k) + 5.0 * float(o), 31.0 * float(k));
+			vec3 n = ground_flow_noise(c);
+			// Back from the stretched cells to world: d/d(along) = n.y / l, d/d(across) = 0.5 n.z / l.
+			slope += w * fade * 0.05 * (dir * n.y + side * 0.5 * n.z);
+		}
+	}
+	return slope * run;
 }
 // Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
 // of 0.25 mm counted per cell of the pixel's footprint, as the snow's sparkle is (Zirr and Kaplanyan 2016;
@@ -4726,14 +4815,51 @@ vec2 ground_deform_tint(vec3 p_world) {
 	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
 		return vec2(1.0);
 	}
-	return ground_deform_sample(p_world.xz).ba;
+	vec4 d = ground_deform_sample(p_world.xz);
+	// A < 0: muddy water over it, whose surface hides the turned ground's gloss (ground_deform_water_mud()).
+	return vec2(d.b, d.a < 0.0 ? 1.0 : d.a);
+}
+// The clay the standing water carries at a world position, kg/m3 (mud round 3; the map's A under muddy water).
+float ground_deform_water_mud(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return 0.0;
+	}
+	return 400.0 * max(-ground_deform_sample(p_world.xz).a, 0.0);
+}
+// Standing water's depth between texels. The water's level (bed plus depth) is what varies smoothly, so the depth
+// is taken as the level less the bed, interpolated, with dry texels given their wet neighbours' mean level (a
+// level-set extension, as heightfield water renderers do at the wet/dry front): the waterline then runs across the
+// texels where the level meets the bed. Interpolating the depth itself and thresholding it near zero (the film's
+// gloss starts at 20 um) draws every dry texel as a square island with stepped edges. p_r and p_g: the four texels'
+// net depression and depth (textureGather order), p_f the position between them.
+float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
+	vec4 wet = step(vec4(1e-7), p_g);
+	float n = dot(wet, vec4(1.0));
+	if (n == 0.0) {
+		return 0.0;
+	}
+	float fill = dot((p_g - p_r) * wet, vec4(1.0)) / n;
+	vec4 dz = mix(vec4(fill) + p_r, p_g, wet);
+	return max(mix(mix(dz.w, dz.z, p_f.x), mix(dz.x, dz.y, p_f.x), p_f.y), 0.0);
 }
 // Standing water over the patch at a world position, m (0 off the patch).
 float ground_deform_water(vec3 p_world) {
 	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
 		return 0.0;
 	}
-	return max(ground_deform_sample(p_world.xz).g, 0.0);
+	vec2 uv = (p_world.xz - ground_deform_rect.xy) / ground_deform_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 0.0;
+	}
+	vec2 f = fract(uv * vec2(textureSize(ground_deform_map, 0)) - 0.5);
+	float w = ground_water_between(textureGather(ground_deform_map, uv, 0), textureGather(ground_deform_map, uv, 1), f);
+	float nw = ground_deform_near_weight(p_world.xz);
+	if (nw > 0.0) {
+		vec2 nuv = (p_world.xz - ground_deform_near_rect.xy) / ground_deform_near_rect.z;
+		vec2 nf = fract(nuv * vec2(textureSize(ground_deform_near_map, 0)) - 0.5);
+		w = mix(w, ground_water_between(textureGather(ground_deform_near_map, nuv, 0), textureGather(ground_deform_near_map, nuv, 1), nf), nw);
+	}
+	return w;
 }
 )";
 	return code;

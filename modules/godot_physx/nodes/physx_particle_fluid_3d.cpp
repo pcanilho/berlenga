@@ -213,6 +213,13 @@ static Ref<StandardMaterial3D> make_clear_water_material() {
 	return m;
 }
 
+Ref<Material> PhysXParticleFluid3D::get_liquid_material() {
+	if (water_material.is_null()) {
+		water_material = make_clear_water_material();
+	}
+	return water_material;
+}
+
 // Resolve a node to an MPM collider. Accepts a CollisionShape3D directly, a
 // CollisionObject3D (its first shape, or the shape at p_shape_index, the index a space query
 // reports), or a GPUParticlesCollisionSDF3D with a baked texture. Sphere, box, capsule, cylinder

@@ -228,8 +228,8 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		buf_packed = _rt_storage(n * n * 4 * packed_uints(p_dims.stride) + 16);
 		buf_ledger = _rt_storage(16);
 		// Standing water is the ground's: snow binds a token buffer.
-		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 32 : 16);
-		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 : 16);
+		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 48 : 16);
+		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 * 4 : 16); // the shifted depth, then the +x and +z faces' discharges, then the shifted clay
 		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * p_dims.stride);
 		RD::TextureFormat tf;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
@@ -311,7 +311,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		rd->buffer_clear(buf_state[0], 0, n * n * 16);
 		rd->buffer_clear(buf_state[1], 0, n * n * 16);
 		if (d.stride == 2) {
-			rd->buffer_clear(buf_water, 0, n * n * 32);
+			rd->buffer_clear(buf_water, 0, n * n * 48);
 		}
 	}
 	const int stamp_count = p_stamps.size() / STAMP_BYTES;
@@ -733,6 +733,9 @@ bool GroundDeformGPUHost::take_field(GroundDeformField &r_field, int p_stride, f
 	if (fresh && int(r_field.water_cut.size()) != fn * fn) {
 		r_field.water_cut.resize(fn * fn);
 	}
+	if (fresh && int(r_field.water_mud.size()) != fn * fn) {
+		r_field.water_mud.resize(fn * fn);
+	}
 	const int T = GroundDeformField::TILE;
 	const uint16_t *h = reinterpret_cast<const uint16_t *>(packed.ptr());
 	const int nt = r_field.tiles();
@@ -755,6 +758,7 @@ bool GroundDeformGPUHost::take_field(GroundDeformField &r_field, int p_stride, f
 			if (fresh) {
 				r_field.water[i] = Math::half_to_float(h[(fn * fn * 2 + i) * 2]);
 				r_field.water_cut[i] = Math::half_to_float(h[(fn * fn * 2 + i) * 2 + 1]);
+				r_field.water_mud[i] = Math::half_to_float(h[(fn * fn * 3 + i) * 2]);
 			}
 			if (dn > 0.0f || rm > 0.0f || fr > 0.0f) {
 				r_field.tile_active[(z / T) * nt + x / T] = 1;

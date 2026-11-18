@@ -62,6 +62,9 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 wade; // tyres wading (mud stage 4c): count (up to 4), unused
 	vec4 wade_m[8]; // per tyre: (axle x, y, z, radius), (heading angle, unused, half width, speed m/s)
 	vec4 water_disc[16]; // water added (+) or taken (-) this step (add_water, wade.y of them): x, z, radius, depth a pass m
+	vec4 water_disc_mud[4]; // the clay each added disc's water carries, kg/m3 (disc k: [k / 4][k % 4])
+	vec4 stir[8]; // clay stirred into standing water this step (stir_water, wade.z of them): x, z, radius, kg/m2 a pass
+	vec4 turbid; // muddy water (mud round 3): on (1), settling m a substep second, tyre churn kg/m2, most kg/m3
 }
 params;
 
@@ -103,19 +106,21 @@ layout(set = 0, binding = 10, std430) restrict readonly buffer TileOps {
 	ivec4 tile_ops[]; // store: (tile x, tile z, slot, 0); shift: per new tile (source kind, index, 0, 0)
 };
 layout(set = 0, binding = 11, std430) restrict writeonly buffer Packed {
-	uint packed[]; // per texel stride() uints, then for the ground one more each: (water depth, 0)
+	uint packed[]; // per texel stride() uints, then for the ground two more each: (water depth, bed cut), (clay kg/m3, 0)
 };
 // Standing water (ground only): per texel the outflows to -x, +x, -z, +z (m/s: m3/s over the texel's area) and
 // (depth m, bed load along x m2/s, bed cut by the runoff m, bed load along z m2/s). The virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007).
+// Then the clay it carries (mud round 3): (kg/m2 over the texel, its concentration kg/m3 as the substep began, 0, 0).
 struct WaterCell {
 	vec4 flux;
 	vec4 w;
+	vec4 s;
 };
 layout(set = 0, binding = 12, std430) restrict buffer Water {
 	WaterCell water[];
 };
 layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
-	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY
+	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face()); then the shifted clay
 };
 layout(set = 0, binding = 14, std430) restrict buffer Ledger {
 	uint ledger[4]; // add_water's discs, mm3 (cumulative): [0] takes could not find, [1] added, [2] taken
@@ -353,7 +358,7 @@ void run_amount_stamp(Stamp s) {
 			// A line being washed away: only what was laid on the surface goes, and its tint with it.
 			st.y -= min(st.y, a);
 			if (ground) {
-				st.w *= 1.0 - cover;
+				st.w = st.w >= 2.0 ? 2.0 + (st.w - 2.0) * (1.0 - cover) : st.w * (1.0 - cover);
 			}
 		} else if (sa > 0.0) {
 			float take = min(st.y, a);
@@ -366,8 +371,11 @@ void run_amount_stamp(Stamp s) {
 			float fill = min(st.x, a);
 			st.x -= fill;
 			st.y += a - fill;
-			if (ground && s.c.z > 0.0) {
-				st.w = max(st.w, s.c.z * cover); // a marked deposit (a swash mark's lip)
+			if (ground && s.c.z >= 2.0) {
+				// A deposit of a different sand (a swash mark's heavy minerals): 2 plus its share, and it stays.
+				st.w = max(st.w, 2.0 + (s.c.z - 2.0) * cover);
+			} else if (ground && s.c.z > 0.0) {
+				st.w = max(st.w, s.c.z * cover); // a marked deposit, tinted fresh
 			}
 		}
 		st.z = max(st.z, settle);
@@ -945,10 +953,69 @@ float wade_head(vec2 p_wp, float p_bed, float p_d) {
 	return head;
 }
 
+// The signed discharge (per texel width, as the fluxes) through the face from texel (x, z) to its +x (p_axis 0) or +z
+// (1) neighbour, as the depth pass left it last step; a face off the field takes its neighbour's within.
+float water_face(int x, int z, int p_axis, int n) {
+	x = clamp(x, 0, n - 1);
+	z = clamp(z, 0, n - 1);
+	return water_tmp[(1 + p_axis) * n * n + z * n + x];
+}
+
+// Muddy water (docs/ideas/mud.md, round 3): the clay standing water carries, kg/m2 over each texel. Tyres churn
+// the soft bed they roll on in the water into it (a tread turns over a couple of millimetres of slurry as it passes,
+// so a tyre through a 5 cm puddle leaves it at some 40 kg/m3, milky brown), feet and landing clods stir it in
+// (stir_water), and it settles out at a silt floc's Stokes speed (0.1 mm/s: a stirred puddle clears in minutes).
+// Only cohesive ground clouds the water: sand falls back out at once (from its conductivity, clay to sand).
+float water_stir(vec2 p_wp, float p_bed, float p_d, float p_k, float p_sed, float p_c) {
+	float sed = p_sed;
+	if (p_d > 0.002) {
+		float clay = p_k > 0.0 && ground_deformable(p_wp) ? 1.0 - smoothstep(3e-6, 3e-5, p_k) : 0.0;
+		if (clay > 0.0) {
+			float bed = p_bed;
+			int count = min(int(params.wade.x), 4);
+			for (int k = 0; k < count; k++) {
+				vec4 a = params.wade_m[2 * k];
+				vec4 b = params.wade_m[2 * k + 1];
+				vec2 o = p_wp - a.xz;
+				vec2 hd = vec2(cos(b.x), sin(b.x));
+				float s = dot(o, hd);
+				float r = a.w;
+				// Where the tread meets the bed (its bottom within a centimetre of it) under its width.
+				if (abs(s) >= r || abs(dot(o, vec2(-hd.y, hd.x))) > b.z || a.y - sqrt(r * r - s * s) > bed + 0.01) {
+					continue;
+				}
+				// Over the contact's length (about the radius) in the time the tyre takes to cross it.
+				sed += clay * params.turbid.z * b.w / r * params.water.y;
+			}
+			for (int k = 0; k < int(params.wade.z); k++) {
+				vec4 st = params.stir[k];
+				vec2 o = p_wp - st.xy;
+				if (dot(o, o) <= st.z * st.z) {
+					sed += clay * st.w;
+				}
+			}
+		}
+	}
+	// Settling: the floc falls out of the bottom of the column at its Stokes speed.
+	sed -= min(params.turbid.y * p_c * params.water.y, max(sed, 0.0));
+	return min(max(sed, 0.0), p_d * params.turbid.w);
+}
+
+// The clay left in a texel's water once its depth is final: none in a texel that dried (it settled on the bed), and
+// never thicker than the water can hold.
+void water_sed_close(int i, float p_d) {
+	if (params.turbid.x < 0.5) {
+		return;
+	}
+	water[i].s.x = p_d < 1e-4 ? 0.0 : min(water[i].s.x, p_d * params.turbid.w);
+}
+
 void water_flux(int x, int z) {
 	int n = fn();
 	int i = z * n + x;
 	float d = water[i].w.x;
+	// The clay's concentration as this substep begins: the pipes carry it out at the rate they carry the water.
+	water[i].s.y = d > 1e-5 ? water[i].s.x / d : 0.0;
 	if (d <= 0.0) {
 		water[i].flux = vec4(0.0);
 		return;
@@ -966,6 +1033,22 @@ void water_flux(int x, int z) {
 	vec4 f = water[i].flux * (runoff ? 1.0 : max(1.0 - params.water.z * dt, 0.0));
 	float hf = max(d, 1e-6);
 	float fr = WATER_G * 0.025 * 0.025 * dt / pow(hf, 7.0 / 3.0);
+	// Runoff: de Almeida, Bates, Freer and Souvignet (2012): the local inertial scheme left as it is lets the
+	// discharge on neighbouring faces decouple, odd and even texels in turn (a checkerboard, along a rill a ladder of
+	// one-texel rungs that the bed then cuts in). Each face starts from its last discharge mixed with the two
+	// parallel faces' either side, theta 0.8 (their 0.7 to 0.9), from the signed face discharges the depth pass keeps
+	// (water_face()); outward is positive for this texel.
+	const float THETA = 0.8;
+	vec4 q0 = f;
+	if (runoff) {
+		q0 = vec4(-water_face(x - 1, z, 0, n), water_face(x, z, 0, n), -water_face(x, z - 1, 1, n), water_face(x, z, 1, n));
+		vec4 qa = vec4(-water_face(x - 2, z, 0, n), water_face(x - 1, z, 0, n), -water_face(x, z - 2, 1, n), water_face(x, z - 1, 1, n));
+		vec4 qb = vec4(-water_face(x, z, 0, n), water_face(x + 1, z, 0, n), -water_face(x, z, 1, n), water_face(x, z + 1, 1, n));
+		q0 = THETA * q0 + 0.5 * (1.0 - THETA) * (qa + qb);
+		// The open edge's faces (no face record past it): their own outflow.
+		q0.x = x > 0 ? q0.x : f.x;
+		q0.z = z > 0 ? q0.z : f.z;
+	}
 	ivec2 nb[4] = ivec2[](ivec2(x - 1, z), ivec2(x + 1, z), ivec2(x, z - 1), ivec2(x, z + 1));
 	for (int k = 0; k < 4; k++) {
 		ivec2 q = nb[k];
@@ -980,7 +1063,7 @@ void water_flux(int x, int z) {
 			dh = h - (qb + qd + (wading && qd > 0.0 ? wade_head(texel_world(q.x, q.y), qb, qd) : 0.0));
 		}
 		if (runoff) {
-			float qk = f[k] * l;
+			float qk = q0[k] * l;
 			qk = (qk + dt * WATER_G * hf * dh / l) / (1.0 + fr * abs(qk));
 			f[k] = max(qk / l, 0.0);
 		} else {
@@ -999,6 +1082,12 @@ void water_depth(int x, int z) {
 	int i = z * n + x;
 	float dt = params.water.y;
 	vec4 f = water[i].flux;
+	if (params.water3.x > 0.5) {
+		// The faces' signed discharges for the next step's mixing (water_flux()); the field's last row and column
+		// keep their own outflow.
+		water_tmp[n * n + i] = f.y - (x < n - 1 ? water[i + 1].flux.x : 0.0);
+		water_tmp[2 * n * n + i] = f.w - (z < n - 1 ? water[i + n].flux.z : 0.0);
+	}
 	float flow = -(f.x + f.y + f.z + f.w);
 	if (x > 0) {
 		flow += water[i - 1].flux.y;
@@ -1014,6 +1103,26 @@ void water_depth(int x, int z) {
 	}
 	float d = water[i].w.x + flow * dt;
 	vec2 wp = texel_world(x, z);
+	bool turbid = params.turbid.x > 0.5;
+	// The clay the water carries (mud round 3): out through the pipes at this texel's concentration, in at each
+	// upstream neighbour's (the pipes only carry outflow, so each face's is upwind), kept exactly as the water is.
+	float c0 = water[i].s.y;
+	float sed = 0.0;
+	if (turbid) {
+		sed = water[i].s.x - (f.x + f.y + f.z + f.w) * dt * c0;
+		if (x > 0) {
+			sed += water[i - 1].flux.y * dt * water[i - 1].s.y;
+		}
+		if (x < n - 1) {
+			sed += water[i + 1].flux.x * dt * water[i + 1].s.y;
+		}
+		if (z > 0) {
+			sed += water[i - n].flux.w * dt * water[i - n].s.y;
+		}
+		if (z < n - 1) {
+			sed += water[i + n].flux.z * dt * water[i + n].s.y;
+		}
+	}
 	// Spray landing and water thrown up (GroundSurface3D::add_water): a flat depth over each disc's texels.
 	for (int k = 0; k < int(params.wade.y); k++) {
 		vec4 wd = params.water_disc[k];
@@ -1021,6 +1130,9 @@ void water_depth(int x, int z) {
 		if (dot(o, o) <= wd.z * wd.z) {
 			float d0 = max(d, 0.0);
 			d = d0 + wd.w;
+			if (turbid) {
+				sed += wd.w > 0.0 ? wd.w * params.water_disc_mud[k / 4][k % 4] : -min(-wd.w, d0) * c0;
+			}
 			if (wd.w > 0.0) {
 				atomicAdd(ledger[1], uint(wd.w * texel() * texel() * 1e9 + 0.5));
 			} else {
@@ -1034,6 +1146,10 @@ void water_depth(int x, int z) {
 		}
 	}
 	vec4 m2 = ground_cell(wp, 2); // conductivity m/s, water table depth m, moisture deficit
+	if (turbid) {
+		sed = water_stir(wp, water_bed(x, z), max(d, 0.0), m2.x, sed, c0);
+		water[i].s.x = sed;
+	}
 	float rain = params.water.x;
 	// Runoff channels: a seepage face (GroundSurface3D::_gpu_cells), where the soaked beach's water table meets the
 	// surface and Darcy outflow k sin(beta) leaves it; the ground there is saturated and takes none back.
@@ -1041,15 +1157,18 @@ void water_depth(int x, int z) {
 	if (params.water3.x > 0.5 && m2.w < 0.0) {
 		// The sea or a lake over this cell (-1): the runoff joins it.
 		water[i].w.x = 0.0;
+		water[i].s.x = 0.0;
 		return;
 	}
 	if (seep > 0.0) {
 		d = max(d + (rain + seep - (d > 0.0 ? params.water.w : 0.0)) * dt, 0.0);
 		water[i].w.x = d;
+		water_sed_close(i, d);
 		return;
 	}
 	if (m2.x <= 0.0 && d <= 0.0 && rain <= 0.0) {
 		water[i].w.x = 0.0;
+		water[i].s.x = 0.0;
 		return;
 	}
 	vec4 st = state[i];
@@ -1075,6 +1194,7 @@ void water_depth(int x, int z) {
 	}
 	bool fed = src > 0.0 || level < table;
 	water[i].w.x = d < params.water2.w && !fed ? 0.0 : d;
+	water_sed_close(i, water[i].w.x);
 }
 
 // Runoff channels (docs/ideas/sand.md): the water moves the sand as bed load, Meyer-Peter and Mueller's
@@ -1285,6 +1405,7 @@ void main() {
 	} else if (push.mode == MODE_WATER_COPY) {
 		water[i].flux = vec4(0.0);
 		water[i].w = vec4(water_tmp[i], 0.0, 0.0, 0.0);
+		water[i].s = vec4(water_tmp[3 * n * n + i], 0.0, 0.0, 0.0);
 	} else if (push.mode == MODE_WATER_ERODE) {
 		water_erode(x, z);
 	} else if (push.mode == MODE_WATER_SED) {
@@ -1305,7 +1426,7 @@ void main() {
 		float keep = exp(-(params.kind.w * m1.z + params.age.x) * params.age.y);
 		st.x *= keep;
 		st.y *= keep;
-		st.w *= params.kind.z;
+		st.w = st.w >= 2.0 ? st.w : st.w * params.kind.z; // the fresh tint dries; a laid mineral (2 + share) stays
 		// As the CPU: a texel both pressed and piled on loses the smaller from both, then films under 10 microns go.
 		float both = min(st.x, st.y);
 		st.xy -= vec2(both);
@@ -1335,14 +1456,23 @@ void main() {
 		if (is_ground() && st.w > 0.0) {
 			// Freshly turned ground: darker (damp grains from below) and glossier when wet.
 			vec4 m1 = ground_cell(texel_world(x, z), 1);
-			tint = vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
+			// Or a laid band of heavy minerals (st.w 2 plus its share: GroundDeformField::amount_fresh): dark, and it
+			// stays dark dry (GroundSurface3D::_publish_tint).
+			tint = st.w >= 2.0 ? vec2(1.0 - 0.4 * min(st.w - 2.0, 1.0), 1.0) : vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
 		}
 		if (is_ground()) {
 			// The ground's map: the net depression (dent less rim) and the standing water over it.
 			// With runoff on, the bed's fixed relief (runoff_rough) is drawn too: the water runs over it and lays its
 			// sand in its hollows, so a drawing without it showed the filled hollows as raised ridges.
 			float relief = params.water3.x > 0.5 ? runoff_rough(texel_world(x, z)) : 0.0;
-			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y - relief, water[i].w.x, tint));
+			// Muddy water (round 3): its clay in place of the turned ground's gloss, which the water's surface
+			// hides (A < 0: minus the concentration over 400 kg/m3).
+			float wd = water[i].w.x;
+			float cm = wd > 0.002 ? water[i].s.x / wd : 0.0;
+			if (cm > 0.5) {
+				tint.y = -min(cm / 400.0, 1.0);
+			}
+			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y - relief, wd, tint));
 		} else {
 			imageStore(out_tex, ivec2(x, z), vec4(st.x, st.y, tint));
 		}
@@ -1356,11 +1486,13 @@ void main() {
 		int lz = z % TILE;
 		vec4 v = vec4(0.0);
 		float wd = 0.0;
+		float ws = 0.0; // the clay in it (a tile coming back from the cache comes back clear: it settled)
 		if (o.x == 1) {
 			int ox = (o.y % nt) * TILE + lx;
 			int oz = (o.y / nt) * TILE + lz;
 			v = state[oz * n + ox];
 			wd = is_ground() ? water[oz * n + ox].w.x : 0.0;
+			ws = is_ground() ? water[oz * n + ox].s.x : 0.0;
 		} else if (o.x == 2) {
 			int sw = stride();
 			int ci = (o.y * TILE * TILE + lz * TILE + lx) * sw;
@@ -1374,6 +1506,7 @@ void main() {
 		state_out[i] = v;
 		if (is_ground()) {
 			water_tmp[i] = wd;
+			water_tmp[3 * n * n + i] = ws;
 		}
 	} else if (push.mode == MODE_PACK) {
 		vec4 st = state[i];
@@ -1382,10 +1515,11 @@ void main() {
 		if (sw == 2) {
 			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
 			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, water[i].w.z));
+			packed[n * n * 3 + i] = packHalf2x16(vec2(water[i].w.x > 1e-5 ? water[i].s.x / water[i].w.x : 0.0, 0.0));
 			if (i == 0) {
-				packed[n * n * 3] = ledger[0];
-				packed[n * n * 3 + 1] = ledger[1];
-				packed[n * n * 3 + 2] = ledger[2];
+				packed[n * n * 4] = ledger[0];
+				packed[n * n * 4 + 1] = ledger[1];
+				packed[n * n * 4 + 2] = ledger[2];
 			}
 		}
 	}

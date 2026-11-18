@@ -60,9 +60,10 @@ extends Node3D
 #                       --water=uniform:value sets one of the sea's shader uniforms (repeatable); --ebb=from,to
 #                       lowers the run-up over the run, as a falling tide, leaving a ladder of swash marks;
 #                       --prints=0 leaves out the row of boot prints; --sea=name:value sets a sea property
+#                       --sun=pitch,yaw sun direction in degrees (default -20,200: low, from over the sea)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
-#   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
+#   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), also --view=rills (default -14,75), and the exposure
 #   --prop=name:value   set one of the surface's properties (repeatable)
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
@@ -94,6 +95,7 @@ var clog_test := false
 var puddle_test := false
 var crack_test := false
 var legs_test := false
+var muddy_test := false
 var near_on := true
 var out := ""
 var spp := 16
@@ -134,6 +136,7 @@ func _ready() -> void:
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
+		elif a == "--test=muddy": muddy_test = true
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -156,6 +159,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if muddy_test:
+		await _run_muddy_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if legs_test:
 		await _run_legs_tests()
 		print("RESULT: %d failed" % fails)
@@ -962,6 +970,67 @@ func _walk_legs(legs: Node3D, p_dist: float, p_speed: float) -> void:
 		t += dt
 
 
+# Muddy water (mud round 3): a pit in wet clay soil fills with ground water (as the puddle test); a tyre churns its
+# clay into the water, a stir adds more, it settles out over minutes, and water landing carries its own clay.
+func _run_muddy_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.9, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.runoff_time_scale = 1000.0
+	surface.press_box(Vector3(0, 0, 0), Vector2(6.0, 1.2), 0.0, 0.0, 0.2)
+	surface.sync_deformation()
+	surface.settle(240.0, 0.05)
+	surface.runoff_time_scale = 0.0
+	surface.settle(1.0, 0.05)
+	var a := Vector3(-1.0, 0, 0)
+	var b := Vector3(2.5, 0, 0)
+	var depth := surface.get_standing_water_at(a)
+	var clear0 := surface.get_water_mud_at(a)
+	_check("ground water seeping into a pit comes in clear", depth > 0.08 and clear0 < 0.5, "%.1f cm of water, %.2f kg/m3" % [depth * 100.0, clear0])
+	# A tyre rolls 2.4 m up the pit's floor at 2 m/s.
+	var floor_h := surface.get_surface_height_at(a)
+	for k in 72:
+		surface.add_wader(1, Vector3(-2.4 + 2.0 * k / 60.0, floor_h + 0.35, 0), 0.35, 0.12, Vector3(2.0, 0, 0))
+		surface.settle(1.0 / 60.0, 1.0 / 60.0)
+		await get_tree().physics_frame
+	surface.settle(0.5, 0.05)
+	var churned := surface.get_water_mud_at(a)
+	var far := surface.get_water_mud_at(b)
+	_check("a tyre rolling through the pit churns its clay into the water", churned > 10.0 and far < 0.25 * churned, "%.1f kg/m3 in its track, %.1f kg/m3 past where it stopped" % [churned, far])
+	# Half a kilo of clay stirred into the far end (a boot, a clod landing).
+	surface.stir_water(b, 0.2, 0.5)
+	surface.settle(0.1, 0.05)
+	var stirred := surface.get_water_mud_at(b)
+	var expect := 0.5 / (PI * 0.04 * depth)
+	_check("clay stirred in clouds the water there by its mass over the water's volume", absf(stirred - far - expect) < 0.35 * expect, "%.1f kg/m3 (%.1f expected)" % [stirred - far, expect])
+	# Water landing (a spray's drops) brings its own clay.
+	var c := Vector3(0.0, 0, 0.4)
+	var before := surface.get_water_mud_at(c)
+	surface.add_water(c, 0.1, 0.002, 200.0)
+	surface.settle(0.1, 0.05)
+	_check("water landing brings the clay it carries", surface.get_water_mud_at(c) > before + 5.0, "%.1f to %.1f kg/m3" % [before, surface.get_water_mud_at(c)])
+	# Ten minutes still: the floc settles out at 0.1 mm/s, the clay falling as exp(-w t / depth).
+	surface.settle(600.0, 0.5)
+	var after := surface.get_water_mud_at(a)
+	var fall := churned * exp(-1e-4 * 600.0 / depth)
+	_check("left still, the clay settles out at the floc's Stokes speed", absf(after - fall) < 0.15 * fall, "%.1f to %.1f kg/m3 after 10 minutes (%.1f expected)" % [churned, after, fall])
+	# Sand (its clay-free bed) stays clear under the same tyre.
+	await _setup("flat", GroundSurface3D.GROUND_SAND, 0.9, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.press_box(Vector3(0, 0, 0), Vector2(6.0, 1.2), 0.0, 0.0, 0.2)
+	surface.sync_deformation()
+	surface.add_water(Vector3(-1.0, 0, 0), 0.5, 0.05)
+	surface.settle(1.0, 0.05)
+	floor_h = surface.get_surface_height_at(a)
+	for k in 72:
+		surface.add_wader(1, Vector3(-2.4 + 2.0 * k / 60.0, floor_h + 0.35, 0), 0.35, 0.12, Vector3(2.0, 0, 0))
+		surface.settle(1.0 / 60.0, 1.0 / 60.0)
+		await get_tree().physics_frame
+	_check("a tyre through water over sand leaves it clear", surface.get_water_mud_at(a) < 1.0, "%.2f kg/m3 (%.1f cm of water)" % [surface.get_water_mud_at(a), surface.get_standing_water_at(a) * 100.0])
+
+
 func _run_legs_tests() -> void:
 	near_on = false
 	await _soil_scene("soil")
@@ -1380,6 +1449,7 @@ func _build_wade() -> void:
 	var c := car.global_position
 	var v := car.get_linear_velocity().length()
 	print("wade: car at %s, %.1f m/s, Froude %.1f in the rut" % [c, v, v / sqrt(9.81 * maxf(surface.get_standing_water_at(Vector3(0.8, 0, c.z + 3.0)), 1e-3))])
+	print("wade: clay in the rut water %.1f kg/m3 behind the car, %.1f ahead (muddy water)" % [surface.get_water_mud_at(Vector3(0.8, 0, c.z - 2.0)), surface.get_water_mud_at(Vector3(0.8, 0, c.z + 3.0))])
 	var wg := grains.get_water_grains()
 	if wg:
 		print("wade: %d drops in the air (%.2f l), %.2f l thrown" % [wg.get_airborne_count(), wg.get_airborne_volume() * 1000.0, wg.get_dug_volume() * 1000.0])
@@ -1844,6 +1914,15 @@ func _runoff_dump() -> void:
 	var raw := FileAccess.open(dump.get_basename() + ".f32", FileAccess.WRITE)
 	if raw:
 		raw.store_buffer(cut.to_byte_array())
+	# The standing water's depth (m, float) over the same window.
+	var wd := PackedFloat32Array()
+	wd.resize(n * n)
+	for py in n:
+		for px in n:
+			wd[py * n + px] = surface.get_standing_water_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s))
+	var rawd := FileAccess.open(dump.get_basename() + "_water.f32", FileAccess.WRITE)
+	if rawd:
+		rawd.store_buffer(wd.to_byte_array())
 	var wsum := 0.0
 	var wmax := 0.0
 	var wet := 0
@@ -2617,7 +2696,7 @@ func _build_rills() -> void:
 	var env := _make_env()
 	for c in get_children():
 		if c is DirectionalLight3D:
-			c.rotation_degrees = Vector3(-14.0, 75.0, 0.0)
+			c.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-14.0, 75.0, 0.0)
 	for i in 2400:
 		await get_tree().physics_frame
 	surface.sync_deformation()
@@ -2654,6 +2733,11 @@ func _build_shore() -> void:
 		if c is DirectionalLight3D:
 			# From over the sea, a little to the side: the wet sand and the film catch its sheen.
 			c.rotation_degrees = Vector3(-20.0, 200.0, 0.0)
+			# --sun=pitch,yaw (degrees) for other light: e.g. -55,20 puts a high sun behind a camera facing the sea.
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--sun="):
+					var sv := a.substr(6).split(",")
+					c.rotation_degrees = Vector3(float(sv[0]), float(sv[1]), 0.0)
 	if not ClassDB.class_exists("PhysXWaterSurface3D") or not ClassDB.class_exists("WeatherMap3D"):
 		push_error("This build has no PhysX water or weather module.")
 		get_tree().quit(1)

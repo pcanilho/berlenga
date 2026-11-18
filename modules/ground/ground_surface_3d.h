@@ -129,6 +129,8 @@ private:
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
+	// Muddy water (docs/ideas/mud.md, round 3): standing water carries the clay tyres churn up and feet stir in.
+	bool muddy_water = true;
 	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
 	float water_seen = 0.0f; // the deepest standing water at the last read back, m
 	float _evaporation() const;
@@ -183,6 +185,8 @@ public:
 		float volume = 0.0f;
 		// Standing water a tyre throws (mud stage 4c), m3: taken from the field over the reach disc when thrown.
 		float water = 0.0f;
+		// The clay that water carries, kg/m3 (muddy water, round 3).
+		float water_mud = 0.0f;
 	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {
@@ -353,7 +357,14 @@ private:
 		Vector3 position;
 		float radius = 0.0f;
 		double volume = 0.0; // m3, < 0 taken
+		float mud = 0.0f; // kg/m3 of clay the added water carries
 	};
+	struct StirDisc {
+		Vector3 position;
+		float radius = 0.0f;
+		float mass = 0.0f; // kg of clay
+	};
+	LocalVector<StirDisc> stir_discs; // stir_water()'s, applied by the next water step
 	LocalVector<WaterDisc> water_discs; // add_water()'s, applied by the next water step
 	double water_added = 0.0; // m3, the discs applied so far (taken < 0)
 	// What takes could not find (the GPU's ledger, read back), and how much of it later water added has paid.
@@ -383,7 +394,7 @@ private:
 	float _far_pore_at(float p_x, float p_z) const;
 	float _pore_step(float p_s, float p_depth, float p_contact, float p_dt, float &r_table) const;
 	static float _value_noise(float p_x, float p_z);
-	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film,
+	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the saturation (the standing film from 0.95, taken after filtering),
 	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
 	Vector<uint8_t> wet_data;
 	Ref<ImageTexture> wet_texture;
@@ -438,6 +449,15 @@ private:
 	};
 	bool swash_marks = true;
 	LocalVector<SwashTransect> swash_tr;
+	struct SwashLine {
+		LocalVector<Vector2> pts; // one per transect
+		LocalVector<uint8_t> valid; // per stretch from point t to t + 1: 0 where not laid or flattened
+	};
+	LocalVector<SwashLine> swash_lines; // the lines still on the sand, oldest first
+	LocalVector<float> swash_max; // each transect's highest reach this wave
+	bool swash_wave_on = false;
+	float swash_r_start = 0.0f; // the mean reach when the wave began, and its highest since
+	float swash_r_peak = 0.0f;
 	Vector2 swash_dir; // down the beach
 	Vector2 swash_mid;
 	double swash_accum = 0.0;
@@ -557,7 +577,14 @@ public:
 	void add_wader(int64_t p_id, const Vector3 &p_axle, float p_radius, float p_half_width, const Vector3 &p_velocity);
 	// Adds p_volume m3 of standing water spread over a disc (taken where negative, never below dry): spray landing
 	// and water thrown up (mud stage 4c). Applied by the next water step on the GPU.
-	void add_water(const Vector3 &p_position, float p_radius, float p_volume);
+	void add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud = 0.0f);
+	// Stirs p_mass kg of the bed's clay into the standing water over a disc (feet, clods landing), where the bed is
+	// cohesive; muddy water (round 3). Applied by the next water step on the GPU.
+	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);
+	// The clay the standing water carries at a place, kg/m3, as last read back.
+	float get_water_mud_at(Vector3 p_position) const;
+	void set_muddy_water(bool p_enabled) { muddy_water = p_enabled; }
+	bool is_muddy_water() const { return muddy_water; }
 	// The standing water over a disc, as last read back (m3): what add_water can take there.
 	float get_standing_water_volume(const Vector3 &p_position, float p_radius) const;
 	float get_water_added() const { return (float)water_added; }

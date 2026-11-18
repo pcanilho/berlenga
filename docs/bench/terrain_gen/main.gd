@@ -1482,6 +1482,29 @@ func _sand_sea_checks() -> void:
 	check(gen.get_last_sand_sea_max() > 12.0, "the sand sea builds dunes higher than its cover (%.1f m over 12 m, %.0f ms)" % [gen.get_last_sand_sea_max(), gen.get_last_sand_sea_msec()])
 	check(dev > 2.0, "its dunes have relief (sand %.1f m, spread %.1f m)" % [mean, dev])
 	check(gen.get_sand_sea_height(Vector3(0, 0, 0)) == 0.0 and gen.get_sand_sea_height(Vector3(1450, 0, 750)) == 0.0, "no sand outside the rect")
+	# The cross-section along the wind (+x): long gentle stoss slopes and short slip faces at the repose (the shear
+	# over the dunes), not ridges with the same slope both ways. Slopes over 8 m (two cells), where there is sand.
+	var rising := 0
+	var falling := 0
+	var lee := PackedFloat32Array()
+	for row in 13:
+		var z := 1000.0 + row * 50.0
+		for i in 125:
+			var x := 1200.0 + i * 4.0
+			var a := gen.get_sand_sea_height(Vector3(x - 4.0, 0, z))
+			var b := gen.get_sand_sea_height(Vector3(x + 4.0, 0, z))
+			if a + b < 1.0:
+				continue
+			var g := (b - a) / 8.0
+			if g > 0.08:
+				rising += 1
+			elif g < -0.08:
+				falling += 1
+				lee.append(-g)
+	lee.sort()
+	var lee90 := rad_to_deg(atan(lee[int(lee.size() * 0.9)])) if lee.size() > 0 else 0.0
+	var stoss_share := float(rising) / maxf(rising + falling, 1)
+	check(stoss_share > 0.55 and lee90 > 25.0 and lee90 < 36.0, "the dunes rise gently into the wind and drop at the repose past the crest (stoss %.0f%% of the sloping sand, lee 90th percentile %.0f deg)" % [stoss_share * 100.0, lee90])
 	gen.generate()
 	check(_hash(gen.get_height_image()) == first, "the same seed gives the same sand sea")
 	gen.sand_sea_rect = Rect2()

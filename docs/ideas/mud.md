@@ -587,6 +587,19 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   (the same Transmission path every water body uses; one water technique). Sheets and drops thrown carry the
   concentration where they were taken; landing on a body they leave a thin stain splat (the 4b splat with a
   low volume and no relief). Check: a stirred puddle browns and clears again; sheets show against the sky.
+- **Built (muddy water).** `muddy_water` (on): a third vec4 per water texel holds the clay (kg/m2) and its
+  concentration as the substep began; the pipes carry it upwind at the water's rate (exact, as the depth), tyres on a
+  clay bed (conductivity under ~3e-5 m/s) churn 2 kg/m2 as they cross a texel, `stir_water` discs add more (boots:
+  0.1 kg a metre walked), and it settles at 0.1 mm/s; a texel that dries drops it. Read back per texel
+  (`get_water_mud_at`), drawn through the blit's A channel (negative under muddy water, where the water hides the
+  turned ground's gloss). `ground_water_look` gains the concentration: Beer-Lambert in it (unchanged at none) and a
+  slurry albedo with the pore water's darkening undone. Tyre sheets take the concentration where they are taken;
+  the water spray child keeps the mean of what is in the air, lands it and tints its liquid material (attenuation
+  over 0.03 / (3 + C) m, clay albedo and less transmission past some tens of kg/m3); a vehicle's sheets stain its
+  arch toward a film set by the clay instead of rinsing it. Bench `--test=muddy` (clear seepage, a tyre churns
+  ~15 kg/m3 into 14 cm, stirring matches mass over volume, landing water brings its clay, settling follows
+  exp(-w t / h), sand stays clear) and `--view=wade --pair --cam=2.0,1.3,-4.2,0.8,0.0,-2.0` (`--prop=muddy_water:false`
+  for the before). Not yet: the clay settled on the bed is not added back to it (grams), and the cache drops it.
 - **Mud tracked onto firm ground.** Construction stormwater rules size tracking pads at about 15 m because a tyre
   sheds most of its carried mud over the first few tens of metres (Minnesota PCA vehicle tracking BMPs; NCDOT
   RP2023-13 on mud on highways); light-vehicle tyre studies on unpaved roads measure the material thrown around the

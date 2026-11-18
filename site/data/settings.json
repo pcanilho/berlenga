@@ -981,7 +981,7 @@
     "sand_sea_kind"
    ],
    "note": "",
-   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers.",
+   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers; each has a long gentle windward slope and a steep slip face at the angle of repose.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -1201,6 +1201,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Muddy water",
+   "settings": [
+    "GroundSurface3D.muddy_water"
+   ],
+   "note": "",
+   "what": "tyres and boots churn clay into standing water, which turns milky brown, drifts with the flow and settles out over minutes; tyre spray flies brown and stains the wheel arches.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on legs",
    "settings": [
     "GroundLegMud3D"
@@ -1310,7 +1321,7 @@
     "GroundSurface3D.swash_marks"
    ],
    "note": "",
-   "what": "each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.",
+   "what": "each wave leaves a scalloped line of dark fine sand at its highest reach, and higher waves smooth older lines.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1718,6 +1729,17 @@
    ],
    "note": "",
    "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Cave pools",
+   "settings": [
+    "seabed_probe_height"
+   ],
+   "note": "",
+   "what": "pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"

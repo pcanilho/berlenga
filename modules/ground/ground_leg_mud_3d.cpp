@@ -274,6 +274,11 @@ void GroundLegMud3D::_step(double p_delta) {
 					mud_rgb = mud_rgb.lerp(Vector3(clay.r, clay.g, clay.b), MIN(speed * dt / 3.0f, 1.0f));
 				}
 			}
+			if (water > 0.01f && planted && speed > 0.1f) {
+				// A boot walking through a puddle stirs the clay of its bed into the water (muddy water, round 3):
+				// about a tenth of a kilo a metre walked.
+				ground->stir_water(p, 0.12f, 0.1f * speed * dt);
+			}
 			if (water > 0.01f) {
 				// Standing water washes the leg below its surface, faster as the leg moves through it (as the body's).
 				const float rate = MIN(water / 0.05f, 1.0f) * 0.3f * (1.0f + 0.5f * speed);
