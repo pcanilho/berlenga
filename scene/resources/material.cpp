@@ -2944,9 +2944,16 @@ void fragment() {)";
 			float gdk = 1.0 - smoothstep(0.5 * gde, 1.5 * gde, ground_fp);
 			if (gdk > 0.0) {
 				float gh0 = ground_deform_relief(gdp);
-				float ghm = 0.25 * (ground_deform_relief(gdp + vec2(gde, 0.0)) + ground_deform_relief(gdp - vec2(gde, 0.0)) +
-										   ground_deform_relief(gdp + vec2(0.0, gde)) + ground_deform_relief(gdp - vec2(0.0, gde)));
-				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk;
+				float gh1 = ground_deform_relief(gdp + vec2(gde, 0.0));
+				float gh2 = ground_deform_relief(gdp - vec2(gde, 0.0));
+				float gh3 = ground_deform_relief(gdp + vec2(0.0, gde));
+				float gh4 = ground_deform_relief(gdp - vec2(0.0, gde));
+				float ghm = 0.25 * (gh1 + gh2 + gh3 + gh4);
+				// Only millimetre relief: where the heights round it span centimetres (a tread's lugs, a rut's wall)
+				// the geometry is there for the shadow map and the path tracer to shade for real, and this term made
+				// it read far darker in raster than traced.
+				float gspan = max(max(max(gh1, gh2), max(gh3, gh4)), gh0) - min(min(min(gh1, gh2), min(gh3, gh4)), gh0);
+				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan));
 				ALBEDO *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
 			}
 		}

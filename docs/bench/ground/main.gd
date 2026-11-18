@@ -3577,7 +3577,7 @@ func _build_ruts() -> void:
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-16.0, 150.0, 0.0)
+	sun.rotation_degrees = Vector3(-16.0, 150.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
 	sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
 	var start_z := -9.0
@@ -4088,6 +4088,18 @@ func _physics_process(delta: float) -> void:
 func _save_frame() -> void:
 	for i in 12:
 		await get_tree().process_frame
+	# Path traced: until every surface's acceleration structure is built (the deformed ground's captured vertices
+	# among them), or the frame shows geometry from before (b1993654).
+	var env_pt := false
+	for c in get_children():
+		if c is WorldEnvironment and (c as WorldEnvironment).environment and (c as WorldEnvironment).environment.pathtracing_enabled:
+			env_pt = true
+	var waited := 0
+	while env_pt and waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+		await get_tree().process_frame
+		waited += 1
+	if env_pt:
+		print("path traced after %d frames waiting for surfaces" % waited)
 	await RenderingServer.frame_post_draw
 	if not out.is_empty():
 		get_viewport().get_texture().get_image().save_png(out)
