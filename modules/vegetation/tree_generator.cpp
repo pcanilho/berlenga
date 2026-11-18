@@ -16966,7 +16966,7 @@ vec3 plant_wind(vec3 wp, float h) {
 			// Burnt up: foliage the flame passed through is consumed once the crown (or the plant) has burnt,
 			// leaf by leaf with a ragged edge, leaving the bare black branches (a crown fire takes the foliage and the
 			// finest twigs, the crown fuel of Van Wagner 1977). Killed brown foliage above the flame stays.
-			if (fire_burn * smoothstep(0.55, 0.9, fire_s.x) > fract(fire_n * 7.31 + 0.137)) {
+			if (fire_burn * smoothstep(0.35, 0.8, fire_s.x) > fract(fire_n * 7.31 + 0.137)) {
 				ALPHA = 0.0;
 			}
 			// Light through a dead leaf takes its colour too (seen from below, a crown is mostly backlit).
