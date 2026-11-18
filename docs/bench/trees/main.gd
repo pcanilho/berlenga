@@ -633,6 +633,11 @@ func _build_scene() -> void:
 		var dist := span * 0.5 / tan(deg_to_rad(cam.fov * 0.5)) * 0.62 + 6.0
 		cam.position = Vector3(cx, tallest * 0.45, dist)
 		cam.look_at(Vector3(cx, tallest * 0.42, -6))
+		if OS.has_environment("CAM"): # "dx,y,z,lx,ly,lz,fov" from the row's centre.
+			var cv := OS.get_environment("CAM").split_floats(",")
+			cam.position = Vector3(cx + cv[0], cv[1], cv[2])
+			cam.look_at(Vector3(cx + cv[3], cv[4], cv[5]))
+			cam.fov = cv[6]
 
 func _render_later() -> void:
 	if OS.has_environment("WIRE"):
