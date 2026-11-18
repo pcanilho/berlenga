@@ -2041,6 +2041,7 @@ PackedFloat32Array GroundSurface3D::get_ripple_heights() const {
 void GroundSurface3D::_ripple_grow_task(void *p_self) {
 	GroundSurface3D *self = (GroundSurface3D *)p_self;
 	GroundRipples::grow(self->ripple_grown, self->ripples.n, self->ripples, self->ripple_grow_wind, 500, 7);
+	self->ripple_grown_k = GroundRipples::dominant_k(self->ripple_grown, self->ripples.n, self->ripples.cell);
 }
 
 void GroundSurface3D::_shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride) {
@@ -3472,6 +3473,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			const bool first = !ripples.tmpl_ready;
 			ripples.tmpl = ripple_grown;
 			ripples.tmpl_wind = ripple_grow_wind;
+			ripples.tmpl_k = ripple_grown_k;
 			ripples.tmpl_ready = true;
 			if (first) {
 				ripples.valid = false; // the whole window from it
@@ -3622,6 +3624,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[8] = tile && sand ? 1.0f : 0.0f;
 		meta[9] = (float)n;
 		meta[10] = (float)sn;
+		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
+		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
 			ripple_image->set_data(w, hgt, false, Image::FORMAT_RGBAF, data);
 			ripple_texture->update(ripple_image);

@@ -118,6 +118,143 @@ void GroundRipples::grow(LocalVector<float> &r_h, int p_n, const GroundRipples &
 	}
 }
 
+static inline float _rv_hash(int p_x, int p_y, uint32_t p_s) {
+	uint32_t h = ((uint32_t)p_x * 0x8da6b343u) ^ ((uint32_t)p_y * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
+	h = (h ^ (h >> 16)) * 0x7feb352du;
+	h = (h ^ (h >> 15)) * 0x846ca68bu;
+	h ^= h >> 16;
+	return (float)(h >> 8) * (1.0f / 16777216.0f);
+}
+
+static inline float _rv_noise(Vector2 p_p, uint32_t p_s) {
+	const float ix = Math::floor(p_p.x);
+	const float iy = Math::floor(p_p.y);
+	const float fx = p_p.x - ix;
+	const float fy = p_p.y - iy;
+	const float ux = fx * fx * (3.0f - 2.0f * fx);
+	const float uy = fy * fy * (3.0f - 2.0f * fy);
+	const int x = (int)ix;
+	const int y = (int)iy;
+	return Math::lerp(Math::lerp(_rv_hash(x, y, p_s), _rv_hash(x + 1, y, p_s), ux), Math::lerp(_rv_hash(x, y + 1, p_s), _rv_hash(x + 1, y + 1, p_s), ux), uy);
+}
+
+static inline float _rv_smoothstep(float p_a, float p_b, float p_x) {
+	const float t = CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f);
+	return t * t * (3.0f - 2.0f * t);
+}
+
+Vector3 GroundRipples::vary(Vector2 p_xz, Vector2 p_k) {
+	const Vector2 p = p_xz;
+	Vector2 o = 4.0f * (Vector2(_rv_noise(p / 24.0f, 1u), _rv_noise(p / 24.0f, 2u)) - Vector2(0.5f, 0.5f));
+	o += 1.2f * (Vector2(_rv_noise(p / 7.0f, 3u), _rv_noise(p / 7.0f, 4u)) - Vector2(0.5f, 0.5f));
+	o += 0.16f * (Vector2(_rv_noise(p / 1.7f, 5u), _rv_noise(p / 1.7f, 6u)) - Vector2(0.5f, 0.5f));
+	const float amp = Math::lerp(0.3f, 1.0f, _rv_smoothstep(0.15f, 0.85f, 0.6f * _rv_noise(p / 9.0f, 7u) + 0.4f * _rv_noise(p / 2.2f, 8u)));
+	const float kk = p_k.dot(p_k);
+	if (kk > 0.0f) {
+		const Vector2 kn = p_k / Math::sqrt(kk);
+		const Vector2 t(-kn.y, kn.x);
+		const int cx = (int)Math::floor(p.x / 2.5f);
+		const int cz = (int)Math::floor(p.y / 2.5f);
+		float ph = 0.0f;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				const int x = cx + dx;
+				const int z = cz + dz;
+				if (_rv_hash(x, z, 9u) >= 0.55f) {
+					continue;
+				}
+				const Vector2 m = (Vector2((float)x, (float)z) + Vector2(_rv_hash(x, z, 10u), _rv_hash(x, z, 11u))) * 2.5f;
+				const float half = 0.2f + 0.4f * _rv_hash(x, z, 12u);
+				const Vector2 da = p - (m - t * half);
+				const Vector2 db = p - (m + t * half);
+				const float sgn = _rv_hash(x, z, 13u) < 0.5f ? -1.0f : 1.0f;
+				ph += sgn * Math::atan2(da.x * db.y - da.y * db.x, da.dot(db)) * (1.0f - _rv_smoothstep(1.2f, 2.4f, (p - m).length()));
+			}
+		}
+		o += p_k * (ph / kk);
+	}
+	return Vector3(o.x, o.y, amp);
+}
+
+float GroundRipples::tmpl_at(int p_wx, int p_wz) const {
+	const Vector3 v = vary(Vector2(p_wx * cell, p_wz * cell), tmpl_k);
+	const float fx = p_wx + v.x / cell;
+	const float fz = p_wz + v.y / cell;
+	const float x0f = Math::floor(fx);
+	const float z0f = Math::floor(fz);
+	const float ax = fx - x0f;
+	const float az = fz - z0f;
+	const int x0 = (((int)x0f % n) + n) % n;
+	const int z0 = (((int)z0f % n) + n) % n;
+	const int x1 = (x0 + 1) % n;
+	const int z1 = (z0 + 1) % n;
+	const float t = Math::lerp(Math::lerp(tmpl[z0 * n + x0], tmpl[z0 * n + x1], ax), Math::lerp(tmpl[z1 * n + x0], tmpl[z1 * n + x1], ax), az);
+	return t * v.z;
+}
+
+Vector2 GroundRipples::dominant_k(const LocalVector<float> &p_h, int p_n, float p_cell) {
+	if (p_n < 8 || (int)p_h.size() != p_n * p_n) {
+		return Vector2();
+	}
+	const float period = p_n * p_cell;
+	const int mmin = MAX(1, (int)Math::ceil(period / 0.4f));
+	const int mmax = MIN(p_n / 2 - 1, (int)Math::floor(period / 0.03f));
+	if (mmax < mmin) {
+		return Vector2();
+	}
+	const int nk = 2 * mmax + 1;
+	LocalVector<float> cs, sn;
+	cs.resize(p_n);
+	sn.resize(p_n);
+	for (int i = 0; i < p_n; i++) {
+		cs[i] = Math::cos(Math::TAU * i / p_n);
+		sn[i] = Math::sin(Math::TAU * i / p_n);
+	}
+	// Along x first (every row, kx in -mmax..mmax), then along z: a separable DFT over the wanted band.
+	LocalVector<float> re, im;
+	re.resize(nk * p_n);
+	im.resize(nk * p_n);
+	for (int z = 0; z < p_n; z++) {
+		for (int a = 0; a < nk; a++) {
+			const int kx = a - mmax;
+			float sr = 0.0f, si = 0.0f;
+			for (int x = 0; x < p_n; x++) {
+				const int j = (((kx * x) % p_n) + p_n) % p_n;
+				const float v = p_h[z * p_n + x];
+				sr += v * cs[j];
+				si -= v * sn[j];
+			}
+			re[a * p_n + z] = sr;
+			im[a * p_n + z] = si;
+		}
+	}
+	float best = 0.0f;
+	Vector2 bk;
+	for (int a = 0; a < nk; a++) {
+		const int kx = a - mmax;
+		for (int kz = 0; kz <= mmax; kz++) { // half plane: the spectrum of a real field is symmetric
+			const int m2 = kx * kx + kz * kz;
+			if (m2 < mmin * mmin || m2 > mmax * mmax || (kz == 0 && kx < 0)) {
+				continue;
+			}
+			float sr = 0.0f, si = 0.0f;
+			for (int z = 0; z < p_n; z++) {
+				const int j = ((kz * z) % p_n + p_n) % p_n;
+				const float r = re[a * p_n + z];
+				const float i = im[a * p_n + z];
+				sr += r * cs[j] + i * sn[j];
+				si += i * cs[j] - r * sn[j];
+			}
+			const float pw = sr * sr + si * si;
+			if (pw > best) {
+				best = pw;
+				bk = Vector2((float)kx, (float)kz) * (Math::TAU / period);
+			}
+		}
+	}
+	return bk;
+}
+
 void GroundRipples::step(float p_q, Vector2 p_wind) {
 	if (!valid) {
 		return;
@@ -145,7 +282,7 @@ void GroundRipples::move_to(Vector2i p_origin) {
 				out[i] = h[oz * n + ox];
 				out_mask[i] = mask[oz * n + ox];
 			} else {
-				out[i] = tmpl_ready ? tmpl[(((wz % n) + n) % n) * n + (((wx % n) + n) % n)] : 0.0f;
+				out[i] = tmpl_ready ? tmpl_at(wx, wz) : 0.0f;
 				out_mask[i] = 1.0f;
 			}
 		}
