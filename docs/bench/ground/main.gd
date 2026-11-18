@@ -60,6 +60,7 @@ extends Node3D
 #                       --water=uniform:value sets one of the sea's shader uniforms (repeatable); --ebb=from,to
 #                       lowers the run-up over the run, as a falling tide, leaving a ladder of swash marks;
 #                       --prints=0 leaves out the row of boot prints; --sea=name:value sets a sea property
+#                       --sun=pitch,yaw sun direction in degrees (default -20,200: low, from over the sea)
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
@@ -2654,6 +2655,11 @@ func _build_shore() -> void:
 		if c is DirectionalLight3D:
 			# From over the sea, a little to the side: the wet sand and the film catch its sheen.
 			c.rotation_degrees = Vector3(-20.0, 200.0, 0.0)
+			# --sun=pitch,yaw (degrees) for other light: e.g. -55,20 puts a high sun behind a camera facing the sea.
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--sun="):
+					var sv := a.substr(6).split(",")
+					c.rotation_degrees = Vector3(float(sv[0]), float(sv[1]), 0.0)
 	if not ClassDB.class_exists("PhysXWaterSurface3D") or not ClassDB.class_exists("WeatherMap3D"):
 		push_error("This build has no PhysX water or weather module.")
 		get_tree().quit(1)
