@@ -409,7 +409,7 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				rim[i] -= take;
 				volume += take * t * t;
 				if (track_fresh) {
-					fresh[i] *= 1.0f - cover;
+					fresh[i] = fresh[i] >= 2.0f ? 2.0f + (fresh[i] - 2.0f) * (1.0f - cover) : fresh[i] * (1.0f - cover);
 				}
 			} else if (a > 0.0f) {
 				const float take = MIN(rim[i], a);
@@ -425,7 +425,9 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				dent[i] -= fill;
 				rim[i] += -a - fill;
 				volume += a * t * t;
-				if (track_fresh && amount_fresh > 0.0f) {
+				if (track_fresh && amount_fresh >= 2.0f) {
+					fresh[i] = MAX(fresh[i], 2.0f + (amount_fresh - 2.0f) * cover); // a laid mineral band: 2 plus its share
+				} else if (track_fresh && amount_fresh > 0.0f) {
 					fresh[i] = MAX(fresh[i], amount_fresh * cover);
 				}
 			}

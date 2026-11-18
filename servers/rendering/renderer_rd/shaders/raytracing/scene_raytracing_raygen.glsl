@@ -2285,6 +2285,22 @@ void vmud_apply(float p_cover, vec2 p_tone, vec3 p_color, float p_wet, inout vec
 	r_specular = mix(r_specular, 0.5, p_cover);
 }
 
+// Standing water's depth between texels. The water's level (bed plus depth) is what varies smoothly, so the depth
+// is taken as the level less the bed, interpolated, with dry texels given their wet neighbours' mean level (a
+// level-set extension, as heightfield water renderers do at the wet/dry front): the waterline then runs across the
+// texels where the level meets the bed. Interpolating the depth itself and thresholding it near zero (the film's
+// gloss starts at 20 um) draws every dry texel as a square island with stepped edges. p_r and p_g: the four texels'
+// net depression and depth (textureGather order), p_f the position between them.
+float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
+	vec4 wet = step(vec4(1e-7), p_g);
+	float n = dot(wet, vec4(1.0));
+	if (n == 0.0) {
+		return 0.0;
+	}
+	float fill = dot((p_g - p_r) * wet, vec4(1.0)) / n;
+	vec4 dz = mix(vec4(fill) + p_r, p_g, wet);
+	return max(mix(mix(dz.w, dz.z, p_f.x), mix(dz.x, dz.y, p_f.x), p_f.y), 0.0);
+}
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
 // ground with pore water p_wet.
@@ -2300,6 +2316,79 @@ vec4 ground_water_look(float p_depth, float p_wet) {
 	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
 	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
 	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, gloss);
+}
+// Flowing water (docs/ideas/sand.md, flowing rills): the sheet's surface carries small ripples that the flow
+// sweeps downstream, drawn as a flow map does (Vlachos 2010, Water Flow in Portal 2): a ripple pattern advected by
+// the water's velocity over a one-second cycle, two copies half a cycle apart cross-faded so neither's reset shows.
+// The velocity is the shallow water's own, by Manning (n 0.025, as the GPU's water) from the depth and the surface's
+// slope (its normal): downhill, d^(2/3) sqrt(S) / n. The same lines are in material.cpp and
+// scene_raytracing_raygen.glsl.
+vec2 ground_flow_grad(vec2 p_cell) {
+	uvec2 q = uvec2(ivec2(floor(p_cell)) + ivec2(1 << 20));
+	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float a = float(h) * (6.2831853 / 4294967296.0);
+	return vec2(cos(a), sin(a));
+}
+// Gradient noise and its slope, p in cells (quintic fade).
+vec3 ground_flow_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+	vec2 ga = ground_flow_grad(i);
+	vec2 gb = ground_flow_grad(i + vec2(1.0, 0.0));
+	vec2 gc = ground_flow_grad(i + vec2(0.0, 1.0));
+	vec2 gd = ground_flow_grad(i + vec2(1.0, 1.0));
+	float va = dot(ga, f);
+	float vb = dot(gb, f - vec2(1.0, 0.0));
+	float vc = dot(gc, f - vec2(0.0, 1.0));
+	float vd = dot(gd, f - vec2(1.0, 1.0));
+	float k = va - vb - vc + vd;
+	float v = va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * k;
+	vec2 d = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (u.yx * k + vec2(vb, vc) - va);
+	return vec3(v, d);
+}
+// The ripples' slope (d/dx, d/dz) on water p_depth deep (m) whose surface normal is p_n (world), at time p_t (s);
+// p_fp is the pixel's footprint (m): ripples finer than two pixels fade out rather than alias.
+vec2 ground_water_flow(vec2 p_xz, vec3 p_n, float p_depth, float p_t, float p_fp) {
+	float s = length(p_n.xz) / max(p_n.y, 0.2);
+	float speed = min(pow(max(p_depth, 0.0), 2.0 / 3.0) * sqrt(s) / 0.025, 1.5);
+	// Ripples stand up once the sheet runs (a few cm/s); still water stays a mirror.
+	float run = smoothstep(0.03, 0.25, speed);
+	if (run <= 0.0 || s < 1e-4) {
+		return vec2(0.0);
+	}
+	vec2 dir = p_n.xz / length(p_n.xz);
+	vec2 v = dir * speed;
+	// Stretched across the flow, as the small transverse ripples on sheet flow are: cells twice as long across.
+	vec2 side = vec2(-dir.y, dir.x);
+	float ph0 = fract(p_t);
+	float ph1 = fract(p_t + 0.5);
+	float w0 = 1.0 - abs(2.0 * ph0 - 1.0);
+	vec2 slope = vec2(0.0);
+	for (int o = 0; o < 2; o++) {
+		// Wavelengths 2 cm and 7 mm, heights a twentieth of them.
+		float l = o == 0 ? 0.02 : 0.007;
+		float fade = 1.0 - smoothstep(0.25 * l, 0.5 * l, p_fp);
+		if (fade <= 0.0) {
+			continue;
+		}
+		for (int k = 0; k < 2; k++) {
+			float ph = k == 0 ? ph0 : ph1;
+			float w = k == 0 ? w0 : 1.0 - w0;
+			vec2 q = p_xz - v * ph;
+			vec2 c = vec2(dot(q, dir), 0.5 * dot(q, side)) / l + vec2(17.0 * float(k) + 5.0 * float(o), 31.0 * float(k));
+			vec3 n = ground_flow_noise(c);
+			// Back from the stretched cells to world: d/d(along) = n.y / l, d/d(across) = 0.5 n.z / l.
+			slope += w * fade * 0.05 * (dir * n.y + side * 0.5 * n.z);
+		}
+	}
+	return slope * run;
 }
 
 // Sand grains (the functions of the same names in material.cpp; docs/ideas/sand.md, sand glints).
@@ -2716,7 +2805,7 @@ void main() {
 				g_grain = clamp(gw.z, 0.0, 1.0);
 				float gup = smoothstep(-0.6, 0.2, h.geometry_normal.y);
 				g_wet = clamp(gw.x, 0.0, 1.0) * gup;
-				g_sheen = clamp(gw.y, 0.0, 1.0) * smoothstep(0.35, 0.7, h.geometry_normal.y);
+				g_sheen = smoothstep(0.95, 1.0, gw.y) * smoothstep(0.35, 0.7, h.geometry_normal.y); // material.cpp ground_wet_at()
 				if (!rt_material_ground_deform(mat)) {
 					g_grain = 0.0;
 				}
@@ -2730,6 +2819,9 @@ void main() {
 			vec2 guv = (gpos.xz - vec2(get_rt_param(RT_PARAM_GROUND_DEFORM_X), get_rt_param(RT_PARAM_GROUND_DEFORM_Z))) / max(get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE), 1e-3);
 			if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
 				vec4 g = textureLod(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 0.0);
+				vec2 gwf2 = fract(guv * vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), 0)) - 0.5);
+				float gwd = ground_water_between(textureGather(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 0),
+						textureGather(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 1), gwf2);
 				// The finer near field inside its square (material.cpp ground_deform_near_weight()).
 				uint nmap = uint(get_rt_param(RT_PARAM_GROUND_NEAR_MAP));
 				float nsize = get_rt_param(RT_PARAM_GROUND_NEAR_SIZE);
@@ -2738,10 +2830,14 @@ void main() {
 					vec2 ne = min(gpos.xz - n0, n0 + nsize - gpos.xz);
 					float nw = smoothstep(0.0, 1.0, min(ne.x, ne.y));
 					if (nw > 0.0) {
-						g = mix(g, textureLod(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), (gpos.xz - n0) / nsize, 0.0), nw);
+						vec2 nuv = (gpos.xz - n0) / nsize;
+						g = mix(g, textureLod(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), nuv, 0.0), nw);
+						vec2 nwf = fract(nuv * vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), 0)) - 0.5);
+						gwd = mix(gwd, ground_water_between(textureGather(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), nuv, 0),
+								textureGather(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), nuv, 1), nwf), nw);
 					}
 				}
-				g_water = max(g.g, 0.0);
+				g_water = gwd; // material.cpp ground_deform_water()
 				m.albedo *= g.b;
 				// The fresh sheen on floors only (material.cpp: torn walls keep their roughness).
 				m.roughness = clamp(m.roughness * mix(1.0, g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
@@ -2846,6 +2942,22 @@ void main() {
 		m.specular = mix(m.specular, 0.25, max(gwl.y, gwl.w));
 		m.normal = normalize(mix(m.normal, h.geometry_normal, max(gwl.y, 0.6 * gwl.w)));
 		g_grain *= 1.0 - gwl.y;
+		// Running water's ripples, swept downstream (material.cpp ground_water_flow()); the footprint as the
+		// cracks take it below.
+		float gffp;
+		vec3 gfp = h.hit_pos + rt_origin.xyz;
+		if (get_total_bounces(payload.packed_bounces_flags) == 0u) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+					scene_data_block.data.inv_view_matrix[2].w);
+			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+			gffp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+		} else {
+			gffp = exp2(rt_cone_footprint_log2);
+		}
+		vec2 gfs = ground_water_flow(gfp.xz, h.geometry_normal, g_water, scene_data_block.data.time, gffp) * max(gwl.y, gwl.w);
+		if (gfs != vec2(0.0)) {
+			m.normal = normalize(m.normal - vec3(gfs.x, 0.0, gfs.y));
+		}
 	}
 	// Desiccation cracks (material.cpp): the mesh carries those its spacing can; the shading the slopes and the slots'
 	// darkness of the finer ones.

@@ -199,7 +199,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Wet sand: dry prints keep sharp walls, the drained band holds a sheen, and prints at the waterline wash out to shallow dips.*
 
-- **Swash marks** (`GroundSurface3D.swash_marks`): each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.
+- **Swash marks** (`GroundSurface3D.swash_marks`): each wave leaves a scalloped line of dark fine sand at its highest reach, and higher waves smooth older lines.
 - **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot.
 
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.

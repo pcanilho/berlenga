@@ -229,7 +229,7 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		buf_ledger = _rt_storage(16);
 		// Standing water is the ground's: snow binds a token buffer.
 		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 32 : 16);
-		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 : 16);
+		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 * 3 : 16); // the shifted depth, then the +x and +z faces' discharges
 		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * p_dims.stride);
 		RD::TextureFormat tf;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;

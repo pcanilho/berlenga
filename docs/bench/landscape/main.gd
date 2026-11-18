@@ -9,7 +9,7 @@ extends Node3D
 # godot --path docs/bench/landscape --rendering-driver vulkan -- [options]
 #   --test            run the link checks, print PASS/FAIL/GAP, quit
 #   --out=path.png    render a view (path traced unless --raster)
-#   --raster          raster only
+#   --raster          raster only (TAA + SMAA; --aa=0 without)
 #   --spp=N           path tracing samples (default 16)
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
 #   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
@@ -1238,7 +1238,13 @@ func _save_dune_map(spec: String) -> void:
 				c = Color(0.42, 0.45, 0.32).lerp(Color(0.86, 0.78, 0.6), sand).lerp(Color(0.38, 0.52, 0.26), veg * sand)
 			img.set_pixel(x, z, c * (0.3 + 0.7 * sh))
 	img.save_png(spec.split(",")[0])
-	_log("dune map saved %s (%s, %.1f m a pixel)" % [spec.split(",")[0], r, step])
+	# The heights too (32-bit floats, rows of sz.x), for laying out a camera on a crest.
+	var hf := FileAccess.open(spec.split(",")[0] + ".f32", FileAccess.WRITE)
+	if hf != null:
+		for z in range(sz.y):
+			for x in range(sz.x):
+				hf.store_float(hm.get_pixel(x, z).r)
+	_log("dune map saved %s (%s, %.1f m a pixel, %d x %d)" % [spec.split(",")[0], r, step, sz.x, sz.y])
 
 
 func _save_map(path: String) -> void:
@@ -1745,6 +1751,12 @@ func _build_weather() -> void:
 	env.pathtracing_sky_shader_enabled = true
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.pathtracing_enabled = not args.has("raster")
+	if args.has("raster") and args.get("aa", "1") != "0":
+		# Raster stills anti-aliased as a game would draw them: TAA over the frames before the shot (the camera
+		# holds still), plus SMAA. Without them, edges the shaders draw (parallax stones, cracks) stair-step into
+		# saw teeth. --aa=0 for the raw image.
+		get_viewport().use_taa = true
+		get_viewport().screen_space_aa = Viewport.SCREEN_SPACE_AA_SMAA
 	env.pathtracing_samples_per_pixel = int(args.get("spp", "16"))
 	env.pathtracing_max_bounces = 2
 	var we := WorldEnvironment.new()
@@ -2462,6 +2474,8 @@ func _build_camera() -> void:
 		cam.position = cv
 		cam.look_at(lv)
 		_log("cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [cv.x, cv.y, cv.z, lv.x, lv.y, lv.z])
+		if clock != null:
+			_log("sun toward %s (altitude %.1f deg)" % [clock.get_sun_direction(), clock.get_sun_altitude()])
 	for g in sward:
 		g.update_at(cam.global_position)
 	if sward.is_empty():
