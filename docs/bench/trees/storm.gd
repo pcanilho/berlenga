@@ -9,6 +9,7 @@ extends Node3D
 #   --speed=U          mean wind at 10 m, m/s (default 30); --turbulence=I (default 0.25)
 #   --anchorage=A      soil factor on root anchorage (default 1; wet soil 0.6)
 #   --presets=a,b      species (default 4,1: Norway spruce, beech); --seed=S
+#   --char=C           a past fire charred every stem foot C metres deep (a WorldFire stub), so they snap there
 #   --spp=N with --pt  path traced; default raster
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
@@ -93,6 +94,10 @@ func _setup(args: Dictionary) -> Array:
 	wind.lod_enabled = false
 	add_child(wind)
 	wind.storm_damage.connect(_on_damage)
+	if args.has("char"):
+		var stub: WorldFire = load("res://fire_stub.gd").new()
+		stub.char_m = float(args.char)
+		Engine.get_singleton("WorldContracts").set_fire(stub)
 	var picks: Array = [4, 1]
 	if args.has("presets"):
 		picks = []
@@ -168,7 +173,7 @@ func run(args: Dictionary) -> void:
 				RenderingServer.force_draw(false)
 			get_viewport().get_texture().get_image().save_png(dir.path_join("storm_%04d.png" % f))
 			print("frame %d t=%.2f parts %d" % [f, t, _parts()])
-	print("storm: %d breaks, %d thrown, %d Blast falls" % [wind.get_storm_break_count(), wind.get_storm_throw_count(), wind.get_storm_fall_count()])
+	print("storm: %d breaks, %d thrown (%d snapped at a charred foot), %d Blast falls" % [wind.get_storm_break_count(), wind.get_storm_throw_count(), wind.get_storm_snap_count(), wind.get_storm_fall_count()])
 	get_tree().quit(1 if fails > 0 else 0)
 
 func _parts() -> int:
