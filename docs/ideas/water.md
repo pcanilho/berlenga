@@ -3508,3 +3508,10 @@ Candidates for the river after the caustics, best first:
    standing waves are geometry with a constant on-screen cost (Planet Coaster 2, Frontier 2024).
 4. Small optimisations: skip the clear-through march and caustics where foam is about 1; evaluate the ripple
    field's two phases once and reuse them for the caustics' centre sample.
+
+Why the river's caustics are a closed form and the sea's a light-space map (one water technique): both are the same
+area-ratio caustics. The sea's heights live in the solver's textures (FFT and ripple grid), so it rasterises them
+into a map once per frame. The river's ripples exist only in its shader (flow-mapped procedural slope), so it
+evaluates the same determinant in place. The white water where the sun enters (live flow foam at x_in) shades
+the bed (Valence's review). The path tracer does not find these lines yet (normals only, no caustic paths; PT
+crop 18 Nov), which is candidate 2 above: move the river's field into the shared map and read it in PT.

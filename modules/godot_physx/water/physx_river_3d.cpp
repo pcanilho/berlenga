@@ -646,6 +646,11 @@ void fragment() {
 			float z = max(v_world.y - bed_p.y, 0.0);
 			vec2 x_in = bed_p.xz - sun_dir.xz * (z / -sun_dir.y);
 			float e = river_caustic(x_in, z / -sun_dir.y, ripple_amp, o_a, o_b, w);
+			// White water where the sun came in scatters it before it can focus: no pattern under it.
+			vec2 cuv_in;
+			float live_in = live_weight(x_in, cuv_in);
+			float foam_in = live_in > 0.0 ? texture(live_flow_tex, cuv_in).b * live_in : 0.0;
+			e = mix(e, 1.0, clamp(foam_in, 0.0, 1.0));
 			// Faded where the bed's ripple cells (about 12 cm at the finest) shrink under a few pixels.
 			e = mix(1.0, e, caustics_strength * (1.0 - smoothstep(0.25, 1.0, footprint * 8.6 * ripple_scale)));
 			float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
