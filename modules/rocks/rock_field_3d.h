@@ -74,6 +74,11 @@ public:
 		LAYER_TOR,
 		LAYER_COAST,
 		LAYER_LANDFORM, // hoodoos, limestone pavement (docs/ideas/rocks.md, landforms)
+		// Ground detail (docs/ideas/ground-detail.md): the stones under min_size near the camera, as real instanced geometry
+		// in three size classes, each drawn out to where it is still a few pixels tall. Off unless ground_detail is set.
+		LAYER_DETAIL_PEBBLE, // 4 cm to min_size (to the scree's own smallest on talus)
+		LAYER_DETAIL_GRAVEL, // 2 to 4 cm
+		LAYER_DETAIL_FINE, // 1 to 2 cm
 		LAYER_MAX,
 	};
 
@@ -167,9 +172,27 @@ private:
 	mutable bool auto_ground_found = false;
 	Ref<ShaderMaterial> _ground_source() const;
 	void _apply_ground(const Ref<ShaderMaterial> &p_material) const;
-	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true, true };
-	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0 };
+	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true, true, true, true, true };
+	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
+	// The detail layers' radii are set from the camera (_update_detail_radii) while ground_detail is on.
+	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0, 20.0, 10.0, 5.0 };
+	// Ground detail (docs/ideas/ground-detail.md): opt-in, an experiment.
+	bool ground_detail = false;
+	real_t ground_detail_pixels = 3.0; // a class is drawn out to where its mean stone is this many pixels tall
+	int ground_detail_reference_height = 0; // px; 0: the viewport's own height
+	real_t ground_detail_max_radius = 40.0; // m
+	int ground_detail_max_per_cell = 40000;
+	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }
+	bool _layer_on(int p_layer) const { return layer_enabled[p_layer] && (ground_detail || !_is_detail(p_layer)); }
+	void _detail_sizes(Layer p_layer, real_t p_upper, float &r_d1, float &r_d2) const;
+	void _update_detail_radii();
+	Vector3 _detail_center() const;
+	struct DetailSeed {
+		Vector2 xz;
+		float centre;
+		float r;
+	};
+	void _detail_seeds(Layer p_layer, const Rect2 &p_rect, LocalVector<DetailSeed> &r_seeds) const;
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
 	real_t river_min_area = 2.0e5;
 	int max_stones_per_cell = 12000;
@@ -379,6 +402,18 @@ public:
 	bool is_cave_mouths() const { return cave_mouths; }
 	void set_ground_blend(bool p_enabled);
 	void set_ground_contact(bool p_enabled);
+	void set_ground_detail(bool p_enabled);
+	bool is_ground_detail() const { return ground_detail; }
+	void set_ground_detail_pixels(real_t p_pixels);
+	real_t get_ground_detail_pixels() const { return ground_detail_pixels; }
+	void set_ground_detail_reference_height(int p_height);
+	int get_ground_detail_reference_height() const { return ground_detail_reference_height; }
+	void set_ground_detail_max_radius(real_t p_radius);
+	real_t get_ground_detail_max_radius() const { return ground_detail_max_radius; }
+	void set_ground_detail_max_per_cell(int p_count) { ground_detail_max_per_cell = MAX(p_count, 1); }
+	int get_ground_detail_max_per_cell() const { return ground_detail_max_per_cell; }
+	// Stones the detail layers hold now, and the instance count per layer (for benches).
+	int get_ground_detail_count(int p_layer = -1) const;
 	void set_moss_cushions(bool p_enabled);
 	bool is_moss_cushions_enabled() const { return moss_cushions; }
 	int get_moss_shell_count() const;
