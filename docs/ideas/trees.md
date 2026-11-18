@@ -2097,6 +2097,14 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Hedge face round 2 (18 Nov; docs: the flailed face showed single oversized flakes over a wire
+cage of twigs, hard-edged boxes; grown-out crowns all broccoli domes from above). A clipped hedge
+packs its leaves into a shell a hand deep, so its leaf area density cap is four times a free
+crown's and its LAI cap twice; leaves half the old size (hawthorn about 2 cm), 3.5 times as many
+to a shoot, and only small, shallow clump gaps. The flail's cut wanders +-7 cm and the top's
+shoulders round off (radius up to 35 cm). Grown-out variants: every fourth wind-leaned (thinned
+windward, exposure 0.45-0.7), every fourth flat-topped (leader lost, limbs wide and bowed).
+
 Hedge shrubs from above (18 Nov; docs on vegetation's fields frame: hawthorn and field maple
 crowns and the hedge face read as one dark green carpet, and the grown-out hedge trees were
 identical round lollipops). Foliage clumping: shrub canopies hold leaves in clumps with gaps

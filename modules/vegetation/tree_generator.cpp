@@ -2597,17 +2597,26 @@ void TreeGenerator::_bend_under_gravity() {
 // junction where a limb leaves its parent are the weld's, not collisions.
 // Inside the clipping envelope; with a batter, its depth (z) narrows linearly from the ground to
 // the top, an A-shaped hedge's section (trees.md 5ad).
+// A flail does not cut a clean plane: the cut face wanders a few centimetres in and out, and the
+// top's shoulders round off where the head swings over (docs, 18 Nov: hard-edged boxes).
 bool TreeGenerator::_in_envelope(const Vector3 &p_point) const {
-	if (!envelope.has_point(p_point)) {
+	if (p_point.x < envelope.position.x || p_point.x > envelope.position.x + envelope.size.x || p_point.y < envelope.position.y) {
 		return false;
-	}
-	if (envelope_batter <= 0.0f) {
-		return true;
 	}
 	const float top = envelope.position.y + envelope.size.y;
 	const float t = CLAMP(p_point.y / MAX(top, 0.01f), 0.0f, 1.0f);
-	const float half = envelope.size.z * 0.5f * (1.0f - envelope_batter * t);
-	return Math::abs(p_point.z - (envelope.position.z + envelope.size.z * 0.5f)) <= half;
+	const float half = envelope.size.z * 0.5f * (1.0f - MAX(envelope_batter, 0.0f) * t);
+	const float wander = 0.07f * (moss_noise(p_point * 2.5f + Vector3(float(seed % 53), 0.0f, 0.0f), 0x666c6169u) - 0.5f) * 2.0f;
+	const float dy = top + wander - p_point.y; // Below the cut top.
+	const float dz = half + wander - Math::abs(p_point.z - (envelope.position.z + envelope.size.z * 0.5f)); // Inside the cut face.
+	if (dy < 0.0f || dz < 0.0f) {
+		return false;
+	}
+	const float R = MIN(0.35f, 0.4f * half);
+	if (dy < R && dz < R) {
+		return (R - dy) * (R - dy) + (R - dz) * (R - dz) <= R * R;
+	}
+	return true;
 }
 
 void TreeGenerator::_prune_collisions() {
@@ -15428,6 +15437,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// Blade area: 2 * width * size^2 * integral of sin(pi t^0.75) over t (0.656).
 		const float blade = 2.0f * params[PARAM_LEAF_WIDTH] * size * size * 0.656f;
 		const float voxel = 1.0f; // Metres.
+		// A clipped hedge packs its leaves into a shell a hand deep: leaf area density there runs
+		// several times a free crown's, and the hedge's own leaf area index 8-12 (trimmed hedges;
+		// Wolton et al., Hedgerow Management, 2014; trimmed shrubs, Ishii et al. 2004). At the
+		// free crown's limits the flailed face thinned to single flakes on a cage of twigs.
+		const bool clipped = envelope.size != Vector3();
+		const float lad_max = clipped ? MAX_LEAF_AREA_DENSITY * 4.0f : MAX_LEAF_AREA_DENSITY;
+		const float lai_max = clipped ? MAX_LEAF_AREA_INDEX * 2.0f : MAX_LEAF_AREA_INDEX;
 		HashMap<Vector3i, float> density;
 		LocalVector<float> node_area;
 		node_area.resize(nodes.size());
@@ -15448,11 +15464,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				continue;
 			}
 			const float d = density[Vector3i((nodes[i].end() / voxel).floor())] / (voxel * voxel * voxel);
-			node_keep[i] = d > MAX_LEAF_AREA_DENSITY ? MAX_LEAF_AREA_DENSITY / d : 1.0f;
+			node_keep[i] = d > lad_max ? lad_max / d : 1.0f;
 			area += double(node_area[i] * node_keep[i]);
 		}
 		const float lai = float(area / (Math::PI * crown_radius * crown_radius));
-		const float keep = lai > MAX_LEAF_AREA_INDEX ? MAX_LEAF_AREA_INDEX / lai : 1.0f;
+		const float keep = lai > lai_max ? lai_max / lai : 1.0f;
 		for (float &k : node_keep) {
 			k *= keep;
 		}
@@ -15473,7 +15489,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int i = 1; i < int(nodes.size()); i++) {
 			const Vector3 q = nodes[i].end() * f + off;
 			const float c = 0.7f * moss_noise(q, 0x636c6d70u) + 0.3f * moss_noise(q * 2.3f, 0x636c6d71u);
-			node_keep[i] *= Math::smoothstep(0.38f, 0.46f, c);
+			// A flailed face keeps its shell: only small, shallow gaps (docs, 18 Nov).
+			node_keep[i] *= envelope.size != Vector3() ? Math::smoothstep(0.3f, 0.38f, c) : Math::smoothstep(0.38f, 0.46f, c);
 		}
 	}
 	// Leaves inside a crown shelter each other: the mean exposure through a canopy of leaf area
@@ -17154,7 +17171,9 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		params[PARAM_APICAL_DOMINANCE] = look.params[PARAM_APICAL_DOMINANCE] * 0.6f;
 		params[PARAM_BRANCH_ANGLE] = MAX(look.params[PARAM_BRANCH_ANGLE], 65.0f);
 		params[PARAM_LEAF_YEARS] = look.params[PARAM_LEAF_YEARS] + 2.0f;
-		params[PARAM_LEAVES_PER_INTERNODE] = look.params[PARAM_LEAVES_PER_INTERNODE] * 1.5f;
+		// A flailed face is a dense shell of small leaves (docs, 18 Nov: single oversized flakes
+		// spread over a wire cage of twigs, about twice true size).
+		params[PARAM_LEAVES_PER_INTERNODE] = look.params[PARAM_LEAVES_PER_INTERNODE] * 3.5f;
 		// Cutting wakes the dormant buds all down the stems (hedge regrowth comes from them, not
 		// only from the cut ends), so they wait longer to break than on an uncut bush.
 		params[PARAM_BUD_IDLE_YEARS] = MAX(look.params[PARAM_BUD_IDLE_YEARS], 8.0f);
@@ -17166,7 +17185,7 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		// long single whips over a flat lid (docs, 18 Nov).
 		params[PARAM_INTERNODE_LENGTH] = look.params[PARAM_INTERNODE_LENGTH] * 0.6f;
 		// Leaves on cut hedges run small, many to a short shoot.
-		params[PARAM_LEAF_SIZE] = look.params[PARAM_LEAF_SIZE] * (p_preset == PRESET_HAZEL || p_preset == PRESET_FIELD_MAPLE ? 0.65f : 0.85f);
+		params[PARAM_LEAF_SIZE] = look.params[PARAM_LEAF_SIZE] * (p_preset == PRESET_HAZEL || p_preset == PRESET_FIELD_MAPLE ? 0.4f : 0.5f);
 	} else if (p_form == FORM_THICKET || p_form == FORM_OLD) {
 		// Heath shrubs (trees.md 5u), from the preset's own numbers each variant.
 		TreeGenerator look;
@@ -17253,6 +17272,19 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		params[PARAM_DIRECTION_NOISE] = look.params[PARAM_DIRECTION_NOISE] * Math::lerp(1.0f, 1.7f, r(16));
 		params[PARAM_GRAVITY_BENDING] = look.params[PARAM_GRAVITY_BENDING] * Math::lerp(0.6f, 1.8f, r(20));
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.8f, 1.1f, r(24)));
+		// From above they still read as rounded domes (docs, 18 Nov): some crowns are leaned
+		// and thinned on the windward side, as field-edge thorns on exposed ground are; others
+		// spread flat-topped, the leader lost early and the limbs bowed out (a browsed or old
+		// hawthorn's table top).
+		wind_exposure = 0.0f; // Variants share the generator: one's wind must not carry on to the next.
+		if (p_variant % 4 == 2) {
+			wind_exposure = Math::lerp(0.45f, 0.7f, r(28));
+		} else if (p_variant % 4 == 3) {
+			params[PARAM_APICAL_DOMINANCE] = look.params[PARAM_APICAL_DOMINANCE] * 0.75f;
+			params[PARAM_APICAL_DOMINANCE_OLD] = look.params[PARAM_APICAL_DOMINANCE_OLD] * 0.75f;
+			params[PARAM_BRANCH_ANGLE] = look.params[PARAM_BRANCH_ANGLE] + 22.0f;
+			params[PARAM_GRAVITY_BENDING] = MAX(look.params[PARAM_GRAVITY_BENDING], 0.2f) * 2.2f;
+		}
 	}
 	climber = CLIMBER_NONE;
 	if (p_base_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG || p_form == FORM_UNDERSTORY)) {
