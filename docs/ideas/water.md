@@ -3532,3 +3532,10 @@ grain, for three reasons, now fixed:
 Result at 640, 32 frames: the bed shows the ripple-scale light pattern; finer lines need more samples (PC).
 Rocks' riffle check (stream_riffle_*960): the raster glint in the cave is the known raster sky-ambient excess
 underground, not a PT loss; PT shows the expected sparse glints.
+
+Refraction march bands (rocks' stream riffle, 18 Nov): the river's screen-space refraction marched ten fixed steps and
+took the first past the scene, so stones under the water read back as stacked horizontal bands. It now bisects the
+crossing (4 steps, as the screen reflections do) and gives up where the refined point lies well behind the screen's
+surface (a thickness test). Not jittered: without a temporal filter the per-pixel start dithered into teeth. The
+vertical striations left on stone sides seen through the water are the same with screen reflections off and are
+not the march (sent to rocks: likely the stones' texture on steep faces).
