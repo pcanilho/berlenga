@@ -1280,13 +1280,21 @@ vec2 shore_pattern_uv(vec2 world_xz) {
 	return 1.0 - abs(mod(u, 2.0) - 1.0);
 }
 
-float shore_foam_at(vec2 world_xz) {
-	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+// footprint: the pixel's size on the water (m). The field is a coarse grid (cells of 25 cm and more): drawn as
+// smooth blobs it read up close as a blurred white veil over the swash, so it is drawn as foam (foam_structure: a
+// sheet where fresh, draining into lace and holes), as the open sea's and the rocks' are.
+float shore_foam_at(vec2 world_xz, float footprint) {
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
 	float shore = grid_bspline(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
-	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
+	g = g * g * (3.0 - 2.0 * g);
+	if (g <= 0.0) {
+		return 0.0;
+	}
+	// The field's amount is how much foam the swash has left, not how fresh it is: a backwash's foam is old, drained
+	// foam, so it is drawn at about half (open lace with clear film between) and only the thickest stays a sheet.
+	return foam_structure(world_xz + vec2(water_time * 0.05, -water_time * 0.03), 0.5 * g * g + 0.1 * g, footprint) * shore_foam_strength;
 }
 
 // White water where the sea meets a steep face: churned foam against each stack, boulder and cliff foot that widens
@@ -1997,13 +2005,17 @@ void fragment() {
 	// Shore foam belongs to the moving edge: full at it, thinning over the
 	// next ~0.6 m of depth, so the white sheet scallops with the edge instead
 	// of filling the band. (Whitecaps are left alone.)
-	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.02, 0.6, shore)));
+	foam = max(foam, shore_foam_at(v_rest_xz, contact_footprint) * (1.0 - smoothstep(0.02, 0.6, shore)));
 	// Bright rim right behind the moving edge, broken into lace.
 	// Over dry sand the swash film is only as thick as the run-up's excess
 	// over the sand -- a few cm -- so it fades in over a fifth of the
 	// softness there, or the uprush would barely show.
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
+	// The last few cm of the film drape over the sand grains and ripple marks instead of lying flat over them: its
+	// reflection roughens toward the wet sand's sheen as it thins (a mirror cut off at the waterline otherwise, a hard
+	// edge under the path tracer, whose film ends at a cut-out).
+	float edge_rough = mix(max(water_roughness, 0.32), water_roughness, smoothstep(soft * 0.5, soft * 4.0, shore));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * shore_wave_activity * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
 	// The bore's white front belongs to the uprush (swash a: climbing); the backwash drains as a clear film, which
@@ -2104,7 +2116,7 @@ void fragment() {
 	// rough white layer on top; where the swash has left the sand, no surface.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(water_roughness, 0.8, foam);
+	ROUGHNESS = mix(edge_rough, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
@@ -2136,7 +2148,7 @@ void fragment() {
 	float sun_a2 = 1.0;
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), water_roughness, open_unlit, sun_body, sun_glint, sun_a2);
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), edge_rough, open_unlit, sun_body, sun_glint, sun_a2);
 #if !defined(BREAKER_LIP)
 		if (!raster_reflections && screen_reflections) {
 			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, smoothstep(0.0, soft, shore) * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
