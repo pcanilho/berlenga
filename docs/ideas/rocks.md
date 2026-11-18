@@ -206,8 +206,8 @@ height deeper).
 Review pass (15 Nov, late): the close-up marks are now laid out in the stone's own frame (fixed from the field's
 zero crossings before carving, shared by the base and close-up shapes, so they also match in scale and the swap
 does not pop) and in metres at the family's typical size, which UV2.y carries to the shader. Granite: a crystal
-map of 1.8 cm cells (quartz 30% proud, feldspar lower, each crystal a tilted facet, etched boundaries, cleavage
-glints) and a biotite map of 1.3 cm clots weathered into pits, both read by the shader with the same integer hash
+map of 1 cm cells (quartz 30% proud, feldspar lower, each crystal a tilted facet, etched boundaries, cleavage
+glints) and a biotite map of 6 mm clots weathered into pits, both read by the shader with the same integer hash
 (rk_crystal), so colour and relief agree; flakes spalled from the rind (6 cm plates), grus pits, hairline cracks on
 a 9 cm map, short hackle steps on fresh breaks. Sandstone laminae of 1.9 cm as ledges by hardness (shader colour
 from the same lamina hash), limestone runnels with knife-edge crests, basalt vesicles as spherical cavities.
@@ -391,7 +391,7 @@ The engine already has the reduced Deliot and Belcour counting for snow (snow_gl
 weight share / chance / sqrt(share n), a coat lobe in raster) and an exact facet per grain under the path tracer
 (SPECULAR_NORMAL). Minerals use the same: Chermain's convergence argument with Deliot and Belcour's counting, so it
 is one technique engine-wide.
-- Raster, past the resolved crystals: rk_glint() counts crystals (1.8 cm on granite, share 0.45 glossy: quartz plus a
+- Raster, past the resolved crystals: rk_glint() counts crystals (1 cm on granite, share 0.45 glossy: quartz plus a
   third of feldspars; 2 x speck size, share 0.12 on the other rocks: quartz and mica grains) per footprint cell up
   to 32 crystals a cell, the facet GGX-tilted (alpha 0.6), drawn in the clear-coat lobe (F0 0.04, minerals about
   0.045) with NORMAL_MAP solved back onto the stone's normal so its own shading is unchanged.
