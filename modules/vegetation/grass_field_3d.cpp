@@ -1491,8 +1491,8 @@ void GrassField3D::_build_hedges() {
 	// bricks"), each level a MultiMesh per 8 m cell: a visibility range is measured to the
 	// instance's AABB centre, so one MultiMesh for a whole field would switch all its hedges
 	// together.
-	auto add_levels = [&](const Ref<Mesh> &p_full, const LocalVector<Transform3D> &p_xf, const String &p_key, const float *p_voxels, const float *p_ranges, const String &p_name) {
-		for (int lod = 0; lod < 4; lod++) {
+	auto add_levels = [&](const Ref<Mesh> &p_full, const LocalVector<Transform3D> &p_xf, const String &p_key, const float *p_voxels, const float *p_ranges, const String &p_name, int p_levels) {
+		for (int lod = 0; lod < p_levels; lod++) {
 			Ref<Mesh> lm = p_full;
 			if (lod > 0) {
 				const String key = vformat("%s_%d_%d", p_key, lod, hedge_day);
@@ -1528,16 +1528,17 @@ void GrassField3D::_build_hedges() {
 					mmi->set_visibility_range_begin(p_ranges[lod]);
 					mmi->set_visibility_range_end(p_ranges[lod + 1]);
 					mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
-					mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
+					mmi->set_visibility_range_end_margin(lod < p_levels - 1 ? 3.0f : 0.0f);
 				}
 				holder->add_child(mmi);
 			}
 		}
 	};
-	// Segments: 10 cm voxels from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a voxel is about
-	// two pixels across at 1080p and a 75 degree view (plus the cell's reach).
-	const float seg_ranges[5] = { 0.0f, 45.0f, 90.0f, 180.0f, 0.0f };
-	const float seg_voxels[4] = { 0.0f, 0.1f, 0.2f, 0.4f };
+	// Segments: 5 cm voxels from 20 m, 10 cm from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a
+	// voxel is about two pixels across at 1080p and a 75 degree view (plus the cell's reach). A
+	// flailed segment is over a million triangles; past 20 m its leaves are under a pixel.
+	const float seg_ranges[6] = { 0.0f, 20.0f, 45.0f, 90.0f, 180.0f, 0.0f };
+	const float seg_voxels[5] = { 0.0f, 0.05f, 0.1f, 0.2f, 0.4f };
 	for (int k = 0; k < kinds; k++) {
 		bool any = false;
 		for (int v = 0; v < VARIANTS; v++) {
@@ -1555,7 +1556,7 @@ void GrassField3D::_build_hedges() {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
 			}
-			add_levels(meshes[v % meshes.size()], xf[k][v], vformat("hedge_%d_%d", int(mix[k].preset), v), seg_voxels, seg_ranges, vformat("Hedge%d_%d", k, v));
+			add_levels(meshes[v % meshes.size()], xf[k][v], vformat("hedge_%d_%d", int(mix[k].preset), v), seg_voxels, seg_ranges, vformat("Hedge%d_%d", k, v), 5);
 		}
 	}
 	// Standards: crowns of 5 to 10 m, coarser voxels and further ranges.
@@ -1588,7 +1589,7 @@ void GrassField3D::_build_hedges() {
 			if (std_xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
 			}
-			add_levels(meshes[v % meshes.size()], std_xf[k][v], vformat("standard_%d_%d", int(std_presets[k]), v), std_voxels, std_ranges, vformat("Standard%d_%d", k, v));
+			add_levels(meshes[v % meshes.size()], std_xf[k][v], vformat("standard_%d_%d", int(std_presets[k]), v), std_voxels, std_ranges, vformat("Standard%d_%d", k, v), 4);
 		}
 	}
 }
