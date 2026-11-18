@@ -201,6 +201,9 @@
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="0.25">
 			White water made by the live window where the water runs fast and shears (as [member PhysXWaterSurface3D.flow_foam]); lower than the sea's, since a river runs fast everywhere. 0: none.
 		</member>
+		<member name="flow_foam_impact" type="bool" setter="set_flow_foam_impact" getter="get_flow_foam_impact" default="true">
+			The live window's white water also forms where the water runs into things, not only where it runs fast and shears: where it converges (a jet meeting slack water, two currents colliding) and as a pillow on the upstream face of a rock standing out of the current. Off: shear and supercritical flow only.
+		</member>
 		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="4.0">
 			Seconds the live window's white water lasts as the water carries it.
 		</member>
@@ -218,6 +221,9 @@
 		</member>
 		<member name="ground_probe_height" type="float" setter="set_ground_probe_height" getter="get_ground_probe_height" default="50.0">
 			How far above the curve the ground rays of [member snap_to_ground] start. Keep it under any roof over the water (a stream in a cave: a few decimetres), or the rays find the roof instead of the bed. While no ray finds any ground, the build waits up to 30 physics ticks for a floor that joins the physics space late.
+		</member>
+		<member name="live_advected_ripples" type="bool" setter="set_live_advected_ripples" getter="get_live_advected_ripples" default="true">
+			The live window's ripples and foam ride the flow's real paths (advected texture coordinates, Neyret 2003): each of the two flow-map phases is carried along by the simulated velocity, so they curl round eddies behind rocks instead of shearing along the local velocity. Off: plain two-phase flow mapping.
 		</member>
 		<member name="live_damping" type="float" setter="set_live_damping" getter="get_live_damping" default="0.05">
 			How fast the live part of the flow dies away (1/s). The baked flow never decays.

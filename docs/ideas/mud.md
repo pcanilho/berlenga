@@ -854,6 +854,28 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   50 mm. `--view=needle [--thaw] --pair` shoots it.
 
 
+#### Round 10 (Paulo picked all three, in order, 18 Nov)
+
+- **Centre ridge.** Research: mobility models count "hang-up" (high-centring) failures where the soil between the
+  ruts, plus the berms the wheels shoved up, reaches the belly once the rut is deeper than the ground clearance (Rula
+  and Nuttall 1971, NRMM; Wong 2008 on ground clearance); MudRunner's signature stuck. *Built (18 Nov):* the belly
+  (stage 3a) bore only below the undisturbed surface, so berms and ridges above it held nothing; it now bears on
+  the undisturbed surface plus the rim above it (rim less dent, where positive), and ploughs that height with its
+  leading row. The wheels unload as the belly takes the weight, as before. Check in `--test=frost`: along ruts 35 cm
+  deep with a ridge 25 cm proud between them the belly carries a third of the car's weight on average and it gets
+  3.0 m in 4 s, against 15.7 m along 12 cm ruts with no belly contact.
+- **Tyre chains and tread types.** Research: lugs and grousers shear soil below the tread face, raising thrust in
+  soft soil (Wong 2008, sec. 2.6); forestry chains add about a fifth to a wheel's pull on soft ground (Forest
+  Research FCTN013; Sever et al. 2018, CROJFE 39); open voids self-clean, closed road treads pack (the clogging of
+  stage 3); on ice chains about treble a tyre's grip and on snow about double, but ride on steel on dry tarmac (CRREL
+  tyre and chain tests). *Built (18 Nov):* `PhysXVehicleWheel3D.tread` (road, all terrain default, mud, chains),
+  read live. On soft soil it scales the shear limit (0.85, 1, 1.12, 1.2), the clog fill rate (1.4, 1, 0.6, 0.5),
+  the shedding speed (1.3, 1, 0.7, 0.75) and the void depth (9, 20, 25, 20 mm); chains keep half the grip a clogged
+  tread loses. Firm ground (world-links' branch) gets `PhysXVehicleWheel3D.tread_firm_grip(tread, ice, snow)`. Check
+  in `--test=clog`: 4 s at half throttle in stiff sticky clay, road tyres 0.29 m and 39% packed, mud tyres 0.78 m
+  and 16%, chains 0.80 m and 13%.
+- **Mud slides downhill.** After that.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

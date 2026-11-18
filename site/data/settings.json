@@ -1027,7 +1027,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1125,7 +1125,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1150,6 +1150,17 @@
    ],
    "note": "",
    "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Treads and chains",
+   "settings": [
+    "PhysXVehicleWheel3D.tread"
+   ],
+   "note": "",
+   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1250,10 +1261,11 @@
   {
    "name": "Mud on legs",
    "settings": [
-    "GroundLegMud3D"
+    "GroundLegMud3D",
+    "boot_suction"
    ],
    "note": "",
-   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water.",
+   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water; sticky mud grips a lifting foot, slows the stride and can keep the boot.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1274,10 +1286,11 @@
   {
    "name": "Frozen ground",
    "settings": [
-    "GroundSurface3D.frozen_ground"
+    "GroundSurface3D.frozen_ground",
+    "needle_ice"
    ],
    "note": "",
-   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days.",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1313,7 +1326,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3724,7 +3737,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3744,10 +3757,11 @@
    "name": "Burning objects",
    "settings": [
     "PhysXBurnable3D",
-    "embers"
+    "embers",
+    "collapse_share"
    ],
    "note": "",
-   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.",
+   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water, break apart as their timber chars through (EN 1995-1-2) with the pieces keeping their char, and throw embers that ride their plume and the wind and start spot fires downwind.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3782,7 +3796,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and loft firebrands higher (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3795,6 +3809,17 @@
    ],
    "note": "",
    "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Heat shimmer",
+   "settings": [
+    "PhysXFlow3D.heat_shimmer"
+   ],
+   "note": "",
+   "what": "hot air above fires bends the view behind it, following the simulated temperature, in raster and path tracing.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3844,7 +3869,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading; river current drags it under water, and soaked fabric sinks slowly.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

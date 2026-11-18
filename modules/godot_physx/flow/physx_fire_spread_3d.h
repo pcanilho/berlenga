@@ -32,11 +32,14 @@
 #pragma once
 
 #include "physx_firebrands.h"
+#include "physx_steam.h"
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
+
+#include "modules/world/world_contracts.h"
 
 class Decal;
 class PhysXFlow3D;
@@ -49,7 +52,7 @@ class PhysXFlowEmitter3D;
 // feeds a pool of emitters in a PhysXFlow3D, which draws the flames and smoke (raster and path traced) and lights the
 // scene. What has burnt is charred, and the burning band glows, through a Decal and the global shader parameters
 // fire_char_map / fire_char_rect for ground and vegetation shaders.
-class PhysXFireSpread3D : public Node3D {
+class PhysXFireSpread3D : public Node3D, public WorldFireProvider {
 	GDCLASS(PhysXFireSpread3D, Node3D);
 
 public:
@@ -74,6 +77,24 @@ private:
 	LocalVector<uint8_t> quenched; // put out while burning (rain)
 	HashMap<uint32_t, float> water_cells; // fluid water on the ground this sample, kg per cell
 	int quenched_by_water = 0;
+	LocalVector<uint8_t> steamed; // water has already taken this cell's heat
+	PhysXSteam steam;
+	// Fire whirls (docs/ideas/physx.md, "Fire whirls").
+	struct Whirl {
+		Vector3 pos;
+		float radius = 1.0f; // m, the core
+		float spin = 5.0f; // m/s, tangential, signed
+		float rise = 5.0f; // m/s, the core's updraft
+		float age = 0.0f;
+		float life = 15.0f;
+	};
+	LocalVector<Whirl> whirls;
+	LocalVector<PhysXFlowEmitter3D *> whirl_emitters;
+	int whirls_spawned = 0;
+	bool fire_whirls = true;
+	uint32_t whirl_seed = 0x2545f491u;
+	float _whirl_rand();
+	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes);
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -210,6 +231,9 @@ public:
 	void extinguish();
 	float get_char_at(const Vector3 &p_position) const; // 0 unburnt .. 1 burnt out
 	float get_intensity_at(const Vector3 &p_position) const; // fireline heat, kW/m2 of ground
+	// The fire contract (WorldFire).
+	float contract_fire_heat_at(const Vector3 &p_position) const override { return get_intensity_at(p_position) * 1000.0f; }
+	float contract_fire_burnt_at(const Vector3 &p_position) const override { return get_char_at(p_position); }
 	float get_flame_length_at(const Vector3 &p_position) const; // peak, m
 	float get_scorch_height_at(const Vector3 &p_position) const; // peak crown scorch height, m
 	float get_burnt_area() const { return total_burnt; }
@@ -245,6 +269,7 @@ public:
 	Ref<Image> get_fuel_map() const { return fuel_map; }
 	bool _update_moisture(float p_delta);
 	void _apply_fluid_water(float p_delta, bool p_weather_dried);
+	void _water_edge(float p_delta);
 	float _moisture(uint32_t p_i) const { return base_moisture * wet[p_i] + rain_water[p_i]; }
 	float _air_temperature() const;
 	void set_fuel_patchiness(float p_v);
@@ -285,6 +310,11 @@ public:
 	int get_firebrand_count() const { return firebrands.get_count(); }
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
 	int get_doused_cells() const { return quenched_by_water; }
+	float get_steam_mass() const { return steam.get_total_kg(); }
+	int get_whirl_count() const { return whirls.size(); }
+	int get_whirls_spawned() const { return whirls_spawned; }
+	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
+	bool is_fire_whirls() const { return fire_whirls; }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }

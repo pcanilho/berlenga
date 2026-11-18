@@ -395,6 +395,9 @@
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="1.0">
 		</member>
+		<member name="flow_foam_impact" type="bool" setter="set_flow_foam_impact" getter="get_flow_foam_impact" default="true">
+			The live window's white water also forms where the water runs into things, not only where it runs fast and shears: where it converges (a jet meeting slack water, two currents colliding) and as a pillow on the upstream face of a rock standing out of the current. Off: shear and supercritical flow only.
+		</member>
 		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="8.0">
 		</member>
 		<member name="flow_period" type="float" setter="set_flow_period" getter="get_flow_period" default="2.0">
@@ -416,6 +419,9 @@
 		</member>
 		<member name="level_from_flows" type="bool" setter="set_level_from_flows" getter="get_level_from_flows" default="false">
 			The level settles where the outlets ([method set_outflow]) pass what flows in (the rivers' inflows plus [member catchment_inflow]): the steady state, since a lake takes hours to days to settle. When it moves by more than a centimetre, [member water_level] changes and the rivers leaving and entering rebuild on the new level.
+		</member>
+		<member name="live_advected_ripples" type="bool" setter="set_live_advected_ripples" getter="get_live_advected_ripples" default="true">
+			The live window's ripples and foam ride the flow's real paths (advected texture coordinates, Neyret 2003): each of the two flow-map phases is carried along by the simulated velocity, so they curl round eddies behind rocks instead of shearing along the local velocity. Off: plain two-phase flow mapping.
 		</member>
 		<member name="live_flow" type="bool" setter="set_live_flow" getter="is_live_flow" default="true">
 		</member>

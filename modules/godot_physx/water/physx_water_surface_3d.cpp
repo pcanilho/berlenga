@@ -422,6 +422,10 @@ uniform bool flow_baked = false;
 uniform vec2 current = vec2(0.0);
 uniform float flow_period = 2.0;
 uniform bool flow_foam_live = false; // flow_tex is the live velocity, with flow foam in b
+// Advected ripple coordinates over the simulated square (water_flow_offset.glsl): each phase's offset from plain
+// flow mapping after following the live flow's real paths. Phase A in rg, B in ba (m).
+uniform bool flow_advected = false;
+uniform sampler2D flow_offset_tex : hint_default_black, filter_linear, repeat_disable;
 
 // Plumes of rivers flowing in (RG m/s over the simulated square), added on top.
 uniform sampler2D plume_tex : hint_default_black, filter_linear, repeat_disable;
@@ -468,6 +472,14 @@ float flow_phases(vec2 world_xz, out vec2 o_a, out vec2 o_b) {
 	float p_b = fract(t + 0.5);
 	o_a = f * (p_a - 0.5) * flow_period;
 	o_b = f * (p_b - 0.5) * flow_period;
+	if (flow_advected) {
+		vec2 rel = world_xz - grid_center;
+		vec2 a = abs(rel / ripple_domain_size);
+		vec4 d = texture(flow_offset_tex, clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0)));
+		d *= 1.0 - smoothstep(0.46, 0.5, max(a.x, a.y));
+		o_a += d.xy;
+		o_b += d.zw;
+	}
 	return 1.0 - abs(1.0 - 2.0 * p_a);
 }
 
@@ -2409,6 +2421,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXWaterSurface3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXWaterSurface3D::get_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_impact", "enabled"), &PhysXWaterSurface3D::set_flow_foam_impact);
+	ClassDB::bind_method(D_METHOD("get_flow_foam_impact"), &PhysXWaterSurface3D::get_flow_foam_impact);
+	ClassDB::bind_method(D_METHOD("set_live_advected_ripples", "enabled"), &PhysXWaterSurface3D::set_live_advected_ripples);
+	ClassDB::bind_method(D_METHOD("get_live_advected_ripples"), &PhysXWaterSurface3D::get_live_advected_ripples);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
@@ -2613,6 +2629,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_flow_foam", "get_flow_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_impact"), "set_flow_foam_impact", "get_flow_foam_impact");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -4873,6 +4891,7 @@ void PhysXWaterSurface3D::set_current(Vector2 p_current) {
 
 void PhysXWaterSurface3D::set_flow_period(float p_period) {
 	flow_period = MAX(p_period, 0.05f);
+	solver.set_advected_ripples(live_advected_ripples, flow_period);
 	_update_flow_material();
 }
 
@@ -4889,15 +4908,26 @@ void PhysXWaterSurface3D::set_live_flow(bool p_enabled) {
 	_send_flow_to_solver();
 }
 
+void PhysXWaterSurface3D::set_flow_foam_impact(bool p_enabled) {
+	flow_foam_impact = p_enabled;
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+}
+
+void PhysXWaterSurface3D::set_live_advected_ripples(bool p_enabled) {
+	live_advected_ripples = p_enabled;
+	solver.set_advected_ripples(live_advected_ripples, flow_period);
+	_update_flow_material();
+}
+
 void PhysXWaterSurface3D::set_flow_foam(float p_strength) {
 	flow_foam = MAX(p_strength, 0.0f);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 	_update_flow_material();
 }
 
 void PhysXWaterSurface3D::set_flow_foam_persistence(float p_seconds) {
 	flow_foam_persistence = MAX(p_seconds, 0.1f);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 }
 
 void PhysXWaterSurface3D::set_wall_friction(float p_friction) {
@@ -4965,6 +4995,9 @@ void PhysXWaterSurface3D::_update_flow_material() {
 	water_material->set_shader_parameter("flow_baked", live || baked);
 	water_material->set_shader_parameter("flow_foam_live", live && flow_foam > 0.0f);
 	water_material->set_shader_parameter("flow_tex", live ? Variant(live_flow_texture) : (baked ? Variant(flow_texture) : Variant()));
+	const bool advected = live && live_advected_ripples && live_offset_texture.is_valid() && live_offset_texture->get_texture_rd_rid().is_valid();
+	water_material->set_shader_parameter("flow_advected", advected);
+	water_material->set_shader_parameter("flow_offset_tex", advected ? Variant(live_offset_texture) : Variant());
 	const bool plumes = !plume_cells.is_empty() && plume_texture.is_valid();
 	water_material->set_shader_parameter("plume_enabled", plumes);
 	water_material->set_shader_parameter("plume_tex", plumes ? Variant(plume_texture) : Variant());
@@ -6720,7 +6753,8 @@ void PhysXWaterSurface3D::_configure_solver() {
 	whitecap_fill_start = water_time;
 	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+	solver.set_advected_ripples(live_advected_ripples, flow_period);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
@@ -6733,7 +6767,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 }
 
 void PhysXWaterSurface3D::_detach_textures() {
-	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture, live_flow_texture };
+	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture, live_flow_texture, live_offset_texture };
 	for (const Ref<Texture2DRD> &texture : textures) {
 		if (texture.is_valid()) {
 			texture->set_texture_rd_rid(RID());
@@ -6810,6 +6844,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		return;
 	}
 	water_time += p_delta;
+	solver.set_flow_clock((float)Math::fmod(water_time, 3600.0)); // (the advected ripples restart on the material's phases)
 	if (step_mode == STEP_MODE_PER_FRAME) {
 		water_time_dirty = true; // the material gets it once, in _frame_update()
 	} else if (water_material.is_valid()) {
@@ -6958,6 +6993,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 		live_flow_texture.instantiate();
 	}
 	live_flow_texture->set_texture_rd_rid(solver.get_velocity_texture_rd_rid());
+	if (live_offset_texture.is_null()) {
+		live_offset_texture.instantiate();
+	}
+	live_offset_texture->set_texture_rd_rid(solver.get_flow_offset_texture_rd_rid());
 	if (shore_foam_tex.is_null()) {
 		shore_foam_tex.instantiate();
 	}

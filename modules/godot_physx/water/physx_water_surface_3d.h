@@ -493,6 +493,13 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	// Also where the live water runs into things: convergence, and the pillow on a rock's upstream face.
+	void set_flow_foam_impact(bool p_enabled);
+	bool get_flow_foam_impact() const { return flow_foam_impact; }
+	// The live window's waves and foam carried along the flow's real paths (advected coordinates), not straight
+	// along the local velocity: they go round eddies instead of smearing.
+	void set_live_advected_ripples(bool p_enabled);
+	bool get_live_advected_ripples() const { return live_advected_ripples; }
 	// The live flow's velocity at cell centres (RG m/s, B flow foam), or null when off.
 	Ref<Texture2D> get_live_flow_texture() const;
 	// Solves the flow again (after the seabed or the current changed; done
@@ -765,9 +772,12 @@ private:
 	float wall_friction = 1.5f;
 	float flow_foam = 1.0f;
 	float flow_foam_persistence = 8.0f;
+	bool flow_foam_impact = true;
+	bool live_advected_ripples = true;
 	PackedFloat32Array flow_faces; // baked face fluxes sent to the solver (4 a cell), empty = none
 	Vector<float> cached_live_velocity; // live face velocities read back (2 a cell)
 	Ref<Texture2DRD> live_flow_texture;
+	Ref<Texture2DRD> live_offset_texture; // advected ripple coordinates (water_flow_offset.glsl)
 	void _send_flow_to_solver();
 	Vector2 _live_flow_at(float p_x, float p_z) const;
 	Ref<Image> flow_image;

@@ -98,6 +98,7 @@ void PhysXFireSpread3D::_allocate() {
 	wet.resize(n);
 	rain_water.resize(n);
 	quenched.resize(n);
+	steamed.resize(n);
 	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
@@ -177,6 +178,7 @@ void PhysXFireSpread3D::_allocate() {
 			rate[i] = rate_mul;
 			rain_water[i] = 0.0f;
 			quenched[i] = 0;
+			steamed[i] = 0;
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -883,7 +885,11 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	for (int bz = 0; bz < nz; bz += block) {
 		for (int bx = 0; bx < nx; bx += block) {
 			const int cx = MIN(bx + block / 2, nx - 1), cz = MIN(bz + block / 2, nz - 1);
-			const float rain = MAX(wm->precipitation_at(_cell_world(cx, cz)), 0.0f); // mm/h = kg/m2/h
+			const Vector3 block_at = _cell_world(cx, cz);
+			const float rain = MAX(wm->precipitation_at(block_at), 0.0f); // mm/h = kg/m2/h
+			// Fuel lying on wet ground (the weather's surface film: rain that fell before the grid was there, dew)
+			// holds about as much as the film: soaked ground keeps it past extinction, dewy ground slows the front.
+			const float ground_wet = CLAMP(wm->surface_wetness_at(block_at), 0.0f, 1.0f) * 1.2f * m.moisture_extinction;
 			for (int z = bz; z < MIN(bz + block, nz); z++) {
 				for (int x = bx; x < MIN(bx + block, nx); x++) {
 					const uint32_t i = z * nx + x;
@@ -891,6 +897,7 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 					if (rain > 0.0f && load[i] > 1.0e-4f) {
 						w = MIN(w + rain / 3600.0f * p_delta * 0.33f / load[i], 2.5f);
 					}
+					w = MAX(w, ground_wet - base_moisture * wet[i]);
 					rain_water[i] = w;
 					const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
 					if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
@@ -962,9 +969,64 @@ void PhysXFireSpread3D::_apply_fluid_water(float p_delta, bool p_weather_dried) 
 		const float on_fuel = MIN(e.value / cell_area / MAX(load[i], 0.05f), 2.5f); // kg water per kg fuel
 		rain_water[i] = MAX(rain_water[i], on_fuel);
 		const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
+		// Steam: the water takes the hot bed's heat, once: its fuel and char near 600 C (1.5 kJ/kg K), a
+		// burning log's more, and about a second of the flames' output where it still burns; no more than the
+		// water there can boil.
+		const bool hot = burning || (t_ignite[i] >= 0.0f && time - t_ignite[i] < 3.0f * m.burn_time);
+		if (hot && !steamed[i]) {
+			steamed[i] = 1;
+			float j = cell_area * (load[i] * MAX(fuel_left[i], 0.3f) + (heavy.is_empty() ? 0.0f : MIN(heavy[i], 20.0f) * 0.25f)) * 1500.0f * 600.0f;
+			j += heat[i] * cell_area;
+			j = MIN(j, e.value * PhysXSteam::BOIL_HEAT);
+			steam.add_heat(_cell_world(int(i % nx), int(i / nx)), j, 0.5f);
+		}
 		if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
 			quenched[i] = 1;
 			quenched_by_water++;
+		}
+	}
+}
+
+// Fire meeting standing or running water (WorldContracts' water: a river bank, a lake shore, a flooded hollow):
+// fuel under the surface cannot burn and a cell the front reaches there goes out in a burst of steam; flames
+// beside the water boil some of it off, a tenth of their heat going into the water a metre away (radiation and
+// the hot gas over it), as a thin steady steam along the shore.
+void PhysXFireSpread3D::_water_edge(float p_delta) {
+	WorldWater *ww = WorldContracts::water();
+	if (!ww || !ww->has_provider() || height.is_empty()) {
+		return;
+	}
+	const float cell_area = cell_size * cell_size;
+	const float step = MAX(1.0f, cell_size);
+	const Vector3 offs[4] = { Vector3(step, 0, 0), Vector3(-step, 0, 0), Vector3(0, 0, step), Vector3(0, 0, -step) };
+	for (int z = 0; z < nz; z++) {
+		for (int x = 0; x < nx; x++) {
+			const uint32_t i = z * nx + x;
+			if (t_ignite[i] < 0.0f || fuel_left[i] <= 0.0f || quenched[i]) {
+				continue;
+			}
+			Vector3 wp = _cell_world(x, z);
+			wp.y = height[i];
+			const float h = ww->height_at(wp);
+			if (Math::is_finite(h) && h >= wp.y - 0.02f) {
+				quenched[i] = 1;
+				if (!steamed[i]) {
+					steamed[i] = 1;
+					steam.add_heat(wp, heat[i] * cell_area + cell_area * load[i] * 1500.0f * 600.0f, 0.4f);
+				}
+				continue;
+			}
+			if (heat[i] <= 0.0f || ((x + z) & 1)) {
+				continue; // a checkerboard is enough to find the shore
+			}
+			for (const Vector3 &o : offs) {
+				const Vector3 q = wp + o;
+				const float hq = ww->height_at(q);
+				if (Math::is_finite(hq) && hq >= q.y - 0.3f && hq <= q.y + 1.0f) {
+					steam.add_heat(Vector3(q.x, hq, q.z), 0.1f * heat[i] * cell_area * 2.0f * p_delta, 0.4f, 1.0f);
+					break;
+				}
+			}
 		}
 	}
 }
@@ -1022,6 +1084,109 @@ void PhysXFireSpread3D::_ignite_from_heat_source() {
 // fireline intensity, so the flames stand in a line along the leading arc, tallest at the head fire downwind and low
 // at the back. Spheres, not boxes: an emitter holds the gas inside it at its own values, and a box left a block of
 // flame with straight sides.
+float PhysXFireSpread3D::_whirl_rand() {
+	whirl_seed ^= whirl_seed << 13;
+	whirl_seed ^= whirl_seed >> 17;
+	whirl_seed ^= whirl_seed << 5;
+	return float(whirl_seed & 0xffffffu) / float(0xffffff);
+}
+
+// Fire whirls (docs/ideas/physx.md, "Fire whirls"; Forthofer and Goodrick 2011): a flank of strong fire in a cross
+// shear spins up a vertical vortex that stands over the burning fuel, lifts its gas and brands high and drifts
+// downwind. They form when the wind is about the fire's own buoyant velocity scale, w* = (g I / (rho cp T))^(1/3)
+// for a front of intensity I (Kuwana et al. 2008: whirls at U / w* near 1 behind line fires; Kuwana et al. 2013 for
+// L-shaped fronts). A whirl's core is some third of the flame length across, it spins at about twice w*, its core
+// rises at about twice w*, and it lives tens of seconds while it stands over flaming fuel. Drawn in the fire's Flow
+// by four emitters around the core, tangential and rising; brands caught in it rise on its updraft.
+void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes) {
+	const float u = p_wind.length();
+	const float t_air = _air_temperature() + 273.15f;
+	// Births: each eligible flank tile has about a 1-in-180 chance a second near U / w* = 1 (one whirl every 20 s or so
+	// along a strong flank; fewer away from it).
+	for (uint32_t k = 0; k < p_flank.size() && whirls.size() < 2; k++) {
+		const float ws = Math::pow(9.8f * p_flank_q[k] * 1000.0f / (1.2f * 1005.0f * t_air), 1.0f / 3.0f);
+		const float ratio = u / MAX(ws, 0.1f);
+		const float favour = Math::exp(-Math::pow(Math::log(MAX(ratio, 1.0e-3f)) / 0.5f, 2.0f)); // 1 at U = w*
+		bool near = false;
+		for (const Whirl &w : whirls) {
+			near = near || w.pos.distance_to(p_flank[k]) < 6.0f;
+		}
+		if (near || p_flank_q[k] < 300.0f || _whirl_rand() > favour * p_delta / 180.0f) {
+			continue;
+		}
+		Whirl w;
+		w.pos = p_flank[k];
+		const float flame = 0.0775f * Math::pow(p_flank_q[k], 0.46f);
+		w.radius = CLAMP(0.3f * flame, 0.3f, 3.0f);
+		// Either way round: both turns are seen on flanks (Forthofer and Goodrick 2011).
+		w.spin = 2.0f * ws * (_whirl_rand() < 0.5f ? -1.0f : 1.0f);
+		w.rise = 2.0f * ws;
+		w.life = 10.0f + 20.0f * _whirl_rand();
+		whirls.push_back(w);
+		whirls_spawned++;
+	}
+	const Vector3 up = get_global_transform().basis.get_column(1).normalized();
+	for (int64_t k = int64_t(whirls.size()) - 1; k >= 0; k--) {
+		Whirl &w = whirls[k];
+		w.age += p_delta;
+		// Drifts downwind at about a third of the wind, wandering.
+		w.pos += (p_wind * 0.3f + Vector3(_whirl_rand() - 0.5f, 0.0f, _whirl_rand() - 0.5f) * 0.6f) * p_delta;
+		int x, z;
+		const bool over = _world_cell(w.pos, x, z) && t_ignite[z * nx + x] >= 0.0f && heat[z * nx + x] > 0.0f;
+		if (!over) {
+			w.age += 2.0f * p_delta; // off the flaming fuel it starves
+		}
+		if (w.age >= w.life) {
+			whirls.remove_at_unordered(k);
+			continue;
+		}
+		PhysXFirebrands::Plume pl;
+		pl.base = w.pos;
+		pl.w0 = w.rise * 1.5f;
+		pl.width = 2.0f * w.radius;
+		r_plumes.push_back(pl);
+	}
+	if (!flow || (whirls.is_empty() && whirl_emitters.is_empty())) {
+		return;
+	}
+	while (whirl_emitters.size() < 8) {
+		PhysXFlowEmitter3D *em = memnew(PhysXFlowEmitter3D);
+		em->set_name(vformat("Whirl%d", (int)whirl_emitters.size()));
+		em->set_enabled(false);
+		em->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
+		flow->add_child(em);
+		em->set_flow_path(em->get_path_to(flow));
+		whirl_emitters.push_back(em);
+	}
+	for (uint32_t e = 0; e < whirl_emitters.size(); e++) {
+		PhysXFlowEmitter3D *em = whirl_emitters[e];
+		const uint32_t k = e / 4;
+		if (k >= whirls.size()) {
+			em->set_enabled(false);
+			continue;
+		}
+		const Whirl &w = whirls[k];
+		const float ramp = MIN(w.age / 2.0f, 1.0f) * MIN((w.life - w.age) / 3.0f, 1.0f);
+		// A helix up the core: the flame is drawn up into a column some three flame lengths tall (Forthofer and
+		// Goodrick 2011), each source pushing the gas round and up.
+		const uint32_t i = e % 4;
+		const float ang = Math::TAU * i / 4.0f + w.age * w.spin / MAX(w.radius, 0.3f);
+		const Vector3 r(Math::cos(ang), 0.0f, Math::sin(ang));
+		const Vector3 tangent = up.cross(r) * w.spin;
+		const float src = MAX(0.8f * w.radius, 0.4f);
+		em->set_enabled(true);
+		em->set_radius(src);
+		// Overlapping sources, so the column is one body of flame, not beads.
+		em->set_global_position(w.pos + r * w.radius * (1.0f - 0.2f * i) + up * (0.3f + 1.2f * src * i));
+		em->set_velocity((tangent + up * w.rise) * ramp + p_wind * 0.3f);
+		em->set_temperature(1.0f);
+		em->set_fuel(flame_strength * 0.6f * ramp);
+		em->set_burn(0.0f);
+		em->set_smoke(0.0f);
+		em->set_couple_rate(4.0f);
+	}
+}
+
 void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 	if (!flow) {
 		return;
@@ -1158,6 +1323,30 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 	}
 	// Burning crowns take up to half the emitters, the hottest first.
 	const uint32_t n_crown = MIN(crown_em.size(), emitters.size() / 2 + (emitters.size() == 1 ? 1 : 0));
+	// Fire whirl sites: strong flaming tiles on a flank, where the front runs along the wind (its normal across it)
+	// and the wind's shear against the plume's indraft spins up vertical vorticity.
+	LocalVector<Vector3> flank;
+	LocalVector<float> flank_q;
+	if (fire_whirls && p_wind.length() > 1.0f) {
+		const Vector3 wd = p_wind.normalized();
+		for (uint32_t k = 0; k < order.size() && k < 32; k++) {
+			const Tile &t = tiles[order[k]];
+			const Vector3 c = t.centre / t.weight;
+			int cx, cz;
+			if (!_world_cell(c, cx, cz) || cx < 1 || cz < 1 || cx >= nx - 1 || cz >= nz - 1) {
+				continue;
+			}
+			const Vector3 n(phi[cz * nx + cx + 1] - phi[cz * nx + cx - 1], 0.0f, phi[(cz + 1) * nx + cx] - phi[(cz - 1) * nx + cx]);
+			if (n.length_squared() < 1.0e-8f) {
+				continue;
+			}
+			if (Math::abs(n.normalized().dot(wd)) < 0.35f) {
+				flank.push_back(c);
+				flank_q.push_back(t.heat / 1000.0f / tile_w);
+			}
+		}
+	}
+	_update_whirls(float(get_physics_process_delta_time()), p_wind, flank, flank_q, plumes);
 	// The convection columns over the strongest stretches of front, for the firebrands.
 	if (spotting) {
 		const float t_air = _air_temperature();
@@ -1498,12 +1687,15 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (!fires.has(this)) {
 				fires.push_back(this);
 			}
+			WorldContracts::register_fire(this);
 #ifdef MODULE_WEATHER_ENABLED
 			lightning_seen = WeatherLightning3D::get_last_ground_strike_serial(); // strikes from before it entered do not count
 #endif
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			fires.erase(this);
+			WorldContracts::unregister_fire(this);
+			steam.clear();
 		} break;
 		case NOTIFICATION_READY: {
 			// Once per run, unless the project declares them (global_shader_parameter_get_list is editor only).
@@ -1535,12 +1727,16 @@ void PhysXFireSpread3D::_notification(int p_what) {
 				sample_timer = 0.25f;
 				_ignite_from_heat_source();
 				_apply_fluid_water(0.25f, _update_moisture(0.25f));
+				_water_edge(0.25f);
 				_ignite_from_lightning();
 			}
 			_step(dt);
 			_update_emitters(_wind());
 			if (spotting && brand_count > 0.0f) {
 				firebrands.release(brand_count, brand_points, flow);
+			}
+			if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
+				steam.step(this, _wind(), dt);
 			}
 			if (firebrands.get_count() > 0) {
 				firebrands.step(this, flow, _wind(), dt, glow_energy);
@@ -1567,6 +1763,11 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXFireSpread3D::get_firebrand_count);
 	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXFireSpread3D::get_spot_fire_count);
 	ClassDB::bind_method(D_METHOD("get_doused_cells"), &PhysXFireSpread3D::get_doused_cells);
+	ClassDB::bind_method(D_METHOD("get_steam_mass"), &PhysXFireSpread3D::get_steam_mass);
+	ClassDB::bind_method(D_METHOD("get_whirl_count"), &PhysXFireSpread3D::get_whirl_count);
+	ClassDB::bind_method(D_METHOD("get_whirls_spawned"), &PhysXFireSpread3D::get_whirls_spawned);
+	ClassDB::bind_method(D_METHOD("set_fire_whirls", "enabled"), &PhysXFireSpread3D::set_fire_whirls);
+	ClassDB::bind_method(D_METHOD("is_fire_whirls"), &PhysXFireSpread3D::is_fire_whirls);
 	ClassDB::bind_method(D_METHOD("set_spotting", "enabled"), &PhysXFireSpread3D::set_spotting);
 	ClassDB::bind_method(D_METHOD("is_spotting"), &PhysXFireSpread3D::is_spotting);
 	ClassDB::bind_method(D_METHOD("set_spotting_scale", "scale"), &PhysXFireSpread3D::set_spotting_scale);
@@ -1656,6 +1857,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spotting_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_spotting_scale", "get_spotting_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crown_fire"), "set_crown_fire", "is_crown_fire");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foliar_moisture", PROPERTY_HINT_RANGE, "0.3,3,0.01"), "set_foliar_moisture", "get_foliar_moisture");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_whirls"), "set_fire_whirls", "is_fire_whirls");
 	ADD_GROUP("Flames", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_emitters", PROPERTY_HINT_RANGE, "1,128,1"), "set_max_emitters", "get_max_emitters");

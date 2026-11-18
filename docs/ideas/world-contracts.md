@@ -73,19 +73,30 @@ groups counts once.
 
 ### Ground (`WorldGround`; producer `GroundSurface3D`)
 
+Built 18 Nov (mud thread; sand adds its own reads on top). `WorldContracts::ground()` in C++,
+`WorldContracts.get_ground()` in scripts; `set_ground(stub)` for a test, where the stub's unset methods fall back to
+the live ground.
+
 | Member | Unit | Default |
 | --- | --- | --- |
-| `height_at(pos)` | m | the ray to the physics floor |
-| `soil_at(pos)` | Soil (soft, cohesion, friction angle, stickiness) | firm |
+| `height_at(pos)` | m, the deformed surface | the first physics surface under the point, else -INF |
+| `soil_at(pos)` | soft, cohesion kPa, friction angle degrees, stickiness 0..1 | firm (soft false) |
 | `standing_water_at(pos)` | m | 0 |
 | `ice_at(pos)` | (thickness m, broken share) | 0 |
-| `frost_at(pos)` | (thawed top m, frost depth m, weakening) | 0 |
+| `frost_at(pos)` | (thawed top m, frost depth m, weakening 0..1) | 0 |
 | `dent_at(pos)`, `rim_at(pos)` | m | 0 |
 | `runoff_at(pos)` | (depth m, speed m/s) | 0 |
-| `press(body)` | | through the contact group |
+| `mud_depth_at(pos)` | m of slurry | 0 |
+| `needle_ice_at(pos)` | (height m, crumbs 0..1) | 0 |
+| `rut_guidance_at(contact, lateral, half_width)` | (cross slope along lateral, wall m on -lateral, wall m on +lateral) | 0 |
+| `sand_at(pos)` | loose sand's share of the top, 0..1 | 0 |
+| `ripple_at(pos)` | wind ripples' height about their mean, m | 0 |
+| `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
+| pressing | | through the `world_contact` group |
 
 Consumers: vehicles, snow, grass (ruts tear the sward), fire (fuel on bare ground), water (wet sand), ground mud on
-legs.
+legs. Moving the vehicle's direct GroundSurface3D calls onto it is the next step (they also need the richer
+terramechanics and pressing calls, which stay on the producer for now).
 
 ### Snow (`WorldSnow`; producers `SnowCover3D`, `SnowSurface3D`)
 
@@ -135,15 +146,18 @@ Consumers: buoyancy, bodies in world_contact, plants (lean with the current), cl
 
 Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (interception), rain (drip).
 
-### Fire (`WorldFire`; producer `PhysXFireSpread3D`)
+### Fire (`WorldFire`; producer `PhysXFireSpread3D`, every live one)
 
-| Member | Unit | Default |
-| --- | --- | --- |
-| `burnt_at(pos)`, `glow_at(pos)` | 0..1 | 0 |
-| `heat_at(pos)` | W/m2 | 0 |
-| shader globals `fire_state_map`, `fire_char_rect` | | |
+| Member | Unit | Default | Guarantee |
+| --- | --- | --- | --- |
+| `heat_at(pos)` | W/m2 | 0 | The most heat release of any fire over the point, now |
+| `burnt_at(pos)` | 0..1 | 0 | |
+| shader globals `fire_state_map`, `fire_char_rect` | | | burnt, glow, flame length, scorch height |
 
-Consumers: plants (char), ground (scorch), snow (melt), weather (drying), water (steam).
+Tests: `WorldContracts.set_fire(stub)`.
+
+Consumers: weather (the surface film boils off under a fire), plants (char), snow (melt, to come), water (steam,
+to come).
 
 ## Testing
 

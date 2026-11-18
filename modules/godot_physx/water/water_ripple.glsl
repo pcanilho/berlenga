@@ -179,6 +179,66 @@ float foam_sample(vec2 p) {
 // grid: air is trapped where neighbouring water moves past each other (shear: wakes, the edges of
 // a jet, eddies), and where the flow is supercritical (Froude number past about 1: chutes,
 // rapids, hydraulic jumps), gated by the water's own speed so slow water never foams.
+//
+// Impact foam (IMPACT_FOAM, docs/ideas/stream-demo-assessment.md): two more sources Ihmsen et al.
+// also name, where water runs into something rather than past it.
+// - Convergence: the velocity's divergence well below zero, water piling into itself (a jet
+//   meeting slack water, the toe of a jump, two currents colliding). Measured as the speed lost
+//   over 25 cm, like the shear, so the cell size doesn't matter. In slow water the same
+//   convergence gathers faint scum lines instead (half strength).
+// - Stagnation: current running straight at dry ground standing out of it, the "pillow" of
+//   white water on a boulder's upstream face. The wall is the nearest dry cell along each axis
+//   within about 0.75 m; the approach speed is read a little upstream of this cell, where the
+//   flow has not yet turned aside.
+#define IMPACT_FOAM (flow_extra.x > 0.5)
+
+float impact_foam_source(ivec2 c, vec2 v) {
+	// Convergence.
+	float u_r = face_u(c);
+	float u_l = c.x > 0 ? face_u(c - ivec2(1, 0)) : u_r;
+	float w_t = face_w(c);
+	float w_b = c.y > 0 ? face_w(c - ivec2(0, 1)) : w_t;
+	float div = (u_r - u_l + w_t - w_b) / CELL;
+	float approach = max(max(abs(u_l), abs(u_r)), max(abs(w_b), abs(w_t))); // the faster side: water arriving
+	float squeeze = smoothstep(0.15, 0.6, max(-div, 0.0) * 0.25);
+	float converge = squeeze * smoothstep(0.5, 1.5, approach);
+	// Scum lines: slow water converging (eddy lines, the edge of a backwater, a pool's seam) sinks and leaves
+	// its bubbles and scum on the surface in faint lines without making white water (Langmuir's windrows are
+	// the same at sea), so half strength from 0.15 m/s.
+	converge = max(converge, 0.5 * squeeze * smoothstep(0.15, 0.5, length(v)));
+
+	// Stagnation.
+	int reach = clamp(int(round(0.75 / CELL)), 1, 3);
+	vec2 to_wall = vec2(0.0);
+	const ivec2 dirs[4] = ivec2[4](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
+	for (int d = 0; d < 4; d++) {
+		for (int k = 1; k <= 3; k++) {
+			if (k > reach) {
+				break;
+			}
+			ivec2 nc = c + dirs[d] * k;
+			if (nc.x < 0 || nc.y < 0 || nc.x >= GRID_N || nc.y >= GRID_N) {
+				break; // (the grid's edge is open water, not a wall)
+			}
+			if (!has_water(nc)) {
+				to_wall += vec2(dirs[d]) * (1.0 - float(k - 1) / float(reach + 1));
+				break;
+			}
+		}
+	}
+	float pillow = 0.0;
+	float wall = length(to_wall);
+	if (wall > 1e-3) {
+		vec2 n = to_wall / wall;
+		vec2 v_up = centre_velocity(c - ivec2(round(n * float(reach))));
+		if (dot(v_up, v_up) < 1e-8) {
+			v_up = v;
+		}
+		pillow = smoothstep(0.3, 1.2, dot(v_up, n)) * clamp(wall, 0.0, 1.0);
+	}
+	return max(converge, pillow);
+}
+
 float flow_foam_source(ivec2 c, vec2 v) {
 	float shear = 0.0;
 	shear += length(v - centre_velocity(c + ivec2(1, 0)));
@@ -191,7 +251,11 @@ float flow_foam_source(ivec2 c, vec2 v) {
 	float trapped_air = smoothstep(0.15, 0.6, shear);
 	float supercritical = smoothstep(0.8, 1.6, froude);
 	float energy = smoothstep(0.5, 1.5, speed);
-	return energy * max(trapped_air, supercritical);
+	float foam = energy * max(trapped_air, supercritical);
+	if (IMPACT_FOAM) {
+		foam = max(foam, impact_foam_source(c, v));
+	}
+	return foam;
 }
 
 float eta_at(ivec2 c) {

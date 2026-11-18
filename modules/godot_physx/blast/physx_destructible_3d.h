@@ -32,6 +32,7 @@
 
 #include "physx_blast_asset.h"
 
+#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
@@ -347,6 +348,12 @@ public:
 	// demo-script concern layered on top.
 	int apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius);
 
+	// For effects that restyle every piece, live and future (PhysXBurnable3D's char): the materials its chunks draw
+	// with (the asset's by slot, or material_override), a stand-in for one of them, and instance shader parameters.
+	Array get_render_materials() const;
+	void set_material_remap(const Ref<Material> &p_from, const Ref<Material> &p_to);
+	void set_instance_shader_parameter(const StringName &p_name, const Variant &p_value);
+
 	// Live piece count right now: 1 while intact (the chunk-0 placeholder),
 	// then one per still-simulating piece, dropping as debris passes kill_y.
 	// Because _spawn_piece() frees a chunk's previous piece before spawning
@@ -408,6 +415,9 @@ private:
 	String chunks_path;
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
+	HashMap<RID, Ref<Material>> material_remap; // a surface material's stand-in on every piece (a burning look)
+	HashMap<StringName, Variant> instance_params; // instance shader parameters on every piece
+	void _apply_remap_and_params(RenderingServer *p_rs, RID p_instance, RID p_mesh) const;
 	GIMode gi_mode = GI_MODE_STATIC;
 	ShadowCastingSetting cast_shadow = SHADOW_CASTING_SETTING_ON;
 	float transparency = 0.0f;
@@ -494,6 +504,7 @@ private:
 		// One render instance per chunk, of the shared per-chunk meshes (PhysXBlastRenderCache): a split moves
 		// instances instead of rebuilding a merged mesh (about a second for a tree).
 		LocalVector<RID> instances;
+		LocalVector<RID> instance_meshes; // each instance's chunk mesh
 		// Which asset chunks this piece renders/collides, aligned with
 		// `shapes`. One entry while intact (chunk 0, the placeholder) and
 		// for a single-chunk (leaf) split product; an island split product

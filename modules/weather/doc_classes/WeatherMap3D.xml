@@ -233,6 +233,12 @@
 				The terrain square's area in world space (x, z, width, depth).
 			</description>
 		</method>
+		<method name="get_water_temperature" qualifiers="const">
+			<return type="float" />
+			<description>
+				Open water's surface temperature (C): with a [member climate], the air's seasonal mean a month earlier (lakes and the sea lag the air; Livingstone and Lotter 1998), never below 0 C; without one, the day's mean air. Steam fog forms where the air is much colder than this.
+			</description>
+		</method>
 		<method name="get_wind_aloft" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />

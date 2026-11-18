@@ -8016,8 +8016,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			float emission[4];
 			float heat_ramp[8][4];
 			float smoke_color[4];
+			float shimmer[4];
 		};
-		static_assert(sizeof(VolumeParams) == 384, "RTVolumeParams layout changed");
+		static_assert(sizeof(VolumeParams) == 400, "RTVolumeParams layout changed");
 		VolumeParams vp = {};
 		RTSparseVolume vol;
 		const bool has_volume = RTVolumes::get_volume(vol);
@@ -8053,6 +8054,10 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			vp.smoke_color[0] = vol.smoke_color.r;
 			vp.smoke_color[1] = vol.smoke_color.g;
 			vp.smoke_color[2] = vol.smoke_color.b;
+			vp.shimmer[0] = vol.temperature_range > 0.0f ? vol.shimmer_kelvin / vol.temperature_range : 0.0f;
+			vp.shimmer[1] = vol.shimmer_air_kelvin;
+			vp.shimmer[2] = vol.shimmer_turbulence;
+			vp.shimmer[3] = vol.shimmer_time;
 		}
 		// No simulated gas this frame: the dense boxes (waterfall mist), if any. emission.w holds their
 		// count, which switches the shader to them; level[] holds the boxes, two uvec4 each.
