@@ -363,7 +363,7 @@ private:
 
 // Desert dune fields: Paris, Galin, Peytavie, Guérin and Gain's (CGF 2019) desertscape simulation, which grows
 // transverse dunes from a thick sand cover, barchans from a thin one, and linear and star dunes from bimodal and wider
-// wind regimes. A random cell lifts a 10 cm slab (unless the wind's shadow behind a crest, 5 to 15 degrees, holds it);
+// wind regimes. A random cell lifts a slab (a quarter of a cell; unless the wind's shadow behind a crest, 5 to 15 degrees, holds it);
 // the slab hops downwind, faster up slopes facing the wind, and settles at each landing with a chance (60% on sand,
 // 40% on bare ground, certain in the shadow), up to three bounces; sand past the repose (33 degrees) slides off at the
 // lift and the landing. The grid wraps (a sand sea).
@@ -377,7 +377,10 @@ private:
 class TerrainDuneSea {
 public:
 	struct Params {
-		double slab = 0.1; // of a cell, in height
+		// A quarter of a cell, in height: Paris 2019's 10 cm on their 1 m cells, but on cells of several metres
+		// 10%-of-a-cell slabs left the field immature in a few hundred steps (soft rolling lumps with no brinks or
+		// slip faces); a quarter grows mature transverse ridges with crisp slip faces in the same steps.
+		double slab = 0.25;
 		int bounces = 3;
 		double shadow_min_tan = 0.08; // about 5 degrees
 		double shadow_max_tan = 0.26; // about 15 degrees

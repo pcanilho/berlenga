@@ -67,6 +67,9 @@ PhysXGroundGrains3D::PhysXGroundGrains3D() {
 // clouds read alike. Grains are deposited back into the field when they land, so the cloud is never seen
 // at rest.
 Ref<Mesh> PhysXGroundGrains3D::_make_mpm_particle_mesh() {
+	if (water) {
+		return PhysXParticleFluid3D::_make_mpm_particle_mesh();
+	}
 	if (mud) {
 		return _make_clod_mesh();
 	}
@@ -208,10 +211,7 @@ void PhysXGroundGrains3D::_emit(const Vector3 &p_position, float p_radius, const
 	for (int k = 0; k < n; k++) {
 		const int slot = (head + k) % capacity;
 		if (alive[slot]) {
-			const float r = 0.5642f * size * 4.0f;
-			const double d = pvol / (Math::PI * r * r);
-			ground->deposit(last[slot], r, (float)d);
-			deposited_volume += pvol;
+			_land(last[slot], 0.5642f * size * 4.0f, pvol);
 			alive[slot] = 0;
 			live--;
 		}
@@ -282,7 +282,8 @@ void PhysXGroundGrains3D::_deposit_pass(double p_delta) {
 		// A slot's read back trails its emit by a few frames (more where the solve runs slower than physics):
 		// until the grain is seen leaving its emit point (alive 1, last = that point) it cannot land. A read
 		// back farther off than the solver's speed cap allows is the slot's previous grain, not yet rewritten.
-		if (have && b[i * 12 + 0] * b[i * 12 + 0] + b[i * 12 + 4] * b[i * 12 + 4] + b[i * 12 + 8] * b[i * 12 + 8] > 0.25f) {
+		// (A live slot's transform has a basis; a dead one is zeroed. The liquid's basis carries the drop's size.)
+		if (have && b[i * 12 + 0] * b[i * 12 + 0] + b[i * 12 + 4] * b[i * 12 + 4] + b[i * 12 + 8] * b[i * 12 + 8] > (water ? 1e-10f : 0.25f)) {
 			const Vector3 q(b[i * 12 + 3], b[i * 12 + 7], b[i * 12 + 11]);
 			if (alive[i] == 2) {
 				if (q != last[i] && age[i] > seen_age[i]) {
@@ -346,12 +347,23 @@ void PhysXGroundGrains3D::_deposit_pass(double p_delta) {
 	mpm_solver->kill(killed);
 	// A disc of one texel's area; a clod of clay splats wider (it does not roll and slump as sand does, and stiff
 	// mud holds a heap's walls).
-	const float r = mud ? 0.12f : 0.5642f * tex;
+	const float r = mud || water ? 0.12f : 0.5642f * tex;
 	for (const KeyValue<Vector2i, double> &kv : land) {
-		const Vector3 at((kv.key.x + 0.5f) * tex, 0.0f, (kv.key.y + 0.5f) * tex);
-		ground->deposit(at, r, (float)(kv.value / (Math::PI * r * r)));
-		deposited_volume += kv.value;
+		_land(Vector3((kv.key.x + 0.5f) * tex, 0.0f, (kv.key.y + 0.5f) * tex), r, kv.value);
 	}
+}
+
+void PhysXGroundGrains3D::_land(const Vector3 &p_at, float p_radius, double p_volume) {
+	GroundSurface3D *ground = _ground();
+	if (!ground || p_volume <= 0.0) {
+		return;
+	}
+	if (water) {
+		ground->add_water(p_at, p_radius, (float)p_volume);
+	} else {
+		ground->deposit(p_at, p_radius, (float)(p_volume / (Math::PI * p_radius * p_radius)));
+	}
+	deposited_volume += p_volume;
 }
 
 Vector3 PhysXGroundGrains3D::_ballistic_landing(const Vector3 &p_from, const Vector3 &p_velocity) const {
@@ -373,6 +385,19 @@ Vector3 PhysXGroundGrains3D::_ballistic_landing(const Vector3 &p_from, const Vec
 		x = nx;
 	}
 	return x;
+}
+
+void PhysXGroundGrains3D::set_follow_target(const NodePath &p_path) {
+	follow_target = p_path;
+	// The mud and water children follow the same node (set after they were made, as a script does after add_child).
+	PhysXGroundGrains3D *children[2] = { mud_child, water_child };
+	for (PhysXGroundGrains3D *c : children) {
+		if (!c || !is_inside_tree() || !c->is_inside_tree()) {
+			continue;
+		}
+		Node *t = p_path.is_empty() ? nullptr : get_node_or_null(p_path);
+		c->set_follow_target(t ? c->get_path_to(t) : NodePath());
+	}
 }
 
 void PhysXGroundGrains3D::_follow() {
@@ -398,8 +423,11 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process(true);
-				if (mud_spray && !mud) {
+				if (mud_spray && !mud && !water) {
 					_make_mud_child();
+				}
+				if (water_spray && !mud && !water) {
+					_make_water_child();
 				}
 			}
 		} break;
@@ -411,8 +439,8 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 			const double dt = get_physics_process_delta_time();
 			_follow();
 			_deposit_pass(dt);
-			if (mud) {
-				// The mud child: its sprays come from the node that made it.
+			if (mud || water) {
+				// The mud and water children: their sprays come from the node that made them.
 				break;
 			}
 			// Sand thrown by spinning wheels: the tread's layer over the slip, dug and thrown (none dug before
@@ -423,8 +451,13 @@ void PhysXGroundGrains3D::_notification(int p_what) {
 			}
 			for (int i = 0; i < sprays.size(); i++) {
 				const Dictionary d = sprays[i];
-				// Sticky clay goes to the mud child (mud stage 4); the rest is sand.
-				if (mud_child && d.has("stickiness") && (float)d["stickiness"] >= 0.3f) {
+				// Standing water goes to the water child (mud stage 4c), sticky clay to the mud child (mud stage 4);
+				// the rest is sand.
+				if (d.has("water") && (float)d["water"] > 0.0f) {
+					if (water_child) {
+						water_child->_take_spray(d, dt);
+					}
+				} else if (mud_child && d.has("stickiness") && (float)d["stickiness"] >= 0.3f) {
 					mud_child->_take_spray(d, dt);
 				} else if (!d.has("volume") || (float)d["volume"] <= 0.0f) {
 					_take_spray(d, dt);
@@ -451,6 +484,21 @@ void PhysXGroundGrains3D::set_as_mud() {
 	tread_depth = 0.002f;
 }
 
+void PhysXGroundGrains3D::set_as_water() {
+	// Muddy water thrown by tyres (docs/ideas/mud.md, stage 4c): MPM liquid (the solver's fluid, not Drucker-Prager),
+	// 2 cm particles (a sheet a few drops thick), drawn as the solver's clear water with its spray and foam.
+	water = true;
+	mud_spray = false;
+	water_spray = false;
+	set_density(1000.0f);
+	set_particle_size(0.02f);
+	set_particle_count(12000);
+	spray_spread = 0.15f;
+	// Drawn as liquid (the granular base draws particles, no foam).
+	set_surface_mesh(true);
+	set_foam_enabled(true);
+}
+
 void PhysXGroundGrains3D::_make_mud_child() {
 	if (mud_child) {
 		return;
@@ -458,20 +506,34 @@ void PhysXGroundGrains3D::_make_mud_child() {
 	mud_child = memnew(PhysXGroundGrains3D);
 	mud_child->set_as_mud();
 	mud_child->set_name("MudSpray");
-	mud_child->set_mpm_domain_size(get_mpm_domain_size());
-	mud_child->set_mpm_grid_resolution(get_mpm_grid_resolution());
-	mud_child->set_max_flight_time(max_flight_time);
-	add_child(mud_child, false, INTERNAL_MODE_FRONT);
-	mud_child->set_as_top_level(true);
+	_adopt_child(mud_child);
+}
+
+void PhysXGroundGrains3D::_make_water_child() {
+	if (water_child) {
+		return;
+	}
+	water_child = memnew(PhysXGroundGrains3D);
+	water_child->set_as_water();
+	water_child->set_name("WaterSpray");
+	_adopt_child(water_child);
+}
+
+void PhysXGroundGrains3D::_adopt_child(PhysXGroundGrains3D *p_child) {
+	p_child->set_mpm_domain_size(get_mpm_domain_size());
+	p_child->set_mpm_grid_resolution(get_mpm_grid_resolution());
+	p_child->set_max_flight_time(max_flight_time);
+	add_child(p_child, false, INTERNAL_MODE_FRONT);
+	p_child->set_as_top_level(true);
 	if (GroundSurface3D *g = _ground()) {
-		mud_child->set_ground_surface(mud_child->get_path_to(g));
+		p_child->set_ground_surface(p_child->get_path_to(g));
 	}
 	if (!follow_target.is_empty()) {
 		if (Node *t = get_node_or_null(follow_target)) {
-			mud_child->set_follow_target(mud_child->get_path_to(t));
+			p_child->set_follow_target(p_child->get_path_to(t));
 		}
 	}
-	mud_child->set_global_position(get_global_position());
+	p_child->set_global_position(get_global_position());
 }
 
 // A clod of wet clay: two or three lumpy blobs stuck together, about the particle's size. Real geometry (path tracing
@@ -542,6 +604,16 @@ void PhysXGroundGrains3D::_take_spray(const Dictionary &d, double dt) {
 	if (!ground || !_mpm_ready_for_emit()) {
 		return;
 	}
+	if (water) {
+		// Standing water a tyre throws (mud stage 4c): taken from the field over the reach disc and thrown.
+		const double wv = (float)d["water"];
+		const Vector3 reach = d.has("reach_center") ? (Vector3)d["reach_center"] : (Vector3)d["position"];
+		const float reach_r = MAX(d.has("reach_radius") ? (float)d["reach_radius"] : 0.1f, 0.02f);
+		ground->add_water(reach, reach_r, -(float)wv);
+		dug_volume += wv;
+		_emit(d["position"], 0.5f * (float)d["width"], d["velocity"], wv, (float)dt);
+		return;
+	}
 	if (d.has("volume") && (float)d["volume"] > 0.0f) {
 		// Clay flung off a tyre (mud stage 4): thrown as it is. It came out of the field into the tread, so it
 		// counts as dug.
@@ -607,6 +679,10 @@ void PhysXGroundGrains3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_mud_spray", "enabled"), &PhysXGroundGrains3D::set_mud_spray);
 	ClassDB::bind_method(D_METHOD("is_mud_spray"), &PhysXGroundGrains3D::is_mud_spray);
 	ClassDB::bind_method(D_METHOD("get_mud_grains"), &PhysXGroundGrains3D::get_mud_grains);
+	ClassDB::bind_method(D_METHOD("set_water_spray", "enabled"), &PhysXGroundGrains3D::set_water_spray);
+	ClassDB::bind_method(D_METHOD("is_water_spray"), &PhysXGroundGrains3D::is_water_spray);
+	ClassDB::bind_method(D_METHOD("get_water_grains"), &PhysXGroundGrains3D::get_water_grains);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_spray"), "set_water_spray", "is_water_spray");
 	ClassDB::bind_method(D_METHOD("get_stuck_volume"), &PhysXGroundGrains3D::get_stuck_volume);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_spray"), "set_mud_spray", "is_mud_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_flight_time", PROPERTY_HINT_RANGE, "0.1,30,0.1,suffix:s"), "set_max_flight_time", "get_max_flight_time");

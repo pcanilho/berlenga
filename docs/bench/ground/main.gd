@@ -36,6 +36,7 @@ extends Node3D
 #                         so its tyres throw the clay up the arches; a close frame on the rear wheel and side.
 #                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear); --spray: the
 #                         frame mid-throw, the clods in the air
+#   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -79,6 +80,7 @@ var view := "trail"
 var kind := "soil"
 var raster := false
 var test := false
+var splash_test := false
 var soil_test := false
 var grains_test := false
 var wind_test := false
@@ -123,6 +125,7 @@ func _ready() -> void:
 		elif a == "--test=water": water_test = true
 		elif a == "--test=shelter": shelter_test = true
 		elif a == "--test=runoff": runoff_test = true
+		elif a == "--test=splash": splash_test = true
 		elif a == "--test=drift": drift_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
@@ -178,6 +181,11 @@ func _ready() -> void:
 		return
 	if drift_test:
 		await _run_drift_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if splash_test:
+		await _build_wade()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -736,6 +744,19 @@ func _run_puddle_tests() -> void:
 	print("  water along the rut after the tyre (cm, z -0.3 to 0.9): ", prof)
 	_check("a wading tyre pushes the water up ahead of it and out from under it, volume kept", ahead1 > ahead0 + 0.003 and behind1 < behind0 - 0.003 and absf(vw1.x - vw0.x) < 0.02 * vw0.x,
 			"ahead %.1f to %.1f cm, under its rear %.1f to %.1f cm; %.2f l to %.2f l" % [ahead0 * 100.0, ahead1 * 100.0, behind0 * 100.0, behind1 * 100.0, vw0.x * 1000.0, vw1.x * 1000.0])
+	# Water added and taken by discs (GroundSurface3D.add_water, mud stage 4c: spray landing, sheets thrown up):
+	# the field's volume moves by exactly that.
+	var va0 := _water_volume(o, 1.0)
+	surface.add_water(o + Vector3(0, 0, 0.3), 0.15, 0.002)
+	surface.settle(0.02, 0.02)
+	await get_tree().physics_frame
+	var va1 := _water_volume(o, 1.0)
+	surface.add_water(o + Vector3(0, 0, -0.3), 0.1, -0.001)
+	surface.settle(0.02, 0.02)
+	await get_tree().physics_frame
+	var va2 := _water_volume(o, 1.0)
+	_check("water added and taken by add_water lands in the field exactly", absf(va1.x - va0.x - 0.002) < 0.00005 and absf(va1.x - va2.x - 0.001) < 0.00005,
+		"%.2f l, +2 l: %.2f l, -1 l: %.2f l" % [va0.x * 1000.0, va1.x * 1000.0, va2.x * 1000.0])
 	# Flow alone keeps the water: with the sources and sinks stopped (time scale 0), a print pressed beside the
 	# pool and cut into it draws water in; the volume holds.
 	surface.runoff_time_scale = 0.0
@@ -1137,6 +1158,8 @@ func _build_wade() -> void:
 	var car := _make_car(1500.0, 700.0, Vector3(0.0, _undisturbed(Vector3(0, 0, -6.0)) + 0.9, -6.0))
 	_dress_car(car)
 	surface.follow_target = surface.get_path_to(car)
+	var grains := _make_grains(car)
+	var vol0 := _water_volume(Vector3(0, 0, 0), 7.2).x
 	var full := get_window().size
 	get_window().size = Vector2i(160, 90)
 	for i in 30:
@@ -1149,6 +1172,32 @@ func _build_wade() -> void:
 	var c := car.global_position
 	var v := car.get_linear_velocity().length()
 	print("wade: car at %s, %.1f m/s, Froude %.1f in the rut" % [c, v, v / sqrt(9.81 * maxf(surface.get_standing_water_at(Vector3(0.8, 0, c.z + 3.0)), 1e-3))])
+	var wg := grains.get_water_grains()
+	if wg:
+		print("wade: %d drops in the air (%.2f l), %.2f l thrown" % [wg.get_airborne_count(), wg.get_airborne_volume() * 1000.0, wg.get_dug_volume() * 1000.0])
+	if splash_test:
+		# Past Froude 1 the tyres throw sheets of the rut's water (mud stage 4c): taken from the field and landed
+		# back on it, volume kept. Then the car stops and the drops come down.
+		car.throttle = 0.0
+		car.brake = 1.0
+		var thrown := wg.get_dug_volume() if wg else 0.0
+		var flying := wg.get_airborne_volume() if wg else 0.0
+		for i in 240:
+			await get_tree().physics_frame
+		var landed := wg.get_deposited_volume() if wg else 0.0
+		var air := wg.get_airborne_volume() if wg else 0.0
+		var vol1 := _water_volume(Vector3(0, 0, 0), 7.2).x
+		print("  thrown %.2f l (%.2f l in the air at once), landed %.2f l, still in the air %.2f l; ruts %.2f l before, %.2f l after" % [thrown * 1000.0, flying * 1000.0, landed * 1000.0, air * 1000.0, vol0 * 1000.0, vol1 * 1000.0])
+		var moved := surface.get_water_moved()
+		var owed := surface.get_water_owed()
+		print("  the field: %.2f l landed in it, %.2f l taken from it, %.2f l owed (thin films on the dry flat soak in: %.2f l)" % [moved.x * 1000.0, moved.y * 1000.0, owed * 1000.0, (vol0 + moved.x - moved.y - vol1) * 1000.0])
+		_check("tyres past Froude 1 throw the rut's water up as sheets", thrown > 0.0005 and flying > 0.0001, "%.2f l thrown, %.2f l in the air" % [thrown * 1000.0, flying * 1000.0])
+		# The field's books: what landed in it less what was taken equals what is still owed (a take that found less
+		# than its read back showed is owed, paid back by the water landing next), and the drops are all down.
+		var dug := wg.get_dug_volume()
+		_check("the thrown water lands back on the field, volume kept", air < 0.01 * dug and absf(landed - dug) < 0.001 * dug and owed < 0.05 * dug and absf(moved.x - moved.y - owed) < 0.01 * dug,
+			"%.2f l thrown, %.2f l landed, %.3f l in the air; the field %.2f l in, %.2f l out, %.2f l owed" % [dug * 1000.0, landed * 1000.0, air * 1000.0, moved.x * 1000.0, moved.y * 1000.0, owed * 1000.0])
+		return
 	var cam := Camera3D.new()
 	add_child(cam)
 	var cc := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([2.2, 1.5, c.z + 3.4, 0.8, 0.0, c.z + 1.5])

@@ -1712,6 +1712,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Underground reflections",
+   "settings": [
+    "screen_reflections"
+   ],
+   "note": "",
+   "what": "with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Raster reflections",
    "settings": [
     "raster_reflections"
@@ -2663,6 +2674,22 @@
    ],
    "note": "",
    "what": "an umbrella crown on a clear bole, cones in three ages and plated red-brown bark.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Mediterranean trees",
+   "settings": [
+    "PRESET_HOLM_OAK",
+    "PRESET_WILD_OLIVE",
+    "PRESET_MARITIME_PINE",
+    "PRESET_CAROB",
+    "PRESET_CORK_OAK",
+    "cork_stripped_years"
+   ],
+   "note": "",
+   "what": "holm oak and carob split low into dense domes, wild olive grows crooked stems from one stool, maritime pine runs onto a long clear bole, and cork oak carries thick cork plates or a stripped trunk that turns from orange to red-brown and darkens as new cork grows back.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

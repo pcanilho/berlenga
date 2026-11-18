@@ -204,6 +204,7 @@ private:
 		float current = 75.0f; // The stage now.
 	};
 	static bool _crop_swath(const CropPlot &p_pl, float &r_pitch, float &r_half);
+	static float crop_canopy_height(Crop p_crop, float p_stage);
 	Vector4 crop_view_published;
 	Vector4 crop_sun_published;
 	Color crop_lobe1_published;

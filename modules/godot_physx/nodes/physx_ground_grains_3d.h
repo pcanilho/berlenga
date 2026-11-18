@@ -56,6 +56,14 @@ class PhysXGroundGrains3D : public PhysXGranular3D {
 	bool mud = false; // this node is that child: clay clods, not sand
 	PhysXGroundGrains3D *mud_child = nullptr;
 	void _make_mud_child();
+	// Water (mud stage 4c): sprays carrying standing water go to a child of MPM liquid this node makes.
+	bool water_spray = true;
+	bool water = false; // this node is that child: water, not grains
+	PhysXGroundGrains3D *water_child = nullptr;
+	void _make_water_child();
+	void _adopt_child(PhysXGroundGrains3D *p_child);
+	// A grain or drop come down at p_at: sand and clay back into the field, water into its standing water.
+	void _land(const Vector3 &p_at, float p_radius, double p_volume);
 	void _take_spray(const Dictionary &p_spray, double p_delta);
 	Ref<Mesh> _make_clod_mesh();
 
@@ -83,12 +91,13 @@ class PhysXGroundGrains3D : public PhysXGranular3D {
 protected:
 	static void _bind_methods();
 	Ref<Mesh> _make_mpm_particle_mesh() override;
+	bool _is_granular() const override { return !water; }
 	void _notification(int p_what);
 
 public:
 	void set_ground_surface(const NodePath &p_path) { ground_surface = p_path; }
 	NodePath get_ground_surface() const { return ground_surface; }
-	void set_follow_target(const NodePath &p_path) { follow_target = p_path; }
+	void set_follow_target(const NodePath &p_path);
 	NodePath get_follow_target() const { return follow_target; }
 	void set_tread_depth(float p_m) { tread_depth = MAX(p_m, 0.0f); }
 	float get_tread_depth() const { return tread_depth; }
@@ -101,6 +110,11 @@ public:
 	void set_mud_spray(bool p_enabled) { mud_spray = p_enabled; }
 	bool is_mud_spray() const { return mud_spray; }
 	PhysXGroundGrains3D *get_mud_grains() const { return mud_child; }
+	void set_water_spray(bool p_enabled) { water_spray = p_enabled; }
+	bool is_water_spray() const { return water_spray; }
+	PhysXGroundGrains3D *get_water_grains() const { return water_child; }
+	// Makes this node the water one (before it enters the tree): MPM liquid drawn as clear water.
+	void set_as_water();
 	// Makes this node the clay one (before it enters the tree): heavier, cohesive, drawn as wet clods.
 	void set_as_mud();
 

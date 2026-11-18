@@ -490,6 +490,30 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   GroundSurface3D spray with a water share, which a grains node throws as PhysX MPM water (its clear-water child, foam
   and spray on, tinted by the mud the field carries), taken from the field there and returned to it where it lands, as
   the clods are.
+- **Sheets: research.** Tyre spray studies (Weir, Strange and Wheeler 1978; Pilkington 1990; Kuemmel et al. 2000) split
+  a tyre's water into a bow wave, side waves thrown out and up from the contact at 20 to 40 degrees, and tread pickup
+  flung off the rear of the tread; the side waves take most of it once the speed is past the water's wave speed
+  sqrt(g h). In height-field games and films the same split is made by turning height-field water into particles
+  where it cannot stay a height field (O'Brien and Hodgins 1995, "Dynamic simulation of splashing fluids"; Thuerey,
+  Muller-Fischer, Schirm and Gross 2007; Chentanez and Muller 2010; Unreal's Niagara water and Waterline Pro do it
+  with authored sprites), and back where the particles land, keeping the volume.
+- **Sheets: build.** Per wheel in water deeper than 5 mm with a Froude number over 1, a share of the water its
+  contact sweeps (width x depth x speed, a third at Fr 2 rising to most of it, Weir's curves) is taken from the
+  field under the tyre and thrown as two side sheets, plus tread pickup off a slipping tyre. GroundSurface3D
+  add_water() queues signed discs that the GPU water pass adds or takes (the area counted in the field's own texels,
+  so volume is exact; a take is held to half the depth read back there); the sprays carry the water's volume to the
+  grains node, which throws it as a third child, MPM liquid (not Drucker-Prager), drawn as clear water with its spray
+  and foam; drops landing on the field go back through add_water.
+- **Built (sheets).** As planned, with: only the leading wheel of a track throws (a rear wheel meets water its front one
+  has thrown); the take disc sits just ahead of the tread, sized to half the water it sweeps into that step by the
+  read back's own sum over the disc (get_standing_water_volume); a GPU ledger (binding 14, copied after the packed
+  field) counts what discs added, took and could not find, the shortfall paid back from the next water added, so the
+  books close exactly (--test=splash: a 4x4 at 3.7 m/s in 2.4 cm ruts throws about 10 l, all of it lands back). The
+  read back trails the GPU (15 Hz and the field's moves), so about half of what is asked is found and the rest is
+  borrowed until the drops land; thin films landing on the dry flat soak in (the field keeps films over 0.02 mm).
+  The liquid's drops are tracked through the solver's world transforms (their basis carries the drop size, which the
+  grains' check took for dead slots). Drawn as the solver's clear water; thin flying sheets need the clear spray
+  drops look (PhysX thread's card) to read, and muddy water a tint.
 - **Body.** Muddy water lifts the arches' spray level and washes stuck clods (2a already washes them in standing
   water).
 - Checks: a wheel driven through a puddle raises water ahead and lowers it behind, total volume kept to 1%; past

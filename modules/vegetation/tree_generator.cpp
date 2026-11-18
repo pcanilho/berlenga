@@ -754,16 +754,19 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIRECTION_NOISE] = 16;
 			p[PARAM_GRAVITROPISM] = 0.0f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.6f;
-			p[PARAM_APICAL_CONTROL] = 0.85f;
-			p[PARAM_SHED_RATIO] = 0.1f; // Evergreen: bare inner shoots are shed, the crown is a shell of leaves.
+			p[PARAM_APICAL_CONTROL] = 0.92f;
+			// A dense, dark crown: shade-tolerant buds and little shedding keep leaves deep inside
+			// (with shed 0.1 the crown read thin over bare twiggy limbs, docs 18 Nov).
+			p[PARAM_SHED_RATIO] = 0.04f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
 			p[PARAM_ROOT_FLARE] = 0.7f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.03f; // Worked trees are pruned of dead wood.
 			p[PARAM_LEAF_SIZE] = 0.07f; // 3-7 cm.
 			p[PARAM_LEAF_WIDTH] = 0.45f;
-			p[PARAM_LEAVES_PER_INTERNODE] = 26;
-			p[PARAM_LEAF_YEARS] = 3; // Leaves kept up to two years, on shoots of the last three.
-			bark_color = Color(0.5f, 0.47f, 0.42f); // Virgin cork: grey to buff.
-			leaf_color = Color(0.07f, 0.17f, 0.06f); // Dark, glossy above; grey felt below.
+			p[PARAM_LEAVES_PER_INTERNODE] = 34;
+			p[PARAM_LEAF_YEARS] = 4; // Leaves kept up to two years, on short shoots of the last four.
+			bark_color = Color(0.48f, 0.47f, 0.45f); // Virgin cork: pale grey.
+			leaf_color = Color(0.05f, 0.13f, 0.05f); // Dark, glossy above; grey felt below.
 			break;
 		case PRESET_HOLM_OAK: // Quercus ilex (trees.md 5ab): evergreen, a short bole and a dense, dark,
 			// rounded dome, leafy deep inside (shade tolerant), small grey-felted leaves.
@@ -815,31 +818,32 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAVES_PER_INTERNODE] = 30;
 			p[PARAM_LEAF_YEARS] = 3;
 			bark_color = Color(0.42f, 0.41f, 0.37f); // Grey.
-			leaf_color = Color(0.13f, 0.17f, 0.09f); // Grey-green above.
+			leaf_color = Color(0.2f, 0.23f, 0.15f); // Pale silver grey-green above.
 			break;
 		case PRESET_MARITIME_PINE: // Pinus pinaster (trees.md 5ac): tall, a long clear bole and an
-			// irregular, open crown high up; stout long needles; very thick, deeply furrowed bark.
-			// Built on the Scots pine growth rules (both are two-needle pines with whorls that
-			// self-prune), grown longer with longer shoots and stouter needles.
+			// irregular crown in the upper part; stout long needles; very thick, deeply furrowed
+			// bark. Built on the Scots pine growth rules (both are two-needle pines with whorls
+			// that self-prune), with weaker apical dominance and control so the laterals fill a broad crown (as a Scots
+			// pine it read as a spindly mast of thin whorls, docs 18 Nov), and stouter needles.
 			p[PARAM_YEARS] = 45;
 			p[PARAM_INTERNODE_LENGTH] = 0.4f;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
 			p[PARAM_WHORL_BUDS] = 5;
-			p[PARAM_APICAL_DOMINANCE] = 0.74f;
+			p[PARAM_APICAL_DOMINANCE] = 0.68f;
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
 			p[PARAM_MATURITY] = 30;
 			p[PARAM_BRANCH_ANGLE] = 65;
 			p[PARAM_DIRECTION_NOISE] = 9;
 			p[PARAM_GRAVITROPISM] = 0.0f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
-			p[PARAM_APICAL_CONTROL] = 0.7f;
+			p[PARAM_APICAL_CONTROL] = 0.8f; // Stronger laterals than Scots pine: a fuller, broader crown.
 			p[PARAM_PHOTOTROPISM] = 0.08f;
 			p[PARAM_SHED_RATIO] = 0.099f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.1f;
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.18f; // Pairs, 10-25 cm, stout.
-			p[PARAM_LEAVES_PER_INTERNODE] = 120;
-			p[PARAM_LEAF_YEARS] = 3;
+			p[PARAM_LEAVES_PER_INTERNODE] = 240;
+			p[PARAM_LEAF_YEARS] = 4;
 			p[PARAM_CROWN_CONE] = 0.45f;
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
 			p[PARAM_PIPE_EXPONENT] = 2.0f;
@@ -1360,8 +1364,9 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.lift = 0.22f; // Pruned up to the cork harvest height in the montado.
 		r.side = 0.7f;
 	} else if (preset == PRESET_MARITIME_PINE && forest_shade <= 0.0f) {
-		// No split: a strong leader, but open-grown it still self-prunes onto a long clear bole
-		// (Alia et al. 1996; the Landes pine).
+		// A strong leader to about 16 m, then it loses its dominance and the top breaks into a
+		// few stems: the mature crown, irregular and rounded, sits in the top third over a long
+		// clear bole (Alia et al. 1996; the Landes pine).
 		r.lift = 0.25f;
 	} else if (preset == PRESET_CAROB && forest_shade <= 0.0f) {
 		// A short trunk into a few spreading limbs under a broad dome (Batlle and Tous 1997).
@@ -3711,7 +3716,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
-		{ 3, 2, 0.3f, 0.05f, 0.004f, 0.4f, 0.18f }, // Cork: deep, wide fissures between spongy, rounded ridges (5aa).
+		{ 5, 3, 0.35f, 0.045f, 0.003f, 0.68f, 0.14f }, // Cork: long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3735,12 +3740,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float r = 0.88f + 0.08f * fibre;
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
-				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 3.0f : 1.0f));
+				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 2.5f : 1.0f));
 				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4, 4, 2, salt + 21u);
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4, 4, 2, salt + 27u);
-				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.3f : 0.0f)));
+				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.35f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : -1.0f, p_kind == BARK_PINEA ? 1.8f : 1.0f);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_CORK ? 0.5f : -1.0f), p_kind == BARK_PINEA ? 1.8f : 1.0f);
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
@@ -3754,10 +3759,17 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				if (p_kind == BARK_CORK) {
 					// Virgin cork (Natividade 1950; Pereira 2007): thick, spongy blocks, rounded and
 					// lumpy, between deep, wide fissures in an irregular network.
-					const float lumps = bark_fbm(u, v, 12, 8, 3, salt + 57u);
+					// Lumps a ridge long and wide: finer ones alias against the displaced near
+					// tube's 5 cm rings into stepped crescents.
+					const float lumps = bark_fbm(u, v, 4, 2, 2, salt + 57u);
 					// Rounded shoulders, not walls: the displaced near trunk tore steep walls into
 					// jagged spikes.
-					plate = Math::smoothstep(0.05f, 0.95f, open) * (0.85f + 0.3f * (lumps + 0.5f));
+					// An irregular network of cracks between cells two to three times as long as
+					// wide (5 by 3 to a tile, wide soft valleys between), half the walls up and down never split, so ridges
+					// run on for two or three cells; a 3 by 2 grid read as a honeycomb of pointed
+					// scales and noise zero lines as loops (docs, 18 Nov). Soft, rounded shoulders.
+					open = Math::smoothstep(0.0f, 1.0f, open);
+					plate = Math::sqrt(open) * (0.88f + 0.24f * (lumps + 0.5f));
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
 					// and splitting like an oak's interlaced ridges. The cells only add the shallower
@@ -3783,7 +3795,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				a = Color(shade, shade, shade);
 				if (p_kind == BARK_CORK) {
 					// Cork's fissures are warm red-brown under the grey-buff, weathered ridges.
-					a = Color(1.15f, 0.82f, 0.62f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.1f, 0.4f, open)) * shade;
+					a = Color(1.15f, 0.82f, 0.62f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.0f, 0.25f, open)) * shade;
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -17157,6 +17169,16 @@ PackedFloat32Array TreeGenerator::get_foliage_profile(int p_bins) const {
 }
 
 Ref<ArrayMesh> TreeGenerator::generate() {
+	// Old oleasters are gnarled: fluted, twisted, burred and hollowing at the base (trees.md 5ac),
+	// so a wild olive always grows at least part veteran. Restored on return.
+	struct VeteranRestore {
+		float &value;
+		const float saved;
+		~VeteranRestore() { value = saved; }
+	} veteran_restore{ veteran, veteran };
+	if (preset == PRESET_WILD_OLIVE && decay_class == 0) {
+		veteran = MAX(veteran, 0.5f);
+	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	nodes.clear();
 	buds.clear();

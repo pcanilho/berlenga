@@ -2021,6 +2021,24 @@ As built (18 Nov):
   rounded leaflets, dark and glossy, paler below; `BARK_SCALY`. Open-grown 11.5 m, crown 15 m
   across.
 
+Docs review (18 Nov): holm oak and carob passed. Fixes for the rest:
+- Wild olive: leaves paler silver grey-green, and the stems gnarled at the base: a wild olive
+  always grows at least half veteran (fluted, burred, hollowing), restored after generation.
+- Maritime pine: the Scots pine rules read as a spindly mast of thin whorls, crown small and
+  see-through. Weaker apical dominance (0.68) and control (0.8) let the laterals fill a broad
+  crown, with 240 needles a shoot over four years. Tried and dropped: a leader split high up
+  (16-24 m) and lifting the crown above 30% of the height; both starved the crown to a tuft on
+  a pole, and the result is sensitive to the lift (0.32 already thins it).
+- Cork oak crown: too open over bare twiggy limbs. Shade-tolerant buds, shed ratio 0.04, four
+  leaf years and 34 leaves a shoot give a broad, dense, dark dome on four limbs.
+- Cork bark: read as a regular honeycomb of pointed scales. Tried: cells stretched along the
+  stem (stripes with dark slots), noise zero lines as furrows (smooth with a few lines, then a
+  grid of pits; the three-octave fbm's zero lines close into small loops). As built: an
+  irregular crack network of 5 by 3 cells a tile (10 by 13 cm) with a strong domain warp, a
+  third of all walls and half of those up and down never split so ridges run on, wide soft
+  valleys (crack 0.35 of a cell) and rounded shoulders (square root of the profile), pale grey
+  ridges over warm fissures.
+
 Not yet: olive and carob fruit, cultivated olives (grafted, pruned open vase), resin-tapping
 scars on maritime pines, Mediterranean stands (montado, maritime pine plantation).
 

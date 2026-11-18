@@ -532,6 +532,111 @@ void GroundSurface3D::add_wader(int64_t p_id, const Vector3 &p_axle, float p_rad
 	waders.push_back(w);
 }
 
+void GroundSurface3D::_water_owed_update() {
+	GroundDeformGPUHost *hosts[2] = { &gpu_host, &near_host };
+	for (int k = 0; k < 2; k++) {
+		if (hosts[k]->gpu.is_null()) {
+			continue;
+		}
+		const uint32_t now = hosts[k]->gpu->get_water_owed_mm3();
+		// Unsigned difference (the ledger wraps at 4 m3); one that went back is a new ledger (the field reset).
+		const uint32_t seen = water_owed_seen[k];
+		const uint32_t delta = now >= seen || seen - now > 0x80000000u ? uint32_t(now - seen) : now;
+		water_owed += double(delta) * 1e-9;
+		water_owed_seen[k] = now;
+	}
+}
+
+void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float p_volume) {
+	if (p_radius <= 0.0f || p_volume == 0.0f || !Math::is_finite(p_volume)) {
+		return;
+	}
+	if (p_volume > 0.0f) {
+		// Water a take asked for but did not find (the field had less than its read back showed) was thrown all
+		// the same: this water pays it back first, so the volume is kept.
+		_water_owed_update();
+		const double pay = MIN(double(p_volume), water_owed);
+		water_owed -= pay;
+		p_volume -= float(pay);
+		if (p_volume <= 0.0f) {
+			return;
+		}
+	}
+	// Discs close together merge (a spray lands as many drops): the same texel area holds them.
+	for (WaterDisc &d : water_discs) {
+		if (d.radius == p_radius && (d.volume < 0.0) == (p_volume < 0.0f) && Vector2(d.position.x - p_position.x, d.position.z - p_position.z).length() < 0.5f * p_radius) {
+			d.volume += p_volume;
+			return;
+		}
+	}
+	if ((int)water_discs.size() >= 4 * WATER_DISCS) {
+		// More than a frame can take: the nearest of the same sign takes it.
+		int best = -1;
+		float bd = 1e30f;
+		for (int k = 0; k < (int)water_discs.size(); k++) {
+			const float dd = water_discs[k].position.distance_squared_to(p_position);
+			if ((water_discs[k].volume < 0.0) == (p_volume < 0.0f) && dd < bd) {
+				bd = dd;
+				best = k;
+			}
+		}
+		if (best >= 0) {
+			water_discs[best].volume += p_volume;
+		}
+		return;
+	}
+	WaterDisc d;
+	d.position = p_position;
+	d.radius = p_radius;
+	d.volume = p_volume;
+	water_discs.push_back(d);
+}
+
+float GroundSurface3D::get_standing_water_volume(const Vector3 &p_position, float p_radius) const {
+	const bool near = is_near_active() && _near_inside(p_position.x, p_position.z);
+	const GroundDeformField &f = near ? near_fld : field;
+	const int n = f.resolution;
+	if (!f.valid || int(f.water.size()) != n * n || p_radius <= 0.0f) {
+		return 0.0f;
+	}
+	const float t = f.texel();
+	const int x0 = MAX((int)Math::floor((p_position.x - p_radius) / t - 0.5f) - f.origin.x, 0);
+	const int x1 = MIN((int)Math::ceil((p_position.x + p_radius) / t - 0.5f) - f.origin.x, n - 1);
+	const int z0 = MAX((int)Math::floor((p_position.z - p_radius) / t - 0.5f) - f.origin.y, 0);
+	const int z1 = MIN((int)Math::ceil((p_position.z + p_radius) / t - 0.5f) - f.origin.y, n - 1);
+	double v = 0.0;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float wx = (f.origin.x + x + 0.5f) * t - p_position.x;
+			const float wz = (f.origin.y + z + 0.5f) * t - p_position.z;
+			if (wx * wx + wz * wz <= p_radius * p_radius) {
+				v += f.water[z * n + x];
+			}
+		}
+	}
+	return float(v * t * t);
+}
+
+int GroundSurface3D::_disc_texels(const GroundDeformField &p_field, const Vector3 &p_position, float p_radius) {
+	const float t = p_field.texel();
+	const int x0 = (int)Math::floor((p_position.x - p_radius) / t - 0.5f) - p_field.origin.x;
+	const int x1 = (int)Math::ceil((p_position.x + p_radius) / t - 0.5f) - p_field.origin.x;
+	const int z0 = (int)Math::floor((p_position.z - p_radius) / t - 0.5f) - p_field.origin.y;
+	const int z1 = (int)Math::ceil((p_position.z + p_radius) / t - 0.5f) - p_field.origin.y;
+	const int n = p_field.resolution;
+	int count = 0;
+	for (int z = MAX(z0, 0); z <= MIN(z1, n - 1); z++) {
+		for (int x = MAX(x0, 0); x <= MIN(x1, n - 1); x++) {
+			const float wx = (p_field.origin.x + x + 0.5f) * t - p_position.x;
+			const float wz = (p_field.origin.y + z + 0.5f) * t - p_position.z;
+			if (wx * wx + wz * wz <= p_radius * p_radius) {
+				count++;
+			}
+		}
+	}
+	return count;
+}
+
 void GroundSurface3D::set_mud_color(const Color &p_color) {
 	mud_color = p_color;
 }
@@ -3416,6 +3521,7 @@ Array GroundSurface3D::take_sprays() {
 		d["side_share"] = s.side_share;
 		d["side_volume_rate"] = s.side_volume_rate;
 		d["stickiness"] = s.stickiness;
+		d["water"] = s.water;
 		d["volume"] = s.volume;
 		out.push_back(d);
 	}
@@ -3536,7 +3642,21 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 			put(18 + 2 * count, Math::atan2(v.y, v.x), 0.0f, wd->half_width, speed);
 			count++;
 		}
-		put(16, float(count), 0.0f, 0.0f, 0.0f);
+		// Water added and taken (add_water): each disc's depth a pass, over its area in this field's texels.
+		int discs = 0;
+		for (const WaterDisc &wd : water_discs) {
+			if (discs >= WATER_DISCS) {
+				break;
+			}
+			const int texels = _disc_texels(p_field, wd.position, wd.radius);
+			if (texels <= 0) {
+				continue;
+			}
+			const float t = p_field.texel();
+			put(25 + discs, wd.position.x, wd.position.z, wd.radius, float(wd.volume / (double(texels) * t * t) / passes));
+			discs++;
+		}
+		put(16, float(count), float(discs), 0.0f, 0.0f);
 	} else if (_runoff_on_gpu()) {
 		// No water step (a still frame): the bed's relief is still drawn (the blit reads it), nothing moves.
 		put(15, 1.0f, 0.0f, 0.002f, 0.0f);
@@ -3549,6 +3669,18 @@ void GroundSurface3D::_gpu_submit(double p_delta, double p_age, bool p_readback,
 	if (is_near_active()) {
 		// The near field lies inside the main one's deformable middle: no edge margin of its own.
 		_gpu_submit_field(near_host, near_fld, near_ground_dirty, near_cells_dirty, near_slow_accum, _near_passes(), 0.0f, p_delta, p_age, p_readback, p_sync);
+	}
+	if ((standing_water || _runoff_on_gpu()) && p_delta > 0.0 && !water_discs.is_empty()) {
+		// The discs this step applied (the first WATER_DISCS) are done; the rest wait for the next.
+		const int done = MIN((int)water_discs.size(), WATER_DISCS);
+		for (int k = 0; k < done; k++) {
+			water_added += water_discs[k].volume;
+		}
+		LocalVector<WaterDisc> rest;
+		for (int k = done; k < (int)water_discs.size(); k++) {
+			rest.push_back(water_discs[k]);
+		}
+		water_discs = rest;
 	}
 	if (p_sync) {
 		_gpu_take();
@@ -3613,7 +3745,7 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 		const WeatherMap3D *wm = WeatherMap3D::get_active();
 		const bool rain = wm && wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) > 0.0f;
 		const bool runoff = _runoff_on_gpu() && (rain || runoff_seep_any || water_seen > 0.0f);
-		if (runoff || (standing_water && (rain || water_seen > 0.0f || water_seep))) {
+		if (runoff || (standing_water && (rain || water_seen > 0.0f || water_seep || !water_discs.is_empty()))) {
 			flags |= GroundDeformGPU::STEP_WATER;
 			water_passes = _water_passes(p_field, p_delta);
 		}
@@ -4029,6 +4161,11 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mud_color_map"), &GroundSurface3D::get_mud_color_map);
 	ClassDB::bind_method(D_METHOD("get_mud_color_at", "position"), &GroundSurface3D::get_mud_color_at);
 	ClassDB::bind_method(D_METHOD("add_wader", "id", "axle", "radius", "half_width", "velocity"), &GroundSurface3D::add_wader);
+	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume"), &GroundSurface3D::add_water);
+	ClassDB::bind_method(D_METHOD("get_water_added"), &GroundSurface3D::get_water_added);
+	ClassDB::bind_method(D_METHOD("get_water_owed"), &GroundSurface3D::get_water_owed);
+	ClassDB::bind_method(D_METHOD("get_standing_water_volume", "position", "radius"), &GroundSurface3D::get_standing_water_volume);
+	ClassDB::bind_method(D_METHOD("get_water_moved"), &GroundSurface3D::get_water_moved);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_yield_stress", "concentration"), &GroundSurface3D::mud_yield_stress);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_viscosity", "concentration"), &GroundSurface3D::mud_viscosity);
 	ClassDB::bind_method(D_METHOD("set_near_field", "enabled"), &GroundSurface3D::set_near_field);

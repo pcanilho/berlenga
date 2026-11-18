@@ -502,26 +502,50 @@ float tm_rd_cracks(float x, float c, float w) {
 float tm_rd_clamp(float w, float per) {
 	return 1.0 - smoothstep(0.25, 0.5, w / per);
 }
-// A scree stone's profile at p, 0 on the gravel bed to 1 on the tallest tops, and the Worley values it came from.
-// Angular clasts: each cell's polygon inset from its borders (half of F2 - F1 is the distance to the border) by 5 to
-// 12% of a cell, with a rounded edge 12% wide and a low dome, so neighbouring stones never meet in a crease and the
-// gravel bed shows between them (open-work talus, angular as rockfall breaks it).
-float tm_rd_stone(vec3 p, out vec3 wv, out float se) {
-	// Cells of 0.45 m, warped so they fall in no rows, each stone inset from its cell by its own 3 to 20 cm: sizes
-	// run from fist-sized chips to 0.4 m blocks with gravel between (talus is poorly sorted). Each stone is an
-	// angular block: a flat top tilted its own way (a broken face, not a dome), with a narrow bevel to the bed.
-	vec3 q = p / (0.45 * tm_rock_detail_scale);
-	q += (vec3(tm_rd_noise(q * 0.37), tm_rd_noise(q * 0.41 + 5.0), tm_rd_noise(q * 0.33 + 9.0)) - 0.5) * 0.9;
+// One octave of scree stones at q (in cells): the stone's profile, 0 on the bed to 1 on the tallest tops; wv = the
+// Worley values (F1, F2, the cell's hash), se = the distance inside the stone's outline (negative in the gaps).
+// Each cell's polygon (straight borders: the distance to the bisector of the two nearest points, not F2 - F1, which
+// bows the edges into rounded tiles) is inset by its own share of a cell, and only some cells hold a stone, so the
+// stones stand apart in the bed instead of tiling it. A stone is an angular block: two broken faces at their own
+// tilts meeting in a crest (the lower of two planes), steep sides, larger stones taller.
+float tm_rd_stone1(vec3 q, float fill, float side, out vec3 wv, out float se) {
 	vec3 n, c, cb;
 	vec4 w4 = tm_rd_worley2(q, n, c, cb);
 	wv = w4.xyz;
-	float h2 = fract(w4.z * 17.31), h3 = fract(w4.z * 5.77);
-	se = 0.5 * (wv.y - wv.x) - mix(0.03, 0.2, h2 * h2);
-	float sb = clamp(se / 0.06, 0.0, 1.0);
-	vec3 g = (vec3(h3, fract(w4.z * 9.13), fract(w4.z * 3.71)) - 0.5) * 1.5;
-	// Larger stones stand taller (a block 0.4 m across shows some 0.2 m of side, a chip a few centimetres).
-	float top = clamp(0.4 + 0.5 * (1.0 - h2) + dot(-c, g), 0.2, 1.0);
-	return top * sb * (2.0 - sb);
+	float h2 = fract(w4.z * 17.31), h4 = fract(w4.z * 41.37);
+	se = dot(0.5 * (c + cb), n) - mix(0.06, 0.24, h2 * h2);
+	if (h4 > fill) {
+		se = -0.5; // an empty cell: the bed
+		return 0.0;
+	}
+	// Tumbled at all angles: faces tilted up to some 50 degrees, so a block shows a tall side and reads chunky,
+	// not as a flat slab lying in the bed.
+	vec3 g1 = (vec3(fract(w4.z * 5.77), fract(w4.z * 9.13), fract(w4.z * 3.71)) - 0.5) * 3.4;
+	vec3 g2 = (vec3(fract(w4.z * 2.31), fract(w4.z * 6.53), fract(w4.z * 11.9)) - 0.5) * 3.4;
+	float top = 0.35 + 0.55 * (1.0 - h2) + min(dot(-c, g1), dot(-c, g2) + 0.12);
+	float sb = clamp(se / side, 0.0, 1.0);
+	return clamp(top, 0.15, 1.0) * sb * (2.0 - sb);
+}
+// The scree's stones at p: blocks in cells of 0.45 m (about half the cells), chips in cells of 0.18 m between them
+// (a second size class, as talus is poorly sorted), standing up to half as tall. wv and se come from whichever
+// stone is on top (se in the large cells' units). kc fades the chips by frequency clamping (1 up close); side is the
+// width of the stones' sides in cells (0.05, steep; the shadow rays take wider ones, see tm_rd_pom_shadow).
+float tm_rd_stone(vec3 p, float kc, float side, out vec3 wv, out float se) {
+	vec3 q = p / (0.45 * tm_rock_detail_scale);
+	// Warped so the cells fall in no rows.
+	q += (vec3(tm_rd_noise(q * 0.37), tm_rd_noise(q * 0.41 + 5.0), tm_rd_noise(q * 0.33 + 9.0)) - 0.5) * 0.9;
+	float big = tm_rd_stone1(q, 0.55, side, wv, se);
+	if (se > 0.05 || kc <= 0.0) {
+		return big; // well inside a block (no chip can stand above it), or the chips are under a pixel
+	}
+	vec3 wv2;
+	float se2;
+	float small = 0.45 * kc * tm_rd_stone1(q * 2.5 + 31.0, 0.6, side, wv2, se2);
+	if (small > big) {
+		wv = wv2;
+	}
+	se = max(se, se2 / 2.5);
+	return max(big, small);
 }
 // One block's relief (x, metres) and tone (y, 0 to 1) at q (metres over tm_rock_detail_scale), from its hash h and the
 // vector c from q to its point in the stretched block space.
@@ -532,8 +556,9 @@ vec4 tm_rd_block(vec3 q, float h, vec3 c) {
 	float facet = dot(-c * vec3(2.6, 1.3, 3.4), bg);
 	return vec4((bh.x - 0.5) * 0.10 + tilt + facet, h, 0.0, 0.0);
 }
-// Stones stand up to 0.2 m out of the bed.
-const float TM_RD_STONE_H = 0.2;
+// Stones stand up to 0.3 m out of the bed: talus blocks are roughly as tall as they are wide (0.2 m read as flat
+// slabs lying in the bed).
+const float TM_RD_STONE_H = 0.3;
 // Height (m) and shade (mean 1 over any area, so the detail never darkens the ground) at p. dx and dy are the axes of
 // the pixel's footprint on the ground: the filter widths are anisotropic, long along a face seen edge-on.
 vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
@@ -599,30 +624,38 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 	if (scree > 0.0) {
 		vec3 wv;
 		float se;
-		float stone = tm_rd_stone(p, wv, se);
+		float stone = tm_rd_stone(p, tm_rd_clamp(wmax, 0.18), 0.05, wv, se);
 		float ks = tm_rd_clamp(wmax, 0.45);
-		float sb = clamp(se / 0.12, 0.0, 1.0);
-		float bev = sb * (2.0 - sb);
 		hgt += scree * ks * stone * TM_RD_STONE_H * tm_rock_detail_scale;
-		// 0.875 is the mean of stones and gravel together (measured over the cells), so the mean stays 1.
-		float st_shade = (0.8 + 0.2 * bev) * (0.92 + 0.16 * wv.z) / 0.875;
+		// Each stone its own tone (fresher and older, lichened faces), mean 1; no darkened rim, which drew the
+		// stones' outlines as grooves (paving). The bed between them is shaded by the stones themselves (parallax
+		// shadows up close, the normal further off).
+		float st_shade = mix(1.0, 0.8 + 0.4 * wv.z, step(0.0, se));
 		// Between the stones, a matrix of gravel and fines (talus is poorly sorted: Fuller-like grading, each size
-		// filling the gaps of the next, so the clasts stand in a finer bed). Gravel: a second octave of rounded
-		// cells 3 to 10 cm, dipped in the bed; fines: grain roughness under a centimetre. Each fades by frequency
+		// filling the gaps of the next, so the clasts stand in a finer bed). Gravel: grit patches a few
+		// centimetres across in the bed; fines: grain roughness under a centimetre. Each fades by frequency
 		// clamping as the pixel grows, and the gap share comes from the stones' own profile.
 		float gap = 1.0 - smoothstep(0.0, 0.03, se);
-		float kg = tm_rd_clamp(wmax, 0.08);
+		float kg = tm_rd_clamp(wmax, 0.045);
 		float gs = 1.0;
 		if (kg > 0.0 && gap > 0.0) {
-			vec3 gv = tm_rd_worley(p / (0.065 * tm_rock_detail_scale) + 17.0);
-			float gr = 0.5 + 0.35 * gv.z;
-			float gx2 = min((gv.x / gr) * (gv.x / gr), 1.0);
-			float kf = tm_rd_clamp(wmax, 0.02);
-			float fines = kf * (tm_rd_noise(p * (60.0 / tm_rock_detail_scale)) - 0.5) * 0.004 * tm_rock_detail_scale;
-			hgt += scree * gap * (kg * ((1.0 - gx2) * sqrt(1.0 - gx2) * 0.018 - 0.01) * tm_rock_detail_scale + fines);
-			// Gravel tops lighter, the fines between them darker (shadowed pores); 0.915 is the mean over the cells,
-			// so the matrix keeps the ground's mean shade.
-			gs = mix(1.0, mix(0.86, 1.06, smoothstep(0.3, 1.0, 1.0 - gx2)) * (0.95 + 0.1 * gv.z) / 0.915, kg);
+			// Grit and gravel as noise, not cells: patches of coarser grains standing a little proud of the fines,
+			// with no outlines (cells of any kind stamped a pattern of outlined polygons over the bed).
+			// Fine noise on coordinates wrapped every 64 m: world positions a kilometre out, times a few dozen per
+			// metre, leave a float too few bits for the lattice's fraction and the noise breaks into a grid of dots.
+			vec3 pw = mod(p, 64.0);
+			float gn = tm_rd_noise(pw * (22.0 / tm_rock_detail_scale) + 17.0);
+			float gn2 = tm_rd_noise(pw * (57.0 / tm_rock_detail_scale) + 3.0);
+			// Each octave fades by its own period (4.5 and 1.75 cm): past them they beat into rings.
+			float k2 = tm_rd_clamp(wmax, 0.0175);
+			gn = mix(0.5, gn, kg);
+			gn2 = mix(0.5, gn2, k2);
+			float gc = smoothstep(0.45, 0.8, 0.6 * gn + 0.4 * gn2);
+			float kf = tm_rd_clamp(wmax, 0.0167);
+			float fines = kf * (tm_rd_noise(pw * (60.0 / tm_rock_detail_scale)) - 0.5) * 0.004 * tm_rock_detail_scale;
+			hgt += scree * gap * (kg * (gc * 0.01 - 0.003) * tm_rock_detail_scale + fines);
+			// Grains lighter and darker at random (mean about 1).
+			gs = mix(1.0, (0.92 + 0.08 * gc) * (0.88 + 0.24 * gn2) / 0.955, kg);
 		}
 		shade = mix(shade, mix(1.0, st_shade * mix(1.0, gs, gap), ks), scree);
 	}
@@ -652,28 +685,79 @@ vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, v
 	shade = h0.y;
 	return normalize(sn - sg);
 }
+// A scree stone's colour (a factor on the scree's albedo) at p: each block its own grey, light to mid (weathered
+// rinds differ), some fresh, paler and cooler breaks, a grain of crystals and pores, and crustose lichen in spots on
+// the older blocks (grey-green, now and then yellow-green, as Rhizocarpon); the bed between them keeps its own
+// colour. Each feature fades to its mean as the pixel grows past it (wmax, in rock-detail scales).
+vec3 tm_rd_stone_color(vec3 p, float wmax) {
+	float ks = tm_rd_clamp(wmax, 0.45);
+	if (ks <= 0.0) {
+		return vec3(1.0);
+	}
+	vec3 wv;
+	float se;
+	float st = tm_rd_stone(p, tm_rd_clamp(wmax, 0.18), 0.05, wv, se);
+	float on = smoothstep(0.0, 0.02, se) * step(1e-3, st);
+	if (on <= 0.0) {
+		return vec3(1.0);
+	}
+	float hid = wv.z;
+	float fresh = step(fract(hid * 7.71), 0.2);
+	float tone = fract(hid * 3.37);
+	vec3 col = mix(0.72, 1.38, tone) * mix(vec3(1.04, 1.0, 0.94), vec3(0.97, 1.0, 1.04), fract(hid * 19.3));
+	col = mix(col, vec3(1.45, 1.47, 1.52), fresh);
+	vec3 q = mod(p, 64.0) / tm_rock_detail_scale; // wrapped, as for the grit
+	float kg = tm_rd_clamp(wmax, 0.006);
+	col *= 1.0 + kg * (tm_rd_noise(q * 140.0) - 0.5) * 0.3 + tm_rd_clamp(wmax, 0.02) * (tm_rd_noise(q * 45.0 + 7.0) - 0.5) * 0.15;
+	float kl = tm_rd_clamp(wmax, 0.05);
+	float ln = 0.65 * tm_rd_noise(q * 14.0 + hid * 50.0) + 0.35 * tm_rd_noise(q * 38.0 + 11.0);
+	float lichen = kl * (1.0 - fresh) * smoothstep(0.62, 0.68, ln) * step(0.35, fract(hid * 13.1));
+	vec3 lc = fract(hid * 23.9) < 0.25 ? vec3(1.05, 1.15, 0.55) : vec3(1.1, 1.16, 1.0);
+	col = mix(col, lc, lichen);
+	return mix(vec3(1.0), col, on * ks);
+}
 // Parallax occlusion mapping for the scree's stones (Tatarchuk 2006, Practical parallax occlusion mapping with
 // approximate soft shadows), against the procedural stone profile instead of a height texture. The ground's mesh is
 // the stones' tops; the gravel bed lies h below it. The view ray v steps down from p until it passes under a stone,
 // then refines linearly between the last two steps. Returns the hit's ground position (on the base plane) and its
 // depth below the mesh. j is a 0-1 jitter for the steps.
-vec3 tm_rd_pom(vec3 p, vec3 n, vec3 v, float h, float j, out float depth) {
+vec3 tm_rd_pom(vec3 p, vec3 n, vec3 v, float h, float j, float kc, out float depth) {
 	float down = max(-dot(v, n), 0.08); // metres of depth per metre along the ray
 	vec3 lat = v - n * dot(v, n); // the ray's drift across the plane per metre along it
 	// Long enough to reach the bed, but never drifting more than a stone and a half across the plane.
 	float t_max = min(h / down, 0.5 * tm_rock_detail_scale / max(length(lat), 1e-4));
-	const int STEPS = 16;
+	// Steps of at most 3 mm across the ground (more the more grazing the view, as Tatarchuk 2006 scales them): a
+	// step passing clean over a stone's corner or side drew the bed behind it, a comb of teeth along the stones'
+	// outlines, wherever a step spanned more than a side's width.
+	int STEPS = clamp(int(t_max * length(lat) / (0.003 * tm_rock_detail_scale)) + 8, 12, 96);
 	float t0 = 0.0, d0 = 0.0, s0 = 0.0;
 	vec3 wv;
 	float se;
 	for (int i = 1; i <= STEPS; i++) {
 		float t = t_max * (float(i) - 1.0 + j) / float(STEPS - 1);
 		float d = t * down; // the ray's depth
-		float s = h * (1.0 - tm_rd_stone(p + lat * t, wv, se)); // the surface's depth there
+		float s = h * (1.0 - tm_rd_stone(p + lat * t, kc, 0.05, wv, se)); // the surface's depth there
 		if (d >= s) {
-			// Between the previous step (above) and this one (below).
+			// Between the previous step (above) and this one (below): a few bisections first (the stones' steep
+			// sides fall within one step, and a single linear guess drew them as stacked layers), then the linear
+			// guess between the last two.
+			float t1 = t;
+			for (int k = 0; k < 4; k++) {
+				float tm = 0.5 * (t0 + t1);
+				float dm = tm * down;
+				float sm = h * (1.0 - tm_rd_stone(p + lat * tm, kc, 0.05, wv, se));
+				if (dm >= sm) {
+					t1 = tm;
+					d = dm;
+					s = sm;
+				} else {
+					t0 = tm;
+					d0 = dm;
+					s0 = sm;
+				}
+			}
 			float a = (s0 - d0) / max((s0 - d0) - (s - d), 1e-5);
-			float th = mix(t0, t, clamp(a, 0.0, 1.0));
+			float th = mix(t0, t1, clamp(a, 0.0, 1.0));
 			depth = th * down;
 			return p + lat * th;
 		}
@@ -685,7 +769,7 @@ vec3 tm_rd_pom(vec3 p, vec3 n, vec3 v, float h, float j, out float depth) {
 	return p + lat * t_max;
 }
 // The sun's visibility from a parallax hit (ground position q, depth below the mesh) over the stones: l toward the
-// sun, soft over the sun's disc or the pixel e, whichever is wider.
+// sun, soft over a penumbra or the pixel e, whichever is wider.
 float tm_rd_pom_shadow(vec3 q, float depth, vec3 n, vec3 l, float h, float e, float j) {
 	float up = dot(l, n);
 	if (up <= 0.02 || depth <= 1e-4) {
@@ -696,13 +780,27 @@ float tm_rd_pom_shadow(vec3 q, float depth, vec3 n, vec3 l, float h, float e, fl
 	float vis = 1.0;
 	vec3 wv;
 	float se;
-	const int STEPS = 10;
+	// Steps on a lattice fixed in the world along the light (1 cm across the ground), not fractions of each pixel's
+	// own ray: neighbouring pixels then sample the stones at the same points, and the shadow's outline no longer
+	// breaks into a comb of teeth where a step lands just inside a stone for one pixel and just outside for the next.
+	float latl = length(lat);
+	if (latl < 1e-3) {
+		return 1.0; // the sun overhead: the stones shade nothing beside them
+	}
+	float st = 0.01 * tm_rock_detail_scale;
+	float off = fract(dot(q, lat / latl) / st);
+	int STEPS = min(int(ceil(t_max * latl / st)) + 1, 32);
 	for (int i = 1; i <= STEPS; i++) {
-		float t = t_max * (float(i) - 1.0 + j) / float(STEPS);
+		// Half a step out at least: a first sample at the start point itself compared the surface with itself and
+		// shadowed it by half, drawing contour lines and a grid of dots wherever the lattice passed near it.
+		float t = min((float(i) - off + 0.5) * st / latl, t_max);
 		float d = depth - t * up; // the ray's depth
-		float s = h * (1.0 - tm_rd_stone(q + lat * t, wv, se)); // the surface's
-		float w = max(t * 0.0093, e);
-		vis = min(vis, smoothstep(-w, w, s - d));
+		// Sides some 7 cm wide for the shadow, which softens its outline a little more.
+		float s = h * (1.0 - tm_rd_stone(q + lat * t, 1.0, 0.15, wv, se)); // the surface's
+		// A penumbra some three times the sun's disc: at the disc's own width a stone's edge falling between two
+		// steps cut the shadow's outline into saw teeth.
+		float w = max(t * 0.03, e);
+		vis = min(vis, smoothstep(-w, w, s - d + 0.002 * tm_rock_detail_scale));
 	}
 	return vis;
 }
@@ -747,10 +845,11 @@ void fragment() {
 		}
 		float scree = sg * (1.0 - rock) + 0.45 * till;
 		float rest = max(1.0 - rock - scree, 0.0);
-		// On a talus slope, ground with less than some 0.3 m of soil has no organic topsoil at its surface: it is the
-		// debris's own fines (regolith), grey like the scree, not the dark olive of a vegetated soil (a half-talus
-		// cone read olive all over). Deeper soil on and below the cones stays soil.
-		float regolith = (1.0 - smoothstep(0.05, 0.3, max(g.x, 0.0))) * smoothstep(0.0, 0.2, sg) * (1.0 - till);
+		// On a talus slope the ground between the stones is the debris's own fines (regolith), grey like the scree,
+		// not the dark olive of a vegetated topsoil: rockfall keeps burying and stripping it, whatever depth of fine
+		// material lies under it (a half-talus cone read olive all over, half its weight soil). Only the fan's
+		// fringes and the till keep their soil; the sward grows on them by the generator's own rules.
+		float regolith = smoothstep(0.05, 0.3, sg) * (1.0 - till);
 		scree += rest * regolith;
 		rest *= 1.0 - regolith;
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
@@ -904,7 +1003,10 @@ void fragment() {
 )";
 	if (detail) {
 		c += R"(	// The generator's erosion detail below the vertex spacing, faded out where a pixel covers it.
+	// The footprint's long axis (stretched by 1 / cos of the view to the ground, up to 10 times): a face seen edge-on
+	// under a side sun drew the detail's octaves as fine diagonal hatching while the cone's width alone kept them.
 	float footprint = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+	footprint /= max(abs(dot(normalize(wp - CAMERA_POSITION_WORLD), wn)), 0.1);
 	sn = terrain_detail_normal(wp, sn, tm_detail_octaves, footprint);
 )";
 	}
@@ -927,16 +1029,19 @@ void fragment() {
 		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.55, 0.72, wn.y));
 		float rd_scree = clamp(w[1], 0.0, 1.0);
 		vec3 rd_p = wp;
-		// Scree stones in parallax up close: full while a pixel spans under 4 mm, gone by 12 mm (about 10 m at
+		// Scree stones in parallax up close: full while a pixel spans under 6 mm, gone by 2 cm (about 16 m at
 		// 1080p looking down on them), where the normal alone carries them.
 		// The footprint's long axis, not the cone's width: at a grazing angle the parallax of stones a pixel cannot
 		// resolve along the view stretched into hard black hatching across far slopes.
 		float rd_fp = max(length(rd_dx), length(rd_dy));
-		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.004, 0.012, rd_fp / tm_rock_detail_scale));
+		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.006, 0.02, rd_fp / tm_rock_detail_scale));
 		if (rd_h > 0.002) {
-			float rd_j = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+			// No per-pixel jitter of the steps: the bisection finds the stones' sides without it, and jitter drew a
+			// dither over the stones and their shadows wherever no temporal filter averages it out.
+			const float rd_j = 0.5;
 			float rd_depth;
-			rd_p = tm_rd_pom(wp, wn, rd_v, rd_h, rd_j, rd_depth);
+			// The chips fade as in the normal (tm_rd_height): at full height past their clamp they beat into rings.
+			rd_p = tm_rd_pom(wp, wn, rd_v, rd_h, rd_j, tm_rd_clamp(rd_fp / tm_rock_detail_scale, 0.18), rd_depth);
 			// The stones shade the bed and each other from the sun, under the path tracer too (no faces to trace).
 			vec3 rd_l = relief_sun_direction();
 			if (dot(rd_l, rd_l) > 0.5) {
@@ -945,6 +1050,9 @@ void fragment() {
 		}
 		sn = tm_rock_detail(rd_p, wn, sn, rd_face, clamp(w[1], 0.0, 1.0), rd_dx, rd_dy, rd_shade);
 		albedo *= rd_shade;
+		if (rd_scree > 1e-3) {
+			albedo *= mix(vec3(1.0), tm_rd_stone_color(rd_p, max(length(rd_dx), length(rd_dy)) / tm_rock_detail_scale), rd_scree);
+		}
 	}
 )";
 	}

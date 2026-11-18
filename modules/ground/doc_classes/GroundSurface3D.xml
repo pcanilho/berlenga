@@ -22,6 +22,15 @@
 				Tells the standing water a tyre centred on [param axle] is moving through it this physics frame at [param velocity] ([param id] names the tyre: a later call with the same id moves it): the water cannot stand inside it, so it is pushed out ahead of it and closes in behind, volume kept, running off as a bow wave and a wake. [PhysXVehicle3D] calls it for its wheels in water. Up to four tyres over the field count.
 			</description>
 		</method>
+		<method name="add_water">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="volume" type="float" />
+			<description>
+				Adds [param volume] m³ of standing water spread evenly over a disc of [param radius] at [param position], or takes it where [param volume] is negative (thrown spray landing, and water a tyre throws up). Applied by the next water step on the GPU, the disc's area counted in the field's own texels, so the volume is exact. A take that finds less water than it asks for is owed (see [method get_water_owed]) and paid back by the next water added.
+			</description>
+		</method>
 		<method name="bed_load" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="water_speed" type="float" />
@@ -271,6 +280,14 @@
 				How far a body of [param mass] kg on [param area] m² ([param width] m wide, 0: from the area) sinks into the ground at [param position], in metres.
 			</description>
 		</method>
+		<method name="get_standing_water_volume" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				The standing water over a disc of [param radius] at [param position] (m³), as last read back from the GPU: what [method add_water] can take there.
+			</description>
+		</method>
 		<method name="get_step_time_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -289,6 +306,24 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The printed ground height at [param position]: the undisturbed ground plus the rim minus the dent.
+			</description>
+		</method>
+		<method name="get_water_added" qualifiers="const">
+			<return type="float" />
+			<description>
+				The net volume (m³) of the [method add_water] discs applied so far, takes negative.
+			</description>
+		</method>
+		<method name="get_water_moved" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The water (m³) [method add_water]'s discs put into the main field ([code]x[/code]) and took out of it ([code]y[/code]) so far, as the GPU last read back.
+			</description>
+		</method>
+		<method name="get_water_owed">
+			<return type="float" />
+			<description>
+				Water (m³) [method add_water]'s takes asked for but did not find, not yet paid back by water added since.
 			</description>
 		</method>
 		<method name="get_water_speed_at" qualifiers="const">

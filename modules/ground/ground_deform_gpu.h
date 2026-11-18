@@ -68,7 +68,7 @@ public:
 		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
 		STEP_RUNOFF = 1 << 12, // runoff channels (ground): the water erodes and carries sand in each water substep
 	};
-	static constexpr int PARAMS_BYTES = 416;
+	static constexpr int PARAMS_BYTES = 672;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -106,6 +106,15 @@ public:
 	// The latest packed field (half floats dent, rim per texel, then fresh and the slumping owed with a stride of
 	// 2, then for the ground a block of (water depth, 0) per texel) and the origin it was taken at.
 	bool take_field(PackedByteArray &r_packed, Vector2i &r_origin);
+	// The cumulative volume add_water's takes could not find (mm3, wraps at 2^32), as last read back.
+	uint32_t get_water_moved_mm3(int p_k) {
+		MutexLock lock(mutex);
+		return water_moved_mm3[p_k];
+	}
+	uint32_t get_water_owed_mm3() {
+		MutexLock lock(mutex);
+		return water_owed_mm3;
+	}
 	// uints per texel in the packed read back.
 	static int packed_uints(int p_stride) { return p_stride == 2 ? 3 : 1; }
 
@@ -128,6 +137,7 @@ private:
 	RID buf_packed;
 	RID buf_water; // ground: per texel the pipe model's outflows and depth (2 vec4)
 	RID buf_water_tmp; // ground: the shifted depth
+	RID buf_ledger; // ground: water add_water could not take, mm3 (cumulative, wraps)
 	RID tex_out;
 	RID uset[2]; // state = buf_state[i], out = buf_state[1 - i]
 	Dims dims;
@@ -145,6 +155,8 @@ private:
 	bool field_in_flight = false;
 	bool collision_in_flight = false;
 	PackedByteArray field_packed;
+	uint32_t water_owed_mm3 = 0; // the ledger as last read back
+	uint32_t water_moved_mm3[2] = { 0, 0 }; // the ledger's water added and taken (cumulative, wraps)
 	Vector2i field_origin;
 
 	void _rt_compile();
