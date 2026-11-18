@@ -20,6 +20,13 @@
 				Kilograms of ash the wind has lifted off the burnt ground so far ([member blowing_ash]).
 			</description>
 		</method>
+		<method name="get_fire_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The wind this fire draws in near the ground at [param position], in m/s (horizontal): its plume's indraft toward the burning front ([member fire_wind]). [method WorldFire.wind_at] sums it over every fire.
+			</description>
+		</method>
 		<method name="get_lee_whirls_spawned" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -225,6 +232,9 @@
 		</member>
 		<member name="fire_whirls" type="bool" setter="set_fire_whirls" getter="is_fire_whirls" default="true">
 			Strong fire on a flank that runs along the wind can spin up a fire whirl: a column of flame, some three flame lengths tall, that turns at about twice the fire's own updraft speed, wanders downwind and lofts firebrands higher. Whirls form most often when the wind is close to that updraft speed (Kuwana et al. 2008), last 10 to 30 seconds and die off the burning fuel. See [method get_whirl_count]. On a lee slope (steeper than about 20 degrees, falling away within 40 degrees of downwind, in a wind over 5.5 m/s) the ridge's eddy makes whirls too, whatever the fire's updraft; these run across the slope at about a fifth of the wind and light the fuel they pass, so the fire spreads sideways along the ridge (vorticity-driven lateral spread, Sharples et al. 2012).
+		</member>
+		<member name="fire_wind" type="bool" setter="set_fire_wind" getter="is_fire_wind" default="true">
+			The fire draws air in at the base of its plume: each stretch of burning front is a sink with an inflow of about half the fire's buoyant velocity just outside the flames (a few m/s at a strong front, as FireFlux measured), falling off with distance. Grass ([code]fire_wind_map[/code], [code]fire_wind_rect[/code]) and [PhysXCloth3D] lean into it through [method WorldFire.wind_at]. The spread takes only the pull of fire ahead of a front (another fire, a spot fire, the far side of a closing gap), so fronts draw together as they meet; a fire's pull on its own front is already in Rothermel's model.
 		</member>
 		<member name="flame_strength" type="float" setter="set_flame_strength" getter="get_flame_strength" default="1.0">
 			Scales the fuel and heat the burning ground feeds into Flow.
