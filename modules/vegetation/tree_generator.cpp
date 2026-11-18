@@ -32,6 +32,7 @@
 #include "tree_generator.h"
 
 #include "plant_generator.h"
+#include "vegetation_fire.h"
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -15282,6 +15283,22 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0 - fib_n, 0.0, 1.0), 0.5, 1.0);
 		}
 	}
+	{
+		// Fire (vegetation_fire.h): bark charred up to about the flame length that passed, with a
+		// ragged top (the flame wraps the stem unevenly). Char takes the plates first, the
+		// furrows keep a little of the bark's brown.
+		vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 fire_s = fire_state_at(fire_w.xz);
+		if (fire_s.x > 0.0) {
+			float fire_edge = texture(lichen_map, base_uv * vec2(1.3, 0.4) + vec2(0.57, 0.21)).r;
+			float reach = fire_s.z * (0.7 + 0.6 * fire_edge);
+			float charred = fire_s.x * (1.0 - smoothstep(0.8, 1.0, (fire_w.y - MODEL_MATRIX[3].y) / max(reach, 0.02)));
+			float plates = texture(texture_roughness, base_uv).b;
+			ALBEDO = mix(ALBEDO, mix(ALBEDO * 0.25, vec3(0.03, 0.026, 0.023), smoothstep(0.3, 0.6, plates)), charred);
+			ROUGHNESS = mix(ROUGHNESS, 0.9, charred);
+			bark_bare *= 1.0 - charred;
+		}
+	}
 )";
 	// The wood under lost bark is smoother than the bark: its normal map fades there. Inserted
 	// first, after the normal map is read (later in the shader than the roughness).
@@ -15299,7 +15316,7 @@ uniform float lichen_leafy_share = 0.5;
 uniform float lichen_orange_share = 0.0;
 uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 )";
-	code = code.insert(vx, uniforms + "\n");
+	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
 	sh.instantiate();
 	sh->set_code(code);
@@ -15421,6 +15438,27 @@ vec3 plant_wind(vec3 wp, float h) {
 	}
 	const String albedo_line = "ALBEDO = albedo.rgb * albedo_tex.rgb;";
 	const int al = code.find(albedo_line);
+	if (al >= 0) {
+		// Fire (vegetation_fire.h): leaves under the flame charred, up to the scorch height killed brown.
+		code = code.insert(al + albedo_line.length(), R"(
+	vec3 fire_leaf_back = vec3(1.0);
+	{
+		vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 fire_s = fire_state_at(fire_w.xz);
+		if (fire_s.x > 0.0) {
+			float fire_rough = 0.0;
+			vec3 fire_before = ALBEDO;
+			fire_foliage_apply(fire_s, fire_w.y - MODEL_MATRIX[3].y, fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13))), ALBEDO, fire_rough);
+			// Light through a dead leaf takes its colour too (seen from below, a crown is mostly backlit).
+			fire_leaf_back = clamp(ALBEDO / max(fire_before, vec3(1e-3)), 0.0, 1.5);
+		}
+	})");
+		const String back_line = "	BACKLIGHT = (backlight.rgb + backlight_tex);\n";
+		const int bl = code.find(back_line);
+		if (bl >= 0) {
+			code = code.insert(bl + back_line.length(), "	BACKLIGHT *= fire_leaf_back;\n");
+		}
+	}
 	if (al >= 0 && leaf_underside > 0.0f) {
 		code = code.insert(al + albedo_line.length(), R"(
 	if (!FRONT_FACING) {
@@ -15428,7 +15466,7 @@ vec3 plant_wind(vec3 wp, float h) {
 		ALBEDO = mix(ALBEDO, vec3(leaf_lum) * vec3(0.93, 1.04, 0.9) * 1.2, leaf_underside);
 	})");
 	}
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + "\n");
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because

@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "plant_generator.h"
+#include "vegetation_fire.h"
 #include "vegetation_light.h"
 
 #include "scene/resources/surface_tool.h"
@@ -5112,6 +5113,7 @@ String PlantGenerator::shader_common_code() {
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
+	code += VegetationFire::SHADER_CODE;
 	code += R"(
 global uniform sampler2D weather_state_map;
 
@@ -5287,6 +5289,12 @@ void vertex() {
 		float s = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12);
 		VERTEX *= s * (1.0 + 0.25 * (1.0 - keep));
 	}
+	// Fire (vegetation_fire.h): a herb under the flame shrivels towards its base as it burns.
+	vec4 fire_v = fire_state_at(MODEL_MATRIX[3].xz);
+	if (fire_v.x > 0.0) {
+		float b = fire_v.x * (1.0 - smoothstep(0.7, 1.3, height / max(fire_v.z, 0.02)));
+		VERTEX *= vec3(mix(1.0, 0.75, b), mix(1.0, 0.3, b), mix(1.0, 0.75, b));
+	}
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_geo_n = normalize(mat3(MODEL_MATRIX) * NORMAL);
 }
@@ -5315,6 +5323,15 @@ void fragment() {
 	float metallic = 0.0;
 	float specular = 0.35; // Leaf cuticle.
 	vec3 n_world = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	// Fire: charred under the flame, scorched brown up to the scorch height; the burning band glows.
+	// At this point's own world position, and the height above the plant's base clamped to its height: the path
+	// tracer reruns vertex() for a merged MultiMesh with the field's transform, not the plant's.
+	vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec4 fire_s = fire_state_at(fire_w.xz);
+	float fire_n = fract(sin(dot(floor(fire_w * 25.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+	float burnt = fire_foliage_apply(fire_s, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), fire_n, albedo, rough);
+	back *= 1.0 - burnt;
+	EMISSION = fire_glow_color(fire_s.y) * 4.0 * burnt;
 	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
 	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
 	// Snow lies on the faces that look up.

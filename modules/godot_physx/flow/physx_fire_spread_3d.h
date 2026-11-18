@@ -64,7 +64,11 @@ private:
 	FuelType fuel_type = FUEL_SHORT_GRASS;
 	float fuel_moisture = 0.06f; // dead fuel moisture, fraction of dry mass
 	float fuel_load_scale = 1.0f;
-	Ref<Image> fuel_map; // optional, red channel: fuel load multiplier over the grid
+	Ref<Image> fuel_map; // optional, red: fuel load multiplier, green: extra moisture (fraction of dry weight, x 0.5)
+	float fuel_patchiness = 0.5f; // patchy fuel and moisture, so the scar is ragged
+	NodePath vegetation_field; // optional VegetationField3D: worn paths and leaf litter change the fuel
+	LocalVector<float> rate; // spread multiplier per cell (bed structure, patchiness)
+	LocalVector<float> wet; // moisture over fuel_moisture, per cell (patches, fuel_map green)
 	Vector3 wind; // world wind when no weather map gives one
 	bool use_weather_wind = true;
 	float spread_scale = 1.0f; // speeds the front up or down (a game's pace)
@@ -102,6 +106,11 @@ private:
 	Ref<ImageTexture> char_texture;
 	Ref<Image> glow_image;
 	Ref<ImageTexture> glow_texture;
+	// Plants' view of the fire (fire_state_map): burnt, glow, peak flame length, peak crown scorch height.
+	Ref<Image> state_image;
+	Ref<ImageTexture> state_texture;
+	LocalVector<float> peak_flame; // m, Byram's flame length of the front that crossed the cell
+	LocalVector<float> peak_scorch; // m, Van Wagner's crown scorch height
 
 	struct FuelModel {
 		float load; // kg/m2
@@ -139,6 +148,8 @@ public:
 	void extinguish();
 	float get_char_at(const Vector3 &p_position) const; // 0 unburnt .. 1 burnt out
 	float get_intensity_at(const Vector3 &p_position) const; // fireline heat, kW/m2 of ground
+	float get_flame_length_at(const Vector3 &p_position) const; // peak, m
+	float get_scorch_height_at(const Vector3 &p_position) const; // peak crown scorch height, m
 	float get_burnt_area() const { return total_burnt; }
 	int get_burning_cells() const;
 
@@ -156,6 +167,10 @@ public:
 	float get_fuel_load_scale() const { return fuel_load_scale; }
 	void set_fuel_map(const Ref<Image> &p_map);
 	Ref<Image> get_fuel_map() const { return fuel_map; }
+	void set_fuel_patchiness(float p_v);
+	float get_fuel_patchiness() const { return fuel_patchiness; }
+	void set_vegetation_field(const NodePath &p_path);
+	NodePath get_vegetation_field() const { return vegetation_field; }
 	void set_wind(const Vector3 &p_wind) { wind = p_wind; }
 	Vector3 get_wind() const { return wind; }
 	void set_use_weather_wind(bool p_v) { use_weather_wind = p_v; }

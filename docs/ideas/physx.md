@@ -633,6 +633,55 @@ distance from burning trees", USDA INT-56; Melek and Keyser 2002,
 "Interactive simulation of fire"; GDC 2017 "Breaking Conventions with The
 Legend of Zelda: Breath of the Wild".
 
+### Fire burns grass, plants and trees (picked 17 Nov, first of four)
+
+What a grass fire leaves (fire ecology field descriptions; Van Wagner 1973;
+Byram 1959): the front consumes the fine fuel from the top down, leaving
+black stubble a few centimetres tall with patches of white ash; small
+plants are consumed to their bases. On trees the bark is charred to about
+the flame length, higher on the lee side where the flame wraps the stem,
+and above it the foliage is killed (scorched, browns within days) up to
+the crown scorch height, where the plume cools to about 60 C:
+hs = 4.483 I^(7/6) / ((0.107 I + U^3)^(1/2) (60 - T)) (Van Wagner 1973; I
+fireline intensity kW/m, U wind m/s, T air temperature C), as BehavePlus
+and FARSITE use. Foliage below the flame is burnt black.
+
+How games show it: Far Cry 2 and 5 swap burnt grass to black stubble and
+char the ground through a mask the foliage shader reads; Unreal landscape
+grass reads a runtime virtual texture or render target the same way.
+Nothing simulates the plants themselves.
+
+Technique: a state map the fire node publishes beside the char map
+(`fire_state_map`, sharing `fire_char_rect`): fuel burnt, glow, the peak
+flame length and the peak crown scorch height each cell has seen (Byram's
+flame length from the front's fireline intensity, Van Wagner's scorch
+height from the same intensity and the wind). The vegetation shaders read
+it, with no state of their own:
+1. Grass blades burn down to 3-5 cm stubble, char black with ash flecks;
+   the burning band's blade tips glow.
+2. Small plants: tissue under the flame is charred, the rest scorched
+   brown; the burning band glows.
+3. Trees: bark charred up to the flame length with a ragged edge, leaves
+   under the flame black, leaves up to the scorch height brown.
+The vegetation module declares the globals, so its shaders compile with or
+without PhysX; raster and the path tracer run the same lines.
+
+Status (18 Nov): built. Found while building it:
+- The path tracer reruns vertex() for a merged grass MultiMesh with the
+  field's transform, not each blade's, so anything read there at the
+  blade's base came out for the field's origin (every blade burnt). Grass
+  and plants read the fire in fragment() at the point's own position.
+- Seen from below, a crown is mostly light through the leaves: scorched
+  leaves kept the species' green backlight until the backlight took the
+  leaf's new colour too.
+- The ground's char decal glowed red up tree trunks standing in its box;
+  it now fades on upright faces (normal fade).
+- Patchy fuel (`fuel_patchiness`, scene's request): metre-scale spread
+  rate and load noise, damp patches and bare gaps make an irregular
+  ellipse; the char edge is ragged at tuft scale (a world-space noise on
+  the level set's coverage). A patchy bed burns about a third less area
+  in the same time than an even one, as discontinuous fuel does.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

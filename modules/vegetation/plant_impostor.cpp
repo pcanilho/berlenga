@@ -716,6 +716,9 @@ void fragment() {
 	float rough = roughness;
 	float metallic = 0.0;
 	float specular = 0.35;
+	vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float burnt = fire_foliage_apply(fire_state_at(fire_w.xz), clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, 2.0 * radius), fract(v_uv0.x * 37.0 + v_uv0.y * 11.0), albedo, rough);
+	back *= 1.0 - burnt;
 	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
