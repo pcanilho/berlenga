@@ -1011,3 +1011,56 @@ frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it
    why candidates fail. 18 Nov: a 40 m beach let mouths open onto dry sand, which is not a sea cave; the foot must now
    stand within 8 m of the waterline with the ground between under high-water swash (sea + 0.6 m), and the mouth
    sits at the last swashed point.
+
+## Next round candidates (research notes, 18 Nov)
+
+Four options put to Paulo after the tafoni, wet rock and cave stream round. Nothing built yet.
+
+### Lichen on rock
+- What it is: crustose lichens (flat crusts: map lichen *Rhizocarpon geographicum*, *Lecanora*, *Lecidea*), foliose
+  (leafy lobes lifting a millimetre or two: *Xanthoria parietina*, *Parmelia*) and fruticose (tufts: *Ramalina* on
+  sea cliffs). They grow as round rosettes from a point, at under a millimetre a year for map lichen (lichenometry,
+  Armstrong 2011; Bradwell 2009), merging into patches over centuries. So patch size tells age: fresh fracture
+  faces and rockfall scars are bare, old tors are covered.
+- Placement: on exposed, lit, well-drained faces (the opposite of moss, which wants shade and damp). Bird perches,
+  where nitrogen falls, are orange (*Xanthoria*). Coasts have zones above the tide (Fletcher 1973, "The ecology of
+  marine (littoral) lichens"): black *Verrucaria maura* in the splash zone, orange *Caloplaca*/*Xanthoria* above it,
+  then grey *Ramalina* and *Lecanora* tufts. Acid granite and siliceous rock take yellow-green map lichen; limestone
+  takes grey-white crusts and pitting (endolithic lichens etch it).
+- Technique: placement is the moss pass's input (exposure, light, slope, moisture, salt), with lichen taking the
+  lit, dry share. Crusts in the shader as Voronoi rosettes with lobed rims (the rosette's own age gives its radius);
+  foliose lobes as real relief in the mesh near the eye (the stones are dense enough at 1 to 2 cm cells), as moss
+  cushions are. Fresh faces (Blast breaks, rockfall scars, the `break_stone` cut) start bare.
+- Compare: Quixel scans bake lichen into the albedo; KCD2 and Crysis show it as colour at range. Here the gain is
+  that age, exposure and spray drive it, and it never covers a fresh break.
+
+### Stream sinks and springs
+- Karst hydrology (Ford and Williams 2007, "Karst Hydrogeology and Geomorphology", ch. 5 to 7): a surface stream
+  that crosses from impermeable rock onto limestone sinks at a swallet (a swallow hole). Upstream of it lies a blind
+  valley, a dry bed that floods only in storms. The water runs through the cave's vadose passages and comes out at a
+  resurgence (a spring or a vauclusian rise) at base level, often where the limestone meets an impermeable bed or
+  the valley floor.
+- Hooks: CaveNetwork3D already marks vadose stream runs. A sink joins a PhysXRiver3D's end to a cave entrance (the
+  river thread owns the river; the coordinator routes it). A spring starts a river from a cave mouth low on a valley
+  side, with tufa (calcite) at the spring and its first fall. Seasons: dry beds downstream of the sink in summer.
+
+### Frost-shattered block fields
+- Periglacial weathering (Ballantyne 2018, "Periglacial Geomorphology"; Hallet, Walder and Stubbs 1991; Murton,
+  Peterson and Ozouf 2006): ice grows in cracks over long cold spells, not just by freeze-thaw, and splits rock along
+  its joints. On flat, high ground the result is a block field (felsenmeer): openwork angular boulders, a metre or
+  two thick, with lichen-dark tops and fresh, pale undersides where blocks have recently turned. On slopes it is
+  talus, and under it there are sorted stone circles and stripes on fine ground.
+- Hooks: the joint sets RockGenerator already cuts give the split faces; terrain-gen's scree already places stones.
+  Block fields would be a RockField3D layer above the tree line (WeatherMap3D temperature by height), with stripes
+  on slopes over 2 degrees. Snow fills the gaps (the snow thread).
+
+### Desert varnish and rock coatings
+- Rock varnish (Dorn and Oberlander 1981; Dorn 2009, "Rock varnish and its use to study climatic change"; Liu and
+  Broecker 2000): a manganese and iron oxide coating 5 to 200 micrometres thick, built by microbes and dust over
+  thousands of years. It is black where manganese dominates and orange-brown where iron does. It runs in dark
+  streaks (varnish curtains) down the paths runoff takes, and is darkest on the upper faces of stable stones. Case
+  hardening (Conca and Rossman 1982) leaves a hard rind over a soft core, which the tafoni already carve. Salt bands
+  and a pale ground-line ring mark where stones meet the sand.
+- Technique: the MFD flow routing baked for rivulets (COLOR.a) already gives the runoff paths, so curtains follow it.
+  Varnish age comes from the stone's exposure (rockfall and Blast breaks are fresh, so bright). Shader-only, in
+  raster and PT alike.
