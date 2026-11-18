@@ -42,9 +42,7 @@
 #include "scene/resources/shader.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 float PhysXFirebrands::_rand() {
 	seed ^= seed << 13;
@@ -169,11 +167,9 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 		const float z = under ? MAX(b.p.y - ground, 0.1f) : 10.0f;
 		// The air: the wind at the brand's height plus the plume's own motion.
 		Vector3 air;
-#ifdef MODULE_WEATHER_ENABLED
-		if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-			air = wm->get_wind_at(b.p, z);
+		if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+			air = wm->wind_at(b.p, z);
 		} else
-#endif
 		{
 			air = p_wind * (Math::log(MAX(z, z0 * 1.5f) / z0) / ref);
 		}

@@ -41,7 +41,7 @@
 #include "scene/main/viewport.h"
 
 #include "modules/rocks/rock_field_3d.h"
-#include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 RockField3D *PhysXRockDust3D::_field() const {
 	if (!rock_field.is_empty()) {
@@ -245,9 +245,8 @@ void PhysXRockDust3D::_step(float p_delta) {
 		weight += s.rate;
 	}
 	// The weather's wind over the dust, 2 m up.
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
 	const Vector3 at = weight > 0.0f ? mid / weight : c;
-	const Vector3 wind = wm ? wm->get_wind_at(at, 2.0f) : Vector3();
+	const Vector3 wind = WorldContracts::weather()->wind_at(at, 2.0f);
 	air->set_enabled(weight > 0.0f && wind.length_squared() > 1e-4f);
 	air->set_global_position(at + Vector3(0, 2.0f, 0));
 	air->set_velocity(wind);

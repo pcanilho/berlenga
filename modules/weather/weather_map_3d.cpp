@@ -381,6 +381,19 @@ float WeatherMap3D::_net_radiation(const CellPass &p_pass, Vector3 p_position, f
 	return ((1.0f - 0.1f) * rs - lw) * (1.0f - canopy);
 }
 
+float WeatherMap3D::get_air_temperature_at(Vector3 p_position) const {
+	return cur_air_temperature - 0.0065f * (p_position.y - ground_height);
+}
+
+float WeatherMap3D::get_air_humidity_at(Vector3 p_position) const {
+	const float dz = p_position.y - ground_height;
+	if (Math::abs(dz) < 0.5f) {
+		return cur_air_humidity;
+	}
+	const float td = get_air_dew_point() - 0.0018f * dz;
+	return CLAMP(saturation_vapour_pressure(td) / saturation_vapour_pressure(get_air_temperature_at(p_position)), 0.0f, 1.0f);
+}
+
 float WeatherMap3D::get_air_dew_point() const {
 	// Magnus inverted (Alduchov and Eskridge 1996).
 	const float g = Math::log(MAX(cur_air_humidity, 0.01f)) + 17.62f * cur_air_temperature / (243.12f + cur_air_temperature);
@@ -1996,6 +2009,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_air_humidity"), &WeatherMap3D::get_air_humidity);
 	ClassDB::bind_method(D_METHOD("get_air_mean_temperature"), &WeatherMap3D::get_air_mean_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_dew_point"), &WeatherMap3D::get_air_dew_point);
+	ClassDB::bind_method(D_METHOD("get_air_temperature_at", "position"), &WeatherMap3D::get_air_temperature_at);
+	ClassDB::bind_method(D_METHOD("get_air_humidity_at", "position"), &WeatherMap3D::get_air_humidity_at);
 	ClassDB::bind_method(D_METHOD("get_sun_sine"), &WeatherMap3D::get_sun_sine);
 	ClassDB::bind_method(D_METHOD("set_air_follows_climate", "enabled"), &WeatherMap3D::set_air_follows_climate);
 	ClassDB::bind_method(D_METHOD("get_air_follows_climate"), &WeatherMap3D::get_air_follows_climate);

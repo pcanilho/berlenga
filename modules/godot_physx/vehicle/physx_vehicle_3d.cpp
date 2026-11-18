@@ -56,9 +56,7 @@
 #include "modules/ground/ground_surface_3d.h"
 #include "modules/ground/ground_terramechanics.h"
 #endif
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 
 // Soft soil (docs/ideas/sand.md, stage 1): the wheels of a vehicle on a GroundSurface3D's soft material sink, print
@@ -170,13 +168,11 @@ static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_wat
 	float film = 0.0f;
 	float depth = MAX(p_standing_water, 0.0f); // m
 	float air = 10.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		film = wm->get_wetness_at(p_at);
-		depth = MAX(depth, wm->get_puddle_at(p_at) * 0.001f);
-		air = wm->get_air_temperature();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		film = wm->surface_wetness_at(p_at);
+		depth = MAX(depth, wm->puddle_at(p_at) * 0.001f);
+		air = wm->air_temperature_at(p_at);
 	}
-#endif
 	const float kmh = Math::abs(p_speed) * 3.6f;
 	const float wet = MAX(CLAMP(film, 0.0f, 1.0f), Math::smoothstep(0.0f, 0.0005f, depth));
 	float grip = Math::lerp(1.0f, 0.75f - 0.15f * Math::smoothstep(0.0f, 120.0f, kmh), wet);
