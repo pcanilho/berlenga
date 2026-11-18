@@ -31,10 +31,10 @@
 
 #pragma once
 
-#include "core/templates/hash_map.h"
-#include "core/templates/local_vector.h"
 #include "physx_firebrands.h"
 
+#include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 

@@ -31,10 +31,9 @@
 
 #include "physx_fire_spread_3d.h"
 
+#include "../nodes/physx_particle_fluid_3d.h"
 #include "physx_flow_3d.h"
 #include "physx_flow_emitter_3d.h"
-
-#include "../nodes/physx_particle_fluid_3d.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
