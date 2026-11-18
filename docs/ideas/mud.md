@@ -736,6 +736,12 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   edges, and where broken, Voronoi plates sized with the ice (6 to 25 cm), tilted, with open water and white
   fractured rims between them; no flow ripples under it. `get_ice_at()`. Not kept with the ruts (it re-forms from
   the temperature). Checks `--test=ice`; `--view=ice --pair` shoots a frozen puddle with a wheel track through it.
+  Reworked after the docs review (18 Nov): the look follows how a puddle freezes, from its rim in: where the ice
+  reaches the bed (h over the water's depth, ragged by noise) it is milky with crowded bubbles (1 to 3 mm dots on a
+  1.5 cm Worley grid, averaged past 2 mm footprints), the middle clear and dark with a few; frozen ripples (slope
+  0.04) and roughness 0.12 instead of a mirror; no crack lines on intact ice; broken plates only where the broken
+  share passes 0.4, tilted (0.35), with wider, softer white fractured edges. add_puddle's bank is now a continuous
+  berm (48 overlapping discs, 2 cm over the water only where the rim is lower), not 16 mounds.
 - **Regrowth follows the seasons.** The regrowth e-fold scaled by WeatherMap3D's season: grass grows from about 5 C,
   fastest in spring, stalled by summer drought and in winter (growing degree days), so a rut left in November is
   still bare in February.

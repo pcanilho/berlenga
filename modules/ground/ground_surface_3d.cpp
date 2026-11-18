@@ -3866,11 +3866,16 @@ void GroundSurface3D::_add_puddle(const Vector3 &p_position, float p_radius, flo
 	// The water's level: the rim's lowest point, or on a slope half the depth below the middle's ground, held by a
 	// low bank of soil laid along the downhill rim (a puddle on a slope is dammed: a track's own berm, a root).
 	const float level = MAX(rim_low - 0.005f, _ground_at(p_position.x, p_position.z) - 0.5f * p_depth);
-	for (int k = 0; k < 16; k++) {
-		const float bank = level + 0.03f - rim[k];
+	// The bank is a continuous berm: discs a seventh of the rim apart, each two-fifths of the bank's height (they
+	// overlap about two and a half deep), 2 cm over the water. Where the rim stands higher it needs none: on the flat
+	// a lip of a few millimetres, no ring of mounds.
+	const int banks = 48;
+	for (int k = 0; k < banks; k++) {
+		const float a = Math::TAU * k / float(banks);
+		const float rk = Math::lerp(rim[(k / 3) % 16], rim[(k / 3 + 1) % 16], float(k % 3) / 3.0f);
+		const float bank = level + 0.02f - rk;
 		if (bank > 0.0f) {
-			const float a = Math::TAU * k / 16.0f;
-			deposit(Vector3(p_position.x + 1.1f * r * Math::cos(a), 0.0f, p_position.z + 1.1f * r * Math::sin(a)), 0.3f * r, bank);
+			deposit(Vector3(p_position.x + 1.1f * r * Math::cos(a), 0.0f, p_position.z + 1.1f * r * Math::sin(a)), 0.15f * r, 0.4f * bank);
 		}
 	}
 	// Lobes from the position's own hash: the same puddle each time it is asked for there.
