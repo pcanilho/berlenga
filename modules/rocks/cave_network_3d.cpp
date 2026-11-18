@@ -1163,6 +1163,44 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 	return d;
 }
 
+// How wet a stream leaves the floor at p_p (docs/ideas/rocks.md, "Cave streams"): 1 on its bed, under the water, and
+// across a margin a little wider than the water (splash, capillary rise, the last flood's film), then dry within a
+// hand's width; 0 above the floor by more than the water's depth plus a few centimetres (walls stay as they are).
+real_t CaveNetwork3D::_stream_wet(const FieldSource &p_src, const Vector3 &p_p) const {
+	real_t wet = 0.0;
+	for (const Segment *sg : p_src.segments) {
+		if (!sg->stream) {
+			continue;
+		}
+		Vector3 t = sg->b - sg->a;
+		const real_t len = t.length();
+		if (len < 1e-4f) {
+			continue;
+		}
+		t /= len;
+		const real_t l = (p_p - sg->a).dot(t);
+		if (l < -0.5 * sg->ra || l > len + 0.5 * sg->rb) {
+			continue;
+		}
+		const real_t lc = CLAMP(l, real_t(0.0), len);
+		const Vector3 line = sg->a + t * lc;
+		const Vector3 q = p_p - line;
+		const Vector3 u_axis = t.cross(Vector3(0, 1, 0)).normalized();
+		const Vector3 v_axis = u_axis.cross(t);
+		const real_t r = Math::lerp(real_t(sg->ra), real_t(sg->rb), lc / len);
+		real_t floor_v;
+		cave_profile(sg->type, 0.0, 0.0, r, floor_v);
+		const real_t water_v = floor_v - cave_stream_cut(r) + cave_stream_depth(r);
+		if (q.dot(v_axis) > water_v + 0.08) {
+			continue;
+		}
+		const real_t ch = cave_stream_half_width(sg->type, r);
+		const real_t x = Math::abs(q.dot(u_axis) - cave_stream_u(line, uint32_t(seed), ch));
+		wet = MAX(wet, real_t(1.0) - Math::smoothstep(real_t(1.05 * ch), real_t(1.05 * ch + 0.12 + 0.1 * r), x));
+	}
+	return wet;
+}
+
 // The rock: positive in it, below ground and outside the cave, min(f_H, f_K) with the heightfield as a distance,
 // f_H = (h - y) / sqrt(1 + slope^2) as Paris et al. take it.
 real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground) const {
@@ -1269,6 +1307,10 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	r_chunk.rim_mesh.unref();
 	if (src.segments.is_empty() && src.chambers.is_empty() && src.patches.is_empty()) {
 		return;
+	}
+	bool has_stream = false;
+	for (const Segment *sg : src.segments) {
+		has_stream = has_stream || sg->stream;
 	}
 	// Drip points round the chunk (their flowstone reaches over its sides), found from the field alone so every chunk
 	// finds the same ones.
@@ -1518,7 +1560,8 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 				if (!r_chunk.pools.is_empty() && in_pool(p)) {
 					fw = 1.0;
 				}
-				pc.push_back(Color(fw, 0, 0));
+				// Green: the stream's wet bed and margin.
+				pc.push_back(Color(fw, has_stream ? _stream_wet(src, p) : 0.0, 0));
 				pi.push_back(pv.size() - 1);
 			} else {
 				pi.push_back(*m);
@@ -2156,9 +2199,17 @@ void fragment() {
 	streak = max(streak, flow);
 	// Wet only where water stands or runs: puddles in floor hollows, the streaks; the rest is damp, matte rock.
 	float puddle = floor_w * smoothstep(0.58, 0.68, fbm(w_pos * 0.7 + 31.0));
-	float wet = clamp(puddle + 0.7 * streak, 0.0, 1.0);
+	// A stream's bed (the mesher's green): washed gravel and cobbles, the fines carried off, so darker and coarser
+	// than the dry fill; wet over the bed and a margin a little wider than the water.
+	float bed = clamp(COLOR.g, 0.0, 1.0);
+	if (bed > 0.0) {
+		float cob = vn(w_pos * 9.0 + 13.0) * 0.6 + vn(w_pos * 23.0 + 5.0) * 0.4;
+		vec3 gravel = mix(sediment_color * 0.9, rock_color * 0.75, smoothstep(0.45, 0.7, cob)) * (0.75 + 0.5 * grain);
+		col = mix(col, gravel, smoothstep(0.6, 0.95, bed) * floor_w);
+	}
+	float wet = clamp(max(puddle + 0.7 * streak, bed), 0.0, 1.0);
 	ALBEDO = col * mix(1.0, 0.7, wet);
-	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3, wet);
+	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3 - 0.12 * bed, wet);
 	SPECULAR = 0.4;
 	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it and
 	// under puddles.

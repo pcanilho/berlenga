@@ -1000,8 +1000,12 @@ frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it
    least 8 m long, about two in three of them (the rest abandoned, dry), carry a stream (Segment.stream): their fill
    is washed level across the trench 0.1 r below the dry fill, and a PhysXRiver3D (given depth 0.08 r, at least
    6 cm; no snapping, no carving, raster reflections off as the pools) runs along it downhill to where the passage
-   meets the water table. Bench `--caves=1 --cave-mesh --cave-view=stream`, `--no-streams`. Still to do: the water
-   reads faintly under a lamp (clear and shallow), sinks and resurgences, the sea swell into sea caves.
+   meets the water table. Bench `--caves=1 --cave-mesh --cave-view=stream`, `--no-streams`. 18 Nov: clear water a few
+   centimetres deep shows by its bed, not its body (as in any caver's photograph): the mesher marks the stream's bed
+   and a margin 12 cm plus 0.1 r wider than the water (vertex green, _stream_wet), and the wall shader lays washed
+   gravel and cobbles there, darker than the dry fill, wet and glossy; with the lamp glints on the water (#359) the
+   stream reads in raster and PT alike. Still to do: sinks and resurgences, the sea swell into sea caves (needs a
+   coast with a cliff at the swash line; none of the generated coasts has one yet).
    Sea mouths (17 Nov): find_sea_entrances loosened for cliffed coasts with a beach or platform at the foot (top 6 m
    over the sea, sea within 150 m, a steep rise to 6 m within 6 to 25 m behind the mouth); CAVE_SEA_DEBUG=1 prints
    why candidates fail. 18 Nov: a 40 m beach let mouths open onto dry sand, which is not a sea cave; the foot must now
