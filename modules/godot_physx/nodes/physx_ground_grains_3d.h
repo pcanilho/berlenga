@@ -61,6 +61,12 @@ class PhysXGroundGrains3D : public PhysXGranular3D {
 	bool water = false; // this node is that child: water, not grains
 	PhysXGroundGrains3D *water_child = nullptr;
 	void _make_water_child();
+	// The clay the thrown water carries (muddy water, round 3), kg/m3: the mean of what is in the air, landed with it
+	// and drawn (a milky brown liquid past a few kg/m3), and the colour of that clay.
+	float water_mud = 0.0f;
+	float water_mud_drawn = 0.0f;
+	Color water_mud_color = Color(0.42f, 0.32f, 0.22f);
+	void _muddy_look();
 	void _adopt_child(PhysXGroundGrains3D *p_child);
 	// A grain or drop come down at p_at: sand and clay back into the field, water into its standing water.
 	void _land(const Vector3 &p_at, float p_radius, double p_volume);
@@ -123,6 +129,7 @@ public:
 	float get_dug_volume() const { return (float)dug_volume; }
 	float get_deposited_volume() const { return (float)deposited_volume; }
 	float get_stuck_volume() const { return (float)stuck_volume; }
+	float get_water_mud() const { return water_mud; }
 	float get_airborne_volume() const;
 	int get_airborne_count() const { return live; }
 	PackedVector3Array get_airborne_positions() const;

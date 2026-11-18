@@ -266,6 +266,8 @@ protected:
 	static void _bind_methods();
 
 public:
+	// The liquid surface's material (made on first use, clear water): a caller may tint it, as muddy water.
+	Ref<Material> get_liquid_material();
 	void set_solver(SolverBackend p_solver);
 	SolverBackend get_solver() const { return solver; }
 	void set_mpm_domain_size(const Vector3 &p_size);

@@ -2303,8 +2303,8 @@ float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
 }
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
-// ground with pore water p_wet.
-vec4 ground_water_look(float p_depth, float p_wet) {
+// ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
+vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
 	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
@@ -2314,8 +2314,16 @@ vec4 ground_water_look(float p_depth, float p_wet) {
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
 	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
-	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
-	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, gloss);
+	// Stirred, it carries more: the attenuation grows with the clay (Beer-Lambert in the concentration), so at some
+	// 40 kg/m3 it hides the bed under a millimetre.
+	float murk = 1.0 - exp(-2.0 * p_depth * (3.0 + max(p_mud, 0.0)) / 0.03);
+	// Thick with clay it no longer shows the soaked bed darker: it scatters back the clay's own colour (the dry
+	// ground's, a little darker: the pore water's darkening, Lagarde's 0.52 with p_wet of it already applied, undone),
+	// milky brown, as the slurry it is.
+	float slurry = max(p_mud, 0.0) / (max(p_mud, 0.0) + 30.0);
+	float bed = soak * mix(1.0, 0.75, murk * cover);
+	float clay = 0.8 / mix(1.0, 0.52, clamp(p_wet, 0.0, 1.0));
+	return vec4(mix(bed, clay, slurry * murk * cover), cover, 0.03, gloss);
 }
 // Flowing water (docs/ideas/sand.md, flowing rills): the sheet's surface carries small ripples that the flow
 // sweeps downstream, drawn as a flow map does (Vlachos 2010, Water Flow in Portal 2): a ripple pattern advected by
@@ -2763,6 +2771,7 @@ void main() {
 	float g_sheen = 0.0;
 	float g_grain = 0.0; // the share of loose dry sand showing its grains (sand_glints)
 	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
+	float g_mud = 0.0; // the clay it carries, kg/m3 (mud round 3)
 	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
@@ -2838,9 +2847,11 @@ void main() {
 					}
 				}
 				g_water = gwd; // material.cpp ground_deform_water()
+				// A < 0: muddy water, its clay in place of the turned ground's gloss (material.cpp ground_deform_tint()).
+				g_mud = 400.0 * max(-g.a, 0.0);
 				m.albedo *= g.b;
 				// The fresh sheen on floors only (material.cpp: torn walls keep their roughness).
-				m.roughness = clamp(m.roughness * mix(1.0, g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
+				m.roughness = clamp(m.roughness * mix(1.0, g.a < 0.0 ? 1.0 : g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
 			}
 		}
 		// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with
@@ -2936,7 +2947,7 @@ void main() {
 	// level there; the surface is water's (F0 0.02, smooth, no relief), the bed under it soaked and, deeper, hidden
 	// by the clay the water carries.
 	if (g_water > 0.0) {
-		vec4 gwl = ground_water_look(g_water, g_wet);
+		vec4 gwl = ground_water_look(g_water, g_wet, g_mud);
 		m.albedo *= gwl.x;
 		m.roughness = mix(m.roughness, gwl.z, max(gwl.y, 0.85 * gwl.w));
 		m.specular = mix(m.specular, 0.25, max(gwl.y, gwl.w));

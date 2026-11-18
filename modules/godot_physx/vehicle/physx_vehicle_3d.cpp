@@ -429,6 +429,7 @@ struct PhysXVehicle3D::Impl {
 	float mud_spray[4] = {};
 	float mud_shed_seen[4] = {};
 	float sheet_rate[4] = {}; // m3/s of water each wheel throws as sheets (mud stage 4c): washes its arch
+	float sheet_mud[4] = {}; // the clay that water carries, kg/m3 (muddy water, round 3): stains it instead
 	float mud_line = 0.0f;
 	float mud_wet = 0.0f;
 	// The clay's colour on the body, linear (mud stage 4d): the ground's mud colour at the wheels, averaged over the last
@@ -1173,6 +1174,7 @@ void PhysXVehicle3D::_wade_step() {
 			continue;
 		}
 		impl->sheet_rate[i] = float(water / MAX(dt, 1e-4));
+		impl->sheet_mud[i] = ground->get_water_mud_at(ahead);
 		for (int s = -1; s <= 1; s += 2) {
 			// Out at about the speed, rising at ~30 degrees, carried a little forward by the tread's push.
 			GroundSurface3D::Spray sheet;
@@ -1182,6 +1184,7 @@ void PhysXVehicle3D::_wade_step() {
 			sheet.reach_center = ahead;
 			sheet.reach_radius = reach;
 			sheet.water = float(0.5 * water);
+			sheet.water_mud = ground->get_water_mud_at(ahead);
 			ground->add_spray(sheet);
 		}
 	}
@@ -1259,7 +1262,11 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 			}
 			// Its own sheets wash the arch they hit: a litre a second rinses most of it in a few seconds.
 			if (impl->sheet_rate[i] > 0.0f) {
-				spray -= spray * MIN(MIN(impl->sheet_rate[i] / 0.001f, 1.0f) * 0.4f * p_delta, 1.0f);
+				// Muddy water (round 3) leaves its clay on what it hits as it runs off: the arch is stained toward a
+				// film that grows with the clay (half the spray's darkest at some 60 kg/m3) rather than rinsed.
+				const float stain = 0.5f * MIN(impl->sheet_mud[i] / 60.0f, 1.0f);
+				const float k = MIN(MIN(impl->sheet_rate[i] / 0.001f, 1.0f) * 0.4f * p_delta, 1.0f);
+				spray += (stain - spray) * k;
 				impl->sheet_rate[i] = 0.0f;
 			}
 		}

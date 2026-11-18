@@ -2906,7 +2906,7 @@ void fragment() {)";
 		code += R"(	{
 		float gwd = ground_deform_water((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		if (gwd > 0.0) {
-			vec4 gwl = ground_water_look(gwd, ground_wet.x);
+			vec4 gwl = ground_water_look(gwd, ground_wet.x, ground_deform_water_mud((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));
 			ALBEDO *= gwl.x;
 			ROUGHNESS = mix(ROUGHNESS, gwl.z, max(gwl.y, 0.85 * gwl.w));
 			SPECULAR = mix(SPECULAR, 0.25, max(gwl.y, gwl.w));
@@ -4618,8 +4618,8 @@ float ground_deform_top(vec2 p_xz) {
 }
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
-// ground with pore water p_wet.
-vec4 ground_water_look(float p_depth, float p_wet) {
+// ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
+vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
 	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
@@ -4629,8 +4629,16 @@ vec4 ground_water_look(float p_depth, float p_wet) {
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
 	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
-	float murk = 1.0 - exp(-2.0 * p_depth / 0.01);
-	return vec4(soak * mix(1.0, 0.75, murk * cover), cover, 0.03, gloss);
+	// Stirred, it carries more: the attenuation grows with the clay (Beer-Lambert in the concentration), so at some
+	// 40 kg/m3 it hides the bed under a millimetre.
+	float murk = 1.0 - exp(-2.0 * p_depth * (3.0 + max(p_mud, 0.0)) / 0.03);
+	// Thick with clay it no longer shows the soaked bed darker: it scatters back the clay's own colour (the dry
+	// ground's, a little darker: the pore water's darkening, Lagarde's 0.52 with p_wet of it already applied, undone),
+	// milky brown, as the slurry it is.
+	float slurry = max(p_mud, 0.0) / (max(p_mud, 0.0) + 30.0);
+	float bed = soak * mix(1.0, 0.75, murk * cover);
+	float clay = 0.8 / mix(1.0, 0.52, clamp(p_wet, 0.0, 1.0));
+	return vec4(mix(bed, clay, slurry * murk * cover), cover, 0.03, gloss);
 }
 // Flowing water (docs/ideas/sand.md, flowing rills): the sheet's surface carries small ripples that the flow
 // sweeps downstream, drawn as a flow map does (Vlachos 2010, Water Flow in Portal 2): a ripple pattern advected by
@@ -4807,7 +4815,16 @@ vec2 ground_deform_tint(vec3 p_world) {
 	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
 		return vec2(1.0);
 	}
-	return ground_deform_sample(p_world.xz).ba;
+	vec4 d = ground_deform_sample(p_world.xz);
+	// A < 0: muddy water over it, whose surface hides the turned ground's gloss (ground_deform_water_mud()).
+	return vec2(d.b, d.a < 0.0 ? 1.0 : d.a);
+}
+// The clay the standing water carries at a world position, kg/m3 (mud round 3; the map's A under muddy water).
+float ground_deform_water_mud(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return 0.0;
+	}
+	return 400.0 * max(-ground_deform_sample(p_world.xz).a, 0.0);
 }
 // Standing water's depth between texels. The water's level (bed plus depth) is what varies smoothly, so the depth
 // is taken as the level less the bed, interpolated, with dry texels given their wet neighbours' mean level (a
