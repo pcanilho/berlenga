@@ -349,6 +349,7 @@ func _contract_tests() -> void:
 	_check("contracts: a fire dries the ground under it", burning < 0.05 and beside > 0.5, "wetness %.2f under the fire, %.2f beside it" % [burning, beside])
 	m.queue_free()
 	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():
 		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")
