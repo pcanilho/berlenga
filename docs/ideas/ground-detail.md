@@ -265,3 +265,19 @@ buys main-thread time; the remaining walking spikes (p95 18 ms, worst 0.85 s) ar
 without ground detail.
 
 Next: leaf litter and twigs (vegetation), mud clods and snow clumps on the same pattern.
+
+## Snow clumps (18 Nov)
+
+`SnowClumps3D` (modules/snow), made by every `SnowSurface3D` (`clumps`, on by default). Where the print field's rim
+grows, a share of the pushed volume (`break_share` 0.25) breaks into lumps if the pack is cohesive: settled
+(density above about 150 kg/m3) or moist snow sinters into lumps (Colbeck 1982), cold new powder sprays and leaves
+none (the trail bench's default 110 kg/m3 fresh snow gives almost none; `--settled` lays 300 kg/m3). Sizes
+log-normal, median 2.2 cm plus 3 cm times wetness, sigma 0.5, 1 to 10 cm (avalanche debris granules, Bartelt and
+McArdell 2009). Each is thrown up to 12 cm away from the print (down the dent's slope), sits 15% into the snow,
+shrinks by degree days in a thaw (4 mm w.e./day/C), is buried by new snow and crushed by a later print. Four
+shared lumpy icospheres (320 triangles) with a fracture face, one rt_instanced MultiMesh each.
+
+Cost (lavapipe, trail bench, `--settled`, about 5,000 clumps lying): main thread 1.5 ms mean, 2.1 ms worst per
+update at 6 Hz (about 0.25 ms a frame); 4 MultiMeshes of 48 bytes per clump. Bench: docs/bench/snow
+`--view=trail --settled --clumps-close [--no-clumps]`. Follow-ups: the scan on a worker; cornice debris
+(`SnowCover3D.cornice_failed`) as large blocks.
