@@ -1212,6 +1212,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Tracked mud",
+   "settings": [
+    "GroundSurface3D.tracked_mud"
+   ],
+   "note": "",
+   "what": "tyres and boots leaving clay lay a film of mud on firm ground that fades as they clean and dries pale in place.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on legs",
    "settings": [
     "GroundLegMud3D"
