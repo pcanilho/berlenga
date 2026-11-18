@@ -3863,7 +3863,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
-		{ 9, 12, 0.2f, 0.06f, 0.003f, 0.22f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
+		{ 9, 12, 0.2f, 0.06f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3913,15 +3913,18 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// lattice at every setting, so the ridges are now the furrowed family's: zero lines
 					// of noise stretched along the stem, two families so they merge and split, and the
 					// cross breaks dropped (they read as rows of dashes).
-					const float n1 = bark_fbm(wu, wv, 9, 2, 3, salt + 51u);
+					const float n1 = bark_fbm(wu, wv, 9, 1, 3, salt + 51u);
 					const float n2 = bark_fbm(wu + 0.3f, wv, 6, 2, 3, salt + 55u);
 					const float f1 = Math::smoothstep(0.0f, 0.1f, Math::abs(n1));
 					const float f2 = Math::smoothstep(0.0f, 0.06f, Math::abs(n2));
-					open = MIN(f1, Math::lerp(0.45f, 1.0f, f2));
+					const float o2 = MIN(f1, Math::lerp(0.45f, 1.0f, f2));
 					// Rounded, crumbly tops: the profile rises fast out of the furrow and flattens over
 					// the ridge, pitted and lumpy.
 					const float lumps = bark_fbm(u, v, 30, 15, 3, salt + 57u);
-					plate = Math::pow(open, 0.5f) * (0.85f + 0.3f * (lumps + 0.5f));
+					plate = Math::pow(o2, 0.5f) * (0.85f + 0.3f * (lumps + 0.5f));
+					// The colour darkens only in the long main furrows: the side family's shallow
+					// partings, dark too, broke the ridges into blotches (docs, 18 Nov: a leopard skin).
+					open = f1;
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
 					// and splitting like an oak's interlaced ridges. The cells only add the shallower
@@ -3943,7 +3946,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				// Plate tone drifts smoothly (a per-cell tone outlines joined plates).
 				const float plate_noise = 0.5f + bark_fbm(u, v, 5 * F, 3 * F, 2, salt + 41u) * 1.6f;
 				height += L.depth * (plate - 1.0f) + L.depth * 0.15f * (plate_noise - 0.5f) * plate;
-				const float shade = Math::lerp(L.dark, 1.0f + L.mottle * (plate_noise - 0.5f), p_kind == BARK_CORK ? Math::smoothstep(0.05f, 0.6f, open) : plate);
+				const float shade = Math::lerp(L.dark, 1.0f + L.mottle * (plate_noise - 0.5f), p_kind == BARK_CORK ? Math::smoothstep(0.0f, 0.3f, open) : plate);
 				a = Color(shade, shade, shade);
 				if (p_kind == BARK_CORK) {
 					// Cork's fissures are warm red-brown under the grey-buff, weathered ridges.
@@ -4210,7 +4213,19 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		for (int y = 0; y < N; y++) {
 			for (int x = 0; x < N; x++) {
 				const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
-				hw[y * N + x] += 0.003f * bark_fbm(u, v, 72, 36, 3, salt + 171u); // Spongy grain along the ridges, not round nubs.
+				const int k = y * N + x;
+				// Virgin cork is a spongy, porous mass (Pereira 2007): crumbly faces a few millimetres
+				// across, open pores, and weathering from pale grey to ochre. Without them the ridges
+				// read as melted wax (docs, 18 Nov).
+				const float crumb = bark_fbm(u, v, 200, 160, 2, salt + 173u);
+				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u));
+				hw[k] += 0.003f * bark_fbm(u, v, 72, 36, 3, salt + 171u) + 0.0025f * crumb - 0.003f * pore;
+				const float ochre = Math::smoothstep(-0.1f, 0.15f, bark_fbm(u, v, 6, 4, 3, salt + 179u));
+				const Color tint = Color(1.0f, 1.0f, 1.0f).lerp(Color(1.12f, 0.96f, 0.74f), 0.55f * ochre) * ((1.0f + 0.3f * crumb) * (1.0f - 0.35f * pore));
+				aw[k * 3 + 0] *= tint.r;
+				aw[k * 3 + 1] *= tint.g;
+				aw[k * 3 + 2] *= tint.b;
+				rw[k] = 1.0f; // Matte throughout.
 			}
 		}
 	}
@@ -4541,7 +4556,7 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.6f, 0.5f, 0.1f }, // Lentisk.
 	{ 0.1f, 0.3f, 0.05f }, // Dwarf fan palm.
 	{ 0.08f, 0.15f, 0.0f }, // Stone pine: thick flaking plates hold little.
-	{ 0.2f, 0.25f, 0.05f }, // Cork oak: thin crusts on the ridges (worked trees are stripped every nine years; docs 18 Nov: big patches read as decals).
+	{ 0.0f, 0.25f, 0.05f }, // Cork oak (none: docs 18 Nov, the crusts on cork read as hard-edged green decals): thin crusts on the ridges (worked trees are stripped every nine years; docs 18 Nov: big patches read as decals).
 	{ 0.5f, 0.3f, 0.05f }, // Holm oak: grey crusts on the dark bark.
 	{ 0.6f, 0.3f, 0.15f }, // Wild olive: crusts and Xanthoria on old trunks.
 	{ 0.1f, 0.2f, 0.0f }, // Maritime pine: thick, flaking plates.
@@ -13871,6 +13886,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int i = s; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
 			chain.push_back(i);
 		}
+		// A leader that split into stems (trees.md 5z) keeps its girth to the split: tapered to
+		// 0.6 there like a shoot's tip, it pinched into the neck under the stems (docs, 18 Nov).
+		bool split_tip = false;
+		for (int l = nodes[chain[chain.size() - 1]].first_lateral; l >= 0 && !split_tip; l = nodes[l].next_sibling) {
+			split_tip = nodes[l].stem_level > nodes[chain[chain.size() - 1]].stem_level;
+		}
 		const float r0 = first.radius;
 		const bool smooth = r0 > 0.015f;
 		pts.clear();
@@ -13880,7 +13901,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int c = 0; c < int(chain.size()); c++) {
 			const Node &n = nodes[chain[c]];
 			// A pollard's head or a stool's stub ends full-girth in its callus knob (trees.md 5l).
-			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) ? 1.0f : 0.6f);
+			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) || split_tip ? 1.0f : 0.6f);
 			// Where a lateral has outgrown the axis's own continuation (a leader overtaken at a
 			// fork), the axis keeps the lateral's girth to the fork: narrowing to the thinner
 			// continuation, it left the lateral's base standing out as a stub.
@@ -14000,8 +14021,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float rp = par.radius;
 			Vector3 side = first.dir - par.dir * first.dir.dot(par.dir);
 			side = side.length() > 1e-4f ? side.normalized() : Vector3();
-			const float rc = MIN(split ? MAX(rad[0] * 1.25f, rp * 0.7f) : rad[0], rp * 0.9f);
-			const float off = MAX(0.0f, rp * 0.92f - rc);
+			const float rc = MIN(split ? MAX(rad[0] * 1.25f, rp * 0.8f) : rad[0], rp * 0.9f);
+			const float off = MAX(0.0f, rp * (split ? 0.97f : 0.92f) - rc); // A split's stems meet the bole's surface: no ledge.
 			const Vector3 base = pts[0] + side * off;
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -14010,9 +14031,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// showed beside the root flare.
 			const float room = MAX(0.0f, (base.y - nodes[0].start.y - 0.1f) / MAX(par.dir.y, 0.2f));
 			const float drop = MIN(rc * ks[0], room) / ks[0];
+			// A split's stems start narrower, wholly inside the bole: level with its surface, their
+			// open first ring stood out through the bole's relief as a pleated rim (docs, 18 Nov).
+			const float kr[3] = { split ? 0.8f : 1.0f, split ? 0.93f : 1.0f, 1.0f };
 			for (int k = 0; k < 3; k++) {
 				cp.push_back(base - par.dir * (drop * ks[k]));
-				cr.push_back(rc);
+				cr.push_back(rc * kr[k]);
 			}
 			// The collar's extra rings near the axis would pull the turn back to the axis.
 			uint32_t i = 1;
@@ -14033,19 +14057,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// axis that stops thick (a shed or snapped continuation, a pruned limb) would show its
 		// hollow inside as a flat dark disc. It ends in a rounded callus instead (wound wood
 		// rolls over a stub; Shigo 1985), or under the splinters of a break.
-		// A leader that split into stems (trees.md 5z) ends inside their swollen bases: its last
-		// bole radius and a half narrows to 0.7 under a low cap, so no rim or dome stands round
-		// the bole's top between the stems (docs, 18 Nov: a narrow neck under the split).
-		bool split_end = false;
-		for (int l = nodes[chain[chain.size() - 1]].first_lateral; l >= 0 && !split_end; l = nodes[l].next_sibling) {
-			split_end = nodes[l].stem_level > nodes[chain[chain.size() - 1]].stem_level;
-		}
+		// A leader that split into stems (trees.md 5z) ends inside their swollen bases (docs,
+		// 18 Nov: a narrow neck under the split). The bole keeps its girth: narrowed, the stems'
+		// bases stood out of it as a lip.
+		const bool split_end = split_tip;
 		if (split_end && pts.size() >= 2) {
 			const Vector3 top = pts[pts.size() - 1];
-			const float span = 2.0f * rad[rad.size() - 1];
-			for (uint32_t i = 0; i < pts.size(); i++) {
-				const float t = 1.0f - CLAMP(pts[i].distance_to(top) / MAX(span, 1e-4f), 0.0f, 1.0f);
-				rad[i] *= Math::lerp(1.0f, 0.6f, Math::smoothstep(0.0f, 1.0f, t));
+			// The bole runs on past the split as a blunt cone the stems leave from, its sides the
+			// saddles of the crotch between them: cut off level, the bole's top rim showed round
+			// the split as a band, a collar of tape (docs, 18 Nov).
+			const Vector3 up = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
+			const float rt = rad[rad.size() - 1];
+			const float hk[5] = { 0.25f, 0.5f, 0.75f, 1.0f, 1.25f };
+			const float rk[5] = { 0.99f, 0.95f, 0.87f, 0.74f, 0.55f };
+			for (int k = 0; k < 5; k++) {
+				pts.push_back(top + up * (rt * hk[k]));
+				rad.push_back(rt * rk[k]);
 			}
 		}
 		Vector3 rim_pt = pts[pts.size() - 1];
@@ -14054,7 +14081,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (rim_r >= 0.006f && pts.size() >= 2) {
 			const Vector3 dir_end = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
 			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]) || _coppice_lobe(chain[chain.size() - 1]);
-			const float cap_len = (broken || split_end) ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
+			const float cap_len = broken ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
 			const float ks[3] = { 0.4f, 0.75f, 1.0f };
 			const float rs[3] = { 0.93f, 0.68f, 0.0f };
 			// A coppice lobe's old cut: the callus has rolled over its rim and stands proud of the

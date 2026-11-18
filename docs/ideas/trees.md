@@ -2056,6 +2056,16 @@ of a leader's fork (stem_level above their parent's) now enter as a fork crotch 
 share, their bases swollen to 0.7 of the bole and easing back over a bole radius and a half,
 and the bole's last two radii narrow to 0.6 under a low cap: the bole flows into the limbs.
 
+Cork oak round 6 (18 Nov; r5 read as waxy clay, with green lichen decals, a smooth root flare,
+a collar of tape at the split and leopard blotches on the limbs): cork's texture gains its
+spongy mass (Pereira 2007): crumbs a few millimetres across, open pores, matte throughout, and
+weathering from pale grey to ochre. The main furrows run the whole tile (one noise cycle along
+it), and only they darken: the side family's partings, dark too, broke the ridges into blotches.
+No lichen on cork. The collar was the leader's end: like any shoot tip its last internode tapered
+to 0.6, a pinch hidden under the stems' bases; a split leader now keeps its girth to the split
+and runs on half a metre as a blunt cone the stems leave from, the saddles of the crotch, with
+the stems' bases swollen to 0.8 of the bole and starting narrower inside it.
+
 Maritime pine round 3 (18 Nov): no excurrent crown cone (it kept the top a sparse spire over a
 wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the height; apical
 control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in
