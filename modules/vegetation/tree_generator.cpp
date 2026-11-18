@@ -2951,6 +2951,11 @@ static thread_local Vector3 tube_carry_nrm;
 static thread_local Vector3 tube_last_nrm;
 // Metres of bark one texture tile covers on the tree being built (_build_mesh sets it per bark family).
 static thread_local float tube_tile = 0.4f;
+// A leader's split (trees.md 5z): the displaced relief fades out within tube_fade_r of
+// tube_fade_c, on the bole and on its stems, so their surfaces meet smooth (the normal map keeps
+// the bark); displaced, the bole's ridges stood through the stems' furrows as teeth (docs, 18 Nov).
+static thread_local Vector3 tube_fade_c;
+static thread_local float tube_fade_r = 0.0f;
 
 // A generalized cylinder along a polyline, framed by parallel transport (Bishop frames).
 void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height, float p_relief, float p_girth_r, bool p_soil_fade) {
@@ -3048,7 +3053,8 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				const float gy = p_points[r].y + dir.y * rr;
 				// None on a cap's end face: the furrows ran into its centre as pleats.
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face;
+				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
+						(tube_fade_r > 0.0f ? Math::smoothstep(0.35f * tube_fade_r, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
 			}
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
 			// The cap's end face is mapped flat across it, in the colour of weathered end grain:
@@ -3863,7 +3869,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
-		{ 9, 12, 0.2f, 0.06f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
+		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3913,17 +3919,25 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// lattice at every setting, so the ridges are now the furrowed family's: zero lines
 					// of noise stretched along the stem, two families so they merge and split, and the
 					// cross breaks dropped (they read as rows of dashes).
-					const float n1 = bark_fbm(wu, wv, 9, 1, 3, salt + 51u);
-					const float n2 = bark_fbm(wu + 0.3f, wv, 6, 2, 3, salt + 55u);
-					const float f1 = Math::smoothstep(0.0f, 0.1f, Math::abs(n1));
-					const float f2 = Math::smoothstep(0.0f, 0.06f, Math::abs(n2));
-					const float o2 = MIN(f1, Math::lerp(0.45f, 1.0f, f2));
+					// Round 7 (docs, 18 Nov: thin, stringy ridges like a juniper's): fewer, fatter
+					// ridges (six noise cycles a tile, a dozen furrows), fissures twice as wide, and
+					// broad cross breaks that cut the ridges into irregular blocks.
+					const float n1 = bark_fbm(wu, wv, 6, 1, 3, salt + 51u);
+					const float n2 = bark_fbm(wu + 0.3f, wv, 4, 2, 3, salt + 55u);
+					const float f1 = Math::smoothstep(0.025f, 0.11f, Math::abs(n1));
+					const float f2 = Math::smoothstep(0.0f, 0.08f, Math::abs(n2));
+					// Cross breaks: zero lines of a noise stretched round the stem, broad and shallow
+					// saddles on about half the ridges' length.
+					const float n3 = bark_fbm(wu, wv, 3, 8, 2, salt + 59u);
+					const float keep = Math::smoothstep(-0.05f, 0.1f, bark_fbm(u, v, 6, 4, 2, salt + 63u));
+					const float brk = Math::lerp(1.0f, Math::lerp(0.55f, 1.0f, Math::smoothstep(0.0f, 0.12f, Math::abs(n3))), keep);
+					const float o2 = MIN(MIN(f1, Math::lerp(0.45f, 1.0f, f2)), brk);
 					// Rounded, crumbly tops: the profile rises fast out of the furrow and flattens over
 					// the ridge, pitted and lumpy.
 					const float lumps = bark_fbm(u, v, 30, 15, 3, salt + 57u);
 					plate = Math::pow(o2, 0.5f) * (0.85f + 0.3f * (lumps + 0.5f));
-					// The colour darkens only in the long main furrows: the side family's shallow
-					// partings, dark too, broke the ridges into blotches (docs, 18 Nov: a leopard skin).
+					// The colour darkens in the main furrows only: the side family's partings and the
+					// breaks, dark too, read as blotches and dashes (docs, 18 Nov).
 					open = f1;
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
@@ -12138,7 +12152,10 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	struct TileGuard {
-		~TileGuard() { tube_tile = BARK_TILE; }
+		~TileGuard() {
+			tube_tile = BARK_TILE;
+			tube_fade_r = 0.0f;
+		}
 	} tile_guard;
 	tube_tile = _bark_tile();
 	Builder bark;
@@ -13892,6 +13909,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int l = nodes[chain[chain.size() - 1]].first_lateral; l >= 0 && !split_tip; l = nodes[l].next_sibling) {
 			split_tip = nodes[l].stem_level > nodes[chain[chain.size() - 1]].stem_level;
 		}
+		tube_fade_r = 0.0f;
+		if (split_tip) {
+			tube_fade_c = nodes[chain[chain.size() - 1]].end();
+			tube_fade_r = 1.6f * nodes[chain[chain.size() - 1]].radius;
+		} else if (first.parent >= 0 && first.stem_level > nodes[first.parent].stem_level) {
+			tube_fade_c = nodes[first.parent].end();
+			tube_fade_r = 1.6f * nodes[first.parent].radius;
+		}
 		const float r0 = first.radius;
 		const bool smooth = r0 > 0.015f;
 		pts.clear();
@@ -14022,7 +14047,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			Vector3 side = first.dir - par.dir * first.dir.dot(par.dir);
 			side = side.length() > 1e-4f ? side.normalized() : Vector3();
 			const float rc = MIN(split ? MAX(rad[0] * 1.25f, rp * 0.8f) : rad[0], rp * 0.9f);
-			const float off = MAX(0.0f, rp * (split ? 0.97f : 0.92f) - rc); // A split's stems meet the bole's surface: no ledge.
+			const float off = MAX(0.0f, rp * (split ? 0.96f : 0.92f) - rc); // A split's stems rise just inside the bole's surface: no ledge.
 			const Vector3 base = pts[0] + side * off;
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -14068,8 +14093,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// the split as a band, a collar of tape (docs, 18 Nov).
 			const Vector3 up = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
 			const float rt = rad[rad.size() - 1];
-			const float hk[5] = { 0.25f, 0.5f, 0.75f, 1.0f, 1.25f };
-			const float rk[5] = { 0.99f, 0.95f, 0.87f, 0.74f, 0.55f };
+			const float hk[5] = { 0.15f, 0.3f, 0.45f, 0.6f, 0.75f };
+			const float rk[5] = { 0.95f, 0.86f, 0.74f, 0.6f, 0.45f };
 			for (int k = 0; k < 5; k++) {
 				pts.push_back(top + up * (rt * hk[k]));
 				rad.push_back(rt * rk[k]);
@@ -14324,7 +14349,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			col = col.lerp(Color(0.42f, 0.4f, 0.37f), 0.6f);
 		}
 		col = col.srgb_to_linear();
-		const float tint = 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
+		// A split's stems take the bole's tone: their own showed as a band of other bark above it.
+		const float tint = (split_tip || (first.parent >= 0 && first.stem_level > nodes[first.parent].stem_level)) ? 1.0f : 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
 		col = Color(col.r * tint, col.g * tint, col.b * tint);
 		bark.bone = node_bone[s];
 		const BarkSet &bs = _bark_set(_bark_kind(preset));

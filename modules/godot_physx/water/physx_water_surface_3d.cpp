@@ -1915,6 +1915,9 @@ void fragment() {
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * shore_wave_activity * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
+	// The bore's white front belongs to the uprush (swash a: climbing); the backwash drains as a clear film, which
+	// the rim drawn over every thin film turned into an opaque grey sheet.
+	rim *= grid_bspline(swash_tex, shore_pattern_uv(v_rest_xz)).a;
 	foam = max(foam, rim * (1.0 - v_lip));
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
