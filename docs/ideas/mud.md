@@ -774,10 +774,23 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   soil: wheels and boots barely sink, old ruts freeze rigid and jolt a vehicle crossing them; the thaw then leaves
   the top wetter and weaker than before (thaw weakening, the spring mud season of forest roads), so ruts form
   deeper for a while. Build: a frost depth per lattice cell from the weather, scaling the cell's rate and bearing.
-- **Raindrop rings on puddles.** Rain falling on standing water draws expanding rings (Lagarde's 2013 rain ripple
+  *Built (18 Nov):* `frozen_ground` (on). Per lattice cell (thawed top a, frost depth b, thaw weakening w), stepped
+  with the water from WeatherMap3D's air: Stefan's front with the soil water's latent heat (the modified Berggren
+  equation's leading term, Aldrich 1956): dz/dt = k dT / (334 MJ/m3 theta (z + 2 cm)), frozen k 2, theta 0.1 to 0.4
+  by wetness (12 cm in 12 h at -8 C); the thaw works down from the top (unfrozen k 1.2); a frost after a thaw
+  refreezes the wet top first; snow-covered cells are left alone. New cells seed from WeatherSeason's soil_frost
+  for the day. Crust share = smoothstep(2, 8 cm) of the frozen layer, gone under 0.5 to 3 cm of thaw: the cell's
+  Bekker k's x(1 + 30 f), cohesion +200 kPa f, no slumping, max_dent x(1 - f), not deformable past 0.95 (ruts in
+  it stay as they are, get_soil() reports it firm); ksat x(1 - 0.99 f), so water stands on it. Thaw weakening:
+  while thawed soil lies on the frost (and for an e-fold of 5 days after it has gone) the cell's wetness is raised
+  to past mud_wet_full and, with mud_layer, the thawed layer is mud as deep as it is. `get_frost_at()`.
+  Checks `--test=frost`: 12 cm in a night, a boot leaves 0 mm (98 unfrozen), the old rut does not move, a 3 kN
+  wheel sinks 87 mm in the thaw against 65 before the frost.
+- **Raindrop rings on puddles.** (Moved to the rain thread, 18 Nov: rain, snow and wind are one system. It adds its
+  ring slope to the standing-water block's `gfs`, scaled by 1 - the ice cover.) Rain falling on standing water draws expanding rings (Lagarde's 2013 rain ripple
   texture approach, rings per drop cell timed by the rain rate), in both renderers, on ruts, puddles and ice-free
   water.
-- **Hoar frost.** Clear, still nights below 0 C rime the grass, plants and bare ground white (deposition when the
+- **Hoar frost.** (Moved to the world-links thread, 18 Nov, with dew, across every material.) Clear, still nights below 0 C rime the grass, plants and bare ground white (deposition when the
   surface cools under the dew point), thickest in hollows; the low sun melts it off from the lit side first.
 
 

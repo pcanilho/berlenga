@@ -51,6 +51,8 @@ extends Node3D
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
 #   --frost=hours[,break] --view=ruts with --water: then a frost of that many hours at -5 C freezes the water (mud
 #                  round 7); ",break": a walker's boots across the left rut break the ice
+#   --test=frost        frozen ground: a night's frost (Stefan) holds feet off, keeps the ruts, stands water; the thaw
+#                         leaves a soaked layer that prints deeper than before
 #   --view=ice          a frozen puddle with a wheel's track broken through it (mud round 7)
 #   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws;
 #                         and mud on plants: thrown clay and muddy splashes spatter the sward, prints do not, rain washes it
@@ -107,6 +109,7 @@ var tracked_test := false
 var ruts_test := false
 var pudhelp_test := false
 var ice_test := false
+var frost_test := false
 var frost_arg := 0.0 # --frost=hours: the ruts view's water frozen over that long at -5 C
 var frost_break := false # --frost=hours,break: and boots across the left rut
 var cracks_on := false # _setup turns desiccation_cracks on (the kept-cracks check needs it from the first lattice)
@@ -157,6 +160,7 @@ func _ready() -> void:
 		elif a == "--test=ruts": ruts_test = true
 		elif a == "--test=puddle-helper": pudhelp_test = true
 		elif a == "--test=ice": ice_test = true
+		elif a == "--test=frost": frost_test = true
 		elif a.begins_with("--frost="):
 			var fv := a.substr(8).split(",")
 			frost_arg = float(fv[0])
@@ -183,6 +187,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if frost_test:
+		await _run_frost_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if ice_test:
 		await _run_ice_tests()
 		await _run_plant_mud_tests()
@@ -356,6 +365,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.runoff_channels = false
 		surface.standing_water = false
 		surface.desiccation_cracks = cracks_on
+		surface.frozen_ground = false
 		surface.world_puddles = false
 	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
 	for a in OS.get_cmdline_user_args():
@@ -1389,6 +1399,76 @@ func _run_plant_mud_tests() -> void:
 	var left := surface.get_plant_mud_at(a)
 	_check("rain washes it off within millimetres", left < 0.3 * pa, "%.2f left after about 4 mm" % left)
 	surface.runoff_time_scale = 1.0
+	wm.queue_free()
+	near_on = true
+
+
+# Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
+# as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.
+func _run_frost_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	surface.mud_layer = true
+	surface.frozen_ground = true
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.9
+	wm.temperature = 8.0
+	wm.season_day = 200 # summer: the climate gives no frost to start from
+	add_child(wm)
+	wm.snap_to_settings()
+	for i in 6:
+		await get_tree().physics_frame
+	var g := surface.get_surface_height_at(Vector3(-2, 0, 0))
+	surface.press_box(Vector3(-2, 0, 0), Vector2(0.11, 0.29), 0.0, g - 0.1, 0.05)
+	for i in 30:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var before := g - surface.get_surface_height_at(Vector3(-2, 0, 0))
+	var sink0: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	var rut := Vector3(1.5, 0, 0)
+	g = surface.get_surface_height_at(rut)
+	surface.press_box(rut, Vector2(0.3, 1.0), 0.0, g - 0.1, 0.05)
+	for i in 30:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var rut0 := surface.get_surface_height_at(rut)
+	wm.temperature = -8.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	for i in 520: # about 12 h
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	var fr := surface.get_frost_at(Vector3(0, 0, -2))
+	print("  frost: %.1f cm deep after about 12 h at -8 C" % (fr.y * 100.0))
+	_check("a night's frost freezes the top (Stefan, Berggren)", fr.y > 0.06 and fr.y < 0.2, "%.1f cm" % (fr.y * 100.0))
+	for i in 150: # the cells take it (every 2 s)
+		await get_tree().physics_frame
+	var q := Vector3(0, 0, -2)
+	g = surface.get_surface_height_at(q)
+	surface.press_box(q, Vector2(0.11, 0.29), 0.0, g - 0.1, 0.05)
+	for i in 30:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var frozen := g - surface.get_surface_height_at(q)
+	_check("a boot barely marks frozen ground", frozen < 0.2 * before, "%.1f mm (%.1f mm unfrozen)" % [frozen * 1000.0, before * 1000.0])
+	_check("the rut already there stays", absf(surface.get_surface_height_at(rut) - rut0) < 0.003, "%.1f mm moved" % ((surface.get_surface_height_at(rut) - rut0) * 1000.0))
+	wm.temperature = 6.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	var frames := 0
+	while frames < 1500 and surface.get_frost_at(q).x < 0.04:
+		await get_tree().physics_frame
+		frames += 1
+	surface.runoff_time_scale = 1.0
+	fr = surface.get_frost_at(q)
+	print("  thaw: %.1f cm thawed over %.1f cm of frost after %.1f h" % [fr.x * 100.0, fr.y * 100.0, frames / 60.0 * 5000.0 / 3600.0])
+	for i in 150:
+		await get_tree().physics_frame
+	# A loaded wheel (3 kN, 70 cm tyre at 200 kPa) on it: Bekker's sinkage, the thawed slurry against the summer soil.
+	var sink1: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	_check("a wheel sinks deeper in the thaw's soaked layer than before the frost", fr.x > 0.03 and fr.y > fr.x and sink1 > 1.2 * sink0, "%.1f mm (%.1f mm before the frost), %.1f cm thawed" % [sink1 * 1000.0, sink0 * 1000.0, fr.x * 100.0])
 	wm.queue_free()
 	near_on = true
 

@@ -386,6 +386,22 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	} else {
 		ice_state.clear();
 	}
+	if (ground_valid && ground_n == p_n && (int)frost_state.size() == p_n * p_n * FROST_FLOATS) {
+		// Cells the lattice comes onto start from the climate's frost (marked -1 for _frost_update()).
+		const Vector2i fd = p_origin - ground_origin;
+		_shift_lattice(frost_state, ground_origin, p_origin, p_n, FROST_FLOATS);
+		for (int z = 0; z < p_n; z++) {
+			for (int x = 0; x < p_n; x++) {
+				const int sx = x + fd.x;
+				const int sz = z + fd.y;
+				if (!(sx >= 0 && sz >= 0 && sx < p_n && sz < p_n)) {
+					frost_state[(z * p_n + x) * FROST_FLOATS] = -1.0f;
+				}
+			}
+		}
+	} else {
+		frost_state.clear();
+	}
 	if (ground_valid && ground_n == p_n && (int)plant_mud_state.size() == p_n * p_n) {
 		_shift_lattice(plant_mud_state, ground_origin, p_origin, p_n, 1);
 	} else {
@@ -474,14 +490,38 @@ void GroundSurface3D::_update_cells() {
 			in.litter = litter_depth * CLAMP(closure, 0.0f, 1.0f);
 			// Under more than a few centimetres of snow the snow surface takes the print.
 			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
+			// Frozen ground (round 8): a crust holds; a thaw's wet layer over the frost, or a fresh thaw not yet
+			// drained, is soaked and soft, a slurry as deep as the thawed layer.
+			in.frozen = in.fixed ? 0.0f : _frost_crust(i);
+			float thaw_top = 0.0f;
+			if (!in.fixed && (int)frost_state.size() == n * n * FROST_FLOATS) {
+				const float *fr = &frost_state[i * FROST_FLOATS];
+				in.moisture = MAX(in.moisture, Math::lerp(in.moisture, mud_wet_full + 0.05f, fr[2]));
+				thaw_top = fr[0] > 0.0f && fr[1] > fr[0] ? fr[0] : 0.0f;
+			}
 			const bool wet = water_coupling && (int)pore.size() == n * n && (pore[i] > 0.0f || water_speed[i] > 0.0f);
-			in.mud = in.fixed ? 0.0f : _mud_depth_at(p, wet ? MAX(m, pore[i]) : m, sand > 0.5f, dmap);
+			in.mud = in.fixed ? 0.0f : _mud_depth_at(p, wet ? MAX(in.moisture, pore[i]) : in.moisture, sand > 0.5f, dmap);
+			if (mud_layer && sand < 0.5f && thaw_top > 0.0f) {
+				in.mud = MAX(in.mud, thaw_top);
+			}
 			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
 			if (wet) {
 				cell_water[i * 2 + 0] = pore[i];
 				cell_water[i * 2 + 1] = water_speed[i];
 			}
-			c.deformable = !in.fixed;
+			c.deformable = !in.fixed && in.frozen < 0.95f;
+			if (in.frozen > 0.0f) {
+				// Frozen soil: ice-bonded, far stiffer and stronger (frozen silt's cohesion is hundreds of kPa), no
+				// slumping; the ruts already in it stay as they are.
+				const float k = 1.0f + 30.0f * in.frozen;
+				c.kc *= k;
+				c.kphi *= k;
+				c.wheel_kc *= k;
+				c.wheel_kphi *= k;
+				c.cohesion += 200.0f * in.frozen;
+				c.max_dent *= 1.0f - in.frozen;
+				c.rate *= 1.0f - in.frozen;
+			}
 			cells[i] = c;
 		}
 	}
@@ -762,6 +802,8 @@ float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
 	if (p_in.mud > 0.0f) {
 		k *= 1.0f / 3.0f;
 	}
+	// Frozen: its pores are ice (meltwater and rain stand on frozen ground).
+	k *= 1.0f - 0.99f * CLAMP(p_in.frozen, 0.0f, 1.0f);
 	return k;
 }
 
@@ -956,6 +998,114 @@ void GroundSurface3D::_ice_break(const Vector3 &p_position, float p_radius, floa
 			c[1] = MAX(c[1], 1.0f - Math::smoothstep(p_radius, r, d));
 		}
 	}
+}
+
+void GroundSurface3D::set_frozen_ground(bool p_enabled) {
+	frozen_ground = p_enabled;
+	if (!p_enabled) {
+		frost_state.clear();
+	}
+	cells_accum = 2.0; // the cells take it at the next step
+}
+
+// Frozen ground (docs/ideas/mud.md, round 8). The frost front goes down by Stefan's solution with the soil's water
+// as the latent heat (the modified Berggren equation's leading term, Aldrich 1956): dz/dt = k dT / (L theta (z +
+// z0)), frozen soil's conductivity k 2 W/(m K), L 334 MJ/m3 of water, theta the soil's water content (0.1 to 0.4 by
+// its wetness), z0 2 cm for the air and the surface's own resistance; about 9 cm in a night at -5 C, half a metre
+// over a cold winter. A thaw works down from the top the same way (unfrozen k 1.2), so for a while a thawed layer
+// lies on the frozen ground: its meltwater cannot drain through the ice below, the layer is saturated and weak
+// (thaw weakening: forest roads lose about half their bearing in the spring thaw and carry load limits) until the
+// frost has gone and it has drained, an e-fold of 5 days. A frost after a thaw refreezes the wet top first. Snow
+// (a cell the snow covers) insulates: no change under it. New cells start from the climate's frost index for the
+// day (WeatherSeason's soil_frost: freezing degree days, thawed back by positive ones, none under snow).
+void GroundSurface3D::_frost_seed(int p_from) {
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	float depth = 0.0f;
+	if (wm) {
+		const WeatherSeason::State st = WeatherSeason::compute(wm->get_season_climate(), _ground_at(center.x, center.y), wm->get_day_of_year());
+		const float theta = 0.1f + 0.3f * CLAMP(moisture >= 0.0f ? moisture : 0.3f, 0.0f, 1.0f);
+		depth = st.snow_cover > 0.5f ? 0.0f : MIN(Math::sqrt(2.0f * 2.0f * st.soil_frost * 86400.0f / (334e6f * theta)), 1.0f);
+	}
+	for (int i = p_from; i < (int)frost_state.size() / FROST_FLOATS; i++) {
+		float *f = &frost_state[i * FROST_FLOATS];
+		if (f[0] < 0.0f) {
+			f[0] = 0.0f;
+			f[1] = depth;
+			f[2] = 0.0f;
+		}
+	}
+}
+
+void GroundSurface3D::_frost_update(double p_delta) {
+	const int n = ground_n;
+	if (!frozen_ground || !ground_valid || n < 2 || (int)cell_inputs.size() != n * n) {
+		frost_state.clear();
+		return;
+	}
+	if ((int)frost_state.size() != n * n * FROST_FLOATS) {
+		frost_state.resize(n * n * FROST_FLOATS);
+		for (int i = 0; i < n * n; i++) {
+			frost_state[i * FROST_FLOATS] = -1.0f;
+		}
+	}
+	_frost_seed(0);
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const float t = wm ? wm->get_air_temperature() : 10.0f;
+	const float dt = float(p_delta) * runoff_time_scale;
+	for (int i = 0; i < n * n; i++) {
+		const CellInput &in = cell_inputs[i];
+		float *f = &frost_state[i * FROST_FLOATS];
+		float &a = f[0];
+		float &b = f[1];
+		float &w = f[2];
+		if (in.fixed) {
+			continue; // rock, or snow over it
+		}
+		const float l = 334e6f * (0.1f + 0.3f * CLAMP(in.moisture, 0.0f, 1.0f));
+		if (t < 0.0f) {
+			if (a > 0.0f) {
+				// The wet top refreezes first, under a crust as thin as it is.
+				a = MAX(a - 2.0f * -t / (l * 0.03f) * dt, 0.0f);
+			} else {
+				b = MIN(b + 2.0f * -t / (l * (b + 0.02f)) * dt, 1.0f);
+			}
+		} else if (b > 0.0f) {
+			a += 1.2f * t / (l * (a + 0.02f)) * dt;
+			if (a >= b) {
+				a = 0.0f;
+				b = 0.0f;
+				w = 1.0f; // thawed through, still saturated
+			}
+		}
+		if (a > 0.0f && b > a) {
+			w = 1.0f; // meltwater perched on the frost
+		} else if (b <= 0.0f && w > 0.0f) {
+			w *= Math::exp(-dt / (5.0f * 86400.0f));
+			w = w < 0.01f ? 0.0f : w;
+		}
+	}
+}
+
+// How far the frozen ground holds as a crust at lattice cell p_i, 0..1: a frozen layer from 2 cm thick (a boot
+// breaks thinner) to 8 cm (a wheel does not), at the surface (a thawed top over it gives way).
+float GroundSurface3D::_frost_crust(int p_i) const {
+	if ((int)frost_state.size() != ground_n * ground_n * FROST_FLOATS || p_i < 0) {
+		return 0.0f;
+	}
+	const float a = MAX(frost_state[p_i * FROST_FLOATS], 0.0f);
+	const float b = frost_state[p_i * FROST_FLOATS + 1];
+	return Math::smoothstep(0.02f, 0.08f, b - a) * (1.0f - Math::smoothstep(0.005f, 0.03f, a));
+}
+
+Vector3 GroundSurface3D::get_frost_at(Vector3 p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)frost_state.size() != n * n * FROST_FLOATS) {
+		return Vector3();
+	}
+	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+	const float *f = &frost_state[(z * n + x) * FROST_FLOATS];
+	return Vector3(MAX(f[0], 0.0f), MAX(f[1], 0.0f), f[2]);
 }
 
 void GroundSurface3D::set_plant_mud(bool p_enabled) {
@@ -3466,6 +3616,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_crack_update(water_accum);
 				_ice_update(water_accum);
 				_plant_mud_update(water_accum);
+				_frost_update(water_accum);
 				water_accum = 0.0;
 			}
 			wet_publish_accum += delta;
@@ -5172,6 +5323,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_puddle_ice", "enabled"), &GroundSurface3D::set_puddle_ice);
 	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);
 	ClassDB::bind_method(D_METHOD("get_ice_at", "position"), &GroundSurface3D::get_ice_at);
+	ClassDB::bind_method(D_METHOD("set_frozen_ground", "enabled"), &GroundSurface3D::set_frozen_ground);
+	ClassDB::bind_method(D_METHOD("is_frozen_ground"), &GroundSurface3D::is_frozen_ground);
+	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &GroundSurface3D::get_frost_at);
 	ClassDB::bind_method(D_METHOD("set_plant_mud", "enabled"), &GroundSurface3D::set_plant_mud);
 	ClassDB::bind_method(D_METHOD("is_plant_mud"), &GroundSurface3D::is_plant_mud);
 	ClassDB::bind_method(D_METHOD("get_plant_mud_at", "position"), &GroundSurface3D::get_plant_mud_at);
@@ -5386,6 +5540,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "puddle_ice"), "set_puddle_ice", "is_puddle_ice");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plant_mud"), "set_plant_mud", "is_plant_mud");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frozen_ground"), "set_frozen_ground", "is_frozen_ground");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");

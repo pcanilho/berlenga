@@ -113,6 +113,13 @@
 				The share of the grass and plants at [param position] spattered with mud (0 to 1, see [member plant_mud]).
 			</description>
 		</method>
+		<method name="get_frost_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The frozen ground at [param position] (see [member frozen_ground]): the thawed layer on top in metres, the frost's depth in metres, and how weakened the ground is by a thaw (0 to 1).
+			</description>
+		</method>
 		<method name="get_ice_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -577,6 +584,9 @@
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.
+		</member>
+		<member name="frozen_ground" type="bool" setter="set_frozen_ground" getter="is_frozen_ground" default="true">
+			If [code]true[/code], the soil freezes from the top below 0 C (about 9 cm in a night at -5 C, deeper over a winter, nothing under snow) and holds as a hard crust: feet and wheels barely mark it, the ruts already in it stay rigid, and water stands on it. A thaw works down from the top: the thawed layer over the frost is soaked and soft, so ruts cut deep in it, and the ground stays weak for some days after the frost has gone. New ground starts from the [WeatherMap3D] climate's frost for the day.
 		</member>
 		<member name="gpu_simulation" type="bool" setter="set_gpu_simulation" getter="is_gpu_simulation" default="true">
 			Runs the field (pressing, slumping, ageing, the turned-ground tint and the tile cache) in compute shaders where there is a [RenderingDevice]; the texture the ground materials sample is written there directly. The queries use a copy read back at 15 Hz. Off, or on the Compatibility renderer, the field runs on the CPU. Turning it over starts the field empty.
