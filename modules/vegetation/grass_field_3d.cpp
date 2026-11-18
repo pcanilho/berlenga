@@ -438,6 +438,9 @@ void GrassField3D::_build_material() {
 	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
 	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
 	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
+	// The far rings (docs/ideas/grass.md, "Far grass"): their start (where every ring blade is kept), end, end band
+	// and the most a blade widens.
+	code += "uniform vec4 ring_band;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
@@ -999,6 +1002,23 @@ void vertex() {
 	float side = VERTEX.x;
 	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
+	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
+	// the distance from the field's centre, each blade dropping at its own rank (w's integer part: -log2 of it, in
+	// 1/1024ths) and the ones left widened, so coverage holds and no ring shows (Ghost of Tsushima, Wohllaib GDC
+	// 2021). They come in over the near blades' outer band, which they mirror, and go over the rings' own end
+	// band, where the voxel shell takes over. From the field's centre, not the camera: the shadow pass agrees.
+	bool ring_blade = w < 0.0;
+	float ring_s = 1.0;
+	if (ring_blade) {
+		w = -w;
+		float rd = max(length(base_w.xz - fade_band.xy), 1e-3);
+		float rk = min(ring_band.x * ring_band.x / (rd * rd), 1.0);
+		w *= min(inversesqrt(rk), ring_band.w);
+		float near_keep = fade_band.w > 0.0 ? clamp((fade_band.z - rd) / fade_band.w, 0.0, 1.0) : 0.0;
+		float far_keep = ring_band.z > 0.0 ? clamp((ring_band.y - rd) / ring_band.z, 0.0, 1.0) : 1.0;
+		float rank = exp2(-floor(INSTANCE_CUSTOM.w) / 1024.0);
+		ring_s = smoothstep(1.0, 1.4, rk * (1.0 - near_keep) * far_keep / rank);
+	}
 
 	// Wind at two thirds of the blade, in the blade's frame; flutter on top.
 	// A blade's own frequency: about 2 Hz at 0.4 m, slower when taller and softer (de Langre 2008).
@@ -1086,7 +1106,9 @@ void vertex() {
 	// dither order and shrink to nothing before the radius, so the field has no edge; the ground under
 	// them takes the blades' colour (get_ground_shader_code()). fade_band: centre xz, the distance
 	// where the last blade is gone, the width of the band.
-	if (fade_band.w > 0.0) {
+	if (ring_blade) {
+		p *= ring_s;
+	} else if (fade_band.w > 0.0) {
 		float keep_b = clamp((fade_band.z - length(base_w.xz - fade_band.xy)) / fade_band.w, 0.0, 1.0);
 		float order = floor(INSTANCE_CUSTOM.w) / 256.0;
 		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
@@ -1204,6 +1226,7 @@ void fragment() {
 	material->set_shader_parameter("trample_rect", Vector4());
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fade_band", fade_band);
+	material->set_shader_parameter("ring_band", ring_band);
 	// One-sided leaf area per ground area: blades per m2 x mean height x width x 0.7 (the taper).
 	material->set_shader_parameter("sward_lai", density * 0.5f * (blade_height.x + blade_height.y) * blade_width * 0.7f);
 	if (blade_mesh.is_valid()) {
@@ -2663,6 +2686,635 @@ void GrassField3D::_free_tile(Tile &p_tile) {
 	}
 }
 
+// Far rings (docs/ideas/grass.md, "Far grass"): the meadow's blades past the near tiles, out to far_ring_range.
+// One set of blades on nested grids: a cell at level L (cells 2^L times the base cell) carries one blade, picked
+// down a chain of hashed children to a base cell, and the same blade carries its parent's cell for as many levels
+// up as the chain continues. That count gives the blade's rank (4^-(levels + 1) to 4^-levels), so the shader can
+// keep blades whose rank is under (start / distance)^2 and the set thins evenly and smoothly with no level showing.
+// A tile at level L holds the blades of rank under 4^-L, enough for any point at 2^L times the start or farther.
+namespace {
+constexpr float RING_TILE = 16.0f; // m, a level-0 tile; level L is 2^L times wider and holds as many blades.
+constexpr int RING_MAX_LEVEL = 8;
+constexpr float RING_WIDEN_MAX = 16.0f;
+constexpr float RING_BUDGET_MSEC = 4.0f; // Ring tiles built a frame, past the first.
+
+uint32_t ring_child(int p_x, int p_z, int p_level) {
+	return cell_hash(p_x, p_z, 0xA511E9B3u + uint32_t(p_level) * 0x9E3779B9u) & 3u;
+}
+
+int floor_half(int p_v) {
+	return p_v >= 0 ? p_v / 2 : -((-p_v + 1) / 2);
+}
+} // namespace
+
+bool GrassField3D::_rings_active() const {
+	return far_rings && crop == CROP_NONE && is_inside_tree() && fade_owner == this && far_ring_range > radius;
+}
+
+Ref<ArrayMesh> GrassField3D::_make_ring_mesh(int p_segments) const {
+	PackedVector3Array verts;
+	PackedVector2Array uvs;
+	PackedInt32Array idx;
+	for (int i = 0; i < p_segments; i++) {
+		const float t = float(i) / p_segments;
+		verts.push_back(Vector3(-0.5f, t, 0.0f));
+		verts.push_back(Vector3(0.5f, t, 0.0f));
+		uvs.push_back(Vector2(0.0f, t));
+		uvs.push_back(Vector2(1.0f, t));
+	}
+	verts.push_back(Vector3(0.0f, 1.0f, 0.0f));
+	uvs.push_back(Vector2(0.5f, 1.0f));
+	for (int i = 0; i < p_segments - 1; i++) {
+		const int a = i * 2;
+		idx.append_array(PackedInt32Array({ a, a + 2, a + 1, a + 1, a + 2, a + 3 }));
+	}
+	const int last = (p_segments - 1) * 2;
+	idx.append_array(PackedInt32Array({ last, last + 2, last + 1 }));
+	PackedVector3Array normals;
+	normals.resize(verts.size());
+	normals.fill(Vector3(0, 0, 1));
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_INDEX] = idx;
+	Ref<ArrayMesh> m;
+	m.instantiate();
+	m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	// Bent and widened in the shader: bounds for the tallest blade at the widest.
+	const float h = MAX(blade_height.x, blade_height.y) * 1.1f;
+	const float wd = blade_width * Math::sqrt(8.0f) * RING_WIDEN_MAX * 1.5f + h;
+	m->set_custom_aabb(AABB(Vector3(-wd, -0.05f, -wd), Vector3(2.0f * wd, h + 0.1f, 2.0f * wd)));
+	m->surface_set_material(0, material);
+	return m;
+}
+
+void GrassField3D::_free_ring_tile(RingTile &p_tile) {
+	if (p_tile.mmi) {
+		Ref<MultiMesh> mm = p_tile.mmi->get_multimesh();
+		if (mm.is_valid()) {
+			ring_blade_count -= mm->get_instance_count();
+		}
+		remove_child(p_tile.mmi);
+		memdelete(p_tile.mmi);
+		p_tile.mmi = nullptr;
+	}
+}
+
+void GrassField3D::_free_rings() {
+	for (KeyValue<Vector3i, RingTile> &kv : ring_tiles) {
+		_free_ring_tile(kv.value);
+	}
+	ring_tiles.clear();
+	ring_blade_count = 0;
+}
+
+void GrassField3D::_update_rings(const Vector2 &p_center, TerrainDataMap3D *p_map) {
+	if (!_rings_active()) {
+		if (!ring_tiles.is_empty()) {
+			_free_rings();
+			_free_shell();
+		}
+		return;
+	}
+	// The rings start where the near blades start to thin (their outer band) and keep every blade there.
+	const float start = MAX(fade_band.z - fade_band.w, 1.0f);
+	const Vector4 band(start, far_ring_range, far_ring_range * 0.2f, RING_WIDEN_MAX);
+	if (!band.is_equal_approx(ring_band)) {
+		ring_band = band;
+		material->set_shader_parameter("ring_band", ring_band);
+	}
+	if (ring_mesh_near.is_null() || ring_mesh_near->surface_get_material(0) != material) {
+		ring_mesh_near = _make_ring_mesh(2);
+		ring_mesh_far = _make_ring_mesh(1);
+	}
+	// The wanted tiles: a quadtree from tiles covering the whole reach, split while a tile is nearer than its level
+	// keeps enough blades for.
+	int top = 0;
+	while (top < RING_MAX_LEVEL && start * float(1 << top) < far_ring_range) {
+		top++;
+	}
+	struct Want {
+		Vector3i key;
+		float d;
+		bool operator<(const Want &o) const { return d < o.d; }
+	};
+	LocalVector<Want> want;
+	HashSet<Vector3i> wanted;
+	const float top_size = RING_TILE * float(1 << top);
+	const Vector2i lo(int(Math::floor((p_center.x - far_ring_range) / top_size)), int(Math::floor((p_center.y - far_ring_range) / top_size)));
+	const Vector2i hi(int(Math::floor((p_center.x + far_ring_range) / top_size)), int(Math::floor((p_center.y + far_ring_range) / top_size)));
+	LocalVector<Vector3i> stack;
+	for (int z = lo.y; z <= hi.y; z++) {
+		for (int x = lo.x; x <= hi.x; x++) {
+			stack.push_back(Vector3i(x, z, top));
+		}
+	}
+	while (!stack.is_empty()) {
+		const Vector3i k = stack[stack.size() - 1];
+		stack.remove_at(stack.size() - 1);
+		const float size = RING_TILE * float(1 << k.z);
+		const Rect2 rect(k.x * size, k.y * size, size, size);
+		const Vector2 nearest(CLAMP(p_center.x, rect.position.x, rect.position.x + size), CLAMP(p_center.y, rect.position.y, rect.position.y + size));
+		const float d_near = nearest.distance_to(p_center);
+		const float d_far = Vector2(MAX(Math::abs(p_center.x - rect.position.x), Math::abs(p_center.x - rect.position.x - size)), MAX(Math::abs(p_center.y - rect.position.y), Math::abs(p_center.y - rect.position.y - size))).length();
+		if (d_near > far_ring_range || d_far < start) {
+			continue; // Past the rings, or all inside the near blades.
+		}
+		if (k.z > 0 && d_near < start * float(1 << k.z)) {
+			for (int c = 0; c < 4; c++) {
+				stack.push_back(Vector3i(k.x * 2 + (c & 1), k.y * 2 + (c >> 1), k.z - 1));
+			}
+			continue;
+		}
+		wanted.insert(k);
+		const RingTile *existing = ring_tiles.getptr(k);
+		if (!existing || existing->generation != generation || d_near < existing->built_near) {
+			want.push_back({ k, d_near });
+		}
+	}
+	want.sort();
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	// The first fill all at once (a scene's first frame), then within a budget a frame.
+	const bool first = ring_tiles.is_empty();
+	for (const Want &w : want) {
+		if (!first && (OS::get_singleton()->get_ticks_usec() - t0) > uint64_t(RING_BUDGET_MSEC * 1000.0f)) {
+			break;
+		}
+		RingTile *existing = ring_tiles.getptr(w.key);
+		if (existing) {
+			_free_ring_tile(*existing);
+			ring_tiles.erase(w.key);
+		}
+		RingTile tile;
+		// Built for a quarter of the tile nearer than now, so walking does not rebuild it every step.
+		_build_ring_tile(w.key, MAX(w.d - 0.25f * RING_TILE * float(1 << w.key.z), 0.0f), p_map, tile);
+		ring_tiles.insert(w.key, tile);
+	}
+	const uint64_t t1 = OS::get_singleton()->get_ticks_usec();
+	if (!want.is_empty()) {
+		ring_build_msec = double(t1 - t0) / 1000.0;
+	}
+	// Tiles no longer wanted go once every wanted one is built, so a split or a merge never leaves a hole.
+	bool complete = true;
+	for (const Vector3i &k : wanted) {
+		const RingTile *t = ring_tiles.getptr(k);
+		if (!t || t->generation != generation) {
+			complete = false;
+			break;
+		}
+	}
+	if (complete) {
+		LocalVector<Vector3i> drop;
+		for (const KeyValue<Vector3i, RingTile> &kv : ring_tiles) {
+			if (!wanted.has(kv.key)) {
+				drop.push_back(kv.key);
+			}
+		}
+		for (const Vector3i &k : drop) {
+			_free_ring_tile(ring_tiles[k]);
+			ring_tiles.erase(k);
+		}
+	}
+}
+
+void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, TerrainDataMap3D *p_map, RingTile &r_tile) {
+	r_tile.generation = generation;
+	r_tile.built_near = p_near;
+	// Only the blades the shader keeps somewhere in the tile: rank under (start / nearest distance)^2.
+	const float ring_start = MAX(ring_band.x, 1.0f);
+	const float min_neg_log_rank = p_near > ring_start ? 2.0f * Math::log2(p_near / ring_start) : 0.0f;
+	const int level = p_key.z;
+	// The base density: the near tiles' coarsest level (an eighth), its cell fitted to the tile.
+	const float base_density = MAX(density, 0.01f) / 8.0f;
+	const int n = MAX(int(Math::ceil(RING_TILE * Math::sqrt(base_density))), 1);
+	const float cell0 = RING_TILE / float(n);
+	const float width0 = blade_width * Math::sqrt(MAX(density, 0.01f) / base_density);
+	const float ground_y = get_global_position().y;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	Ref<PlantSpecies> r = rules;
+	if (r.is_null()) {
+		r.instantiate();
+	}
+	const VegetationField3D *canopy = _get_canopy(r.ptr());
+	const VegetationField3D *crowns = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+	const VegetationField3D *under = _get_undergrowth();
+	const float size = RING_TILE * float(1 << level);
+	const Rect2 rect(p_key.x * size, p_key.y * size, size, size);
+	const bool rocks = !obstacle_grid.is_empty();
+	const bool holed = !holes.is_empty() && holes.any_in(rect.grow(OBSTACLE_MARGIN));
+	const bool fielded = crop_mask.any_in(rect);
+	const bool trodden = !path_grid.is_empty() && trample_resistance > 0.0f && path_grid.any_in(rect.grow(path_grid.max_reach));
+	// Only over the data map: past it there are no rules or heights.
+	const Rect2 map_rect = p_map ? p_map->get_map_rect() : Rect2();
+	if (p_map && !map_rect.intersects(rect)) {
+		return;
+	}
+	LocalVector<Transform3D> xforms;
+	LocalVector<Color> customs;
+	xforms.reserve(n * n);
+	customs.reserve(n * n);
+	for (int j = 0; j < n; j++) {
+		for (int i = 0; i < n; i++) {
+			const int ci = p_key.x * n + i;
+			const int cj = p_key.y * n + j;
+			// Down the chain to the base cell that carries this cell's blade.
+			int bx = ci;
+			int bz = cj;
+			for (int l = level; l > 0; l--) {
+				const uint32_t ch = ring_child(bx, bz, l);
+				bx = bx * 2 + int(ch & 1u);
+				bz = bz * 2 + int(ch >> 1);
+			}
+			// Up: how many more levels it carries.
+			int keepers = level;
+			int ux = ci;
+			int uz = cj;
+			while (keepers < 24) {
+				const int px = floor_half(ux);
+				const int pz = floor_half(uz);
+				if (ring_child(px, pz, keepers + 1) != (uint32_t(ux & 1) | (uint32_t(uz & 1) << 1))) {
+					break;
+				}
+				ux = px;
+				uz = pz;
+				keepers++;
+			}
+			const uint32_t hj = cell_hash(bx, bz, 0x6C8E9CF5u);
+			const uint32_t hb = cell_hash(bx, bz, 0x1B873593u);
+			// -log2 of the rank: 2 (keepers + 1) - log2(1 + 3 u).
+			const float u = float(hb & 0xFFFFu) / 65536.0f;
+			const float neg_log_rank = 2.0f * float(keepers + 1) - Math::log2(1.0f + 3.0f * u);
+			if (neg_log_rank < min_neg_log_rank) {
+				continue; // Dropped everywhere in the tile.
+			}
+			const float x = (bx + unit(hj, 0)) * cell0;
+			const float z = (bz + unit(hj, 8)) * cell0;
+			const Vector2 q(x, z);
+			if (p_map && !map_rect.has_point(q)) {
+				continue;
+			}
+			if (rocks && obstacle_grid.blocks(q, OBSTACLE_MARGIN)) {
+				continue;
+			}
+			if (fielded && crop_mask.contains(q)) {
+				continue;
+			}
+			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
+				continue;
+			}
+			const float passes = trodden ? path_grid.passes_at(q) : 0.0f;
+			const Vector3 p(x, ground_y, z);
+			float y = ground_y;
+			const float pick = unit(hb, 16) + unit(hb, 24) / 256.0f;
+			float suit = 1.0f;
+			if (p_map) {
+				suit = r->get_suitability(p_map, p);
+				if (canopy && suit > 0.0f) {
+					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+				}
+				if (under && suit > 0.0f) {
+					suit *= 1.0f - under->get_sward_shade_at(p);
+				}
+				if (passes > 0.0f && suit > 0.0f) {
+					suit *= _trample_cover(passes);
+				}
+				if (pick >= suit) {
+					continue;
+				}
+				y = p_map->get_height_at(p);
+			}
+			const float light = (1.0f - (crowns ? crowns->get_shade_at(p) : 0.0f)) * (p_map ? VegetationLight::exposure(p_map, sun_mean, x, z) : 1.0f);
+			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
+			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
+			const uint32_t hc = clump_hash(x, z, clump_size);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes);
+			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
+			xforms.push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z)));
+			const float rnd = unit(hash_fmix32(hb ^ 0x5BD1E995u), 0);
+			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)) * (1.0f + 0.8f * shade_t), 3.99f);
+			customs.push_back(Color(height, -width0, VegetationLight::pack(light) * 4.0f + blade_lean, Math::floor(MIN(neg_log_rank, 63.0f) * 1024.0f) + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
+		}
+	}
+	if (xforms.is_empty()) {
+		return;
+	}
+	Ref<MultiMesh> mm;
+	mm.instantiate();
+	mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+	mm->set_use_custom_data(true);
+	mm->set_mesh(level == 0 ? ring_mesh_near : ring_mesh_far);
+	mm->set_instance_count(xforms.size());
+	for (uint32_t i = 0; i < xforms.size(); i++) {
+		mm->set_instance_transform(i, xforms[i]);
+		mm->set_instance_custom_data(i, customs[i]);
+	}
+	r_tile.mmi = memnew(MultiMeshInstance3D);
+	r_tile.mmi->set_multimesh(mm);
+	// Shadows from the nearer rings only: past a hundred metres or so a blade's shadow is under a pixel (the near
+	// tiles' self shade in their light term carries the sward's darkening).
+	r_tile.mmi->set_cast_shadows_setting(level <= 1 ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	r_tile.mmi->set_name(vformat("GrassRing_%d_%d_%d", p_key.x, p_key.y, level));
+	add_child(r_tile.mmi, false, INTERNAL_MODE_BACK);
+	ring_blade_count += xforms.size();
+}
+
+void GrassField3D::set_far_rings(bool p_enabled) {
+	far_rings = p_enabled;
+	if (!far_rings) {
+		_free_rings();
+	}
+}
+
+void GrassField3D::set_far_ring_range(float p_range) {
+	far_ring_range = MAX(p_range, 0.0f);
+	generation++;
+}
+
+// Far shell (docs/ideas/grass.md, "Far grass"): past the rings the sward as columns of voxels standing on the
+// ground, as the hedges' far shells and VegetationField3D.far_volume (VegetationVoxelLod; Unreal 5.7's Nanite
+// Foliage voxels; Loubet and Neyret 2017): real geometry, so raster, shadows and the path tracer see one shape.
+// Each column's top follows the ground, its height the sward's (the rules' cover and clump-sized patches), its
+// corners jittered by a hash shared with its neighbours so the shell is closed and lumpy, not boxy. It takes the
+// far ground's own colour (grass_ground()), so it matches the ground the rings stood on; its sides darken into the
+// sward. It rises out of the ground over the rings' end band and sinks back by far_shell_range (the shader, from
+// the field's centre).
+namespace {
+constexpr float SHELL_TILE = 64.0f;
+} // namespace
+
+float GrassField3D::_shell_column(int p_x, int p_z, float p_cell, const PlantSpecies *p_rules, TerrainDataMap3D *p_map) const {
+	const float x = (p_x + 0.5f) * p_cell;
+	const float z = (p_z + 0.5f) * p_cell;
+	const Vector2 q(x, z);
+	float suit = 1.0f;
+	if (p_map) {
+		if (!p_map->get_map_rect().has_point(q)) {
+			return 0.0f;
+		}
+		suit = p_rules->get_suitability(p_map, Vector3(x, get_global_position().y, z));
+	}
+	if ((!crop_mask.is_empty() || !crop_mask.hedges.is_empty()) && crop_mask.contains(q)) {
+		suit = 0.0f;
+	}
+	if (suit < 0.15f) {
+		return 0.0f;
+	}
+	// Patches a few metres across (the blades' clumps seen together) and each column a little different.
+	const uint32_t hp = clump_hash(x, z, 4.0f);
+	const uint32_t hc = cell_hash(p_x, p_z, 0x3C6EF372u ^ uint32_t(p_cell * 16.0f));
+	const float mean = 0.5f * (blade_height.x + blade_height.y) * 0.75f; // Leaning blades stand lower than their length.
+	return mean * (0.55f + 0.6f * unit(hp, 0)) * (0.85f + 0.3f * unit(hc, 0)) * MIN(suit * 1.25f, 1.0f);
+}
+
+void GrassField3D::_free_shell_tile(ShellTile &p_tile) {
+	if (p_tile.mi) {
+		remove_child(p_tile.mi);
+		memdelete(p_tile.mi);
+		p_tile.mi = nullptr;
+	}
+}
+
+void GrassField3D::_free_shell() {
+	for (KeyValue<Vector2i, ShellTile> &kv : shell_tiles) {
+		_free_shell_tile(kv.value);
+	}
+	shell_tiles.clear();
+	shell_column_count = 0;
+}
+
+void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_map) {
+	if (!far_shell || crop != CROP_NONE || !is_inside_tree() || fade_owner != this) {
+		if (!shell_tiles.is_empty()) {
+			_free_shell();
+		}
+		return;
+	}
+	const bool rings = _rings_active();
+	const float in_end = rings ? far_ring_range : fade_band.z;
+	const float in_band = rings ? far_ring_range * 0.2f : fade_band.w;
+	const float out_end = MAX(far_shell_range, in_end + 1.0f);
+	const float out_band = MIN(out_end * 0.2f, out_end - in_end);
+	if (shell_material.is_null()) {
+		Ref<Shader> sh;
+		sh.instantiate();
+		String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
+		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
+		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
+		code += get_ground_shader_code();
+		code += R"(
+varying vec3 v_wp;
+void vertex() {
+	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float d = length(wp.xz - shell_center);
+	float grow_in = shell_band.y > 0.0 ? 1.0 - clamp((shell_band.x - d) / shell_band.y, 0.0, 1.0) : 1.0;
+	float grow_out = shell_band.w > 0.0 ? clamp((shell_band.z - d) / shell_band.w, 0.0, 1.0) : 1.0;
+	float g = grow_in * grow_out;
+	// UV2.x: the vertex's height over the ground; down under it where the shell is gone.
+	VERTEX.y += UV2.x * (g - 1.0) - 0.15 * (1.0 - g);
+	v_wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	// The far ground's colour here (the blades seen from afar, with their patches and the sun's lobes), darker down
+	// the columns' sides into the sward.
+	ALBEDO = grass_ground(v_wp, vec3(0.2, 0.16, 0.1)) * COLOR.r;
+	ROUGHNESS = 0.95;
+	// The ground's own sheen under the sward (little): a plain 0.5 lit the columns' tops grey with the sky at grazing.
+	SPECULAR = grass_ground_specular(v_wp, 0.3);
+}
+)";
+		sh->set_code(code);
+		shell_material.instantiate();
+		shell_material->set_shader(sh);
+	}
+	shell_material->set_shader_parameter("shell_center", p_center);
+	shell_material->set_shader_parameter("shell_band", Vector4(in_end, in_band, out_end, out_band));
+	const float start = in_end - in_band;
+	HashSet<Vector2i> wanted;
+	struct Want {
+		Vector2i key;
+		int cells;
+		float d;
+		bool operator<(const Want &o) const { return d < o.d; }
+	};
+	LocalVector<Want> want;
+	const Vector2i lo(int(Math::floor((p_center.x - out_end) / SHELL_TILE)), int(Math::floor((p_center.y - out_end) / SHELL_TILE)));
+	const Vector2i hi(int(Math::floor((p_center.x + out_end) / SHELL_TILE)), int(Math::floor((p_center.y + out_end) / SHELL_TILE)));
+	for (int z = lo.y; z <= hi.y; z++) {
+		for (int x = lo.x; x <= hi.x; x++) {
+			const Rect2 rect(x * SHELL_TILE, z * SHELL_TILE, SHELL_TILE, SHELL_TILE);
+			const Vector2 nearest(CLAMP(p_center.x, rect.position.x, rect.position.x + SHELL_TILE), CLAMP(p_center.y, rect.position.y, rect.position.y + SHELL_TILE));
+			const float d_near = nearest.distance_to(p_center);
+			const float d_far = Vector2(MAX(Math::abs(p_center.x - rect.position.x), Math::abs(p_center.x - rect.position.x - SHELL_TILE)), MAX(Math::abs(p_center.y - rect.position.y), Math::abs(p_center.y - rect.position.y - SHELL_TILE))).length();
+			if (d_near > out_end || d_far < start) {
+				continue;
+			}
+			// Columns about 1.5 m wide, 3 m past 300 m (a few pixels at 1080p either way).
+			const int cells = d_near < 300.0f ? 42 : 21;
+			const Vector2i k(x, z);
+			wanted.insert(k);
+			const ShellTile *existing = shell_tiles.getptr(k);
+			if (!existing || existing->generation != generation || existing->cells != cells) {
+				want.push_back({ k, cells, d_near });
+			}
+		}
+	}
+	want.sort();
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const bool first = shell_tiles.is_empty();
+	for (const Want &w : want) {
+		if (!first && (OS::get_singleton()->get_ticks_usec() - t0) > uint64_t(RING_BUDGET_MSEC * 1000.0f)) {
+			break;
+		}
+		ShellTile *existing = shell_tiles.getptr(w.key);
+		if (existing) {
+			_free_shell_tile(*existing);
+			shell_tiles.erase(w.key);
+		}
+		ShellTile tile;
+		_build_shell_tile(w.key, w.cells, p_map, tile);
+		shell_tiles.insert(w.key, tile);
+	}
+	LocalVector<Vector2i> drop;
+	for (const KeyValue<Vector2i, ShellTile> &kv : shell_tiles) {
+		if (!wanted.has(kv.key)) {
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector2i &k : drop) {
+		_free_shell_tile(shell_tiles[k]);
+		shell_tiles.erase(k);
+	}
+}
+
+void GrassField3D::_build_shell_tile(const Vector2i &p_key, int p_cells, TerrainDataMap3D *p_map, ShellTile &r_tile) {
+	r_tile.generation = generation;
+	r_tile.cells = p_cells;
+	Ref<PlantSpecies> r = rules;
+	if (r.is_null()) {
+		r.instantiate();
+	}
+	const float cell = SHELL_TILE / float(p_cells);
+	const int bx = p_key.x * p_cells;
+	const int bz = p_key.y * p_cells;
+	const int n = p_cells + 2;
+	// Column heights with a ring of neighbours, so the tiles' walls agree.
+	LocalVector<float> hgt;
+	hgt.resize(n * n);
+	int columns = 0;
+	for (int j = 0; j < n; j++) {
+		for (int i = 0; i < n; i++) {
+			hgt[j * n + i] = _shell_column(bx + i - 1, bz + j - 1, cell, r.ptr(), p_map);
+		}
+	}
+	// Corners: jittered by a hash shared with the neighbours, on the ground.
+	const int m = p_cells + 1;
+	LocalVector<Vector3> corner;
+	corner.resize(m * m);
+	const uint32_t salt = 0x9E3779B9u ^ uint32_t(p_cells);
+	const float gy = get_global_position().y;
+	for (int j = 0; j < m; j++) {
+		for (int i = 0; i < m; i++) {
+			const uint32_t h = cell_hash(bx + i, bz + j, salt);
+			const float x = (bx + i + (unit(h, 0) - 0.5f) * 0.6f) * cell;
+			const float z = (bz + j + (unit(h, 8) - 0.5f) * 0.6f) * cell;
+			const float y = p_map ? p_map->get_height_at(Vector3(x, gy, z)) : gy;
+			corner[j * m + i] = Vector3(x, y, z);
+		}
+	}
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedColorArray colors;
+	PackedVector2Array uv2s;
+	PackedInt32Array idx;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	auto quad = [&](const Vector3 p_v[4], const float p_h[4], const float p_shade[4], const Vector3 &p_out) {
+		Vector3 nn = (p_v[1] - p_v[0]).cross(p_v[3] - p_v[0]);
+		if (nn.dot(p_out) < 0.0f) {
+			nn = -nn;
+		}
+		nn = nn.normalized();
+		const int first_v = verts.size();
+		for (int c = 0; c < 4; c++) {
+			verts.push_back(to_local.xform(p_v[c]));
+			normals.push_back(to_local.basis.xform(nn).normalized());
+			colors.push_back(Color(p_shade[c], p_shade[c], p_shade[c], 1.0f));
+			uv2s.push_back(Vector2(p_h[c], 0.0f));
+		}
+		idx.append_array(PackedInt32Array({ first_v, first_v + 1, first_v + 2, first_v, first_v + 2, first_v + 3 }));
+	};
+	// The four sides: neighbour offset, and the two corners (in the corner grid) of the shared edge.
+	const int side_d[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+	const int side_c[4][4] = { { 1, 0, 1, 1 }, { 0, 1, 0, 0 }, { 1, 1, 0, 1 }, { 0, 0, 1, 0 } };
+	for (int j = 0; j < p_cells; j++) {
+		for (int i = 0; i < p_cells; i++) {
+			const float h = hgt[(j + 1) * n + i + 1];
+			if (h <= 0.0f) {
+				continue;
+			}
+			columns++;
+			const Vector3 c00 = corner[j * m + i];
+			const Vector3 c10 = corner[j * m + i + 1];
+			const Vector3 c11 = corner[(j + 1) * m + i + 1];
+			const Vector3 c01 = corner[(j + 1) * m + i];
+			{
+				const Vector3 v[4] = { c00 + Vector3(0, h, 0), c10 + Vector3(0, h, 0), c11 + Vector3(0, h, 0), c01 + Vector3(0, h, 0) };
+				const float hh[4] = { h, h, h, h };
+				const float sh[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+				quad(v, hh, sh, Vector3(0, 1, 0));
+			}
+			for (int s = 0; s < 4; s++) {
+				const float hn = hgt[(j + 1 + side_d[s][1]) * n + i + 1 + side_d[s][0]];
+				if (h <= hn + 0.02f) {
+					continue;
+				}
+				const Vector3 a = corner[(j + side_c[s][1]) * m + i + side_c[s][0]];
+				const Vector3 b = corner[(j + side_c[s][3]) * m + i + side_c[s][2]];
+				// Down the side into the sward: its lower part in the blades' shade.
+				const float low = hn > 0.0f ? 0.8f : 0.6f;
+				const Vector3 v[4] = { a + Vector3(0, hn, 0), b + Vector3(0, hn, 0), b + Vector3(0, h, 0), a + Vector3(0, h, 0) };
+				const float hh[4] = { hn, hn, h, h };
+				const float sh[4] = { low, low, 0.9f, 0.9f };
+				quad(v, hh, sh, Vector3(float(side_d[s][0]), 0.0f, float(side_d[s][1])));
+			}
+		}
+	}
+	if (verts.is_empty()) {
+		return;
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
+	arrays[Mesh::ARRAY_INDEX] = idx;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	mesh->surface_set_material(0, shell_material);
+	r_tile.mi = memnew(MeshInstance3D);
+	r_tile.mi->set_mesh(mesh);
+	// Its shadows are under a pixel this far out; the path tracer traces them anyway.
+	r_tile.mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	r_tile.mi->set_name(vformat("GrassShell_%d_%d", p_key.x, p_key.y));
+	add_child(r_tile.mi, false, INTERNAL_MODE_BACK);
+	shell_column_count += columns;
+}
+
+void GrassField3D::set_far_shell(bool p_enabled) {
+	far_shell = p_enabled;
+	if (!far_shell) {
+		_free_shell();
+	}
+}
+
+void GrassField3D::set_far_shell_range(float p_range) {
+	far_shell_range = MAX(p_range, 0.0f);
+	generation++;
+}
+
 // The outer band: blades thin out from 60% of the radius and are all gone just inside it (the
 // blade shader's fade_band), and the ground under the grass turns to the blades' colour over the
 // same band (grass_ground_fade, grass_ground_far), so the field ends without an edge.
@@ -3677,6 +4329,8 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	if (built > 0) {
 		build_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	}
+	_update_rings(c, map);
+	_update_shell(c, map);
 }
 
 // Ground tint: where grass grows the ground under it takes the grass's colour, so the gaps
@@ -4583,6 +5237,7 @@ void GrassField3D::_notification(int p_what) {
 				_free_tile(kv.value);
 			}
 			tiles.clear();
+			_free_rings();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			Viewport *vp = get_viewport();
@@ -5006,6 +5661,19 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("update_at", "center"), &GrassField3D::update_at);
 	ClassDB::bind_method(D_METHOD("get_blade_count"), &GrassField3D::get_blade_count);
 	ClassDB::bind_method(D_METHOD("get_tile_count"), &GrassField3D::get_tile_count);
+	ClassDB::bind_method(D_METHOD("set_far_rings", "enabled"), &GrassField3D::set_far_rings);
+	ClassDB::bind_method(D_METHOD("is_far_rings"), &GrassField3D::is_far_rings);
+	ClassDB::bind_method(D_METHOD("set_far_ring_range", "range"), &GrassField3D::set_far_ring_range);
+	ClassDB::bind_method(D_METHOD("get_far_ring_range"), &GrassField3D::get_far_ring_range);
+	ClassDB::bind_method(D_METHOD("get_ring_blade_count"), &GrassField3D::get_ring_blade_count);
+	ClassDB::bind_method(D_METHOD("get_ring_tile_count"), &GrassField3D::get_ring_tile_count);
+	ClassDB::bind_method(D_METHOD("get_ring_build_msec"), &GrassField3D::get_ring_build_msec);
+	ClassDB::bind_method(D_METHOD("set_far_shell", "enabled"), &GrassField3D::set_far_shell);
+	ClassDB::bind_method(D_METHOD("is_far_shell"), &GrassField3D::is_far_shell);
+	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &GrassField3D::set_far_shell_range);
+	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &GrassField3D::get_far_shell_range);
+	ClassDB::bind_method(D_METHOD("get_shell_column_count"), &GrassField3D::get_shell_column_count);
+	ClassDB::bind_method(D_METHOD("get_shell_tile_count"), &GrassField3D::get_shell_tile_count);
 	ClassDB::bind_method(D_METHOD("get_build_time_msec"), &GrassField3D::get_build_time_msec);
 	ClassDB::bind_method(D_METHOD("get_material"), &GrassField3D::get_material);
 
@@ -5051,6 +5719,10 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_tint"), "set_ground_tint", "get_ground_tint");
 	ADD_GROUP("Range", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "1,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_rings"), "set_far_rings", "is_far_rings");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_ring_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_ring_range", "get_far_ring_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

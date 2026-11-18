@@ -1160,7 +1160,7 @@
     "PhysXVehicleWheel3D.tread"
    ],
    "note": "",
-   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay.",
+   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1254,6 +1254,17 @@
    ],
    "note": "",
    "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Mud slides",
+   "settings": [
+    "GroundSurface3D.mud_slides"
+   ],
+   "note": "",
+   "what": "soaked mud runs off slopes it can no longer hold and fills the ruts below.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3225,6 +3236,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Lake ice",
+   "settings": [
+    "SnowCover3D.lake_ice_enabled"
+   ],
+   "note": "",
+   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow on materials",
    "settings": [
     "snow_enabled"
@@ -3278,6 +3300,17 @@
    ],
    "note": "",
    "what": "falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Falling snow"
+  },
+  {
+   "name": "Sleet",
+   "settings": [
+    "SnowFall3D.sleet_enabled"
+   ],
+   "note": "",
+   "what": "near 0 C falling snow clumps into large wet flakes; above it the flakes melt as they fall, smaller, faster and greyer.",
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
@@ -3844,7 +3877,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash. Fire chars the stem feet, and a charred tree can snap there in a later storm.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

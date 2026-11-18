@@ -212,6 +212,7 @@ public:
 	virtual float contract_fire_heat_at(const Vector3 &p_position) const = 0; // W/m2 of ground, now
 	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
+	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
 	virtual ~WorldFireProvider() {}
 };
 
@@ -227,6 +228,7 @@ protected:
 	GDVIRTUAL1RC(float, _heat_at, Vector3)
 	GDVIRTUAL1RC(float, _burnt_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
+	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -237,6 +239,9 @@ public:
 	// The wind the fires draw in near the ground at the point (their indraft, m/s, horizontal), summed over the fires;
 	// it adds to the weather's wind. Zero with none.
 	Vector3 wind_at(const Vector3 &p_position) const;
+	// How deep a stem standing at the point has charred at its foot (m, bark and wood): the flames' and smouldering
+	// logs' time there at a charring rate of 0.8 mm a minute. The most of any fire; 0 where none burnt.
+	float stem_char_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).

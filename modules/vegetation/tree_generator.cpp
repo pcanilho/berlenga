@@ -1785,7 +1785,9 @@ void TreeGenerator::_grow_year(int p_year) {
 		for (int k = 0; k < count; k++) {
 			if (k > 0 || !bud.terminal) {
 				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] + Vector3(0, grav, 0) * 0.5f;
-				d += _random_unit() * Math::sin(noise);
+				// A standard's stem is kept straight for timber (coppice with standards): its
+				// leader wanders a third as much.
+				d += _random_unit() * Math::sin((timber_stems && order == 0) ? noise * 0.3f : noise);
 				if (krummholz > 0.0f && order > 0 && !layered) {
 					// Mat branches press down under the snow and spread (krummholz, trees.md 5q).
 					d.y -= 0.08f * krummholz;
@@ -5566,8 +5568,25 @@ void TreeGenerator::_laid_hedge_props(Builder &r_bark) {
 	pr.seed(uint64_t(seed) * 0x9e3779b9u + 0x7374616bu);
 	const Vector3 base = nodes.is_empty() ? Vector3() : nodes[0].start;
 	const float top = 1.25f + 0.1f * pr.randf();
+	// Stakes and binders run only where the laid stems are (docs, 18 Nov: stakes stood in empty
+	// space past the last pleacher): the span of the laid wood between knee and binder height.
+	float x0 = 1e9f, x1 = -1e9f;
+	for (const Node &n : nodes) {
+		if (n.removed || n.order != 0 || n.parent < 0 || n.radius < 0.012f) {
+			continue;
+		}
+		for (const Vector3 &q : { n.start, n.end() }) {
+			if (q.y - base.y > 0.3f && q.y - base.y < 1.3f) {
+				x0 = MIN(x0, q.x - base.x);
+				x1 = MAX(x1, q.x - base.x);
+			}
+		}
+	}
+	if (x1 - x0 < 0.3f) {
+		return;
+	}
 	LocalVector<float> stake_x;
-	for (float x = -0.9f + 0.1f * pr.randf(); x < 1.0f; x += 0.42f + 0.08f * pr.randf()) {
+	for (float x = x0 + 0.05f + 0.1f * pr.randf(); x < x1 - 0.05f; x += 0.42f + 0.08f * pr.randf()) {
 		stake_x.push_back(x);
 	}
 	// Grey-brown hazel or ash poles with their bark on; the binders a warmer brown.
@@ -5599,7 +5618,7 @@ void TreeGenerator::_laid_hedge_props(Builder &r_bark) {
 		LocalVector<float> rad;
 		const float phase = float(b) * float(Math::PI) * 2.0f / float(binders);
 		const float r0 = 0.011f + 0.004f * pr.randf();
-		for (float x = -1.05f; x <= 1.05f; x += 0.05f) {
+		for (float x = x0 - 0.05f; x <= x1 + 0.1f; x += 0.05f) {
 			const float s = x / 0.42f * float(Math::PI) + phase;
 			pts.push_back(base + Vector3(x, top - 0.02f + 0.025f * Math::cos(s), 0.035f * Math::sin(s)));
 			rad.push_back(r0);
@@ -17956,6 +17975,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	cut_since = p_from.cut_since;
 	coppice_ages = p_from.coppice_ages;
 	laid_since = p_from.laid_since;
+	timber_stems = p_from.timber_stems;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -18082,6 +18102,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// its flowers do (trees.md 5u).
 		needle_sprays = p_preset != PRESET_GORSE;
 		forest_shade = p_stand_grown ? 0.6f : 0.0f;
+		if (timber_stems) {
+			// Standards (coppice with standards): stems kept straight for timber.
+			params[PARAM_TRUNK_GRAVITROPISM] = MAX(params[PARAM_TRUNK_GRAVITROPISM], 1.4f);
+			params[PARAM_PHOTOTROPISM] *= 0.35f;
+		}
 		// Neighbours in a Poisson-disk stand stand on average about 1.3 times the minimum spacing
 		// apart, so crowns grown to that boundary close the canopy as real stands do.
 		forest_spacing = (is_shrub(p_preset) ? 3.0f : h.stand_spacing) * 1.3f;
@@ -18649,19 +18674,25 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			// to the hectare) so light reaches the underwood, ash among them on moist ground, and
 			// beneath them hazel cut in coupes, each a patch cut in its own year; side by side a
 			// grown coupe and one cut a year or three ago, of short rods on bare stools.
-			// Standards grow up with the underwood round their boles but crowns free on every
-			// side: the open-grown form (short clear bole, spreading crown), not the drawn-up
-			// high-forest one.
+			// Standards grow up with the underwood round their boles, drawn up straight and
+			// self-pruned by it while young (timber trees: a clean, straight bole is what they
+			// are kept for; docs, 18 Nov: open-grown oaks here bent twice within a few metres):
+			// open-grown crowns on timber stems (timber_stems: a strong upward pull on the
+			// leader, little lean to the light). The sinuous forms stay with hedgerow and pasture
+			// trees.
+			timber_stems = true;
 			Ref<PlantSpecies> oak = _stand_species(PRESET_OAK, false, p_variants);
-			oak->set_density(0.35f);
-			oak->set_spacing(oak->get_spacing() * 1.4f);
+			// Open-grown spacing is a crown apart (about 28 m for oak): at full density that is
+			// a dozen oaks a hectare, with ash and tellers 20-30 standards in all (Rackham 2006:
+			// a dozen to thirty; docs, 18 Nov: at 0.35 and 1.4x spacing, four a hectare).
+			oak->set_density(1.0f);
 			list.push_back(oak);
 			Ref<PlantSpecies> ash = _stand_species(PRESET_ASH, false, p_variants);
-			ash->set_density(0.3f);
-			ash->set_spacing(ash->get_spacing() * 1.4f);
+			ash->set_density(0.6f);
 			ash->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			ash->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(ash);
+			timber_stems = false;
 			ash->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(6.0f, 1000.0f));
 			ash->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
 			// The underwood in coupes (trees.md, "Coppice with standards"): straight-edged
@@ -18707,9 +18738,12 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			}
 			coppice_ages = saved_ages;
 			// The cut wood: brash (the tops and side shoots) left lying on the fresh coupe and the
-			// one before, the poles carried out to the ride.
-			Ref<PlantSpecies> brash = _stand_species(PRESET_HAZEL, true, p_variants, FORM_BRANCH);
-			brash->set_density(0.5f);
+			// one before, the poles carried out to the ride. Cut rod tops and side shoots lie
+			// scattered and criss-crossed over the stools (docs, 18 Nov: a shed-limb form read as
+			// shapeless brown lumps): the sticks form, larger and denser.
+			Ref<PlantSpecies> brash = _stand_species(PRESET_HAZEL, true, p_variants, FORM_STICKS);
+			brash->set_density(1.0f);
+			brash->set_scale_range(Vector2(1.4f, 2.2f));
 			brash->set_patch_scale(50.0f);
 			brash->set_patch_seed(patch_seed + 11);
 			brash->set_coupe_rotation(rotation);
@@ -18725,15 +18759,16 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				st->set_coupe_ages(Vector2i(0, rotation - 1));
 				st->set_ride_width(6.0f);
 			}
+			timber_stems = true;
 			Ref<PlantSpecies> teller = _stand_species(PRESET_OAK, false, p_variants);
-			teller->set_density(0.2f);
-			teller->set_spacing(teller->get_spacing() * 1.4f);
+			teller->set_density(0.5f);
 			teller->set_scale_range(Vector2(0.45f, 0.7f));
 			teller->set_patch_scale(50.0f);
 			teller->set_patch_seed(patch_seed + 11);
 			teller->set_coupe_rotation(rotation);
 			teller->set_coupe_ages(Vector2i(0, rotation - 1));
 			teller->set_ride_width(6.0f);
+			timber_stems = false;
 			list.insert(1, teller);
 			if (shrub_start >= 1) {
 				shrub_start++;
@@ -18807,7 +18842,10 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				break;
 			}
 		}
+		// A worked coppice's recruits are singled and kept straight for the next standards.
+		timber_stems = p_stand == STAND_COPPICE_STANDARDS;
 		Ref<PlantSpecies> sap = _stand_species(lead, true, p_variants, FORM_SAPLING);
+		timber_stems = false;
 		sap->set_density(0.6f);
 		// A worked coppice is tidied: its standards are felled for timber before they die, so it
 		// holds a fraction of a wild wood's deadwood.

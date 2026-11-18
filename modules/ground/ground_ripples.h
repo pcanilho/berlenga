@@ -34,6 +34,7 @@
 #include "core/math/math_funcs.h"
 #include "core/math/vector2.h"
 #include "core/math/vector2i.h"
+#include "core/math/vector3.h"
 #include "core/templates/local_vector.h"
 
 // Wind ripples on sand (docs/ideas/sand.md, stage 3): a height layer of a few millimetres on a fine grid
@@ -67,7 +68,17 @@ public:
 	LocalVector<float> mask; // 0..1: sand that can move (dry sand share)
 	LocalVector<float> tmpl; // a grown periodic field (n x n) the cells coming in take
 	Vector2 tmpl_wind; // the wind it grew in
+	Vector2 tmpl_k; // its dominant wave vector (rad/m; 0 = none found)
 	bool tmpl_ready = false;
+
+	// The template's dominant wave vector (rad/m): the strongest periodic component with a wavelength of 3 to 40 cm.
+	static Vector2 dominant_k(const LocalVector<float> &p_h, int p_n, float p_cell);
+	// Where a world point reads the periodic template, and how high (no repeat may show): a three-octave world-space
+	// warp (crests turn and change spacing over tens of metres, bend over a few) and edge dislocations in pairs
+	// (Y-junctions: a crest forks and rejoins) with a height that wanders; x, y the offset (m), z the height factor.
+	// The ripple shaders carry the same lines (material.cpp, scene_raytracing_raygen.glsl ground_ripple_vary()).
+	static Vector3 vary(Vector2 p_xz, Vector2 p_k);
+	float tmpl_at(int p_wx, int p_wz) const; // the template as a cell coming in at world cell (p_wx, p_wz) takes it
 
 	// Grows a periodic field from noise: p_steps steps of q_ref in direction p_wind (unit).
 	static void grow(LocalVector<float> &r_h, int p_n, const GroundRipples &p_params, Vector2 p_wind, int p_steps, uint32_t p_seed);

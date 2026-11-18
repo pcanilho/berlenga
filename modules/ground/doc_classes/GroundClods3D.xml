@@ -28,6 +28,12 @@
 				Returns the number of clods stood up from thrown clay that landed, since the node entered the tree.
 			</description>
 		</method>
+		<method name="get_parked_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of clods kept while the camera is away from where they lie (in memory; on disk ones are not counted), given back when the print field comes over them again.
+			</description>
+		</method>
 		<method name="get_spawned_total" qualifiers="const">
 			<return type="int" />
 			<description>

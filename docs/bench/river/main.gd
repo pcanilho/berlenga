@@ -14,6 +14,7 @@ extends Node3D
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N       frames rendered before --out is saved (default 12)
 #   --pt-from=N      rasterize until frame N, path trace from then on
+#   --pt-freeze      with --pt-from: stop the clock there, so the still is one instant (caustics, foam)
 #   --out=path.png   save the last frame and quit
 #   --seq=N          also save the N frames after --frames (for a GIF)
 #   --river=prop:value  a PhysXRiver3D property, e.g. --river=discharge:12.0
@@ -56,6 +57,7 @@ var spp := 16
 var bounces := 3
 var frames := 12
 var pt_from := 0
+var pt_freeze := false # --pt-freeze: stop the clock when path tracing starts, so the accumulated still holds one instant
 var out := ""
 var seq := 0
 var report := false
@@ -150,6 +152,7 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
+		elif a == "--pt-freeze": pt_freeze = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--sun="):
@@ -622,6 +625,8 @@ func _process(_delta: float) -> void:
 		print("frame %d: contact wetness over half on %d of %d points round the live window" % [n, wet_n, total])
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
+		if pt_freeze:
+			Engine.time_scale = 0.0
 	if mist_report and n == frames - 1:
 		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
 			var t0 := Time.get_ticks_usec()

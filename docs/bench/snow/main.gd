@@ -59,6 +59,7 @@ class FireStub extends WorldFire:
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
 #   --clumps-close    (trail view) the camera low beside the small ball's furrow
+#   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
 #   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
@@ -1819,6 +1820,22 @@ func _build_trail(cam: Camera3D) -> void:
 	if clumps:
 		clumps.update_now()
 		print("snow clumps: %d lying, %d broken off; update %.2f ms mean, %.2f ms worst (%d updates)" % [clumps.get_clump_count(), clumps.get_spawned_total(), clumps.get_update_msec_mean(), clumps.get_update_msec_worst(), clumps.get_update_runs()])
+		if OS.get_cmdline_user_args().has("--away"):
+			# The field leaves for 300 m and comes back: the clumps are kept meanwhile and lie where they were.
+			var lying := clumps.get_clump_count()
+			var probe: Node3D = get_node("Probe")
+			probe.global_position = Vector3(300.0, 0, 0)
+			for i in 6:
+				await get_tree().physics_frame
+			clumps.update_now()
+			var away := clumps.get_parked_count()
+			probe.global_position = Vector3.ZERO
+			for i in 30:
+				await get_tree().physics_frame
+			surface.sync_deformation()
+			for i in 10:
+				clumps.update_now()
+			print("snow clumps away and back: %d lying, %d kept while away, %d lying again, %d still kept" % [lying, away, clumps.get_clump_count(), clumps.get_parked_count()])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true
 	await _save_frame("")

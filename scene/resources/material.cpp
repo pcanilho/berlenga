@@ -2944,9 +2944,16 @@ void fragment() {)";
 			float gdk = 1.0 - smoothstep(0.5 * gde, 1.5 * gde, ground_fp);
 			if (gdk > 0.0) {
 				float gh0 = ground_deform_relief(gdp);
-				float ghm = 0.25 * (ground_deform_relief(gdp + vec2(gde, 0.0)) + ground_deform_relief(gdp - vec2(gde, 0.0)) +
-										   ground_deform_relief(gdp + vec2(0.0, gde)) + ground_deform_relief(gdp - vec2(0.0, gde)));
-				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk;
+				float gh1 = ground_deform_relief(gdp + vec2(gde, 0.0));
+				float gh2 = ground_deform_relief(gdp - vec2(gde, 0.0));
+				float gh3 = ground_deform_relief(gdp + vec2(0.0, gde));
+				float gh4 = ground_deform_relief(gdp - vec2(0.0, gde));
+				float ghm = 0.25 * (gh1 + gh2 + gh3 + gh4);
+				// Only millimetre relief: where the heights round it span centimetres (a tread's lugs, a rut's wall)
+				// the geometry is there for the shadow map and the path tracer to shade for real, and this term made
+				// it read far darker in raster than traced.
+				float gspan = max(max(max(gh1, gh2), max(gh3, gh4)), gh0) - min(min(min(gh1, gh2), min(gh3, gh4)), gh0);
+				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan));
 				ALBEDO *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
 			}
 		}
@@ -4508,22 +4515,55 @@ float ground_ripple(vec2 p_xz) {
 // Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
 // sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
 // path tracer reads the same map (scene_raytracing_raygen.glsl).
-// The far ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each
-// point reads it through a slow world-space warp of about a metre (crests bend and shift as real trains do round
-// defects) and a height that wanders between 55 and 100% over a few metres; both fade to none at the real
-// ripples' window so the two meet crest to crest. Shared with the path tracer (scene_raytracing_raygen.glsl).
-float ground_ripple_vn(vec2 p_p) {
+// The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
+// it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
+// few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
+// real ripple fields), with a height that wanders between 30 and 100%. p_k is the grown field's dominant wave
+// vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
+// through the same lines (GroundRipples::vary), so the two meet crest to crest.
+float ground_ripple_hash(ivec2 p_c, uint p_s) {
+	uint h = (uint(p_c.x) * 0x8da6b343u) ^ (uint(p_c.y) * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
+	h = (h ^ (h >> 16u)) * 0x7feb352du;
+	h = (h ^ (h >> 15u)) * 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
+float ground_ripple_vn(vec2 p_p, uint p_s) {
 	vec2 i = floor(p_p);
 	vec2 f = p_p - i;
 	vec2 u = f * f * (3.0 - 2.0 * f);
-	vec4 h = fract(sin(vec4(dot(i, vec2(127.1, 311.7)), dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)), dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7)), dot(i + vec2(1.0), vec2(127.1, 311.7)))) * 43758.5453);
-	return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+	ivec2 c = ivec2(i);
+	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
-vec3 ground_ripple_vary(vec2 p_xz, float p_out) {
-	vec2 q = p_xz;
-	vec2 warp = 1.2 * (vec2(ground_ripple_vn(q / 5.0), ground_ripple_vn(q / 5.0 + 17.3)) - 0.5);
-	float amp = mix(0.55, 1.0, ground_ripple_vn(q / 2.5 + 41.0));
-	return vec3(warp * p_out, mix(1.0, amp, p_out));
+vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
+	vec2 p = p_xz;
+	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
+	o += 1.2 * (vec2(ground_ripple_vn(p / 7.0, 3u), ground_ripple_vn(p / 7.0, 4u)) - 0.5);
+	o += 0.16 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
+	float amp = mix(0.3, 1.0, smoothstep(0.15, 0.85, 0.6 * ground_ripple_vn(p / 9.0, 7u) + 0.4 * ground_ripple_vn(p / 2.2, 8u)));
+	float kk = dot(p_k, p_k);
+	if (kk > 0.0) {
+		vec2 kn = p_k / sqrt(kk);
+		vec2 t = vec2(-kn.y, kn.x);
+		ivec2 c0 = ivec2(floor(p / 2.5));
+		float ph = 0.0;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				ivec2 c = c0 + ivec2(dx, dz);
+				if (ground_ripple_hash(c, 9u) >= 0.55) {
+					continue;
+				}
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.5;
+				float hl = 0.2 + 0.4 * ground_ripple_hash(c, 12u);
+				vec2 da = p - (m - t * hl);
+				vec2 db = p - (m + t * hl);
+				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
+				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(1.2, 2.4, length(p - m)));
+			}
+		}
+		o += p_k * (ph / kk);
+	}
+	return vec3(o, amp);
 }
 vec2 ground_ripple_far_slope(vec2 p_xz) {
 	if (ground_ripple_rect.z <= 0.0) {
@@ -4532,6 +4572,7 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 	ivec2 ts = textureSize(ground_ripple_map, 0);
 	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
 	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
+	vec4 m3 = texelFetch(ground_ripple_map, ivec2(3, ts.y - 1), 0);
 	if (m2.x < 0.5) {
 		return vec2(0.0);
 	}
@@ -4555,7 +4596,7 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 		return vec2(0.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
-	vec3 vr = ground_ripple_vary(p_xz, 1.0 - live);
+	vec3 vr = ground_ripple_vary(p_xz, m3.xy);
 	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
 	return w * vr.z * texture(ground_ripple_far, tuv).rg;
 }

@@ -518,6 +518,41 @@ below 1 Hz it falls by about 15% (the slow gusts as before, the flutter sine's 3
 Cost on the cloud's software rasterizer: 1.64 s -> 1.81 s per frame (+10%, vertex work on the
 CPU); GPU cost needs the PC. Path traced frame clean. Clip in the gallery.
 
+## Far grass: rings, then a voxel shell (built 18 Nov)
+
+Paulo, 18 Nov, on the showcase sky frames: the meadow looks bald past the blades' 40 m. He picked "blade LOD
+rings, then voxel shell". What the published work does:
+
+- **Ghost of Tsushima** (Wohllaib, GDC 2021): grass to the horizon by levels of fewer, wider blades with fewer
+  vertices, thinned per blade so no level boundary shows, then the terrain coloured like the grass.
+- **Unreal 5.7 Nanite Foliage** and **Loubet and Neyret (2017)**, hybrid mesh-volume LoDs: far foliage as voxels,
+  real geometry that keeps its mass and silhouette. Here as in the hedges' far shells and
+  `VegetationField3D.far_volume`.
+
+What we built (`GrassField3D.far_rings`, `far_ring_range` 250 m, `far_shell`, `far_shell_range` 500 m, all on):
+
+- **Rings.** One set of blades on nested grids: a cell at level L carries one blade, picked down a chain of hashed
+  children to a base cell, and the same blade carries its parent cells for as many levels up as the chain goes. That
+  gives each blade a rank, and the shader keeps a blade while rank < (start / distance)^2 and widens the ones left by
+  1 / sqrt of that (up to 16 times), so density falls smoothly with the square of the distance and coverage holds. No
+  ring shows because nothing switches at a distance: tiles on a quadtree (16 m at level 0, twice as wide a level)
+  only decide which blades exist, each holding those kept anywhere in it. Blades carry a negative width so the same
+  blade shader (wind, snow, ruts, fire, colour patches) draws them. Two-segment blades in the nearest level, single
+  triangles past it; shadows from the two nearest levels only. They fade in over the near tiles' outer band by the
+  same rule, mirrored, so the two sets crossfade. Only the widest meadow field grows them, not crops or undercoats.
+- **Shell.** Past 200 m, voxel columns on the ground: tops follow the ground (no terraces on slopes), heights from
+  the rules' cover and 4 m patches, corners jittered by a hash shared with neighbours (closed and lumpy), 1.5 m
+  columns to 300 m and 3 m past it. Colour is `grass_ground()` itself, the far ground's colour, so tops match the
+  ground the rings stood on; sides darken into the sward. The vertex shader raises it out of the ground over the
+  rings' end band and sinks it by 500 m. Its sheen is the ground's (a plain 0.5 lit its tops grey at grazing).
+- Both stop at the data map's edge. Raster and path tracer draw the same geometry (vertex-shader only).
+
+Bench: grass `--far-grass[=off|rings]` (a 640 m meadow from 1.7 m) and a `--test` check that the kept blades thin
+with the square of the distance. Cost on lavapipe at 640x360, raster, against neither: rings +280k blades in 140
+tiles, +69 MB memory, +976k primitives, frame 2710 to 3067 ms (+13%); the shell +67k columns in 204 tiles, +229k
+primitives, +1%. First fill 120-150 ms on the main thread, then a 4 ms budget a frame. Path traced: the far meadow
+keeps its texture to the horizon with no seam (bench pair). GPU cost on the PC queue.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

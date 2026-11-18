@@ -503,6 +503,7 @@ private:
 	Vector2i coppice_ages = Vector2i(-1, -1);
 	// A laid hedge (FORM_LAID_HEDGE): years since it was laid (-1 none), set per variant; laid_done
 	// once the growth has laid it, so the mesh adds its stakes and binders.
+	bool timber_stems = false; // Stand building: straight timber stems (coppice standards).
 	int laid_since = -1;
 	bool laid_done = false;
 	void _lay_hedge(int p_year);

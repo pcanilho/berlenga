@@ -126,16 +126,24 @@ void fragment() {
 	vec3 col = mix(clear, vec3(0.5, 0.54, 0.58), white);
 	float rough = mix(0.03, 0.35, white);
 	// Cracks: thermal cracks split the sheet into plates of several metres, a few splitting again. Frozen
-	// bubbles line them, so they show pale in the clear ice; most are hairlines. Lines widen with distance so
-	// they do not alias, and fade out before they would.
+	// bubbles line them, so they show pale in the clear ice; most are hairlines. Each line is at least about
+	// one and a half pixels wide (the pixel footprint from the projection and viewport, the same in raster and
+	// path tracing), so it neither aliases in raster nor averages away under path tracing, and the network
+	// fades out before the plates get smaller than a few pixels.
 	float dist = distance(v_world, INV_VIEW_MATRIX[3].xyz);
-	float wide = max(0.004, dist * 0.0006);
+	float pixel = dist * 2.0 / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1.0);
+	float wide = max(0.004, 0.75 * pixel);
 	vec2 q = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * v_world.xz;
 	float big = 1.0 - smoothstep(0.0, wide / 9.0, ice_crack_distance(q / 9.0 + 23.0, 0.55));
 	float fine = (1.0 - smoothstep(0.0, wide / 2.5, ice_crack_distance(q / 2.5 + 71.0, 0.2))) * smoothstep(0.08, 0.2, h);
 	float crack = max(big, 0.5 * fine) * smoothstep(0.02, 0.06, h) * (1.0 - smoothstep(25.0, 90.0, dist));
-	col = mix(col, vec3(0.38, 0.42, 0.46), crack * crack_strength * (1.0 - white) * 0.45);
-	rough = mix(rough, 0.2, crack * crack_strength);
+	// A crack is a fracture plane full of tiny bubbles: it scatters like snow ice, so it reads in the
+	// diffuse albedo (which path tracing keeps at any sample count), not only as a roughness change.
+	// Far away a pixel-wide line stands for a hairline much thinner than the pixel, so its contrast falls with
+	// distance (about its true coverage) and it does not break into bright dashes at grazing angles.
+	float crack_far = 1.0 - 0.7 * smoothstep(12.0, 45.0, dist);
+	col = mix(col, vec3(0.6, 0.64, 0.68), crack * crack_strength * (1.0 - white) * 0.8 * crack_far);
+	rough = mix(rough, 0.2, crack * crack_strength * crack_far);
 	float metallic = 0.0;
 	float specular = 0.335; // ice, F0 0.018
 	vec4 snow_s = snow_cover_at(v_world);
