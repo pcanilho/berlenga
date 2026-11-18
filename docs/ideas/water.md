@@ -3488,3 +3488,23 @@ river's live solver runs with caustics off and its ripples are procedural in the
   4x where the rays cross; faded where the 12 cm ripple cells drop under a few pixels; only the sun that reaches
   the bed (sun_visibility). Cost: six ripple_slope calls per clear-water pixel.
 Bench switch: `--water=caustics_strength:0.0`.
+
+### Next round: research (18 Nov)
+
+Candidates for the river after the caustics, best first:
+1. Dispersive surface waves on the live solver: Jeschke and Wojtan, "Generalizing Shallow Water Simulations with
+   Dispersive Surface Waves" (ACM ToG 2023). Each step splits the height into bulk flow (shallow water) and surface
+   waves by a depth-dependent diffusion (alpha = h^2/64); the waves step with an exact Airy integrator in Fourier
+   space (omega = sqrt(g k tanh(k h)), four depth samples), are carried by the bulk velocity and added back. Real
+   ripples that reflect and diffract round boulders and wakes, instead of only procedural noise. Reported: 512^2
+   on a laptop RTX 2080 at about 100 fps sim-only; the decomposition is 87% of it (128 diffusion substeps), so
+   replace it with a few-level Gaussian pyramid. The FFT is already in the solver (water_fft.glsl).
+2. Caustics from a light-space map, shared by raster and PT: render the river's ripple field once per frame into
+   the solver's caustics map (water_caustics_map.glsl, Wallace's area-ratio on a refracted grid) instead of six
+   slope evaluations per pixel; then the path tracer reads the same map for the sun's next-event on beds under
+   water (caustic maps as in Ray Tracing Gems II ch. 30), so PT shows the pattern without photon paths. Full
+   unbiased alternative, heavier: ReSTIR BDPT with caustics (Hedstrom et al., NVIDIA 2025).
+3. Real displacement near the camera: the near river's mesh subdivided by distance so ripples and the
+   standing waves are geometry with a constant on-screen cost (Planet Coaster 2, Frontier 2024).
+4. Small optimisations: skip the clear-through march and caustics where foam is about 1; evaluate the ripple
+   field's two phases once and reuse them for the caustics' centre sample.
