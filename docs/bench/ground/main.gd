@@ -32,6 +32,10 @@ extends Node3D
 #   --near=0            the near field off (A/B for any view)
 #   --test=clog         mud on wheels and the belly (mud stage 3): sticky clay, a clogging tread grips less and is
 #                         flung off when spun fast on dry ground; a low car high-centres in slurry and ploughs a trough
+#                         and treads (mud round 10): mud tyres and chains clog less and get further than road tyres
+#   --test=treads       each tread's lugs or chain links in its rut floor (mud round 10); --view=ruts --tread=N drives
+#                         the car on PhysXVehicleWheel3D.Tread N
+#   --test=slides       soaked mud slides down a 15 degree bank into a rut at its foot, stiff mud holds (mud round 10)
 #   --view=bodymud      mud on a car's body (mud stage 3b): a dressed 4x4 crawls through stiff clay, then is floored
 #                         so its tyres throw the clay up the arches; a close frame on the rear wheel and side.
 #                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear); --spray: the
@@ -102,6 +106,9 @@ var drift_test := false
 var near_test := false
 var mud_test := false
 var clog_test := false
+var treads_test := false
+var slides_test := false
+var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
 var crack_test := false
 var legs_test := false
@@ -153,6 +160,8 @@ func _ready() -> void:
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
 		elif a == "--test=clog": clog_test = true
+		elif a == "--test=treads": treads_test = true
+		elif a == "--test=slides": slides_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
@@ -168,6 +177,7 @@ func _ready() -> void:
 			frost_break = fv.size() > 1 and fv[1] == "break"
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
+		elif a.begins_with("--tread="): tread_arg = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--gpu=0": gpu = false
@@ -227,8 +237,13 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test:
-		await _run_clog_tests()
+	if clog_test or treads_test or slides_test:
+		if clog_test:
+			await _run_clog_tests()
+		if treads_test:
+			await _run_tread_rut_tests()
+		if slides_test:
+			await _run_slide_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -2057,6 +2072,126 @@ func _run_clog_tests() -> void:
 	_check("chains slide on dry road and bite on ice", g_dry < 0.8 and g_ice > 2.5, "%.2f dry, %.2f on ice" % [g_dry, g_ice])
 
 
+# Each tread's rut floor (mud round 10), also alone as --test=treads: a 26 cm wide tyre rolled 2 m over damp sand
+# (a press every 5 cm, 3 cm deep, as the vehicle prints), its rut floor read along the middle every 5 mm.
+func _run_tread_rut_tests() -> void:
+	var rough := {}
+	for t in [-1, PhysXVehicleWheel3D.TREAD_ROAD, PhysXVehicleWheel3D.TREAD_ALL_TERRAIN, PhysXVehicleWheel3D.TREAD_MUD, PhysXVehicleWheel3D.TREAD_CHAINS]:
+		near_on = true
+		await _soil_scene("damp_sand")
+		surface.follow_target = NodePath()
+		for i in 10:
+			await get_tree().physics_frame
+		var o := Vector3(0.3, 0, 0.2)
+		for k in 40:
+			surface.press_wheel(o + Vector3(0, 0, 0.05 * k), Vector2(0.26, 0.2), 0.0, 0.03, Vector2(), t)
+			await get_tree().physics_frame
+		for i in 10:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var vals: Array[float] = []
+		for k in 300:
+			var q := o + Vector3(0.05, 0, 0.25 + 0.005 * k)
+			vals.append(surface.get_dent_at(q) - surface.get_rim_at(q))
+		var mean := 0.0
+		for v in vals:
+			mean += v / vals.size()
+		var sd := 0.0
+		var deep := 0.0
+		for v in vals:
+			sd += (v - mean) * (v - mean) / vals.size()
+			deep = maxf(deep, v - mean)
+		rough[t] = [sqrt(sd), deep, mean]
+		print("  tread %d rut: %.1f cm deep, floor relief %.2f mm rms, %.1f mm deepest below the mean" % [t, mean * 100.0, sqrt(sd) * 1000.0, deep * 1000.0])
+	# Driven: a car on road tyres and one on mud tyres over damp sand at half throttle, the rut floor 1 to 3 m behind
+	# the rear left wheel, against its 20 cm running mean.
+	var driven := {}
+	for t in [PhysXVehicleWheel3D.TREAD_ROAD, PhysXVehicleWheel3D.TREAD_MUD]:
+		await _soil_scene("damp_sand")
+		var tc := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		tc.belly_drag = false
+		var wl: PhysXVehicleWheel3D = null
+		for c in tc.get_children():
+			if c is PhysXVehicleWheel3D:
+				c.tread = t
+				wl = c
+		surface.follow_target = surface.get_path_to(tc)
+		for i in 30:
+			await get_tree().physics_frame
+		var a0 := wl.global_position
+		var r: Array = await _drive(tc, 4.0, 0.5)
+		tc.brake = 1.0
+		for i in 30:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var a1 := wl.global_position
+		var dir := ((a1 - a0) * Vector3(1, 0, 1)).normalized()
+		var dv: Array[float] = []
+		for k in 400:
+			var q := a1 - dir * (1.0 + 0.005 * k)
+			dv.append(surface.get_dent_at(q) - surface.get_rim_at(q))
+		var ds := 0.0
+		var dm := 0.0
+		for k in range(20, dv.size() - 20):
+			var m := 0.0
+			for j in range(k - 20, k + 21):
+				m += dv[j] / 41.0
+			ds += (dv[k] - m) * (dv[k] - m) / (dv.size() - 40)
+			dm += dv[k] / (dv.size() - 40)
+		driven[t] = sqrt(ds)
+		print("  driven, tread %d: %.1f m, rut %.1f cm, floor relief %.2f mm rms, slip %.2f" % [t, r[0], dm * 100.0, sqrt(ds) * 1000.0, r[2]])
+	_check("a driven car's mud tyres print their lugs in its rut", driven[PhysXVehicleWheel3D.TREAD_MUD] > 2.0 * driven[PhysXVehicleWheel3D.TREAD_ROAD] + 0.001,
+			"%.1f mm rms against %.1f on road tyres" % [driven[PhysXVehicleWheel3D.TREAD_MUD] * 1000.0, driven[PhysXVehicleWheel3D.TREAD_ROAD] * 1000.0])
+	_check("each tread prints its own rut floor: lugs over a plain floor, deeper mud lugs, chain links cut in",
+			rough[PhysXVehicleWheel3D.TREAD_ALL_TERRAIN][0] > 2.0 * rough[-1][0] + 0.002 and rough[PhysXVehicleWheel3D.TREAD_MUD][0] > 1.2 * rough[PhysXVehicleWheel3D.TREAD_ALL_TERRAIN][0] and rough[PhysXVehicleWheel3D.TREAD_CHAINS][1] > rough[PhysXVehicleWheel3D.TREAD_ALL_TERRAIN][1] + 0.004,
+			"rms plain %.1f, road %.1f, all terrain %.1f, mud %.1f, chains %.1f mm; chains %.1f mm below the mean against %.1f" % [rough[-1][0] * 1000.0, rough[0][0] * 1000.0, rough[1][0] * 1000.0, rough[2][0] * 1000.0, rough[3][0] * 1000.0, rough[3][1] * 1000.0, rough[1][1] * 1000.0])
+
+# Mud slides downhill in rain (mud round 10): 40 cm of mud on a 15 degree bank (20 cm counted while only stiff, as
+# wet as it is). Stiff, it holds; soaked for a minute, the layer
+# flows off the bank down to the depth that still holds (tau_y / (rho g tan 15)), into a rut at the foot, volume kept.
+func _run_slide_tests() -> void:
+	var res := {}
+	for k in ["stiff", "soaked"]:
+		near_on = false
+		await _setup("bank", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+		await _paint_mud(0.4, STIFF_MUD)
+		for i in 60:
+			await get_tree().physics_frame
+		# A rut at the foot of the bank, 2 m long across it, 25 cm deep.
+		var foot := Vector3(-2.6, 0, 0)
+		surface.press_box(foot, Vector2(0.4, 2.0), 0.0, height.get_height(foot) - 0.25, 0.25)
+		for i in 120:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var rut0 := surface.get_dent_at(foot) - surface.get_rim_at(foot)
+		var mv0: Vector2 = surface.get_moved_volume()
+		var vol0 := mv0.x - mv0.y
+		if k == "soaked":
+			surface.moisture = 1.0
+		for i in 3600:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var mid := Vector3(1.0, 0, 0.5) # the upper bank, which drains first
+		var prof := ""
+		for xi in 13:
+			var q := Vector3(-3.0 + 0.5 * xi, 0, 0.5)
+			prof += "%.0f/%.0f " % [surface.get_dent_at(q) * 100.0, surface.get_rim_at(q) * 100.0]
+		print("  %s profile dent/rim cm from x=-3: %s gpu %s mud %.2f" % [k, prof, surface.is_gpu_active(), surface.get_mud_depth_at(mid)])
+		var left := surface.get_mud_depth_at(mid) - surface.get_dent_at(mid) + surface.get_rim_at(mid)
+		var rut1 := surface.get_dent_at(foot) - surface.get_rim_at(foot)
+		var surf_slope := rad_to_deg(atan((surface.get_surface_height_at(mid + Vector3(0.25, 0, 0)) - surface.get_surface_height_at(mid - Vector3(0.25, 0, 0))) / 0.5))
+		var mv1: Vector2 = surface.get_moved_volume()
+		res[k] = [left, rut0, rut1, (mv1.x - mv1.y) - vol0, surface.get_mud_slide_angle_at(mid), surface.get_mud_depth_at(mid), surf_slope]
+		print("  %s: %.1f cm of mud left on the upper bank, its surface %.1f deg (holds to %.1f deg); rut at the foot %.1f cm, then %.1f cm; volume change %.4f m3" % [k, left * 100.0, res[k][6], res[k][4], rut0 * 100.0, rut1 * 100.0, res[k][3]])
+	_check("stiff mud holds on a 15 degree bank", res["stiff"][0] > 0.95 * res["stiff"][5] and absf(res["stiff"][2] - res["stiff"][1]) < 0.02, "%.1f cm left of %.1f" % [res["stiff"][0] * 100.0, res["stiff"][5] * 100.0])
+	# A Bingham layer stands where its weight down its free surface stays under the yield stress, rho g h tan(surface)
+	# <= tau_y (Coussot 1997): soaked, the bank's mud runs down until its surface is that gentle.
+	_check("soaked, it slides down the bank until its surface is as gentle as it holds", res["soaked"][0] < 0.7 * res["soaked"][5] and res["soaked"][6] <= res["soaked"][4] + 1.5 and res["soaked"][6] < 13.0,
+			"%.1f cm left of %.1f on the upper bank, its surface %.1f deg (holds to %.1f) on 15 degree ground" % [res["soaked"][0] * 100.0, res["soaked"][5] * 100.0, res["soaked"][6], res["soaked"][4]])
+	_check("and fills the rut at the foot, volume kept", res["soaked"][2] < res["soaked"][1] - 0.08 and absf(res["soaked"][3]) < 0.02,
+			"%.1f cm to %.1f cm; volume change %.4f m3" % [res["soaked"][1] * 100.0, res["soaked"][2] * 100.0, res["soaked"][3]])
+
+
 # Meshes for a bench car (mud stage 3b): a painted body over the chassis box and a cab, tyres on the wheels.
 func _dress_car(car: PhysXVehicle3D) -> void:
 	var paint := StandardMaterial3D.new()
@@ -3454,6 +3589,10 @@ func _build_ruts() -> void:
 		for c in car.get_children():
 			if c is PhysXVehicleWheel3D:
 				c.tire_pressure = 60.0
+	if tread_arg >= 0:
+		for c in car.get_children():
+			if c is PhysXVehicleWheel3D:
+				c.tread = tread_arg
 	surface.follow_target = surface.get_path_to(car)
 	# Nothing to see while it drives: draw it small (lavapipe), full size for the final frame.
 	var full := get_window().size

@@ -90,6 +90,13 @@
 				How burnt the ground at [param position] is: 0 unburnt, 1 burnt out.
 			</description>
 		</method>
+		<method name="get_stem_char_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How deep (m) the fire has charred a tree's stem foot standing at [param position]: 0.8 mm per minute of heat at it (flaming grass or litter counts in proportion to its heat, a burning log fully, a smouldering one a third). [TreeWind3D] reads it through [method WorldFire.stem_char_at] to weaken a tree's foot against the wind.
+			</description>
+		</method>
 		<method name="get_crowns_burning" qualifiers="const">
 			<return type="int" />
 			<description>

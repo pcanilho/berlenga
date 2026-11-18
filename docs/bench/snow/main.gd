@@ -1,4 +1,9 @@
 extends Node3D
+
+# A fire on the ground east of x = 2 m: 928 W/m2, enough to melt 10 mm of water an hour.
+class FireStub extends WorldFire:
+	func _heat_at(p: Vector3) -> float:
+		return 928.0 if p.x > 2.0 else 0.0
 # SnowCover3D bench: checks the snowpack against the published relations, and renders snow on a mountain
 # or on props, raster or path traced.
 #
@@ -18,10 +23,12 @@ extends Node3D
 #                       mesh you can stand on
 #   --view=mountain   a 700 m mountain after a day of snow and two days of sun (snow line, south faces melted)
 #   --view=trail      deep snow as geometry: a walker, rolling balls and a wheel leave tracks (SnowSurface3D)
-#   --view=snowfall   falling snow over deep snow and a shed (flakes stop under the roof); --wind=M m/s
+#   --view=snowfall   falling snow over deep snow and a shed (flakes stop under the roof); --wind=M m/s;
+#                     --air=C for wet snow and sleet near and above 0 C
 #                     at 10 m (default 4; 15 or more blows the snow off the ground)
 #   --view=climate   a winter baked over the mountain (SnowClimate): snow line, shaded north faces, loaded lee
 #   --view=cornice   a corniced ridge from below its lee face
+#   --view=lake       a frozen lake from its shore after two weeks of frost and a light snow (--snow=H)
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
 #                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
 #                     (sparkle) prints the share of glinting pixels and the mean luminance
@@ -94,6 +101,7 @@ var only := ""
 var melt_hours := 0.0
 var crust_cycles := 0.0
 var transport := true
+var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
 func _ready() -> void:
@@ -118,6 +126,7 @@ func _ready() -> void:
 		elif a.begins_with("--transport="): transport = a.substr(12) != "0"
 		elif a.begins_with("--crack="): crack_days = int(a.substr(8))
 		elif a == "--fall": fall = true
+		elif a.begins_with("--air="): air = float(a.substr(6))
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
@@ -135,6 +144,10 @@ func _ready() -> void:
 			await _run_background_tests()
 		elif only == "water":
 			await _run_water_tests()
+		elif only == "fire":
+			await _run_fire_tests()
+		elif only == "sleet":
+			_run_sleet_tests()
 
 		else:
 			await _run_tests()
@@ -324,6 +337,8 @@ func _run_tests() -> void:
 	_run_icicle_tests()
 	await _run_background_tests()
 	await _run_water_tests()
+	await _run_fire_tests()
+	_run_sleet_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -998,12 +1013,62 @@ func _run_water_tests() -> void:
 	snow.advance(6.0 * 3600.0)
 	var cap := 83.0 * snow.get_ice_thickness_at(wet)
 	_check("a heavy load floods into snow ice", snow.get_swe_at(wet) <= cap + 1.0 and snow.get_ice_thickness_at(wet) > ice0 + 0.05, "ice %.1f -> %.1f cm, %.0f mm of snow left on it (the ice floats %.0f mm)" % [ice0 * 100.0, snow.get_ice_thickness_at(wet) * 100.0, snow.get_swe_at(wet), cap])
+	_check("the flooded layer is white snow ice", snow.get_white_ice_thickness_at(wet) > 0.03 and snow.get_white_ice_thickness_at(wet) <= snow.get_ice_thickness_at(wet), "%.1f cm of the %.1f cm" % [snow.get_white_ice_thickness_at(wet) * 100.0, snow.get_ice_thickness_at(wet) * 100.0])
+	# The drawn ice: a sheet over the lake at its level plus the freeboard, solid where it bears a walker.
+	var li: SnowLakeIce3D = snow.get_lake_ice()
+	li.collision_radius = 1000.0
+	li.rebuild()
+	var top := snow.get_water_level_at(wet) + SnowLakeIce3D.freeboard(snow.get_ice_thickness_at(wet))
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(wet + Vector3(0, top + 20.0, 0), wet + Vector3(0, top - 20.0, 0)))
+	_check("the ice is drawn and walkable", li != null and li.get_quad_count() > 100 and li.get_walkable_count() > 100 and not hit.is_empty() and absf(hit.position.y - top) < 0.05, "%d cells drawn, %d walkable; a ray stops at %.2f m (ice top %.2f m)" % [li.get_quad_count() if li else 0, li.get_walkable_count() if li else 0, hit.position.y if not hit.is_empty() else -INF, top])
+	var white0 := snow.get_white_ice_thickness_at(wet)
 	# A thaw: the snow goes first, then the ice.
 	await _weather_to(12.0, 0.0)
 	var ice1 := snow.get_ice_thickness_at(wet)
 	var swe1 := snow.get_swe_at(wet)
-	snow.advance(24.0 * 3600.0 * 12.0)
-	_check("a thaw melts the snow, then the ice", snow.get_swe_at(wet) == 0.0 and snow.get_ice_thickness_at(wet) < ice1 - 0.02, "%.0f mm of snow and %.1f cm of ice -> %.1f mm and %.1f cm after 12 days at %.1f C" % [swe1, ice1 * 100.0, snow.get_swe_at(wet), snow.get_ice_thickness_at(wet) * 100.0, snow.get_air_temperature_at(Vector3(wet.x, level, wet.z))])
+	snow.advance(24.0 * 3600.0 * 10.0)
+	_check("a thaw melts the snow, then the ice", snow.get_swe_at(wet) == 0.0 and snow.get_ice_thickness_at(wet) < ice1 - 0.02, "%.0f mm of snow and %.1f cm of ice -> %.1f mm and %.1f cm after 10 days at %.1f C" % [swe1, ice1 * 100.0, snow.get_swe_at(wet), snow.get_ice_thickness_at(wet) * 100.0, snow.get_air_temperature_at(Vector3(wet.x, level, wet.z))])
+	var lost := ice1 - snow.get_ice_thickness_at(wet)
+	_check("the thaw takes the white ice first", white0 - snow.get_white_ice_thickness_at(wet) > 0.99 * minf(lost, white0), "%.1f cm of ice lost, %.1f -> %.1f cm of white ice" % [lost * 100.0, white0 * 100.0, snow.get_white_ice_thickness_at(wet) * 100.0])
+	snow.advance(24.0 * 3600.0 * 30.0)
+	li.rebuild()
+	_check("open water again, nothing drawn", snow.get_ice_thickness_at(wet) == 0.0 and li.get_quad_count() == 0, "%.1f cm, %d cells" % [snow.get_ice_thickness_at(wet) * 100.0, li.get_quad_count()])
+
+
+func _run_sleet_tests() -> void:
+	print("Sleet (follow-up 17)")
+	var a_cold := SnowFall3D.aggregate_factor(-10.0)
+	var a_warm := SnowFall3D.aggregate_factor(-0.5)
+	_check("flakes aggregate near 0 C (Hobbs, Chang and Locatelli 1974: 2 to 3 times)", is_equal_approx(a_cold, 1.0) and a_warm > 2.0 and a_warm < 3.0, "x%.2f at -10 C, x%.2f at -0.5 C" % [a_cold, a_warm])
+	var m0 := SnowFall3D.melted_share(-1.0, 0.85)
+	var m1 := SnowFall3D.melted_share(1.0, 0.85)
+	var m3 := SnowFall3D.melted_share(3.0, 0.85)
+	_check("falling snow melts in air above 0 C, as the rain-or-snow split", m0 == 0.0 and m1 > 0.0 and m3 > m1 and absf(m1 - (1.0 - SnowCover3D.snowfall_fraction(1.0, 0.85))) < 1e-5, "%.2f at -1 C, %.2f at 1 C, %.2f at 3 C" % [m0, m1, m3])
+	var v_dry := SnowFall3D.wet_fall_speed(2.0, 0.0)
+	var v_half := SnowFall3D.wet_fall_speed(2.0, 0.5)
+	var v_wet := SnowFall3D.wet_fall_speed(2.0, 1.0)
+	_check("a melting flake keeps its slow fall until mostly melted, then falls as a drop (Mitra et al. 1990)", v_dry > 0.8 and v_dry < 1.5 and v_half < 1.5 * v_dry and absf(v_wet - 6.55) < 0.1, "%.2f m/s dry, %.2f half melted, %.2f melted (2 mm drop)" % [v_dry, v_half, v_wet])
+
+
+func _run_fire_tests() -> void:
+	print("Fire melts snow (WorldFire)")
+	await _setup("flat", 32.0, 32, -8.0)
+	snow.drift_enabled = false
+	_precipitate(10.0, 2.0)
+	var hot := Vector3(8.0, 0, 0)
+	var cold := Vector3(-8.0, 0, 0)
+	var h0 := snow.get_swe_at(hot)
+	WorldContracts.set_fire(FireStub.new())
+	snow.advance(2.0 * 3600.0)
+	WorldContracts.clear_overrides()
+	var lost := h0 - snow.get_swe_at(hot)
+	_check("fire heat melts the pack at 0.334 MJ/kg, in frost", absf(lost - 20.0) < 1.0 and absf(snow.get_swe_at(cold) - h0) < 0.5, "%.1f mm melted in 2 h under 928 W/m2 at -8 C (energy gives 20.0); %.1f mm beside it of %.1f" % [lost, snow.get_swe_at(cold), h0])
+	# The snow contract other systems read (vehicle grip, plants): the cover answers it.
+	var ws: WorldSnow = WorldContracts.get_snow()
+	var surf := snow.get_ground_height_at(cold) + snow.get_depth_at(cold)
+	_check("the snow contract reads the cover", ws.has_provider() and absf(ws.depth_at(cold) - snow.get_depth_at(cold)) < 1e-4 and absf(ws.density_at(cold) - snow.get_density_at(cold)) < 1e-3 and absf(ws.surface_at(cold) - surf) < 1e-3 and ws.lake_ice_at(cold) == Vector2(), "depth %.3f m, density %.0f kg/m3, surface %.3f m" % [ws.depth_at(cold), ws.density_at(cold), ws.surface_at(cold)])
 
 
 func _climate(wind_speed: float) -> SnowClimate:
@@ -1468,6 +1533,8 @@ func _build_view() -> void:
 		await _setup("cornice", 512.0, 256, -6.0)
 	elif view == "sparkle":
 		await _setup("flat", 32.0, 128, -6.0)
+	elif view == "lake":
+		await _setup("mountain", 512.0, 128, -12.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
 	elif view == "shelter" or view == "icicles":
@@ -1517,6 +1584,9 @@ func _build_view() -> void:
 		return
 	elif view == "sparkle":
 		await _build_sparkle(cam)
+		return
+	elif view == "lake":
+		await _build_lake(cam)
 		return
 	elif view == "windblown":
 		await _build_windblown(cam)
@@ -1987,6 +2057,44 @@ func _build_shelter(cam: Camera3D) -> void:
 	get_tree().quit()
 
 
+# A frozen lake at the mountain's foot from its shore: two weeks of frost, then a light snow on the ice.
+func _build_lake(cam: Camera3D) -> void:
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-18.0, 120.0, 0.0)
+	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 64.0)
+	var level: float = ground.get_height(Vector3(200.0, 0, 0))
+	_lake(level)
+	# The open water under the ice (dark, smooth), for where the ice is thin or gone.
+	var water := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(512.0, 512.0)
+	water.mesh = pm
+	var wm := StandardMaterial3D.new()
+	wm.albedo_color = Color(0.02, 0.04, 0.05)
+	wm.roughness = 0.04
+	water.material_override = wm
+	water.position = Vector3(0, level, 0)
+	add_child(water)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	snow.advance(14.0 * 24.0 * 3600.0)
+	_precipitate(snow_hours if snow_hours >= 0.0 else 1.5, 1.0)
+	snow.get_lake_ice().rebuild()
+	# Stand on the shore looking out along it.
+	var x := 150.0
+	while x < 250.0 and ground.get_height(Vector3(x, 0, 0)) > level + 0.8:
+		x += 1.0
+	var at := Vector3(x - 6.0, 0, 0)
+	cam.position = at + Vector3(0, ground.get_height(at) + 1.7, 0)
+	cam.look_at(Vector3(x + 40.0, level, -45.0))
+	cam.fov = 55.0
+	cam.far = 2000.0
+	var p := Vector3(x + 30.0, 0, 0)
+	print("lake: level %.2f m, ice %.1f cm (%.1f cm white), snow %.1f mm, %d cells drawn" % [level, snow.get_ice_thickness_at(p) * 100.0, snow.get_white_ice_thickness_at(p) * 100.0, snow.get_swe_at(p), snow.get_lake_ice().get_quad_count()])
+	await _save_frame("")
+
+
 func _build_sparkle(cam: Camera3D) -> void:
 	snow.drift_enabled = false
 	sun.visible = true
@@ -2100,6 +2208,8 @@ func _build_snowfall(cam: Camera3D) -> void:
 	weather.rain_rate = 3.0
 	weather.cloud_cover = 1.0
 	weather.wind_speed = wind
+	if air < INF:
+		weather.temperature = air
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var deep := SnowSurface3D.new()
@@ -2154,6 +2264,7 @@ func _build_snowfall(cam: Camera3D) -> void:
 		if steps > 0:
 			await _save_frame("_%03d" % s)
 	print("visibility %.0f m in the falling snow; blowing snow %.4f /m at 1 m (%.0f m), layer %.2f m deep; haze at 1 m %.4f /m" % [fall.get_visibility(), fall.get_blowing_extinction(), 3.912 / maxf(fall.get_blowing_extinction(), 1e-6), fall.get_blowing_height_scale(), weather.get_precipitation_extinction_at(Vector3(0, weather.get_ground_height() + 1.0, 0))])
+	print("sleet: air %.1f C, melted share %.2f, aggregates x%.2f" % [snow.get_air_temperature_at(Vector3(0, 1, 0)), fall.get_melted_share(), fall.get_aggregate()])
 	print("snowfall %.2f mm/h, %d flakes, blowing %.0f%% at %.1f m/s (threshold %.1f)" % [fall.get_snowfall_rate(), fall.get_visible_flakes(), fall.get_blowing_amount() * 100.0, fall.get_wind_speed_10m(), fall.get_threshold_wind()])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true

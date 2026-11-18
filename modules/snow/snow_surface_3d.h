@@ -71,6 +71,8 @@ class StaticBody3D;
 class SnowSurface3D : public Node3D {
 	GDCLASS(SnowSurface3D, Node3D);
 
+	static SnowSurface3D *active; // the last to enter the tree: the snow contract reads its surface
+
 	static constexpr int TILE = GroundDeformField::TILE; // deformation texels per cached tile side
 
 	NodePath snow_cover;
@@ -285,6 +287,7 @@ public:
 	Vector2 get_moved_volume() const; // m3: (dent, rim) over the live field
 	int get_cached_tile_count() const { return _gpu_on() ? gpu_host.cache.size() : field.cached_tile_count(); }
 	Rect2 get_deform_rect() const;
+	static SnowSurface3D *get_active() { return active; }
 	double get_step_time_msec() const { return step_msec; }
 	Ref<ShaderMaterial> get_surface_material() const { return material; }
 

@@ -38,12 +38,14 @@
 #include "core/object/worker_thread_pool.h"
 #include "modules/ground/ground_height_query.h"
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
 class PhysicsDirectSpaceState3D;
 
 class SnowCornice3D;
+class SnowLakeIce3D;
 class TerrainDeformer3D;
 class TerrainDataMap3D;
 
@@ -56,10 +58,11 @@ class TerrainDataMap3D;
 // refrozen, snow sliding off steep slopes (SnowSlide, Bernhardt and Schulz 2010) and wind piling it in lee
 // and stripping exposed ground (Winstral et al. 2002). Materials read it through the snow_map global
 // (BaseMaterial3D Snow), scripts through get_*_at().
-class SnowCover3D : public Node3D {
+class SnowCover3D : public Node3D, public WorldSnowProvider {
 	GDCLASS(SnowCover3D, Node3D);
 	friend class SnowCornice3D;
 	friend class SnowSurface3D;
+	friend class SnowLakeIce3D;
 
 	static SnowCover3D *active;
 
@@ -241,7 +244,7 @@ class SnowCover3D : public Node3D {
 		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
-		Vector<float> ice;
+		Vector<float> ice, white_ice;
 	} pub;
 	bool background_updates = true;
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
@@ -253,8 +256,10 @@ class SnowCover3D : public Node3D {
 	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
 	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
 	Vector<float> cell_water;
-	Vector<float> cell_ice;
+	Vector<float> cell_ice; // m of lake ice
+	Vector<float> cell_white_ice; // m of it that is snow ice (flooded snow, white), the rest clear
 	bool lake_ice_enabled = true;
+	SnowLakeIce3D *lake_ice = nullptr; // the drawn ice, an internal child
 	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
@@ -400,6 +405,16 @@ public:
 	// it lies at the water surface.
 	float get_water_level_at(Vector3 p_position) const;
 	float get_ice_thickness_at(Vector3 p_position) const;
+	float get_white_ice_thickness_at(Vector3 p_position) const;
+	SnowLakeIce3D *get_lake_ice() const { return lake_ice; }
+
+	// The snow contract (WorldContracts::snow()).
+	float contract_snow_depth_at(const Vector3 &p_position) const override { return get_depth_at(p_position); }
+	float contract_snow_density_at(const Vector3 &p_position) const override;
+	float contract_snow_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
+	float contract_snow_surface_at(const Vector3 &p_position) const override;
+	float contract_snow_crust_at(const Vector3 &p_position) const override { return get_crust_strength_at(p_position); }
+	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
 	void set_lake_ice_enabled(bool p_enabled);
 	bool is_lake_ice_enabled() const { return lake_ice_enabled; }
 	// Lake ice after p_hours at p_air_celsius from p_ice m with p_snow_depth m of snow of p_snow_density

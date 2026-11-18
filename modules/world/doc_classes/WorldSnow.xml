@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldSnow" inherits="RefCounted" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The snow contract: the snowpack and lake ice at a point, for any system (vehicle grip, plants, footsteps).
+	</brief_description>
+	<description>
+		Read it through [method WorldContracts.get_snow]. [SnowCover3D] produces it; with no snow system every reading is bare ground. A test sets a stub (a script extending this class) with [method WorldContracts.set_snow]; methods it does not override still come from the snow cover.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_crust_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a test stub to answer [method crust_at].
+			</description>
+		</method>
+		<method name="_density_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a test stub to answer [method density_at].
+			</description>
+		</method>
+		<method name="_depth_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a test stub to answer [method depth_at].
+			</description>
+		</method>
+		<method name="_lake_ice_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a test stub to answer [method lake_ice_at].
+			</description>
+		</method>
+		<method name="_surface_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a test stub to answer [method surface_at].
+			</description>
+		</method>
+		<method name="_wetness_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a test stub to answer [method wetness_at].
+			</description>
+		</method>
+		<method name="crust_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the load a crust in the pack bears before a foot breaks through, in kPa; 0 with none.
+			</description>
+		</method>
+		<method name="density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the pack's bulk density at [param position] in kg/m³: about 100 for new powder, 250 to 350 settled, 400 to 550 old or wet; 0 where bare.
+			</description>
+		</method>
+		<method name="depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the snow on the ground at [param position] in metres, 0 with no snow system.
+			</description>
+		</method>
+		<method name="has_provider" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when a snow cover is in the tree.
+			</description>
+		</method>
+		<method name="lake_ice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the lake ice at [param position] as (thickness in metres, the share of it that is white snow ice). Ice of 5 cm and more bears a walker.
+			</description>
+		</method>
+		<method name="surface_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the snow surface height in metres, with the prints near the camera; [code]-INF[/code] where there is no snow.
+			</description>
+		</method>
+		<method name="wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the liquid water in the pack over what it can hold, 0 (dry) to 1 (slush).
+			</description>
+		</method>
+	</methods>
+</class>

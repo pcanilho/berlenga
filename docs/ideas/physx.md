@@ -1495,6 +1495,35 @@ the indraft 2 m outside a calm front was 0.3 to 0.6 m/s. Left: the Flow
 gas itself does not take this wind (it has its own buoyant flow), and the
 grass map covers the fire's own area only.
 
+### Burnt trees fall later (picked 18 Nov late night, second of four)
+
+Built. Research: fire kills and chars a trunk's base from outside, deepest
+on the lee side where flames wrap round it (catfaces: Gill 1974,
+Gutsell and Johnson 1996); burnt-through and hollowed bases are how
+fire-killed trees fail, often months later in wind (hazard trees:
+Dickinson and Johnson 2001, Hood et al. 2008). Charring in wood moves
+inward at about 0.65 to 0.8 mm a minute of fire (EN 1995-1-2, the
+notional rate), and the section left carries the bending load (the
+reduced cross-section method). Here: PhysXFireSpread3D keeps, per cell,
+the time heat stood at it (grass and litter by their heat over 50 kW/m2,
+a flaming log fully, a smouldering one a third), so a log burning
+against a trunk for an hour chars it about 5 cm and a grass front alone
+barely marks bark. WorldFire.stem_char_at (a new contract member, the
+most of any fire) gives it to TreeWind3D, which reads it for each tree
+once a second while a fire provider exists. In the storm test the char
+past the bark (a tenth of the radius, 5 mm to 3 cm), taken as half its
+depth round the stem, leaves (1 - c/r)^3 of the foot's strength (times a
+per-tree defect, 65 to 115%); if the wind's base moment beats that
+before it beats the roots, the tree snaps at its foot: it falls as the
+thrown-tree body without its root plate (no plate mass or hull, no pit),
+hinged on its lee side at the foot, and its scorched low limbs (side
+capsules below a third of its height) no longer prop it (crown scorch
+height, Van Wagner 1973). Test: on the storm bench a spruce with 12 cm
+of char (`--char=0.12`, a WorldFire stub) snaps at about 2.8 s in a
+26 m/s storm and lies down on its upper whorls; without char nothing is
+thrown at 26 m/s. Left: no stump is drawn (the whole tree falls), and
+char does not yet weaken limbs or the standing tree's sway.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

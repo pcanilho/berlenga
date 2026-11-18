@@ -123,6 +123,7 @@ public:
 	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint, and at -2 level the dent too (a washed swash line)
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
+	int press_tread = 0; // a wheel's tread for its box presses (tread_relief(): 0 none, 1 road .. 4 chains)
 	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).
 	// The ground uses 1: Prandtl's passive wedge beside a strip footing on undrained clay reaches one width
 	// out, so the pushed soil rises as a broad lip rather than a wall round the print.
@@ -192,6 +193,7 @@ public:
 	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f);
 	static float sole_sd(float p_lx, float p_lz, Vector2 p_half);
 	static float sole_relief(float p_lx, float p_lz, Vector2 p_half);
+	static float tread_relief(int p_code, float p_wx, float p_wz, float p_lx, float p_lz, Vector2 p_half, float p_cy, float p_sy, float p_slip);
 	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity = Vector2());
 	// Bodies in p_groups press along the path they moved since the last call.
 	void press_bodies(SceneTree *p_tree, const PackedStringArray &p_groups, const Columns &p_columns, float p_character_mass, float p_character_area, float p_contact_tolerance, double p_delta);

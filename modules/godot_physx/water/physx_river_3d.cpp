@@ -35,6 +35,7 @@
 #include "physx_water_mist_3d.h"
 #include "physx_water_surface_3d.h"
 #include "water_fall_sound.h"
+#include "water_foam_shared.h"
 
 #include "scene/3d/audio_stream_player_3d.h"
 
@@ -297,101 +298,6 @@ float river_caustic(vec2 x, float z, float amp, vec2 o_a, vec2 o_b, float w) {
 	return 1.0 / max(abs(det), 0.25);
 }
 
-// The white water's structure (the open sea's foam_structure, PhysXWaterSurface3D; kept in step with it): holes
-// torn at three scales, strands along their borders, rafts, bubble grain, the crisp outline. p in world metres,
-// drawn out along p_streak (the current) by 1 + p_stretch.
-float rf_fbm(vec2 p) {
-	return 0.5 * r_noise(p) + 0.3 * r_noise(p * 2.3 + 7.1) + 0.2 * r_noise(p * 5.1 - 3.3);
-}
-
-vec4 rf_holes(vec2 p, float open, float scale, float bias, float soft, float jit) {
-	p += 0.22 * (vec2(rf_fbm(p * 2.3 + 1.3), rf_fbm(p * 2.3 - 4.1)) - 0.5);
-	float lobe = rf_fbm(p * 3.7 + 7.3) - 0.5;
-	float tear = rf_fbm(p * 9.1 - 2.6) - 0.5;
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	float d1 = 8.0;
-	float d2 = 8.0;
-	float keep = 1.0;
-	float inside = 0.0;
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			vec2 g = vec2(float(x), float(y));
-			vec2 o = vec2(r_hash(i + g), r_hash(i + g + vec2(17.3, 5.1)));
-			vec2 r = g + 0.15 + 0.7 * o - f;
-			float d = length(r);
-			if (d < d1) {
-				d2 = d1;
-				d1 = d;
-			} else if (d < d2) {
-				d2 = d;
-			}
-			float rad = min(open * max(r_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.65);
-			if (rad > 0.0) {
-				float de = d + jit + rad * (0.6 * lobe + 0.25 * tear);
-				keep = min(keep, smoothstep(rad - soft, rad + soft, de));
-				inside = max(inside, (rad - de) / rad);
-			}
-		}
-	}
-	return vec4(keep, d1, d2, inside);
-}
-
-float rf_structure(vec2 p, float amount, float footprint, vec2 p_streak, float p_stretch) {
-	vec2 q0 = p * foam_detail_scale;
-	vec2 q = vec2(dot(q0, p_streak) / (1.0 + p_stretch), dot(q0, vec2(-p_streak.y, p_streak.x)));
-	vec2 warp = vec2(r_noise(q * 0.9 + 3.7), r_noise(q * 0.9 - 8.1)) - 0.5;
-	float a = clamp(amount, 0.0, 1.0);
-	float open = 1.0 - pow(a, 0.6);
-	float age_warp = 1.0 + 1.2 * open;
-	float rag = rf_fbm(q * 9.0) - 0.5;
-	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
-	float soft2 = 0.015 + footprint * foam_detail_scale * 2.8;
-	float soft3 = 0.02 + footprint * foam_detail_scale * 9.2;
-	vec4 h1 = rf_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag);
-	vec4 h2 = rf_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag);
-	vec4 h3 = rf_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag);
-	float cover = h1.x * h2.x * mix(1.0, h3.x, 0.75);
-	float brk = smoothstep(0.4, 0.62, rf_fbm(q * 2.7 + 1.7));
-	float w = (0.04 + 0.07 * a) * brk;
-	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, h1.z - h1.y + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, h2.z - h2.y + 0.25 * rag));
-	cover = max(cover, strands * smoothstep(0.15, 0.45, a));
-	float raft = smoothstep(0.62, 0.68, rf_fbm(q * 6.3 + 3.1)) * smoothstep(0.2, 0.5, a) * smoothstep(0.35, 0.5, max(h1.w, h2.w));
-	cover = max(cover, raft * (1.0 - clamp(footprint * foam_detail_scale * 20.0 - 0.2, 0.0, 1.0)));
-	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, rf_fbm(q * 5.3 - 4.1)));
-	float coarse = clamp(footprint * foam_detail_scale * 1.2 - 0.25, 0.0, 1.0);
-	cover = mix(cover, clamp(1.0 - 1.4 * open * open, 0.05, 1.0), coarse);
-	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
-	float cluster = 1.0 - clamp((footprint - 0.04) / 0.12, 0.0, 1.0);
-	vec2 pw = p + 0.08 * warp;
-	float clumps = rf_fbm(pw * 16.0 + 4.7);
-	float gaps = smoothstep(0.3, 0.12, rf_fbm(pw * 31.0 - 2.9));
-	float domes = smoothstep(0.8, 0.95, rf_fbm(pw * 38.0 + 9.3));
-	float bubbles = mix(0.84, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
-	bubbles *= mix(0.925, 0.7 + 0.45 * rf_fbm(pw * 3.5 + 2.3), cluster);
-	float density = smoothstep(0.02, 0.35, a);
-	float rough = 0.6 * rf_fbm(q * 3.1 + 5.3) + 0.4 * rf_fbm(q * 11.0 - 2.1);
-	float t_edge = 0.32 + 0.5 * (rough - 0.5);
-	float w_edge = clamp(0.02 + footprint * foam_detail_scale * 2.0, 0.02, 0.3);
-	float outline = max(smoothstep(t_edge - w_edge, t_edge + w_edge, density) * mix(0.55, 1.0, smoothstep(0.35, 0.7, a)), 0.8 * density);
-	density = mix(density, outline, foam_crisp);
-	bubbles = mix(1.0, bubbles, 1.0 - 0.55 * foam_crisp);
-	return clamp(cover * density * bubbles, 0.0, 1.0);
-}
-
-// The bubbles' domes (the clumps' smooth height), for the light to catch the foam's grain.
-vec2 rf_bubble_slope(vec2 p, float footprint) {
-	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
-	if (grain <= 0.0) {
-		return vec2(0.0);
-	}
-	const float e = 0.01;
-	float h0 = rf_fbm(p * 16.0 + 4.7);
-	float hx = rf_fbm((p + vec2(e, 0.0)) * 16.0 + 4.7);
-	float hz = rf_fbm((p + vec2(0.0, e)) * 16.0 + 4.7);
-	return vec2(hx - h0, hz - h0) / e * 0.03 * grain;
-}
-
 // The two phases' offsets and the first one's weight.
 float flow_phases(vec2 p, vec2 flow, out vec2 o_a, out vec2 o_b) {
 	float t = water_time / max(flow_period, 0.05) + r_noise(p * 0.05);
@@ -550,7 +456,7 @@ void fragment() {
 	float foam = clamp(min(max(max(v_info.g, live_foam), edge_band), 0.85) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
 	foam = foam * foam * (3.0 - 2.0 * foam);
 	if (foam_crisp > 0.0) {
-		// The white water's amount drawn as foam (rf_structure), each phase riding the current (the flow mapping
+		// The white water's amount drawn as foam (wf_structure, water_foam_shared.h), each phase riding the current (the flow mapping
 		// draws it out along the current by itself). Not rotated to the local current: world coordinates turned by
 		// an angle that varies over the water shear by that angle times their distance from the origin, combing
 		// the pattern into hairlines wherever the current turns.
@@ -560,8 +466,8 @@ void fragment() {
 		float amount = foam * foam;
 		const vec2 sd = vec2(1.0, 0.0);
 		const float stretch = 0.0;
-		float f_a = rf_structure(v_world.xz - o_a, amount, footprint, sd, stretch);
-		float f_b = rf_structure(v_world.xz - o_b + vec2(5.3, 2.1), amount, footprint, sd, stretch);
+		float f_a = wf_structure(v_world.xz - o_a, amount, footprint, sd, stretch, foam_detail_scale, foam_crisp);
+		float f_b = wf_structure(v_world.xz - o_b + vec2(5.3, 2.1), amount, footprint, sd, stretch, foam_detail_scale, foam_crisp);
 		float crisp = f_a * w + f_b * (1.0 - w);
 		float foam_soft = crisp;
 #if !defined(RT)
@@ -578,7 +484,7 @@ void fragment() {
 			// Foam damps the ripples under it (the film's elasticity, as slicks do), its bubbles' domes catch the
 			// light, and its rims stand up as a thin skin.
 			world_normal = normalize(mix(world_normal, n_mesh, clamp(foam, 0.0, 1.0)));
-			vec2 bs = rf_bubble_slope(v_world.xz - o_a, footprint) * w + rf_bubble_slope(v_world.xz - o_b + vec2(5.3, 2.1), footprint) * (1.0 - w);
+			vec2 bs = wf_bubble_slope(v_world.xz - o_a, footprint) * w + wf_bubble_slope(v_world.xz - o_b + vec2(5.3, 2.1), footprint) * (1.0 - w);
 			world_normal = normalize(world_normal - vec3(bs.x, 0.0, bs.y) * foam * foam_grain_tilt);
 #if !defined(RT)
 			if (foam_relief > 0.0) {
@@ -728,7 +634,7 @@ static String _river_wind_src() {
 
 // The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + RIVER_SHADER_SRC_TAIL;
 	return src;
 }
 

@@ -35,6 +35,7 @@
 #include "snow_clumps_3d.h"
 
 #include "snow_cover_3d.h"
+#include "snow_lake_ice_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -540,8 +541,9 @@ void SnowSurface3D::_shift_ground(Vector2i p_origin) {
 					// Lake ice that bears weight is the ground the deep snow lies on (docs/ideas/snow.md,
 					// follow-up 15); open water and thin ice are not.
 					const Vector3 at((p_origin.x + i) * ground_spacing, 0, (p_origin.y + z) * ground_spacing);
-					if (cover->get_ice_thickness_at(at) >= SnowCover3D::ICE_WALK) {
-						h = MAX(h, cover->get_water_level_at(at));
+					const float ice = cover->get_ice_thickness_at(at);
+					if (ice >= SnowCover3D::ICE_WALK) {
+						h = MAX(h, cover->get_water_level_at(at) + SnowLakeIce3D::freeboard(ice));
 					}
 				}
 				next[z * n + i] = h;
@@ -869,9 +871,12 @@ void SnowSurface3D::_update_collision() {
 	collision_dirty = false;
 }
 
+SnowSurface3D *SnowSurface3D::active = nullptr;
+
 void SnowSurface3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
+			active = this;
 			_ensure_children();
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
@@ -883,6 +888,9 @@ void SnowSurface3D::_notification(int p_what) {
 			_update_collision();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (active == this) {
+				active = nullptr;
+			}
 			set_physics_process_internal(false);
 			_gpu_release();
 		} break;

@@ -629,6 +629,39 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		eye.y = valley.get_height(eye) + 1.7
 		cam.position = eye
 		cam.look_at(eye + look)
+	if args.has("edge"):
+		# --edge: from 1.7 m in a coupe cut 0-1 years ago, across its edge into one of 8+ years
+		# (PlantSpecies.get_coupe_at of the stand's first coupe species).
+		var csp: PlantSpecies = null
+		for sp in biome.species:
+			if sp.get_coupe_rotation() > 0 and String(sp.resource_name).begins_with("Hazel"):
+				csp = sp
+				break
+		var found := false
+		if csp != null:
+			for r in range(0, 60, 4):
+				for a in 32:
+					var p := Vector3(r * cos(a * PI / 16), 0, r * sin(a * PI / 16))
+					var c: Vector3 = csp.get_coupe_at(p)
+					if c.x > 1 or c.z > 0.5 or c.y < 3.0 or c.y > 8.0:
+						continue
+					for k in 16:
+						var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
+						var e := p - d * 8.0
+						var q: Vector3 = csp.get_coupe_at(p + d * (c.y + 6.0))
+						var ce: Vector3 = csp.get_coupe_at(e)
+						if q.x >= 8 and q.z < 0.5 and ce.x <= 1 and ce.z < 0.5 and not found:
+							found = true
+							e.y = valley.get_height(e) + 1.7
+							cam.position = e
+							var tgt := p + d * (c.y + 6.0)
+							tgt.y = valley.get_height(tgt) + 2.5
+							cam.look_at(tgt)
+							cam.fov = 55.0
+							cam.far = 120.0
+							print("edge view from ", e, " to ", tgt, " ages ", c.x, " -> ", q.x)
+		if not found:
+			print("no coupe edge found")
 	var cv := OS.get_environment("CAM").split(",")
 	if cv.size() >= 6:
 		# CAM="x,y,z,lx,ly,lz[,fov]" overrides the view (eye height over the ground at x, z).

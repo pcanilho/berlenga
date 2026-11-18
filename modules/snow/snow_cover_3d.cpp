@@ -32,10 +32,14 @@
 
 #include "snow_cover_3d.h"
 
+#include "snow_lake_ice_3d.h"
+#include "snow_surface_3d.h"
+
 #include "snow_climate.h"
 #include "snow_fall_3d.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
+#include "modules/world/world_contracts.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/world/world_contracts.h"
@@ -67,6 +71,7 @@ constexpr float SETTLE_RATE = 0.01f; // per hour
 // Below this the cell is bare.
 constexpr float SWE_MIN = 0.01f; // mm
 constexpr float ICE_DENSITY = 917.0f; // kg/m3
+constexpr float ICE_DECAY = 0.005f / 24.0f; // m per C hour above freezing, bare lake ice
 constexpr float ICE_MAX = 1.5f; // m of lake ice at most
 constexpr float ICE_CONDUCTIVITY = 2.24f; // W/(m K)
 constexpr float ICE_LATENT = 3.34e5f; // J/kg
@@ -191,6 +196,8 @@ void SnowCover3D::_allocate() {
 	cell_water.fill(-Math::INF);
 	cell_ice.resize(nn);
 	cell_ice.fill(0.0f);
+	cell_white_ice.resize(nn);
+	cell_white_ice.fill(0.0f);
 	steep_dirty = true;
 	cell_cornice_x.resize(cornices_enabled ? nn : 0);
 	cell_cornice_z.resize(cornices_enabled ? nn : 0);
@@ -302,7 +309,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -602,9 +609,15 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				if (t < 0.0f) {
 					ice = lake_ice_growth(ice, t, ds, rho, in.dt_h);
 				} else if (ds <= 0.0f && ice > 0.0f) {
-					ice = MAX(ice - melt_temperature_factor * t * in.dt_h / ICE_DENSITY, 0.0f);
+					// The thaw works down from the top, through the white snow ice first. Bare lake ice decays by
+					// degree-days at about 0.5 cm per C day (Bilello 1980; Ashton 1983), sun and warm water
+					// included, faster than snow's melt factor gives.
+					const float m = MIN(ICE_DECAY * t * in.dt_h, ice);
+					ice -= m;
+					cell_white_ice.write[i] = MAX(cell_white_ice[i] - m, 0.0f);
 				}
 				cell_ice.write[i] = ice;
+				cell_white_ice.write[i] = MIN(cell_white_ice[i], ice);
 			}
 			if (ice < ICE_HOLD) {
 				cell_swe.write[i] = 0.0f;
@@ -751,8 +764,10 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				const float taken = flood * MAX(rho, 30.0f);
 				liq *= (swe - taken) / swe;
 				swe -= taken;
-				ice = MIN(ice + flood, ICE_MAX);
+				const float grown = MIN(ice + flood, ICE_MAX) - ice;
+				ice += grown;
 				cell_ice.write[i] = ice;
+				cell_white_ice.write[i] = MIN(cell_white_ice[i] + grown, ice);
 			}
 		}
 		cell_crust.write[i] = crust;
@@ -1049,6 +1064,7 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_cornice_z.ptrw();
 	cell_cornice_crack.ptrw();
 	cell_ice.ptrw();
+	cell_white_ice.ptrw();
 	if (p_parallel) {
 		WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &SnowCover3D::_update_row, (void *)nullptr, resolution, -1, true, String("SnowCover3D cells"));
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
@@ -1113,6 +1129,7 @@ void SnowCover3D::_publish_cells() {
 	pub.cornice_z = cell_cornice_z;
 	pub.cornice_crack = cell_cornice_crack;
 	pub.ice = cell_ice;
+	pub.white_ice = cell_white_ice;
 }
 
 void SnowCover3D::_start_background(double p_weather_dt, bool p_world) {
@@ -1865,6 +1882,7 @@ void SnowCover3D::_feed_world() {
 			double depth_sum = 0.0;
 			double a_sum = 0.0;
 			double ice_sum = 0.0;
+			double white_sum = 0.0;
 			int ice_n = 0;
 			int count = 0;
 			for (int z = z0; z < z1; z++) {
@@ -1876,6 +1894,7 @@ void SnowCover3D::_feed_world() {
 					a_sum += swe[i] * alb[i];
 					if (cell_water.size() == n * n && cell_water[i] > -1e29f) {
 						ice_sum += cell_ice[i];
+						white_sum += cell_white_ice[i];
 						ice_n++;
 					}
 					count++;
@@ -1887,6 +1906,7 @@ void SnowCover3D::_feed_world() {
 			const int wi = wz * wn + wx;
 			if (ice_n > 0 && world->cell_ice.size() == wn * wn) {
 				world->cell_ice.write[wi] = float(ice_sum / ice_n);
+				world->cell_white_ice.write[wi] = float(white_sum / ice_n);
 			}
 			wswe[wi] = float(w_sum / count);
 			wliq[wi] = float(l_sum / count);
@@ -1925,6 +1945,7 @@ void SnowCover3D::_seed_from_world(const Vector<uint8_t> *p_only) {
 			const float w = world->_sample(world->cell_swe, xz);
 			if (cell_ice.size() == n * n && world->cell_ice.size() == world->resolution * world->resolution) {
 				cell_ice.write[i] = cell_water[i] > -1e29f ? world->_sample(world->cell_ice, xz) : 0.0f;
+				cell_white_ice.write[i] = cell_water[i] > -1e29f ? MIN(world->_sample(world->cell_white_ice, xz), cell_ice[i]) : 0.0f;
 			}
 			if (w <= SWE_MIN) {
 				swe[i] = 0.0f;
@@ -1971,6 +1992,10 @@ void SnowCover3D::_make_world() {
 		if (climate->get_cornice_x().size() == nn) {
 			world->cell_cornice_x = climate->get_cornice_x();
 			world->cell_cornice_z = climate->get_cornice_z();
+		}
+		if (climate->get_ice().size() == nn && climate->get_white_ice().size() == nn) {
+			world->cell_ice = climate->get_ice();
+			world->cell_white_ice = climate->get_white_ice();
 		}
 	}
 	world->_upload();
@@ -2029,6 +2054,8 @@ Error SnowCover3D::bake_climate(Rect2 p_rect, int p_resolution) {
 		}
 	}
 	climate->set_result(b->get_map_rect(), b->resolution, b->cell_swe, b->cell_liquid, b->cell_density, b->cell_albedo, b->cell_cornice_x, b->cell_cornice_z);
+	climate->set_ice(b->cell_ice);
+	climate->set_white_ice(b->cell_white_ice);
 	memdelete(b);
 	print_verbose(vformat("SnowCover3D: baked %d days of climate on %d x %d cells in %.1f s.", climate->get_days(), p_resolution, p_resolution, (OS::get_singleton()->get_ticks_usec() - t0) / 1e6));
 	if (is_inside_tree()) {
@@ -2313,6 +2340,39 @@ float SnowCover3D::get_ice_thickness_at(Vector3 p_position) const {
 	return pub.ice[z * n + x];
 }
 
+float SnowCover3D::get_white_ice_thickness_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_white_ice_thickness_at(p_position);
+	}
+	const int n = resolution;
+	if (pub.white_ice.size() != n * n || !origin_valid || !get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return 0.0f;
+	}
+	const float cs = _cell_size();
+	const int x = CLAMP(int(Math::floor(p_position.x / cs)) - origin_cell.x, 0, n - 1);
+	const int z = CLAMP(int(Math::floor(p_position.z / cs)) - origin_cell.y, 0, n - 1);
+	return pub.white_ice[z * n + x];
+}
+
+float SnowCover3D::contract_snow_density_at(const Vector3 &p_position) const {
+	return get_depth_at(p_position) > 0.0f ? get_density_at(p_position) : 0.0f;
+}
+
+float SnowCover3D::contract_snow_surface_at(const Vector3 &p_position) const {
+	// The deep snow near the camera has the prints in it; elsewhere the cover's ground plus its depth.
+	const SnowSurface3D *surface = SnowSurface3D::get_active();
+	if (surface && surface->get_deform_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return surface->get_surface_height_at(p_position);
+	}
+	const float d = get_depth_at(p_position);
+	return d > 0.0f ? get_ground_height_at(p_position) + d : -Math::INF;
+}
+
+Vector2 SnowCover3D::contract_snow_lake_ice_at(const Vector3 &p_position) const {
+	const float ice = get_ice_thickness_at(p_position);
+	return Vector2(ice, ice > 0.0f ? CLAMP(get_white_ice_thickness_at(p_position) / ice, 0.0f, 1.0f) : 0.0f);
+}
+
 void SnowCover3D::set_lake_ice_enabled(bool p_enabled) {
 	_finish_background(true);
 	lake_ice_enabled = p_enabled;
@@ -2344,6 +2404,9 @@ void SnowCover3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			active = this;
+			if (!owner) {
+				WorldContracts::register_snow(this);
+			}
 			if (cell_swe.size() != resolution * resolution) {
 				_allocate();
 			}
@@ -2358,10 +2421,16 @@ void SnowCover3D::_notification(int p_what) {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				_follow(_follow_position());
 				_upload();
+				// Lake ice draws itself (follow-up 15); a scene may hold its own SnowLakeIce3D instead.
+				if (lake_ice_enabled && !owner && !lake_ice) {
+					lake_ice = memnew(SnowLakeIce3D);
+					add_child(lake_ice, false, INTERNAL_MODE_BACK);
+				}
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			_finish_background(true);
+			WorldContracts::unregister_snow(this);
 			if (WeatherMap3D *weather = WeatherMap3D::get_active()) {
 				weather->clear_surface_water_source(this);
 			}
@@ -2697,6 +2766,8 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sync_update"), &SnowCover3D::sync_update);
 	ClassDB::bind_method(D_METHOD("get_water_level_at", "position"), &SnowCover3D::get_water_level_at);
 	ClassDB::bind_method(D_METHOD("get_ice_thickness_at", "position"), &SnowCover3D::get_ice_thickness_at);
+	ClassDB::bind_method(D_METHOD("get_white_ice_thickness_at", "position"), &SnowCover3D::get_white_ice_thickness_at);
+	ClassDB::bind_method(D_METHOD("get_lake_ice"), &SnowCover3D::get_lake_ice);
 	ClassDB::bind_method(D_METHOD("set_lake_ice_enabled", "enabled"), &SnowCover3D::set_lake_ice_enabled);
 	ClassDB::bind_method(D_METHOD("is_lake_ice_enabled"), &SnowCover3D::is_lake_ice_enabled);
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);

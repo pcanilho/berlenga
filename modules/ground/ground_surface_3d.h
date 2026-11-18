@@ -75,6 +75,9 @@ public:
 		float tan_repose = 0.7f;
 		float rate = 1.0f; // slumping share per second
 		float max_dent = 0.1f;
+		// Mud slides (docs/ideas/mud.md, round 10): the mud's yield stress over its weight, tau_y / (rho g), m; a
+		// layer h deep holds on ground up to slide_length / h steep, past it flows down (1e3: holds anywhere).
+		float slide_length = 1e3f;
 		float darken = 0.3f; // albedo lost where freshly turned
 		float gloss = 1.0f; // roughness factor where freshly turned
 		float litter = 0.0f; // m of litter on top
@@ -129,6 +132,7 @@ private:
 	// MudRunner's mud brush) and from the terrain (a TerrainDataMap3D's wetness index and distance to water, at
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
+	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -136,6 +140,7 @@ private:
 	bool muddy_water = true;
 	// Mud tracked onto firm ground (round 3): tyres and boots leave the clay they carry as a film (track_mud).
 	bool tracked_mud = true;
+	bool mud_sliding = false; // round 10: some cell's mud layer is on ground steeper than it holds
 	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
 	float water_seen = 0.0f; // the deepest standing water at the last read back, m
 	float _evaporation() const;
@@ -634,8 +639,9 @@ public:
 	GroundWheelSoil wheel_soil(Vector3 p_position, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle) const;
 	Dictionary get_wheel_soil(Vector3 p_position, float p_load, float p_radius, float p_width, float p_inflation = 200.0f, float p_slip = 0.0f, float p_slip_angle = 0.0f) const;
 	// Presses a wheel's contact: p_size (width, length along p_yaw) down to p_sinkage below the undisturbed
-	// ground. p_velocity is where the loose sand goes (backwards when the wheel spins).
-	float press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity = Vector2());
+	// ground. p_velocity is where the loose sand goes (backwards when the wheel spins). p_tread: the tyre's
+	// PhysXVehicleWheel3D::Tread, its lugs or chains printed in the rut floor (-1: a plain floor).
+	float press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity = Vector2(), int p_tread = -1);
 	// A walker's footing: sinkage, the speed it keeps (Lejeune et al. 1998: walking in sand costs 1.6 to 2.5
 	// times the work), and the downhill acceleration where the slope is steeper than the material holds.
 	Dictionary get_footing_at(Vector3 p_position, float p_mass = 75.0f, float p_area = 0.035f) const;
@@ -760,6 +766,10 @@ public:
 	bool is_wind_ripples() const { return wind_ripples; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
+	void set_mud_slides(bool p_enabled);
+	bool is_mud_slides() const { return mud_slides; }
+	// The steepest ground the mud at p_position stays on now, degrees (90 where there is none or it holds anywhere).
+	float get_mud_slide_angle_at(Vector3 p_position) const;
 	void set_standing_water(bool p_enabled);
 	bool is_standing_water() const { return standing_water; }
 	float get_standing_water_at(Vector3 p_position) const;
