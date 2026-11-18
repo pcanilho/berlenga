@@ -298,7 +298,12 @@ Vector3 PlantSpecies::get_coupe_at(const Vector3 &p_pos, Vector2 *r_out) const {
 	if (r_out) {
 		*r_out = out;
 	}
-	const float age = float(int(patch_hash(best.x, best.y, patch_seed + 43) * float(coupe_rotation)) % coupe_rotation);
+	// The cutting order: the year steps by about 5 along x and 8 along z (mod the rotation), so
+	// a coupe and its neighbours differ by four years or more, fresh stools next to tall poles
+	// (docs, 18 Nov: a random age per coupe often put like beside like and the edges barely
+	// read), with a year's jitter.
+	const int step = best.x * 5 + best.y * 8 + int(patch_hash(best.x, best.y, patch_seed + 43) * 2.0f);
+	const float age = float(((step % coupe_rotation) + coupe_rotation) % coupe_rotation);
 	return Vector3(age, edge, ride && edge < 0.0f ? 1.0f : 0.0f);
 }
 

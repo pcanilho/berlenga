@@ -501,6 +501,13 @@ private:
 	// Stand building: the years since the cut that FORM_COPPICE variants spread over (a coupe's
 	// age band); x < 0: the forms' own ranges.
 	Vector2i coppice_ages = Vector2i(-1, -1);
+	// A laid hedge (FORM_LAID_HEDGE): years since it was laid (-1 none), set per variant; laid_done
+	// once the growth has laid it, so the mesh adds its stakes and binders.
+	bool timber_stems = false; // Stand building: straight timber stems (coppice standards).
+	int laid_since = -1;
+	bool laid_done = false;
+	void _lay_hedge(int p_year);
+	void _laid_hedge_props(Builder &r_bark);
 	HashSet<int> sprout_roots; // First nodes of shoots grown since the last cut.
 	LocalVector<int> cut_heads; // Stubs and knuckles the head is made of.
 	int last_cut_year = -1000;
@@ -830,6 +837,7 @@ private:
 		FORM_THICKET, // Heath shrubs grown into one: wider than tall, flat-topped (section 5u).
 		FORM_OLD, // A heath shrub near the end of its life: leggy, leaning out, its centre dead and grey (5u).
 		FORM_HEDGE, // A two-metre segment of a cut field hedge, A-shaped or boxed by variant (5ad).
+		FORM_LAID_HEDGE, // A two-metre segment of a hand-laid hedge: pleachers, stakes, binders (trees.md, "Laid hedges").
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -1013,6 +1021,7 @@ public:
 		SHRUB_THICKET,
 		SHRUB_CUSHION,
 		SHRUB_HEDGE,
+		SHRUB_LAID_HEDGE,
 		SHRUB_MAX,
 	};
 	static Ref<PlantSpecies> make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season);

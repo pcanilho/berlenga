@@ -305,3 +305,23 @@ per update at 6 Hz (about 0.25 ms a frame); 64 bytes per clod. The ground bench 
 check ran its trail view with moisture 0.4 soil (`--ground=clay` locally) and `--prop=clods:false` for the A/B.
 Follow-ups: the scan on a worker (shared with snow clumps); clods kept with kept ruts (a GroundCellStore file);
 drying (lighter, crumbling) and rain slaking them over hours.
+
+## Lumps: shared scan and drawing (18 Nov)
+
+Snow clumps and mud clods share `GroundLumpScan` (modules/ground/ground_lump_scan.h: the print field's rim and dent
+in a window round the camera, read from the field's texels directly; which cells grew a rim, which changed at all,
+so the crush check samples only lumps under a changed cell) and `GroundLumpDraw` (one MultiMesh per shape with
+room by doubling and `visible_instance_count`, so a lump more or less re-uploads a buffer instead of reallocating
+the MultiMesh and its ray tracing entries). Main thread per update at 6 Hz (lavapipe, same benches, images
+identical): clumps 1.5 to 0.9 ms mean, clods 1.4 to 0.8 ms mean and 7.7 to 1.6 ms worst.
+
+## Lumps kept while away (18 Nov)
+
+A lump that leaves the deformed area round the camera (4 m past its edge) is parked in `GroundLumpStore`
+(modules/ground/ground_lump_store.h: lumps per 16 m tile, position, basis, size, colour, shape) instead of dropped,
+and taken back when its tile is near again, after a check that the ground under it still has the relief it lay on.
+Clods also go to disk beside the kept ruts (`lumps_clods_x_z.lmp`, zstd) when `GroundSurface3D` keeps ruts, so they
+outlive the area streaming out like the ruts do. The scan skips cells outside the field's rect and gives cells newly
+inside it a few looks to settle, so a returning field is not read as fresh rims. Snow bench `--away` (field taken
+300 m away and back): 4,172 lying, 4,172 kept while away, 4,129 lying again where they were (the rest crushed by
+the relief check), no new ones broken off. Cost unchanged: clumps 0.78 ms mean, clods 0.88 ms mean per update.

@@ -93,6 +93,8 @@ private:
 	PackedFloat32Array albedo;
 	PackedFloat32Array cornice_x;
 	PackedFloat32Array cornice_z;
+	PackedFloat32Array ice; // m of lake ice (follow-up 15)
+	PackedFloat32Array white_ice; // m of it that is snow ice
 
 	// The generator's state.
 	RandomPCG rng;
@@ -162,5 +164,7 @@ public:
 	SNOW_CLIMATE_PROP(PackedFloat32Array, albedo)
 	SNOW_CLIMATE_PROP(PackedFloat32Array, cornice_x)
 	SNOW_CLIMATE_PROP(PackedFloat32Array, cornice_z)
+	SNOW_CLIMATE_PROP(PackedFloat32Array, ice)
+	SNOW_CLIMATE_PROP(PackedFloat32Array, white_ice)
 #undef SNOW_CLIMATE_PROP
 };

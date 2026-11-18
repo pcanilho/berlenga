@@ -1785,7 +1785,9 @@ void TreeGenerator::_grow_year(int p_year) {
 		for (int k = 0; k < count; k++) {
 			if (k > 0 || !bud.terminal) {
 				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] + Vector3(0, grav, 0) * 0.5f;
-				d += _random_unit() * Math::sin(noise);
+				// A standard's stem is kept straight for timber (coppice with standards): its
+				// leader wanders a third as much.
+				d += _random_unit() * Math::sin((timber_stems && order == 0) ? noise * 0.3f : noise);
 				if (krummholz > 0.0f && order > 0 && !layered) {
 					// Mat branches press down under the snow and spread (krummholz, trees.md 5q).
 					d.y -= 0.08f * krummholz;
@@ -2579,7 +2581,8 @@ void TreeGenerator::_bend_under_gravity() {
 		}
 		n.dir = acc[i].xform(n.dir).normalized();
 		const Node &par = nodes[n.parent];
-		n.start = n.parent == 0 ? par.start : par.end();
+		// A laid hedge's stems keep their own feet along the row (_lay_hedge()).
+		n.start = n.parent == 0 ? (laid_done ? n.start : par.start) : par.end();
 		// Branches resting on the ground run along it instead of through it. The axis keeps its
 		// own radius clear of the soil: held only at 8 cm, a thick low limb sank half its girth
 		// into the ground and its bark showed a ragged line where it crossed the surface.
@@ -2622,7 +2625,7 @@ bool TreeGenerator::_in_envelope(const Vector3 &p_point) const {
 	// little longer than its step, covers them; at a gateway or a run's end they show.
 	// A rounded box, as a signed distance would round it (Quilez, rounded box SDF).
 	const float R = MIN(0.35f, 0.4f * half);
-	const float Rx = R;
+	const float Rx = MAX(R, 0.5f);
 	const float dx = MIN(p_point.x - envelope.position.x, envelope.position.x + envelope.size.x - p_point.x) + wander;
 	const float ey = MAX(R - dy, 0.0f), ez = MAX(R - dz, 0.0f);
 	if (dy < R && dz < R && ey * ey + ez * ez > R * R) {
@@ -2634,9 +2637,9 @@ bool TreeGenerator::_in_envelope(const Vector3 &p_point) const {
 			return false;
 		}
 	}
-	if (dx < Rx && dz < Rx) {
-		const float ax = Rx - dx, az = Rx - dz;
-		if (ax * ax + az * az > Rx * Rx) {
+	if (dx < R && dz < R) {
+		const float ax = R - dx, az = R - dz;
+		if (ax * ax + az * az > R * R) {
 			return false;
 		}
 	}
@@ -4309,16 +4312,24 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
 				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : 1.0f)); // Cork: amplitude in its 3x tile.
-				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 21u);
-				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 27u);
+				float wu = u + 0.035f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 21u);
+				float wv = v + 0.05f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 27u);
+				if (p_kind == BARK_PINASTER) {
+					// Round 10 (docs, 18 Nov: plates as pointed, feather-like tongues in rows): the
+					// stretched cells' straight walls met in points. A second, finer warp breaks the
+					// walls into the irregular, broken outlines of real plates (domain warping;
+					// Quilez 2002).
+					wu += 0.03f * bark_fbm(u, v, 11 * F, 7 * F, 2, salt + 121u);
+					wv += 0.035f * bark_fbm(u, v, 9 * F, 12 * F, 2, salt + 123u);
+				}
 				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), (p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 1.8f : 1.0f);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), p_kind == BARK_PINEA ? 1.8f : (p_kind == BARK_PINASTER ? 1.35f : 1.0f));
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
 				const float crack_w = L.crack * (0.5f + 2.0f * (bark_fbm(u, v, 6 * F, 3 * F, 2, salt + 33u) + 0.5f));
-				const float ragged = c.edge + 0.12f * bark_fbm(u, v, 24 * F, 24 * F, 3, salt + 81u) + (p_kind == BARK_FLAKING ? 1.2f * bark_fbm(u, v, 8, 8, 2, salt + 83u) : 0.0f);
+				const float ragged = c.edge + (p_kind == BARK_PINASTER ? 0.22f : 0.12f) * bark_fbm(u, v, 24 * F, 24 * F, 3, salt + 81u) + (p_kind == BARK_FLAKING ? 1.2f * bark_fbm(u, v, 8, 8, 2, salt + 83u) : 0.0f);
 				float open = Math::smoothstep(0.0f, crack_w, ragged);
 				// Flaking bark is mostly smooth: only a fallen flake leaves an edge, around a shallow
 				// scar of fresh, warmer inner bark (sycamore, plane, horse chestnut).
@@ -4457,10 +4468,10 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float below = (fv - Math::floor(fv)) * 8.0f - f.site.y;
 					const float lift = CLAMP(0.5f + 0.35f * below, 0.0f, 1.0f);
 					const float own = bark_hash(int(f.id), 3, salt + 107u);
-					const float step_soft = Math::smoothstep(0.0f, 0.12f, f.edge + 0.04f * bark_fbm(u, v, 40, 30, 2, salt + 119u));
+					const float step_soft = Math::smoothstep(0.0f, 0.3f, f.edge + 0.06f * bark_fbm(u, v, 40, 30, 2, salt + 119u));
 					const float scales = (0.2f * lift + 0.8f * own) * (0.6f + 0.4f * step_soft);
 					const float on_plate = Math::smoothstep(0.55f, 0.85f, open);
-					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.2f * scales * on_plate;
+					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.12f * scales * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
@@ -5372,6 +5383,252 @@ float TreeGenerator::_stem_top() const {
 		}
 	}
 	return top;
+}
+
+// Laying a hedge (trees.md, "Laid hedges"; Brooks and Agate, Hedging, BTCV 1998; Maclean,
+// Hedges and Hedgelaying, 2006). Each stem's foot is spread along the segment (the planting row),
+// the thinnest stems are cut out to the stool, and the rest are pleached: cut most of the way
+// through just above the ground and laid over along +x at 30-40 degrees, the whole stem turned
+// about its heel. Side branches reaching out of the hedge's line or down to the ground are
+// trimmed ("brushing up") and the pleachers shortened where they would run into the segment
+// after next. The stools and the pleachers' upper sides then shoot up through the laid stems.
+void TreeGenerator::_lay_hedge(int p_year) {
+	_compute_radii();
+	const int count = int(nodes.size());
+	const Vector3 base = nodes[0].start;
+	// Every node's stem (the root's child it hangs from); parents come before their children.
+	LocalVector<int> stem;
+	stem.resize(count);
+	for (int i = 0; i < count; i++) {
+		const int p = nodes[i].parent;
+		stem[i] = (i == 0 || p < 0) ? -1 : (p == 0 ? i : stem[p]);
+	}
+	LocalVector<int> roots;
+	for (int i = 1; i < count; i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0) {
+			roots.push_back(i);
+		}
+	}
+	if (roots.is_empty()) {
+		return;
+	}
+	// Thickest first (a few stems: a plain insertion sort).
+	for (uint32_t a = 1; a < roots.size(); a++) {
+		for (uint32_t b = a; b > 0 && nodes[roots[b]].radius > nodes[roots[b - 1]].radius; b--) {
+			SWAP(roots[b], roots[b - 1]);
+		}
+	}
+	const int n_roots = int(roots.size());
+	const int laid = MAX(1, int(Math::ceil(n_roots * 0.7f)));
+	// Each stem's new foot along the row, in planting order, a little off the line either side
+	// (a staggered double row), and its turn: the heel stays, the stem lies along +x.
+	HashMap<int, Vector3> shift;
+	HashMap<int, Basis> turn;
+	HashMap<int, Vector3> pivot;
+	for (int k = 0; k < n_roots; k++) {
+		const int r = roots[k];
+		const float along = -0.95f + 1.5f * (float(k) + _rand(0.0f, 0.8f)) / float(n_roots);
+		const Vector3 foot = base + Vector3(along, 0.0f, ((k & 1) ? 0.08f : -0.08f) + _rand(-0.04f, 0.04f));
+		shift[r] = foot - nodes[r].start;
+		pivot[r] = foot;
+		if (k >= laid) {
+			// Cut out to the stool: a stub, whose buds shoot again.
+			Node &n = nodes[r];
+			n.main = -1;
+			n.first_lateral = -1;
+			n.length = MIN(n.length, 0.08f);
+			n.leafy = false;
+			turn[r] = Basis();
+			continue;
+		}
+		// The stem's own axis: from its foot to the end of its main line.
+		int tip = r;
+		while (nodes[tip].main >= 0 && !nodes[nodes[tip].main].removed) {
+			tip = nodes[tip].main;
+		}
+		Vector3 axis = nodes[tip].end() - nodes[r].start;
+		if (axis.length_squared() < 1e-6f) {
+			axis = Vector3(0, 1, 0);
+		}
+		axis.normalize();
+		const float lay = Math::deg_to_rad(_rand(28.0f, 40.0f));
+		const Vector3 target = Vector3(Math::cos(lay), Math::sin(lay), _rand(-0.12f, 0.12f)).normalized();
+		const Vector3 c = axis.cross(target);
+		const float sa = c.length();
+		const float ca = axis.dot(target);
+		turn[r] = sa > 1e-5f ? Basis(c / sa, Math::atan2(sa, ca)) : Basis();
+	}
+	// Removed stems' children go with them; everything else is moved and turned with its stem.
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed) {
+			continue;
+		}
+		if (n.parent > 0 && nodes[n.parent].removed) {
+			n.removed = true;
+			continue;
+		}
+		const int r = stem[i];
+		if (r < 0 || !turn.has(r)) {
+			continue;
+		}
+		const Basis &b = turn[r];
+		const Vector3 piv = pivot[r];
+		n.start = piv + b.xform(n.start + shift[r] - piv);
+		n.dir = b.xform(n.dir).normalized();
+	}
+	// Cut-out stems: their subtrees go (the stub stays).
+	for (int k = laid; k < n_roots; k++) {
+		const int r = roots[k];
+		for (int i = r + 1; i < count; i++) {
+			if (!nodes[i].removed && stem[i] == r) {
+				nodes[i].removed = true;
+			}
+		}
+	}
+	// Brushing up: whatever now reaches out of the line (35 cm either side), below 15 cm, above
+	// the binders (1.4 m) or past the next segment is cut, with all it carries.
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed || n.parent == 0) {
+			continue;
+		}
+		if (n.parent > 0 && nodes[n.parent].removed) {
+			n.removed = true;
+			continue;
+		}
+		const Vector3 q = n.end() - base;
+		if (Math::abs(q.z) > 0.35f || q.y < 0.15f || q.y > 1.4f || q.x > 1.35f) {
+			n.removed = true;
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node < 0 || b.node >= count || nodes[b.node].removed) {
+			b.alive = false;
+			continue;
+		}
+		const int r = stem[b.node];
+		if (r >= 0 && turn.has(r)) {
+			b.dir = turn[r].xform(b.dir).normalized();
+			// Buds turned to face the ground do not break.
+			if (b.dir.y < -0.3f) {
+				b.alive = false;
+			}
+		}
+	}
+	// Regrowth: shoots straight up from the stools and the upper side of each pleacher, about one
+	// every 25 cm along it (the "brush" that thickens a laid hedge).
+	for (int k = 0; k < n_roots; k++) {
+		const int r = roots[k];
+		Bud b;
+		b.node = r;
+		b.dir = (Vector3(0, 1, 0) + _random_unit() * 0.15f).normalized();
+		b.sprout = true;
+		buds.push_back(b);
+		if (k >= laid) {
+			Bud b2 = b;
+			b2.dir = (Vector3(0, 1, 0) + _random_unit() * 0.25f).normalized();
+			buds.push_back(b2);
+		}
+	}
+	float run = 0.0f;
+	for (int i = 1; i < count; i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.order != 0 || stem[i] < 0 || !turn.has(stem[i]) || n.radius < 0.012f) {
+			continue;
+		}
+		run += n.length;
+		if (run < 0.25f) {
+			continue;
+		}
+		run = 0.0f;
+		Bud b;
+		b.node = i;
+		b.dir = (Vector3(0, 1, 0) + _random_unit() * 0.2f).normalized();
+		b.sprout = true;
+		buds.push_back(b);
+	}
+	// The regrowth stays within the hedge's line: a laid hedge is trimmed on its sides (and its
+	// tops topped at about 2 m) in the years after laying, so the brush keeps a narrow, upright
+	// face rather than the A-shape of a flailed hedge (Brooks and Agate 1998, "Aftercare").
+	// The segment may reach a little past its 2 m so neighbours knit together.
+	const float top = _rand(1.9f, 2.3f);
+	envelope = AABB(Vector3(base.x - 1.2f, -1.0f, base.z - 0.4f), Vector3(2.5f, 1.0f + top, 0.8f));
+	envelope_batter = 0.1f;
+	envelope_sprouts = 1;
+	last_cut_year = p_year;
+	laid_done = true;
+}
+
+// A laid hedge's stakes and binders: hazel or ash stakes driven every 45 cm along the line, a
+// little off it either side, and two or three long hazel rods twisted along their tops, passing
+// in front of one stake and behind the next (Brooks and Agate 1998).
+void TreeGenerator::_laid_hedge_props(Builder &r_bark) {
+	RandomPCG pr;
+	pr.seed(uint64_t(seed) * 0x9e3779b9u + 0x7374616bu);
+	const Vector3 base = nodes.is_empty() ? Vector3() : nodes[0].start;
+	const float top = 1.25f + 0.1f * pr.randf();
+	// Stakes and binders run only where the laid stems are (docs, 18 Nov: stakes stood in empty
+	// space past the last pleacher): the span of the laid wood between knee and binder height.
+	float x0 = 1e9f, x1 = -1e9f;
+	for (const Node &n : nodes) {
+		if (n.removed || n.order != 0 || n.parent < 0 || n.radius < 0.012f) {
+			continue;
+		}
+		for (const Vector3 &q : { n.start, n.end() }) {
+			if (q.y - base.y > 0.3f && q.y - base.y < 1.3f) {
+				x0 = MIN(x0, q.x - base.x);
+				x1 = MAX(x1, q.x - base.x);
+			}
+		}
+	}
+	if (x1 - x0 < 0.3f) {
+		return;
+	}
+	LocalVector<float> stake_x;
+	for (float x = x0 + 0.05f + 0.1f * pr.randf(); x < x1 - 0.05f; x += 0.42f + 0.08f * pr.randf()) {
+		stake_x.push_back(x);
+	}
+	// Grey-brown hazel or ash poles with their bark on; the binders a warmer brown.
+	const Color stake_c = Color(0.46f, 0.39f, 0.3f).srgb_to_linear();
+	const Color binder_c = Color(0.4f, 0.28f, 0.18f).srgb_to_linear();
+	for (uint32_t k = 0; k < stake_x.size(); k++) {
+		LocalVector<Vector3> pts;
+		LocalVector<float> rad;
+		const float lean = 0.04f * (pr.randf() - 0.5f);
+		const float zz = 0.02f * (pr.randf() - 0.5f);
+		const float h = top + 0.05f * pr.randf();
+		const float r0 = 0.022f + 0.008f * pr.randf();
+		for (int q = 0; q <= 6; q++) {
+			const float t = float(q) / 6.0f;
+			pts.push_back(base + Vector3(stake_x[k] + lean * t, -0.15f + (h + 0.15f) * t, zz + 0.01f * Math::sin(t * 7.0f + float(k))));
+			rad.push_back(r0 * (1.0f - 0.15f * t));
+		}
+		Vector4i part;
+		r_bark.bone = 0;
+		r_bark.begin(part);
+		_tube(r_bark, pts, rad, 7, 0.0f, stake_c, nullptr, 0.0f, -1.0f, false);
+		r_bark.end(part, r0);
+	}
+	// Binders: each weaves round the stakes, front and back by turns, the next rod half a step
+	// out of phase, so the pair twist round each other.
+	const int binders = 2 + int(pr.rand() % 2u);
+	for (int b = 0; b < binders; b++) {
+		LocalVector<Vector3> pts;
+		LocalVector<float> rad;
+		const float phase = float(b) * float(Math::PI) * 2.0f / float(binders);
+		const float r0 = 0.011f + 0.004f * pr.randf();
+		for (float x = x0 - 0.05f; x <= x1 + 0.1f; x += 0.05f) {
+			const float s = x / 0.42f * float(Math::PI) + phase;
+			pts.push_back(base + Vector3(x, top - 0.02f + 0.025f * Math::cos(s), 0.035f * Math::sin(s)));
+			rad.push_back(r0);
+		}
+		Vector4i part;
+		r_bark.bone = 0;
+		r_bark.begin(part);
+		_tube(r_bark, pts, rad, 6, 0.0f, binder_c, nullptr, 0.0f, -1.0f, false);
+		r_bark.end(part, r0);
+	}
 }
 
 void TreeGenerator::_cut_back(bool p_first, int p_year) {
@@ -15679,6 +15936,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 	soil_b = Builder();
+	if (laid_done && decay_class == 0 && !fallen && !fallen_branch) {
+		_laid_hedge_props(bark);
+	}
 	if (plate.on) {
 		const int roots_v0 = int(bark.verts.size());
 		_root_plate(bark);
@@ -17463,6 +17723,34 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_form == FORM_LAID_HEDGE) {
+		// A hand-laid hedge (trees.md, "Laid hedges"; Brooks and Agate, Hedging, BTCV 1998;
+		// National Hedgelaying Society): a hedge let grow out for 10-15 years, then each stem cut
+		// most of the way through at its foot and bent over along the line at 30-40 degrees, the
+		// pleachers held by stakes every half metre and the top bound with twisted hazel binders;
+		// the stools and the pleachers then shoot up through it. Laid 1-5 years before the
+		// variant's year, so a row runs from fresh-laid to grown through.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		for (int k = 0; k < PARAM_MAX; k++) {
+			params[k] = look.params[k];
+		}
+		laid_since = 1 + int((h >> 8) % 5u);
+		params[PARAM_YEARS] = float(laid_since + 8 + int((h >> 16) % 4u)); // Pleachers 5-10 cm at the heel.
+		// Planted thick (five to the metre in a double row): many stems from the segment's foot.
+		params[PARAM_STEMS] = Math::round(MAX(look.params[PARAM_STEMS], 1.0f) + 6.0f);
+		params[PARAM_STEM_SPREAD] = 25.0f;
+		params[PARAM_BASAL_SPROUTS] = MAX(look.params[PARAM_BASAL_SPROUTS], 0.4f);
+		params[PARAM_SHADOW_STRENGTH] = MIN(look.params[PARAM_SHADOW_STRENGTH], 0.05f);
+		params[PARAM_PIPE_EXPONENT] = MAX(look.params[PARAM_PIPE_EXPONENT], 2.5f);
+		params[PARAM_BUD_LIGHT_MIN] = 0.0f;
+		params[PARAM_SHED_RATIO] = 0.0f;
+		params[PARAM_LEAF_SIZE] = look.params[PARAM_LEAF_SIZE] * 0.75f;
+		// Grown out unclipped until it is laid (_lay_hedge() sets the regrowth's bounds).
+		envelope = AABB();
+		envelope_batter = 0.0f;
+		envelope_sprouts = 0;
 	} else if (p_form == FORM_HEDGE) {
 		// A cut field hedge (trees.md 5ad): two metres of hedge, several stems planted along it,
 		// flailed every winter to an A-shape (even variants) or a box, 1.8-2.5 m tall and 1.6-2.4 m
@@ -17686,6 +17974,8 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	cut_cycle = p_from.cut_cycle;
 	cut_since = p_from.cut_since;
 	coppice_ages = p_from.coppice_ages;
+	laid_since = p_from.laid_since;
+	timber_stems = p_from.timber_stems;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -17781,7 +18071,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE &&
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE &&
 			!(p_form == FORM_SAPLING && scrub_shrub(p_preset)) && !((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0);
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
@@ -17812,6 +18102,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// its flowers do (trees.md 5u).
 		needle_sprays = p_preset != PRESET_GORSE;
 		forest_shade = p_stand_grown ? 0.6f : 0.0f;
+		if (timber_stems) {
+			// Standards (coppice with standards): stems kept straight for timber.
+			params[PARAM_TRUNK_GRAVITROPISM] = MAX(params[PARAM_TRUNK_GRAVITROPISM], 1.4f);
+			params[PARAM_PHOTOTROPISM] *= 0.35f;
+		}
 		// Neighbours in a Poisson-disk stand stand on average about 1.3 times the minimum spacing
 		// apart, so crowns grown to that boundary close the canopy as real stands do.
 		forest_spacing = (is_shrub(p_preset) ? 3.0f : h.stand_spacing) * 1.3f;
@@ -17836,6 +18131,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const AABB saved_envelope = envelope;
 		const float saved_batter = envelope_batter;
 		const int saved_sprouts = envelope_sprouts;
+		const int saved_laid = laid_since;
 		if (p_form == FORM_SAPLING) {
 			// A young heath shrub is three or four years old, already flowering (BSBI, GOERT).
 			const bool heath = scrub_shrub(p_preset);
@@ -17849,7 +18145,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// Gorse's spines are needles but thin stochastically as leaves (trees.md 5x.2): it splits too.
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && (params[PARAM_NEEDLES] <= 0.5f || scrub_shrub(Preset(p_preset))) &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -17896,6 +18192,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		envelope = saved_envelope;
 		envelope_batter = saved_batter;
 		envelope_sprouts = saved_sprouts;
+		laid_since = saved_laid;
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
 		root_stone = saved_stone;
@@ -17937,7 +18234,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -18092,8 +18389,8 @@ Ref<PlantSpecies> TreeGenerator::make_species(bool p_stand_grown, int p_variants
 Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season) {
 	ERR_FAIL_COND_V_MSG(!scrub_shrub(p_preset) && !hedge_shrub(p_preset), Ref<PlantSpecies>(), "Not a heath, scrub or hedge shrub preset.");
 	ERR_FAIL_INDEX_V(int(p_form), int(SHRUB_MAX), Ref<PlantSpecies>());
-	static const Form forms[SHRUB_MAX] = { FORM_SAPLING, FORM_OPEN, FORM_OLD, FORM_THICKET, FORM_KRUMMHOLZ, FORM_HEDGE };
-	static const char *names[SHRUB_MAX] = { " (young)", "", " (old)", " (thicket)", " (cushion)", " (hedge)" };
+	static const Form forms[SHRUB_MAX] = { FORM_SAPLING, FORM_OPEN, FORM_OLD, FORM_THICKET, FORM_KRUMMHOLZ, FORM_HEDGE, FORM_LAID_HEDGE };
+	static const char *names[SHRUB_MAX] = { " (young)", "", " (old)", " (thicket)", " (cushion)", " (hedge)", " (laid hedge)" };
 	Ref<TreeGenerator> g;
 	g.instantiate();
 	g->set_preset(p_preset);
@@ -18117,7 +18414,7 @@ Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p
 	}
 	sp->set_name(String(preset_names[p_preset]) + names[p_form]);
 	sp->set_meta("shrub_form", int(p_form));
-	if (form == FORM_HEDGE) {
+	if (form == FORM_HEDGE || form == FORM_LAID_HEDGE) {
 		// Two metres of hedge along local x, laid end to end along a field edge by the caller: no
 		// random yaw, one segment every two metres (trees.md 5ad).
 		sp->set_random_yaw(false);
@@ -18377,19 +18674,25 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			// to the hectare) so light reaches the underwood, ash among them on moist ground, and
 			// beneath them hazel cut in coupes, each a patch cut in its own year; side by side a
 			// grown coupe and one cut a year or three ago, of short rods on bare stools.
-			// Standards grow up with the underwood round their boles but crowns free on every
-			// side: the open-grown form (short clear bole, spreading crown), not the drawn-up
-			// high-forest one.
+			// Standards grow up with the underwood round their boles, drawn up straight and
+			// self-pruned by it while young (timber trees: a clean, straight bole is what they
+			// are kept for; docs, 18 Nov: open-grown oaks here bent twice within a few metres):
+			// open-grown crowns on timber stems (timber_stems: a strong upward pull on the
+			// leader, little lean to the light). The sinuous forms stay with hedgerow and pasture
+			// trees.
+			timber_stems = true;
 			Ref<PlantSpecies> oak = _stand_species(PRESET_OAK, false, p_variants);
-			oak->set_density(0.35f);
-			oak->set_spacing(oak->get_spacing() * 1.4f);
+			// Open-grown spacing is a crown apart (about 28 m for oak): at full density that is
+			// a dozen oaks a hectare, with ash and tellers 20-30 standards in all (Rackham 2006:
+			// a dozen to thirty; docs, 18 Nov: at 0.35 and 1.4x spacing, four a hectare).
+			oak->set_density(1.0f);
 			list.push_back(oak);
 			Ref<PlantSpecies> ash = _stand_species(PRESET_ASH, false, p_variants);
-			ash->set_density(0.3f);
-			ash->set_spacing(ash->get_spacing() * 1.4f);
+			ash->set_density(0.6f);
 			ash->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			ash->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(ash);
+			timber_stems = false;
 			ash->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(6.0f, 1000.0f));
 			ash->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
 			// The underwood in coupes (trees.md, "Coppice with standards"): straight-edged
@@ -18409,7 +18712,13 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				if (shrub_start < 0) {
 					shrub_start = list.size();
 				}
-				hz->set_density(1.0f);
+				// Stools stand where the planting and a century of layering and dying left them: at
+				// random, a few close together and gaps between (docs, 18 Nov: an even Poisson disc
+				// read as a grid). A dense disc thinned at random to about a third keeps the mean
+				// density (about 1,000-1,500 stools a hectare; Harmer and Howe 2003) with that scatter.
+				hz->set_spacing(hz->get_spacing() * 0.55f);
+				hz->set_density(0.35f);
+				hz->set_scale_range(Vector2(0.75f, 1.25f));
 				hz->set_patch_scale(50.0f);
 				hz->set_patch_seed(patch_seed + 11);
 				hz->set_coupe_rotation(rotation);
@@ -18429,9 +18738,12 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			}
 			coppice_ages = saved_ages;
 			// The cut wood: brash (the tops and side shoots) left lying on the fresh coupe and the
-			// one before, the poles carried out to the ride.
-			Ref<PlantSpecies> brash = _stand_species(PRESET_HAZEL, true, p_variants, FORM_BRANCH);
-			brash->set_density(0.5f);
+			// one before, the poles carried out to the ride. Cut rod tops and side shoots lie
+			// scattered and criss-crossed over the stools (docs, 18 Nov: a shed-limb form read as
+			// shapeless brown lumps): the sticks form, larger and denser.
+			Ref<PlantSpecies> brash = _stand_species(PRESET_HAZEL, true, p_variants, FORM_STICKS);
+			brash->set_density(1.0f);
+			brash->set_scale_range(Vector2(1.4f, 2.2f));
 			brash->set_patch_scale(50.0f);
 			brash->set_patch_seed(patch_seed + 11);
 			brash->set_coupe_rotation(rotation);
@@ -18447,15 +18759,16 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				st->set_coupe_ages(Vector2i(0, rotation - 1));
 				st->set_ride_width(6.0f);
 			}
+			timber_stems = true;
 			Ref<PlantSpecies> teller = _stand_species(PRESET_OAK, false, p_variants);
-			teller->set_density(0.2f);
-			teller->set_spacing(teller->get_spacing() * 1.4f);
+			teller->set_density(0.5f);
 			teller->set_scale_range(Vector2(0.45f, 0.7f));
 			teller->set_patch_scale(50.0f);
 			teller->set_patch_seed(patch_seed + 11);
 			teller->set_coupe_rotation(rotation);
 			teller->set_coupe_ages(Vector2i(0, rotation - 1));
 			teller->set_ride_width(6.0f);
+			timber_stems = false;
 			list.insert(1, teller);
 			if (shrub_start >= 1) {
 				shrub_start++;
@@ -18529,7 +18842,10 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				break;
 			}
 		}
+		// A worked coppice's recruits are singled and kept straight for the next standards.
+		timber_stems = p_stand == STAND_COPPICE_STANDARDS;
 		Ref<PlantSpecies> sap = _stand_species(lead, true, p_variants, FORM_SAPLING);
+		timber_stems = false;
 		sap->set_density(0.6f);
 		// A worked coppice is tidied: its standards are felled for timber before they die, so it
 		// holds a fraction of a wild wood's deadwood.
@@ -18721,6 +19037,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	int first_cut = -1;
 	int cuts = 0;
 	last_cut_year = -1000;
+	laid_done = false;
 	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
 	for (int y = 1; y <= years; y++) {
 		// A cut tree's sprouts are its poles, from the head or the stool: no more stems from the base.
@@ -18765,6 +19082,9 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				b.layer = true;
 				buds.push_back(b);
 			}
+		}
+		if (laid_since >= 0 && y == years - laid_since) {
+			_lay_hedge(y);
 		}
 		if (cut_height > 0.0f) {
 			// Cut back every cycle (trees.md 5l), first once the stem stands well over the cut;
@@ -18955,6 +19275,31 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	_wind_flag();
 	if (!palm) {
 		_prune_collisions();
+	}
+	if (envelope.size != Vector3()) {
+		// The flail's last pass (docs, 18 Nov: an A-shaped segment's skirt sprawled wider than its
+		// cut face): shoots the growth kept inside the envelope sag out of it under their own weight
+		// (_bend_under_gravity runs after growth), so whatever now reaches more than 10 cm outside
+		// is cut, twigs and all, with everything it carries.
+		const float zc = envelope.position.z + envelope.size.z * 0.5f;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &n = nodes[i];
+			if (n.removed) {
+				continue;
+			}
+			if (n.parent > 0 && nodes[n.parent].removed) {
+				n.removed = true;
+				continue;
+			}
+			Vector3 q = n.end();
+			q.y -= 0.1f;
+			q.z = q.z > zc ? MAX(zc, q.z - 0.1f) : MIN(zc, q.z + 0.1f);
+			const float xc = envelope.position.x + envelope.size.x * 0.5f;
+			q.x = q.x > xc ? MAX(xc, q.x - 0.1f) : MIN(xc, q.x + 0.1f);
+			if (q.y > envelope.position.y && !_in_envelope(q)) {
+				n.removed = true;
+			}
+		}
 	}
 	for (const int r : thinned_stubs) {
 		if (r < int(nodes.size()) && !nodes[r].removed) {
@@ -19408,6 +19753,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SHRUB_THICKET);
 	BIND_ENUM_CONSTANT(SHRUB_CUSHION);
 	BIND_ENUM_CONSTANT(SHRUB_HEDGE);
+	BIND_ENUM_CONSTANT(SHRUB_LAID_HEDGE);
 	BIND_ENUM_CONSTANT(SHRUB_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 	BIND_ENUM_CONSTANT(STAND_BEECH);

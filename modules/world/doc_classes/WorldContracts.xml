@@ -41,6 +41,12 @@
 				The ground contract: the stub set with [method set_ground], else the live ground's.
 			</description>
 		</method>
+		<method name="get_snow" qualifiers="const">
+			<return type="WorldSnow" />
+			<description>
+				Returns the snow contract every system reads: the test stub if one is set, else the built-in one.
+			</description>
+		</method>
 		<method name="get_water" qualifiers="const">
 			<return type="WorldWater" />
 			<description>
@@ -65,6 +71,13 @@
 			<return type="void" />
 			<description>
 				Replaces the ground contract with [param stub] (a script extending [WorldGround]); the virtual methods it does not override fall back to the live ground. [method clear_overrides] removes it.
+			</description>
+		</method>
+		<method name="set_snow">
+			<param index="0" name="stub" type="WorldSnow" />
+			<return type="void" />
+			<description>
+				Replaces the snow for every system with [param stub], a script extending [WorldSnow]; what it does not override still comes from the snow cover.
 			</description>
 		</method>
 		<method name="set_water">

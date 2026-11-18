@@ -34,6 +34,7 @@
 
 #include "flow_poisson.h"
 #include "physx_water_wake_3d.h"
+#include "water_foam_shared.h"
 #include "water_raster_reflections.h"
 
 #include "core/config/engine.h"
@@ -931,49 +932,6 @@ float foam_fbm(vec2 p) {
 	return 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.3 + 7.1) + 0.2 * foam_value_noise(p * 5.1 - 3.3);
 }
 
-// Holes torn in a foam sheet, one per feature of a jittered grid (Worley 1996), each its own size: the cover left
-// (1 where no hole), the nearest and second-nearest feature distances (for the strands along cell borders), in
-// cell units, and how far inside a hole the point lies (0 at its edge, 1 at its middle). Every feature in the 3x3 neighbourhood carves its own hole, so a hole wider than its cell runs
-// on into the next one instead of being cut along the straight cell border (a nearest-cell-only radius would).
-// jit is the ragged tear added to the distance. Each layer tears at its own scale: the cell space is warped by noise a
-// few times finer than the cells (film rupture stretched by the surface's strain, so the walls between holes bend and
-// no border stays a straight segment), and each hole's edge wanders in lobes in proportion to its size.
-vec4 foam_holes(vec2 p, float open, float scale, float bias, float soft, float jit) {
-	p += 0.22 * (vec2(foam_fbm(p * 2.3 + 1.3), foam_fbm(p * 2.3 - 4.1)) - 0.5);
-	float lobe = foam_fbm(p * 3.7 + 7.3) - 0.5;
-	float tear = foam_fbm(p * 9.1 - 2.6) - 0.5;
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	float d1 = 8.0;
-	float d2 = 8.0;
-	float keep = 1.0;
-	float inside = 0.0;
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			vec2 g = vec2(float(x), float(y));
-			vec2 o = vec2(foam_hash(i + g), foam_hash(i + g + vec2(17.3, 5.1)));
-			vec2 r = g + 0.15 + 0.7 * o - f;
-			float d = length(r);
-			if (d < d1) {
-				d2 = d1;
-				d1 = d;
-			} else if (d < d2) {
-				d2 = d;
-			}
-			// No feature outside the 3x3 neighbourhood is nearer than 1.15 cells, and a hole reaches its radius
-			// plus the tear and lobes (up to 0.16 + 0.43 of the radius) past it: at most 0.65 cells keeps every
-			// hole whole (a larger one was cut along a straight line where the search ended).
-			float rad = min(open * max(foam_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.65);
-			if (rad > 0.0) {
-				float de = d + jit + rad * (0.6 * lobe + 0.25 * tear);
-				keep = min(keep, smoothstep(rad - soft, rad + soft, de));
-				inside = max(inside, (rad - de) / rad);
-			}
-		}
-	}
-	return vec4(keep, d1, d2, inside);
-}
-
 // How much of the surface foam covers, from its amount (docs/ideas/water.md "Ocean detail"). Fresh foam is a
 // solid sheet. As it drains, films rupture: holes open, each its own size (some cells hold, some open wide),
 // and grow until only torn strands of the borders between them are left (Plateau borders: Weaire and Hutzler
@@ -981,78 +939,8 @@ vec4 foam_holes(vec2 p, float open, float scale, float bias, float soft, float j
 // three scales (about 2, 0.7 and 0.2 m) with ragged edges; clumps of bubbles (centimetres to a decimetre) give
 // the sheet its grain. Each layer fades to its mean cover where it is finer than the pixel (footprint, m).
 float foam_structure(vec2 p, float amount, float footprint) {
-	vec2 sd = dot(foam_streak_dir, foam_streak_dir) > 1e-6 ? normalize(foam_streak_dir) : vec2(1.0, 0.0);
-	vec2 q0 = p * foam_detail_scale;
-	// Drawn out about one and a half times along the drift.
-	vec2 q = vec2(dot(q0, sd) / 1.5, dot(q0, vec2(-sd.y, sd.x)));
-	vec2 warp = vec2(foam_value_noise(q * 0.9 + 3.7), foam_value_noise(q * 0.9 - 8.1)) - 0.5;
-	float a = clamp(amount, 0.0, 1.0);
-	float open = 1.0 - pow(a, 0.6); // how far the foam has drained
-	// Older foam has been sheared and drawn out longer by the surface currents: a stronger warp.
-	float age_warp = 1.0 + 1.2 * open;
-	// Ragged, torn edges: the distances jittered by finer noise.
-	float rag = foam_fbm(q * 9.0) - 0.5;
-	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
-	float soft2 = 0.015 + footprint * foam_detail_scale * 2.8;
-	float soft3 = 0.02 + footprint * foam_detail_scale * 9.2;
-	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide; each layer's holes
-	// torn at its own scale (foam_holes).
-	vec4 h1 = foam_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag);
-	vec4 h2 = foam_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag);
-	vec4 h3 = foam_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag);
-	float keep1 = h1.x;
-	float keep2 = h2.x;
-	float keep3 = h3.x;
-	float cover = keep1 * keep2 * mix(1.0, keep3, 0.75);
-	// Torn strands along the larger cells' borders, breaking along their length.
-	float brk = smoothstep(0.4, 0.62, foam_fbm(q * 2.7 + 1.7));
-	float w = (0.04 + 0.07 * a) * brk;
-	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, h1.z - h1.y + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, h2.z - h2.y + 0.25 * rag));
-	// Only where the sheet still holds enough foam (thin foam leaves no web over open water).
-	cover = max(cover, strands * smoothstep(0.15, 0.45, a));
-	// Islands and bridges: rafts of film that have not ruptured yet, left in the holes (fade where under a pixel).
-	// Only well inside the larger holes, so they float free of the hole's rim (no hairline gap round a raft).
-	float raft = smoothstep(0.62, 0.68, foam_fbm(q * 6.3 + 3.1)) * smoothstep(0.2, 0.5, a) * smoothstep(0.35, 0.5, max(h1.w, h2.w));
-	// Gone well before a raft is a pixel or two across (single-pixel specks in the open water otherwise).
-	cover = max(cover, raft * (1.0 - clamp(footprint * foam_detail_scale * 20.0 - 0.2, 0.0, 1.0)));
-	// Thin scum of loose bubbles left in the holes.
-	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, foam_fbm(q * 5.3 - 4.1)));
-	// Past where the holes are under a pixel, their mean cover: the largest holes (about a metre and a half) stay
-	// a few pixels across out to a few hundred metres, so only there (fading from a quarter of a cell a pixel; it
-	// began at a fortieth, which smoothed the surf's bores 30 m away into even white bands).
-	float coarse = clamp(footprint * foam_detail_scale * 1.2 - 0.25, 0.0, 1.0);
-	cover = mix(cover, clamp(1.0 - 1.4 * open * open, 0.05, 1.0), coarse);
-	// Bubble clumps (about 7 cm cells, each its own brightness) and their walls (finer), to a few cm a pixel;
-	// clusters of clumps (about 25 cm) carry on further out.
-	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
-	float cluster = 1.0 - clamp((footprint - 0.04) / 0.12, 0.0, 1.0);
-	// Smooth, warped noise rather than cells, so the grain has no tile edges: soft clumps, the dark gaps
-	// between them, and the small bright domes of single large bubbles.
-	vec2 pw = p + 0.08 * warp;
-	float clumps = foam_fbm(pw * 16.0 + 4.7);
-	float gaps = smoothstep(0.3, 0.12, foam_fbm(pw * 31.0 - 2.9));
-	float domes = smoothstep(0.8, 0.95, foam_fbm(pw * 38.0 + 9.3));
-	// Past a pixel each fades to its own mean (foam_fbm averages 0.5: clumps 0.62 + 0.45 * 0.5, gaps and domes rare),
-	// not to 1: fading to 1 drew far foam about a fifth brighter than the same foam near, or under the path tracer
-	// (no derivatives, full detail, the same mean), so distant patches read as flat white sheets.
-	float bubbles = mix(0.84, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
-	bubbles *= mix(0.925, 0.7 + 0.45 * foam_fbm(pw * 3.5 + 2.3), cluster);
-	// Thin foam is translucent, thick foam opaque.
-	float density = smoothstep(0.02, 0.35, a);
-	if (foam_crisp > 0.0) {
-		// Crisp: a patch's edge is a narrow step of its density against a ragged threshold (fine noise), not
-		// the soft blob of the amount texture; the thin haze an old patch leaves stays, translucent, so no foam
-		// is lost.
-		float rough = 0.6 * foam_fbm(q * 3.1 + 5.3) + 0.4 * foam_fbm(q * 11.0 - 2.1);
-		float t_edge = 0.32 + 0.5 * (rough - 0.5);
-		float w_edge = clamp(0.02 + footprint * foam_detail_scale * 2.0, 0.02, 0.3);
-		// A thin patch's step rises only part way: a small, thin whitecap stays translucent with a soft rim, not a
-		// paper-white chip (only a thick sheet reads as opaque).
-		float outline = max(smoothstep(t_edge - w_edge, t_edge + w_edge, density) * mix(0.55, 1.0, smoothstep(0.35, 0.7, a)), 0.8 * density);
-		density = mix(density, outline, foam_crisp);
-		bubbles = mix(1.0, bubbles, 1.0 - 0.55 * foam_crisp);
-	}
-	return clamp(cover * density * bubbles, 0.0, 1.0);
+	// Drawn out about one and a half times along the drift (water_foam_shared.h).
+	return wf_structure(p, amount, footprint, foam_streak_dir, 0.5, foam_detail_scale, foam_crisp);
 }
 
 // The bubbles' own normal (each a low dome a few cm across), for the light to catch the foam's grain; up past a
@@ -1280,13 +1168,21 @@ vec2 shore_pattern_uv(vec2 world_xz) {
 	return 1.0 - abs(mod(u, 2.0) - 1.0);
 }
 
-float shore_foam_at(vec2 world_xz) {
-	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+// footprint: the pixel's size on the water (m). The field is a coarse grid (cells of 25 cm and more): drawn as
+// smooth blobs it read up close as a blurred white veil over the swash, so it is drawn as foam (foam_structure: a
+// sheet where fresh, draining into lace and holes), as the open sea's and the rocks' are.
+float shore_foam_at(vec2 world_xz, float footprint) {
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
 	float shore = grid_bspline(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
-	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
+	g = g * g * (3.0 - 2.0 * g);
+	if (g <= 0.0) {
+		return 0.0;
+	}
+	// The field's amount is how much foam the swash has left, not how fresh it is: a backwash's foam is old, drained
+	// foam, so it is drawn at about half (open lace with clear film between) and only the thickest stays a sheet.
+	return foam_structure(world_xz + vec2(water_time * 0.05, -water_time * 0.03), 0.5 * g * g + 0.1 * g, footprint) * shore_foam_strength;
 }
 
 // White water where the sea meets a steep face: churned foam against each stack, boulder and cliff foot that widens
@@ -1997,13 +1893,17 @@ void fragment() {
 	// Shore foam belongs to the moving edge: full at it, thinning over the
 	// next ~0.6 m of depth, so the white sheet scallops with the edge instead
 	// of filling the band. (Whitecaps are left alone.)
-	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.02, 0.6, shore)));
+	foam = max(foam, shore_foam_at(v_rest_xz, contact_footprint) * (1.0 - smoothstep(0.02, 0.6, shore)));
 	// Bright rim right behind the moving edge, broken into lace.
 	// Over dry sand the swash film is only as thick as the run-up's excess
 	// over the sand -- a few cm -- so it fades in over a fifth of the
 	// softness there, or the uprush would barely show.
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
+	// The last few cm of the film drape over the sand grains and ripple marks instead of lying flat over them: its
+	// reflection roughens toward the wet sand's sheen as it thins (a mirror cut off at the waterline otherwise, a hard
+	// edge under the path tracer, whose film ends at a cut-out).
+	float edge_rough = mix(max(water_roughness, 0.32), water_roughness, smoothstep(soft * 0.5, soft * 4.0, shore));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * shore_wave_activity * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
 	// The bore's white front belongs to the uprush (swash a: climbing); the backwash drains as a clear film, which
@@ -2104,7 +2004,7 @@ void fragment() {
 	// rough white layer on top; where the swash has left the sand, no surface.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(water_roughness, 0.8, foam);
+	ROUGHNESS = mix(edge_rough, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
@@ -2136,7 +2036,7 @@ void fragment() {
 	float sun_a2 = 1.0;
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), water_roughness, open_unlit, sun_body, sun_glint, sun_a2);
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), edge_rough, open_unlit, sun_body, sun_glint, sun_a2);
 #if !defined(BREAKER_LIP)
 		if (!raster_reflections && screen_reflections) {
 			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, smoothstep(0.0, soft, shore) * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
@@ -2254,7 +2154,7 @@ float water_cats_paw(vec2 xz) {
 
 // The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &water_shader_src() {
-	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
+	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + WATER_SHADER_SRC_TAIL;
 	return src;
 }
 

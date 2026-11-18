@@ -212,6 +212,7 @@ public:
 	virtual float contract_fire_heat_at(const Vector3 &p_position) const = 0; // W/m2 of ground, now
 	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
+	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
 	virtual ~WorldFireProvider() {}
 };
 
@@ -227,6 +228,7 @@ protected:
 	GDVIRTUAL1RC(float, _heat_at, Vector3)
 	GDVIRTUAL1RC(float, _burnt_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
+	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -237,6 +239,9 @@ public:
 	// The wind the fires draw in near the ground at the point (their indraft, m/s, horizontal), summed over the fires;
 	// it adds to the weather's wind. Zero with none.
 	Vector3 wind_at(const Vector3 &p_position) const;
+	// How deep a stem standing at the point has charred at its foot (m, bark and wood): the flames' and smouldering
+	// logs' time there at a charring rate of 0.8 mm a minute. The most of any fire; 0 where none burnt.
+	float stem_char_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
@@ -311,6 +316,50 @@ public:
 	float blown_sand_at(const Vector3 &p_position) const;
 };
 
+// Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
+class WorldSnowProvider {
+public:
+	virtual float contract_snow_depth_at(const Vector3 &p_position) const = 0; // m
+	virtual float contract_snow_density_at(const Vector3 &p_position) const = 0; // kg/m3 (100 new powder .. 550 old wet)
+	virtual float contract_snow_wetness_at(const Vector3 &p_position) const { return 0.0f; } // liquid over what the pack holds, 0..1
+	virtual float contract_snow_surface_at(const Vector3 &p_position) const { return -Math::INF; } // m, the snow top with prints; -INF bare
+	virtual float contract_snow_crust_at(const Vector3 &p_position) const { return 0.0f; } // kPa a crust bears, 0 none
+	virtual Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m of lake ice, white share)
+	virtual ~WorldSnowProvider() {}
+};
+
+class WorldSnow : public RefCounted {
+	GDCLASS(WorldSnow, RefCounted);
+
+	friend class WorldContracts;
+	WorldSnowProvider *provider = nullptr; // the built-in contract's; a script stub overrides the virtuals
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _depth_at, Vector3)
+	GDVIRTUAL1RC(float, _density_at, Vector3)
+	GDVIRTUAL1RC(float, _wetness_at, Vector3)
+	GDVIRTUAL1RC(float, _surface_at, Vector3)
+	GDVIRTUAL1RC(float, _crust_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _lake_ice_at, Vector3)
+
+public:
+	bool has_provider() const { return provider != nullptr; }
+	// Snow on the ground at the point (m); 0 with no snow system.
+	float depth_at(const Vector3 &p_position) const;
+	// Its bulk density (kg/m3): about 100 for new powder, 250 to 350 settled, 400 to 550 old or wet; 0 bare.
+	float density_at(const Vector3 &p_position) const;
+	// Liquid water in the pack over what it can hold, 0 (dry) to 1 (slush).
+	float wetness_at(const Vector3 &p_position) const;
+	// The snow surface (m), prints included near the camera; -INF where there is none.
+	float surface_at(const Vector3 &p_position) const;
+	// The load a crust in the pack bears before a foot breaks through (kPa), 0 with none.
+	float crust_at(const Vector3 &p_position) const;
+	// Lake ice: (thickness m, share of it that is white snow ice). Ice of 5 cm and more bears a walker.
+	Vector2 lake_ice_at(const Vector3 &p_position) const;
+};
+
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.
 struct WorldContactBody {
 	Vector3 center; // the shape's centre (the node's position without a shape)
@@ -337,6 +386,9 @@ class WorldContracts : public Object {
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
 	Ref<WorldFire> fire_override;
+	Ref<WorldSnow> builtin_snow;
+	Ref<WorldSnow> snow_override;
+	WorldSnowProvider *snow_provider = nullptr;
 	LocalVector<WorldWaterProvider *> water_stubs;
 	void _clear_water_stubs();
 
@@ -353,6 +405,7 @@ public:
 	static WorldWater *water();
 	static WorldGround *ground();
 	static WorldFire *fire();
+	static WorldSnow *snow();
 
 	// Producers register on entering the tree and unregister on leaving; the last to register is current.
 	static void register_weather(WorldWeatherProvider *p_provider);
@@ -363,6 +416,8 @@ public:
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);
 	static void unregister_fire(WorldFireProvider *p_provider);
+	static void register_snow(WorldSnowProvider *p_provider);
+	static void unregister_snow(WorldSnowProvider *p_provider);
 
 	// Tests set stubs (a script extending the contract class) and clear them.
 	void set_weather(const Ref<WorldWeather> &p_stub);
@@ -373,6 +428,8 @@ public:
 	Ref<WorldWater> get_water() const;
 	void set_fire(const Ref<WorldFire> &p_stub);
 	Ref<WorldFire> get_fire() const;
+	void set_snow(const Ref<WorldSnow> &p_stub);
+	Ref<WorldSnow> get_snow() const;
 	// A script stub (extending WorldWater) as one more water producer beside the real ones: a pool or sea for a
 	// bench without one. clear_overrides() removes it.
 	void add_water_stub(const Ref<WorldWater> &p_stub);

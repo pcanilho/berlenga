@@ -100,6 +100,7 @@ void PhysXFireSpread3D::_allocate() {
 	quenched.resize(n);
 	steamed.resize(n);
 	ash_blown.resize(n);
+	char_time.resize(n);
 	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
@@ -181,6 +182,7 @@ void PhysXFireSpread3D::_allocate() {
 			quenched[i] = 0;
 			steamed[i] = 0;
 			ash_blown[i] = 0.0f;
+			char_time[i] = 0.0f;
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -571,6 +573,8 @@ void PhysXFireSpread3D::_step(float p_delta) {
 			const float kg = MAX(fuel_left[i] - left, 0.0f) * load[i];
 			heat[i] = kg * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
 			fuel_left[i] = left < 0.002f ? 0.0f : left;
+			// Flame against a stem here: full charring from about 50 kW/m2 of ground (a flaming zone).
+			char_time[i] += p_delta * MIN(heat[i] / 50000.0f, 1.0f);
 			if (fine_brands > 0.0f && kg > 0.0f && time - t_ignite[i] < m.burn_time) { // from the flames, not the embers
 				const float w = kg * cell_area * fine_brands;
 				brand_points.push_back({ _cell_world(x, z) + Vector3(0.0f, 0.1f, 0.0f), w });
@@ -610,6 +614,8 @@ void PhysXFireSpread3D::_burn_heavy(float p_delta) {
 			if (heavy_left[i] < 0.01f) {
 				heavy_left[i] = 0.0f;
 			}
+			// A burning log against a stem chars it all the while; smouldering, at about a third of the rate.
+			char_time[i] += p_delta * (_heavy_flaming(i) ? 1.0f : 1.0f / 3.0f);
 			if (_heavy_flaming(i)) {
 				const float kg = (before - heavy_left[i]) * heavy[i];
 				heat[i] += kg * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
@@ -1189,6 +1195,16 @@ Vector3 PhysXFireSpread3D::_indraft_at(const Vector3 &p_position, float p_skip) 
 		u += r / d * (k.q / (2.0f * Math::PI * dd * dd));
 	}
 	return u.limit_length(15.0f);
+}
+
+// Char at a stem's foot: the time flames and smouldering logs stood there at softwood's notional charring rate (EN
+// 1995-1-2, 0.8 mm a minute), bark and wood together; TreeWind3D takes off the bark.
+float PhysXFireSpread3D::get_stem_char_at(const Vector3 &p_position) const {
+	int x, z;
+	if (char_time.is_empty() || !_world_cell(p_position, x, z)) {
+		return 0.0f;
+	}
+	return char_time[z * nx + x] * 0.8e-3f / 60.0f;
 }
 
 void PhysXFireSpread3D::set_fire_wind(bool p_v) {
@@ -2046,6 +2062,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fire_wind", "enabled"), &PhysXFireSpread3D::set_fire_wind);
 	ClassDB::bind_method(D_METHOD("is_fire_wind"), &PhysXFireSpread3D::is_fire_wind);
 	ClassDB::bind_method(D_METHOD("get_fire_wind_at", "position"), &PhysXFireSpread3D::get_fire_wind_at);
+	ClassDB::bind_method(D_METHOD("get_stem_char_at", "position"), &PhysXFireSpread3D::get_stem_char_at);
 	ClassDB::bind_method(D_METHOD("set_blowing_ash", "enabled"), &PhysXFireSpread3D::set_blowing_ash);
 	ClassDB::bind_method(D_METHOD("is_blowing_ash"), &PhysXFireSpread3D::is_blowing_ash);
 	ClassDB::bind_method(D_METHOD("get_ash_blown"), &PhysXFireSpread3D::get_ash_blown);

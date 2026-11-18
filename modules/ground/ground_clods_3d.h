@@ -34,6 +34,9 @@
 
 #include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
+#include "ground_lump_draw.h"
+#include "ground_lump_scan.h"
+#include "ground_lump_store.h"
 #include "ground_surface_3d.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
@@ -64,30 +67,21 @@ private:
 	float update_rate = 6.0f; // Hz for the rim scan and the checks; landings are taken every frame
 	int seed = 0;
 
-	struct Clod {
-		Vector3 position;
-		Basis basis; // rotation and a stretch of its own (unit size)
-		float size = 0.0f; // m across
-		float relief = 0.0f; // the print field's rim less dent under it when it landed
-		Color color;
-		uint8_t shape = 0;
-	};
+	using Clod = GroundLump;
 	LocalVector<Clod> clods;
 	uint32_t next_slot = 0;
 
-	LocalVector<float> last_rim;
-	LocalVector<float> owed;
-	Vector2i last_origin = Vector2i(INT32_MIN, INT32_MIN);
-	Vector2 last_moved = Vector2(-1.0f, -1.0f);
-	int scan_n = 0;
-	float scan_cell = 0.0f;
+	GroundLumpScan scan;
+	LocalVector<GroundLumpScan::Grown> grown;
 	double since_scan = 0.0;
+	int water_wait = 0;
 	RandomPCG rng;
 	LocalVector<GroundSurface3D::ClodDrop> drops;
 
 	Ref<ArrayMesh> shapes[SHAPES];
-	Ref<MultiMesh> multimeshes[SHAPES];
-	MultiMeshInstance3D *instances[SHAPES] = {};
+	GroundLumpDraw lump_draw;
+	GroundLumpStore store; // clods kept while the camera is away (with the kept ruts)
+	LocalVector<GroundLump> back;
 	Ref<Material> material;
 	bool draw_dirty = false;
 	int spawned_total = 0;
@@ -100,11 +94,13 @@ private:
 	void _ensure_draw();
 	void _free_draw();
 	void _land(GroundSurface3D *p_surface);
+	void _watch(GroundSurface3D *p_surface);
 	void _scan(GroundSurface3D *p_surface);
 	void _spawn(GroundSurface3D *p_surface, const Vector3 &p_at, const Vector2 &p_out, float p_size, float p_throw, const Color &p_color);
-	void _check(GroundSurface3D *p_surface);
+	void _check(GroundSurface3D *p_surface, bool p_water);
 	void _draw();
 	void _remove(uint32_t p_index);
+	void _restore(GroundSurface3D *p_surface);
 
 protected:
 	void _notification(int p_what);
@@ -133,6 +129,7 @@ public:
 	int get_clod_count() const { return int(clods.size()); }
 	int get_spawned_total() const { return spawned_total; }
 	int get_landed_total() const { return landed_total; }
+	int get_parked_count() const { return store.get_parked_count(); }
 	double get_update_msec_mean() const { return update_runs ? update_msec_total / update_runs : 0.0; }
 	double get_update_msec_worst() const { return update_msec_worst; }
 	int get_update_runs() const { return update_runs; }

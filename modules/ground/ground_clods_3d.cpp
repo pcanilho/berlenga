@@ -49,6 +49,7 @@ constexpr float MIN_SIZE = 0.008f; // m: smaller is the film and crumbs the grou
 constexpr float MAX_SIZE = 0.09f;
 constexpr float SINK = 0.12f; // of its size, pressed into the ground it fell on
 constexpr float STICKY = 0.3f; // soil this sticky holds together as clods (MudSpray's "mud")
+constexpr float PARK_MARGIN = 4.0f; // m past the print field before a clod is kept away
 
 float _hash01(uint32_t p_h) {
 	p_h ^= p_h >> 16;
@@ -206,37 +207,21 @@ void GroundClods3D::_ensure_draw() {
 		if (shapes[i].is_null()) {
 			shapes[i] = make_shape(i + 1);
 		}
-		if (multimeshes[i].is_null()) {
-			multimeshes[i].instantiate();
-			multimeshes[i]->set_transform_format(MultiMesh::TRANSFORM_3D);
-			multimeshes[i]->set_use_colors(true);
-			multimeshes[i]->set_mesh(shapes[i]);
-		}
-		if (!instances[i]) {
-			instances[i] = memnew(MultiMeshInstance3D);
-			instances[i]->set_multimesh(multimeshes[i]);
-			instances[i]->set_material_override(material);
-			instances[i]->set_as_top_level(true);
-			add_child(instances[i], false, INTERNAL_MODE_FRONT);
-			instances[i]->set_global_transform(Transform3D());
-		}
 	}
+	lump_draw.ensure(this, shapes, SHAPES, true, material);
 }
 
 void GroundClods3D::_free_draw() {
-	for (int i = 0; i < SHAPES; i++) {
-		if (instances[i]) {
-			instances[i]->queue_free();
-			instances[i] = nullptr;
-		}
-		multimeshes[i].unref();
-	}
+	lump_draw.release();
 }
 
 // Thrown clay that landed: a landing holding a lump's volume stands up as one to three clods (a lump splits as it
 // lands), the rest stays the film the ground drew.
 void GroundClods3D::_land(GroundSurface3D *p_surface) {
 	p_surface->take_clod_drops(drops);
+	if (!drops.is_empty()) {
+		_watch(p_surface);
+	}
 	for (const GroundSurface3D::ClodDrop &d : drops) {
 		float vol = d.volume;
 		const int pieces = 1 + int(rng.rand() % 3);
@@ -256,83 +241,44 @@ void GroundClods3D::_land(GroundSurface3D *p_surface) {
 	drops.clear();
 }
 
+void GroundClods3D::_watch(GroundSurface3D *p_surface) {
+	scan.main_field = &p_surface->get_deform_field();
+	scan.fine_field = p_surface->get_near_deform_field();
+	// Inside the near field's blend into the main one (GroundSurface3D::NEAR_BLEND, 1 m).
+	scan.fine_rect = scan.fine_field ? p_surface->get_near_rect().grow(-1.0f) : Rect2();
+}
+
 void GroundClods3D::_scan(GroundSurface3D *p_surface) {
 	const Rect2 field = p_surface->get_deform_rect();
 	const float texel = p_surface->get_deform_extent() / MAX(p_surface->get_deform_resolution(), 1);
 	const Vector3 cam = _camera_or(this, Vector3(field.get_center().x, 0.0f, field.get_center().y));
-	const float cell = MAX(texel * 2.0f, 0.05f);
-	const int n = int(Math::ceil(2.0f * radius / cell));
-	const Vector2i origin(int(Math::floor((cam.x - radius) / cell)), int(Math::floor((cam.z - radius) / cell)));
-	const Vector2 moved = p_surface->get_moved_volume();
-	if (origin == last_origin && n == scan_n && cell == scan_cell && moved == last_moved) {
-		return;
-	}
-	const bool fresh = n != scan_n || cell != scan_cell;
-	if (fresh || origin != last_origin) {
-		LocalVector<float> rim2, owed2;
-		rim2.resize(n * n);
-		owed2.resize(n * n);
-		for (int z = 0; z < n; z++) {
-			for (int x = 0; x < n; x++) {
-				const int ox = x + origin.x - last_origin.x, oz = z + origin.y - last_origin.y;
-				const int i = z * n + x;
-				if (!fresh && ox >= 0 && oz >= 0 && ox < scan_n && oz < scan_n) {
-					rim2[i] = last_rim[oz * scan_n + ox];
-					owed2[i] = owed[oz * scan_n + ox];
-				} else {
-					rim2[i] = p_surface->get_rim_at(Vector3((origin.x + x + 0.5f) * cell, 0.0f, (origin.y + z + 0.5f) * cell));
-					owed2[i] = 0.0f;
-				}
-			}
+	scan.update(cam, radius, MAX(texel * 2.0f, 0.05f), RIM_STEP, grown);
+	for (const GroundLumpScan::Grown &g : grown) {
+		const Vector3 &c = g.center;
+		// Plastic clay tears out as clods; sand crumbles, slurry flows (stickiness falls off for both).
+		const float sticky = p_surface->get_soil(c).stickiness;
+		if (sticky < STICKY) {
+			continue;
 		}
-		last_rim = rim2;
-		owed = owed2;
-		scan_n = n;
-		scan_cell = cell;
-		last_origin = origin;
-	}
-	last_moved = moved;
-	const float r2 = radius * radius;
-	for (int z = 0; z < n; z++) {
-		for (int x = 0; x < n; x++) {
-			const Vector3 c((origin.x + x + 0.5f) * cell, 0.0f, (origin.y + z + 0.5f) * cell);
-			if (!field.has_point(Vector2(c.x, c.z)) || Vector2(c.x - cam.x, c.z - cam.z).length_squared() > r2) {
-				continue;
+		float &owed = scan.owed[g.index];
+		owed += g.grew * scan.cell * scan.cell * break_share * Math::smoothstep(STICKY, 0.7f, sticky);
+		Color col;
+		bool have_col = false;
+		for (int k = 0; k < 6; k++) {
+			// Log-normal aggregate sizes (Gardner 1956), median 2.5 cm.
+			const float size = CLAMP(0.025f * Math::exp(0.55f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE);
+			const float vol = CLOD_FILL * size * size * size;
+			if (owed < vol) {
+				break;
 			}
-			const int i = z * n + x;
-			const float rim = p_surface->get_rim_at(c);
-			const float grew = rim - last_rim[i];
-			last_rim[i] = rim;
-			if (grew <= RIM_STEP) {
-				continue;
+			owed -= vol;
+			if (!have_col) {
+				// A torn face is the moist inside of the clay: darker than the surface dried by the air.
+				col = _clay_at(p_surface, c).darkened(0.08f);
+				have_col = true;
 			}
-			// Plastic clay tears out as clods; sand crumbles, slurry flows (stickiness falls off for both).
-			const float sticky = p_surface->get_soil(c).stickiness;
-			if (sticky < STICKY) {
-				continue;
-			}
-			owed[i] += grew * cell * cell * break_share * Math::smoothstep(STICKY, 0.7f, sticky);
-			const float e = cell;
-			const Vector2 grad(p_surface->get_dent_at(c + Vector3(e, 0, 0)) - p_surface->get_dent_at(c - Vector3(e, 0, 0)), p_surface->get_dent_at(c + Vector3(0, 0, e)) - p_surface->get_dent_at(c - Vector3(0, 0, e)));
-			const Vector2 out = grad.length() > 1e-5f ? -grad.normalized() : Vector2();
-			Color col;
-			bool have_col = false;
-			for (int k = 0; k < 6; k++) {
-				// Log-normal aggregate sizes (Gardner 1956), median 2.5 cm.
-				const float size = CLAMP(0.025f * Math::exp(0.55f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE);
-				const float vol = CLOD_FILL * size * size * size;
-				if (owed[i] < vol) {
-					break;
-				}
-				owed[i] -= vol;
-				if (!have_col) {
-					// A torn face is the moist inside of the clay: darker than the surface dried by the air.
-					col = _clay_at(p_surface, c).darkened(0.08f);
-					have_col = true;
-				}
-				const Vector3 at = c + Vector3(rng.random(-0.5f, 0.5f) * cell, 0.0f, rng.random(-0.5f, 0.5f) * cell);
-				_spawn(p_surface, at, out, size, MIN(0.1f, 3.0f * size), col);
-			}
+			const Vector3 at = c + Vector3(rng.random(-0.5f, 0.5f) * scan.cell, 0.0f, rng.random(-0.5f, 0.5f) * scan.cell);
+			_spawn(p_surface, at, g.out, size, MIN(0.1f, 3.0f * size), col);
 		}
 	}
 }
@@ -345,7 +291,7 @@ void GroundClods3D::_spawn(GroundSurface3D *p_surface, const Vector3 &p_at, cons
 	c.size = p_size;
 	c.shape = uint8_t(rng.rand() % SHAPES);
 	const Vector3 pos(p_at.x + d.x, 0.0f, p_at.z + d.y);
-	c.relief = p_surface->get_rim_at(pos) - p_surface->get_dent_at(pos);
+	c.relief = scan.relief_at(pos);
 	c.position = Vector3(pos.x, p_surface->get_surface_height_at(pos) + p_size * (0.32f - SINK), pos.z);
 	const Basis yaw(Vector3(0, 1, 0), rng.randf() * float(Math::TAU));
 	const Basis tilt(Vector3(rng.random(-1.0f, 1.0f), 0.0f, rng.random(-1.0f, 1.0f)).normalized(), rng.random(0.0f, 0.6f));
@@ -372,12 +318,25 @@ void GroundClods3D::_remove(uint32_t p_index) {
 
 // A later print that presses a clod in or heaps over it crushes or hides it; water standing over it slakes it
 // (dry clay aggregates fall apart when wetted, Emerson 1967); far behind the camera it is let go.
-void GroundClods3D::_check(GroundSurface3D *p_surface) {
-	const Rect2 keep = p_surface->get_deform_rect().grow(p_surface->get_deform_extent() * 0.5f);
+void GroundClods3D::_check(GroundSurface3D *p_surface, bool p_water) {
+	// Past the field (and a margin, so it does not come and go): kept in the store while the camera is away.
+	const Rect2 keep = p_surface->get_deform_rect().grow(PARK_MARGIN);
 	for (uint32_t i = 0; i < clods.size();) {
 		const Clod &c = clods[i];
-		const float h = p_surface->get_rim_at(c.position) - p_surface->get_dent_at(c.position);
-		const bool gone = !keep.has_point(Vector2(c.position.x, c.position.z)) || h < c.relief - 0.5f * c.size || h > c.relief + 0.6f * c.size || p_surface->get_standing_water_at(c.position) > 0.5f * c.size;
+		if (!keep.has_point(Vector2(c.position.x, c.position.z))) {
+			store.park(c);
+			_remove(i);
+			continue;
+		}
+		bool gone = false;
+		if (!gone && scan.changed_at(c.position)) {
+			// Only where the field moved since the last look: a print pressed it in or heaped over it.
+			const float h = scan.relief_at(c.position);
+			gone = h < c.relief - 0.5f * c.size || h > c.relief + 0.6f * c.size;
+		}
+		if (!gone && p_water) {
+			gone = p_surface->get_standing_water_at(c.position) > 0.5f * c.size;
+		}
 		if (gone) {
 			_remove(i);
 		} else {
@@ -387,16 +346,36 @@ void GroundClods3D::_check(GroundSurface3D *p_surface) {
 	next_slot = clods.is_empty() ? 0 : next_slot % clods.size();
 }
 
+// The clods kept while the camera was away, back where the field is again: as they lay if the print under them is
+// as it was (the kept ruts), gone if it changed or was not kept; waited for while the field there is still empty.
+void GroundClods3D::_restore(GroundSurface3D *p_surface) {
+	back.clear();
+	store.take(p_surface->get_deform_rect(), back);
+	for (GroundLump &l : back) {
+		const float h = scan.relief_at(l.position);
+		if (h == 0.0f && Math::abs(l.relief) > 0.002f && l.tries < 30) {
+			l.tries++;
+			store.park(l);
+			continue;
+		}
+		if (Math::abs(h - l.relief) > 0.5f * l.size || int(clods.size()) >= max_clods) {
+			continue;
+		}
+		l.tries = 0;
+		clods.push_back(l);
+		draw_dirty = true;
+	}
+}
+
 void GroundClods3D::_draw() {
 	if (!is_inside_tree()) {
 		return;
 	}
 	_ensure_draw();
 	draw_dirty = false;
-	LocalVector<float> buffers[SHAPES];
 	for (const Clod &c : clods) {
 		const Basis b = c.basis.scaled(Vector3(c.size, c.size, c.size));
-		LocalVector<float> &out = buffers[c.shape % SHAPES];
+		LocalVector<float> &out = lump_draw.buffers[c.shape % SHAPES];
 		// Instance colours reach the shader as they are (linear); the clay's colour is sRGB, as albedos are given.
 		const Color lin = c.color.srgb_to_linear();
 		const float row[16] = { b.rows[0].x, b.rows[0].y, b.rows[0].z, c.position.x, b.rows[1].x, b.rows[1].y, b.rows[1].z, c.position.y, b.rows[2].x, b.rows[2].y, b.rows[2].z, c.position.z, lin.r, lin.g, lin.b, 1.0f };
@@ -404,23 +383,7 @@ void GroundClods3D::_draw() {
 			out.push_back(row[k]);
 		}
 	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	for (int i = 0; i < SHAPES; i++) {
-		const int count = int(buffers[i].size() / 16);
-		Ref<MultiMesh> &mm = multimeshes[i];
-		if (mm->get_instance_count() != count) {
-			mm->set_instance_count(count);
-			// One TLAS entry per clod over its shape for the path tracer, not a merged copy of every clod.
-			rs->multimesh_set_rt_instanced(mm->get_rid(), true);
-		}
-		instances[i]->set_visible(count > 0);
-		if (count > 0) {
-			PackedFloat32Array buf;
-			buf.resize(buffers[i].size());
-			memcpy(buf.ptrw(), buffers[i].ptr(), buffers[i].size() * sizeof(float));
-			rs->multimesh_set_buffer(mm->get_rid(), buf);
-		}
-	}
+	lump_draw.commit();
 }
 
 void GroundClods3D::_notification(int p_what) {
@@ -460,12 +423,21 @@ void GroundClods3D::update_now() {
 		return;
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	_watch(surface);
 	_land(surface);
-	const Vector2 moved_before = last_moved;
 	_scan(surface);
-	if (last_moved != moved_before && !clods.is_empty()) {
-		_check(surface);
+	if (!clods.is_empty()) {
+		// Standing water changes slowly: looked at once a second.
+		water_wait += 1;
+		const bool water = surface->is_standing_water() && water_wait >= int(update_rate);
+		if (water) {
+			water_wait = 0;
+		}
+		_check(surface, water);
 	}
+	store.configure(surface->is_keeping_ruts() ? surface->get_ruts_path() : String(), "clods");
+	_restore(surface);
+	store.flush();
 	if (draw_dirty) {
 		_draw();
 	}
@@ -477,12 +449,9 @@ void GroundClods3D::update_now() {
 
 void GroundClods3D::clear() {
 	clods.clear();
+	store.clear(false);
 	next_slot = 0;
-	last_rim.clear();
-	owed.clear();
-	scan_n = 0;
-	last_origin = Vector2i(INT32_MIN, INT32_MIN);
-	last_moved = Vector2(-1.0f, -1.0f);
+	scan.clear();
 	draw_dirty = true;
 	if (is_inside_tree()) {
 		_draw();
@@ -515,11 +484,7 @@ void GroundClods3D::set_max_clods(int p_max) {
 
 void GroundClods3D::set_material(const Ref<Material> &p_material) {
 	material = p_material;
-	for (int i = 0; i < SHAPES; i++) {
-		if (instances[i]) {
-			instances[i]->set_material_override(material);
-		}
-	}
+	lump_draw.set_material(material);
 }
 
 void GroundClods3D::_bind_methods() {
@@ -541,6 +506,7 @@ void GroundClods3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &GroundClods3D::clear);
 	ClassDB::bind_method(D_METHOD("get_clod_count"), &GroundClods3D::get_clod_count);
 	ClassDB::bind_method(D_METHOD("get_spawned_total"), &GroundClods3D::get_spawned_total);
+	ClassDB::bind_method(D_METHOD("get_parked_count"), &GroundClods3D::get_parked_count);
 	ClassDB::bind_method(D_METHOD("get_landed_total"), &GroundClods3D::get_landed_total);
 	ClassDB::bind_method(D_METHOD("get_update_msec_mean"), &GroundClods3D::get_update_msec_mean);
 	ClassDB::bind_method(D_METHOD("get_update_msec_worst"), &GroundClods3D::get_update_msec_worst);

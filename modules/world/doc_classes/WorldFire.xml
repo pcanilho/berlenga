@@ -23,6 +23,13 @@
 				Override in a stub to replace [method heat_at].
 			</description>
 		</method>
+		<method name="_stem_char_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method stem_char_at].
+			</description>
+		</method>
 		<method name="_wind_at" qualifiers="virtual const">
 			<return type="Vector3" />
 			<param index="0" name="position" type="Vector3" />
@@ -48,6 +55,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The fire's heat release over the ground at [param position] now, in W/m2; 0 where nothing burns.
+			</description>
+		</method>
+		<method name="stem_char_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How deep a stem standing at [param position] has charred at its foot, in metres of bark and wood: the time flames and smouldering logs stood there, at a charring rate of about 0.8 mm a minute (EN 1995-1-2). [TreeWind3D] weakens the stem's foot by it, so a burnt tree may snap there in a later storm. The most of any fire; 0 where none burnt.
 			</description>
 		</method>
 		<method name="wind_at" qualifiers="const">

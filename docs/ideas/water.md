@@ -3488,3 +3488,54 @@ river's live solver runs with caustics off and its ripples are procedural in the
   4x where the rays cross; faded where the 12 cm ripple cells drop under a few pixels; only the sun that reaches
   the bed (sun_visibility). Cost: six ripple_slope calls per clear-water pixel.
 Bench switch: `--water=caustics_strength:0.0`.
+
+### Next round: research (18 Nov)
+
+Candidates for the river after the caustics, best first:
+1. Dispersive surface waves on the live solver: Jeschke and Wojtan, "Generalizing Shallow Water Simulations with
+   Dispersive Surface Waves" (ACM ToG 2023). Each step splits the height into bulk flow (shallow water) and surface
+   waves by a depth-dependent diffusion (alpha = h^2/64); the waves step with an exact Airy integrator in Fourier
+   space (omega = sqrt(g k tanh(k h)), four depth samples), are carried by the bulk velocity and added back. Real
+   ripples that reflect and diffract round boulders and wakes, instead of only procedural noise. Reported: 512^2
+   on a laptop RTX 2080 at about 100 fps sim-only; the decomposition is 87% of it (128 diffusion substeps), so
+   replace it with a few-level Gaussian pyramid. The FFT is already in the solver (water_fft.glsl).
+2. Caustics from a light-space map, shared by raster and PT: render the river's ripple field once per frame into
+   the solver's caustics map (water_caustics_map.glsl, Wallace's area-ratio on a refracted grid) instead of six
+   slope evaluations per pixel; then the path tracer reads the same map for the sun's next-event on beds under
+   water (caustic maps as in Ray Tracing Gems II ch. 30), so PT shows the pattern without photon paths. Full
+   unbiased alternative, heavier: ReSTIR BDPT with caustics (Hedstrom et al., NVIDIA 2025).
+3. Real displacement near the camera: the near river's mesh subdivided by distance so ripples and the
+   standing waves are geometry with a constant on-screen cost (Planet Coaster 2, Frontier 2024).
+4. Small optimisations: skip the clear-through march and caustics where foam is about 1; evaluate the ripple
+   field's two phases once and reuse them for the caustics' centre sample.
+
+Why the river's caustics are a closed form and the sea's a light-space map (one water technique): both are the same
+area-ratio caustics. The sea's heights live in the solver's textures (FFT and ripple grid), so it rasterises them
+into a map once per frame. The river's ripples exist only in its shader (flow-mapped procedural slope), so it
+evaluates the same determinant in place. The white water where the sun enters (live flow foam at x_in) shades
+the bed (Valence's review). The path tracer does not find these lines yet (normals only, no caustic paths; PT
+crop 18 Nov), which is candidate 2 above: move the river's field into the shared map and read it in PT.
+
+### Path-traced caustics on the river (18 Nov, Paulo picked "All four, in order"; item 1)
+
+The path tracer already traces caustic photons (raytracing_caustics_inc.glsl: Gruen 2019, Yang and Ouyang RTG II
+ch. 30) through the river's own shader normals. On the 640x360 cloud frames the river bed still showed only
+grain, for three reasons, now fixed:
+- Photon density: one photon a pixel is about one a texel at 640x360 (512^2 cascade 0), and a bright line is a
+  density estimate. Each cascade now gets at least RT_CAUSTICS_MIN_PHOTONS (4) a texel a frame, up to 6 photons a
+  pixel, stratified in strips. At 1080p it is still one a pixel, so no cost there.
+- Sun disc: photons now start from a point on the sun's disc (the light's angular radius, at least the real
+  sun's 0.27 degrees). It blurs by angle x depth, as a real sun does; the mean is unchanged (river crop means
+  83.3/98.0/83.5 off vs 84.1/98.6/84.0 on).
+- Moving water in an accumulated still: the river bench's --pt-freeze stops the clock when path tracing starts,
+  so the still holds one instant instead of averaging a second of moving lines.
+Result at 640, 32 frames: the bed shows the ripple-scale light pattern; finer lines need more samples (PC).
+Rocks' riffle check (stream_riffle_*960): the raster glint in the cave is the known raster sky-ambient excess
+underground, not a PT loss; PT shows the expected sparse glints.
+
+Refraction march bands (rocks' stream riffle, 18 Nov): the river's screen-space refraction marched ten fixed steps and
+took the first past the scene, so stones under the water read back as stacked horizontal bands. It now bisects the
+crossing (4 steps, as the screen reflections do) and gives up where the refined point lies well behind the screen's
+surface (a thickness test). Not jittered: without a temporal filter the per-pixel start dithered into teeth. The
+vertical striations left on stone sides seen through the water are the same with screen reflections off and are
+not the march (sent to rocks: likely the stones' texture on steep faces).

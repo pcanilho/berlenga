@@ -335,7 +335,7 @@ public:
 				yaw = Math::atan2(-side.z, side.x);
 			}
 			if (sw.sinkage > 0.002f) {
-				ground->press_wheel(center, Vector2(across, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z));
+				ground->press_wheel(center, Vector2(across, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z), sw.tread);
 			}
 			// A wheel turning faster than it travels shears its tread through the sand and throws it back
 			// (roost); one sliding sideways drags and shoves sand out of the side of the turn: reported for a

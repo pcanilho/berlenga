@@ -313,7 +313,12 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 			vec2 q_last = uv;
 			float len_last = len0 < 1e4 ? z0 / max(-t.y, 0.05) : len0;
 			bool hidden = false;
+			float f_last = 0.0;
 			for (int i = 1; i <= MS; i++) {
+				// The crossing is found by bisection below: ten fixed steps took the first one past the surface, so
+				// every stone under the water read back in ten bands, ribbed and stair-stepped (stream riffle, rocks
+				// bench), as screen-space reflections do without refinement. Not jittered: a per-pixel start dithers
+				// the hidden test into vertical teeth without a temporal filter to resolve it.
 				float f = float(i) / float(MS);
 				vec3 pv = vs + vt * f;
 				vec4 cp = proj * vec4(pv, 1.0);
@@ -331,11 +336,44 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 					break;
 				}
 				float dz = b.z / b.w - pv.z; // > 0: the scene there is nearer the eye than the ray
-				q_last = q;
-				len_last = d1 > 0.0 ? distance(w, p_s) : len_r * k * f;
 				if (dz > 0.0) {
+					// Bisect between the last sample in front of the scene and this one behind it.
+					float lo = f_last;
+					float hi = f;
+					for (int j = 0; j < 4; j++) {
+						float fm = 0.5 * (lo + hi);
+						vec3 pm = vs + vt * fm;
+						vec4 cm = proj * vec4(pm, 1.0);
+						vec2 qm = cm.xy / cm.w * 0.5 + 0.5;
+						float dm = textureLod(p_depth, qm, 0.0).r;
+						vec4 bm = inv_proj * vec4(qm * 2.0 - 1.0, dm, 1.0);
+						if (bm.z / bm.w - pm.z > 0.0) {
+							hi = fm;
+						} else {
+							lo = fm;
+						}
+					}
+					vec3 ph = vs + vt * hi;
+					vec4 ch = proj * vec4(ph, 1.0);
+					q = ch.xy / ch.w * 0.5 + 0.5;
+					d1 = textureLod(p_depth, q, 0.0).r;
+					b = inv_proj * vec4(q * 2.0 - 1.0, d1, 1.0);
+					w = (inv_view * vec4(b.xyz / b.w, 1.0)).xyz;
+					// A thickness test, as screen-space reflections make: where the refined point still lies well
+					// behind what the screen shows there, the ray passed behind a stone (its far side, not on the
+					// screen) rather than meeting its face, and reading that pixel smeared the stone's silhouette
+					// down in columns. The straight-through pixel stands in, as for a hidden ray.
+					if (b.z / b.w - ph.z > 0.1 + 0.02 * abs(ph.z)) {
+						hidden = true;
+						break;
+					}
+					q_last = q;
+					len_last = d1 > 0.0 ? distance(w, p_s) : len_r * k * hi;
 					break;
 				}
+				q_last = q;
+				len_last = d1 > 0.0 ? distance(w, p_s) : len_r * k * f;
+				f_last = f;
 			}
 			// Hidden: what the ray meets is behind the stone on the screen, so the straight-through pixel stands in
 			// (the last clear sample, kept, stretched the bed's last row before the stone up over the whole band).
