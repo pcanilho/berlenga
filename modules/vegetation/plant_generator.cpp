@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "plant_generator.h"
+#include "grass_field_3d.h"
 #include "vegetation_fire.h"
 #include "vegetation_light.h"
 
@@ -5222,6 +5223,7 @@ Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
 		code += "#define PLANT_TEXTURED\n";
 	}
 	code += shader_common_code();
+	code += GrassField3D::get_ground_opened_shader_code();
 	code += R"(
 global uniform sampler2D grass_trample_map;
 global uniform vec4 grass_trample_rect;
@@ -5267,6 +5269,9 @@ void vertex() {
 	vec3 root = MODEL_MATRIX[3].xyz;
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
 	vec3 rest_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// Ruts, digs and puddles (mud round 6): a light print lays the plant down, a rut or standing water takes it.
+	vec3 go = grass_ground_opened(root.xz);
+	float plant_rnd = fract(sin(dot(root.xz, vec2(12.9898, 78.233))) * 43758.5453);
 	if (w > 0.0) {
 		float resp = (grass_wind.z > 0.0 ? grass_wind.z : 0.12) / max(stiffness, 0.05);
 		vec3 wind = to_local * plant_wind(root, max(height * 0.66, 0.05));
@@ -5299,6 +5304,12 @@ void vertex() {
 			if (press > 1e-3 && length(b) > 1e-4) {
 				push = normalize((to_local * vec3(b.x, 0.0, b.y)).xz) * 1.2 / max(sqrt(stiffness), 0.3);
 			}
+		}
+		if (go.x > press) {
+			// Pressed into the ground: laid over its own way, as a wheel or boot leaves a plant.
+			float ga = plant_rnd * 6.2831853;
+			press = go.x;
+			push = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz) * 1.2 / max(sqrt(stiffness), 0.3);
 		}
 		// Sway: on top of the mean lean, each organ rocks at its own natural frequency, driven by
 		// the turbulence (de Langre 2008: herbs and grasses 0.5 to 4 Hz, lower for taller and
@@ -5359,6 +5370,9 @@ void vertex() {
 		float b = fire_v.x * (1.0 - smoothstep(0.7, 1.3, height / max(fire_v.z, 0.02)));
 		VERTEX *= vec3(mix(1.0, 0.75, b), mix(1.0, 0.3, b), mix(1.0, 0.75, b));
 	}
+	// Torn out where the soil opened (a dither by the plant, so a rut's edge thins), and standing on the dented ground.
+	VERTEX *= 1.0 - step(plant_rnd, 0.97 * go.y + 0.02) * step(1e-3, go.y);
+	VERTEX -= to_local * vec3(0.0, go.z, 0.0);
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_geo_n = normalize(mat3(MODEL_MATRIX) * NORMAL);
 }

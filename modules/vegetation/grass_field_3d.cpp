@@ -352,19 +352,8 @@ void GrassField3D::_ensure_resources() {
 	}
 }
 
-void GrassField3D::_build_material() {
-	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
-	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
-	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
-	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
-	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
-	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
-	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\n";
-	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
-	code += WeatherMap3D::get_wind_shader_code();
-	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
-	// The ground's ruts, digs and puddles (GroundSurface3D; material.cpp ground_deform_exposed()), mud round 5.
-	code += R"(
+String GrassField3D::get_ground_opened_shader_code() {
+	return R"(
 global uniform sampler2D ground_deform_map;
 global uniform vec4 ground_deform_rect;
 global uniform sampler2D ground_deform_near_map;
@@ -390,12 +379,30 @@ vec3 grass_ground_opened(vec2 p_xz) {
 	}
 	// Any fresh print or film lays the sward over (the ground's fresh tint, B); a light pass leaves it there, flattened,
 	// as on a meadow a tyre has crossed once. Pressed in past a centimetre or so, or under water, it is torn out.
-	float flat_ = max(smoothstep(0.002, 0.008, abs(d.r)), smoothstep(0.03, 0.15, abs(1.0 - d.b)));
-	float relief = smoothstep(0.01, 0.04, abs(d.r));
+	// Grown back over since (mud round 6: GroundSurface3D's kept ruts age; A just over 1): torn blades return, flattened
+	// ones stand up four times sooner.
+	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
+	float flat_ = max(smoothstep(0.002, 0.008, abs(d.r)) * (1.0 - min(4.0 * regrown, 1.0)), smoothstep(0.03, 0.15, abs(1.0 - d.b)));
+	float relief = smoothstep(0.01, 0.04, abs(d.r)) * (1.0 - regrown);
 	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
 	return vec3(flat_, max(relief, water), d.r);
 }
 )";
+}
+
+void GrassField3D::_build_material() {
+	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
+	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
+	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
+	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
+	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
+	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
+	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\n";
+	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
+	code += WeatherMap3D::get_wind_shader_code();
+	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
+	// The ground's ruts, digs and puddles (GroundSurface3D; material.cpp ground_deform_exposed()), mud round 5.
+	code += get_ground_opened_shader_code();
 	code += R"(
 // weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
 // zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
