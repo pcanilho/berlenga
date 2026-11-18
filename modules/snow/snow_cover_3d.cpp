@@ -38,6 +38,7 @@
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -927,7 +928,7 @@ void SnowCover3D::_slide() {
 void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only) {
 	const int n = resolution;
 	const int nn = n * n;
-	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
+	const WorldWeather *wm = owner || !canopy_enabled || !WorldContracts::weather()->has_provider() ? nullptr : WorldContracts::weather();
 	const TerrainDataMap3D *cm = get_climate_map_node();
 	const bool canopy = cell_canopy.size() == nn;
 	if (cm) {
@@ -957,7 +958,7 @@ void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vecto
 			}
 			const Vector3 pos = _cell_center(x, z);
 			if (c) {
-				c[i] = wm ? CLAMP(wm->get_canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
+				c[i] = wm ? CLAMP(wm->canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
 			}
 			if (cp) {
 				cp[i] = cm->get_precipitation_at(pos);
@@ -2224,18 +2225,21 @@ float SnowCover3D::get_runoff_at(Vector3 p_position) const {
 	return MAX(_sample(pub.runoff, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
+// The weather contract's air at the ground under the point, then the snow's own lapse rate up or down to it.
 float SnowCover3D::get_air_temperature_at(Vector3 p_position) const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
-	const float t = w ? w->get_air_temperature() : temperature;
+	const WorldWeather *w = WorldContracts::weather();
+	const bool live = w->has_provider();
+	const float ref = live ? w->ground_height_at(p_position) : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const float t = live ? w->air_temperature_at(Vector3(p_position.x, ref, p_position.z)) : temperature;
 	return t - lapse_rate * 0.001f * (p_position.y - ref);
 }
 
 float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	const float rate = w ? w->get_rain_at(p_position) : precipitation_rate;
-	const float rh = w ? w->get_air_humidity() : humidity;
-	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const WorldWeather *w = WorldContracts::weather();
+	const bool live = w->has_provider();
+	const float ref = live ? w->ground_height_at(p_position) : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const float rate = live ? w->precipitation_at(p_position) : precipitation_rate;
+	const float rh = live ? w->air_humidity_at(Vector3(p_position.x, ref, p_position.z)) : humidity;
 	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) * snowfall_fraction(get_air_temperature_at(p_position), rh);
 }
 

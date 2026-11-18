@@ -60,6 +60,13 @@
 				Override in a stub to replace [method canopy_wetness_at].
 			</description>
 		</method>
+		<method name="_cloud_cover_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method cloud_cover_at].
+			</description>
+		</method>
 		<method name="_contact_wetness_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -67,11 +74,24 @@
 				Override in a stub to replace [method contact_wetness_at].
 			</description>
 		</method>
+		<method name="_day_of_year" qualifiers="virtual const">
+			<return type="int" />
+			<description>
+				Override in a stub: [method day_of_year].
+			</description>
+		</method>
 		<method name="_frost_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub to replace [method frost_at].
+			</description>
+		</method>
+		<method name="_ground_height_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method ground_height_at].
 			</description>
 		</method>
 		<method name="_ground_water_input_at" qualifiers="virtual const">
@@ -116,6 +136,14 @@
 				Override in a stub to replace [method rainfall_at].
 			</description>
 		</method>
+		<method name="_season_at" qualifiers="virtual const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="day" type="int" />
+			<description>
+				Override in a stub: [method season_at].
+			</description>
+		</method>
 		<method name="_snowfall_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -130,11 +158,30 @@
 				Override in a stub to replace [method sun_visibility_at].
 			</description>
 		</method>
+		<method name="_surface_temperature_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method surface_temperature_at].
+			</description>
+		</method>
 		<method name="_surface_wetness_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub to replace [method surface_wetness_at].
+			</description>
+		</method>
+		<method name="_time_scale" qualifiers="virtual const">
+			<return type="float" />
+			<description>
+				Override in a stub: [method time_scale].
+			</description>
+		</method>
+		<method name="_water_temperature" qualifiers="virtual const">
+			<return type="float" />
+			<description>
+				Override in a stub: [method water_temperature].
 			</description>
 		</method>
 		<method name="_wind_aloft_at" qualifiers="virtual const">
@@ -204,11 +251,24 @@
 				How wet the leaves are (0..1). Default 0.
 			</description>
 		</method>
+		<method name="cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Cloud cover over the point, 0 to 1. Default 0.
+			</description>
+		</method>
 		<method name="contact_wetness_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Water other systems splashed onto surfaces at [param position] (0..1). Default 0.
+			</description>
+		</method>
+		<method name="day_of_year" qualifiers="const">
+			<return type="int" />
+			<description>
+				The day of the year, 1 to 365: the clock's date, else the weather's season day. Default 135 (15 May).
 			</description>
 		</method>
 		<method name="dew_point_at" qualifiers="const">
@@ -223,6 +283,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Hoarfrost on exposed surfaces (mm of water). Default 0.
+			</description>
+		</method>
+		<method name="ground_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The terrain height the weather sees under the point, in meters (its wind terrain, else its ground height). Default 0.
 			</description>
 		</method>
 		<method name="ground_water_input_at" qualifiers="const">
@@ -273,6 +340,14 @@
 				Rain at [param position] (mm/h of liquid). Default 0.
 			</description>
 		</method>
+		<method name="season_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="day" type="int" default="-1" />
+			<description>
+				The season's state at the point's height on a day of the year (below 1: today), with the live departure from the climate: phenology, snowpack, soil frost (the keys of WeatherMap3D.get_season). Default: the default climate.
+			</description>
+		</method>
 		<method name="snowfall_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -287,11 +362,30 @@
 				The share of the sun's disc clear of cloud at [param position] (0..1). Default 1.
 			</description>
 		</method>
+		<method name="surface_temperature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Exposed ground's temperature in degrees Celsius: below the air under a clear calm night sky. Default: the air's.
+			</description>
+		</method>
 		<method name="surface_wetness_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How wet open surfaces are at [param position] (0..1: the water film over its storage; 1 where puddles stand). Default 0.
+			</description>
+		</method>
+		<method name="time_scale" qualifiers="const">
+			<return type="float" />
+			<description>
+				The weather's time per real second. Default 1.
+			</description>
+		</method>
+		<method name="water_temperature" qualifiers="const">
+			<return type="float" />
+			<description>
+				Open water's temperature in degrees Celsius, lagging the air by about a month. Default 15.
 			</description>
 		</method>
 		<method name="wind_aloft_at" qualifiers="const">

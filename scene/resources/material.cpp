@@ -906,6 +906,38 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	cover = mix(cover, min(crown_load * 2.0, 1.0), crown);
 	return vec4(cover, s.g, clamp(s.b, 0.0, 1.0), 1.0);
 }
+
+// The snowpack's depth (m) and density (kg/m3) at a world position, (0, 0) where no pack answers: the near square
+// over the world tier, as snow_cover_at() reads them. For what the pack's weight does (plants pressed under it).
+vec2 snow_pack_at(vec3 p_world_pos) {
+	vec4 s = vec4(0.0);
+	if (snow_world_rect.z > 0.0) {
+		vec2 wuv = (p_world_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
+		if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
+			vec2 wh = 0.5 / vec2(textureSize(snow_world_map, 0));
+			s = textureLod(snow_world_map, clamp(wuv, wh, 1.0 - wh), 0.0);
+		}
+	}
+	if (snow_map_rect.z > 0.0) {
+		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+		vec2 ne = min(nuv, 1.0 - nuv);
+		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
+		if (nw > 0.0) {
+			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
+		}
+	}
+	return vec2(max(s.r, 0.0), max(s.a, 0.0) * 1000.0);
+}
+
+// How far a pack's weight presses a plant over, 0 to 1 (docs/ideas/world-links.md, snow on plants): the load
+// rho g d against the stems' stiffness. Settled snow lays herbs and grasses flat (the snow press of alpine
+// swards, Koerner 2003, "Alpine Plant Life", ch. 3) from about 0.3 kPa; stiffer dwarf shrubs bow under more
+// (p_stiffness over the grass's, bending going as its square). A dusting presses nothing.
+float snow_press(vec2 p_pack, float p_stiffness) {
+	float load = p_pack.y * 9.81 * p_pack.x; // Pa
+	return smoothstep(0.0, 1.0, load / (300.0 * max(p_stiffness * p_stiffness, 0.05))) * smoothstep(0.02, 0.06, p_pack.x);
+}
 )";
 	}
 	code += R"(

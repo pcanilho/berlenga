@@ -75,6 +75,55 @@ float WorldWeather::canopy_water_at(const Vector3 &p_position) const WW_CALL(_ca
 float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_canopy_wetness_at, contract_canopy_wetness_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
+float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
+float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
+float WorldWeather::surface_temperature_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_surface_temperature_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_surface_temperature_at(p_position) : air_temperature_at(p_position);
+}
+Dictionary WorldWeather::season_at(const Vector3 &p_position, int p_day) const {
+	Dictionary r;
+	if (GDVIRTUAL_CALL(_season_at, p_position, p_day, r)) {
+		return r;
+	}
+	if (provider) {
+		return provider->contract_season_at(p_position, p_day);
+	}
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(WeatherSeason::Climate(), p_position.y, p_day >= 1 ? MIN(p_day, 365) : day_of_year()));
+}
+int WorldWeather::day_of_year() const {
+	int r = 135;
+	if (GDVIRTUAL_CALL(_day_of_year, r)) {
+		return CLAMP(r, 1, 365);
+	}
+	return provider ? CLAMP(provider->contract_day_of_year(), 1, 365) : 135;
+}
+bool WorldWeather::season_climate(WeatherSeason::Climate &r_climate) const {
+	return provider != nullptr && provider->contract_season_climate(r_climate);
+}
+float WorldWeather::water_temperature() const {
+	float r = DEFAULT_AIR_TEMPERATURE;
+	if (GDVIRTUAL_CALL(_water_temperature, r)) {
+		return r;
+	}
+	return provider ? provider->contract_water_temperature() : DEFAULT_AIR_TEMPERATURE;
+}
+double WorldWeather::time_scale() const {
+	double r = 1.0;
+	if (GDVIRTUAL_CALL(_time_scale, r)) {
+		return r;
+	}
+	return provider ? provider->contract_time_scale() : 1.0;
+}
+
+Dictionary WorldWeatherProvider::contract_season_at(const Vector3 &p_position, int p_day) const {
+	WeatherSeason::Climate c;
+	contract_season_climate(c);
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(c, p_position.y, p_day >= 1 ? MIN(p_day, 365) : contract_day_of_year()));
+}
 
 Vector3 WorldWeather::mean_wind_at(const Vector3 &p_position) const WW_CALL(_mean_wind_at, contract_mean_wind_at(p_position), Vector3(), p_position)
 Vector3 WorldWeather::wind_aloft_at(const Vector3 &p_position, float p_altitude) const WW_CALL(_wind_aloft_at, contract_wind_aloft_at(p_position, p_altitude), Vector3(), p_position, p_altitude)
@@ -120,6 +169,13 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);
 	ClassDB::bind_method(D_METHOD("ground_water_input_at", "position"), &WorldWeather::ground_water_input_at);
+	ClassDB::bind_method(D_METHOD("day_of_year"), &WorldWeather::day_of_year);
+	ClassDB::bind_method(D_METHOD("season_at", "position", "day"), &WorldWeather::season_at, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("cloud_cover_at", "position"), &WorldWeather::cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("water_temperature"), &WorldWeather::water_temperature);
+	ClassDB::bind_method(D_METHOD("surface_temperature_at", "position"), &WorldWeather::surface_temperature_at);
+	ClassDB::bind_method(D_METHOD("ground_height_at", "position"), &WorldWeather::ground_height_at);
+	ClassDB::bind_method(D_METHOD("time_scale"), &WorldWeather::time_scale);
 
 	GDVIRTUAL_BIND(_air_temperature_at, "position");
 	GDVIRTUAL_BIND(_air_humidity_at, "position");
@@ -141,6 +197,13 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_canopy_wetness_at, "position");
 	GDVIRTUAL_BIND(_canopy_drip_at, "position");
 	GDVIRTUAL_BIND(_ground_water_input_at, "position");
+	GDVIRTUAL_BIND(_day_of_year);
+	GDVIRTUAL_BIND(_season_at, "position", "day");
+	GDVIRTUAL_BIND(_cloud_cover_at, "position");
+	GDVIRTUAL_BIND(_water_temperature);
+	GDVIRTUAL_BIND(_surface_temperature_at, "position");
+	GDVIRTUAL_BIND(_ground_height_at, "position");
+	GDVIRTUAL_BIND(_time_scale);
 }
 
 // Water.

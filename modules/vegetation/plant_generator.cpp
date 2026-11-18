@@ -5540,6 +5540,15 @@ void vertex() {
 			press = go.x;
 			push = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz) * 1.2 / max(sqrt(stiffness), 0.3);
 		}
+		// Snow (docs/ideas/world-links.md): a settled pack's weight bows the plant down and out, each part
+		// over its own side, till it lies under the snow; it rises again as the pack melts.
+		float snow_p = snow_press(snow_pack_at(root), stiffness);
+		if (snow_p > press) {
+			float ga = plant_rnd * 6.2831853;
+			vec2 own = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz);
+			press = snow_p;
+			push = (hl > 1e-4 ? hd : own) * 1.2 / max(sqrt(stiffness), 0.3);
+		}
 		// Sway: on top of the mean lean, each organ rocks at its own natural frequency, driven by
 		// the turbulence (de Langre 2008: herbs and grasses 0.5 to 4 Hz, lower for taller and
 		// softer stems). An ellipse, wider along the wind than across it; the phase is the organ's.

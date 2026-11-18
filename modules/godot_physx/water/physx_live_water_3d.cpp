@@ -31,6 +31,8 @@
 
 #include "physx_live_water_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "physx_river_3d.h"
 #include "water_raster_reflections.h"
 
@@ -300,14 +302,11 @@ void PhysXLiveWater3D::_wet_ground() {
 
 float PhysXLiveWater3D::_rain_mm_per_hour() const {
 	float r = rain_rate;
-#ifdef MODULE_WEATHER_ENABLED
 	if (rain_from_weather) {
-		const WeatherMap3D *weather = WeatherMap3D::get_active();
-		if (weather != nullptr) {
-			r += weather->get_rain_at(get_global_position());
+		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
+			r += weather->precipitation_at(get_global_position());
 		}
 	}
-#endif
 	return r;
 }
 

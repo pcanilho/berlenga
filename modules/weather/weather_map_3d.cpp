@@ -1258,6 +1258,15 @@ Dictionary WeatherMap3D::get_season_at_height(float p_height) const {
 	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), p_height, get_day_of_year(), season_anomaly));
 }
 
+// The weather contract's season: the cached one at the map's ground for today, else computed at the point's height.
+Dictionary WeatherMap3D::contract_season_at(const Vector3 &p_position, int p_day) const {
+	const int day = p_day >= 1 ? MIN(p_day, 365) : get_day_of_year();
+	if (day == get_day_of_year() && Math::abs(p_position.y - ground_height) < 25.0f) {
+		return const_cast<WeatherMap3D *>(this)->get_season();
+	}
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), p_position.y, day, season_anomaly));
+}
+
 Dictionary WeatherMap3D::get_season_on_day(int p_day) const {
 	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), ground_height, CLAMP(p_day, 1, 365), season_anomaly));
 }
