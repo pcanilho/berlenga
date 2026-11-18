@@ -1354,6 +1354,41 @@ wind field, and terrain lee slopes are not yet a birth site.
    terrain wind (WeatherMap3D, terrain wind) turns back behind a ridge,
    and those whirls run along the slope, spreading the fire sideways.
 
+### Burning pieces keep their flames (picked 18 Nov late, first of four)
+
+Built. Once a burning PhysXDestructible3D has broken, PhysXBurnable3D finds
+the burning patch again among the pieces by where each sat in the intact
+object (PhysXDestructible3D.get_piece_rest_center: the middle of its
+chunks in the node's space) and their size (get_piece_volume): a piece
+whose rest centre lies within the burn radius of the ignition, give or
+take half its size, is alight. The eight biggest carry the flames, a
+Flow source riding just over each (Flow takes moving bodies as solids, so
+the gas would be lost inside one), the heat release shared by volume and
+the flame height by Heskestad as on the faces. Sparks and firebrands rise
+from the same places, so they follow the debris too. Once the fuel is
+spent the pieces smoulder: a faint warm smoke over each until the embers
+die, with the char glow already carried on the pieces by the instance
+shader parameters. This is how Teardown and BeamNG keep fire on debris:
+fire is a property of the burning material and moves with it. Test: the
+3 x 2 m board wall broke at 70 s (fast collapse_share); flames went down
+with the pieces and burnt on the ground pile (heights 0.2 to 0.3 m) at
+125 s. get_piece_center now gives the middle of all a piece's chunks with
+the node's scale (it gave the first chunk's), which also puts rockfall
+dust under the middle of a falling island.
+
+### River current drags flags and sheets (picked 18 Nov late, second of four)
+
+Built for the CPU cloth solver (PhysXCloth3D's default). The XPBD solver
+takes the water's surface and current (ClothWetness reads them from
+WorldContracts' water each step): particles under the surface keep 30% of
+their weight and relax toward the current at Morison's 0.5 rho Cd |u| over
+the soaked areal mass (Cd 1.2), capped at 200/s, as worn clothing does.
+Test: a 1 x 1.5 m sheet hanging from its top edge with its lower 45 cm in
+the water: still water left it hanging; a 0.8 m/s current streamed its
+lower edge 0.94 m downstream, up to the surface, in two seconds, and it
+hung straight again once out. Left: the GPU deformable path (PhysX
+surface) does not take the current.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

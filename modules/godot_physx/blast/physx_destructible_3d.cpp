@@ -196,6 +196,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buried_below_y", PROPERTY_HINT_RANGE, "-10000,10000,0.01,or_less,or_greater,suffix:m"), "set_buried_below_y", "get_buried_below_y");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
+	ClassDB::bind_method(D_METHOD("get_piece_rest_center", "index"), &PhysXDestructible3D::get_piece_rest_center);
+	ClassDB::bind_method(D_METHOD("get_piece_volume", "index"), &PhysXDestructible3D::get_piece_volume);
 	ClassDB::bind_method(D_METHOD("set_piece_lifetime", "seconds"), &PhysXDestructible3D::set_piece_lifetime);
 	ClassDB::bind_method(D_METHOD("get_piece_lifetime"), &PhysXDestructible3D::get_piece_lifetime);
 	ClassDB::bind_method(D_METHOD("set_piece_shrink_time", "seconds"), &PhysXDestructible3D::set_piece_shrink_time);
@@ -1699,7 +1701,28 @@ Vector3 PhysXDestructible3D::get_piece_center(int p_index) const {
 	if (pieces[p_index].chunk_indices.is_empty()) {
 		return xf.origin;
 	}
-	return xf.xform(_chunk_centroid_local(pieces[p_index].chunk_indices[0]));
+	// The middle of all its chunks (an island carries several), with the node's scale the body's pose lacks.
+	return Transform3D(xf.basis.orthonormalized().scaled_local(spawn_scale), xf.origin).xform(pieces[p_index].center_local);
+}
+
+Vector3 PhysXDestructible3D::get_piece_rest_center(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size()) {
+		return Vector3();
+	}
+	return pieces[p_index].center_local;
+}
+
+float PhysXDestructible3D::get_piece_volume(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size()) {
+		return 0.0f;
+	}
+	double v = 0.0;
+	for (uint32_t ci : pieces[p_index].chunk_indices) {
+		if (ci < chunk_volumes.size()) {
+			v += chunk_volumes[ci];
+		}
+	}
+	return float(v * Math::abs(spawn_scale.x * spawn_scale.y * spawn_scale.z));
 }
 
 float PhysXDestructible3D::get_piece_mass(int p_index) const {
