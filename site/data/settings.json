@@ -2752,7 +2752,7 @@
     "cut_since"
    ],
    "note": "",
-   "what": "trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.",
+   "what": "trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Coppice with standards is cut in straight-edged coupes in turn (`coupe_rotation`, `coupe_ages`), so neighbouring coupes stand at different ages, with rides along some edges (`ride_width`). Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
