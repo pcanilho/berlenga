@@ -2079,6 +2079,24 @@ wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the he
 control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in
 the top 60%.
 
+Cork round 8 (18 Nov; docs declined r7: each stem a separate tube in the bole with a sleeve
+rim and the bark changing across it, pale blotches on the bole, fissures as thin pencil lines,
+a root flap). The crotch is now swept: over the split the bole runs on as one surface, the
+outline of the smooth union of the bole and its stems (blended skeletal surfaces, Bloomenthal
+and Wyvill 1990; Quilez's polynomial smooth minimum, so the blend acts only where surfaces meet)
+cut by each bole ring along its own radii, from 0.6 bole radii under the split to 1.1 over it,
+where the outline lies on the stems. Its v runs over the surface side by side and its UVs turn
+into each stem's own (the stems' tubes framed from their inner side, so the crotch knows their
+u), except down the valley between two stems; the stems start on the bole's axis and are drawn
+1.5% inside the crotch until its top ring. No displaced relief on the crotch (the normal map
+keeps it). The cork itself: fissures are cut to a width in metres from the first-order distance
+to the noise's zero lines (|n| / |grad n|; Taubin 1994), not a threshold on the noise, which gave
+hairlines where the noise was steep: main fissures 3-5 cm across and 4.5-9.5 cm deep with
+rounded shoulders, a second family splitting half the ridges, cross fissures every 15-25 cm
+cutting them into blocks across their width; the whole fissure darkens (red-brown walls, dark
+floor); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
+as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
+
 Maritime pine round 4 (18 Nov): the crown read as a see-through fan of bare limbs with tufts at the tips. Shedding 0.02 and six years of needles keep shoots inside the crown, a lighter self-shadow (0.03) lets them live, and a pipe exponent of 1.85 gives a stout bole under the heavy crown.
 
 Round 3 (18 Nov): the leader splits once into four limbs (a second split at ten years gave

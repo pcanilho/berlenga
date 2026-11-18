@@ -2956,6 +2956,129 @@ static thread_local float tube_tile = 0.4f;
 // the bark); displaced, the bole's ridges stood through the stems' furrows as teeth (docs, 18 Nov).
 static thread_local Vector3 tube_fade_c;
 static thread_local float tube_fade_r = 0.0f;
+static thread_local float tube_fade_r0 = 0.0f; // No relief at all within this.
+// The swept crotch's height over a split, in bole radii.
+static constexpr float TREE_CROTCH_TOP = 1.1f;
+
+// A leader's swept crotch (trees.md 5z, cork round 8): over its split the bole runs on as one
+// surface wrapping its stems, the outline of their smooth union (Bloomenthal and Wyvill's
+// blended skeletal surfaces; the exponential smooth minimum) cut by each of the bole's rings
+// along its own radii, so its bark runs on unbroken; its UVs turn into each stem's own by the top
+// ring, which lies on the stems. As separate tubes pushed into the bole each stem showed a
+// sleeve rim and its bark changed across it (docs, 18 Nov).
+struct TubeCrotch {
+	struct Stem {
+		LocalVector<Vector3> p;
+		LocalVector<float> r;
+		LocalVector<float> arc; // Metres along the polyline to each point.
+		Vector3 n0; // The stem tube's first frame normal (its u origin).
+		float repeats = 1.0f;
+		float circ = 1.0f; // Metres per v unit.
+	};
+	bool active = false;
+	Vector3 c, up;
+	float rt = 0.0f, h_top = 0.0f;
+	float h0 = 0.0f; // Where it starts, under the split (negative).
+	LocalVector<Stem> stems;
+	float bole_r(float p_h) const {
+		// The bole's own top, a blunt dome the stems leave from (its sides the saddles).
+		static const float hk[7] = { 0.0f, 0.15f, 0.3f, 0.45f, 0.6f, 0.75f, 0.95f };
+		static const float rk[7] = { 1.0f, 0.95f, 0.86f, 0.74f, 0.6f, 0.45f, 0.0f };
+		const float h = p_h / rt;
+		if (h <= 0.0f) {
+			return rt;
+		}
+		for (int i = 1; i < 7; i++) {
+			if (h <= hk[i]) {
+				return rt * Math::lerp(rk[i - 1], rk[i], (h - hk[i - 1]) / (hk[i] - hk[i - 1]));
+			}
+		}
+		return 0.0f;
+	}
+	float blend(float p_h) const {
+		return 0.3f * rt * Math::smoothstep(h0, h0 + 0.5f * rt, p_h) * (1.0f - Math::smoothstep(0.55f * h_top, h_top, p_h));
+	}
+	// Signed distance to each stem's surface (capsule chain), the nearest stem and the margin
+	// to the second nearest.
+	float stem_d(const Stem &p_s, const Vector3 &p_x, int *r_seg = nullptr, float *r_t = nullptr) const {
+		float best = 1e9f;
+		for (uint32_t i = 0; i + 1 < p_s.p.size(); i++) {
+			const Vector3 ab = p_s.p[i + 1] - p_s.p[i];
+			const float l2 = ab.length_squared();
+			const float t = l2 > 1e-12f ? CLAMP((p_x - p_s.p[i]).dot(ab) / l2, 0.0f, 1.0f) : 0.0f;
+			const float d = p_x.distance_to(p_s.p[i] + ab * t) - Math::lerp(p_s.r[i], p_s.r[i + 1], t);
+			if (d < best) {
+				best = d;
+				if (r_seg) {
+					*r_seg = int(i);
+					*r_t = t;
+				}
+			}
+		}
+		return best;
+	}
+	float field(const Vector3 &p_x, int *r_near = nullptr, float *r_margin = nullptr) const {
+		const Vector3 rel = p_x - c;
+		const float h = rel.dot(up);
+		const float br = bole_r(h);
+		const float radial = (rel - up * h).length();
+		float d[9];
+		int n = 0;
+		d[n++] = br > 0.0f ? radial - br : p_x.distance_to(c + up * (0.95f * rt));
+		float m = d[0], m2 = 1e9f;
+		int near = -1;
+		for (uint32_t i = 0; i < stems.size() && n < 9; i++) {
+			d[n] = stem_d(stems[i], p_x);
+			if (d[n] < m) {
+				m2 = m;
+				m = d[n];
+				near = int(i);
+			} else if (d[n] < m2) {
+				m2 = d[n];
+			}
+			n++;
+		}
+		if (r_near) {
+			// The stem nearest, and its lead over every other stem.
+			float best = 1e9f, second = 1e9f;
+			int bi = -1;
+			for (int i = 1; i < n; i++) {
+				if (d[i] < best) {
+					second = best;
+					best = d[i];
+					bi = i - 1;
+				} else if (d[i] < second) {
+					second = d[i];
+				}
+			}
+			*r_near = bi;
+			*r_margin = second - best;
+		}
+		(void)near;
+		// The polynomial smooth minimum (Quilez): it blends only within k of a meeting, so the
+		// bole keeps its own girth where the stems are still deep inside it (the exponential one
+		// swelled it there, a ring where the crotch began).
+		const float k = blend(h);
+		if (k < 1e-5f) {
+			return m;
+		}
+		float f = d[0];
+		for (int i = 1; i < n; i++) {
+			const float hh = MAX(k - Math::abs(f - d[i]), 0.0f) / k;
+			f = MIN(f, d[i]) - hh * hh * k * 0.25f;
+		}
+		return f;
+	}
+};
+static thread_local TubeCrotch tube_crotch;
+// A split's stem under the swept crotch: drawn a little inside it (its rings, set square to the
+// bend at its base, bulge past the straight segments the crotch wraps), full girth at its top.
+struct TubeCrotchShrink {
+	bool active = false;
+	Vector3 c, up;
+	float rt = 0.0f, h_top = 0.0f;
+};
+static thread_local TubeCrotchShrink tube_shrink;
 
 // A generalized cylinder along a polyline, framed by parallel transport (Bishop frames).
 void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height, float p_relief, float p_girth_r, bool p_soil_fade) {
@@ -2999,6 +3122,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		auto at = [&](int i, int j) { return hdata[((j % hn + hn) % hn) * hn + ((i % hn + hn) % hn)]; };
 		return Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
 	};
+	LocalVector<float> side_v; // The swept crotch's v, per side.
 	for (int r = 0; r < rings; r++) {
 		// The ring's plane follows the axis averaged over about a radius either way: square to
 		// the local tangent, a bend tighter than the stem is thick folded the rings on its inner
@@ -3042,11 +3166,103 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			const float len = p_points[r1].distance_to(p_points[r0]);
 			slope = len > 1e-6f ? CLAMP((p_radii[r1] - p_radii[r0]) / len, -6.0f, 6.0f) : 0.0f;
 		}
+		// A ring over a leader's split, on the bole's axis: it follows the swept crotch.
+		const TubeCrotch &cx = tube_crotch;
+		float c_h = 0.0f;
+		bool cring = false;
+		if (cx.active && !capped) {
+			const Vector3 rel = p_points[r] - cx.c;
+			c_h = rel.dot(cx.up);
+			cring = c_h > cx.h0 + 1e-4f && c_h <= cx.h_top + 1e-4f && (rel - cx.up * c_h).length() < 1e-3f;
+		}
+		if (int(side_v.size()) != p_sides + 1) {
+			side_v.resize(p_sides + 1);
+		}
 		for (int s = 0; s <= p_sides; s++) {
 			const float ang = Math::TAU * s / p_sides;
 			const Vector3 dir = nrm * Math::cos(ang) + bin * Math::sin(ang);
 			float rr = p_radii[r];
-			if (hdata) {
+			Vector3 c_pos, c_nrm, c_tan;
+			Vector2 c_uv;
+			if (!cring) {
+				side_v[s] = v;
+			}
+			if (cring) {
+				// The outermost crossing of the blended surface along this side's radius.
+				const Vector3 o = p_points[r];
+				const float far = 2.6f * cx.rt, step = 0.02f * cx.rt;
+				float rho = 0.0f;
+				for (float q = far; q > 0.0f; q -= step) {
+					if (cx.field(o + dir * q) < 0.0f) {
+						float lo = q, hi = q + step;
+						for (int it = 0; it < 12; it++) {
+							const float mid = 0.5f * (lo + hi);
+							if (cx.field(o + dir * mid) < 0.0f) {
+								lo = mid;
+							} else {
+								hi = mid;
+							}
+						}
+						rho = 0.5f * (lo + hi);
+						break;
+					}
+				}
+				// Just outside the stems over the blend, just inside them at the top ring, where
+				// the stems' own bark takes over.
+				rho = MAX(0.0f, rho + Math::lerp(0.002f, -0.004f, Math::smoothstep(0.7f * cx.h_top, cx.h_top, c_h)));
+				rr = rho;
+				c_pos = o + dir * rho;
+				const float e = 0.003f;
+				Vector3 g(cx.field(c_pos + Vector3(e, 0, 0)) - cx.field(c_pos - Vector3(e, 0, 0)),
+						cx.field(c_pos + Vector3(0, e, 0)) - cx.field(c_pos - Vector3(0, e, 0)),
+						cx.field(c_pos + Vector3(0, 0, e)) - cx.field(c_pos - Vector3(0, 0, e)));
+				c_nrm = g.length_squared() > 1e-14f ? g.normalized() : dir;
+				// The bole's UVs, turning into the nearest stem's toward the top ring (not where
+				// two stems meet: there both keep the bole's, down the crotch's valley).
+				// v runs over the surface, side by side: by the axis, it smeared over the stems'
+				// undersides, where the outline steps out between two rings.
+				if (r > 0) {
+					side_v[s] += c_pos.distance_to(r_b.verts[base + (r - 1) * (p_sides + 1) + s]) / circumference;
+				}
+				const Vector2 ub(float(s) / p_sides * repeats, side_v[s]);
+				Vector3 tb = bin * Math::cos(ang) - nrm * Math::sin(ang);
+				c_uv = ub;
+				c_tan = tb;
+				int near = -1;
+				float margin = 0.0f;
+				cx.field(c_pos, &near, &margin);
+				if (near >= 0) {
+					const TubeCrotch::Stem &st = cx.stems[near];
+					int seg = 0;
+					float tt = 0.0f;
+					cx.stem_d(st, c_pos, &seg, &tt);
+					const Vector3 ab = st.p[seg + 1] - st.p[seg];
+					const Vector3 tj = ab.length_squared() > 1e-12f ? ab.normalized() : cx.up;
+					Vector3 ns = st.n0 - tj * st.n0.dot(tj);
+					ns = ns.length_squared() > 1e-10f ? ns.normalized() : nrm;
+					const Vector3 bs = tj.cross(ns);
+					const Vector3 rel = c_pos - (st.p[seg] + ab * tt);
+					float a = Math::atan2(rel.dot(bs), rel.dot(ns));
+					if (a < 0.0f) {
+						a += float(Math::TAU);
+					}
+					const Vector2 us(a / float(Math::TAU) * st.repeats, (st.arc[seg] + tt * ab.length()) / st.circ);
+					// The stem's UVs shifted by whole tiles to the bole's: shifting the bole's instead
+					// squeezed whole tiles into the row under the crotch's first ring, a band.
+					const Vector2 uss(us.x - Math::round(us.x - ub.x), us.y - Math::round(us.y - ub.y));
+					const float w = Math::smoothstep(0.15f * cx.h_top, cx.h_top, c_h) * Math::smoothstep(0.0f, 0.25f * cx.rt, margin);
+					c_uv = ub.lerp(uss, w);
+					const Vector3 ts = rel.length_squared() > 1e-12f ? tj.cross(rel.normalized()) : tb;
+					c_tan = tb.lerp(ts, w);
+				}
+				c_tan = c_tan - c_nrm * c_tan.dot(c_nrm);
+				c_tan = c_tan.length_squared() > 1e-10f ? c_tan.normalized() : tb;
+			}
+			if (tube_shrink.active && !cring) {
+				const float hs = (p_points[r] + dir * rr - tube_shrink.c).dot(tube_shrink.up);
+				rr *= 1.0f - 0.15f * (1.0f - Math::smoothstep(tube_shrink.h_top - 0.3f * tube_shrink.rt, tube_shrink.h_top, hs));
+			}
+			if (hdata && !cring) {
 				// Faded out at the soil line (the tree's ground is y = 0): plates and furrows cut
 				// the ground plane in a ragged line, read as a rim around the root collar. Not on
 				// fallen wood, which lies across that plane: its underside lost its furrows.
@@ -3054,7 +3270,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				// None on a cap's end face: the furrows ran into its centre as pleats.
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
 				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
-						(tube_fade_r > 0.0f ? Math::smoothstep(0.35f * tube_fade_r, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
+						(tube_fade_r > 0.0f ? Math::smoothstep(tube_fade_r0, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
 			}
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
 			// The cap's end face is mapped flat across it, in the colour of weathered end grain:
@@ -3084,23 +3300,23 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				while (r_b.relief_off.size() < uint32_t(r_b.verts.size())) {
 					r_b.relief_off.push_back(Vector2());
 				}
-				r_b.relief_off.push_back(Vector2(rr - p_radii[r], p_relief));
+				r_b.relief_off.push_back(Vector2(cring ? 0.0f : rr - p_radii[r], p_relief));
 			}
-			r_b.verts.push_back(p_points[r] + dir * rr + tongue);
-			r_b.normals.push_back(n_out);
+			r_b.verts.push_back(cring ? c_pos : p_points[r] + dir * rr + tongue);
+			r_b.normals.push_back(cring ? c_nrm : n_out);
 			if (end_face) {
 				const float rf = p_radii[r] / tube_tile;
 				r_b.not_bark.push_back(uint32_t(r_b.verts.size() - 1));
 				r_b.uvs.push_back(Vector2(0.5f + rf * Math::cos(ang), 0.5f + rf * Math::sin(ang)));
 				r_b.colors.push_back(p_color.lerp(Color(0.3f, 0.24f, 0.17f), 0.7f));
 			} else {
-				r_b.uvs.push_back(Vector2(float(s) / p_sides * repeats, v));
+				r_b.uvs.push_back(cring ? c_uv : Vector2(float(s) / p_sides * repeats, v));
 				r_b.colors.push_back(p_color);
 			}
 			if (r_b.use_tangents) {
 				// Along u; the binormal (normal x tangent) then runs along the stem, with v. On the
 				// end face u runs along the frame's normal axis.
-				const Vector3 tan = end_face ? (nrm - n_out * nrm.dot(n_out)).normalized() : bin * Math::cos(ang) - nrm * Math::sin(ang);
+				const Vector3 tan = cring ? c_tan : (end_face ? (nrm - n_out * nrm.dot(n_out)).normalized() : bin * Math::cos(ang) - nrm * Math::sin(ang));
 				r_b.tangents.push_back(tan.x);
 				r_b.tangents.push_back(tan.y);
 				r_b.tangents.push_back(tan.z);
@@ -3910,6 +4126,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				// scar of fresh, warmer inner bark (sycamore, plane, horse chestnut).
 				const bool scar = scar_cut > 0.0f && bark_hash(int(c.id), 5, salt + 43u) > scar_cut; // 0 in the crack, 1 on the plate.
 				float plate = open;
+				float cork_open = 1.0f;
 				if (p_kind == BARK_CORK) {
 					// Virgin cork (Natividade 1950; Pereira 2007): Europe's most deeply furrowed bark,
 					// a few dozen thick, corky ridges round the trunk, mostly up and down, several
@@ -3922,23 +4139,45 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// Round 7 (docs, 18 Nov: thin, stringy ridges like a juniper's): fewer, fatter
 					// ridges (six noise cycles a tile, a dozen furrows), fissures twice as wide, and
 					// broad cross breaks that cut the ridges into irregular blocks.
-					const float n1 = bark_fbm(wu, wv, 6, 1, 3, salt + 51u);
-					const float n2 = bark_fbm(wu + 0.3f, wv, 4, 2, 3, salt + 55u);
-					const float f1 = Math::smoothstep(0.025f, 0.11f, Math::abs(n1));
-					const float f2 = Math::smoothstep(0.0f, 0.08f, Math::abs(n2));
-					// Cross breaks: zero lines of a noise stretched round the stem, broad and shallow
-					// saddles on about half the ridges' length.
-					const float n3 = bark_fbm(wu, wv, 3, 8, 2, salt + 59u);
-					const float keep = Math::smoothstep(-0.05f, 0.1f, bark_fbm(u, v, 6, 4, 2, salt + 63u));
-					const float brk = Math::lerp(1.0f, Math::lerp(0.55f, 1.0f, Math::smoothstep(0.0f, 0.12f, Math::abs(n3))), keep);
-					const float o2 = MIN(MIN(f1, Math::lerp(0.45f, 1.0f, f2)), brk);
-					// Rounded, crumbly tops: the profile rises fast out of the furrow and flattens over
-					// the ridge, pitted and lumpy.
-					const float lumps = bark_fbm(u, v, 30, 15, 3, salt + 57u);
-					plate = Math::pow(o2, 0.5f) * (0.85f + 0.3f * (lumps + 0.5f));
-					// The colour darkens in the main furrows only: the side family's partings and the
-					// breaks, dark too, read as blotches and dashes (docs, 18 Nov).
-					open = f1;
+					// Round 8 (docs, 18 Nov: thin pencil-line fissures, smooth waxy ridges, pale
+					// blotches): each fissure is cut to a width in metres, not a threshold on the
+					// noise (which gave hairlines where the noise was steep): the distance to a zero
+					// line is |n| / |grad n| (first-order, Taubin 1994). Fissures 2.5-5 cm across and
+					// 3.5-6.5 cm deep with rounded shoulders, a second family that splits and merges
+					// the ridges, and cross fissures that cut them into blocks, full width.
+					const float tile = _bark_tile_of(p_kind);
+					const float e = 1.0f / N;
+					auto zero_dist = [&](float p_u, float p_v, int p_px, int p_py, uint32_t p_salt) {
+						auto at = [&](float p_a, float p_b) {
+							const float qu = p_a + 0.035f * warp * bark_fbm(p_a, p_b, 4 * F, 4 * F, 2, salt + 21u);
+							const float qv = p_b + 0.05f * warp * bark_fbm(p_a, p_b, 4 * F, 4 * F, 2, salt + 27u);
+							return bark_fbm(qu, qv, p_px, p_py, 3, p_salt);
+						};
+						const float n0 = at(p_u, p_v);
+						const float gx = (at(p_u + e, p_v) - at(p_u - e, p_v)) / (2.0f * e * tile);
+						const float gy = (at(p_u, p_v + e) - at(p_u, p_v - e)) / (2.0f * e * tile);
+						return Math::abs(n0) / MAX(Math::sqrt(gx * gx + gy * gy), 1e-4f);
+					};
+					auto cut = [](float p_d, float p_w) {
+						// 1 on the floor, 0 past the rounded shoulder.
+						return Math::pow(1.0f - Math::smoothstep(0.0f, 1.15f, p_d / p_w), 1.6f);
+					};
+					const float wn = bark_fbm(u, v, 4, 6, 2, salt + 33u) + 0.25f; // 0..0.5
+					const float w1 = 0.034f + 0.04f * wn; // Nominal: the first-order distance runs about twice the true one at this noise.
+					const float dep = 0.045f + 0.05f * wn;
+					const float c1 = cut(zero_dist(u, v, 8, 1, salt + 51u), w1);
+					// The second family only where it splits a ridge (half the stem).
+					const float m2 = Math::smoothstep(-0.02f, 0.06f, bark_fbm(u, v, 3, 4, 2, salt + 63u));
+					const float c2 = m2 * cut(zero_dist(u, v, 6, 1, salt + 55u), 0.8f * w1);
+					// Cross fissures, about every 15-25 cm, on most of the ridges.
+					const float m3 = Math::smoothstep(-0.08f, 0.02f, bark_fbm(u, v, 5, 3, 2, salt + 67u));
+					const float c3 = m3 * cut(zero_dist(u, v, 3, 8, salt + 59u), 0.6f * w1);
+					const float depth = dep * MAX(MAX(c1, 0.8f * c2), 0.65f * c3);
+					cork_open = 1.0f - MAX(MAX(c1, c2), 0.85f * c3);
+					// Lumpy, crumbly ridge tops, at the scale of a thumb.
+					const float lumps = bark_fbm(u, v, 30, 20, 3, salt + 57u);
+					plate = 1.0f - depth / L.depth + 0.05f * lumps;
+					open = cork_open;
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
 					// and splitting like an oak's interlaced ridges. The cells only add the shallower
@@ -3964,7 +4203,13 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				a = Color(shade, shade, shade);
 				if (p_kind == BARK_CORK) {
 					// Cork's fissures are warm red-brown under the grey-buff, weathered ridges.
-					a = Color(1.08f, 0.88f, 0.72f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.0f, 0.25f, open)) * shade;
+					// The whole fissure darkens, its walls the fresher red-brown cork, its floor in
+					// shadow-dark (a thin dark line in a pale field read as pencil, docs 18 Nov); the
+					// ridge tops mottle at a few centimetres, never in broad patches.
+					const float mott = 1.0f + 0.22f * bark_fbm(u, v, 40, 30, 3, salt + 75u);
+					const Color wall(0.78f, 0.56f, 0.42f), floor_c(0.2f, 0.15f, 0.12f);
+					const Color fis = floor_c.lerp(wall, Math::smoothstep(0.1f, 0.8f, cork_open));
+					a = fis.lerp(Color(mott, mott, mott), Math::smoothstep(0.7f, 1.0f, cork_open));
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -4203,7 +4448,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		// the spongy pitting goes back on top, unblurred.
 		LocalVector<float> tmp;
 		tmp.resize(N * N);
-		const int R = 3;
+		const int R = 2;
 		for (int pass = 0; pass < 1; pass++) {
 			for (int y = 0; y < N; y++) {
 				for (int x = 0; x < N; x++) {
@@ -4235,7 +4480,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u));
 				hw[k] += 0.003f * bark_fbm(u, v, 72, 36, 3, salt + 171u) + 0.0025f * crumb - 0.003f * pore;
 				const float ochre = Math::smoothstep(-0.1f, 0.15f, bark_fbm(u, v, 6, 4, 3, salt + 179u));
-				const Color tint = Color(1.0f, 1.0f, 1.0f).lerp(Color(1.12f, 0.96f, 0.74f), 0.55f * ochre) * ((1.0f + 0.3f * crumb) * (1.0f - 0.35f * pore));
+				// The ochre weathering is faint: strong, it read as pale and brown blotches across
+				// the ridges, a leopard's coat (docs, 18 Nov).
+				const Color tint = Color(1.0f, 1.0f, 1.0f).lerp(Color(1.08f, 0.98f, 0.84f), 0.3f * ochre) * ((1.0f + 0.3f * crumb) * (1.0f - 0.35f * pore));
 				aw[k * 3 + 0] *= tint.r;
 				aw[k * 3 + 1] *= tint.g;
 				aw[k * 3 + 2] *= tint.b;
@@ -4307,8 +4554,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		float *H = reinterpret_cast<float *>(hbytes.ptrw());
 		LocalVector<float> tmp;
 		tmp.resize(N * N);
-		const int R = 8;
-		for (int pass = 0; pass < 2; pass++) {
+		const int R = 6;
+		for (int pass = 0; pass < 1; pass++) {
 			for (int y = 0; y < N; y++) {
 				for (int x = 0; x < N; x++) {
 					float sum = 0.0f;
@@ -4330,6 +4577,25 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		}
 	}
 	set.height = Image::create_from_data(N, N, false, Image::FORMAT_RF, hbytes);
+	if (OS::get_singleton()->has_environment("TREE_BARK_DUMP") && p_kind == BARK_CORK) {
+		const String dir = OS::get_singleton()->get_environment("TREE_BARK_DUMP");
+		Ref<Image> a2 = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, abytes);
+		a2->save_png(dir + "/cork_albedo.png");
+		const float *H = reinterpret_cast<const float *>(hbytes.ptr());
+		float lo = 1e9f, hi = -1e9f;
+		for (int i = 0; i < N * N; i++) {
+			lo = MIN(lo, H[i]);
+			hi = MAX(hi, H[i]);
+		}
+		Vector<uint8_t> hb;
+		hb.resize(N * N);
+		for (int i = 0; i < N * N; i++) {
+			hb.write[i] = uint8_t(CLAMP((H[i] - lo) / MAX(hi - lo, 1e-6f) * 255.0f, 0.0f, 255.0f));
+		}
+		Ref<Image> h2 = Image::create_from_data(N, N, false, Image::FORMAT_L8, hb);
+		h2->save_png(dir + "/cork_height.png");
+		print_line(vformat("cork height range %.4f .. %.4f", lo, hi));
+	}
 	// What the displaced near tube adds over a smooth one (trees.md 2g). The relief tube samples
 	// this map on a grid about 2.5 cm around and 5 cm along (32 x 64 texels); bilinear between
 	// its vertices, it differs from the map by its reconstruction error. A smooth tube differs by
@@ -12155,6 +12421,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		~TileGuard() {
 			tube_tile = BARK_TILE;
 			tube_fade_r = 0.0f;
+			tube_fade_r0 = 0.0f;
+			tube_crotch.active = false;
+			tube_crotch.stems.clear();
+			tube_shrink.active = false;
 		}
 	} tile_guard;
 	tube_tile = _bark_tile();
@@ -13139,10 +13409,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// from the flare and sinks: about level with the soil for most of its run and
 					// below it at the end, so it enters the ground still thick, its side steep.
 					const float rr = root_r0 * (1.0f - 0.3f * t);
-					const float a_w = rr * 1.15f, b_h = rr * 0.85f;
+					// The root flattens as it nears the soil, so it slides under it: full height, it met the
+					// ground in a wall at its tip, a flap lying on the soil (docs, 18 Nov).
+					const float a_w = rr * 1.15f, b_h = rr * 0.85f * (1.0f - 0.55f * Math::smoothstep(0.25f, 0.6f, t));
 					const float d_c = r_t + root_push(root_top, root_az[best]) * (1.0f - t) + root_len[best] * Math::pow(t, 1.1f) + rr * Math::smoothstep(0.0f, 0.3f, t);
 					const float s1 = Math::smoothstep(0.0f, 0.35f, t);
-					const float yc = (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 1.6f * Math::smoothstep(0.45f, 0.95f, t)) * s1;
+					const float yc = (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 2.0f * Math::smoothstep(0.35f, 0.85f, t)) * s1;
 					const float lat = Math::abs(sda) * d_c;
 					const float qe = lat / a_w;
 					// The oval's top, then straight down past its widest point.
@@ -13883,7 +14155,28 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	};
 	// The lying stem's own bark and moss (deadwood interface): vertex ranges for _measure_lying().
 	int dw_v0 = -1, dw_v1 = -1, dw_m0 = -1, dw_m1 = -1;
-	for (int s = 1; s < int(nodes.size()); s++) {
+	// A leader that splits into stems is built after them: its swept crotch wraps their bases
+	// (TubeCrotch), recorded as each is built.
+	LocalVector<int> chain_order;
+	{
+		LocalVector<int> later;
+		for (int s = 1; s < int(nodes.size()); s++) {
+			int e = s;
+			while (nodes[e].main >= 0 && !nodes[nodes[e].main].removed) {
+				e = nodes[e].main;
+			}
+			bool sp = false;
+			for (int l = nodes[e].first_lateral; l >= 0 && !sp; l = nodes[l].next_sibling) {
+				sp = !nodes[l].removed && nodes[l].stem_level > nodes[e].stem_level;
+			}
+			(sp ? later : chain_order).push_back(s);
+		}
+		for (int s : later) {
+			chain_order.push_back(s);
+		}
+	}
+	HashMap<int, LocalVector<TubeCrotch::Stem>> crotch_stems; // By the split node.
+	for (int s : chain_order) {
 		const Node &first = nodes[s];
 		if (first.removed || (first.parent > 0 && nodes[first.parent].main == s)) {
 			continue;
@@ -13909,13 +14202,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int l = nodes[chain[chain.size() - 1]].first_lateral; l >= 0 && !split_tip; l = nodes[l].next_sibling) {
 			split_tip = nodes[l].stem_level > nodes[chain[chain.size() - 1]].stem_level;
 		}
+		// The swept crotch carries no displaced relief (the normal map keeps the bark): the
+		// bole's fades out over half a radius under it, each stem's from just past its top.
 		tube_fade_r = 0.0f;
+		tube_fade_r0 = 0.0f;
+		tube_crotch.active = false;
 		if (split_tip) {
 			tube_fade_c = nodes[chain[chain.size() - 1]].end();
-			tube_fade_r = 1.6f * nodes[chain[chain.size() - 1]].radius;
+			tube_fade_r0 = 0.6f * nodes[chain[chain.size() - 1]].radius;
+			tube_fade_r = 1.2f * nodes[chain[chain.size() - 1]].radius;
 		} else if (first.parent >= 0 && first.stem_level > nodes[first.parent].stem_level) {
 			tube_fade_c = nodes[first.parent].end();
-			tube_fade_r = 1.6f * nodes[first.parent].radius;
+			tube_fade_r0 = 1.3f * TREE_CROTCH_TOP * nodes[first.parent].radius;
+			tube_fade_r = tube_fade_r0 + 0.6f * nodes[first.parent].radius;
 		}
 		const float r0 = first.radius;
 		const bool smooth = r0 > 0.015f;
@@ -14041,13 +14340,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// pushed into the bole's capped top, a narrow neck under the crown (docs, 18 Nov). Their
 		// bases also swell a little, so together they fill the bole's top.
 		const bool split = first.parent >= 0 && first.stem_level > nodes[first.parent].stem_level;
+		const bool split_stem = split; // (`split` is a ring index in the near tube below.)
 		if (!stem && !hanger && pts.size() >= 2 && (r0 > 0.6f * nodes[first.parent].radius || split)) {
 			const Node &par = nodes[first.parent];
 			const float rp = par.radius;
 			Vector3 side = first.dir - par.dir * first.dir.dot(par.dir);
 			side = side.length() > 1e-4f ? side.normalized() : Vector3();
-			const float rc = MIN(split ? MAX(rad[0] * 1.25f, rp * 0.8f) : rad[0], rp * 0.9f);
-			const float off = MAX(0.0f, rp * (split ? 0.96f : 0.92f) - rc); // A split's stems rise just inside the bole's surface: no ledge.
+			const float rc = MIN(split ? MAX(rad[0] * 1.1f, rp * 0.55f) : rad[0], rp * 0.9f);
+			// A split's stems start on the bole's axis, wholly inside it (its relief too): the swept
+			// crotch over the split wraps them.
+			const float off = split ? 0.0f : MAX(0.0f, rp * 0.92f - rc);
 			const Vector3 base = pts[0] + side * off;
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -14058,7 +14360,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float drop = MIN(rc * ks[0], room) / ks[0];
 			// A split's stems start narrower, wholly inside the bole: level with its surface, their
 			// open first ring stood out through the bole's relief as a pleated rim (docs, 18 Nov).
-			const float kr[3] = { split ? 0.8f : 1.0f, split ? 0.93f : 1.0f, 1.0f };
+			const float kr[3] = { split ? 0.6f : 1.0f, split ? 0.7f : 1.0f, split ? 0.8f : 1.0f };
 			for (int k = 0; k < 3; k++) {
 				cp.push_back(base - par.dir * (drop * ks[k]));
 				cr.push_back(rc * kr[k]);
@@ -14087,17 +14389,38 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// bases stood out of it as a lip.
 		const bool split_end = split_tip;
 		if (split_end && pts.size() >= 2) {
+			// The bole runs on past the split as the swept crotch (TubeCrotch), from 0.6 of its
+			// radius under the split (its stems swell out of it from there, not in a step at the
+			// split) up to where its outline lies on the stems, rings every 3 cm on a straight
+			// axis; the radii here (a blunt dome) serve only the closing cap, inside the stems.
 			const Vector3 top = pts[pts.size() - 1];
-			// The bole runs on past the split as a blunt cone the stems leave from, its sides the
-			// saddles of the crotch between them: cut off level, the bole's top rim showed round
-			// the split as a band, a collar of tape (docs, 18 Nov).
 			const Vector3 up = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
 			const float rt = rad[rad.size() - 1];
-			const float hk[5] = { 0.15f, 0.3f, 0.45f, 0.6f, 0.75f };
-			const float rk[5] = { 0.95f, 0.86f, 0.74f, 0.6f, 0.45f };
-			for (int k = 0; k < 5; k++) {
-				pts.push_back(top + up * (rt * hk[k]));
-				rad.push_back(rt * rk[k]);
+			TubeCrotch &cx = tube_crotch;
+			cx.c = top;
+			cx.up = up;
+			cx.rt = rt;
+			cx.h0 = -0.6f * rt;
+			cx.h_top = TREE_CROTCH_TOP * rt;
+			cx.stems.clear();
+			if (crotch_stems.has(chain[chain.size() - 1])) {
+				cx.stems = crotch_stems[chain[chain.size() - 1]];
+			}
+			cx.active = !cx.stems.is_empty();
+			if (cx.active) {
+				const Vector3 c0 = top + up * cx.h0;
+				while (pts.size() > 2 && (pts[pts.size() - 1] - top).dot(up) > cx.h0 + 0.02f) {
+					pts.resize(pts.size() - 1);
+					rad.resize(rad.size() - 1);
+				}
+				pts.push_back(c0);
+				rad.push_back(rt);
+				const int n = MAX(4, int(Math::ceil((cx.h_top - cx.h0) / 0.03f)));
+				for (int k = 1; k <= n; k++) {
+					const float h = Math::lerp(cx.h0, cx.h_top, float(k) / n);
+					pts.push_back(top + up * h);
+					rad.push_back(MAX(cx.bole_r(h), 0.3f * rt));
+				}
 			}
 		}
 		Vector3 rim_pt = pts[pts.size() - 1];
@@ -14231,6 +14554,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				// the bark runs into the ground at a shallow angle instead of standing on it as
 				// a wall with a hard rim (the buttress roots continue under the surface).
 				rad[i] *= (1.0f + flare * Math::exp(-h / MAX(0.05f, trunk_r * 2.5f))) * (1.0f + 0.15f * flare * Math::exp(-h / 0.12f));
+			}
+			if (tube_crotch.active) {
+				// The swept crotch starts at the bole's girth there, flare and all.
+				const float h = MAX(0.0f, (tube_crotch.c + tube_crotch.up * tube_crotch.h0).y - nodes[0].start.y);
+				tube_crotch.rt *= (1.0f + flare * Math::exp(-h / MAX(0.05f, trunk_r * 2.5f))) * (1.0f + 0.15f * flare * Math::exp(-h / 0.12f));
 			}
 		}
 		float girth_r = -1.0f; // The bark tiles' radius when the tube starts in a cap.
@@ -14370,11 +14698,50 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// into long streaks. Rings every few centimetres instead.
 			densify(pts, rad, [&](const Vector3 &, float p_r) { return CLAMP(0.25f * p_r, 0.03f, 0.06f); });
 		}
+		// A split's stem: recorded for the bole's swept crotch, its tubes framed from the side
+		// facing the bole's axis (the crotch maps its bark into theirs by that frame).
+		Vector3 crotch_n0;
+		tube_shrink.active = false;
+		if (split_stem && pts.size() >= 2) {
+			tube_shrink.active = true;
+			tube_shrink.c = first.start;
+			tube_shrink.up = nodes[first.parent].dir;
+			tube_shrink.rt = nodes[first.parent].radius;
+			tube_shrink.h_top = TREE_CROTCH_TOP * tube_shrink.rt;
+			TubeCrotch::Stem cs;
+			const Vector3 axis_up = nodes[first.parent].dir;
+			const Vector3 t0 = (pts[1] - pts[0]).normalized();
+			Vector3 in = -(first.dir - axis_up * first.dir.dot(axis_up));
+			in = in - t0 * in.dot(t0);
+			crotch_n0 = in.length_squared() > 1e-8f ? in.normalized() : Vector3();
+			const float reach = 4.0f * nodes[first.parent].radius;
+			float arc = 0.0f;
+			for (uint32_t i = 0; i < pts.size(); i++) {
+				if (i > 0) {
+					arc += pts[i].distance_to(pts[i - 1]);
+				}
+				cs.p.push_back(pts[i]);
+				cs.r.push_back(rad[i]);
+				cs.arc.push_back(arc);
+				if (pts[i].distance_to(first.start) > reach && i >= 1) {
+					break;
+				}
+			}
+			cs.n0 = crotch_n0;
+			const float girth = Math::TAU * MAX(girth_r > 0.0f ? girth_r : rad[0], 0.001f);
+			cs.repeats = MAX(1.0f, Math::round(girth / _bark_tile()));
+			cs.circ = girth / cs.repeats;
+			if (crotch_n0 != Vector3()) {
+				crotch_stems[first.parent].push_back(cs);
+			}
+		}
 		if (!(near_tube && skip_lods)) {
 			Vector4i part;
 			bark.role = near_tube ? Builder::ROLE_PLAIN : Builder::ROLE_ALL;
+			tube_carry_nrm = crotch_n0;
 			bark.begin(part);
 			_tube(bark, pts, rad, sides, 0.0f, col, nullptr, 0.0f, girth_r);
+			tube_carry_nrm = Vector3();
 			bark.end(part, r0);
 			if (collar) {
 				root_collar(bark, part, sides, pts, rad, false);
@@ -14392,7 +14759,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (s == veteran_stem || vet_share[s]) {
 				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 			}
-			if (!stem && !hanger && junction_weld) {
+			if (!stem && !hanger && !split_stem && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
 			}
 			if (s == wound_stem) {
@@ -14576,6 +14943,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					Vector4i part;
 					bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
 					bark.begin(part);
+					if (crotch_n0 != Vector3()) {
+						tube_carry_nrm = crotch_n0;
+					}
 					_tube(bark, bp, br, bsides, 0.0f, col, relief ? bs.height.ptr() : nullptr, relief ? scale : 0.0f, girth_r, !(fallen || fallen_branch));
 					bark.end(part, r0);
 					if (collar) {
@@ -14601,7 +14971,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					if (vf) {
 						veteran_deform(bark, part, bp, br, bsides, true, vf);
 					}
-					if (!stem && !hanger && junction_weld) {
+					if (!stem && !hanger && !split_stem && junction_weld) {
 						weld(bark, part, s, bp, br, bsides);
 					}
 					if (s == wound_stem) {
@@ -14617,6 +14987,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					Vector4i part;
 					moss.bone = node_bone[s];
 					moss.begin(part);
+					if (crotch_n0 != Vector3()) {
+						tube_carry_nrm = crotch_n0;
+					}
 					_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
 					moss.end(part, r0);
 					if (collar) {
@@ -14796,6 +15169,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			cut_arc0 = 0.0f;
 			tube_carry_nrm = Vector3();
 		}
+		tube_crotch.active = false;
+		tube_shrink.active = false;
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
 		if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
