@@ -598,17 +598,6 @@ void PhysXCloth3D::_update_gpu_mesh() {
 		arrays[RSE::ARRAY_TEX_UV] = render_uvs;
 	}
 	arrays[RSE::ARRAY_INDEX] = render_indices;
-#ifdef GODOT_PHYSX_FLOW
-	if (burn.has_marks() && !gpu_cloth.is_valid()) {
-		burn.fill_colors(burn_colors, n);
-		arrays[RSE::ARRAY_COLOR] = burn_colors;
-		const RID m = burn.get_material(get_material_override());
-		if (m != burn_override && m.is_valid()) {
-			burn_override = m;
-			rs->instance_geometry_set_material_override(get_instance(), m);
-		}
-	}
-#endif
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
 	AABB box(render_verts[0], Vector3());
@@ -733,6 +722,18 @@ void PhysXCloth3D::_update_mesh() {
 		arrays[RSE::ARRAY_TEX_UV] = render_uvs;
 	}
 	arrays[RSE::ARRAY_INDEX] = render_indices;
+#ifdef GODOT_PHYSX_FLOW
+	// The burn state for the burn material: char, glow, scorch and how far each part has burnt through.
+	if (burn.has_marks()) {
+		burn.fill_colors(burn_colors, n);
+		arrays[RSE::ARRAY_COLOR] = burn_colors;
+		const RID m = burn.get_material(get_material_override());
+		if (m != burn_override && m.is_valid()) {
+			burn_override = m;
+			rs->instance_geometry_set_material_override(get_instance(), m);
+		}
+	}
+#endif
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
 	AABB box(render_verts[0], Vector3());

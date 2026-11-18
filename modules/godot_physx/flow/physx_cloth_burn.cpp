@@ -306,9 +306,9 @@ void PhysXClothBurn::_update_emitters(Node *p_owner, const XPBDClothSolver &p_so
 		}
 		e->set_enabled(true);
 		e->set_global_position(centre[k] / count[k]);
-		e->set_radius(CLAMP(reach[k] * 0.6f + 0.05f, 0.08f, 0.3f)); // thin fabric: a band of low flame, not a bonfire
+		e->set_radius(CLAMP(reach[k] * 0.3f + 0.04f, 0.06f, 0.15f)); // thin fabric: a band of low flame, not a bonfire
 		e->set_temperature(1.0f);
-		e->set_fuel(CLAMP(count[k] / 80.0f, 0.15f, 0.6f));
+		e->set_fuel(CLAMP(count[k] / 160.0f, 0.1f, 0.35f));
 		e->set_burn(0.0f);
 		e->set_smoke(0.0f);
 		e->set_velocity(Vector3(0, 0.8f, 0));
@@ -338,7 +338,7 @@ void PhysXClothBurn::fill_colors(PackedColorArray &r_colors, int p_count) const 
 		float whole = 1.0f;
 		if (ignited[i] >= 0.0f) {
 			const float age = (time - ignited[i]) / MAX(settings.burn_through_time * (0.7f + 0.6f * jitter[i]), 0.1f);
-			whole = 1.0f - CLAMP((age - 0.55f) / 0.45f, 0.0f, 1.0f);
+			whole = 1.0f - CLAMP(age, 0.0f, 1.0f); // over the whole burn, so the cut between particles is a smooth curve
 		}
 		w[i] = Color(ch, glow, scorch, whole);
 	}
@@ -392,7 +392,7 @@ RID PhysXClothBurn::get_material(const Ref<Material> &p_base) {
 		cloth_burn_emit = mix(vec3(0.55, 0.06, 0.01), vec3(1.0, 0.3, 0.05), cloth_burn.g) * cloth_burn.g * cloth_glow_energy;
 		// The burning edge: a noisy threshold on how far each part has burnt through (dissolve), glowing just
 		// inside the cut.
-		vec2 cb_p = UV * 48.0;
+		vec2 cb_p = UV * 96.0;
 		vec2 cb_i = floor(cb_p);
 		vec2 cb_f = fract(cb_p);
 		cb_f = cb_f * cb_f * (3.0 - 2.0 * cb_f);
@@ -401,13 +401,14 @@ RID PhysXClothBurn::get_material(const Ref<Material> &p_base) {
 		float cb_h01 = fract(sin(dot(cb_i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
 		float cb_h11 = fract(sin(dot(cb_i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
 		float cb_n = mix(mix(cb_h00, cb_h10, cb_f.x), mix(cb_h01, cb_h11, cb_f.x), cb_f.y);
-		float cb_cut = (1.0 - cloth_burn.a) + (cb_n - 0.5) * 0.3;
-		if (cb_cut > 0.6) {
+		float cb_cut = (1.0 - cloth_burn.a) + (cb_n - 0.5) * 0.2;
+		if (cb_cut > 0.72) {
 			discard;
 		}
-		float cb_rim = smoothstep(0.35, 0.6, cb_cut);
-		ALBEDO *= 1.0 - 0.7 * cb_rim;
-		cloth_burn_emit += vec3(1.0, 0.32, 0.06) * cb_rim * cloth_glow_energy * 1.5;
+		// The burning edge: a band of glowing ember just inside the cut, black char behind it.
+		float cb_rim = smoothstep(0.52, 0.66, cb_cut) * (1.0 - smoothstep(0.69, 0.72, cb_cut) * 0.3);
+		ALBEDO = mix(ALBEDO, vec3(0.02), smoothstep(0.4, 0.6, cb_cut));
+		cloth_burn_emit += vec3(1.0, 0.3, 0.05) * cb_rim * cloth_glow_energy * 1.5;
 	}
 )");
 	// The glow added at the end of fragment(), after any emission the material sets.
