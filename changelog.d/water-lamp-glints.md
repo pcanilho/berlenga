@@ -1,0 +1,1 @@
+- Water: omni and spot lights (lamps, torches) now glint on raster water, on rivers and on pools with raster reflections off too; before, only the sun did.
