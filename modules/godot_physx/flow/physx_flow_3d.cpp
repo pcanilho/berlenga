@@ -31,6 +31,7 @@
 #include "physx_flow_3d.h"
 
 #include "flow_backend.h"
+#include "modules/weather/weather_map_3d.h"
 #include "physx_flow_emitter_3d.h"
 #include "physx_flow_render_effect.h"
 
@@ -1025,6 +1026,40 @@ float PhysXFlow3D::_terrain_height_at(const Vector2i &p_node, float p_spacing, f
 // The TERRAIN FLOOR: one solid box per grid cell of the ground under the region, its top laid on the plane
 // through the cell's four corner heights (tilted to the slope, so the gas meets a smooth ground, not steps),
 // a little wider than the cell so neighbours overlap and nothing leaks between them. Solids reserve no blocks.
+void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const {
+	if (!weather_wind || weather_wind_coupling <= 0.0f || !p_region.has_volume()) {
+		return;
+	}
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (wm == nullptr) {
+		return;
+	}
+	// Layers of at most 4 m, up to 8: the wind grows with height (log law), so a tall plume bends more aloft.
+	const AABB r = p_region.grow(2.0f);
+	const int layers = CLAMP(int(Math::ceil(r.size.y / 4.0f)), 1, 8);
+	const float lh = r.size.y / layers;
+	for (int i = 0; i < layers; i++) {
+		const Vector3 c(r.position.x + r.size.x * 0.5f, r.position.y + lh * (i + 0.5f), r.position.z + r.size.z * 0.5f);
+		const Vector3 w = wm->get_wind_at(c);
+		FlowBackend::Emitter e;
+		e.shape = FlowBackend::Emitter::SHAPE_BOX;
+		e.origin[0] = c.x;
+		e.origin[1] = c.y;
+		e.origin[2] = c.z;
+		e.half_size[0] = r.size.x * 0.5f;
+		e.half_size[1] = lh * 0.5f;
+		e.half_size[2] = r.size.z * 0.5f;
+		e.velocity[0] = w.x;
+		e.velocity[1] = w.y;
+		e.velocity[2] = w.z;
+		e.temperature = 0.0f;
+		e.smoke = 0.0f;
+		e.couple_rate = weather_wind_coupling;
+		e.allocate = false;
+		r_emitters.push_back(e);
+	}
+}
+
 void PhysXFlow3D::_gather_terrain_floor(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) {
 	if (!terrain_floor || !p_region.has_volume() || !is_inside_tree()) {
 		return;
@@ -1119,6 +1154,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	}
 	transient_solids.clear();
 	_gather_terrain_floor(region, emitters);
+	_gather_weather_wind(region, emitters);
 	_gather_scatter_lights();
 	if (floor_enabled) {
 		// The FLOOR: one wide solid box whose top is floor_height, under everything this grid can reach. A solid
@@ -1582,6 +1618,10 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collision_range", "range"), &PhysXFlow3D::set_collision_range);
 	ClassDB::bind_method(D_METHOD("set_floor_enabled", "enabled"), &PhysXFlow3D::set_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_floor_enabled"), &PhysXFlow3D::is_floor_enabled);
+	ClassDB::bind_method(D_METHOD("set_weather_wind", "enabled"), &PhysXFlow3D::set_weather_wind);
+	ClassDB::bind_method(D_METHOD("is_weather_wind"), &PhysXFlow3D::is_weather_wind);
+	ClassDB::bind_method(D_METHOD("set_weather_wind_coupling", "rate"), &PhysXFlow3D::set_weather_wind_coupling);
+	ClassDB::bind_method(D_METHOD("get_weather_wind_coupling"), &PhysXFlow3D::get_weather_wind_coupling);
 	ClassDB::bind_method(D_METHOD("set_terrain_floor", "enabled"), &PhysXFlow3D::set_terrain_floor);
 	ClassDB::bind_method(D_METHOD("is_terrain_floor"), &PhysXFlow3D::is_terrain_floor);
 	ClassDB::bind_method(D_METHOD("set_terrain_path", "path"), &PhysXFlow3D::set_terrain_path);
@@ -1671,6 +1711,8 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_range", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_collision_range", "get_collision_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floor_enabled"), "set_floor_enabled", "is_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "floor_height", PROPERTY_HINT_NONE, "suffix:m"), "set_floor_height", "get_floor_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wind"), "set_weather_wind", "is_weather_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "weather_wind_coupling", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:1/s"), "set_weather_wind_coupling", "get_weather_wind_coupling");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "terrain_floor"), "set_terrain_floor", "is_terrain_floor");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_path"), "set_terrain_path", "get_terrain_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_floor_spacing", PROPERTY_HINT_RANGE, "0.05,8,0.05,or_greater,suffix:m"), "set_terrain_floor_spacing", "get_terrain_floor_spacing");

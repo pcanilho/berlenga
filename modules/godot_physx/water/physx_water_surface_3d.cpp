@@ -1785,12 +1785,14 @@ void fragment() {
 			float footprint = max(max(fw.x, fw.y), 1e-5);
 			float k_hi = PI / detail_texel;
 			float shown = clamp(log(PI / (2.0 * footprint) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
+			// Cat's paws: the gusts passing over the water roughen the short waves under them.
+			float paw = water_cats_paw(v_rest_xz);
 			if (shown > 0.0) {
-				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * shown;
+				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * (shown * sqrt(paw));
 			}
 			// Beckmann/GGX: alpha^2 adds the slope variance; alpha = roughness^2.
 			float a = pathtraced_roughness * pathtraced_roughness;
-			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * (1.0 - shown)));
+			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * paw * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
 		// Wherever the band rises (the vertices' share, interpolated), not only under foam: an aged lace hole
@@ -2185,9 +2187,44 @@ void light() {
 #endif
 )";
 
-// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+// Cat's paws (docs/ideas/wind.md): the shared wind's gusts roughen the short waves where they pass. The short waves'
+// mean square slope follows the local wind, linearly as Cox and Munk (1954) measured it (0.003 + 0.00512 U10),
+// and nearly vanishes below the capillary onset (about 1 m/s: glassy patches in a lull). Their ratio to the mean
+// wind's scales the detail band's slopes and the roughness it hands over at distance.
+static String _water_wind_src() {
+#ifdef MODULE_WEATHER_ENABLED
+	String c = WeatherMap3D::get_wind_shader_code();
+	c += R"(
+uniform bool cats_paws = true;
+float water_short_slope_var(float u10) {
+	return 0.0005 + (0.0025 + 0.00512 * u10) * smoothstep(0.7, 2.5, u10);
+}
+// Short-wave slope variance against the mean wind's, at a point of the surface (1: no weather, or no gust).
+float water_cats_paw(vec2 xz) {
+	if (!cats_paws || weather_map_rect.z <= 0.0) {
+		return 1.0;
+	}
+	vec2 m10 = textureLod(weather_wind_map, (xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec3 w = weather_wind(vec3(xz.x, 0.0, xz.y), 2.0);
+	float u_local = length(w.xz) / max(weather_open_profile(2.0, z0), 1e-3);
+	return clamp(water_short_slope_var(u_local) / water_short_slope_var(length(m10)), 0.1, 4.0);
+}
+)";
+	return c;
+#else
+	return R"(
+uniform bool cats_paws = true;
+float water_cats_paw(vec2 xz) {
+	return 1.0;
+}
+)";
+#endif
+}
+
+// The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &water_shader_src() {
-	static const String src = String(WATER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
+	static const String src = String(WATER_SHADER_SRC_HEAD) + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -2639,11 +2676,13 @@ void PhysXWaterSurface3D::set_ocean_domain_size(Vector2 p_size) {
 
 void PhysXWaterSurface3D::set_wind_speed(float p_speed) {
 	wind_speed = MAX(p_speed, 0.01f);
+	wind_explicit = true; // a hand-set wind wins over the weather's until follow_weather is set again
 	_reinit_spectrum();
 }
 
 void PhysXWaterSurface3D::set_wind_direction(Vector2 p_dir) {
 	wind_direction = p_dir;
+	wind_explicit = true;
 	_reinit_spectrum();
 }
 
@@ -4626,7 +4665,8 @@ void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
 // The spectrum is updated in place (set_sea_state), so the waves keep their phases while they grow or turn.
 void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 #ifdef MODULE_WEATHER_ENABLED
-	if (!follow_weather || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
+	// On by default (docs/ideas/wind.md): every water body takes the weather's wind, unless its wind was set by hand.
+	if (!follow_weather || wind_explicit || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
 		return;
 	}
 	const WeatherMap3D *weather = WeatherMap3D::get_active();
@@ -4676,6 +4716,7 @@ void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 
 void PhysXWaterSurface3D::set_follow_weather(bool p_enabled) {
 	follow_weather = p_enabled;
+	wind_explicit = false;
 	weather_sea_valid = false;
 #ifdef MODULE_WEATHER_ENABLED
 	if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {

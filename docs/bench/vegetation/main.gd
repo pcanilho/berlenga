@@ -564,6 +564,18 @@ func _checks() -> void:
 		if Vector2(d.position.x, d.position.z).distance_to(Vector2(t0.x, t0.z)) < 0.01 and d.crown_radius > 0.0 and d.height > 0.0 and d.crown_base < d.height:
 			found = true
 	_check("crowns near: the tree over a point, with its crown", found and field.get_crowns_near(t0 + Vector3(500, 0, 500), 1.0).is_empty(), [near_c.size()])
+	# Falling leaves take their crowns from the field (LeafFall3D.auto_crowns).
+	if ClassDB.class_exists("LeafFall3D"):
+		tree_sp.set_meta("preset", TreeGenerator.PRESET_BEECH)
+		var lf: Node3D = ClassDB.instantiate("LeafFall3D")
+		add_child(lf)
+		lf.vegetation_field = lf.get_path_to(field)
+		lf.refresh_crowns_near(t0)
+		var lf_crowns: int = lf.get_crown_count()
+		var lf_share: float = lf.get_preset_shed_daily(TreeGenerator.PRESET_BEECH)
+		_check("leaf fall: crowns from the field, with the beech's daily share", lf_crowns > 0 and lf.get_kind_count() >= 1 and lf_share >= 0.0, [lf_crowns, lf.get_kind_count(), lf_share])
+		lf.queue_free()
+		tree_sp.remove_meta("preset")
 	# Light: each ranged plant carries the light it grew in (VegetationLight), which tints it.
 	bush_sp.visibility_range = 30.0
 	field.populate()

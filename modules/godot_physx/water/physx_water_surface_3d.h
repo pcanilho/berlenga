@@ -663,7 +663,8 @@ private:
 	int mesh_detail = 1;
 	float near_mesh_step = 0.0f;
 	static constexpr float NEAR_MESH_GROWTH = 0.08f;
-	bool follow_weather = false;
+	bool follow_weather = true;
+	bool wind_explicit = false; // set_wind_speed/direction called by hand: the weather does not drive the sea
 	bool weather_sea_valid = false;
 	uint64_t weather_snap_serial = 0;
 	double weather_advanced_seen = 0.0;

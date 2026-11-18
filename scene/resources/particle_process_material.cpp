@@ -423,6 +423,12 @@ void ParticleProcessMaterial::_update_shader() {
 		}
 	}
 
+	if (wind_drag > 0.0f && !weather_wind_shader_code.is_empty()) {
+		code += "uniform float wind_drag = 1.0;\n";
+		code += "uniform float wind_height = -1.0;\n";
+		code += weather_wind_shader_code;
+	}
+
 	code += "\n";
 
 	// Define helper functions.
@@ -1102,6 +1108,24 @@ void ParticleProcessMaterial::_update_shader() {
 	code += "		}\n";
 	code += "	}\n\n";
 
+	if (wind_drag > 0.0f && !weather_wind_shader_code.is_empty()) {
+		// Linear (Stokes) drag toward the air, as Niagara's Wind Force and Unity's wind zones apply it, across
+		// gravity only: the fall a particle was given stays its own, the gusts' updraughts still lift it.
+		code += "	if (weather_map_rect.z > 0.0) { // a WeatherMap3D publishes the wind\n";
+		code += "		vec3 wpos = TRANSFORM[3].xyz;\n";
+		code += "		vec3 air = weather_wind(wpos, wind_height >= 0.0 ? wind_height : weather_height_above_ground(wpos));\n";
+		code += "		vec3 down = length(gravity) > 0.0 ? normalize(gravity) : vec3(0.0, -1.0, 0.0);\n";
+		code += "		vec3 rel = air - USERDATA1.xyz;\n";
+		code += "		rel -= down * dot(rel, down);\n";
+		code += "		rel += down * dot(air, down);\n";
+		code += "		float catch_up = 1.0 - exp(-wind_drag * DELTA);\n";
+		code += "		USERDATA1.xyz += rel * catch_up;\n";
+		if (particle_flags[PARTICLE_FLAG_DISABLE_Z]) {
+			code += "		USERDATA1.z = 0.0;\n";
+		}
+		code += "	}\n\n";
+	}
+
 	if (collision_mode == COLLISION_RIGID) {
 		code += "	if (COLLIDED) {\n";
 		code += "		float collision_response = dot(COLLISION_NORMAL, USERDATA1.xyz);\n";
@@ -1383,6 +1407,8 @@ void ParticleProcessMaterial::flush_changes() {
 		dirty_materials.first()->remove_from_list();
 	}
 }
+
+String ParticleProcessMaterial::weather_wind_shader_code;
 
 void ParticleProcessMaterial::_queue_shader_change() {
 	if (!_is_initialized()) {
@@ -2337,6 +2363,20 @@ bool ParticleProcessMaterial::get_sub_emitter_keep_velocity() const {
 	return sub_emitter_keep_velocity;
 }
 
+void ParticleProcessMaterial::set_wind_drag(float p_drag) {
+	const bool was = wind_drag > 0.0f;
+	wind_drag = MAX(p_drag, 0.0f);
+	if (was != (wind_drag > 0.0f)) {
+		_queue_shader_change();
+	}
+	RenderingServer::get_singleton()->material_set_param(_get_material(), "wind_drag", wind_drag);
+}
+
+void ParticleProcessMaterial::set_wind_height(float p_height) {
+	wind_height = p_height;
+	RenderingServer::get_singleton()->material_set_param(_get_material(), "wind_height", wind_height);
+}
+
 void ParticleProcessMaterial::set_attractor_interaction_enabled(bool p_enable) {
 	attractor_interaction_enabled = p_enable;
 	_queue_shader_change();
@@ -2534,6 +2574,10 @@ void ParticleProcessMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sub_emitter_keep_velocity"), &ParticleProcessMaterial::get_sub_emitter_keep_velocity);
 	ClassDB::bind_method(D_METHOD("set_sub_emitter_keep_velocity", "enable"), &ParticleProcessMaterial::set_sub_emitter_keep_velocity);
 
+	ClassDB::bind_method(D_METHOD("set_wind_drag", "drag"), &ParticleProcessMaterial::set_wind_drag);
+	ClassDB::bind_method(D_METHOD("get_wind_drag"), &ParticleProcessMaterial::get_wind_drag);
+	ClassDB::bind_method(D_METHOD("set_wind_height", "height"), &ParticleProcessMaterial::set_wind_height);
+	ClassDB::bind_method(D_METHOD("get_wind_height"), &ParticleProcessMaterial::get_wind_height);
 	ClassDB::bind_method(D_METHOD("set_attractor_interaction_enabled", "enabled"), &ParticleProcessMaterial::set_attractor_interaction_enabled);
 	ClassDB::bind_method(D_METHOD("is_attractor_interaction_enabled"), &ParticleProcessMaterial::is_attractor_interaction_enabled);
 
@@ -2677,6 +2721,9 @@ void ParticleProcessMaterial::_bind_methods() {
 	ADD_MIN_MAX_PROPERTY("turbulence_initial_displacement", "-100,100,0.1", PARAM_TURB_INIT_DISPLACEMENT);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "turbulence_influence_over_life", PROPERTY_HINT_RESOURCE_TYPE, CurveTexture::get_class_static()), "set_param_texture", "get_param_texture", PARAM_TURB_INFLUENCE_OVER_LIFE);
 
+	ADD_GROUP("Wind", "wind_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_drag", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater,suffix:1/s"), "set_wind_drag", "get_wind_drag");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_height", PROPERTY_HINT_RANGE, "-1,100,0.1,or_greater,suffix:m"), "set_wind_height", "get_wind_height");
 	ADD_GROUP("Collision", "collision_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mode", PROPERTY_HINT_ENUM, "Disabled,Rigid,Hide On Contact"), "set_collision_mode", "get_collision_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_friction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_collision_friction", "get_collision_friction");
@@ -2815,6 +2862,8 @@ ParticleProcessMaterial::ParticleProcessMaterial() :
 	set_sub_emitter_keep_velocity(false);
 
 	set_attractor_interaction_enabled(true);
+	set_wind_drag(1.0);
+	set_wind_height(-1.0);
 	set_collision_mode(COLLISION_DISABLED);
 	set_collision_bounce(0.0);
 	set_collision_friction(0.0);

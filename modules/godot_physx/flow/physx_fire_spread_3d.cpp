@@ -1209,8 +1209,19 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 		em->set_velocity(p_wind * 0.4f + Vector3(0, CLAMP(flame * 0.6f, 0.3f, 1.2f), 0));
 		em->set_couple_rate(2.0f);
 	}
+	// The Flow's own ambient wind carries the weather's wind over the whole plume (docs/ideas/wind.md); the fire's
+	// box only pushes its wind when that is off, or when the fire has a wind of its own (use_weather_wind off).
+	bool ambient = false;
+	if (flow) {
+		if (!use_weather_wind) {
+			flow->set_weather_wind(false);
+		}
+#ifdef MODULE_WEATHER_ENABLED
+		ambient = flow->is_weather_wind() && WeatherMap3D::get_active() != nullptr;
+#endif
+	}
 	if (air) {
-		air->set_enabled((!order.is_empty() || n_crown > 0) && p_wind.length_squared() > 1.0e-4f);
+		air->set_enabled(!ambient && (!order.is_empty() || n_crown > 0) && p_wind.length_squared() > 1.0e-4f);
 		air->set_velocity(p_wind);
 		air->set_global_position(get_global_position() + Vector3(0, 2.0f, 0));
 		air->set_size(Vector3(size.x, 4.0f, size.y));

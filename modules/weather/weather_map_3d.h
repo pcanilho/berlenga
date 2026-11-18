@@ -36,6 +36,7 @@
 #include "weather_contact_wetness.h"
 #include "weather_season.h"
 #include "weather_shelter.h"
+#include "weather_terrain_wind.h"
 
 #include "core/io/image.h"
 #include "core/object/object_id.h"
@@ -273,6 +274,18 @@ private:
 
 	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
 	WeatherShelter shelter;
+	// Wind over terrain (docs/ideas/wind.md): ground heights from terrain_source (a node with
+	// get_height(position) or Terrain3D's get_data()), else the first TerrainDeformer3D, Landscape3D,
+	// TerrainGenerator3D or Terrain3D in the scene, else rays on terrain_collision_mask.
+	WeatherTerrainWind terrain_wind;
+	float boundary_layer_height = 1000.0f; // m
+	float wind_shear_aloft = 1.5f; // m/s per km above the boundary layer
+	bool terrain_wind_enabled = true;
+	NodePath terrain_source;
+	uint32_t terrain_collision_mask = 1;
+	ObjectID terrain_height_object; // what answers get_height for the square being sampled
+	bool terrain_height_by_data = false; // Terrain3D: get_data().get_height()
+	RID terrain_global_rid;
 	bool shelter_enabled = true;
 	Ref<Texture2D> canopy_map;
 	float gust_patch_size = 6.0f; // m
@@ -373,6 +386,11 @@ private:
 	Vector3 _gust_at(Vector3 p_position, Vector2 p_mean) const;
 	float _patch_at(Vector2 p_xz, float p_height) const;
 	void _bake_shelter();
+	void _update_terrain_wind();
+	void _find_terrain_source();
+	float _terrain_height(Vector2 p_xz) const;
+	// Height above the ground: p_height when >= 0, else from the terrain under the point (or ground_height).
+	float _height_above_ground(Vector3 p_position, float p_height, const float p_terrain[4]) const;
 
 	WeatherSeason::Climate _season_climate() const;
 
@@ -517,6 +535,41 @@ public:
 	void set_cloud_shadow_interval(float p_seconds);
 	float get_cloud_shadow_interval() const { return cloud_shadow_interval; }
 
+	void set_terrain_wind_enabled(bool p_enabled);
+	bool is_terrain_wind_enabled() const { return terrain_wind_enabled; }
+	void set_terrain_source(const NodePath &p_path);
+	NodePath get_terrain_source() const { return terrain_source; }
+	void set_terrain_collision_mask(uint32_t p_mask);
+	uint32_t get_terrain_collision_mask() const { return terrain_collision_mask; }
+	void set_terrain_wind_extent(float p_extent);
+	float get_terrain_wind_extent() const { return terrain_wind.extent; }
+	void set_terrain_wind_resolution(int p_resolution);
+	int get_terrain_wind_resolution() const { return terrain_wind.resolution; }
+	void set_terrain_curvature_length(float p_length);
+	float get_terrain_curvature_length() const { return terrain_wind.curvature_length; }
+	void set_terrain_slope_weight(float p_weight);
+	float get_terrain_slope_weight() const { return terrain_wind.slope_weight; }
+	void set_terrain_curvature_weight(float p_weight);
+	float get_terrain_curvature_weight() const { return terrain_wind.curvature_weight; }
+	void set_terrain_lee_reach(float p_reach);
+	float get_terrain_lee_reach() const { return terrain_wind.lee_reach; }
+	void set_terrain_lee_strength(float p_strength);
+	float get_terrain_lee_strength() const { return terrain_wind.lee_strength; }
+	void set_terrain_floor(float p_floor);
+	float get_terrain_floor() const { return terrain_wind.floor; }
+	// Rebuild the terrain wind now (after the terrain changed), sampling every height at once.
+	void rebake_terrain_wind();
+	bool is_terrain_wind_ready() const { return terrain_wind.valid; }
+	float get_terrain_wind_derive_time() const { return terrain_wind.derive_ms; }
+	Rect2 get_terrain_wind_rect() const { return terrain_wind.valid ? terrain_wind.rect() : Rect2(); }
+	// The terrain's MicroMet speed weighting at a point (1: flat), its diverting angle (rad), the ground
+	// height it sampled (NaN outside the square) and Sx, the steepest rise upwind within lee_reach (rad;
+	// positive in a ridge's lee, Winstral et al. 2002).
+	float get_terrain_speed_factor_at(Vector3 p_position) const;
+	float get_terrain_divert_at(Vector3 p_position) const;
+	float get_terrain_ground_at(Vector3 p_position) const;
+	float get_terrain_lee_at(Vector3 p_position) const;
+
 	void set_shelter_enabled(bool p_enabled);
 	bool get_shelter_enabled() const { return shelter_enabled; }
 	void set_shelter_extent(float p_extent);
@@ -587,7 +640,17 @@ public:
 	// p_height_above_ground < 0 takes it from ground_height.
 	Vector3 get_wind_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
 	// Mean wind at 10 m, no gusts (x, z).
-	Vector2 get_mean_wind_at(Vector3 p_position) const;
+	// The mean wind aloft (x, z), for clouds and anything above the surface layer: the log law up to the top
+	// of the boundary layer (boundary_layer_height), veering with height through the Ekman spiral (to the right
+	// in the northern hemisphere, by about 20 degrees over the sea and 30 over land, Holton 2004), then the
+	// free-air wind growing by wind_shear_aloft per km (the thermal wind). p_altitude: m above the ground.
+	Vector2 get_wind_aloft(Vector3 p_position, float p_altitude) const;
+	void set_boundary_layer_height(float p_height) { boundary_layer_height = MAX(p_height, 50.0f); }
+	float get_boundary_layer_height() const { return boundary_layer_height; }
+	void set_wind_shear_aloft(float p_shear) { wind_shear_aloft = p_shear; }
+	float get_wind_shear_aloft() const { return wind_shear_aloft; }
+	// p_terrain: the terrain's speed-up, lee and turning at 10 m above the ground (false: as over flat ground).
+	Vector2 get_mean_wind_at(Vector3 p_position, bool p_terrain = true) const;
 	// The parts of get_wind_at() for solvers that filter the turbulence themselves (TreeWind3D):
 	// the mean air velocity (log law, shelter, gust patches), the along-wind direction of the gust
 	// frame and the gust standard deviation there (m/s, shelter included).
@@ -657,6 +720,8 @@ public:
 	WeatherSeason::Climate get_season_climate() const { return _season_climate(); } // for C++ users (the ground's regrowth)
 	Dictionary get_season();
 	Dictionary get_season_at_height(float p_height) const;
+	// The season on another day of the year (1-365) at the ground, for rates such as leaf fall.
+	Dictionary get_season_on_day(int p_day) const;
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
 	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }

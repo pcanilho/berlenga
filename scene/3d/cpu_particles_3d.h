@@ -194,6 +194,10 @@ private:
 
 	Vector3 gravity = Vector3(0, -9.8, 0);
 
+	// The shared wind (WeatherMap3D), as ParticleProcessMaterial's wind_drag and wind_height.
+	float wind_drag = 1.0f;
+	float wind_height = -1.0f;
+
 	Ref<RandomNumberGenerator> rng;
 
 	void _update_internal();
@@ -328,6 +332,16 @@ public:
 	Ref<Curve> get_scale_curve_y() const;
 	Ref<Curve> get_scale_curve_z() const;
 	bool get_split_scale();
+
+	// Set by the weather module: the air velocity at a world point and a height above the ground
+	// (< 0: from the point), false when there is no weather.
+	typedef bool (*WindSampler)(const Vector3 &p_position, float p_height_above_ground, Vector3 &r_air);
+	static WindSampler weather_wind_sampler;
+
+	void set_wind_drag(float p_drag) { wind_drag = MAX(p_drag, 0.0f); }
+	float get_wind_drag() const { return wind_drag; }
+	void set_wind_height(float p_height) { wind_height = p_height; }
+	float get_wind_height() const { return wind_height; }
 
 	void set_gravity(const Vector3 &p_gravity);
 	Vector3 get_gravity() const;
