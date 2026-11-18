@@ -1168,10 +1168,12 @@
   {
    "name": "Mud on vehicles",
    "settings": [
-    "PhysXVehicle3D.body_mud"
+    "PhysXVehicle3D.body_mud",
+    "mud_color",
+    "mud_color_map"
    ],
    "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.",
+   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first and drying pale.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
