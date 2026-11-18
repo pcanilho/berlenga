@@ -332,7 +332,9 @@ void SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const 
 	c.position = Vector3(pos.x, p_surface->get_surface_height_at(pos) + p_size * (0.34f - SINK), pos.z);
 	const Basis yaw(Vector3(0, 1, 0), rng.randf() * float(Math::TAU));
 	const Basis tilt(Vector3(rng.random(-1.0f, 1.0f), 0.0f, rng.random(-1.0f, 1.0f)).normalized(), rng.random(0.0f, 0.5f));
-	c.basis = tilt * yaw;
+	// Each clump stretched its own way, so the few shared shapes do not read as copies.
+	const Basis stretch = Basis::from_scale(Vector3(rng.random(0.8f, 1.2f), rng.random(0.75f, 1.15f), rng.random(0.8f, 1.2f)));
+	c.basis = tilt * yaw * stretch;
 	if (int(clumps.size()) < max_clumps) {
 		clumps.push_back(c);
 	} else if (max_clumps > 0) {

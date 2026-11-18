@@ -1027,7 +1027,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1125,7 +1125,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1250,10 +1250,11 @@
   {
    "name": "Mud on legs",
    "settings": [
-    "GroundLegMud3D"
+    "GroundLegMud3D",
+    "boot_suction"
    ],
    "note": "",
-   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water.",
+   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water; sticky mud grips a lifting foot, slows the stride and can keep the boot.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1274,10 +1275,11 @@
   {
    "name": "Frozen ground",
    "settings": [
-    "GroundSurface3D.frozen_ground"
+    "GroundSurface3D.frozen_ground",
+    "needle_ice"
    ],
    "note": "",
-   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days.",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1313,7 +1315,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2448,6 +2450,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Falling leaves",
+   "settings": [
+    "LeafFall3D"
+   ],
+   "note": "",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts lift them off the ground.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Wetland plants",
    "settings": [
     "PlantSpecies.floating",
@@ -3125,7 +3138,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3353,6 +3366,17 @@
    "topic": ""
   },
   {
+   "name": "Wind over terrain",
+   "settings": [
+    "terrain_wind_enabled"
+   ],
+   "note": "",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wind near the ground",
    "settings": [
     "add_canopy",
@@ -3458,6 +3482,17 @@
    "topic": ""
   },
   {
+   "name": "Dew and frost",
+   "settings": [
+    "dew_and_frost"
+   ],
+   "note": "",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Contact wetness",
    "settings": [
     "contact_wetness_enabled"
@@ -3495,10 +3530,12 @@
    "name": "Followers",
    "settings": [
     "follow_weather",
-    "weather_wind"
+    "cats_paws",
+    "weather_wind",
+    "wind_drag"
    ],
    "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
+   "what": "water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3571,7 +3608,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes and fray into wisps; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes and fray into wisps, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
@@ -3747,7 +3784,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3809,7 +3846,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less and clings to the body.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

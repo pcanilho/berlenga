@@ -72,6 +72,9 @@ float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
 
+Vector3 WorldWeather::mean_wind_at(const Vector3 &p_position) const WW_CALL(_mean_wind_at, contract_mean_wind_at(p_position), Vector3(), p_position)
+Vector3 WorldWeather::wind_aloft_at(const Vector3 &p_position, float p_altitude) const WW_CALL(_wind_aloft_at, contract_wind_aloft_at(p_position, p_altitude), Vector3(), p_position, p_altitude)
+
 #undef WW_CALL
 
 void WorldWeather::add_contact_wetness(const Vector3 &p_position, float p_radius, float p_amount) {
@@ -105,6 +108,8 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sun_visibility_at", "position"), &WorldWeather::sun_visibility_at);
 	ClassDB::bind_method(D_METHOD("canopy_closure_at", "position"), &WorldWeather::canopy_closure_at);
 	ClassDB::bind_method(D_METHOD("frost_at", "position"), &WorldWeather::frost_at);
+	ClassDB::bind_method(D_METHOD("mean_wind_at", "position"), &WorldWeather::mean_wind_at);
+	ClassDB::bind_method(D_METHOD("wind_aloft_at", "position", "altitude"), &WorldWeather::wind_aloft_at);
 	ClassDB::bind_method(D_METHOD("rainfall_at", "position"), &WorldWeather::rainfall_at);
 	ClassDB::bind_method(D_METHOD("snowfall_at", "position"), &WorldWeather::snowfall_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
@@ -124,6 +129,8 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_sun_visibility_at, "position");
 	GDVIRTUAL_BIND(_canopy_closure_at, "position");
 	GDVIRTUAL_BIND(_frost_at, "position");
+	GDVIRTUAL_BIND(_mean_wind_at, "position");
+	GDVIRTUAL_BIND(_wind_aloft_at, "position", "altitude");
 	GDVIRTUAL_BIND(_rainfall_at, "position");
 	GDVIRTUAL_BIND(_snowfall_at, "position");
 	GDVIRTUAL_BIND(_canopy_water_at, "position");
@@ -240,6 +247,38 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
 }
 
+// Fire.
+
+float WorldFire::heat_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_heat_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_heat_at(p_position));
+	}
+	return r;
+}
+
+float WorldFire::burnt_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_burnt_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_burnt_at(p_position));
+	}
+	return r;
+}
+
+void WorldFire::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
+	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
+	ClassDB::bind_method(D_METHOD("burnt_at", "position"), &WorldFire::burnt_at);
+	GDVIRTUAL_BIND(_heat_at, "position");
+	GDVIRTUAL_BIND(_burnt_at, "position");
+}
+
 // A script stub standing in as one water producer among the real ones.
 class WorldWaterStubProvider : public WorldWaterProvider {
 public:
@@ -345,6 +384,37 @@ Ref<WorldWater> WorldContracts::get_water() const {
 	return water_override.is_valid() ? water_override : builtin_water;
 }
 
+WorldFire *WorldContracts::fire() {
+	static Ref<WorldFire> fallback;
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	return singleton->fire_override.is_valid() ? singleton->fire_override.ptr() : singleton->builtin_fire.ptr();
+}
+
+void WorldContracts::register_fire(WorldFireProvider *p_provider) {
+	if (singleton && p_provider && !singleton->builtin_fire->providers.has(p_provider)) {
+		singleton->builtin_fire->providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_fire(WorldFireProvider *p_provider) {
+	if (singleton) {
+		singleton->builtin_fire->providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {
+	fire_override = p_stub;
+}
+
+Ref<WorldFire> WorldContracts::get_fire() const {
+	return fire_override.is_valid() ? fire_override : builtin_fire;
+}
+
 void WorldContracts::set_weather(const Ref<WorldWeather> &p_stub) {
 	weather_override = p_stub;
 	if (weather_override.is_valid()) {
@@ -359,6 +429,7 @@ Ref<WorldWeather> WorldContracts::get_weather() const {
 void WorldContracts::clear_overrides() {
 	weather_override.unref();
 	water_override.unref();
+	fire_override.unref();
 	_clear_water_stubs();
 }
 
@@ -430,6 +501,35 @@ WorldContactBody WorldContracts::describe_body(const Node3D *p_node) {
 	return b;
 }
 
+Vector2 WorldContracts::body_extent(const Node3D *p_node, float p_fallback) {
+	if (p_node->has_meta(SNAME("trample_radius"))) {
+		const float r = p_node->get_meta(SNAME("trample_radius"));
+		return Vector2(r, r);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		const CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(p_node->get_child(i));
+		if (!cs || cs->is_disabled() || cs->get_shape().is_null()) {
+			continue;
+		}
+		const Ref<Shape3D> shape = cs->get_shape();
+		const float sc = cs->get_global_basis().get_scale().x;
+		if (const SphereShape3D *sp = Object::cast_to<SphereShape3D>(shape.ptr())) {
+			return Vector2(sp->get_radius(), sp->get_radius()) * sc;
+		}
+		if (const CapsuleShape3D *cp = Object::cast_to<CapsuleShape3D>(shape.ptr())) {
+			return Vector2(cp->get_radius(), cp->get_height() * 0.5f) * sc;
+		}
+		if (const CylinderShape3D *cy = Object::cast_to<CylinderShape3D>(shape.ptr())) {
+			return Vector2(cy->get_radius(), cy->get_height() * 0.5f) * sc;
+		}
+		if (const BoxShape3D *bx = Object::cast_to<BoxShape3D>(shape.ptr())) {
+			const Vector3 s = bx->get_size() * 0.5f * sc;
+			return Vector2(MAX(s.x, s.z), s.y);
+		}
+	}
+	return Vector2(p_fallback, p_fallback);
+}
+
 Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 	const WorldContactBody b = describe_body(Object::cast_to<Node3D>(p_node));
 	Dictionary d;
@@ -450,6 +550,8 @@ void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water", "stub"), &WorldContracts::set_water);
 	ClassDB::bind_method(D_METHOD("get_water"), &WorldContracts::get_water);
 	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
+	ClassDB::bind_method(D_METHOD("set_fire", "stub"), &WorldContracts::set_fire);
+	ClassDB::bind_method(D_METHOD("get_fire"), &WorldContracts::get_fire);
 	ClassDB::bind_method(D_METHOD("clear_overrides"), &WorldContracts::clear_overrides);
 	ClassDB::bind_method(D_METHOD("describe_body", "node"), &WorldContracts::describe_body_bind);
 }
@@ -458,6 +560,7 @@ WorldContracts::WorldContracts() {
 	singleton = this;
 	builtin_weather.instantiate();
 	builtin_water.instantiate();
+	builtin_fire.instantiate();
 }
 
 WorldContracts::~WorldContracts() {

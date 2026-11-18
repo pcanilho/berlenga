@@ -732,6 +732,9 @@ public:
 	// The weather's wetness and the snowpack's snow as shader code any spatial shader can use (docs/ideas/terrain-material.md).
 	// BaseMaterial3D generates its own wetness and snow from the same functions.
 	static String get_wetness_functions_code(bool p_from_weather);
+	// weather_frost_map and weather_frost_at(): hoarfrost (WeatherMap3D dew_and_frost), for shaders that declare
+	// weather_map_rect themselves; get_wetness_functions_code(true) includes it.
+	static String get_frost_sampling_code();
 	static String get_snow_functions_code(bool p_from_weather);
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();

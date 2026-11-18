@@ -39,6 +39,7 @@
 #include "servers/physics_3d/physics_server_3d.h"
 
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 static constexpr float MIST_HOLLOW_RADIUS = 10.0f; // Ring for the hollow index, metres.
 static constexpr float MIST_LEVEL_PERIOD = 0.5f; // Seconds between weather reads.
@@ -142,6 +143,9 @@ float VegetationMist3D::get_propensity_at(const Vector3 &p_position) {
 
 // Radiation fog needs air near saturation, calm (wind mixes the cooled layer away above about
 // 3 m/s), a clear sky to cool under, and no sun to burn it off (Gultepe et al. 2007; Price 2011).
+// Wet ground feeds the cooled layer its vapour (fog comes most often on the night after rain; Bergot
+// and Guedalia 1994), and the layer saturates where the radiating surface cools below the air's dew
+// point (the weather's surface temperature, with a sky clock).
 float VegetationMist3D::weather_mist_level() const {
 	float humid = 0.0f, calm = 1.0f, clear = 1.0f, dark = 1.0f;
 	const Node3D *t = _target();
@@ -150,7 +154,10 @@ float VegetationMist3D::weather_mist_level() const {
 	if (!wm) {
 		return 0.0f;
 	}
-	humid = Math::smoothstep(0.86f, 0.97f, wm->get_air_humidity());
+	const float wet = CLAMP(wm->get_wetness_at(at), 0.0f, 1.0f);
+	humid = Math::smoothstep(0.86f, 0.97f, wm->get_air_humidity() + 0.06f * wet);
+	const float below_dew = wm->get_air_dew_point() - wm->get_surface_temperature_at(at);
+	humid = MAX(humid, Math::smoothstep(0.0f, 2.0f, below_dew) * Math::smoothstep(0.8f, 0.92f, wm->get_air_humidity() + 0.06f * wet));
 	calm = 1.0f - Math::smoothstep(1.5f, 4.0f, wm->get_mean_wind_at(at).length());
 	clear = 1.0f - 0.7f * CLAMP(wm->get_cloud_cover_at(at), 0.0f, 1.0f);
 	if (wm->get_air_temperature() < -12.0f) {
@@ -282,11 +289,26 @@ void VegetationMist3D::_step(float p_delta) {
 				c.emitter->set("enabled", false);
 				continue;
 			}
-			const Vector2 g = _ground_cell(key);
+			Vector2 g = _ground_cell(key);
 			// Thinned over the outer third of the patch, so it melts into the environment's fog
 			// beyond instead of ending at a line.
 			const float edge = 1.0f - Math::smoothstep(mist_range * 0.6f, mist_range + mist_cell * 0.5f, off.length());
-			const float smoke = level * g.y * edge;
+			const Vector3 cell_at((key.x + 0.5f) * mist_cell, g.x, (key.y + 0.5f) * mist_cell);
+			float local = 1.0f;
+			if (wm) {
+				local += 0.5f * CLAMP(wm->get_wetness_at(cell_at), 0.0f, 1.0f); // wet ground mists more
+			}
+			float smoke = level * g.y * local * edge;
+			// Steam fog over open water (sea smoke): air much colder than the water takes up its vapour and
+			// condenses it at once, in any light, while a breeze leaves it lying (Saunders 1964; ten or more
+			// degrees for thick steam). The water lags the season (get_water_temperature).
+			const float water = wm ? WorldContracts::water()->height_at(cell_at + Vector3(0, 2.0f, 0)) : -Math::INF;
+			if (Math::is_finite(water) && water > g.x - 0.5f) {
+				const float excess = wm->get_water_temperature() - wm->get_air_temperature_at(Vector3(cell_at.x, water, cell_at.z));
+				const float steam = Math::smoothstep(3.0f, 10.0f, excess) * (1.0f - Math::smoothstep(6.0f, 12.0f, wind.length())) * Math::smoothstep(0.5f, 0.8f, wm->get_air_humidity());
+				g.x = water;
+				smoke = MAX(smoke, steam * edge);
+			}
 			// The emitter couples the layer towards its level, so it holds the mist where the weather
 			// wants it and refills what a walker stirred away. A tiny level keeps it coupled, so the
 			// mist clears when the level drops instead of lingering.

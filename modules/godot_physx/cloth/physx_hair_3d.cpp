@@ -55,9 +55,7 @@
 #include "servers/physics_3d/physics_server_3d.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 namespace {
 
@@ -904,14 +902,13 @@ Vector2 PhysXHair3D::_fibre_roughness() const {
 // 1%, so the material is not set every frame.
 void PhysXHair3D::_update_wetness(double p_delta) {
 	const float dt = (float)p_delta;
-#ifdef MODULE_WEATHER_ENABLED
 	float rain = 0.0f;
 	if (weather_wetting && dt > 0.0f && is_inside_tree()) {
-		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
 			const Vector3 at = render_instance ? render_instance->get_global_transform().xform(render_instance->get_aabb()).get_center() : get_global_transform().origin;
-			rain = weather->get_rain_at(at);
+			rain = weather->precipitation_at(at);
 			if (rain > 0.0f) {
-				rain *= 1.0f - CLAMP(weather->get_canopy_closure_at(at), 0.0f, 1.0f);
+				rain *= 1.0f - CLAMP(weather->canopy_closure_at(at), 0.0f, 1.0f);
 				rain_shelter_timer -= dt;
 				if (rain_shelter_timer <= 0.0f) {
 					rain_shelter_timer = 0.5f;
@@ -942,9 +939,10 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 		// (Jennings et al. 2018, as the weather map's own surfaces): only the rain wets at once.
 		float air = 0.0f;
 		float snowfall = 0.0f;
-		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
-			air = weather->get_air_temperature();
-			const float liquid = WeatherMap3D::rain_fraction(air, weather->get_air_humidity());
+		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
+			const Vector3 at = get_global_transform().origin;
+			air = weather->air_temperature_at(at);
+			const float liquid = weather->rain_share_at(at);
 			snowfall = rain * (1.0f - liquid);
 			rain *= liquid;
 		}
@@ -963,7 +961,6 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 		}
 		wetness = CLAMP(wetness, 0.0f, 1.0f);
 	}
-#endif
 	if (Math::abs(snow - snow_look) >= 0.01f || (snow != snow_look && (snow == 0.0f || snow == 1.0f))) {
 		snow_look = snow;
 		if (snow_material.is_valid()) {
@@ -1884,13 +1881,11 @@ void PhysXHair3D::_step(double p_delta) {
 		}
 	}
 	s.wind = wind;
-#ifdef MODULE_WEATHER_ENABLED
 	if (weather_wind && is_inside_tree()) {
-		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
-			s.wind += weather->get_wind_at(get_global_transform().origin);
+		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
+			s.wind += weather->wind_at(get_global_transform().origin);
 		}
 	}
-#endif
 	s.gust = gust;
 	s.turbulence = turbulence;
 	s.turbulence_size = turbulence_size;

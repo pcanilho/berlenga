@@ -143,8 +143,17 @@ float snow_height(vec2 p) {
 float snow_height_vertex(vec2 p) {
 	return snow_height_with(p, snow_deform_vertex(p));
 }
+// Integer lattice hash (pcg2d, Jarzynski and Olano 2020): no sine, so it holds kilometres from the origin
+// with no banding or repeats.
 float snow_hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+	uvec2 v = uvec2(ivec2(p)) * 1664525u + 1013904223u;
+	v.x += v.y * 1664525u;
+	v.y += v.x * 1664525u;
+	v ^= v >> 16u;
+	v.x += v.y * 1664525u;
+	v.y += v.x * 1664525u;
+	v ^= v >> 16u;
+	return float(v.x >> 8u) * (1.0 / 16777216.0);
 }
 float snow_noise(vec2 p) {
 	vec2 i = floor(p);
@@ -210,8 +219,13 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 }
 
 float snow_ripple(vec2 p) {
-	// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm.
-	return micro_relief * (0.004 * snow_noise(p / 0.35) + 0.0015 * snow_noise(p / 0.09 + 17.0));
+	// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm. Each octave turns by an irrational angle
+	// so no lattice axis lines up, and a 1.7 m field varies their strength from patch to patch (smoother and
+	// rougher snow), so the pattern never reads as a repeat.
+	const mat2 r1 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+	const mat2 r2 = mat2(vec2(0.28, -0.96), vec2(0.96, 0.28));
+	float strength = 0.55 + 0.9 * snow_noise(r2 * p / 1.7 + 41.0);
+	return micro_relief * strength * (0.004 * snow_noise(r1 * p / 0.35) + 0.0015 * snow_noise(r2 * p / 0.09 + 17.0));
 }
 
 void vertex() {
@@ -521,6 +535,14 @@ void SnowSurface3D::_shift_ground(Vector2i p_origin) {
 				float h = cover ? row[i - x] : 0.0f;
 				if (!Math::is_finite(h)) {
 					h = cover ? cover->get_ground_height_at(Vector3((p_origin.x + i) * ground_spacing, 0, (p_origin.y + z) * ground_spacing)) : 0.0f;
+				}
+				if (cover) {
+					// Lake ice that bears weight is the ground the deep snow lies on (docs/ideas/snow.md,
+					// follow-up 15); open water and thin ice are not.
+					const Vector3 at((p_origin.x + i) * ground_spacing, 0, (p_origin.y + z) * ground_spacing);
+					if (cover->get_ice_thickness_at(at) >= SnowCover3D::ICE_WALK) {
+						h = MAX(h, cover->get_water_level_at(at));
+					}
 				}
 				next[z * n + i] = h;
 			}

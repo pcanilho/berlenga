@@ -29,6 +29,9 @@ extends Node3D
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
 #                     the getters steady while one runs, the main thread's share of each update
+#   --test=water      snow and water (follow-up 15): snow on a lake melts into it, lake ice grows by Stefan's
+#                     law under the frost (against Ashton's observed coefficients), holds the snow, floods
+#                     into snow ice under a heavy load and melts in a thaw
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
 #   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
@@ -130,6 +133,8 @@ func _ready() -> void:
 			_run_icicle_tests()
 		elif only == "background":
 			await _run_background_tests()
+		elif only == "water":
+			await _run_water_tests()
 
 		else:
 			await _run_tests()
@@ -318,6 +323,7 @@ func _run_tests() -> void:
 	await _run_failure_tests()
 	_run_icicle_tests()
 	await _run_background_tests()
+	await _run_water_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -922,6 +928,82 @@ func _run_background_tests() -> void:
 	for v in ma:
 		top_a = maxf(top_a, v)
 	_check("the frame no longer waits for the update", top_b < 0.5 * top_a, "worst %.2f ms against %.2f ms" % [top_b, top_a])
+
+
+# A lake around the mountain's foot: a water surface the terrain data map takes as a water source (any node
+# with get_water_level(), as PhysXWaterSurface3D has).
+func _lake(level: float) -> void:
+	var ws := GDScript.new()
+	ws.source_code = "extends Node3D\nvar level := 0.0\nfunc get_water_level() -> float:\n\treturn level\n"
+	ws.reload()
+	var lake := Node3D.new()
+	lake.set_script(ws)
+	lake.set("level", level)
+	lake.name = "Lake"
+	add_child(lake)
+	var dm := TerrainDataMap3D.new()
+	dm.name = "WaterMap"
+	dm.size = 1024.0
+	dm.resolution = 256
+	add_child(dm)
+	dm.height_source = dm.get_path_to(ground)
+	dm.water_sources = [dm.get_path_to(lake)]
+	dm.bake()
+	snow.climate_map = snow.get_path_to(dm)
+	snow.refresh_heights()
+
+
+func _run_water_tests() -> void:
+	print("Follow-up 15: snow and water")
+	# Stefan's law against the field: Ashton (1989) gives h = a sqrt(FDD) (cm, degree-days) with a about 2.7
+	# for a windy lake without snow and 1.4 to 2.4 for lakes with snow; Stefan's ideal is 3.6.
+	var bare := SnowCover3D.lake_ice_growth(0.0, -10.0, 0.0, 300.0, 24.0 * 30.0)
+	var snowy := SnowCover3D.lake_ice_growth(0.0, -10.0, 0.2, 300.0, 24.0 * 30.0)
+	var a_bare := bare * 100.0 / sqrt(300.0)
+	var a_snow := snowy * 100.0 / sqrt(300.0)
+	_check("lake ice by Stefan's law, bare", a_bare > 2.4 and a_bare < 3.6, "%.1f cm after 30 days at -10 C, a = %.2f (windy lake 2.7, Stefan's ideal 3.6)" % [bare * 100.0, a_bare])
+	# Snow conducts heat 18 times less than ice (Sturm et al. 1997: 0.13 W/(m K) at 300 kg/m3 against 2.24), so
+	# 20 cm of it insulates like 3.5 m of ice: lakes reach Ashton's 1.4 to 2.4 with snow only because the snow
+	# comes later and floods into snow ice.
+	_check("snow insulates the ice", snowy < bare * 0.25 and absf(SnowCover3D.snow_conductivity(300.0) - 0.126) < 0.002, "%.1f cm under 20 cm of snow from the start (k = %.3f W/(m K))" % [snowy * 100.0, SnowCover3D.snow_conductivity(300.0)])
+	var split := SnowCover3D.lake_ice_growth(SnowCover3D.lake_ice_growth(0.0, -10.0, 0.0, 300.0, 100.0), -10.0, 0.0, 300.0, 100.0)
+	_check("ice growth adds up over steps", absf(split - SnowCover3D.lake_ice_growth(0.0, -10.0, 0.0, 300.0, 200.0)) < 1e-5, "%.4f m in two steps of 100 h" % split)
+
+	await _setup("mountain", 512.0, 128, -5.0)
+	var shore := Vector3(200.0, 0, 0)
+	var level: float = ground.get_height(shore)
+	_lake(level)
+	var wet := Vector3(240.0, 0, 0)
+	var dry := Vector3(120.0, 0, 0)
+	_check("the lake is found", snow.get_water_level_at(wet) > ground.get_height(wet) and snow.get_water_level_at(dry) == -INF, "water at %.1f m over a bed at %.1f m; none at %.0f m from the summit" % [snow.get_water_level_at(wet), ground.get_height(wet), dry.x])
+	snow.lake_ice_enabled = false
+	_precipitate(10.0, 2.0)
+	_check("snow on open water melts into it", snow.get_swe_at(wet) == 0.0 and snow.get_swe_at(dry) > 15.0 and snow.get_runoff_at(wet) > 0.0, "%.1f mm on the lake, %.1f mm on land; %.2f mm/h into the lake" % [snow.get_swe_at(wet), snow.get_swe_at(dry), snow.get_runoff_at(wet)])
+	_check("the pack over the lake lies at its surface", absf(snow.get_ground_height_at(wet) - level) < 0.01, "%.2f m (water %.2f m)" % [snow.get_ground_height_at(wet), level])
+
+	# Frost: ten days at -10 C on clear water grow ice as the relation says.
+	await _setup("mountain", 512.0, 128, -10.0)
+	_lake(level)
+	snow.advance(240.0 * 3600.0)
+	var air := snow.get_air_temperature_at(Vector3(wet.x, level, wet.z)) # the lapse rate at the lake's height
+	var want := SnowCover3D.lake_ice_growth(0.0, air, 0.0, 300.0, 240.0)
+	var got := snow.get_ice_thickness_at(wet)
+	_check("ice grows in the frost", absf(got - want) < 0.005 and snow.get_ice_thickness_at(dry) == 0.0, "%.1f cm after 10 days at %.1f C (relation %.1f cm); none on land" % [got * 100.0, air, want * 100.0])
+	_precipitate(10.0, 2.0)
+	_check("the ice holds the snow", snow.get_swe_at(wet) > 15.0, "%.1f mm on %.1f cm of ice" % [snow.get_swe_at(wet), snow.get_ice_thickness_at(wet) * 100.0])
+	# A heavy load on the ice floods it: past the buoyancy (1000 - 917) h it turns to snow ice.
+	var ice0 := snow.get_ice_thickness_at(wet)
+	snow.add_snow(150.0, 250.0)
+	snow.advance(600.0)
+	snow.advance(6.0 * 3600.0)
+	var cap := 83.0 * snow.get_ice_thickness_at(wet)
+	_check("a heavy load floods into snow ice", snow.get_swe_at(wet) <= cap + 1.0 and snow.get_ice_thickness_at(wet) > ice0 + 0.05, "ice %.1f -> %.1f cm, %.0f mm of snow left on it (the ice floats %.0f mm)" % [ice0 * 100.0, snow.get_ice_thickness_at(wet) * 100.0, snow.get_swe_at(wet), cap])
+	# A thaw: the snow goes first, then the ice.
+	await _weather_to(12.0, 0.0)
+	var ice1 := snow.get_ice_thickness_at(wet)
+	var swe1 := snow.get_swe_at(wet)
+	snow.advance(24.0 * 3600.0 * 12.0)
+	_check("a thaw melts the snow, then the ice", snow.get_swe_at(wet) == 0.0 and snow.get_ice_thickness_at(wet) < ice1 - 0.02, "%.0f mm of snow and %.1f cm of ice -> %.1f mm and %.1f cm after 12 days at %.1f C" % [swe1, ice1 * 100.0, snow.get_swe_at(wet), snow.get_ice_thickness_at(wet) * 100.0, snow.get_air_temperature_at(Vector3(wet.x, level, wet.z))])
 
 
 func _climate(wind_speed: float) -> SnowClimate:

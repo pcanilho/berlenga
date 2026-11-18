@@ -133,7 +133,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 ## Ground
 
-- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.
+- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.
 
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 
@@ -169,7 +169,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Near field: faceted holes become boot soles with a rounded heel, a waist and a toe.*
 
-- **Soft ground** (PhysXVehicle3D `soft_soil`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.
+- **Soft ground** (PhysXVehicle3D `soft_soil`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.
 - **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry.
 - **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
 - **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
@@ -180,12 +180,12 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Muddy water** (`GroundSurface3D.muddy_water`): tyres and boots churn clay into standing water, which turns milky brown, drifts with the flow and settles out over minutes; tyre spray flies brown and stains the wheel arches.
 - **Tracked mud** (`GroundSurface3D.tracked_mud`): tyres and boots leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.
 - **Ruts that stay** (`GroundSurface3D.keep_ruts`, `ruts_time_scale`, `ruts_away_rain`, `ruts_regrowth_time`): prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.
-- **Mud on legs** (`GroundLegMud3D`): each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water.
+- **Mud on legs** (`GroundLegMud3D`, `boot_suction`): each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water; sticky mud grips a lifting foot, slows the stride and can keep the boot.
 - **Standing water** (`GroundSurface3D.standing_water`, `world_puddles`, `add_puddle()`): rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing; puddles form in hollows and wet flats and stay as dry hollows in dry weather; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes; below 0 C puddles freeze (`puddle_ice`), bearing a foot and breaking into plates under a wheel.
-- **Frozen ground** (`GroundSurface3D.frozen_ground`): soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days.
+- **Frozen ground** (`GroundSurface3D.frozen_ground`, `needle_ice`): soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.
 - **Desiccation cracks** (`GroundSurface3D.desiccation_cracks`): soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.
-- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.
+- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.
 - **Blowing sand** (`GroundStreamers3D`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.
 - **Dust** (`GroundDust3D`, `GroundSurface3D.dust_emission`): the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.
 - **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.

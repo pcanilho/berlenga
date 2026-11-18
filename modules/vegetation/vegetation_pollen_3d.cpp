@@ -31,6 +31,8 @@
 
 #include "vegetation_pollen_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "plant_generator.h"
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
@@ -305,7 +307,7 @@ void VegetationPollen3D::_step(float p_delta) {
 			wind = wm->get_wind_at(m.last, 1.0f);
 			wind.y = 0.0f;
 		}
-		const float radius = b->has_meta("trample_radius") ? float(b->get_meta("trample_radius")) : 0.4f;
+		const float radius = WorldContracts::body_extent(b, 0.4f).x;
 		const Vector2i k0 = pollen_key(m.last - Vector3(radius + 0.6f, 0, radius + 0.6f));
 		const Vector2i k1 = pollen_key(m.last + Vector3(radius + 0.6f, 0, radius + 0.6f));
 		// Every plant the body brushes this step sheds into one puff in front of it: the pool stays

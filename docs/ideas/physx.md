@@ -1194,9 +1194,60 @@ downwind in 90 s, which burnt 420 m2.
    burning twigs falling while it torches. Here: the tree shaders cut
    leaves by the crown's burnt share (alpha), the fire state map darkens
    the ground under it, a few PhysX debris twigs fall burning.
+
+   Status of 3 (18 Nov): built. The tree leaf shader (needles too) drops
+   foliage the flame passed through once the crown has burnt (the state
+   map's burnt share over 0.55 to 0.9), leaf by leaf on a per-leaf hash,
+   so a torched pine stands as bare black branches; killed brown foliage
+   above the flame stays (it falls over months, not minutes). Alpha, so
+   the path tracer's any-hit drops them too. Under a burnt crown the char
+   decal lightens patchily to white-grey ash (mineral ash, albedo about
+   0.35). The burning twigs are firebrands rather than rigid bodies: 1.5
+   per kg of crown fuel, 1 to 3 cm thick, dropping from all through the
+   crown from rest at 6 to 12 m/s (too heavy for the column), glowing for
+   a minute or two where they land and able to light what they land on.
+   Debris bodies would cost a PhysX actor each for a few glowing streaks.
+
+### Wading wets clothing (taken on from world-links, 18 Nov)
+
+ClothWetness (PhysXSkinnedCloth3D and PhysXCloth3D) asks the world water
+contract (WorldContracts::water()->height_at, every water producer: sea,
+lakes, rivers, pools, live water, standing water) for the surface under
+the fabric. Fabric below it soaks in a few seconds (a woven fabric's
+wicking takes up its fill within seconds once immersed, Kissa 1996), and
+the water climbs about 3 cm above the line by capillarity. The soaked
+band is held as a depth above the fabric's lowest point and dries as the
+rest does (Penman). Its weight, stiffness and cling count as the band's
+share of the fabric's height; the skinned cloth's shader darkens the
+band up to a wavering tide line in world height. Test: a 60 cm skirt
+waded 20 cm deep soaked to 23 cm in about 5 s (0.38 of its height, the
+weight figure 0.38), with the tide line drawn in raster and path tracing.
+Left: water drag on the submerged fabric (flow_at) and buoyancy.
 Sources: Cohen 2000, "Preventing disaster: home ignitability in the
 wildland-urban interface", J. Forestry 98; Manzello et al. 2008, Fire
 Safety J. 43; McGrattan et al., FDS technical reference (water spray).
+
+### Next-round options (card, 18 Nov night)
+
+1. Water on fire makes steam. Water on burning fuel boils off (2.26
+   MJ/kg) as a white plume that hides the flames for a moment, the
+   look of every hose or bucket on a fire. Here: cells and burnables put
+   out by water emit white, buoyant, fast-cooling vapour into Flow for a
+   few seconds, more for hotter fuel.
+2. Burning buildings and props break apart. Char eats a timber's section
+   (charring rate about 0.65 mm/min, EN 1995-1-2), so beams give way and
+   roofs fall in. Here: a PhysXBurnable3D on a Blast asset loses bond
+   strength with its char depth, so a burning shed or fence breaks and
+   falls in pieces that keep burning.
+3. River current drags and floats clothing. Submerged fabric feels the
+   current (Morison drag on the water's flow_at) and lifts (buoyancy
+   less its weight), so a skirt or coat streams downstream and floats up
+   when wading. Here: the waded band of PhysXSkinnedCloth3D and
+   PhysXCloth3D gets drag and lift from the water contract.
+4. Fire whirls. A fire in a sheared wind spins up vertical vortices
+   (Forthofer and Goodrick 2011) that lift brands high and throw them
+   far. Here: Flow's vorticity seeded where the front meets a wind
+   shear or a lee slope; brands caught in it rise further.
 
 ### Ray tracing cost
 

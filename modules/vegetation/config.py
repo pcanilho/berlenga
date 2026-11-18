@@ -1,5 +1,5 @@
 def can_build(env, platform):
-    env.module_add_dependencies("vegetation", ["terrain_deform", "weather"])
+    env.module_add_dependencies("vegetation", ["terrain_deform", "weather", "world"])
     return True
 
 
@@ -11,6 +11,7 @@ def get_doc_classes():
     return [
         "Biome",
         "GrassField3D",
+        "LeafFall3D",
         "PlantGenerator",
         "PlantSpecies",
         "TreeGenerator",

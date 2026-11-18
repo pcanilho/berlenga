@@ -49,9 +49,7 @@
 #include "scene/resources/shader.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 namespace {
 constexpr float GRAVITY = 9.81f;
@@ -940,11 +938,9 @@ String PhysXWaterfalls3D::get_streak_shader_code() {
 }
 
 Vector3 PhysXWaterfalls3D::_wind_at(const Vector3 &p_position) const {
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
-		return weather->get_wind_at(p_position);
+	if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
+		return weather->wind_at(p_position);
 	}
-#endif
 	(void)p_position;
 	return Vector3();
 }

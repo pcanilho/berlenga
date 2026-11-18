@@ -24,7 +24,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Burning objects** (`PhysXBurnable3D`, `embers`): wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.
 - **Burning logs** (`PhysXFireSpread3D.vegetation_field`): fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.
 - **Spot fires** (`PhysXFireSpread3D.spotting`, `spotting_scale`): burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.
-- **Crown fire** (`PhysXFireSpread3D.crown_fire`, `foliar_moisture`): trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers.
+- **Crown fire** (`PhysXFireSpread3D.crown_fire`, `foliar_moisture`): trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.
 - **Fire light and embers** (`PhysXFlow3D.fire_light`, `embers`): a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.
 
   ![A campfire in a stone ring at night, seen from above, lighting the ground and stones](media/physx-campfire.jpg)
@@ -39,7 +39,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 
 - **Cloth tearing** (`PhysXCloth3D.tear_factor`, `physics/physx_3d/cloth/tearing`): overstretched edges split and the rip runs.
 - **Burning cloth** (`PhysXCloth3D.burnable`): cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.
-- **Wet cloth** (`PhysXCloth3D` and `PhysXSkinnedCloth3D`: `weather_wetting`, `wetness`, `water_capacity`): rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less and clings to the body.
+- **Wet cloth** (`PhysXCloth3D` and `PhysXSkinnedCloth3D`: `weather_wetting`, `wetness`, `water_capacity`): rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.
 - **Blast materials** (`PhysXBlastAsset.materials`, `bond_healths`): pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.
 - **Blast without stalls** (`PhysXBlastAsset.prepare_render()`; `initial_linear_velocity`, `initial_angular_velocity`): piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.
 - **Streaming without stalls** (`physics/physx_3d/streaming/statics_per_step`): static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.

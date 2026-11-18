@@ -61,6 +61,8 @@ public:
 	virtual float contract_sun_visibility_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_canopy_closure_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
+	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
+	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
@@ -91,6 +93,8 @@ protected:
 	GDVIRTUAL1RC(float, _sun_visibility_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_closure_at, Vector3)
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
+	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
@@ -117,6 +121,8 @@ public:
 	float sun_visibility_at(const Vector3 &p_position) const;
 	float canopy_closure_at(const Vector3 &p_position) const;
 	float frost_at(const Vector3 &p_position) const;
+	Vector3 mean_wind_at(const Vector3 &p_position) const;
+	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
 	float canopy_water_at(const Vector3 &p_position) const;
@@ -172,6 +178,34 @@ public:
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
 };
 
+// Fire: what burns where, for what it heats (snow, the surface water, the air) and chars.
+class WorldFireProvider {
+public:
+	virtual float contract_fire_heat_at(const Vector3 &p_position) const = 0; // W/m2 of ground, now
+	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
+	virtual ~WorldFireProvider() {}
+};
+
+class WorldFire : public RefCounted {
+	GDCLASS(WorldFire, RefCounted);
+
+	friend class WorldContracts;
+	LocalVector<WorldFireProvider *> providers;
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _heat_at, Vector3)
+	GDVIRTUAL1RC(float, _burnt_at, Vector3)
+
+public:
+	bool has_provider() const { return !providers.is_empty(); }
+	// The fire's heat release over the ground at the point (W/m2), the most of any fire there; 0 with none.
+	float heat_at(const Vector3 &p_position) const;
+	// How burnt the ground is there, 0..1.
+	float burnt_at(const Vector3 &p_position) const;
+};
+
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.
 struct WorldContactBody {
 	Vector3 center; // the shape's centre (the node's position without a shape)
@@ -193,6 +227,8 @@ class WorldContracts : public Object {
 	WorldWeatherProvider *weather_provider = nullptr;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
+	Ref<WorldFire> builtin_fire;
+	Ref<WorldFire> fire_override;
 	LocalVector<WorldWaterProvider *> water_stubs;
 	void _clear_water_stubs();
 
@@ -207,18 +243,23 @@ public:
 	// The contract objects: never null.
 	static WorldWeather *weather();
 	static WorldWater *water();
+	static WorldFire *fire();
 
 	// Producers register on entering the tree and unregister on leaving; the last to register is current.
 	static void register_weather(WorldWeatherProvider *p_provider);
 	static void unregister_weather(WorldWeatherProvider *p_provider);
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
+	static void register_fire(WorldFireProvider *p_provider);
+	static void unregister_fire(WorldFireProvider *p_provider);
 
 	// Tests set stubs (a script extending the contract class) and clear them.
 	void set_weather(const Ref<WorldWeather> &p_stub);
 	Ref<WorldWeather> get_weather() const;
 	void set_water(const Ref<WorldWater> &p_stub);
 	Ref<WorldWater> get_water() const;
+	void set_fire(const Ref<WorldFire> &p_stub);
+	Ref<WorldFire> get_fire() const;
 	// A script stub (extending WorldWater) as one more water producer beside the real ones: a pool or sea for a
 	// bench without one. clear_overrides() removes it.
 	void add_water_stub(const Ref<WorldWater> &p_stub);
@@ -227,6 +268,10 @@ public:
 	// Contact bodies: the world_contact group, and how big and heavy a body is (metas trample_radius,
 	// touch_radius, ground_* / snow_*, deform_wheel_*, else its first collision shape).
 	static WorldContactBody describe_body(const Node3D *p_node);
+	// The body's footprint for what it bends and pushes aside (grass, plants, water): (radius, half height) from
+	// its trample_radius meta, else its first enabled collision shape (sphere, capsule, cylinder, box), else
+	// p_fallback for both.
+	static Vector2 body_extent(const Node3D *p_node, float p_fallback);
 	Dictionary describe_body_bind(Node *p_node) const;
 
 	WorldContracts();

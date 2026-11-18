@@ -4,6 +4,8 @@ extends Node3D
 # build prints SKIP. Exits 1 on any FAIL.
 #
 #   godot --path docs/bench/links --headless -- --test
+#   godot --path docs/bench/links -- --frost=out.png [--frost-off]   grass, a fern, a rock and TerrainMaterial3D ground
+#             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
 #   air       no clock and no climate: the air is the settings, exactly
@@ -12,6 +14,8 @@ extends Node3D
 #             clouds narrow the day's range
 #   water     rain fills the surface film and puddles; the cold turns rain to snow
 #             the sun dries puddles faster than the shade of a canopy and than the night
+#   dew       a clear calm night wets open ground with dew, and frosts it below freezing; clouds and a canopy keep it
+#             dry; the morning sun melts the frost
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
@@ -30,6 +34,12 @@ class PoolStub extends WorldWater:
 
 	func _flow_at(_p: Vector3) -> Vector3:
 		return Vector3(0.5, 0, 0)
+
+
+# A fire stub: 50 kW/m2 burning over x > 0.
+class FireStub extends WorldFire:
+	func _heat_at(p: Vector3) -> float:
+		return 50000.0 if p.x > 0.0 else 0.0
 
 
 var fails := 0
@@ -52,6 +62,11 @@ func _skip(name: String, why: String) -> void:
 
 
 func _ready() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--frost="):
+			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
+			get_tree().quit()
+			return
 	if not ClassDB.class_exists("WeatherMap3D"):
 		push_error("This build has no weather module.")
 		get_tree().quit(1)
@@ -62,10 +77,11 @@ func _ready() -> void:
 	cam.make_current()
 	await _air_tests()
 	await _water_tests()
+	await _dew_tests()
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
-	_contract_tests()
+	await _contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -152,6 +168,11 @@ func _air_tests() -> void:
 	c.month = 7
 	var summer := _air_at(m, c, 12.0).x
 	_check("air: winter colder than summer from the climate", summer - winter > 15.0, "%.1f C in January, %.1f C in July" % [winter, summer])
+	# Open water lags the season: on an autumn dawn it is warmer than the air (steam fog over lakes).
+	c.month = 10
+	var dawn := _air_at(m, c, 5.0).x
+	var water: float = m.get_water_temperature()
+	_check("air: autumn water warmer than the dawn air", water - dawn > 3.0, "water %.1f C, dawn air %.1f C" % [water, dawn])
 	m.climate = null
 	m.queue_free()
 	c.queue_free()
@@ -312,7 +333,168 @@ func _contract_tests() -> void:
 	_check("contracts: a pool below the sea's level reads its own water", out == 0.0 and in_pool == -5.0 and between == 0.0 and above == 0.0, "sea side %.1f, in the pool %.1f, over the pool under the sea %.1f, above both %.1f" % [out, in_pool, between, above])
 	_check("contracts: the flow comes from the water that answered", w.flow_at(Vector3(-5, -7, 0)).x == 0.5 and w.flow_at(Vector3(5, -2, 0)) == Vector3.ZERO, "")
 	_check("contracts: depth under the surface", absf(w.depth_at(Vector3(-5, -7, 0)) - 2.0) < 1e-4, "%.2f m" % w.depth_at(Vector3(-5, -7, 0)))
+	# A fire dries the surface water under it, through the fire contract.
+	var m := _new_map()
+	m.rain_rate = 5.0
+	m.cloud_cover = 1.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3600.0)
+	m.rain_rate = 0.0
+	m.snap_to_settings()
+	WorldContracts.set_fire(FireStub.new())
+	m.advance(3600.0)
+	var burning: float = m.get_wetness_at(Vector3(200, 0, 0))
+	var beside: float = m.get_wetness_at(Vector3(-200, 0, 0))
+	_check("contracts: a fire dries the ground under it", burning < 0.05 and beside > 0.5, "wetness %.2f under the fire, %.2f beside it" % [burning, beside])
+	m.queue_free()
 	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():
 		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")
+
+
+func _dew_tests() -> void:
+	var m := _new_map()
+	var c := _new_clock(10, 0.0)
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.wind_speed = 1.0
+	m.humidity = 0.9
+	m.add_canopy(Vector2(-200, -200), 60.0, 20.0, 4.0)
+	var open_p := Vector3(200, 0, 200)
+	var shade_p := Vector3(-200, 0, -200)
+	# A mild clear night: dew.
+	m.temperature = 8.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(4.0 * 3600.0)
+	var dew_open: float = m.get_wetness_at(open_p)
+	var dew_shade: float = m.get_wetness_at(shade_p)
+	var cool: float = m.get_surface_temperature_at(open_p) - m.get_air_temperature_at(open_p)
+	_check("dew: a clear calm night wets open ground, not under a canopy", dew_open > 0.3 and dew_shade < 0.1 and m.get_frost_at(open_p) == 0.0, "film %.2f open, %.2f under the canopy; surface %.1f K under the air" % [dew_open, dew_shade, -cool])
+	# A cold clear night: hoarfrost; an overcast one: none.
+	m.temperature = 1.0
+	m.snap_to_settings()
+	m.advance(6.0 * 3600.0)
+	var frost_open: float = m.get_frost_at(open_p)
+	var frost_shade: float = m.get_frost_at(shade_p)
+	_check("dew: hoarfrost below freezing at the surface, none under the canopy", frost_open > 0.05 and frost_shade < 0.01, "%.3f mm open, %.3f mm under the canopy" % [frost_open, frost_shade])
+	var m2 := _new_map()
+	m2.sky_clock = m2.get_path_to(c)
+	m2.air_daily_cycle = false
+	m2.wind_speed = 1.0
+	m2.humidity = 0.9
+	m2.temperature = 1.0
+	m2.cloud_cover = 1.0
+	m2.snap_to_settings()
+	await get_tree().physics_frame
+	m2.advance(6.0 * 3600.0)
+	_check("dew: an overcast night leaves no frost", m2.get_frost_at(open_p) < 0.01, "%.3f mm" % m2.get_frost_at(open_p))
+	# Morning sun melts it.
+	c.time_of_day = 11.0
+	m.temperature = 3.0
+	m.snap_to_settings()
+	m.advance(2.0 * 3600.0)
+	_check("dew: the morning sun melts the frost", m.get_frost_at(open_p) < 0.01, "%.3f mm left after 2 h" % m.get_frost_at(open_p))
+	# Radiation mist: wet ground and a surface cooled below the dew point bring it on sooner.
+	if ClassDB.class_exists("VegetationMist3D"):
+		var m3 := _new_map()
+		m3.sky_clock = m3.get_path_to(c)
+		m3.air_daily_cycle = false
+		m3.wind_speed = 0.5
+		m3.humidity = 0.85
+		m3.temperature = 8.0
+		m3.snap_to_settings()
+		await get_tree().physics_frame
+		c.time_of_day = 2.0
+		var mist: Node3D = ClassDB.instantiate("VegetationMist3D")
+		add_child(mist)
+		mist.weather_map = mist.get_path_to(m3)
+		m3.dew_and_frost = false
+		m3.advance(600.0)
+		var dry_level: float = mist.weather_mist_level()
+		m3.rain_rate = 5.0
+		m3.cloud_cover = 1.0
+		m3.snap_to_settings()
+		m3.advance(3600.0)
+		m3.rain_rate = 0.0
+		m3.cloud_cover = 0.0
+		m3.dew_and_frost = true
+		m3.snap_to_settings()
+		m3.advance(600.0)
+		var wet_level: float = mist.weather_mist_level()
+		_check("mist: a clear night over wet ground mists sooner than over dry", wet_level > dry_level + 0.1, "level %.2f wet, %.2f dry" % [wet_level, dry_level])
+		mist.queue_free()
+		m3.queue_free()
+	else:
+		_skip("mist", "no VegetationMist3D")
+	m.queue_free()
+	m2.queue_free()
+	c.queue_free()
+	await get_tree().physics_frame
+
+
+
+func _frost_view(path: String, off: bool) -> void:
+	var m := _new_map()
+	var c := _new_clock(1, 2.0)
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.9
+	m.temperature = -2.0
+	m.dew_and_frost = not off
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	print("frost %.3f mm" % m.get_frost_at(Vector3.ZERO))
+	# Seen in a low morning light (the frost stays: the clock is not moved).
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-25, 150, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.55, 0.65, 0.8)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.5, 0.58, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	add_child(env)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(40, 40)
+	ground.mesh = pm
+	ground.material_override = TerrainMaterial3D.new()
+	ground.position.x = 8.0
+	add_child(ground)
+	var grass := GrassField3D.new()
+	grass.radius = 12.0
+	add_child(grass)
+	var gen := PlantGenerator.new()
+	gen.preset = 0
+	gen.apply_preset_colors()
+	var fern := MeshInstance3D.new()
+	fern.mesh = gen.generate()
+	fern.position = Vector3(1.2, 0, 2.0)
+	add_child(fern)
+	var rg := RockGenerator.new()
+	rg.seed = 3
+	var rock := MeshInstance3D.new()
+	rock.mesh = rg.generate()
+	rock.position = Vector3(-1.5, 0, 1.5)
+	add_child(rock)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.6, 6.5)
+	cam.rotation_degrees = Vector3(-14, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	get_viewport().size = Vector2i(1280, 720)
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)

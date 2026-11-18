@@ -12,6 +12,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   *Weather map: a storm's cloud, rain core, wind and the wet ground it leaves.*
 
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
+- **Wind over terrain** (`terrain_wind_enabled`): faster over crests, calm in lees, turned along valleys and rising up slopes.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`): shelter inside plant canopies and behind buildings; gust patches sweep across fields.
 - **Season state** (`WeatherMap3D.get_season()`): day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
@@ -37,7 +38,8 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 
   *Wet surfaces: the sand darkens, puddles form and catch the sky.*
 
+- **Dew and frost** (`dew_and_frost`): clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.
 - **Contact wetness** (`contact_wetness_enabled`): ground that running water crossed stays dark after it drains, then dries with the weather.
 - **Rain on rock** (rock material `rain_rivulets`): rivulets run down rock faces while it rains, and the rock dries in patches after.
 - **Air temperature** (`air_follows_climate`, `air_daily_cycle`): follows the season and the time of day.
-- **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.
+- **Followers**: water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.

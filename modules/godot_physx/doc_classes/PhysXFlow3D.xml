@@ -194,6 +194,12 @@
 		<member name="vorticity" type="float" setter="set_vorticity" getter="get_vorticity" default="0.6">
 			Vorticity confinement: keeps small swirls alive for rolling, billowing gas.
 		</member>
+		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="is_weather_wind" default="true">
+			If [code]true[/code], the weather's wind (the world contract's wind, from a [WeatherMap3D]) is laid over the gas as air-only layers up to 4 m thick, so smoke from every emitter leans and drifts with the same air as the grass and trees, more aloft where the wind is stronger. The layers reserve no blocks. With no weather provider, nothing changes.
+		</member>
+		<member name="weather_wind_coupling" type="float" setter="set_weather_wind_coupling" getter="get_weather_wind_coupling" default="1.0">
+			Rate (1/s) at which the gas's velocity is pulled toward the weather's wind with [member weather_wind].
+		</member>
 	</members>
 	<constants>
 		<constant name="SCATTERING_RESOLUTION_FULL" value="0" enum="ScatteringResolution">

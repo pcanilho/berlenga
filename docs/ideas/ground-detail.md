@@ -274,10 +274,11 @@ grows, a share of the pushed volume (`break_share` 0.25) breaks into lumps if th
 none (the trail bench's default 110 kg/m3 fresh snow gives almost none; `--settled` lays 300 kg/m3). Sizes
 log-normal, median 2.2 cm plus 3 cm times wetness, sigma 0.5, 1 to 10 cm (avalanche debris granules, Bartelt and
 McArdell 2009). Each is thrown up to 12 cm away from the print (down the dent's slope), sits 15% into the snow,
-shrinks by degree days in a thaw (4 mm w.e./day/C), is buried by new snow and crushed by a later print. Four
-shared lumpy icospheres (320 triangles) with a fracture face, one rt_instanced MultiMesh each.
+shrinks by degree days in a thaw (4 mm w.e./day/C), is buried by new snow and crushed by a later print. Eight
+shared lumpy icospheres (320 triangles) with a fracture face, each clump stretched its own way (0.75 to 1.2 per
+axis) so the shapes do not read as copies; one rt_instanced MultiMesh per shape.
 
 Cost (lavapipe, trail bench, `--settled`, about 5,000 clumps lying): main thread 1.5 ms mean, 2.1 ms worst per
-update at 6 Hz (about 0.25 ms a frame); 4 MultiMeshes of 48 bytes per clump. Bench: docs/bench/snow
+update at 6 Hz (about 0.25 ms a frame); 48 bytes per clump. Bench: docs/bench/snow
 `--view=trail --settled --clumps-close [--no-clumps]`. Follow-ups: the scan on a worker; cornice debris
 (`SnowCover3D.cornice_failed`) as large blocks.

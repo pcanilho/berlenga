@@ -498,6 +498,12 @@ func _world() -> void:
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
 	cam.look_at(look)
+	if args.has("cam"):
+		# --cam/--look win over the view's camera (a fixed shot of a spot in the world).
+		var c: PackedStringArray = args["cam"].split(",")
+		var l: PackedStringArray = args.get("look", "0,0,0").split(",")
+		cam.position = Vector3(float(c[0]), float(c[1]), float(c[2]))
+		cam.look_at(Vector3(float(l[0]), float(l[1]), float(l[2])))
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:
@@ -980,8 +986,10 @@ func _caves(cam: Camera3D) -> void:
 					# --graze: a second lamp downstream, low over the water (another caver's, out of shot): its light grazes the
 					# surface toward the lens, so the water shows as a glinting sheet, as it does to a caver.
 					var lamp_g := OmniLight3D.new()
-					lamp_g.omni_range = 10.0
-					lamp_g.light_energy = float(args.get("graze-energy", "1.5"))
+					# Low, dim and short-reaching: its light falls mainly on the water round it, the walls stay dark.
+					lamp_g.omni_range = 4.0
+					lamp_g.omni_attenuation = 2.0
+					lamp_g.light_energy = float(args.get("graze-energy", "0.8"))
 					lamp_g.shadow_enabled = true
 					add_child(lamp_g)
 					# Kept on this segment's own water, short of its end: past it the stream may drop down a cascade, and a
@@ -990,7 +998,7 @@ func _caves(cam: Camera3D) -> void:
 					var g_at := eye_s + dir * maxf(ahead, 1.5)
 					var bed_eye := eye_s.y - float(args.get("eye-height", "0.4"))
 					var g_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(g_at.x, bed_eye + 0.8, g_at.z), Vector3(g_at.x, bed_eye - 0.6, g_at.z)))
-					g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.2
+					g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.12
 					for k in 8:
 						if net.get_rock_distance(g_at) < -0.15:
 							break

@@ -44,10 +44,11 @@ func _sky(kv: Dictionary) -> void:
 		# --aerosol=km: the weather's aerosol haze for that visibility (Koschmieder, 3.912 / V), as WeatherMap3D gives it.
 		mat.set_aerosol(3.912 / (float(kv["aerosol"]) * 1000.0), 0.9, 1200.0, 0.0)
 	if kv.has("params"):
-		# --params=name:value,...: any of the sky's shader parameters (e.g. cloud_cover:0.5,atmo_cloud_shadow_steps:0).
+		# --params=name:value,...: any of the sky's shader parameters (e.g. cloud_cover:0.5,atmo_cloud_shadow_steps:0, vec2s as cloud_shear:900:0).
 		for pair in String(kv["params"]).split(","):
+			# name:x:y sets a vec2 (cloud_shear:900:0).
 			var nv := pair.split(":")
-			mat.set_shader_parameter(nv[0], float(nv[1]))
+			mat.set_shader_parameter(nv[0], Vector2(float(nv[1]), float(nv[2])) if nv.size() == 3 else float(nv[1]))
 	var sky := Sky.new()
 	sky.sky_material = mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME

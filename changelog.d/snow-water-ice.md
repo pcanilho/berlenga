@@ -1,0 +1,1 @@
+- Snow: snow melts into open water instead of piling on the lake bed, and lakes freeze with Stefan's law under insulating snow, flood into snow ice and thaw (`lake_ice_enabled`, on by default). Ice from 5 cm is walkable. Snow and the weather share one rain-or-snow split and read the live air.

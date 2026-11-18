@@ -47,8 +47,8 @@
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_lightning_3d.h"
-#include "modules/weather/weather_map_3d.h"
 #endif
+#include "modules/world/world_contracts.h"
 
 // Fuel models from Anderson 1982 ("Aids to Determining Fuel Models for Estimating Fire Behavior", USDA INT-122): load,
 // depth, surface-to-volume ratio and moisture of extinction as published; packing ratios from load / (depth * 513
@@ -219,6 +219,13 @@ Vector3 PhysXFireSpread3D::_cell_world(int p_x, int p_z) const {
 	return w;
 }
 
+// A steady 0..1 hash of two integers.
+static float _hash01(uint32_t p_a, uint32_t p_b) {
+	uint32_t h = p_a * 73856093u ^ p_b * 19349663u;
+	h = (h ^ (h >> 13)) * 0x5bd1e995u;
+	return float((h ^ (h >> 15)) & 0xffffu) / 65535.0f;
+}
+
 bool PhysXFireSpread3D::_world_cell(const Vector3 &p_world, int &r_x, int &r_z) const {
 	const Vector3 local = get_global_transform().affine_inverse().xform(p_world);
 	r_x = (int)Math::floor((local.x + size.x * 0.5f) / cell_size);
@@ -385,15 +392,13 @@ void PhysXFireSpread3D::extinguish() {
 }
 
 Vector3 PhysXFireSpread3D::_wind() const {
-#ifdef MODULE_WEATHER_ENABLED
 	if (use_weather_wind) {
-		if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
 			// Midflame height: about the fuel's depth; WRF-SFIRE takes the wind at 6.1 m and reduces it, a weather map
 			// gives it near the ground directly.
-			return wm->get_wind_at(get_global_position(), 1.0f);
+			return wm->wind_at(get_global_position(), 1.0f);
 		}
 	}
-#endif
 	return wind;
 }
 
@@ -769,6 +774,12 @@ void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, cons
 				brand_points.push_back({ t.pos + up * t.base + off, w });
 				brand_count += w;
 			}
+			// Burning twigs dropping out of the crown as it burns (about 1.5 a kilogram of crown fuel), from all
+			// through it.
+			const float wt = kg * 1.5f * spotting_scale;
+			const Vector3 off((_hash01(k, uint32_t(time * 60.0f)) - 0.5f) * t.radius, (0.2f + 0.6f * _hash01(k + 7919u, uint32_t(time * 60.0f))) * depth, (_hash01(k + 104729u, uint32_t(time * 60.0f)) - 0.5f) * t.radius);
+			brand_points.push_back({ t.pos + up * t.base + off, wt, 0.015f });
+			brand_count += wt;
 		}
 		if (spotting && t.hrr > 0.0f) {
 			PhysXFirebrands::Plume pl;
@@ -781,7 +792,7 @@ void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, cons
 		// footprint), foliage around it killed by the column, and a glow while it flames.
 		const float flame_top = MIN(t.base + (1.3f * t.top - t.base) * MIN(c / 0.4f, 1.0f), 32.0f);
 		const float glow = c < 0.9f ? 1.0f : 0.0f;
-		const float reach = 1.6f * t.radius;
+		const float reach = 1.6f * t.radius; // (> the crown's ragged edge, 1.55 radius at most)
 		int x0, z0, x1, z1;
 		const bool in0 = _world_cell(t.pos - Vector3(reach, 0, reach), x0, z0);
 		const bool in1 = _world_cell(t.pos + Vector3(reach, 0, reach), x1, z1);
@@ -805,10 +816,16 @@ void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, cons
 				const Vector3 wp = _cell_world(x, z);
 				const float d = Vector2(wp.x - t.pos.x, wp.z - t.pos.z).length();
 				const uint32_t i = z * nx + x;
-				if (d <= t.radius * 1.05f) {
+				// The crown's outline is not a circle: its lowest, longest branches reach past the mean radius
+				// unevenly, so the burnt footprint has a wavering edge (a few lobes and a finer jitter).
+				const float ang = Math::atan2(wp.z - t.pos.z, wp.x - t.pos.x);
+				const float lobe = 0.5f + 0.5f * Math::sin(3.0f * ang + 2.1f * k) * Math::cos(5.0f * ang + 0.7f * k);
+				const float edge = t.radius * (1.0f + 0.4f * lobe + 0.15f * _hash01(uint32_t(x), uint32_t(z)));
+				if (d <= edge) {
+					const float rim = 1.0f - Math::smoothstep(0.75f * edge, edge, d);
 					peak_flame[i] = MAX(peak_flame[i], flame_top);
-					crown_char[i] = MAX(crown_char[i], MIN(c * 2.5f, 1.0f));
-					crown_glow[i] = glow > 0.0f ? MAX(crown_glow[i], glow) : crown_glow[i] * 0.9f;
+					crown_char[i] = MAX(crown_char[i], MIN(c * 2.5f, 1.0f) * (0.4f + 0.6f * rim));
+					crown_glow[i] = glow > 0.0f ? MAX(crown_glow[i], glow * rim) : crown_glow[i] * 0.9f;
 				}
 				if (d <= reach) {
 					peak_scorch[i] = MAX(peak_scorch[i], MIN(1.5f * t.top * MIN(c / 0.4f, 1.0f), 48.0f));
@@ -828,11 +845,9 @@ float PhysXFireSpread3D::get_heavy_fuel_at(const Vector3 &p_position) const {
 }
 
 float PhysXFireSpread3D::_air_temperature() const {
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		return wm->get_air_temperature();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		return wm->air_temperature_at(get_global_position());
 	}
-#endif
 	return 20.0f;
 }
 
@@ -844,13 +859,12 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	if (!use_weather_moisture || phi.is_empty()) {
 		return false;
 	}
-#ifdef MODULE_WEATHER_ENABLED
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	if (!wm) {
+	const WorldWeather *wm = WorldContracts::weather();
+	if (!wm->has_provider()) {
 		return false;
 	}
-	const float t = wm->get_air_temperature();
-	const float hum = CLAMP(wm->get_air_humidity() * 100.0f, 0.0f, 100.0f);
+	const float t = wm->air_temperature_at(get_global_position());
+	const float hum = CLAMP(wm->air_humidity_at(get_global_position()) * 100.0f, 0.0f, 100.0f);
 	const float k = 0.18f * (21.1f - t) * (1.0f - Math::exp(-0.115f * hum));
 	const float ed = (0.942f * Math::pow(hum, 0.679f) + 11.0f * Math::exp((hum - 100.0f) / 10.0f) + k) * 0.01f;
 	const float ew = (0.618f * Math::pow(hum, 0.753f) + 10.0f * Math::exp((hum - 100.0f) / 10.0f) + k) * 0.01f;
@@ -869,7 +883,11 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	for (int bz = 0; bz < nz; bz += block) {
 		for (int bx = 0; bx < nx; bx += block) {
 			const int cx = MIN(bx + block / 2, nx - 1), cz = MIN(bz + block / 2, nz - 1);
-			const float rain = MAX(wm->get_rain_at(_cell_world(cx, cz)), 0.0f); // mm/h = kg/m2/h
+			const Vector3 block_at = _cell_world(cx, cz);
+			const float rain = MAX(wm->precipitation_at(block_at), 0.0f); // mm/h = kg/m2/h
+			// Fuel lying on wet ground (the weather's surface film: rain that fell before the grid was there, dew)
+			// holds about as much as the film: soaked ground keeps it past extinction, dewy ground slows the front.
+			const float ground_wet = CLAMP(wm->surface_wetness_at(block_at), 0.0f, 1.0f) * 1.2f * m.moisture_extinction;
 			for (int z = bz; z < MIN(bz + block, nz); z++) {
 				for (int x = bx; x < MIN(bx + block, nx); x++) {
 					const uint32_t i = z * nx + x;
@@ -877,6 +895,7 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 					if (rain > 0.0f && load[i] > 1.0e-4f) {
 						w = MIN(w + rain / 3600.0f * p_delta * 0.33f / load[i], 2.5f);
 					}
+					w = MAX(w, ground_wet - base_moisture * wet[i]);
 					rain_water[i] = w;
 					const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
 					if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
@@ -887,9 +906,6 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 		}
 	}
 	return true;
-#else
-	return false;
-#endif
 }
 
 // Water from the liquid fluids (docs/ideas/physx.md, "Water puts fires out"): a bucket, a hose or a burst tank of
@@ -1204,8 +1220,17 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 		em->set_velocity(p_wind * 0.4f + Vector3(0, CLAMP(flame * 0.6f, 0.3f, 1.2f), 0));
 		em->set_couple_rate(2.0f);
 	}
+	// The Flow's own ambient wind carries the weather's wind over the whole plume (docs/ideas/wind.md); the fire's
+	// box only pushes its wind when that is off, or when the fire has a wind of its own (use_weather_wind off).
+	bool ambient = false;
+	if (flow) {
+		if (!use_weather_wind) {
+			flow->set_weather_wind(false);
+		}
+		ambient = flow->is_weather_wind() && WorldContracts::weather()->has_provider();
+	}
 	if (air) {
-		air->set_enabled((!order.is_empty() || n_crown > 0) && p_wind.length_squared() > 1.0e-4f);
+		air->set_enabled(!ambient && (!order.is_empty() || n_crown > 0) && p_wind.length_squared() > 1.0e-4f);
 		air->set_velocity(p_wind);
 		air->set_global_position(get_global_position() + Vector3(0, 2.0f, 0));
 		air->set_size(Vector3(size.x, 4.0f, size.y));
@@ -1243,7 +1268,16 @@ void PhysXFireSpread3D::_update_maps() {
 			// Charred fuel and scorched ground: near-black, a little warm (char's albedo is about 0.03-0.05). The
 			// front's edge is scorched at once, the rest darkens as the fuel burns down.
 			const float a = char_darkness * cover * MIN(0.35f + burnt * (1.2f + 0.4f * jitter), 1.0f);
-			char_image->set_pixel(x, z, Color(0.035f, 0.03f, 0.027f, a));
+			// Under a burnt crown the needles and twigs it dropped lie as white-grey ash over the char, patchily
+			// (mineral ash's albedo is about 0.3-0.5; Roy et al. 2010).
+			float ash = 0.0f;
+			if (!crown_char.is_empty() && crown_char[i] > 0.0f) {
+				// Drifts and bare patches at the scale of the fallen needle mats, a finer speckle on top.
+				const Vector3 wp = _cell_world(x, z);
+				const float mats = 0.65f * _fuel_noise(wp.x / 0.7f, wp.z / 0.7f, 7u) + 0.35f * _fuel_noise(wp.x / 2.2f, wp.z / 2.2f, 8u);
+				ash = CLAMP(crown_char[i] * 1.6f - 0.6f + 0.9f * (mats - 0.5f), 0.0f, 1.0f) * (0.3f + 0.55f * jitter) * MIN(burnt * 1.5f, 1.0f);
+			}
+			char_image->set_pixel(x, z, Color(Math::lerp(0.035f, 0.36f, ash), Math::lerp(0.03f, 0.35f, ash), Math::lerp(0.027f, 0.33f, ash), a));
 			// Glow: the flaming band (heat release falls as exp(-age)), then embers that die within a few burn times,
 			// unevenly.
 			const float age = t_ignite[i] < 0.0f ? 0.0f : (time - t_ignite[i]) / m.burn_time;
@@ -1469,12 +1503,14 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (!fires.has(this)) {
 				fires.push_back(this);
 			}
+			WorldContracts::register_fire(this);
 #ifdef MODULE_WEATHER_ENABLED
 			lightning_seen = WeatherLightning3D::get_last_ground_strike_serial(); // strikes from before it entered do not count
 #endif
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			fires.erase(this);
+			WorldContracts::unregister_fire(this);
 		} break;
 		case NOTIFICATION_READY: {
 			// Once per run, unless the project declares them (global_shader_parameter_get_list is editor only).

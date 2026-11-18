@@ -33,6 +33,7 @@
 #include "modules/terrain_deform/landscape_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/math/convex_hull.h"
@@ -392,6 +393,10 @@ RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint3
 				// Shingle bins: from little-worn to long-worn (1.5 to 6 abrasion lengths), each with its own shapes.
 				static const float pebble_bins[4] = { 1.5f, 2.5f, 4.0f, 6.0f };
 				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * pebble_bins[CLAMP(key_bin(k), 0, 3)];
+				j.seed += 131 * key_bin(k);
+			} else if (key_bin(k) >= RF_DETAIL_BIN) {
+				// Ground detail classes (pebbles, gravel, fine gravel): each its own shapes, so a finer class is not
+				// the coarser one shrunk, and no shape repeats across the scales.
 				j.seed += 131 * key_bin(k);
 			}
 			jobs.push_back(j);
@@ -3565,8 +3570,8 @@ int RockField3D::write_terrain3d_holes() {
 // Falls per game hour now, as a multiple of rockfall_rate: 1 as the base, plus 3 in the frost-cracking window
 // (-8 to -3 C), plus 6 for two game hours after the air thaws through 0 C, plus the rain rate over 5 mm/h.
 real_t RockField3D::get_rockfall_trigger() const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	if (!w) {
+	const WorldWeather *w = WorldContracts::weather();
+	if (!w->has_provider()) {
 		return 1.0;
 	}
 	const Vector3 tp = _target_position();
@@ -3578,17 +3583,17 @@ real_t RockField3D::get_rockfall_trigger() const {
 	if (thaw_left > 0.0) {
 		t += 6.0;
 	}
-	t += MAX(real_t(w->get_rain_at(tp)), real_t(0.0)) / 5.0;
+	t += MAX(real_t(w->precipitation_at(tp)), real_t(0.0)) / 5.0;
 	return t;
 }
 
-// The air at the target's height (standard lapse, 6.5 C per km, from the weather's ground height).
+// The air at the target's height (the weather contract applies the lapse rate).
 real_t RockField3D::_rockfall_air(const Vector3 &p_pos) const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	if (!w) {
+	const WorldWeather *w = WorldContracts::weather();
+	if (!w->has_provider()) {
 		return 10.0;
 	}
-	return w->get_air_temperature() - 0.0065f * (p_pos.y - w->get_ground_height());
+	return w->air_temperature_at(p_pos);
 }
 
 bool RockField3D::_find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_group, int &r_k) {

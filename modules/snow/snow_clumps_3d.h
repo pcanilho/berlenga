@@ -54,7 +54,7 @@ class SnowClumps3D : public Node3D {
 	GDCLASS(SnowClumps3D, Node3D);
 
 public:
-	static constexpr int SHAPES = 4;
+	static constexpr int SHAPES = 8;
 
 private:
 	NodePath surface_path;
@@ -67,7 +67,7 @@ private:
 
 	struct Clump {
 		Vector3 position; // on the snow, world
-		Basis basis; // rotation, unit scale
+		Basis basis; // rotation and a stretch of its own (unit size)
 		float size = 0.0f; // m, across
 		float buried = 0.0f; // m of new snow over it since it fell
 		float relief = 0.0f; // the print field's rim less dent under it when it landed (a later print that presses it in crushes it)

@@ -42,9 +42,7 @@
 #include "scene/resources/shader.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 float PhysXFirebrands::_rand() {
 	seed ^= seed << 13;
@@ -127,6 +125,19 @@ void PhysXFirebrands::release(float p_count, const LocalVector<Release> &p_point
 			k++;
 		}
 		Brand b;
+		if (p_points[k].twig > 0.0f) {
+			// A burning twig breaking off in the crown: it falls from rest through the needles at its own terminal
+			// velocity, too heavy for the column to hold (cylinders of 1 to 3 cm: 6 to 12 m/s, Tohidi et al. 2015),
+			// and glows on the ground for a minute or two.
+			const float d = p_points[k].twig * (0.6f + 0.8f * _rand());
+			b.p = p_points[k].position + Vector3((_rand() - 0.5f) * 0.6f, (_rand() - 0.5f) * 0.6f, (_rand() - 0.5f) * 0.6f);
+			b.v = Vector3((_rand() - 0.5f) * 0.6f, -0.5f * _rand(), (_rand() - 0.5f) * 0.6f);
+			b.vt = MIN(3.0f + 350.0f * d, 12.0f);
+			b.life = MIN(30.0f + 3000.0f * d * (0.7f + 0.6f * _rand()), 120.0f);
+			b.n = per;
+			brands.push_back(b);
+			continue;
+		}
 		b.p = p_points[k].position + Vector3((_rand() - 0.5f) * 0.3f, _rand() * 0.3f, (_rand() - 0.5f) * 0.3f);
 		// Thrown up into the plume; the gas carries it from there.
 		b.v = Vector3((_rand() - 0.5f) * 1.0f, 1.5f + _rand() * 2.5f, (_rand() - 0.5f) * 1.0f);
@@ -169,11 +180,9 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 		const float z = under ? MAX(b.p.y - ground, 0.1f) : 10.0f;
 		// The air: the wind at the brand's height plus the plume's own motion.
 		Vector3 air;
-#ifdef MODULE_WEATHER_ENABLED
-		if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-			air = wm->get_wind_at(b.p, z);
+		if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+			air = wm->wind_at(b.p, z);
 		} else
-#endif
 		{
 			air = p_wind * (Math::log(MAX(z, z0 * 1.5f) / z0) / ref);
 		}
