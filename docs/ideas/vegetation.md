@@ -539,8 +539,19 @@ Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
   wheelings) and a 256x2 look table; `crop_ground()` in the ground shader draws drilled soil with
   slot lines and darker wheelings, the colour of tillers dropped by the coarser levels, and past
   the band the crop's colour and cover by stage. Still to do: ridge and furrow and ploughed soil
-  (needs terrain heights: terrain thread), straw swaths on stubble, the meadow grass kept out of
-  fields, GPU fill for crops.
+  (needs terrain heights: terrain thread), GPU fill for crops.
+- Stage 2 second part (18 Nov, after docs declined the first frames): ears as real spikelets
+  (two alternate rows of lozenges on a slim rachis, glumes shaded darker where they tuck under;
+  barley's awns from each spikelet's tip), oat panicles in whorls of three with drooping
+  spikelets, wind lean scaled per tiller so a stand is not a comb. The far canopy colour is
+  measured, not guessed: the grass bench's `CROP_FAR_ONLY=1` draws only the ground, and
+  `crop_canopy_look()` is set so its screen mean matches the tillers' over the same ground
+  (darker and more saturated than the leaf colour: the gaps are in shade), and the ground under a
+  closed canopy has no sheen. Straw swaths: after harvest a swath of loose straw down the middle
+  of each combine pass (a third of the tramline spacing, 1.4 m wide, heaped in the middle) as
+  lying straw records (plot slot + 64), and as paler stripes on the far ground. The meadow and
+  VegetationField3D plants keep out of every crop node's fields (`get_crop_field_mask()`, group
+  `vegetation_crop_aware`).
 - References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
   instanced rows); Ghost of Tsushima, GDC 2021 (blades and wind); Butler and Ebert, "Procedural
   field grasses".

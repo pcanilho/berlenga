@@ -299,6 +299,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	}
 	r_setup.obstacles = obstacle_grid;
 	r_setup.paths = path_grid;
+	r_setup.crop_fields = GrassField3D::get_crop_field_mask();
 	_follow_holes(map);
 	r_setup.holes.read(VegetationHoles::source_of(map));
 	{
@@ -1108,6 +1109,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const float passes = p_setup.paths.passes_at(xz);
 						suit *= sp->trample_cover(passes);
 						trodden = sp->trample_scale(passes);
+					}
+					// Crop fields: nothing else grows in them (the margins are outside).
+					if (suit > 0.0f && !p_setup.crop_fields.is_empty() && !on_top && p_setup.crop_fields.contains(xz)) {
+						suit = 0.0f;
 					}
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
@@ -3085,6 +3090,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 	// setup), the setup takes the new holes and the tiles near them are placed again.
 	if (holes_dirty.has_area() && stream_jobs.is_empty()) {
 		stream_setup.holes.read(VegetationHoles::source_of(stream_setup.map));
+		stream_setup.crop_fields = GrassField3D::get_crop_field_mask();
 		const Rect2 near = holes_dirty.grow(stream_setup.deadwood_reach + stream_setup.max_footprint + OBSTACLE_MARGIN);
 		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
 			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
@@ -3376,6 +3382,11 @@ void VegetationField3D::_follow_holes(TerrainDataMap3D *p_map) {
 	gen->connect(SNAME("holes_changed"), on_holes);
 }
 
+// Crop fields came, went or moved (GrassField3D.fields): rebuild clear of them.
+void VegetationField3D::_on_crop_fields_changed() {
+	_on_holes_changed(Rect2(-1e6f, -1e6f, 2e6f, 2e6f));
+}
+
 void VegetationField3D::_on_holes_changed(const Rect2 &p_rect) {
 	if (streaming) {
 		if (stream_setup_valid) {
@@ -3392,6 +3403,7 @@ void VegetationField3D::_notification(int p_what) {
 			if (Engine::get_singleton()->is_editor_hint()) {
 				break;
 			}
+			add_to_group(SNAME("vegetation_crop_aware"));
 			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
@@ -3454,6 +3466,7 @@ void VegetationField3D::set_populate_on_ready(bool p_enable) {
 }
 
 void VegetationField3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("_on_crop_fields_changed"), &VegetationField3D::_on_crop_fields_changed);
 	ClassDB::bind_method(D_METHOD("set_biome", "biome"), &VegetationField3D::set_biome);
 	ClassDB::bind_method(D_METHOD("get_biome"), &VegetationField3D::get_biome);
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);

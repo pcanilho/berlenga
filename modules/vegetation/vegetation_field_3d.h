@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "grass_field_3d.h"
 #include "plant_species.h"
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
@@ -210,6 +211,7 @@ class VegetationField3D : public Node3D {
 		float deadwood_reach = 0.0f; // The widest a log reaches from its origin plus the widest deadwood band of a species.
 		VegetationObstacles obstacles; // Rocks the plants keep out of (a copy, for the worker threads).
 		VegetationPaths paths; // Worn paths that thin and shorten the plants (a copy).
+		GrassField3D::CropFieldMask crop_fields; // Crop fields nothing else grows in (a copy).
 		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
 		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
 		VegetationHoles holes; // Openings in the ground (cave mouths): no plant there (a copy).
@@ -327,6 +329,7 @@ class VegetationField3D : public Node3D {
 	Rect2 holes_dirty; // Ground opened or closed since the streamed tiles were placed (no area: none).
 	void _follow_holes(TerrainDataMap3D *p_map);
 	void _on_holes_changed(const Rect2 &p_rect);
+	void _on_crop_fields_changed();
 	bool stream_maps_dirty = false;
 	double stream_maps_wait = 0.0;
 	Vector2 stream_maps_centre = Vector2(1e30f, 1e30f);
