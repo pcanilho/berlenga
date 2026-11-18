@@ -1752,6 +1752,24 @@ func _field_checks() -> void:
 	if head == 0 or head_off > head / 4:
 		fails += 1
 		print("GRASS_FAIL fields: headland rows not parallel to the edge")
+	# Hedgerows round the fields (GrassField3D.hedges): segments laid, none standing in a field.
+	var hedge_n := grass.get_hedge_segment_count()
+	var hedge_in := 0
+	for h in grass.get_children(true):
+		if h.name != "Hedges":
+			continue
+		for ch in h.get_children():
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var t: Transform3D = ch.global_transform * mm.get_instance_transform(i)
+				var mid := t.origin + t.basis.x * 1.0
+				for f in grass.fields:
+					if Geometry2D.is_point_in_polygon(Vector2(mid.x, mid.z), f["polygon"]):
+						hedge_in += 1
+	print("GRASS_HEDGES segments=%d in_fields=%d" % [hedge_n, hedge_in])
+	if hedge_n < 40 or hedge_in > 0:
+		fails += 1
+		print("GRASS_FAIL hedges: too few segments round the fields, or some standing in a field")
 	# The meadow keeps out of the fields.
 	var meadow := get_node("Meadow") as GrassField3D
 	for i in 600:

@@ -562,6 +562,23 @@ Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
   through a canopy height field (rows, clumps, ears, height by stage from
   `crop_canopy_height()`), so tramlines read as lanes cut into the crop with shaded walls rather
   than painted stripes, and the canopy top shades by depth into it.
+- Far crop matched live (18 Nov): raster draws the tillers much brighter than the path tracer (no
+  shade inside the stand), so a fixed far colour cannot match both. The first crop node now runs
+  the meadow's live-view match (`far_match_view`): pairs of screen points in the same field, one at
+  half the tillers' radius, one just past it, read back asynchronously; the far canopy is scaled
+  per channel (`crop_ground_view`) until they agree, up to five rounds ten frames apart.
+- Stage 3, margins and hedgerows (18 Nov). `PlantSpecies.RULE_FIELD_EDGE` (`field_edge_range`):
+  metres from the nearest field's edge, negative inside; a species using it may grow in the crop.
+  `PlantGenerator.make_margin()`: `MARGIN_HEADLAND` (corn poppy, cornflower, scentless mayweed,
+  from 5 m inside the crop to the edge, where most of a field's weeds are: Marshall 1989; Wilson
+  and Aebischer 1995) and `MARGIN_VERGE` (cow parsley, cocksfoot, nettles at the hedge foot,
+  knapweed, 0.3 to 2.8 m out). `GrassField3D.hedges` (on): the trees thread's hedge segments
+  (TreeGenerator `SHRUB_HEDGE`, 2 m long) laid end to end `hedge_offset` (3.5 m) out from each
+  field's edge, turned along it: hawthorn 55%, blackthorn 15%, hazel 12%, field maple 10%, dog rose
+  8%, in runs of about three segments (the common mixed hedge; Pollard, Hooper and Moore 1974);
+  a boundary two fields share gets one hedge; one 6 m gateway per field on its longest side.
+- Meadow clumps are Voronoi cells (nearest of jittered seeds), not grid squares, which showed as
+  blocks of lighter and darker grass.
 - References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
   instanced rows); Ghost of Tsushima, GDC 2021 (blades and wind); Butler and Ebert, "Procedural
   field grasses".

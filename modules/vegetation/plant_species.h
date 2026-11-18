@@ -68,6 +68,7 @@ public:
 		RULE_TIDE_HEIGHT, // Metres above the sea (the geology source's sea). Coast rules need a geology source with a sea; without one a species using them is not placed.
 		RULE_COAST_EXPOSURE, // 0 sheltered to 1 open to the sea's waves (TerrainGenerator3D.get_coast_exposure_at); 0 far from the sea.
 		RULE_BEACH, // Beach mask, 1 on the beach face fading over the backshore, 0 inland (TerrainGenerator3D.get_beach_at).
+		RULE_FIELD_EDGE, // Metres from the nearest crop field's edge (GrassField3D.fields), negative inside the field. A species using it may grow in the fields; without fields it is not placed.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -225,6 +226,7 @@ public:
 	// the days with a mean of at least 0.9 C, -10 when there are fewer than 94 of them (Paulsen and
 	// Koerner 2014, the treeline model: trees need 6.4 C over at least 94 days).
 	static float season_temperature(float p_january, float p_july);
+	bool uses_field_edge() const { return ranges[RULE_FIELD_EDGE].x > -100000.0f || ranges[RULE_FIELD_EDGE].y < 100000.0f; }
 	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
 	// True when a coast rule (tide height, exposure, beach) is narrower than "anywhere".
 	bool uses_coast() const {

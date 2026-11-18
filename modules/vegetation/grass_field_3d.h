@@ -89,6 +89,26 @@ public:
 				}
 			}
 			return false;
+		}		// Metres to the nearest field's edge, negative inside a field; p_reach where none is nearer.
+		float edge_distance(const Vector2 &p_q, float p_reach) const {
+			float best = p_reach;
+			bool inside = false;
+			for (const Item &it : items) {
+				if (!it.bounds.grow(p_reach).has_point(p_q)) {
+					continue;
+				}
+				const int n = it.polygon.size();
+				const Vector2 *pts = it.polygon.ptr();
+				for (int i = 0; i < n; i++) {
+					const Vector2 a = pts[i];
+					const Vector2 b = pts[(i + 1) % n];
+					const Vector2 ab = b - a;
+					const float t = CLAMP((p_q - a).dot(ab) / MAX(ab.length_squared(), 1e-8f), 0.0f, 1.0f);
+					best = MIN(best, p_q.distance_to(a + ab * t));
+				}
+				inside = inside || (it.bounds.has_point(p_q) && Geometry2D::is_point_in_polygon(p_q, it.polygon));
+			}
+			return inside ? -best : best;
 		}
 	};
 
@@ -212,6 +232,16 @@ private:
 	void _publish_crop_sun();
 	mutable Ref<ImageTexture> crop_stage_texture; // A texel a plot: its stage (shader crop_plot_stage).
 	Array fields;
+	// Hedgerows round the fields (crop nodes): TreeGenerator's hedge segments laid end to end along
+	// each field's edge, hedge_offset metres out (past the verge), one gateway gap per field.
+	bool hedges = true;
+	float hedge_offset = 3.5f;
+	LocalVector<Node3D *> hedge_nodes;
+	int hedge_day = -1000;
+	bool hedges_queued = false;
+	void _queue_hedges();
+	void _build_hedges();
+	void _free_hedges();
 	LocalVector<CropPlot> plots;
 	int crop_day = -1; // The season's day the plot stages were set for.
 	void _update_plot_stages(int p_day);
@@ -313,6 +343,10 @@ private:
 	double far_view_msec = 0.0; // The last readback's sampling cost on the thread it lands on.
 	Color far_view_ratio = Color(1, 1, 1, 1);
 	int far_view_pairs = 0;
+	// The same match for a crop's fields (the first crop node): its tillers just inside their band
+	// against the far canopy past it, in the same field; per channel, as crop_ground_view.
+	Color crop_view_scale = Color(1, 1, 1, 1);
+	bool _is_crop_view() const { return crop != CROP_NONE && !crop_nodes.is_empty() && crop_nodes[0] == this; }
 	void _far_view_step(class Camera3D *p_cam);
 	void _far_view_start(int p_wait);
 	void _far_view_issue(RID p_viewport_texture);
@@ -451,6 +485,11 @@ public:
 	float get_row_spacing() const { return row_spacing; }
 	static constexpr int MAX_PLOTS = 63;
 	void set_fields(const Array &p_fields);
+	void set_hedges(bool p_enabled);
+	bool get_hedges() const { return hedges; }
+	void set_hedge_offset(float p_offset);
+	float get_hedge_offset() const { return hedge_offset; }
+	int get_hedge_segment_count() const;
 	Array get_fields() const { return fields; }
 	float get_field_stage(int p_index) const;
 	static float crop_calendar_stage(int p_sown_day, int p_harvest_day, int p_day);

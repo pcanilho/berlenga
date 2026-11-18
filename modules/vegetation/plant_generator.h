@@ -154,6 +154,11 @@ public:
 		PRESET_FRENCH_LAVENDER,
 		PRESET_THYME,
 		PRESET_SAGE_ROCKROSE,
+		// Field margins (plant_margin.cpp).
+		PRESET_CORN_POPPY,
+		PRESET_CORNFLOWER,
+		PRESET_MAYWEED,
+		PRESET_COW_PARSLEY,
 		PRESET_MAX,
 	};
 
@@ -339,6 +344,11 @@ private:
 	void _build_sea_kale();
 	void _build_sea_campion();
 	void _build_horned_poppy();
+	// Field margins (plant_margin.cpp).
+	void _build_corn_poppy();
+	void _build_cornflower();
+	void _build_mayweed();
+	void _build_cow_parsley();
 	// Atlantic heath (plant_heath.cpp).
 	void _build_bell_heather();
 	void _build_cross_leaved_heath();
@@ -569,6 +579,13 @@ public:
 		SALTMARSH_MAX,
 	};
 	static TypedArray<Resource> make_saltmarsh(SaltmarshStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// The plants along a crop field's edge, placed by the distance to it (plant_margin.cpp).
+	enum MarginStand {
+		MARGIN_HEADLAND, // The crop's outer metres and the uncropped strip: corn poppy, cornflower, mayweed.
+		MARGIN_VERGE, // The grass strip by the hedge: cow parsley, cocksfoot, nettle, knapweed.
+		MARGIN_MAX,
+	};
+	static TypedArray<Resource> make_margin(MarginStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	// Atlantic heath on acid, oceanic, open ground (plant_heath.cpp).
 	enum HeathStand {
 		HEATH_DRY, // Free-draining ground: heather, bell heather, crowberry, wiry grasses.
@@ -604,5 +621,6 @@ VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
+VARIANT_ENUM_CAST(PlantGenerator::MarginStand);
 VARIANT_ENUM_CAST(PlantGenerator::HeathStand);
 VARIANT_ENUM_CAST(PlantGenerator::ScrubStand);
