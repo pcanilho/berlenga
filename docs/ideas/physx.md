@@ -1270,6 +1270,25 @@ send a tenth of their heat into it as a thin steady steam. Test: a 2.6 m
 square of water on a burning patch put out 100 cells and made 2.7 kg of
 steam that rose as a white billow over a metre in two seconds.
 
+### Burning buildings break apart (picked 18 Nov night, second of four)
+
+Built. A PhysXBurnable3D whose target is a PhysXDestructible3D weakens its
+Blast bonds as it chars. The section lost follows EN 1995-1-2's reduced
+cross-section: a notional char depth of 0.8 mm a minute (softwood members,
+corner rounding included) plus a zero-strength layer growing to 7 mm over
+the first 20 minutes, from both faces of the box's thinnest side. Bonds in
+the burning patch take damage in step with it, reaching their health at
+collapse_share (0.4: a member loaded near half its capacity fails when
+about 40% of its section is gone), with no shatter speed, so pieces break
+off gently and the support graph (anchor Grounded) drops what is cut
+loose. The destructible gained a material remap and instance shader
+parameters applied to every piece, live and future, so the burnable's
+char look (in the destructible's own space) stays on falling pieces. Test:
+a 3 x 2 m wall of 4 cm boards (24 Voronoi chunks) burning at up to 1.8 MW
+broke at 7 minutes and was all pieces by 8, as the section model says.
+Left: flames stay at the intact shape's place after it breaks (the Flow
+emitters do not follow pieces yet).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

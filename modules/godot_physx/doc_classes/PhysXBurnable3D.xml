@@ -96,6 +96,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="collapse_share" type="float" setter="set_collapse_share" getter="get_collapse_share" default="0.4">
+			For a [PhysXDestructible3D] target: the share of its section burnt away at which it gives way. The section is lost as timber loses it in a fire (EN 1995-1-2's reduced cross-section: char at about 0.8 mm a minute and a zero-strength layer growing to 7 mm behind it, from both faces of its thinnest side), and the bonds in the burning patch weaken with it, breaking at this share, so the burning parts break off gently and what is cut loose from the ground falls. A 4 cm board wall gives way after about 7 minutes of flaming. Its char look stays on the pieces.
+		</member>
 		<member name="ember_rate" type="float" setter="set_ember_rate" getter="get_ember_rate" default="30.0">
 			Sparks thrown per second for each MW of heat released (for the look; they do not light anything).
 		</member>
