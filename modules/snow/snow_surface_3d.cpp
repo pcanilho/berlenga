@@ -522,6 +522,14 @@ void SnowSurface3D::_shift_ground(Vector2i p_origin) {
 				if (!Math::is_finite(h)) {
 					h = cover ? cover->get_ground_height_at(Vector3((p_origin.x + i) * ground_spacing, 0, (p_origin.y + z) * ground_spacing)) : 0.0f;
 				}
+				if (cover) {
+					// Lake ice that bears weight is the ground the deep snow lies on (docs/ideas/snow.md,
+					// follow-up 15); open water and thin ice are not.
+					const Vector3 at((p_origin.x + i) * ground_spacing, 0, (p_origin.y + z) * ground_spacing);
+					if (cover->get_ice_thickness_at(at) >= SnowCover3D::ICE_WALK) {
+						h = MAX(h, cover->get_water_level_at(at));
+					}
+				}
 				next[z * n + i] = h;
 			}
 			x = e;

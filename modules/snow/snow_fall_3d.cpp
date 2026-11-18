@@ -476,6 +476,9 @@ void SnowFall3D::_update_ground(Vector3 p_center) {
 			if (!Math::is_finite(h)) {
 				h = cover ? cover->get_ground_height_at(p) : p_center.y - fall_extent.y;
 			}
+			if (cover) {
+				h = MAX(h, cover->get_water_level_at(p)); // flakes end on water (and ice), not on its bed
+			}
 			w[z * GROUND_N + x] = h + (cover ? cover->get_depth_at(p) : 0.0f);
 		}
 	}
@@ -543,7 +546,7 @@ void SnowFall3D::_update(double p_delta) {
 	// Blowing: the wind at 10 m over the ground under the camera against the threshold of dry snow.
 	const float ground_y = ground_valid && cover ? cover->get_ground_height_at(center) : center.y - 2.0f;
 	const Vector3 base(center.x, ground_y, center.z);
-	const float temp = cover ? cover->get_air_temperature_at(base) : (weather ? weather->get_temperature() : -5.0f);
+	const float temp = cover ? cover->get_air_temperature_at(base) : (weather ? weather->get_air_temperature() : -5.0f);
 	cur_threshold = threshold_wind_override >= 0.0f ? threshold_wind_override : blowing_threshold(temp);
 	cur_wind10 = weather ? weather->get_wind_at(base, 10.0f).length() : 0.0f;
 	cur_blow = blowing_enabled && temp < 0.0f ? CLAMP(saltation_flux_ratio(cur_wind10, cur_threshold) * blowing_strength, 0.0f, 1.0f) : 0.0f;

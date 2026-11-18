@@ -270,9 +270,9 @@ void SnowIcicles3D::advance(float p_hours) {
 		mid += p / float(edge.size());
 	}
 	const Vector3 at = get_global_transform().xform(mid);
-	const float celsius = cover ? cover->get_air_temperature_at(at) : (weather ? weather->get_temperature() : 0.0f);
+	const float celsius = cover ? cover->get_air_temperature_at(at) : (weather ? weather->get_air_temperature() : 0.0f);
 	const float wind = weather ? weather->get_wind_at(at).length() : 0.0f;
-	const float humidity = weather ? weather->get_humidity() : 0.8f;
+	const float humidity = weather ? weather->get_air_humidity() : 0.8f;
 	float supply = 0.0f; // kg per metre of edge per hour
 	if (cover) {
 		// Melt water leaving the pack above (mm/h = kg/(m2 h)) over the catchment, plus the roof's heat melting
