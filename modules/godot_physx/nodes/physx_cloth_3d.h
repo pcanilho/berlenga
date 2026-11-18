@@ -34,8 +34,8 @@
 
 #include "scene/3d/visual_instance_3d.h"
 
+#include "../cloth/cloth_wetness.h" // not Flow's: builds without flow_sdk need it too
 #ifdef GODOT_PHYSX_FLOW
-#include "../cloth/cloth_wetness.h"
 #include "../flow/physx_cloth_burn.h"
 #endif
 #include "scene/resources/mesh.h"

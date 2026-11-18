@@ -709,6 +709,13 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Puddles placed by the world.** add_puddle() exists for scenes; the ground can call it itself where the terrain
   data map's wetness index is high in a hollow, after rain, so a generated world has puddles where water would
   gather without scene code.
+  *Built (18 Nov):* `world_puddles` (on) and `world_puddle_density` (1 per 100 m2 where fully suited). Sites on a
+  4 m world grid with their own hash; a site seen inside the field for a second is weighed by
+  `_world_puddle_suit()` (the data map's wetness index or the first metres by water, as the deep mud's, or without a
+  data map a hollow in the ground lattice; flat, bare soil only) and dug with add_puddle's hollow (radius 0.6 to
+  1.6 m, 5 to 12 cm), filled with slightly muddy water (15 kg/m3) when the ground round it is wet, left a dry hollow
+  (it can crack) when not; rain fills it later. Sites the field leaves are forgotten; a hollow already there on
+  return (kept ruts) is not dug again. Check: --test=puddle-helper (three dips of a "hollows" ground).
 
 
 ### Look (any stage)

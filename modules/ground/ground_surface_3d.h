@@ -401,6 +401,14 @@ private:
 	};
 	LocalVector<PendingPuddle> pending_puddles; // add_puddle()'s, filled once dug
 	void _puddles_update(double p_delta);
+	void _add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud, bool p_fill);
+	// Puddles the world places (mud round 6): candidate sites on a 4 m grid, each seen inside the field a while.
+	bool world_puddles = true;
+	float world_puddle_density = 1.0f; // puddles per 100 m2 where the ground fully suits one
+	HashMap<Vector2i, double> world_puddle_seen; // site -> time first seen inside the field (< 0: done)
+	double world_puddle_clock = 0.0;
+	void _world_puddles_update(double p_delta);
+	float _world_puddle_suit(const Vector3 &p_position) const;
 	double water_added = 0.0; // m3, the discs applied so far (taken < 0)
 	// What takes could not find (the GPU's ledger, read back), and how much of it later water added has paid.
 	uint32_t water_owed_seen[2] = { 0, 0 };
@@ -411,6 +419,7 @@ private:
 	static int _disc_texels(const GroundDeformField &p_field, const Vector3 &p_position, float p_radius);
 	LocalVector<float> water_table; // m from the surface down to the water table a sea or lake left (runoff_channels)
 	double water_accum = 0.0;
+	double puddle_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
 	// The far pore water (docs/ideas/mud.md, stage 0): the same balance on a lattice FAR_STEP times coarser with as
@@ -614,6 +623,10 @@ public:
 	// and water thrown up (mud stage 4c). Applied by the next water step on the GPU.
 	void add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud = 0.0f);
 	void add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud = 0.0f);
+	void set_world_puddles(bool p_enabled) { world_puddles = p_enabled; }
+	bool is_world_puddles() const { return world_puddles; }
+	void set_world_puddle_density(float p_density) { world_puddle_density = MAX(p_density, 0.0f); }
+	float get_world_puddle_density() const { return world_puddle_density; }
 	// Stirs p_mass kg of the bed's clay into the standing water over a disc (feet, clods landing), where the bed is
 	// cohesive; muddy water (round 3). Applied by the next water step on the GPU.
 	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);
