@@ -83,6 +83,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "crop_ground_sun", "vec4" },
 		{ "crop_ground_lobe1", "vec4" },
 		{ "crop_ground_lobe2", "vec4" },
+		{ "crop_ground_view", "vec4" },
 		{ "grass_trample_map", "sampler2D" },
 		{ "grass_trample_rect", "vec4" },
 		// PhysXFireSpread3D's plant state (vegetation_fire.h); set only while a fire burns.
@@ -101,7 +102,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		Dictionary d;
 		d["type"] = g.type;
 		// A scale is 1 until a field sets it.
-		const bool unit = String(g.name) == "grass_ground_far_scale" || String(g.name) == "vegetation_far_shade";
+		const bool unit = String(g.name) == "grass_ground_far_scale" || String(g.name) == "vegetation_far_shade" || String(g.name) == "crop_ground_view";
 		d["value"] = String(g.type) == "vec4" ? Variant(unit ? Vector4(1, 1, 1, 1) : Vector4()) : (String(g.type) == "float" ? Variant(unit ? 1.0f : 0.0f) : Variant(""));
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}

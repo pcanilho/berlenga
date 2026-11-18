@@ -829,6 +829,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool litter_rule = sp->uses_litter();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
+		const bool field_rule = sp->uses_field_edge();
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
@@ -1110,8 +1111,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						suit *= sp->trample_cover(passes);
 						trodden = sp->trample_scale(passes);
 					}
-					// Crop fields: nothing else grows in them (the margins are outside).
-					if (suit > 0.0f && !p_setup.crop_fields.is_empty() && !on_top && p_setup.crop_fields.contains(xz)) {
+					// Field margins (PlantSpecies field_edge_range): arable weeds in the headland and the
+					// uncropped strip, verge plants by the hedge; no fields, no margin plants.
+					if (field_rule && suit > 0.0f) {
+						const float reach = MAX(Math::abs(sp->get_rule_range(PlantSpecies::RULE_FIELD_EDGE).x), Math::abs(sp->get_rule_range(PlantSpecies::RULE_FIELD_EDGE).y)) + sp->get_rule_fade(PlantSpecies::RULE_FIELD_EDGE) + 1.0f;
+						suit *= p_setup.crop_fields.is_empty() ? 0.0f : sp->rule_weight(PlantSpecies::RULE_FIELD_EDGE, p_setup.crop_fields.edge_distance(xz, MIN(reach, 1000.0f)));
+					}
+					// Crop fields: nothing else grows in them (the margins are outside), but for the
+					// margin plants that keep to the field's edge.
+					if (suit > 0.0f && !field_rule && !p_setup.crop_fields.is_empty() && !on_top && p_setup.crop_fields.contains(xz)) {
 						suit = 0.0f;
 					}
 					const float keep = sp->get_density() * suit;
@@ -1930,11 +1938,48 @@ void VegetationField3D::_compute_maps(Maps &r_maps, const LocalVector<const Loca
 		if (r_maps.want_floor) {
 			// The forest floor for the ground's shader (get_floor_shader_code()): litter cover in
 			// red and the conifer share of the cover in green.
+			// Needles and leaves fall under every crown, not only in a closed stand: an open stand
+			// (stone pine, parkland oaks) keeps a mat under and just past each crown, thinning into
+			// drifts between them (litterfall falls off within about a crown's height of the stem;
+			// Ferrari and Sugita 1996). The shade blurred over about 2 m carries it past the crown.
+			const int lr_x = MAX(1, int(Math::round(2.0f * w / rect.size.x)));
+			const int lr_y = MAX(1, int(Math::round(2.0f * h / rect.size.y)));
+			LocalVector<float> fall;
+			fall.resize(w * h);
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					float sum = 0.0f;
+					int n = 0;
+					for (int dx = -lr_x; dx <= lr_x; dx++) {
+						const int xx = x + dx;
+						if (xx >= 0 && xx < w) {
+							sum += shade[y * w + xx];
+							n++;
+						}
+					}
+					tmp[y * w + x] = n > 0 ? sum / n : 0.0f;
+				}
+			}
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					float sum = 0.0f;
+					int n = 0;
+					for (int dy = -lr_y; dy <= lr_y; dy++) {
+						const int yy = y + dy;
+						if (yy >= 0 && yy < h) {
+							sum += tmp[yy * w + x];
+							n++;
+						}
+					}
+					fall[y * w + x] = n > 0 ? sum / n : 0.0f;
+				}
+			}
 			Vector<uint8_t> data;
 			data.resize(w * h * 2);
 			uint8_t *d = data.ptrw();
 			for (int i = 0; i < w * h; i++) {
-				d[i * 2 + 0] = uint8_t(CLAMP(stand[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+				const float litter = MAX(stand[i], 0.9f * Math::smoothstep(0.04f, 0.3f, fall[i]));
+				d[i * 2 + 0] = uint8_t(CLAMP(litter, 0.0f, 1.0f) * 255.0f + 0.5f);
 				d[i * 2 + 1] = uint8_t(CLAMP(conifer[i], 0.0f, 1.0f) * 255.0f + 0.5f);
 			}
 			r_maps.floor = Image::create_from_data(w, h, false, Image::FORMAT_RG8, data);

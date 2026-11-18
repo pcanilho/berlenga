@@ -24,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -349,6 +349,7 @@ func _checks() -> void:
 	_dune_checks()
 	_alpine_checks()
 	_saltmarsh_checks()
+	_margin_checks()
 	_heath_checks()
 	_scrub_checks()
 	_bloom_checks()
@@ -564,6 +565,42 @@ func _saltmarsh_checks() -> void:
 	var green := PlantGenerator.make_saltmarsh(P.SALTMARSH_PIONEER, 1, false, {"forcing": 900.0, "day_of_year": 190, "senescence": 0.0})
 	_check("glasswort and cord-grass carry pollen tags; cord-grass sheds pollen", (green[1] as PlantSpecies).get_meta("pollen", 0.0) > 0.0 and int((green[0] as PlantSpecies).get_meta("plant_preset", -1)) == P.PRESET_GLASSWORT, [green[1].get_meta("pollen", 0.0)])
 	_check("both glasswort seasons build", (red[0] as PlantSpecies).meshes.size() == 1 and (green[0] as PlantSpecies).meshes.size() == 1, null)
+
+# Field margins (docs/ideas/vegetation.md, "Farmland", stage 3): sizes in leaf, in flower and in
+# seed, and the sets keep to the field's edge (headland weeds inside it, the verge outside).
+func _margin_checks() -> void:
+	var P := PlantGenerator
+	var sizes := {P.PRESET_CORN_POPPY: [0.015, 0.85, 0.6], P.PRESET_CORNFLOWER: [0.015, 0.95, 0.5], P.PRESET_MAYWEED: [0.03, 0.6, 0.9], P.PRESET_COW_PARSLEY: [0.08, 1.6, 1.0]}
+	for p in sizes:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for season in [{"forcing": 450.0, "day_of_year": 130, "senescence": 0.0}, {"forcing": 1000.0, "day_of_year": 185, "senescence": 0.0}, {"forcing": 2100.0, "day_of_year": 260, "senescence": 0.2}]:
+			g.season = season
+			for sd in 3:
+				g.seed = sd
+				var m := g.generate()
+				var bb := m.get_aabb()
+				ok = ok and bb.end.y > sizes[p][0] and bb.end.y < sizes[p][1] and maxf(bb.size.x, bb.size.z) < sizes[p][2] and _tris(m) < 40000 and bb.position.y > -0.05
+				info.append([snappedf(bb.end.y, 0.001), snappedf(maxf(bb.size.x, bb.size.z), 0.001), _tris(m)])
+		_check("%s: %.1f to %.0f cm tall, under %.0f cm across, under 40k triangles" % [NAMES[p], sizes[p][0] * 100, sizes[p][1] * 100, sizes[p][2] * 100], ok, info)
+	var summer := {"forcing": 1000.0, "day_of_year": 185, "senescence": 0.0}
+	var head := P.make_margin(P.MARGIN_HEADLAND, 1, false, summer)
+	var verge := P.make_margin(P.MARGIN_VERGE, 1, false, summer)
+	var ok_h := head.size() >= 3
+	for sp in head:
+		var r: Vector2 = (sp as PlantSpecies).field_edge_range
+		ok_h = ok_h and r.x < 0.0 and r.y <= 1.01 and sp.has_meta("field_margin")
+	var ok_v := verge.size() >= 3
+	for sp in verge:
+		var r: Vector2 = (sp as PlantSpecies).field_edge_range
+		ok_v = ok_v and r.x > 0.0 and r.y <= 5.0 and sp.has_meta("field_margin")
+	_check("headland weeds grow in the crop's outer metres, up to the edge", ok_h, head.size())
+	_check("verge plants keep outside the field, within 5 m", ok_v, verge.size())
+	var spring := P.make_margin(P.MARGIN_VERGE, 1, false, {"forcing": 450.0, "day_of_year": 130, "senescence": 0.0})
+	_check("cow parsley flowers in spring", (spring[0] as PlantSpecies).density > 0.0 and int((spring[0] as PlantSpecies).get_meta("plant_preset", -1)) == P.PRESET_COW_PARSLEY, spring[0].density)
 
 # Atlantic heath (docs/ideas/vegetation.md, "Next round candidates (17 Nov)"): the dwarf shrubs'
 # sizes in leaf and in flower, and the sets on their own water and coast bands.

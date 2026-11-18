@@ -480,6 +480,18 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_HORNED_POPPY:
 			r_phenology = { 700.0f, 1900.0f, 600.0f, false }; // June to September; the horns after.
 			return true;
+		case PRESET_CORN_POPPY:
+			r_phenology = { 550.0f, 1500.0f, 500.0f, false }; // Late May to August; the capsules stand.
+			return true;
+		case PRESET_CORNFLOWER:
+			r_phenology = { 650.0f, 1550.0f, 400.0f, false }; // June to August.
+			return true;
+		case PRESET_MAYWEED:
+			r_phenology = { 650.0f, 2000.0f, 300.0f, false }; // June to October.
+			return true;
+		case PRESET_COW_PARSLEY:
+			r_phenology = { 250.0f, 650.0f, 600.0f, true }; // April to early June; dead stalks into summer.
+			return true;
 		case PRESET_BELL_HEATHER:
 			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September, before heather; brown bells stand.
 			return true;
@@ -737,6 +749,7 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_SORREL:
 		case PRESET_VIOLET:
 		case PRESET_THYME:
+		case PRESET_MAYWEED: // Gateways and tracks: it takes some treading.
 		case PRESET_IVY:
 		case PRESET_SEA_PURSLANE:
 		case PRESET_GLASSWORT:
@@ -764,6 +777,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_SEA_HOLLY:
 		case PRESET_HORNED_POPPY:
 		case PRESET_SEA_KALE:
+		case PRESET_CORN_POPPY:
+		case PRESET_CORNFLOWER:
 			return 50.0f;
 		case PRESET_NETTLE:
 		case PRESET_HERB_ROBERT:
@@ -779,6 +794,7 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_SAGE_ROCKROSE:
 		case PRESET_REED:
 		case PRESET_CATTAIL:
+		case PRESET_COW_PARSLEY:
 			return 40.0f;
 		case PRESET_FERN:
 		case PRESET_BRACKEN:
@@ -4008,6 +4024,24 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.aspect = 1.0f;
 			t.venation = VENATION_PALMATE; // Crumpled silk, veined from the base.
 			t.base_tint = Color(0.95f, 0.72f, 0.05f, 0.35f);
+		} else if (preset == PRESET_CORN_POPPY) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.15f;
+			t.venation = VENATION_PALMATE;
+			t.vein = petal_color.lerp(Color(0.35f, 0.0f, 0.02f), 0.35f); // Darker crumple lines.
+			t.base_tint = Color(0.05f, 0.03f, 0.04f, 0.5f); // The black blotch at the base.
+		} else if (preset == PRESET_CORNFLOWER) {
+			l.shape = LEAF_SPATULATE;
+			t.aspect = 0.5f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 5;
+			t.base_tint = Color(0.35f, 0.25f, 0.65f, 0.35f); // The funnel's throat, violet.
+		} else if (preset == PRESET_MAYWEED) {
+			t.base_tint = Color(0.95f, 0.92f, 0.6f, 0.3f);
+		} else if (preset == PRESET_COW_PARSLEY) {
+			l.shape = LEAF_ROUND;
+			t.aspect = 1.0f;
+			t.base_tint = Color(0.88f, 0.92f, 0.78f, 0.3f);
 		} else {
 			t.base_tint = Color(0.9f, 0.55f, 0.02f, 0.4f);
 		}
@@ -4529,6 +4563,36 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.vein = leaf_color.lerp(Color(0.8f, 0.84f, 0.82f), 0.35f);
 			t.yellowing = 0.1f;
 			t.spots = 0.4f; // The rough, warty hairs.
+			break;
+		case PRESET_CORN_POPPY:
+			l.shape = LEAF_LANCEOLATE;
+			l.lobes = 5;
+			l.lobe_depth = 0.55f;
+			t.aspect = 0.3f;
+			t.yellowing = 0.15f;
+			t.spots = 0.3f; // Bristly.
+			break;
+		case PRESET_CORNFLOWER:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.1f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 3;
+			t.vein = leaf_color.lerp(Color(0.75f, 0.78f, 0.72f), 0.3f); // Grey cottony down.
+			t.yellowing = 0.1f;
+			break;
+		case PRESET_MAYWEED:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.06f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 1;
+			t.yellowing = 0.15f;
+			break;
+		case PRESET_COW_PARSLEY:
+			l.shape = LEAF_LANCEOLATE;
+			l.lobes = 5;
+			l.lobe_depth = 0.75f;
+			t.aspect = 0.5f;
+			t.yellowing = 0.15f;
 			break;
 		case PRESET_SEA_HOLLY:
 			l.shape = LEAF_ROUND;
@@ -5649,7 +5713,7 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.95f, 0.75f, 0.1f);
 			break;
 		case PRESET_NEEDLE_LITTER:
-			leaf_color = Color(0.42f, 0.24f, 0.1f); // Rusty dead needles.
+			leaf_color = Color(0.27f, 0.15f, 0.07f); // Dead needles: red-brown, a shade over the mat they lie on (forest_litter()).
 			centre_color = Color(0.3f, 0.19f, 0.09f);
 			petal_color = Color(0.36f, 0.23f, 0.12f); // Cones.
 			stem_color = Color(0.3f, 0.24f, 0.17f);
@@ -5961,6 +6025,30 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.98f, 0.82f, 0.08f); // Yellow.
 			centre_color = Color(0.5f, 0.56f, 0.48f); // Glaucous pods.
 			break;
+		case PRESET_CORN_POPPY:
+			leaf_color = Color(0.15f, 0.3f, 0.08f);
+			stem_color = Color(0.22f, 0.34f, 0.12f);
+			petal_color = Color(0.8f, 0.05f, 0.03f); // Scarlet.
+			centre_color = Color(0.32f, 0.4f, 0.27f); // The glaucous capsule.
+			break;
+		case PRESET_CORNFLOWER:
+			leaf_color = Color(0.24f, 0.33f, 0.19f); // Grey-green, cottony.
+			stem_color = Color(0.3f, 0.38f, 0.23f);
+			petal_color = Color(0.12f, 0.28f, 0.85f); // Cornflower blue.
+			centre_color = Color(0.3f, 0.33f, 0.2f); // The bracts, fringed darker.
+			break;
+		case PRESET_MAYWEED:
+			leaf_color = Color(0.13f, 0.3f, 0.08f);
+			stem_color = Color(0.26f, 0.34f, 0.13f);
+			petal_color = Color(0.96f, 0.96f, 0.93f); // White rays.
+			centre_color = Color(0.9f, 0.7f, 0.08f); // The domed yellow disc.
+			break;
+		case PRESET_COW_PARSLEY:
+			leaf_color = Color(0.12f, 0.3f, 0.07f); // Fresh, fern-like.
+			stem_color = Color(0.27f, 0.36f, 0.14f); // Furrowed, sometimes purple-tinged.
+			petal_color = Color(0.95f, 0.95f, 0.92f); // Lacy white.
+			centre_color = Color(0.4f, 0.45f, 0.22f);
+			break;
 		case PRESET_LIVERWORT:
 			leaf_color = Color(0.1f, 0.26f, 0.06f);
 			stem_color = Color(0.08f, 0.2f, 0.05f);
@@ -6201,6 +6289,18 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_HORNED_POPPY:
 			_build_horned_poppy();
 			break;
+		case PRESET_CORN_POPPY:
+			_build_corn_poppy();
+			break;
+		case PRESET_CORNFLOWER:
+			_build_cornflower();
+			break;
+		case PRESET_MAYWEED:
+			_build_mayweed();
+			break;
+		case PRESET_COW_PARSLEY:
+			_build_cow_parsley();
+			break;
 		case PRESET_BELL_HEATHER:
 			_build_bell_heather();
 			break;
@@ -6305,6 +6405,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_FRENCH_LAVENDER:
 		case PRESET_THYME:
 		case PRESET_SAGE_ROCKROSE:
+		case PRESET_CORNFLOWER:
 			leaf_rough = 0.85f; // Felted or rough with hairs.
 			break;
 		default:
@@ -7225,12 +7326,17 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_FRENCH_LAVENDER);
 	BIND_ENUM_CONSTANT(PRESET_THYME);
 	BIND_ENUM_CONSTANT(PRESET_SAGE_ROCKROSE);
+	BIND_ENUM_CONSTANT(PRESET_CORN_POPPY);
+	BIND_ENUM_CONSTANT(PRESET_CORNFLOWER);
+	BIND_ENUM_CONSTANT(PRESET_MAYWEED);
+	BIND_ENUM_CONSTANT(PRESET_COW_PARSLEY);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_trample_resistance", "preset"), &PlantGenerator::get_trample_resistance);
@@ -7281,6 +7387,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SALTMARSH_HIGH);
 	BIND_ENUM_CONSTANT(SALTMARSH_SHINGLE);
 	BIND_ENUM_CONSTANT(SALTMARSH_MAX);
+	BIND_ENUM_CONSTANT(MARGIN_HEADLAND);
+	BIND_ENUM_CONSTANT(MARGIN_VERGE);
+	BIND_ENUM_CONSTANT(MARGIN_MAX);
 	BIND_ENUM_CONSTANT(HEATH_DRY);
 	BIND_ENUM_CONSTANT(HEATH_WET);
 	BIND_ENUM_CONSTANT(HEATH_MARITIME);

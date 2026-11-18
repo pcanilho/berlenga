@@ -80,6 +80,27 @@ float unit(uint h, int shift) {
 	return float((h >> uint(shift)) & 0xFFu) / 255.0;
 }
 
+// GrassField3D's clump_hash(): the nearest of jittered seeds, one per cell (Voronoi clumps).
+uint clump_hash(float x, float z, float size) {
+	const int cx = int(floor(x / size));
+	const int cz = int(floor(z / size));
+	float best = 1e30;
+	uint best_h = 0u;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			const uint h = cell_hash(cx + dx, cz + dz, 0xC2B2AE35u);
+			const float sx = (float(cx + dx) + unit(h, 0) * 0.5 + unit(h, 8) * 0.5) * size - x;
+			const float sz = (float(cz + dz) + unit(h, 16) * 0.5 + unit(h, 24) * 0.5) * size - z;
+			const float d2 = sx * sx + sz * sz;
+			if (d2 < best) {
+				best = d2;
+				best_h = h;
+			}
+		}
+	}
+	return fmix32(best_h ^ 0x27D4EB2Fu);
+}
+
 float suitability(float x, float z) {
 	const int n = int(inp[H_SG_N]);
 	const int base = int(inp[H_OFF_SUIT]);
@@ -203,9 +224,7 @@ void main() {
 		y = height_at(x, z);
 	}
 	// Clumps (Ghost of Tsushima): blades of a clump share height, facing and dryness.
-	const int cx = int(floor(x / inp[H_CLUMP]));
-	const int cz = int(floor(z / inp[H_CLUMP]));
-	const uint hc = cell_hash(cx, cz, 0xC2B2AE35u);
+	const uint hc = clump_hash(x, z, inp[H_CLUMP]);
 	const float clump_h = unit(hc, 0);
 	const float clump_yaw = unit(hc, 8) * 6.28318530718;
 	const float rnd = unit(hb, 16);

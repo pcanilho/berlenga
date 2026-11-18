@@ -20,6 +20,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Worn paths** (`VegetationField3D.paths`, `GrassField3D.paths`): along paths, plants and grass thin out and shorten by how well they resist trampling, leaving bare trodden soil.
 - **Cereal crops** (`GrassField3D.crop`, `crop_stage`): wheat, barley, oats and rye as real plants in drill rows, with spikelet ears and barley awns, through their growth stages from green rows to gold ears and stubble with straw swaths.
 - **Crop fields** (`GrassField3D.fields`): field outlines with their own drill direction, sowing date, tramlines and headland; the ground carries the crop's colour into the distance.
+- **Hedgerows and margins** (`GrassField3D.hedges`, `PlantGenerator.make_margin()`): field edges carry hedgerows of mixed native shrubs with a gateway per field, and headland and verge strips of field weeds.
 - **Clear of boulders** (`VegetationField3D.obstacles`, `GrassField3D.obstacles`): grass, ground plants, tree feet and fallen logs keep out of boulders.
 - **Waterfall spray** (`PlantSpecies.spray_range`): plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.
 - **Plant cover map** (`VegetationField3D.cover_map_enabled`): a colour map of the plant cover baked from the planting rules, for distant terrain.
