@@ -47,8 +47,8 @@
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_lightning_3d.h"
-#include "modules/weather/weather_map_3d.h"
 #endif
+#include "modules/world/world_contracts.h"
 
 // Fuel models from Anderson 1982 ("Aids to Determining Fuel Models for Estimating Fire Behavior", USDA INT-122): load,
 // depth, surface-to-volume ratio and moisture of extinction as published; packing ratios from load / (depth * 513
@@ -385,15 +385,13 @@ void PhysXFireSpread3D::extinguish() {
 }
 
 Vector3 PhysXFireSpread3D::_wind() const {
-#ifdef MODULE_WEATHER_ENABLED
 	if (use_weather_wind) {
-		if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
 			// Midflame height: about the fuel's depth; WRF-SFIRE takes the wind at 6.1 m and reduces it, a weather map
 			// gives it near the ground directly.
-			return wm->get_wind_at(get_global_position(), 1.0f);
+			return wm->wind_at(get_global_position(), 1.0f);
 		}
 	}
-#endif
 	return wind;
 }
 
@@ -828,11 +826,9 @@ float PhysXFireSpread3D::get_heavy_fuel_at(const Vector3 &p_position) const {
 }
 
 float PhysXFireSpread3D::_air_temperature() const {
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		return wm->get_air_temperature();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		return wm->air_temperature_at(get_global_position());
 	}
-#endif
 	return 20.0f;
 }
 
@@ -844,13 +840,12 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	if (!use_weather_moisture || phi.is_empty()) {
 		return false;
 	}
-#ifdef MODULE_WEATHER_ENABLED
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	if (!wm) {
+	const WorldWeather *wm = WorldContracts::weather();
+	if (!wm->has_provider()) {
 		return false;
 	}
-	const float t = wm->get_air_temperature();
-	const float hum = CLAMP(wm->get_air_humidity() * 100.0f, 0.0f, 100.0f);
+	const float t = wm->air_temperature_at(get_global_position());
+	const float hum = CLAMP(wm->air_humidity_at(get_global_position()) * 100.0f, 0.0f, 100.0f);
 	const float k = 0.18f * (21.1f - t) * (1.0f - Math::exp(-0.115f * hum));
 	const float ed = (0.942f * Math::pow(hum, 0.679f) + 11.0f * Math::exp((hum - 100.0f) / 10.0f) + k) * 0.01f;
 	const float ew = (0.618f * Math::pow(hum, 0.753f) + 10.0f * Math::exp((hum - 100.0f) / 10.0f) + k) * 0.01f;
@@ -869,7 +864,7 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	for (int bz = 0; bz < nz; bz += block) {
 		for (int bx = 0; bx < nx; bx += block) {
 			const int cx = MIN(bx + block / 2, nx - 1), cz = MIN(bz + block / 2, nz - 1);
-			const float rain = MAX(wm->get_rain_at(_cell_world(cx, cz)), 0.0f); // mm/h = kg/m2/h
+			const float rain = MAX(wm->precipitation_at(_cell_world(cx, cz)), 0.0f); // mm/h = kg/m2/h
 			for (int z = bz; z < MIN(bz + block, nz); z++) {
 				for (int x = bx; x < MIN(bx + block, nx); x++) {
 					const uint32_t i = z * nx + x;
@@ -887,9 +882,6 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 		}
 	}
 	return true;
-#else
-	return false;
-#endif
 }
 
 // Water from the liquid fluids (docs/ideas/physx.md, "Water puts fires out"): a bucket, a hose or a burst tank of

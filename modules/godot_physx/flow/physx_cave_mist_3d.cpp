@@ -41,7 +41,7 @@
 
 #include "modules/rocks/cave_network_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
-#include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 CaveNetwork3D *PhysXCaveMist3D::_network() const {
 	if (!cave_network.is_empty()) {
@@ -186,7 +186,7 @@ void PhysXCaveMist3D::_step(float p_delta) {
 		}
 	}
 	near.sort();
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = WorldContracts::weather();
 	for (uint32_t k = 0; k < near.size() && k < mouths.size(); k++) {
 		Mouth &m = mouths[k];
 		const CaveNetwork3D::Cave *cv = net->get_cave(near[k].cave);
@@ -205,9 +205,7 @@ void PhysXCaveMist3D::_step(float p_delta) {
 		}
 		Vector3 v = out * (push_speed * (0.15f + surge) - push_speed * back) + gust;
 		v.y = MIN(v.y, 0.0f); // laden air spills out level and sinks; it never jets up
-		if (wm) {
-			v += wm->get_wind_at(at, 2.0f) * 0.2f;
-		}
+		v += wm->wind_at(at, 2.0f) * 0.2f;
 		m.emitter->set_enabled(true);
 		// A slab across the mouth's lower part (the air leaves over the water, under the arch), world aligned.
 		const float half_w = cv->segments.is_empty() ? 2.0f : CLAMP(float(cv->segments[0].ra) * 0.7f, 1.0f, 6.0f);

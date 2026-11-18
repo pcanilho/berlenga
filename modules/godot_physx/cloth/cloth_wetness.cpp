@@ -35,9 +35,7 @@
 #include "servers/physics_3d/physics_server_3d.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 void ClothWetness::rain_directions(const Vector3 &p_wind, Vector3 r_dirs[4], float &r_mean_dy) {
 	const float sigma = 0.3f * Vector2(p_wind.x, p_wind.z).length() + 0.5f;
@@ -62,15 +60,14 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 	float air_t = 15.0f;
 	float humidity = 0.7f;
 	float rain = 0.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		air_t = wm->get_air_temperature();
-		humidity = wm->get_air_humidity();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		air_t = wm->air_temperature_at(p_world_box.get_center());
+		humidity = wm->air_humidity_at(p_world_box.get_center());
 		if (p_weather && p_node && p_node->is_inside_tree()) {
 			const Vector3 at = p_world_box.get_center();
-			rain = MAX(wm->get_rain_at(at), 0.0f);
-			rain *= 1.0f - CLAMP(wm->get_canopy_closure_at(at), 0.0f, 1.0f);
-			rain *= WeatherMap3D::rain_fraction(air_t, humidity); // snow does not soak in at once
+			rain = MAX(wm->precipitation_at(at), 0.0f);
+			rain *= 1.0f - CLAMP(wm->canopy_closure_at(at), 0.0f, 1.0f);
+			rain *= wm->rain_share_at(at); // snow does not soak in at once
 			rain_timer -= p_dt;
 			if (rain > 0.0f && rain_timer <= 0.0f) {
 				rain_timer = 0.5f;
@@ -91,7 +88,6 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 			rain *= rain_shelter * rain_catch;
 		}
 	}
-#endif
 	water += rain / 3600.0f * p_dt; // mm/h of rain = kg/m2/h
 	const float es = 6.108f * Math::exp(17.27f * air_t / (air_t + 237.3f)); // hPa, saturation (Tetens)
 	const float deficit = MAX(es * (1.0f - CLAMP(humidity, 0.0f, 1.0f)), 0.0f);

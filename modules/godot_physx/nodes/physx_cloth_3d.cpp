@@ -46,9 +46,7 @@
 #endif
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 // Map a friendly 0..1 stiffness to XPBD compliance (m/N). 1 -> rigid, 0 -> slack.
 static float _stiffness_to_compliance(float p_stiffness, float p_max_compliance) {
@@ -374,10 +372,9 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		w += perp * (speed * wind_turbulence * 0.5f * sway);
 		w += up * (speed * wind_turbulence * 0.3f * Math::sin(t * 3.7f));
 	}
-#ifdef MODULE_WEATHER_ENABLED
 	// The world's wind at the cloth, with its own gusts (wind_turbulence only shapes the local wind above).
-	const WeatherMap3D *weather = weather_wind ? WeatherMap3D::get_active() : nullptr;
-	if (weather) {
+	const WorldWeather *weather = WorldContracts::weather();
+	if (weather_wind && weather->has_provider()) {
 		const LocalVector<Vector3> &sp = solver.get_positions();
 		Vector3 center = get_global_transform().origin;
 		if (!sp.is_empty()) {
@@ -387,9 +384,8 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 			}
 			center /= (float)sp.size();
 		}
-		w += weather->get_wind_at(center);
+		w += weather->wind_at(center);
 	}
-#endif
 	return w;
 }
 

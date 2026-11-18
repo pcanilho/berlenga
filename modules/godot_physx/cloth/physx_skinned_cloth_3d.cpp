@@ -51,9 +51,7 @@
 #include "servers/physics_3d/physics_server_3d.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 namespace {
 
@@ -1464,11 +1462,9 @@ void PhysXSkinnedCloth3D::_update_wetness(float p_delta) {
 	}
 	const AABB box = ri->get_global_transform().xform(ri->get_aabb());
 	Vector3 wind;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		wind = wm->get_wind_at(box.get_center());
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		wind = wm->wind_at(box.get_center());
 	}
-#endif
 	bool update_catch = false;
 	wet.step(this, box, wind, p_delta, fabric_density * water_capacity, weather_wetting, update_catch);
 	if (update_catch) {

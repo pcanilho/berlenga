@@ -45,9 +45,7 @@
 #include "servers/rendering/rendering_server.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 LocalVector<PhysXBurnable3D *> PhysXBurnable3D::burnables;
 HashMap<RID, Ref<Material>> PhysXBurnable3D::material_cache;
@@ -335,11 +333,9 @@ float PhysXBurnable3D::_brand_flux(Vector3 &r_hot) const {
 	}
 	const Transform3D xf = _target_xform();
 	float u = 2.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		u = Vector2(wm->get_wind_at(xf.origin).x, wm->get_wind_at(xf.origin).z).length();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		u = Vector2(wm->wind_at(xf.origin).x, wm->wind_at(xf.origin).z).length();
 	}
-#endif
 	const float fan = 0.4f + 0.6f * MIN(u / 6.0f, 1.0f);
 	for (const BrandSpot &sp : brand_spots) {
 		const float q = 50.0f * MIN(sp.glow / 20.0f, 1.0f) * fan;
@@ -377,11 +373,9 @@ void PhysXBurnable3D::extinguish() {
 // it out. Out of fuel, it smoulders, then goes cold.
 void PhysXBurnable3D::_burn(float p_delta) {
 	float rain = 0.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		rain = MAX(wm->get_rain_at(_target_xform().xform(bounds.get_center())), 0.0f);
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		rain = MAX(wm->precipitation_at(_target_xform().xform(bounds.get_center())), 0.0f);
 	}
-#endif
 	// Water held on the surface (mm): a burning surface dries it fast, a cold one slowly.
 	rain_water = MAX(rain_water + rain / 3600.0f * p_delta - p_delta * (state == STATE_FLAMING ? hrr / 2.0e8f : 1.0f / 1800.0f), 0.0f);
 	if (state == STATE_FLAMING) {
@@ -508,12 +502,10 @@ void PhysXBurnable3D::_update_embers(float p_delta) {
 			const float width = MAX(MAX(wb.size.x, wb.size.z), 0.2f);
 			float t_air = 20.0f;
 			Vector3 wind;
-#ifdef MODULE_WEATHER_ENABLED
-			if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-				t_air = wm->get_air_temperature();
-				wind = wm->get_wind_at(wb.get_center());
+			if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+				t_air = wm->air_temperature_at(wb.get_center());
+				wind = wm->wind_at(wb.get_center());
 			}
-#endif
 			if (wind == Vector3() && fire) {
 				wind = fire->get_wind();
 			}

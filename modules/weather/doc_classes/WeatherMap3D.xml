@@ -112,10 +112,29 @@
 				Stops the water delivered by [param owner] (see [method set_surface_water_source]); the precipitation reaches the ground there again. Sources whose owner is freed are dropped on their own.
 			</description>
 		</method>
+		<method name="get_air_dew_point" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dew point of the air now (C), from [method get_air_temperature] and [method get_air_humidity] (Magnus).
+			</description>
+		</method>
 		<method name="get_air_humidity" qualifiers="const">
 			<return type="float" />
 			<description>
 				The relative humidity of the air now (0..1): [member humidity] eased over [member transition_time] is the humidity at the day's mean temperature; with [member air_daily_cycle] the vapour holds through the day, so it rises as the air cools at night and falls in the afternoon.
+			</description>
+		</method>
+		<method name="get_air_humidity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The live air's relative humidity at [param position] (0..1): the dew point falls 1.8 K/km above the map's [member ground_height] while the air cools 6.5 K/km.
+			</description>
+		</method>
+		<method name="get_air_mean_temperature" qualifiers="const">
+			<return type="float" />
+			<description>
+				The day's mean air temperature now (C): with a [member climate] and [member air_follows_climate], the climate's mean for the date at [member ground_height] plus [member season_anomaly]; else [member temperature]; eased over [member transition_time].
 			</description>
 		</method>
 		<method name="get_air_temperature" qualifiers="const">
@@ -124,16 +143,11 @@
 				The air temperature now (C), as everything that melts, freezes, dries, burns or fogs reads it: the day's mean ([method get_air_mean_temperature]) through the day's cycle when [member air_daily_cycle] is on and a [member sky_clock] is set.
 			</description>
 		</method>
-		<method name="get_air_dew_point" qualifiers="const">
+		<method name="get_air_temperature_at" qualifiers="const">
 			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
 			<description>
-				The dew point of the air now (C), from [method get_air_temperature] and [method get_air_humidity] (Magnus).
-			</description>
-		</method>
-		<method name="get_air_mean_temperature" qualifiers="const">
-			<return type="float" />
-			<description>
-				The day's mean air temperature now (C): with a [member climate] and [member air_follows_climate], the climate's mean for the date at [member ground_height] plus [member season_anomaly]; else [member temperature]; eased over [member transition_time].
+				The live air at [param position] (C): [method get_air_temperature] less 6.5 K per km above the map's [member ground_height] (the standard lapse rate).
 			</description>
 		</method>
 		<method name="get_sun_sine" qualifiers="const">
