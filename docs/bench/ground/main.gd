@@ -3539,6 +3539,10 @@ func _build_shore() -> void:
 	sea.set("shore_wave_direction", Vector2(0.15, 1.0))
 	sea.set("swash_run_up", 0.12)
 	sea.set("contact_wetness", true)
+	# A wider near field (12 m at the same texel): the run-up climbs to about 3 m above the still line, and the
+	# default 8 m field's sharp middle ends 3 m from its centre.
+	surface.near_resolution = 768
+	surface.near_extent = 12.0
 	# --sea=name:value sets one of the sea's properties (repeatable), e.g. --sea=shore_wave_curl:0.
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--sea="):
