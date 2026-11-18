@@ -26,6 +26,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Spot fires** (`PhysXFireSpread3D.spotting`, `spotting_scale`): burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.
 - **Crown fire** (`PhysXFireSpread3D.crown_fire`, `foliar_moisture`): trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and loft firebrands higher (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.
 - **Fire light and embers** (`PhysXFlow3D.fire_light`, `embers`): a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.
+- **Heat shimmer** (`PhysXFlow3D.heat_shimmer`): hot air above fires bends the view behind it, following the simulated temperature, in raster and path tracing.
 
   ![A campfire in a stone ring at night, seen from above, lighting the ground and stones](media/physx-campfire.jpg)
 

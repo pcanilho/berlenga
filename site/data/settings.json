@@ -3814,6 +3814,17 @@
    "topic": ""
   },
   {
+   "name": "Heat shimmer",
+   "settings": [
+    "PhysXFlow3D.heat_shimmer"
+   ],
+   "note": "",
+   "what": "hot air above fires bends the view behind it, following the simulated temperature, in raster and path tracing.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Particle fluid surface",
    "settings": [
     "PhysXParticleFluid3D.render_mode",
