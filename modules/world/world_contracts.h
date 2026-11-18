@@ -41,7 +41,9 @@
 #include "core/object/ref_counted.h"
 #include "core/math/vector3.h"
 #include "core/variant/dictionary.h"
+#include "core/templates/local_vector.h"
 
+class Node;
 class Node3D;
 
 // Weather: what the air, the sky and the surface water are doing at a point.
@@ -123,6 +125,53 @@ public:
 	float ground_water_input_at(const Vector3 &p_position) const;
 };
 
+// Water: open water of every kind (sea, rivers, pools, live water, standing water on the ground). Several
+// producers are live at once; the contract answers with the highest surface over a point.
+class WorldWaterProvider {
+public:
+	// The water surface over the point (m, world space), or -INF where this producer has no water there.
+	virtual float contract_water_height_at(const Vector3 &p_position) const = 0;
+	virtual Vector3 contract_water_flow_at(const Vector3 &p_position) const { return Vector3(); } // m/s
+	virtual float contract_water_wake_depth_at(const Vector3 &p_position) const { return 0.0f; } // m
+	// A body moving in the water: owner-keyed so it keeps one moving disturbance; impulse for a single splash.
+	virtual void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {}
+	virtual void contract_water_clear(uint64_t p_owner) {}
+	virtual void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {}
+	virtual ~WorldWaterProvider() {}
+};
+
+class WorldWater : public RefCounted {
+	GDCLASS(WorldWater, RefCounted);
+
+	friend class WorldContracts;
+	LocalVector<WorldWaterProvider *> providers; // every live producer; a script stub overrides the virtuals
+
+	WorldWaterProvider *_top_at(const Vector3 &p_position, float &r_height) const;
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _height_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _flow_at, Vector3)
+	GDVIRTUAL1RC(float, _wake_depth_at, Vector3)
+	GDVIRTUAL4(_disturb, uint64_t, Vector3, float, float)
+	GDVIRTUAL1(_clear, uint64_t)
+	GDVIRTUAL3(_impulse, Vector3, float, float)
+
+public:
+	bool has_provider() const { return !providers.is_empty(); }
+	// The water surface for the point, -INF where there is none: of the producers with water there, the surface
+	// nearest above the point, else the nearest below it.
+	float height_at(const Vector3 &p_position) const;
+	// How deep the point lies under that surface (0 above it or with no water).
+	float depth_at(const Vector3 &p_position) const;
+	Vector3 flow_at(const Vector3 &p_position) const;
+	float wake_depth_at(const Vector3 &p_position) const;
+	void disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength);
+	void clear(uint64_t p_owner);
+	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
+};
+
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.
 struct WorldContactBody {
 	Vector3 center; // the shape's centre (the node's position without a shape)
@@ -142,6 +191,10 @@ class WorldContracts : public Object {
 	Ref<WorldWeather> builtin_weather;
 	Ref<WorldWeather> weather_override;
 	WorldWeatherProvider *weather_provider = nullptr;
+	Ref<WorldWater> builtin_water;
+	Ref<WorldWater> water_override;
+	LocalVector<WorldWaterProvider *> water_stubs;
+	void _clear_water_stubs();
 
 protected:
 	static void _bind_methods();
@@ -153,14 +206,22 @@ public:
 
 	// The contract objects: never null.
 	static WorldWeather *weather();
+	static WorldWater *water();
 
 	// Producers register on entering the tree and unregister on leaving; the last to register is current.
 	static void register_weather(WorldWeatherProvider *p_provider);
 	static void unregister_weather(WorldWeatherProvider *p_provider);
+	static void register_water(WorldWaterProvider *p_provider);
+	static void unregister_water(WorldWaterProvider *p_provider);
 
 	// Tests set stubs (a script extending the contract class) and clear them.
 	void set_weather(const Ref<WorldWeather> &p_stub);
 	Ref<WorldWeather> get_weather() const;
+	void set_water(const Ref<WorldWater> &p_stub);
+	Ref<WorldWater> get_water() const;
+	// A script stub (extending WorldWater) as one more water producer beside the real ones: a pool or sea for a
+	// bench without one. clear_overrides() removes it.
+	void add_water_stub(const Ref<WorldWater> &p_stub);
 	void clear_overrides();
 
 	// Contact bodies: the world_contact group, and how big and heavy a body is (metas trample_radius,

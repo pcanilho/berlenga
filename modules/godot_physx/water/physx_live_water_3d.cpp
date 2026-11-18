@@ -145,6 +145,16 @@ PhysXLiveWater3D::PhysXLiveWater3D() {
 	set_notify_transform(true);
 }
 
+float PhysXLiveWater3D::contract_water_height_at(const Vector3 &p_position) const {
+	return sample_depth(p_position) > 0.0f ? sample_height(p_position) : -Math::INF;
+}
+
+void PhysXLiveWater3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	if (sample_depth(p_position) > 0.0f) {
+		submit_sphere(int64_t(p_owner), p_position, p_radius);
+	}
+}
+
 PhysXLiveWater3D::~PhysXLiveWater3D() {
 	// (The tiles' mesh instances are children, freed with the node.)
 	for (const KeyValue<Vector2i, SleepTile *> &E : sleeping) {
@@ -1060,8 +1070,10 @@ void PhysXLiveWater3D::_notification(int p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			set_physics_process_internal(true);
 			set_process_internal(!Engine::get_singleton()->is_editor_hint());
+			WorldContracts::register_water(this);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
 			set_physics_process_internal(false);
 			set_process_internal(false);
 		} break;

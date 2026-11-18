@@ -92,17 +92,27 @@ legs.
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the
 surface water).
 
-### Water (`WorldWater`; producers `PhysXWaterSurface3D`, `PhysXRiver3D`, `PhysXLiveWater3D`)
+### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water))
 
-| Member | Unit | Default |
-| --- | --- | --- |
-| `height_at(pos)` | m | NaN (no water) |
-| `flow_at(pos)` | m/s, Vector3 | 0 |
-| `disturb(owner, pos, radius, strength)`, `clear(owner)`, `impulse(pos, radius, strength)` | | no-op |
-| `wake_depth_at(pos)` | m | 0 |
+Every producer is live at once and answers only where it really has water: the sea where its depth over the seabed
+is above 0, a river inside its ribbon, live water and pools in cells with depth, the terrain map where its baked
+water depth is above 5 mm, the ground where water stands over 2 mm. Of the producers that answer, the point reads
+the surface nearest above it, else the nearest below it, so a cave stream, a rimstone pool or a pool in a hollow
+below the sea's level reads its own water, and a body above the water reads the water under it.
 
-Consumers: buoyancy, bodies in world_contact, plants (lean with the current), cloth (wading), mist, ground (wet
-shore).
+| Member | Unit | Default | Guarantee |
+| --- | --- | --- | --- |
+| `height_at(pos)` | m | -INF (no water) | The rule above |
+| `depth_at(pos)` | m | 0 | How far the point lies under that surface |
+| `flow_at(pos)` | m/s, Vector3 | 0 | From the producer that answered `height_at` |
+| `wake_depth_at(pos)` | m | 0 | |
+| `disturb(owner, pos, radius, strength)`, `clear(owner)`, `impulse(pos, radius, strength)` | | no-op | Sent to every producer; each acts only where it has water |
+
+Tests: `WorldContracts.set_water(stub)` replaces the whole contract; `WorldContracts.add_water_stub(stub)` adds a
+script producer beside the real ones (a pool or a sea for a buoyancy bench without one).
+
+Consumers: buoyancy, bodies in world_contact, plants (lean with the current), cloth (wading wetness), mist, ground
+(wet shore), snow (lake ice).
 
 ### Canopy and crowns (`WorldCanopy`; producers `VegetationField3D`, `TreeWind3D`)
 

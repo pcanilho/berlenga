@@ -1441,8 +1441,10 @@ void PhysXRiver3D::_notification(int p_what) {
 			_queue_build();
 			set_physics_process_internal(true);
 			set_process_internal(!Engine::get_singleton()->is_editor_hint());
+			WorldContracts::register_water(this);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
 			set_physics_process_internal(false);
 			set_process_internal(false);
 			_live_stop();
@@ -3774,4 +3776,18 @@ PackedStringArray PhysXRiver3D::get_configuration_warnings() const {
 		warnings.push_back(RTR("Draw the river's path: it needs at least two curve points, from source to mouth."));
 	}
 	return warnings;
+}
+
+float PhysXRiver3D::contract_water_height_at(const Vector3 &p_position) const {
+	return sample_height(p_position);
+}
+
+void PhysXRiver3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	if (Math::is_finite(sample_height(p_position))) {
+		submit_sphere(int(p_owner & 0x7fffffff), p_position, p_radius, p_strength);
+	}
+}
+
+void PhysXRiver3D::contract_water_clear(uint64_t p_owner) {
+	clear_sphere(int(p_owner & 0x7fffffff));
 }

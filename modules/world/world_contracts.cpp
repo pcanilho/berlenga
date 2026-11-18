@@ -132,6 +132,142 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_ground_water_input_at, "position");
 }
 
+// Water.
+
+WorldWaterProvider *WorldWater::_top_at(const Vector3 &p_position, float &r_height) const {
+	// Each producer answers only where it really has water. Of those, the surface nearest above the point (a
+	// cave stream under the sea's level, a pool in a hollow, a river under an overhang), else the nearest below
+	// it (a body above the water).
+	WorldWaterProvider *above = nullptr;
+	WorldWaterProvider *below = nullptr;
+	float above_h = Math::INF;
+	float below_h = -Math::INF;
+	for (WorldWaterProvider *w : providers) {
+		const float h = w->contract_water_height_at(p_position);
+		if (!Math::is_finite(h)) {
+			continue;
+		}
+		if (h >= p_position.y) {
+			if (h < above_h) {
+				above_h = h;
+				above = w;
+			}
+		} else if (h > below_h) {
+			below_h = h;
+			below = w;
+		}
+	}
+	r_height = above ? above_h : below_h;
+	return above ? above : below;
+}
+
+float WorldWater::height_at(const Vector3 &p_position) const {
+	float r = -Math::INF;
+	if (GDVIRTUAL_CALL(_height_at, p_position, r)) {
+		return r;
+	}
+	_top_at(p_position, r);
+	return r;
+}
+
+float WorldWater::depth_at(const Vector3 &p_position) const {
+	const float h = height_at(p_position);
+	return Math::is_finite(h) ? MAX(h - p_position.y, 0.0f) : 0.0f;
+}
+
+Vector3 WorldWater::flow_at(const Vector3 &p_position) const {
+	Vector3 r;
+	if (GDVIRTUAL_CALL(_flow_at, p_position, r)) {
+		return r;
+	}
+	float h;
+	WorldWaterProvider *top = _top_at(p_position, h);
+	return top ? top->contract_water_flow_at(p_position) : Vector3();
+}
+
+float WorldWater::wake_depth_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_wake_depth_at, p_position, r)) {
+		return r;
+	}
+	float h;
+	WorldWaterProvider *top = _top_at(p_position, h);
+	return top ? top->contract_water_wake_depth_at(p_position) : 0.0f;
+}
+
+void WorldWater::disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	if (GDVIRTUAL_CALL(_disturb, p_owner, p_position, p_radius, p_strength)) {
+		return;
+	}
+	for (WorldWaterProvider *w : providers) {
+		w->contract_water_disturb(p_owner, p_position, p_radius, p_strength);
+	}
+}
+
+void WorldWater::clear(uint64_t p_owner) {
+	if (GDVIRTUAL_CALL(_clear, p_owner)) {
+		return;
+	}
+	for (WorldWaterProvider *w : providers) {
+		w->contract_water_clear(p_owner);
+	}
+}
+
+void WorldWater::impulse(const Vector3 &p_position, float p_radius, float p_strength) {
+	if (GDVIRTUAL_CALL(_impulse, p_position, p_radius, p_strength)) {
+		return;
+	}
+	for (WorldWaterProvider *w : providers) {
+		w->contract_water_impulse(p_position, p_radius, p_strength);
+	}
+}
+
+void WorldWater::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_provider"), &WorldWater::has_provider);
+	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldWater::height_at);
+	ClassDB::bind_method(D_METHOD("depth_at", "position"), &WorldWater::depth_at);
+	ClassDB::bind_method(D_METHOD("flow_at", "position"), &WorldWater::flow_at);
+	ClassDB::bind_method(D_METHOD("wake_depth_at", "position"), &WorldWater::wake_depth_at);
+	ClassDB::bind_method(D_METHOD("disturb", "owner", "position", "radius", "strength"), &WorldWater::disturb);
+	ClassDB::bind_method(D_METHOD("clear", "owner"), &WorldWater::clear);
+	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
+
+	GDVIRTUAL_BIND(_height_at, "position");
+	GDVIRTUAL_BIND(_flow_at, "position");
+	GDVIRTUAL_BIND(_wake_depth_at, "position");
+	GDVIRTUAL_BIND(_disturb, "owner", "position", "radius", "strength");
+	GDVIRTUAL_BIND(_clear, "owner");
+	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
+}
+
+// A script stub standing in as one water producer among the real ones.
+class WorldWaterStubProvider : public WorldWaterProvider {
+public:
+	Ref<WorldWater> stub;
+	float contract_water_height_at(const Vector3 &p_position) const override { return stub->height_at(p_position); }
+	Vector3 contract_water_flow_at(const Vector3 &p_position) const override { return stub->flow_at(p_position); }
+	float contract_water_wake_depth_at(const Vector3 &p_position) const override { return stub->wake_depth_at(p_position); }
+	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override { stub->disturb(p_owner, p_position, p_radius, p_strength); }
+	void contract_water_clear(uint64_t p_owner) override { stub->clear(p_owner); }
+	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
+};
+
+void WorldContracts::add_water_stub(const Ref<WorldWater> &p_stub) {
+	ERR_FAIL_COND(p_stub.is_null());
+	WorldWaterStubProvider *w = memnew(WorldWaterStubProvider);
+	w->stub = p_stub;
+	water_stubs.push_back(w);
+	register_water(w);
+}
+
+void WorldContracts::_clear_water_stubs() {
+	for (WorldWaterProvider *w : water_stubs) {
+		unregister_water(w);
+		memdelete(static_cast<WorldWaterStubProvider *>(w));
+	}
+	water_stubs.clear();
+}
+
 // Registry.
 
 WorldContracts *WorldContracts::singleton = nullptr;
@@ -166,6 +302,49 @@ void WorldContracts::unregister_weather(WorldWeatherProvider *p_provider) {
 	}
 }
 
+WorldWater *WorldContracts::water() {
+	static Ref<WorldWater> fallback;
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	if (singleton->water_override.is_valid()) {
+		return singleton->water_override.ptr();
+	}
+	return singleton->builtin_water.ptr();
+}
+
+void WorldContracts::register_water(WorldWaterProvider *p_provider) {
+	if (singleton && p_provider && !singleton->builtin_water->providers.has(p_provider)) {
+		singleton->builtin_water->providers.push_back(p_provider);
+		if (singleton->water_override.is_valid()) {
+			singleton->water_override->providers = singleton->builtin_water->providers;
+		}
+	}
+}
+
+void WorldContracts::unregister_water(WorldWaterProvider *p_provider) {
+	if (singleton) {
+		singleton->builtin_water->providers.erase(p_provider);
+		if (singleton->water_override.is_valid()) {
+			singleton->water_override->providers = singleton->builtin_water->providers;
+		}
+	}
+}
+
+void WorldContracts::set_water(const Ref<WorldWater> &p_stub) {
+	water_override = p_stub;
+	if (water_override.is_valid()) {
+		water_override->providers = builtin_water->providers; // a partial stub falls back to the real ones
+	}
+}
+
+Ref<WorldWater> WorldContracts::get_water() const {
+	return water_override.is_valid() ? water_override : builtin_water;
+}
+
 void WorldContracts::set_weather(const Ref<WorldWeather> &p_stub) {
 	weather_override = p_stub;
 	if (weather_override.is_valid()) {
@@ -179,6 +358,8 @@ Ref<WorldWeather> WorldContracts::get_weather() const {
 
 void WorldContracts::clear_overrides() {
 	weather_override.unref();
+	water_override.unref();
+	_clear_water_stubs();
 }
 
 // Contact bodies.
@@ -266,6 +447,9 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);
+	ClassDB::bind_method(D_METHOD("set_water", "stub"), &WorldContracts::set_water);
+	ClassDB::bind_method(D_METHOD("get_water"), &WorldContracts::get_water);
+	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
 	ClassDB::bind_method(D_METHOD("clear_overrides"), &WorldContracts::clear_overrides);
 	ClassDB::bind_method(D_METHOD("describe_body", "node"), &WorldContracts::describe_body_bind);
 }
@@ -273,9 +457,11 @@ void WorldContracts::_bind_methods() {
 WorldContracts::WorldContracts() {
 	singleton = this;
 	builtin_weather.instantiate();
+	builtin_water.instantiate();
 }
 
 WorldContracts::~WorldContracts() {
+	_clear_water_stubs();
 	if (singleton == this) {
 		singleton = nullptr;
 	}

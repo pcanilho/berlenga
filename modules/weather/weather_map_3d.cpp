@@ -725,7 +725,12 @@ void WeatherMap3D::advance(float p_seconds) {
 	if (cell_film.size() != resolution * resolution) {
 		_allocate();
 	}
-	_follow(_follow_position());
+	const Vector3 at = _follow_position();
+	_follow(at);
+	// Canopies and obstacles added since the last bake shelter this advance too.
+	if (shelter.needs_bake(Vector2(at.x, at.z), cur_wind_direction)) {
+		_bake_shelter();
+	}
 	// Large steps in pieces, so storms move and the base eases on the way.
 	double left = MAX(p_seconds, 0.0f);
 	while (left > 0.0) {

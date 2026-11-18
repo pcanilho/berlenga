@@ -15,6 +15,22 @@ extends Node3D
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
+#   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
+#             level, a body above the water); with no producer it answers -INF; the weather's defaults
+
+# Stub producers for the water contract: a sea at 0 m everywhere, and a pool at -5 m over x < 0.
+class SeaStub extends WorldWater:
+	func _height_at(_p: Vector3) -> float:
+		return 0.0
+
+
+class PoolStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return -5.0 if p.x < 0.0 else -INF
+
+	func _flow_at(_p: Vector3) -> Vector3:
+		return Vector3(0.5, 0, 0)
+
 
 var fails := 0
 var passes := 0
@@ -49,6 +65,7 @@ func _ready() -> void:
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
+	_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -119,7 +136,7 @@ func _air_tests() -> void:
 	_check("air: range about daily_temperature_range", absf((hi.x - lo.x) - m.daily_temperature_range) < 1.5, "%.1f K against %.1f" % [hi.x - lo.x, m.daily_temperature_range])
 	_check("air: the day's mean kept", absf(mean - 12.5) < 0.2, "%.2f C against 12.5" % mean)
 	_check("air: humidity up at night", lo.y > hi.y + 0.15, "%.2f at dawn, %.2f in the afternoon" % [lo.y, hi.y])
-	var dew := m.get_air_dew_point()
+	var dew: float = m.get_air_dew_point()
 	_check("air: dew point held through the day", absf(dew - (_dew(12.5, 0.6))) < 0.3, "%.2f C" % dew)
 	m.cloud_cover = 1.0
 	var overcast := _air_at(m, c, 15.0).x - _air_at(m, c, 5.0).x
@@ -159,7 +176,7 @@ func _water_tests() -> void:
 	_check("water: rain fills the film and puddles", m.get_wetness_at(p) > 0.9 and m.get_puddle_at(p) > 0.5, "wetness %.2f, puddles %.2f mm" % [m.get_wetness_at(p), m.get_puddle_at(p)])
 	_check("water: rain falls as snow in the cold", WeatherMap3D.rain_fraction(-5.0, 0.8) < 0.1 and WeatherMap3D.rain_fraction(8.0, 0.8) > 0.9, "")
 
-	# Sun against shade against night: the same puddles under a summer noon sun, under a dense canopy, at night.
+	# Sun against shade against night: the same wet film under a summer noon sun, under a dense canopy, at night.
 	m.rain_rate = 0.0
 	m.cloud_cover = 0.0
 	var c := _new_clock(7, 12.0)
@@ -173,9 +190,11 @@ func _water_tests() -> void:
 	for case_name in ["noon", "night"]:
 		c.time_of_day = 12.0 if case_name == "noon" else 0.0
 		m.rain_rate = 5.0
+		m.cloud_cover = 1.0
 		m.snap_to_settings()
 		m.advance(3600.0)
 		m.rain_rate = 0.0
+		m.cloud_cover = 0.0
 		m.snap_to_settings()
 		var t_sun := -1.0
 		var t_shade := -1.0
@@ -183,16 +202,16 @@ func _water_tests() -> void:
 		while hours < 72.0 and (t_sun < 0.0 or t_shade < 0.0):
 			m.advance(600.0)
 			hours += 600.0 / 3600.0
-			if t_sun < 0.0 and m.get_puddle_at(sun_p) <= 0.0:
+			if t_sun < 0.0 and m.get_wetness_at(sun_p) <= 0.05:
 				t_sun = hours
-			if t_shade < 0.0 and m.get_puddle_at(shade_p) <= 0.0:
+			if t_shade < 0.0 and m.get_wetness_at(shade_p) <= 0.05:
 				t_shade = hours
 		times[case_name] = Vector2(t_sun, t_shade)
 	var noon: Vector2 = times["noon"]
 	var night: Vector2 = times["night"]
-	print("  puddles gone: noon sun %.1f h, noon shade %.1f h, night %.1f h" % [noon.x, noon.y, night.x])
+	print("  surface dry: noon sun %.1f h, noon shade %.1f h, night %.1f h" % [noon.x, noon.y, night.x])
 	if m.sun_drying:
-		_check("water: sun dries puddles before the shade", noon.x > 0.0 and (noon.y < 0.0 or noon.x < 0.8 * noon.y), "%.1f h against %.1f h" % [noon.x, noon.y])
+		_check("water: sun dries the surface before the shade", noon.x > 0.0 and (noon.y < 0.0 or noon.x < 0.8 * noon.y), "%.1f h against %.1f h" % [noon.x, noon.y])
 		_check("water: the noon sun dries before the night", noon.x > 0.0 and (night.x < 0.0 or noon.x < 0.8 * night.x), "%.1f h against %.1f h" % [noon.x, night.x])
 	m.queue_free()
 	c.queue_free()
@@ -242,9 +261,9 @@ func _fire_tests() -> void:
 	if not ClassDB.class_exists("PhysXFireSpread3D"):
 		_skip("fire: lightning ignition", "no PhysX in this build")
 		return
-	var dry: float = PhysXFireSpread3D.lightning_ignition_chance(0.15, 0.05, 0.25)
-	var wet: float = PhysXFireSpread3D.lightning_ignition_chance(0.15, 0.3, 0.25)
-	var short: float = PhysXFireSpread3D.lightning_ignition_chance(0.01, 0.05, 0.25)
+	var dry: float = ClassDB.class_call_static("PhysXFireSpread3D", "lightning_ignition_chance", 0.15, 0.05, 0.25)
+	var wet: float = ClassDB.class_call_static("PhysXFireSpread3D", "lightning_ignition_chance", 0.15, 0.3, 0.25)
+	var short: float = ClassDB.class_call_static("PhysXFireSpread3D", "lightning_ignition_chance", 0.01, 0.05, 0.25)
 	_check("fire: a continuing current lights dry fuel, not wet or brief", dry > 0.3 and wet == 0.0 and short == 0.0, "dry %.2f, wet %.2f, no continuing current %.2f" % [dry, wet, short])
 
 
@@ -277,3 +296,23 @@ func _contact_tests() -> void:
 		_check("contact: plants bend under bodies where there is no grass", tv.length() > 0.1, "bend %.2f" % tv.length())
 		v.queue_free()
 	body.queue_free()
+
+
+func _contract_tests() -> void:
+	WorldContracts.clear_overrides()
+	var w: WorldWater = WorldContracts.get_water()
+	if not w.has_provider():
+		_check("contracts: no water producer gives -INF", is_inf(w.height_at(Vector3(0, -1, 0))) and w.height_at(Vector3.ZERO) < 0.0 and w.depth_at(Vector3.ZERO) == 0.0, "%f" % w.height_at(Vector3.ZERO))
+	WorldContracts.add_water_stub(SeaStub.new())
+	WorldContracts.add_water_stub(PoolStub.new())
+	var out := w.height_at(Vector3(5, -2, 0))
+	var in_pool := w.height_at(Vector3(-5, -7, 0))
+	var between := w.height_at(Vector3(-5, -3, 0))
+	var above := w.height_at(Vector3(-5, 3, 0))
+	_check("contracts: a pool below the sea's level reads its own water", out == 0.0 and in_pool == -5.0 and between == 0.0 and above == 0.0, "sea side %.1f, in the pool %.1f, over the pool under the sea %.1f, above both %.1f" % [out, in_pool, between, above])
+	_check("contracts: the flow comes from the water that answered", w.flow_at(Vector3(-5, -7, 0)).x == 0.5 and w.flow_at(Vector3(5, -2, 0)) == Vector3.ZERO, "")
+	_check("contracts: depth under the surface", absf(w.depth_at(Vector3(-5, -7, 0)) - 2.0) < 1e-4, "%.2f m" % w.depth_at(Vector3(-5, -7, 0)))
+	WorldContracts.clear_overrides()
+	var wx: WorldWeather = WorldContracts.get_weather()
+	if not wx.has_provider():
+		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")

@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "ground_deform_field.h"
 #include "ground_deform_gpu.h"
 #include "ground_height_query.h"
@@ -55,7 +56,7 @@ class WeatherMap3D;
 // crowns drop litter; bare rock does not print. The field is drawn as a patch with the ground's own
 // material, and the terrain, drawn with the same material (BaseMaterial3D ground_deform_enabled, or
 // get_ground_deform_shader_code() in a shader), is lowered under it, so both renderers trace the prints.
-class GroundSurface3D : public Node3D {
+class GroundSurface3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(GroundSurface3D, Node3D);
 
 public:
@@ -738,6 +739,8 @@ public:
 	void set_standing_water(bool p_enabled);
 	bool is_standing_water() const { return standing_water; }
 	float get_standing_water_at(Vector3 p_position) const;
+	// The water contract (WorldWater): standing water on the ground, -INF where there is none.
+	float contract_water_height_at(const Vector3 &p_position) const override;
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
 	void set_puddle_ice(bool p_enabled);

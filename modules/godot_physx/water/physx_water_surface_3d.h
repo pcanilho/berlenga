@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "water_body_contacts.h"
 #include "water_contact_map.h"
 #include "water_raster_reflections.h"
@@ -79,7 +80,7 @@ class ParticleProcessMaterial;
 // separate from the zero-copy texture path above per the project plan's own
 // note: two consumers, two different freshness/precision needs, one
 // underlying simulation.
-class PhysXWaterSurface3D : public Node3D {
+class PhysXWaterSurface3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(PhysXWaterSurface3D, Node3D);
 
 	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
@@ -422,6 +423,11 @@ public:
 	// both layers (ripple + ocean), matching what the rendered mesh shows.
 	// Returns -INF over dry cells when a surface_mesh is set.
 	float sample_height(Vector3 p_world_pos) const;
+	// The water contract (WorldWater): this water's surface, -INF where it has none.
+	float contract_water_height_at(const Vector3 &p_position) const override;
+	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
+	void contract_water_clear(uint64_t p_owner) override;
+	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
 	// The same, leaving out one wake (a boat's buoyancy reading the water
 	// under it shouldn't sink into its own wake's dip).
 	float sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const;
