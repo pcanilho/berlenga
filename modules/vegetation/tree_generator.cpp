@@ -16144,7 +16144,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			m->set_uv1_scale(Vector3(mt, mt, 1.0f));
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "moss");
 		} else {
-			m->set_roughness(needles ? 0.5f : 0.6f);
+			m->set_roughness(needles ? 0.5f : 0.75f);
+			if (!needles) {
+				// A broadleaf's cuticle reflects a little, and its leaves face every way: with the
+				// default specular (0.5) at roughness 0.6 the sky's grey-blue lay over dense, dark
+				// crowns from 5-30 m and turned hedges grey (vegetation, 18 Nov; its far shells from
+				// the same leaves use 0.3 and read green). Leaf reflectance at normal incidence is a
+				// few percent (Jacquemoud and Ustin, Leaf Optical Properties, 2019).
+				m->set_specular(0.3f);
+			}
 			if (needles && needle_sprays) {
 				m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _spray_texture());
 				// Hashed alpha with alpha to coverage: a spray seen as a pixel-wide line keeps its

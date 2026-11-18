@@ -477,6 +477,13 @@ void PhysXFireSpread3D::_step(float p_delta) {
 	// Fuel burns down after ignition (WRF-SFIRE): left = exp(-(t - t_ig) / T_f); the heat it gives off, W/m2.
 	total_burnt = 0.0f;
 	const float cell_area = cell_size * cell_size;
+	// Glowing firebrands big enough to light fuel, per kg burnt. Burning trees and shrubs throw hundreds of hot brands
+	// per kg (Caton-Kerr et al. 2021, Frontiers in Mech. Eng. 7), most of them needles and leaves too small to light
+	// anything; grass throws fewer that last (flakes of stem and seed head), litter more (bark and leaf), wood the most.
+	static const float brands_per_kg[FUEL_MAX] = { 2.0f, 3.0f, 5.0f };
+	const float fine_brands = spotting ? brands_per_kg[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)] * spotting_scale : 0.0f;
+	brand_points.clear();
+	brand_count = 0.0f;
 	for (int z = band_z0; z <= band_z1; z++) {
 		for (int x = band_x0; x <= band_x1; x++) {
 			const uint32_t i = z * nx + x;
@@ -489,8 +496,14 @@ void PhysXFireSpread3D::_step(float p_delta) {
 				continue; // put out: what is left stays, unburnt
 			}
 			const float left = fuel_left[i] <= 0.0f ? 0.0f : Math::exp(-(time - t_ignite[i]) / m.burn_time);
-			heat[i] = MAX(fuel_left[i] - left, 0.0f) * load[i] * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
+			const float kg = MAX(fuel_left[i] - left, 0.0f) * load[i];
+			heat[i] = kg * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
 			fuel_left[i] = left < 0.002f ? 0.0f : left;
+			if (fine_brands > 0.0f && kg > 0.0f && time - t_ignite[i] < m.burn_time) { // from the flames, not the embers
+				const float w = kg * cell_area * fine_brands;
+				brand_points.push_back({ _cell_world(x, z) + Vector3(0.0f, 0.1f, 0.0f), w });
+				brand_count += w;
+			}
 		}
 	}
 	if (heavy_any) {
@@ -500,7 +513,7 @@ void PhysXFireSpread3D::_step(float p_delta) {
 
 // Large wood (BURNUP's view, Albini and Reinhardt 1995: big pieces keep burning long after the surface front has
 // passed). A log catches from the surface fire burning under it unless it is too wet, flames for about Anderson's
-// (1969) residence time, 384/sigma minutes (sigma its surface to volume ratio, 4/d per foot: about 5 minutes per cm
+// (1969) residence time, 384/sigma minutes (sigma its surface to volume ratio, 4/d per foot: about 3 minutes per cm
 // of diameter), then smoulders for longer with no flame. Its heat feeds the flames and the glow over its cells.
 void PhysXFireSpread3D::_burn_heavy(float p_delta) {
 	const FuelModel &m = _model(fuel_type);
@@ -526,7 +539,14 @@ void PhysXFireSpread3D::_burn_heavy(float p_delta) {
 				heavy_left[i] = 0.0f;
 			}
 			if (_heavy_flaming(i)) {
-				heat[i] += (before - heavy_left[i]) * heavy[i] * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
+				const float kg = (before - heavy_left[i]) * heavy[i];
+				heat[i] += kg * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
+				if (spotting && kg > 0.0f) {
+					// Bark and charred twig off burning wood: the brands that carry furthest.
+					const float w = kg * cell_size * cell_size * 10.0f * spotting_scale;
+					brand_points.push_back({ _cell_world(x, z) + Vector3(0.0f, 0.3f, 0.0f), w });
+					brand_count += w;
+				}
 			}
 		}
 	}
@@ -756,6 +776,21 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 			picked.push_back(ti);
 		}
 	}
+	// The convection columns over the strongest stretches of front, for the firebrands.
+	if (spotting) {
+		LocalVector<PhysXFirebrands::Plume> plumes;
+		const float t_air = _air_temperature();
+		for (uint32_t k = 0; k < order.size() && k < 128; k++) {
+			const Tile &t = tiles[order[k]];
+			PhysXFirebrands::Plume pl;
+			pl.base = t.centre / t.weight;
+			pl.w0 = PhysXFirebrands::plume_speed(t.heat / 1000.0f / tile_w, t_air);
+			pl.width = tile_w;
+			plumes.push_back(pl);
+		}
+		// Flaming tiles lie along the front, a tile or two deep: their count over the depth is about its length.
+		firebrands.set_plumes(plumes, order.size() * tile_w * 0.5f);
+	}
 	for (uint32_t k = 0; k < emitters.size(); k++) {
 		PhysXFlowEmitter3D *em = emitters[k];
 		if (k >= picked.size()) {
@@ -968,6 +1003,13 @@ void PhysXFireSpread3D::set_vegetation_field(const NodePath &p_path) {
 	grid_dirty = true;
 }
 
+void PhysXFireSpread3D::set_spotting(bool p_v) {
+	spotting = p_v;
+	if (!spotting) {
+		firebrands.clear();
+	}
+}
+
 void PhysXFireSpread3D::set_glow_energy(float p_v) {
 	glow_energy = MAX(p_v, 0.0f);
 	if (decal) {
@@ -1072,6 +1114,12 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			}
 			_step(dt);
 			_update_emitters(_wind());
+			if (spotting && brand_count > 0.0f) {
+				firebrands.release(brand_count, brand_points, flow);
+			}
+			if (firebrands.get_count() > 0) {
+				firebrands.step(this, flow, _wind(), dt, glow_energy);
+			}
 			map_timer -= dt;
 			if (map_timer <= 0.0f) {
 				map_timer = 0.1f;
@@ -1091,6 +1139,12 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_burnt_area"), &PhysXFireSpread3D::get_burnt_area);
 	ClassDB::bind_method(D_METHOD("get_burning_cells"), &PhysXFireSpread3D::get_burning_cells);
 	ClassDB::bind_method(D_METHOD("get_flow"), &PhysXFireSpread3D::get_flow);
+	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXFireSpread3D::get_firebrand_count);
+	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXFireSpread3D::get_spot_fire_count);
+	ClassDB::bind_method(D_METHOD("set_spotting", "enabled"), &PhysXFireSpread3D::set_spotting);
+	ClassDB::bind_method(D_METHOD("is_spotting"), &PhysXFireSpread3D::is_spotting);
+	ClassDB::bind_method(D_METHOD("set_spotting_scale", "scale"), &PhysXFireSpread3D::set_spotting_scale);
+	ClassDB::bind_method(D_METHOD("get_spotting_scale"), &PhysXFireSpread3D::get_spotting_scale);
 
 	ClassDB::bind_method(D_METHOD("set_enabled", "enabled"), &PhysXFireSpread3D::set_enabled);
 	ClassDB::bind_method(D_METHOD("is_enabled"), &PhysXFireSpread3D::is_enabled);
@@ -1157,6 +1211,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spread_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_spread_scale", "get_spread_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "heat_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_heat_source", "get_heat_source");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_ignition_temperature", "get_ignition_temperature");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spotting"), "set_spotting", "is_spotting");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spotting_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_spotting_scale", "get_spotting_scale");
 	ADD_GROUP("Flames", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_emitters", PROPERTY_HINT_RANGE, "1,128,1"), "set_max_emitters", "get_max_emitters");

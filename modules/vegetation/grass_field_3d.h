@@ -370,6 +370,11 @@ private:
 	Vector3 far_view_camera; // Where it last matched from.
 	Vector2 far_view_size; // The viewport's visible size when the pixels were picked.
 	PackedVector2Array far_view_px; // Pairs: inside the band, past it.
+	LocalVector<int> far_view_pair_slot; // Each pair's field slot (crop_ground_plots), crops only.
+	HashMap<int, Color> far_view_slot_ratio; // Per field slot: blades / far ground this round.
+	// Per field slot: its far canopy's own scale on top of crop_ground_view (fields of different
+	// crops and stages differ; one global scale left a barley field's far half dark).
+	static inline HashMap<int, Color> crop_slot_view;
 	double far_view_msec = 0.0; // The last readback's sampling cost on the thread it lands on.
 	Color far_view_ratio = Color(1, 1, 1, 1);
 	int far_view_pairs = 0;

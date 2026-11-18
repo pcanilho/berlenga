@@ -786,7 +786,13 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		off.y -= 1.6 * amp * drop_w * exp(-drop_x * drop_x);
 		// White water: the breaking crest, and the bore's foam trailing behind it.
 		float behind = fract(-th / 6.28318530718);
-		r_white = max(r_white, brk * vary * max(smoothstep(0.35, 0.95, cos(ps)), 0.7 * exp(-behind * 5.0)));
+		// A breaker spills in sections along its crest (each a few metres to tens of metres, from where the crest
+		// first peaks), not as one even white line down the beach; the bore's foam behind thins in patches, so it
+		// opens into lace rather than trailing as a smooth band.
+		float sect = flow_value_noise(world_xz * 0.09 + vec2(float(i) * 7.3, 0.0)) * 0.65 + flow_value_noise(world_xz * 0.31 - vec2(0.0, float(i) * 3.1)) * 0.35;
+		float spill = mix(0.3, 1.0, smoothstep(0.3, 0.62, sect));
+		float trail = 0.7 * exp(-behind * 5.0) * mix(0.45, 1.0, smoothstep(0.25, 0.7, flow_value_noise(world_xz * 0.45 + 2.7)));
+		r_white = max(r_white, brk * vary * spill * max(smoothstep(0.35, 0.95, cos(ps)), trail));
 		// The lip turns white as it falls, and the plunge throws up a splash.
 		r_white = max(r_white, drop_w * lip);
 	}
@@ -1007,7 +1013,9 @@ float foam_structure(vec2 p, float amount, float footprint) {
 		float rough = 0.6 * foam_fbm(q * 3.1 + 5.3) + 0.4 * foam_fbm(q * 11.0 - 2.1);
 		float t_edge = 0.32 + 0.5 * (rough - 0.5);
 		float w_edge = clamp(0.02 + footprint * foam_detail_scale * 2.0, 0.02, 0.3);
-		float outline = max(smoothstep(t_edge - w_edge, t_edge + w_edge, density), 0.8 * density);
+		// A thin patch's step rises only part way: a small, thin whitecap stays translucent with a soft rim, not a
+		// paper-white chip (only a thick sheet reads as opaque).
+		float outline = max(smoothstep(t_edge - w_edge, t_edge + w_edge, density) * mix(0.55, 1.0, smoothstep(0.35, 0.7, a)), 0.8 * density);
 		density = mix(density, outline, foam_crisp);
 		bubbles = mix(1.0, bubbles, 1.0 - 0.55 * foam_crisp);
 	}
@@ -1036,6 +1044,11 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
+	// The distance from the camera, for the foam's pixel footprint: the open sea's mesh sits under the camera
+	// (mesh_offset from the grid's centre); a following square is centred on it. A world's sea is centred on the
+	// world, so its distance from the grid's centre drew full-detail chips a kilometre out (single bright pixels
+	// along the horizon) and blurred the foam by a world-centre far from the camera.
+	float view_dist = length(mesh_open ? rel - mesh_offset : rel);
 	// The foam amount is a bilinear texture: up close its contours (a patch's crisp edge) run as straight
 	// segments across each texel, with wedge corners where they meet. Its lookup is wandered by smooth noise
 	// about a texel long (a few decimetres), which bends those segments without moving the foam more than that.
@@ -1078,7 +1091,7 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		// A pixel's rough footprint (about 2 mrad, from the grid's centre, which follows the camera; no
 		// derivatives, as the vertex stage calls this too): past where the filaments are thinner than a pixel
 		// they fade toward their mean cover rather than shimmering.
-		streak = mix(streak, 0.06, clamp(0.002 * length(rel) * 4.0 - 0.2, 0.0, 1.0));
+		streak = mix(streak, 0.06, clamp(0.002 * view_dist * 4.0 - 0.2, 0.0, 1.0));
 		amount = max(amount, 0.6 * streak * fade * foam_streaks);
 	}
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
@@ -1108,7 +1121,7 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	vec2 o_a;
 	vec2 o_b;
 	float w = flow_phases(world_xz, o_a, o_b);
-	float footprint = 0.002 * length(rel) + 0.002;
+	float footprint = 0.002 * view_dist + 0.002;
 	float f = foam_structure(world_xz - o_a, amount, footprint);
 	if (w < 1.0) {
 		f = f * w + foam_structure(world_xz - o_b, amount, footprint) * (1.0 - w);
@@ -2900,6 +2913,7 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 	}
 	const float *dw = cell_depth.ptr();
 	shore_baked_height = _shore_height();
+	const bool open_from_all_sides = open_sea_beyond && shore_wave_direction.length_squared() < 1e-8f;
 	for (int t = 0; t < SHORE_TRAINS; t++) {
 		// The second train: a little longer, lower and from a few degrees round,
 		// so the two beat into sets.
@@ -2926,6 +2940,17 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
 				if (k_cell[z * n + x] <= 0.0f) {
+					continue;
+				}
+				const bool edge = x == 0 || z == 0 || x == n - 1 || z == n - 1;
+				if (open_from_all_sides) {
+					// Open sea all round the square (a generated world's sea): the swell reaches every coast from the
+					// sea in front of it, wrapping round as it refracts, not only the coasts that face the wind (a beach
+					// running along the wind drew no surf at all). Fronts start parallel to the square's edges; the
+					// shelf turns them to the depth contours. The lee coasts get a lower swell (below).
+					if (edge) {
+						pw[z * n + x] = 0.0f;
+					}
 					continue;
 				}
 				const bool in = (x == 0 && dir.x > 0.05f) || (x == n - 1 && dir.x < -0.05f) || (z == 0 && dir.y > 0.05f) || (z == n - 1 && dir.y < -0.05f);
@@ -3045,7 +3070,10 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 					const float shoal = Math::sqrt(cg_deep / MAX(_shore_cg(omega, h), 1e-3f));
 					// Deep water: the FFT ocean's swell, not these.
 					const float deep_fade = 1.0f - Math::smoothstep(0.25f * wavelength_deep, 0.5f * wavelength_deep, h);
-					const float unbroken = h0 * shoal * deep_fade;
+					// From all sides: the swell's own direction still sets how much reaches a coast (the wind's
+					// side full, the lee a little under half, as the spread swell bends round into it).
+					const float face = open_from_all_sides ? 0.45f + 0.55f * Math::smoothstep(-0.3f, 0.7f, (g / k).dot(dir)) : 1.0f;
+					const float unbroken = h0 * shoal * deep_fade * face;
 					height = MIN(unbroken, BREAKER_INDEX * h);
 					stage = unbroken / (BREAKER_INDEX * h);
 				}
@@ -6442,10 +6470,10 @@ int PhysXWaterSurface3D::_sample_seabed(bool p_quiet) {
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	// Terrain holes (cave mouths) leave the heightfield's collision open: a ray through one finds nothing.
 	Node *terrain = terrain_source.is_empty() ? nullptr : get_node_or_null(terrain_source);
-	bool holes = false;
-	if (terrain != nullptr && terrain->has_method(SNAME("is_hole")) && terrain->has_method(SNAME("get_height"))) {
-		holes = terrain->has_method(SNAME("has_holes_in")) ? bool(terrain->call(SNAME("has_holes_in"), Rect2(grid_min, active_domain_size))) : true;
-	}
+	// Rays meet only the collision that is loaded (a streamed terrain has it near its camera), and start below a hill
+	// higher than the probe: past those, the terrain's own height, so a world's sea sees its whole coast (it read
+	// all the land outside the loaded square as open water of the constant depth, so no wave ever shoaled or broke).
+	const bool terrain_height = terrain != nullptr && terrain->has_method(SNAME("get_height"));
 	int hits = 0;
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
@@ -6475,15 +6503,14 @@ int PhysXWaterSurface3D::_sample_seabed(bool p_quiet) {
 				}
 				ray.exclude.insert(result.rid);
 			}
-			if (!hit && holes) {
-				// Through a hole onto nothing (no cave floor under it yet): the terrain's own height closes it.
+			if (!hit && terrain_height) {
+				// Through a hole onto nothing (no cave floor under it yet), or no collision here: the terrain's own
+				// height closes it.
 				const Vector3 at(p.x, surface_y, p.y);
-				if (bool(terrain->call(SNAME("is_hole"), at))) {
-					const float g = terrain->call(SNAME("get_height"), at);
-					if (Math::is_finite(g)) {
-						d = surface_y - g;
-						hits++;
-					}
+				const float g = terrain->call(SNAME("get_height"), at);
+				if (Math::is_finite(g)) {
+					d = surface_y - g;
+					hits++;
 				}
 			}
 			dw[i] = d;
@@ -6660,6 +6687,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 			_update_cell_fade();
 			solver.update_seabed(cell_depth);
 			_bake_flow();
+			_bake_shore_waves(); // (their refraction and breaking read the same depths)
 		}
 	}
 	if (shore_waves) {
