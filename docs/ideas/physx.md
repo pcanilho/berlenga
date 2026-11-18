@@ -896,6 +896,21 @@ at a third of the rate with a patchy glow. The bark shader takes that glow
 from fire_state_map in its furrows within half a metre of the ground. Rain
 quenches a flaming log to a smoulder.
 
+Status (18 Nov, cloth): PhysXClothBurn on the CPU cloth solver. Each
+particle takes heat (flame contact from the fire under it, 60 sqrt(I/600)
+kW/m2 up to 60; hot Flow gas 80 t^2; burnables' radiant flux) and cools
+below 10 kW/m2; thin fabric ignites at an areal dose of 0.26 kg/m2 times
+380 K, about 99 kJ/m2 (thermally thin ignition). Flame spreads over the
+mesh's own neighbour graph at flame_spread (1 + 7 up^2), so it climbs a
+hanging curtain fast and creeps down; each particle burns through after
+burn_through_time (0.7 to 1.3 of it). The shader eats the fabric along a
+noisy threshold on the interpolated burn (a dissolve with a glowing rim), so
+holes are round; a triangle and the constraints it held leave the solver
+once all three corners have burnt through. Char, glow and scorch go to vertex colour,
+read by a material override built from the cloth's own. Up to four Flow
+emitters sit over the burning clusters (farthest-point picks), sized small
+so the fabric shows. SIM_AUTO takes the CPU path while any fire exists.
+
 Smoother streaming. Unreal registers a streamed level's components over
 several frames within a budget (s.LevelStreamingComponentsRegistration
 Granularity and the streaming time limit). Here: bodies entering a space
