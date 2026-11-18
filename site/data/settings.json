@@ -3534,6 +3534,17 @@
    "topic": ""
   },
   {
+   "name": "Fuel moisture from the weather",
+   "settings": [
+    "PhysXFireSpread3D.use_weather_moisture"
+   ],
+   "note": "",
+   "what": "fuel dries or damps toward the air's equilibrium moisture, and rain wets it, slows the fire and puts it out.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Burning objects",
    "settings": [
     "PhysXBurnable3D",
