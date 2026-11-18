@@ -226,6 +226,13 @@
 				The near field's square in world XZ, or an empty rect when it is not active.
 			</description>
 		</method>
+		<method name="get_needle_ice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The needle ice at [param position] (see [member needle_ice]): its height in metres, and the loose crumbs a thaw left there (0 to 1).
+			</description>
+		</method>
 		<method name="get_patch_material" qualifiers="const">
 			<return type="Material" />
 			<description>
@@ -653,6 +660,9 @@
 		</member>
 		<member name="mud_wet_start" type="float" setter="set_mud_wet_start" getter="get_mud_wet_start" default="0.35">
 			The moisture where the ground starts turning to mud. Mud is stiff (a solid share of 0.56) at a moisture of 0.35 and slurry (0.40) soaked.
+		</member>
+		<member name="needle_ice" type="bool" setter="set_needle_ice" getter="is_needle_ice" default="true">
+			If [code]true[/code] (with [member frozen_ground]), frosty nights on wet, bare, fine soil grow needle ice where the frost has not yet gone down: the needles lift the top soil about 2 cm in a night at -3 C, the lifted cap cracks into clods with the white needles showing at a few, and feet and wheels sink deep into the weak mat. The thaw melts them and the ground drops back as loose crumbs that print deeper and wash away more easily, settling over about a week. Below about -8 C the frost runs down as solid frozen ground instead.
 		</member>
 		<member name="near_extent" type="float" setter="set_near_extent" getter="get_near_extent" default="8.0">
 			The near field's side, in metres, centred on the field. A multiple of twice the [member detail_spacing], so the patch's fine ring lines up with its grid.

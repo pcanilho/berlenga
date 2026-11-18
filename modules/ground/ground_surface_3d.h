@@ -157,9 +157,13 @@ private:
 	void _ice_update(double p_delta);
 	void _ice_break(const Vector3 &p_position, float p_radius, float p_bearing);
 	// Frozen ground (round 8): per lattice cell (the thawed layer on top, m; the frost's depth, m; the thaw's
-	// weakening, 0..1).
-	static constexpr int FROST_FLOATS = 3;
+	// weakening, 0..1; round 9's needle ice: its height, m; the loose soil it leaves, 0..1; the height laid on the
+	// field, m).
+	static constexpr int FROST_FLOATS = 6;
 	bool frozen_ground = true;
+	bool needle_ice = true;
+	int needle_cursor = 0;
+	float _needle_loose_at(float p_x, float p_z) const;
 	LocalVector<float> frost_state;
 	void _frost_update(double p_delta);
 	void _frost_seed(int p_from);
@@ -749,6 +753,9 @@ public:
 	void set_frozen_ground(bool p_enabled);
 	bool is_frozen_ground() const { return frozen_ground; }
 	Vector3 get_frost_at(Vector3 p_position) const;
+	void set_needle_ice(bool p_enabled);
+	bool is_needle_ice() const { return needle_ice; }
+	Vector2 get_needle_ice_at(Vector3 p_position) const;
 	void set_plant_mud(bool p_enabled);
 	bool is_plant_mud() const { return plant_mud; }
 	float get_plant_mud_at(Vector3 p_position) const;
