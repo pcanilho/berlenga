@@ -1041,10 +1041,26 @@ const float WATER_G = 9.81;
 // Runoff channels start from the bed's own roughness (RillGrow, Favis-Mortlock 1998): a few millimetres of fixed
 // relief per place, value noise at 3 cm (grain clusters, the swash's and rain's marks), which the water sees and
 // follows; the cuts it makes are then the channels.
+// Gradient noise (Perlin 2002) rather than value noise: value noise's lattice shows as blobs with edges along the
+// grid's axes, which the water followed and cut into square hooks and cross bars. Each octave is also turned by
+// its own angle, so no two share a lattice direction.
+float runoff_gnoise(vec2 q, int salt) {
+	float a = 0.6 + 1.7 * float(salt);
+	q = mat2(vec2(cos(a), sin(a)), vec2(-sin(a), cos(a))) * q;
+	ivec2 c = ivec2(floor(q)) + ivec2(salt * 7919, salt * 104729);
+	vec2 f = q - floor(q);
+	vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	float g00 = dot(vec2(cos(6.2831853 * runoff_hash(c)), sin(6.2831853 * runoff_hash(c))), f);
+	float g10 = dot(vec2(cos(6.2831853 * runoff_hash(c + ivec2(1, 0))), sin(6.2831853 * runoff_hash(c + ivec2(1, 0)))), f - vec2(1.0, 0.0));
+	float g01 = dot(vec2(cos(6.2831853 * runoff_hash(c + ivec2(0, 1))), sin(6.2831853 * runoff_hash(c + ivec2(0, 1)))), f - vec2(0.0, 1.0));
+	float g11 = dot(vec2(cos(6.2831853 * runoff_hash(c + ivec2(1, 1))), sin(6.2831853 * runoff_hash(c + ivec2(1, 1)))), f - vec2(1.0));
+	// About the value noise's spread (gradient noise peaks near 0.7).
+	return 0.75 * mix(mix(g00, g10, u.x), mix(g01, g11, u.x), u.y);
+}
 // The face's own relief, fixed per place: grain-scale roughness (3 cm) on the swash's low ridges and hollows
 // (15 and 50 cm, a few mm), which gather the seepage into fewer, joining rills.
 float runoff_rough(vec2 p) {
-	return params.water3.z * (runoff_noise(p / 0.03, 0) + 1.5 * runoff_noise(p / 0.15, 1) + 2.0 * runoff_noise(p / 0.5, 2));
+	return params.water3.z * (runoff_gnoise(p / 0.03, 0) + 1.5 * runoff_gnoise(p / 0.15, 1) + 2.0 * runoff_gnoise(p / 0.5, 2));
 }
 
 float water_bed(int x, int z) {

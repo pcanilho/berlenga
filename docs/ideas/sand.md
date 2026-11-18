@@ -669,3 +669,10 @@ Asked: a fast slide through a sharp turn should throw sand, and dry sand should 
   0.75 u10. Flow now takes the shapes of bodies whose shapes live on their own PhysX actor (vehicles) from their
   CollisionShape3D children, so the dust curls round the car. Raster and path-traced frames match in shape (the
   path tracer's dust is browner and grainy without a denoiser). Defaults (17 Nov, after frames): `dust_heaviness` 0.3, `expansion` 3, `turbulence` 4: the plume billows to about car height. Raster dust is greyer than the path tracer's.
+
+Docs round 3 on the rills (18 Nov: glyph-like channels with square hooks and cross bars, no moving water, no fans).
+The hooks came from the bed's fixed roughness, value noise whose blobs have edges along the grid's axes: the
+seepage followed them and cut them in. It is now gradient noise (Perlin 2002), each octave turned by its own
+angle, and the rills curve and braid at shallow angles. Tried and dropped on the way: a diffusive bank flux in
+the solver (it worked against the fixed relief and went unstable) and B-spline drawing of the relief (no visible
+change: the shapes were several texels wide, not texel facets).
