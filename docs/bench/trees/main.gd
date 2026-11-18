@@ -228,6 +228,13 @@ func _check(ok: bool, what: String) -> void:
 	print(("PASS " if ok else "FAIL ") + what)
 
 func _run_test() -> void:
+	# Falling leaves (make_leaf_mesh, get_leaf_physics): a leaf at true size with its material,
+	# broad leaves falling at 1-2 m/s.
+	for lp in [0, 41]:
+		var lm: ArrayMesh = TreeGenerator.make_leaf_mesh(lp, {}, 1)
+		var lphys: Dictionary = TreeGenerator.get_leaf_physics(lp)
+		_check(lm != null and lm.get_surface_count() == 1 and lm.surface_get_material(0) != null and lm.get_aabb().get_longest_axis_size() < 0.3, "%s leaf mesh: one surface with material, %.3f m" % [NAMES[lp], lm.get_aabb().get_longest_axis_size() if lm else 0.0])
+		_check(float(lphys.terminal_speed_fresh) > 0.5 and float(lphys.terminal_speed_fresh) < 4.0, "%s leaf falls at %.1f m/s" % [NAMES[lp], float(lphys.terminal_speed_fresh)])
 	print("species        stand   height  crown_r  crown_base  internodes  leaves   dead  shed  tris      bark      ms")
 	for p in (pick if not pick.is_empty() else ([preset] if preset >= 0 else range(NAMES.size()))):
 		var o := _gen(p, false, seed)
