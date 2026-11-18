@@ -344,6 +344,12 @@ func _ready() -> void:
 		meadow.name = "Meadow"
 		meadow.fallback_wind = wind
 		meadow.radius = 50.0
+		# A field verge, not a lawn: fine blades (cocksfoot and false oat-grass leaves are 5 to
+		# 10 mm), denser, a summer grey-green rather than spring lime.
+		meadow.blade_width = 0.018
+		meadow.density = 220.0
+		meadow.blade_height = Vector2(0.2, 0.5)
+		meadow.tip_color = Color(0.36, 0.44, 0.2)
 		add_child(meadow)
 		meadow.data_map = meadow.get_path_to(dm)
 	if season_map:
