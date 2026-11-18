@@ -217,6 +217,7 @@ public:
 
 	void set_deform_enabled(bool p_enabled);
 	bool is_deform_enabled() const { return deform_enabled; }
+	const GroundDeformField &get_deform_field() const { return field; } // CPU copy (read back), for GroundLumpScan
 	void set_clumps(bool p_enabled);
 	bool is_clumps() const { return clumps; }
 	SnowClumps3D *get_clumps_node() const { return clumps_node; }

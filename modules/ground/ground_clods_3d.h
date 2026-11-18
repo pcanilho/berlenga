@@ -34,6 +34,8 @@
 
 #include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
+#include "ground_lump_draw.h"
+#include "ground_lump_scan.h"
 #include "ground_surface_3d.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
@@ -75,19 +77,15 @@ private:
 	LocalVector<Clod> clods;
 	uint32_t next_slot = 0;
 
-	LocalVector<float> last_rim;
-	LocalVector<float> owed;
-	Vector2i last_origin = Vector2i(INT32_MIN, INT32_MIN);
-	Vector2 last_moved = Vector2(-1.0f, -1.0f);
-	int scan_n = 0;
-	float scan_cell = 0.0f;
+	GroundLumpScan scan;
+	LocalVector<GroundLumpScan::Grown> grown;
 	double since_scan = 0.0;
+	int water_wait = 0;
 	RandomPCG rng;
 	LocalVector<GroundSurface3D::ClodDrop> drops;
 
 	Ref<ArrayMesh> shapes[SHAPES];
-	Ref<MultiMesh> multimeshes[SHAPES];
-	MultiMeshInstance3D *instances[SHAPES] = {};
+	GroundLumpDraw lump_draw;
 	Ref<Material> material;
 	bool draw_dirty = false;
 	int spawned_total = 0;
@@ -100,9 +98,10 @@ private:
 	void _ensure_draw();
 	void _free_draw();
 	void _land(GroundSurface3D *p_surface);
+	void _watch(GroundSurface3D *p_surface);
 	void _scan(GroundSurface3D *p_surface);
 	void _spawn(GroundSurface3D *p_surface, const Vector3 &p_at, const Vector2 &p_out, float p_size, float p_throw, const Color &p_color);
-	void _check(GroundSurface3D *p_surface);
+	void _check(GroundSurface3D *p_surface, bool p_water);
 	void _draw();
 	void _remove(uint32_t p_index);
 

@@ -826,6 +826,9 @@ public:
 	Rect2 get_near_rect() const;
 	Vector2 get_near_moved_volume() const { return is_near_active() ? near_fld.moved_volume() : Vector2(); }
 	bool is_near_active() const { return _near_on() && near_fld.valid; }
+	// The print fields' CPU copies (read back from the GPU), for GroundLumpScan.
+	const GroundDeformField &get_deform_field() const { return field; }
+	const GroundDeformField *get_near_deform_field() const { return is_near_active() ? &near_fld : nullptr; }
 	void set_water_sources(const TypedArray<NodePath> &p_sources) { water_sources = p_sources; }
 	TypedArray<NodePath> get_water_sources() const { return water_sources; }
 	void set_water_coupling(bool p_enabled);
