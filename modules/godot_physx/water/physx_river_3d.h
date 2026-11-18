@@ -120,6 +120,12 @@ private:
 	PackedFloat32Array depths;
 	float default_width = 4.0f;
 	float discharge = 2.0f; // m^3/s
+	// Storm flow (docs/ideas/rain.md, step 3): the world's runoff (WeatherRunoff3D) reaching the river's upstream end
+	// is added to its discharge, so it rises and runs faster in rain and falls back after.
+	bool rain_response = true;
+	float rain_discharge = 0.0f; // m^3/s from the runoff at the last build
+	double rain_check = 0.0; // s until the runoff is read again
+	void _rain_response_update(double p_delta);
 	float roughness = 0.035f; // Manning n
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
@@ -267,6 +273,9 @@ public:
 	float get_default_width() const { return default_width; }
 	void set_discharge(float p_discharge);
 	float get_discharge() const { return discharge; }
+	void set_rain_response(bool p_enable);
+	bool get_rain_response() const { return rain_response; }
+	float get_rain_discharge() const { return rain_discharge; }
 	void set_roughness(float p_roughness);
 	float get_roughness() const { return roughness; }
 	void set_max_slope(float p_slope);

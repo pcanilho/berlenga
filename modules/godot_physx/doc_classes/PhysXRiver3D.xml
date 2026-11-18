@@ -58,6 +58,12 @@
 				With [member source_lake]: how far (m) the lake stood above the outlet's sill at the last build.
 			</description>
 		</method>
+		<method name="get_rain_discharge" qualifiers="const">
+			<return type="float" />
+			<description>
+				The storm flow (m³/s) from [WeatherRunoff3D] added to [member discharge] at the last build.
+			</description>
+		</method>
 		<method name="get_section" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
@@ -129,11 +135,11 @@
 		</method>
 	</methods>
 	<members>
-		<member name="base_height_source" type="NodePath" setter="set_base_height_source" getter="get_base_height_source" default="NodePath(&quot;&quot;)">
-			A node with a [code]base_height_at(world_xz: Vector2) -&gt; float[/code] method giving the ground as it was before carving (a terrain deformer keeps those heights). When set, the river reads the ground from it instead of measuring, so once its channel is carved it does not measure the channel and carve deeper on every rebuild. Return NAN where there is no ground.
-		</member>
 		<member name="bank_margin" type="float" setter="set_bank_margin" getter="get_bank_margin" default="1.0">
 			How far (m) the water mesh reaches past each bank, so the waterline can follow the measured ground.
+		</member>
+		<member name="base_height_source" type="NodePath" setter="set_base_height_source" getter="get_base_height_source" default="NodePath(&quot;&quot;)">
+			A node with a [code]base_height_at(world_xz: Vector2) -&gt; float[/code] method giving the ground as it was before carving (a terrain deformer keeps those heights). When set, the river reads the ground from it instead of measuring, so once its channel is carved it does not measure the channel and carve deeper on every rebuild. Return NAN where there is no ground.
 		</member>
 		<member name="bend_superelevation" type="bool" setter="set_bend_superelevation" getter="get_bend_superelevation" default="true">
 			The surface banks up towards the outside of each bend by about [code]U² w / (g r)[/code] (the centrifugal tilt of open-channel flow round a bend), held to half the mean depth across the half width.
@@ -168,11 +174,11 @@
 		<member name="discharge" type="float" setter="set_discharge" getter="get_discharge" default="2.0">
 			Water carried by the river (m³/s). A brook carries 0.1 to 1, a small river 5 to 50.
 		</member>
-		<member name="fall_material" type="ShaderMaterial" setter="set_fall_material" getter="get_fall_material">
-			The waterfalls' falling sheet. Left empty, a built-in shader: a thin slab of water whose streaks ride the falling water, turning white with the air it takes in and breaking into clumps past its break-up length. Its vertex data: UV = (travel time since the lip in s, distance across in m), UV2.x = speed, COLOR.r = edge fade, COLOR.g = aeration, COLOR.b = how far past break-up.
-		</member>
 		<member name="fall_exclusions" type="PackedVector3Array" setter="set_fall_exclusions" getter="get_fall_exclusions" default="PackedVector3Array()">
 			Faces another node draws, as pairs of points (lip, then foot, in global coordinates): the ribbon down each is hidden and no waterfall is made there. [PhysXWaterfalls3D] sets it on every river in the tree for its contact falls.
+		</member>
+		<member name="fall_material" type="ShaderMaterial" setter="set_fall_material" getter="get_fall_material">
+			The waterfalls' falling sheet. Left empty, a built-in shader: a thin slab of water whose streaks ride the falling water, turning white with the air it takes in and breaking into clumps past its break-up length. Its vertex data: UV = (travel time since the lip in s, distance across in m), UV2.x = speed, COLOR.r = edge fade, COLOR.g = aeration, COLOR.b = how far past break-up.
 		</member>
 		<member name="fall_min_height" type="float" setter="set_fall_min_height" getter="get_fall_min_height" default="1.5">
 			A drop at least this tall (m), over which the water can fall clear of the ground, is a waterfall: the surface draws down to the brink depth before the lip, the water leaves it and falls as a free jet onto the water below, which boils white. Lower drops, and chutes the jet would run down, stay cascades. 0 turns waterfalls off.
@@ -207,6 +213,12 @@
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			The physics layers measured as ground. Only static bodies count.
 		</member>
+		<member name="ground_probe_depth" type="float" setter="set_ground_probe_depth" getter="get_ground_probe_depth" default="200.0">
+			How far below the curve the ground rays of [member snap_to_ground] look. Where none finds ground within it, the bed there is the parabola past the banks (dry). Keep it a little over the deepest water where the ground is in layers (a stream in a cave: a ray starting inside the rock past its banks goes on down through it to a passage below and laid deep water over the bank).
+		</member>
+		<member name="ground_probe_height" type="float" setter="set_ground_probe_height" getter="get_ground_probe_height" default="50.0">
+			How far above the curve the ground rays of [member snap_to_ground] start. Keep it under any roof over the water (a stream in a cave: a few decimetres), or the rays find the roof instead of the bed. While no ray finds any ground, the build waits up to 30 physics ticks for a floor that joins the physics space late.
+		</member>
 		<member name="live_damping" type="float" setter="set_live_damping" getter="get_live_damping" default="0.05">
 			How fast the live part of the flow dies away (1/s). The baked flow never decays.
 		</member>
@@ -237,26 +249,23 @@
 		<member name="outlet_coefficient" type="float" setter="set_outlet_coefficient" getter="get_outlet_coefficient" default="0.85">
 			The discharge coefficient of the outlet's sill, a broad-crested weir: about 0.85 for a rough natural sill, 1.0 for a smooth long crest.
 		</member>
+		<member name="rain_response" type="bool" setter="set_rain_response" getter="get_rain_response" default="true">
+			Add the world's runoff ([WeatherRunoff3D]) at the upstream end to the discharge: the river rises and runs faster in rain and falls back after.
+		</member>
 		<member name="raster_reflections" type="bool" setter="set_raster_reflections" getter="get_raster_reflections" default="true">
 			Raster only: open water mirrors the sky and the sun's glitter by the exact Fresnel term, as the path tracer sees it (the same as [member PhysXWaterSurface3D.raster_reflections]). Off, the surface is the unlit tint it was before.
 		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.035">
 			Manning's roughness: about 0.013 for concrete, 0.03 for a clean natural channel, 0.05 for a stony or weedy one. Rougher rivers run slower and deeper.
 		</member>
+		<member name="snap_to_ground" type="bool" setter="set_snap_to_ground" getter="get_snap_to_ground" default="true">
+			Measure the ground under the river by raycasts. Off: the curve is the water surface, and the bed is a parabola [member depths] deep.
+		</member>
 		<member name="source_lake" type="NodePath" setter="set_source_lake" getter="get_source_lake" default="NodePath(&quot;&quot;)">
 			A [PhysXWaterSurface3D] lake this river drains. Its discharge then comes from the lake's head over the sill (the highest bed in the river's first 12 m) as a broad-crested weir, [code]Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)[/code] with [member outlet_coefficient] as Cd, unless the channel below is too slow to carry that: then the sill is drowned and the discharge is the one whose energy at the sill the lake's level just reaches. No head, no flow (a trickle). The lake's water converges on the outlet, and with [member PhysXWaterSurface3D.level_from_flows] its level settles where the outlet passes what flows in. Replaces [member discharge].
 		</member>
 		<member name="standing_waves" type="bool" setter="set_standing_waves" getter="get_standing_waves" default="true">
 			Standing surface patterns from the solved profile (needs [member gradually_varied_flow]): below a weak hydraulic jump (Froude number 1 to 1.7) a train of smooth stationary waves whose wavelength is the one that stands still in the current downstream, decaying over about four wavelengths (a weak tail below stronger jumps); in fast (supercritical) water, cross-waves that leave each bank where the channel narrows or widens at the angle [code]asin(1/Fr)[/code] and reflect off the far bank, making diamond patterns. The water material's [code]froude_overlay[/code] parameter colours the water by its Froude number for tuning (blue slow, green near critical, red fast, white at jump toes).
-		</member>
-		<member name="ground_probe_depth" type="float" setter="set_ground_probe_depth" getter="get_ground_probe_depth" default="200.0">
-			How far below the curve the ground rays of [member snap_to_ground] look. Where none finds ground within it, the bed there is the parabola past the banks (dry). Keep it a little over the deepest water where the ground is in layers (a stream in a cave: a ray starting inside the rock past its banks goes on down through it to a passage below and laid deep water over the bank).
-		</member>
-		<member name="ground_probe_height" type="float" setter="set_ground_probe_height" getter="get_ground_probe_height" default="50.0">
-			How far above the curve the ground rays of [member snap_to_ground] start. Keep it under any roof over the water (a stream in a cave: a few decimetres), or the rays find the roof instead of the bed. While no ray finds any ground, the build waits up to 30 physics ticks for a floor that joins the physics space late.
-		</member>
-		<member name="snap_to_ground" type="bool" setter="set_snap_to_ground" getter="get_snap_to_ground" default="true">
-			Measure the ground under the river by raycasts. Off: the curve is the water surface, and the bed is a parabola [member depths] deep.
 		</member>
 		<member name="step_length" type="float" setter="set_step_length" getter="get_step_length" default="1.0">
 			Distance (m) between cross-sections along the river.

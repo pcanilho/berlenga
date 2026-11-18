@@ -3500,6 +3500,10 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 	m->set_backlight(c * 0.6f);
 	m->set_roughness(needles ? 0.5f : 0.75f);
+	// Wet while the canopy holds the rain it caught, with the water beaded on the leaves (docs/ideas/rain.md, step 5).
+	m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+	m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
+	m->set_wetness_canopy(true);
 	if (!needles) {
 		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
 		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
@@ -16418,6 +16422,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "moss");
 		} else {
 			m->set_roughness(needles ? 0.5f : 0.75f);
+			// Wet while the canopy holds the rain it caught, with the water beaded on the leaves (docs/ideas/rain.md,
+			// step 5); the flutter material carries the same generated lines.
+			m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+			m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
+			m->set_wetness_canopy(true);
 			if (!needles) {
 				// A broadleaf's cuticle reflects a little, and its leaves face every way: with the
 				// default specular (0.5) at roughness 0.6 the sky's grey-blue lay over dense, dark
@@ -16843,6 +16852,10 @@ Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_
 	if (code.is_empty() || vx < 0) {
 		return p_base;
 	}
+	// Beaded leaves (wetness_canopy): the path tracer draws every bead (a footprint of 0); raster fades the ones finer
+	// than the pixel.
+	code = code.replace("\t\tvec3 bead_fw = fwidth(bead_wp);\n\t\tfloat bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);\n",
+			"#if defined(RT)\n\t\tfloat bead_fp = 0.0;\n#else\n\t\tvec3 bead_fw = fwidth(bead_wp);\n\t\tfloat bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);\n#endif\n");
 	// The wind lines, minus any global the generated code already declares.
 	String wind;
 	const String plant_wind_code = R"(

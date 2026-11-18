@@ -8,8 +8,10 @@ def configure(env):
 
 def get_doc_classes():
     return [
+        "RainFall3D",
         "SkyClock",
         "WeatherMap3D",
+        "WeatherRunoff3D",
         "WeatherSkyMaterial",
     ]
 

@@ -602,6 +602,9 @@
 		<member name="wetness_amount" type="float" setter="set_wetness_amount" getter="get_wetness_amount" default="1.0">
 			How wet the surface is, from 0 to 1. With [member wetness_from_weather], it scales the wetness of the weather map; without, it is the wetness, for a script to set (a prop pulled out of water, a sprinkled lawn).
 		</member>
+		<member name="wetness_canopy" type="bool" setter="set_wetness_canopy" getter="is_wetness_canopy" default="false">
+			With [member wetness_from_weather], the surface is a leaf: it stays wet while the canopy holds the rain it intercepted ([method WeatherMap3D.get_canopy_wetness_at]), after the ground has begun to dry, and the water stands on it as beads on the faces that look up.
+		</member>
 		<member name="wetness_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
 			If [code]true[/code], the surface darkens and turns glossier when wet, following Lagarde's physically based wet surfaces (2013): water in the pores of porous surfaces (soil, bark, stone, fabric) darkens them down to 20% of their albedo and smooths them; non-porous surfaces barely change. The wetness comes from the [code]WeatherMap3D[/code] (its rain film and puddles drying over time) or from [member wetness_amount]. Surfaces facing down catch less rain. The path tracer applies the same model. Puddles are separate.
 		</member>

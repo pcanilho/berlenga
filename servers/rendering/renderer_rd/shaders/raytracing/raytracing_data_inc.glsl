@@ -244,6 +244,11 @@ vec4 rt_material_wetness(MaterialData p_mat) {
 			float((p_mat.subsurface >> 25u) & 1u), float((p_mat.subsurface >> 26u) & 1u));
 }
 
+// BaseMaterial3D wetness_canopy: a leaf's intercepted water (the rain map's green) and its beads.
+bool rt_material_wetness_canopy(MaterialData p_mat) {
+	return ((p_mat.subsurface_texture >> 24u) & 1u) != 0u;
+}
+
 // BaseMaterial3D Ground Deform on GroundSurface3D's patch: the turned-ground tint is on.
 bool rt_material_ground_deform(MaterialData p_mat) {
 	return ((p_mat.subsurface >> 29u) & 1u) != 0u;

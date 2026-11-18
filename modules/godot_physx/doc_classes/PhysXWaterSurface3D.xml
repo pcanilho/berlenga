@@ -143,6 +143,12 @@
 				What the outlets pass at the current level (m³/s).
 			</description>
 		</method>
+		<method name="get_rain_inflow" qualifiers="const">
+			<return type="float" />
+			<description>
+				The storm runoff (m³/s) from [WeatherRunoff3D] reaching this lake besides its rivers, added to its inflow when [member level_from_flows] is on.
+			</description>
+		</method>
 		<method name="get_wave_cascade_size" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="index" type="int" />
@@ -446,11 +452,11 @@
 		<member name="seabed_collision_mask" type="int" setter="set_seabed_collision_mask" getter="get_seabed_collision_mask" default="1">
 			Physics layers [member seabed_from_floor]'s rays hit. Only static bodies count; a rigid or character body in the way is skipped.
 		</member>
-		<member name="seabed_probe_height" type="float" setter="set_seabed_probe_height" getter="get_seabed_probe_height" default="100.0">
-			How far above the water [member seabed_from_floor]'s rays start, in metres. Under a roof (water in a cave) keep it below the roof, or the rays find the roof.
-		</member>
 		<member name="seabed_from_floor" type="bool" setter="set_seabed_from_floor" getter="get_seabed_from_floor" default="false">
 			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting [member seabed_probe_height] above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
+		</member>
+		<member name="seabed_probe_height" type="float" setter="set_seabed_probe_height" getter="get_seabed_probe_height" default="100.0">
+			How far above the water [member seabed_from_floor]'s rays start, in metres. Under a roof (water in a cave) keep it below the roof, or the rays find the roof.
 		</member>
 		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
 			Water shallower than this many meters fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).

@@ -137,6 +137,7 @@ public:
 	bool get_level_from_flows() const { return level_from_flows; }
 	void set_catchment_inflow(float p_discharge);
 	float get_catchment_inflow() const { return catchment_inflow; }
+	float get_rain_inflow() const { return rain_inflow; }
 	float get_outflow_discharge() const;
 	void set_water_level(float p_level);
 	float get_water_level() const { return water_level; }
@@ -788,6 +789,11 @@ private:
 	LocalVector<Outflow> outflows;
 	bool level_from_flows = false; // the level settles where the outlets pass the inflows (docs "Lake outlets")
 	float catchment_inflow = 0.0f; // m^3/s from rain and springs, besides the rivers flowing in
+	// Storm runoff (docs/ideas/rain.md, step 3): the world's runoff (WeatherRunoff3D) reaching the lake other than by
+	// the rivers flowing in (their own storm flow comes with their inflows), read every 10 s.
+	float rain_inflow = 0.0f;
+	double rain_check = 0.0;
+	void _rain_inflow_update(double p_delta);
 	void _settle_level();
 	PackedVector2Array plume_cells; // m/s per ripple cell, world xz
 	Ref<ImageTexture> plume_texture;
