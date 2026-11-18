@@ -266,39 +266,89 @@ void PhysXBurnable3D::_burn(float p_delta) {
 	}
 }
 
-// One Flow sphere emitter of hot fuel gas over the burning patch, as the ground fire's tiles are fed.
+// Flow emitters of hot fuel gas just outside each burning face (four sides and the top), over the part of the face
+// the burning patch covers, so the flames rise along the faces and lick over the top, as a wall fire's flame
+// attaches to the wall it burns. The heat is shared by the faces' burning areas.
 void PhysXBurnable3D::_update_emitter() {
 	if (!flow) {
 		return;
 	}
-	if (!emitter) {
-		emitter = memnew(PhysXFlowEmitter3D);
-		emitter->set_name(String(get_name()) + "Flame");
-		emitter->set_enabled(false);
-		flow->add_child(emitter);
-		emitter->set_flow_path(emitter->get_path_to(flow));
-	}
-	if (state != STATE_FLAMING || hrr <= 0.0f) {
-		emitter->set_enabled(false);
-		return;
+	const bool flaming = state == STATE_FLAMING && hrr > 0.0f;
+	const Vector3 lo = bounds.position, hi = bounds.position + bounds.size;
+	const Vector3 c = bounds.get_center();
+	struct Face {
+		Vector3 point; // target-local, on the face, in the burning patch
+		Vector3 normal;
+		float r;
+		float area;
+	};
+	Face faces[5];
+	float total = 0.0f;
+	for (int f = 0; f < 5; f++) {
+		const int axis = f < 4 ? (f / 2) * 2 : 1; // x, x, z, z, then y (top)
+		const float side = f < 4 ? ((f % 2) ? 1.0f : -1.0f) : 1.0f;
+		Vector3 nrm;
+		nrm[axis] = side;
+		Vector3 p = origin_local;
+		p[axis] = side > 0.0f ? hi[axis] : lo[axis];
+		const float to_face = origin_local.distance_to(p);
+		const float left = burn_radius - to_face; // radius of the burning disc on this face
+		faces[f] = { p, nrm, 0.0f, 0.0f };
+		if (!flaming || left <= 0.0f) {
+			continue;
+		}
+		// The disc's middle: from the point nearest the ignition, toward the face's middle as it grows; on the
+		// sides kept on the lower part of the disc, where the flame starts before it rises.
+		Vector3 fc = c;
+		fc[axis] = p[axis];
+		const Vector3 half = bounds.size * 0.5f;
+		float face_r = 0.0f;
+		for (int k = 0; k < 3; k++) {
+			if (k != axis) {
+				face_r = MAX(face_r, half[k]);
+			}
+		}
+		const float grow = CLAMP(left / MAX(face_r, 0.02f), 0.0f, 1.0f);
+		Vector3 q = p.lerp(fc, grow * 0.7f);
+		const float r = CLAMP(MIN(left, face_r) * 0.5f, 0.04f, 0.8f);
+		if (axis != 1) {
+			q.y = CLAMP(q.y, lo.y + r * 0.5f, hi.y - r * 0.5f);
+		}
+		faces[f] = { q + nrm * r * 0.7f, nrm, r, MIN(Math::PI * left * left, 4.0f * face_r * face_r) };
+		total += faces[f].area;
 	}
 	const Transform3D xf = _target_xform();
-	// Centred between the ignition point and the box's centre as the patch grows over it, on its upper part.
-	const float grown = CLAMP(burn_radius / MAX(bounds.size.length() * 0.5f, 0.05f), 0.0f, 1.0f);
-	Vector3 lc = origin_local.lerp(bounds.get_center(), grown);
-	lc.y = MAX(lc.y, bounds.get_center().y);
-	const float r = CLAMP(MIN(burn_radius, bounds.size.length() * 0.5f), 0.08f, 1.5f);
-	const float flame = CLAMP(0.235f * Math::pow(hrr / 1000.0f, 0.4f) - 1.02f * 2.0f * r, 0.2f, 4.0f); // Heskestad
-	emitter->set_enabled(true);
-	emitter->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
-	emitter->set_radius(r * 0.8f);
-	emitter->set_global_position(xf.xform(lc));
-	emitter->set_temperature(1.0f);
-	emitter->set_fuel(flame_strength * CLAMP(hrr / 300000.0f, 0.15f, 1.0f));
-	emitter->set_burn(0.0f);
-	emitter->set_smoke(0.0f);
-	emitter->set_velocity(Vector3(0, CLAMP(flame * 0.6f, 0.3f, 1.5f), 0));
-	emitter->set_couple_rate(2.0f);
+	for (int f = 0; f < 5; f++) {
+		PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(emitters[f]));
+		if (!e) {
+			if (!flaming || faces[f].area <= 0.0f) {
+				continue;
+			}
+			e = memnew(PhysXFlowEmitter3D);
+			e->set_name(String(get_name()) + "Flame" + itos(f));
+			flow->add_child(e);
+			e->set_flow_path(e->get_path_to(flow));
+			e->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
+			emitters[f] = e->get_instance_id();
+		}
+		if (!flaming || faces[f].area <= 0.0f || total <= 0.0f) {
+			e->set_enabled(false);
+			continue;
+		}
+		const float share = hrr * faces[f].area / total;
+		const float flame = CLAMP(0.235f * Math::pow(share / 1000.0f, 0.4f) - 1.02f * 2.0f * faces[f].r, 0.15f, 4.0f); // Heskestad
+		// A little outward push off the face, mostly up: buoyancy does the rest.
+		const Vector3 up = xf.basis.xform(faces[f].normal).normalized() * 0.15f + Vector3(0, CLAMP(flame * 0.8f, 0.4f, 2.0f), 0);
+		e->set_enabled(true);
+		e->set_radius(faces[f].r);
+		e->set_global_position(xf.xform(faces[f].point));
+		e->set_temperature(1.0f);
+		e->set_fuel(flame_strength * CLAMP(share / 100000.0f, 0.2f, 1.0f));
+		e->set_burn(0.0f);
+		e->set_smoke(0.0f);
+		e->set_velocity(up);
+		e->set_couple_rate(2.0f);
+	}
 }
 
 // Embers: released with the heat (ember_rate per MW), lofted by the plume and carried by Flow's gas with drag (a
@@ -454,26 +504,43 @@ Ref<Material> PhysXBurnable3D::_burn_material(const Ref<Material> &p_base) {
 	}
 	const String body = R"(
 	{
-		// PhysXBurnable3D: char from the ignition point, its edge ragged with a noise; the burning band glows,
-		// and the char's cracks glow while it smoulders.
+		// PhysXBurnable3D: the zones of burning wood behind its front (Babrauskas 2005; EN 1995-1-2), from the
+		// ignition point outward: deep char, alligator-cracked into blocks; fresh char, black with fine checks
+		// that glow near the flame; the burning front, a thin ragged glowing line; the pyrolysis zone, scorched
+		// brown; then unburnt wood. The char deepens with the time behind the front, so the cracks open there.
 		if (burn_state.w > 0.0) {
+			float b = burn_state.z;
 			float d = length(burn_local - burn_origin.xyz);
 			float n = burn_noise(burn_local * 9.0) * 0.6 + burn_noise(burn_local * 23.0) * 0.4;
-			float edge = burn_origin.w - d + (n - 0.5) * burn_state.z * 2.0;
-			float charred = smoothstep(-burn_state.z * 0.3, 0.0, edge);
-			// Alligator char: blocks split by shrinkage cracks, the cell edges of a Voronoi pattern; cracks open
-			// wider where the char is deeper (nearer the ignition point).
-			float depth = clamp(edge / max(burn_state.z * 4.0, 1e-4), 0.0, 1.0);
+			float n2 = burn_noise(burn_local * 41.0);
+			// Distance behind the front (m): positive is burnt.
+			float s = burn_origin.w - d + (n - 0.5) * b * 2.0 + (n2 - 0.5) * b * 0.5;
+			float scorch = smoothstep(-b * 2.5, 0.0, s);
+			float charred = smoothstep(-b * 0.15, b * 0.25, s);
+			float depth = clamp(s / (b * 6.0), 0.0, 1.0);
+			// Alligator checks: the cell edges of a Voronoi pattern; open wider and darker as the char deepens.
 			float cell = burn_cells(burn_local * 22.0);
-			// Faded as the cells shrink below a few pixels, so they do not alias.
 			float fw = fwidth(cell);
-			float crack = (1.0 - smoothstep(0.012, 0.022 + 0.03 * depth + 0.5 * fw, cell)) / (1.0 + fw * 16.0);
-			vec3 ch = mix(vec3(0.03, 0.026, 0.022), vec3(0.06, 0.05, 0.045), n) * (1.0 - 0.6 * crack);
-			ALBEDO = mix(ALBEDO, ch, charred);
-			// Glowing char in the cracks: a dull red to orange blackbody (about 600 to 900 C), flickering in patches.
+			float crack = (1.0 - smoothstep(0.008, 0.012 + 0.03 * depth + 0.5 * fw, cell)) * smoothstep(0.05, 0.5, depth) / (1.0 + fw * 16.0);
+			// Checks vary over the surface (grain, knots, how hot each part burnt): some parts stay smooth char.
+			crack *= mix(0.2, 1.0, smoothstep(0.3, 0.7, burn_noise(burn_local * 4.0 + 3.0)));
+			// Scorched: the wood's own colour browned and darkened toward the front.
+			float lum = dot(ALBEDO, vec3(0.3, 0.59, 0.11));
+			vec3 brown = mix(ALBEDO, vec3(0.32, 0.17, 0.08) * (0.5 + lum), smoothstep(0.0, 0.6, scorch)) * mix(1.0, 0.35, scorch * scorch);
+			// Char: brown-black at the front, blacker with a faint grey sheen deeper in, the blocks' faces lit.
+			vec3 ch = mix(vec3(0.05, 0.034, 0.022), vec3(0.035, 0.032, 0.03), depth) * (0.8 + 0.4 * n2) * (1.0 - 0.7 * crack);
+			ALBEDO = mix(brown, ch, charred);
+			// Glow in the cracks: near the flame while flaming, in patches while smouldering; a dull red to
+			// orange blackbody (about 600 to 900 C).
 			float heat = clamp(burn_noise(burn_local * 6.0 + vec3(0.0, TIME * 0.4, 0.0)) * 1.4 - 0.2, 0.0, 1.0);
 			vec3 ember = mix(vec3(0.55, 0.06, 0.01), vec3(1.0, 0.3, 0.05), heat) * (0.3 + 0.7 * heat);
-			burn_emit = vec3(0.5, 0.13, 0.02) * burn_state.x * (1.0 - smoothstep(0.0, burn_state.z, abs(edge))) * step(0.0, edge + burn_state.z * 0.3) + ember * burn_state.y * crack * charred;
+			float near = burn_state.x > 0.0 ? exp(-max(s, 0.0) / (b * 3.0)) : 0.0;
+			float patches = smoothstep(0.45, 0.75, burn_noise(burn_local * 3.0 + 7.0));
+			float crack_glow = crack * charred * ((near * burn_state.x * 0.25 + burn_state.y) * patches);
+			// The front: a thin line, broken where the noise is low.
+			float w = b * (0.12 + 0.2 * n2);
+			float line = (1.0 - smoothstep(0.0, w, abs(s - b * 0.05))) * smoothstep(0.25, 0.6, burn_noise(burn_local * 17.0));
+			burn_emit = (vec3(0.9, 0.22, 0.03) * line * burn_state.x * 0.2 + ember * crack_glow);
 		}
 	}
 )";
@@ -575,6 +642,12 @@ void PhysXBurnable3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			burnables.erase(this);
+			for (ObjectID &id : emitters) {
+				if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(id))) {
+					e->queue_free();
+				}
+				id = ObjectID();
+			}
 		} break;
 		case NOTIFICATION_READY: {
 			set_physics_process_internal(true);

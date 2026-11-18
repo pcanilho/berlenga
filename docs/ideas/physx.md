@@ -779,6 +779,67 @@ faded by the pixel footprint so they do not alias at a distance. Embers stay
 few without Flow's updraft (headless runs). Raster and path tracer both keep
 the char and cracks.
 
+Look rework (18 Nov, after docs review: the char read as a printed crackle
+over whole faces, the front as a cream rim, the flames sat beside the
+object). How burning wood looks, from fire investigation (Babrauskas 2005,
+"Charring rate of wood as a tool for fire investigations", Fire Safety J.
+40) and the timber fire design code (EN 1995-1-2, about 0.65 mm/min
+charring): behind the front the char deepens with time and splits into
+alligator blocks, smooth and fine-checked when fresh, larger and deeper
+behind; at the front a thin glowing line; ahead of it the pyrolysis zone,
+browned and darkened wood; then unburnt wood. A flame on a wall attaches
+to it and climbs (the wall fire plume). Built that way: the shader's
+distance behind the front stands for the char depth, cracks open with it
+and vary over the surface with a low noise, crack glow only near the
+flame and in smouldering patches, the front is a thin broken orange line,
+and a band of scorched brown leads it. The single Flow emitter inside the
+box (masked by the body as a solid) became one emitter just outside each
+burning face (sides and top) over the part the patch covers, pushed up.
+
+### Open-world physics checks (picked 17 Nov, fourth of four)
+
+What the module does now: one PxScene per space with the default scene
+query trees (static and dynamic both eDYNAMIC_AABB_TREE, rebuilt in the
+background over about 100 steps) and the default CPU broad phase (PABP in
+PhysX 5.10), or the GPU broad phase when CUDA is up. Each body goes in with
+its own addActor the moment it enters the space. Blast pieces already have
+piece_lifetime and kill_y; nothing else pools or culls bodies.
+
+How it is done elsewhere:
+- PhysX's guide (scene queries, "Pruning structures"; "Origin shift"):
+  for streamed content, build a PxPruningStructure for a batch of static
+  actors (at load or off the main thread) and add it with
+  addActors(pruningStructure): the batch's query tree merges into the
+  scene's in one step instead of each actor dirtying it. addActors with an
+  array is cheaper than single adds for the broad phase too. Static
+  aggregates (PxAggregateType::eSTATIC) put a region's statics into the
+  broad phase as one box. shiftOrigin moves every object by a vector, cost
+  O(n), meant to be called rarely as the player travels.
+- Unreal 5: physics state for a streamed level is created over several
+  frames (async physics state creation, a time budget per frame); Chaos
+  runs in doubles with Large World Coordinates, so it dropped origin
+  rebasing. Destruction debris: lifetime and "remove on sleep", with users
+  reporting it does not stop frame drops, so pooling is the game's job.
+- Unity (PhysX 4): no origin shift; projects run a floating origin script.
+
+Checks, in order (cloud CPU first; GPU numbers go on the PC queue):
+1. Bench (docs/bench/physx_openworld): regions of 500 m with a few
+   thousand static bodies each (boxes, convexes, trimeshes); stream one in
+   during a frame, measure that frame, the next steps, and raycast cost
+   before and after the query tree settles. The same with debris: a few
+   thousand dynamics settling, sleeping, then far away.
+2. Batched adds: bodies entering a space during a frame wait in a list and
+   go in with one addActors before the step; a batch of many statics goes
+   in through a PxPruningStructure. Keep it only if the bench shows the
+   spike drops; no behaviour change either way (same actors, same step).
+3. Sleep and distance: bodies beyond a distance from the active camera stop
+   simulating (eDISABLE_SIMULATION) and resume when back in range, as an
+   opt-in setting first, since game logic may rely on far bodies.
+4. Precision: PhysX runs in floats, so at 10 km a step's position step is
+   about 1 mm. Measure jitter of resting bodies at 1, 10 and 50 km. If it
+   shows, add an origin shift through PxScene::shiftOrigin that follows the
+   renderer's relative origin.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
