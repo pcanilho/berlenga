@@ -2960,6 +2960,10 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	MeshInstance3D *mi = memnew(MeshInstance3D);
 	mi->set_name(vformat("Chunk %d %d %d", p_chunk.key.x, p_chunk.key.y, p_chunk.key.z));
 	mi->set_mesh(p_chunk.mesh);
+	// The walls face into the passage, so from the sun (outside) every one is a back face, which the shadow pass culls:
+	// the rock cast no shadow and the sun lit the passage through it in raster (the path tracer's shadow rays hit both
+	// sides, so there it was dark). Both sides cast.
+	mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
 	for (int sfc = 0; sfc < p_chunk.mesh->get_surface_count(); sfc++) {
 		const bool is_ground = p_chunk.mesh->surface_get_name(sfc) == "ground";
 		mi->set_surface_override_material(sfc, is_ground && ground_material.is_valid() ? ground_material : p_wall);
