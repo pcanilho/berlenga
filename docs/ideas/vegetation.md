@@ -577,6 +577,17 @@ Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
   field's edge, turned along it: hawthorn 55%, blackthorn 15%, hazel 12%, field maple 10%, dog rose
   8%, in runs of about three segments (the common mixed hedge; Pollard, Hooper and Moore 1974);
   a boundary two fields share gets one hedge; one 6 m gateway per field on its longest side.
+- Far field, what else is out there (18 Nov, Paulo asked). Unreal's Nanite Foliage (experimental)
+  voxelizes a mesh's clusters into 4x4x4 voxel bricks where that simplifies with less error than
+  triangles, each voxel keeping a normal distribution sampled per pixel, drawn front to back in
+  depth buckets: distant canopies stay volumetric geometry rather than cards. AMD's research
+  (2026) traces about 25,000 animated plants by deforming tetrahedral cages round static dense
+  meshes (BVH memory 47 times smaller); NVIDIA's path-traces 60 million plants with bone-merge
+  LODs, thin-preserving edge collapse, opacity micromaps and a partitioned TLAS. For a crop the
+  canopy is a height field (one surface over the ground), so the parallax canopy already gives
+  what a voxel brick would; voxel bricks pay off where the far shape is not a height field: hedges,
+  woodland edges, tree crowns. Hedge segments are 70k to 330k triangles each, so a far LOD for
+  them is the next real need.
 - Meadow clumps are Voronoi cells (nearest of jittered seeds), not grid squares, which showed as
   blocks of lighter and darker grass.
 - References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
