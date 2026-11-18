@@ -327,16 +327,10 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .hl b{padding:2px 14px 4px}
 .hl-text{padding:0 14px 14px;font-size:14px;line-height:1.5;color:var(--muted)}
 .links-wrap{overflow-x:auto;margin:16px 0 8px}
-.links-svg{display:block;width:100%;min-width:720px;height:auto}
-.lk-hub{fill:var(--accent-soft);stroke:var(--line)}
-.lk-box{fill:var(--panel);stroke:var(--line)}
-.lk-h1{fill:var(--text);font-size:20px;font-weight:800}
-.lk-h2{fill:var(--text);font-size:16px;font-weight:700}
-.lk-sub{fill:var(--muted);font-size:12.5px}
-.lk-down{stroke:var(--dusk);stroke-width:1.5;stroke-dasharray:4 4;fill:none}
-.lk-arc{stroke:var(--accent);stroke-width:1.6;fill:none}
-.lk-head{fill:var(--accent)}
-.lk-pill{fill:var(--bg);stroke:var(--line)}
-.lk-lab{fill:var(--text);font-size:12px}
+.world-svg{display:block;width:100%;min-width:720px;height:auto;border-radius:14px}
+.ws-lead{stroke:#1b2026;stroke-width:1.2;opacity:.7}
+.ws-dot{fill:#fff;stroke:#1b2026;stroke-width:1.5}
+.ws-pill{fill:rgba(255,255,255,.92);stroke:rgba(15,23,32,.15)}
+.ws-lab{fill:#0f1720;font-size:12.5px;font-weight:600}
 @media (max-width:860px){.hl{grid-template-columns:1fr 1fr}}
 @media (max-width:520px){.hl{grid-template-columns:1fr}}
