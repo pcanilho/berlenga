@@ -143,6 +143,12 @@
 				What the outlets pass at the current level (m³/s).
 			</description>
 		</method>
+		<method name="get_rain_inflow" qualifiers="const">
+			<return type="float" />
+			<description>
+				The storm runoff (m³/s) from [WeatherRunoff3D] reaching this lake besides its rivers, added to its inflow when [member level_from_flows] is on.
+			</description>
+		</method>
 		<method name="get_wave_cascade_size" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="index" type="int" />
@@ -389,6 +395,9 @@
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="1.0">
 		</member>
+		<member name="flow_foam_impact" type="bool" setter="set_flow_foam_impact" getter="get_flow_foam_impact" default="true">
+			The live window's white water also forms where the water runs into things, not only where it runs fast and shears: where it converges (a jet meeting slack water, two currents colliding) and as a pillow on the upstream face of a rock standing out of the current. Off: shear and supercritical flow only.
+		</member>
 		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="8.0">
 		</member>
 		<member name="flow_period" type="float" setter="set_flow_period" getter="get_flow_period" default="2.0">
@@ -402,14 +411,17 @@
 		<member name="foam_threshold" type="float" setter="set_foam_threshold" getter="get_foam_threshold" default="0.7">
 			How squeezed the surface must be before whitecap foam forms: foam is injected where the choppy displacement's area Jacobian drops below this ([code]1[/code] = unsqueezed, [code]0[/code] = folding over). Lower gives fewer whitecaps, needing steeper waves; higher gives more. Depends on [member choppiness] -- without it nothing folds and no foam forms.
 		</member>
-		<member name="follow_weather" type="bool" setter="set_follow_weather" getter="get_follow_weather" default="false">
-			If [code]true[/code], [member wind_speed] and [member wind_direction] follow the [WeatherMap3D]'s mean wind at this node. Waves take time to build: the wind the spectrum sees follows the real one over a third of the Shore Protection Manual's growth time for the fetch, g t / U = 68.8 (g F / U^2)^(2/3), in weather time. The spectrum is updated in place, so the waves keep their phases as they grow or turn.
+		<member name="follow_weather" type="bool" setter="set_follow_weather" getter="get_follow_weather" default="true">
+			If [code]true[/code], [member wind_speed] and [member wind_direction] follow the [WeatherMap3D]'s mean wind at this node. Waves take time to build: the wind the spectrum sees follows the real one over a third of the Shore Protection Manual's growth time for the fetch, g t / U = 68.8 (g F / U^2)^(2/3), in weather time. The spectrum is updated in place, so the waves keep their phases as they grow or turn. On by default; setting [member wind_speed] or [member wind_direction] yourself takes the wind back until this is set again. The shader's [code]cats_paws[/code] uniform (on) also darkens and roughens the ripples where the weather's gust patches pass (cat's paws), from the Cox and Munk slope variance of the local wind.
 		</member>
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
 		<member name="level_from_flows" type="bool" setter="set_level_from_flows" getter="get_level_from_flows" default="false">
 			The level settles where the outlets ([method set_outflow]) pass what flows in (the rivers' inflows plus [member catchment_inflow]): the steady state, since a lake takes hours to days to settle. When it moves by more than a centimetre, [member water_level] changes and the rivers leaving and entering rebuild on the new level.
+		</member>
+		<member name="live_advected_ripples" type="bool" setter="set_live_advected_ripples" getter="get_live_advected_ripples" default="true">
+			The live window's ripples and foam ride the flow's real paths (advected texture coordinates, Neyret 2003): each of the two flow-map phases is carried along by the simulated velocity, so they curl round eddies behind rocks instead of shearing along the local velocity. Off: plain two-phase flow mapping.
 		</member>
 		<member name="live_flow" type="bool" setter="set_live_flow" getter="is_live_flow" default="true">
 		</member>
@@ -446,11 +458,11 @@
 		<member name="seabed_collision_mask" type="int" setter="set_seabed_collision_mask" getter="get_seabed_collision_mask" default="1">
 			Physics layers [member seabed_from_floor]'s rays hit. Only static bodies count; a rigid or character body in the way is skipped.
 		</member>
-		<member name="seabed_probe_height" type="float" setter="set_seabed_probe_height" getter="get_seabed_probe_height" default="100.0">
-			How far above the water [member seabed_from_floor]'s rays start, in metres. Under a roof (water in a cave) keep it below the roof, or the rays find the roof.
-		</member>
 		<member name="seabed_from_floor" type="bool" setter="set_seabed_from_floor" getter="get_seabed_from_floor" default="false">
 			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting [member seabed_probe_height] above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
+		</member>
+		<member name="seabed_probe_height" type="float" setter="set_seabed_probe_height" getter="get_seabed_probe_height" default="100.0">
+			How far above the water [member seabed_from_floor]'s rays start, in metres. Under a roof (water in a cave) keep it below the roof, or the rays find the roof.
 		</member>
 		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
 			Water shallower than this many meters fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).

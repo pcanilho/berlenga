@@ -9,6 +9,17 @@
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="tread_firm_grip" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="tread" type="int" enum="PhysXVehicleWheel3D.Tread" />
+			<param index="1" name="ice" type="float" />
+			<param index="2" name="snow" type="float" />
+			<description>
+				The grip of [param tread] on firm ground covered by [param ice] and [param snow] (0 to 1 each), as a share of the surface's own friction.
+			</description>
+		</method>
+	</methods>
 	<members>
 		<member name="damping_rate" type="float" setter="set_damping_rate" getter="get_damping_rate" default="0.25">
 			Damping applied to the wheel's own spin (rotation around its axle), independent of the tire's road grip -- resists the wheel spinning up or down, similar to driveline/bearing friction.
@@ -43,6 +54,9 @@
 		<member name="tire_pressure" type="float" setter="set_tire_pressure" getter="get_tire_pressure" default="200.0">
 			The tyre's inflation pressure, in kPa. Only on soft ground ([member PhysXVehicle3D.soft_soil]): below the pressure a rigid wheel would put on the soil, the tyre flattens and sinks less, so airing down gets a car through dry sand.
 		</member>
+		<member name="tread" type="int" setter="set_tread" getter="get_tread" enum="PhysXVehicleWheel3D.Tread" default="1">
+			The tyre's tread. On soft ground ([member PhysXVehicle3D.soft_soil]) it sets how far the tread bites into the soil and how fast sticky clay packs into it and is thrown out. [method tread_firm_grip] gives its grip on firm ground, ice and snow.
+		</member>
 		<member name="tire_rest_grip" type="float" setter="set_tire_rest_grip" getter="get_tire_rest_grip" default="0.9">
 			Grip at zero wheel slip, as a fraction of [member tire_friction]. Lower than [code]1.0[/code] so grip still ramps up toward the peak at ~10% slip rather than starting there.
 		</member>
@@ -62,4 +76,18 @@
 			The wheel's own rotational inertia around its axle -- higher values make its spin speed change more sluggishly under engine torque or braking.
 		</member>
 	</members>
+	<constants>
+		<constant name="TREAD_ROAD" value="0" enum="Tread">
+			Shallow sipes: the best grip on dry roads; packs with clay and bites least into soft soil.
+		</constant>
+		<constant name="TREAD_ALL_TERRAIN" value="1" enum="Tread">
+			The default.
+		</constant>
+		<constant name="TREAD_MUD" value="2" enum="Tread">
+			Deep open lugs: bite further into soft soil and throw clay out sooner; a little less grip on dry roads, more on snow.
+		</constant>
+		<constant name="TREAD_CHAINS" value="3" enum="Tread">
+			Steel chains: bite hardest into mud, snow and ice, cut through a clogged tread's slick, and slide on dry roads.
+		</constant>
+	</constants>
 </class>

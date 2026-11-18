@@ -39,6 +39,7 @@
 #include "core/object/gdvirtual.gen.h"
 #include "core/object/object.h"
 #include "core/object/ref_counted.h"
+#include "core/math/vector2.h"
 #include "core/math/vector3.h"
 #include "core/variant/dictionary.h"
 #include "core/templates/local_vector.h"
@@ -61,6 +62,8 @@ public:
 	virtual float contract_sun_visibility_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_canopy_closure_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
+	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
+	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
@@ -91,6 +94,8 @@ protected:
 	GDVIRTUAL1RC(float, _sun_visibility_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_closure_at, Vector3)
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
+	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
@@ -117,6 +122,8 @@ public:
 	float sun_visibility_at(const Vector3 &p_position) const;
 	float canopy_closure_at(const Vector3 &p_position) const;
 	float frost_at(const Vector3 &p_position) const;
+	Vector3 mean_wind_at(const Vector3 &p_position) const;
+	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
 	float canopy_water_at(const Vector3 &p_position) const;
@@ -172,6 +179,106 @@ public:
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
 };
 
+// Fire: what burns where, for what it heats (snow, the surface water, the air) and chars.
+class WorldFireProvider {
+public:
+	virtual float contract_fire_heat_at(const Vector3 &p_position) const = 0; // W/m2 of ground, now
+	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
+	virtual ~WorldFireProvider() {}
+};
+
+class WorldFire : public RefCounted {
+	GDCLASS(WorldFire, RefCounted);
+
+	friend class WorldContracts;
+	LocalVector<WorldFireProvider *> providers;
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _heat_at, Vector3)
+	GDVIRTUAL1RC(float, _burnt_at, Vector3)
+
+public:
+	bool has_provider() const { return !providers.is_empty(); }
+	// The fire's heat release over the ground at the point (W/m2), the most of any fire there; 0 with none.
+	float heat_at(const Vector3 &p_position) const;
+	// How burnt the ground is there, 0..1.
+	float burnt_at(const Vector3 &p_position) const;
+};
+
+// Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
+struct WorldGroundSoil {
+	bool soft = false; // false: firm ground, rock, no soil
+	float cohesion = 0.0f; // kPa
+	float friction_angle = 35.0f; // degrees
+	float stickiness = 0.0f; // 0..1, how wet clay clings to rubber and boots
+};
+
+class WorldGroundProvider {
+public:
+	virtual float contract_ground_height_at(const Vector3 &p_position) const = 0; // m, the deformed surface
+	virtual WorldGroundSoil contract_ground_soil_at(const Vector3 &p_position) const = 0;
+	virtual float contract_ground_standing_water_at(const Vector3 &p_position) const { return 0.0f; } // m
+	virtual Vector2 contract_ground_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m, broken share)
+	virtual Vector3 contract_ground_frost_at(const Vector3 &p_position) const { return Vector3(); } // (thawed top m, frost depth m, weakening)
+	virtual float contract_ground_dent_at(const Vector3 &p_position) const { return 0.0f; } // m
+	virtual float contract_ground_rim_at(const Vector3 &p_position) const { return 0.0f; } // m
+	virtual Vector2 contract_ground_runoff_at(const Vector3 &p_position) const { return Vector2(); } // (depth m, speed m/s)
+	virtual float contract_ground_mud_depth_at(const Vector3 &p_position) const { return 0.0f; } // m of slurry
+	virtual Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m, crumbs 0..1)
+	virtual Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const { return Vector3(); } // (cross slope, wall -lat m, wall +lat m)
+	virtual float contract_ground_sand_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, loose sand's share of the top
+	virtual float contract_ground_ripple_at(const Vector3 &p_position) const { return 0.0f; } // m, wind ripples about their mean
+	virtual float contract_ground_blown_sand_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, dry sand the wind moves there now
+	virtual ~WorldGroundProvider() {}
+};
+
+class WorldGround : public RefCounted {
+	GDCLASS(WorldGround, RefCounted);
+
+	friend class WorldContracts;
+	WorldGroundProvider *provider = nullptr; // the built-in contract's; a script stub overrides the virtuals
+
+	Dictionary _soil_at_bind(const Vector3 &p_position) const;
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _height_at, Vector3)
+	GDVIRTUAL1RC(Dictionary, _soil_at, Vector3)
+	GDVIRTUAL1RC(float, _standing_water_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _ice_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _frost_at, Vector3)
+	GDVIRTUAL1RC(float, _dent_at, Vector3)
+	GDVIRTUAL1RC(float, _rim_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _runoff_at, Vector3)
+	GDVIRTUAL1RC(float, _mud_depth_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _needle_ice_at, Vector3)
+	GDVIRTUAL3RC(Vector3, _rut_guidance_at, Vector3, Vector3, float)
+	GDVIRTUAL1RC(float, _sand_at, Vector3)
+	GDVIRTUAL1RC(float, _ripple_at, Vector3)
+	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
+
+public:
+	bool has_provider() const { return provider != nullptr; }
+	// The ground's surface (m); with no ground, the first static physics surface under the point, else -INF.
+	float height_at(const Vector3 &p_position) const;
+	WorldGroundSoil soil_at(const Vector3 &p_position) const;
+	float standing_water_at(const Vector3 &p_position) const;
+	Vector2 ice_at(const Vector3 &p_position) const;
+	Vector3 frost_at(const Vector3 &p_position) const;
+	float dent_at(const Vector3 &p_position) const;
+	float rim_at(const Vector3 &p_position) const;
+	Vector2 runoff_at(const Vector3 &p_position) const;
+	float mud_depth_at(const Vector3 &p_position) const;
+	Vector2 needle_ice_at(const Vector3 &p_position) const;
+	Vector3 rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const;
+	float sand_at(const Vector3 &p_position) const;
+	float ripple_at(const Vector3 &p_position) const;
+	float blown_sand_at(const Vector3 &p_position) const;
+};
+
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.
 struct WorldContactBody {
 	Vector3 center; // the shape's centre (the node's position without a shape)
@@ -191,8 +298,13 @@ class WorldContracts : public Object {
 	Ref<WorldWeather> builtin_weather;
 	Ref<WorldWeather> weather_override;
 	WorldWeatherProvider *weather_provider = nullptr;
+	Ref<WorldGround> builtin_ground;
+	Ref<WorldGround> ground_override;
+	WorldGroundProvider *ground_provider = nullptr;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
+	Ref<WorldFire> builtin_fire;
+	Ref<WorldFire> fire_override;
 	LocalVector<WorldWaterProvider *> water_stubs;
 	void _clear_water_stubs();
 
@@ -207,18 +319,28 @@ public:
 	// The contract objects: never null.
 	static WorldWeather *weather();
 	static WorldWater *water();
+	static WorldGround *ground();
+	static WorldFire *fire();
 
 	// Producers register on entering the tree and unregister on leaving; the last to register is current.
 	static void register_weather(WorldWeatherProvider *p_provider);
 	static void unregister_weather(WorldWeatherProvider *p_provider);
+	static void register_ground(WorldGroundProvider *p_provider);
+	static void unregister_ground(WorldGroundProvider *p_provider);
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
+	static void register_fire(WorldFireProvider *p_provider);
+	static void unregister_fire(WorldFireProvider *p_provider);
 
 	// Tests set stubs (a script extending the contract class) and clear them.
 	void set_weather(const Ref<WorldWeather> &p_stub);
 	Ref<WorldWeather> get_weather() const;
+	void set_ground(const Ref<WorldGround> &p_stub);
+	Ref<WorldGround> get_ground() const;
 	void set_water(const Ref<WorldWater> &p_stub);
 	Ref<WorldWater> get_water() const;
+	void set_fire(const Ref<WorldFire> &p_stub);
+	Ref<WorldFire> get_fire() const;
 	// A script stub (extending WorldWater) as one more water producer beside the real ones: a pool or sea for a
 	// bench without one. clear_overrides() removes it.
 	void add_water_stub(const Ref<WorldWater> &p_stub);
@@ -227,6 +349,10 @@ public:
 	// Contact bodies: the world_contact group, and how big and heavy a body is (metas trample_radius,
 	// touch_radius, ground_* / snow_*, deform_wheel_*, else its first collision shape).
 	static WorldContactBody describe_body(const Node3D *p_node);
+	// The body's footprint for what it bends and pushes aside (grass, plants, water): (radius, half height) from
+	// its trample_radius meta, else its first enabled collision shape (sphere, capsule, cylinder, box), else
+	// p_fallback for both.
+	static Vector2 body_extent(const Node3D *p_node, float p_fallback);
 	Dictionary describe_body_bind(Node *p_node) const;
 
 	WorldContracts();

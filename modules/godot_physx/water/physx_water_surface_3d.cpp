@@ -60,6 +60,7 @@
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
+#include "modules/weather/weather_runoff_3d.h"
 #endif
 #include "scene/resources/environment.h"
 #include "scene/resources/image_texture.h"
@@ -421,6 +422,10 @@ uniform bool flow_baked = false;
 uniform vec2 current = vec2(0.0);
 uniform float flow_period = 2.0;
 uniform bool flow_foam_live = false; // flow_tex is the live velocity, with flow foam in b
+// Advected ripple coordinates over the simulated square (water_flow_offset.glsl): each phase's offset from plain
+// flow mapping after following the live flow's real paths. Phase A in rg, B in ba (m).
+uniform bool flow_advected = false;
+uniform sampler2D flow_offset_tex : hint_default_black, filter_linear, repeat_disable;
 
 // Plumes of rivers flowing in (RG m/s over the simulated square), added on top.
 uniform sampler2D plume_tex : hint_default_black, filter_linear, repeat_disable;
@@ -467,6 +472,14 @@ float flow_phases(vec2 world_xz, out vec2 o_a, out vec2 o_b) {
 	float p_b = fract(t + 0.5);
 	o_a = f * (p_a - 0.5) * flow_period;
 	o_b = f * (p_b - 0.5) * flow_period;
+	if (flow_advected) {
+		vec2 rel = world_xz - grid_center;
+		vec2 a = abs(rel / ripple_domain_size);
+		vec4 d = texture(flow_offset_tex, clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0)));
+		d *= 1.0 - smoothstep(0.46, 0.5, max(a.x, a.y));
+		o_a += d.xy;
+		o_b += d.zw;
+	}
 	return 1.0 - abs(1.0 - 2.0 * p_a);
 }
 
@@ -1785,12 +1798,14 @@ void fragment() {
 			float footprint = max(max(fw.x, fw.y), 1e-5);
 			float k_hi = PI / detail_texel;
 			float shown = clamp(log(PI / (2.0 * footprint) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
+			// Cat's paws: the gusts passing over the water roughen the short waves under them.
+			float paw = water_cats_paw(v_rest_xz);
 			if (shown > 0.0) {
-				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * shown;
+				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * (shown * sqrt(paw));
 			}
 			// Beckmann/GGX: alpha^2 adds the slope variance; alpha = roughness^2.
 			float a = pathtraced_roughness * pathtraced_roughness;
-			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * (1.0 - shown)));
+			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * paw * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
 		// Wherever the band rises (the vertices' share, interpolated), not only under foam: an aged lace hole
@@ -1861,6 +1876,23 @@ void fragment() {
 			world_normal = normalize(world_normal - vec3(fg.x, 0.0, fg.y));
 		}
 #endif
+	}
+	// Raindrop rings (rain_ripples(), docs/ideas/rain.md): the rain here (its share at the weather's reference
+	// ground height), its rings in the normal, its impacts finer than the pixel in the roughness. Foam damps them,
+	// as it damps the short waves.
+	if (rain_rings && v_lip < 0.5) {
+		float rr_rate = weather_rainfall_at(vec3(v_drawn_xz.x, weather_precip_phase.w, v_drawn_xz.y));
+		if (rr_rate > 0.0) {
+#if defined(RT)
+			float rr_fp = 0.0; // the path tracer has no derivatives: full detail
+#else
+			vec2 rr_fw = fwidth(v_drawn_xz);
+			float rr_fp = max(max(rr_fw.x, rr_fw.y), 1e-5);
+#endif
+			vec3 rr = rain_ripples(v_drawn_xz, TIME, rr_rate, rr_fp) * (1.0 - clamp(foam, 0.0, 1.0));
+			world_normal = normalize(world_normal - vec3(rr.x, 0.0, rr.y));
+			water_roughness = rain_ripple_roughness(water_roughness, rr.z);
+		}
 	}
 #if defined(UNDERWATER_SURFACE) && defined(RT)
 	ALPHA = 0.0; // the path tracer has the real surface
@@ -2185,9 +2217,44 @@ void light() {
 #endif
 )";
 
-// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+// Cat's paws (docs/ideas/wind.md): the shared wind's gusts roughen the short waves where they pass. The short waves'
+// mean square slope follows the local wind, linearly as Cox and Munk (1954) measured it (0.003 + 0.00512 U10),
+// and nearly vanishes below the capillary onset (about 1 m/s: glassy patches in a lull). Their ratio to the mean
+// wind's scales the detail band's slopes and the roughness it hands over at distance.
+static String _water_wind_src() {
+#ifdef MODULE_WEATHER_ENABLED
+	String c = WeatherMap3D::get_wind_shader_code();
+	c += R"(
+uniform bool cats_paws = true;
+float water_short_slope_var(float u10) {
+	return 0.0005 + (0.0025 + 0.00512 * u10) * smoothstep(0.7, 2.5, u10);
+}
+// Short-wave slope variance against the mean wind's, at a point of the surface (1: no weather, or no gust).
+float water_cats_paw(vec2 xz) {
+	if (!cats_paws || weather_map_rect.z <= 0.0) {
+		return 1.0;
+	}
+	vec2 m10 = textureLod(weather_wind_map, (xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec3 w = weather_wind(vec3(xz.x, 0.0, xz.y), 2.0);
+	float u_local = length(w.xz) / max(weather_open_profile(2.0, z0), 1e-3);
+	return clamp(water_short_slope_var(u_local) / water_short_slope_var(length(m10)), 0.1, 4.0);
+}
+)";
+	return c;
+#else
+	return R"(
+uniform bool cats_paws = true;
+float water_cats_paw(vec2 xz) {
+	return 1.0;
+}
+)";
+#endif
+}
+
+// The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &water_shader_src() {
-	static const String src = String(WATER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
+	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -2354,6 +2421,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXWaterSurface3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXWaterSurface3D::get_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_impact", "enabled"), &PhysXWaterSurface3D::set_flow_foam_impact);
+	ClassDB::bind_method(D_METHOD("get_flow_foam_impact"), &PhysXWaterSurface3D::get_flow_foam_impact);
+	ClassDB::bind_method(D_METHOD("set_live_advected_ripples", "enabled"), &PhysXWaterSurface3D::set_live_advected_ripples);
+	ClassDB::bind_method(D_METHOD("get_live_advected_ripples"), &PhysXWaterSurface3D::get_live_advected_ripples);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
@@ -2463,6 +2534,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_level_from_flows"), &PhysXWaterSurface3D::get_level_from_flows);
 	ClassDB::bind_method(D_METHOD("set_catchment_inflow", "discharge"), &PhysXWaterSurface3D::set_catchment_inflow);
 	ClassDB::bind_method(D_METHOD("get_catchment_inflow"), &PhysXWaterSurface3D::get_catchment_inflow);
+	ClassDB::bind_method(D_METHOD("get_rain_inflow"), &PhysXWaterSurface3D::get_rain_inflow);
 	ClassDB::bind_method(D_METHOD("get_outflow_discharge"), &PhysXWaterSurface3D::get_outflow_discharge);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
@@ -2557,6 +2629,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_flow_foam", "get_flow_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_impact"), "set_flow_foam_impact", "get_flow_foam_impact");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -2639,11 +2713,13 @@ void PhysXWaterSurface3D::set_ocean_domain_size(Vector2 p_size) {
 
 void PhysXWaterSurface3D::set_wind_speed(float p_speed) {
 	wind_speed = MAX(p_speed, 0.01f);
+	wind_explicit = true; // a hand-set wind wins over the weather's until follow_weather is set again
 	_reinit_spectrum();
 }
 
 void PhysXWaterSurface3D::set_wind_direction(Vector2 p_dir) {
 	wind_direction = p_dir;
+	wind_explicit = true;
 	_reinit_spectrum();
 }
 
@@ -4626,7 +4702,8 @@ void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
 // The spectrum is updated in place (set_sea_state), so the waves keep their phases while they grow or turn.
 void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 #ifdef MODULE_WEATHER_ENABLED
-	if (!follow_weather || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
+	// On by default (docs/ideas/wind.md): every water body takes the weather's wind, unless its wind was set by hand.
+	if (!follow_weather || wind_explicit || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
 		return;
 	}
 	const WeatherMap3D *weather = WeatherMap3D::get_active();
@@ -4676,6 +4753,7 @@ void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 
 void PhysXWaterSurface3D::set_follow_weather(bool p_enabled) {
 	follow_weather = p_enabled;
+	wind_explicit = false;
 	weather_sea_valid = false;
 #ifdef MODULE_WEATHER_ENABLED
 	if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
@@ -4813,6 +4891,7 @@ void PhysXWaterSurface3D::set_current(Vector2 p_current) {
 
 void PhysXWaterSurface3D::set_flow_period(float p_period) {
 	flow_period = MAX(p_period, 0.05f);
+	solver.set_advected_ripples(live_advected_ripples, flow_period);
 	_update_flow_material();
 }
 
@@ -4829,15 +4908,26 @@ void PhysXWaterSurface3D::set_live_flow(bool p_enabled) {
 	_send_flow_to_solver();
 }
 
+void PhysXWaterSurface3D::set_flow_foam_impact(bool p_enabled) {
+	flow_foam_impact = p_enabled;
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+}
+
+void PhysXWaterSurface3D::set_live_advected_ripples(bool p_enabled) {
+	live_advected_ripples = p_enabled;
+	solver.set_advected_ripples(live_advected_ripples, flow_period);
+	_update_flow_material();
+}
+
 void PhysXWaterSurface3D::set_flow_foam(float p_strength) {
 	flow_foam = MAX(p_strength, 0.0f);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 	_update_flow_material();
 }
 
 void PhysXWaterSurface3D::set_flow_foam_persistence(float p_seconds) {
 	flow_foam_persistence = MAX(p_seconds, 0.1f);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 }
 
 void PhysXWaterSurface3D::set_wall_friction(float p_friction) {
@@ -4905,6 +4995,9 @@ void PhysXWaterSurface3D::_update_flow_material() {
 	water_material->set_shader_parameter("flow_baked", live || baked);
 	water_material->set_shader_parameter("flow_foam_live", live && flow_foam > 0.0f);
 	water_material->set_shader_parameter("flow_tex", live ? Variant(live_flow_texture) : (baked ? Variant(flow_texture) : Variant()));
+	const bool advected = live && live_advected_ripples && live_offset_texture.is_valid() && live_offset_texture->get_texture_rd_rid().is_valid();
+	water_material->set_shader_parameter("flow_advected", advected);
+	water_material->set_shader_parameter("flow_offset_tex", advected ? Variant(live_offset_texture) : Variant());
 	const bool plumes = !plume_cells.is_empty() && plume_texture.is_valid();
 	water_material->set_shader_parameter("plume_enabled", plumes);
 	water_material->set_shader_parameter("plume_tex", plumes ? Variant(plume_texture) : Variant());
@@ -5006,6 +5099,41 @@ float PhysXWaterSurface3D::get_outflow_discharge() const {
 	return q;
 }
 
+// Storm runoff into a lake with outlets: the runoff's peak discharge over the lake's square (the network fills the
+// lake's hollow, so its outlet cell gathers the catchment) less the storm flow its rivers already bring. The level
+// settles again when that moves by over a tenth of the lake's inflow.
+void PhysXWaterSurface3D::_rain_inflow_update(double p_delta) {
+	if (!level_from_flows || outflows.is_empty()) {
+		return;
+	}
+	rain_check -= p_delta;
+	if (rain_check > 0.0 || Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	rain_check = 10.0;
+	float q = 0.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherRunoff3D *ro = WeatherRunoff3D::get_active()) {
+		q = ro->get_max_discharge_in(Rect2(grid_center - 0.5f * active_domain_size, active_domain_size));
+		for (const Inflow &f : inflows) {
+			Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner));
+			if (o != nullptr && o->has_method(SNAME("get_rain_discharge"))) {
+				q -= float(o->call(SNAME("get_rain_discharge")));
+			}
+		}
+		q = MAX(q, 0.0f);
+	}
+#endif
+	float q_in = catchment_inflow;
+	for (const Inflow &f : inflows) {
+		q_in += f.discharge;
+	}
+	if (Math::abs(q - rain_inflow) > 0.1f * MAX(q_in + rain_inflow, 0.05f) || (q == 0.0f && rain_inflow > 0.0f)) {
+		rain_inflow = q;
+		_settle_level();
+	}
+}
+
 // The level budget (docs/ideas/water.md "Lake outlets"): steady state, where the outlets pass what flows in.
 // A lake takes hours to days to settle, so it holds the settled level rather than creeping during play.
 // When the level moves (over a centimetre) the rivers leaving and entering it rebuild on the new level.
@@ -5013,7 +5141,7 @@ void PhysXWaterSurface3D::_settle_level() {
 	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
 		return;
 	}
-	float q_in = catchment_inflow;
+	float q_in = catchment_inflow + rain_inflow;
 	for (const Inflow &f : inflows) {
 		q_in += f.discharge;
 	}
@@ -6369,6 +6497,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_follow_weather(get_physics_process_delta_time());
+			_rain_inflow_update(get_physics_process_delta_time());
 			_update(get_physics_process_delta_time());
 			_update_breakers();
 			_update_crest_spray();
@@ -6624,7 +6753,8 @@ void PhysXWaterSurface3D::_configure_solver() {
 	whitecap_fill_start = water_time;
 	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+	solver.set_advected_ripples(live_advected_ripples, flow_period);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
@@ -6637,7 +6767,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 }
 
 void PhysXWaterSurface3D::_detach_textures() {
-	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture, live_flow_texture };
+	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture, live_flow_texture, live_offset_texture };
 	for (const Ref<Texture2DRD> &texture : textures) {
 		if (texture.is_valid()) {
 			texture->set_texture_rd_rid(RID());
@@ -6714,6 +6844,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		return;
 	}
 	water_time += p_delta;
+	solver.set_flow_clock((float)Math::fmod(water_time, 3600.0)); // (the advected ripples restart on the material's phases)
 	if (step_mode == STEP_MODE_PER_FRAME) {
 		water_time_dirty = true; // the material gets it once, in _frame_update()
 	} else if (water_material.is_valid()) {
@@ -6862,6 +6993,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 		live_flow_texture.instantiate();
 	}
 	live_flow_texture->set_texture_rd_rid(solver.get_velocity_texture_rd_rid());
+	if (live_offset_texture.is_null()) {
+		live_offset_texture.instantiate();
+	}
+	live_offset_texture->set_texture_rd_rid(solver.get_flow_offset_texture_rd_rid());
 	if (shore_foam_tex.is_null()) {
 		shore_foam_tex.instantiate();
 	}

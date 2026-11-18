@@ -46,9 +46,7 @@
 #endif
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 // Map a friendly 0..1 stiffness to XPBD compliance (m/N). 1 -> rigid, 0 -> slack.
 static float _stiffness_to_compliance(float p_stiffness, float p_max_compliance) {
@@ -62,11 +60,11 @@ void PhysXCloth3D::_apply_solver_settings() {
 	s.stretch_compliance = _stiffness_to_compliance(stiffness, 5.0e-3f);
 	s.shear_compliance = _stiffness_to_compliance(shear_stiffness, 2.0e-1f);
 	// Water softens the fibres (it plasticises cellulose: wet cotton bends about half as stiffly) and adds its weight.
-	s.bend_compliance = _stiffness_to_compliance(bend_stiffness * (1.0f - 0.5f * wet.wetness), 6.0e-1f);
+	s.bend_compliance = _stiffness_to_compliance(bend_stiffness * (1.0f - 0.5f * wet.effective()), 6.0e-1f);
 	s.damping = MAX(damping, 0.0f);
 	s.drag = MAX(drag, 0.0f);
 	s.lift = MAX(lift, 0.0f);
-	s.density = MAX(density, 1.0e-3f) * (1.0f + water_capacity * wet.wetness);
+	s.density = MAX(density, 1.0e-3f) * (1.0f + water_capacity * wet.effective());
 	s.tear_factor = is_tearing() ? tear_factor : 0.0f;
 	solver.settings = s;
 }
@@ -374,10 +372,9 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		w += perp * (speed * wind_turbulence * 0.5f * sway);
 		w += up * (speed * wind_turbulence * 0.3f * Math::sin(t * 3.7f));
 	}
-#ifdef MODULE_WEATHER_ENABLED
 	// The world's wind at the cloth, with its own gusts (wind_turbulence only shapes the local wind above).
-	const WeatherMap3D *weather = weather_wind ? WeatherMap3D::get_active() : nullptr;
-	if (weather) {
+	const WorldWeather *weather = WorldContracts::weather();
+	if (weather_wind && weather->has_provider()) {
 		const LocalVector<Vector3> &sp = solver.get_positions();
 		Vector3 center = get_global_transform().origin;
 		if (!sp.is_empty()) {
@@ -387,9 +384,8 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 			}
 			center /= (float)sp.size();
 		}
-		w += weather->get_wind_at(center);
+		w += weather->wind_at(center);
 	}
-#endif
 	return w;
 }
 
@@ -462,6 +458,18 @@ void PhysXCloth3D::_step(double p_delta) {
 	}
 	const Vector3 gravity = gravity_vec.normalized() * gravity_mag;
 
+	// Under water (docs/ideas/physx.md, "River current drags flags and sheets"): as worn clothing, soaked fabric keeps
+	// about 30% of its weight and the current drags it at Morison's 0.5 rho Cd |u| per its soaked areal mass.
+	if (wet.water_surface > -1.0e8f) {
+		const float areal = MAX(density, 1.0e-3f) * (1.0f + water_capacity);
+		solver.settings.water_height = wet.water_surface;
+		solver.settings.water_flow = wet.water_flow;
+		solver.settings.water_drag = MIN(0.5f * 1000.0f * 1.2f * (wet.water_flow.length() + 0.1f) / MAX(areal, 0.05f), 200.0f);
+		solver.settings.water_gravity = 0.3f;
+	} else {
+		solver.settings.water_height = -1.0e9f;
+		solver.settings.water_drag = 0.0f;
+	}
 	_eddy_air(wind_now);
 	if (collision_enabled) {
 		pre_step_positions = solver.get_positions();
@@ -516,8 +524,8 @@ void PhysXCloth3D::_update_wetness(double p_delta, const Vector3 &p_wind) {
 		}
 		wet.rain_catch = area > 0.0f ? caught / (area * MAX(dy, 0.05f)) : 0.0f;
 	}
-	if (Math::abs(wet.wetness - wet_applied) > 0.01f || (wet.wetness == 0.0f && wet_applied != 0.0f)) {
-		wet_applied = wet.wetness;
+	if (Math::abs(wet.effective() - wet_applied) > 0.01f || (wet.effective() == 0.0f && wet_applied != 0.0f)) {
+		wet_applied = wet.effective();
 		_apply_solver_settings();
 		if (built && !gpu_cloth.is_valid()) {
 			solver.refresh_masses();
@@ -527,7 +535,7 @@ void PhysXCloth3D::_update_wetness(double p_delta, const Vector3 &p_wind) {
 
 void PhysXCloth3D::set_wetness(float p_v) {
 	wet.wetness = CLAMP(p_v, 0.0f, 1.0f);
-	wet_applied = wet.wetness;
+	wet_applied = wet.effective();
 	_apply_solver_settings();
 	if (built && !gpu_cloth.is_valid()) {
 		solver.refresh_masses();
@@ -736,8 +744,8 @@ void PhysXCloth3D::_collide() {
 	const float radius = MAX(solver.vertex_radius(), 0.005f);
 	// Wet fabric clings: it sticks to what it touches over a film-thin gap, and slides less (water raises the friction
 	// of fabric on skin and on most surfaces, Gerhardt et al. 2008).
-	const float gap = wet.wetness > 0.05f ? radius * 1.5f * wet.wetness : 0.0f;
-	const float wet_friction = friction + (1.0f - friction) * 0.6f * wet.wetness;
+	const float gap = wet.effective() > 0.05f ? radius * 1.5f * wet.effective() : 0.0f;
+	const float wet_friction = friction + (1.0f - friction) * 0.6f * wet.effective();
 	if (collision_sphere.is_null()) {
 		collision_sphere = ps->sphere_shape_create();
 	}
@@ -797,10 +805,10 @@ void PhysXCloth3D::_collide() {
 		} else if (gap > 0.0f && depth > -gap) {
 			// Within the water film's reach of the surface: capillary adhesion draws the wet fabric onto it and holds it
 			// against peeling away.
-			pos[i] += push_dir * (depth * 0.5f * wet.wetness);
+			pos[i] += push_dir * (depth * 0.5f * wet.effective());
 			const float vn = vel[i].dot(push_dir);
 			if (vn > 0.0f) {
-				vel[i] -= push_dir * vn * 0.8f * wet.wetness;
+				vel[i] -= push_dir * vn * 0.8f * wet.effective();
 			}
 			vel[i] -= (vel[i] - push_dir * vel[i].dot(push_dir)) * (0.5f * wet_friction);
 		}
@@ -875,11 +883,11 @@ void PhysXCloth3D::_update_mesh() {
 #ifdef GODOT_PHYSX_FLOW
 	// The burn state for the burn material: char, glow, scorch and how far each part has burnt through.
 	// Also while wet: the same material darkens with the water held.
-	if (burn.has_marks() || wet.wetness > 0.0f || burn_override.is_valid()) {
+	if (burn.has_marks() || wet.effective() > 0.0f || burn_override.is_valid()) {
 		burn.fill_colors(burn_colors, n);
 		arrays[RSE::ARRAY_COLOR] = burn_colors;
-		if (burn.settings.wetness != wet.wetness) {
-			burn.settings.wetness = wet.wetness;
+		if (burn.settings.wetness != wet.effective()) {
+			burn.settings.wetness = wet.effective();
 			burn.update_wetness();
 		}
 		const RID m = burn.get_material(get_material_override());

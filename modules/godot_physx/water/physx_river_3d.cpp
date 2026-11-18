@@ -41,6 +41,7 @@
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
+#include "modules/weather/weather_runoff_3d.h"
 #endif
 
 #include "core/config/engine.h"
@@ -67,6 +68,10 @@
 #endif
 
 namespace {
+
+// Seconds each copy of the ripples rides the current (the shader's flow_period; the live window's advected
+// coordinates restart on the same phases).
+constexpr float RIVER_FLOW_PERIOD = 1.5f;
 
 // The river surface. Per vertex (built by PhysXRiver3D): UV = (arc length,
 // distance across) in m, UV2 = flow (local xz, m/s), COLOR.r = water depth
@@ -134,6 +139,11 @@ uniform vec2 live_texel = vec2(0.25);
 uniform vec3 live_tilt = vec3(0.0);
 uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
+// Advected ripple coordinates (water_flow_offset.glsl): how far each phase's ripples have drifted from where plain
+// flow mapping puts them, following the live flow's real paths (round eddies, not straight along today's
+// velocity). Phase A in rg, B in ba (m).
+uniform bool live_advected = false;
+uniform sampler2D live_offset_tex : hint_default_black, filter_linear, repeat_disable;
 // Clear water (raster, seen from above; docs/ideas/water.md "Clear water you can see into"): the bed read
 // through the surface along the refracted ray and passed through the path tracer's medium, as on the sea
 // (PhysXWaterSurface3D). Off: the older tint (water_color, shallow_color).
@@ -192,6 +202,37 @@ vec2 ripple_slope(vec2 p) {
 	s += r_noise_grad(p * 3.9 + 11.0) * 0.3;
 	s += r_noise_grad(p * 8.6 - 7.0) * 0.2;
 	return s;
+}
+
+// Gust ripples (docs/ideas/wind.md): the shared wind roughens the water where it blows. The short waves' mean
+// square slope follows the local wind as Cox and Munk (1954) measured it (0.00512 U10 beyond the calm), and
+// vanishes below the capillary onset (about 1 m/s), so lulls leave glassy patches and gusts sweep darker cat's
+// paws over the river. The wavelets' crests lie across the wind; they ride the current and creep downwind at
+// about the slowest capillary-gravity phase speed (0.23 m/s). Narrow water is fetch-limited: wind_ripple_strength.
+uniform bool wind_ripples = true;
+uniform float wind_ripple_strength : hint_range(0.0, 2.0, 0.01) = 0.5;
+vec2 river_wind_slope(vec2 xz, vec2 flow) {
+#ifdef RIVER_WEATHER
+	if (!wind_ripples || weather_map_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec3 w = weather_wind(vec3(xz.x, 0.0, xz.y), 2.0);
+	float u10 = length(w.xz) / max(weather_open_profile(2.0, z0), 1e-3);
+	float var = (0.0025 + 0.00512 * u10) * smoothstep(0.7, 2.5, u10);
+	if (var <= 1e-6) {
+		return vec2(0.0);
+	}
+	vec2 d = w.xz / max(length(w.xz), 1e-4);
+	vec2 c = vec2(-d.y, d.x);
+	vec2 q = xz - (flow + d * 0.23) * water_time;
+	// Short along the wind (crests across it), longer across it.
+	vec2 g = ripple_slope(vec2(dot(q, d) * 9.0, dot(q, c) * 4.0) + vec2(31.7, 3.3));
+	// ripple_slope's rms is about 0.35 per axis: scale it to the Cox-Munk rms.
+	return (d * g.x + c * g.y * 0.6) * (sqrt(var) * wind_ripple_strength / 0.35);
+#else
+	return vec2(0.0);
+#endif
 }
 
 // The two phases' offsets and the first one's weight.
@@ -263,6 +304,11 @@ void fragment() {
 	vec2 o_a;
 	vec2 o_b;
 	float w = flow_phases(v_world.xz, flow, o_a, o_b);
+	if (live_advected && live > 0.0) {
+		vec4 d = texture(live_offset_tex, cuv) * live;
+		o_a += d.xy;
+		o_b += d.zw;
+	}
 	// Surface-gradient blend of the two phases, renormalised so the crossover
 	// doesn't flatten the ripples (phase B is shifted half a tile, so the two are
 	// close to independent).
@@ -282,6 +328,7 @@ void fragment() {
 	depth += edge_relief * (relief - 0.5) * 2.0;
 	// Calm at the waterline: ripples die out over the last 15 cm.
 	slope *= (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
+	slope += river_wind_slope(v_world.xz, flow) * smoothstep(0.0, 0.15, depth);
 	vec3 n_mesh = normalize(v_normal);
 	if (n_mesh.y < 0.0) {
 		n_mesh = -n_mesh;
@@ -294,6 +341,23 @@ void fragment() {
 			float e = exp(-x / v_wave.w) * min(x * v_wave.y / PI, 1.0);
 			float dh = v_wave.x * e * (v_wave.y * cos(v_wave.y * x) - sin(v_wave.y * x) / v_wave.w);
 			slope += flow / speed * dh * smoothstep(0.0, 0.2, depth);
+		}
+	}
+	// Raindrop rings (rain_ripples(), docs/ideas/rain.md), carried by the current: each ring rides the water it
+	// fell on, so the rings are read in the two flow phases the ripples use and blended the same way.
+	float river_roughness = pathtraced_roughness;
+	if (rain_rings) {
+		float rr_rate = weather_rainfall_at(vec3(v_world.x, weather_precip_phase.w, v_world.z));
+		if (rr_rate > 0.0) {
+#if defined(RT)
+			float rr_fp = 0.0;
+#else
+			vec2 rr_fw = fwidth(v_world.xz);
+			float rr_fp = max(max(rr_fw.x, rr_fw.y), 1e-5);
+#endif
+			vec3 rr = rain_ripples(v_world.xz - o_a, TIME, rr_rate, rr_fp) * w + rain_ripples(v_world.xz - o_b + vec2(13.1, 7.7), TIME, rr_rate, rr_fp) * (1.0 - w);
+			slope += rr.xy * smoothstep(0.0, 0.05, depth);
+			river_roughness = rain_ripple_roughness(river_roughness, rr.z);
 		}
 	}
 	vec3 world_normal = normalize(n_mesh - vec3(slope.x, 0.0, slope.y));
@@ -317,7 +381,7 @@ void fragment() {
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	ROUGHNESS = mix(river_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
@@ -372,7 +436,7 @@ void fragment() {
 	vec3 sun_body;
 	vec4 sun_glint;
 	float sun_a2;
-	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), river_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
 	if (!raster_reflections && screen_reflections) {
 		refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
 	}
@@ -411,9 +475,18 @@ void light() {
 #endif
 )";
 
-// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+// The shared wind for the gust ripples (river_wind_slope), when the weather module is in.
+static String _river_wind_src() {
+#ifdef MODULE_WEATHER_ENABLED
+	return "\n#define RIVER_WEATHER\n" + WeatherMap3D::get_wind_shader_code();
+#else
+	return String();
+#endif
+}
+
+// The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -527,6 +600,9 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_default_width"), &PhysXRiver3D::get_default_width);
 	ClassDB::bind_method(D_METHOD("set_discharge", "discharge"), &PhysXRiver3D::set_discharge);
 	ClassDB::bind_method(D_METHOD("get_discharge"), &PhysXRiver3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
+	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
+	ClassDB::bind_method(D_METHOD("get_rain_discharge"), &PhysXRiver3D::get_rain_discharge);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXRiver3D::set_roughness);
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXRiver3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_max_slope", "slope"), &PhysXRiver3D::set_max_slope);
@@ -599,6 +675,10 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXRiver3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXRiver3D::set_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXRiver3D::get_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_impact", "enabled"), &PhysXRiver3D::set_flow_foam_impact);
+	ClassDB::bind_method(D_METHOD("get_flow_foam_impact"), &PhysXRiver3D::get_flow_foam_impact);
+	ClassDB::bind_method(D_METHOD("set_live_advected_ripples", "enabled"), &PhysXRiver3D::set_live_advected_ripples);
+	ClassDB::bind_method(D_METHOD("get_live_advected_ripples"), &PhysXRiver3D::get_live_advected_ripples);
 	ClassDB::bind_method(D_METHOD("set_live_damping", "damping"), &PhysXRiver3D::set_live_damping);
 	ClassDB::bind_method(D_METHOD("get_live_damping"), &PhysXRiver3D::get_live_damping);
 	ClassDB::bind_method(D_METHOD("set_live_follow", "path"), &PhysXRiver3D::set_live_follow);
@@ -642,6 +722,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_response"), "set_rain_response", "get_rain_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
@@ -673,6 +754,8 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05"), "set_flow_foam", "get_flow_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_impact"), "set_flow_foam_impact", "get_flow_foam_impact");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_damping", PROPERTY_HINT_RANGE, "0,1,0.005"), "set_live_damping", "get_live_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "live_follow", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_live_follow", "get_live_follow");
 	ADD_GROUP("Carve", "carve_");
@@ -834,7 +917,7 @@ void PhysXRiver3D::_unregister_outlet() {
 
 float PhysXRiver3D::get_discharge_at(float p_s) const {
 	// A lake outlet runs on what the lake passes over its sill (a trickle with no head, so the ribbon stays).
-	float q = outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge;
+	float q = (outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge) + rain_discharge;
 	for (const Tributary &t : tributaries) {
 		if (p_s >= t.s) {
 			q += t.discharge;
@@ -977,15 +1060,30 @@ void PhysXRiver3D::set_wall_friction(float p_friction) {
 void PhysXRiver3D::set_flow_foam(float p_strength) {
 	flow_foam = MAX(p_strength, 0.0f);
 	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 	}
 }
 
 void PhysXRiver3D::set_flow_foam_persistence(float p_seconds) {
 	flow_foam_persistence = MAX(p_seconds, 0.05f);
 	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 	}
+}
+
+void PhysXRiver3D::set_flow_foam_impact(bool p_enabled) {
+	flow_foam_impact = p_enabled;
+	if (live_configured) {
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+	}
+}
+
+void PhysXRiver3D::set_live_advected_ripples(bool p_enabled) {
+	live_advected_ripples = p_enabled;
+	if (live_configured) {
+		live_solver.set_advected_ripples(live_advected_ripples, RIVER_FLOW_PERIOD);
+	}
+	_live_material();
 }
 
 void PhysXRiver3D::set_live_follow(const NodePath &p_path) {
@@ -1135,6 +1233,9 @@ void PhysXRiver3D::_live_stop() {
 	if (live_flow_tex.is_valid()) {
 		live_flow_tex->set_texture_rd_rid(RID());
 	}
+	if (live_offset_tex.is_valid()) {
+		live_offset_tex->set_texture_rd_rid(RID());
+	}
 	live_bound = false;
 	live_configured = false;
 	live_height_cache.clear();
@@ -1156,7 +1257,9 @@ void PhysXRiver3D::_live_material() {
 		water_material->set_shader_parameter(SNAME("live_height_tex"), live_height_tex);
 		water_material->set_shader_parameter(SNAME("live_flow_tex"), live_flow_tex);
 		water_material->set_shader_parameter(SNAME("live_tilt"), live_tilt);
+		water_material->set_shader_parameter(SNAME("live_offset_tex"), live_offset_tex);
 	}
+	water_material->set_shader_parameter(SNAME("live_advected"), on && live_advected_ripples && live_offset_tex.is_valid());
 }
 
 // The live window: the shallow-water solver of PhysXWaterSurface3D's live flow
@@ -1215,7 +1318,8 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_depth = depth;
 		live_tilt = Vector3();
 		live_solver.configure(st);
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+		live_solver.set_advected_ripples(live_advected_ripples, RIVER_FLOW_PERIOD);
 		live_solver.set_base_flux(flux, wall_friction);
 		live_configured = true;
 		live_fields_dirty = false;
@@ -1246,6 +1350,10 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		}
 		live_height_tex->set_texture_rd_rid(live_solver.get_ripple_height_texture_rd_rid());
 		live_flow_tex->set_texture_rd_rid(live_solver.get_velocity_texture_rd_rid());
+		if (live_offset_tex.is_null()) {
+			live_offset_tex.instantiate();
+		}
+		live_offset_tex->set_texture_rd_rid(live_solver.get_flow_offset_texture_rd_rid());
 		live_bound = true;
 		_live_material();
 	}
@@ -1466,17 +1574,54 @@ void PhysXRiver3D::_notification(int p_what) {
 						[this](int o) { clear_sphere(o); },
 						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
 			}
+			_rain_response_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();
 			if (water_material.is_valid()) {
 				water_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
+				if (live_configured) {
+					live_solver.set_flow_clock((float)Math::fmod(water_time, 3600.0)); // (the clock the ripples' phases run on)
+				}
 				raster_reflection_state.update(this, water_material, raster_reflections);
 			}
 			if (fall_material.is_valid() && !falls.is_empty()) {
 				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
 			}
 		} break;
+	}
+}
+
+// Storm flow: every 10 s, the runoff's peak discharge within two of its cells of the river's upstream end. The
+// river is rebuilt when that moves by more than a tenth of its flow (depth and speed follow by Manning, so a
+// river in spate is deeper and faster), at most every 10 s.
+void PhysXRiver3D::_rain_response_update(double p_delta) {
+	rain_check -= p_delta;
+	if (rain_check > 0.0 || Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	rain_check = 10.0;
+	float q = 0.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	const WeatherRunoff3D *ro = WeatherRunoff3D::get_active();
+	const Ref<Curve3D> c = get_curve();
+	if (rain_response && ro != nullptr && c.is_valid() && c->get_point_count() > 0) {
+		const Vector3 at = get_global_transform().xform(c->get_point_position(0));
+		const float reach = 2.0f * ro->get_extent() / float(MAX(ro->get_resolution(), 1));
+		q = ro->get_max_discharge_in(Rect2(at.x - reach, at.z - reach, 2.0f * reach, 2.0f * reach));
+	}
+#endif
+	if (Math::abs(q - rain_discharge) > 0.1f * MAX(discharge + rain_discharge, 0.05f) || (q == 0.0f && rain_discharge > 0.0f)) {
+		rain_discharge = q;
+		_queue_build();
+	}
+}
+
+void PhysXRiver3D::set_rain_response(bool p_enable) {
+	rain_response = p_enable;
+	if (!p_enable && rain_discharge > 0.0f) {
+		rain_discharge = 0.0f;
+		_queue_build();
 	}
 }
 

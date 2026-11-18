@@ -50,6 +50,7 @@ public:
 	struct Release {
 		Vector3 position;
 		float weight = 1.0f; // share of the brands from here
+		float twig = 0.0f; // m, > 0: burning twigs of about this thickness dropping out of a crown (not thrown up)
 	};
 	// A stretch of the burning front and the convection column over it.
 	struct Plume {

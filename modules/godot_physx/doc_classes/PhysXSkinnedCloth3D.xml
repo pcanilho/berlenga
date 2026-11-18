@@ -197,7 +197,7 @@
 			If [code]true[/code], the active [WeatherMap3D]'s rain over the garment (less under a canopy or a roof) soaks it, and it dries in the air by the map's temperature, humidity and wind. A worn garment catches rain as an upright figure does: its sides by the slant of the drops in the wind, its shoulders by all that falls on them.
 		</member>
 		<member name="wetness" type="float" setter="set_wetness" getter="get_wetness" default="0.0">
-			How wet the garment is, 0 dry to 1 soaked. Wet fabric draws darker (water in the weave, Lekner and Dorf) and a little glossier near soaked, swings less and clings to the body: more friction on its colliders, more damping, and a slight pull to its skinned pose. A custom [member render_material] darkens too if its shader has a [code]cloth_wetness[/code] uniform.
+			How wet the garment is, 0 dry to 1 soaked. Wet fabric draws darker (water in the weave, Lekner and Dorf) and a little glossier near soaked, swings less and clings to the body: more friction on its colliders, more damping, and a slight pull to its skinned pose. A custom [member render_material] darkens too if its shader has a [code]cloth_wetness[/code] uniform. Wading also wets it: fabric that dips under water (any producer of the world water contract: sea, lakes, rivers, pools) soaks within seconds up to a ragged tide line a few centimetres above the surface, and that band's water counts towards its weight and cling; under the water the fabric keeps about a third of its weight and the current (the water contract's flow) drags it downstream, pressing it against the legs; reading this gives the whole garment's water, rain and waded band together.
 		</member>
 	</members>
 </class>

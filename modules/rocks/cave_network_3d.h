@@ -109,6 +109,7 @@ private:
 		Ref<ArrayMesh> mesh;
 		Node3D *node = nullptr;
 		int triangles = 0;
+		real_t cell = 0.0; // its grid: mesh_cell, or near_mesh_cell round the focus
 		bool pinned = false; // an entrance patch chunk: kept while the landscape's hole is open
 		Vector<Transform3D> spel[16]; // speleothems by kind * SPEL_VARIANTS + variant (unit shapes placed)
 		Ref<ArrayMesh> rim_mesh; // rimstone dams (world space)
@@ -144,6 +145,13 @@ private:
 	friend struct CaveMeshJob;
 	HashMap<Vector3i, Chunk> chunks;
 	real_t mesh_cell = 0.3;
+	// Near the follow target (or the point refine_meshes is given), chunks are meshed on a finer grid, so the walls
+	// round the camera hold real relief down to a few centimetres; a refined chunk overlaps its coarse neighbours by
+	// one coarse cell, so the seam between them has no crack.
+	real_t near_mesh_cell = 0.1;
+	real_t near_mesh_radius = 6.0;
+	real_t _cell_for(const Vector3i &p_key, const Vector3 &p_focus, real_t p_slack = 0.0) const;
+	void _replace_chunk(Chunk &p_chunk, const Ref<Material> &p_wall);
 	real_t chunk_size = 16.0;
 	real_t patch_radius = 14.0;
 	real_t roughness = 1.0;
@@ -203,12 +211,12 @@ private:
 	TerrainGenerator3D *_get_generator() const;
 	bool _grow(Cave &r_cave, uint32_t p_seed) const;
 	void _scatter_blocks(Cave &r_cave, uint32_t p_seed) const;
-	real_t _air(const FieldSource &p_src, const Vector3 &p_p) const;
+	real_t _air(const FieldSource &p_src, const Vector3 &p_p, real_t p_cell = -1.0) const;
 	real_t _stream_wet(const FieldSource &p_src, const Vector3 &p_p) const;
 	real_t _wall_foot(const FieldSource &p_src, const Vector3 &p_p) const;
-	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr) const;
+	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr, real_t p_cell = -1.0) const;
 	void _gather(const AABB &p_box, FieldSource &r_src) const;
-	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const;
+	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell) const;
 	void _drips(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const AABB &p_box, LocalVector<Drip> &r_drips) const;
 	static real_t _flowstone(const LocalVector<Drip> &p_drips, const Vector3 &p_p, real_t p_rock, real_t *r_weight = nullptr);
 	Ref<ArrayMesh> _spel_mesh(int p_kind, int p_variant);
@@ -250,6 +258,11 @@ public:
 	real_t get_rock_distance(const Vector3 &p_position) const;
 	void set_mesh_cell(real_t p_value) { mesh_cell = CLAMP(p_value, real_t(0.05), real_t(4.0)); }
 	real_t get_mesh_cell() const { return mesh_cell; }
+	void set_near_mesh_cell(real_t p_value) { near_mesh_cell = CLAMP(p_value, real_t(0.0), real_t(4.0)); }
+	real_t get_near_mesh_cell() const { return near_mesh_cell; }
+	void set_near_mesh_radius(real_t p_value) { near_mesh_radius = MAX(p_value, real_t(0.0)); }
+	real_t get_near_mesh_radius() const { return near_mesh_radius; }
+	int refine_meshes(const Vector3 &p_center);
 	void set_patch_radius(real_t p_value) { patch_radius = CLAMP(p_value, real_t(0.0), real_t(100.0)); }
 	real_t get_patch_radius() const { return patch_radius; }
 	void set_roughness(real_t p_value) { roughness = CLAMP(p_value, real_t(0.0), real_t(4.0)); }

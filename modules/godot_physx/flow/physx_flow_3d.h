@@ -114,6 +114,12 @@ private:
 	// capsules is skipped (those are solids through collide_with_bodies).
 	bool terrain_floor = true;
 	NodePath terrain_path;
+	// AMBIENT WIND (docs/ideas/wind.md): the WeatherMap3D's wind over the gas, as air-only boxes in layers up
+	// the gas (the log profile, terrain and gusts sampled at each layer's middle) that reserve no blocks: smoke
+	// from a chimney or a campfire leans and drifts with the weather. weather_wind_coupling: per second.
+	bool weather_wind = true;
+	float weather_wind_coupling = 1.0f;
+	void _gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const;
 	float terrain_floor_spacing = 0.5f;
 	HashMap<Vector2i, float> terrain_heights; // ground height at grid nodes (NaN: none, or already a collider)
 	float terrain_heights_spacing = 0.0f;
@@ -201,6 +207,13 @@ private:
 	bool cast_shadows = true;
 	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
 	bool scattering_temporal = true;
+	// Light bends through the gas's hot air (docs/ideas/heat-shimmer.md): a screen-space pass in raster, bent
+	// camera rays under path tracing. heat_shimmer_kelvin: kelvin above the air at a temperature of
+	// temperature_range; heat_shimmer_turbulence: rms temperature fluctuation below the grid, as a share of the
+	// excess (George, Alpert and Tamanini 1977 measure 0.3 to 0.4 on a plume's axis).
+	bool heat_shimmer = true;
+	float heat_shimmer_kelvin = 1200.0f;
+	float heat_shimmer_turbulence = 0.35f;
 	int scattering_max_lights = 4;
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
@@ -237,6 +250,12 @@ private:
 	float traced_emission = 0.0f;
 	bool traced_proxy_light = false; // the fire light is on: it carries the glow's lighting under the path tracer
 	float traced_temperature_range = 2.0f;
+	// Heat shimmer, for both renderers: kelvin per temperature_range (0: off, or no emitter carries heat), the
+	// air's kelvin, the turbulence and the simulation's time.
+	float traced_shimmer_kelvin = 0.0f;
+	float traced_air_kelvin = 288.15f;
+	float traced_shimmer_turbulence = 0.35f;
+	float traced_shimmer_time = 0.0f;
 	bool traced_this_frame = false; // render thread only
 	// The sun the gas shadows the scene from (its light RID and the world direction toward it).
 	RID shadow_light;
@@ -305,6 +324,10 @@ public:
 	bool is_floor_enabled() const { return floor_enabled; }
 	void set_floor_height(float p_v) { floor_height = p_v; }
 	float get_floor_height() const { return floor_height; }
+	void set_weather_wind(bool p_v) { weather_wind = p_v; }
+	bool is_weather_wind() const { return weather_wind; }
+	void set_weather_wind_coupling(float p_v) { weather_wind_coupling = MAX(p_v, 0.0f); }
+	float get_weather_wind_coupling() const { return weather_wind_coupling; }
 	void set_terrain_floor(bool p_v) { terrain_floor = p_v; }
 	bool is_terrain_floor() const { return terrain_floor; }
 	void set_terrain_path(const NodePath &p_path) {
@@ -347,6 +370,12 @@ public:
 	bool is_ambient_scattering() const { return ambient_scattering; }
 	void set_sun_scattering(bool p_v) { sun_scattering = p_v; }
 	bool is_sun_scattering() const { return sun_scattering; }
+	void set_heat_shimmer(bool p_v) { heat_shimmer = p_v; }
+	bool is_heat_shimmer() const { return heat_shimmer; }
+	void set_heat_shimmer_kelvin(float p_v) { heat_shimmer_kelvin = MAX(p_v, 0.0f); }
+	float get_heat_shimmer_kelvin() const { return heat_shimmer_kelvin; }
+	void set_heat_shimmer_turbulence(float p_v) { heat_shimmer_turbulence = MAX(p_v, 0.0f); }
+	float get_heat_shimmer_turbulence() const { return heat_shimmer_turbulence; }
 	void set_cast_shadows(bool p_v) { cast_shadows = p_v; }
 	bool is_cast_shadows() const { return cast_shadows; }
 	void set_scattering_temporal(bool p_v) { scattering_temporal = p_v; }

@@ -45,10 +45,12 @@
 #include "scene/3d/visual_instance_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/sky_material.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/environment.h"
 #include "scene/resources/sky.h"
+#include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
 WeatherMap3D *WeatherMap3D::active = nullptr;
@@ -151,6 +153,238 @@ float WeatherMap3D::_patch_at(Vector2 p_xz, float p_height) const {
 	return MAX(1.0f + fade * gust_patch_strength * (n - 0.5f) / WeatherPatches::NOISE_STD, 0.05f);
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// Wind over terrain (docs/ideas/wind.md)
+
+void WeatherMap3D::_find_terrain_source() {
+	terrain_height_object = ObjectID();
+	terrain_height_by_data = false;
+	if (!is_inside_tree()) {
+		return;
+	}
+	Node *src = terrain_source.is_empty() ? nullptr : get_node_or_null(terrain_source);
+	if (src == nullptr) {
+		// The first terrain in the scene, by class name (weather does not link the terrain modules).
+		static const char *classes[] = { "TerrainDeformer3D", "Landscape3D", "TerrainGenerator3D", "Terrain3D" };
+		Node *root = get_tree()->get_current_scene();
+		if (root == nullptr) {
+			root = get_tree()->get_root();
+		}
+		for (const char *cls : classes) {
+			LocalVector<Node *> stack;
+			stack.push_back(root);
+			while (!stack.is_empty() && src == nullptr) {
+				Node *n = stack[stack.size() - 1];
+				stack.resize(stack.size() - 1);
+				if (n->is_class(cls)) {
+					src = n;
+					break;
+				}
+				for (int i = n->get_child_count() - 1; i >= 0; i--) {
+					stack.push_back(n->get_child(i));
+				}
+			}
+			if (src) {
+				break;
+			}
+		}
+	}
+	if (src == nullptr) {
+		return;
+	}
+	if (src->has_method("get_height")) {
+		terrain_height_object = src->get_instance_id();
+	} else if (src->has_method("get_data")) {
+		terrain_height_object = src->get_instance_id();
+		terrain_height_by_data = true;
+	}
+	// A terrain that knows its sea keeps the wind off the seabed.
+	bool ok = false;
+	const Variant sea = src->get("sea_level", &ok);
+	if (ok && (sea.get_type() == Variant::FLOAT || sea.get_type() == Variant::INT) && terrain_wind.floor < -1.0e8f) {
+		terrain_wind.floor = float(sea);
+	}
+}
+
+float WeatherMap3D::_terrain_height(Vector2 p_xz) const {
+	const Vector3 p(p_xz.x, ground_height, p_xz.y);
+	Object *src = ObjectDB::get_instance(terrain_height_object);
+	if (src) {
+		Variant v;
+		if (terrain_height_by_data) {
+			Object *data = src->call("get_data");
+			if (data && data->has_method("get_height")) {
+				v = data->call("get_height", p);
+			}
+		} else {
+			v = src->call("get_height", p);
+		}
+		if (v.get_type() == Variant::FLOAT || v.get_type() == Variant::INT) {
+			const float h = float(v);
+			if (Math::is_finite(h)) {
+				return h;
+			}
+		}
+	}
+	if (!is_inside_tree() || get_world_3d().is_null()) {
+		return Math::NaN;
+	}
+	PhysicsDirectSpaceState3D *space = get_world_3d()->get_direct_space_state();
+	if (space == nullptr) {
+		return Math::NaN;
+	}
+	PhysicsDirectSpaceState3D::RayParameters rp;
+	rp.from = Vector3(p.x, ground_height + 10000.0f, p.z);
+	rp.to = Vector3(p.x, ground_height - 10000.0f, p.z);
+	rp.collision_mask = terrain_collision_mask;
+	PhysicsDirectSpaceState3D::RayResult rr;
+	if (space->intersect_ray(rp, rr)) {
+		return rr.position.y;
+	}
+	return Math::NaN;
+}
+
+void WeatherMap3D::_update_terrain_wind() {
+	if (!terrain_wind_enabled) {
+		return;
+	}
+	const Vector3 c = _follow_position();
+	const Vector2 center(c.x, c.z);
+	if (terrain_wind.needs_heights(center)) {
+		_find_terrain_source();
+		terrain_wind.begin_heights(center);
+	}
+	if (terrain_wind.is_sampling()) {
+		// About 8k heights a tick, so a 256 square comes in over 8 ticks.
+		const int n = terrain_wind.resolution;
+		const int rows = MAX(1, 8192 / n);
+		float *h = terrain_wind.pending.ptrw();
+		const int end = MIN(n, terrain_wind.pending_row + rows);
+		for (int z = terrain_wind.pending_row; z < end; z++) {
+			for (int x = 0; x < n; x++) {
+				h[z * n + x] = _terrain_height(terrain_wind.pending_cell_center(x, z));
+			}
+		}
+		terrain_wind.pending_row = end;
+		if (end >= n) {
+			terrain_wind.finish_heights();
+		}
+	}
+	if (terrain_wind.needs_derive(cur_wind_direction)) {
+		terrain_wind.derive(cur_wind_direction);
+		_publish_globals();
+	}
+}
+
+void WeatherMap3D::rebake_terrain_wind() {
+	if (!terrain_wind_enabled || !is_inside_tree()) {
+		return;
+	}
+	const Vector3 c = _follow_position();
+	_find_terrain_source();
+	terrain_wind.begin_heights(Vector2(c.x, c.z));
+	const int n = terrain_wind.resolution;
+	float *h = terrain_wind.pending.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			h[z * n + x] = _terrain_height(terrain_wind.pending_cell_center(x, z));
+		}
+	}
+	terrain_wind.finish_heights();
+	terrain_wind.derive(cur_wind_direction);
+	_publish_globals();
+}
+
+void WeatherMap3D::set_terrain_wind_enabled(bool p_enabled) {
+	terrain_wind_enabled = p_enabled;
+	terrain_wind.dirty = true;
+	if (globals_added) {
+		_publish_globals();
+	}
+}
+
+void WeatherMap3D::set_terrain_source(const NodePath &p_path) {
+	terrain_source = p_path;
+	terrain_wind.dirty = true;
+}
+
+void WeatherMap3D::set_terrain_collision_mask(uint32_t p_mask) {
+	terrain_collision_mask = p_mask;
+	terrain_wind.dirty = true;
+}
+
+void WeatherMap3D::set_terrain_wind_extent(float p_extent) {
+	terrain_wind.extent = MAX(p_extent, 64.0f);
+	terrain_wind.dirty = true;
+	terrain_wind.valid = false;
+	terrain_wind.heights_valid = false;
+}
+
+void WeatherMap3D::set_terrain_wind_resolution(int p_resolution) {
+	terrain_wind.resolution = CLAMP(p_resolution, 16, 1024);
+	terrain_wind.dirty = true;
+	terrain_wind.valid = false;
+	terrain_wind.heights_valid = false;
+}
+
+void WeatherMap3D::set_terrain_curvature_length(float p_length) {
+	terrain_wind.curvature_length = MAX(p_length, 1.0f);
+	terrain_wind.derived = false;
+}
+
+void WeatherMap3D::set_terrain_slope_weight(float p_weight) {
+	terrain_wind.slope_weight = MAX(p_weight, 0.0f);
+	terrain_wind.derived = false;
+}
+
+void WeatherMap3D::set_terrain_curvature_weight(float p_weight) {
+	terrain_wind.curvature_weight = MAX(p_weight, 0.0f);
+	terrain_wind.derived = false;
+}
+
+void WeatherMap3D::set_terrain_lee_reach(float p_reach) {
+	terrain_wind.lee_reach = MAX(p_reach, 0.0f);
+	terrain_wind.derived = false;
+}
+
+void WeatherMap3D::set_terrain_lee_strength(float p_strength) {
+	terrain_wind.lee_strength = CLAMP(p_strength, 0.0f, 1.0f);
+	terrain_wind.derived = false;
+}
+
+void WeatherMap3D::set_terrain_floor(float p_floor) {
+	terrain_wind.floor = p_floor;
+	terrain_wind.derived = false;
+}
+
+float WeatherMap3D::get_terrain_speed_factor_at(Vector3 p_position) const {
+	if (!terrain_wind_enabled) {
+		return 1.0f;
+	}
+	float t[4];
+	terrain_wind.sample(Vector2(p_position.x, p_position.z), t);
+	return t[0];
+}
+
+float WeatherMap3D::get_terrain_divert_at(Vector3 p_position) const {
+	if (!terrain_wind_enabled) {
+		return 0.0f;
+	}
+	float t[4];
+	terrain_wind.sample(Vector2(p_position.x, p_position.z), t);
+	return t[1];
+}
+
+float WeatherMap3D::get_terrain_ground_at(Vector3 p_position) const {
+	float t[4];
+	terrain_wind.sample(Vector2(p_position.x, p_position.z), t);
+	return t[3];
+}
+
+float WeatherMap3D::get_terrain_lee_at(Vector3 p_position) const {
+	return terrain_wind.sample_lee(Vector2(p_position.x, p_position.z));
+}
+
 void WeatherMap3D::_bake_shelter() {
 	shelter.ground_height = ground_height;
 	LocalVector<AABB> extra;
@@ -193,6 +427,8 @@ void WeatherMap3D::_allocate() {
 	cell_rain.resize(n * n);
 	cell_film.resize(n * n);
 	cell_puddle.resize(n * n);
+	cell_frost.resize(n * n);
+	cell_cooling.resize(n * n);
 	cell_inflow.resize(n * n);
 	cell_inflow.fill(-1.0f);
 	cell_wind.fill(0.0f);
@@ -201,14 +437,19 @@ void WeatherMap3D::_allocate() {
 	cell_rain.fill(0.0f);
 	cell_film.fill(0.0f);
 	cell_puddle.fill(0.0f);
+	cell_frost.fill(0.0f);
+	cell_cooling.fill(0.0f);
 	wind_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	state_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
+	frost_image = Image::create_empty(n, n, false, Image::FORMAT_RGH);
+	frost_texture.unref();
 	gust_image = Image::create_empty(GUST_COUNT, 1, false, Image::FORMAT_RGBAF);
 	wind_texture.unref();
 	state_texture.unref();
 	gust_texture.unref();
 	globals_added = false;
 	origin_valid = false;
+	_rain_allocate();
 }
 
 float WeatherMap3D::_cloud_noise(Vector2 p_xz) const {
@@ -290,6 +531,14 @@ float WeatherMap3D::_target_temperature() const {
 		return WeatherSeason::day_temperature(_season_climate(), ground_height, float(get_day_of_year())) + season_anomaly;
 	}
 	return temperature;
+}
+
+float WeatherMap3D::get_water_temperature() const {
+	if (climate.is_valid()) {
+		const float day = Math::fposmod(float(get_day_of_year()) - 30.0f, 365.0f);
+		return MAX(WeatherSeason::day_temperature(_season_climate(), ground_height, day), 0.0f);
+	}
+	return MAX(cur_temperature, 0.0f);
 }
 
 // Parton and Logan (1981), "A model for diurnal variation in soil and air temperature": from the minimum c hours
@@ -381,6 +630,19 @@ float WeatherMap3D::_net_radiation(const CellPass &p_pass, Vector3 p_position, f
 	return ((1.0f - 0.1f) * rs - lw) * (1.0f - canopy);
 }
 
+float WeatherMap3D::get_air_temperature_at(Vector3 p_position) const {
+	return cur_air_temperature - 0.0065f * (p_position.y - ground_height);
+}
+
+float WeatherMap3D::get_air_humidity_at(Vector3 p_position) const {
+	const float dz = p_position.y - ground_height;
+	if (Math::abs(dz) < 0.5f) {
+		return cur_air_humidity;
+	}
+	const float td = get_air_dew_point() - 0.0018f * dz;
+	return CLAMP(saturation_vapour_pressure(td) / saturation_vapour_pressure(get_air_temperature_at(p_position)), 0.0f, 1.0f);
+}
+
 float WeatherMap3D::get_air_dew_point() const {
 	// Magnus inverted (Alduchov and Eskridge 1996).
 	const float g = Math::log(MAX(cur_air_humidity, 0.01f)) + 17.62f * cur_air_temperature / (243.12f + cur_air_temperature);
@@ -421,14 +683,18 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 	// The film and puddles are history; everything else is rebuilt from the weather each update.
 	double film_sum = 0.0;
 	double puddle_sum = 0.0;
+	double frost_sum = 0.0;
 	for (int i = 0; i < n * n; i++) {
 		film_sum += cell_film[i];
 		puddle_sum += cell_puddle[i];
+		frost_sum += cell_frost[i];
 	}
 	const float film_mean = float(film_sum / (n * n));
 	const float puddle_mean = float(puddle_sum / (n * n));
+	const float frost_mean = float(frost_sum / (n * n));
 	Vector<float> film = cell_film;
 	Vector<float> puddle = cell_puddle;
+	Vector<float> frost = cell_frost;
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int sx = x + d.x;
@@ -436,8 +702,10 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 			const bool inside = sx >= 0 && sz >= 0 && sx < n && sz < n;
 			cell_film.write[z * n + x] = inside ? film[sz * n + sx] : film_mean;
 			cell_puddle.write[z * n + x] = inside ? puddle[sz * n + sx] : puddle_mean;
+			cell_frost.write[z * n + x] = inside ? frost[sz * n + sx] : frost_mean;
 		}
 	}
+	_rain_shift(d);
 	origin_cell = p_new_origin;
 }
 
@@ -475,6 +743,8 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	cells_serial++;
 	c.film = cell_film.ptrw();
 	c.puddle = cell_puddle.ptrw();
+	c.frost = cell_frost.ptrw();
+	c.cooling = cell_cooling.ptrw();
 	// Snow does not wet surfaces as it falls: only the rain share reaches the film.
 	c.rain_fraction = rain_fraction(cur_air_temperature, cur_air_humidity);
 	c.air_temperature = cur_air_temperature;
@@ -483,6 +753,11 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	// sun's elevation (Allen et al. 1998, eq. 37).
 	// Without a sun light or a clock nothing says how much sun there is: the drying stays the air's alone.
 	c.sun = sun_drying && sun_known;
+	c.dew = dew_and_frost && sun_known;
+	{
+		const WorldFire *f = WorldContracts::fire();
+		c.fire = (f->has_provider() || f->get_script_instance()) ? f : nullptr; // a fire, or a test's stub
+	}
 	c.shortwave_clear = 0.75f * 1361.0f * cur_sun_sine;
 	c.use_shadow = sun_drying && cur_sun_sine > 0.0f && shadow_res >= 2 && shadow_values.size() == shadow_res * shadow_res;
 	if (c.use_shadow) {
@@ -493,6 +768,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+	_rain_update(p_weather_dt);
 }
 
 float WeatherMap3D::rain_fraction(float p_celsius, float p_humidity) {
@@ -643,10 +919,66 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// it rains).
 		if (c.dt_h > 0.0f) {
 			const float rh = r > 0.1f ? MAX(c.air_humidity, 0.97f) : c.air_humidity;
-			const float evap = (c.sun ? penman_evaporation(_net_radiation(c, Vector3(p.x, ground_height, p.y), cover), w.length() * c.to_2m, c.air_temperature, rh) : evaporation_rate(w.length() * c.to_2m, c.air_temperature, rh)) * c.dt_h;
+			const float u2 = w.length() * c.to_2m;
+			const bool radiation = c.sun || c.dew;
+			const float rn = radiation ? _net_radiation(c, Vector3(p.x, ground_height, p.y), cover) : 0.0f;
+			float evap = (c.sun ? penman_evaporation(rn, u2, c.air_temperature, rh) : evaporation_rate(u2, c.air_temperature, rh)) * c.dt_h;
+			// A fire over the cell boils the surface water off: a share of its heat release (a tenth here)
+			// reaches the ground, 681 W/m2 a millimetre an hour.
+			if (c.fire && c.dt_h > 0.0f) {
+				evap += 0.1f * c.fire->heat_at(Vector3(p.x, ground_height, p.y)) / 681.0f * c.dt_h;
+			}
+			// Dew and hoarfrost (Monteith 1957): where the surface loses more by radiation to a clear night sky
+			// than the air's drying brings, Penman's combination turns negative and the vapour condenses on it.
+			// Clouds and a canopy overhead return the longwave, so sheltered and clouded spots stay dry. Below
+			// 0 C at the surface (the air's temperature plus the radiative cooling over the sky and convective
+			// exchange, 4 sigma T^3 + 5 + 4 u W/m2/K) it deposits as hoarfrost, which melts by the same balance.
+			float fr = c.frost[i];
+			float f = c.film[i];
+			c.cooling[i] = 0.0f;
+			if (radiation) {
+				const float tk = c.air_temperature + 273.16f;
+				const float exchange = 4.0f * 5.670e-8f * tk * tk * tk + 5.0f + 4.0f * u2;
+				const float ts = c.air_temperature + rn / exchange;
+				c.cooling[i] = ts - c.air_temperature;
+				if (c.dew && rn < 0.0f && r <= 0.01f) {
+					const float es = saturation_vapour_pressure(c.air_temperature) * 0.1f;
+					const float delta = 4098.0f * es / ((c.air_temperature + 237.3f) * (c.air_temperature + 237.3f));
+					const float gamma = 0.0665f;
+					const float net = (delta * rn / 681.0f + gamma * evaporation_rate(u2, c.air_temperature, rh)) / (delta + gamma); // mm/h, < 0 condenses
+					if (net < 0.0f) {
+						const float cond = -net * c.dt_h;
+						if (ts < 0.0f) {
+							fr = MIN(fr + cond, 0.5f); // a heavy hoarfrost holds about half a millimetre
+						} else {
+							f += cond;
+						}
+						evap = 0.0f;
+					} else {
+						evap = net * c.dt_h; // the cooled surface dries slower
+					}
+				}
+				if (fr > 0.0f && ts > 0.0f) {
+					// Melt into the film: 1 mm/h of ice takes 92.8 W/m2 (334 kJ/kg).
+					const float melt = MIN(fr, (exchange * ts + MAX(rn, 0.0f)) / 92.8f * c.dt_h);
+					fr -= melt;
+					f += melt;
+				}
+			} else if (fr > 0.0f && c.air_temperature > 0.0f) {
+				const float melt = MIN(fr, (5.0f + 4.0f * u2) * c.air_temperature / 92.8f * c.dt_h);
+				fr -= melt;
+				f += melt;
+			}
+			if (fr > 0.0f && c.air_temperature + c.cooling[i] < 0.0f) {
+				// Below freezing the drying takes the frost (sublimation) before any film.
+				const float sub = MIN(fr, evap);
+				fr -= sub;
+				evap -= sub;
+			}
+			c.frost[i] = fr;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
 			const float in = c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction;
-			float f = c.film[i] + in * c.dt_h;
+			f += in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
 				pd += f - surface_storage;
@@ -774,7 +1106,8 @@ void WeatherMap3D::_upload() {
 			w[i * 4 + 1] = Math::make_half_float(cell_wind[i * 2 + 1]);
 			w[i * 4 + 2] = Math::make_half_float(cell_cover[i]);
 			w[i * 4 + 3] = Math::make_half_float(cell_type[i]);
-			const float wet = cell_puddle[i] > 0.0f ? 1.0f : MIN(cell_film[i] / storage, 1.0f);
+			// Ground the world's runoff (WeatherRunoff3D) is flowing over is wet too, where the rain did not fall.
+			const float wet = cell_puddle[i] > 0.0f ? 1.0f : MAX(MIN(cell_film[i] / storage, 1.0f), _runoff_wetness(i));
 			s[i * 4 + 0] = Math::make_half_float(cell_rain[i]);
 			s[i * 4 + 1] = Math::make_half_float(wet);
 			s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
@@ -782,6 +1115,14 @@ void WeatherMap3D::_upload() {
 		}
 		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
 		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
+		Vector<uint8_t> fd;
+		fd.resize(n * n * 4);
+		uint16_t *fp = reinterpret_cast<uint16_t *>(fd.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
+			fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
+		}
+		frost_image->set_data(n, n, false, Image::FORMAT_RGH, fd);
 	}
 	_fill_gust_image();
 	if (wind_texture.is_null()) {
@@ -789,11 +1130,15 @@ void WeatherMap3D::_upload() {
 		state_texture = ImageTexture::create_from_image(state_image);
 		gust_texture = ImageTexture::create_from_image(gust_image);
 	} else {
+		if (frost_texture.is_valid()) {
+			frost_texture->update(frost_image);
+		}
 		wind_texture->update(wind_image);
 		state_texture->update(state_image);
 		gust_texture->update(gust_image);
 	}
 	_publish_globals();
+	_rain_upload();
 }
 
 void WeatherMap3D::_set_global(const StringName &p_name, const Variant &p_value, int p_type) {
@@ -819,6 +1164,12 @@ void WeatherMap3D::_publish_globals() {
 		// Texture RIDs stay the same across updates, so they are set once.
 		_set_global("weather_wind_map", wind_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		_set_global("weather_state_map", state_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		if (frost_texture.is_null() && frost_image.is_valid()) {
+			frost_texture = ImageTexture::create_from_image(frost_image);
+		}
+		if (frost_texture.is_valid()) {
+			_set_global("weather_frost_map", frost_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		}
 		_set_global("weather_gusts", gust_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	}
 	_set_global("weather_map_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
@@ -833,6 +1184,16 @@ void WeatherMap3D::_publish_globals() {
 		_set_global("weather_shelter_rect", Vector4(sr.position.x, sr.position.y, sr.size.x, sr.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
 	_set_global("weather_patch_info", Vector4(patch_drift.x, patch_drift.y, 1.0f / gust_patch_size, gust_patch_strength / WeatherPatches::NOISE_STD), RSE::GLOBAL_VAR_TYPE_VEC4);
+	if (terrain_wind.texture.is_valid()) {
+		if (terrain_global_rid != terrain_wind.texture->get_rid()) {
+			terrain_global_rid = terrain_wind.texture->get_rid();
+			_set_global("weather_terrain_map", terrain_global_rid, RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		}
+		const bool on = terrain_wind_enabled && terrain_wind.valid;
+		const Rect2 tr = on ? terrain_wind.rect() : Rect2();
+		_set_global("weather_terrain_rect", Vector4(tr.position.x, tr.position.y, tr.size.x, tr.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
+		_set_global("weather_terrain_info", Vector4(terrain_wind.reference, terrain_wind.fade_length(), on ? 1.0f : 0.0f, 0.0f), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 	globals_added = true;
 }
 
@@ -897,6 +1258,10 @@ Dictionary WeatherMap3D::get_season_at_height(float p_height) const {
 	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), p_height, get_day_of_year(), season_anomaly));
 }
 
+Dictionary WeatherMap3D::get_season_on_day(int p_day) const {
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), ground_height, CLAMP(p_day, 1, 365), season_anomaly));
+}
+
 void WeatherMap3D::set_sky_clock(const NodePath &p_path) {
 	sky_clock = p_path;
 	season_cached = false;
@@ -934,6 +1299,7 @@ void WeatherMap3D::_notification(int p_what) {
 				_ease_base(0.0);
 				_update_cells(0.0);
 				_bake_shelter();
+				rebake_terrain_wind();
 				_upload();
 				_push_sky();
 				update_cloud_shadow();
@@ -969,6 +1335,7 @@ void WeatherMap3D::_notification(int p_what) {
 					_bake_shelter();
 				}
 			}
+			_update_terrain_wind();
 			// Cloud shadows bake in the background; between bakes they slide with the clouds.
 			shadow_timer += dt;
 			if (shadow_task != WorkerThreadPool::INVALID_TASK_ID && WorkerThreadPool::get_singleton()->is_group_task_completed(shadow_task)) {
@@ -1004,22 +1371,60 @@ void WeatherMap3D::_notification(int p_what) {
 // ---------------------------------------------------------------------------------------------------------
 // Queries
 
-Vector2 WeatherMap3D::get_mean_wind_at(Vector3 p_position) const {
+Vector2 WeatherMap3D::get_mean_wind_at(Vector3 p_position, bool p_terrain) const {
 	const Vector2 p(p_position.x, p_position.z);
-	if (!origin_valid) {
-		return cur_wind_direction * cur_wind_speed;
+	const Vector2 m = origin_valid ? Vector2(_sample(cell_wind, p, 2, 0), _sample(cell_wind, p, 2, 1)) : cur_wind_direction * cur_wind_speed;
+	if (!p_terrain || !terrain_wind_enabled || !terrain_wind.valid) {
+		return m;
 	}
-	return Vector2(_sample(cell_wind, p, 2, 0), _sample(cell_wind, p, 2, 1));
+	float t[4];
+	terrain_wind.sample(p, t);
+	const Vector3 w = WeatherTerrainWind::apply(t, m, 10.0f, terrain_wind.fade_length());
+	return Vector2(w.x, w.z);
+}
+
+Vector2 WeatherMap3D::get_wind_aloft(Vector3 p_position, float p_altitude) const {
+	const Vector2 m10 = get_mean_wind_at(p_position, false);
+	const float z0 = MAX(roughness_length, 1e-5f);
+	const float zi = boundary_layer_height;
+	const float z = CLAMP(p_altitude, 10.0f, zi);
+	const float speed = m10.length() * WeatherShelter::open_profile(z, z0);
+	// Ekman veer: more over rough ground (z0 0.0002 m, the sea: 20 degrees; 0.02 m and up, land: 30 degrees).
+	const float veer_top = Math::deg_to_rad(20.0f + 10.0f * CLAMP((Math::log(z0 / 0.0002f) / Math::log(10.0f)) / 2.0f, 0.0f, 1.0f));
+	float latitude = 45.0f;
+	const Node *clock = has_node(sky_clock) ? get_node(sky_clock) : nullptr;
+	if (clock != nullptr) {
+		latitude = float(clock->get("latitude"));
+	}
+	const float hemisphere = latitude >= 0.0f ? 1.0f : -1.0f;
+	// Veering is clockwise seen from above (x east, -z north): a positive turn of the (x, z) vector.
+	const float veer = hemisphere * veer_top * (z - 10.0f) / MAX(zi - 10.0f, 1.0f);
+	Vector2 w = m10.length_squared() > 1e-8f ? m10.normalized().rotated(veer) * speed : Vector2();
+	if (p_altitude > zi && w.length_squared() > 1e-8f) {
+		w += w.normalized() * (wind_shear_aloft * (p_altitude - zi) / 1000.0f);
+	}
+	return w;
+}
+
+float WeatherMap3D::_height_above_ground(Vector3 p_position, float p_height, const float p_terrain[4]) const {
+	if (p_height >= 0.0f) {
+		return p_height;
+	}
+	return p_position.y - (Math::is_finite(p_terrain[3]) ? p_terrain[3] : ground_height);
 }
 
 Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_ground) const {
 	const float z0 = MAX(roughness_length, 1e-5f);
-	float h = p_height_above_ground >= 0.0f ? p_height_above_ground : p_position.y - ground_height;
+	const Vector2 xz(p_position.x, p_position.z);
+	float t[4];
+	terrain_wind.sample(xz, t);
+	const bool terrain = terrain_wind_enabled && terrain_wind.valid;
+	float h = _height_above_ground(p_position, p_height_above_ground, t);
 	h = MAX(h, z0 * 1.5f);
 	// Mean wind on the log law, u(z) = u10 ln(z / z0) / ln(10 / z0), sheltered by canopies and obstacles and
 	// carried in gust patches. The turbulence under shelter drops more slowly than the mean (Finnigan 2000).
-	const Vector2 m10 = get_mean_wind_at(p_position);
-	const Vector2 xz(p_position.x, p_position.z);
+	// Over terrain the mean is turned, scaled and lifted (MicroMet), and the gusts scale with it.
+	const Vector2 m10 = get_mean_wind_at(p_position, false);
 	float f = 1.0f;
 	if (shelter_enabled) {
 		float cell[4];
@@ -1027,16 +1432,25 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 		f = WeatherShelter::factor(h, z0, cell);
 	}
 	const Vector2 m = m10 * (WeatherShelter::open_profile(h, z0) * f * _patch_at(xz, h));
-	const Vector3 gust = _gust_at(p_position, m10) * Math::sqrt(f);
-	return Vector3(m.x, 0.0f, m.y) + gust;
+	Vector3 mean(m.x, 0.0f, m.y);
+	float gust_scale = 1.0f;
+	if (terrain) {
+		mean = WeatherTerrainWind::apply(t, m, h, terrain_wind.fade_length());
+		gust_scale = m.length_squared() > 1e-8f ? Vector2(mean.x, mean.z).length() / m.length() : 1.0f;
+	}
+	const Vector3 gust = _gust_at(p_position, m10) * (Math::sqrt(f) * gust_scale);
+	return mean + gust;
 }
 
 void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_ground, Vector3 &r_mean, Vector2 &r_along, float &r_sigma) const {
 	const float z0 = MAX(roughness_length, 1e-5f);
-	float h = p_height_above_ground >= 0.0f ? p_height_above_ground : p_position.y - ground_height;
-	h = MAX(h, z0 * 1.5f);
-	const Vector2 m10 = get_mean_wind_at(p_position);
 	const Vector2 xz(p_position.x, p_position.z);
+	float t[4];
+	terrain_wind.sample(xz, t);
+	const bool terrain = terrain_wind_enabled && terrain_wind.valid;
+	float h = _height_above_ground(p_position, p_height_above_ground, t);
+	h = MAX(h, z0 * 1.5f);
+	const Vector2 m10 = get_mean_wind_at(p_position, false);
 	float f = 1.0f;
 	if (shelter_enabled) {
 		float cell[4];
@@ -1045,9 +1459,14 @@ void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_groun
 	}
 	const Vector2 m = m10 * (WeatherShelter::open_profile(h, z0) * f * _patch_at(xz, h));
 	r_mean = Vector3(m.x, 0.0f, m.y);
+	float gust_scale = 1.0f;
+	if (terrain) {
+		r_mean = WeatherTerrainWind::apply(t, m, h, terrain_wind.fade_length());
+		gust_scale = m.length_squared() > 1e-8f ? Vector2(r_mean.x, r_mean.z).length() / m.length() : 1.0f;
+	}
 	const float speed = m10.length();
 	r_along = speed > 1e-3f ? m10 / speed : cur_wind_direction;
-	r_sigma = speed < 1e-3f ? 0.0f : MAX(gust_intensity, 0.0f) * SIGMA_U_PER_USTAR * KARMAN / Math::log(10.0f / z0) * speed * Math::sqrt(f);
+	r_sigma = speed < 1e-3f ? 0.0f : MAX(gust_intensity, 0.0f) * SIGMA_U_PER_USTAR * KARMAN / Math::log(10.0f / z0) * speed * Math::sqrt(f) * gust_scale;
 }
 
 void WeatherMap3D::get_gust_waves(LocalVector<Vector4> &r_waves) const {
@@ -1103,6 +1522,14 @@ float WeatherMap3D::get_wetness_at(Vector3 p_position) const {
 		return 1.0f;
 	}
 	return CLAMP(_sample(cell_film, p) / MAX(surface_storage, 1e-3f), 0.0f, 1.0f);
+}
+
+float WeatherMap3D::get_frost_at(Vector3 p_position) const {
+	return MAX(_sample(cell_frost, Vector2(p_position.x, p_position.z)), 0.0f);
+}
+
+float WeatherMap3D::get_surface_temperature_at(Vector3 p_position) const {
+	return get_air_temperature_at(p_position) + _sample(cell_cooling, Vector2(p_position.x, p_position.z));
 }
 
 float WeatherMap3D::get_puddle_at(Vector3 p_position) const {
@@ -1316,6 +1743,13 @@ void WeatherMap3D::set_air_daily_cycle(bool p_enabled) {
 void WeatherMap3D::set_daily_temperature_range(float p_kelvin) {
 	daily_temperature_range = CLAMP(p_kelvin, 0.0f, 40.0f);
 	_update_air();
+}
+
+void WeatherMap3D::set_dew_and_frost(bool p_enabled) {
+	dew_and_frost = p_enabled;
+	if (!dew_and_frost) {
+		cell_frost.fill(0.0f);
+	}
 }
 
 void WeatherMap3D::set_sun_drying(bool p_enabled) {
@@ -1536,15 +1970,19 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.shape_scale = cloud_shape_scale;
 	st.drift = cloud_drift;
 	if (cloud_shear > 0.0f) {
-		// The wind grows through the layer by about the wind aloft over 4 km (a typical tropospheric shear,
-		// 2-5 m/s per km) and veers 20 degrees with height (Ekman turning). Tissue rising at an updraft w of
-		// about 3 m/s is carried s z^2 / (2 w) downwind of the base by height z, so at one thickness H the
-		// lean is s H^2 / (2 w): kept under 0.6 H (sheared towers lean, they do not lie down).
-		const float z0 = MAX(roughness_length, 1e-5f);
-		const float aloft = Math::log(1000.0f / z0) / Math::log(10.0f / z0);
-		const float s = cur_wind_speed * aloft / 4000.0f;
-		const float lean = MIN(s * cloud_thickness * cloud_thickness / 6.0f, 0.6f * cloud_thickness) * cloud_shear;
-		st.shear = cur_wind_direction.rotated(Math::deg_to_rad(-20.0f)) * lean;
+		// The lean comes from the wind aloft (get_wind_aloft: log law and Ekman veer through the boundary
+		// layer, wind_shear_aloft above it): the shear vector across the layer, s = (u_top - u_base) / H.
+		// Tissue rising at an updraft w of about 3 m/s is carried s z^2 / (2 w) downwind of the base by
+		// height z, so at one thickness the lean is s H^2 / 6: kept under 0.6 H (sheared towers lean, they
+		// do not lie down).
+		const Vector3 at = is_inside_tree() ? get_global_position() : Vector3();
+		const float h = MAX(cloud_thickness, 1.0f);
+		const Vector2 shear = (get_wind_aloft(at, cloud_base_height + h) - get_wind_aloft(at, cloud_base_height)) / h;
+		const float s = shear.length();
+		if (s > 1e-7f) {
+			const float lean = MIN(s * h * h / 6.0f, 0.6f * h) * cloud_shear;
+			st.shear = shear / s * lean;
+		}
 	}
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
@@ -1870,7 +2308,9 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "global uniform vec4 weather_wind_info;\n";
 	c += "global uniform vec4 weather_shelter_rect;\n";
 	c += "global uniform vec4 weather_patch_info;\n";
+	c += "global uniform float weather_ground_height;\n";
 	c += "\n";
+	c += WeatherTerrainWind::get_shader_code();
 	c += "float weather_open_profile(float z, float z0) {\n";
 	c += "	return log(max(z, 1.5 * z0) / z0) / log(10.0 / z0);\n";
 	c += "}\n\n";
@@ -1967,7 +2407,19 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "	float z = max(height, 1.5 * z0);\n";
 	c += "	float f = weather_shelter_factor(z, z0, sh);\n";
 	c += "	vec2 m = m10 * (weather_open_profile(z, z0) * f * weather_patch(wp.xz, z));\n";
-	c += "	return vec3(m.x, 0.0, m.y) + weather_gust(wp, m10) * sqrt(f);\n";
+	c += "	vec3 mean = vec3(m.x, 0.0, m.y);\n";
+	c += "	float gs = 1.0;\n";
+	c += "	vec4 t = weather_terrain(wp.xz);\n";
+	c += "	if (t.x != 1.0 || t.y != 0.0 || t.z != 0.0) {\n";
+	c += "		mean = weather_terrain_wind(t, m, z);\n";
+	c += "		gs = length(m) > 1e-4 ? length(mean.xz) / length(m) : 1.0;\n";
+	c += "	}\n";
+	c += "	return mean + weather_gust(wp, m10) * (sqrt(f) * gs);\n";
+	c += "}\n\n";
+	c += "// Height above the ground under a world point: the terrain the wind sampled, else weather_ground_height.\n";
+	c += "float weather_height_above_ground(vec3 wp) {\n";
+	c += "	float g = weather_terrain(wp.xz).w;\n";
+	c += "	return wp.y - (g > -1e8 ? g : weather_ground_height);\n";
 	c += "}\n";
 	return c;
 }
@@ -2010,7 +2462,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_air_temperature"), &WeatherMap3D::get_air_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_humidity"), &WeatherMap3D::get_air_humidity);
 	ClassDB::bind_method(D_METHOD("get_air_mean_temperature"), &WeatherMap3D::get_air_mean_temperature);
+	ClassDB::bind_method(D_METHOD("get_water_temperature"), &WeatherMap3D::get_water_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_dew_point"), &WeatherMap3D::get_air_dew_point);
+	ClassDB::bind_method(D_METHOD("get_air_temperature_at", "position"), &WeatherMap3D::get_air_temperature_at);
+	ClassDB::bind_method(D_METHOD("get_air_humidity_at", "position"), &WeatherMap3D::get_air_humidity_at);
 	ClassDB::bind_method(D_METHOD("get_sun_sine"), &WeatherMap3D::get_sun_sine);
 	ClassDB::bind_method(D_METHOD("set_air_follows_climate", "enabled"), &WeatherMap3D::set_air_follows_climate);
 	ClassDB::bind_method(D_METHOD("get_air_follows_climate"), &WeatherMap3D::get_air_follows_climate);
@@ -2018,6 +2473,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_air_daily_cycle"), &WeatherMap3D::get_air_daily_cycle);
 	ClassDB::bind_method(D_METHOD("set_daily_temperature_range", "kelvin"), &WeatherMap3D::set_daily_temperature_range);
 	ClassDB::bind_method(D_METHOD("get_daily_temperature_range"), &WeatherMap3D::get_daily_temperature_range);
+	ClassDB::bind_method(D_METHOD("set_dew_and_frost", "enabled"), &WeatherMap3D::set_dew_and_frost);
+	ClassDB::bind_method(D_METHOD("get_dew_and_frost"), &WeatherMap3D::get_dew_and_frost);
+	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &WeatherMap3D::get_frost_at);
+	ClassDB::bind_method(D_METHOD("get_surface_temperature_at", "position"), &WeatherMap3D::get_surface_temperature_at);
 	ClassDB::bind_method(D_METHOD("set_sun_drying", "enabled"), &WeatherMap3D::set_sun_drying);
 	ClassDB::bind_method(D_METHOD("get_sun_drying"), &WeatherMap3D::get_sun_drying);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("diurnal_shape", "solar_hour", "day_length"), &WeatherMap3D::diurnal_shape);
@@ -2104,7 +2563,42 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shelter_texture"), &WeatherMap3D::get_shelter_texture);
 	ClassDB::bind_method(D_METHOD("get_shelter_rect"), &WeatherMap3D::get_shelter_rect);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_wind_shader_code"), &WeatherMap3D::get_wind_shader_code);
-	ClassDB::bind_method(D_METHOD("get_mean_wind_at", "position"), &WeatherMap3D::get_mean_wind_at);
+	ClassDB::bind_method(D_METHOD("get_mean_wind_at", "position", "terrain"), &WeatherMap3D::get_mean_wind_at, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("get_wind_aloft", "position", "altitude"), &WeatherMap3D::get_wind_aloft);
+	ClassDB::bind_method(D_METHOD("set_boundary_layer_height", "height"), &WeatherMap3D::set_boundary_layer_height);
+	ClassDB::bind_method(D_METHOD("get_boundary_layer_height"), &WeatherMap3D::get_boundary_layer_height);
+	ClassDB::bind_method(D_METHOD("set_wind_shear_aloft", "shear"), &WeatherMap3D::set_wind_shear_aloft);
+	ClassDB::bind_method(D_METHOD("get_wind_shear_aloft"), &WeatherMap3D::get_wind_shear_aloft);
+	ClassDB::bind_method(D_METHOD("set_terrain_wind_enabled", "enabled"), &WeatherMap3D::set_terrain_wind_enabled);
+	ClassDB::bind_method(D_METHOD("is_terrain_wind_enabled"), &WeatherMap3D::is_terrain_wind_enabled);
+	ClassDB::bind_method(D_METHOD("set_terrain_source", "path"), &WeatherMap3D::set_terrain_source);
+	ClassDB::bind_method(D_METHOD("get_terrain_source"), &WeatherMap3D::get_terrain_source);
+	ClassDB::bind_method(D_METHOD("set_terrain_collision_mask", "mask"), &WeatherMap3D::set_terrain_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_terrain_collision_mask"), &WeatherMap3D::get_terrain_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_terrain_wind_extent", "extent"), &WeatherMap3D::set_terrain_wind_extent);
+	ClassDB::bind_method(D_METHOD("get_terrain_wind_extent"), &WeatherMap3D::get_terrain_wind_extent);
+	ClassDB::bind_method(D_METHOD("set_terrain_wind_resolution", "resolution"), &WeatherMap3D::set_terrain_wind_resolution);
+	ClassDB::bind_method(D_METHOD("get_terrain_wind_resolution"), &WeatherMap3D::get_terrain_wind_resolution);
+	ClassDB::bind_method(D_METHOD("set_terrain_curvature_length", "length"), &WeatherMap3D::set_terrain_curvature_length);
+	ClassDB::bind_method(D_METHOD("get_terrain_curvature_length"), &WeatherMap3D::get_terrain_curvature_length);
+	ClassDB::bind_method(D_METHOD("set_terrain_slope_weight", "weight"), &WeatherMap3D::set_terrain_slope_weight);
+	ClassDB::bind_method(D_METHOD("get_terrain_slope_weight"), &WeatherMap3D::get_terrain_slope_weight);
+	ClassDB::bind_method(D_METHOD("set_terrain_curvature_weight", "weight"), &WeatherMap3D::set_terrain_curvature_weight);
+	ClassDB::bind_method(D_METHOD("get_terrain_curvature_weight"), &WeatherMap3D::get_terrain_curvature_weight);
+	ClassDB::bind_method(D_METHOD("set_terrain_lee_reach", "reach"), &WeatherMap3D::set_terrain_lee_reach);
+	ClassDB::bind_method(D_METHOD("get_terrain_lee_reach"), &WeatherMap3D::get_terrain_lee_reach);
+	ClassDB::bind_method(D_METHOD("set_terrain_lee_strength", "strength"), &WeatherMap3D::set_terrain_lee_strength);
+	ClassDB::bind_method(D_METHOD("get_terrain_lee_strength"), &WeatherMap3D::get_terrain_lee_strength);
+	ClassDB::bind_method(D_METHOD("set_terrain_floor", "height"), &WeatherMap3D::set_terrain_floor);
+	ClassDB::bind_method(D_METHOD("get_terrain_floor"), &WeatherMap3D::get_terrain_floor);
+	ClassDB::bind_method(D_METHOD("rebake_terrain_wind"), &WeatherMap3D::rebake_terrain_wind);
+	ClassDB::bind_method(D_METHOD("is_terrain_wind_ready"), &WeatherMap3D::is_terrain_wind_ready);
+	ClassDB::bind_method(D_METHOD("get_terrain_wind_derive_time"), &WeatherMap3D::get_terrain_wind_derive_time);
+	ClassDB::bind_method(D_METHOD("get_terrain_wind_rect"), &WeatherMap3D::get_terrain_wind_rect);
+	ClassDB::bind_method(D_METHOD("get_terrain_speed_factor_at", "position"), &WeatherMap3D::get_terrain_speed_factor_at);
+	ClassDB::bind_method(D_METHOD("get_terrain_divert_at", "position"), &WeatherMap3D::get_terrain_divert_at);
+	ClassDB::bind_method(D_METHOD("get_terrain_ground_at", "position"), &WeatherMap3D::get_terrain_ground_at);
+	ClassDB::bind_method(D_METHOD("get_terrain_lee_at", "position"), &WeatherMap3D::get_terrain_lee_at);
 	ClassDB::bind_method(D_METHOD("get_rain_at", "position"), &WeatherMap3D::get_rain_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_type_at", "position"), &WeatherMap3D::get_cloud_type_at);
@@ -2157,6 +2651,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_day_of_year"), &WeatherMap3D::get_day_of_year);
 	ClassDB::bind_method(D_METHOD("get_season"), &WeatherMap3D::get_season);
 	ClassDB::bind_method(D_METHOD("get_season_at_height", "height"), &WeatherMap3D::get_season_at_height);
+	ClassDB::bind_method(D_METHOD("get_season_on_day", "day"), &WeatherMap3D::get_season_on_day);
 
 	ADD_GROUP("Map", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_extent", "get_extent");
@@ -2181,6 +2676,20 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust_intensity", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_gust_intensity", "get_gust_intensity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust_patch_size", PROPERTY_HINT_RANGE, "0.5,50,0.1,or_greater,suffix:m"), "set_gust_patch_size", "get_gust_patch_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust_patch_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_gust_patch_strength", "get_gust_patch_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "boundary_layer_height", PROPERTY_HINT_RANGE, "50,3000,1,suffix:m"), "set_boundary_layer_height", "get_boundary_layer_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_shear_aloft", PROPERTY_HINT_RANGE, "-10,20,0.1,suffix:m/s/km"), "set_wind_shear_aloft", "get_wind_shear_aloft");
+	ADD_GROUP("Terrain Wind", "terrain_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "terrain_wind_enabled"), "set_terrain_wind_enabled", "is_terrain_wind_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_source"), "set_terrain_source", "get_terrain_source");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "terrain_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_terrain_collision_mask", "get_terrain_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_wind_extent", PROPERTY_HINT_RANGE, "64,16384,1,or_greater,suffix:m"), "set_terrain_wind_extent", "get_terrain_wind_extent");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "terrain_wind_resolution", PROPERTY_HINT_RANGE, "16,1024,1"), "set_terrain_wind_resolution", "get_terrain_wind_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_curvature_length", PROPERTY_HINT_RANGE, "1,2000,0.1,or_greater,suffix:m"), "set_terrain_curvature_length", "get_terrain_curvature_length");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_slope_weight", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_terrain_slope_weight", "get_terrain_slope_weight");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_curvature_weight", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_terrain_curvature_weight", "get_terrain_curvature_weight");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_lee_reach", PROPERTY_HINT_RANGE, "0,1000,1,or_greater,suffix:m"), "set_terrain_lee_reach", "get_terrain_lee_reach");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_lee_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_terrain_lee_strength", "get_terrain_lee_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_floor", PROPERTY_HINT_RANGE, "-100000,100000,0.1,or_less,or_greater,suffix:m"), "set_terrain_floor", "get_terrain_floor");
 	ADD_GROUP("Shelter", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shelter_enabled"), "set_shelter_enabled", "get_shelter_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shelter_extent", PROPERTY_HINT_RANGE, "16,4096,1,or_greater,suffix:m"), "set_shelter_extent", "get_shelter_extent");
@@ -2216,6 +2725,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "air_daily_cycle"), "set_air_daily_cycle", "get_air_daily_cycle");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "daily_temperature_range", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:K"), "set_daily_temperature_range", "get_daily_temperature_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_drying"), "set_sun_drying", "get_sun_drying");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");
@@ -2232,6 +2742,8 @@ void WeatherMap3D::_bind_methods() {
 
 	BIND_CONSTANT(GUSTS_PER_AXIS);
 	BIND_CONSTANT(GUST_COUNT);
+
+	_bind_rain_methods();
 }
 
 WeatherMap3D::WeatherMap3D() {

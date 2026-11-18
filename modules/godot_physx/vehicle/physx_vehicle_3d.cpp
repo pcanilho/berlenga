@@ -56,9 +56,7 @@
 #include "modules/ground/ground_surface_3d.h"
 #include "modules/ground/ground_terramechanics.h"
 #endif
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 
 // Soft soil (docs/ideas/sand.md, stage 1): the wheels of a vehicle on a GroundSurface3D's soft material sink, print
@@ -75,6 +73,7 @@
 //   is its traction less the resistance, and a car whose resistance passes its traction digs in.
 struct PhysXVehicleSoilWheel {
 	float inflation = 200.0f; // kPa, from the wheel node
+	int tread = 1; // PhysXVehicleWheel3D::Tread, from the wheel node
 	float sinkage = 0.0f; // m, smoothed
 	float already = 0.0f; // m, the rut already pressed ahead of the wheel
 	float resistance = 0.0f; // N, the last substep's
@@ -92,6 +91,9 @@ struct PhysXVehicleSoilWheel {
 	float shed = 0.0f;
 	float grip = 1.0f; // the share of the clean shear limit it keeps
 	float base_moi = -1.0f;
+	// Ruts steer the wheels (docs/ideas/mud.md, round 9): the deformation's cross slope under the tread along the
+	// tyre's lateral direction, and the rut wall's height beside each sidewall (GroundSurface3D::get_rut_guidance()).
+	Vector3 guide;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSoil soil;
 #endif
@@ -116,7 +118,6 @@ static float _soil_slip(const Vehicle4W &p_v, PxU32 p_i, float p_spin) {
 // Mud in the tread (docs/ideas/mud.md, stage 3): sticky clay packs into the tread as it slips through it; a tread
 // turning fast enough flings it off (w^2 r past ca / (rho t): GroundTerramechanics::shedding_speed()); standing water
 // washes it out; on firm ground it falls off slowly. A full tread grips as a slick and adds its mass to the wheel.
-static constexpr float TREAD_DEPTH = 0.02f; // m, a lug
 static constexpr float CLAY_DENSITY = 1700.0f; // kg/m3
 
 static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i, float p_spin, float p_dt, bool p_soft, float p_water) {
@@ -126,10 +127,11 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 	const float revs = tread / ((float)Math::TAU * r); // per second
 	float &f = p_sw.mud;
 	const float before = f;
+	const PhysXVehicleWheel3D::TreadSoil ts = PhysXVehicleWheel3D::tread_soil((PhysXVehicleWheel3D::Tread)p_sw.tread);
 	if (p_soft && p_sw.soil.stickiness > 0.0f) {
-		// A quarter of the tread fills per turn at full slip in the stickiest clay, a tenth rolling.
-		f += 0.25f * p_sw.soil.stickiness * (0.4f + 0.6f * Math::abs(p_sw.slip)) * revs * (1.0f - f) * p_dt;
-		const float shed_speed = GroundTerramechanics::shedding_speed(p_sw.soil, r);
+		// A quarter of an all terrain tread fills per turn at full slip in the stickiest clay, a tenth rolling.
+		f += 0.25f * ts.fill * p_sw.soil.stickiness * (0.4f + 0.6f * Math::abs(p_sw.slip)) * revs * (1.0f - f) * p_dt;
+		const float shed_speed = GroundTerramechanics::shedding_speed(p_sw.soil, r) * ts.shed;
 		if (tread > shed_speed) {
 			f -= f * MIN(2.0f * (tread / shed_speed - 1.0f) * p_dt, 1.0f);
 		}
@@ -146,7 +148,7 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 		f -= f * MIN(MIN(p_water / 0.1f, 1.0f) * (0.2f + 0.5f * revs) * p_dt, 1.0f);
 	}
 	f = CLAMP(f, 0.0f, 1.0f);
-	const float full_kg = (float)Math::TAU * r * 2.0f * wp.halfWidth * TREAD_DEPTH * 0.5f * CLAY_DENSITY;
+	const float full_kg = (float)Math::TAU * r * 2.0f * wp.halfWidth * ts.depth * 0.5f * CLAY_DENSITY;
 	if (f < before) {
 		p_sw.shed += (before - f) * full_kg;
 	}
@@ -166,17 +168,17 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 //   a glaze where a wet surface's film freezes in the air below zero (black ice).
 static constexpr float TYRE_PRESSURE_KPA = 220.0f;
 
-static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice) {
+// The tread scales the result by what covers the surface (PhysXVehicleWheel3D::tread_firm_grip: chains bite ice,
+// lugs bite snow). Snow on firm ground waits for the snow contract (world-contracts.md): 0 until then.
+static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice, int p_tread) {
 	float film = 0.0f;
 	float depth = MAX(p_standing_water, 0.0f); // m
 	float air = 10.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		film = wm->get_wetness_at(p_at);
-		depth = MAX(depth, wm->get_puddle_at(p_at) * 0.001f);
-		air = wm->get_air_temperature();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		film = wm->surface_wetness_at(p_at);
+		depth = MAX(depth, wm->puddle_at(p_at) * 0.001f);
+		air = wm->air_temperature_at(p_at);
 	}
-#endif
 	const float kmh = Math::abs(p_speed) * 3.6f;
 	const float wet = MAX(CLAMP(film, 0.0f, 1.0f), Math::smoothstep(0.0f, 0.0005f, depth));
 	float grip = Math::lerp(1.0f, 0.75f - 0.15f * Math::smoothstep(0.0f, 120.0f, kmh), wet);
@@ -185,7 +187,8 @@ static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_wat
 	const float glaze = wet * Math::smoothstep(0.0f, 2.0f, -air);
 	const float sheet = CLAMP(p_ice.x / 0.002f, 0.0f, 1.0f) * (1.0f - CLAMP(p_ice.y, 0.0f, 1.0f));
 	const float ice_grip = Math::lerp(0.08f, 0.15f, Math::smoothstep(-0.5f, -5.0f, air));
-	return Math::lerp(grip, MIN(ice_grip, grip), MAX(glaze, sheet));
+	const float ice = MAX(glaze, sheet);
+	return Math::lerp(grip, MIN(ice_grip, grip), ice) * PhysXVehicleWheel3D::tread_firm_grip((PhysXVehicleWheel3D::Tread)p_tread, ice, 0.0f);
 }
 
 class PhysXVehicleSoilRoad : public PxVehicleComponent {
@@ -224,7 +227,7 @@ public:
 				if (road.hitState) {
 					// No ground surface (a street, a road mesh): the weather's wet, flooded and frozen state still holds.
 					const PxTransform hp = v.rigidBodyState.pose * v.wheelLocalPoses[i].localPose;
-					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2());
+					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2(), sw.tread);
 					road.friction *= sw.grip;
 				}
 				sw.soft = false;
@@ -245,7 +248,7 @@ public:
 				if (clogging) {
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
 				}
-				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at));
+				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at), sw.tread);
 				road.friction *= sw.grip;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
@@ -275,6 +278,7 @@ public:
 			const float ahead = (v_lng >= 0.0f ? 1.0f : -1.0f) * (0.5f * probe.contact_length + 0.05f);
 			const Vector3 front = at + Vector3(lng.x, lng.y, lng.z) * ahead;
 			sw.already = MAX(ground->get_dent_at(front) - ground->get_rim_at(front), 0.0f);
+			sw.guide = ground->get_rut_guidance(at, Vector3(lat.x, lat.y, lat.z), wp.halfWidth);
 			// A rut already there ahead (another wheel's, an earlier pass) takes the wheel down into it.
 			const float rut = MIN(ground->get_dent_at(front) - ground->get_rim_at(front), sw.soil.max_sinkage);
 			// The load's sinkage settles over a tenth of a second (the soil yields as the load comes). Slip
@@ -294,7 +298,9 @@ public:
 				const PxVehicleTireForceParams &tp = v.tireForceParams[i];
 				const float peak = MAX(MAX(tp.frictionVsSlip[0][1], tp.frictionVsSlip[1][1]), MAX(tp.frictionVsSlip[2][1], 0.05f));
 				// A clogged tread grips as a slick (stage 3).
-				sw.grip = Math::lerp(1.0f, GroundTerramechanics::clogged_grip(sw.soil, load, probe.contact_length * width), sw.mud);
+				// The tread's lugs or chains shear deeper; chains still bite through a clogged tread's slick (round 10).
+				const PhysXVehicleWheel3D::TreadSoil ts = PhysXVehicleWheel3D::tread_soil((PhysXVehicleWheel3D::Tread)sw.tread);
+				sw.grip = Math::lerp(1.0f, GroundTerramechanics::clogged_grip(sw.soil, load, probe.contact_length * width), sw.mud * (1.0f - ts.clog_bite)) * ts.grip;
 				road.friction = probe.shear_limit * sw.grip / load / peak;
 				const float slope = probe.shear_limit * probe.contact_length / (2.0f * MAX(sw.soil.shear_k, 1e-3f));
 				const float substep = p_dt / 3.0f;
@@ -419,11 +425,14 @@ public:
 				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
 				f.forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
 				f.torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
+			}
 			// Side bulldozing: a wheel sliding sideways through loose soil shoves a wedge of it with its sidewall
 			// (Ishigami et al. 2007, Hegedus' bulldozing on the side face): Bekker's bulldozing on a face one
 			// contact length long and the sinkage deep, against the side slip, eased in over 0.3 m/s.
 			const float v_lat = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL];
-			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, sw.sinkage, 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
+			// Into a rut's wall the sidewall shoves the wall's whole height, not only what the tyre sank.
+			const float wall = v_lat > 0.0f ? sw.guide.z : sw.guide.y;
+			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, MAX(sw.sinkage, wall), 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
 			if (side != 0.0f) {
 				const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
 				const PxVec3 dF = lat * -side;
@@ -432,6 +441,16 @@ public:
 				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm.cross(dF);
 			}
 			sw.side_bulldozing = Math::abs(side);
+			// Resting across a rut's tilted floor or wall, the ground's reaction tips with it: load x slope down the
+			// tilt (rut wandering, as a road's camber), so the wheel slides back into the rut and climbing out of one
+			// needs the tyre's own side force to beat it.
+			const float wander = -load * CLAMP(sw.guide.x, -0.6f, 0.6f);
+			if (wander != 0.0f) {
+				const PxVec3 lat_w = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
+				const PxVec3 dW = lat_w * wander;
+				const PxVec3 arm_w = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+				f.forces[PxVehicleTireDirectionModes::eLATERAL] += dW;
+				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm_w.cross(dW);
 			}
 			sw.resistance = Math::abs(r);
 			sw.traction = ws.traction * sw.grip;
@@ -724,6 +743,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			_engine_controls();
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
+				impl->soil_wheels[i].tread = (int)wheels[impl->wheel_order[i]]->get_tread();
 			}
 			if (!get_global_transform().is_equal_approx(impl->synced)) {
 				// Moved by a script since the last step: the actor goes there at rest.
@@ -904,8 +924,11 @@ void PhysXVehicle3D::_belly_step(float p_delta) {
 		for (int ix = 0; ix < NX; ix++) {
 			const Vector3 local((float(ix) + 0.5f) / NX * wx - 0.5f * wx, -h.y, (float(iz) + 0.5f) / NZ * wz - 0.5f * wz);
 			const Vector3 p = box.xform(local);
-			// Under the undisturbed surface: the trough the belly presses is mud packed under it, still bearing.
-			const float z = ground->get_ground_height_at(p) - p.y;
+			// Under the undisturbed surface: the trough the belly presses is mud packed under it, still bearing. Above
+			// it, the berms and the centre ridge the wheels shoved up between their ruts (mud round 10): soil the belly
+			// rides up on and ploughs (high-centring, the "hang-up" failure of mobility models: Rula and Nuttall
+			// 1971; Wong 2008 on ground clearance), so deep old ruts leave a ridge that lifts the car off its wheels.
+			const float z = ground->get_ground_height_at(p) + MAX(ground->get_rim_at(p) - ground->get_dent_at(p), 0.0f) - p.y;
 			if (z <= 0.0f) {
 				continue;
 			}

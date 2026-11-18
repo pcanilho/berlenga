@@ -253,11 +253,50 @@ float tm_vn(vec3 p) {
 
 // A tangent-space normal from a projection plane as a world-space perturbation (whiteout-style: added to the
 // geometric normal along the plane's two axes).
-vec3 tm_perturb(vec3 nt, ivec2 axes) {
+vec3 tm_perturb(vec2 nt, ivec2 axes) {
 	vec3 d = vec3(0.0);
 	d[axes.x] = nt.x;
 	d[axes.y] = nt.y;
 	return d;
+}
+// Layer textures without visible tiling: hex-tiling (Mikkelsen 2022, "Practical Real-Time Hex-Tiling", after Heitz and
+// Neyret 2018). The plane is cut into a triangle grid; each vertex owns a copy of the texture at its own random offset
+// and rotation, and a pixel blends the three copies of its triangle by barycentric weights sharpened so mostly one
+// copy shows. Gradients are rotated with the coordinates, so the mips stay right across the seams, and normal maps
+// rotate their xy back into the layer's axes.
+vec2 tm_hex_hash(ivec2 v) {
+	uint h = uint(v.x) * 0x8DA6B343u ^ uint(v.y) * 0xD8163841u;
+	h ^= h >> 13u;
+	h *= 0x5BD1E995u;
+	h ^= h >> 15u;
+	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
+}
+vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
+	vec2 st = uv * 1.7320508; // triangles some two thirds of a texture tile on a side: smaller cut features apart
+	vec2 sk = vec2(st.x - 0.57735027 * st.y, 1.15470054 * st.y);
+	ivec2 b = ivec2(floor(sk));
+	vec3 tmp = vec3(fract(sk), 0.0);
+	tmp.z = 1.0 - tmp.x - tmp.y;
+	float sg = step(0.0, -tmp.z);
+	float s2 = 2.0 * sg - 1.0;
+	vec3 w = vec3(-tmp.z * s2, sg - tmp.y * s2, sg - tmp.x * s2);
+	int si = int(sg);
+	ivec2 v[3] = ivec2[3](b + ivec2(si, si), b + ivec2(si, 1 - si), b + ivec2(1 - si, si));
+	w = w * w * w * w;
+	w /= max(w.x + w.y + w.z, 1e-6);
+	vec4 acc = vec4(0.0);
+	for (int k = 0; k < 3; k++) {
+		vec2 hh = tm_hex_hash(v[k]);
+		float a = hh.x * 6.2831853;
+		mat2 r = mat2(vec2(cos(a), sin(a)), vec2(-sin(a), cos(a)));
+		vec4 c = textureGrad(t, r * uv + hh * 17.0, r * dx, r * dy);
+		if (nmap) {
+			vec2 nt = transpose(r) * (c.xy * 2.0 - 1.0);
+			c.xy = nt * 0.5 + 0.5;
+		}
+		acc += c * w[k];
+	}
+	return acc;
 }
 )";
 	// Per layer: albedo, roughness, normal perturbation and height at this point.
@@ -268,22 +307,27 @@ vec3 tm_perturb(vec3 nt, ivec2 axes) {
 		const bool has_n = l.is_valid() && l->get_normal_texture().is_valid();
 		const bool has_r = l.is_valid() && l->get_roughness_texture().is_valid();
 		const bool has_h = l.is_valid() && l->get_height_texture().is_valid();
-		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
+		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
 		c += vformat("\tTmProj pr = tm_projection(p, n, tm_%s_scale, cliff);\n", n);
+		if (has_a || has_n || has_r || has_h) {
+			// The pixel's footprint in each projection's texture coordinates, for the hex-tiled samples' mips.
+			c += vformat("\tvec2 dx0 = vec2(dpx[pr.axes0.x], dpx[pr.axes0.y]) * tm_%s_scale, dy0 = vec2(dpy[pr.axes0.x], dpy[pr.axes0.y]) * tm_%s_scale;\n", n, n);
+			c += vformat("\tvec2 dx1 = vec2(dpx[pr.axes1.x], dpx[pr.axes1.y]) * tm_%s_scale, dy1 = vec2(dpy[pr.axes1.x], dpy[pr.axes1.y]) * tm_%s_scale;\n", n, n);
+		}
 		c += vformat("\talbedo = tm_%s_color.rgb;\n\trough = tm_%s_roughness;\n\tdn = vec3(0.0);\n\th = 0.5;\n", n, n);
 		if (has_a) {
-			c += vformat("\talbedo *= texture(tm_%s_albedo_tex, pr.uv0).rgb * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_albedo_tex, pr.uv1).rgb * pr.w1 : vec3(0.0));\n", n, n);
+			c += vformat("\talbedo *= tm_hex(tm_%s_albedo_tex, pr.uv0, dx0, dy0, false).rgb * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_albedo_tex, pr.uv1, dx1, dy1, false).rgb * pr.w1 : vec3(0.0));\n", n, n);
 		}
 		if (has_r) {
-			c += vformat("\trough *= texture(tm_%s_roughness_tex, pr.uv0).g * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_roughness_tex, pr.uv1).g * pr.w1 : 0.0);\n", n, n);
+			c += vformat("\trough *= tm_hex(tm_%s_roughness_tex, pr.uv0, dx0, dy0, false).g * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_roughness_tex, pr.uv1, dx1, dy1, false).g * pr.w1 : 0.0);\n", n, n);
 		}
 		if (has_n) {
-			c += vformat("\tvec3 n0 = texture(tm_%s_normal_tex, pr.uv0).xyz * 2.0 - 1.0;\n", n);
+			c += vformat("\tvec3 n0 = tm_hex(tm_%s_normal_tex, pr.uv0, dx0, dy0, true).xyz * 2.0 - 1.0;\n", n);
 			c += vformat("\tdn = tm_perturb(n0.xy * tm_%s_normal, pr.axes0) * pr.w0;\n", n);
-			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = texture(tm_%s_normal_tex, pr.uv1).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
+			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = tm_hex(tm_%s_normal_tex, pr.uv1, dx1, dy1, true).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
 		}
 		if (has_h) {
-			c += vformat("\th = texture(tm_%s_height_tex, pr.uv0).r * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_height_tex, pr.uv1).r * pr.w1 : 0.0);\n", n, n);
+			c += vformat("\th = tm_hex(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", n, n);
 		}
 		c += "}\n";
 	}
@@ -877,6 +921,9 @@ void fragment() {
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	bool cliff = wn.y < tm_cliff_cos;
+	// The pixel's world footprint, taken here in uniform control flow for the layers' texture gradients.
+	vec3 tm_dpx = dFdx(wp);
+	vec3 tm_dpy = dFdy(wp);
 	// Layer weights. Geology from the generator: bare rock, scree on it, the rest soil, alluvium where much water
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
 	float w[5];
@@ -964,7 +1011,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_rock(wp, wn, cliff, a, r, d, h);
+		tm_rock(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[0] = a;
 		rgh[0] = r;
 		dns[0] = d;
@@ -975,7 +1022,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_scree(wp, wn, cliff, a, r, d, h);
+		tm_scree(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		// Patches of fresher and older, lichened blocks: a tone that varies by about a fifth over 10 to 30 m (mean
 		// kept), so a talus slope is not one flat colour at a distance (world coordinates, unrotated, as above).
 		{
@@ -993,7 +1040,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_soil(wp, wn, cliff, a, r, d, h);
+		tm_soil(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -1004,7 +1051,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_alluvium(wp, wn, cliff, a, r, d, h);
+		tm_alluvium(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -1015,7 +1062,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_sand(wp, wn, cliff, a, r, d, h);
+		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		alb[4] = a;
 		rgh[4] = r;
@@ -1257,6 +1304,8 @@ void fragment() {
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
 		c += "\tweather_wetness_apply(tm_wetness * weather_wetness_at(wp), wn.y, metallic, porosity, albedo, rough);\n";
+		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
+		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the

@@ -31,6 +31,7 @@
 #include "physx_flow_3d.h"
 
 #include "flow_backend.h"
+#include "modules/world/world_contracts.h"
 #include "physx_flow_emitter_3d.h"
 #include "physx_flow_render_effect.h"
 
@@ -353,6 +354,10 @@ bool PhysXFlow3D::prepare_traced() {
 		v.emission_scale = traced_emission;
 		v.emission_proxy_light = traced_proxy_light;
 		v.temperature_range = traced_temperature_range;
+		v.shimmer_kelvin = traced_shimmer_kelvin;
+		v.shimmer_air_kelvin = traced_air_kelvin;
+		v.shimmer_turbulence = traced_shimmer_turbulence;
+		v.shimmer_time = traced_shimmer_time;
 		for (int i = 0; i < 8; i++) {
 			v.heat_ramp[i] = traced_heat[i];
 		}
@@ -417,8 +422,18 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 	if (receive != 0 && !lights.is_empty()) {
 		_fill_scatter_shadows(lights, p_lights, p_shadow_atlas, receive);
 	}
+	FlowShimmerRD::Params shimmer;
+	{
+		MutexLock lock(scatter_mutex);
+		shimmer.kelvin = traced_shimmer_kelvin;
+		shimmer.air_kelvin = traced_air_kelvin;
+		shimmer.turbulence = traced_shimmer_turbulence;
+		shimmer.time = traced_shimmer_time;
+		shimmer.temperature_range = traced_temperature_range;
+	}
+	const bool shimmer_on = shimmer.kelvin > 0.0f;
 	FlowBackend::ScatterSource source;
-	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering && !cast_shadows) ? nullptr : &source, p_first_view);
+	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering && !cast_shadows && !shimmer_on) ? nullptr : &source, p_first_view);
 	stat_render_calls++;
 	stat_render_outputs += out != 0 ? 1 : 0;
 	if (out != 0 && out != p_color.get_id()) {
@@ -476,6 +491,15 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 			// The opaque pass reads it from the next frame on (Forward+ only).
 			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow);
 		}
+	}
+	if (out != 0 && source.valid && shimmer_on) {
+		// Last, over the gas and its light: what lies behind the hot air (the gas included) is seen along the
+		// bent rays. Before the Flow frame ends: its volume and table are this frame's.
+		shimmer.inv_view_projection = p_inv_view_projection;
+		shimmer.camera_position = p_camera;
+		FlowShimmerRD &pass = p_effect->get_shimmer();
+		p_effect->copy_texture(p_rd, p_color, pass.get_source_copy(p_rd, p_size), p_size);
+		pass.run(p_rd, source, shimmer, p_depth, p_color, p_size);
 	}
 	if (p_last_view) {
 		FlowBackend::grid_render_rd_finish(grid);
@@ -1022,6 +1046,43 @@ float PhysXFlow3D::_terrain_height_at(const Vector2i &p_node, float p_spacing, f
 	return h;
 }
 
+// The AMBIENT WIND: the weather's wind (the world contract's wind_at) laid over the region as air-only boxes in
+// layers, so smoke from every emitter leans and drifts with the same air as the grass and trees. They reserve
+// no blocks: they only couple the velocity where the gas already is.
+void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const {
+	if (!weather_wind || weather_wind_coupling <= 0.0f || !p_region.has_volume()) {
+		return;
+	}
+	const WorldWeather *wm = WorldContracts::weather();
+	if (wm == nullptr || !wm->has_provider()) {
+		return;
+	}
+	// Layers of at most 4 m, up to 8: the wind grows with height (log law), so a tall plume bends more aloft.
+	const AABB r = p_region.grow(2.0f);
+	const int layers = CLAMP(int(Math::ceil(r.size.y / 4.0f)), 1, 8);
+	const float lh = r.size.y / layers;
+	for (int i = 0; i < layers; i++) {
+		const Vector3 c(r.position.x + r.size.x * 0.5f, r.position.y + lh * (i + 0.5f), r.position.z + r.size.z * 0.5f);
+		const Vector3 w = wm->wind_at(c);
+		FlowBackend::Emitter e;
+		e.shape = FlowBackend::Emitter::SHAPE_BOX;
+		e.origin[0] = c.x;
+		e.origin[1] = c.y;
+		e.origin[2] = c.z;
+		e.half_size[0] = r.size.x * 0.5f;
+		e.half_size[1] = lh * 0.5f;
+		e.half_size[2] = r.size.z * 0.5f;
+		e.velocity[0] = w.x;
+		e.velocity[1] = w.y;
+		e.velocity[2] = w.z;
+		e.temperature = 0.0f;
+		e.smoke = 0.0f;
+		e.couple_rate = weather_wind_coupling;
+		e.allocate = false;
+		r_emitters.push_back(e);
+	}
+}
+
 // The TERRAIN FLOOR: one solid box per grid cell of the ground under the region, its top laid on the plane
 // through the cell's four corner heights (tilted to the slope, so the gas meets a smooth ground, not steps),
 // a little wider than the cell so neighbours overlap and nothing leaks between them. Solids reserve no blocks.
@@ -1100,6 +1161,20 @@ void PhysXFlow3D::_step(double p_delta) {
 	AABB emitter_bounds;
 	_gather_emitters(emitters, emitter_bounds);
 	draw_center = emitters.is_empty() ? get_global_position() : emitter_bounds.get_center();
+	{
+		// Heat shimmer only where an emitter brings heat (or fuel to burn): dust and mist skip the pass.
+		bool hot = false;
+		for (const FlowBackend::Emitter &e : emitters) {
+			hot = hot || e.temperature > 0.0f || (combustion && e.fuel > 0.0f);
+		}
+		const WorldWeather *wm = WorldContracts::weather();
+		const float air_c = wm != nullptr ? wm->air_temperature_at(draw_center) : 15.0f;
+		MutexLock lock(scatter_mutex);
+		traced_shimmer_kelvin = (heat_shimmer && hot) ? heat_shimmer_kelvin : 0.0f;
+		traced_air_kelvin = air_c + 273.15f;
+		traced_shimmer_turbulence = heat_shimmer_turbulence;
+		traced_shimmer_time = (float)Math::fmod(sim_time, 3600.0);
+	}
 	// Solids near where the gas comes from -- and where it has spread to,
 	// when it's read back.
 	AABB region = emitters.is_empty() ? AABB() : emitter_bounds.grow(collision_range);
@@ -1119,6 +1194,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	}
 	transient_solids.clear();
 	_gather_terrain_floor(region, emitters);
+	_gather_weather_wind(region, emitters);
 	_gather_scatter_lights();
 	if (floor_enabled) {
 		// The FLOOR: one wide solid box whose top is floor_height, under everything this grid can reach. A solid
@@ -1582,6 +1658,10 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collision_range", "range"), &PhysXFlow3D::set_collision_range);
 	ClassDB::bind_method(D_METHOD("set_floor_enabled", "enabled"), &PhysXFlow3D::set_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_floor_enabled"), &PhysXFlow3D::is_floor_enabled);
+	ClassDB::bind_method(D_METHOD("set_weather_wind", "enabled"), &PhysXFlow3D::set_weather_wind);
+	ClassDB::bind_method(D_METHOD("is_weather_wind"), &PhysXFlow3D::is_weather_wind);
+	ClassDB::bind_method(D_METHOD("set_weather_wind_coupling", "rate"), &PhysXFlow3D::set_weather_wind_coupling);
+	ClassDB::bind_method(D_METHOD("get_weather_wind_coupling"), &PhysXFlow3D::get_weather_wind_coupling);
 	ClassDB::bind_method(D_METHOD("set_terrain_floor", "enabled"), &PhysXFlow3D::set_terrain_floor);
 	ClassDB::bind_method(D_METHOD("is_terrain_floor"), &PhysXFlow3D::is_terrain_floor);
 	ClassDB::bind_method(D_METHOD("set_terrain_path", "path"), &PhysXFlow3D::set_terrain_path);
@@ -1619,6 +1699,12 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_ambient_scattering"), &PhysXFlow3D::is_ambient_scattering);
 	ClassDB::bind_method(D_METHOD("set_sun_scattering", "enabled"), &PhysXFlow3D::set_sun_scattering);
 	ClassDB::bind_method(D_METHOD("is_sun_scattering"), &PhysXFlow3D::is_sun_scattering);
+	ClassDB::bind_method(D_METHOD("set_heat_shimmer", "enabled"), &PhysXFlow3D::set_heat_shimmer);
+	ClassDB::bind_method(D_METHOD("is_heat_shimmer"), &PhysXFlow3D::is_heat_shimmer);
+	ClassDB::bind_method(D_METHOD("set_heat_shimmer_kelvin", "kelvin"), &PhysXFlow3D::set_heat_shimmer_kelvin);
+	ClassDB::bind_method(D_METHOD("get_heat_shimmer_kelvin"), &PhysXFlow3D::get_heat_shimmer_kelvin);
+	ClassDB::bind_method(D_METHOD("set_heat_shimmer_turbulence", "turbulence"), &PhysXFlow3D::set_heat_shimmer_turbulence);
+	ClassDB::bind_method(D_METHOD("get_heat_shimmer_turbulence"), &PhysXFlow3D::get_heat_shimmer_turbulence);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enabled"), &PhysXFlow3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_cast_shadows"), &PhysXFlow3D::is_cast_shadows);
 	ClassDB::bind_method(D_METHOD("set_scattering_temporal", "enabled"), &PhysXFlow3D::set_scattering_temporal);
@@ -1671,6 +1757,8 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_range", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_collision_range", "get_collision_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floor_enabled"), "set_floor_enabled", "is_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "floor_height", PROPERTY_HINT_NONE, "suffix:m"), "set_floor_height", "get_floor_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wind"), "set_weather_wind", "is_weather_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "weather_wind_coupling", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:1/s"), "set_weather_wind_coupling", "get_weather_wind_coupling");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "terrain_floor"), "set_terrain_floor", "is_terrain_floor");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_path"), "set_terrain_path", "get_terrain_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terrain_floor_spacing", PROPERTY_HINT_RANGE, "0.05,8,0.05,or_greater,suffix:m"), "set_terrain_floor_spacing", "get_terrain_floor_spacing");
@@ -1706,6 +1794,10 @@ void PhysXFlow3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(SCATTERING_RESOLUTION_QUARTER);
 	BIND_BITFIELD_FLAG(SCATTERING_SHADOW_OMNI);
 	BIND_BITFIELD_FLAG(SCATTERING_SHADOW_SPOT);
+	ADD_GROUP("Heat Shimmer", "heat_shimmer");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "heat_shimmer"), "set_heat_shimmer", "is_heat_shimmer");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "heat_shimmer_kelvin", PROPERTY_HINT_RANGE, "0,3000,1,or_greater,suffix:K"), "set_heat_shimmer_kelvin", "get_heat_shimmer_kelvin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "heat_shimmer_turbulence", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater"), "set_heat_shimmer_turbulence", "get_heat_shimmer_turbulence");
 	ADD_GROUP("Queries", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cpu_readback"), "set_cpu_readback", "is_cpu_readback");
 }

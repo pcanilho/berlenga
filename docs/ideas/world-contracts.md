@@ -28,11 +28,12 @@ contract returns with no provider.
 
 | Member | Unit | Default | Guarantee |
 | --- | --- | --- | --- |
-| `air_temperature_at(pos)` | C | 15 | The live air (season, day's cycle, lapse rate above the map's ground height). Without a clock and a climate it equals the `temperature` setting, eased |
+| `air_temperature_at(pos)` | C | 15 | The live air (season, day's cycle, 6.5 K/km above the map's ground height). Without a clock and a climate it equals the `temperature` setting, eased |
 | `air_humidity_at(pos)` | 0..1 | 0.7 | Relative, at the live air temperature |
 | `dew_point_at(pos)` | C | from the two above | |
-| `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles; height < 0 means 10 m |
-| `wind_aloft_at(pos, height)` | m/s, Vector3 | 0 | Free wind over the terrain (clouds, smoke columns) |
+| `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles, with the terrain's speed-up, turning and updraught; height < 0 is measured from the ground under pos |
+| `mean_wind_at(pos)` | m/s, Vector3 (y 0) | 0 | 10 m mean, terrain included, no gusts |
+| `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
@@ -41,11 +42,20 @@ contract returns with no provider.
 | `sun_direction()`, `sun_visibility_at(pos)` | unit vector, 0..1 | (0,1,0), 1 | Cloud shadow |
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
-| `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (planned) |
+| `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 
 Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather_state_map`, `weather_map_rect`,
-`weather_contact_map`, `weather_shelter_map`, `weather_precip_phase`; formats in weather.md.
+`weather_contact_map`, `weather_shelter_map`, `weather_frost_map` (R frost mm, G surface cooling K),
+`weather_precip_phase`; formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
+`weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
+globals are declared at start, so a shader compiles with no weather and has no wind.
+
+The full wind side (gust parts and waves for solvers, terrain getters `get_terrain_speed_factor_at`,
+`get_terrain_divert_at`, `get_terrain_lee_at`, `get_terrain_ground_at`, consumers' settings) is in wind.md, "The
+wind contract"; solvers that filter the turbulence themselves still read `WeatherMap3D` for `get_wind_parts` and
+`get_gust_waves`. Stub for the terrain under the wind: `docs/bench/weather/hill.gd` (any node with
+`get_height(position)`).
 
 Consumers: ground, snow, rocks, grass, plants, trees, pollen, mist, fire, firebrands, Flow dust, cloth, hair,
 water (sea wind, mist, falls), vehicles, lightning.
@@ -63,19 +73,30 @@ groups counts once.
 
 ### Ground (`WorldGround`; producer `GroundSurface3D`)
 
+Built 18 Nov (mud thread; sand adds its own reads on top). `WorldContracts::ground()` in C++,
+`WorldContracts.get_ground()` in scripts; `set_ground(stub)` for a test, where the stub's unset methods fall back to
+the live ground.
+
 | Member | Unit | Default |
 | --- | --- | --- |
-| `height_at(pos)` | m | the ray to the physics floor |
-| `soil_at(pos)` | Soil (soft, cohesion, friction angle, stickiness) | firm |
+| `height_at(pos)` | m, the deformed surface | the first physics surface under the point, else -INF |
+| `soil_at(pos)` | soft, cohesion kPa, friction angle degrees, stickiness 0..1 | firm (soft false) |
 | `standing_water_at(pos)` | m | 0 |
 | `ice_at(pos)` | (thickness m, broken share) | 0 |
-| `frost_at(pos)` | (thawed top m, frost depth m, weakening) | 0 |
+| `frost_at(pos)` | (thawed top m, frost depth m, weakening 0..1) | 0 |
 | `dent_at(pos)`, `rim_at(pos)` | m | 0 |
 | `runoff_at(pos)` | (depth m, speed m/s) | 0 |
-| `press(body)` | | through the contact group |
+| `mud_depth_at(pos)` | m of slurry | 0 |
+| `needle_ice_at(pos)` | (height m, crumbs 0..1) | 0 |
+| `rut_guidance_at(contact, lateral, half_width)` | (cross slope along lateral, wall m on -lateral, wall m on +lateral) | 0 |
+| `sand_at(pos)` | loose sand's share of the top, 0..1 | 0 |
+| `ripple_at(pos)` | wind ripples' height about their mean, m | 0 |
+| `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
+| pressing | | through the `world_contact` group |
 
 Consumers: vehicles, snow, grass (ruts tear the sward), fire (fuel on bare ground), water (wet sand), ground mud on
-legs.
+legs. Moving the vehicle's direct GroundSurface3D calls onto it is the next step (they also need the richer
+terramechanics and pressing calls, which stay on the producer for now).
 
 ### Snow (`WorldSnow`; producers `SnowCover3D`, `SnowSurface3D`)
 
@@ -125,15 +146,18 @@ Consumers: buoyancy, bodies in world_contact, plants (lean with the current), cl
 
 Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (interception), rain (drip).
 
-### Fire (`WorldFire`; producer `PhysXFireSpread3D`)
+### Fire (`WorldFire`; producer `PhysXFireSpread3D`, every live one)
 
-| Member | Unit | Default |
-| --- | --- | --- |
-| `burnt_at(pos)`, `glow_at(pos)` | 0..1 | 0 |
-| `heat_at(pos)` | W/m2 | 0 |
-| shader globals `fire_state_map`, `fire_char_rect` | | |
+| Member | Unit | Default | Guarantee |
+| --- | --- | --- | --- |
+| `heat_at(pos)` | W/m2 | 0 | The most heat release of any fire over the point, now |
+| `burnt_at(pos)` | 0..1 | 0 | |
+| shader globals `fire_state_map`, `fire_char_rect` | | | burnt, glow, flame length, scorch height |
 
-Consumers: plants (char), ground (scorch), snow (melt), weather (drying), water (steam).
+Tests: `WorldContracts.set_fire(stub)`.
+
+Consumers: weather (the surface film boils off under a fire), plants (char), snow (melt, to come), water (steam,
+to come).
 
 ## Testing
 
@@ -151,8 +175,13 @@ Today systems reach into each other through `X::get_active()`, `#include "module
 (15 files), vegetation → weather (8), vegetation → terrain data map (5), snow → weather (4), rocks → terrain
 generator (3), PhysX → ground (3), snow → ground deform (3), and about 15 single ones. The order:
 
-1. `modules/world` with the registry, the weather and contact contracts, and stubs. Producers register.
-2. Weather consumers move to `WorldContracts::weather()` (mechanical: same names), module by module.
-3. The contact reader replaces the four copies of the body-size code (grass, ground, water, plants).
+1. `modules/world` with the registry, the weather and contact contracts, and stubs. Producers register. Done 18 Nov
+   (weather, water, contacts).
+2. Weather consumers move to `WorldContracts::weather()`, module by module. Done 18 Nov: PhysX (fire, firebrands,
+   burnables, cloth, hair, wetness, vehicles, waterfalls, cave mist, rock dust) and rockfall. Left: ground, snow,
+   vegetation, which also read richer WeatherMap3D state (season, snapshots, shader code).
+3. The contact reader replaces the copies of the body-size code: done 18 Nov for grass, the plants' trample field,
+   pollen and water (`WorldContracts::body_extent`); the ground keeps its own reader (mass, wheels) until mud and
+   sand move it onto `describe_body`.
 4. Ground, snow, water, canopy and fire contracts, then their consumers.
 5. Each bench gets its stubs.

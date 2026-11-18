@@ -56,3 +56,28 @@ papers and can be built from those.
 Borrow ideas: add items 1 and 2 to `flow_foam_source` (small, a few lines in one shader, no new
 texture) and treat item 3 as a separate, optional step for the live window, with a raster and a path-traced
 check at 100% crop. Owner: the Valence thread (water).
+
+## As built (18 Nov, Paulo's pick: foam ideas plus advected UVs)
+
+Both on by default on `PhysXRiver3D` and `PhysXWaterSurface3D`; benches and tests switch them off with the
+properties below (off is the old behaviour exactly).
+
+- **`flow_foam_impact`**: two more white-water sources in the live window (`water_ripple.glsl`,
+  `impact_foam_source`). Convergence: the speed lost over 25 cm (negative divergence times 0.25 m) between
+  0.15 and 0.6 m/s, gated by the faster face's speed (0.5 to 1.5 m/s), so it marks a jet meeting slack water or
+  a jump's toe, not slow deepening. Stagnation: the nearest dry cell along each axis within about 0.75 m (at
+  most 3 cells) gives the wall's direction; the approach speed is read that far upstream, where the flow has
+  not yet turned aside; 0.3 to 1.2 m/s gives the pillow. Joins the existing shear and Froude sources by max,
+  so it carries, fades and renders as the other flow foam does. Params grew a fifth vec4 (`flow_extra`).
+- **`live_advected_ripples`**: `water_flow_offset.glsl`, one pass and a copy per solver step over the ripple
+  grid (RGBA32F, 16 bytes a cell, plus a scratch). It stores, for each of the two flow-map phases, how far the
+  advected coordinate has drifted from plain flow mapping, so zero is the old look and the materials just add
+  it (river: `live_offset_tex`; sea and lakes: `flow_offset_tex` inside the simulated square, fading over its
+  edge as the flow does). Each phase restarts at zero when its own phase wraps, on the materials' clock
+  (`WaterSolver::set_flow_clock`, the same `water_time` and phase noise), so the restart is unseen. A uniform
+  current gives zero exactly; the correction only shows where the flow turns. Re-centring clears it.
+- River bench: the generated granite boulders and `--view=creek` from Valence's shelved draft.
+
+Cost: one extra small compute pass on a 160 to 192 square grid and one texture read per pixel of live water;
+the foam terms add about a dozen neighbour reads per cell to a pass that already runs. Not timed on a GPU
+yet (PC queue).

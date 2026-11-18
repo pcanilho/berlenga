@@ -33,6 +33,7 @@
 #include "modules/terrain_deform/landscape_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/math/convex_hull.h"
@@ -361,6 +362,15 @@ real_t RockField3D::_cell_size(Layer p_layer) const {
 	return (p_layer == LAYER_SCREE || p_layer == LAYER_RIVER || p_layer == LAYER_SHORE) ? 32.0 : 128.0; // tors and coast 128 m too
 }
 
+// Shapes per library. Big rounded stones (river and beach cobbles and boulders, glacial erratics, rockfall blocks)
+// lie by the hundred in one view, each one large enough to recognise, so they get twice the variants: two of the
+// same shape side by side read as a copy, where two pebbles do not.
+int RockField3D::_variant_count(uint32_t p_key) const {
+	const RockGenerator::Family f = key_family(p_key);
+	const bool big = key_bin(p_key) < RF_DETAIL_BIN && (f == RockGenerator::FAMILY_COBBLE || f == RockGenerator::FAMILY_GLACIAL || f == RockGenerator::FAMILY_ROCKFALL);
+	return big ? MIN(variants * 2, 32) : variants;
+}
+
 uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator::Family p_family, int p_bin) const {
 	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 8);
 }
@@ -369,6 +379,7 @@ uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator
 // and lets the cell wait instead (library_pending), so a first coast stack or hoodoo is no main-thread hitch.
 struct RockField3D::LibraryBuild {
 	LocalVector<uint32_t> keys;
+	LocalVector<uint32_t> first; // each key's first job (and one past the last key's)
 	LocalVector<LibraryJob> jobs;
 	WorkerThreadPool::GroupID group = 0;
 };
@@ -380,7 +391,8 @@ RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint3
 	LocalVector<LibraryJob> &jobs = b->jobs;
 	for (uint32_t k : missing) {
 		RockGenerator::get_material(key_type(k)); // made here, read by the workers
-		for (int v = 0; v < variants; v++) {
+		b->first.push_back(jobs.size());
+		for (int v = 0; v < _variant_count(k); v++) {
 			LibraryJob j;
 			j.type = key_type(k);
 			j.family = key_family(k);
@@ -393,10 +405,15 @@ RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint3
 				static const float pebble_bins[4] = { 1.5f, 2.5f, 4.0f, 6.0f };
 				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * pebble_bins[CLAMP(key_bin(k), 0, 3)];
 				j.seed += 131 * key_bin(k);
+			} else if (key_bin(k) >= RF_DETAIL_BIN) {
+				// Ground detail classes (pebbles, gravel, fine gravel): each its own shapes, so a finer class is not
+				// the coarser one shrunk, and no shape repeats across the scales.
+				j.seed += 131 * key_bin(k);
 			}
 			jobs.push_back(j);
 		}
 	}
+	b->first.push_back(jobs.size());
 	b->group = WorkerThreadPool::get_singleton()->add_native_group_task(&library_job, jobs.ptr(), int(jobs.size()), -1, true, "RockField3D libraries");
 	return b;
 }
@@ -408,8 +425,8 @@ void RockField3D::_finish_libraries(LibraryBuild *p_build) {
 	LocalVector<LibraryJob> &jobs = p_build->jobs;
 	for (uint32_t m = 0; m < missing.size(); m++) {
 		Library lib;
-		for (int v = 0; v < variants; v++) {
-			LibraryJob &j = jobs[m * variants + v];
+		for (uint32_t ji = p_build->first[m]; ji < p_build->first[m + 1]; ji++) {
+			LibraryJob &j = jobs[ji];
 			if (j.mesh.is_null()) {
 				continue;
 			}
@@ -1061,7 +1078,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.size = CLAMP(pd.size, float(min_size), 1.5f);
 						// Four shape bins of pebbles (the swash's sorting by shape: discs and blades up the beach, spheres and
 						// rods rolled down; Bluck 1967), each its own variants, so neighbours are rarely twins.
-						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, int(rng.rand() % 4)) : _library_key(type, RockGenerator::FAMILY_COBBLE, 2);
+						// The bigger ones from the two most-worn cobble bins: rounder and less round, so no two read alike.
+						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, int(rng.rand() % 4)) : _library_key(type, RockGenerator::FAMILY_COBBLE, 1 + int(rng.rand() % 2));
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
 						pd.tilt = Math::deg_to_rad(10.0f) * rng.randf();
@@ -3565,8 +3583,8 @@ int RockField3D::write_terrain3d_holes() {
 // Falls per game hour now, as a multiple of rockfall_rate: 1 as the base, plus 3 in the frost-cracking window
 // (-8 to -3 C), plus 6 for two game hours after the air thaws through 0 C, plus the rain rate over 5 mm/h.
 real_t RockField3D::get_rockfall_trigger() const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	if (!w) {
+	const WorldWeather *w = WorldContracts::weather();
+	if (!w->has_provider()) {
 		return 1.0;
 	}
 	const Vector3 tp = _target_position();
@@ -3578,17 +3596,17 @@ real_t RockField3D::get_rockfall_trigger() const {
 	if (thaw_left > 0.0) {
 		t += 6.0;
 	}
-	t += MAX(real_t(w->get_rain_at(tp)), real_t(0.0)) / 5.0;
+	t += MAX(real_t(w->precipitation_at(tp)), real_t(0.0)) / 5.0;
 	return t;
 }
 
-// The air at the target's height (standard lapse, 6.5 C per km, from the weather's ground height).
+// The air at the target's height (the weather contract applies the lapse rate).
 real_t RockField3D::_rockfall_air(const Vector3 &p_pos) const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	if (!w) {
+	const WorldWeather *w = WorldContracts::weather();
+	if (!w->has_provider()) {
 		return 10.0;
 	}
-	return w->get_air_temperature() - 0.0065f * (p_pos.y - w->get_ground_height());
+	return w->air_temperature_at(p_pos);
 }
 
 bool RockField3D::_find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_group, int &r_k) {

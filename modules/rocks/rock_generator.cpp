@@ -285,10 +285,11 @@ void rk_worley_point(const Vector3 &p_p, uint32_t p_seed, float &r_f1, float &r_
 }
 
 // The granite crystal map, shared with the shader (rk_crystal there, same hash and lattice): crystal cells of
-// 1.8 cm, quartz (30%) or feldspar by the cell's id; biotite clots on a 1.3 cm map of their own (7% of its cells).
-static const float RK_CRYSTAL_CELL = 0.018f;
+// 1 cm (a medium to coarse granite: most are 2 to 10 mm, cells this size read as its larger feldspars), quartz (30%)
+// or feldspar by the cell's id; biotite clots on a 6 mm map of their own (7% of its cells).
+static const float RK_CRYSTAL_CELL = 0.01f;
 static const uint32_t RK_CRYSTAL_SEED = 0x51A7u;
-static const float RK_BIOTITE_CELL = 0.013f;
+static const float RK_BIOTITE_CELL = 0.006f;
 // Sandstone laminae: 1.9 cm, each with its own hardness (shared with the shader's lamina colour).
 static const float RK_LAMINA = 0.019f;
 static const uint32_t RK_LAMINA_SEED = 0x5A5Du;
@@ -330,7 +331,9 @@ float rk_relief(RockGenerator::RockType p_type, const Vector3 &p, const Vector3 
 			rk_worley_point(p / RK_CRYSTAL_CELL, RK_CRYSTAL_SEED, f1, f2, id, fp);
 			const float u = float(id >> 8) / 16777216.0f;
 			// Each crystal a planar facet: its class height plus a small tilt about its centre (cleavage faces).
-			const Vector3 tilt = Vector3(float((id >> 2) & 15u) - 7.5f, float((id >> 10) & 15u) - 7.5f, float((id >> 18) & 15u) - 7.5f) * 0.03f;
+			// The tilt is a fresh break's: weathering and wear round a crystal's face into the rind's (a beach or
+			// stream boulder is near smooth), so an old face keeps a quarter of it.
+			const Vector3 tilt = Vector3(float((id >> 2) & 15u) - 7.5f, float((id >> 10) & 15u) - 7.5f, float((id >> 18) & 15u) - 7.5f) * (0.0075f + 0.0225f * p_fresh);
 			float facet = u < 0.3f ? 0.0016f : 0.0003f; // quartz proud, feldspar lower (it kaolinises)
 			facet += tilt.dot(p - fp * RK_CRYSTAL_CELL);
 			d += fit(RK_CRYSTAL_CELL) * facet;
@@ -2782,17 +2785,17 @@ void fragment() {
 	if (crystal_map) {
 		// In the stone's frame at its own size (see mpu_marks), as the geometry was carved.
 		vec3 mg = lp * mpu_marks;
-		float near_crystal = 1.0 - smoothstep(0.006, 0.03, footprint);
+		float near_crystal = 1.0 - smoothstep(0.0035, 0.017, footprint);
 		resolved = near_crystal;
 		float quartz = 0.3;
 		speck_mix = 0.07;
 		if (near_crystal > 0.0) {
 			// Grain boundaries are not straight: crystals grew into each other, so the map is looked up through a
 			// small warp (a fifth of a crystal) and its borders come out ragged instead of a polygon mosaic.
-			vec3 warp = vec3(rk_noise3(mg * 160.0), rk_noise3(mg * 160.0 + 17.3), rk_noise3(mg * 160.0 + 41.9)) - 0.5;
-			vec3 mgw = mg + warp * 0.0045;
-			vec2 c = rk_crystal(mgw / 0.018, 20903u);
-			vec2 b = rk_crystal(mgw / 0.013, 45323u);
+			vec3 warp = vec3(rk_noise3(mg * 290.0), rk_noise3(mg * 290.0 + 17.3), rk_noise3(mg * 290.0 + 41.9)) - 0.5;
+			vec3 mgw = mg + warp * 0.0025;
+			vec2 c = rk_crystal(mgw / 0.01, 20903u);
+			vec2 b = rk_crystal(mgw / 0.006, 45323u);
 			float edge = smoothstep(0.0, 0.1, c.y);
 			float bio = step(b.x, 0.07) * smoothstep(0.0, 0.1, b.y);
 			// Soft at the border: a crystal's class fades into its neighbour over the last tenth of a cell.
@@ -2807,13 +2810,15 @@ void fragment() {
 			float fa = fract(c.x * 91.7) * 6.2831853, fb = fract(c.x * 37.3) * 2.0 - 1.0;
 			// Cleavage planes cut the crystal at any angle to the broken face, so the glossy ones tilt much further
 			// (up to about 45 degrees): spread over the hemisphere, a few of them face the half vector of any sun.
-			float tilt = mix(0.25 + 0.25 * fresh, 0.35 + 0.65 * fract(c.x * 5.13), step(0.5, crystal_gloss));
+			// On an old face weathering and wear have rounded them into the rind, so they tilt far less: a worn boulder
+			// shows its crystals by colour, not as a mosaic of flat facets.
+			float tilt = mix(0.07 + 0.43 * fresh, (0.35 + 0.65 * fract(c.x * 5.13)) * (0.3 + 0.7 * fresh), step(0.5, crystal_gloss));
 			facet = vec3(cos(fa) * sqrt(1.0 - fb * fb), fb, sin(fa) * sqrt(1.0 - fb * fb)) * near_crystal * tilt * (1.0 - bio);
 			// Feldspar: each crystal its own shade, the boundaries etched darker.
 			col *= mix(1.0, 0.9 + 0.2 * fract(c.x * 7.31), near_crystal);
 			// Inside each crystal: feldspar clouded by its alteration (sericite, kaolin) in soft blotches, quartz
 			// glassy and grey with faint inclusions. Tone noise per crystal, so no two cells are flat copies.
-			float cloud = rk_fbm3(mg * 240.0 + fract(c.x * 53.1) * 31.0);
+			float cloud = rk_fbm3(mg * 430.0 + fract(c.x * 53.1) * 31.0);
 			col *= mix(1.0, mix(0.86 + 0.26 * cloud, 0.94 + 0.08 * cloud, qz), near_crystal);
 			col *= mix(1.0, 0.9 + 0.1 * edge, near_crystal);
 		}
@@ -3014,7 +3019,9 @@ void fragment() {
 	// sun, cracks and the joints between blocks, and the foot where it meets the soil. Open, sunlit tops dry out
 	// between rains and carry lichen instead; overhangs get no rain.
 	float moss_term = 0.9 * shade_side + 0.45 * (1.0 - cavity) + 0.8 * contact * (1.0 - smoothstep(0.4, 0.85, wn.y)) + 0.25 * max(wn.y, 0.0) - 0.4 * max(-wn.y - 0.3, 0.0);
-	float moss_place = smoothstep(0.2, 0.7, moss_term) * (1.0 - fresh);
+	// Not on stones that keep moving (talus, shingle) nor within the sea's salt spray.
+	float moss_place = smoothstep(0.2, 0.7, moss_term) * (1.0 - fresh) * smoothstep(0.15, 0.6, surface_age);
+	moss_place *= 1.0 - step(-1e4, sea_level) * (1.0 - smoothstep(tide_range * 3.0, tide_range * 6.0, v_world.y - sea_level));
 	float moss = moss_cover * moss_place * smoothstep(0.42, 0.58, rk_fbm3(mp * 2.2 + 17.0) + 0.25 * moss_cover - 0.12);
 	col = mix(col, moss_color * (0.7 + 0.6 * rk_fbm3(mp * 25.0)), moss);
 	rough = mix(rough, 0.95, moss);
@@ -3108,6 +3115,7 @@ void fragment() {
 	rough = mix(rough_dry, rough, 0.35);
 	col *= 1.0 - 0.4 * rivulet;
 	rough = mix(rough, 0.07, rivulet);
+	weather_frost_apply(weather_frost_at(v_world), wn.y, col, rough);
 
 	vec4 snow_s = snow_cover_at(v_world);
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);
@@ -3121,7 +3129,7 @@ void fragment() {
 	float glint_ok = (1.0 - lic) * (1.0 - moss) * (1.0 - sw) * (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - ground_cover) * mix(0.35, 1.0, fresh) * (1.0 - resolved);
 	if (mineral_glints && glint_ok > 0.0) {
 		// Crystal size in metres on this stone (the marks' map is laid out at mpu_marks, the stone drawn at v_scale).
-		float gd = crystal_map ? 0.018 * v_scale / max(mpu_marks, 1e-4) : 2.0 * speck_size;
+		float gd = crystal_map ? 0.01 * v_scale / max(mpu_marks, 1e-4) : 2.0 * speck_size;
 		float gshare = crystal_map ? 0.45 : 0.12;
 		if (IN_PATH_TRACER) {
 			// Exact: the facet of the crystal each sample lands on (the path tracer's samples count the footprint's

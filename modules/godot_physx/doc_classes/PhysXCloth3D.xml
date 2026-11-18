@@ -196,7 +196,7 @@
 			Adds a swirling gust on top of the steady wind, as a fraction of its speed.
 		</member>
 		<member name="wetness" type="float" setter="set_wetness" getter="get_wetness" default="0.0">
-			How wet the fabric is, 0 dry to 1 soaked ([member water_capacity]). Wet cloth is heavier (it carries the water's weight), bends more easily, looks darker and slightly glossier (light trapped in the wet weave, Lekner and Dorf 1988), and clings: it sticks to what it touches and slides less. Heat must boil the water off before it can catch fire, and flame spreads over it more slowly. Set it from a script to soak or dry a cloth at once (CPU solver; the look needs Flow).
+			How wet the fabric is, 0 dry to 1 soaked ([member water_capacity]). Wet cloth is heavier (it carries the water's weight), bends more easily, looks darker and slightly glossier (light trapped in the wet weave, Lekner and Dorf 1988), and clings: it sticks to what it touches and slides less. Heat must boil the water off before it can catch fire, and flame spreads over it more slowly. Set it from a script to soak or dry a cloth at once (CPU solver; the look needs Flow). Cloth that dips under water (the world water contract) soaks in the part that went under; reading this gives the whole cloth's water, that part included. Under water the fabric keeps about 30% of its weight and the current drags it (CPU solver), so a sheet or flag dipped in a river streams downstream.
 		</member>
 	</members>
 	<signals>

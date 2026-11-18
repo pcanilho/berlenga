@@ -124,6 +124,12 @@ private:
 	PackedFloat32Array depths;
 	float default_width = 4.0f;
 	float discharge = 2.0f; // m^3/s
+	// Storm flow (docs/ideas/rain.md, step 3): the world's runoff (WeatherRunoff3D) reaching the river's upstream end
+	// is added to its discharge, so it rises and runs faster in rain and falls back after.
+	bool rain_response = true;
+	float rain_discharge = 0.0f; // m^3/s from the runoff at the last build
+	double rain_check = 0.0; // s until the runoff is read again
+	void _rain_response_update(double p_delta);
 	float roughness = 0.035f; // Manning n
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
@@ -156,6 +162,8 @@ private:
 	float wall_friction = 1.5f; // 1/s, along rocks and banks
 	float flow_foam = 0.25f; // a river runs fast everywhere: less than the sea's 1
 	float flow_foam_persistence = 4.0f; // s
+	bool flow_foam_impact = true; // also where the water runs into things (water_ripple.glsl)
+	bool live_advected_ripples = true; // ripples carried along the live flow's real paths (water_flow_offset.glsl)
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
 
@@ -166,6 +174,7 @@ private:
 	Vector2 live_center;
 	Ref<Texture2DRD> live_height_tex;
 	Ref<Texture2DRD> live_flow_tex;
+	Ref<Texture2DRD> live_offset_tex;
 	Vector<float> live_height_cache;
 	Vector<float> live_velocity_cache;
 	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
@@ -271,6 +280,9 @@ public:
 	float get_default_width() const { return default_width; }
 	void set_discharge(float p_discharge);
 	float get_discharge() const { return discharge; }
+	void set_rain_response(bool p_enable);
+	bool get_rain_response() const { return rain_response; }
+	float get_rain_discharge() const { return rain_discharge; }
 	void set_roughness(float p_roughness);
 	float get_roughness() const { return roughness; }
 	void set_max_slope(float p_slope);
@@ -332,6 +344,10 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	void set_flow_foam_impact(bool p_enabled);
+	bool get_flow_foam_impact() const { return flow_foam_impact; }
+	void set_live_advected_ripples(bool p_enabled);
+	bool get_live_advected_ripples() const { return live_advected_ripples; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);

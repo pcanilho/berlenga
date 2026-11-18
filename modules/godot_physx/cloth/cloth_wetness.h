@@ -47,6 +47,14 @@ public:
 	float rain_catch = 1.0f; // set by the owner when asked (r_update_catch)
 	float rain_shelter = 1.0f; // 0 under a roof
 	float rain_timer = 0.0f;
+	// Wading (docs/ideas/physx.md, "Wading wets clothing"): the band of fabric that has been under the water
+	// (WorldContracts' water), soaked, up to wade_depth above the fabric's lowest point.
+	float wade_depth = 0.0f; // m
+	float wade_wet = 0.0f; // 0..1, the band's water
+	float wade_share = 0.0f; // the band's share of the fabric's height
+	float wade_line = -1.0e6f; // world y of the band's top this step (for the shader)
+	float water_surface = -1.0e9f; // world y of the water under the fabric this step (very low: none)
+	Vector3 water_flow; // its current there, m/s
 
 	static constexpr float DROP_SPEED = 6.5f; // m/s
 
@@ -54,5 +62,9 @@ public:
 	static void rain_directions(const Vector3 &p_wind, Vector3 r_dirs[4], float &r_mean_dy);
 	// Advances the water held. p_capacity is kg/m2 when soaked. r_update_catch is set when it rains and the owner should
 	// refresh rain_catch (twice a second).
+	// The fabric's water as one figure (for its weight and stiffness): the rain's, and the waded band's over its share.
+	float effective() const { return wetness + (1.0f - wetness) * wade_wet * wade_share; }
+	// How wet the fabric is at this world height (for its look).
+	float wetness_at(float p_y) const { return p_y <= wade_line ? MAX(wetness, wade_wet) : wetness; }
 	void step(Node3D *p_node, const AABB &p_world_box, const Vector3 &p_wind, float p_dt, float p_capacity, bool p_weather, bool &r_update_catch);
 };

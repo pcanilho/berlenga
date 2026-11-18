@@ -25,6 +25,7 @@ extends Node3D
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --day=N               day of the month (default 15)
+#   --leaves=0            no falling leaves (LeafFall3D); --leaf-litter=N loose leaves per m2 the gusts can lift (0.5)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --sun-off             no sun at all: what the sky alone lights
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
@@ -1797,6 +1798,14 @@ func _build_weather() -> void:
 	snowfall.name = "Snowfall"
 	add_child(snowfall)
 	snowfall.snow_cover = snowfall.get_path_to(snow)
+	# Falling and blown leaves (LeafFall3D): shed from the trees' crowns near the camera as their season drops
+	# them, carried by the same wind, and lifted off the ground by gusts. --leaves=0 for none.
+	if args.get("leaves", "1") != "0" and ClassDB.class_exists("LeafFall3D"):
+		var leaf_fall = ClassDB.instantiate("LeafFall3D")
+		leaf_fall.name = "LeafFall"
+		add_child(leaf_fall)
+		leaf_fall.weather_map = leaf_fall.get_path_to(weather)
+		leaf_fall.litter_density = float(args.get("leaf-litter", "0.5"))
 	snow.global_position = Vector3(0, 0, 0)
 
 
@@ -3063,6 +3072,18 @@ func _checks() -> void:
 		check(cover.streaming and cover.is_stream_idle() and cover.get_plant_count() > 0, "ground cover streams round the camera on the world's data map (%d plants, settled after %d frames, %s)" % [cover.get_plant_count(), sf, str(cover.get_stream_stats())])
 	if args.get("layout", "range") == "valley":
 		check(false, "the clearing on the valley floor comes from the generator by itself (a density mask is built by script from its sediment here)", true)
+	# Falling leaves -> trees: LeafFall3D takes its crowns from the vegetation's trees, with their species' leaves.
+	var leaf_fall := get_node_or_null("LeafFall")
+	if leaf_fall != null and veg != null:
+		var cam_p := get_viewport().get_camera_3d().global_position if get_viewport().get_camera_3d() else Vector3()
+		var near_trees: Array = veg.get_crowns_near(cam_p, 2000.0)
+		var at := cam_p
+		for d in near_trees:
+			if int(d.preset) >= 0:
+				at = d.position
+				break
+		leaf_fall.refresh_crowns_near(at)
+		check(leaf_fall.get_crown_count() > 0 and leaf_fall.get_kind_count() > 0, "falling leaves shed from the vegetation's tree crowns, with their species' leaves (%d crowns, %d leaf kinds, %d trees within 2 km)" % [leaf_fall.get_crown_count(), leaf_fall.get_kind_count(), near_trees.size()])
 	# The gale check lays 40 mm of snow and moves the near square to the peak, and leaves them: only in test
 	# runs, which quit after the checks, so a picture is never taken of its snow (with --snow=none the square's
 	# edge showed as a straight snow line across the range).

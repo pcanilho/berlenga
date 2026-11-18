@@ -8,6 +8,7 @@
 		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map. Plants read [code]fire_state_map[/code] over the same rect (red: share of the fuel burnt, green: glow, blue: the peak flame length over 8 m, alpha: the peak crown scorch height over 24 m, from Van Wagner 1973): [GrassField3D] blades burn down to charred stubble, [PlantGenerator] plants char under the flame and scorch brown above it, and [TreeGenerator] bark chars to the flame length and leaves brown up to the scorch height.
 		With [member spotting], burning fuel throws up glowing firebrands that the plume lofts and the wind carries; where one lands on unburnt fuel of any [PhysXFireSpread3D] it may start a spot fire ahead of the front.
 		Water from a [PhysXParticleFluid3D] lying on the ground (a bucket, a hose, a burst tank) soaks the fuel under it: burning cells go out and the front stops at the wet ground ([method get_doused_cells]).
+		With [member fire_whirls], strong flanks in a cross wind spin up whirls of flame that lift firebrands higher.
 		Start a fire with [method ignite], or set [member heat_source] so that hot gas from another [PhysXFlow3D] (a campfire, a burning wreck) sets the ground alight.
 	</description>
 	<tutorials>
@@ -154,6 +155,12 @@
 				The highest the fire's plume killed foliage at [param position], in metres: the crown scorch height of Van Wagner (1973) from the front's fireline intensity, the wind and the air temperature.
 			</description>
 		</method>
+		<method name="get_steam_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of steam made so far where water met the fire: water from a [PhysXParticleFluid3D] on burning or glowing ground, and the front reaching standing or running water. Steam rises as a white cloud in a gas of its own, made only while something steams.
+			</description>
+		</method>
 		<method name="get_tree_burnt" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="index" type="int" />
@@ -165,6 +172,18 @@
 			<return type="int" />
 			<description>
 				How many trees the fire knows: crowns from [member vegetation_field] over its area and those added by [method add_tree].
+			</description>
+		</method>
+		<method name="get_whirl_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many fire whirls are spinning now (at most two).
+			</description>
+		</method>
+		<method name="get_whirls_spawned" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many fire whirls have formed since the fire started.
 			</description>
 		</method>
 		<method name="ignite">
@@ -188,6 +207,9 @@
 		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			When disabled, the fire stops where it is.
+		</member>
+		<member name="fire_whirls" type="bool" setter="set_fire_whirls" getter="is_fire_whirls" default="true">
+			Strong fire on a flank that runs along the wind can spin up a fire whirl: a column of flame, some three flame lengths tall, that turns at about twice the fire's own updraft speed, wanders downwind and lofts firebrands higher. Whirls form most often when the wind is close to that updraft speed (Kuwana et al. 2008), last 10 to 30 seconds and die off the burning fuel. See [method get_whirl_count].
 		</member>
 		<member name="flame_strength" type="float" setter="set_flame_strength" getter="get_flame_strength" default="1.0">
 			Scales the fuel and heat the burning ground feeds into Flow.

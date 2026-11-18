@@ -191,6 +191,7 @@ func _ready() -> void:
 	if frost_test:
 		await _run_frost_tests()
 		await _run_rut_guidance_tests()
+		await _run_needle_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -305,6 +306,9 @@ func _ready() -> void:
 		return
 	if view == "ice":
 		await _build_ice()
+		return
+	if view == "needle":
+		await _build_needle()
 		return
 	if view == "tracked":
 		await _build_legs(true)
@@ -490,9 +494,12 @@ func _run_tests() -> void:
 	surface.clear_deformation()
 	surface.moisture = 0.4
 	surface.press(o, 0.15, -0.12, 0.0, true)
+	var damp_before := _max_slope(o, 0.3)
 	surface.settle(3.0)
 	var damp_wall := _max_slope(o, 0.3)
-	_check("damp sand keeps steep walls", damp_wall > 60.0, "steepest wall %.0f degrees after 3 s" % damp_wall)
+	# Against its own walls before settling: the CPU field (headless) presses on a coarser texel, so its walls start
+	# near 52 degrees rather than the GPU's 70.
+	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > damp_before - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s" % [damp_before, damp_wall])
 	# Mud creeps back slowly.
 	surface.clear_deformation()
 	surface.ground_type = GroundSurface3D.GROUND_SOIL
@@ -1405,6 +1412,80 @@ func _run_plant_mud_tests() -> void:
 	near_on = true
 
 
+# Needle ice (mud round 9): a frosty night on wet bare soil grows needles that lift the top (the frost front held at
+# the surface), a boot sinks deeper into the weak mat, and the thaw leaves loose crumbs that print deeper still.
+func _run_needle_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	surface.mud_layer = false
+	surface.frozen_ground = true
+	surface.needle_ice = true
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.9
+	wm.temperature = 5.0
+	wm.season_day = 300
+	add_child(wm)
+	wm.snap_to_settings()
+	for i in 150:
+		await get_tree().physics_frame
+	# A boot's Bekker sinkage on the unfrozen soil first, for scale.
+	var plain := surface.get_sinkage_at(Vector3(-2, 0, -2), 80.0, 0.03, 0.1)
+	var q := Vector3(0, 0, -2)
+	var g0 := surface.get_surface_height_at(q)
+	wm.temperature = -3.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	for i in 430: # about 10 h
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	for i in 150:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var nd := surface.get_needle_ice_at(q)
+	var fr := surface.get_frost_at(q)
+	var lift := surface.get_surface_height_at(q) - g0
+	print("  needle ice: %.1f cm after a night at -3 C, frost %.1f cm deep, the ground %.1f cm higher" % [nd.x * 100.0, fr.y * 100.0, lift * 100.0])
+	_check("a frosty night on wet bare soil grows needle ice, 1 to 4 cm (Outcalt, Lawler)", nd.x > 0.01 and nd.x < 0.04, "%.1f cm" % (nd.x * 100.0))
+	_check("the needles hold the frost front at the surface", fr.y < 0.01, "%.1f cm" % (fr.y * 100.0))
+	_check("and lift the ground by their height", absf(lift - nd.x) < 0.004, "%.1f cm for %.1f cm" % [lift * 100.0, nd.x * 100.0])
+	for i in 150: # the cells take it (every 2 s)
+		await get_tree().physics_frame
+	var on_needles := surface.get_sinkage_at(Vector3(2, 0, -2), 80.0, 0.03, 0.1)
+	_check("a boot sinks deeper into the needle mat than into the soil before", on_needles > 1.5 * plain, "%.1f mm (%.1f mm before)" % [on_needles * 1000.0, plain * 1000.0])
+	# The thaw: the needles melt, the cap drops back as loose crumbs.
+	wm.temperature = 5.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	var frames := 0
+	while frames < 1500 and surface.get_needle_ice_at(q).x > 0.0:
+		await get_tree().physics_frame
+		frames += 1
+	surface.runoff_time_scale = 1.0
+	for i in 150:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	nd = surface.get_needle_ice_at(q)
+	var back := surface.get_surface_height_at(q) - g0
+	print("  thaw: needles gone after %.1f h, crumbs %.2f, the ground %.1f mm off where it was" % [frames / 60.0 * 5000.0 / 3600.0, nd.y, back * 1000.0])
+	_check("the thaw melts them and the ground drops back, left as loose crumbs", nd.x == 0.0 and nd.y > 0.5 and absf(back) < 0.003, "crumbs %.2f, %.1f mm" % [nd.y, back * 1000.0])
+	var loose := surface.get_sinkage_at(Vector3(-2, 0, -2), 80.0, 0.03, 0.1)
+	_check("the crumbs print deeper than the soil did", loose > 1.2 * plain, "%.1f mm (%.1f mm before)" % [loose * 1000.0, plain * 1000.0])
+	# The ground contract (docs/ideas/world-contracts.md) answers from this ground; a stub overrides only what it sets.
+	var wg: WorldGround = WorldContracts.get_ground()
+	var p := Vector3(-2, 0, -2)
+	var same: bool = wg.has_provider() and absf(wg.height_at(p) - surface.get_surface_height_at(p)) < 1e-5 and wg.needle_ice_at(p) == surface.get_needle_ice_at(p) and bool(wg.soil_at(p)["soft"])
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _standing_water_at(_p: Vector3) -> float:\n\treturn 0.5\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	var stubbed: WorldGround = WorldContracts.get_ground()
+	var mixed: bool = stubbed.standing_water_at(p) == 0.5 and absf(stubbed.height_at(p) - surface.get_surface_height_at(p)) < 1e-5
+	WorldContracts.clear_overrides()
+	_check("the ground contract answers from the ground, and a stub replaces only what it overrides", same and mixed and WorldContracts.get_ground().standing_water_at(p) == surface.get_standing_water_at(p), "live %s, stubbed %s" % [same, mixed])
+	wm.queue_free()
+
 # Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
 # as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.
 func _run_frost_tests() -> void:
@@ -1412,6 +1493,7 @@ func _run_frost_tests() -> void:
 	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
 	surface.mud_layer = true
 	surface.frozen_ground = true
+	surface.needle_ice = false # its own test (_run_needle_tests)
 	var wm := WeatherMap3D.new()
 	wm.cloud_cover = 0.0
 	wm.rain_rate = 0.0
@@ -1496,6 +1578,66 @@ func _run_rut_guidance_tests() -> void:
 	_check("centred in a rut, no push; walls as high as the rut is deep", absf(centred.x) < 0.05 and centred.y > 0.04 and centred.z > 0.04, "slope %.2f, walls %.1f and %.1f cm" % [centred.x, centred.y * 100.0, centred.z * 100.0])
 	_check("half out of it, the tilt pushes it back in", right.x > 0.1 and left.x < -0.1, "slope %.2f right, %.2f left" % [right.x, left.x])
 	_check("on unmarked ground, nothing", absf(flat.x) < 0.01 and flat.y < 0.005 and flat.z < 0.005, "%s" % flat)
+	if ClassDB.class_exists("PhysXVehicle3D"):
+		# A car driven straight with its wheels 15 cm inside a pair of old ruts: the walls under the treads tip it
+		# into them (it drifts sideways), where on unmarked soil it keeps its line.
+		var drift := []
+		for ruts in [false, true]:
+			await _soil_scene("soil")
+			surface.moisture = 0.3
+			surface.mud_layer = false
+			if ruts:
+				for side in [-1.0, 1.0]:
+					for k in 30:
+						var q := Vector3(side * 0.8 + 0.15, 0, -1.0 + 0.45 * k)
+						var g := surface.get_surface_height_at(q)
+						surface.press_box(q, Vector2(0.3, 0.5), 0.0, g - 0.12, 0.0)
+				for i in 40:
+					await get_tree().physics_frame
+				surface.sync_deformation()
+			var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+			surface.follow_target = surface.get_path_to(car)
+			var dr: Array = await _drive(car, 4.0, 0.4)
+			print("  (%.1f m driven, sinkage %.1f cm)" % [dr[0], dr[1] * 100.0])
+			drift.append(car.global_position.x)
+			car.queue_free()
+		print("  a car driven straight: %.1f cm sideways on unmarked soil, %.1f cm with its wheels 15 cm inside old ruts" % [drift[0] * 100.0, drift[1] * 100.0])
+		_check("old ruts pull the wheels into them", drift[1] - drift[0] > 0.05 and absf(drift[0]) < 0.05, "%.1f cm, %.1f cm unmarked" % [drift[1] * 100.0, drift[0] * 100.0])
+		# The centre ridge (mud round 10): deep old ruts with the soil between them standing 25 cm proud. The wheels drop
+		# into the ruts, the belly lands on the ridge and takes the car's weight off them: it hangs up where it drives
+		# on along shallow ruts.
+		var hang := {}
+		for deep in [false, true]:
+			await _soil_scene("soil")
+			surface.moisture = 0.3
+			surface.mud_layer = false
+			for side in [-1.0, 1.0]:
+				for k in 30:
+					var q := Vector3(side * 0.8, 0, -1.0 + 0.45 * k)
+					var g := surface.get_surface_height_at(q)
+					surface.press_box(q, Vector2(0.3, 0.5), 0.0, g - (0.35 if deep else 0.12), 0.0)
+			if deep:
+				for k in 40:
+					surface.deposit(Vector3(0, 0, 0.5 + 0.3 * k), 0.4, 0.25)
+			for i in 40:
+				await get_tree().physics_frame
+			surface.sync_deformation()
+			var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+			surface.follow_target = surface.get_path_to(car)
+			for i in 30:
+				await get_tree().physics_frame
+			var start := car.global_position
+			car.throttle = 0.5
+			var held := 0.0
+			for i in 240:
+				await get_tree().physics_frame
+				held += car.get_belly_support() / 240.0
+			car.throttle = 0.0
+			hang[deep] = [(car.global_position - start).length(), held]
+			car.queue_free()
+		print("  ruts: %.1f m along shallow ones; %.1f m along deep ones over a ridge, the belly holding %.0f N of %.0f on average" % [hang[false][0], hang[true][0], hang[true][1], 1500.0 * 9.81])
+		_check("a ridge between deep ruts lifts the car onto its belly and it hangs up", hang[true][1] > 0.3 * 1500.0 * 9.81 and hang[true][0] < 0.3 * hang[false][0] and hang[false][1] == 0.0,
+				"%.1f m, belly %.0f N; %.1f m in shallow ruts" % [hang[true][0], hang[true][1], hang[false][0]])
 	near_on = true
 
 
@@ -1887,6 +2029,32 @@ func _run_clog_tests() -> void:
 			"%.0f N up, %.0f N drag" % [belly["on"][1], belly["on"][2]])
 	_check("the slurry the car sits in marks the body: a mud line round the belly", belly["on"][4] > 0.05 and belly["on"][4] < 0.4, "%.0f cm above the chassis bottom" % (belly["on"][4] * 100.0))
 	_check("the belly ploughs a trough", belly["on"][3] > 0.03 and belly["on"][3] > belly["off"][3] + 0.05, "%.1f cm (%.1f cm without)" % [belly["on"][3] * 100.0, belly["off"][3] * 100.0])
+	# Treads (mud round 10): the same 4 s in stiff sticky clay on road tyres, mud tyres and chains.
+	var treads := {}
+	for t in [PhysXVehicleWheel3D.TREAD_ROAD, PhysXVehicleWheel3D.TREAD_MUD, PhysXVehicleWheel3D.TREAD_CHAINS]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, STIFF_MUD)
+		var tc := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		tc.belly_drag = false
+		for c in tc.get_children():
+			if c is PhysXVehicleWheel3D:
+				c.tread = t
+		surface.follow_target = surface.get_path_to(tc)
+		var r: Array = await _drive(tc, 4.0, 0.5)
+		var fill := 0.0
+		for w in 4:
+			fill += tc.get_wheel_mud(w) / 4.0
+		treads[t] = [r[0], fill]
+		print("  tread %d: %.2f m in 4 s, tread %.0f%% full" % [t, r[0], fill * 100.0])
+	var rd: Array = treads[PhysXVehicleWheel3D.TREAD_ROAD]
+	var mt: Array = treads[PhysXVehicleWheel3D.TREAD_MUD]
+	var ch: Array = treads[PhysXVehicleWheel3D.TREAD_CHAINS]
+	_check("road tyres pack with clay, mud tyres throw it out", rd[1] > 1.2 * mt[1], "%.0f%% full against %.0f%%" % [rd[1] * 100.0, mt[1] * 100.0])
+	_check("mud tyres and chains get further in sticky clay than road tyres", mt[0] > rd[0] + 0.1 and ch[0] > rd[0] + 0.1,
+			"%.2f m and %.2f m against %.2f m" % [mt[0], ch[0], rd[0]])
+	var g_dry := PhysXVehicleWheel3D.tread_firm_grip(PhysXVehicleWheel3D.TREAD_CHAINS, 0.0, 0.0)
+	var g_ice := PhysXVehicleWheel3D.tread_firm_grip(PhysXVehicleWheel3D.TREAD_CHAINS, 1.0, 0.0)
+	_check("chains slide on dry road and bite on ice", g_dry < 0.8 and g_ice > 2.5, "%.2f dry, %.2f on ice" % [g_dry, g_ice])
 
 
 # Meshes for a bench car (mud stage 3b): a painted body over the chassis box and a cab, tyres on the wheels.
@@ -2092,6 +2260,86 @@ func _build_ice() -> void:
 	await _save_view(env)
 	get_tree().quit()
 
+
+# Needle ice (mud round 9): a night at -3 C on wet bare soil, then a line of boot prints crushing it; --thaw: the next
+# day's thaw, the crumbs it leaves (--cam=x,y,z,tx,ty,tz).
+func _build_needle() -> void:
+	kind = "soil"
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	_apply(kind)
+	surface.moisture = 0.4 # wet: needle ice wants a soil near field capacity
+	surface.mud_layer = false
+	surface.frozen_ground = true
+	surface.needle_ice = true
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-25.0, 200.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 10.0
+	add_child(sun)
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.9
+	wm.temperature = -3.0
+	wm.season_day = 300
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	for i in 430:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	for i in 150:
+		await get_tree().physics_frame
+	# Boot prints walked across it, left and right.
+	for k in 8:
+		var q := Vector3(-1.4 + 0.35 * k, 0, 0.09 if k % 2 == 0 else -0.09)
+		var g := surface.get_surface_height_at(q)
+		surface.press_box(q, Vector2(0.29, 0.11), 0.0, g - 0.03, 0.01)
+	for i in 30:
+		await get_tree().physics_frame
+	if OS.get_cmdline_user_args().has("--thaw"):
+		wm.temperature = 6.0
+		wm.snap_to_settings()
+		surface.runoff_time_scale = 5000.0
+		var frames := 0
+		while frames < 1500 and surface.get_needle_ice_at(Vector3(1, 0, 1)).x > 0.0:
+			await get_tree().physics_frame
+			frames += 1
+		surface.runoff_time_scale = 1.0
+		for i in 150:
+			await get_tree().physics_frame
+	print("needle ice: %s away from the prints, %s in one" % [surface.get_needle_ice_at(Vector3(1, 0, 1)), surface.get_needle_ice_at(Vector3(-1.4, 0, 0.09))])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.9, 0.55, 1.1, -0.2, 0.0, 0.0])
+	cam.position = Vector3(c[0], c[1], c[2])
+	cam.look_at(Vector3(c[3], c[4], c[5]))
+	cam.fov = 45.0
+	surface.follow_target = surface.get_path_to(cam)
+	surface.sync_deformation()
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
 
 # Mud stage 4e: a pair of legs walked 4 m through 15 cm of slurry, stopped mid-stride (--cam=x,y,z,tx,ty,tz from the
 # legs).
@@ -2513,6 +2761,11 @@ func _run_wind_tests() -> void:
 	for i in 3:
 		await get_tree().physics_frame
 	var grow_s := (Time.get_ticks_msec() - t0) / 1000.0
+	# The ground contract's sand reads (docs/ideas/world-contracts.md) answer from this sand.
+	var wgp := Vector3(0.3, 0, 0.2)
+	var wg: WorldGround = WorldContracts.get_ground()
+	_check("the ground contract reads sand, ripples and blown sand from the ground", wg.sand_at(wgp) > 0.9 and wg.ripple_at(wgp) == surface.get_ripple_at(wgp) and wg.blown_sand_at(wgp) == surface.get_blown_at(wgp.x, wgp.z) and wg.blown_sand_at(wgp) > 0.0,
+			"sand %.2f, ripple %.1f mm, blown %.2f" % [wg.sand_at(wgp), wg.ripple_at(wgp) * 1000.0, wg.blown_sand_at(wgp)])
 	var st := _ripple_stats()
 	print("  grown in %.1f s (a worker); 8 m/s along x: wavelength %.1f cm along, %.1f cm across, slope energy %.0fx along, %.1f mm peak to peak" % [grow_s, st[0] * 100.0, st[1] * 100.0, st[2], st[3] * 1000.0])
 	_check("ripples 5 to 15 cm long along the wind (Bagnold 1941; Andreotti 2006)", st[0] > 0.05 and st[0] < 0.15, "%.1f cm" % (st[0] * 100.0))

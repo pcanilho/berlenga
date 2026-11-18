@@ -376,7 +376,7 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 	if (!valid || p_radius <= 0.0f || p_depth == 0.0f) {
 		return 0.0f;
 	}
-	p_depth *= amount_scale(p_position, p_radius);
+	p_depth *= amount_scale(p_position, p_radius, amount_tent);
 	if (stamp_sink) {
 		stamp_sink->amount(p_columns, p_position, p_radius, p_depth, p_cell);
 		return 0.0f;
@@ -393,7 +393,7 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 		for (int x = x0; x <= x1; x++) {
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
-			const float cover = amount_cover(wx - p_position.x, wz - p_position.z, p_radius, t, false);
+			const float cover = amount_cover(wx - p_position.x, wz - p_position.z, p_radius, t, amount_tent);
 			if (cover == 0.0f) {
 				continue;
 			}

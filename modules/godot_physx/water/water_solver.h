@@ -81,6 +81,7 @@ public:
 	RID shader_shore_foam, pipeline_shore_foam;
 	// Swash run-up and wet sand (water_swash.glsl), on the ripple grid.
 	RID shader_swash, pipeline_swash;
+	RID shader_flow_offset, pipeline_flow_offset;
 
 	RID buf_params;
 	RID buf_state_a, buf_state_b; // ping-pong ripple state (h, h_prev, foam, _)
@@ -156,6 +157,16 @@ public:
 	float wall_friction = 1.5f;
 	float flow_foam = 1.0f; // white water made by the live flow (water_ripple.glsl), 0 = none
 	float flow_foam_persistence = 8.0f; // s
+	bool flow_foam_impact = true; // convergence and stagnation sources too (water_ripple.glsl)
+	// Advected ripple coordinates (water_flow_offset.glsl): RGBA32F on the ripple grid, the two flow-map phases'
+	// offsets carried by the live flow, as differences from plain flow mapping; materials add them.
+	bool advected_ripples = false;
+	float advected_period = 2.0f;
+	SafeNumeric<uint32_t> flow_clock_bits{ 0u }; // the materials' clock (float bits), set from the main thread
+	float flow_clock_last = -1.0f; // the clock at the last advection step; < 0 = restart
+	Vector2 flow_grid_center; // world xz of the ripple grid's centre (the phases' noise is world-anchored)
+	RID tex_flow_offset, tex_flow_offset_tmp;
+	RID buf_flow_offset_params, buf_flow_offset_copy_params, uset_flow_offset, uset_flow_offset_copy;
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
@@ -280,7 +291,9 @@ public:
 	// The baked current's face fluxes (4 floats a cell, grid_resolution^2 cells; empty = still water) and the wall
 	// friction (1/s) along dry ground, in place: the live velocities restart from the new flow.
 	void rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_flux, float p_wall_friction);
-	void rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence);
+	void rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence, bool p_impact);
+	void rt_set_advected_ripples(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_period);
+	void rt_set_flow_grid_center(Ref<WaterSolverGPU> p_self, Vector2 p_center);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -429,7 +442,14 @@ public:
 	void set_base_flux(const PackedFloat32Array &p_flux, float p_wall_friction);
 	bool has_base_flux() const { return !base_flux.is_empty(); }
 	// White water the live flow makes where it runs fast and shears (0 = none), and how long it lasts (s).
-	void set_flow_foam(float p_strength, float p_persistence);
+	// p_impact: also where it runs into things (convergence, and the pillow on a rock's upstream face).
+	void set_flow_foam(float p_strength, float p_persistence, bool p_impact = true);
+	// Advected ripple coordinates (water_flow_offset.glsl) for materials whose two-phase flow uses p_period
+	// seconds; set_flow_clock() passes the clock those materials animate with (the same value, every frame).
+	void set_advected_ripples(bool p_enabled, float p_period);
+	void set_flow_clock(float p_time);
+	// RGBA32F on the ripple grid: phase A's offset correction in rg, phase B's in ba (m); invalid until built.
+	RID get_flow_offset_texture_rd_rid() const;
 	// Live face velocities read back from the GPU (u' on each cell's +x face, w' on its +z face, m/s, on top of the
 	// baked flow); empty until a readback lands with a current running.
 	void get_velocity_grid(Vector<float> &r_velocity) const;

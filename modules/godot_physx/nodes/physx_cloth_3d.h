@@ -240,13 +240,13 @@ public:
 	void move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions);
 	int tear(const Vector3 &p_from, const Vector3 &p_to);
 	void set_wetness(float p_v);
-	float get_wetness() const { return wet.wetness; }
+	float get_wetness() const { return wet.effective(); }
 	void set_weather_wetting(bool p_v) { weather_wetting = p_v; }
 	bool is_weather_wetting() const { return weather_wetting; }
 	void set_water_capacity(float p_v);
 	float get_water_capacity() const { return water_capacity; }
 	// Water held, kg/m2.
-	float get_water_load() const { return wet.wetness * density * water_capacity; }
+	float get_water_load() const { return wet.effective() * density * water_capacity; }
 
 	void set_burnable(bool p_v);
 	bool is_burnable() const { return burnable; }

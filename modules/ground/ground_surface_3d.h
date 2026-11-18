@@ -56,7 +56,7 @@ class WeatherMap3D;
 // crowns drop litter; bare rock does not print. The field is drawn as a patch with the ground's own
 // material, and the terrain, drawn with the same material (BaseMaterial3D ground_deform_enabled, or
 // get_ground_deform_shader_code() in a shader), is lowered under it, so both renderers trace the prints.
-class GroundSurface3D : public Node3D, public WorldWaterProvider {
+class GroundSurface3D : public Node3D, public WorldWaterProvider, public WorldGroundProvider {
 	GDCLASS(GroundSurface3D, Node3D);
 
 public:
@@ -157,9 +157,13 @@ private:
 	void _ice_update(double p_delta);
 	void _ice_break(const Vector3 &p_position, float p_radius, float p_bearing);
 	// Frozen ground (round 8): per lattice cell (the thawed layer on top, m; the frost's depth, m; the thaw's
-	// weakening, 0..1).
-	static constexpr int FROST_FLOATS = 3;
+	// weakening, 0..1; round 9's needle ice: its height, m; the loose soil it leaves, 0..1; the height laid on the
+	// field, m).
+	static constexpr int FROST_FLOATS = 6;
 	bool frozen_ground = true;
+	bool needle_ice = true;
+	int needle_cursor = 0;
+	float _needle_loose_at(float p_x, float p_z) const;
 	LocalVector<float> frost_state;
 	void _frost_update(double p_delta);
 	void _frost_seed(int p_from);
@@ -741,6 +745,21 @@ public:
 	float get_standing_water_at(Vector3 p_position) const;
 	// The water contract (WorldWater): standing water on the ground, -INF where there is none.
 	float contract_water_height_at(const Vector3 &p_position) const override;
+	// The ground contract (WorldGround, docs/ideas/world-contracts.md).
+	float contract_ground_height_at(const Vector3 &p_position) const override { return get_surface_height_at(p_position); }
+	WorldGroundSoil contract_ground_soil_at(const Vector3 &p_position) const override;
+	float contract_ground_standing_water_at(const Vector3 &p_position) const override { return get_standing_water_at(p_position); }
+	Vector2 contract_ground_ice_at(const Vector3 &p_position) const override { return get_ice_at(p_position); }
+	Vector3 contract_ground_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
+	float contract_ground_dent_at(const Vector3 &p_position) const override { return get_dent_at(p_position); }
+	float contract_ground_rim_at(const Vector3 &p_position) const override { return get_rim_at(p_position); }
+	Vector2 contract_ground_runoff_at(const Vector3 &p_position) const override { return get_runoff_at(p_position); }
+	float contract_ground_mud_depth_at(const Vector3 &p_position) const override { return get_mud_depth_at(p_position); }
+	Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const override { return get_needle_ice_at(p_position); }
+	Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const override { return get_rut_guidance(p_contact, p_lateral, p_half_width); }
+	float contract_ground_sand_at(const Vector3 &p_position) const override;
+	float contract_ground_ripple_at(const Vector3 &p_position) const override { return get_ripple_at(p_position); }
+	float contract_ground_blown_sand_at(const Vector3 &p_position) const override;
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
 	void set_puddle_ice(bool p_enabled);
@@ -749,6 +768,9 @@ public:
 	void set_frozen_ground(bool p_enabled);
 	bool is_frozen_ground() const { return frozen_ground; }
 	Vector3 get_frost_at(Vector3 p_position) const;
+	void set_needle_ice(bool p_enabled);
+	bool is_needle_ice() const { return needle_ice; }
+	Vector2 get_needle_ice_at(Vector3 p_position) const;
 	void set_plant_mud(bool p_enabled);
 	bool is_plant_mud() const { return plant_mud; }
 	float get_plant_mud_at(Vector3 p_position) const;

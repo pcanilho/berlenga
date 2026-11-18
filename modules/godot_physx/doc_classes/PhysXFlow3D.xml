@@ -120,6 +120,15 @@
 		<member name="heat_ramp" type="Gradient" setter="set_heat_ramp" getter="get_heat_ramp">
 			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a blackbody: [code]0[/code] to [member temperature_range] spans 600 K to 1,500 K, coloured as a blackbody at that temperature and as bright as Planck's law makes it at 580 nm (alpha above [code]1[/code] at the top), so a flame has a bright core and sharp tongues and the cooler gas over it reads as smoke.
 		</member>
+		<member name="heat_shimmer" type="bool" setter="set_heat_shimmer" getter="is_heat_shimmer" default="true">
+			Light bends through the gas's hot air. Air's refractive index falls with its density (Gladstone-Dale), so each view ray turns by the gradient of the index across it, from the simulated temperature plus the turbulence below the grid. The raster renderers shift the frame by where the bent rays land; the path tracer bends its camera rays. Flows whose emitters bring no heat (dust, mist) skip it.
+		</member>
+		<member name="heat_shimmer_kelvin" type="float" setter="set_heat_shimmer_kelvin" getter="get_heat_shimmer_kelvin" default="1200.0">
+			Kelvin above the surrounding air (from the weather) at a temperature of [member temperature_range]: Flow's temperature in kelvin, for the refractive index.
+		</member>
+		<member name="heat_shimmer_turbulence" type="float" setter="set_heat_shimmer_turbulence" getter="get_heat_shimmer_turbulence" default="0.35">
+			The turbulent temperature fluctuation below the grid's cells, as a share of the gas's excess over the air (about 0.3 to 0.4 on a fire plume's axis). It carries most of the visible shimmer. 0: only the simulated field bends light.
+		</member>
 		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="0.05">
 			The temperature above which fuel burns (see [member combustion]).
 		</member>
@@ -193,6 +202,12 @@
 		</member>
 		<member name="vorticity" type="float" setter="set_vorticity" getter="get_vorticity" default="0.6">
 			Vorticity confinement: keeps small swirls alive for rolling, billowing gas.
+		</member>
+		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="is_weather_wind" default="true">
+			If [code]true[/code], the weather's wind (the world contract's wind, from a [WeatherMap3D]) is laid over the gas as air-only layers up to 4 m thick, so smoke from every emitter leans and drifts with the same air as the grass and trees, more aloft where the wind is stronger. The layers reserve no blocks. With no weather provider, nothing changes.
+		</member>
+		<member name="weather_wind_coupling" type="float" setter="set_weather_wind_coupling" getter="get_weather_wind_coupling" default="1.0">
+			Rate (1/s) at which the gas's velocity is pulled toward the weather's wind with [member weather_wind].
 		</member>
 	</members>
 	<constants>

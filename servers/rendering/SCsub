@@ -1,7 +1,24 @@
 #!/usr/bin/env python
 from misc.utility.scons_hints import *
 
+import methods
+
 Import("env")
+
+
+# The raindrop ring functions (docs/ideas/rain.md): one GLSL source, included by the path tracer and handed to
+# material shaders as text, so both renderers draw the same rings.
+def rain_ripples_builder(target, source, env):
+    code = methods.get_buffer(str(source[0])).decode("utf-8")
+    with methods.generated_wrapper(str(target[0])) as file:
+        file.write(f"inline constexpr const char *RAIN_RIPPLES_GLSL = {methods.to_raw_cstring(code)};\n")
+
+
+env.CommandNoCache(
+    "rain_ripples_glsl.gen.h",
+    "renderer_rd/shaders/raytracing/raytracing_rain_inc.glsl",
+    env.Run(rain_ripples_builder),
+)
 
 env.add_source_files(env.servers_sources, "*.cpp")
 

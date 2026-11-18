@@ -857,7 +857,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_SHADOW_STRENGTH] = 0.02f;
 			p[PARAM_PIPE_EXPONENT] = 1.85f; // A stout bole under the heavy crown.
 			p[PARAM_BUD_LIGHT_MIN] = 0.0f; // Inner shoots live on: needles along the limbs, not tufts at the tips of a bare cage (docs, 18 Nov).
-			bark_color = Color(0.27f, 0.25f, 0.23f); // Dark grey-brown plates (the furrows' floor dull red-brown, from BARK_PINASTER).
+			bark_color = Color(0.31f, 0.285f, 0.26f); // Grey-brown plates, paler crests over near-black furrows (the furrows' floor dull red-brown, from BARK_PINASTER).
 			leaf_color = Color(0.11f, 0.17f, 0.08f); // Grey-green.
 			break;
 		case PRESET_CAROB: // Ceratonia siliqua (trees.md 5ac): evergreen, a short trunk under a broad,
@@ -2612,9 +2612,28 @@ bool TreeGenerator::_in_envelope(const Vector3 &p_point) const {
 	if (dy < 0.0f || dz < 0.0f) {
 		return false;
 	}
+	// Rounded edges (a flail leaves no sharp arris: docs, 18 Nov, a segment's end showed a hard
+	// top corner). The ends along the line round off too, less: in a row the next segment, a
+	// little longer than its step, covers them; at a gateway or a run's end they show.
+	// A rounded box, as a signed distance would round it (Quilez, rounded box SDF).
 	const float R = MIN(0.35f, 0.4f * half);
-	if (dy < R && dz < R) {
-		return (R - dy) * (R - dy) + (R - dz) * (R - dz) <= R * R;
+	const float Rx = 0.6f * R;
+	const float dx = MIN(p_point.x - envelope.position.x, envelope.position.x + envelope.size.x - p_point.x) + wander;
+	const float ey = MAX(R - dy, 0.0f), ez = MAX(R - dz, 0.0f);
+	if (dy < R && dz < R && ey * ey + ez * ez > R * R) {
+		return false;
+	}
+	if (dx < Rx && dy < Rx) {
+		const float ax = Rx - dx, ay = Rx - dy;
+		if (ax * ax + ay * ay > Rx * Rx) {
+			return false;
+		}
+	}
+	if (dx < Rx && dz < Rx) {
+		const float ax = Rx - dx, az = Rx - dz;
+		if (ax * ax + az * az > Rx * Rx) {
+			return false;
+		}
 	}
 	return true;
 }
@@ -2963,6 +2982,17 @@ static thread_local Vector3 tube_last_nrm;
 static thread_local float tube_tile = 0.4f;
 // Off for tubes that are not bark or moss (resin runs), which keep their own flat colour.
 static thread_local bool tube_macro_tint = true;
+// Cork (docs, 18 Nov: thin limbs read busy): a limb thinner than the bark tile carries one tile
+// squeezed round it, so its fissures shrank both ways into a fine net. Young cork on thin limbs is
+// thin and split in long shallow grooves along the limb (Natividade 1950; Pereira 2007, Cork:
+// Biology, Production and Uses), so there the tile keeps its own length along the stem and only
+// narrows round it: the bark's v runs per tile length between the squeezed circumference and the
+// full tile (geometric mean).
+static thread_local bool tube_v_stretch = false;
+static inline float tube_v_len(float p_girth, float p_repeats) {
+	const float circ = p_girth / p_repeats;
+	return tube_v_stretch && circ < tube_tile ? Math::sqrt(circ * tube_tile) : circ;
+}
 // A leader's split (trees.md 5z): the displaced relief fades out within tube_fade_r of
 // tube_fade_c, on the bole and on its stems, so their surfaces meet smooth (the normal map keeps
 // the bark); displaced, the bole's ridges stood through the stems' furrows as teeth (docs, 18 Nov).
@@ -3116,7 +3146,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	// zero radius the bark tiled every few millimetres and mipmapped to a flat colour.
 	const float girth = Math::TAU * MAX(p_girth_r > 0.0f ? p_girth_r : p_radii[0], 0.001f);
 	const float repeats = MAX(1.0f, Math::round(girth / tube_tile));
-	const float circumference = girth / repeats;
+	const float circumference = tube_v_len(girth, repeats);
 	// Displacement: the bark family's height (metres, 0 on plate tops, negative in cracks),
 	// bilinear and wrapped, along the surface normal.
 	const float *hdata = nullptr;
@@ -3525,6 +3555,10 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 	m->set_backlight(c * 0.6f);
 	m->set_roughness(needles ? 0.5f : 0.75f);
+	// Wet while the canopy holds the rain it caught, with the water beaded on the leaves (docs/ideas/rain.md, step 5).
+	m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+	m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
+	m->set_wetness_canopy(true);
 	if (!needles) {
 		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
 		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
@@ -4243,7 +4277,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 4, 3, 0.36f, 0.085f, 0.003f, 0.3f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
+		{ 4, 3, 0.36f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4459,6 +4493,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					a = a * Math::lerp(0.55f, 1.0f, MAX(1.0f - Math::smoothstep(0.15f, 0.35f, open), Math::smoothstep(0.55f, 0.85f, open)));
 				}
 				r = Math::lerp(1.0f, r, plate);
+				if (p_kind == BARK_PINASTER) {
+					// Maritime pine plates are dry, fibrous and flaking, fully matte (docs, 18 Nov: the
+					// bole read sheeny); scanned pine bark sits at roughness 0.9-1 (Quixel Megascans
+					// pine bark sets).
+					r = 0.95f + 0.05f * fibre;
+				}
 				if (scar) {
 					const float t = 0.5f + bark_fbm(u, v, 4, 4, 2, salt + 47u) * 1.6f;
 					a = Color(1.08f + 0.12f * t, 0.9f + 0.06f * t, 0.74f - 0.08f * t) * shade;
@@ -10618,7 +10658,7 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 		_tube(r_bark, pts, rad, sides, v0, p_color);
 		tube_carry_nrm = tube_last_nrm;
 		r_bark.end(part, rad[0]);
-		const float circ = Math::TAU * MAX(rad[0], 0.001f) / MAX(1.0f, Math::round(Math::TAU * MAX(rad[0], 0.001f) / _bark_tile()));
+		const float circ = tube_v_len(Math::TAU * MAX(rad[0], 0.001f), MAX(1.0f, Math::round(Math::TAU * MAX(rad[0], 0.001f) / _bark_tile())));
 		for (int i = 1; i < int(pts.size()); i++) {
 			v0 += pts[i].distance_to(pts[i - 1]) / circ;
 		}
@@ -12657,6 +12697,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	struct TileGuard {
 		~TileGuard() {
 			tube_tile = BARK_TILE;
+			tube_v_stretch = false;
 			tube_fade_r = 0.0f;
 			tube_fade_r0 = 0.0f;
 			tube_crotch.active = false;
@@ -12665,6 +12706,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	} tile_guard;
 	tube_tile = _bark_tile();
+	tube_v_stretch = _bark_kind(preset) == BARK_CORK;
 	Builder bark;
 	wood_b = Builder();
 	bark.use_tangents = true;
@@ -12707,7 +12749,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const float repeats = MAX(1.0f, Math::round(girth / _bark_tile()));
 		const float n2 = MAX(1.0f, Math::round(girth / LICHEN_TILE));
 		const uint32_t h = (p_salt * 2654435761u) ^ uint32_t(seed) * 2246822519u;
-		r_b.part_uv2[r_b.part_uv2.size() - 1] = Vector4(n2 / repeats, girth / (repeats * LICHEN_TILE), float(h & 0xffff) / 65535.0f, float((h >> 16) & 0xffff) / 65535.0f * 7.0f);
+		r_b.part_uv2[r_b.part_uv2.size() - 1] = Vector4(n2 / repeats, tube_v_len(girth, repeats) / LICHEN_TILE, float(h & 0xffff) / 65535.0f, float((h >> 16) & 0xffff) / 65535.0f * 7.0f);
 	};
 	auto moss_tint = [&](Builder &r_b, const Vector4i &p_part) {
 		if (moss_k <= 0.0f) {
@@ -13086,7 +13128,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// The tube's bark tile length along the axis (as _tube lays it), so a vertex slid along
 		// the axis keeps its texel density instead of stretching the bark over the footprint.
 		const float girth = Math::TAU * MAX(p_rad[0], 0.001f);
-		const float circumference = girth / MAX(1.0f, Math::round(girth / _bark_tile()));
+		const float circumference = tube_v_len(girth, MAX(1.0f, Math::round(girth / _bark_tile())));
 		// Two passes: find every slide first, and weld nothing if any vertex would leave through
 		// open bark (a crotch between near-equal stems): a ragged, half-welded tube end shows
 		// its inside, the unwelded one stays hidden in its parent as before.
@@ -14967,7 +15009,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			cs.n0 = crotch_n0;
 			const float girth = Math::TAU * MAX(girth_r > 0.0f ? girth_r : rad[0], 0.001f);
 			cs.repeats = MAX(1.0f, Math::round(girth / _bark_tile()));
-			cs.circ = girth / cs.repeats;
+			cs.circ = tube_v_len(girth, cs.repeats);
 			if (crotch_n0 != Vector3()) {
 				crotch_stems[first.parent].push_back(cs);
 			}
@@ -16445,6 +16487,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "moss");
 		} else {
 			m->set_roughness(needles ? 0.5f : 0.75f);
+			// Wet while the canopy holds the rain it caught, with the water beaded on the leaves (docs/ideas/rain.md,
+			// step 5); the flutter material carries the same generated lines.
+			m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+			m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
+			m->set_wetness_canopy(true);
 			if (!needles) {
 				// A broadleaf's cuticle reflects a little, and its leaves face every way: with the
 				// default specular (0.5) at roughness 0.6 the sky's grey-blue lay over dense, dark
@@ -16870,6 +16917,10 @@ Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_
 	if (code.is_empty() || vx < 0) {
 		return p_base;
 	}
+	// Beaded leaves (wetness_canopy): the path tracer draws every bead (a footprint of 0); raster fades the ones finer
+	// than the pixel.
+	code = code.replace("\t\tvec3 bead_fw = fwidth(bead_wp);\n\t\tfloat bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);\n",
+			"#if defined(RT)\n\t\tfloat bead_fp = 0.0;\n#else\n\t\tvec3 bead_fw = fwidth(bead_wp);\n\t\tfloat bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);\n#endif\n");
 	// The wind lines, minus any global the generated code already declares.
 	String wind;
 	const String plant_wind_code = R"(
@@ -16961,7 +17012,14 @@ vec3 plant_wind(vec3 wp, float h) {
 		if (fire_s.x > 0.0) {
 			float fire_rough = 0.0;
 			vec3 fire_before = ALBEDO;
-			fire_foliage_apply(fire_s, fire_w.y - MODEL_MATRIX[3].y, fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13))), ALBEDO, fire_rough);
+			float fire_n = fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13)));
+			float fire_burn = fire_foliage_apply(fire_s, fire_w.y - MODEL_MATRIX[3].y, fire_n, ALBEDO, fire_rough);
+			// Burnt up: foliage the flame passed through is consumed once the crown (or the plant) has burnt,
+			// leaf by leaf with a ragged edge, leaving the bare black branches (a crown fire takes the foliage and the
+			// finest twigs, the crown fuel of Van Wagner 1977). Killed brown foliage above the flame stays.
+			if (fire_burn * smoothstep(0.35, 0.8, fire_s.x) > fract(fire_n * 7.31 + 0.137)) {
+				ALPHA = 0.0;
+			}
 			// Light through a dead leaf takes its colour too (seen from below, a crown is mostly backlit).
 			fire_leaf_back = clamp(ALBEDO / max(fire_before, vec3(1e-3)), 0.0, 1.5);
 		}
@@ -17375,7 +17433,11 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		const float top = Math::lerp(1.8f, 2.5f, t);
 		const float base_w = Math::lerp(1.6f, 2.4f, t2);
 		envelope = AABB(Vector3(-1.0f, -1.0f, -base_w * 0.5f), Vector3(2.0f, 1.0f + top, base_w));
-		envelope_batter = p_variant % 2 == 0 ? 1.0f - Math::lerp(0.6f, 1.0f, t2) / base_w : 0.0f;
+		// Box variants keep a slight batter (docs, 18 Nov: a box's lower half thinned to twigs).
+		// A flailed face is never quite plumb, and a face leaning back a little lets the low
+		// leaves see the sky; hedge guidance cuts every hedge narrower at the top for that
+		// reason (Hedgelink, Hedge management cycle; Natural England TIN 5).
+		envelope_batter = p_variant % 2 == 0 ? 1.0f - Math::lerp(0.6f, 1.0f, t2) / base_w : Math::lerp(0.12f, 0.2f, t);
 		envelope_sprouts = 2;
 		// Planted in a staggered double row, five to the metre, and leaning out along the line:
 		// stems from all along the segment's foot fill its length.
