@@ -62,7 +62,7 @@ extends Node3D
 #                       --prints=0 leaves out the row of boot prints; --sea=name:value sets a sea property
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
-#   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
+#   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), also --view=rills (default -14,75), and the exposure
 #   --prop=name:value   set one of the surface's properties (repeatable)
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
@@ -1844,6 +1844,15 @@ func _runoff_dump() -> void:
 	var raw := FileAccess.open(dump.get_basename() + ".f32", FileAccess.WRITE)
 	if raw:
 		raw.store_buffer(cut.to_byte_array())
+	# The standing water's depth (m, float) over the same window.
+	var wd := PackedFloat32Array()
+	wd.resize(n * n)
+	for py in n:
+		for px in n:
+			wd[py * n + px] = surface.get_standing_water_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s))
+	var rawd := FileAccess.open(dump.get_basename() + "_water.f32", FileAccess.WRITE)
+	if rawd:
+		rawd.store_buffer(wd.to_byte_array())
 	var wsum := 0.0
 	var wmax := 0.0
 	var wet := 0
@@ -2617,7 +2626,7 @@ func _build_rills() -> void:
 	var env := _make_env()
 	for c in get_children():
 		if c is DirectionalLight3D:
-			c.rotation_degrees = Vector3(-14.0, 75.0, 0.0)
+			c.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-14.0, 75.0, 0.0)
 	for i in 2400:
 		await get_tree().physics_frame
 	surface.sync_deformation()

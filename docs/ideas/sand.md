@@ -541,7 +541,16 @@ Docs round 1 (declined: dotted rills, a parallel comb, no water, bench backgroun
   from 0.02 mm (smooth surface, Lagarde 2013's accumulated water) and covers the grains past 0.3 mm as before.
 - `--view=rills` looks down the face to the waterline. The site frame belongs to the scene's real beach.
 Left: faint ridges across some floors (the explicit scheme's two-texel mode; de Almeida et al. 2012's flux
-weighting would damp it but needs the neighbours' fluxes double-buffered).
+weighting would damp it but needs the neighbours' fluxes double-buffered). Fixed 18 Nov: a backlit close-up showed
+it worse than ridges, a ladder of one-texel rungs along every rill (odd and even texels' discharges decoupled, the
+bed cut to match), drawn as stepped islands in the glistening sheet. The depth pass now keeps each face's signed
+discharge (the shift buffer, extended) and the flux pass starts each face from its own mixed with the two parallel
+faces' either side, theta 0.8 (de Almeida, Bates, Freer and Souvignet 2012). Second difference of the depth along
+the face down 0.90 to 0.57 of the first; the deepest cut 17.7 to 7.8 mm (the rungs had deepened it), the runoff
+test passes. Two shading fixes found on the way, both renderers: the standing film is classified from the pore
+saturation after filtering, not before (its edge was rounded squares a lattice step across), and standing water's
+depth between texels is the interpolated level less the bed, dry texels given their wet neighbours' mean level, so
+the waterline runs between texels instead of round whole dry ones.
 
 Docs passed round 2, with a note: in raster the net partly reads as raised ridges with bright crests. Checked
 on the cut: the rills' banks sit 0.1 mm below the face on average, not above it; under the low side sun each
@@ -591,7 +600,17 @@ solved on cells of tens of centimetres: its edge's finer wiggles are the grid's)
 gentle 0.8 to 1.3 m scallops; a new line flattens any older one on its transect it reached past, so lines never
 cross; and each stretch between two marks is laid once, by the second to mark (a doubled join was a bead). Bench:
 `--prints=0`, `--sea=name:value` (`shore_wave_curl:0` for path-traced shore frames until the lips have a PT look).
-`--view=shore` prints the count; `SWASH_DUMP=file.f32` writes the ground's change over x -3..3, z -1..3.
+`--view=shore` prints the count; `SWASH_DUMP=file.f32` writes the ground's change over x -4..4, z -1..5 at 1 cm.
+Docs rounds 4 and 5 (short hooked scraps far off, near lines too straight and doubled): marks are now laid per
+wave, not per transect. A wave is the mean reach over the stretch rising and falling back 8 cm; its line is each
+transect's highest reach that wave, tent-averaged 1.5 m either side, plus scallops 0.8 to 1.5 m long and 18 to 30 cm
+deep (a sine raised to 0.6, so the cusps stay sharp). An older line within 10 cm landward of a new one, or seaward
+of it, is flattened there (one reach draws one ridge), and what is left of a line under a metre long goes with it.
+Validity is kept per stretch between transects, so flattening one never orphans a 10 cm dash beside it.
+The PT frame of that round lost the lines: the lip's darker tint was the fresh tint, which dries away in minutes,
+so by the frame only the raster's micro-occlusion drew them. The lip's dark grains are its material (heavy minerals
+and mica, Komar 1998), not its moisture: it is now laid as a band of another sand (`amount_fresh` from 2: 2 plus its
+share, kept, albedo down to 0.6, no sheen), which both renderers draw.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
 

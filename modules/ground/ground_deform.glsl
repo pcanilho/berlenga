@@ -115,7 +115,7 @@ layout(set = 0, binding = 12, std430) restrict buffer Water {
 	WaterCell water[];
 };
 layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
-	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY
+	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face())
 };
 layout(set = 0, binding = 14, std430) restrict buffer Ledger {
 	uint ledger[4]; // add_water's discs, mm3 (cumulative): [0] takes could not find, [1] added, [2] taken
@@ -353,7 +353,7 @@ void run_amount_stamp(Stamp s) {
 			// A line being washed away: only what was laid on the surface goes, and its tint with it.
 			st.y -= min(st.y, a);
 			if (ground) {
-				st.w *= 1.0 - cover;
+				st.w = st.w >= 2.0 ? 2.0 + (st.w - 2.0) * (1.0 - cover) : st.w * (1.0 - cover);
 			}
 		} else if (sa > 0.0) {
 			float take = min(st.y, a);
@@ -366,8 +366,11 @@ void run_amount_stamp(Stamp s) {
 			float fill = min(st.x, a);
 			st.x -= fill;
 			st.y += a - fill;
-			if (ground && s.c.z > 0.0) {
-				st.w = max(st.w, s.c.z * cover); // a marked deposit (a swash mark's lip)
+			if (ground && s.c.z >= 2.0) {
+				// A deposit of a different sand (a swash mark's heavy minerals): 2 plus its share, and it stays.
+				st.w = max(st.w, 2.0 + (s.c.z - 2.0) * cover);
+			} else if (ground && s.c.z > 0.0) {
+				st.w = max(st.w, s.c.z * cover); // a marked deposit, tinted fresh
 			}
 		}
 		st.z = max(st.z, settle);
@@ -945,6 +948,14 @@ float wade_head(vec2 p_wp, float p_bed, float p_d) {
 	return head;
 }
 
+// The signed discharge (per texel width, as the fluxes) through the face from texel (x, z) to its +x (p_axis 0) or +z
+// (1) neighbour, as the depth pass left it last step; a face off the field takes its neighbour's within.
+float water_face(int x, int z, int p_axis, int n) {
+	x = clamp(x, 0, n - 1);
+	z = clamp(z, 0, n - 1);
+	return water_tmp[(1 + p_axis) * n * n + z * n + x];
+}
+
 void water_flux(int x, int z) {
 	int n = fn();
 	int i = z * n + x;
@@ -966,6 +977,22 @@ void water_flux(int x, int z) {
 	vec4 f = water[i].flux * (runoff ? 1.0 : max(1.0 - params.water.z * dt, 0.0));
 	float hf = max(d, 1e-6);
 	float fr = WATER_G * 0.025 * 0.025 * dt / pow(hf, 7.0 / 3.0);
+	// Runoff: de Almeida, Bates, Freer and Souvignet (2012): the local inertial scheme left as it is lets the
+	// discharge on neighbouring faces decouple, odd and even texels in turn (a checkerboard, along a rill a ladder of
+	// one-texel rungs that the bed then cuts in). Each face starts from its last discharge mixed with the two
+	// parallel faces' either side, theta 0.8 (their 0.7 to 0.9), from the signed face discharges the depth pass keeps
+	// (water_face()); outward is positive for this texel.
+	const float THETA = 0.8;
+	vec4 q0 = f;
+	if (runoff) {
+		q0 = vec4(-water_face(x - 1, z, 0, n), water_face(x, z, 0, n), -water_face(x, z - 1, 1, n), water_face(x, z, 1, n));
+		vec4 qa = vec4(-water_face(x - 2, z, 0, n), water_face(x - 1, z, 0, n), -water_face(x, z - 2, 1, n), water_face(x, z - 1, 1, n));
+		vec4 qb = vec4(-water_face(x, z, 0, n), water_face(x + 1, z, 0, n), -water_face(x, z, 1, n), water_face(x, z + 1, 1, n));
+		q0 = THETA * q0 + 0.5 * (1.0 - THETA) * (qa + qb);
+		// The open edge's faces (no face record past it): their own outflow.
+		q0.x = x > 0 ? q0.x : f.x;
+		q0.z = z > 0 ? q0.z : f.z;
+	}
 	ivec2 nb[4] = ivec2[](ivec2(x - 1, z), ivec2(x + 1, z), ivec2(x, z - 1), ivec2(x, z + 1));
 	for (int k = 0; k < 4; k++) {
 		ivec2 q = nb[k];
@@ -980,7 +1007,7 @@ void water_flux(int x, int z) {
 			dh = h - (qb + qd + (wading && qd > 0.0 ? wade_head(texel_world(q.x, q.y), qb, qd) : 0.0));
 		}
 		if (runoff) {
-			float qk = f[k] * l;
+			float qk = q0[k] * l;
 			qk = (qk + dt * WATER_G * hf * dh / l) / (1.0 + fr * abs(qk));
 			f[k] = max(qk / l, 0.0);
 		} else {
@@ -999,6 +1026,12 @@ void water_depth(int x, int z) {
 	int i = z * n + x;
 	float dt = params.water.y;
 	vec4 f = water[i].flux;
+	if (params.water3.x > 0.5) {
+		// The faces' signed discharges for the next step's mixing (water_flux()); the field's last row and column
+		// keep their own outflow.
+		water_tmp[n * n + i] = f.y - (x < n - 1 ? water[i + 1].flux.x : 0.0);
+		water_tmp[2 * n * n + i] = f.w - (z < n - 1 ? water[i + n].flux.z : 0.0);
+	}
 	float flow = -(f.x + f.y + f.z + f.w);
 	if (x > 0) {
 		flow += water[i - 1].flux.y;
@@ -1305,7 +1338,7 @@ void main() {
 		float keep = exp(-(params.kind.w * m1.z + params.age.x) * params.age.y);
 		st.x *= keep;
 		st.y *= keep;
-		st.w *= params.kind.z;
+		st.w = st.w >= 2.0 ? st.w : st.w * params.kind.z; // the fresh tint dries; a laid mineral (2 + share) stays
 		// As the CPU: a texel both pressed and piled on loses the smaller from both, then films under 10 microns go.
 		float both = min(st.x, st.y);
 		st.xy -= vec2(both);
@@ -1335,7 +1368,9 @@ void main() {
 		if (is_ground() && st.w > 0.0) {
 			// Freshly turned ground: darker (damp grains from below) and glossier when wet.
 			vec4 m1 = ground_cell(texel_world(x, z), 1);
-			tint = vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
+			// Or a laid band of heavy minerals (st.w 2 plus its share: GroundDeformField::amount_fresh): dark, and it
+			// stays dark dry (GroundSurface3D::_publish_tint).
+			tint = st.w >= 2.0 ? vec2(1.0 - 0.4 * min(st.w - 2.0, 1.0), 1.0) : vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
 		}
 		if (is_ground()) {
 			// The ground's map: the net depression (dent less rim) and the standing water over it.

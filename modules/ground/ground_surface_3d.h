@@ -383,7 +383,7 @@ private:
 	float _far_pore_at(float p_x, float p_z) const;
 	float _pore_step(float p_s, float p_depth, float p_contact, float p_dt, float &r_table) const;
 	static float _value_noise(float p_x, float p_z);
-	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the standing film,
+	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the saturation (the standing film from 0.95, taken after filtering),
 	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
 	Vector<uint8_t> wet_data;
 	Ref<ImageTexture> wet_texture;
@@ -438,6 +438,15 @@ private:
 	};
 	bool swash_marks = true;
 	LocalVector<SwashTransect> swash_tr;
+	struct SwashLine {
+		LocalVector<Vector2> pts; // one per transect
+		LocalVector<uint8_t> valid; // per stretch from point t to t + 1: 0 where not laid or flattened
+	};
+	LocalVector<SwashLine> swash_lines; // the lines still on the sand, oldest first
+	LocalVector<float> swash_max; // each transect's highest reach this wave
+	bool swash_wave_on = false;
+	float swash_r_start = 0.0f; // the mean reach when the wave began, and its highest since
+	float swash_r_peak = 0.0f;
 	Vector2 swash_dir; // down the beach
 	Vector2 swash_mid;
 	double swash_accum = 0.0;
