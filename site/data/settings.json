@@ -2335,7 +2335,7 @@
     "GrassField3D.trample_recovery"
    ],
    "note": "",
-   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles.",
+   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -3149,7 +3149,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
