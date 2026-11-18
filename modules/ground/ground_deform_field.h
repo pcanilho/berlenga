@@ -105,6 +105,17 @@ public:
 	float extent = 32.0f;
 	int resolution = 512;
 	int max_cached_tiles = 1024;
+	// Mud tracked onto firm ground (mud round 3): fresh values from 4 are a laid film of clay, 4 + its share in
+	// sixteenths + 0.06 x its wetness (ground_deform.glsl mud_band()).
+	static float mud_band(float p_share, float p_wet) {
+		const float b = CLAMP(Math::round(p_share * 16.0f) - 1.0f, 0.0f, 15.0f);
+		return 4.0f + b / 16.0f + 0.06f * CLAMP(p_wet, 0.0f, 1.0f);
+	}
+	static Vector2 mud_band_share_wet(float p_w) {
+		const float v = p_w - 4.0f;
+		const float b = Math::floor(v * 16.0f + 1e-4f);
+		return Vector2((b + 1.0f) / 16.0f, CLAMP((v - b / 16.0f) / 0.06f, 0.0f, 1.0f));
+	}
 	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
@@ -147,6 +158,7 @@ public:
 	void invalidate() { valid = false; }
 	void clear();
 	int cached_tile_count() const { return cache.size(); }
+	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
 
 	float sample(const LocalVector<float> &p_field, float p_x, float p_z) const;
 	float dent_at(float p_x, float p_z) const { return valid ? sample(dent, p_x, p_z) : 0.0f; }

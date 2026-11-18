@@ -847,15 +847,15 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_APICAL_CONTROL] = 0.9f; // Strong laterals: a full, dense crown.
 			p[PARAM_PHOTOTROPISM] = 0.08f;
 			p[PARAM_GRAVITY_BENDING] = 0.35f; // Heavy old limbs bow out and down, tips turned up: the crown spreads as a mass, not a fan of rising limbs.
-			p[PARAM_SHED_RATIO] = 0.06f; // Keeps shoots inside the crown: a dense mass, not tufts.
+			p[PARAM_SHED_RATIO] = 0.02f; // Keeps shoots inside the crown: a dense mass, not tufts at the limb tips (docs, 18 Nov).
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f; // A long dead limb read as an artefact (docs, 18 Nov).
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.18f; // Pairs, 10-25 cm, stout.
 			p[PARAM_LEAVES_PER_INTERNODE] = 300; // Dense: the needles hide most of the branches.
-			p[PARAM_LEAF_YEARS] = 4;
+			p[PARAM_LEAF_YEARS] = 6; // Needles stay 4-6 years on old crowns.
 			p[PARAM_CROWN_CONE] = 0.0f; // No excurrent cone: it held the top to a sparse spire over a wide lowest whorl (docs, 18 Nov).
-			p[PARAM_SHADOW_STRENGTH] = 0.04f;
-			p[PARAM_PIPE_EXPONENT] = 2.0f;
+			p[PARAM_SHADOW_STRENGTH] = 0.03f;
+			p[PARAM_PIPE_EXPONENT] = 1.85f; // A stout bole under the heavy crown.
 			bark_color = Color(0.4f, 0.26f, 0.2f); // Purplish red-brown plates.
 			leaf_color = Color(0.11f, 0.17f, 0.08f); // Grey-green.
 			break;
@@ -16072,6 +16072,11 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			ALBEDO = mix(ALBEDO, mix(ALBEDO * 0.25, vec3(0.03, 0.026, 0.023), smoothstep(0.3, 0.6, plates)), charred);
 			ROUGHNESS = mix(ROUGHNESS, 0.9, charred);
 			bark_bare *= 1.0 - charred;
+			// Burning and smouldering wood near the ground (logs, fallen branches, a stem's foot): the glow
+			// the fire map carries there shows in the char's cracks, the furrows between the plates.
+			float fire_low = 1.0 - smoothstep(0.15, 0.5, fire_w.y - MODEL_MATRIX[3].y);
+			float fire_cracks = 1.0 - smoothstep(0.2, 0.45, plates);
+			fire_bark_emit = fire_glow_color(fire_s.y) * charred * fire_low * (0.15 + 0.85 * fire_cracks) * 3.0;
 		}
 	}
 )";
@@ -16083,6 +16088,24 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		code = code.insert(na + nanchor.length(), "	NORMAL_MAP = mix(NORMAL_MAP, bark_wood_n, bark_bare * 0.85);\n");
 	}
 	code = code.insert(ra + anchor.length(), body);
+	{
+		// The fire's glow, added at the end of fragment() after any emission the material sets.
+		const int fr = code.find("void fragment() {");
+		int depth = 0;
+		int end = -1;
+		for (int i = code.find("{", fr); fr >= 0 && i >= 0 && i < code.length(); i++) {
+			if (code[i] == '{') {
+				depth++;
+			} else if (code[i] == '}' && --depth == 0) {
+				end = i;
+				break;
+			}
+		}
+		if (end > 0) {
+			code = code.insert(end, "	EMISSION += fire_bark_emit;\n");
+			code = code.insert(code.find("{", fr) + 1, "\n	vec3 fire_bark_emit = vec3(0.0);");
+		}
+	}
 	const String uniforms = R"(uniform sampler2D lichen_map : hint_default_white, filter_linear_mipmap, repeat_enable;
 uniform vec3 lichen_crust_color : source_color = vec3(0.5, 0.53, 0.47);
 uniform vec3 lichen_leafy_color : source_color = vec3(0.6, 0.64, 0.55);

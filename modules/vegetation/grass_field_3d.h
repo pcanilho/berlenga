@@ -73,6 +73,14 @@ public:
 			PackedVector2Array polygon;
 		};
 		LocalVector<Item> items;
+		// The hedges round them (GrassField3D.hedges): runs of segments, a straight line each, whose
+		// core nothing else grows in.
+		struct Hedge {
+			Vector2 a, b;
+			float half = 0.7f;
+			Rect2 bounds;
+		};
+		LocalVector<Hedge> hedges;
 		bool is_empty() const { return items.is_empty(); }
 		bool any_in(const Rect2 &p_rect) const {
 			for (const Item &it : items) {
@@ -80,15 +88,34 @@ public:
 					return true;
 				}
 			}
+			for (const Hedge &h : hedges) {
+				if (h.bounds.intersects(p_rect)) {
+					return true;
+				}
+			}
 			return false;
 		}
+		bool in_hedge(const Vector2 &p_q) const {
+			for (const Hedge &h : hedges) {
+				if (!h.bounds.has_point(p_q)) {
+					continue;
+				}
+				const Vector2 ab = h.b - h.a;
+				const float t = CLAMP((p_q - h.a).dot(ab) / MAX(ab.length_squared(), 1e-8f), 0.0f, 1.0f);
+				if (p_q.distance_to(h.a + ab * t) < h.half) {
+					return true;
+				}
+			}
+			return false;
+		}
+		// In a field, or in a hedge's core.
 		bool contains(const Vector2 &p_q) const {
 			for (const Item &it : items) {
 				if (it.bounds.has_point(p_q) && Geometry2D::is_point_in_polygon(p_q, it.polygon)) {
 					return true;
 				}
 			}
-			return false;
+			return in_hedge(p_q);
 		}		// Metres to the nearest field's edge, negative inside a field; p_reach where none is nearer.
 		float edge_distance(const Vector2 &p_q, float p_reach) const {
 			float best = p_reach;
@@ -236,7 +263,10 @@ private:
 	// each field's edge, hedge_offset metres out (past the verge), one gateway gap per field.
 	bool hedges = true;
 	float hedge_offset = 3.5f;
+	bool hedge_voxel_lods = true; // Voxel shells past 30 m (VegetationVoxelLod).
+	static inline HashMap<String, Ref<Mesh>> hedge_shell_cache;
 	LocalVector<Node3D *> hedge_nodes;
+	LocalVector<CropFieldMask::Hedge> hedge_runs; // World xz, for the mask.
 	int hedge_day = -1000;
 	bool hedges_queued = false;
 	void _queue_hedges();
@@ -489,7 +519,10 @@ public:
 	bool get_hedges() const { return hedges; }
 	void set_hedge_offset(float p_offset);
 	float get_hedge_offset() const { return hedge_offset; }
+	void set_hedge_voxel_lods(bool p_enabled);
+	bool get_hedge_voxel_lods() const { return hedge_voxel_lods; }
 	int get_hedge_segment_count() const;
+	static Ref<ArrayMesh> make_voxel_shell(const Ref<Mesh> &p_mesh, float p_voxel);
 	Array get_fields() const { return fields; }
 	float get_field_stage(int p_index) const;
 	static float crop_calendar_stage(int p_sown_day, int p_harvest_day, int p_day);

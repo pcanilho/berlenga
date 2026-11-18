@@ -32,6 +32,7 @@
 #include "ground_surface_3d.h"
 
 #include "core/config/engine.h"
+#include "core/io/dir_access.h"
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -1213,10 +1214,16 @@ void GroundSurface3D::_follow(Vector3 p_center) {
 	const Vector2i want = field.origin_for(xz);
 	const bool moved = !field.valid || want != field.origin;
 	if (moved) {
+		_ruts_configure();
+		_ruts_leave(field, rut_main, want, rut_main_pending);
+		_ruts_arrive(field, rut_main, _gpu_on() ? &gpu_host : nullptr, want, rut_main_pending);
 		if (_gpu_on()) {
 			gpu_host.shift_to(field, want, deform_resolution, max_cached_tiles);
 		}
 		field.shift(want);
+		if (!_gpu_on()) {
+			_ruts_read_cpu(field, rut_main, rut_main_pending);
+		}
 	}
 	_near_follow();
 	const Rect2 r = field.rect();
@@ -1294,6 +1301,11 @@ Rect2 GroundSurface3D::get_near_rect() const {
 }
 
 void GroundSurface3D::_near_release() {
+	if (near_fld.valid && _ruts_on()) {
+		_ruts_configure();
+		_ruts_save_field(near_fld, rut_near, rut_near_pending);
+	}
+	rut_near_pending.clear();
 	field.stamp_step = 0.0f;
 	near_host.release();
 	near_fld.invalidate();
@@ -1321,6 +1333,9 @@ void GroundSurface3D::_near_follow() {
 	if (near_fld.valid && want == near_fld.origin) {
 		return;
 	}
+	_ruts_configure();
+	_ruts_leave(near_fld, rut_near, want, rut_near_pending);
+	_ruts_arrive(near_fld, rut_near, &near_host, want, rut_near_pending);
 	if (near_fld.valid && !near_host.reset) {
 		_near_seed(want);
 	}
@@ -1348,8 +1363,8 @@ void GroundSurface3D::_near_seed(Vector2i p_origin) {
 			if (o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) {
 				continue; // kept from the old near field
 			}
-			if (near_host.has_cached(w)) {
-				continue;
+			if (near_host.has_cached(w) || rut_near_pending.has(w)) {
+				continue; // cached, or coming back from disk (kept ruts)
 			}
 			bool any = false;
 			for (int z = 0; z < T; z++) {
@@ -1446,6 +1461,13 @@ void GroundSurface3D::_upload() {
 						continue;
 					}
 					const Cell &c = _cell_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t);
+					if (f >= 4.0f) {
+						// Tracked mud (ground_deform.glsl): wet, dark and glossy; dry, a pale matte film.
+						const Vector2 sq = GroundDeformField::mud_band_share_wet(f);
+						tint_albedo[i] = Math::lerp(1.0f, Math::lerp(1.12f, 0.55f, sq.y), sq.x);
+						tint_roughness[i] = Math::lerp(1.0f, Math::lerp(1.0f, 0.45f, sq.y), sq.x);
+						continue;
+					}
 					if (f >= 2.0f) {
 						// A laid band of heavy minerals (2 plus its share): dark, dry or wet (ground_deform.glsl).
 						tint_albedo[i] = 1.0f - 0.4f * MIN(f - 2.0f, 1.0f);
@@ -3054,7 +3076,11 @@ void GroundSurface3D::_age(double p_delta) {
 						dn *= keep;
 						rm *= keep;
 					}
-					if (field.fresh[i] < 2.0f) {
+					if (field.fresh[i] >= 4.0f) {
+						// Tracked mud dries in place (its film stays).
+						const Vector2 sq = GroundDeformField::mud_band_share_wet(field.fresh[i]);
+						field.fresh[i] = GroundDeformField::mud_band(sq.x, sq.y * dry);
+					} else if (field.fresh[i] < 2.0f) {
 						field.fresh[i] *= dry; // a laid mineral band (2 plus its share) does not dry away
 					}
 					// A texel both pressed and piled on is the same surface with the smaller of the two taken off both
@@ -3157,6 +3183,9 @@ void GroundSurface3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			set_physics_process_internal(false);
+			if (_ruts_on()) {
+				save_ruts();
+			}
 			_gpu_release();
 			if (ripple_task != WorkerThreadPool::INVALID_TASK_ID) {
 				WorkerThreadPool::get_singleton()->wait_for_task_completion(ripple_task);
@@ -3568,6 +3597,206 @@ float GroundSurface3D::deposit(Vector3 p_position, float p_radius, float p_depth
 	return p_depth > 0.0f ? _amount(p_position, p_radius, -p_depth, 0.0f) : 0.0f;
 }
 
+// Ruts kept across the world (docs/ideas/mud.md, round 3). MudRunner and SnowRunner keep a map's deformation in its
+// save; this keeps the field's tiles (dent, rim, tint and standing water) on disk as it moves off them, the way a
+// virtual texture pages its tiles out, and reads them back in when it returns. The main and near fields each keep
+// their own, named by texel.
+bool GroundSurface3D::_ruts_on() const {
+	return keep_ruts && !ruts_path.is_empty() && !Engine::get_singleton()->is_editor_hint();
+}
+
+void GroundSurface3D::_ruts_configure() {
+	const String dir = _ruts_on() ? ruts_path : String();
+	rut_main.configure(dir, "m", field.texel());
+	rut_near.configure(dir, "n", near_fld.texel());
+}
+
+void GroundSurface3D::_ruts_leave(const GroundDeformField &p_field, GroundRutStore &r_store, Vector2i p_origin, const LocalVector<Vector2i> &p_pending) {
+	if (!r_store.is_on() || !p_field.valid) {
+		return;
+	}
+	const int T = GroundDeformField::TILE;
+	const int nt = p_field.tiles();
+	const Vector2i old0 = p_field.origin / T;
+	const Vector2i new0 = p_origin / T;
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			const Vector2i w = old0 + Vector2i(tx, tz);
+			const Vector2i l = w - new0;
+			if ((l.x >= 0 && l.y >= 0 && l.x < nt && l.y < nt) || p_pending.has(w)) {
+				continue; // staying, or never read in (its file is still right)
+			}
+			const bool active = int(p_field.tile_active.size()) == nt * nt && p_field.tile_active[tz * nt + tx];
+			if (active || r_store.has(w)) {
+				r_store.store(p_field, w, tx, tz);
+			}
+		}
+	}
+}
+
+void GroundSurface3D::_ruts_arrive(const GroundDeformField &p_field, GroundRutStore &r_store, const GroundDeformGPUHost *p_host, Vector2i p_origin, LocalVector<Vector2i> &r_pending) {
+	const int T = GroundDeformField::TILE;
+	const int nt = p_field.resolution / T;
+	const Vector2i old0 = p_field.origin / T;
+	const Vector2i new0 = p_origin / T;
+	LocalVector<Vector2i> keep;
+	for (const Vector2i &w : r_pending) {
+		const Vector2i l = w - new0;
+		if (l.x >= 0 && l.y >= 0 && l.x < nt && l.y < nt) {
+			keep.push_back(w);
+		}
+	}
+	r_pending = keep;
+	if (!r_store.is_on() || r_store.count() == 0) {
+		return;
+	}
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			const Vector2i w = new0 + Vector2i(tx, tz);
+			const Vector2i o = w - old0;
+			if (p_field.valid && o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) {
+				continue;
+			}
+			const bool cached = p_host ? p_host->has_cached(w) : p_field.has_cached(w);
+			if (!cached && r_store.has(w) && !r_pending.has(w)) {
+				r_pending.push_back(w);
+			}
+		}
+	}
+}
+
+void GroundSurface3D::_ruts_read_cpu(GroundDeformField &r_field, GroundRutStore &r_store, LocalVector<Vector2i> &r_pending) {
+	const int T = GroundDeformField::TILE;
+	const Vector2i t0 = r_field.origin / T;
+	LocalVector<uint32_t> data;
+	for (const Vector2i &w : r_pending) {
+		if (r_store.load(w, data)) {
+			GroundRutStore::unpack(r_field, w.x - t0.x, w.y - t0.y, data);
+		}
+	}
+	r_pending.clear();
+}
+
+void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRutStore &r_store, GroundDeformGPUHost &r_host, LocalVector<Vector2i> &r_pending) {
+	// Read in once the field stands (a reset or a move this frame first): seeded into the cache, then pulled.
+	if (r_pending.is_empty() || r_host.reset || r_host.gpu.is_null() || r_host.shift.size() > 0 || r_host.stores.size() > 0) {
+		return;
+	}
+	LocalVector<uint32_t> data;
+	for (const Vector2i &w : r_pending) {
+		if (r_store.load(w, data)) {
+			r_host.seed_tile(w, data.ptr(), 2, max_cached_tiles);
+		}
+	}
+	if (r_host.pull_cached(p_field, r_pending)) {
+		r_pending.clear();
+	}
+}
+
+void GroundSurface3D::_ruts_save_field(const GroundDeformField &p_field, GroundRutStore &r_store, const LocalVector<Vector2i> &p_pending) {
+	if (!r_store.is_on() || !p_field.valid) {
+		return;
+	}
+	const int T = GroundDeformField::TILE;
+	const int nt = p_field.tiles();
+	const Vector2i t0 = p_field.origin / T;
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			const Vector2i w = t0 + Vector2i(tx, tz);
+			if (p_pending.has(w)) {
+				continue;
+			}
+			const bool active = int(p_field.tile_active.size()) == nt * nt && p_field.tile_active[tz * nt + tx];
+			if (active || r_store.has(w)) {
+				r_store.store(p_field, w, tx, tz);
+			}
+		}
+	}
+}
+
+void GroundSurface3D::set_keep_ruts(bool p_enabled) {
+	keep_ruts = p_enabled;
+	if (!p_enabled) {
+		rut_main_pending.clear();
+		rut_near_pending.clear();
+	}
+	_ruts_configure();
+}
+
+void GroundSurface3D::set_ruts_path(const String &p_path) {
+	ruts_path = p_path;
+	rut_main_pending.clear();
+	rut_near_pending.clear();
+	_ruts_configure();
+}
+
+void GroundSurface3D::save_ruts() {
+	_ruts_configure();
+	_ruts_save_field(field, rut_main, rut_main_pending);
+	if (near_fld.valid) {
+		_ruts_save_field(near_fld, rut_near, rut_near_pending);
+	}
+}
+
+void GroundSurface3D::clear_saved_ruts() {
+	// Every field's tiles in the folder, whatever their texel.
+	if (!ruts_path.is_empty() && DirAccess::dir_exists_absolute(ruts_path)) {
+		Ref<DirAccess> da = DirAccess::open(ruts_path);
+		if (da.is_valid()) {
+			LocalVector<String> files;
+			da->list_dir_begin();
+			for (String f = da->get_next(); !f.is_empty(); f = da->get_next()) {
+				if (!da->current_is_dir() && f.ends_with(".rut")) {
+					files.push_back(f);
+				}
+			}
+			da->list_dir_end();
+			for (const String &f : files) {
+				da->remove(f);
+			}
+		}
+	}
+	rut_main_pending.clear();
+	rut_near_pending.clear();
+	rut_main.configure(String(), "m", 0.0f);
+	rut_near.configure(String(), "n", 0.0f);
+	_ruts_configure();
+}
+
+int GroundSurface3D::get_saved_rut_tile_count() {
+	_ruts_configure();
+	return rut_main.count() + rut_near.count();
+}
+
+Vector2 GroundSurface3D::get_tracked_mud_at(Vector3 p_position) const {
+	const bool near = is_near_active() && _near_inside(p_position.x, p_position.z);
+	const GroundDeformField &f = near ? near_fld : field;
+	const int n = f.resolution;
+	if (!f.valid || int(f.fresh.size()) != n * n) {
+		return Vector2();
+	}
+	const float t = f.texel();
+	const int x = (int)Math::floor(p_position.x / t) - f.origin.x;
+	const int z = (int)Math::floor(p_position.z / t) - f.origin.y;
+	if (x < 0 || z < 0 || x >= n || z >= n || f.fresh[z * n + x] < 4.0f) {
+		return Vector2();
+	}
+	return GroundDeformField::mud_band_share_wet(f.fresh[z * n + x]);
+}
+
+float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet) {
+	if (!tracked_mud || !(p_depth > 0.0f)) {
+		return 0.0f;
+	}
+	// A film thinner than a millimetre covers the grain in patches: its share, so the trail fades out as the tread
+	// or sole runs clean.
+	const float before = field.amount_fresh;
+	field.amount_fresh = GroundDeformField::mud_band(CLAMP(p_depth / 0.001f, 0.1f, 1.0f), p_wet);
+	const float v = deposit(p_position, p_radius, p_depth);
+	field.amount_fresh = before;
+	return v;
+}
+
 void GroundSurface3D::add_spray(const Spray &p_spray) {
 	// Nobody taking them (no grains node): what is older than a couple of physics frames is dropped.
 	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
@@ -3799,6 +4028,10 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 }
 
 void GroundSurface3D::_gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync) {
+	_ruts_read_gpu(field, rut_main, gpu_host, rut_main_pending);
+	if (is_near_active()) {
+		_ruts_read_gpu(near_fld, rut_near, near_host, rut_near_pending);
+	}
 	_gpu_submit_field(gpu_host, field, gpu_ground_dirty, gpu_cells_dirty, gpu_slow_accum, 1, terrain_margin + skirt_fade, p_delta, p_age, p_readback, p_sync);
 	if (is_near_active()) {
 		// The near field lies inside the main one's deformable middle: no edge margin of its own.
@@ -4022,6 +4255,8 @@ void GroundSurface3D::clear_deformation() {
 	near_host.stamps.clear();
 	near_host.uploads.clear();
 	near_host.slump_until = -1.0;
+	rut_main_pending.clear(); // what is on disk stays: the next pass over it reads it in
+	rut_near_pending.clear();
 	if (is_inside_tree()) {
 		_upload();
 	}
@@ -4301,6 +4536,17 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume", "mud"), &GroundSurface3D::add_water, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("stir_water", "position", "radius", "mass"), &GroundSurface3D::stir_water);
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
+	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet"), &GroundSurface3D::track_mud, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
+	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
+	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);
+	ClassDB::bind_method(D_METHOD("set_keep_ruts", "enabled"), &GroundSurface3D::set_keep_ruts);
+	ClassDB::bind_method(D_METHOD("is_keeping_ruts"), &GroundSurface3D::is_keeping_ruts);
+	ClassDB::bind_method(D_METHOD("set_ruts_path", "path"), &GroundSurface3D::set_ruts_path);
+	ClassDB::bind_method(D_METHOD("get_ruts_path"), &GroundSurface3D::get_ruts_path);
+	ClassDB::bind_method(D_METHOD("save_ruts"), &GroundSurface3D::save_ruts);
+	ClassDB::bind_method(D_METHOD("clear_saved_ruts"), &GroundSurface3D::clear_saved_ruts);
+	ClassDB::bind_method(D_METHOD("get_saved_rut_tile_count"), &GroundSurface3D::get_saved_rut_tile_count);
 	ClassDB::bind_method(D_METHOD("set_muddy_water", "enabled"), &GroundSurface3D::set_muddy_water);
 	ClassDB::bind_method(D_METHOD("is_muddy_water"), &GroundSurface3D::is_muddy_water);
 	ClassDB::bind_method(D_METHOD("get_water_added"), &GroundSurface3D::get_water_added);
@@ -4455,6 +4701,9 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");

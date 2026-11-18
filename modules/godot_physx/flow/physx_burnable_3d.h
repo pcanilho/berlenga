@@ -128,6 +128,8 @@ protected:
 	static void _bind_methods();
 
 public:
+	// Radiant heat (kW/m2) at a point from every flaming burnable, as a point source each.
+	static float radiant_flux_at(const Vector3 &p_position);
 	static void free_materials();
 	void ignite(const Vector3 &p_position);
 	void extinguish();

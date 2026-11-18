@@ -61,7 +61,8 @@ private:
 	float line[2] = {}; // m above the sole
 	float flecks[2] = {}; // 0..1
 	float wet = 0.0f;
-	float in_water[2] = { 1e3f, 1e3f }; // s since each foot last stood in water (the read back can miss a frame as the field moves)
+	float in_water[2] = { 1e3f, 1e3f };
+	bool planted[2] = { false, false }; // last step's, so a footfall prints once // s since each foot last stood in water (the read back can miss a frame as the field moves)
 	Vector3 mud_rgb = Vector3(0.17f, 0.11f, 0.065f);
 	Vector3 last_position;
 	bool have_last = false;

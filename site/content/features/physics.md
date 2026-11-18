@@ -22,6 +22,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Spreading fire** (`PhysXFireSpread3D`, `fuel_patchiness`): grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.
 - **Fuel moisture from the weather** (`PhysXFireSpread3D.use_weather_moisture`): fuel dries or damps toward the air's equilibrium moisture, and rain wets it, slows the fire and puts it out.
 - **Burning objects** (`PhysXBurnable3D`, `embers`): wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that start new fires.
+- **Burning logs** (`PhysXFireSpread3D.vegetation_field`): fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.
 - **Fire light and embers** (`PhysXFlow3D.fire_light`, `embers`): a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.
 
   ![A campfire in a stone ring at night, seen from above, lighting the ground and stones](media/physx-campfire.jpg)
@@ -35,6 +36,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
   *Particle fluid: a clear stream pours into a bucket and churns up foam and bubbles where it lands.*
 
 - **Cloth tearing** (`PhysXCloth3D.tear_factor`, `physics/physx_3d/cloth/tearing`): overstretched edges split and the rip runs.
+- **Burning cloth** (`PhysXCloth3D.burnable`): cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.
 - **Blast materials** (`PhysXBlastAsset.materials`, `bond_healths`): pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.
 - **Blast without stalls** (`PhysXBlastAsset.prepare_render()`; `initial_linear_velocity`, `initial_angular_velocity`): piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.
 

@@ -2079,6 +2079,8 @@ wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the he
 control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in
 the top 60%.
 
+Maritime pine round 4 (18 Nov): the crown read as a see-through fan of bare limbs with tufts at the tips. Shedding 0.02 and six years of needles keep shoots inside the crown, a lighter self-shadow (0.03) lets them live, and a pipe exponent of 1.85 gives a stout bole under the heavy crown.
+
 Round 3 (18 Nov): the leader splits once into four limbs (a second split at ten years gave
 sixteen, the broom of thin pale limbs the docs saw), their side branches held to 0.35 of their
 vigor, the fork stems at 55 degrees; no dead branches kept (the twig bundle on the bole). Cork

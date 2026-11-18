@@ -1212,6 +1212,28 @@
    "topic": "Ground"
   },
   {
+   "name": "Tracked mud",
+   "settings": [
+    "GroundSurface3D.tracked_mud"
+   ],
+   "note": "",
+   "what": "tyres and boots leaving clay lay a film of mud on firm ground that fades as they clean and dries pale in place.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Ruts that stay",
+   "settings": [
+    "GroundSurface3D.keep_ruts"
+   ],
+   "note": "",
+   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on legs",
    "settings": [
     "GroundLegMud3D"
@@ -3640,6 +3662,17 @@
    "topic": ""
   },
   {
+   "name": "Burning logs",
+   "settings": [
+    "PhysXFireSpread3D.vegetation_field"
+   ],
+   "note": "",
+   "what": "fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fire light and embers",
    "settings": [
     "PhysXFlow3D.fire_light",
@@ -3671,6 +3704,17 @@
    ],
    "note": "",
    "what": "overstretched edges split and the rip runs.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Burning cloth",
+   "settings": [
+    "PhysXCloth3D.burnable"
+   ],
+   "note": "",
+   "what": "cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

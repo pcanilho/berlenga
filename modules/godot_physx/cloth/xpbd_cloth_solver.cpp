@@ -651,6 +651,59 @@ bool XPBDClothSolver::_split_vertex(int p_v, int p_toward) {
 	return true;
 }
 
+int XPBDClothSolver::burn_away(const LocalVector<uint8_t> &p_gone) {
+	if (p_gone.size() < positions.size()) {
+		return 0;
+	}
+	LocalVector<int> kept;
+	kept.reserve(indices.size());
+	LocalVector<uint8_t> touched;
+	touched.resize(positions.size());
+	memset(touched.ptr(), 0, touched.size());
+	int removed = 0;
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		const int a = indices[t], b = indices[t + 1], c = indices[t + 2];
+		// A triangle leaves once all its corners have burnt through; until then the burn shader eats it from the burnt
+		// corners along a soft edge, so holes are round rather than the mesh's triangle staircase.
+		if (p_gone[a] && p_gone[b] && p_gone[c]) {
+			touched[a] = touched[b] = touched[c] = 1;
+			removed++;
+			continue;
+		}
+		kept.push_back(a);
+		kept.push_back(b);
+		kept.push_back(c);
+	}
+	if (removed == 0) {
+		return 0;
+	}
+	indices = kept;
+	auto valid = [&](const DistanceConstraint &c) {
+		if (c.via_a < 0) {
+			return _has_tri(indices, c.a, c.b);
+		}
+		if (c.via_b < 0) {
+			return _has_tri(indices, c.a, c.via_a) && _has_tri(indices, c.via_a, c.b);
+		}
+		return _has_tri(indices, c.a, c.via_a, c.via_b) && _has_tri(indices, c.b, c.via_a, c.via_b);
+	};
+	for (uint32_t ci = 0; ci < constraints.size();) {
+		const DistanceConstraint &c = constraints[ci];
+		const bool near = touched[c.a] || touched[c.b] || (c.via_a >= 0 && touched[c.via_a]) || (c.via_b >= 0 && touched[c.via_b]);
+		if (near && !valid(c)) {
+			constraints.remove_at_unordered(ci);
+		} else {
+			ci++;
+		}
+	}
+	for (uint32_t v = 0; v < touched.size(); v++) {
+		if (touched[v]) {
+			_vertex_mass(v);
+		}
+	}
+	return removed;
+}
+
 int XPBDClothSolver::_tear_overstretched(float p_dt) {
 	struct Over {
 		float ratio = 0.0f;

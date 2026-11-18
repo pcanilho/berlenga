@@ -242,6 +242,8 @@ void GroundLegMud3D::_step(double p_delta) {
 	last_position = here;
 	have_last = true;
 
+	Vector3 facing = body ? body->get_global_basis().get_column(2) : get_global_basis().get_column(2);
+	facing = facing.length_squared() > 1e-8f ? facing.normalized() : Vector3(0, 0, 1);
 	bool fresh = false;
 	GroundSurface3D *ground = GroundSurface3D::get_active();
 	if (ground) {
@@ -250,6 +252,8 @@ void GroundLegMud3D::_step(double p_delta) {
 			const float surface = ground->get_surface_height_at(p);
 			const float water = ground->get_standing_water_at(p);
 			const bool planted = p.y - surface < LEG_PLANTED;
+			const bool footfall = planted && !this->planted[leg];
+			this->planted[leg] = planted;
 			// Under more than a few cm of standing water the boot comes out rinsed, not coated.
 			in_water[leg] = water > 0.03f ? 0.0f : in_water[leg] + dt;
 			if (planted && in_water[leg] > 0.5f) {
@@ -273,6 +277,15 @@ void GroundLegMud3D::_step(double p_delta) {
 					const Color clay = ground->get_mud_color_at(p).srgb_to_linear();
 					mud_rgb = mud_rgb.lerp(Vector3(clay.r, clay.g, clay.b), MIN(speed * dt / 3.0f, 1.0f));
 				}
+			}
+			if (footfall && line[leg] > 0.01f && water <= 0.01f && ground->get_mud_depth_at(p) <= 0.0f && ground->get_soil(p).stickiness < 0.2f) {
+				// Out of the mud (round 3): each footfall on firm ground leaves some of the sole's clay as a print,
+				// heel and forefoot, and the boot comes cleaner (a boot sheds its mud over a dozen steps or so).
+				const Vector3 fwd = Vector3(facing.x, 0.0f, facing.z).normalized();
+				const float film = 0.001f * MIN(line[leg] / 0.15f, 1.0f); // a full sole prints solid, a cleaner one patchy
+				ground->track_mud(p - fwd * 0.08f, 0.045f, film, wet);
+				ground->track_mud(p + fwd * 0.06f, 0.055f, film, wet);
+				line[leg] *= 0.85f;
 			}
 			if (water > 0.01f && planted && speed > 0.1f) {
 				// A boot walking through a puddle stirs the clay of its bed into the water (muddy water, round 3):
@@ -298,8 +311,6 @@ void GroundLegMud3D::_step(double p_delta) {
 		return;
 	}
 	written = total > 1e-4f;
-	Vector3 facing = body ? body->get_global_basis().get_column(2) : get_global_basis().get_column(2);
-	facing = facing.length_squared() > 1e-8f ? facing.normalized() : Vector3(0, 0, 1);
 	static const StringName names[12] = { "mud_frame0", "mud_frame1", "mud_frame2", "mud_wheel0", "mud_wheel1", "mud_wheel2",
 		"mud_wheel3", "mud_fill", "mud_spray", "mud_body", "mud_color", "mud_splat" };
 	const Vector4 values[12] = {

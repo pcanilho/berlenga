@@ -937,3 +937,50 @@ river gravels by mossy saxifrage, stonecrop and, near water, sedges and rushes.
   or olive; a first per-plant, graded version mixed both on sunlit tops (docs review).
   make_stones pairs green moss (+1 scree, +0.6 river) with a smaller, sparser yellow-olive one (-1).
 - Next: the river sets reading the stones' water film.
+
+## Far hedges as voxel bricks (Paulo picked 18 Nov; built)
+
+A hedge segment is 70k to 330k triangles, and a farmland view holds hundreds of them. Past some
+tens of metres a hedge's leaves and twigs are far below a pixel, so their shape and their light are
+all that is left to draw. Nanite Foliage (Unreal, experimental) keeps that as geometry: clusters
+that simplify badly as triangles become 4x4x4 voxel bricks, each voxel keeping its coverage, colour
+and a distribution of normals, one normal picked per pixel so the lighting stays rough. The same
+idea goes back to aggregate LOD for foliage (Neyret's volumetric textures, 1998; Loubet and Neyret,
+"Hybrid mesh-volume LoDs for all-scale pre-filtering of complex 3D assets", 2017) and to SGGX
+microflake distributions for filtered volumes (Heitz et al. 2015).
+
+The fork has no compute rasteriser and must stay path-traceable, so the bricks become a mesh:
+
+1. Voxelize each segment variant once (CPU, at species build): coverage, mean albedo and the normal
+   distribution's moments per voxel (mean normal and its length as the spread, the Toksvig idea) at
+   10, 20 and 40 cm.
+2. Per level, emit the exposed faces of covered voxels (coverage over a threshold that keeps the
+   segment's silhouette area), greedy-merged, the shell eroded by coverage so it is not blocky; per
+   vertex the voxel's albedo, mean normal and spread.
+3. Shade with the stored normal, widened by the spread (a rough, view-independent lobe) and a
+   sub-voxel dither of the normal from the distribution, so a far hedge keeps the sparkle of lit and
+   shadowed leaves rather than a flat paint.
+4. Swap by distance with the mesh's own LOD chain (Godot mesh LODs and visibility ranges), the
+   near segments real twigs. Shadows and PT trace the same shell.
+
+Then woodland edges and tree crowns the same way, if it holds up.
+
+Built (`VegetationVoxelLod::make_shell`, `GrassField3D.make_voxel_shell`, `hedge_voxel_lods` on):
+
+- Triangles are sampled every voxel/3 with their material's look (BaseMaterial3D or a ShaderMaterial
+  made from its code, so leaf flutter keeps working): colour, vertex colour (linear unless the
+  material says sRGB), texture with its alpha cut-out. Normals are turned outward from the core for
+  two-sided leaves.
+- Coverage 1 - exp(-0.5 L) for leaf area L per voxel face; solid past 0.35. Faces of partly filled
+  voxels sit inset, so the shell is not a lattice of whole cubes.
+- The shell must not look brighter than the hedge it stands for. Three terms, all from the voxel
+  grid: the filled share of the 26 neighbours as ambient occlusion; a deep leaf cloud's single
+  scattering brings its reflectance to about half the leaf albedo (Ross 1981; Goudriaan 1977), so
+  0.45 + 0.55 exp(-tau/2) with tau the leaf optical depth behind the face; and the rays the leaves in
+  front let through end on shade (a fifth of the leaf brightness). Normals blend the voxel's mean
+  leaf normal (by its length) with the crown's rounded outward direction, the spherical-normal
+  foliage trick, so the brick lights as one soft mass.
+- Hawthorn segment: full 279k triangles; 10 cm 4.5k; 20 cm 0.9k; 40 cm 0.2k; about 50 ms per level.
+  Far views: the mean colour of each level is within a few sRGB values of the full hedge. Levels
+  swap by visibility range: full to 30 m, 10 cm to 70 m, 20 cm to 150 m, 40 cm beyond, 3 m fades.
+- Not done: per-pixel normal dither from the distribution (step 3); greedy face merging.

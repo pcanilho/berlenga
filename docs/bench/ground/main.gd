@@ -37,6 +37,7 @@ extends Node3D
 #                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear); --spray: the
 #                         frame mid-throw, the clods in the air
 #   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
+#   --test=ruts         kept ruts (mud round 3): a print back after the field drives 600 m off and in a new node
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -96,6 +97,9 @@ var puddle_test := false
 var crack_test := false
 var legs_test := false
 var muddy_test := false
+var tracked_test := false
+var ruts_test := false
+var ruts_on := false # kept ruts (written to user://): off on the bench, or one run's prints turn up in the next
 var near_on := true
 var out := ""
 var spp := 16
@@ -137,6 +141,8 @@ func _ready() -> void:
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
 		elif a == "--test=muddy": muddy_test = true
+		elif a == "--test=tracked": tracked_test = true
+		elif a == "--test=ruts": ruts_test = true
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -159,6 +165,16 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if ruts_test:
+		await _run_ruts_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if tracked_test:
+		await _run_tracked_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if muddy_test:
 		await _run_muddy_tests()
 		print("RESULT: %d failed" % fails)
@@ -246,6 +262,9 @@ func _ready() -> void:
 	if view == "legs":
 		await _build_legs()
 		return
+	if view == "tracked":
+		await _build_legs(true)
+		return
 	if view == "wade":
 		await _build_wade()
 		return
@@ -293,6 +312,8 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.gpu_simulation = gpu
 	surface.near_field = near_on
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
+	surface.keep_ruts = ruts_on
+	surface.ruts_path = "user://bench_ruts"
 	# Everything ships on; each check turns on what it is about (--defaults keeps the shipped settings).
 	if not OS.get_cmdline_user_args().has("--defaults"):
 		surface.wind_ripples = false
@@ -1031,6 +1052,131 @@ func _run_muddy_tests() -> void:
 	_check("a tyre through water over sand leaves it clear", surface.get_water_mud_at(a) < 1.0, "%.2f kg/m3 (%.1f cm of water)" % [surface.get_water_mud_at(a), surface.get_standing_water_at(a) * 100.0])
 
 
+# Mud tracked onto firm ground (mud round 3): boots walked out of slurry onto dry soil leave fading prints and come
+# out cleaner step by step; the film dries. (The mud dries away where they walked: a soil's mud is its wetness.)
+# Ruts kept across the world (mud round 3): a print goes to disk as the field moves off it, is there when the field
+# comes back, and in the next session (a new ground node over the same place).
+func _run_ruts_tests() -> void:
+	var wipe := GroundSurface3D.new()
+	wipe.ruts_path = "user://bench_ruts"
+	wipe.clear_saved_ruts()
+	wipe.free()
+	ruts_on = true
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var a := Vector3(1.0, 0.0, 0.5)
+	var b := Vector3(-0.6, 0.0, -0.4)
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	surface.press_box(b, Vector2(0.11, 0.29), 0.3, 0.0, 0.03)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d0 := -surface.get_surface_height_at(a)
+	var e0 := -surface.get_surface_height_at(b)
+	var probe := get_node("Probe") as Node3D
+	probe.global_position = Vector3(600.0, 0.0, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var files := surface.get_saved_rut_tile_count()
+	probe.global_position = Vector3.ZERO
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d1 := -surface.get_surface_height_at(a)
+	_check("a print goes to disk as the field moves off it and is there when it comes back", files > 0 and d0 > 0.02 and absf(d1 - d0) < 0.1 * d0,
+			"%.1f cm deep, %d tiles kept 600 m away, %.1f cm on return" % [d0 * 100.0, files, d1 * 100.0])
+	# The next session: a new ground node (the old one keeps what it holds as it leaves the tree).
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d2 := -surface.get_surface_height_at(a)
+	var e2 := -surface.get_surface_height_at(b)
+	_check("and in the next session, both prints as they were", absf(d2 - d0) < 0.1 * d0 and absf(e2 - e0) < 0.1 * e0,
+			"%.1f and %.1f cm, %.1f and %.1f cm before" % [d2 * 100.0, e2 * 100.0, d0 * 100.0, e0 * 100.0])
+	# Flattened (cleared) and left: its file goes, so a later visit finds it flat.
+	surface.clear_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	(get_node("Probe") as Node3D).global_position = Vector3(600.0, 0.0, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var left := surface.get_saved_rut_tile_count()
+	(get_node("Probe") as Node3D).global_position = Vector3.ZERO
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d3 := -surface.get_surface_height_at(a)
+	_check("a cleared field drops its kept tiles as it leaves them", left == 0 and d3 < 0.002, "%d tiles kept, %.2f cm on return" % [left, d3 * 100.0])
+	# Off: a new node starts flat even where tiles are kept.
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.save_ruts()
+	ruts_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d4 := -surface.get_surface_height_at(a)
+	_check("with keep_ruts off a new node starts flat", d4 < 0.002, "%.2f cm" % (d4 * 100.0))
+	surface.clear_saved_ruts()
+
+
+func _run_tracked_tests() -> void:
+	near_on = false
+	await _soil_scene("soil")
+	# 15 cm of slurry, walked through for 3 m; then the ground dries out (as the clog test's) and the walk goes on.
+	await _paint_mud(0.15, 0.85)
+	var legs := _make_legs(Vector3(-3.0, 0, 0))
+	var lm := legs.get_node("LegMud") as GroundLegMud3D
+	surface.follow_target = surface.get_path_to(legs)
+	await _walk_legs(legs, 3.0, 1.4)
+	surface.moisture = 0.1
+	surface.settle(1.0, 0.5)
+	var line0 := lm.get_mud_line(GroundLegMud3D.LEG_LEFT)
+	await _walk_legs(legs, 5.5, 1.4)
+	var line1 := lm.get_mud_line(GroundLegMud3D.LEG_LEFT)
+	for i in 10:
+		await get_tree().physics_frame
+	# Prints along the walk out: the share of points on a film near the mud's edge, and further on.
+	var near_hits := 0
+	var near_mud := 0.0
+	var far_mud := 0.0
+	for k in 100:
+		for dz in range(-15, 16):
+			var nm := surface.get_tracked_mud_at(Vector3(0.6 + 1.2 * k / 100.0, 0, 0.01 * dz))
+			near_hits += 1 if nm.x > 0.0 else 0
+			near_mud += nm.x
+			far_mud += surface.get_tracked_mud_at(Vector3(3.6 + 1.2 * k / 100.0, 0, 0.01 * dz)).x
+	print("  line %.1f cm in the mud, %.1f cm after 5.5 m on dry soil; film over %.0f points' worth 0.6-1.8 m out, %.0f at 3.6-4.8 m" % [line0 * 100.0, line1 * 100.0, near_mud, far_mud])
+	_check("boots walked out of the mud leave prints on dry ground", near_hits > 100, "%d points" % near_hits)
+	_check("and come out cleaner step by step, the prints fainter", line1 < 0.5 * line0 and far_mud < 0.95 * near_mud, "line %.1f to %.1f cm; film %.0f to %.0f" % [line0 * 100.0, line1 * 100.0, near_mud, far_mud])
+	# Wet, the film is dark; an hour later it has dried in place and is still there.
+	var w0 := _film_wetness()
+	surface.settle(3600.0, 10.0)
+	var w1 := _film_wetness()
+	_check("the film dries in place and stays", w0.y > 100 and w1.y > 0.7 * w0.y and w1.x < w0.x - 0.4, "wetness %.2f to %.2f over %d to %d points" % [w0.x, w1.x, w0.y, w1.y])
+
+
+# The tracked mud film's mean wetness and the points it covers, 0.6 to 1.8 m out.
+func _film_wetness() -> Vector2:
+	var sum := 0.0
+	var count := 0
+	for k in 100:
+		for dz in range(-15, 16):
+			var m := surface.get_tracked_mud_at(Vector3(0.6 + 1.2 * k / 100.0, 0, 0.01 * dz))
+			if m.x > 0.0:
+				sum += m.y
+				count += 1
+	return Vector2(sum / maxf(count, 1), count)
+
+
 func _run_legs_tests() -> void:
 	near_on = false
 	await _soil_scene("soil")
@@ -1139,11 +1285,36 @@ func _run_clog_tests() -> void:
 			"slip %.2f against %.2f clean; %.2f m against %.2f m" % [res["clogging"][1], res["clean"][1], res["clogging"][0], res["clean"][0]])
 	# Out onto dry ground, floored: the tread clears (scoured, and flung off past ~7 m/s of tread speed).
 	var car: PhysXVehicle3D = res["clogging"][4]
+	surface.moisture = 0.1
+	surface.settle(2.0, 0.5)
+	# Rolled gently out over the dried ground first: some of the clay is pressed off the tread onto it (mud round 3),
+	# a film along the tracks that the floored spin below would only dig away.
+	var wheels: Array[Node3D] = []
+	for c in car.get_children():
+		if c is PhysXVehicleWheel3D:
+			wheels.append(c)
+	var starts: Array[Vector3] = []
+	for w in wheels:
+		starts.append(w.global_position)
+	var from := car.global_position
+	await _drive(car, 3.0, 0.35)
+	var to := car.global_position
+	var along := (to - from) * Vector3(1, 0, 1)
+	var side_x := car.global_transform.basis.x.normalized()
+	var hits := 0
+	var tries := 0
+	for wi in wheels.size():
+		var path: Vector3 = (wheels[wi].global_position - starts[wi]) * Vector3(1, 0, 1)
+		for k in 40:
+			var q: Vector3 = starts[wi] + path * (float(k) / 40.0)
+			for dz in range(-6, 7):
+				tries += 1
+				if surface.get_tracked_mud_at(q + side_x * (0.01 * dz)).x > 0.0:
+					hits += 1
+	_check("the clay a rolling tread presses onto dry ground is left along its tracks", hits > tries / 10, "mud film at %d of %d points along the tracks (%.1f m)" % [hits, tries, along.length()])
 	var before := 0.0
 	for w in 4:
 		before += car.get_wheel_mud(w) / 4.0
-	surface.moisture = 0.1
-	surface.settle(2.0, 0.5)
 	# The clay thrown off flies as mud clods (stage 4): a grains node routes it to its mud child.
 	var grains := _make_grains(car)
 	var shed0 := 0.0
@@ -1181,7 +1352,7 @@ func _run_clog_tests() -> void:
 	var mk2 := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
 	_check("clods thrown at the body stick to it as splats, volume kept", car.get_mud_splat_count() > 0 and stuck > 0.5 * 0.15 * 0.15 * PI * 0.03 and absf(mk2 - md2) < 0.05 * md2 + 1e-5,
 			"%d splats, %.2f l stuck" % [car.get_mud_splat_count(), stuck * 1000.0])
-	# The clay thrown off lands up the arches (stage 3b): the body's material carries the Mud layer, fed by the car.
+	# The clay thrown off lands up the arches (stage 3b): the body's material carries the Mud layer, fed by the car. Some of the clay was pressed onto the ground first, so less is left to throw.
 	var spray := 0.0
 	for w in 4:
 		spray += car.get_wheel_mud_spray(w) / 4.0
@@ -1190,7 +1361,7 @@ func _run_clog_tests() -> void:
 	var fed: Vector4 = body_mi.get_instance_shader_parameter("mud_spray")
 	var clay := car.get_body_mud_color()
 	_check("the body's mud takes the ground's clay colour", clay.r > 1.6 * clay.g and clay.r > 0.5, "clay %s on the body" % str(clay))
-	_check("the thrown clay muds the arches, the body's material shows it", spray > 0.3 and body_mat.mud_enabled and fed.x + fed.y + fed.z + fed.w > 1.0 and not res["clean"][5] and car.get_body_mud_wetness() > 0.9,
+	_check("the thrown clay muds the arches, the body's material shows it", spray > 0.2 and body_mat.mud_enabled and fed.x + fed.y + fed.z + fed.w > 1.0 and not res["clean"][5] and car.get_body_mud_wetness() > 0.9,
 			"spray %.2f a wheel, uniform %s, wetness %.2f" % [spray, str(fed), car.get_body_mud_wetness()])
 	# A low car (15 cm under its belly) in 80 cm of slurry at half throttle: with belly drag it high-centres.
 	var belly := {}
@@ -1339,7 +1510,7 @@ func _build_bodymud() -> void:
 
 # Mud stage 4e: a pair of legs walked 4 m through 15 cm of slurry, stopped mid-stride (--cam=x,y,z,tx,ty,tz from the
 # legs).
-func _build_legs() -> void:
+func _build_legs(p_out := false) -> void:
 	kind = "soil"
 	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
 	_apply(kind)
@@ -1371,11 +1542,16 @@ func _build_legs() -> void:
 	var full := get_window().size
 	get_window().size = Vector2i(160, 90)
 	await _walk_legs(legs, 4.0, 1.6)
+	if p_out:
+		# --view=tracked: on out of the mud onto the dried ground (the clog test's way), the boots leaving prints.
+		surface.moisture = 0.1
+		surface.settle(1.0, 0.5)
+		await _walk_legs(legs, 3.0, 1.4)
 	var lm := legs.get_node("LegMud") as GroundLegMud3D
 	print("legs: lines %.1f and %.1f cm, flecks %.2f and %.2f" % [lm.get_mud_line(0) * 100.0, lm.get_mud_line(1) * 100.0, lm.get_mud_flecks(0), lm.get_mud_flecks(1)])
 	var cam := Camera3D.new()
 	add_child(cam)
-	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.6, 0.45, 1.3, 0.0, 0.2, 0.0])
+	var c := cam_arg if cam_arg.size() == 6 else (PackedFloat32Array([-1.2, 1.1, 1.0, -1.6, 0.0, 0.0]) if p_out else PackedFloat32Array([0.6, 0.45, 1.3, 0.0, 0.2, 0.0]))
 	cam.position = legs.global_position + Vector3(c[0], c[1], c[2])
 	cam.look_at(legs.global_position + Vector3(c[3], c[4], c[5]))
 	cam.fov = 40.0

@@ -10,6 +10,25 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_burning_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many vertices are burning now (lit and not yet burnt through). See [member burnable].
+			</description>
+		</method>
+		<method name="get_burnt_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many vertices have burnt through. Their triangles have left the mesh.
+			</description>
+		</method>
+		<method name="ignite">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sets the fabric alight at the vertex nearest [param position] (global space), like a match held to it. The flame then spreads over the cloth by itself. Needs [member burnable] and the CPU solver.
+			</description>
+		</method>
 		<method name="get_pinned_positions" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<description>
@@ -69,6 +88,12 @@
 		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.1">
 			Resistance to folding, from 0 (limp) to 1 (stiff). Low values give soft, drapey cloth.
 		</member>
+		<member name="burn_through_time" type="float" setter="set_burn_through_time" getter="get_burn_through_time" default="3.0">
+			Seconds from a part of the fabric catching fire to its burning through into a hole (each part varies by about 30%). Thin cotton or linen takes a few seconds; heavy canvas longer.
+		</member>
+		<member name="burnable" type="bool" setter="set_burnable" getter="is_burnable" default="true">
+			When on, the cloth takes heat from a [PhysXFireSpread3D] fire's flames, hot [PhysXFlow3D] gas and burning [PhysXBurnable3D] objects, and catches fire once the heat it has taken in brings it to ignition (thermally thin ignition, about 100 kJ/m² for light fabric). Flame spreads over the cloth fast upward and slowly down and across, chars the fabric with a glowing edge, and burns holes through it, so the cloth opens, sags and falls apart; flames rise from the burning edge through Flow emitters. Uses the CPU solver: [constant SIM_AUTO] picks it while a fire exists in the scene. Costs nothing until heat reaches the cloth.
+		</member>
 		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
 			When enabled, each vertex is pushed out of any physics body it overlaps each step.
 		</member>
@@ -86,6 +111,12 @@
 		</member>
 		<member name="drag" type="float" setter="set_drag" getter="get_drag" default="1.0">
 			How hard air pushes on a triangle face-on. Drives the billow.
+		</member>
+		<member name="fire_path" type="NodePath" setter="set_fire_path" getter="get_fire_path" default="NodePath(&quot;&quot;)">
+			Optional [PhysXFireSpread3D] the cloth takes heat from. When empty, the cloth uses the fire whose area it hangs over, if any.
+		</member>
+		<member name="flame_spread" type="float" setter="set_flame_spread" getter="get_flame_spread" default="0.02">
+			How fast flame creeps across and down the fabric, in metres per second. Upward it runs about eight times faster, as on a hanging curtain.
 		</member>
 		<member name="flow" type="NodePath" setter="set_flow_path" getter="get_flow_path" default="NodePath(&quot;&quot;)">
 			A [PhysXFlow3D] whose gas blows the cloth: each vertex takes the gas velocity there (on top of [member wind]) for the [member drag] and [member lift] model, so a fire's updraft lifts a tarp and a blast's front snaps a flag. The cloth stirs the gas back: some of its moving particles enter it as moving solids ([method PhysXFlow3D.add_transient_solid]).

@@ -128,6 +128,19 @@ layout(set = 0, binding = 14, std430) restrict buffer Ledger {
 
 const float SWE_MIN = 0.01;
 
+// Mud tracked onto firm ground (docs/ideas/mud.md, round 3): a texel's fresh value from 4 is a laid film of clay,
+// 4 + its share (sixteenths, the bin) + 0.06 x its wetness (GroundDeformField::mud_band()): dark and glossy wet,
+// a pale matte film once dry, and it stays until a wash takes it.
+float mud_band(float p_share, float p_wet) {
+	float b = clamp(round(p_share * 16.0) - 1.0, 0.0, 15.0);
+	return 4.0 + b / 16.0 + 0.06 * clamp(p_wet, 0.0, 1.0);
+}
+vec2 mud_band_share_wet(float p_w) {
+	float v = p_w - 4.0;
+	float b = floor(v * 16.0 + 1e-4);
+	return vec2((b + 1.0) / 16.0, clamp((v - b / 16.0) / 0.06, 0.0, 1.0));
+}
+
 bool is_ground() {
 	return params.kind.x > 0.5;
 }
@@ -358,7 +371,13 @@ void run_amount_stamp(Stamp s) {
 			// A line being washed away: only what was laid on the surface goes, and its tint with it.
 			st.y -= min(st.y, a);
 			if (ground) {
-				st.w = st.w >= 2.0 ? 2.0 + (st.w - 2.0) * (1.0 - cover) : st.w * (1.0 - cover);
+				if (st.w >= 4.0) {
+					vec2 sq = mud_band_share_wet(st.w);
+					float left = sq.x * (1.0 - cover);
+					st.w = left > 1.0 / 32.0 ? mud_band(left, sq.y) : 0.0;
+				} else {
+					st.w = st.w >= 2.0 ? 2.0 + (st.w - 2.0) * (1.0 - cover) : st.w * (1.0 - cover);
+				}
 			}
 		} else if (sa > 0.0) {
 			float take = min(st.y, a);
@@ -371,7 +390,17 @@ void run_amount_stamp(Stamp s) {
 			float fill = min(st.x, a);
 			st.x -= fill;
 			st.y += a - fill;
-			if (ground && s.c.z >= 2.0) {
+			if (ground && s.c.z >= 4.0) {
+				// Tracked mud: the film's share, the wetter of the two where it lands on another.
+				vec2 sq = mud_band_share_wet(s.c.z);
+				float laid = sq.x * cover;
+				if (st.w >= 4.0) {
+					vec2 o = mud_band_share_wet(st.w);
+					st.w = mud_band(max(o.x, laid), max(o.y, sq.y));
+				} else if (laid > 1.0 / 32.0) {
+					st.w = mud_band(laid, sq.y);
+				}
+			} else if (ground && s.c.z >= 2.0) {
 				// A deposit of a different sand (a swash mark's heavy minerals): 2 plus its share, and it stays.
 				st.w = max(st.w, 2.0 + (s.c.z - 2.0) * cover);
 			} else if (ground && s.c.z > 0.0) {
@@ -561,7 +590,7 @@ void run_stamp(Stamp s) {
 		st.y -= take;
 		st.x += delta - take;
 		st.z = max(st.z, settle);
-		if (ground) {
+		if (ground && st.w < 4.0) { // freshly turned, under a tracked-mud film that stays on top
 			st.w = 1.0;
 		}
 		state[i] = st;
@@ -623,7 +652,7 @@ void run_stamp(Stamp s) {
 			st.y -= take;
 			st.x += delta - take;
 			st.z = max(st.z, settle);
-			if (ground) {
+			if (ground && st.w < 4.0) { // freshly turned, under a tracked-mud film that stays on top
 				st.w = 1.0;
 			}
 			state[i] = st;
@@ -1426,7 +1455,13 @@ void main() {
 		float keep = exp(-(params.kind.w * m1.z + params.age.x) * params.age.y);
 		st.x *= keep;
 		st.y *= keep;
-		st.w = st.w >= 2.0 ? st.w : st.w * params.kind.z; // the fresh tint dries; a laid mineral (2 + share) stays
+		if (st.w >= 4.0) {
+			// Tracked mud dries in place (its film stays).
+			vec2 sq = mud_band_share_wet(st.w);
+			st.w = mud_band(sq.x, sq.y * params.kind.z);
+		} else {
+			st.w = st.w >= 2.0 ? st.w : st.w * params.kind.z; // the fresh tint dries; a laid mineral (2 + share) stays
+		}
 		// As the CPU: a texel both pressed and piled on loses the smaller from both, then films under 10 microns go.
 		float both = min(st.x, st.y);
 		st.xy -= vec2(both);
@@ -1459,6 +1494,12 @@ void main() {
 			// Or a laid band of heavy minerals (st.w 2 plus its share: GroundDeformField::amount_fresh): dark, and it
 			// stays dark dry (GroundSurface3D::_publish_tint).
 			tint = st.w >= 2.0 ? vec2(1.0 - 0.4 * min(st.w - 2.0, 1.0), 1.0) : vec2(1.0 - st.w * m1.x, mix(1.0, m1.y, st.w));
+			if (st.w >= 4.0) {
+				// Tracked mud (GroundSurface3D::_publish_tint the same): wet, dark and glossy (Lagarde's 0.52 and a
+				// smooth film); dry, a pale matte film of fine clay over the grain.
+				vec2 sq = mud_band_share_wet(st.w);
+				tint = mix(vec2(1.0), mix(vec2(1.12, 1.0), vec2(0.55, 0.45), sq.y), sq.x);
+			}
 		}
 		if (is_ground()) {
 			// The ground's map: the net depression (dent less rim) and the standing water over it.
