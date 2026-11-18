@@ -6790,6 +6790,10 @@ Array TerrainGenerator3D::build_water(Node *p_parent) {
 			sea->set("follow_weather", true);
 		}
 		attach(sea);
+		if (physx && is_inside_tree() && sea->is_inside_tree()) {
+			// The sea measures its bed through this terrain where no collision is loaded (and closes its holes).
+			sea->set("terrain_source", sea->get_path_to(this));
+		}
 		sea_node = sea->get_instance_id();
 	}
 	for (uint32_t k = 0; k < lake_info.size(); k++) {
