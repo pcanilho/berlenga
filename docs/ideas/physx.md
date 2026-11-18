@@ -1441,6 +1441,36 @@ Left: the lee test reads the fire's own slope, not the terrain wind's
 separation behind a ridge crest upwind; whirls (and so the lateral
 spread) need the fire's Flow, as flank whirls do.
 
+### Next-round options (card, 18 Nov late night)
+
+1. Fire makes its own wind. A fire's plume draws air in at its base
+   (indraft of a few m/s at a strong front: Clements et al. 2007, FireFlux),
+   which tilts flames toward the fire, slows the backing front and pulls
+   smoke, ash, grass and loose cloth inward. Here: the fire's Flow
+   velocity near the ground, sampled at the front, feeds the spread's
+   effective wind (WRF-SFIRE's two-way coupling, with Flow as the
+   atmosphere), and is offered on the wind contract so grass, cloth and
+   particles near a fire lean into it.
+2. Burnt trees fall later. A ground fire chars a trunk's base (cambium
+   killed, wood charred from the outside: Dickinson and Johnson 2001);
+   days on, or in the next strong wind, fire-weakened trees fall (hazard
+   trees, a main danger to crews). Here: the char depth at the stem foot
+   from flame length and residence time, the section left (as buildings'
+   EN 1995-1-2 model) against the wind's bending load, and a tree whose
+   base gives way falls as a PhysX body (the storm bench's thrown-tree
+   path).
+3. Burnt grass shows its ash. Complete combustion leaves white-grey
+   mineral ash, incomplete black char (Roy et al. 2010: ash albedo 0.3 to
+   0.5, char 0.03 to 0.05); the mix follows fuel moisture and intensity.
+   Here: the char map draws grass ash by combustion completeness, thinned
+   by blowing ash and darkened by rain, so a burn scar reads grey and
+   black in patches instead of uniform black.
+4. Lee eddies from the terrain wind. Lee whirls now read the fire's own
+   slope. Here: WeatherMap3D's terrain wind marks where flow separates
+   behind a crest (reversed or slack near-ground wind in the lee), so lee
+   whirls form only below a real ridge, and the lateral spread follows the
+   ridge line.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
