@@ -1,0 +1,1 @@
+- Water: rock contact foam on a low rock top is torn lace that closes up only as a crest pours over, no longer a white slab laid on the rock.
