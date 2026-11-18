@@ -770,3 +770,34 @@ bool GroundDeformGPUHost::take_field(GroundDeformField &r_field, int p_stride, f
 	}
 	return true;
 }
+
+bool GroundDeformGPUHost::pull_cached(const GroundDeformField &p_field, const LocalVector<Vector2i> &p_tiles) {
+	const int T = GroundDeformField::TILE;
+	const int nt = p_field.resolution / T;
+	if (reset || gpu.is_null() || !p_field.valid || n != p_field.resolution || shift.size() > 0 || stores.size() > 0) {
+		return false;
+	}
+	const Vector2i t0 = p_field.origin / T;
+	shift.resize(nt * nt * 16);
+	int32_t *sh = reinterpret_cast<int32_t *>(shift.ptrw());
+	for (int i = 0; i < nt * nt; i++) {
+		sh[i * 4 + 0] = 1; // kept where it is
+		sh[i * 4 + 1] = i;
+		sh[i * 4 + 2] = 0;
+		sh[i * 4 + 3] = 0;
+	}
+	for (const Vector2i &w : p_tiles) {
+		const Vector2i l = w - t0;
+		Slot *c = cache.getptr(w);
+		if (!c || l.x < 0 || l.y < 0 || l.x >= nt || l.y >= nt) {
+			continue;
+		}
+		int32_t *op = sh + (l.y * nt + l.x) * 4;
+		op[0] = 2;
+		op[1] = c->slot;
+		free_slots.push_back(c->slot); // read before anything is stored into it again (stores come first, next step)
+		cache.erase(w);
+	}
+	changed = true;
+	return true;
+}

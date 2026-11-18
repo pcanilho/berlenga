@@ -620,6 +620,14 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   in a session tile cache. Build: write touched tiles (height delta, mud depth, water, crack state; 16-bit,
   zstd) to user:// as they leave the cache and on save, read them back when the field recentres onto them, with
   an LRU budget. Matters most for the open-world game's scale.
+- **Built (ruts kept).** `keep_ruts` (on), `ruts_path` (user://ground_ruts): as the main or near field moves, a
+  leaving tile with prints is written in the cache's own layout (two half pairs a texel: dent and rim, tint and
+  water) as one zstd file named by field texel and world tile; a tile flattened since loses its file. Arriving tiles
+  with a file that the GPU cache does not hold are read the step after the field stands: seeded into the cache and
+  pulled in place (GroundDeformGPUHost::pull_cached), so the startup reset is covered; the CPU path writes them
+  straight in. `save_ruts` on leaving the tree (and for the game's own save), `clear_saved_ruts`. Off in the
+  editor. Bench `--test=ruts` (back after 600 m and in a new node, a cleared field drops its files, off starts
+  flat; also with `--prop=gpu_simulation:false`). Not kept yet: crack state and the water's clay (lattice data).
 
 ### Look (any stage)
 

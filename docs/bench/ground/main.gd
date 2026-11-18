@@ -37,6 +37,7 @@ extends Node3D
 #                         --cam=x,y,z,tx,ty,tz in the car's frame (default from its right rear); --spray: the
 #                         frame mid-throw, the clods in the air
 #   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
+#   --test=ruts         kept ruts (mud round 3): a print back after the field drives 600 m off and in a new node
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -97,6 +98,8 @@ var crack_test := false
 var legs_test := false
 var muddy_test := false
 var tracked_test := false
+var ruts_test := false
+var ruts_on := false # kept ruts (written to user://): off on the bench, or one run's prints turn up in the next
 var near_on := true
 var out := ""
 var spp := 16
@@ -139,6 +142,7 @@ func _ready() -> void:
 		elif a == "--test=legs": legs_test = true
 		elif a == "--test=muddy": muddy_test = true
 		elif a == "--test=tracked": tracked_test = true
+		elif a == "--test=ruts": ruts_test = true
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -161,6 +165,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if ruts_test:
+		await _run_ruts_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if tracked_test:
 		await _run_tracked_tests()
 		print("RESULT: %d failed" % fails)
@@ -303,6 +312,8 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.gpu_simulation = gpu
 	surface.near_field = near_on
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
+	surface.keep_ruts = ruts_on
+	surface.ruts_path = "user://bench_ruts"
 	# Everything ships on; each check turns on what it is about (--defaults keeps the shipped settings).
 	if not OS.get_cmdline_user_args().has("--defaults"):
 		surface.wind_ripples = false
@@ -1043,6 +1054,80 @@ func _run_muddy_tests() -> void:
 
 # Mud tracked onto firm ground (mud round 3): boots walked out of slurry onto dry soil leave fading prints and come
 # out cleaner step by step; the film dries. (The mud dries away where they walked: a soil's mud is its wetness.)
+# Ruts kept across the world (mud round 3): a print goes to disk as the field moves off it, is there when the field
+# comes back, and in the next session (a new ground node over the same place).
+func _run_ruts_tests() -> void:
+	var wipe := GroundSurface3D.new()
+	wipe.ruts_path = "user://bench_ruts"
+	wipe.clear_saved_ruts()
+	wipe.free()
+	ruts_on = true
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var a := Vector3(1.0, 0.0, 0.5)
+	var b := Vector3(-0.6, 0.0, -0.4)
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	surface.press_box(b, Vector2(0.11, 0.29), 0.3, 0.0, 0.03)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d0 := -surface.get_surface_height_at(a)
+	var e0 := -surface.get_surface_height_at(b)
+	var probe := get_node("Probe") as Node3D
+	probe.global_position = Vector3(600.0, 0.0, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var files := surface.get_saved_rut_tile_count()
+	probe.global_position = Vector3.ZERO
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d1 := -surface.get_surface_height_at(a)
+	_check("a print goes to disk as the field moves off it and is there when it comes back", files > 0 and d0 > 0.02 and absf(d1 - d0) < 0.1 * d0,
+			"%.1f cm deep, %d tiles kept 600 m away, %.1f cm on return" % [d0 * 100.0, files, d1 * 100.0])
+	# The next session: a new ground node (the old one keeps what it holds as it leaves the tree).
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d2 := -surface.get_surface_height_at(a)
+	var e2 := -surface.get_surface_height_at(b)
+	_check("and in the next session, both prints as they were", absf(d2 - d0) < 0.1 * d0 and absf(e2 - e0) < 0.1 * e0,
+			"%.1f and %.1f cm, %.1f and %.1f cm before" % [d2 * 100.0, e2 * 100.0, d0 * 100.0, e0 * 100.0])
+	# Flattened (cleared) and left: its file goes, so a later visit finds it flat.
+	surface.clear_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	(get_node("Probe") as Node3D).global_position = Vector3(600.0, 0.0, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var left := surface.get_saved_rut_tile_count()
+	(get_node("Probe") as Node3D).global_position = Vector3.ZERO
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d3 := -surface.get_surface_height_at(a)
+	_check("a cleared field drops its kept tiles as it leaves them", left == 0 and d3 < 0.002, "%d tiles kept, %.2f cm on return" % [left, d3 * 100.0])
+	# Off: a new node starts flat even where tiles are kept.
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.save_ruts()
+	ruts_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var d4 := -surface.get_surface_height_at(a)
+	_check("with keep_ruts off a new node starts flat", d4 < 0.002, "%.2f cm" % (d4 * 100.0))
+	surface.clear_saved_ruts()
+
+
 func _run_tracked_tests() -> void:
 	near_on = false
 	await _soil_scene("soil")
