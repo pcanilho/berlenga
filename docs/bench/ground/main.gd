@@ -100,6 +100,8 @@ var legs_test := false
 var muddy_test := false
 var tracked_test := false
 var ruts_test := false
+var pudhelp_test := false
+var cracks_on := false # _setup turns desiccation_cracks on (the kept-cracks check needs it from the first lattice)
 var ruts_scale := 1.0 # kept ruts' world seconds per real second while away
 var ruts_on := false # kept ruts (written to user://): off on the bench, or one run's prints turn up in the next
 var near_on := true
@@ -145,6 +147,7 @@ func _ready() -> void:
 		elif a == "--test=muddy": muddy_test = true
 		elif a == "--test=tracked": tracked_test = true
 		elif a == "--test=ruts": ruts_test = true
+		elif a == "--test=puddle-helper": pudhelp_test = true
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -167,6 +170,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if pudhelp_test:
+		await _run_puddle_helper_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if ruts_test:
 		await _run_ruts_tests()
 		print("RESULT: %d failed" % fails)
@@ -324,7 +332,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.wind_ripples = false
 		surface.runoff_channels = false
 		surface.standing_water = false
-		surface.desiccation_cracks = false
+		surface.desiccation_cracks = cracks_on
 	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--prop="):
@@ -1172,6 +1180,124 @@ func _run_ruts_tests() -> void:
 	surface.sync_deformation()
 	var d4 := -surface.get_surface_height_at(a)
 	_check("with keep_ruts off a new node starts flat", d4 < 0.002, "%.2f cm" % (d4 * 100.0))
+	surface.clear_saved_ruts()
+	await _run_kept_water_tests()
+
+
+# A puddle for a scene (GroundSurface3D.add_puddle): a hollow pressed and filled.
+func _run_puddle_helper_tests() -> void:
+	near_on = false
+	for kind in ["flat", "beach"]:
+		await _setup(kind, GroundSurface3D.GROUND_SOIL, 0.35, 0.0)
+		surface.mud_layer = false
+		surface.standing_water = true
+		var o := Vector3(0.5, 0, 0.3)
+		var g0 := surface.get_ground_height_at(o)
+		surface.add_puddle(o, 1.5, 0.12, 40.0)
+		for i in 300:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var w := surface.get_standing_water_at(o)
+		var top := surface.get_surface_height_at(o) + w
+		# The water's edge round it: how far out it reaches in 16 directions (irregular, not a circle or a box).
+		var reach := []
+		var tops := []
+		for k in 16:
+			var a := TAU * k / 16.0
+			var dir := Vector3(cos(a), 0, sin(a))
+			var e := 0.0
+			var tx := surface.deform_extent / surface.deform_resolution
+			for j in 40:
+				var q := o + dir * (0.05 * j)
+				# At texel centres (between them a shore texel's depth and its bed blend apart).
+				q = Vector3((floorf(q.x / tx) + 0.5) * tx, 0, (floorf(q.z / tx) + 0.5) * tx)
+				var wq := surface.get_standing_water_at(q)
+				if wq > 0.003:
+					e = 0.05 * j
+				if wq > 0.01:
+					tops.append(surface.get_surface_height_at(q) + wq)
+			reach.append(e)
+		var rmin: float = reach.min()
+		var rmax: float = reach.max()
+		var tmin: float = tops.min() if tops.size() > 0 else 0.0
+		var tmax: float = tops.max() if tops.size() > 0 else 0.0
+		var outside := surface.get_standing_water_at(o + Vector3(0, 0, 2.4))
+		print("  %s: bed %.1f cm below the ground there" % [kind, (g0 - surface.get_surface_height_at(o)) * 100.0])
+		print("  %s: %.1f cm deep at the centre, edge %.2f to %.2f m out, surface %.1f mm from lowest to highest, %.1f kg/m3, %.2f mm 2.4 m out" % [kind, w * 100.0, rmin, rmax, (tmax - tmin) * 1000.0, surface.get_water_mud_at(o), outside * 1000.0])
+		_check("add_puddle on %s ground: a filled puddle" % kind, w > 0.07 and rmin > 0.6 and rmax < 2.0, "%.1f cm deep, edge %.2f to %.2f m" % [w * 100.0, rmin, rmax])
+		_check("its rim is irregular", rmax - rmin > 0.12, "%.2f to %.2f m" % [rmin, rmax])
+		# On the slope the bed's texels step 5 mm each along it: the surface read back there is a step or two out.
+		_check("its water stands level and stays in it", tmax - tmin < (0.004 if kind == "flat" else 0.02) and outside < 0.0005, "%.1f mm, %.2f mm outside" % [(tmax - tmin) * 1000.0, outside * 1000.0])
+		_check("it carries the clay asked for", absf(surface.get_water_mud_at(o) - 40.0) < 8.0, "%.1f kg/m3" % surface.get_water_mud_at(o))
+
+
+# Mud round 5: what stood in a rut is kept with it. Clay churned into a pool's water, and cracks a dried pool left.
+func _run_kept_water_tests() -> void:
+	ruts_on = true
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.9, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.runoff_time_scale = 1000.0
+	surface.press_box(Vector3(0, 0, 0), Vector2(6.0, 1.2), 0.0, 0.0, 0.2)
+	surface.sync_deformation()
+	surface.settle(240.0, 0.05)
+	surface.runoff_time_scale = 0.0
+	var m := Vector3(-1.0, 0, 0)
+	surface.stir_water(m, 0.4, 2.0)
+	surface.settle(0.1, 0.05)
+	var c0 := surface.get_water_mud_at(m)
+	var w0 := surface.get_standing_water_at(m)
+	var probe := get_node("Probe") as Node3D
+	probe.global_position = Vector3(600.0, 0.0, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	probe.global_position = Vector3.ZERO
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var c1 := surface.get_water_mud_at(m)
+	var w1 := surface.get_standing_water_at(m)
+	_check("a pool's clay stays in its water as the field moves off and back", c0 > 5.0 and w1 > 0.8 * w0 and absf(c1 - c0) < 0.2 * c0,
+			"%.1f kg/m3 in %.1f cm of water, %.1f kg/m3 in %.1f cm on return" % [c0, w0 * 100.0, c1, w1 * 100.0])
+	# The next session, at once: the clay is still in it (a tile written seconds ago has not settled).
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.9, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.runoff_time_scale = 0.0
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var c2 := surface.get_water_mud_at(m)
+	_check("and in the next session", absf(c2 - c0) < 0.25 * c0, "%.1f kg/m3 (%.1f when left)" % [c2, c0])
+	surface.clear_saved_ruts()
+	# A dried pool's cracks.
+	cracks_on = true
+	var o := Vector3(0.3, 0, 0.2)
+	var r: Array = await _rain_and_dry(GroundSurface3D.GROUND_SOIL, o)
+	var dry: Vector4 = r[1]
+	probe = get_node("Probe") as Node3D
+	probe.global_position = Vector3(600.0, 0.0, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	var gone: Vector4 = surface.get_crack_at(o)
+	probe.global_position = Vector3.ZERO
+	for i in 6:
+		await get_tree().physics_frame
+	var back: Vector4 = surface.get_crack_at(o)
+	_check("a dried pool's cracks are kept as the ground moves off them and back", dry.x > 0.9 and gone.x == 0.0 and back.x > 0.9 and absf(back.y - dry.y) < 0.15 * dry.y,
+			"opening %.2f, plates %.1f cm; away %.2f; back %.2f, %.1f cm" % [dry.x, dry.y * 100.0, gone.x, back.x, back.y * 100.0])
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	var next: Vector4 = surface.get_crack_at(o)
+	_check("and in the next session", next.x > 0.9 and absf(next.y - dry.y) < 0.15 * dry.y, "opening %.2f, plates %.1f cm" % [next.x, next.y * 100.0])
+	cracks_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	_check("with desiccation_cracks off none come back", surface.get_crack_at(o).x == 0.0, "opening %.2f" % surface.get_crack_at(o).x)
 	surface.clear_saved_ruts()
 
 

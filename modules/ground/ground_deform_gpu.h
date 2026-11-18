@@ -117,6 +117,8 @@ public:
 	}
 	// uints per texel in the packed read back.
 	static int packed_uints(int p_stride) { return p_stride == 2 ? 4 : 1; }
+	// uints per texel in the tile cache: the ground's third is its water's clay (kg/m2 | 0; mud round 5).
+	static int cache_uints(int p_stride) { return p_stride == 2 ? 3 : 1; }
 
 private:
 	RenderingDevice *rd = nullptr;

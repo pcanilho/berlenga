@@ -100,7 +100,7 @@ layout(set = 0, binding = 8, std430) restrict writeonly buffer Collision {
 	float collision_h[];
 };
 layout(set = 0, binding = 9, std430) restrict buffer Cache {
-	uint cache[]; // per slot TILE x TILE packHalf2x16(dent, rim)
+	uint cache[]; // per slot TILE x TILE x cache_stride(): packHalf2x16(dent, rim), then (fresh, water depth), (clay kg/m2, 0)
 };
 layout(set = 0, binding = 10, std430) restrict readonly buffer TileOps {
 	ivec4 tile_ops[]; // store: (tile x, tile z, slot, 0); shift: per new tile (source kind, index, 0, 0)
@@ -148,6 +148,10 @@ bool is_ground() {
 // uints per texel in the cache and the read back: (dent, rim), then (fresh, 0) for the ground.
 int stride() {
 	return is_ground() ? 2 : 1;
+}
+// uints per texel in the tile cache (GroundDeformGPU::cache_uints): the ground's third keeps its water's clay (mud round 5).
+int cache_stride() {
+	return is_ground() ? 3 : 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1438,10 +1442,11 @@ void main() {
 		int x = o.x * TILE + k % TILE;
 		int z = o.y * TILE + k / TILE;
 		vec4 st = state[z * n + x];
-		int sw = stride();
+		int sw = cache_stride();
 		cache[(o.z * TILE * TILE + k) * sw] = packHalf2x16(st.xy);
-		if (sw == 2) {
-			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, water[z * n + x].w.x));
+		if (is_ground()) {
+			cache[(o.z * TILE * TILE + k) * sw + 1] = packHalf2x16(vec2(st.w, water[z * n + x].w.x));
+			cache[(o.z * TILE * TILE + k) * sw + 2] = packHalf2x16(vec2(water[z * n + x].s.x, 0.0));
 		}
 		return;
 	}
@@ -1551,7 +1556,7 @@ void main() {
 		int lz = z % TILE;
 		vec4 v = vec4(0.0);
 		float wd = 0.0;
-		float ws = 0.0; // the clay in it (a tile coming back from the cache comes back clear: it settled)
+		float ws = 0.0; // the clay in it (kept in the cache with the water since mud round 5)
 		if (o.x == 1) {
 			int ox = (o.y % nt) * TILE + lx;
 			int oz = (o.y / nt) * TILE + lz;
@@ -1559,13 +1564,14 @@ void main() {
 			wd = is_ground() ? water[oz * n + ox].w.x : 0.0;
 			ws = is_ground() ? water[oz * n + ox].s.x : 0.0;
 		} else if (o.x == 2) {
-			int sw = stride();
+			int sw = cache_stride();
 			int ci = (o.y * TILE * TILE + lz * TILE + lx) * sw;
 			v.xy = unpackHalf2x16(cache[ci]);
-			if (sw == 2) {
+			if (is_ground()) {
 				vec2 fw = unpackHalf2x16(cache[ci + 1]);
 				v.w = fw.x;
 				wd = fw.y;
+				ws = wd > 1e-4 ? unpackHalf2x16(cache[ci + 2]).x : 0.0;
 			}
 		}
 		state_out[i] = v;

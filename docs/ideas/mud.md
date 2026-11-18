@@ -662,9 +662,27 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   vertex shader lays blades flat by it (crushed under 2 cm, gone where the ground was turned or flooded); the
   trample field (add_trample) takes vehicle and boot passes for the bent-over band beside a rut, recovering over
   days. Grass is the vegetation system's: built there, fed from here.
+  *Built (18 Nov):* GrassField3D's blade and tiller shaders read the ground's deformation map themselves
+  (`grass_ground_opened()`, the same globals material.cpp samples, near field blended in), so nothing extra is
+  published: a print or film a few millimetres deep, or any fresh tint, lays each blade flat its own way; past a
+  centimetre or so of dent or rim, or under standing water, the blades are torn out (a dither by the blade's random,
+  so the edge thins rather than cuts); the ones left stand on the dented ground (base lowered by the dent, raised on
+  a rim). It lasts as long as the print does: the ground's own ageing and kept ruts carry it, so no trample field
+  is needed. The VegetationField3D plants (flowers, clover, herbs) still stand in ruts: their materials are
+  StandardMaterial3D; a next step. Bench: docs/bench/grass `--ruts` (two 8 cm tyre ruts and a light 6 mm pass,
+  close view).
 - **Everything kept with the ruts.** Crack state and the water's clay live on the ground lattice, not the field
   tiles, so a kept tile comes back with its puddle clear and its cracks gone. Build: a second small file per tile
   for the lattice cells under it (crack state, cycles, pool depth, clay kg/m2), aged the same way.
+  *Built (18 Nov):* the clay is the field's (per texel, GPU), so it went into the tile itself: the GPU tile cache
+  holds a third uint per ground texel (clay kg/m2; `GroundDeformGPU::cache_uints`), so a tile that leaves and comes
+  back in the same session keeps its muddy water too (it used to come back clear), and the kept file is version 3
+  (versions 1 and 2 still read, with clear water). Away, the clay settles as the water step has it, exp(-0.1 mm/s
+  t / depth), and goes with the water. The crack state is the lattice's: `GroundCellStore` keeps it per block of
+  32 x 32 cells (one `.cel` zstd file each, with each cell's write time), written as the lattice moves off cells or
+  the node leaves the tree, read back as it comes onto them. Away, a soaked cell stays soaked while its pool lasts
+  (the kept water's own budget: evaporation less ruts_away_rain), then its layer dries at the evaporation rate.
+  Checks in --test=ruts: clay back in its pool on return and next session, dried cracks back with the same plates.
 
 
 ### Look (any stage)

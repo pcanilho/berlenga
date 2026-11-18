@@ -230,7 +230,7 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		// Standing water is the ground's: snow binds a token buffer.
 		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 48 : 16);
 		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 * 4 : 16); // the shifted depth, then the +x and +z faces' discharges, then the shifted clay
-		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * p_dims.stride);
+		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * cache_uints(p_dims.stride));
 		RD::TextureFormat tf;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
 		tf.width = n;
@@ -325,7 +325,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		rd->buffer_update(buf_stamps, 0, stamp_count * STAMP_BYTES, p_stamps.ptr());
 	}
 	{
-		const int tile_bytes = TILE * TILE * 4 * d.stride;
+		const int tile_bytes = TILE * TILE * 4 * cache_uints(d.stride);
 		const int rec = 4 + tile_bytes;
 		for (int at = 0; at + rec <= p_uploads.size(); at += rec) {
 			int32_t slot;
