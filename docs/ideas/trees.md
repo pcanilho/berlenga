@@ -2848,3 +2848,6 @@ read as sticks; games run TAA or DLSS, which integrate that coverage.
   distributions of important trees and shrubs in North America*, USGS Professional Paper 1650,
   1999. Eyre (ed.), *Forest Cover Types of the United States and Canada*, SAF, 1980. Braun,
   *Deciduous Forests of Eastern North America*, 1950.
+
+### Repetition audit (18 Nov)
+Paulo's rule: any repeated geometry carries good-quality noise so the repeat does not read. Bark relief and colour already had the macro variation and tile slide (ac6e8bde). Audit: moss shells and lichen UV2 follow the bark UVs, so they slide with it, and lichen cover is a world-space mask. The plain (non-relief) bark tubes, used by the far LODs, roots and thin stems, had the tile slide but not the macro colour, so near and far LODs differed in colour; they now take the same world-space tint (resin runs keep their flat colour). Hedge segments already vary per segment (three variants, flipped end for end, length/height/width scale, sideways offset, species runs), so no change there.
