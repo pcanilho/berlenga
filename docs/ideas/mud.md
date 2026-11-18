@@ -576,6 +576,28 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   Limit: the shader's coverage is a cylinder round the shin plus a boot block 14 cm long, so very wide trousers
   or long boots stay partly clean; a docs image needs a real rigged character.
 
+### Next round: research (18 Nov, awaiting a pick)
+
+- **Muddy splash water.** Natural water is never clear: suspended sediment both absorbs and scatters, so turbid
+  water turns brown and opaque within a few cm (USGS Water Science School, "Water color"; turbidity and total
+  suspended solids, Fondriest). Build: a suspended sediment channel in the standing water field, stirred up by
+  waders, feet and landing spray in proportion to the excess shear on the clay bed (as the body wash), carried by
+  the water flux and settling out at a Stokes rate for silt (clear in minutes). The water's look reads it as
+  Beer-Lambert absorption plus a single-scatter albedo of the local clay colour, so raster and the tracer agree
+  (the same Transmission path every water body uses; one water technique). Sheets and drops thrown carry the
+  concentration where they were taken; landing on a body they leave a thin stain splat (the 4b splat with a
+  low volume and no relief). Check: a stirred puddle browns and clears again; sheets show against the sky.
+- **Mud tracked onto firm ground.** Construction stormwater rules size tracking pads at about 15 m because a tyre
+  sheds most of its carried mud over the first few tens of metres (Minnesota PCA vehicle tracking BMPs; NCDOT
+  RP2023-13 on mud on highways); light-vehicle tyre studies on unpaved roads measure the material thrown around the
+  tyre (SAE 2024-01-5032). Build: the clogged tread (get_wheel_mud) and the leg mud lose a share each revolution
+  or step on firm ground, printed as a thin mud layer with the tread or sole pattern, decaying with distance;
+  printed mud is a mud depth in the field (so it dries and cracks as any other) or, off the field, a decal.
+- **Ruts kept across the world.** MudRunner and SnowRunner keep their deformation in the map's save; ours lives
+  in a session tile cache. Build: write touched tiles (height delta, mud depth, water, crack state; 16-bit,
+  zstd) to user:// as they leave the cache and on save, read them back when the field recentres onto them, with
+  an LRU budget. Matters most for the open-world game's scale.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
