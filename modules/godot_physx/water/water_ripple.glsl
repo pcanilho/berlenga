@@ -184,7 +184,8 @@ float foam_sample(vec2 p) {
 // also name, where water runs into something rather than past it.
 // - Convergence: the velocity's divergence well below zero, water piling into itself (a jet
 //   meeting slack water, the toe of a jump, two currents colliding). Measured as the speed lost
-//   over 25 cm, like the shear, so the cell size doesn't matter.
+//   over 25 cm, like the shear, so the cell size doesn't matter. In slow water the same
+//   convergence gathers faint scum lines instead (half strength).
 // - Stagnation: current running straight at dry ground standing out of it, the "pillow" of
 //   white water on a boulder's upstream face. The wall is the nearest dry cell along each axis
 //   within about 0.75 m; the approach speed is read a little upstream of this cell, where the
@@ -199,7 +200,12 @@ float impact_foam_source(ivec2 c, vec2 v) {
 	float w_b = c.y > 0 ? face_w(c - ivec2(0, 1)) : w_t;
 	float div = (u_r - u_l + w_t - w_b) / CELL;
 	float approach = max(max(abs(u_l), abs(u_r)), max(abs(w_b), abs(w_t))); // the faster side: water arriving
-	float converge = smoothstep(0.15, 0.6, max(-div, 0.0) * 0.25) * smoothstep(0.5, 1.5, approach);
+	float squeeze = smoothstep(0.15, 0.6, max(-div, 0.0) * 0.25);
+	float converge = squeeze * smoothstep(0.5, 1.5, approach);
+	// Scum lines: slow water converging (eddy lines, the edge of a backwater, a pool's seam) sinks and leaves
+	// its bubbles and scum on the surface in faint lines without making white water (Langmuir's windrows are
+	// the same at sea), so half strength from 0.15 m/s.
+	converge = max(converge, 0.5 * squeeze * smoothstep(0.15, 0.5, length(v)));
 
 	// Stagnation.
 	int reach = clamp(int(round(0.75 / CELL)), 1, 3);
