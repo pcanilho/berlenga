@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldWater" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The water contract: open water of every kind, as the other world systems read it.
+	</brief_description>
+	<description>
+		Answers for every live water producer at once (sea, rivers, pools, live water, standing water on the ground): each producer answers only where it really has water, and a point reads the surface nearest above it, else the nearest below it (so a cave stream or a pool in a hollow below the sea's level reads its own water). With no producer, [method height_at] is [code]-INF[/code] and the rest is still water. Get it from [WorldContracts]; a test extends it in a script and sets it with [method WorldContracts.set_water]. Units: metres, m/s, world space.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_clear" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Override in a stub to replace [method clear].
+			</description>
+		</method>
+		<method name="_disturb" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="strength" type="float" />
+			<description>
+				Override in a stub to replace [method disturb].
+			</description>
+		</method>
+		<method name="_flow_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method flow_at].
+			</description>
+		</method>
+		<method name="_height_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method height_at].
+			</description>
+		</method>
+		<method name="_impulse" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				Override in a stub to replace [method impulse].
+			</description>
+		</method>
+		<method name="_wake_depth_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method wake_depth_at].
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Ends the moving disturbance [param owner] keeps.
+			</description>
+		</method>
+		<method name="depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far [param position] lies under the water surface over it, in metres; 0 above it or with no water.
+			</description>
+		</method>
+		<method name="disturb">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="strength" type="float" />
+			<description>
+				A body moving in the water at [param position]: ripples and wakes. [param owner] keeps one disturbance per body.
+			</description>
+		</method>
+		<method name="flow_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The current of the water over [param position], in m/s; zero with no water.
+			</description>
+		</method>
+		<method name="has_provider" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether any water producer is live.
+			</description>
+		</method>
+		<method name="height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The water surface for [param position] (world height in metres): of the producers with water there, the one nearest above it, else the nearest below; [code]-INF[/code] where there is none.
+			</description>
+		</method>
+		<method name="impulse">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				A single splash at [param position].
+			</description>
+		</method>
+		<method name="wake_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the surface over [param position] is pushed down by wakes, in metres.
+			</description>
+		</method>
+	</methods>
+</class>

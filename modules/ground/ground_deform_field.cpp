@@ -850,6 +850,16 @@ bool GroundDeformField::read_body(Node3D *p_node, float p_character_mass, float 
 		}
 	};
 	meta("ground_radius", "snow_radius", b.radius);
+	// A wheel with no collision shape of its own (PhysX vehicles' raycast wheels): a track as wide as the tyre.
+	if (p_node->has_meta("deform_wheel_radius")) {
+		b.center = p_node->get_global_position();
+		b.wheel = true;
+		b.round = false;
+		b.box = false;
+		b.half_height = p_node->get_meta("deform_wheel_radius");
+		b.width = p_node->has_meta("deform_wheel_width") ? float(p_node->get_meta("deform_wheel_width")) : b.half_height * 0.6f;
+		b.radius = b.width * 0.5f;
+	}
 	// Load: rigid bodies by mass, characters by character_mass, the rest only push to their underside.
 	if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(p_node)) {
 		b.mass = rb->get_mass();
@@ -874,7 +884,7 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 		const Vector<Node *> nodes = p_tree->get_nodes_in_group(StringName(group));
 		for (Node *node : nodes) {
 			Node3D *n3 = Object::cast_to<Node3D>(node);
-			if (!n3 || !n3->is_visible_in_tree() || done.has(n3->get_instance_id())) {
+			if (!n3 || !n3->is_visible_in_tree() || done.has(n3->get_instance_id()) || p_columns.skips(n3)) {
 				continue;
 			}
 			done.insert(n3->get_instance_id());

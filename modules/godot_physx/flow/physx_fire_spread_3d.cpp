@@ -31,11 +31,13 @@
 
 #include "physx_fire_spread_3d.h"
 
+#include "../nodes/physx_particle_fluid_3d.h"
 #include "physx_flow_3d.h"
 #include "physx_flow_emitter_3d.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
+#include "core/templates/hashfuncs.h"
 #include "core/templates/sort_array.h"
 #include "scene/3d/decal.h"
 #include "scene/resources/3d/world_3d.h"
@@ -44,6 +46,7 @@
 
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_lightning_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #endif
 
@@ -95,6 +98,7 @@ void PhysXFireSpread3D::_allocate() {
 	wet.resize(n);
 	rain_water.resize(n);
 	quenched.resize(n);
+	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
 	peak_flame.resize(n);
@@ -299,6 +303,50 @@ void PhysXFireSpread3D::_redistance() {
 			}
 		}
 	}
+}
+
+// Lightning fires (docs/ideas/world-links.md, link 4). Fuels are lit by the long continuing current that follows
+// some return strokes, not by the strokes themselves (Fuquay et al. 1972: continuing currents over about 40 ms;
+// about a third of ground flashes carry one), and only fuel dry enough takes: the chance falls with the fuel's
+// moisture towards its moisture of extinction (Latham and Schlieter 1989's ignition trials; Anderson 2002's
+// lightning-fire ignition model). A strike on a tree lights the litter at its foot as the current runs down
+// the trunk into it.
+float PhysXFireSpread3D::lightning_ignition_chance(float p_continuing, float p_moisture, float p_extinction) {
+	if (p_continuing < 0.04f || p_extinction <= 0.0f) {
+		return 0.0f;
+	}
+	const float dry = CLAMP(1.0f - p_moisture / p_extinction, 0.0f, 1.0f);
+	return Math::smoothstep(0.04f, 0.2f, p_continuing) * dry * dry;
+}
+
+void PhysXFireSpread3D::_ignite_from_lightning() {
+#ifdef MODULE_WEATHER_ENABLED
+	if (!lightning_ignition) {
+		lightning_seen = WeatherLightning3D::get_last_ground_strike_serial();
+		return;
+	}
+	LocalVector<WeatherLightning3D::GroundStrike> strikes;
+	WeatherLightning3D::get_ground_strikes_after(lightning_seen, strikes);
+	lightning_seen = WeatherLightning3D::get_last_ground_strike_serial();
+	const FuelModel &m = _model(fuel_type);
+	for (const WeatherLightning3D::GroundStrike &s : strikes) {
+		int x, z;
+		if (!_world_cell(s.position, x, z)) {
+			continue;
+		}
+		const uint32_t i = z * nx + x;
+		if (load.is_empty() || load[i] <= 1.0e-4f || fuel_left[i] <= 0.0f) {
+			continue;
+		}
+		const float p = lightning_ignition_chance(s.continuing_current, _moisture(i), m.moisture_extinction);
+		// A draw from the strike's serial, so a replay lights the same fires.
+		const uint32_t h = hash_murmur3_one_64(s.serial ^ (uint64_t(get_instance_id()) << 1));
+		if (float(h & 0xffffff) / float(0x1000000) < p) {
+			ignite(s.position, cell_size);
+			lightning_ignitions++;
+		}
+	}
+#endif
 }
 
 void PhysXFireSpread3D::ignite(const Vector3 &p_position, float p_radius) {
@@ -792,14 +840,14 @@ float PhysXFireSpread3D::_air_temperature() const {
 // its equilibrium moisture for the air's temperature and humidity with its time lag (Van Wagner and Pech 1985, the
 // Canadian FFMC's drying and wetting EMC; WRF-SFIRE's fuel moisture model), and rain wets it at once by what the
 // fuel bed intercepts. A burning cell whose fuel gets wetter than the moisture of extinction goes out.
-void PhysXFireSpread3D::_update_moisture(float p_delta) {
+bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	if (!use_weather_moisture || phi.is_empty()) {
-		return;
+		return false;
 	}
 #ifdef MODULE_WEATHER_ENABLED
 	const WeatherMap3D *wm = WeatherMap3D::get_active();
 	if (!wm) {
-		return;
+		return false;
 	}
 	const float t = wm->get_air_temperature();
 	const float hum = CLAMP(wm->get_air_humidity() * 100.0f, 0.0f, 100.0f);
@@ -838,7 +886,76 @@ void PhysXFireSpread3D::_update_moisture(float p_delta) {
 			}
 		}
 	}
+	return true;
+#else
+	return false;
 #endif
+}
+
+// Water from the liquid fluids (docs/ideas/physx.md, "Water puts fires out"): a bucket, a hose or a burst tank of
+// PhysXParticleFluid3D. The water lying on a cell's ground (particles up to 0.4 m over it) soaks its fine fuel, up to
+// about 2.5 times the fuel's dry weight as rain does (WRF-SFIRE's saturation); a burning cell whose fuel goes over
+// the moisture of extinction goes out (Rothermel 1972), the way water on a grass fire works: by cooling and wetting
+// the fuel ahead of and in the flames, not by smothering. Without a weather map to dry it, the water on the fuel
+// dries at the fuel's own time lag.
+void PhysXFireSpread3D::_apply_fluid_water(float p_delta, bool p_weather_dried) {
+	if (phi.is_empty() || height.is_empty()) {
+		return;
+	}
+	if (!p_weather_dried) {
+		const float dry = Math::exp(-p_delta * 4.0f / moisture_timelag);
+		for (float &w : rain_water) {
+			w *= dry;
+		}
+	}
+	const LocalVector<PhysXParticleFluid3D *> &fluids = PhysXParticleFluid3D::get_water_fluids();
+	if (fluids.is_empty()) {
+		return;
+	}
+	const Transform3D inv = get_global_transform().affine_inverse();
+	const float cell_area = cell_size * cell_size;
+	const FuelModel &m = _model(fuel_type);
+	LocalVector<Vector3> pts;
+	water_cells.clear();
+	for (const PhysXParticleFluid3D *f : fluids) {
+		if (!f->is_inside_tree()) {
+			continue;
+		}
+		f->gather_world_positions(pts);
+		const float mass = f->get_particle_water_mass();
+		if (pts.is_empty() || mass <= 0.0f) {
+			continue;
+		}
+		for (const Vector3 &p : pts) {
+			const Vector3 l = inv.xform(p);
+			const int x = (int)Math::floor((l.x + size.x * 0.5f) / cell_size);
+			const int z = (int)Math::floor((l.z + size.y * 0.5f) / cell_size);
+			if (x < 0 || z < 0 || x >= nx || z >= nz) {
+				continue;
+			}
+			const uint32_t i = z * nx + x;
+			const float above = p.y - height[i];
+			if (above < -0.2f || above > 0.4f) {
+				continue;
+			}
+			float *w = water_cells.getptr(i);
+			if (w) {
+				*w += mass;
+			} else {
+				water_cells.insert(i, mass);
+			}
+		}
+	}
+	for (const KeyValue<uint32_t, float> &e : water_cells) {
+		const uint32_t i = e.key;
+		const float on_fuel = MIN(e.value / cell_area / MAX(load[i], 0.05f), 2.5f); // kg water per kg fuel
+		rain_water[i] = MAX(rain_water[i], on_fuel);
+		const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
+		if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
+			quenched[i] = 1;
+			quenched_by_water++;
+		}
+	}
 }
 
 float PhysXFireSpread3D::get_ground_height_at(const Vector3 &p_position) const {
@@ -1352,6 +1469,9 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (!fires.has(this)) {
 				fires.push_back(this);
 			}
+#ifdef MODULE_WEATHER_ENABLED
+			lightning_seen = WeatherLightning3D::get_last_ground_strike_serial(); // strikes from before it entered do not count
+#endif
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			fires.erase(this);
@@ -1385,7 +1505,8 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (sample_timer <= 0.0f) {
 				sample_timer = 0.25f;
 				_ignite_from_heat_source();
-				_update_moisture(0.25f);
+				_apply_fluid_water(0.25f, _update_moisture(0.25f));
+				_ignite_from_lightning();
 			}
 			_step(dt);
 			_update_emitters(_wind());
@@ -1416,6 +1537,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow"), &PhysXFireSpread3D::get_flow);
 	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXFireSpread3D::get_firebrand_count);
 	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXFireSpread3D::get_spot_fire_count);
+	ClassDB::bind_method(D_METHOD("get_doused_cells"), &PhysXFireSpread3D::get_doused_cells);
 	ClassDB::bind_method(D_METHOD("set_spotting", "enabled"), &PhysXFireSpread3D::set_spotting);
 	ClassDB::bind_method(D_METHOD("is_spotting"), &PhysXFireSpread3D::is_spotting);
 	ClassDB::bind_method(D_METHOD("set_spotting_scale", "scale"), &PhysXFireSpread3D::set_spotting_scale);
@@ -1460,6 +1582,10 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXFireSpread3D::set_wind);
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXFireSpread3D::get_wind);
 	ClassDB::bind_method(D_METHOD("set_use_weather_wind", "enabled"), &PhysXFireSpread3D::set_use_weather_wind);
+	ClassDB::bind_method(D_METHOD("set_lightning_ignition", "enabled"), &PhysXFireSpread3D::set_lightning_ignition);
+	ClassDB::bind_method(D_METHOD("is_lightning_ignition"), &PhysXFireSpread3D::is_lightning_ignition);
+	ClassDB::bind_method(D_METHOD("get_lightning_ignition_count"), &PhysXFireSpread3D::get_lightning_ignition_count);
+	ClassDB::bind_static_method("PhysXFireSpread3D", D_METHOD("lightning_ignition_chance", "continuing", "moisture", "extinction"), &PhysXFireSpread3D::lightning_ignition_chance);
 	ClassDB::bind_method(D_METHOD("is_using_weather_wind"), &PhysXFireSpread3D::is_using_weather_wind);
 	ClassDB::bind_method(D_METHOD("set_spread_scale", "scale"), &PhysXFireSpread3D::set_spread_scale);
 	ClassDB::bind_method(D_METHOD("get_spread_scale"), &PhysXFireSpread3D::get_spread_scale);
@@ -1493,6 +1619,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_GROUP("Spread", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_weather_wind"), "set_use_weather_wind", "is_using_weather_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lightning_ignition"), "set_lightning_ignition", "is_lightning_ignition");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spread_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_spread_scale", "get_spread_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "heat_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_heat_source", "get_heat_source");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_ignition_temperature", "get_ignition_temperature");

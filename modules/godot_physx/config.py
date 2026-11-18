@@ -27,6 +27,7 @@ def can_build(env, platform):
             _notified = True
         return False
 
+    env.module_add_dependencies("godot_physx", ["world"])
     return True
 
 

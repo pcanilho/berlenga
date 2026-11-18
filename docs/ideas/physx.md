@@ -1151,6 +1151,44 @@ downwind in 90 s, which burnt 420 m2.
    water spray: droplets absorb 2.6 MJ/kg). Here: MPM water and spray
    landing on the fire grid wet its cells (quenching burning ones) and
    cool burnables, so buckets, hoses and a burst pipe stop a fire.
+
+   Status of 1 (18 Nov): built. A brand whose flight ray hits a
+   PhysXBurnable3D's collider rests on it: where it lands on a face that
+   faces up, at the foot of the wall for one that strikes a wall (the
+   re-entrant corner); within 25 cm brands share one pile. A pile's glow
+   (brands weighed by the square root of what is left of each, fading over
+   20 s) heats the wood under it at 50 kW/m2 for 20 brands in a 6 m/s wind
+   (Hakes et al. 2019 measured 40 to 80 under piles), less in still air;
+   the burnable's ignition dose takes it like any other flux. Brands are
+   now cast against walls while flying flat as well as falling. Near
+   MAX_BRANDS aloft each new brand stands for several (a crown fire throws
+   thousands), so landings, piles and spot fire chances count them all.
+   Test (7 m/s, 32 C, 20%): a 3 x 4 x 2.4 m wooden shed 10 m downwind of a
+   burning stand of 24 conifers gathered about 40 brands and caught at
+   about 35 s; downwind of a grass fire alone it held a dozen and did not
+   catch; with spotting off, none.
+   Status of 2 (18 Nov): built. PhysXParticleFluid3D keeps a list of the
+   liquid fluids in the world (granular subclasses left out) and hands out
+   its particles' positions without a GPU wait (MPM: the render buffer it
+   already reads back). Every quarter second PhysXFireSpread3D bins the
+   particles lying on its ground (up to 0.4 m above a cell) and soaks each
+   cell's fine fuel by the water on it, up to 2.5 times the fuel's dry
+   weight as rain does; a burning cell over the moisture of extinction goes
+   out (Rothermel 1972), and wet cells ahead of the front do not take it.
+   With no weather map to dry it, the water dries at the fuel's time lag.
+   PhysXBurnable3D counts the particles in its box, 10 cm grown, as a film
+   over its surface (kg/m2 = mm): wet wood takes no ignition dose, a
+   flaming surface damps and goes out at 1.5 mm (the rain rule), and the
+   ember piles on it and the embers in its char drown. Water stands for
+   cooling and wetting together; the FDS-style droplet heat sink (2.6
+   MJ/kg) is left to the moisture rule, which is what the fire models use.
+   Test (3 m/s wind, tall grass, 5%): a band of water 3 x 6 m laid across
+   the path stopped the front, 75 m2 burnt against 120 m2 with none past
+   the band; a 1 m crate burning at 39 kW went out a second after about
+   a 0.6 x 0.6 x 0.3 m block of water fell on it.
+   The same band dropped onto the burning
+   patch behind the head put out 181 burning cells; the head, already past
+   it, ran on.
 3. Burnt crowns shed their needles. After a crown fire the fine fuel is
    gone: bare black branches, needles fallen as a grey ash layer, and
    burning twigs falling while it torches. Here: the tree shaders cut

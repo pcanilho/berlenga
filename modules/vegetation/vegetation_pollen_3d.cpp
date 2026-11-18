@@ -35,6 +35,7 @@
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
 
+#include "core/templates/hash_set.h"
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/main/scene_tree.h"
@@ -266,13 +267,17 @@ void VegetationPollen3D::_step(float p_delta) {
 		_refresh_release();
 	}
 	const WeatherMap3D *wm = weather_map.is_empty() ? nullptr : Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
-	const Vector<Node *> nodes = get_tree()->get_nodes_in_group(trample_group);
+	// The trample group and world_contact, every body any system should feel (docs/ideas/world-links.md).
+	Vector<Node *> nodes = get_tree()->get_nodes_in_group(trample_group);
+	nodes.append_array(get_tree()->get_nodes_in_group(SNAME("world_contact")));
 	LocalVector<Mover> next;
+	HashSet<ObjectID> listed;
 	for (Node *n : nodes) {
 		Node3D *b = Object::cast_to<Node3D>(n);
-		if (!b) {
+		if (!b || listed.has(b->get_instance_id())) {
 			continue;
 		}
+		listed.insert(b->get_instance_id());
 		Mover m;
 		m.id = b->get_instance_id();
 		m.last = b->get_global_position();

@@ -1,0 +1,164 @@
+# World links: how the systems feed each other
+
+The living matrix of every world system pair in the fork: what each system reads from the others, through which
+shared source, and what is still missing. Update it with every commit that adds or removes a link. The links bench
+(`docs/bench/links`) checks the key ones in one scene.
+
+Status: **linked** (both directions a real world has), **one-way** (only one direction exists where both should),
+**missing**, **n/a** (no real interaction). Sources are the shared state a link reads; a system keeping a private
+copy of shared state is listed under "Private copies" until it moves onto the source.
+
+## Shared sources
+
+| Source | Owner | What it carries |
+| --- | --- | --- |
+| `WeatherMap3D` air | weather | `get_air_temperature()`, `get_air_humidity()`, `get_air_dew_point()`: the day's mean (climate for the date + `season_anomaly`, or `temperature`) through the day's cycle |
+| `WeatherMap3D` cells | weather | wind (`get_wind_at`, `weather_wind_map`), rain, cloud cover, surface water film (`get_wetness_at`) and puddles (`get_puddle_at`) |
+| `WeatherMap3D` contact wetness | weather | `add_contact_wetness*`, `weather_contact_map`: water any system splashes onto surfaces |
+| `WeatherMap3D` shelter | weather | canopy height and closure, lee of obstacles (`get_shelter_at`) |
+| `WeatherMap3D` cloud shadow | weather | `get_sun_visibility_at` |
+| `WeatherMap3D` season | weather | `get_season()`, `get_season_at_height()`: phenology, snowpack, soil frost |
+| `SkyClock` | weather | date, time, sun and moon |
+| `GroundSurface3D` | ground | soil per point (`get_soil`), deformation field (`ground_deform_map`), standing water, puddle ice, frost |
+| `SnowCover3D` | snow | `snow_cover` maps, depth, air at height (`get_air_temperature_at`) |
+| `fire_state_map` | fire | burnt share and glow per cell |
+| `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
+| Contact groups | each system | `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` (to be one `world_contact`) |
+
+## Pairs
+
+### Weather (air, wind, rain, sun, clouds)
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Season → air temperature | linked (18 Nov) | climate + SkyClock | `air_follows_climate` |
+| Time of day → air temperature, humidity | linked (18 Nov) | SkyClock | `air_daily_cycle`, Parton and Logan 1981 |
+| Sun → surface drying | linked (18 Nov) | sun, cloud shadow, canopy | `sun_drying`, Penman 1948 |
+| Air → rain/snow share | linked | air | Jennings 2018 |
+| Wind → clouds, storms | linked | cells | |
+| Weather → haze | linked | air humidity, precipitation | |
+| Clear calm nights → dew, hoarfrost | missing | air, sky | planned (link 5) |
+| Lightning ← storms, freezing level | linked | cells, air | |
+| Lightning → tall things | linked (18 Nov) | ray + canopy map | rolling sphere |
+
+### Terrain and ground (sand, mud)
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Rain, puddles → ground wetness, mud | linked | cells | |
+| Air → puddle ice, soil frost, thaw | linked | air, season | |
+| Wind → sand transport, dust | linked | wind | |
+| Season → regrowth of ruts | linked | season | |
+| Snow → ground | linked | snow cover | |
+| Water bodies → wet sand (swash) | linked | contact wetness | |
+| Fire → scorched, ashy ground | missing | fire_state_map | vegetation's burnt-ground pick covers plants; ground side planned (link 8) |
+| Ground → dust (Flow) | linked | Flow | |
+| Terrain → runoff, rivers | linked | terrain runoff (monthly) | storm runoff to rivers: rain work |
+
+### Snow
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Air → snowfall, melt | one-way | settings | reads `get_temperature()` (the setting), not the live air: private copy |
+| Sun, cloud shadow → melt | linked | sun, cloud shadow | |
+| Wind → drifts, cornices | linked | wind | |
+| Rain → wet snow, crust | linked | cells | |
+| Canopy → interception | linked | shelter | |
+| Snow → plants (burial, pressing) | missing | snow cover | planned (contact 5) |
+| Fire → snow melt | missing | fire_state_map | planned (link 8) |
+| Vehicles → snow ruts | missing | contact | planned (contact 3) |
+| Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
+
+### Vegetation (grass, shrubs, crops) and trees
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Wind → grass, shrubs, trees | linked | wind | |
+| Season → leaf colour, fall, flowering | linked | season | |
+| Rain, wetness → wet leaves | linked | cells | |
+| Fire → burnt plants | linked | fire_state_map | |
+| Plants → fire fuel | linked | VegetationField3D | |
+| Canopy → shelter (wind, rain, snow) | linked | shelter | |
+| Ground ruts, water → grass torn, pressed | linked | ground deform | |
+| Mud spatter → grass | linked | ground | |
+| Bodies → grass bend, trample | linked | `grass_trample` group | |
+| Bodies → shrubs, crops, hedges, ferns | missing | contact | planned (contact 2) |
+| Bodies → branches | linked | `tree_touch` group | |
+| Vehicles → grass, branches | missing | contact | vehicles join no group (contact 1) |
+| Lying snow → plants | missing | snow cover | planned (contact 5) |
+| Flowing water → reeds, grass | missing | river flow | planned (contact 6) |
+| Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
+| Wet ground → mist | one-way | humidity only | planned (link 6) |
+
+### Water (ocean, rivers, pools, falls)
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Wind → waves | one-way | sea's own wind | `follow_weather` defaults off: private copy |
+| Rain → ripples | rain work | | |
+| Cloud shadow → water | linked | cloud shadow | |
+| Water → wet shore | linked | contact wetness | |
+| Falls → mist → wet rock | linked | mist | |
+| Bodies with buoyancy → wakes | linked | buoyancy, wake nodes | |
+| Bodies without buoyancy → ripples, splash | missing | contact | planned (contact 4) |
+| Wading → wet legs, clothes | missing | water height | planned (contact 4) |
+| Cold air over water → steam fog | missing | air, water | planned (link 6) |
+| Rain, melt → river level | missing | runoff | rain work |
+| Cold → lake ice | missing | air | snow work (Stefan's law) |
+| Fire → steam on water | missing | fire, water | planned (link 8) |
+
+### Fire, gas and lightning
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Wind → fire spread, smoke | linked | wind | |
+| Air, rain → fuel moisture | linked | air, cells | |
+| Wet ground → fuel moisture | missing | cells | fuel starts dry after rain (link 8) |
+| Lightning → fire | linked (18 Nov) | ground strikes | continuing current, fuel moisture |
+| Fire → cloth | linked | cloth burn | |
+| Fire → firebrands → spot fires | linked | wind | |
+| Fire → drying, snow melt | missing | fire_state_map | link 8 |
+| Fire → heat shimmer | missing | Flow temperature | link 10 |
+| Weather wind → free-standing Flow smoke | missing | wind | wind work |
+
+### Cloth, hair, bodies
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Wind → cloth, hair | linked | wind | |
+| Rain → wet cloth, hair | linked | cells, shelter | |
+| Air → drying | linked | air | |
+| Flow gas → cloth | linked | Flow velocity | |
+| Bodies → ground prints | linked | `ground_deform` group | |
+| Mud → legs | linked | GroundLegMud3D | |
+
+### Vehicles
+
+| Pair | Status | Source | Note |
+| --- | --- | --- | --- |
+| Soft soil → sinkage, grip, ruts | linked | ground terramechanics | |
+| Puddles → spray, washed tread | linked | ground | |
+| Wet, flooded, icy firm ground → grip, aquaplaning | linked (18 Nov) | cells, ground ice | |
+| Vehicles → water wakes | linked | buoyancy | |
+| Vehicles → grass, branches, snow | missing | contact | contact 1 and 3 |
+| Vehicles → Flow (bodies as solids) | linked | Flow | |
+
+## Private copies of shared state
+
+- Snow reads `WeatherMap3D.get_temperature()`/`get_humidity()` (the settings) instead of the live air
+  (`snow_cover_3d.cpp`, `snow_fall_3d.cpp`, `snow_icicles_3d.cpp`). With the trees, ground and fire on the live air,
+  snow would disagree with them through the day. Owner: snow.
+- `PhysXWaterSurface3D.follow_weather` defaults to false: the sea keeps its own wind. Owner: wind work.
+- `VegetationField3D` placement skew reads the wind setting: placement time only, harmless.
+
+## Techniques for the planned links
+
+- Dew and hoarfrost: radiative cooling of exposed surfaces under a clear sky below the dew point (Monteith 1957;
+  Garratt and Segal 1988), rime below 0 C; sheltered and clouded spots stay dry.
+- Mist over wet ground: radiation fog strength from the surface's moisture (wet film, puddles); steam fog where air
+  much colder than water lies over it (sea smoke).
+- Fire on the ground: the fire grid's heat dries the surface film, melts snow (energy balance), steams where it
+  meets water; fuel moisture starts from the surface film.
+- Heat shimmer: refraction through the gas's temperature gradient.
+- One contact group: every system reads `world_contact` as well as its own group; vehicles, characters and PhysX
+  bodies join it.

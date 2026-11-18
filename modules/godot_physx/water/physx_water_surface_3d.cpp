@@ -2834,6 +2834,24 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 	}
 }
 
+float PhysXWaterSurface3D::contract_water_height_at(const Vector3 &p_position) const {
+	return sample_depth(p_position) > 0.0f ? sample_height(p_position) : -Math::INF;
+}
+
+void PhysXWaterSurface3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	submit_sphere(int(p_owner & 0x7fffffff), p_position, p_radius, p_strength);
+}
+
+void PhysXWaterSurface3D::contract_water_clear(uint64_t p_owner) {
+	clear_sphere(int(p_owner & 0x7fffffff));
+}
+
+void PhysXWaterSurface3D::contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {
+	if (sample_depth(p_position) > 0.0f) {
+		submit_impulse(p_position, p_radius, p_strength);
+	}
+}
+
 PhysXWaterSurface3D::~PhysXWaterSurface3D() {
 	_clear_cascades();
 }
@@ -6327,12 +6345,14 @@ Ref<Texture2D> PhysXWaterSurface3D::get_caustics_texture() const {
 void PhysXWaterSurface3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			WorldContracts::register_water(this);
 			_connect_terrain();
 			_rebuild();
 			set_physics_process_internal(true);
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			WorldContracts::unregister_water(this);
 			_disconnect_terrain();
 			set_physics_process_internal(false);
 			set_process_internal(false);
@@ -6348,6 +6368,15 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update_crest_spray();
 			_update_crest_sheets((float)get_physics_process_delta_time());
 			_wet_ground();
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				body_contacts.update(
+						get_tree(), get_physics_process_delta_time(),
+						[this](const Vector3 &p) { return sample_height(p); },
+						[](const Vector3 &) { return Vector3(); },
+						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
+						[this](int o) { clear_sphere(o); },
+						[this](const Vector3 &p, float r, float s) { submit_impulse(p, r, s); });
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {

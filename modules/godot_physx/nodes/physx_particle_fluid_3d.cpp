@@ -1275,6 +1275,37 @@ PackedVector3Array PhysXParticleFluid3D::get_particle_positions() const {
 	return server->particle_fluid_get_positions(fluid);
 }
 
+LocalVector<PhysXParticleFluid3D *> PhysXParticleFluid3D::water_fluids;
+
+void PhysXParticleFluid3D::gather_world_positions(LocalVector<Vector3> &r_positions) const {
+	r_positions.clear();
+	if (mpm != nullptr) {
+		if (!spawned) {
+			return;
+		}
+		const PackedFloat32Array mm = mpm->get_multimesh_buffer();
+		const int count = MIN(mpm->get_particle_count(), mm.size() / 12);
+		const float *f = mm.ptr();
+		r_positions.resize(count);
+		for (int i = 0; i < count; i++) {
+			r_positions[i] = Vector3(f[i * 12 + 3], f[i * 12 + 7], f[i * 12 + 11]);
+		}
+		return;
+	}
+	const PackedVector3Array p = get_particle_positions();
+	r_positions.resize(p.size());
+	for (int i = 0; i < p.size(); i++) {
+		r_positions[i] = p[i];
+	}
+}
+
+float PhysXParticleFluid3D::get_particle_water_mass() const {
+	if (mpm != nullptr) {
+		return mpm->get_particle_volume() * 1000.0f;
+	}
+	return particle_size * particle_size * particle_size * 1000.0f;
+}
+
 float PhysXParticleFluid3D::get_submersion(const AABB &p_world_aabb) const {
 	if (mpm != nullptr) {
 		// The MPM solver never fills the server's (PBD) fluid object, so count its own particles.
@@ -1666,6 +1697,9 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 	const bool editor = Engine::get_singleton()->is_editor_hint();
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			if (!editor && get_class_name() == PhysXParticleFluid3D::get_class_static() && !water_fluids.has(this)) {
+				water_fluids.push_back(this); // liquid, not a granular subclass
+			}
 			if (editor) {
 				_editor_preview_enter();
 				set_process_internal(true);
@@ -1686,6 +1720,7 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			water_fluids.erase(this);
 			_screen_space_detach();
 			set_physics_process_internal(false);
 			set_process_internal(false);
@@ -1693,6 +1728,7 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 			_free_fluid();
 		} break;
 		case NOTIFICATION_PREDELETE: {
+			water_fluids.erase(this);
 			// Belt and braces: drop the MPM solver (and its local RenderingDevice)
 			// while the rendering subsystem is still alive, in case EXIT_WORLD did
 			// not run (e.g. freed without ever being parented).

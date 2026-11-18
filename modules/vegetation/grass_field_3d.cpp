@@ -1582,10 +1582,10 @@ void GrassField3D::_build_hedges() {
 			}
 		}
 	};
-	// Segments: 5 cm voxels from 20 m, 10 cm from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a
+	// Segments: 5 cm voxels from 30 m, 10 cm from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a
 	// voxel is about two pixels across at 1080p and a 75 degree view (plus the cell's reach). A
-	// flailed segment is over a million triangles; past 20 m its leaves are under a pixel.
-	const float seg_ranges[6] = { 0.0f, 20.0f, 45.0f, 90.0f, 180.0f, 0.0f };
+	// flailed segment is over a million triangles; past 30 m its leaves are under a pixel (from 20 m the bench's near hedges read as blocks).
+	const float seg_ranges[6] = { 0.0f, 30.0f, 45.0f, 90.0f, 180.0f, 0.0f };
 	const float seg_voxels[5] = { 0.0f, 0.05f, 0.1f, 0.2f, 0.4f };
 	for (int k = 0; k < kinds; k++) {
 		bool any = false;
@@ -4087,7 +4087,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 			// spans a few pixels; past that the pixel holds the lane's walls and tops as well, and
 			// its mean is near the canopy's own (a far tramline is a faint line, not a black one).
 			float lane_res = 1.0 - smoothstep(0.08, 0.3, px_lane);
-			vec3 relief = mix(canopy * 0.8, soil * mix(0.85, 0.6, look.a), lane_res);
+			vec3 relief = mix(canopy * 0.8, mix(soil, canopy, 0.3) * mix(1.0, 0.75, look.a), lane_res); // Lit from the sky down the lane, and the straw's bounce.
 			if (hit_s >= 0.0) {
 				vec2 q = xz - v.xz * hit_s;
 				float depth = clamp(hit_s * dv / H, 0.0, 1.0);
@@ -4107,7 +4107,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 				}
 				// Lit at the top, in the stand's own shade lower down (its light falls about as
 				// exp(-LAI) to the base).
-				relief = canopy * max(1.0 + 1.3 * grain, 0.3) * mix(mix(0.28, 0.7, 1.0 - lane_res), 1.3, depth * depth); // Deep hits (a lane's walls) lifted to the pixel's mean where the lane is unresolved.
+				relief = canopy * max(1.0 + 1.3 * grain, 0.3) * mix(mix(0.42, 0.7, 1.0 - lane_res), 1.3, depth * depth); // Deep hits (a lane's walls) lifted to the pixel's mean where the lane is unresolved.
 			}
 			far = mix(far, relief * crop_ground_view.rgb * texelFetch(crop_ground_plots, ivec2(int(crop_ground_field_slot(world_pos)), 3), 0).rgb, gone);
 		}
@@ -4382,10 +4382,12 @@ void GrassField3D::_trample_step(double p_delta) {
 	const float ground_y = get_global_position().y;
 	HashMap<ObjectID, Vector3> seen;
 	if (is_inside_tree()) {
-		const Vector<Node *> movers = get_tree()->get_nodes_in_group(trample_group);
+		// The trample group and world_contact, every body any system should feel (docs/ideas/world-links.md).
+		Vector<Node *> movers = get_tree()->get_nodes_in_group(trample_group);
+		movers.append_array(get_tree()->get_nodes_in_group(SNAME("world_contact")));
 		for (Node *n : movers) {
 			Node3D *n3 = Object::cast_to<Node3D>(n);
-			if (!n3 || !n3->is_visible_in_tree()) {
+			if (!n3 || !n3->is_visible_in_tree() || seen.has(n3->get_instance_id())) {
 				continue;
 			}
 			const Vector3 pos = n3->get_global_position();
@@ -4501,6 +4503,7 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
 			if (crop != CROP_NONE) {
 				if (!crop_nodes.has(this)) {
 					crop_nodes.push_back(this);

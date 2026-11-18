@@ -335,7 +335,7 @@ void WeatherMap3D::_update_aerosol() {
 		}
 		return;
 	}
-	const float sigma = aerosol_extinction(haze_visibility, cur_humidity);
+	const float sigma = aerosol_extinction(haze_visibility, cur_air_humidity);
 	if (applied_aerosol < 0.0f || Math::abs(sigma - applied_aerosol) > 0.02f * applied_aerosol) {
 		applied_aerosol = sigma;
 		set_precipitation_extinction(this, sigma, haze_height, 0.9f);

@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "water_raster_reflections.h"
 
 #include "core/templates/hash_map.h"
@@ -47,7 +48,7 @@ class PhysicsDirectSpaceState3D;
 // 2007) on the CPU over the ground's heights (measured by ray casts, so terrain, rocks and buildings all
 // count). Water comes from sources, rain and add_water(), and leaves over the open edges and by soaking in.
 // Drawn with the river's surface (clear water, shadows, foam where it runs fast).
-class PhysXLiveWater3D : public Node3D {
+class PhysXLiveWater3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(PhysXLiveWater3D, Node3D);
 
 	Vector2 size = Vector2(64.0f, 64.0f);
@@ -185,6 +186,11 @@ public:
 	float sample_depth(const Vector3 &p_global) const;
 	// The water's surface height (world y) at a point, or the ground's where dry; NAN outside.
 	float sample_height(const Vector3 &p_global) const;
+	// The water contract (WorldWater): this water's surface, -INF where it has none.
+	float contract_water_height_at(const Vector3 &p_position) const override;
+	Vector3 contract_water_flow_at(const Vector3 &p_position) const override { return sample_flow(p_position); }
+	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
+	void contract_water_clear(uint64_t p_owner) override { clear_sphere(int64_t(p_owner)); }
 	// Depth-averaged velocity (world, m/s) at a point.
 	Vector3 sample_flow(const Vector3 &p_global) const;
 	float get_total_volume() const;
