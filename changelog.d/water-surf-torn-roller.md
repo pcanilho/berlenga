@@ -1,0 +1,1 @@
+- Water: the breaking crest's white water is torn in patches into streaks running with the wave, so surf a few tens of metres out no longer reads as an even white band.
