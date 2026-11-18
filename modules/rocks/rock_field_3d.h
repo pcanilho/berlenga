@@ -222,6 +222,13 @@ private:
 	void _detail_commit(DetailJob &r_job);
 	void _detail_finish(bool p_wait, real_t p_budget_msec);
 	void _detail_cancel();
+	struct LibraryBuild;
+	HashMap<uint32_t, LibraryBuild *> library_builds; // started by streaming cells, keyed by every key they build
+	bool library_async = false; // while streaming: a missing library is started on workers, the cell waits
+	bool library_pending = false; // the cell being placed asked for a library not built yet
+	LibraryBuild *_start_libraries(const LocalVector<uint32_t> &p_missing);
+	void _finish_libraries(LibraryBuild *p_build);
+	void _collect_libraries(bool p_wait);
 	Color _stone_custom(const TerrainGenerator3D *p_gen, const Stone &p_stone, const Vector3 &p_axes, RandomPCG &r_rng) const;
 	MultiMeshInstance3D *_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin, bool p_detail = false);
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
