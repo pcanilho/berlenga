@@ -211,6 +211,8 @@ public:
 	// Clods that stuck to the body (mud stage 4b): a splat at p_world, spread along p_velocity, of p_volume m3.
 	void add_mud_splat(const Vector3 &p_world, const Vector3 &p_velocity, float p_volume);
 	int get_mud_splat_count() const;
+	// Stuck clod p_index: its position in the vehicle's frame and how much of it is left (w, 0..1).
+	Vector4 get_mud_splat(int p_index) const;
 	// For a grains node: the live vehicles, and whether a point is inside one's chassis box.
 	static void get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles);
 	bool mud_box_contains(const Vector3 &p_world) const;

@@ -1160,10 +1160,18 @@ func _build_wade() -> void:
 	surface.follow_target = surface.get_path_to(car)
 	var grains := _make_grains(car)
 	var vol0 := _water_volume(Vector3(0, 0, 0), 7.2).x
+
 	var full := get_window().size
 	get_window().size = Vector2i(160, 90)
 	for i in 30:
 		await get_tree().physics_frame
+	if splash_test:
+		# Clods stuck low on a sill, just under the ruts' water line, and high on a door (mud stage 4c): the water
+		# should wash the low one off, not the high one.
+		# (Its origin rides about 32 cm over the water in the ruts.)
+		var cp := car.global_position
+		car.add_mud_splat(Vector3(0.9, cp.y - 0.34, cp.z), Vector3(1, 0, 0), 1e-4)
+		car.add_mud_splat(Vector3(0.9, cp.y + 0.6, cp.z), Vector3(1, 0, 0), 1e-4)
 	car.throttle = 0.6
 	var t := 0.0
 	while t < 10.0 and car.global_position.z < -0.4:
@@ -1191,6 +1199,16 @@ func _build_wade() -> void:
 		var moved := surface.get_water_moved()
 		var owed := surface.get_water_owed()
 		print("  the field: %.2f l landed in it, %.2f l taken from it, %.2f l owed (thin films on the dry flat soak in: %.2f l)" % [moved.x * 1000.0, moved.y * 1000.0, owed * 1000.0, (vol0 + moved.x - moved.y - vol1) * 1000.0])
+		var low := 1.0
+		var high := 0.0
+		for k in car.get_mud_splat_count():
+			var sp := car.get_mud_splat(k)
+			if k == 0:
+				low = minf(low, sp.w)
+			else:
+				high = maxf(high, sp.w)
+		print("  splats left: low %.2f, high %.2f" % [low, high])
+		_check("the water washes the clods under its line off the body, not those above", low < 0.5 and high > 0.8, "low %.2f, high %.2f left" % [low, high])
 		_check("tyres past Froude 1 throw the rut's water up as sheets", thrown > 0.0005 and flying > 0.0001, "%.2f l thrown, %.2f l in the air" % [thrown * 1000.0, flying * 1000.0])
 		# The field's books: what landed in it less what was taken equals what is still owed (a take that found less
 		# than its read back showed is owed, paid back by the water landing next), and the drops are all down.

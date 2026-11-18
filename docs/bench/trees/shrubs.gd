@@ -175,3 +175,9 @@ func _test() -> void:
 		if not lods.is_empty():
 			last = lods[lods.size() - 1].index_data.size() / (4 if sd.vertex_count > 65535 else 2)
 		_check(lods.size() >= 2 and last * 10 < full, "gorse flowers and pods thin with distance (%d of %d indices at the coarsest of %d levels)" % [last, full, lods.size()])
+	# Hedges (trees.md 5ad): a two-metre segment along x, 1.6-2.7 m tall, no random yaw.
+	for p in [6, 43, 5, 44, 45]:
+		var hs: PlantSpecies = TreeGenerator.make_shrub_species(p, TreeGenerator.SHRUB_HEDGE, 1, aug)
+		var hb := (hs.meshes[0] as Mesh).get_aabb()
+		_check(hb.end.y > 1.6 and hb.end.y < 2.7 and hb.size.x > 1.8 and hb.size.x < 3.2 and float(hs.get_meta("hedge_segment_length", 0.0)) == 2.0 and not hs.random_yaw, "%s: %.2f m tall, %.2f m along the line, segment meta, no yaw" % [hs.get_name(), hb.end.y, hb.size.x])
+	_check(TreeGenerator.get_bloom(43, 95) > 0.9 and TreeGenerator.get_bloom(6, 135) > 0.9 and TreeGenerator.get_bloom(45, 170) > 0.9 and TreeGenerator.get_bloom(6, 200) == 0.0, "blackthorn in flower in April, hawthorn in May, dog rose in June")

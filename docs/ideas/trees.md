@@ -2042,6 +2042,67 @@ Docs review (18 Nov): holm oak and carob passed. Fixes for the rest:
 Not yet: olive and carob fruit, cultivated olives (grafted, pruned open vase), resin-tapping
 scars on maritime pines, Mediterranean stands (montado, maritime pine plantation).
 
+### 5ad. Hedge shrubs and cut hedges (18 Nov; farmland and hedgerows, for vegetation)
+
+Asked by vegetation for Paulo's farmland pick: the woody hedge shrubs as shrub species
+(`make_shrub_species`, like gorse and broom), with a cut field-hedge form. Vegetation places
+them along field edges and builds the margin flora itself.
+
+Research:
+- **Cutting** (Hedgelink, *Hedge management cycle*; Defra, *Hedgerow Survey Handbook*, 2007;
+  Staley et al. 2015 on cutting regimes): most field hedges are flailed every one to three
+  years in winter, into an A-shape (a trapezoid section: wide base, narrower top) or a box.
+  Good practice is at least 1.5 m tall and 1.5 m wide; typical managed hedges stand 1.8-2.5 m
+  and 1.5-3 m wide at the base, a top of 0.6-1 m on an A. Each cut stub breaks into several
+  short shoots, so a cut hedge is a dense twiggy shell 30-50 cm deep around older stems, leafy
+  to the ground when not over-trimmed; over-trimmed or old ones go gappy at the base.
+- **Laying** (National Hedgelaying Society, Midland style; BTCV *Hedging*): stems cut three
+  quarters through at the base (pleachers) and laid along the line at about 35 degrees, held by
+  stakes every 45 cm and woven binders; the stools and pleachers send up straight regrowth. Every
+  10-15 years, between flailings. Not in this round: it needs a pleacher model in the growth.
+- **Hawthorn** (*Crataegus monogyna*): the hedge plant (often half or more of a hedge). Leaves
+  2-4 cm, deeply 3-5 lobed. May blossom: white flowers 8-15 mm, five petals, pink to purple
+  anthers, in flat corymbs of 5-25, smothering the hedge for two to three weeks in May. Haws
+  deep red, 8-10 mm, September into winter. Thorns 1-2 cm.
+- **Blackthorn** (*Prunus spinosa*): suckers into thickets 1-4 m; dark, almost black bark;
+  side shoots stiff, at wide angles, ending in thorns. White flowers 10-15 mm, singly or in
+  pairs, crowded along the bare twigs in March-April before the leaves (white hedges in early
+  spring). Leaves 2-4 cm, elliptic, finely toothed, dull. Sloes 10-15 mm, blue-black under a
+  waxy bloom, September to November, often left on into winter.
+- **Hazel** (*Corylus avellana*): already a preset (coppice); in hedges cut like the rest;
+  catkins in February.
+- **Field maple** (*Acer campestre*): a small tree 8-15 m, often a hedge shrub when cut; leaves
+  5-8 cm, five rounded lobes; twigs often with corky wings; butter-yellow in autumn; keys in
+  pairs held almost straight out.
+- **Dog rose** (*Rosa canina*): arching prickly canes 1-3 m from the base, scrambling up to 5 m
+  through a hedge. Leaves pinnate, five to seven toothed leaflets. Flowers 4-6 cm, five pale
+  pink to white petals, June; hips oval, scarlet, 1.5-2 cm, from September, kept into winter.
+- **Standards**: oaks left uncut in the hedge line grow open (short bole, wide crown): the
+  existing open-grown oak.
+
+Plan: presets `PRESET_BLACKTHORN`, `PRESET_FIELD_MAPLE`, `PRESET_DOG_ROSE`; hawthorn and hazel
+as they are. `SHRUB_HEDGE` (`FORM_HEDGE`): a two-metre segment of hedge grown from several
+stems inside an envelope cut every year, A-shaped or boxed by variant, its profile kept in the
+mesh meta for placement end to end along a line. Blossom and fruit by day of year in the crown
+parts: hawthorn May blossom and haws, blackthorn flowers on bare wood and sloes, dog rose
+flowers and hips.
+
+As built: `make_shrub_species(preset, SHRUB_HEDGE)` takes the five hedge shrubs. A segment
+runs along local X from 0 to 2 m (`hedge_segment_length` meta, spacing 2 m, no random yaw).
+The envelope is the clip AABB of section 7, narrowed with height on even variants (the A's
+batter, top 0.6-1 m wide). The cut: a terminal shoot that would leave the envelope stops and
+its parent node gets two new terminal buds turned back along the face (`envelope_sprouts`),
+for up to four cuts in a row; dormant buds live eight years, shedding is off and leaves stay
+two years longer, so the shell is leafy to the ground. Seven or more stems are planted along
+the segment; the pipe exponent is at least 2.5 so the thousands of shell twigs do not sum to
+tree-sized stems. Hawthorn and blackthorn flower from every young leafy shoot (spurs), not only
+the shoot ends: two corymbs of 24-48 flowers per hawthorn shoot, 8-16 flowers along each
+blackthorn shoot, each small flower five triangles with its boss coloured at the centre (a
+third of the full flower); dog rose keeps the full five-petal flower with a raised boss.
+Blossom days: blackthorn 70-120, hawthorn 118-158, dog rose 150-196. Sloes days 240-20, hips
+240-45, haws as before. A 2 m segment is 200-310k triangles at LOD 0 in flower, 70-250k out of
+it. Laid hedges are left for a later round.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

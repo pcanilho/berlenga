@@ -49,7 +49,8 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
 	"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
 	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm",
-	"Stone Pine", "Cork Oak", "Holm Oak", "Wild Olive", "Maritime Pine", "Carob"
+	"Stone Pine", "Cork Oak", "Holm Oak", "Wild Olive", "Maritime Pine", "Carob",
+	"Blackthorn", "Field Maple", "Dog Rose"
 };
 
 // The woody shrubs vegetation places through make_shrub_species (trees.md 5u, 5v): Atlantic heath
@@ -65,6 +66,12 @@ static int _bank_variants(int p_variants) {
 static bool scrub_shrub(TreeGenerator::Preset p_preset) {
 	return p_preset == TreeGenerator::PRESET_GORSE || p_preset == TreeGenerator::PRESET_BROOM || p_preset == TreeGenerator::PRESET_GUM_ROCKROSE ||
 			p_preset == TreeGenerator::PRESET_KERMES_OAK || p_preset == TreeGenerator::PRESET_LENTISK || p_preset == TreeGenerator::PRESET_DWARF_FAN_PALM;
+}
+
+// Woody hedge shrubs (trees.md 5ad): make_shrub_species takes them too, with the cut hedge form.
+static bool hedge_shrub(TreeGenerator::Preset p_preset) {
+	return p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_BLACKTHORN || p_preset == TreeGenerator::PRESET_HAZEL ||
+			p_preset == TreeGenerator::PRESET_FIELD_MAPLE || p_preset == TreeGenerator::PRESET_DOG_ROSE;
 }
 
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
@@ -872,6 +879,61 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 2;
 			bark_color = Color(0.36f, 0.32f, 0.28f); // Grey-brown, rough.
 			leaf_color = Color(0.05f, 0.13f, 0.04f); // Dark, glossy.
+			break;
+		case PRESET_BLACKTHORN: // Prunus spinosa (trees.md 5ad): a suckering, thorny thicket shrub,
+			// stiff side shoots at wide angles, dark bark; flowers on bare wood, sloes.
+			p[PARAM_YEARS] = 18;
+			p[PARAM_INTERNODE_LENGTH] = 0.15f;
+			p[PARAM_APICAL_DOMINANCE] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.48f;
+			p[PARAM_MATURITY] = 8;
+			p[PARAM_BRANCH_ANGLE] = 70; // Stiff, spreading spur shoots.
+			p[PARAM_DIRECTION_NOISE] = 18;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.4f;
+			p[PARAM_SHED_RATIO] = 0.03f;
+			p[PARAM_STEMS] = 4;
+			p[PARAM_STEM_SPREAD] = 20;
+			p[PARAM_BASAL_SPROUTS] = 0.3f; // Suckers.
+			p[PARAM_LEAF_SIZE] = 0.035f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 18;
+			bark_color = Color(0.2f, 0.18f, 0.17f); // Almost black.
+			leaf_color = Color(0.12f, 0.2f, 0.08f); // Dull green.
+			break;
+		case PRESET_FIELD_MAPLE: // Acer campestre (trees.md 5ad): a small round-headed tree, often a
+			// cut hedge shrub; small five-lobed leaves, corky twigs, butter-yellow in autumn.
+			p[PARAM_YEARS] = 40;
+			p[PARAM_INTERNODE_LENGTH] = 0.3f;
+			p[PARAM_APICAL_DOMINANCE] = 0.58f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_MATURITY] = 20;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 14;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.55f;
+			p[PARAM_SHED_RATIO] = 0.03f;
+			p[PARAM_LEAF_SIZE] = 0.06f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 20;
+			bark_color = Color(0.42f, 0.37f, 0.3f); // Light grey-brown, finely fissured.
+			leaf_color = Color(0.12f, 0.25f, 0.07f);
+			break;
+		case PRESET_DOG_ROSE: // Rosa canina (trees.md 5ad): arching prickly canes from the base,
+			// pinnate leaves; pale pink flowers in June, scarlet hips.
+			p[PARAM_YEARS] = 8;
+			p[PARAM_INTERNODE_LENGTH] = 0.25f;
+			p[PARAM_APICAL_DOMINANCE] = 0.45f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.45f;
+			p[PARAM_MATURITY] = 4;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_DIRECTION_NOISE] = 14;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
+			p[PARAM_GRAVITY_BENDING] = 0.6f; // Canes arch over under their own weight.
+			p[PARAM_SHED_RATIO] = 0.05f;
+			p[PARAM_STEMS] = 6;
+			p[PARAM_STEM_SPREAD] = 30;
+			p[PARAM_BASAL_SPROUTS] = 0.5f; // New canes from the base every year.
+			p[PARAM_LEAF_SIZE] = 0.03f; // Leaflets 1.5-4 cm.
+			p[PARAM_LEAVES_PER_INTERNODE] = 10;
+			bark_color = Color(0.3f, 0.32f, 0.2f); // Green to brown canes.
+			leaf_color = Color(0.12f, 0.22f, 0.08f);
 			break;
 		case PRESET_MAX:
 			break;
@@ -1689,7 +1751,21 @@ void TreeGenerator::_grow_year(int p_year) {
 			const bool main = k > 0 || (bud.terminal && !from_root);
 			// Clipped forms (hedges, topiary; Palubicki 2009 section 6): a shoot that would leave the
 			// envelope is cut back, as a hedge trimmer does each year.
-			if (envelope.size.x > 0.0f && !envelope.has_point(pos + dir * len)) {
+			if (envelope.size.x > 0.0f && !_in_envelope(pos + dir * len)) {
+				if (envelope_sprouts > 0 && bud.terminal && bud.idle < 4) {
+					// A flailed hedge (trees.md 5ad): the cut stub breaks into short shoots from the
+					// buds behind the cut, turned back along the hedge's face, so each year's cut
+					// thickens the twiggy shell instead of stopping the shoot.
+					for (int q = 0; q < envelope_sprouts; q++) {
+						Bud t;
+						t.node = parent;
+						Vector3 sd = _random_unit() - dir * 0.6f;
+						t.dir = sd.length_squared() > 1e-6f ? sd.normalized() : -dir;
+						t.terminal = true;
+						t.idle = bud.idle + 1;
+						buds.push_back(t);
+					}
+				}
 				break;
 			}
 			// Krummholz (trees.md 5q, 5s): what rises above the snowpack is killed back each winter,
@@ -2477,6 +2553,21 @@ void TreeGenerator::_bend_under_gravity() {
 // shyness, Putz et al. 1984, Fish et al. 2006). So the thinner wood is cut just short of the
 // contact and everything beyond it goes. Stems (order 0) are never cut. Contacts within the
 // junction where a limb leaves its parent are the weld's, not collisions.
+// Inside the clipping envelope; with a batter, its depth (z) narrows linearly from the ground to
+// the top, an A-shaped hedge's section (trees.md 5ad).
+bool TreeGenerator::_in_envelope(const Vector3 &p_point) const {
+	if (!envelope.has_point(p_point)) {
+		return false;
+	}
+	if (envelope_batter <= 0.0f) {
+		return true;
+	}
+	const float top = envelope.position.y + envelope.size.y;
+	const float t = CLAMP(p_point.y / MAX(top, 0.01f), 0.0f, 1.0f);
+	const float half = envelope.size.z * 0.5f * (1.0f - envelope_batter * t);
+	return Math::abs(p_point.z - (envelope.position.z + envelope.size.z * 0.5f)) <= half;
+}
+
 void TreeGenerator::_prune_collisions() {
 	collision_prunes = 0;
 	collision_deflects = 0;
@@ -3038,6 +3129,9 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Wild olive: narrow lanceolate.
 	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Maritime pine.
 	{ TreeGenerator::LEAF_PINNATE, 8, 0.0f }, // Carob: paripinnate, 2-5 pairs of rounded leaflets.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Blackthorn: elliptic, finely toothed.
+	{ TreeGenerator::LEAF_PALMATE, 5, 0.4f }, // Field maple: five rounded lobes.
+	{ TreeGenerator::LEAF_PINNATE, 7, 0.0f }, // Dog rose: five to seven toothed leaflets.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -3116,6 +3210,9 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Wild olive.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Maritime pine.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Carob.
+	{ true, 105.0f, 235.0f, 200.0f, 100.0f, Color(0.3f, 0.18f, 0.06f) }, // Blackthorn: leafs after its flowers; dull yellow-brown.
+	{ true, 115.0f, 225.0f, 200.0f, 100.0f, Color(0.5f, 0.38f, 0.04f) }, // Field maple: butter yellow.
+	{ true, 100.0f, 245.0f, 200.0f, 90.0f, Color(0.35f, 0.2f, 0.06f) }, // Dog rose: early out, dull orange-yellow.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -3558,6 +3655,10 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 			return BARK_PLATED;
 		case PRESET_WILD_OLIVE: // Grey, smooth when young, fissured and gnarled when old.
 			return BARK_FURROWED;
+		case PRESET_BLACKTHORN: // Dark, almost black, finely scaly.
+			return BARK_SCALY;
+		case PRESET_DOG_ROSE: // Smooth green to brown canes.
+			return BARK_SMOOTH;
 		case PRESET_NORWAY_SPRUCE:
 		case PRESET_HEMLOCK:
 		case PRESET_SILVER_FIR:
@@ -4177,6 +4278,9 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.05f, // Wild olive: dry and sunny.
 	0.1f, // Maritime pine: Atlantic dunes, damper than the stone pine's.
 	0.05f, // Carob: dry coasts.
+	0.4f, // Blackthorn.
+	0.6f, // Field maple: corky bark holds moss.
+	0.2f, // Dog rose: thin canes.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -4322,6 +4426,9 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.6f, 0.3f, 0.15f }, // Wild olive: crusts and Xanthoria on old trunks.
 	{ 0.1f, 0.2f, 0.0f }, // Maritime pine: thick, flaking plates.
 	{ 0.4f, 0.3f, 0.1f }, // Carob.
+	{ 0.8f, 0.5f, 0.15f }, // Blackthorn: grey crusts and Usnea in old hedges.
+	{ 0.7f, 0.5f, 0.1f }, // Field maple.
+	{ 0.3f, 0.2f, 0.0f }, // Dog rose.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -5379,6 +5486,9 @@ static const struct {
 	{ 60.0f, 220.0f }, // wild olive (very dense wood, deep roots)
 	{ 40.0f, 190.0f }, // maritime pine (deep taproot, but tall and exposed)
 	{ 50.0f, 200.0f }, // carob
+	{ 55.0f, 200.0f }, // blackthorn
+	{ 50.0f, 190.0f }, // field maple
+	{ 55.0f, 200.0f }, // dog rose
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -5651,6 +5761,14 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 		case PRESET_DWARF_FAN_PALM:
 			// March to June, peaking in April (Flora iberica; Herrera 1989).
 			return ramp(65.0f, 90.0f, 130.0f, 170.0f);
+		// Hedge shrubs (trees.md 5ad; lowland Britain and France): blackthorn on the bare wood in
+		// March and April, hawthorn's May blossom, dog rose in June.
+		case PRESET_BLACKTHORN:
+			return ramp(70.0f, 85.0f, 105.0f, 120.0f);
+		case PRESET_HAWTHORN:
+			return ramp(118.0f, 128.0f, 145.0f, 158.0f);
+		case PRESET_DOG_ROSE:
+			return ramp(150.0f, 162.0f, 180.0f, 196.0f);
 		default:
 			return 0.0f;
 	}
@@ -6751,6 +6869,9 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		ACORN_KERMES,
 		DRUPE_LENTISK,
 		CONE_STONE_PINE,
+		DRUPE_SLOE,
+		HIP_ROSE,
+		BLOSSOM, // Hedge shrubs in flower (trees.md 5ad): the preset says whose.
 	};
 	Kind kind = NONE;
 	float share = 0.0f, low = 0.0f; // Share of the tips above `low` (0-1 up the crown).
@@ -6802,7 +6923,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			kind = BERRY_HOLLY, share = 0.3f, low = 0.0f;
 			break;
 		case PRESET_HAWTHORN:
-			kind = BERRY_HAW, share = 0.35f, low = 0.2f;
+			kind = BERRY_HAW, share = 0.7f, low = 0.1f;
 			break;
 		case PRESET_ROWAN:
 			kind = BERRY_ROWAN, share = 0.12f, low = 0.3f;
@@ -6819,8 +6940,26 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		case PRESET_LENTISK:
 			kind = DRUPE_LENTISK, share = 0.25f, low = 0.0f;
 			break;
+		case PRESET_FIELD_MAPLE:
+			kind = KEYS_MAPLE, share = 0.12f, low = 0.2f;
+			break;
+		case PRESET_BLACKTHORN:
+			kind = DRUPE_SLOE, share = 0.6f, low = 0.0f;
+			break;
+		case PRESET_DOG_ROSE:
+			kind = HIP_ROSE, share = 0.3f, low = 0.0f;
+			break;
 		default:
 			break;
+	}
+	// Hedge shrubs flower from the same tips that later fruit (trees.md 5ad): hawthorn white over
+	// the whole bush in May, blackthorn white along its bare twigs in March and April, dog rose
+	// pale pink in June.
+	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE) ? get_bloom(preset, day) : 0.0f;
+	if (blossom > 0.0f) {
+		kind = BLOSSOM;
+		share = preset == PRESET_DOG_ROSE ? 0.4f : 1.0f;
+		low = 0.0f;
 	}
 	// Dioecious species: only the female trees fruit (holly, yew), by seed.
 	if ((kind == BERRY_HOLLY || kind == BERRY_YEW || kind == DRUPE_LENTISK) && (uint32_t(seed) * 2654435761u >> 16) % 2 == 1) {
@@ -6862,6 +7001,16 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			// (Jordano 1989).
 			present = in_days(210.0f, 45.0f) ? 1.0f : 0.0f;
 			break;
+		case DRUPE_SLOE:
+			// September to November, many left on into winter.
+			present = in_days(240.0f, 20.0f) ? 1.0f : 0.0f;
+			break;
+		case HIP_ROSE:
+			present = in_days(240.0f, 45.0f) ? 1.0f : 0.0f;
+			break;
+		case BLOSSOM:
+			present = blossom;
+			break;
 		case CATKIN_HAZEL:
 			present = in_days(210.0f, 100.0f) ? 1.0f : 0.0f;
 			break;
@@ -6874,18 +7023,32 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	if (kind == NONE || present <= 0.0f) {
 		return big_end;
 	}
-	// A budget of clusters, so a big crown carries a few hundred, not tens of thousands.
+	// Hawthorn and blackthorn flower from short spurs all along the last years' wood, not only
+	// at the shoot ends (Stace 2019): in flower the whole bush is white, and the haws and sloes
+	// follow on the same spurs.
+	LocalVector<Tip> spurs;
+	if ((kind == BLOSSOM && preset != PRESET_DOG_ROSE) || kind == BERRY_HAW || kind == DRUPE_SLOE) {
+		for (int i = 1; i < int(nodes.size()); i++) {
+			const Node &n = nodes[i];
+			if (!n.removed && !n.dead && n.leafy && n.order >= 1 && n.radius <= 0.012f) {
+				spurs.push_back({ i, CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f) });
+			}
+		}
+	}
+	const LocalVector<Tip> &sites = spurs.is_empty() ? tips : spurs;
+	// A budget of clusters, so a big crown carries a few hundred, not tens of thousands. Hedge fruit
+	// (haws, sloes, hips) comes by the thousand: the autumn hedge is dotted red and blue-black.
 	int eligible = 0;
-	for (const Tip &t : tips) {
+	for (const Tip &t : sites) {
 		eligible += t.f >= low ? 1 : 0;
 	}
 	// Corymbs carry a hundred berries or more each: a rowan bears some dozens of heads.
 	// A stone pine's crown is spent on cones, three years' worth at once: about a thousand.
-	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : 360.0f)) * fruit_cover;
+	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? 3000.0f : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE ? 900.0f : 360.0f)))) * fruit_cover;
 	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
 	// Catkins open before the leaves: hazel from late January, alder February, birch April.
 	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
-	for (const Tip &t : tips) {
+	for (const Tip &t : sites) {
 		if (t.f < low || cr.randf() >= p) {
 			continue;
 		}
@@ -7239,10 +7402,120 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				}
 				size = 0.04f;
 			} break;
+			case DRUPE_SLOE: {
+				// One or two, 10-15 mm, blue-black under a dusty waxy bloom, on short stalks along
+				// the twig behind its tip.
+				const int k = 1 + int(cr.randf() * 1.8f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 on = n.start + n.dir * (n.length * Math::lerp(0.3f, 0.8f, cr.randf()));
+					const Vector3 out = sd.rotated(d, cr.randf() * float(Math::TAU));
+					const float rb = Math::lerp(0.005f, 0.0075f, cr.randf());
+					const Vector3 bc = on + out * (rb * 1.4f) + Vector3(0, -rb * 1.2f, 0);
+					stalk(on, bc + Vector3(0, rb * 0.8f, 0), 0.0006f, lin(0.3f, 0.28f, 0.2f));
+					ball(bc, rb, lin(0.33f, 0.36f, 0.5f) * Math::lerp(0.85f, 1.1f, cr.randf()));
+				}
+				size = 0.03f;
+			} break;
+			case HIP_ROSE: {
+				// One to three, oval, 15-20 mm, scarlet and glossy, at the tips of the arching
+				// canes (two balls make the oval), a dark scar where the sepals fell.
+				const int k = 1 + int(cr.randf() * 2.5f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 out = sd.rotated(d, q * 2.2f + cr.randf());
+					const Vector3 ax = (d * 0.4f + out * 0.6f + Vector3(0, -0.3f, 0)).normalized();
+					const float rb = Math::lerp(0.006f, 0.0075f, cr.randf());
+					const Vector3 b0 = at + ax * 0.012f;
+					stalk(at, b0, 0.0008f, lin(0.3f, 0.32f, 0.15f));
+					const Color c = lin(0.78f, 0.1f, 0.05f) * Math::lerp(0.85f, 1.1f, cr.randf());
+					ball(b0 + ax * rb, rb, c);
+					ball(b0 + ax * (rb * 2.0f), rb * 0.92f, c);
+					const Vector3 tip = b0 + ax * (rb * 2.9f);
+					const Vector3 u1 = perp(ax), u2 = ax.cross(u1);
+					const float cs = rb * 0.4f;
+					const Color dk = lin(0.12f, 0.06f, 0.03f);
+					const int s0 = vert(tip + u1 * cs, Vector2(), dk), s1 = vert(tip + (u1 * -0.5f + u2 * 0.87f) * cs, Vector2(), dk), s2 = vert(tip + (u1 * -0.5f - u2 * 0.87f) * cs, Vector2(), dk);
+					tri(s0, s1, s2);
+				}
+				size = 0.05f;
+			} break;
+			case BLOSSOM: {
+				// Five-petalled flowers facing out and up: hawthorn 8-15 mm in flat corymbs of
+				// 5-25 with pink-purple anthers; blackthorn 10-15 mm, singly or in pairs crowded
+				// along the bare twig, orange anthers; dog rose 4-6 cm, one to three, pale pink with
+				// a paler eye and a yellow boss (Stace 2019).
+				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE;
+				const int k = haw ? 24 + int(cr.randf() * 24.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : 8 + int(cr.randf() * 9.0f));
+				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf()));
+				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : lin(0.96f, 0.95f, 0.91f);
+				const Color eye_c = rose ? lin(0.99f, 0.95f, 0.88f) : petal_c;
+				const Color boss_c = haw ? lin(0.55f, 0.22f, 0.32f) : lin(0.95f, 0.75f, 0.2f);
+				for (int q = 0; q < k; q++) {
+					Vector3 fc;
+					if (haw) {
+						// Flat-topped corymbs, two to a shoot (its end and a spur half way along):
+						// flowers spread over a disc above each.
+						const float a = cr.randf() * float(Math::TAU), rr = 0.035f * Math::sqrt(cr.randf());
+						fc = (q % 2 == 0 ? at : n.start + n.dir * (n.length * 0.5f) + sd.rotated(d, 2.0f) * 0.02f) + d * 0.01f + (sd * Math::cos(a) + d.cross(sd) * Math::sin(a)) * rr + Vector3(0, 0.008f, 0);
+					} else if (rose) {
+						fc = at + sd.rotated(d, q * 2.4f) * (0.02f * q) + d * 0.01f;
+					} else {
+						fc = n.start + n.dir * (n.length * Math::lerp(0.2f, 1.0f, cr.randf())) + sd.rotated(d, cr.randf() * float(Math::TAU)) * 0.006f;
+					}
+					// Facing out from the shoot and up toward the light.
+					const Vector3 face = (sd.rotated(d, cr.randf() * float(Math::TAU)) * 0.7f + Vector3(0, 0.5f, 0) + d * 0.4f).normalized();
+					const Vector3 u1 = perp(face), u2 = face.cross(u1);
+					const float a0 = cr.randf() * float(Math::TAU);
+					if (!rose) {
+						// Small flowers by the thousand: five triangles, the boss coloured at the centre
+						// and fading into the petals, a third of the full flower's cost.
+						const int cc = vert(fc + face * (fr * 0.15f), Vector2(), petal_c.lerp(boss_c, haw ? 0.5f : 0.25f));
+						int pv = -1, fv = -1;
+						for (int pk = 0; pk < 5; pk++) {
+							const float a = a0 + float(Math::TAU) * pk / 5.0f;
+							const int v = vert(fc + (u1 * Math::cos(a) + u2 * Math::sin(a)) * fr + face * (fr * 0.2f), Vector2(), petal_c);
+							if (pv >= 0) {
+								tri(cc, pv, v);
+							} else {
+								fv = v;
+							}
+							pv = v;
+						}
+						tri(cc, pv, fv);
+						continue;
+					}
+					const int c0 = vert(fc + face * (fr * 0.08f), Vector2(), eye_c);
+					for (int pk = 0; pk < 5; pk++) {
+						// A petal: a rounded kite from the centre, cupped a little.
+						const float a = a0 + float(Math::TAU) * pk / 5.0f, hw = float(Math::TAU) / 12.0f;
+						const Vector3 dl = u1 * Math::cos(a - hw) + u2 * Math::sin(a - hw), dm = u1 * Math::cos(a) + u2 * Math::sin(a), dr = u1 * Math::cos(a + hw) + u2 * Math::sin(a + hw);
+						const int l = vert(fc + dl * (fr * 0.75f) + face * (fr * 0.12f), Vector2(), petal_c);
+						const int m = vert(fc + dm * fr + face * (fr * 0.2f), Vector2(), petal_c);
+						const int r = vert(fc + dr * (fr * 0.75f) + face * (fr * 0.12f), Vector2(), petal_c);
+						tri(c0, l, m);
+						tri(c0, m, r);
+					}
+					// The boss of stamens, a small raised ring.
+					const float bs = fr * (rose ? 0.3f : 0.35f);
+					const int b0 = vert(fc + face * (fr * 0.25f), Vector2(), boss_c);
+					int prev = -1, first = -1;
+					for (int pk = 0; pk < 5; pk++) {
+						const float a = a0 + float(Math::TAU) * (pk + 0.5f) / 5.0f;
+						const int v = vert(fc + (u1 * Math::cos(a) + u2 * Math::sin(a)) * bs + face * (fr * 0.15f), Vector2(), boss_c);
+						if (prev >= 0) {
+							tri(b0, prev, v);
+						} else {
+							first = v;
+						}
+						prev = v;
+					}
+					tri(b0, prev, first);
+				}
+				size = haw ? 0.06f : (rose ? 0.08f : 0.04f);
+			} break;
 			case BERRY_HOLLY:
 			case BERRY_HAW:
 			case BERRY_YEW: {
-				const int k = kind == BERRY_ROWAN ? 15 + int(cr.randf() * 20.0f) : (kind == BERRY_ELDER ? 25 + int(cr.randf() * 30.0f) : 2 + int(cr.randf() * 5.0f));
+				const int k = kind == BERRY_ROWAN ? 15 + int(cr.randf() * 20.0f) : (kind == BERRY_ELDER ? 25 + int(cr.randf() * 30.0f) : (kind == BERRY_HAW ? 3 + int(cr.randf() * 8.0f) : 2 + int(cr.randf() * 5.0f)));
 				const float br = kind == BERRY_ELDER ? 0.0028f : (kind == BERRY_ROWAN ? 0.0045f : (kind == BERRY_YEW ? 0.004f : 0.005f));
 				const Color c = kind == BERRY_ELDER ? lin(0.08f, 0.05f, 0.08f) : (kind == BERRY_ROWAN ? lin(0.88f, 0.35f, 0.08f) : (kind == BERRY_HAW ? lin(0.55f, 0.08f, 0.06f) : lin(0.75f, 0.06f, 0.05f)));
 				const float spread = kind == BERRY_ROWAN || kind == BERRY_ELDER ? 0.045f : 0.012f;
@@ -15730,7 +16003,6 @@ vec3 plant_wind(vec3 wp, float h) {
 			break;
 		case PRESET_CAROB: // Paler below.
 			leaf_underside = 0.3f;
-			leaf_underside = 0.6f;
 			break;
 		case PRESET_WHITE_WILLOW:
 			leaf_underside = 0.75f;
@@ -16058,13 +16330,19 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	{ 11, 18, 2, 11, 500, 1500, 0.35f, 40, 0.3f, 0, 0.2f, 0.5f, 6.0f, 1.0f }, // Maritime pine
 	// Carob: the warmest coasts, frost-tender (about -4 C), limestone, dry summers.
 	{ 16, 22, 8, 15, 250, 800, 0.15f, 35, 0.2f, 0, 0.35f, 0.75f, 9.0f, 1.0f }, // Carob
+	// Blackthorn: hedges, scrub and wood edges of all lowland Europe; light-demanding.
+	{ 4, 15, -15, 9, 400, 1400, 0.4f, 40, 0.15f, 0, 0.4f, 0.70f, 2.5f, 0.6f }, // Blackthorn
+	// Field maple: lowland hedges and woods on base-rich soils, temperate Europe to the Caspian.
+	{ 6, 14, -10, 7, 450, 1200, 0.45f, 35, 0.3f, 0, 0.6f, 0.80f, 6.0f, 0.9f }, // Field maple
+	// Dog rose: hedges and scrub nearly everywhere in Europe below the mountains.
+	{ 3, 16, -15, 10, 350, 1500, 0.35f, 40, 0.1f, 0, 0.4f, 0.55f, 2.0f, 0.5f }, // Dog rose
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
 	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER || p_preset == TreeGenerator::PRESET_HOLLY || p_preset == TreeGenerator::PRESET_BOX ||
 			p_preset == TreeGenerator::PRESET_WITCH_HAZEL || p_preset == TreeGenerator::PRESET_MOUNTAIN_LAUREL || p_preset == TreeGenerator::PRESET_GORSE ||
 			p_preset == TreeGenerator::PRESET_BROOM || p_preset == TreeGenerator::PRESET_GUM_ROCKROSE || p_preset == TreeGenerator::PRESET_KERMES_OAK ||
-			p_preset == TreeGenerator::PRESET_LENTISK;
+			p_preset == TreeGenerator::PRESET_LENTISK || p_preset == TreeGenerator::PRESET_BLACKTHORN || p_preset == TreeGenerator::PRESET_DOG_ROSE;
 }
 
 void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
@@ -16153,6 +16431,47 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_form == FORM_HEDGE) {
+		// A cut field hedge (trees.md 5ad): two metres of hedge, several stems planted along it,
+		// flailed every winter to an A-shape (even variants) or a box, 1.8-2.5 m tall and 1.6-2.4 m
+		// wide at the base. Each cut stub breaks into short shoots (the envelope stops a shoot
+		// where the flail took it), so the hedge grows a dense twiggy shell, leafy to the ground.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f, t2 = float((h >> 16) & 255u) / 255.0f;
+		for (int k = 0; k < PARAM_MAX; k++) {
+			params[k] = look.params[k];
+		}
+		const float top = Math::lerp(1.8f, 2.5f, t);
+		const float base_w = Math::lerp(1.6f, 2.4f, t2);
+		envelope = AABB(Vector3(-1.0f, -1.0f, -base_w * 0.5f), Vector3(2.0f, 1.0f + top, base_w));
+		envelope_batter = p_variant % 2 == 0 ? 1.0f - Math::lerp(0.6f, 1.0f, t2) / base_w : 0.0f;
+		envelope_sprouts = 2;
+		// Planted in a staggered double row, five to the metre, and leaning out along the line:
+		// stems from all along the segment's foot fill its length.
+		params[PARAM_STEMS] = Math::round(MAX(look.params[PARAM_STEMS], 1.0f) + 6.0f);
+		params[PARAM_STEM_SPREAD] = 55.0f;
+		params[PARAM_BASAL_SPROUTS] = MAX(look.params[PARAM_BASAL_SPROUTS], 0.6f);
+		params[PARAM_SHADOW_STRENGTH] = MIN(look.params[PARAM_SHADOW_STRENGTH], 0.05f);
+		// Cut every year for decades: 15-30 years of growth, the stems no older.
+		params[PARAM_YEARS] = Math::round(CLAMP(look.params[PARAM_YEARS] * 0.8f, 15.0f, 30.0f));
+		params[PARAM_BUD_LIGHT_MIN] = 0.0f;
+		// The flail takes the tops and the sides each year: buds all along the stems break, and the
+		// side shoots, in full light on the hedge's face, keep their leaves (a bare-sided hedge of
+		// upright stems under a leafy lid read wrong).
+		params[PARAM_SHED_RATIO] = 0.0f;
+		params[PARAM_APICAL_DOMINANCE] = look.params[PARAM_APICAL_DOMINANCE] * 0.6f;
+		params[PARAM_BRANCH_ANGLE] = MAX(look.params[PARAM_BRANCH_ANGLE], 65.0f);
+		params[PARAM_LEAF_YEARS] = look.params[PARAM_LEAF_YEARS] + 2.0f;
+		params[PARAM_LEAVES_PER_INTERNODE] = look.params[PARAM_LEAVES_PER_INTERNODE] * 1.5f;
+		// Cutting wakes the dormant buds all down the stems (hedge regrowth comes from them, not
+		// only from the cut ends), so they wait longer to break than on an uncut bush.
+		params[PARAM_BUD_IDLE_YEARS] = MAX(look.params[PARAM_BUD_IDLE_YEARS], 8.0f);
+		// The shell is thousands of thin twigs: under da Vinci's rule they would sum into stems as
+		// thick as an uncut tree's; a hedge's stems stay a few centimetres.
+		params[PARAM_PIPE_EXPONENT] = MAX(look.params[PARAM_PIPE_EXPONENT], 2.5f);
+		params[PARAM_GRAVITY_BENDING] = MIN(look.params[PARAM_GRAVITY_BENDING], 0.2f);
 	} else if (p_form == FORM_THICKET || p_form == FORM_OLD) {
 		// Heath shrubs (trees.md 5u), from the preset's own numbers each variant.
 		TreeGenerator look;
@@ -16219,13 +16538,15 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 	// scales them (0: none).
 	climber = CLIMBER_NONE;
 	if (p_base_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG || p_form == FORM_UNDERSTORY)) {
-		const uint32_t bit = 1u << int(p_preset);
-		const uint32_t ivy_hosts = (1u << PRESET_OAK) | (1u << PRESET_BEECH) | (1u << PRESET_ASH) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_LIME) |
-				(1u << PRESET_BLACK_ALDER) | (1u << PRESET_WHITE_WILLOW) | (1u << PRESET_HORSE_CHESTNUT) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ELDER) |
-				(1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK) | (1u << PRESET_AMERICAN_BEECH) | (1u << PRESET_YELLOW_BIRCH);
-		const uint32_t liana_hosts = (1u << PRESET_OAK) | (1u << PRESET_ASH) | (1u << PRESET_LIME) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_BLACK_ALDER) |
-				(1u << PRESET_WHITE_WILLOW) | (1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK);
-		const uint32_t twine_hosts = (1u << PRESET_HAZEL) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ROWAN) | (1u << PRESET_ELDER) | (1u << PRESET_WITCH_HAZEL);
+		// 64 bits: presets run past 31 (a 32-bit shift by them was undefined).
+		const uint64_t bit = 1ull << int(p_preset);
+		const uint64_t ivy_hosts = (1ull << PRESET_OAK) | (1ull << PRESET_BEECH) | (1ull << PRESET_ASH) | (1ull << PRESET_SYCAMORE_MAPLE) | (1ull << PRESET_LIME) |
+				(1ull << PRESET_BLACK_ALDER) | (1ull << PRESET_WHITE_WILLOW) | (1ull << PRESET_HORSE_CHESTNUT) | (1ull << PRESET_HAWTHORN) | (1ull << PRESET_ELDER) |
+				(1ull << PRESET_SUGAR_MAPLE) | (1ull << PRESET_RED_MAPLE) | (1ull << PRESET_RED_OAK) | (1ull << PRESET_WHITE_OAK) | (1ull << PRESET_AMERICAN_BEECH) | (1ull << PRESET_YELLOW_BIRCH);
+		const uint64_t liana_hosts = (1ull << PRESET_OAK) | (1ull << PRESET_ASH) | (1ull << PRESET_LIME) | (1ull << PRESET_SYCAMORE_MAPLE) | (1ull << PRESET_BLACK_ALDER) |
+				(1ull << PRESET_WHITE_WILLOW) | (1ull << PRESET_SUGAR_MAPLE) | (1ull << PRESET_RED_MAPLE) | (1ull << PRESET_RED_OAK) | (1ull << PRESET_WHITE_OAK);
+		const uint64_t twine_hosts = (1ull << PRESET_HAZEL) | (1ull << PRESET_HAWTHORN) | (1ull << PRESET_ROWAN) | (1ull << PRESET_ELDER) | (1ull << PRESET_WITCH_HAZEL) |
+				(1ull << PRESET_BLACKTHORN) | (1ull << PRESET_FIELD_MAPLE);
 		if (p_variant % 4 == 1 && (ivy_hosts & bit)) {
 			climber = CLIMBER_IVY;
 			climber_cover = p_base_cover * Math::lerp(0.5f, 1.0f, float((uint32_t(seed) * 2654435761u) >> 24) / 255.0f);
@@ -16255,6 +16576,8 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	fallen = p_from.fallen;
 	fallen_branch = p_from.fallen_branch;
 	envelope = p_from.envelope;
+	envelope_batter = p_from.envelope_batter;
+	envelope_sprouts = p_from.envelope_sprouts;
 	collider_radius = p_from.collider_radius;
 	veteran = p_from.veteran;
 	bark_color = p_from.bark_color;
@@ -16378,7 +16701,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD &&
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE &&
 			!(p_form == FORM_SAPLING && scrub_shrub(p_preset));
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
@@ -16431,6 +16754,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_erosion = bank_erosion;
 		const float saved_stone = root_stone;
 		const AABB saved_envelope = envelope;
+		const float saved_batter = envelope_batter;
+		const int saved_sprouts = envelope_sprouts;
 		if (p_form == FORM_SAPLING) {
 			// A young heath shrub is three or four years old, already flowering (BSBI, GOERT).
 			const bool heath = scrub_shrub(p_preset);
@@ -16444,7 +16769,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// Gorse's spines are needles but thin stochastically as leaves (trees.md 5x.2): it splits too.
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && (params[PARAM_NEEDLES] <= 0.5f || scrub_shrub(Preset(p_preset))) &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -16484,6 +16809,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		wind_exposure = saved_exposure;
 		krummholz = saved_krummholz;
 		envelope = saved_envelope;
+		envelope_batter = saved_batter;
+		envelope_sprouts = saved_sprouts;
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
 		root_stone = saved_stone;
@@ -16525,7 +16852,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -16644,6 +16971,14 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			far = Color(stems.r, stems.g, stems.b).lerp(gold, bloom);
 			far.a = p_form == FORM_SAPLING ? 0.6f : 0.85f;
 		}
+		if (p_preset == PRESET_HAWTHORN || p_preset == PRESET_BLACKTHORN || p_preset == PRESET_DOG_ROSE) {
+			// A hedge in blossom is white from afar: hawthorn smothered in May, blackthorn white on
+			// bare black wood, dog rose pink-flecked (trees.md 5ad).
+			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * (p_preset == PRESET_DOG_ROSE ? 0.15f : (p_preset == PRESET_HAWTHORN ? 0.5f : 0.6f));
+			const float a = Math::lerp(far.a, MAX(far.a, 0.8f), bloom);
+			far = far.lerp(Color(0.93f, 0.92f, 0.9f), bloom);
+			far.a = a;
+		}
 		if (p_preset == PRESET_GUM_ROCKROSE) {
 			// A jara in flower is speckled white from afar: a flower 7 cm across on about a third
 			// of the shoot tips at the peak (trees.md 5v).
@@ -16670,17 +17005,22 @@ Ref<PlantSpecies> TreeGenerator::make_species(bool p_stand_grown, int p_variants
 // canopy radius and far colour on the season's day; placement and its climate and terrain rules
 // are vegetation's (PlantGenerator.apply_scrub_rules and its own).
 Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season) {
-	ERR_FAIL_COND_V_MSG(!scrub_shrub(p_preset), Ref<PlantSpecies>(), "Not a heath or scrub shrub preset.");
+	ERR_FAIL_COND_V_MSG(!scrub_shrub(p_preset) && !hedge_shrub(p_preset), Ref<PlantSpecies>(), "Not a heath, scrub or hedge shrub preset.");
 	ERR_FAIL_INDEX_V(int(p_form), int(SHRUB_MAX), Ref<PlantSpecies>());
-	static const Form forms[SHRUB_MAX] = { FORM_SAPLING, FORM_OPEN, FORM_OLD, FORM_THICKET, FORM_KRUMMHOLZ };
-	static const char *names[SHRUB_MAX] = { " (young)", "", " (old)", " (thicket)", " (cushion)" };
+	static const Form forms[SHRUB_MAX] = { FORM_SAPLING, FORM_OPEN, FORM_OLD, FORM_THICKET, FORM_KRUMMHOLZ, FORM_HEDGE };
+	static const char *names[SHRUB_MAX] = { " (young)", "", " (old)", " (thicket)", " (cushion)", " (hedge)" };
 	Ref<TreeGenerator> g;
 	g.instantiate();
 	g->set_preset(p_preset);
 	g->season = p_season.duplicate(true);
 	// Gum rockrose is not wind-clipped into cushions (an erect, short-lived seeder): its low form
 	// is the young plant.
-	const Form form = p_preset == PRESET_GUM_ROCKROSE && p_form == SHRUB_CUSHION ? FORM_SAPLING : forms[p_form];
+	Form form = p_preset == PRESET_GUM_ROCKROSE && p_form == SHRUB_CUSHION ? FORM_SAPLING : forms[p_form];
+	// Hedge shrubs grown wild have no heath thicket or wind cushion: their thicket is the open
+	// shrub, their low form the young one.
+	if (hedge_shrub(p_preset) && !scrub_shrub(p_preset) && (p_form == SHRUB_THICKET || p_form == SHRUB_CUSHION)) {
+		form = p_form == SHRUB_THICKET ? FORM_OPEN : FORM_SAPLING;
+	}
 	Ref<PlantSpecies> sp = g->_stand_species(p_preset, false, MAX(p_variants, 1), form);
 	ERR_FAIL_COND_V(sp.is_null(), sp);
 	// No climate, terrain or shade rules: a fresh species' ranges.
@@ -16692,6 +17032,13 @@ Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p
 	}
 	sp->set_name(String(preset_names[p_preset]) + names[p_form]);
 	sp->set_meta("shrub_form", int(p_form));
+	if (form == FORM_HEDGE) {
+		// Two metres of hedge along local x, laid end to end along a field edge by the caller: no
+		// random yaw, one segment every two metres (trees.md 5ad).
+		sp->set_random_yaw(false);
+		sp->set_spacing(2.0f);
+		sp->set_meta("hedge_segment_length", 2.0f);
+	}
 	// The source keeps the near meshes alive through the species (_near_mesh_source meta).
 	return sp;
 }
@@ -17894,11 +18241,15 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WILD_OLIVE);
 	BIND_ENUM_CONSTANT(PRESET_MARITIME_PINE);
 	BIND_ENUM_CONSTANT(PRESET_CAROB);
+	BIND_ENUM_CONSTANT(PRESET_BLACKTHORN);
+	BIND_ENUM_CONSTANT(PRESET_FIELD_MAPLE);
+	BIND_ENUM_CONSTANT(PRESET_DOG_ROSE);
 	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
 	BIND_ENUM_CONSTANT(SHRUB_MATURE);
 	BIND_ENUM_CONSTANT(SHRUB_OLD);
 	BIND_ENUM_CONSTANT(SHRUB_THICKET);
 	BIND_ENUM_CONSTANT(SHRUB_CUSHION);
+	BIND_ENUM_CONSTANT(SHRUB_HEDGE);
 	BIND_ENUM_CONSTANT(SHRUB_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 	BIND_ENUM_CONSTANT(STAND_BEECH);
