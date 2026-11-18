@@ -3651,6 +3651,17 @@
    "topic": ""
   },
   {
+   "name": "Burning logs",
+   "settings": [
+    "PhysXFireSpread3D.vegetation_field"
+   ],
+   "note": "",
+   "what": "fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fire light and embers",
    "settings": [
     "PhysXFlow3D.fire_light",
@@ -3682,6 +3693,17 @@
    ],
    "note": "",
    "what": "overstretched edges split and the rip runs.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Burning cloth",
+   "settings": [
+    "PhysXCloth3D.burnable"
+   ],
+   "note": "",
+   "what": "cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
