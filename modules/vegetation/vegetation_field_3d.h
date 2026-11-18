@@ -118,6 +118,9 @@ class VegetationField3D : public Node3D {
 		float top = 0.0f; // Crown top above the ground, metres.
 		float conifer = 0.0f; // 1 for a needle-leaved crown.
 		float stem = 0.0f; // The stem's foot at the soil line (flare and root ridges), metres from its centre.
+		int species = -1; // Index into the biome's species (get_crowns_near()).
+		float scale = 1.0f; // The instance's scale.
+		float y = 0.0f; // The ground under it, world y.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
 	Vector2 litter_wind; // Downwind lean of the leaf drift; zero: from the weather map's wind.
@@ -541,6 +544,9 @@ public:
 	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f, float p_min_radius = 0.0f) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
+	// The placed crowns within p_radius: {position, preset, height, crown_base, crown_radius} each
+	// (falling leaves). height and crown_base from the mesh's "crown" meta, else its AABB.
+	Array get_crowns_near(const Vector3 &p_position, float p_radius) const;
 	float get_light_at(const Vector3 &p_global_position) const;
 	float get_stand_shade_at(const Vector3 &p_global_position) const;
 	float get_sward_shade_at(const Vector3 &p_global_position) const;
