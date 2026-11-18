@@ -106,6 +106,13 @@
 				The field's world XZ rectangle.
 			</description>
 		</method>
+		<method name="get_ice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The puddle ice at [param position] (see [member puddle_ice]): its thickness in metres and the share of it broken into plates (0 to 1).
+			</description>
+		</method>
 		<method name="get_crack_at" qualifiers="const">
 			<return type="Vector4" />
 			<param index="0" name="position" type="Vector3" />
@@ -635,6 +642,9 @@
 		</member>
 		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
 			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.
+		</member>
+		<member name="puddle_ice" type="bool" setter="set_puddle_ice" getter="is_puddle_ice" default="true">
+			If [code]true[/code], standing water freezes over below 0 C, the ice growing as the square root of the time (Stefan's law, about 4 cm in a night at -5 C) and melting by degree days above it. Ice thinner than about 3 cm breaks under a foot and 6 cm under a wheel, into plates that float apart and freeze back together. Needs [member standing_water] and a [WeatherMap3D] for the temperature.
 		</member>
 		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
 			How fast rain softens prints: the share lost per hour per mm/h of rain.

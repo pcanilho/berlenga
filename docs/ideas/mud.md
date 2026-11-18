@@ -718,12 +718,24 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   return (kept ruts) is not dug again. Check: --test=puddle-helper (three dips of a "hollows" ground).
 
 
-### Round 7: proposed (18 Nov, card posted)
+### Round 7 (picked 18 Nov: all three, in order)
 
 - **Puddles freeze in frost.** Below 0 C (WeatherMap3D air temperature, night radiative cooling) standing water
   grows an ice skin, thickness by Stefan's law (h ~ sqrt(degree-days)); thin ice is white-veined and cracks radially
   under a wheel or boot (a star of cracks, then broken plates floating), thicker ice bears. Build: an ice thickness
   per texel beside the water depth, drawn as a frosted, cracked sheet over the water in both renderers.
+  *Built (18 Nov):* `puddle_ice` (on). Per lattice cell (25 cm) the ice's thickness and its broken share, stepped
+  with the water twice a second from WeatherMap3D's air temperature: Stefan's law with Ashton's (1989) factor 0.6,
+  dh/dt = 0.6 k dT / (rho L (h + 5 mm)) (3 cm in about 7 h at -5 C), degree-day melt above 0 C (8.1e-8 m/s/C,
+  about 7 mm a day per degree), never thicker than the water, gone where the water goes. Loads break it by Gold's
+  (1971) bearing law P = A h^2: `press`/`press_box` (a foot) below 3 cm, `press_wheel` below 6 cm, any dig; the
+  broken share freezes back as 3 mm of new ice forms. Published as a fourth wet-map block (texel 3's tag 5.5; every
+  reader now counts blocks by their tags, material.cpp `ground_wet_blocks()`); `ground_ice_look()` (material.cpp
+  and the raygen, the same lines) draws it inside the standing water: ice's F0 (specular 0.22) and smoothness over
+  the water's dark bed (black ice), milky patches of trapped air as it thickens, faint stress cracks on some cell
+  edges, and where broken, Voronoi plates sized with the ice (6 to 25 cm), tilted, with open water and white
+  fractured rims between them; no flow ripples under it. `get_ice_at()`. Not kept with the ruts (it re-forms from
+  the temperature). Checks `--test=ice`; `--view=ice --pair` shoots a frozen puddle with a wheel track through it.
 - **Regrowth follows the seasons.** The regrowth e-fold scaled by WeatherMap3D's season: grass grows from about 5 C,
   fastest in spring, stalled by summer drought and in winter (growing degree days), so a rut left in November is
   still bare in February.
