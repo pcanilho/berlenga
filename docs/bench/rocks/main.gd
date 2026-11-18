@@ -7,7 +7,7 @@ extends Node3D
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
-#   --clouds              the weather sky (clouds, atmosphere) instead of the plain gradient
+#   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
@@ -131,6 +131,10 @@ func _environment() -> void:
 		var ws := WeatherSkyMaterial.new()
 		ws.cloud_reprojection = false
 		ws.set_shader_parameter("atmo_far_water", 1.0)
+		# --clouds=C: the cover (0..1); a still gets three times the march's steps, as it has no frames to average.
+		if args["clouds"] != "1": # (a bare --clouds keeps the sky's own cover)
+			ws.set_shader_parameter("cloud_cover", float(args["clouds"]))
+		ws.set_shader_parameter("cloud_steps", 192)
 		sky = ws
 	var sk := Sky.new()
 	sk.sky_material = sky
