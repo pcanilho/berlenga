@@ -1564,10 +1564,18 @@ void GrassField3D::_build_hedges() {
 				Ref<MultiMesh> mm;
 				mm.instantiate();
 				mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+				// Each shrub its own tone (Paulo, 18 Nov: no visible repeats): a little lighter or
+				// darker and yellower or bluer, from its position, the same at every level.
+				mm->set_use_colors(true);
 				mm->set_mesh(lm);
 				mm->set_instance_count(cell.value.size());
 				for (uint32_t t = 0; t < cell.value.size(); t++) {
 					mm->set_instance_transform(t, cell.value[t]);
+					const Vector3 o = cell.value[t].origin;
+					const uint32_t hh = hash_murmur3_one_32(uint32_t(int(Math::floor(o.x * 10.0f))), hash_murmur3_one_32(uint32_t(int(Math::floor(o.z * 10.0f))), 0x7A3Bu));
+					const float lv = 0.92f + 0.16f * float(hh & 0xFF) / 255.0f;
+					const float yl = 0.1f * (float((hh >> 8) & 0xFF) / 255.0f - 0.5f);
+					mm->set_instance_color(t, Color(lv * (1.0f + yl), lv * (1.0f + 0.3f * yl), lv * (1.0f - yl), 1.0f));
 				}
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 				mmi->set_name(vformat("%s_%d_%d_lod%d", p_name, cell.key.x, cell.key.y, lod));
