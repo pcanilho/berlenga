@@ -205,6 +205,10 @@ private:
 	};
 	static bool _crop_swath(const CropPlot &p_pl, float &r_pitch, float &r_half);
 	Vector4 crop_view_published;
+	Vector4 crop_sun_published;
+	Color crop_lobe1_published;
+	Color crop_lobe2_published;
+	void _publish_crop_sun();
 	mutable Ref<ImageTexture> crop_stage_texture; // A texel a plot: its stage (shader crop_plot_stage).
 	Array fields;
 	LocalVector<CropPlot> plots;
