@@ -193,6 +193,8 @@ void WeatherMap3D::_allocate() {
 	cell_rain.resize(n * n);
 	cell_film.resize(n * n);
 	cell_puddle.resize(n * n);
+	cell_frost.resize(n * n);
+	cell_cooling.resize(n * n);
 	cell_inflow.resize(n * n);
 	cell_inflow.fill(-1.0f);
 	cell_wind.fill(0.0f);
@@ -201,8 +203,12 @@ void WeatherMap3D::_allocate() {
 	cell_rain.fill(0.0f);
 	cell_film.fill(0.0f);
 	cell_puddle.fill(0.0f);
+	cell_frost.fill(0.0f);
+	cell_cooling.fill(0.0f);
 	wind_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	state_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
+	frost_image = Image::create_empty(n, n, false, Image::FORMAT_RGH);
+	frost_texture.unref();
 	gust_image = Image::create_empty(GUST_COUNT, 1, false, Image::FORMAT_RGBAF);
 	wind_texture.unref();
 	state_texture.unref();
@@ -434,14 +440,18 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 	// The film and puddles are history; everything else is rebuilt from the weather each update.
 	double film_sum = 0.0;
 	double puddle_sum = 0.0;
+	double frost_sum = 0.0;
 	for (int i = 0; i < n * n; i++) {
 		film_sum += cell_film[i];
 		puddle_sum += cell_puddle[i];
+		frost_sum += cell_frost[i];
 	}
 	const float film_mean = float(film_sum / (n * n));
 	const float puddle_mean = float(puddle_sum / (n * n));
+	const float frost_mean = float(frost_sum / (n * n));
 	Vector<float> film = cell_film;
 	Vector<float> puddle = cell_puddle;
+	Vector<float> frost = cell_frost;
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int sx = x + d.x;
@@ -449,6 +459,7 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 			const bool inside = sx >= 0 && sz >= 0 && sx < n && sz < n;
 			cell_film.write[z * n + x] = inside ? film[sz * n + sx] : film_mean;
 			cell_puddle.write[z * n + x] = inside ? puddle[sz * n + sx] : puddle_mean;
+			cell_frost.write[z * n + x] = inside ? frost[sz * n + sx] : frost_mean;
 		}
 	}
 	origin_cell = p_new_origin;
@@ -488,6 +499,8 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	cells_serial++;
 	c.film = cell_film.ptrw();
 	c.puddle = cell_puddle.ptrw();
+	c.frost = cell_frost.ptrw();
+	c.cooling = cell_cooling.ptrw();
 	// Snow does not wet surfaces as it falls: only the rain share reaches the film.
 	c.rain_fraction = rain_fraction(cur_air_temperature, cur_air_humidity);
 	c.air_temperature = cur_air_temperature;
@@ -496,6 +509,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	// sun's elevation (Allen et al. 1998, eq. 37).
 	// Without a sun light or a clock nothing says how much sun there is: the drying stays the air's alone.
 	c.sun = sun_drying && sun_known;
+	c.dew = dew_and_frost && sun_known;
 	c.shortwave_clear = 0.75f * 1361.0f * cur_sun_sine;
 	c.use_shadow = sun_drying && cur_sun_sine > 0.0f && shadow_res >= 2 && shadow_values.size() == shadow_res * shadow_res;
 	if (c.use_shadow) {
@@ -656,10 +670,61 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// it rains).
 		if (c.dt_h > 0.0f) {
 			const float rh = r > 0.1f ? MAX(c.air_humidity, 0.97f) : c.air_humidity;
-			const float evap = (c.sun ? penman_evaporation(_net_radiation(c, Vector3(p.x, ground_height, p.y), cover), w.length() * c.to_2m, c.air_temperature, rh) : evaporation_rate(w.length() * c.to_2m, c.air_temperature, rh)) * c.dt_h;
+			const float u2 = w.length() * c.to_2m;
+			const bool radiation = c.sun || c.dew;
+			const float rn = radiation ? _net_radiation(c, Vector3(p.x, ground_height, p.y), cover) : 0.0f;
+			float evap = (c.sun ? penman_evaporation(rn, u2, c.air_temperature, rh) : evaporation_rate(u2, c.air_temperature, rh)) * c.dt_h;
+			// Dew and hoarfrost (Monteith 1957): where the surface loses more by radiation to a clear night sky
+			// than the air's drying brings, Penman's combination turns negative and the vapour condenses on it.
+			// Clouds and a canopy overhead return the longwave, so sheltered and clouded spots stay dry. Below
+			// 0 C at the surface (the air's temperature plus the radiative cooling over the sky and convective
+			// exchange, 4 sigma T^3 + 5 + 4 u W/m2/K) it deposits as hoarfrost, which melts by the same balance.
+			float fr = c.frost[i];
+			float f = c.film[i];
+			c.cooling[i] = 0.0f;
+			if (radiation) {
+				const float tk = c.air_temperature + 273.16f;
+				const float exchange = 4.0f * 5.670e-8f * tk * tk * tk + 5.0f + 4.0f * u2;
+				const float ts = c.air_temperature + rn / exchange;
+				c.cooling[i] = ts - c.air_temperature;
+				if (c.dew && rn < 0.0f && r <= 0.01f) {
+					const float es = saturation_vapour_pressure(c.air_temperature) * 0.1f;
+					const float delta = 4098.0f * es / ((c.air_temperature + 237.3f) * (c.air_temperature + 237.3f));
+					const float gamma = 0.0665f;
+					const float net = (delta * rn / 681.0f + gamma * evaporation_rate(u2, c.air_temperature, rh)) / (delta + gamma); // mm/h, < 0 condenses
+					if (net < 0.0f) {
+						const float cond = -net * c.dt_h;
+						if (ts < 0.0f) {
+							fr = MIN(fr + cond, 0.5f); // a heavy hoarfrost holds about half a millimetre
+						} else {
+							f += cond;
+						}
+						evap = 0.0f;
+					} else {
+						evap = net * c.dt_h; // the cooled surface dries slower
+					}
+				}
+				if (fr > 0.0f && ts > 0.0f) {
+					// Melt into the film: 1 mm/h of ice takes 92.8 W/m2 (334 kJ/kg).
+					const float melt = MIN(fr, (exchange * ts + MAX(rn, 0.0f)) / 92.8f * c.dt_h);
+					fr -= melt;
+					f += melt;
+				}
+			} else if (fr > 0.0f && c.air_temperature > 0.0f) {
+				const float melt = MIN(fr, (5.0f + 4.0f * u2) * c.air_temperature / 92.8f * c.dt_h);
+				fr -= melt;
+				f += melt;
+			}
+			if (fr > 0.0f && c.air_temperature + c.cooling[i] < 0.0f) {
+				// Below freezing the drying takes the frost (sublimation) before any film.
+				const float sub = MIN(fr, evap);
+				fr -= sub;
+				evap -= sub;
+			}
+			c.frost[i] = fr;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
 			const float in = c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction;
-			float f = c.film[i] + in * c.dt_h;
+			f += in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
 				pd += f - surface_storage;
@@ -795,6 +860,14 @@ void WeatherMap3D::_upload() {
 		}
 		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
 		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
+		Vector<uint8_t> fd;
+		fd.resize(n * n * 4);
+		uint16_t *fp = reinterpret_cast<uint16_t *>(fd.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
+			fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
+		}
+		frost_image->set_data(n, n, false, Image::FORMAT_RGH, fd);
 	}
 	_fill_gust_image();
 	if (wind_texture.is_null()) {
@@ -802,6 +875,9 @@ void WeatherMap3D::_upload() {
 		state_texture = ImageTexture::create_from_image(state_image);
 		gust_texture = ImageTexture::create_from_image(gust_image);
 	} else {
+		if (frost_texture.is_valid()) {
+			frost_texture->update(frost_image);
+		}
 		wind_texture->update(wind_image);
 		state_texture->update(state_image);
 		gust_texture->update(gust_image);
@@ -832,6 +908,12 @@ void WeatherMap3D::_publish_globals() {
 		// Texture RIDs stay the same across updates, so they are set once.
 		_set_global("weather_wind_map", wind_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		_set_global("weather_state_map", state_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		if (frost_texture.is_null() && frost_image.is_valid()) {
+			frost_texture = ImageTexture::create_from_image(frost_image);
+		}
+		if (frost_texture.is_valid()) {
+			_set_global("weather_frost_map", frost_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		}
 		_set_global("weather_gusts", gust_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	}
 	_set_global("weather_map_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
@@ -1118,6 +1200,14 @@ float WeatherMap3D::get_wetness_at(Vector3 p_position) const {
 	return CLAMP(_sample(cell_film, p) / MAX(surface_storage, 1e-3f), 0.0f, 1.0f);
 }
 
+float WeatherMap3D::get_frost_at(Vector3 p_position) const {
+	return MAX(_sample(cell_frost, Vector2(p_position.x, p_position.z)), 0.0f);
+}
+
+float WeatherMap3D::get_surface_temperature_at(Vector3 p_position) const {
+	return get_air_temperature_at(p_position) + _sample(cell_cooling, Vector2(p_position.x, p_position.z));
+}
+
 float WeatherMap3D::get_puddle_at(Vector3 p_position) const {
 	return MAX(_sample(cell_puddle, Vector2(p_position.x, p_position.z)), 0.0f);
 }
@@ -1329,6 +1419,13 @@ void WeatherMap3D::set_air_daily_cycle(bool p_enabled) {
 void WeatherMap3D::set_daily_temperature_range(float p_kelvin) {
 	daily_temperature_range = CLAMP(p_kelvin, 0.0f, 40.0f);
 	_update_air();
+}
+
+void WeatherMap3D::set_dew_and_frost(bool p_enabled) {
+	dew_and_frost = p_enabled;
+	if (!dew_and_frost) {
+		cell_frost.fill(0.0f);
+	}
 }
 
 void WeatherMap3D::set_sun_drying(bool p_enabled) {
@@ -2033,6 +2130,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_air_daily_cycle"), &WeatherMap3D::get_air_daily_cycle);
 	ClassDB::bind_method(D_METHOD("set_daily_temperature_range", "kelvin"), &WeatherMap3D::set_daily_temperature_range);
 	ClassDB::bind_method(D_METHOD("get_daily_temperature_range"), &WeatherMap3D::get_daily_temperature_range);
+	ClassDB::bind_method(D_METHOD("set_dew_and_frost", "enabled"), &WeatherMap3D::set_dew_and_frost);
+	ClassDB::bind_method(D_METHOD("get_dew_and_frost"), &WeatherMap3D::get_dew_and_frost);
+	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &WeatherMap3D::get_frost_at);
+	ClassDB::bind_method(D_METHOD("get_surface_temperature_at", "position"), &WeatherMap3D::get_surface_temperature_at);
 	ClassDB::bind_method(D_METHOD("set_sun_drying", "enabled"), &WeatherMap3D::set_sun_drying);
 	ClassDB::bind_method(D_METHOD("get_sun_drying"), &WeatherMap3D::get_sun_drying);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("diurnal_shape", "solar_hour", "day_length"), &WeatherMap3D::diurnal_shape);
@@ -2231,6 +2332,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "air_daily_cycle"), "set_air_daily_cycle", "get_air_daily_cycle");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "daily_temperature_range", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:K"), "set_daily_temperature_range", "get_daily_temperature_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_drying"), "set_sun_drying", "get_sun_drying");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");

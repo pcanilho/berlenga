@@ -1257,6 +1257,8 @@ void fragment() {
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
 		c += "\tweather_wetness_apply(tm_wetness * weather_wetness_at(wp), wn.y, metallic, porosity, albedo, rough);\n";
+		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
+		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the

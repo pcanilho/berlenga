@@ -613,6 +613,8 @@ void BaseMaterial3D::init_shaders() {
 		// Its contact wetness (wet where water has been): a fine square round the camera.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -733,6 +735,21 @@ void BaseMaterial3D::finish_shaders() {
 // (terrain shaders above all), so there is one source and the two never drift apart. The path tracer applies
 // the same lines for BaseMaterial3D in scene_raytracing_raygen.glsl; a ShaderMaterial runs this code in its own
 // hit shader.
+String BaseMaterial3D::get_frost_sampling_code() {
+	return R"(global uniform sampler2D weather_frost_map;
+
+// Hoarfrost on exposed surfaces (WeatherMap3D dew_and_frost), mm of water; 0 with no weather map.
+float weather_frost_at(vec3 p_world_pos) {
+	if (weather_map_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_frost_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
+	return max(textureLod(weather_frost_map, uv, 0.0).r, 0.0);
+}
+)";
+}
+
 String BaseMaterial3D::get_wetness_functions_code(bool p_from_weather) {
 	String code;
 	if (p_from_weather) {
@@ -763,6 +780,7 @@ float weather_wetness_at(vec3 p_world_pos) {
 	return max(textureLod(weather_state_map, uv, 0.0).g, weather_contact_wetness_at(p_world_pos));
 }
 )";
+		code += get_frost_sampling_code();
 	}
 	code += R"(
 // Wet surfaces, Lagarde 2013 ("Water drop 3b"): water in the pores darkens porous surfaces and smooths them.
@@ -772,6 +790,16 @@ void weather_wetness_apply(float p_wet, float p_normal_y, float p_metallic, floa
 	float wet_factor = mix(1.0, 0.2, (1.0 - p_metallic) * p_porosity);
 	r_albedo *= mix(1.0, wet_factor, wet);
 	r_roughness *= mix(1.0, wet_factor, 0.5 * wet);
+}
+
+// Hoarfrost: ice crystals grown from the air on the faces that see the sky (they cool by radiation), white and
+// matte; a few tenths of a millimetre of water frost the surface over (fresh rime's albedo about 0.8, Warren 1982).
+// Returns the cover, for what else it hides.
+float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, inout float r_roughness) {
+	float cover = smoothstep(0.0, 0.3, p_frost) * smoothstep(0.0, 0.8, p_normal_y);
+	r_albedo = mix(r_albedo, vec3(0.78, 0.8, 0.84), 0.65 * cover);
+	r_roughness = mix(r_roughness, 0.8, cover);
+	return cover;
 }
 )";
 	return code;

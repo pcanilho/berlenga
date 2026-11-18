@@ -438,7 +438,7 @@ void GrassField3D::_build_material() {
 	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
-	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\n";
+	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += WeatherMap3D::get_wind_shader_code();
 	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
@@ -547,6 +547,7 @@ varying float v_part;
 varying float v_ripe;
 varying float v_dead;
 varying float v_wet;
+varying float v_frost;
 varying vec3 v_tint;
 varying float v_light;
 varying float v_hf;
@@ -849,10 +850,13 @@ void vertex() {
 	v_hf = clamp(p.y / max(h + ear_len, 0.05), 0.0, 1.0);
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	v_wet = 0.0;
+	v_frost = 0.0;
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 		v_wet = textureLod(weather_state_map, uv, 0.0).g;
+		// Hoarfrost (WeatherMap3D dew_and_frost): a few tenths of a millimetre frost the sward over.
+		v_frost = smoothstep(0.0, 0.3, textureLod(weather_frost_map, uv, 0.0).r);
 	}
 }
 
@@ -929,8 +933,12 @@ void fragment() {
 	vec3 mud_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float mud_c = grass_mud_apply(grass_ground_mud(mud_w.xz), mud_w, v_hf * 0.8, c);
 	rough = mix(rough, 0.85, mud_c);
-	ALBEDO = c * mix(1.0, wet_factor, v_wet);
-	ROUGHNESS = rough * mix(1.0, 0.4, v_wet);
+	// Hoarfrost rimes the blades, the tips most (they see the most sky); frozen, they do not look wet.
+	float frost_c = v_frost * mix(0.4, 1.0, v_hf);
+	c = mix(c, vec3(0.78, 0.8, 0.84), 0.6 * frost_c);
+	rough = mix(rough, 0.85, frost_c);
+	ALBEDO = c * mix(1.0, wet_factor, v_wet * (1.0 - frost_c));
+	ROUGHNESS = rough * mix(1.0, 0.4, v_wet * (1.0 - frost_c));
 	SPECULAR = spec;
 	BACKLIGHT = ALBEDO * back;
 	// Sky light inside the canopy (Monsi and Saeki 1953), as the grass: raster ambient only.
@@ -943,6 +951,7 @@ void fragment() {
 varying float v_t;
 varying float v_dry;
 varying float v_wet;
+varying float v_frost;
 varying vec3 v_tint;
 varying float v_light;
 varying float v_trod; // Trodden flat on a worn path (its rest lean past any sward's own).
@@ -1055,11 +1064,14 @@ void vertex() {
 	v_t = t;
 	v_dry = rnd;
 	v_wet = 0.0;
+	v_frost = 0.0;
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 		v_wet = textureLod(weather_state_map, uv, 0.0).g;
+		// Hoarfrost (WeatherMap3D dew_and_frost): a few tenths of a millimetre frost the sward over.
+		v_frost = smoothstep(0.0, 0.3, textureLod(weather_frost_map, uv, 0.0).r);
 	}
 	if (weather_contact_rect.z > 0.0) {
 		// Wet where water has been (WeatherMap3D contact wetness), easing out at its square's edge.
@@ -1113,8 +1125,12 @@ void fragment() {
 	// Mud thrown or splashed onto it (mud round 7): the blade's height as a 30 cm sward's.
 	vec3 mud_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float mud_c = grass_mud_apply(grass_ground_mud(mud_w.xz), mud_w, v_t * 0.3, c);
-	ALBEDO = c * mix(1.0, wet_factor, v_wet);
-	ROUGHNESS = mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn));
+	// Hoarfrost rimes the stubs (frozen, they do not look wet).
+	float frost_c = v_frost * mix(0.4, 1.0, v_t);
+	c = mix(c, vec3(0.78, 0.8, 0.84), 0.6 * frost_c);
+	float wet_c = v_wet * (1.0 - frost_c);
+	ALBEDO = c * mix(1.0, wet_factor, wet_c);
+	ROUGHNESS = mix(mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * wet_c) * mix(1.0, 0.4, wet_c), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn)), 0.85, frost_c);
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);

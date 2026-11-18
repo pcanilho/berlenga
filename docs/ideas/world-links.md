@@ -12,7 +12,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 
 | Source | Owner | What it carries |
 | --- | --- | --- |
-| `WeatherMap3D` air | weather | `get_air_temperature()`, `get_air_humidity()`, `get_air_dew_point()`: the day's mean (climate for the date + `season_anomaly`, or `temperature`) through the day's cycle |
+| `WeatherMap3D` air | weather | `get_air_temperature()`, `get_air_humidity()`, `get_air_dew_point()`: the day's mean (climate for the date + `season_anomaly`, or `temperature`) through the day's cycle; `get_air_temperature_at()`/`get_air_humidity_at()` at height (6.5 K/km) |
 | `WeatherMap3D` cells | weather | wind (`get_wind_at`, `weather_wind_map`), rain, cloud cover, surface water film (`get_wetness_at`) and puddles (`get_puddle_at`) |
 | `WeatherMap3D` contact wetness | weather | `add_contact_wetness*`, `weather_contact_map`: water any system splashes onto surfaces |
 | `WeatherMap3D` shelter | weather | canopy height and closure, lee of obstacles (`get_shelter_at`) |
@@ -23,7 +23,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `SnowCover3D` | snow | `snow_cover` maps, depth, air at height (`get_air_temperature_at`) |
 | `fire_state_map` | fire | burnt share and glow per cell |
 | `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
-| Contact groups | each system | `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` (to be one `world_contact`) |
+| Contact groups | each system | `world_contact` (every physics body and wheel) read by all, plus the old `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` |
+| Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `describe_body()`: see world-contracts.md |
 
 ## Pairs
 
@@ -37,7 +38,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Air → rain/snow share | linked | air | Jennings 2018 |
 | Wind → clouds, storms | linked | cells | |
 | Weather → haze | linked | air humidity, precipitation | |
-| Clear calm nights → dew, hoarfrost | missing | air, sky | planned (link 5) |
+| Clear calm nights → dew, hoarfrost | linked (18 Nov) | air, net radiation | `dew_and_frost`, Monteith 1957; `weather_frost_map` on terrain, grass, plants, rocks |
 | Lightning ← storms, freezing level | linked | cells, air | |
 | Lightning → tall things | linked (18 Nov) | ray + canopy map | rolling sphere |
 
@@ -59,7 +60,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 
 | Pair | Status | Source | Note |
 | --- | --- | --- | --- |
-| Air → snowfall, melt | one-way | settings | reads `get_temperature()` (the setting), not the live air: private copy |
+| Air → snowfall, melt | linked (18 Nov) | air | live air with snow's own lapse rate |
 | Sun, cloud shadow → melt | linked | sun, cloud shadow | |
 | Wind → drifts, cornices | linked | wind | |
 | Rain → wet snow, crust | linked | cells | |
@@ -82,9 +83,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Ground ruts, water → grass torn, pressed | linked | ground deform | |
 | Mud spatter → grass | linked | ground | |
 | Bodies → grass bend, trample | linked | `grass_trample` group | |
-| Bodies → shrubs, crops, hedges, ferns | missing | contact | planned (contact 2) |
+| Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
-| Vehicles → grass, branches | missing | contact | vehicles join no group (contact 1) |
+| Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | missing | snow cover | planned (contact 5) |
 | Flowing water → reeds, grass | missing | river flow | planned (contact 6) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
@@ -100,8 +101,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
 | Bodies with buoyancy → wakes | linked | buoyancy, wake nodes | |
-| Bodies without buoyancy → ripples, splash | missing | contact | planned (contact 4) |
-| Wading → wet legs, clothes | missing | water height | planned (contact 4) |
+| Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
+| Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
 | Cold air over water → steam fog | missing | air, water | planned (link 6) |
 | Rain, melt → river level | missing | runoff | rain work |
 | Cold → lake ice | missing | air | snow work (Stefan's law) |
@@ -138,16 +139,13 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | --- | --- | --- | --- |
 | Soft soil → sinkage, grip, ruts | linked | ground terramechanics | |
 | Puddles → spray, washed tread | linked | ground | |
-| Wet, flooded, icy firm ground → grip, aquaplaning | linked (18 Nov) | cells, ground ice | |
+| Wet, flooded, icy firm ground → grip, aquaplaning | linked (18 Nov) | weather contract, ground ice | |
 | Vehicles → water wakes | linked | buoyancy | |
-| Vehicles → grass, branches, snow | missing | contact | contact 1 and 3 |
+| Vehicles → grass, branches, snow | linked (18 Nov) | world_contact | snow ruts: snow checks the wheel stamp |
 | Vehicles → Flow (bodies as solids) | linked | Flow | |
 
 ## Private copies of shared state
 
-- Snow reads `WeatherMap3D.get_temperature()`/`get_humidity()` (the settings) instead of the live air
-  (`snow_cover_3d.cpp`, `snow_fall_3d.cpp`, `snow_icicles_3d.cpp`). With the trees, ground and fire on the live air,
-  snow would disagree with them through the day. Owner: snow.
 - `PhysXWaterSurface3D.follow_weather` defaults to false: the sea keeps its own wind. Owner: wind work.
 - `VegetationField3D` placement skew reads the wind setting: placement time only, harmless.
 

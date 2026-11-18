@@ -5190,6 +5190,9 @@ float weather_wetness_at(vec3 p_world_pos) {
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 	return textureLod(weather_state_map, uv, 0.0).g;
 }
+)";
+	code += BaseMaterial3D::get_frost_sampling_code();
+	code += R"(
 
 global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
 
@@ -5431,6 +5434,7 @@ void fragment() {
 	back *= 1.0 - mud_c;
 	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
 	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
+	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);

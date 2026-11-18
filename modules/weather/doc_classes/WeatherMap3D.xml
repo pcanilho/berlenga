@@ -150,6 +150,13 @@
 				The live air at [param position] (C): [method get_air_temperature] less 6.5 K per km above the map's [member ground_height] (the standard lapse rate).
 			</description>
 		</method>
+		<method name="get_frost_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Hoarfrost on exposed surfaces at [param position], in mm of water: deposited on clear calm nights below 0 C at the surface (see [member dew_and_frost]), melted by the morning sun or mild air. Shaders read it from the global [code]weather_frost_map[/code] (R, mm; G, the surface's temperature less the air's, K) over [code]weather_map_rect[/code].
+			</description>
+		</method>
 		<method name="get_sun_sine" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -162,6 +169,13 @@
 			<param index="1" name="day_length" type="float" />
 			<description>
 				The day's temperature cycle of Parton and Logan (1981), 0 at the minimum just after sunrise and 1 at the afternoon peak, for the local solar hour and the day length in hours.
+			</description>
+		</method>
+		<method name="get_surface_temperature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				An exposed surface's temperature at [param position] (C): the air's plus the radiative cooling of a clear night or the sun's warming, from the cell's net radiation over the exchange with the air (4 sigma T^3 + 5 + 4 u W/m2/K). Needs a sun light or a sky clock; otherwise the air's.
 			</description>
 		</method>
 		<method name="penman_evaporation" qualifiers="static">
@@ -472,6 +486,9 @@
 		</member>
 		<member name="daily_temperature_range" type="float" setter="set_daily_temperature_range" getter="get_daily_temperature_range" default="10.0">
 			The range between the day's coldest and warmest air on a clear calm day (K). An overcast sky halves it and rain narrows it further (Dai, Trenberth and Karl 1999).
+		</member>
+		<member name="dew_and_frost" type="bool" setter="set_dew_and_frost" getter="get_dew_and_frost" default="true">
+			On clear calm nights exposed surfaces lose more by radiation to the sky than the air's drying brings back, and the vapour condenses on them (Monteith 1957): dew joins the surface water film, and below 0 C at the surface it deposits as hoarfrost ([method get_frost_at]). Clouds and canopies return the longwave, so clouded and sheltered spots stay dry. Needs a sun light or a sky clock.
 		</member>
 		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
 			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.

@@ -104,6 +104,7 @@ private:
 	bool air_daily_cycle = true; // with a SkyClock: cooler nights, warmer afternoons (Parton and Logan 1981)
 	float daily_temperature_range = 10.0f; // K, clear calm day; clouds and rain narrow it
 	bool sun_drying = true; // the sun's net radiation in the evaporation (Penman 1948's combination)
+	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
 	int season_day = 135; // day of the year without a SkyClock (15 May)
@@ -169,6 +170,8 @@ private:
 	Vector<float> cell_rain; // mm/h
 	Vector<float> cell_film; // mm
 	Vector<float> cell_puddle; // mm
+	Vector<float> cell_frost; // mm of water as hoarfrost on exposed surfaces
+	Vector<float> cell_cooling; // K, the exposed surface's temperature less the air's (radiative cooling, sun warming)
 	// Water reaching the ground where another node takes the precipitation (a snowpack's runoff), mm/h;
 	// negative where none does, so the cell's own rain reaches the ground.
 	Vector<float> cell_inflow;
@@ -198,6 +201,9 @@ private:
 		const float *inflow = nullptr;
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
+		float *frost = nullptr;
+		float *cooling = nullptr;
+		bool dew = false;
 		// The sun on wet surfaces (sun_drying): clear-sky shortwave on level ground (W/m2), the cloud shadow
 		// when one is baked, the air the evaporation sees.
 		bool sun = false;
@@ -217,6 +223,8 @@ private:
 
 	Ref<Image> wind_image;
 	Ref<Image> state_image;
+	Ref<Image> frost_image;
+	Ref<ImageTexture> frost_texture;
 	Ref<Image> gust_image;
 	Ref<ImageTexture> wind_texture;
 	Ref<ImageTexture> state_texture;
@@ -438,6 +446,12 @@ public:
 	float get_daily_temperature_range() const { return daily_temperature_range; }
 	void set_sun_drying(bool p_enabled);
 	bool get_sun_drying() const { return sun_drying; }
+	void set_dew_and_frost(bool p_enabled);
+	bool get_dew_and_frost() const { return dew_and_frost; }
+	// Hoarfrost on exposed surfaces (mm of water) and their temperature (C): the air's plus the radiative
+	// cooling of a clear night or the sun's warming (from the cells' net radiation).
+	float get_frost_at(Vector3 p_position) const;
+	float get_surface_temperature_at(Vector3 p_position) const;
 	// Parton and Logan's (1981) day: 0 at the minimum just after sunrise, 1 at the afternoon peak.
 	static float diurnal_shape(float p_solar_hour, float p_day_length);
 	// Evaporation from a wet surface (mm/h), Penman's (1948) combination of the sun's net radiation (W/m2)
@@ -644,6 +658,7 @@ public:
 	void contract_add_contact_wetness(const Vector3 &p_position, float p_radius, float p_amount) override { add_contact_wetness(p_position, p_radius, p_amount); }
 	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
 	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
+	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
 
 	void set_sky_clock(const NodePath &p_path);
 	NodePath get_sky_clock() const { return sky_clock; }
