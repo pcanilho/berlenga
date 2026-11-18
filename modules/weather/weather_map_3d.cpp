@@ -476,7 +476,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// Broken cloud: the cover is the coverage threshold of a drifting noise field (as Nubis's
 		// coverage remaps its noise), so a 0.4 sky is 40% clouds in patches, not a 40% grey.
 		if (cloud_variation > 0.0f) {
-			cover = CLAMP(cover + (_cloud_noise(p) - 0.5f) * 2.0f * cloud_variation, 0.0f, 1.0f);
+			cover = CLAMP(cover + (_cloud_noise(p) - 0.5f) * 2.0f * cloud_variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
 		}
 		// Rain falls from the thicker cloud: the base rate, spread where the cover is.
 		float r = cur_rain_rate * rain_scale * CLAMP(Math::smoothstep(0.3f, 0.7f, cover) / c.cover_gate, 0.0f, 2.5f);
