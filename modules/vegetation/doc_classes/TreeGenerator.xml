@@ -610,7 +610,19 @@
 		<constant name="PRESET_CORK_OAK" value="38" enum="Preset">
 			Cork oak (Quercus suber): an evergreen oak with a short bole dividing at about 3 m into a few thick, sinuous, spreading limbs under a broad, low, rounded crown; small toothed leaves, dark glossy above and grey felted below; thick, deeply fissured, spongy grey-buff virgin cork.
 		</constant>
-		<constant name="PRESET_MAX" value="39" enum="Preset">
+		<constant name="PRESET_HOLM_OAK" value="39" enum="Preset">
+			Holm oak (Quercus ilex): an evergreen oak with a short bole dividing into a few limbs under a dense, dark, rounded dome, leafy deep inside; small leaves, dark glossy green above and grey felted below; dark grey bark cracked into small, thin plates.
+		</constant>
+		<constant name="PRESET_WILD_OLIVE" value="40" enum="Preset">
+			Wild olive (Olea europaea var. sylvestris): a gnarled small tree of two or three crooked stems under a dense, rounded crown; opposite, narrow leaves, grey-green above and silvery below; grey bark, fissured on old stems.
+		</constant>
+		<constant name="PRESET_MARITIME_PINE" value="41" enum="Preset">
+			Maritime pine (Pinus pinaster): a tall pine with a long clear bole and an irregular, open crown high up; stout grey-green needles 10-25 cm in pairs; very thick bark in long purplish red-brown plates between deep furrows; cones in whorls.
+		</constant>
+		<constant name="PRESET_CAROB" value="42" enum="Preset">
+			Carob (Ceratonia siliqua): an evergreen with a short trunk under a broad, dense, rounded crown; leathery, glossy, dark paripinnate leaves of two to five pairs of rounded leaflets; rough grey-brown bark.
+		</constant>
+		<constant name="PRESET_MAX" value="43" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">

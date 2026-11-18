@@ -94,6 +94,10 @@ public:
 		PRESET_DWARF_FAN_PALM, // Chamaerops humilis (trees.md 5w).
 		PRESET_STONE_PINE, // Pinus pinea (trees.md 5y).
 		PRESET_CORK_OAK, // Quercus suber (trees.md 5aa).
+		PRESET_HOLM_OAK, // Quercus ilex (trees.md 5ab).
+		PRESET_WILD_OLIVE, // Olea europaea var. sylvestris (trees.md 5ac).
+		PRESET_MARITIME_PINE, // Pinus pinaster (trees.md 5ac).
+		PRESET_CAROB, // Ceratonia siliqua (trees.md 5ac).
 		PRESET_MAX,
 	};
 
