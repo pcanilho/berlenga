@@ -168,7 +168,9 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 //   a glaze where a wet surface's film freezes in the air below zero (black ice).
 static constexpr float TYRE_PRESSURE_KPA = 220.0f;
 
-static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice) {
+// The tread scales the result by what covers the surface (PhysXVehicleWheel3D::tread_firm_grip: chains bite ice,
+// lugs bite snow). Snow on firm ground waits for the snow contract (world-contracts.md): 0 until then.
+static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice, int p_tread) {
 	float film = 0.0f;
 	float depth = MAX(p_standing_water, 0.0f); // m
 	float air = 10.0f;
@@ -185,7 +187,8 @@ static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_wat
 	const float glaze = wet * Math::smoothstep(0.0f, 2.0f, -air);
 	const float sheet = CLAMP(p_ice.x / 0.002f, 0.0f, 1.0f) * (1.0f - CLAMP(p_ice.y, 0.0f, 1.0f));
 	const float ice_grip = Math::lerp(0.08f, 0.15f, Math::smoothstep(-0.5f, -5.0f, air));
-	return Math::lerp(grip, MIN(ice_grip, grip), MAX(glaze, sheet));
+	const float ice = MAX(glaze, sheet);
+	return Math::lerp(grip, MIN(ice_grip, grip), ice) * PhysXVehicleWheel3D::tread_firm_grip((PhysXVehicleWheel3D::Tread)p_tread, ice, 0.0f);
 }
 
 class PhysXVehicleSoilRoad : public PxVehicleComponent {
@@ -224,7 +227,7 @@ public:
 				if (road.hitState) {
 					// No ground surface (a street, a road mesh): the weather's wet, flooded and frozen state still holds.
 					const PxTransform hp = v.rigidBodyState.pose * v.wheelLocalPoses[i].localPose;
-					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2());
+					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2(), sw.tread);
 					road.friction *= sw.grip;
 				}
 				sw.soft = false;
@@ -245,7 +248,7 @@ public:
 				if (clogging) {
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
 				}
-				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at));
+				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at), sw.tread);
 				road.friction *= sw.grip;
 				sw.printed = false;
 				sw.sinkage = 0.0f;

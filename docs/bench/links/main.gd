@@ -7,7 +7,7 @@ extends Node3D
 #   godot --path docs/bench/links -- --frost=out.png [--frost-off]   grass, a fern, a rock and TerrainMaterial3D ground
 #   godot --path docs/bench/links -- --shimmer=out.png [--shimmer-off] [--pt] [--clear] [--frames=N]   a fire in front
 #             of a striped wall, its heat shimmer on or off (--clear: the gas drawn invisible, only the bending);
-#             --clip=dir saves every frame after the warm-up
+#             --clip=dir saves every frame after the warm-up; --turbulence=x overrides heat_shimmer_turbulence
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -522,8 +522,7 @@ func _shimmer_scene(p_clear: bool, p_pt: bool) -> Node3D:
 	env.environment.ambient_light_energy = 0.5
 	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
 	if p_pt:
-		env.environment.pathtracing_enabled = true
-		env.environment.pathtracing_samples_per_pixel = 4
+		env.environment.pathtracing_samples_per_pixel = 4 if not p_clear else 32
 		env.environment.pathtracing_max_bounces = 2
 	root.add_child(env)
 	var sun := DirectionalLight3D.new()
@@ -597,9 +596,21 @@ func _shimmer_view(path: String) -> void:
 		return
 	get_viewport().size = Vector2i(640, 360) if args.has("--pt") else Vector2i(1280, 720)
 	var root := _shimmer_scene(args.has("--clear"), args.has("--pt"))
+	(root.get_child(0) as WorldEnvironment).environment.pathtracing_enabled = false
 	root.get_meta("flow").heat_shimmer = not args.has("--shimmer-off")
+	for a in args:
+		if a.begins_with("--turbulence="):
+			root.get_meta("flow").heat_shimmer_turbulence = float(a.substr(13))
+	var pt := args.has("--pt")
 	for i in frames:
 		await RenderingServer.frame_post_draw
+	if pt:
+		# The path tracer accumulates one frozen instant (the gas and its shimmer stop), as a raster frame shows one.
+		Engine.time_scale = 0.0
+		var env: Environment = root.get_child(0).environment
+		env.pathtracing_enabled = true
+		for i in 30:
+			await RenderingServer.frame_post_draw
 	if clip != "":
 		DirAccess.make_dir_recursive_absolute(clip)
 		for i in 48:
