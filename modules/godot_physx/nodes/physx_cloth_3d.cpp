@@ -61,11 +61,12 @@ void PhysXCloth3D::_apply_solver_settings() {
 	s.substeps = MAX(substeps, 1);
 	s.stretch_compliance = _stiffness_to_compliance(stiffness, 5.0e-3f);
 	s.shear_compliance = _stiffness_to_compliance(shear_stiffness, 2.0e-1f);
-	s.bend_compliance = _stiffness_to_compliance(bend_stiffness, 6.0e-1f);
+	// Water softens the fibres (it plasticises cellulose: wet cotton bends about half as stiffly) and adds its weight.
+	s.bend_compliance = _stiffness_to_compliance(bend_stiffness * (1.0f - 0.5f * wetness), 6.0e-1f);
 	s.damping = MAX(damping, 0.0f);
 	s.drag = MAX(drag, 0.0f);
 	s.lift = MAX(lift, 0.0f);
-	s.density = MAX(density, 1.0e-3f);
+	s.density = MAX(density, 1.0e-3f) * (1.0f + water_capacity * wetness);
 	s.tear_factor = is_tearing() ? tear_factor : 0.0f;
 	solver.settings = s;
 }
@@ -358,6 +359,7 @@ void PhysXCloth3D::_step(double p_delta) {
 
 	const Vector3 wind_now = _sample_wind(p_delta);
 	_couple_flow(p_delta);
+	_update_wetness(p_delta, wind_now);
 
 	// --- GPU path: the deformable surface is stepped by the physics server. ---
 	if (gpu_cloth.is_valid()) {
@@ -428,6 +430,115 @@ void PhysXCloth3D::_step(double p_delta) {
 	_update_mesh();
 }
 
+// Rain in, evaporation out. Rain falls at about 6.5 m/s (2 mm drops, Gunn and Kinzer 1949) leaning with the wind, so a
+// hanging sheet facing the wind catches it too. The weave holds up to water_capacity times its weight (more drips
+// off). Each face evaporates as open water does, by Penman's (1948) wind function, 0.26 (1 + 0.54 U) mm a day per hPa
+// of vapour pressure deficit, slowing as the last water is held in the fibres (the falling rate period of drying).
+void PhysXCloth3D::_update_wetness(double p_delta, const Vector3 &p_wind) {
+	const float dt = (float)p_delta;
+	if (dt <= 0.0f) {
+		return;
+	}
+	const float capacity = MAX(density * water_capacity, 1.0e-4f); // kg/m2
+	float water = wetness * capacity;
+	float air_t = 15.0f;
+	float humidity = 0.7f;
+	float rain = 0.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		air_t = wm->get_air_temperature();
+		humidity = wm->get_air_humidity();
+		if (weather_wetting && is_inside_tree() && render_verts.size() >= 3) {
+			const Transform3D gt = get_global_transform();
+			const AABB box = gt.xform(get_aabb());
+			const Vector3 at = box.get_center();
+			rain = MAX(wm->get_rain_at(at), 0.0f);
+			rain *= 1.0f - CLAMP(wm->get_canopy_closure_at(at), 0.0f, 1.0f);
+			rain *= WeatherMap3D::rain_fraction(air_t, humidity); // snow does not soak in at once
+			rain_timer -= dt;
+			if (rain > 0.0f && rain_timer <= 0.0f) {
+				rain_timer = 0.5f;
+				// A roof above it.
+				rain_shelter = 1.0f;
+				if (PhysicsDirectSpaceState3D *space = get_world_3d().is_valid() ? get_world_3d()->get_direct_space_state() : nullptr) {
+					PhysicsDirectSpaceState3D::RayParameters ray;
+					ray.from = Vector3(at.x, box.position.y + box.size.y + 0.1f, at.z);
+					ray.to = ray.from + Vector3(0.0f, 100.0f, 0.0f);
+					PhysicsDirectSpaceState3D::RayResult hit;
+					if (space->intersect_ray(ray, hit)) {
+						rain_shelter = 0.0f;
+					}
+				}
+				// Rain caught per area of fabric over rain per area of ground, both faces: |n . d| / |d.y|, over drops
+				// slanted by the wind and scattered by its gusts (turbulence of about 0.3 U, and eddies even in calm
+				// air), so a flag streaming edge on to the rain still wets.
+				const float sigma = 0.3f * Vector2(p_wind.x, p_wind.z).length() + 0.5f;
+				Vector3 dirs[4] = {
+					Vector3(p_wind.x + sigma, -6.5f, p_wind.z), Vector3(p_wind.x - sigma, -6.5f, p_wind.z),
+					Vector3(p_wind.x, -6.5f, p_wind.z + sigma), Vector3(p_wind.x, -6.5f, p_wind.z - sigma)
+				};
+				float dy = 0.0f;
+				for (Vector3 &d : dirs) {
+					d.normalize();
+					dy += 0.25f * Math::abs(d.y);
+				}
+				const Basis b = gt.basis;
+				float area = 0.0f;
+				float caught = 0.0f;
+				const Vector3 *v = render_verts.ptr();
+				const int *ix = render_indices.ptr();
+				const int vn = render_verts.size();
+				for (int t = 0; t + 2 < render_indices.size(); t += 3) {
+					if (ix[t] >= vn || ix[t + 1] >= vn || ix[t + 2] >= vn) {
+						continue;
+					}
+					const Vector3 cr = b.xform((v[ix[t + 1]] - v[ix[t]]).cross(v[ix[t + 2]] - v[ix[t]]));
+					const float a = cr.length();
+					area += a;
+					for (const Vector3 &d : dirs) {
+						caught += 0.25f * Math::abs(cr.dot(d));
+					}
+				}
+				rain_catch = area > 0.0f ? caught / (area * MAX(dy, 0.05f)) : 0.0f;
+			}
+			rain *= rain_shelter * rain_catch;
+		}
+	}
+#endif
+	water += rain / 3600.0f * dt; // mm/h of rain = kg/m2/h
+	const float es = 6.108f * Math::exp(17.27f * air_t / (air_t + 237.3f)); // hPa, saturation (Tetens)
+	const float deficit = MAX(es * (1.0f - CLAMP(humidity, 0.0f, 1.0f)), 0.0f);
+	const float u = Math::sqrt(p_wind.x * p_wind.x + p_wind.z * p_wind.z);
+	float evap = 2.0f * 0.26f * (1.0f + 0.54f * u) * deficit / 86400.0f; // kg/m2/s, both faces
+	evap *= CLAMP(wetness / 0.2f, 0.1f, 1.0f);
+	water = CLAMP(water - evap * dt, 0.0f, capacity);
+	wetness = water / capacity;
+	if (Math::abs(wetness - wet_applied) > 0.01f || (wetness == 0.0f && wet_applied != 0.0f)) {
+		wet_applied = wetness;
+		_apply_solver_settings();
+		if (built && !gpu_cloth.is_valid()) {
+			solver.refresh_masses();
+		}
+	}
+}
+
+void PhysXCloth3D::set_wetness(float p_v) {
+	wetness = CLAMP(p_v, 0.0f, 1.0f);
+	wet_applied = wetness;
+	_apply_solver_settings();
+	if (built && !gpu_cloth.is_valid()) {
+		solver.refresh_masses();
+	}
+}
+
+void PhysXCloth3D::set_water_capacity(float p_v) {
+	water_capacity = MAX(p_v, 0.0f);
+	_apply_solver_settings();
+	if (built && !gpu_cloth.is_valid()) {
+		solver.refresh_masses();
+	}
+}
+
 #ifdef GODOT_PHYSX_FLOW
 void PhysXCloth3D::_step_burn(double p_delta) {
 	if (!burnable || p_delta <= 0.0) {
@@ -440,6 +551,7 @@ void PhysXCloth3D::_step_burn(double p_delta) {
 	}
 	burn.settings.flame_spread = flame_spread;
 	burn.settings.burn_through_time = burn_through_time;
+	burn.settings.water = get_water_load();
 	burn.step(this, solver, fire, flow, float(p_delta));
 }
 #endif
@@ -619,10 +731,14 @@ void PhysXCloth3D::_collide() {
 	}
 
 	const float radius = MAX(solver.vertex_radius(), 0.005f);
+	// Wet fabric clings: it sticks to what it touches over a film-thin gap, and slides less (water raises the friction
+	// of fabric on skin and on most surfaces, Gerhardt et al. 2008).
+	const float gap = wetness > 0.05f ? radius * 1.5f * wetness : 0.0f;
+	const float wet_friction = friction + (1.0f - friction) * 0.6f * wetness;
 	if (collision_sphere.is_null()) {
 		collision_sphere = ps->sphere_shape_create();
 	}
-	ps->shape_set_data(collision_sphere, radius);
+	ps->shape_set_data(collision_sphere, radius + gap);
 
 	PhysicsDirectSpaceState3D::ShapeParameters params;
 	params.shape_rid = collision_sphere;
@@ -646,13 +762,22 @@ void PhysXCloth3D::_collide() {
 		// shape out and info.point as (center - normal * penetration), so the
 		// penetration depth is just the projection back onto the normal.
 		const Vector3 push_dir = info.normal;
-		const float depth = (pos[i] - info.point).dot(push_dir);
+		const float depth = (pos[i] - info.point).dot(push_dir) - gap;
 		if (depth > 0.0f) {
 			pos[i] += push_dir * (depth + 0.001f);
 			const float vn = vel[i].dot(push_dir);
 			Vector3 v_tangent = vel[i] - push_dir * vn;
-			v_tangent *= (1.0f - friction); // Coulomb-style sliding friction
+			v_tangent *= (1.0f - wet_friction); // Coulomb-style sliding friction
 			vel[i] = v_tangent + push_dir * MAX(vn, 0.0f); // no inward velocity
+		} else if (gap > 0.0f && depth > -gap) {
+			// Within the water film's reach of the surface: capillary adhesion draws the wet fabric onto it and holds it
+			// against peeling away.
+			pos[i] += push_dir * (depth * 0.5f * wetness);
+			const float vn = vel[i].dot(push_dir);
+			if (vn > 0.0f) {
+				vel[i] -= push_dir * vn * 0.8f * wetness;
+			}
+			vel[i] -= (vel[i] - push_dir * vel[i].dot(push_dir)) * (0.5f * wet_friction);
 		}
 	}
 }
@@ -724,9 +849,14 @@ void PhysXCloth3D::_update_mesh() {
 	arrays[RSE::ARRAY_INDEX] = render_indices;
 #ifdef GODOT_PHYSX_FLOW
 	// The burn state for the burn material: char, glow, scorch and how far each part has burnt through.
-	if (burn.has_marks()) {
+	// Also while wet: the same material darkens with the water held.
+	if (burn.has_marks() || wetness > 0.0f || burn_override.is_valid()) {
 		burn.fill_colors(burn_colors, n);
 		arrays[RSE::ARRAY_COLOR] = burn_colors;
+		if (burn.settings.wetness != wetness) {
+			burn.settings.wetness = wetness;
+			burn.update_wetness();
+		}
 		const RID m = burn.get_material(get_material_override());
 		if (m != burn_override && m.is_valid()) {
 			burn_override = m;
@@ -1052,6 +1182,13 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_pinned_positions"), &PhysXCloth3D::get_pinned_positions);
 	ClassDB::bind_method(D_METHOD("release_pins", "vertices"), &PhysXCloth3D::release_pins);
 	ClassDB::bind_method(D_METHOD("tear", "from", "to"), &PhysXCloth3D::tear);
+	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXCloth3D::set_wetness);
+	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXCloth3D::get_wetness);
+	ClassDB::bind_method(D_METHOD("set_weather_wetting", "enable"), &PhysXCloth3D::set_weather_wetting);
+	ClassDB::bind_method(D_METHOD("is_weather_wetting"), &PhysXCloth3D::is_weather_wetting);
+	ClassDB::bind_method(D_METHOD("set_water_capacity", "capacity"), &PhysXCloth3D::set_water_capacity);
+	ClassDB::bind_method(D_METHOD("get_water_capacity"), &PhysXCloth3D::get_water_capacity);
+	ClassDB::bind_method(D_METHOD("get_water_load"), &PhysXCloth3D::get_water_load);
 	ClassDB::bind_method(D_METHOD("set_burnable", "enable"), &PhysXCloth3D::set_burnable);
 	ClassDB::bind_method(D_METHOD("is_burnable"), &PhysXCloth3D::is_burnable);
 	ClassDB::bind_method(D_METHOD("set_fire_path", "path"), &PhysXCloth3D::set_fire_path);
@@ -1152,6 +1289,10 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lift", "get_lift");
 	ADD_GROUP("Tearing", "tear_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tear_factor", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_tear_factor", "get_tear_factor");
+	ADD_GROUP("Wetness", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "is_weather_wetting");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_water_capacity", "get_water_capacity");
 	ADD_GROUP("Burning", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "burnable"), "set_burnable", "is_burnable");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "fire_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFireSpread3D"), "set_fire_path", "get_fire_path");

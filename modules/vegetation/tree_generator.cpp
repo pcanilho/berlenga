@@ -841,22 +841,23 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.62f; // The leader keeps on: limbs at several heights, not one whorl of spokes at the bole top (docs, 18 Nov).
 			p[PARAM_MATURITY] = 30;
 			p[PARAM_BRANCH_ANGLE] = 65;
-			p[PARAM_DIRECTION_NOISE] = 16; // Crooked limbs and a sinuous bole.
+			p[PARAM_DIRECTION_NOISE] = 22; // Crooked limbs and a sinuous, leaning bole.
 			p[PARAM_GRAVITROPISM] = 0.0f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
-			p[PARAM_APICAL_CONTROL] = 0.85f; // Laterals strong enough for a full crown, under the leader.
+			p[PARAM_APICAL_CONTROL] = 0.75f; // Laterals held under the leader: a few heavy limbs at different heights, each clothed.
 			p[PARAM_PHOTOTROPISM] = 0.08f;
-			p[PARAM_GRAVITY_BENDING] = 0.35f; // Heavy old limbs bow out and down, tips turned up: the crown spreads as a mass, not a fan of rising limbs.
-			p[PARAM_SHED_RATIO] = 0.02f; // Keeps shoots inside the crown: a dense mass, not tufts at the limb tips (docs, 18 Nov).
+			p[PARAM_GRAVITY_BENDING] = 0.2f; // Less of an even bow: evenly curved limbs read as umbrella ribs.
+			p[PARAM_SHED_RATIO] = 0.01f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f; // A long dead limb read as an artefact (docs, 18 Nov).
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.18f; // Pairs, 10-25 cm, stout.
 			p[PARAM_LEAVES_PER_INTERNODE] = 300; // Dense: the needles hide most of the branches.
 			p[PARAM_LEAF_YEARS] = 6; // Needles stay 4-6 years on old crowns.
 			p[PARAM_CROWN_CONE] = 0.0f; // No excurrent cone: it held the top to a sparse spire over a wide lowest whorl (docs, 18 Nov).
-			p[PARAM_SHADOW_STRENGTH] = 0.03f;
+			p[PARAM_SHADOW_STRENGTH] = 0.02f;
 			p[PARAM_PIPE_EXPONENT] = 1.85f; // A stout bole under the heavy crown.
-			bark_color = Color(0.27f, 0.25f, 0.23f); // Dark grey-brown plates (the fissures red-orange, from the bark map).
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f; // Inner shoots live on: needles along the limbs, not tufts at the tips of a bare cage (docs, 18 Nov).
+			bark_color = Color(0.27f, 0.25f, 0.23f); // Dark grey-brown plates (the furrows' floor dull red-brown, from BARK_PINASTER).
 			leaf_color = Color(0.11f, 0.17f, 0.08f); // Grey-green.
 			break;
 		case PRESET_CAROB: // Ceratonia siliqua (trees.md 5ac): evergreen, a short trunk under a broad,
@@ -3916,8 +3917,8 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 		case PRESET_HOLM_OAK: // Dark grey, cracked into small, thin, squarish plates.
 		case PRESET_CAROB: // Rough grey-brown, finely cracked.
 			return BARK_SCALY;
-		case PRESET_MARITIME_PINE: // Very thick, deep furrows between long dark plates, red-orange inside (as the stone pine's).
-			return BARK_PINEA;
+		case PRESET_MARITIME_PINE: // Very thick, deep furrows between long dark plates.
+			return BARK_PINASTER;
 		case PRESET_WILD_OLIVE: // Grey, smooth when young, fissured and gnarled when old.
 			return BARK_FURROWED;
 		case PRESET_BLACKTHORN: // Dark, almost black, finely scaly.
@@ -4055,7 +4056,7 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 // The bark albedo texture's scale: stored divided by it, the material's albedo multiplies it back.
 float TreeGenerator::_bark_headroom(BarkKind p_kind) {
 	// Stone pine's orange-red fissures run far warmer than its grey-brown bark colour.
-	return p_kind == BARK_SMOOTH ? 1.35f : (p_kind == BARK_PINEA ? 3.0f : (p_kind == BARK_CORK ? 1.3f : 1.0f));
+	return p_kind == BARK_SMOOTH ? 1.35f : (p_kind == BARK_PINEA ? 3.0f : ((p_kind == BARK_CORK || p_kind == BARK_PINASTER) ? 1.3f : 1.0f));
 }
 
 const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
@@ -4086,6 +4087,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
+		{ 4, 3, 0.22f, 0.06f, 0.003f, 0.3f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4110,12 +4112,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float r = 0.88f + 0.08f * fibre;
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
-				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : 1.0f)); // Cork: amplitude in its 3x tile.
+				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : 1.0f)); // Cork: amplitude in its 3x tile.
 				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 21u);
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 27u);
-				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
+				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_CORK ? 0.75f : -1.0f), p_kind == BARK_PINEA ? 1.8f : 1.0f);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, (p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 0.5f : (p_kind == BARK_CORK ? 0.75f : -1.0f), (p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 1.8f : 1.0f);
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
@@ -4169,14 +4171,23 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// narrows and shallows to a point instead of stopping square.
 					const float m2 = Math::smoothstep(-0.06f, 0.1f, bark_fbm(u, v, 3, 4, 2, salt + 63u));
 					const float d2 = zero_dist(u, v, 6, 1, salt + 55u) / 0.8f + (1.0f - m2) * 3.0f * w1;
-					const float m3 = Math::smoothstep(-0.2f, 0.04f, bark_fbm(u, v, 3, 3, 2, salt + 67u));
-					const float d3 = zero_dist(u, v, 5, 6, salt + 59u, 2) / 0.75f + (1.0f - m3) * 3.0f * w1;
+					const float m3 = Math::smoothstep(-0.08f, 0.12f, bark_fbm(u, v, 3, 3, 2, salt + 67u));
+					// Round 10 (docs: the isotropic zero lines curled into S, F and C hooks, carved
+					// glyphs): one octave stretched across the stem, nearly straight lines whose
+					// slant drifts with the warp, made jagged at their edges by fine noise. A slow tilt per block
+					// (trees.md, cork r10) keeps them from lining up into rows like brick courses.
+					const float vs = v + 0.06f * bark_fbm(u, v, 5, 2, 2, salt + 73u);
+					const float d3 = zero_dist(u, vs, 2, 5, salt + 59u, 1) / 0.75f + (1.0f - m3) * 3.0f * w1 + 0.3f * w1 * bark_fbm(u, v, 48, 48, 2, salt + 69u);
 					const float dm = MIN(d1, MIN(d2, d3));
 					// One profile from the fissure's floor to the block's crown, steep at the floor
 					// and rounding over the top (round 8's separate cut and swelling met in a step, a
 					// terraced, machined edge).
+					// Round 10 (docs: soft, folded edges like melted plastic): the walls rise steeply
+					// to a rim at about 40% of the span, crumbled by fine noise, and the crown rounds
+					// gently from there.
 					const float x = CLAMP(dm / (2.6f * w1), 0.0f, 1.0f);
-					const float depth = (dep + 0.03f) * (1.0f - x) * (1.0f - x);
+					const float xj = x + 0.1f * bark_fbm(u, v, 60, 40, 2, salt + 71u);
+					const float depth = dep * (1.0f - Math::smoothstep(0.04f, 0.42f, xj)) + 0.03f * (1.0f - x) * (1.0f - x);
 					cork_open = CLAMP(dm / (1.3f * w1), 0.0f, 1.0f);
 					// Lumpy, crumbly crowns, at the scale of a thumb.
 					const float lumps = bark_fbm(u, v, 30, 20, 3, salt + 57u);
@@ -4191,6 +4202,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float cross = Math::lerp(1.0f, open, 0.55f);
 					open = MIN(furrow, cross);
 					plate = Math::sqrt(open); // Rounded ridge tops.
+				} else if (p_kind == BARK_PINASTER) {
+					// Maritime pine (Alia et al. 1996; Gymnosperm Database: "very thick, deeply
+					// fissured"): thick plates, steep walls straight down from their rims, the tops
+					// built of a few flaking layers (docs, 18 Nov: thin flat plates read as piping).
+					const float layers = Math::floor((bark_fbm(u, v, 10, 5, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
+					plate = Math::smoothstep(0.0f, 0.3f, open) * (0.8f + 0.2f * layers);
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
@@ -4214,6 +4231,11 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const Color wall(0.78f, 0.56f, 0.42f), floor_c(0.2f, 0.15f, 0.12f);
 					const Color fis = floor_c.lerp(wall, Math::smoothstep(0.1f, 0.8f, cork_open));
 					a = fis.lerp(Color(mott, mott, mott), Math::smoothstep(0.7f, 1.0f, cork_open));
+				}
+				if (p_kind == BARK_PINASTER) {
+					// Dark plates and dark walls; only the furrow's floor, where the outer bark has
+					// split to the fresh layers, a dull red-brown (bright, they read as orange piping).
+					a = Color(1.5f, 0.98f, 0.76f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.08f, 0.3f, open)) * shade;
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -4695,7 +4717,7 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.05f, // Cork oak: a dry climate; a little moss low on the shaded side.
 	0.15f, // Holm oak: deep shade under the dome keeps the base damp.
 	0.05f, // Wild olive: dry and sunny.
-	0.1f, // Maritime pine: Atlantic dunes, damper than the stone pine's.
+	0.03f, // Maritime pine: Atlantic dunes, damper than the stone pine's; deep plate furrows filled green at more (docs 18 Nov).
 	0.05f, // Carob: dry coasts.
 	0.4f, // Blackthorn.
 	0.6f, // Field maple: corky bark holds moss.

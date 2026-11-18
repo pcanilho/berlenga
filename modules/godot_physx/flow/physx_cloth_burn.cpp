@@ -47,9 +47,12 @@ static constexpr float IGNITION_DOSE = 0.26f * 380.0f; // kJ/m2
 static constexpr float CRITICAL_FLUX = 10.0f; // kW/m2
 static constexpr float UPWARD_SPREAD = 8.0f; // upward flame spread over downward and lateral on a hanging fabric
 static constexpr int MAX_EMITTERS = 4;
+// Heat to warm a kg of water from 20 C and boil it off, kJ/kg: wet fabric does not get past 100 C until it is dry.
+static constexpr float WATER_DOSE = 4.186f * 80.0f + 2257.0f;
 
 void PhysXClothBurn::reset() {
 	heat.clear();
+	dried.clear();
 	ignited.clear();
 	progress.clear();
 	jitter.clear();
@@ -77,12 +80,14 @@ void PhysXClothBurn::_rebuild(const XPBDClothSolver &p_solver) {
 	const uint32_t n = p_solver.vertex_count();
 	const uint32_t old = heat.size();
 	heat.resize(n);
+	dried.resize(n);
 	ignited.resize(n);
 	progress.resize(n);
 	jitter.resize(n);
 	gone.resize(n);
 	for (uint32_t i = old; i < n; i++) {
 		heat[i] = 0.0f;
+		dried[i] = 0.0f;
 		ignited[i] = -1.0f;
 		progress[i] = 0.0f;
 		uint32_t h = i * 2654435761u;
@@ -135,7 +140,15 @@ void PhysXClothBurn::_sample(const XPBDClothSolver &p_solver, PhysXFireSpread3D 
 		}
 		q += PhysXBurnable3D::radiant_flux_at(p);
 		if (q > CRITICAL_FLUX) {
-			heat[i] += (q - CRITICAL_FLUX) * p_delta;
+			float in = (q - CRITICAL_FLUX) * p_delta;
+			// The water held boils off first (wet cloth holds at 100 C), then the dry fabric heats.
+			const float to_dry = settings.water * WATER_DOSE - dried[i];
+			if (to_dry > 0.0f) {
+				const float take = MIN(in, to_dry);
+				dried[i] += take;
+				in -= take;
+			}
+			heat[i] += in;
 			any_heat = true;
 		} else {
 			heat[i] *= Math::exp(-p_delta / 10.0f); // cools between exposures
@@ -208,7 +221,10 @@ bool PhysXClothBurn::step(Node *p_owner, XPBDClothSolver &p_solver, PhysXFireSpr
 				progress[j] = 1.0f;
 			} else {
 				const float up = MAX(e.y / len, 0.0f);
-				const float v = settings.flame_spread * (1.0f + (UPWARD_SPREAD - 1.0f) * up * up) * (0.6f + 0.8f * jitter[j]);
+				// Thermally thin flame spread goes as one over the heat to bring the fabric ahead to ignition (de Ris
+				// 1969), so the water still in it slows the flame.
+				const float wet = MAX(settings.water * WATER_DOSE - dried[j], 0.0f);
+				const float v = settings.flame_spread * (1.0f + (UPWARD_SPREAD - 1.0f) * up * up) * (0.6f + 0.8f * jitter[j]) * IGNITION_DOSE / (IGNITION_DOSE + wet);
 				progress[j] += p_delta * v / len;
 			}
 			if (progress[j] >= 1.0f) {
@@ -389,6 +405,11 @@ RID PhysXClothBurn::get_material(const Ref<Material> &p_base) {
 		// PhysXClothBurn: scorch, char and the burning edge's glow (vertex colour r char, g glow, b scorch).
 		vec3 scorched = mix(ALBEDO, vec3(0.3, 0.16, 0.07) * (0.4 + dot(ALBEDO, vec3(0.3, 0.59, 0.11))), smoothstep(0.3, 1.0, cloth_burn.b));
 		ALBEDO = mix(scorched, vec3(0.03, 0.027, 0.024), cloth_burn.r);
+		// Water in the weave: light scattered inside the wet fibres is partly reflected back in at the water's
+		// surface and absorbed, so the wet albedo is a (1 - r) / (1 - a r) with r about 0.6 (Lekner and Dorf 1988);
+		// fabric looks wet as soon as the fibres are.
+		float cw = clamp(cloth_wetness * 2.0, 0.0, 1.0);
+		ALBEDO = mix(ALBEDO, ALBEDO * 0.4 / (1.0 - 0.6 * ALBEDO), cw);
 		// The burning zone smoulders faintly; the light is at the cut (below), not a halo over the sheet.
 		cloth_burn_emit = vec3(0.55, 0.08, 0.01) * smoothstep(0.5, 1.0, cloth_burn.g) * cloth_glow_energy * 0.12;
 		// The burning edge: a noisy threshold on how far each part has burnt through (dissolve), glowing just
@@ -418,13 +439,15 @@ RID PhysXClothBurn::get_material(const Ref<Material> &p_base) {
 		}
 	}
 	if (end > 0) {
-		code = code.insert(end, "	EMISSION += cloth_burn_emit;\n");
+		// Only a soaked weave carries a film of water at its surface: a touch glossier (water fills the pores first).
+		code = code.insert(end, "	EMISSION += cloth_burn_emit;\n	ROUGHNESS *= 1.0 - 0.12 * smoothstep(0.8, 1.0, cloth_wetness);\n");
 	}
 	code = code.insert(code.find("{", fr2) + 1, "\n	vec3 cloth_burn_emit = vec3(0.0);");
 	const int vx2 = code.find("void vertex() {");
 	code = code.insert(vx2 + String("void vertex() {").length(), "\n	cloth_burn = COLOR;");
 	code = code.insert(code.find("void vertex() {"), R"(varying vec4 cloth_burn;
 uniform float cloth_glow_energy = 4.0;
+uniform float cloth_wetness = 0.0;
 
 float cloth_burn_noise(vec2 p) {
 	vec2 i = floor(p);
@@ -463,6 +486,14 @@ float cloth_burn_noise(vec2 p) {
 		}
 	}
 	m->set_shader_parameter("cloth_glow_energy", settings.glow_energy);
+	m->set_shader_parameter("cloth_wetness", settings.wetness);
 	burn_material = m;
 	return m->get_rid();
+}
+
+void PhysXClothBurn::update_wetness() {
+	Ref<ShaderMaterial> m = burn_material;
+	if (m.is_valid()) {
+		m->set_shader_parameter("cloth_wetness", settings.wetness);
+	}
 }

@@ -3678,6 +3678,18 @@
    "topic": ""
   },
   {
+   "name": "Spot fires",
+   "settings": [
+    "PhysXFireSpread3D.spotting",
+    "spotting_scale"
+   ],
+   "note": "",
+   "what": "burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fire light and embers",
    "settings": [
     "PhysXFlow3D.fire_light",
@@ -3720,6 +3732,19 @@
    ],
    "note": "",
    "what": "cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Wet cloth",
+   "settings": [
+    "PhysXCloth3D.weather_wetting",
+    "wetness",
+    "water_capacity"
+   ],
+   "note": "",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
