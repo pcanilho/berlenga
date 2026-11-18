@@ -67,6 +67,19 @@ PhysXBurnable3D::~PhysXBurnable3D() {
 	burnables.erase(this);
 }
 
+float PhysXBurnable3D::radiant_flux_at(const Vector3 &p_position) {
+	float q = 0.0f;
+	for (const PhysXBurnable3D *b : burnables) {
+		if (b->state != STATE_FLAMING || !b->is_inside_tree()) {
+			continue;
+		}
+		const Vector3 bc = b->_target_xform().xform(b->bounds.get_center());
+		const float d = MAX(bc.distance_to(p_position) - b->bounds.size.length() * 0.25f, 0.3f);
+		q += CHI_R * b->hrr / 1000.0f / (4.0f * Math::PI * d * d);
+	}
+	return q;
+}
+
 float PhysXBurnable3D::_rand() {
 	rng ^= rng << 13;
 	rng ^= rng >> 17;

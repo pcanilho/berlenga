@@ -135,6 +135,10 @@ public:
 	// Cut the cloth along a segment in its local rest XY plane: constraints and triangles whose
 	// rest edges cross it are removed, so the two sides separate. Returns the constraints removed.
 	int tear(const Vector2 &p_from, const Vector2 &p_to);
+	// Burn holes: drop every triangle whose three vertices are marked in p_gone (one flag per vertex), the
+	// constraints the mesh no longer holds together, and the mass the lost cloth carried. Returns the
+	// triangles removed.
+	int burn_away(const LocalVector<uint8_t> &p_gone);
 
 private:
 	struct DistanceConstraint {

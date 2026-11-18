@@ -41,6 +41,7 @@
 #include "servers/rendering/rendering_server.h"
 
 #ifdef GODOT_PHYSX_FLOW
+#include "../flow/physx_fire_spread_3d.h"
 #include "../flow/physx_flow_3d.h"
 #endif
 
@@ -121,6 +122,11 @@ bool PhysXCloth3D::_try_build_gpu() {
 	if (simulation_mode == SIM_CPU || (simulation_mode == SIM_AUTO && is_tearing())) {
 		return false; // strain tearing splits vertices, which only the CPU solver can do
 	}
+#ifdef GODOT_PHYSX_FLOW
+	if (simulation_mode == SIM_AUTO && burnable && PhysXFireSpread3D::any()) {
+		return false; // a fire in the scene: burning holes drop triangles, which only the CPU solver can do
+	}
+#endif
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server || !server->has_gpu() || get_world_3d().is_null()) {
 		return false;
@@ -193,6 +199,14 @@ void PhysXCloth3D::_destroy() {
 		collision_sphere = RID();
 	}
 	solver.clear();
+#ifdef GODOT_PHYSX_FLOW
+	burn.reset();
+	if (burn_override.is_valid() && is_inside_tree()) {
+		const Ref<Material> mo = get_material_override();
+		RenderingServer::get_singleton()->instance_geometry_set_material_override(get_instance(), mo.is_valid() ? mo->get_rid() : RID());
+	}
+	burn_override = RID();
+#endif
 	pinned_index_cache.clear();
 }
 
@@ -408,7 +422,63 @@ void PhysXCloth3D::_step(double p_delta) {
 	if (collision_enabled) {
 		_collide();
 	}
+#ifdef GODOT_PHYSX_FLOW
+	_step_burn(p_delta);
+#endif
 	_update_mesh();
+}
+
+#ifdef GODOT_PHYSX_FLOW
+void PhysXCloth3D::_step_burn(double p_delta) {
+	if (!burnable || p_delta <= 0.0) {
+		return;
+	}
+	PhysXFireSpread3D *fire = fire_path.is_empty() ? PhysXFireSpread3D::find_at(get_global_position()) : Object::cast_to<PhysXFireSpread3D>(get_node_or_null(fire_path));
+	PhysXFlow3D *flow = flow_path.is_empty() ? nullptr : Object::cast_to<PhysXFlow3D>(get_node_or_null(flow_path));
+	if (!flow && fire) {
+		flow = fire->get_flow();
+	}
+	burn.settings.flame_spread = flame_spread;
+	burn.settings.burn_through_time = burn_through_time;
+	burn.step(this, solver, fire, flow, float(p_delta));
+}
+#endif
+
+void PhysXCloth3D::set_burnable(bool p_v) {
+	burnable = p_v;
+}
+
+void PhysXCloth3D::set_flame_spread(float p_v) {
+	flame_spread = MAX(p_v, 0.0f);
+}
+
+void PhysXCloth3D::set_burn_through_time(float p_v) {
+	burn_through_time = MAX(p_v, 0.1f);
+}
+
+void PhysXCloth3D::ignite(const Vector3 &p_position) {
+#ifdef GODOT_PHYSX_FLOW
+	ERR_FAIL_COND_MSG(gpu_cloth.is_valid(), "PhysXCloth3D.ignite() needs the CPU solver; set simulation_mode to SIM_CPU.");
+	if (built) {
+		burn.ignite(solver, p_position);
+	}
+#endif
+}
+
+int PhysXCloth3D::get_burnt_count() const {
+#ifdef GODOT_PHYSX_FLOW
+	return burn.get_burnt_count();
+#else
+	return 0;
+#endif
+}
+
+int PhysXCloth3D::get_burning_count() const {
+#ifdef GODOT_PHYSX_FLOW
+	return burn.get_burning_count();
+#else
+	return 0;
+#endif
 }
 
 // Two-way coupling with a Flow gas, as APEX Turbulence drove APEX Clothing: each vertex takes the gas velocity there
@@ -528,6 +598,17 @@ void PhysXCloth3D::_update_gpu_mesh() {
 		arrays[RSE::ARRAY_TEX_UV] = render_uvs;
 	}
 	arrays[RSE::ARRAY_INDEX] = render_indices;
+#ifdef GODOT_PHYSX_FLOW
+	if (burn.has_marks() && !gpu_cloth.is_valid()) {
+		burn.fill_colors(burn_colors, n);
+		arrays[RSE::ARRAY_COLOR] = burn_colors;
+		const RID m = burn.get_material(get_material_override());
+		if (m != burn_override && m.is_valid()) {
+			burn_override = m;
+			rs->instance_geometry_set_material_override(get_instance(), m);
+		}
+	}
+#endif
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
 	AABB box(render_verts[0], Vector3());
@@ -970,6 +1051,17 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_pinned_positions"), &PhysXCloth3D::get_pinned_positions);
 	ClassDB::bind_method(D_METHOD("release_pins", "vertices"), &PhysXCloth3D::release_pins);
 	ClassDB::bind_method(D_METHOD("tear", "from", "to"), &PhysXCloth3D::tear);
+	ClassDB::bind_method(D_METHOD("set_burnable", "enable"), &PhysXCloth3D::set_burnable);
+	ClassDB::bind_method(D_METHOD("is_burnable"), &PhysXCloth3D::is_burnable);
+	ClassDB::bind_method(D_METHOD("set_fire_path", "path"), &PhysXCloth3D::set_fire_path);
+	ClassDB::bind_method(D_METHOD("get_fire_path"), &PhysXCloth3D::get_fire_path);
+	ClassDB::bind_method(D_METHOD("set_flame_spread", "speed"), &PhysXCloth3D::set_flame_spread);
+	ClassDB::bind_method(D_METHOD("get_flame_spread"), &PhysXCloth3D::get_flame_spread);
+	ClassDB::bind_method(D_METHOD("set_burn_through_time", "seconds"), &PhysXCloth3D::set_burn_through_time);
+	ClassDB::bind_method(D_METHOD("get_burn_through_time"), &PhysXCloth3D::get_burn_through_time);
+	ClassDB::bind_method(D_METHOD("ignite", "position"), &PhysXCloth3D::ignite);
+	ClassDB::bind_method(D_METHOD("get_burnt_count"), &PhysXCloth3D::get_burnt_count);
+	ClassDB::bind_method(D_METHOD("get_burning_count"), &PhysXCloth3D::get_burning_count);
 	ClassDB::bind_method(D_METHOD("is_gpu_accelerated"), &PhysXCloth3D::is_gpu_accelerated);
 
 	ClassDB::bind_method(D_METHOD("set_simulation_mode", "mode"), &PhysXCloth3D::set_simulation_mode);
@@ -1059,6 +1151,11 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lift", "get_lift");
 	ADD_GROUP("Tearing", "tear_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tear_factor", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_tear_factor", "get_tear_factor");
+	ADD_GROUP("Burning", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "burnable"), "set_burnable", "is_burnable");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "fire_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFireSpread3D"), "set_fire_path", "get_fire_path");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flame_spread", PROPERTY_HINT_RANGE, "0,0.5,0.001,suffix:m/s"), "set_flame_spread", "get_flame_spread");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_through_time", PROPERTY_HINT_RANGE, "0.1,30,0.1,suffix:s"), "set_burn_through_time", "get_burn_through_time");
 	ADD_GROUP("Pinning", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pin_mode", PROPERTY_HINT_ENUM, "None,Top Edge,Top Corners,Left Edge,Right Edge"), "set_pin_mode", "get_pin_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "pinned_vertices"), "set_pinned_vertices", "get_pinned_vertices");

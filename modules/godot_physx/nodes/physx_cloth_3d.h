@@ -33,6 +33,10 @@
 #include "../cloth/xpbd_cloth_solver.h"
 
 #include "scene/3d/visual_instance_3d.h"
+
+#ifdef GODOT_PHYSX_FLOW
+#include "../flow/physx_cloth_burn.h"
+#endif
 #include "scene/resources/mesh.h"
 
 // A cloth patch simulated by the PhysX module. On an NVIDIA machine with GPU
@@ -87,6 +91,19 @@ private:
 	float lift = 0.2;
 
 	float tear_factor = 0.0; // 0 = off; else edges stretched past this many rest lengths break
+
+	// Burning (with Flow): heat from a PhysXFireSpread3D's flames, Flow's hot gas and burning objects lights the
+	// fabric; it chars, glows and burns through into holes (CPU solver).
+	bool burnable = true;
+	NodePath fire_path;
+	float flame_spread = 0.02f;
+	float burn_through_time = 3.0f;
+#ifdef GODOT_PHYSX_FLOW
+	PhysXClothBurn burn;
+	RID burn_override;
+	PackedColorArray burn_colors;
+	void _step_burn(double p_delta);
+#endif
 
 	PinMode pin_mode = PIN_TOP_EDGE;
 	PackedInt32Array pinned_vertices; // extra explicit pins, by vertex index
@@ -209,6 +226,18 @@ public:
 	PackedVector3Array get_pinned_positions() const;
 	int release_pins(const PackedInt32Array &p_vertices);
 	int tear(const Vector3 &p_from, const Vector3 &p_to);
+	void set_burnable(bool p_v);
+	bool is_burnable() const { return burnable; }
+	void set_fire_path(const NodePath &p_v) { fire_path = p_v; }
+	NodePath get_fire_path() const { return fire_path; }
+	void set_flame_spread(float p_v);
+	float get_flame_spread() const { return flame_spread; }
+	void set_burn_through_time(float p_v);
+	float get_burn_through_time() const { return burn_through_time; }
+	// Sets the fabric alight at the particle nearest a world position (CPU solver, Flow builds).
+	void ignite(const Vector3 &p_position);
+	int get_burnt_count() const;
+	int get_burning_count() const;
 	// True when the GPU (PhysX deformable-surface) path is in use.
 	bool is_gpu_accelerated() const { return gpu_cloth.is_valid(); }
 

@@ -576,7 +576,7 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   Limit: the shader's coverage is a cylinder round the shin plus a boot block 14 cm long, so very wide trousers
   or long boots stay partly clean; a docs image needs a real rigged character.
 
-### Next round: research (18 Nov, awaiting a pick)
+### Next round (picked 18 Nov: all three, in order)
 
 - **Muddy splash water.** Natural water is never clear: suspended sediment both absorbs and scatters, so turbid
   water turns brown and opaque within a few cm (USGS Water Science School, "Water color"; turbidity and total
@@ -606,6 +606,16 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   tyre (SAE 2024-01-5032). Build: the clogged tread (get_wheel_mud) and the leg mud lose a share each revolution
   or step on firm ground, printed as a thin mud layer with the tread or sole pattern, decaying with distance;
   printed mud is a mud depth in the field (so it dries and cracks as any other) or, off the field, a decal.
+- **Built (tracked mud).** `tracked_mud` (on): `track_mud` lays a film as a deposit whose fresh tint value is a band
+  from 4 up (share in sixteenths, wetness in the fraction; 2 to 4 stays the sand's mineral band), on both the CPU and
+  GPU field. Out of sticky soil, a vehicle presses part of what its tread sheds under the tyre, `1 - tread/8 m/s`
+  of it (at least a fifth), the rest still flies as clods; boots print heel and forefoot at each footfall on firm
+  ground, film `1 mm * line / 15 cm`, and lose 15% of their line a step. Presses keep the film on top (it was the
+  fresh-dug tint before); digs and standing water take it. The tint is mixed toward the wet clay or its dried pale
+  tone by its share; it dries with the ground's freshness clock. `get_tracked_mud_at` reads the nearest texel.
+  Bench `--test=tracked` (prints, fainter as the boots clean, dries in place), `--test=clog` (a rolling tread
+  leaves film along each wheel's path), `--view=tracked`. Not yet: tread or sole pattern in the print; mud depth
+  for thick dumps (it is a tint over the ground, not relief).
 - **Ruts kept across the world.** MudRunner and SnowRunner keep their deformation in the map's save; ours lives
   in a session tile cache. Build: write touched tiles (height delta, mud depth, water, crack state; 16-bit,
   zstd) to user:// as they leave the cache and on save, read them back when the field recentres onto them, with

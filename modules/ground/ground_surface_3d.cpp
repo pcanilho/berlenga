@@ -1446,6 +1446,13 @@ void GroundSurface3D::_upload() {
 						continue;
 					}
 					const Cell &c = _cell_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t);
+					if (f >= 4.0f) {
+						// Tracked mud (ground_deform.glsl): wet, dark and glossy; dry, a pale matte film.
+						const Vector2 sq = GroundDeformField::mud_band_share_wet(f);
+						tint_albedo[i] = Math::lerp(1.0f, Math::lerp(1.12f, 0.55f, sq.y), sq.x);
+						tint_roughness[i] = Math::lerp(1.0f, Math::lerp(1.0f, 0.45f, sq.y), sq.x);
+						continue;
+					}
 					if (f >= 2.0f) {
 						// A laid band of heavy minerals (2 plus its share): dark, dry or wet (ground_deform.glsl).
 						tint_albedo[i] = 1.0f - 0.4f * MIN(f - 2.0f, 1.0f);
@@ -3054,7 +3061,11 @@ void GroundSurface3D::_age(double p_delta) {
 						dn *= keep;
 						rm *= keep;
 					}
-					if (field.fresh[i] < 2.0f) {
+					if (field.fresh[i] >= 4.0f) {
+						// Tracked mud dries in place (its film stays).
+						const Vector2 sq = GroundDeformField::mud_band_share_wet(field.fresh[i]);
+						field.fresh[i] = GroundDeformField::mud_band(sq.x, sq.y * dry);
+					} else if (field.fresh[i] < 2.0f) {
 						field.fresh[i] *= dry; // a laid mineral band (2 plus its share) does not dry away
 					}
 					// A texel both pressed and piled on is the same surface with the smaller of the two taken off both
@@ -3566,6 +3577,35 @@ float GroundSurface3D::dig(Vector3 p_position, float p_radius, float p_depth) {
 
 float GroundSurface3D::deposit(Vector3 p_position, float p_radius, float p_depth) {
 	return p_depth > 0.0f ? _amount(p_position, p_radius, -p_depth, 0.0f) : 0.0f;
+}
+
+Vector2 GroundSurface3D::get_tracked_mud_at(Vector3 p_position) const {
+	const bool near = is_near_active() && _near_inside(p_position.x, p_position.z);
+	const GroundDeformField &f = near ? near_fld : field;
+	const int n = f.resolution;
+	if (!f.valid || int(f.fresh.size()) != n * n) {
+		return Vector2();
+	}
+	const float t = f.texel();
+	const int x = (int)Math::floor(p_position.x / t) - f.origin.x;
+	const int z = (int)Math::floor(p_position.z / t) - f.origin.y;
+	if (x < 0 || z < 0 || x >= n || z >= n || f.fresh[z * n + x] < 4.0f) {
+		return Vector2();
+	}
+	return GroundDeformField::mud_band_share_wet(f.fresh[z * n + x]);
+}
+
+float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet) {
+	if (!tracked_mud || !(p_depth > 0.0f)) {
+		return 0.0f;
+	}
+	// A film thinner than a millimetre covers the grain in patches: its share, so the trail fades out as the tread
+	// or sole runs clean.
+	const float before = field.amount_fresh;
+	field.amount_fresh = GroundDeformField::mud_band(CLAMP(p_depth / 0.001f, 0.1f, 1.0f), p_wet);
+	const float v = deposit(p_position, p_radius, p_depth);
+	field.amount_fresh = before;
+	return v;
 }
 
 void GroundSurface3D::add_spray(const Spray &p_spray) {
@@ -4301,6 +4341,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume", "mud"), &GroundSurface3D::add_water, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("stir_water", "position", "radius", "mass"), &GroundSurface3D::stir_water);
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
+	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet"), &GroundSurface3D::track_mud, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
+	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
+	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);
 	ClassDB::bind_method(D_METHOD("set_muddy_water", "enabled"), &GroundSurface3D::set_muddy_water);
 	ClassDB::bind_method(D_METHOD("is_muddy_water"), &GroundSurface3D::is_muddy_water);
 	ClassDB::bind_method(D_METHOD("get_water_added"), &GroundSurface3D::get_water_added);
@@ -4455,6 +4499,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");

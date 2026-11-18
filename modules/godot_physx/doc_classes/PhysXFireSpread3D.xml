@@ -56,6 +56,13 @@
 				The ground height the fire grid holds at [param position] (world Y), or the node's own height outside the grid.
 			</description>
 		</method>
+		<method name="get_heavy_fuel_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Kilograms per square metre of large wood (logs and fallen branches from the [member vegetation_field]) left to burn at [param position].
+			</description>
+		</method>
 		<method name="get_intensity_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -151,7 +158,7 @@
 			When enabled, the wind comes from the active [WeatherMap3D] where there is one; [member wind] is used otherwise.
 		</member>
 		<member name="vegetation_field" type="NodePath" setter="set_vegetation_field" getter="get_vegetation_field" default="NodePath(&quot;&quot;)">
-			Optional [VegetationField3D] the fuel follows: worn paths ([method VegetationField3D.get_path_passes_at]) are bare, and leaf litter ([method VegetationField3D.get_litter_at]) adds fuel. Read when the grid is built.
+			Optional [VegetationField3D] the fuel follows: worn paths ([method VegetationField3D.get_path_passes_at]) are bare, leaf litter ([method VegetationField3D.get_litter_at]) adds fuel, and its logs and fallen branches ([method VegetationField3D.get_deadwood_at]) are large wood: a log catches from the fire burning under it unless too wet, flames for about Anderson's residence time (about 5 minutes per centimetre of diameter), then smoulders, glowing, for longer. Read when the grid is built.
 		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			The wind over the fire, in metres a second, when no weather map gives one.

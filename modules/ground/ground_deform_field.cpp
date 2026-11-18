@@ -409,7 +409,13 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				rim[i] -= take;
 				volume += take * t * t;
 				if (track_fresh) {
-					fresh[i] = fresh[i] >= 2.0f ? 2.0f + (fresh[i] - 2.0f) * (1.0f - cover) : fresh[i] * (1.0f - cover);
+					if (fresh[i] >= 4.0f) {
+						const Vector2 sq = mud_band_share_wet(fresh[i]);
+						const float left = sq.x * (1.0f - cover);
+						fresh[i] = left > 1.0f / 32.0f ? mud_band(left, sq.y) : 0.0f;
+					} else {
+						fresh[i] = fresh[i] >= 2.0f ? 2.0f + (fresh[i] - 2.0f) * (1.0f - cover) : fresh[i] * (1.0f - cover);
+					}
 				}
 			} else if (a > 0.0f) {
 				const float take = MIN(rim[i], a);
@@ -425,7 +431,17 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				dent[i] -= fill;
 				rim[i] += -a - fill;
 				volume += a * t * t;
-				if (track_fresh && amount_fresh >= 2.0f) {
+				if (track_fresh && amount_fresh >= 4.0f) {
+					// Tracked mud: the film's share, the wetter of the two where it lands on another.
+					const Vector2 sq = mud_band_share_wet(amount_fresh);
+					const float laid = sq.x * cover;
+					if (fresh[i] >= 4.0f) {
+						const Vector2 o = mud_band_share_wet(fresh[i]);
+						fresh[i] = mud_band(MAX(o.x, laid), MAX(o.y, sq.y));
+					} else if (laid > 1.0f / 32.0f) {
+						fresh[i] = mud_band(laid, sq.y);
+					}
+				} else if (track_fresh && amount_fresh >= 2.0f) {
 					fresh[i] = MAX(fresh[i], 2.0f + (amount_fresh - 2.0f) * cover); // a laid mineral band: 2 plus its share
 				} else if (track_fresh && amount_fresh > 0.0f) {
 					fresh[i] = MAX(fresh[i], amount_fresh * cover);
@@ -625,7 +641,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			const float take = MIN(rim[i], delta);
 			rim[i] -= take;
 			dent[i] += delta - take;
-			if (track_fresh) {
+			if (track_fresh && fresh[i] < 4.0f) { // a tracked-mud film stays on top
 				fresh[i] = 1.0f;
 			}
 			moved += delta * area;
@@ -673,7 +689,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				const float take = MIN(rim[i], delta);
 				rim[i] -= take;
 				dent[i] += delta - take;
-				if (track_fresh) {
+				if (track_fresh && fresh[i] < 4.0f) { // a tracked-mud film stays on top
 					fresh[i] = 1.0f;
 				}
 				_mark(x, z, press_settle);
