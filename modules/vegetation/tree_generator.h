@@ -782,7 +782,9 @@ private:
 	const BarkSet &_moss_set();
 	static BarkKind _bark_kind(Preset p_preset);
 	static float _bark_tile_of(BarkKind p_kind) { return p_kind == BARK_CORK ? 1.2f : BARK_TILE; } // Metres one tile of this family covers.
-	float _bark_tile() const { return _bark_tile_of(_bark_kind(preset)); }
+	// A maritime pine's plates are the stone pine's map (BARK_PINEA) drawn larger: a hand or two
+	// across on a mature bole (docs, 18 Nov: at the stone pine's size they read as knitting).
+	float _bark_tile() const { return _bark_tile_of(_bark_kind(preset)) * (preset == PRESET_MARITIME_PINE ? 2.2f : 1.0f); }
 	static float _bark_headroom(BarkKind p_kind);
 	void _wind_flag();
 	void _bank_shear(Builder &r_b, bool p_drape) const;

@@ -324,6 +324,9 @@ private:
 	// Ruts kept across the world (mud round 3): tiles leaving a field go to disk, and come back when it returns.
 	bool keep_ruts = true;
 	String ruts_path = "user://ground_ruts";
+	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
+	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
+	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
 	GroundRutStore rut_main;
 	GroundRutStore rut_near;
 	LocalVector<Vector2i> rut_main_pending; // world tiles in the field waiting to be read in from disk
@@ -602,7 +605,9 @@ public:
 	float get_water_mud_at(Vector3 p_position) const;
 	// Lays a film of clay p_depth m thick over a disc (a tyre or a boot leaving mud on firm ground; mud round 3):
 	// dark and glossy as wet as p_wet, a pale film once it dries, and it stays until a wash takes it.
-	float track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet = 1.0f);
+	// p_print: the film's print (ground_deform.glsl mud_print_mask()): (0) a plain disc, (1, yaw) a tyre's lugs on its
+	// heading (cos yaw, -sin yaw), (2, yaw, half length, half width) a boot's sole, toe along the heading.
+	float track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet = 1.0f, Vector4 p_print = Vector4());
 	// The tracked mud film at a place (the texel under it): (its share 0..1, its wetness 0..1), (0, 0) for none.
 	Vector2 get_tracked_mud_at(Vector3 p_position) const;
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
@@ -611,6 +616,10 @@ public:
 	bool is_keeping_ruts() const { return keep_ruts; }
 	void set_ruts_path(const String &p_path);
 	String get_ruts_path() const { return ruts_path; }
+	void set_ruts_time_scale(float p_scale) { ruts_time_scale = MAX(p_scale, 0.0f); }
+	float get_ruts_time_scale() const { return ruts_time_scale; }
+	void set_ruts_away_rain(float p_rate) { ruts_away_rain = MAX(p_rate, 0.0f); }
+	float get_ruts_away_rain() const { return ruts_away_rain; }
 	void save_ruts();
 	void clear_saved_ruts();
 	int get_saved_rut_tile_count();

@@ -33,6 +33,7 @@
 #include "ground_deform_field.h"
 
 #include "core/string/ustring.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 
@@ -46,6 +47,7 @@ class GroundRutStore {
 	String prefix;
 	bool scanned = false;
 	HashSet<Vector2i> on_disk;
+	HashMap<Vector2i, double> written; // unix time each tile was written this session
 
 	String _path(Vector2i p_tile) const;
 	void _scan();
@@ -57,7 +59,10 @@ public:
 	bool has(Vector2i p_tile);
 	// Writes the field's tile (p_tx, p_tz in field tiles) at world tile p_tile, or removes its file if it is flat.
 	void store(const GroundDeformField &p_field, Vector2i p_tile, int p_tx, int p_tz);
-	bool load(Vector2i p_tile, LocalVector<uint32_t> &r_data);
+	// r_age: seconds since it was written (0 for a file without a time).
+	bool load(Vector2i p_tile, LocalVector<uint32_t> &r_data, double *r_age = nullptr);
+	// Seconds since this session wrote the tile, or -1.
+	double written_ago(Vector2i p_tile) const;
 	// Deletes every tile file of this field.
 	void clear();
 	int count();

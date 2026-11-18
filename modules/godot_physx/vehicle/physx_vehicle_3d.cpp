@@ -1225,7 +1225,10 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 			const float pressed = thrown * CLAMP(1.0f - tread / 8.0f, 0.2f, 1.0f);
 			const Vector3 up = get_global_basis().get_column(1).normalized();
 			const Vector3 contact = wn->get_global_position() - up * r;
-			ground->track_mud(contact, hw, pressed / 1700.0f / ((float)Math::PI * hw * hw), 1.0f);
+			// Through the tread's lugs, on the wheel's heading (mud round 4).
+			const Vector3 head = wn->get_global_basis().get_column(2);
+			const float yaw = Math::atan2(-head.z, head.x);
+			ground->track_mud(contact, hw, pressed / 1700.0f / ((float)Math::PI * hw * hw), 1.0f, Vector4(1.0f, yaw, 0.0f, 0.0f));
 			flung = thrown - pressed;
 			spray -= pressed / MUD_SPRAY_KG; // pressed down, not thrown up into the arch
 		}

@@ -177,8 +177,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Mud spray** (`PhysXGroundGrains3D.mud_spray`): spinning wheels fling clods of wet clay that land back in the ground.
 - **Mud splats** (`PhysXVehicle3D.add_mud_splat()`): clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.
 - **Muddy water** (`GroundSurface3D.muddy_water`): tyres and boots churn clay into standing water, which turns milky brown, drifts with the flow and settles out over minutes; tyre spray flies brown and stains the wheel arches.
-- **Tracked mud** (`GroundSurface3D.tracked_mud`): tyres and boots leaving clay lay a film of mud on firm ground that fades as they clean and dries pale in place.
-- **Ruts that stay** (`GroundSurface3D.keep_ruts`): prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next.
+- **Tracked mud** (`GroundSurface3D.tracked_mud`): tyres and boots leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.
+- **Ruts that stay** (`GroundSurface3D.keep_ruts`, `ruts_time_scale`, `ruts_away_rain`): prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate.
 - **Mud on legs** (`GroundLegMud3D`): each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water.
 - **Standing water** (`GroundSurface3D.standing_water`): rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing.
 - **Desiccation cracks** (`GroundSurface3D.desiccation_cracks`): soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.

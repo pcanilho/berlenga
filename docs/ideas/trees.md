@@ -2097,6 +2097,21 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Cork round 9 (18 Nov; docs: the crotch passed; cross fissures read as rows of square-ended
+notches, stamped glyphs, and the blocks had terraced, machined edges). Cross cracks are now zero
+lines of a two-octave noise as fine across the stem as along it, so they wander at every angle
+and length; where any family fades out its width and depth taper to a point (the masked
+distance grows) instead of stopping square. One profile runs from the fissure floor to the
+block's crown, (1 - x)^2 over 2.6 fissure half-widths: steep at the floor, rounding over the
+top, no step. The porous face is back to round 6's (normal blur 3 texels, stronger pores).
+
+Maritime pine round 5 (18 Nov; docs: every limb from one whorl at the bole top, bare spokes of an
+umbrella; a straight short bole with fine red-brown scales). The leader keeps its dominance
+(0.72 young, 0.62 old) so limbs leave at several heights, direction noise 16 and a weaker
+trunk gravitropism (0.7) make them and the bole crooked, and the clear bole runs to 55% of the
+height. Bark: the stone pine's plated map (BARK_PINEA, red-orange fissures) drawn 2.2 times
+larger, dark grey-brown plates a hand or two across.
+
 Maritime pine round 4 (18 Nov): the crown read as a see-through fan of bare limbs with tufts at the tips. Shedding 0.02 and six years of needles keep shoots inside the crown, a lighter self-shadow (0.03) lets them live, and a pipe exponent of 1.85 gives a stout bole under the heavy crown.
 
 Round 3 (18 Nov): the leader splits once into four limbs (a second split at ten years gave

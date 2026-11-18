@@ -636,10 +636,36 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   Bingham repose), rain from the weather map's history filling ruts and settling clay, and the tracked film drying,
   run in a few large stable steps on the CPU before it is seeded. Bounded per tile so a long absence settles to
   the ground's rest state rather than integrating hours.
+  **Built (ageing ruts).** Kept tiles carry the unix time they were written (file version 2). Read back, a tile is
+  stepped over the time away times `ruts_time_scale` with _age()'s own decays, which are exponential and so exact in
+  one step: tint and mud film dry by `drying_time`, relief softens at `rain_smoothing` times `ruts_away_rain` (0.1 mm/h
+  default, a temperate 900 mm a year: a 4 cm rut is about 1 cm after a month), water goes as evaporation beats that
+  rain. A tile cached more than ten world minutes comes back from disk, aged. Bench `--test=ruts` (35 days).
 - **Thrown clods leave lumps.** A landed clod over a size threshold deposits a mud depth (relief, with rim) instead
   of only the tint; mud on mud merges into the layer, on firm ground it dries and cracks as a small cake.
+  **Built (clod cakes).** The mud spray child lands its clods with `track_mud` instead of a plain deposit: the same
+  volume as relief (rim), and the clay film's tint at full share, wet, drying pale in place; on mud it merges with the
+  layer as before. Check in `--test=clog` (clay film points within 5 m grow as the clods land).
 - **Tread and sole patterns.** The film is laid through the tyre's or sole's pattern mask (the lug bars and boot
   sole already used for prints), so it reads as a tread mark rather than a smudge; share stays the coverage.
+  **Built (prints).** `track_mud(..., print)`: the amount stamp's spare vec4 carries a print kind
+  (ground_deform.glsl `mud_print_mask()`, mirrored on the CPU): a tyre's chevron lugs, 45 mm bars 9 cm apart across
+  the wheel's heading and fixed on the ground so a rolling tyre's frames agree (15% between them); a boot's sole,
+  heel and forefoot through `sole_sd()`/`sole_relief()` (no shank, no grooves), one disc per footfall with the relief
+  spread over it. The share mask sets the film; the near field's 1.56 cm texels resolve the tyre lugs, the sole's
+  grooves only soften.
+
+### Round 5: proposed (18 Nov, card posted)
+
+- **Grass flattened and torn in ruts.** The soil now shows through a meadow where ruts open it, but GrassField3D's
+  blades still stand there. Build: GroundSurface3D publishes its exposure (ground_deform_exposed()) and the blade
+  vertex shader lays blades flat by it (crushed under 2 cm, gone where the ground was turned or flooded); the
+  trample field (add_trample) takes vehicle and boot passes for the bent-over band beside a rut, recovering over
+  days. Grass is the vegetation system's: built there, fed from here.
+- **Everything kept with the ruts.** Crack state and the water's clay live on the ground lattice, not the field
+  tiles, so a kept tile comes back with its puddle clear and its cracks gone. Build: a second small file per tile
+  for the lattice cells under it (crack state, cycles, pool depth, clay kg/m2), aged the same way.
+
 
 ### Look (any stage)
 

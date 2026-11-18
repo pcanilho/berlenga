@@ -1143,6 +1143,16 @@ void fragment() {
 		}
 	}
 )";
+	// Saturated sand: below the swash's reach (some 0.4 to 0.9 m over the still sea, wandering with the waves' runup)
+	// and under the sea, beach and bar sand is wet through: darker and glossier (porous darkening, Lagarde 2013), so a
+	// bar just awash reads as the sea's wet floor and not a pale dry plate laid on the water.
+	c += R"(	{
+		float runup = mix(0.4, 0.9, tm_vn(vec3(wp.x / 23.0, 0.0, wp.z / 23.0)));
+		float soaked = w[4] * (1.0 - smoothstep(runup * 0.6, runup, wp.y - tm_sea_level));
+		albedo *= mix(1.0, 0.55, soaked);
+		rough = mix(rough, rough * 0.45, soaked);
+	}
+)";
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.
 		// Ruts, digs, puddles and tracked mud open the meadow's cover: the soil layer's own colour shows there,
