@@ -4819,6 +4819,19 @@ vec2 ground_deform_tint(vec3 p_world) {
 	// A < 0: muddy water over it, whose surface hides the turned ground's gloss (ground_deform_water_mud()).
 	return vec2(d.b, d.a < 0.0 ? 1.0 : d.a);
 }
+// How far a print, rut, dig, standing water or laid mud has opened the ground's cover (turf, a meadow's tint) to the
+// soil under it, 0 to 1: a rut deeper than a few cm, freshly turned or mud-filmed ground, a puddle. A plain step
+// presses the sward flat without breaking it.
+float ground_deform_exposed(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec4 d = ground_deform_sample(p_world.xz);
+	float relief = smoothstep(0.01, 0.04, abs(d.r));
+	float turned = smoothstep(0.03, 0.15, abs(1.0 - d.b));
+	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
+	return max(max(relief, turned), water);
+}
 // The clay the standing water carries at a world position, kg/m3 (mud round 3; the map's A under muddy water).
 float ground_deform_water_mud(vec3 p_world) {
 	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {

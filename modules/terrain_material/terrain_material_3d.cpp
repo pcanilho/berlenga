@@ -1074,6 +1074,10 @@ void fragment() {
 	if (far_blend_enabled) {
 		c += "\tvec3 tm_bare = albedo;\n\tfloat tm_far_t = 0.0;\n\tfloat tm_far_cover = 0.0;\n";
 	}
+	if (ground_deform_enabled) {
+		// The soil under the cover, for where the ground is broken open (below).
+		c += "\tvec3 tm_soil = albedo;\n\tfloat tm_exposed = 0.0;\n";
+	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
 		// Moraine till keeps its stones above the turf: the scree layer's tallest blocks stand out of the sward
@@ -1141,6 +1145,14 @@ void fragment() {
 )";
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.
+		// Ruts, digs, puddles and tracked mud open the meadow's cover: the soil layer's own colour shows there,
+		// its edge broken by noise, before the turned ground's tint (darker, wet) goes over it.
+		c += R"(	tm_exposed = ground_deform_exposed(wp);
+	if (tm_exposed > 0.0) {
+		tm_exposed = clamp(tm_exposed * (0.75 + 0.5 * tm_vn(wp * 6.0 + 11.0)), 0.0, 1.0);
+		albedo = mix(albedo, tm_soil, tm_exposed);
+	}
+)";
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
@@ -1151,6 +1163,22 @@ void fragment() {
 	if (far_blend_enabled) {
 		// Past far_start the cover map hides the sheen by its cover share, as the sward does near.
 		c += "\tspecular = mix(specular, mix(0.5, 0.1, tm_far_cover), tm_far_t);\n";
+	}
+	if (ground_deform_enabled) {
+		// The opened soil keeps its sheen (the sward hid it); standing water in ruts (mud stage 2) and the clay it
+		// carries (round 3), as BaseMaterial3D draws them (material.cpp ground_water_look()).
+		c += R"(	specular = mix(specular, 0.5, tm_exposed);
+	{
+		float gwd = ground_deform_water(wp);
+		if (gwd > 0.0) {
+			vec4 gwl = ground_water_look(gwd, ground_wet_at(wp, wn).x, ground_deform_water_mud(wp));
+			albedo *= gwl.x;
+			rough = mix(rough, gwl.z, max(gwl.y, 0.85 * gwl.w));
+			specular = mix(specular, 0.25, max(gwl.y, gwl.w));
+			sn = normalize(mix(sn, wn, max(gwl.y, 0.6 * gwl.w)));
+		}
+	}
+)";
 	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
