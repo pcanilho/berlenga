@@ -1190,13 +1190,32 @@ Color GrassField3D::crop_canopy_look(Crop p_crop, float p_stage) {
 	// A young open stand has little self-shade: its leaves keep nearer their own colour.
 	const float closed = ramp(cover, 0.3f, 0.95f);
 	// (Ripe: matched with the sun ahead and behind, the far ground turning by the tillers' bake.)
-	c = Color(grey, grey, grey).lerp(c, Math::lerp(Math::lerp(1.2f, 1.6f, closed), 0.85f, ripe));
-	c = c * Math::lerp(Math::lerp(0.8f, 0.44f, closed), 0.68f, ripe);
+	c = Color(grey, grey, grey).lerp(c, Math::lerp(Math::lerp(1.2f, 1.6f, closed), 1.15f, ripe));
+	c = c * Math::lerp(Math::lerp(0.8f, 0.44f, closed), 0.63f, ripe);
 	c.r = MAX(c.r, 0.0f);
 	c.g = MAX(c.g, 0.0f);
 	c.b = MAX(c.b, 0.0f);
 	c.a = cover;
 	return c;
+}
+
+// The canopy's top over the ground at a stage (m), for the far fields' relief: leaves only while
+// tillering, the stem extending to flag leaf and heading, the ears on top; stubble after harvest.
+float GrassField3D::crop_canopy_height(Crop p_crop, float p_stage) {
+	const CropShape cs = _crop_shape(p_crop);
+	const float s = p_stage;
+	if (s < 10.0f) {
+		return 0.0f;
+	}
+	if (s >= 99.0f) {
+		return 0.15f;
+	}
+	auto ramp = [](float p_x, float p_a, float p_b) { return CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f); };
+	const float full = cs.height + cs.ear_length * 0.8f;
+	if (s < 30.0f) {
+		return Math::lerp(0.05f, 0.22f, ramp(s, 10.0f, 30.0f)) * full / 0.9f;
+	}
+	return Math::lerp(0.22f, 1.0f, ramp(s, 30.0f, 59.0f)) * full;
 }
 
 LocalVector<GrassField3D *> GrassField3D::crop_nodes;
@@ -1315,9 +1334,8 @@ void GrassField3D::_crop_ground_step() {
 				img->set_pixel(slot, 1, Color(pl.drill_angle, pl.row_spacing, g->radius * 0.97f, g->radius * 0.37f));
 				float pitch = 0.0f;
 				float half = 0.0f;
-				if (_crop_swath(pl, pitch, half)) {
-					img->set_pixel(slot, 2, Color(pitch, half, 1.0f, 0.0f));
-				}
+				const bool swath = _crop_swath(pl, pitch, half);
+				img->set_pixel(slot, 2, Color(pitch, half, swath ? 1.0f : 0.0f, crop_canopy_height(g->crop, pl.current)));
 				slot++;
 			}
 		}
@@ -3386,6 +3404,19 @@ float crop_ground_field(vec3 world_pos, out vec4 r_look, out vec4 r_drill, out f
 	return 1.0;
 }
 
+// The far canopy's height field (crop_ground()'s relief): the stand's top, lower between the rows
+// while it is open, in clumps of tillers, with the ears' tops speckled where a pixel resolves them,
+// and cut down to the ground in the tramline lanes.
+float crop_canopy_h(vec2 q, vec2 nrow, float row_spacing, float H, float closed, float ear_f) {
+	float u = dot(q, nrow) / max(row_spacing, 0.03);
+	float rows = mix(0.55 + 0.45 * (0.5 + 0.5 * cos(u * 6.2832)), 1.0, closed * closed);
+	float clump = grass_noise(q * 1.8 + 5.3);
+	float ears = mix(0.5, grass_noise(q * 14.0 + 9.1), ear_f);
+	vec2 uv = (q - crop_ground_rect.xy) / crop_ground_rect.zw;
+	float lane = textureLod(crop_ground_map, uv, 0.0).g;
+	return H * (0.74 + 0.16 * clump + 0.16 * ears) * rows * (1.0 - 0.95 * lane);
+}
+
 vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	vec4 look;
 	vec4 drill;
@@ -3446,8 +3477,52 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	// Tramlines in a standing crop are lanes between walls of it: soil in their shade, darker
 	// than the canopy round them, not pale stripes over it.
 	far = mix(far, mix(canopy * 0.45, soil * 0.3, 0.5), wheel * look.a * mu);
+	vec4 sw = texelFetch(crop_ground_plots, ivec2(int(crop_ground_field_slot(world_pos)), 2), 0);
+	// Past the tillers' band the stand as a relief: the view ray marched back from the ground
+	// through a height field of the canopy (parallax occlusion mapping, Tatarchuk 2006; relief
+	// mapping, Policarpo et al. 2005), so a far field keeps its height: the ears' tops lit, the
+	// stems below them in their shade, rows, clumps and tramline lanes cut into it. The ground is
+	// the base, the canopy rises above it: the first point along the ray (from the eye) under the
+	// canopy's top is what the pixel sees.
+	float H = sw.w;
+	if (gone > 0.0 && H > 0.05 && crop_ground_fade.w != 0.0) {
+		vec3 eye = vec3(crop_ground_fade.x, crop_ground_fade.z, crop_ground_fade.y);
+		vec3 v = world_pos - eye;
+		float vl = length(v);
+		v /= max(vl, 1e-3);
+		float dv = -v.y;
+		if (dv > 0.004) {
+			vec2 nrow = vec2(-d.y, d.x);
+			float s_max = min(H / dv, min(30.0, vl * 0.9));
+			float ear_f = 1.0 - smoothstep(0.03, 0.12, length(fwidth(xz)));
+			float closed = clamp((look.a - 0.3) / 0.65, 0.0, 1.0);
+			const int STEPS = 24;
+			float hit_s = -1.0;
+			float prev_s = s_max;
+			float prev_d = -H;
+			for (int i = 0; i <= STEPS; i++) {
+				float st = s_max * (1.0 - float(i) / float(STEPS));
+				float dd = crop_canopy_h(xz - v.xz * st, nrow, drill.y, H, closed, ear_f) - st * dv;
+				if (dd >= 0.0) {
+					hit_s = mix(prev_s, st, prev_d / min(prev_d - dd, -1e-5));
+					break;
+				}
+				prev_s = st;
+				prev_d = dd;
+			}
+			vec3 relief = shaded * 0.45; // Down a lane to the ground in its walls' shade.
+			if (hit_s >= 0.0) {
+				vec2 q = xz - v.xz * hit_s;
+				float depth = clamp(hit_s * dv / H, 0.0, 1.0);
+				float ears = mix(0.5, grass_noise(q * 14.0 + 9.1), ear_f);
+				// Lit at the top, in the stand's own shade lower down (its light falls about as
+				// exp(-LAI) to the base).
+				relief = canopy * (0.8 + 0.4 * ears) * mix(0.28, 1.3, depth * depth);
+			}
+			far = mix(far, relief, gone);
+		}
+	}
 	// Stubble: the combine's swaths of straw down each pass, paler and fuller than the stubble.
-	vec4 sw = texelFetch(crop_ground_plots, ivec2(textureSize(crop_ground_plots, 0).y > 2 ? int(crop_ground_field_slot(world_pos)) : 0, 2), 0);
 	if (sw.z > 0.0) {
 		float um = dot(xz, vec2(-d.y, d.x));
 		float vm = dot(xz, d);

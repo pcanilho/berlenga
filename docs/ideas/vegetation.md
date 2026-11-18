@@ -552,6 +552,16 @@ Farmland plan (Paulo picked all three in order, 17 Nov 19:02Z; farmland first):
   lying straw records (plot slot + 64), and as paler stripes on the far ground. The meadow and
   VegetationField3D plants keep out of every crop node's fields (`get_crop_field_mask()`, group
   `vegetation_crop_aware`).
+- Stage 2 third part (18 Nov): plot stages moved from a uniform array to a 64x1 texture (a
+  float[64] pads to 1 KB in std140 and overflowed the path tracer's 512 B material slot, so PT
+  read every plot as green). Soil gaps close with view slant (Nilson gap fraction:
+  cover = 1 - (1 - cover)^(1/mu)). The far canopy's sun lobes come from the first crop node's own
+  far bake (`crop_ground_sun`, `crop_ground_lobe1/2`), so far and near agree against and with the
+  sun. Past the near band the crop is a relief canopy: parallax occlusion mapping (Policarpo et
+  al. 2005; Tatarchuk, "Practical parallax occlusion mapping", 2006) marches the view ray back
+  through a canopy height field (rows, clumps, ears, height by stage from
+  `crop_canopy_height()`), so tramlines read as lanes cut into the crop with shaded walls rather
+  than painted stripes, and the canopy top shades by depth into it.
 - References for rendering: Serious Sam 4, GDC 2019 ("4 million acres", crop fields as GPU
   instanced rows); Ghost of Tsushima, GDC 2021 (blades and wind); Butler and Ebert, "Procedural
   field grasses".
