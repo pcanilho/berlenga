@@ -59,6 +59,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 water; // standing water (docs/ideas/mud.md, stage 2): rain m/s, substep s, flux damping per s, evaporation m/s
 	vec4 water2; // seepage length m, compaction's share of the conductivity kept, conductivity scale, thinnest film kept m
 	vec4 water3; // runoff channels (sand): on (1), morphological factor, bed roughness m, source landing factor
+	vec4 wade; // tyres wading (mud stage 4c): count (up to 4), unused
+	vec4 wade_m[8]; // per tyre: (axle x, y, z, radius), (heading angle, unused, half width, speed m/s)
 }
 params;
 
@@ -909,6 +911,36 @@ float water_bed(int x, int z) {
 	return ground_at(p) + st.y - st.x + (params.water3.x > 0.5 ? runoff_rough(p) : 0.0);
 }
 
+// Tyres wading (mud stage 4c): a tyre in the water is an obstacle in the pipe model. Water cannot stand inside it,
+// so where it dips below a column's water the water there stands that much higher (its head), and the pipes drive it
+// out from under the tyre; as the tyre rolls on, its front keeps raising the head ahead of it, which runs off as a
+// bow wave, and the water closes in behind. Flux limited by the depth there, so volume is kept by construction. A
+// tyre seen from the side is a disc: at s along the heading from the axle its bottom is r - sqrt(r^2 - s^2) under
+// the axle.
+float wade_head(vec2 p_wp, float p_bed, float p_d) {
+	int count = min(int(params.wade.x), 4);
+	float head = 0.0;
+	float tx = texel();
+	for (int k = 0; k < count; k++) {
+		vec4 a = params.wade_m[2 * k];
+		vec4 b = params.wade_m[2 * k + 1];
+		vec2 d = p_wp - a.xz;
+		float r = a.w;
+		if (dot(d, d) >= (r + b.z + tx) * (r + b.z + tx)) {
+			continue;
+		}
+		vec2 hd = vec2(cos(b.x), sin(b.x));
+		float s = dot(d, hd);
+		if (abs(s) >= r) {
+			continue;
+		}
+		float side = 1.0 - smoothstep(b.z - 0.5 * tx, b.z + 0.5 * tx, abs(dot(d, vec2(-hd.y, hd.x))));
+		float bottom = a.y - sqrt(r * r - s * s);
+		head += side * clamp(p_bed + p_d - max(bottom, p_bed), 0.0, p_d);
+	}
+	return head;
+}
+
 void water_flux(int x, int z) {
 	int n = fn();
 	int i = z * n + x;
@@ -919,7 +951,9 @@ void water_flux(int x, int z) {
 	}
 	float dt = params.water.y;
 	float l = texel();
-	float h = water_bed(x, z) + d;
+	float bed = water_bed(x, z);
+	bool wading = params.wade.x > 0.0;
+	float h = bed + d + (wading ? wade_head(texel_world(x, z), bed, d) : 0.0);
 	bool runoff = params.water3.x > 0.5;
 	// Runoff channels: the local inertial shallow water equations (Bates, Horritt and Fewtrell 2010), each pipe's
 	// unit discharge q = f l gaining g h dt (dh / l) over the flowing depth h, with Manning's bed friction (n 0.025,
@@ -937,7 +971,9 @@ void water_flux(int x, int z) {
 			// texel's, dry), and is lost to the field; a wall there pooled the field's runoff along its edge.
 			dh = d;
 		} else {
-			dh = h - (water_bed(q.x, q.y) + water[q.y * n + q.x].w.x);
+			float qb = water_bed(q.x, q.y);
+			float qd = water[q.y * n + q.x].w.x;
+			dh = h - (qb + qd + (wading && qd > 0.0 ? wade_head(texel_world(q.x, q.y), qb, qd) : 0.0));
 		}
 		if (runoff) {
 			float qk = f[k] * l;

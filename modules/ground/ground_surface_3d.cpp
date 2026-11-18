@@ -515,6 +515,46 @@ float GroundSurface3D::get_mud_depth_at(Vector3 p_position) const {
 	return _cell_at(p_position.x, p_position.z).mud;
 }
 
+void GroundSurface3D::add_wader(int64_t p_id, const Vector3 &p_axle, float p_radius, float p_half_width, const Vector3 &p_velocity) {
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	for (int64_t k = int64_t(waders.size()) - 1; k >= 0; k--) {
+		if (waders[k].frame + 1 < frame || waders[k].id == p_id) {
+			waders.remove_at_unordered(k);
+		}
+	}
+	Wader w;
+	w.id = p_id;
+	w.axle = p_axle;
+	w.radius = p_radius;
+	w.half_width = p_half_width;
+	w.velocity = p_velocity;
+	w.frame = frame;
+	waders.push_back(w);
+}
+
+void GroundSurface3D::set_mud_color(const Color &p_color) {
+	mud_color = p_color;
+}
+
+void GroundSurface3D::set_mud_color_map(const Ref<Image> &p_map) {
+	mud_color_map = p_map;
+}
+
+Color GroundSurface3D::get_mud_color_at(Vector3 p_position) const {
+	if (mud_color_map.is_null() || mud_color_map->is_empty() || mud_map_rect.size.x <= 0.0f || mud_map_rect.size.y <= 0.0f) {
+		return mud_color;
+	}
+	const Vector2 uv = (Vector2(p_position.x, p_position.z) - mud_map_rect.position) / mud_map_rect.size;
+	if (uv.x < 0.0f || uv.y < 0.0f || uv.x > 1.0f || uv.y > 1.0f) {
+		return mud_color;
+	}
+	const int x = CLAMP((int)(uv.x * mud_color_map->get_width()), 0, mud_color_map->get_width() - 1);
+	const int y = CLAMP((int)(uv.y * mud_color_map->get_height()), 0, mud_color_map->get_height() - 1);
+	Color col = mud_color_map->get_pixel(x, y);
+	col.a = 1.0f;
+	return col;
+}
+
 void GroundSurface3D::set_mud_layer(bool p_enabled) {
 	mud_layer = p_enabled;
 	_update_cells();
@@ -3439,6 +3479,29 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 			// water at its own pace); 2 mm of bed roughness; the seepage landed in the substeps at its own rate.
 			put(15, 1.0f, runoff_time_scale / _morph_passes(), 0.002f, gain / MAX(runoff_time_scale, 1e-6f));
 		}
+		// Tyres wading (mud stage 4c): this physics frame's over the field, up to four.
+		const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+		LocalVector<const Wader *> live;
+		for (const Wader &wd : waders) {
+			if (wd.frame + 1 >= frame && r.has_point(Vector2(wd.axle.x, wd.axle.z))) {
+				live.push_back(&wd);
+			}
+		}
+		int count = 0;
+		for (const Wader *wd : live) {
+			if (count >= 4) {
+				break;
+			}
+			const Vector2 v(wd->velocity.x, wd->velocity.z);
+			const float speed = v.length();
+			if (speed < 1e-3f) {
+				continue;
+			}
+			put(17 + 2 * count, wd->axle.x, wd->axle.y, wd->axle.z, wd->radius);
+			put(18 + 2 * count, Math::atan2(v.y, v.x), 0.0f, wd->half_width, speed);
+			count++;
+		}
+		put(16, float(count), 0.0f, 0.0f, 0.0f);
 	} else if (_runoff_on_gpu()) {
 		// No water step (a still frame): the bed's relief is still drawn (the blit reads it), nothing moves.
 		put(15, 1.0f, 0.0f, 0.002f, 0.0f);
@@ -3925,6 +3988,12 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &GroundSurface3D::set_data_map);
 	ClassDB::bind_method(D_METHOD("get_data_map"), &GroundSurface3D::get_data_map);
 	ClassDB::bind_method(D_METHOD("get_mud_depth_at", "position"), &GroundSurface3D::get_mud_depth_at);
+	ClassDB::bind_method(D_METHOD("set_mud_color", "color"), &GroundSurface3D::set_mud_color);
+	ClassDB::bind_method(D_METHOD("get_mud_color"), &GroundSurface3D::get_mud_color);
+	ClassDB::bind_method(D_METHOD("set_mud_color_map", "map"), &GroundSurface3D::set_mud_color_map);
+	ClassDB::bind_method(D_METHOD("get_mud_color_map"), &GroundSurface3D::get_mud_color_map);
+	ClassDB::bind_method(D_METHOD("get_mud_color_at", "position"), &GroundSurface3D::get_mud_color_at);
+	ClassDB::bind_method(D_METHOD("add_wader", "id", "axle", "radius", "half_width", "velocity"), &GroundSurface3D::add_wader);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_yield_stress", "concentration"), &GroundSurface3D::mud_yield_stress);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_viscosity", "concentration"), &GroundSurface3D::mud_viscosity);
 	ClassDB::bind_method(D_METHOD("set_near_field", "enabled"), &GroundSurface3D::set_near_field);
@@ -4043,6 +4112,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_auto_depth", PROPERTY_HINT_RANGE, "0,2,0.05,suffix:m"), "set_mud_auto_depth", "get_mud_auto_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_wet_start", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mud_wet_start", "get_mud_wet_start");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_wet_full", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mud_wet_full", "get_mud_wet_full");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "mud_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_mud_color", "get_mud_color");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_color_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_color_map", "get_mud_color_map");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_spacing", PROPERTY_HINT_RANGE, "0.05,4,0.05,suffix:m"), "set_ground_spacing", "get_ground_spacing");

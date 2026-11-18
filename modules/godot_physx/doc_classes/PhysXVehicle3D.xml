@@ -102,6 +102,12 @@
 				How high the mud reaches on the body, in metres above the chassis box's underside: the deepest the belly has sat in mud. See [member body_mud].
 			</description>
 		</method>
+		<method name="get_body_mud_color" qualifiers="const">
+			<return type="Color" />
+			<description>
+				The colour of the clay on the body: [member GroundSurface3D.mud_color] (or its [member GroundSurface3D.mud_color_map]) where the wheels turn in mud, averaged over the last few metres driven. See [member body_mud].
+			</description>
+		</method>
 		<method name="get_body_mud_wetness" qualifiers="const">
 			<return type="float" />
 			<description>

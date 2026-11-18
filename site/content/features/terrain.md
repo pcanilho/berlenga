@@ -173,7 +173,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry.
 - **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
 - **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
-- **Mud on vehicles** (`PhysXVehicle3D.body_mud`): tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.
+- **Mud on vehicles** (`PhysXVehicle3D.body_mud`; GroundSurface3D `mud_color`, `mud_color_map`): tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first and drying pale.
 - **Mud spray** (`PhysXGroundGrains3D.mud_spray`): spinning wheels fling clods of wet clay that land back in the ground.
 - **Mud splats** (`PhysXVehicle3D.add_mud_splat()`): clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.
 - **Standing water** (`GroundSurface3D.standing_water`): rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing.
