@@ -1389,6 +1389,31 @@ lower edge 0.94 m downstream, up to the surface, in two seconds, and it
 hung straight again once out. Left: the GPU deformable path (PhysX
 surface) does not take the current.
 
+### Wind lifts ash after a fire (picked 18 Nov late, third of four)
+
+Built. Research: fresh burn scars are among the strongest wind-erosion
+dust sources (Wagenbrenner et al. 2013, 2017, Idaho rangeland fires:
+emission from winds near 5 m/s until rain crusts the ash or plants come
+back); ash loads run 0.1 to 5 kg/m2, the low end in grass (Bodi et al.
+2014). Here: each burnt cell holds the ash its burn made (6% of the fine
+fuel burnt, plus 0.15 kg/m2 under a fully burnt crown), less what has
+blown. Once cold (three burn times, as steam's "hot") and dry (intercepted
+water under 0.02 kg/kg: rain or fluid water holds it), it gives a dust
+flux from the friction velocity u* = 0.075 U (log law to 2 m over 1 cm
+roughness): White's horizontal flux Q = 2.6 rho/g u*^3 (1 - (u*t/u*)^2)
+with u*t = 0.25 m/s (some 3.5 m/s near the ground), and the lifted dust
+F = 2e-3 Q. Gusts are a noise field carried with the wind (Taylor's frozen
+turbulence, +/- 35% of U), so as u*^3 the ash comes off in travelling
+puffs. About-2 m patches feed PhysXAsh, which makes its own PhysXFlow3D
+only while ash blows (no combustion, grey, smoke_buoyancy -0.4 so it hugs
+the ground, slow fade) with eight low box sources pushing into the wind's
+direction; the Flow's own weather wind carries it. The crown ash in the
+char map thins as it blows off. Test: a 16 m tall-grass burn (about 10 kg
+of ash): 0.04 kg blown in 5 minutes at 3 m/s, 1.5 kg at 5, 8.2 at 8 and
+all of it within 3 minutes at 12 m/s; under a 10 m/s WeatherMap3D wind a
+low grey sheet streamed downwind off the scar. Left: grass ash does not
+show in the char map itself (only crown ash is drawn lighter).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "physx_ash.h"
 #include "physx_firebrands.h"
 #include "physx_steam.h"
 
@@ -92,6 +93,13 @@ private:
 	LocalVector<PhysXFlowEmitter3D *> whirl_emitters;
 	int whirls_spawned = 0;
 	bool fire_whirls = true;
+	// Ash blown off the burnt ground (docs/ideas/physx.md, "Wind lifts ash after a fire").
+	bool blowing_ash = true;
+	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell
+	LocalVector<PhysXAsh::Source> ash_sources; // this sample's blowing patches
+	PhysXAsh ash;
+	float _ash_made(uint32_t p_i) const;
+	void _blow_ash(float p_delta);
 	uint32_t whirl_seed = 0x2545f491u;
 	float _whirl_rand();
 	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes);
@@ -315,6 +323,9 @@ public:
 	int get_whirls_spawned() const { return whirls_spawned; }
 	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
 	bool is_fire_whirls() const { return fire_whirls; }
+	void set_blowing_ash(bool p_v);
+	bool is_blowing_ash() const { return blowing_ash; }
+	float get_ash_blown() const { return ash.get_total_kg(); }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }
