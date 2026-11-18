@@ -792,7 +792,7 @@ void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, cons
 		// footprint), foliage around it killed by the column, and a glow while it flames.
 		const float flame_top = MIN(t.base + (1.3f * t.top - t.base) * MIN(c / 0.4f, 1.0f), 32.0f);
 		const float glow = c < 0.9f ? 1.0f : 0.0f;
-		const float reach = 1.6f * t.radius;
+		const float reach = 1.6f * t.radius; // (> the crown's ragged edge, 1.55 radius at most)
 		int x0, z0, x1, z1;
 		const bool in0 = _world_cell(t.pos - Vector3(reach, 0, reach), x0, z0);
 		const bool in1 = _world_cell(t.pos + Vector3(reach, 0, reach), x1, z1);
@@ -816,10 +816,16 @@ void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, cons
 				const Vector3 wp = _cell_world(x, z);
 				const float d = Vector2(wp.x - t.pos.x, wp.z - t.pos.z).length();
 				const uint32_t i = z * nx + x;
-				if (d <= t.radius * 1.05f) {
+				// The crown's outline is not a circle: its lowest, longest branches reach past the mean radius
+				// unevenly, so the burnt footprint has a wavering edge (a few lobes and a finer jitter).
+				const float ang = Math::atan2(wp.z - t.pos.z, wp.x - t.pos.x);
+				const float lobe = 0.5f + 0.5f * Math::sin(3.0f * ang + 2.1f * k) * Math::cos(5.0f * ang + 0.7f * k);
+				const float edge = t.radius * (1.0f + 0.4f * lobe + 0.15f * _hash01(uint32_t(x), uint32_t(z)));
+				if (d <= edge) {
+					const float rim = 1.0f - Math::smoothstep(0.75f * edge, edge, d);
 					peak_flame[i] = MAX(peak_flame[i], flame_top);
-					crown_char[i] = MAX(crown_char[i], MIN(c * 2.5f, 1.0f));
-					crown_glow[i] = glow > 0.0f ? MAX(crown_glow[i], glow) : crown_glow[i] * 0.9f;
+					crown_char[i] = MAX(crown_char[i], MIN(c * 2.5f, 1.0f) * (0.4f + 0.6f * rim));
+					crown_glow[i] = glow > 0.0f ? MAX(crown_glow[i], glow * rim) : crown_glow[i] * 0.9f;
 				}
 				if (d <= reach) {
 					peak_scorch[i] = MAX(peak_scorch[i], MIN(1.5f * t.top * MIN(c / 0.4f, 1.0f), 48.0f));
@@ -1259,7 +1265,13 @@ void PhysXFireSpread3D::_update_maps() {
 			const float a = char_darkness * cover * MIN(0.35f + burnt * (1.2f + 0.4f * jitter), 1.0f);
 			// Under a burnt crown the needles and twigs it dropped lie as white-grey ash over the char, patchily
 			// (mineral ash's albedo is about 0.3-0.5; Roy et al. 2010).
-			const float ash = crown_char.is_empty() ? 0.0f : CLAMP(crown_char[i] * 1.5f - 0.5f, 0.0f, 1.0f) * (0.35f + 0.5f * jitter) * MIN(burnt * 1.5f, 1.0f);
+			float ash = 0.0f;
+			if (!crown_char.is_empty() && crown_char[i] > 0.0f) {
+				// Drifts and bare patches at the scale of the fallen needle mats, a finer speckle on top.
+				const Vector3 wp = _cell_world(x, z);
+				const float mats = 0.65f * _fuel_noise(wp.x / 0.7f, wp.z / 0.7f, 7u) + 0.35f * _fuel_noise(wp.x / 2.2f, wp.z / 2.2f, 8u);
+				ash = CLAMP(crown_char[i] * 1.6f - 0.6f + 0.9f * (mats - 0.5f), 0.0f, 1.0f) * (0.3f + 0.55f * jitter) * MIN(burnt * 1.5f, 1.0f);
+			}
 			char_image->set_pixel(x, z, Color(Math::lerp(0.035f, 0.36f, ash), Math::lerp(0.03f, 0.35f, ash), Math::lerp(0.027f, 0.33f, ash), a));
 			// Glow: the flaming band (heat release falls as exp(-age)), then embers that die within a few burn times,
 			// unevenly.

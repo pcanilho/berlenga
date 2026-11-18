@@ -31,7 +31,7 @@
 #include "physx_flow_3d.h"
 
 #include "flow_backend.h"
-#include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 #include "physx_flow_emitter_3d.h"
 #include "physx_flow_render_effect.h"
 
@@ -1023,15 +1023,15 @@ float PhysXFlow3D::_terrain_height_at(const Vector2i &p_node, float p_spacing, f
 	return h;
 }
 
-// The TERRAIN FLOOR: one solid box per grid cell of the ground under the region, its top laid on the plane
-// through the cell's four corner heights (tilted to the slope, so the gas meets a smooth ground, not steps),
-// a little wider than the cell so neighbours overlap and nothing leaks between them. Solids reserve no blocks.
+// The AMBIENT WIND: the weather's wind (the world contract's wind_at) laid over the region as air-only boxes in
+// layers, so smoke from every emitter leans and drifts with the same air as the grass and trees. They reserve
+// no blocks: they only couple the velocity where the gas already is.
 void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const {
 	if (!weather_wind || weather_wind_coupling <= 0.0f || !p_region.has_volume()) {
 		return;
 	}
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	if (wm == nullptr) {
+	const WorldWeather *wm = WorldContracts::weather();
+	if (wm == nullptr || !wm->has_provider()) {
 		return;
 	}
 	// Layers of at most 4 m, up to 8: the wind grows with height (log law), so a tall plume bends more aloft.
@@ -1040,7 +1040,7 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBac
 	const float lh = r.size.y / layers;
 	for (int i = 0; i < layers; i++) {
 		const Vector3 c(r.position.x + r.size.x * 0.5f, r.position.y + lh * (i + 0.5f), r.position.z + r.size.z * 0.5f);
-		const Vector3 w = wm->get_wind_at(c);
+		const Vector3 w = wm->wind_at(c);
 		FlowBackend::Emitter e;
 		e.shape = FlowBackend::Emitter::SHAPE_BOX;
 		e.origin[0] = c.x;
@@ -1060,6 +1060,9 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBac
 	}
 }
 
+// The TERRAIN FLOOR: one solid box per grid cell of the ground under the region, its top laid on the plane
+// through the cell's four corner heights (tilted to the slope, so the gas meets a smooth ground, not steps),
+// a little wider than the cell so neighbours overlap and nothing leaks between them. Solids reserve no blocks.
 void PhysXFlow3D::_gather_terrain_floor(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) {
 	if (!terrain_floor || !p_region.has_volume() || !is_inside_tree()) {
 		return;
