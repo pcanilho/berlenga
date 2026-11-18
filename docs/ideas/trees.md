@@ -2097,6 +2097,22 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Cork round 10 (18 Nov; docs: the isotropic cross breaks curled into S, F and C hooks like
+glyphs; ridge edges soft and drapey, melted plastic). Cross breaks are zero lines of one octave
+stretched across the stem, so they run nearly straight, with a slow tilt per block so they never
+line up into brick courses, fewer of them (mask raised), and fine noise jags their edges. The
+fissure profile keeps round 9's rounded tops and porous speckle but breaks over a jagged rim
+(the profile's x jittered by fine noise), so the edge crumbles instead of draping.
+
+Maritime pine round 6 (18 Nov; docs: bright terracotta strands raised over thin flat grey plates,
+like piping; a bare cage of evenly curved limbs; a foliage collar at the bole top). Its own bark
+(BARK_PINASTER): thick dark grey-brown plates (Voronoi blocks, warped, some merged) over deep
+V furrows, layered slightly on top, and only the furrow's walls and floor a dull red-brown,
+1.5/1.0/0.76 of the plate colour, far less saturated than the stone pine's orange. Moss affinity
+0.03 (at 0.1 the deep furrows filled with green). Crown: leader dominance 0.72/0.62, direction
+noise 22, apical control 0.75, gravity bending 0.2, shedding 0.01 and a weak self-shadow keep
+needles along the limbs, so no bare ribs and no disc of foliage on the bole top.
+
 Cork round 9 (18 Nov; docs: the crotch passed; cross fissures read as rows of square-ended
 notches, stamped glyphs, and the blocks had terraced, machined edges). Cross cracks are now zero
 lines of a two-octave noise as fine across the stem as along it, so they wander at every angle
