@@ -1566,6 +1566,37 @@ WeatherMap3D: the lee's own wind is 1.5 to 3 m/s (the old test saw no
 whirls there); the new one spawned 6 lee whirls in 150 s and the burn
 covered 659 m2 against 581 m2 without whirls.
 
+### Next-round options (card, 18-19 Nov night)
+
+1. Charred stumps and standing snags. A tree that snaps at a charred foot
+   should leave its stump (now the whole tree falls), and fire-killed
+   trees stand as snags that shed bark and limbs and fall over the
+   following years, faster for small and rotten stems (snag fall rates:
+   Russell et al. 2006; Dunn and Bailey 2016). Here: a stump mesh from
+   the stem's foot with the char on it, kept static; killed trees (crown
+   burnt out) lose fine branches and bark in later winds and fall by a
+   per-tree hazard, using the storm path.
+2. Rain washes the burn scar. Burnt soil turns water-repellent (Doerr et
+   al. 2000), so rain on a fresh scar runs off at once, carrying ash and
+   soil (ash slurry, "black water" in streams: Smith et al. 2011) and
+   cutting rills. Here: the fire's burnt map lowers infiltration on the
+   ground water contract, ash moves with the runoff into the mud and
+   river systems (darker, cloudier water downstream), rills on steep
+   scars through the terrain deformation layer.
+3. Smouldering ground fire. Peat and deep duff burn slowly without flame
+   (a few cm an hour, Rein 2009), with white smoke, under a front that
+   has passed or after it is out, and can rekindle a flaming fire hours
+   or days later when it reaches dry fuel (holdover fires). Here: a duff
+   layer per cell from the fuel map, a slow 2D smoulder front (Rein's
+   rates by moisture and depth), Flow smoke from it, rekindling the
+   surface fire where it meets unburnt dry fuel.
+4. Fire clouds. A strong fire's plume condenses into a pyrocumulus over it
+   (Lareau and Clements 2016) whose downdrafts gust out at the ground and
+   turn the fire. Here: the plume's heat flux and the weather's moisture
+   give a cloud base and growth (Briggs plume rise with the lifting
+   condensation level), drawn by the weather's cloud volume, and its
+   outflow added to the fire's wind.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
