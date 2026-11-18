@@ -1211,6 +1211,17 @@ func _run_tracked_tests() -> void:
 	_check("the film dries in place and stays", w0.y > 100 and w1.y > 0.7 * w0.y and w1.x < w0.x - 0.4, "wetness %.2f to %.2f over %d to %d points" % [w0.x, w1.x, w0.y, w1.y])
 
 
+# Points 4 cm apart within p_reach of p_at (XZ) carrying a tracked clay film.
+func _film_points(p_at: Vector3, p_reach: float) -> int:
+	var hits := 0
+	var n := int(p_reach / 0.04)
+	for j in range(-n, n + 1):
+		for i in range(-n, n + 1):
+			if surface.get_tracked_mud_at(p_at + Vector3(i * 0.04, 0.0, j * 0.04)).x > 0.0:
+				hits += 1
+	return hits
+
+
 # The tracked mud film's mean wetness and the points it covers, 0.6 to 1.8 m out.
 func _film_wetness() -> Vector2:
 	var sum := 0.0
@@ -1367,6 +1378,7 @@ func _run_clog_tests() -> void:
 	var shed0 := 0.0
 	for w in 4:
 		shed0 += car.get_wheel_mud_shed(w)
+	var film0 := _film_points(car.global_position, 5.0)
 	await _drive(car, 4.0, 1.0)
 	var after := 0.0
 	var shed := 0.0
@@ -1382,6 +1394,9 @@ func _run_clog_tests() -> void:
 	var mk := (mud_grains.get_airborne_volume() + mud_grains.get_deposited_volume()) if mud_grains else 0.0
 	_check("the thrown clay flies as mud clods and lands, volume kept", md > 0.5 * (shed - shed0) / 1700.0 and absf(mk - md) < 0.05 * md + 1e-5,
 			"%.1f l of clay thrown as clods, %.1f l in the air or landed (%.1f l of the dry ground thrown as sand)" % [md * 1000.0, mk * 1000.0, grains.get_dug_volume() * 1000.0])
+	# Landed on the dry ground, the clods lie there as cakes of wet clay (mud round 4): more of it filmed with clay.
+	var film1 := _film_points(car.global_position, 5.0)
+	_check("landed clods lie as cakes of clay on the dry ground", film1 > film0 + 20, "clay at %d points within 5 m, %d before the clods" % [film1, film0])
 	# Clods thrown at the parked car's side stick to it as splats (stage 4b), their volume kept.
 	car.throttle = 0.0
 	car.brake = 1.0

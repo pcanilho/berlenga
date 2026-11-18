@@ -360,6 +360,10 @@ void PhysXGroundGrains3D::_land(const Vector3 &p_at, float p_radius, double p_vo
 	}
 	if (water) {
 		ground->add_water(p_at, p_radius, (float)p_volume, water_mud);
+	} else if (mud && ground->is_tracked_mud()) {
+		// A clod lands as a cake of wet clay (mud round 4): its relief, and the clay's colour over whatever ground it
+		// hits, drying pale where it lies (the tracked-mud film, thicker).
+		ground->track_mud(p_at, p_radius, (float)(p_volume / (Math::PI * p_radius * p_radius)), 1.0f);
 	} else {
 		ground->deposit(p_at, p_radius, (float)(p_volume / (Math::PI * p_radius * p_radius)));
 	}

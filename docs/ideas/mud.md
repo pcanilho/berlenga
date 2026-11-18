@@ -643,6 +643,9 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   rain. A tile cached more than ten world minutes comes back from disk, aged. Bench `--test=ruts` (35 days).
 - **Thrown clods leave lumps.** A landed clod over a size threshold deposits a mud depth (relief, with rim) instead
   of only the tint; mud on mud merges into the layer, on firm ground it dries and cracks as a small cake.
+  **Built (clod cakes).** The mud spray child lands its clods with `track_mud` instead of a plain deposit: the same
+  volume as relief (rim), and the clay film's tint at full share, wet, drying pale in place; on mud it merges with the
+  layer as before. Check in `--test=clog` (clay film points within 5 m grow as the clods land).
 - **Tread and sole patterns.** The film is laid through the tyre's or sole's pattern mask (the lug bars and boot
   sole already used for prints), so it reads as a tread mark rather than a smudge; share stays the coverage.
 
