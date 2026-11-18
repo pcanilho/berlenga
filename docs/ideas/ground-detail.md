@@ -215,12 +215,11 @@ it).
 - In the fork: gpu-multimesh-records.md, instanced-forests.md, persistent-instances.md, open-world-geometry.md,
   displaced-hit-varyings.md, rocks.md, forest-floor.md, mud.md.
 
-## Stage 1 as built (18 Nov): an experiment, off by default
+## Stage 1 as built (18 Nov)
 
-Paulo picked the instanced approach as an experiment to assess by eye before anything reaches main
-(branch `claude/project-thread-tmrbzz`).
+Built as an experiment, assessed by eye on raster and path-traced pairs, then switched on by default (stage 2).
 
-- `RockField3D.ground_detail` (off): three more layers, `LAYER_DETAIL_PEBBLE` (4 cm to `min_size`, on talus to
+- `RockField3D.ground_detail`: three more layers, `LAYER_DETAIL_PEBBLE` (4 cm to `min_size`, on talus to
   the scree layer's own smallest), `LAYER_DETAIL_GRAVEL` (2 to 4 cm), `LAYER_DETAIL_FINE` (1 to 2 cm), in 8, 4 and
   2 m cells round the camera.
 - Amounts continue the big layers' own size laws below `min_size`: the shore's log-normal (sigma 0.35 round the
@@ -234,11 +233,35 @@ Paulo picked the instanced approach as an experiment to assess by eye before any
   `ground_detail_max_radius`), gravel 11.7 m, fine gravel 5.8 m.
 - Shapes are the field's own libraries (pebble and scree families), drawn from one of their LODs (320, 140 and 64
   triangles): a MultiMesh takes one LOD for the whole cell, so the grains carry theirs. The path tracer builds one
-  BLAS per shape and one TLAS entry per stone (the expanded MultiMesh path); nothing is built per stone.
+  BLAS per shape and one TLAS entry per stone (the expanded MultiMesh path, forced by
+  `RenderingServer.multimesh_set_rt_instanced`: a few hundred grains of one shape fall under the merged-BLAS cap,
+  which baked a copy of every grain and ran the 285k-stone scree out of memory).
 - Stones under 50 cm had a ground-blend band sized for a 50 cm stone, which covers a pebble whole. With
   `ground_detail` on, `small_linear` shrinks the band in proportion below 50 cm (unchanged above), so the pebbles and
   the grains share one dusted foot. Off, the shader is as before.
-- GPU fill (the compute pass) is not in this stage: placement runs with the field's cells on the CPU, the same
-  deterministic way. It comes with the GPU-written TLAS entries if the experiment is kept.
 
-Bench: `docs/bench/rocks --world --view=shore|scree --ground-detail [--detail-ref=1080 --detail-pixels=3]`.
+Bench: `docs/bench/rocks --world --view=shore|scree [--no-ground-detail] [--detail-ref=1080 --detail-pixels=3]`.
+
+## Stage 2 (18 Nov): on by default, placed on workers
+
+Measured on the cloud's software Vulkan, so relative only (GPU milliseconds are on the PC queue):
+
+| | without | with |
+|---|---|---|
+| Shore, path traced, memory | 5.13 GB | 5.29 GB (+101k stones) |
+| Scree, path traced, memory | 5.47 GB | 5.63 GB (+228k stones; before the instanced fix it ran out of 15 GB) |
+| Shore raster frame | 7.5 s | 12.7 s |
+| Shore path-traced frame (16 spp) | 34.5 s | 49.7 s |
+| Scree path-traced frame (16 spp) | 25.7 s | 88.9 s |
+
+A detail cell took 15 to 58 ms on the main thread (placement two thirds, packing the records a third). Stage 2
+follows the vegetation streaming: the main thread snapshots what a cell reads (the shape libraries and the coarser
+stones its grains rest on), a worker places the grains and packs each shape's MultiMesh records, and the main thread
+adds the cell with one buffer upload per shape (`ground_detail_threads`). Walking 6 m over the shingle beach
+(`--walk=6`), the ground detail's main-thread share per frame went from mean 13.9 / worst 165 ms to mean 0.2 /
+worst 1.4 ms, with the same stones. Detail cells are streamed ahead of the coarse layers' far cells (they starved
+behind them before), each once the coarse cells round it are down. A GPU compute fill remains possible but no longer
+buys main-thread time; the remaining walking spikes (p95 18 ms, worst 0.85 s) are the coarse layers' own cells, with or
+without ground detail.
+
+Next: leaf litter and twigs (vegetation), mud clods and snow clumps on the same pattern.

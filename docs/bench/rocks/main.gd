@@ -1869,6 +1869,8 @@ func _test() -> void:
 	check(sync_counts.min() > 0, "ground detail on the beach: pebbles %d, gravel %d, fine gravel %d" % sync_counts)
 	rocks.rebuild()
 	rocks.ground_detail_threads = true
+	rocks.build_budget_msec = 1000.0 # the coarse layers' cells in a few frames
+	get_viewport().disable_3d = true # frames without drawing the world (software Vulkan takes seconds a frame)
 	rocks.streaming = true
 	var frames := 0
 	var still := 0
@@ -1880,6 +1882,8 @@ func _test() -> void:
 		still = still + 1 if n == last and n > 0 and rocks.get_ground_detail_pending() == 0 else 0
 		last = n
 	rocks.streaming = false
+	get_viewport().disable_3d = false
+	rocks.build_budget_msec = 4.0
 	var thr_counts := []
 	for l in [RockField3D.LAYER_DETAIL_PEBBLE, RockField3D.LAYER_DETAIL_GRAVEL, RockField3D.LAYER_DETAIL_FINE]:
 		thr_counts.append(rocks.get_ground_detail_count(l))
