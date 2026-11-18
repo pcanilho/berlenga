@@ -10,6 +10,7 @@ def configure(env):
 def get_doc_classes():
     return [
         "GroundDust3D",
+        "GroundLegMud3D",
         "GroundStreamers3D",
         "GroundSurface3D",
     ]

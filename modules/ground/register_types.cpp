@@ -33,6 +33,7 @@
 
 #include "ground_streamers_3d.h"
 #include "ground_dust_3d.h"
+#include "ground_leg_mud_3d.h"
 #include "ground_surface_3d.h"
 
 #include "core/object/class_db.h"
@@ -45,6 +46,7 @@ void initialize_ground_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(GroundSurface3D);
 	GDREGISTER_CLASS(GroundStreamers3D);
 	GDREGISTER_CLASS(GroundDust3D);
+	GDREGISTER_CLASS(GroundLegMud3D);
 }
 
 void uninitialize_ground_module(ModuleInitializationLevel p_level) {

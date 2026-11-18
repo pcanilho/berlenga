@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GroundLegMud3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Mud on a character's boots and legs.
+	</brief_description>
+	<description>
+		Add as a child of a character. Each leg's mud line rises from the sole to the depth its foot sank in mud on the active [GroundSurface3D] (the slurry's depth, or the Bekker sinkage of a boot), flecks fly up the shin with the stride (more as the walk quickens), the mud takes the local clay's colour, dries over about five minutes and standing water washes it off below its surface.
+		It turns [BaseMaterial3D]'s Mud layer on in copies of the materials of the meshes under its parent and writes the sole and knee points each physics tick: the shader lays the mud in each shin's own frame, so it stays on the leg through the walk cycle. The leg points come from the foot and lower leg bones of a [Skeleton3D] (found by name when left empty) or from four marker nodes.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_mud">
+			<return type="void" />
+			<description>
+				Cleans both legs.
+			</description>
+		</method>
+		<method name="get_foot_bone" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The foot bone of [param leg].
+			</description>
+		</method>
+		<method name="get_knee_bone" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The lower leg bone of [param leg] (it starts at the knee).
+			</description>
+		</method>
+		<method name="get_knee_node" qualifiers="const">
+			<return type="NodePath" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The node at the knee of [param leg], used instead of bones.
+			</description>
+		</method>
+		<method name="get_mud_flecks" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The flecks thrown up [param leg]'s shin, 0 to 1.
+			</description>
+		</method>
+		<method name="get_mud_line" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				How high [param leg] is coated above its sole, in metres.
+			</description>
+		</method>
+		<method name="get_mud_wetness" qualifiers="const">
+			<return type="float" />
+			<description>
+				1 for fresh mud, falling to 0 as it dries.
+			</description>
+		</method>
+		<method name="get_sole_node" qualifiers="const">
+			<return type="NodePath" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The node at the sole of [param leg], used instead of bones.
+			</description>
+		</method>
+		<method name="set_foot_bone">
+			<return type="void" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<param index="1" name="name" type="String" />
+			<description>
+				Sets the foot bone of [param leg].
+			</description>
+		</method>
+		<method name="set_knee_bone">
+			<return type="void" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<param index="1" name="name" type="String" />
+			<description>
+				Sets the lower leg bone of [param leg].
+			</description>
+		</method>
+		<method name="set_knee_node">
+			<return type="void" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<param index="1" name="path" type="NodePath" />
+			<description>
+				Sets the node at the knee of [param leg].
+			</description>
+		</method>
+		<method name="set_sole_node">
+			<return type="void" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<param index="1" name="path" type="NodePath" />
+			<description>
+				Sets the node at the sole of [param leg].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="ankle_height" type="float" setter="set_ankle_height" getter="get_ankle_height" default="0.08">
+			How far the sole sits below the foot bone, in metres.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			If [code]false[/code], the legs stay clean.
+		</member>
+		<member name="left_foot_bone" type="String" setter="set_foot_bone" getter="get_foot_bone" default="&quot;&quot;">
+			The left foot bone. Empty: found by name ("LeftFoot", "foot.L", "foot_l").
+		</member>
+		<member name="left_knee_bone" type="String" setter="set_knee_bone" getter="get_knee_bone" default="&quot;&quot;">
+			The left lower leg bone. Empty: found by name ("LeftLeg", "calf_l", "shin.L"), else the foot bone's parent.
+		</member>
+		<member name="left_knee_node" type="NodePath" setter="set_knee_node" getter="get_knee_node" default="NodePath(&quot;&quot;)">
+			A node at the left knee, for rigs without a skeleton. Used with [member left_sole_node].
+		</member>
+		<member name="left_sole_node" type="NodePath" setter="set_sole_node" getter="get_sole_node" default="NodePath(&quot;&quot;)">
+			A node at the left sole, for rigs without a skeleton.
+		</member>
+		<member name="right_foot_bone" type="String" setter="set_foot_bone" getter="get_foot_bone" default="&quot;&quot;">
+			The right foot bone. Empty: found by name.
+		</member>
+		<member name="right_knee_bone" type="String" setter="set_knee_bone" getter="get_knee_bone" default="&quot;&quot;">
+			The right lower leg bone. Empty: found by name, else the foot bone's parent.
+		</member>
+		<member name="right_knee_node" type="NodePath" setter="set_knee_node" getter="get_knee_node" default="NodePath(&quot;&quot;)">
+			A node at the right knee, for rigs without a skeleton.
+		</member>
+		<member name="right_sole_node" type="NodePath" setter="set_sole_node" getter="get_sole_node" default="NodePath(&quot;&quot;)">
+			A node at the right sole, for rigs without a skeleton.
+		</member>
+		<member name="shin_radius" type="float" setter="set_shin_radius" getter="get_shin_radius" default="0.06">
+			The shin's radius, in metres: the mud covers the leg out to a little past it.
+		</member>
+		<member name="skeleton" type="NodePath" setter="set_skeleton" getter="get_skeleton" default="NodePath(&quot;&quot;)">
+			The [Skeleton3D] to read the legs from. Empty: the first one under the parent.
+		</member>
+	</members>
+	<constants>
+		<constant name="LEG_LEFT" value="0" enum="Leg">
+			The left leg.
+		</constant>
+		<constant name="LEG_RIGHT" value="1" enum="Leg">
+			The right leg.
+		</constant>
+	</constants>
+</class>

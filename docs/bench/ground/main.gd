@@ -93,6 +93,7 @@ var mud_test := false
 var clog_test := false
 var puddle_test := false
 var crack_test := false
+var legs_test := false
 var near_on := true
 var out := ""
 var spp := 16
@@ -132,6 +133,7 @@ func _ready() -> void:
 		elif a == "--test=clog": clog_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
+		elif a == "--test=legs": legs_test = true
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -154,6 +156,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if legs_test:
+		await _run_legs_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if clog_test:
 		await _run_clog_tests()
 		print("RESULT: %d failed" % fails)
@@ -227,6 +234,9 @@ func _ready() -> void:
 		return
 	if view == "bodymud":
 		await _build_bodymud()
+		return
+	if view == "legs":
+		await _build_legs()
 		return
 	if view == "wade":
 		await _build_wade()
@@ -877,6 +887,149 @@ func _run_mud_tests() -> void:
 
 
 # Mud on wheels and the belly (docs/ideas/mud.md, stage 3).
+# A stand-in pair of legs for GroundLegMud3D (mud stage 4e): a root, two shin cylinders and marker nodes at the
+# soles and knees, walked by moving the markers (no skeleton).
+func _make_legs(p: Vector3) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Legs"
+	root.position = p
+	# Facing +x (its +z).
+	root.rotation.y = PI / 2.0
+	add_child(root)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.16, 0.2, 0.27)
+	mat.roughness = 0.95
+	var boot_mat := StandardMaterial3D.new()
+	boot_mat.albedo_color = Color(0.09, 0.07, 0.05)
+	boot_mat.roughness = 0.6
+	for side in ["L", "R"]:
+		var leg := MeshInstance3D.new()
+		leg.name = "Shin" + side
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.055
+		cyl.bottom_radius = 0.06
+		cyl.height = 0.5
+		leg.mesh = cyl
+		leg.material_override = mat
+		root.add_child(leg)
+		# A boot on the sole: a rounded block, toe forward.
+		var boot := MeshInstance3D.new()
+		boot.name = "Boot" + side
+		var bm := CapsuleMesh.new()
+		bm.radius = 0.06
+		bm.height = 0.3
+		boot.mesh = bm
+		boot.rotation_degrees = Vector3(90, 0, 0)
+		boot.scale = Vector3(0.85, 1.0, 1.0)
+		boot.material_override = boot_mat
+		root.add_child(boot)
+		for m in ["Sole", "Knee"]:
+			var mk := Node3D.new()
+			mk.name = m + side
+			root.add_child(mk)
+	var mud := GroundLegMud3D.new()
+	mud.name = "LegMud"
+	mud.left_sole_node = NodePath("../SoleL")
+	mud.left_knee_node = NodePath("../KneeL")
+	mud.right_sole_node = NodePath("../SoleR")
+	mud.right_knee_node = NodePath("../KneeR")
+	root.add_child(mud)
+	return root
+
+
+# Walks the legs p_dist m the way they face at p_speed m/s: the stance foot on the ground, the other swung 10 cm up.
+func _walk_legs(legs: Node3D, p_dist: float, p_speed: float) -> void:
+	var dt := 1.0 / 60.0
+	var t := 0.0
+	var stride := 0.7
+	while t * p_speed < p_dist:
+		legs.position += legs.basis.z.normalized() * (p_speed * dt)
+		legs.position.y = surface.get_surface_height_at(legs.position)
+		var phase := fmod(t * p_speed / stride, 1.0)
+		for k in 2:
+			var side: String = ["L", "R"][k]
+			var ph := fmod(phase + 0.5 * k, 1.0)
+			var lift := 0.1 * sin(PI * (ph - 0.5) / 0.5) if ph > 0.5 else 0.0
+			var reach := (0.5 - ph) * stride * 0.5
+			var x := 0.1 if k == 0 else -0.1
+			(legs.get_node("Sole" + side) as Node3D).position = Vector3(x, lift, reach)
+			(legs.get_node("Knee" + side) as Node3D).position = Vector3(x, 0.5 + lift, 0.6 * reach)
+			var shin := legs.get_node("Shin" + side) as MeshInstance3D
+			shin.position = Vector3(x, 0.25 + lift, 0.8 * reach)
+			shin.rotation.x = -atan2(0.4 * reach, 0.5)
+			(legs.get_node("Boot" + side) as Node3D).position = Vector3(x, lift + 0.06, reach + 0.06)
+		await get_tree().physics_frame
+		t += dt
+
+
+func _run_legs_tests() -> void:
+	near_on = false
+	await _soil_scene("soil")
+	# Dry soil: no mud on the boots.
+	surface.moisture = 0.1
+	surface.settle(2.0, 0.5)
+	var legs := _make_legs(Vector3(-2, 0, 0))
+	var lm := legs.get_node("LegMud") as GroundLegMud3D
+	surface.follow_target = surface.get_path_to(legs)
+	await _walk_legs(legs, 3.0, 1.4)
+	var dry_line := maxf(lm.get_mud_line(GroundLegMud3D.LEG_LEFT), lm.get_mud_line(GroundLegMud3D.LEG_RIGHT))
+	_check("walking on dry soil leaves the boots clean", dry_line == 0.0 and lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT) == 0.0, "line %.1f cm" % (dry_line * 100.0))
+	# Into 15 cm of slurry: the line rises to about its depth, flecks up the shins at a walk, more at a run.
+	await _paint_mud(0.15, 0.85)
+	surface.mud_color = Color(0.62, 0.3, 0.2)
+	await _walk_legs(legs, 3.0, 1.4)
+	var l0 := lm.get_mud_line(GroundLegMud3D.LEG_LEFT)
+	var l1 := lm.get_mud_line(GroundLegMud3D.LEG_RIGHT)
+	var f_walk := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
+	print("  in %.1f cm of mud: lines %.1f and %.1f cm, flecks %.2f, wet %.2f" % [surface.get_mud_depth_at(legs.position) * 100.0, l0 * 100.0, l1 * 100.0, f_walk, lm.get_mud_wetness()])
+	_check("walking in slurry coats both boots to about its depth", l0 > 0.12 and l1 > 0.12 and l0 < 0.3 and l1 < 0.3 and lm.get_mud_wetness() == 1.0, "%.1f and %.1f cm" % [l0 * 100.0, l1 * 100.0])
+	await _walk_legs(legs, 3.0, 4.0)
+	var f_run := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
+	_check("running throws more flecks up the shins than walking", f_walk > 0.05 and f_run > f_walk + 0.2, "%.2f walking, %.2f running" % [f_walk, f_run])
+	var shin := legs.get_node("ShinL") as MeshInstance3D
+	var mat := shin.material_override as BaseMaterial3D
+	var w0: Vector4 = shin.get_instance_shader_parameter("mud_wheel0")
+	var body: Vector4 = shin.get_instance_shader_parameter("mud_body")
+	var col: Vector4 = shin.get_instance_shader_parameter("mud_color")
+	_check("the shins' material has the Mud layer on in legs mode, fed the line and the local clay", mat.mud_enabled and body.w == 1.0 and absf(w0.w - l0) < 0.001 and col.x > 1.5 * col.z,
+			"mud %s, mode %.0f, line %.1f cm, clay (%.2f, %.2f, %.2f)" % [mat.mud_enabled, body.w, w0.w * 100.0, col.x, col.y, col.z])
+
+	# Wading (seepage fills a pit in wet soil to the water table, as the puddle test): the water rinses the legs.
+	var line_before := maxf(lm.get_mud_line(GroundLegMud3D.LEG_LEFT), lm.get_mud_line(GroundLegMud3D.LEG_RIGHT))
+	var flecks_before := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
+	legs.free()
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.9, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.runoff_time_scale = 1000.0
+	surface.press_box(Vector3(0, 0, 0), Vector2(6.0, 1.2), 0.0, 0.0, 0.2)
+	surface.sync_deformation()
+	surface.settle(240.0, 0.05)
+	surface.runoff_time_scale = 0.0
+	var depth := surface.get_standing_water_at(Vector3.ZERO)
+	legs = _make_legs(Vector3(-1.5, 0, 0))
+	lm = legs.get_node("LegMud") as GroundLegMud3D
+	surface.follow_target = surface.get_path_to(legs)
+	# Muddied first on the bank in 8 cm of slurry (below the pit's water), then 5.4 m through the pit at 1 m/s.
+	await _paint_mud(0.08, 0.85)
+	surface.mud_layer = true
+	legs.position.x = -6.0
+	await _walk_legs(legs, 2.0, 1.4)
+	var coated := maxf(lm.get_mud_line(GroundLegMud3D.LEG_LEFT), lm.get_mud_line(GroundLegMud3D.LEG_RIGHT))
+	surface.mud_layer = false
+	surface.mud_max_depth = 0.0
+	legs.position.x = -2.7
+	# (The water's read back lags the mud layer's switch by a few frames.)
+	for i in 120:
+		if surface.get_standing_water_at(Vector3(-2, 0, 0.1)) > 0.1:
+			break
+		await get_tree().physics_frame
+	await _walk_legs(legs, 5.4, 1.0)
+	var rinsed := maxf(lm.get_mud_line(GroundLegMud3D.LEG_LEFT), lm.get_mud_line(GroundLegMud3D.LEG_RIGHT))
+	print("  pit water %.1f cm: line %.1f cm on the bank, %.1f cm after wading (dry-ground run gave %.1f cm, flecks %.2f)" % [depth * 100.0, coated * 100.0, rinsed * 100.0, line_before * 100.0, flecks_before])
+	_check("wading through water deeper than the mud line rinses it off", depth > coated and coated > 0.07 and rinsed < 0.5 * coated, "%.1f cm to %.1f cm in %.1f cm of water" % [coated * 100.0, rinsed * 100.0, depth * 100.0])
+
+
 func _run_clog_tests() -> void:
 	await _soil_scene("soil")
 	var o := Vector3(0.3, 0, 0.2)
@@ -1110,6 +1263,53 @@ func _build_bodymud() -> void:
 	cam.position = xf * Vector3(c[0], c[1], c[2])
 	cam.look_at(xf * Vector3(c[3], c[4], c[5]))
 	cam.fov = 45.0
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
+
+
+# Mud stage 4e: a pair of legs walked 4 m through 15 cm of slurry, stopped mid-stride (--cam=x,y,z,tx,ty,tz from the
+# legs).
+func _build_legs() -> void:
+	kind = "soil"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, 120.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 10.0
+	add_child(sun)
+	await _paint_mud(0.15, 0.85)
+	var legs := _make_legs(Vector3(-4.0, 0, 0))
+	surface.follow_target = surface.get_path_to(legs)
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	await _walk_legs(legs, 4.0, 1.6)
+	var lm := legs.get_node("LegMud") as GroundLegMud3D
+	print("legs: lines %.1f and %.1f cm, flecks %.2f and %.2f" % [lm.get_mud_line(0) * 100.0, lm.get_mud_line(1) * 100.0, lm.get_mud_flecks(0), lm.get_mud_flecks(1)])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.6, 0.45, 1.3, 0.0, 0.2, 0.0])
+	cam.position = legs.global_position + Vector3(c[0], c[1], c[2])
+	cam.look_at(legs.global_position + Vector3(c[3], c[4], c[5]))
+	cam.fov = 40.0
 	get_window().size = full
 	await _save_view(env)
 	get_tree().quit()
