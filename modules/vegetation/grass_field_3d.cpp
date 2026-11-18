@@ -30,6 +30,8 @@
 /**************************************************************************/
 
 #include "grass_field_3d.h"
+
+#include "modules/world/world_contracts.h"
 #include "tree_generator.h"
 #include "vegetation_voxel_lod.h"
 #include "vegetation_fire.h"
@@ -4352,32 +4354,7 @@ void GrassField3D::clear_trample() {
 }
 
 Vector2 GrassField3D::_mover_extent(Node3D *p_node) const {
-	if (p_node->has_meta("trample_radius")) {
-		const float r = p_node->get_meta("trample_radius");
-		return Vector2(r, r);
-	}
-	for (int i = 0; i < p_node->get_child_count(); i++) {
-		CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(p_node->get_child(i));
-		if (!cs || cs->is_disabled() || cs->get_shape().is_null()) {
-			continue;
-		}
-		const Ref<Shape3D> shape = cs->get_shape();
-		const float sc = cs->get_global_basis().get_scale().x;
-		if (const SphereShape3D *sp = Object::cast_to<SphereShape3D>(shape.ptr())) {
-			return Vector2(sp->get_radius(), sp->get_radius()) * sc;
-		}
-		if (const CapsuleShape3D *cp = Object::cast_to<CapsuleShape3D>(shape.ptr())) {
-			return Vector2(cp->get_radius(), cp->get_height() * 0.5f) * sc;
-		}
-		if (const CylinderShape3D *cy = Object::cast_to<CylinderShape3D>(shape.ptr())) {
-			return Vector2(cy->get_radius(), cy->get_height() * 0.5f) * sc;
-		}
-		if (const BoxShape3D *bx = Object::cast_to<BoxShape3D>(shape.ptr())) {
-			const Vector3 s = bx->get_size() * 0.5f * sc;
-			return Vector2(MAX(s.x, s.z), s.y);
-		}
-	}
-	return Vector2(trample_radius, trample_radius);
+	return WorldContracts::body_extent(p_node, trample_radius);
 }
 
 void GrassField3D::_trample_step(double p_delta) {

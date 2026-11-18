@@ -233,6 +233,10 @@ public:
 	// Contact bodies: the world_contact group, and how big and heavy a body is (metas trample_radius,
 	// touch_radius, ground_* / snow_*, deform_wheel_*, else its first collision shape).
 	static WorldContactBody describe_body(const Node3D *p_node);
+	// The body's footprint for what it bends and pushes aside (grass, plants, water): (radius, half height) from
+	// its trample_radius meta, else its first enabled collision shape (sphere, capsule, cylinder, box), else
+	// p_fallback for both.
+	static Vector2 body_extent(const Node3D *p_node, float p_fallback);
 	Dictionary describe_body_bind(Node *p_node) const;
 
 	WorldContracts();

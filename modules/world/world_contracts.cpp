@@ -437,6 +437,35 @@ WorldContactBody WorldContracts::describe_body(const Node3D *p_node) {
 	return b;
 }
 
+Vector2 WorldContracts::body_extent(const Node3D *p_node, float p_fallback) {
+	if (p_node->has_meta(SNAME("trample_radius"))) {
+		const float r = p_node->get_meta(SNAME("trample_radius"));
+		return Vector2(r, r);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		const CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(p_node->get_child(i));
+		if (!cs || cs->is_disabled() || cs->get_shape().is_null()) {
+			continue;
+		}
+		const Ref<Shape3D> shape = cs->get_shape();
+		const float sc = cs->get_global_basis().get_scale().x;
+		if (const SphereShape3D *sp = Object::cast_to<SphereShape3D>(shape.ptr())) {
+			return Vector2(sp->get_radius(), sp->get_radius()) * sc;
+		}
+		if (const CapsuleShape3D *cp = Object::cast_to<CapsuleShape3D>(shape.ptr())) {
+			return Vector2(cp->get_radius(), cp->get_height() * 0.5f) * sc;
+		}
+		if (const CylinderShape3D *cy = Object::cast_to<CylinderShape3D>(shape.ptr())) {
+			return Vector2(cy->get_radius(), cy->get_height() * 0.5f) * sc;
+		}
+		if (const BoxShape3D *bx = Object::cast_to<BoxShape3D>(shape.ptr())) {
+			const Vector3 s = bx->get_size() * 0.5f * sc;
+			return Vector2(MAX(s.x, s.z), s.y);
+		}
+	}
+	return Vector2(p_fallback, p_fallback);
+}
+
 Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 	const WorldContactBody b = describe_body(Object::cast_to<Node3D>(p_node));
 	Dictionary d;

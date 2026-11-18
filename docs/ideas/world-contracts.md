@@ -161,8 +161,13 @@ Today systems reach into each other through `X::get_active()`, `#include "module
 (15 files), vegetation → weather (8), vegetation → terrain data map (5), snow → weather (4), rocks → terrain
 generator (3), PhysX → ground (3), snow → ground deform (3), and about 15 single ones. The order:
 
-1. `modules/world` with the registry, the weather and contact contracts, and stubs. Producers register.
-2. Weather consumers move to `WorldContracts::weather()` (mechanical: same names), module by module.
-3. The contact reader replaces the four copies of the body-size code (grass, ground, water, plants).
+1. `modules/world` with the registry, the weather and contact contracts, and stubs. Producers register. Done 18 Nov
+   (weather, water, contacts).
+2. Weather consumers move to `WorldContracts::weather()`, module by module. Done 18 Nov: PhysX (fire, firebrands,
+   burnables, cloth, hair, wetness, vehicles, waterfalls, cave mist, rock dust) and rockfall. Left: ground, snow,
+   vegetation, which also read richer WeatherMap3D state (season, snapshots, shader code).
+3. The contact reader replaces the copies of the body-size code: done 18 Nov for grass, the plants' trample field,
+   pollen and water (`WorldContracts::body_extent`); the ground keeps its own reader (mass, wheels) until mud and
+   sand move it onto `describe_body`.
 4. Ground, snow, water, canopy and fire contracts, then their consumers.
 5. Each bench gets its stubs.
