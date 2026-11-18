@@ -1566,6 +1566,31 @@ func _run_rut_guidance_tests() -> void:
 	_check("centred in a rut, no push; walls as high as the rut is deep", absf(centred.x) < 0.05 and centred.y > 0.04 and centred.z > 0.04, "slope %.2f, walls %.1f and %.1f cm" % [centred.x, centred.y * 100.0, centred.z * 100.0])
 	_check("half out of it, the tilt pushes it back in", right.x > 0.1 and left.x < -0.1, "slope %.2f right, %.2f left" % [right.x, left.x])
 	_check("on unmarked ground, nothing", absf(flat.x) < 0.01 and flat.y < 0.005 and flat.z < 0.005, "%s" % flat)
+	if ClassDB.class_exists("PhysXVehicle3D"):
+		# A car driven straight with its wheels 15 cm inside a pair of old ruts: the walls under the treads tip it
+		# into them (it drifts sideways), where on unmarked soil it keeps its line.
+		var drift := []
+		for ruts in [false, true]:
+			await _soil_scene("soil")
+			surface.moisture = 0.3
+			surface.mud_layer = false
+			if ruts:
+				for side in [-1.0, 1.0]:
+					for k in 30:
+						var q := Vector3(side * 0.8 + 0.15, 0, -1.0 + 0.45 * k)
+						var g := surface.get_surface_height_at(q)
+						surface.press_box(q, Vector2(0.3, 0.5), 0.0, g - 0.12, 0.0)
+				for i in 40:
+					await get_tree().physics_frame
+				surface.sync_deformation()
+			var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+			surface.follow_target = surface.get_path_to(car)
+			var dr: Array = await _drive(car, 4.0, 0.4)
+			print("  (%.1f m driven, sinkage %.1f cm)" % [dr[0], dr[1] * 100.0])
+			drift.append(car.global_position.x)
+			car.queue_free()
+		print("  a car driven straight: %.1f cm sideways on unmarked soil, %.1f cm with its wheels 15 cm inside old ruts" % [drift[0] * 100.0, drift[1] * 100.0])
+		_check("old ruts pull the wheels into them", drift[1] - drift[0] > 0.05 and absf(drift[0]) < 0.05, "%.1f cm, %.1f cm unmarked" % [drift[1] * 100.0, drift[0] * 100.0])
 	near_on = true
 
 

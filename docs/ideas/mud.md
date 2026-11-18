@@ -806,8 +806,12 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   outside it over the tread's floor). A tyre resting across a rut's wall is pushed down the tilt by load x slope
   (rut wandering; the normal force resolved on a slope, as on a road's camber); one moving sideways shoves the
   wall as a bulldozed face that high. Checks in `--test=frost`: centred no push, walls 7.6 cm over a 6 cm rut,
-  12 cm off-centre a slope of 0.36 back in. The vehicle's call waits for the world-links grip change in
-  physx_vehicle_3d.cpp (the split: it owns the firm-ground branch, the mud thread the soft force block).
+  12 cm off-centre a slope of 0.36 back in. *Vehicle side (18 Nov):* PhysXVehicle3D's soil step reads the guidance
+  under each soft wheel along its lateral direction; in the substep the wheel takes -load x slope sideways (capped at
+  0.6) and its side bulldozing acts on the wall's height when it slides into one, not only its own sinkage (the soft
+  force block; also fixed: side bulldozing had sat inside the rolling-resistance branch, so a wheel not rolling never
+  felt it). Check in `--test=frost`: a car driven straight with its wheels 15 cm inside 12 cm ruts drifts 15 cm into
+  them over 4 s, none on unmarked soil; it also drives 7.9 m in the old ruts against 0.5 m bogging on fresh soil.
 - **Mud holds boots.** Feet in sticky, saturated mud are held by suction (the pore pressure under a lifting sole,
   as in breakout force of objects from seabed mud): a GroundLegMud3D or character foot slows to lift, with a sound
   hook, and loses a boot past a limit.
