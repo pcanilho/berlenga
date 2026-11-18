@@ -295,6 +295,7 @@ private:
 	Ref<ImageTexture> ripple_texture;
 	WorkerThreadPool::TaskID ripple_task = WorkerThreadPool::INVALID_TASK_ID;
 	LocalVector<float> ripple_grown;
+	Vector2 ripple_grown_k;
 	Vector2 ripple_grow_wind;
 	int ripple_steps = 0;
 	static void _ripple_grow_task(void *p_self);

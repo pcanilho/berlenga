@@ -7,6 +7,7 @@ extends Node3D
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
 #   --map=path.png    the placement maps of every stand in one image
+#   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --inside          with --plot: the view from inside the stand, 70 m deep
@@ -638,30 +639,70 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				csp = sp
 				break
 		var found := false
-		if csp != null:
-			for r in range(0, 60, 4):
-				for a in 32:
-					var p := Vector3(r * cos(a * PI / 16), 0, r * sin(a * PI / 16))
-					var c: Vector3 = csp.get_coupe_at(p)
-					if c.x > 1 or c.z > 0.5 or c.y < 3.0 or c.y > 8.0:
+		for need_std in [true, false]:
+			if csp != null and not found:
+				for r in range(0, 60, 4):
+					for a in 32:
+						var p := Vector3(r * cos(a * PI / 16), 0, r * sin(a * PI / 16))
+						var c: Vector3 = csp.get_coupe_at(p)
+						if c.x > 1 or c.z > 0.5 or c.y < 3.0 or c.y > 8.0:
+							continue
+						for k in 16:
+							var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
+							var e := p - d * 8.0
+							var q: Vector3 = csp.get_coupe_at(p + d * (c.y + 6.0))
+							var ce: Vector3 = csp.get_coupe_at(e)
+							if q.x >= 8 and q.z < 0.5 and ce.x <= 1 and ce.z < 0.5 and not found:
+								# A standard (the stand's first species, oak) 5-12 m out and in view.
+								var std_ok := false
+								for sp_pos in f.get_placements(0):
+									var o := Vector3(sp_pos.x, 0, sp_pos.z) - e
+									if o.length() > 4.0 and o.length() < 15.0 and o.normalized().dot(d) > 0.8:
+										std_ok = true
+								if need_std and not std_ok:
+									continue
+								found = true
+								e.y = valley.get_height(e) + 1.7
+								cam.position = e
+								var tgt := p + d * (c.y + 6.0)
+								tgt.y = valley.get_height(tgt) + 2.5
+								cam.look_at(tgt)
+								cam.fov = 55.0
+								cam.far = 120.0
+								print("edge view from ", e, " to ", tgt, " ages ", c.x, " -> ", q.x)
+		if args.has("standard") and csp != null:
+			# --edge --standard: an oak standard 8 m off in a young coupe, an older one behind it.
+			var best := -1.0
+			var stds := PackedVector3Array()
+			for si in 3:
+				stds.append_array(f.get_placements(si))
+			for sp_pos in stds:
+				for k in 16:
+					var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
+					var e: Vector3 = Vector3(sp_pos.x, 0, sp_pos.z) - d * 8.0
+					var ce: Vector3 = csp.get_coupe_at(e)
+					var cb: Vector3 = csp.get_coupe_at(Vector3(sp_pos.x, 0, sp_pos.z) + d * 12.0)
+					if ce.x > 7 or ce.z > 0.5 or absf(e.x) > 75 or absf(e.z) > 75:
 						continue
-					for k in 16:
-						var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
-						var e := p - d * 8.0
-						var q: Vector3 = csp.get_coupe_at(p + d * (c.y + 6.0))
-						var ce: Vector3 = csp.get_coupe_at(e)
-						if q.x >= 8 and q.z < 0.5 and ce.x <= 1 and ce.z < 0.5 and not found:
-							found = true
-							e.y = valley.get_height(e) + 1.7
-							cam.position = e
-							var tgt := p + d * (c.y + 6.0)
-							tgt.y = valley.get_height(tgt) + 2.5
-							cam.look_at(tgt)
-							cam.fov = 55.0
-							cam.far = 120.0
-							print("edge view from ", e, " to ", tgt, " ages ", c.x, " -> ", q.x)
+					var score := cb.x - ce.x - (0.0 if ce.x <= 3 else 5.0)
+					if score > best:
+						best = score
+						e.y = valley.get_height(e) + 1.7
+						cam.position = e
+						cam.look_at(Vector3(sp_pos.x, valley.get_height(sp_pos) + 4.0, sp_pos.z))
+						cam.fov = 60.0
+						cam.far = 120.0
+						found = true
+			print("standard view from ", cam.position, " score ", best)
 		if not found:
 			print("no coupe edge found")
+		for si in biome.species.size():
+			for pp in f.get_placements(si):
+				var o: Vector3 = pp - cam.position
+				o.y = 0
+				var nm: String = biome.species[si].resource_name
+				if o.length() < 25.0 and not nm.begins_with("Hazel") and not nm.contains("sticks") and o.normalized().dot(-cam.global_transform.basis.z * Vector3(1, 0, 1)) > 0.6:
+					print("in view %.1f m: %s" % [o.length(), biome.species[si].resource_name])
 	var cv := OS.get_environment("CAM").split(",")
 	if cv.size() >= 6:
 		# CAM="x,y,z,lx,ly,lz[,fov]" overrides the view (eye height over the ground at x, z).

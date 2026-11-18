@@ -18682,12 +18682,13 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			// trees.
 			timber_stems = true;
 			Ref<PlantSpecies> oak = _stand_species(PRESET_OAK, false, p_variants);
-			oak->set_density(0.35f);
-			oak->set_spacing(oak->get_spacing() * 1.4f);
+			// Open-grown spacing is a crown apart (about 28 m for oak): at full density that is
+			// a dozen oaks a hectare, with ash and tellers 20-30 standards in all (Rackham 2006:
+			// a dozen to thirty; docs, 18 Nov: at 0.35 and 1.4x spacing, four a hectare).
+			oak->set_density(1.0f);
 			list.push_back(oak);
 			Ref<PlantSpecies> ash = _stand_species(PRESET_ASH, false, p_variants);
-			ash->set_density(0.3f);
-			ash->set_spacing(ash->get_spacing() * 1.4f);
+			ash->set_density(0.6f);
 			ash->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			ash->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(ash);
@@ -18760,8 +18761,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			}
 			timber_stems = true;
 			Ref<PlantSpecies> teller = _stand_species(PRESET_OAK, false, p_variants);
-			teller->set_density(0.2f);
-			teller->set_spacing(teller->get_spacing() * 1.4f);
+			teller->set_density(0.5f);
 			teller->set_scale_range(Vector2(0.45f, 0.7f));
 			teller->set_patch_scale(50.0f);
 			teller->set_patch_seed(patch_seed + 11);

@@ -57,6 +57,9 @@ public:
 	LocalVector<float> dent;
 	LocalVector<float> owed; // m3 pushed into the rim and not yet shed, for the owner
 	LocalVector<uint8_t> changed; // rim or dent moved by a millimetre or more at the last update
+	LocalVector<uint8_t> wait; // looks left before a cell new to the field counts growth (its tiles still arriving)
+	Rect2 last_inside;
+	int arrival_looks = 6; // a field read back from the GPU can fill some frames after it moves back (a look is 1/6 s)
 
 	// A texel of p_values (the field's rim or dent) nearest p_x, p_z; 0 outside the field.
 	static float texel_at(const GroundDeformField &p_field, const LocalVector<float> &p_values, float p_x, float p_z) {
@@ -108,6 +111,8 @@ public:
 		dent.clear();
 		owed.clear();
 		changed.clear();
+		wait.clear();
+		last_inside = Rect2();
 	}
 
 	// Looks at the window of p_radius round p_center (cells of p_cell) and lists the cells whose rim grew more than
@@ -122,6 +127,8 @@ public:
 		const bool fresh = n2 != n || p_cell != cell;
 		if (fresh || o2 != origin) {
 			LocalVector<float> rim2, dent2, owed2;
+			LocalVector<uint8_t> wait2;
+			wait2.resize(n2 * n2);
 			rim2.resize(n2 * n2);
 			dent2.resize(n2 * n2);
 			owed2.resize(n2 * n2);
@@ -134,11 +141,13 @@ public:
 						rim2[i] = rim[j];
 						dent2[i] = dent[j];
 						owed2[i] = owed[j];
+						wait2[i] = wait[j];
 					} else {
 						const float cx = (o2.x + x + 0.5f) * p_cell, cz = (o2.y + z + 0.5f) * p_cell;
 						rim2[i] = rim_at(cx, cz);
 						dent2[i] = dent_at(cx, cz);
 						owed2[i] = 0.0f;
+						wait2[i] = 0; // the field's own arrivals are waited for below
 					}
 				}
 			}
@@ -148,15 +157,33 @@ public:
 			n = n2;
 			cell = p_cell;
 			origin = o2;
+			wait = wait2;
 			changed.resize(n * n);
 		}
 		const float r2 = p_radius * p_radius;
+		const Rect2 inside = main_field->rect();
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
 				const int i = z * n + x;
 				const float cx = (origin.x + x + 0.5f) * cell, cz = (origin.y + z + 0.5f) * cell;
+				if (!inside.has_point(Vector2(cx, cz))) {
+					// The field is not here (it moved away): unknown, not flat, so its return is no new rim.
+					changed[i] = 0;
+					continue;
+				}
+				if (!last_inside.has_point(Vector2(cx, cz))) {
+					wait[i] = uint8_t(arrival_looks); // just came onto the field
+				}
 				const float r = rim_at(cx, cz);
 				const float d = dent_at(cx, cz);
+				if (wait[i] > 0) {
+					// Its tiles may still be arriving: follow them without counting growth.
+					wait[i]--;
+					rim[i] = r;
+					dent[i] = d;
+					changed[i] = 0;
+					continue;
+				}
 				const float grew = r - rim[i];
 				changed[i] = Math::abs(grew) + Math::abs(d - dent[i]) > 0.001f;
 				rim[i] = r;
@@ -170,6 +197,7 @@ public:
 				}
 			}
 		}
+		last_inside = inside;
 		// Away from the print: down the dent's slope over the neighbouring cells.
 		for (Grown &g : r_grown) {
 			const int x = g.index % n, z = g.index / n;
