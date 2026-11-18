@@ -45,6 +45,7 @@ void initialize_world_module(ModuleInitializationLevel p_level) {
 	}
 	GDREGISTER_CLASS(WorldWeather);
 	GDREGISTER_CLASS(WorldWater);
+	GDREGISTER_CLASS(WorldGround);
 	GDREGISTER_CLASS(WorldFire);
 	GDREGISTER_CLASS(WorldContracts);
 	world_contracts = memnew(WorldContracts);

@@ -56,7 +56,7 @@ class WeatherMap3D;
 // crowns drop litter; bare rock does not print. The field is drawn as a patch with the ground's own
 // material, and the terrain, drawn with the same material (BaseMaterial3D ground_deform_enabled, or
 // get_ground_deform_shader_code() in a shader), is lowered under it, so both renderers trace the prints.
-class GroundSurface3D : public Node3D, public WorldWaterProvider {
+class GroundSurface3D : public Node3D, public WorldWaterProvider, public WorldGroundProvider {
 	GDCLASS(GroundSurface3D, Node3D);
 
 public:
@@ -745,6 +745,18 @@ public:
 	float get_standing_water_at(Vector3 p_position) const;
 	// The water contract (WorldWater): standing water on the ground, -INF where there is none.
 	float contract_water_height_at(const Vector3 &p_position) const override;
+	// The ground contract (WorldGround, docs/ideas/world-contracts.md).
+	float contract_ground_height_at(const Vector3 &p_position) const override { return get_surface_height_at(p_position); }
+	WorldGroundSoil contract_ground_soil_at(const Vector3 &p_position) const override;
+	float contract_ground_standing_water_at(const Vector3 &p_position) const override { return get_standing_water_at(p_position); }
+	Vector2 contract_ground_ice_at(const Vector3 &p_position) const override { return get_ice_at(p_position); }
+	Vector3 contract_ground_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
+	float contract_ground_dent_at(const Vector3 &p_position) const override { return get_dent_at(p_position); }
+	float contract_ground_rim_at(const Vector3 &p_position) const override { return get_rim_at(p_position); }
+	Vector2 contract_ground_runoff_at(const Vector3 &p_position) const override { return get_runoff_at(p_position); }
+	float contract_ground_mud_depth_at(const Vector3 &p_position) const override { return get_mud_depth_at(p_position); }
+	Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const override { return get_needle_ice_at(p_position); }
+	Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const override { return get_rut_guidance(p_contact, p_lateral, p_half_width); }
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
 	void set_puddle_ice(bool p_enabled);

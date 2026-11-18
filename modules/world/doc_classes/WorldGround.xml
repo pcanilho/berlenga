@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldGround" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The ground contract: the deformable ground's surface, soil and what lies on it.
+	</brief_description>
+	<description>
+		Read it through [method WorldContracts.get_ground]. The provider is the active [GroundSurface3D]; with none, every query returns its default (firm ground, nothing on it, the height from the first physics surface under the point). A test sets a stub with [method WorldContracts.set_ground]: a script extending this class that overrides the virtual methods it needs; the rest fall back to the real ground. See docs/ideas/world-contracts.md.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_dent_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method dent_at].
+			</description>
+		</method>
+		<method name="_frost_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method frost_at].
+			</description>
+		</method>
+		<method name="_height_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method height_at].
+			</description>
+		</method>
+		<method name="_ice_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method ice_at].
+			</description>
+		</method>
+		<method name="_mud_depth_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method mud_depth_at].
+			</description>
+		</method>
+		<method name="_needle_ice_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method needle_ice_at].
+			</description>
+		</method>
+		<method name="_rim_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method rim_at].
+			</description>
+		</method>
+		<method name="_runoff_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method runoff_at].
+			</description>
+		</method>
+		<method name="_rut_guidance_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="contact" type="Vector3" />
+			<param index="1" name="lateral" type="Vector3" />
+			<param index="2" name="half_width" type="float" />
+			<description>
+				A stub's [method rut_guidance_at].
+			</description>
+		</method>
+		<method name="_soil_at" qualifiers="virtual const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method soil_at]: the same keys.
+			</description>
+		</method>
+		<method name="_standing_water_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method standing_water_at].
+			</description>
+		</method>
+		<method name="dent_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the ground is pressed down at [param position] (ruts, prints), in metres. Default 0.
+			</description>
+		</method>
+		<method name="frost_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The frozen ground: the thawed layer on top (m), the frost's depth (m) and how weakened a thaw has left it (0 to 1). Default zero.
+			</description>
+		</method>
+		<method name="has_provider" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] when a ground is live.
+			</description>
+		</method>
+		<method name="height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The ground's deformed surface under [param position], in metres. With no ground, the first physics surface under the point, else -INF.
+			</description>
+		</method>
+		<method name="ice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Ice on standing water: its thickness (m) and the share broken into plates. Default zero.
+			</description>
+		</method>
+		<method name="mud_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of soft slurry over firmer soil, in metres. Default 0.
+			</description>
+		</method>
+		<method name="needle_ice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Needle ice: its height (m) and the loose crumbs its thaw left (0 to 1). Default zero.
+			</description>
+		</method>
+		<method name="rim_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the ground is raised at [param position] (berms, laid soil), in metres. Default 0.
+			</description>
+		</method>
+		<method name="runoff_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water running over the ground: its depth (m) and speed (m/s). Default zero.
+			</description>
+		</method>
+		<method name="rut_guidance_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="contact" type="Vector3" />
+			<param index="1" name="lateral" type="Vector3" />
+			<param index="2" name="half_width" type="float" />
+			<description>
+				Ruts under a tyre at [param contact]: the cross slope of the ground's deformation along [param lateral] (rising towards it), and the rut wall's height beside the tread on its -[param lateral] and +[param lateral] sides (m), for a tread [param half_width] m either side. Default zero.
+			</description>
+		</method>
+		<method name="soil_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The soil: [code]soft[/code] (false for firm ground, rock or no soil), [code]cohesion[/code] (kPa), [code]friction_angle[/code] (degrees) and [code]stickiness[/code] (0 to 1, how wet clay clings). Default firm.
+			</description>
+		</method>
+		<method name="standing_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water standing on the ground (ruts, prints, puddles), in metres. Default 0.
+			</description>
+		</method>
+	</methods>
+</class>

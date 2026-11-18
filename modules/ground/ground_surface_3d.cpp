@@ -795,6 +795,16 @@ void GroundSurface3D::set_standing_water(bool p_enabled) {
 	}
 }
 
+WorldGroundSoil GroundSurface3D::contract_ground_soil_at(const Vector3 &p_position) const {
+	const GroundSoil g = get_soil(p_position);
+	WorldGroundSoil s;
+	s.soft = g.soft;
+	s.cohesion = g.cohesion;
+	s.friction_angle = Math::rad_to_deg(Math::atan(g.tan_phi));
+	s.stickiness = g.stickiness;
+	return s;
+}
+
 float GroundSurface3D::contract_water_height_at(const Vector3 &p_position) const {
 	const float water = get_standing_water_at(p_position);
 	return water > 0.002f ? get_surface_height_at(p_position) + water : -Math::INF;
@@ -3765,6 +3775,9 @@ void GroundSurface3D::_notification(int p_what) {
 				active = this;
 			}
 			WorldContracts::register_water(this);
+			if (active == this) {
+				WorldContracts::register_ground(this);
+			}
 			_ensure_children();
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
@@ -3777,6 +3790,7 @@ void GroundSurface3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_water(this);
+			WorldContracts::unregister_ground(this);
 			set_physics_process_internal(false);
 			if (_ruts_on()) {
 				save_ruts();
@@ -3802,6 +3816,7 @@ void GroundSurface3D::_notification(int p_what) {
 			const double delta = get_physics_process_delta_time();
 			if (!active) {
 				active = this;
+				WorldContracts::register_ground(this);
 			}
 			_follow(_follow_position());
 			if (!pending_puddles.is_empty()) {
@@ -5832,6 +5847,7 @@ GroundSurface3D::GroundSurface3D() {
 }
 
 GroundSurface3D::~GroundSurface3D() {
+	WorldContracts::unregister_ground(this);
 	if (active == this) {
 		active = nullptr;
 	}
