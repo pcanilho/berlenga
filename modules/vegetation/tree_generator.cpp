@@ -1686,8 +1686,13 @@ void TreeGenerator::_grow_year(int p_year) {
 			}
 			// A cut stem's root system feeds a few poles: they shoot up 1-3 m a year (coppice
 			// regrowth; Rackham 2006).
-			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= 4) {
-				buds[bi].vigor *= 1.6f;
+			// A coppice stool's poles keep that lead longer: hazel rods reach 2-3 m in three years
+			// and 4-6 m at a seven to ten year cut (Buckley 1992; Harmer and Howe, The Silviculture
+			// and Management of Coppice Woodlands, Forestry Commission 2003); at the pollards' 1.6 for
+			// four years they made 3 m in ten.
+			const bool stool = cut_height > 0.0f && cut_height <= 0.5f;
+			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= (stool ? 10 : 4)) {
+				buds[bi].vigor *= stool ? (p_year - last_cut_year <= 4 ? 2.0f : 1.4f) : 1.6f;
 			}
 			if (wind_exposure > 0.0f && buds[bi].terminal && on.order == 0) {
 				// Exposed trees stay short: the leader's shoots are shortened by the wind's drying
@@ -2613,11 +2618,11 @@ bool TreeGenerator::_in_envelope(const Vector3 &p_point) const {
 		return false;
 	}
 	// Rounded edges (a flail leaves no sharp arris: docs, 18 Nov, a segment's end showed a hard
-	// top corner). The ends along the line round off too, less: in a row the next segment, a
+	// top corner). The ends along the line round off as much: in a row the next segment, a
 	// little longer than its step, covers them; at a gateway or a run's end they show.
 	// A rounded box, as a signed distance would round it (Quilez, rounded box SDF).
 	const float R = MIN(0.35f, 0.4f * half);
-	const float Rx = 0.6f * R;
+	const float Rx = R;
 	const float dx = MIN(p_point.x - envelope.position.x, envelope.position.x + envelope.size.x - p_point.x) + wander;
 	const float ey = MAX(R - dy, 0.0f), ez = MAX(R - dz, 0.0f);
 	if (dy < R && dz < R && ey * ey + ez * ez > R * R) {
@@ -3555,6 +3560,10 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 	m->set_backlight(c * 0.6f);
 	m->set_roughness(needles ? 0.5f : 0.75f);
+	// Wet while the canopy holds the rain it caught, with the water beaded on the leaves (docs/ideas/rain.md, step 5).
+	m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+	m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
+	m->set_wetness_canopy(true);
 	if (!needles) {
 		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
 		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
@@ -4437,13 +4446,19 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// soft-edged steps between (shingles, as the scaly family; a few walls merged so
 					// the scales are irregular).
 					const float valley = Math::pow(CLAMP(open, 0.0f, 1.0f), 0.7f);
-					const float fu = u + 0.025f * bark_fbm(u, v, 8, 8, 2, salt + 103u);
-					const BarkCell f = bark_voronoi(fu - Math::floor(fu), v, 12, 10, salt + 105u, 0.3f, 0.0f, salt + 113u);
-					const float below = v * 10.0f - f.site.y; // + toward the scale's lower edge.
-					const float lift = CLAMP(0.5f + 0.9f * below, 0.0f, 1.0f);
+					// Round 9 (docs, 18 Nov: pointed, feather-like tongues stacked in rows): the scales'
+					// outlines are broken and irregular, not shingles. The cell lattice is warped both
+					// ways (domain warping; Quilez 2002), and each scale stands at its own level with a
+					// slight tilt rather than a ramp to a lower edge (the ramp drew a pointed tongue in
+					// every cell, the rows the lattice's).
+					const float fu = u + 0.05f * bark_fbm(u, v, 8, 8, 2, salt + 103u);
+					const float fv = v + 0.04f * bark_fbm(u, v, 7, 9, 2, salt + 117u);
+					const BarkCell f = bark_voronoi(fu - Math::floor(fu), fv - Math::floor(fv), 11, 8, salt + 105u, 0.45f, 0.0f, salt + 113u);
+					const float below = (fv - Math::floor(fv)) * 8.0f - f.site.y;
+					const float lift = CLAMP(0.5f + 0.35f * below, 0.0f, 1.0f);
 					const float own = bark_hash(int(f.id), 3, salt + 107u);
-					const float step_soft = Math::smoothstep(0.0f, 0.12f, f.edge);
-					const float scales = (0.55f * lift + 0.45f * own) * (0.6f + 0.4f * step_soft);
+					const float step_soft = Math::smoothstep(0.0f, 0.12f, f.edge + 0.04f * bark_fbm(u, v, 40, 30, 2, salt + 119u));
+					const float scales = (0.2f * lift + 0.8f * own) * (0.6f + 0.4f * step_soft);
 					const float on_plate = Math::smoothstep(0.55f, 0.85f, open);
 					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.2f * scales * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
@@ -5494,6 +5509,27 @@ void TreeGenerator::_cut_back(bool p_first, int p_year) {
 				}
 				seat_cuts[n.parent] = (seat_cuts.has(n.parent) ? seat_cuts[n.parent] : 0) + 1;
 			}
+		}
+	}
+	if (coppice && !p_first) {
+		// Everything else standing up from the stool goes too: shoots that broke from the stool's
+		// dormant buds between cuts (more of them in a stand's shade, where the poles' own leaders
+		// die back) were never sprout roots, escaped every cut and grew on into a 7 m tree over a
+		// coupe cut last winter. The cutter takes every stem at the stool (Rackham 2006).
+		const float reach = cut_height + 0.3f;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &n = nodes[i];
+			if (n.removed || cut.has(i) || cut_heads.has(i) || n.start.y - base_y > reach || n.end().y - base_y <= reach) {
+				continue;
+			}
+			if (n.parent > 0 && nodes[n.parent].removed) {
+				continue;
+			}
+			clear_children(i);
+			cut.insert(i);
+			n.length = MIN(n.length, CLAMP(n.radius * 0.9f, 0.03f, 0.1f));
+			n.pole = false;
+			cut_stubs.insert(i, p_year);
 		}
 	}
 	sprout_roots.clear();
@@ -14957,7 +14993,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		col = Color(col.r * tint, col.g * tint, col.b * tint);
 		bark.bone = node_bone[s];
 		const BarkSet &bs = _bark_set(_bark_kind(preset));
-		const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
+		// Cork thickens with age: on the upper limbs the virgin cork is a centimetre or two, its
+		// fissures shallow (Pereira 2007; docs, 18 Nov: the upper limbs carried the bole's full
+		// blocks), so its relief falls off from the bole's (30 cm radius and over) to a tenth on
+		// 10 cm limbs.
+		const float scale = bark_relief * (_bark_kind(preset) == BARK_CORK ? Math::lerp(0.08f, 1.0f, Math::smoothstep(0.1f, 0.3f, r0)) : CLAMP(r0 / 0.35f, 0.25f, 1.0f));
 		// A cut tree's poles and stool get a near tube however thin, for their modelled relief.
 		const bool near_tube = bark_relief > 0.0f && (r0 >= RELIEF_MIN_RADIUS || (cut_chain && r0 >= 0.012f));
 		// Displaced only where that shows (a millimetre or more nearer the relief than a smooth
@@ -16483,6 +16523,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "moss");
 		} else {
 			m->set_roughness(needles ? 0.5f : 0.75f);
+			// Wet while the canopy holds the rain it caught, with the water beaded on the leaves (docs/ideas/rain.md,
+			// step 5); the flutter material carries the same generated lines.
+			m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+			m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
+			m->set_wetness_canopy(true);
 			if (!needles) {
 				// A broadleaf's cuticle reflects a little, and its leaves face every way: with the
 				// default specular (0.5) at roughness 0.6 the sky's grey-blue lay over dense, dark
@@ -16908,6 +16953,10 @@ Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_
 	if (code.is_empty() || vx < 0) {
 		return p_base;
 	}
+	// Beaded leaves (wetness_canopy): the path tracer draws every bead (a footprint of 0); raster fades the ones finer
+	// than the pixel.
+	code = code.replace("\t\tvec3 bead_fw = fwidth(bead_wp);\n\t\tfloat bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);\n",
+			"#if defined(RT)\n\t\tfloat bead_fp = 0.0;\n#else\n\t\tvec3 bead_fw = fwidth(bead_wp);\n\t\tfloat bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);\n#endif\n");
 	// The wind lines, minus any global the generated code already declares.
 	String wind;
 	const String plant_wind_code = R"(
@@ -17383,6 +17432,15 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		cut_height = 0.15f;
 		cut_cycle = p_preset == PRESET_HAZEL ? 8 : 10;
 		cut_since = p_form == FORM_COPPICE_YOUNG ? 1 + int((h >> 8) % 3) : 4 + int((h >> 8) % MAX(cut_cycle - 3, 1));
+		if (coppice_ages.x >= 0) {
+			// A coupe's age band (coppice with standards): the variants spread over its years.
+			cut_since = coppice_ages.x + int((h >> 8) % uint32_t(MAX(coppice_ages.y - coppice_ages.x + 1, 1)));
+			// Rods are long-jointed, straight wands (Harmer and Howe 2003): longer internodes than
+			// the open-grown shrub's, so a coupe reaches 5-6 m by its cut.
+			TreeGenerator look;
+			look.set_preset(p_preset);
+			params[PARAM_INTERNODE_LENGTH] = look.params[PARAM_INTERNODE_LENGTH] * 1.5f;
+		}
 		params[PARAM_YEARS] = float(40 + int((h >> 16) % 50));
 	} else if (p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ) {
 		// Exposure varies over the variants: a flagged tree from half its limbs gone to a few
@@ -17627,6 +17685,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	cut_height = p_from.cut_height;
 	cut_cycle = p_from.cut_cycle;
 	cut_since = p_from.cut_since;
+	coppice_ages = p_from.coppice_ages;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -17723,13 +17782,13 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
 	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE &&
-			!(p_form == FORM_SAPLING && scrub_shrub(p_preset));
+			!(p_form == FORM_SAPLING && scrub_shrub(p_preset)) && !((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0);
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		rigged = false;
 	}
-	const int key = (int(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0);
+	const int key = (int(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0) + ((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0 ? 100000 * (1 + coppice_ages.x + 64 * coppice_ages.y) : 0);
 	const Habitat &h = HABITATS[p_preset];
 	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
 		// Generate with this generator's colours and seed, under the preset's own parameters.
@@ -18333,20 +18392,73 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			list.push_back(ash);
 			ash->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(6.0f, 1000.0f));
 			ash->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
-			for (int q = 0; q < 2; q++) {
-				Ref<PlantSpecies> hz = _stand_species(PRESET_HAZEL, true, p_variants, q == 0 ? FORM_COPPICE : FORM_COPPICE_YOUNG);
+			// The underwood in coupes (trees.md, "Coppice with standards"): straight-edged
+			// compartments about 50 m across, one cut each winter on a 12-year rotation (hazel 7-12,
+			// with ash and maple in it longer; Rackham 2006; Buckley 1992), so side by side a coupe
+			// of bare stools and brash cut last winter, one of short rods, one grown and one
+			// overstood and closing. Rides 4 m wide along about half the coupe edges. Each band is
+			// its own species, the variants spread over the band's years.
+			const int rotation = 12;
+			const Vector2i bands[4] = { Vector2i(0, 0), Vector2i(1, 3), Vector2i(4, 7), Vector2i(8, 11) };
+			const Vector2i saved_ages = coppice_ages;
+			for (int q = 0; q < 4; q++) {
+				coppice_ages = bands[q];
+				// Grown in the open: a coupe is cut to the ground and regrows in full light under
+				// standards spaced for it (in a stand's shade the rods made 3 m in ten years).
+				Ref<PlantSpecies> hz = _stand_species(PRESET_HAZEL, false, p_variants, q < 2 ? FORM_COPPICE_YOUNG : FORM_COPPICE);
 				if (shrub_start < 0) {
 					shrub_start = list.size();
 				}
 				hz->set_density(1.0f);
-				// Coupes about 40 m across, alternating.
-				hz->set_patch_scale(40.0f);
-				hz->set_patch_cover(0.5f);
+				hz->set_patch_scale(50.0f);
 				hz->set_patch_seed(patch_seed + 11);
-				hz->set_patch_invert(q == 1);
+				hz->set_coupe_rotation(rotation);
+				hz->set_coupe_ages(bands[q]);
+				hz->set_ride_width(4.0f);
+				hz->set_meta("coupe_ages", bands[q]);
+				{
+					const String nm = hz->get_name();
+					const int k = nm.rfind(" (");
+					if (k > 0) {
+						hz->set_name(nm.substr(0, k) + vformat(", cut %d-%d years ago", bands[q].x, bands[q].y) + nm.substr(k));
+					}
+				}
 				// The standards are spaced for the underwood's light: it grows under them.
 				hz->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.9f));
 				list.push_back(hz);
+			}
+			coppice_ages = saved_ages;
+			// The cut wood: brash (the tops and side shoots) left lying on the fresh coupe and the
+			// one before, the poles carried out to the ride.
+			Ref<PlantSpecies> brash = _stand_species(PRESET_HAZEL, true, p_variants, FORM_BRANCH);
+			brash->set_density(0.5f);
+			brash->set_patch_scale(50.0f);
+			brash->set_patch_seed(patch_seed + 11);
+			brash->set_coupe_rotation(rotation);
+			brash->set_coupe_ages(Vector2i(0, 1));
+			brash->set_ride_width(4.0f);
+			list.push_back(brash);
+			// Standards keep off the rides too, and come in several ages (Evelyn's tellers, wavers
+			// and standards; Rackham 2006): younger, smaller oaks among the old ones.
+			for (const Ref<PlantSpecies> &st : { oak, ash }) {
+				st->set_patch_scale(50.0f);
+				st->set_patch_seed(patch_seed + 11);
+				st->set_coupe_rotation(rotation);
+				st->set_coupe_ages(Vector2i(0, rotation - 1));
+				st->set_ride_width(6.0f);
+			}
+			Ref<PlantSpecies> teller = _stand_species(PRESET_OAK, false, p_variants);
+			teller->set_density(0.2f);
+			teller->set_spacing(teller->get_spacing() * 1.4f);
+			teller->set_scale_range(Vector2(0.45f, 0.7f));
+			teller->set_patch_scale(50.0f);
+			teller->set_patch_seed(patch_seed + 11);
+			teller->set_coupe_rotation(rotation);
+			teller->set_coupe_ages(Vector2i(0, rotation - 1));
+			teller->set_ride_width(6.0f);
+			list.insert(1, teller);
+			if (shrub_start >= 1) {
+				shrub_start++;
 			}
 			shrub(PRESET_HAWTHORN, 0.15f);
 		} break;
@@ -18454,6 +18566,20 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		for (int i = 0; i < list.size(); i++) {
 			Ref<PlantSpecies> sp = list[i];
 			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+		}
+	}
+	if (p_stand == STAND_COPPICE_STANDARDS) {
+		// Rides are kept open (mown or grazed tracks): nothing of the stand on them, only at
+		// their edges.
+		for (int i = 0; i < list.size(); i++) {
+			Ref<PlantSpecies> sp = list[i];
+			if (sp->get_coupe_rotation() <= 0) {
+				sp->set_patch_scale(50.0f);
+				sp->set_patch_seed(patch_seed + 11);
+				sp->set_coupe_rotation(12);
+				sp->set_coupe_ages(Vector2i(0, 11));
+				sp->set_ride_width(4.0f);
+			}
 		}
 	}
 	for (int i = 0; i < list.size(); i++) {
@@ -18644,7 +18770,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// Cut back every cycle (trees.md 5l), first once the stem stands well over the cut;
 			// the last cut cut_since years before the end.
 			const float top = _stem_top();
-			if (last_cut < 0 ? (y >= 8 && top > cut_height + 2.0f && y <= years - since) : (y - last_cut >= cut_cycle && y <= years - since)) {
+			// The last cut falls exactly cut_since years before the end (a coupe cut last winter is
+			// bare stools, whatever the cycle's phase): cycling on from the first cut alone left it
+			// anywhere up to a whole cycle older, so every coupe grew rods metres tall.
+			const bool last = last_cut >= 0 && y == years - since && y - last_cut >= 2;
+			if (last_cut < 0 ? (y >= 8 && top > cut_height + 2.0f && y <= years - since) : ((y - last_cut >= cut_cycle && y <= years - since - 2) || last)) {
 				_cut_back(last_cut < 0, y);
 				if (last_cut < 0) {
 					first_cut = y;

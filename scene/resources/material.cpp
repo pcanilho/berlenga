@@ -40,6 +40,7 @@
 #include "core/version.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/texture.h"
+#include "servers/rendering/rain_ripples_glsl.gen.h"
 #include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -613,6 +614,10 @@ void BaseMaterial3D::init_shaders() {
 		// Its contact wetness (wet where water has been): a fine square round the camera.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its rain readers' map and the precipitation's phase (get_rain_functions_code()).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
@@ -802,6 +807,45 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	return cover;
 }
 )";
+	return code;
+}
+
+// Rain (docs/ideas/rain.md): the raindrop rings every water surface draws (rain_ripples(), the same file the path
+// tracer includes) and, with p_from_weather, the weather's rain at a point. Any shader may add this once.
+String BaseMaterial3D::get_rain_functions_code(bool p_from_weather) {
+	String code = RAIN_RIPPLES_GLSL;
+	if (p_from_weather) {
+		code += R"(
+global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness, canopy drip mm/h
+global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
+global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
+
+vec4 weather_rain_sample(vec3 p_world_pos) {
+	if (weather_rain_rect.z <= 0.0) {
+		return vec4(0.0);
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_rain_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_rain_rect.xy) / weather_rain_rect.zw, half_texel, 1.0 - half_texel);
+	return textureLod(weather_rain_map, uv, 0.0);
+}
+
+// The air's temperature at a height, and the rain (mm/h, liquid) there: WeatherMap3D.get_rainfall_at().
+float weather_air_temperature_at(vec3 p_world_pos) {
+	return weather_precip_phase.x - weather_precip_phase.y * (p_world_pos.y - weather_precip_phase.w);
+}
+float weather_rainfall_at(vec3 p_world_pos) {
+	float r = weather_rain_sample(p_world_pos).r;
+	return r > 0.0 ? r * rain_liquid_share(weather_air_temperature_at(p_world_pos), weather_precip_phase.z) : 0.0;
+}
+// Leaves' wetness from the canopy's held water (0..1), and the drip off them (mm/h): Rutter's interception.
+float weather_canopy_wetness_at(vec3 p_world_pos) {
+	return weather_rain_sample(p_world_pos).g;
+}
+float weather_canopy_drip_at(vec3 p_world_pos) {
+	return weather_rain_sample(p_world_pos).b;
+}
+)";
+	}
 	return code;
 }
 
@@ -1394,6 +1438,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.hair_cards = hair_cards;
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
+		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
@@ -1998,6 +2043,10 @@ uniform vec3 uv2_offset;
 
 	if (features[FEATURE_GROUND_DEFORM]) {
 		code += _ground_deform_code(false, ground_deform_patch);
+	}
+	// The rain's functions (raindrop rings on the patch's standing water, beads on a wet canopy), once.
+	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy)) {
+		code += get_rain_functions_code(true);
 	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
@@ -2943,7 +2992,11 @@ void fragment() {)";
 	// Wetness: Enabled
 	float wet = wetness_amount;
 )";
-		if (wetness_from_weather) {
+		if (wetness_from_weather && wetness_canopy) {
+			// A canopy stays wet while it holds the water it intercepted (Rutter's store, WeatherMap3D), after the
+			// ground has begun to dry.
+			code += "\twet *= max(weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz), weather_canopy_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));\n";
+		} else if (wetness_from_weather) {
 			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
 		}
 		if (features[FEATURE_GROUND_DEFORM]) {
@@ -2951,6 +3004,25 @@ void fragment() {)";
 		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
 )";
+		if (wetness_from_weather && wetness_canopy) {
+			// Water beaded on a waxy leaf (rain_surface_beads(), docs/ideas/rain.md step 5): upward faces hold the
+			// drops, undersides shed them. The path tracer draws the same beads at full detail (scene_raytracing_raygen.glsl;
+			// a ShaderMaterial made from this code puts the footprint under #if defined(RT), as TreeGenerator's flutter).
+			code += R"(	{
+		vec3 bead_wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 bead_n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 bead_fw = fwidth(bead_wp);
+		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
+		vec4 bead = rain_surface_beads(bead_wp, bead_n, wet * smoothstep(-0.2, 0.6, bead_n.y), bead_fp);
+		if (bead.w > 0.0) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
+			ROUGHNESS = mix(ROUGHNESS, 0.05, bead.w);
+			SPECULAR = mix(SPECULAR, 0.5, bead.w);
+			ALBEDO *= 1.0 - 0.5 * bead.w;
+		}
+	}
+)";
+		}
 	}
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
@@ -2985,6 +3057,14 @@ void fragment() {)";
 			// Running water's ripples, swept downstream (ground_water_flow()).
 			vec3 gwn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 			vec2 gfs = ground_water_flow((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, gwn, gwd, TIME, ground_fp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
+			// Raindrop rings on the water (rain_ripples(); none under ice); the impacts finer than the pixel roughen it.
+			{
+				vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+				float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
+				vec3 grr = grs > 0.0 ? rain_ripples(gwp.xz, TIME, weather_rainfall_at(gwp), ground_fp) : vec3(0.0);
+				gfs += grr.xy * grs;
+				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, grr.z), grs);
+			}
 			if (gfs != vec2(0.0)) {
 				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gfs.x, 0.0, gfs.y, 0.0)).xyz);
 			}
@@ -4296,6 +4376,18 @@ void BaseMaterial3D::set_wetness_from_weather(bool p_enable) {
 
 bool BaseMaterial3D::is_wetness_from_weather() const {
 	return wetness_from_weather;
+}
+
+void BaseMaterial3D::set_wetness_canopy(bool p_enable) {
+	if (wetness_canopy == p_enable) {
+		return;
+	}
+	wetness_canopy = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_wetness_canopy() const {
+	return wetness_canopy;
 }
 
 void BaseMaterial3D::set_snow_amount(float p_amount) {
@@ -5628,6 +5720,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wetness_amount"), &BaseMaterial3D::get_wetness_amount);
 	ClassDB::bind_method(D_METHOD("set_wetness_from_weather", "enable"), &BaseMaterial3D::set_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
+	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
 	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
@@ -5952,6 +6046,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_porosity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_porosity", "get_wetness_porosity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
 
 	ADD_GROUP("Snow", "snow_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);

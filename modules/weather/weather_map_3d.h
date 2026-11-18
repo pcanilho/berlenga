@@ -403,6 +403,23 @@ private:
 
 	WeatherSeason::Climate _season_climate() const;
 
+	// Rain (weather_rain.cpp, docs/ideas/rain.md): the precipitation's phase with height, and the water the
+	// canopy holds (Rutter et al. 1971, 1975), with its own map for rain readers.
+	bool canopy_water_enabled = true;
+	float canopy_storage = 1.0f; // mm, S: what a full canopy holds before it drips freely
+	float canopy_free_throughfall = 0.25f; // p: the share of rain passing through the gaps
+	Vector<float> cell_canopy; // mm, C
+	Vector<float> cell_drip; // mm/h, the canopy's drainage D
+	Ref<Image> rain_image;
+	Ref<ImageTexture> rain_texture;
+	bool rain_global_added = false;
+	void _rain_allocate();
+	void _rain_shift(Vector2i p_delta);
+	void _rain_update(double p_weather_dt);
+	void _rain_upload();
+	float _runoff_wetness(int p_cell) const;
+	static void _bind_rain_methods();
+
 protected:
 	void _notification(int p_what);
 	static void _bind_methods();
@@ -777,6 +794,33 @@ public:
 	Ref<Texture2D> get_gust_texture() const { return gust_texture; }
 	Ref<Texture2D> get_cloud_shadow_texture() const { return shadow_texture; }
 	Rect2 get_map_rect() const;
+
+	// Rain (weather_rain.cpp). The share of the precipitation that falls as rain at a height (rain_fraction() of
+	// get_air_temperature_at() and get_air_humidity_at()), and the
+	// precipitation split by it: rain (mm/h) and snow (mm/h of water). One split for every reader: rain, snow,
+	// wet cloth and hair, and the water bodies' rings.
+	float get_rain_share_at(Vector3 p_position) const;
+	float get_rainfall_at(Vector3 p_position) const;
+	float get_snowfall_at(Vector3 p_position) const;
+	// The canopy's water (Rutter's interception model on a reference canopy): water held on leaves (mm), how
+	// wet they are (held over storage, 0..1), and the drainage dripping off them (mm/h, over the canopy's
+	// cover), which carries on after the rain stops until the leaves are below storage.
+	void set_canopy_water_enabled(bool p_enabled) { canopy_water_enabled = p_enabled; }
+	bool is_canopy_water_enabled() const { return canopy_water_enabled; }
+	void set_canopy_storage(float p_mm) { canopy_storage = CLAMP(p_mm, 0.05f, 10.0f); }
+	float get_canopy_storage() const { return canopy_storage; }
+	void set_canopy_free_throughfall(float p_share) { canopy_free_throughfall = CLAMP(p_share, 0.0f, 1.0f); }
+	float get_canopy_free_throughfall() const { return canopy_free_throughfall; }
+	float get_canopy_water_at(Vector3 p_position) const;
+	float get_canopy_wetness_at(Vector3 p_position) const;
+	float get_canopy_drip_at(Vector3 p_position) const;
+	// The water reaching the ground (mm/h): a snowpack's runoff where one lies (set_surface_water_source), else the
+	// rain at its liquid share. What WeatherRunoff3D routes.
+	float get_ground_water_input_at(Vector3 p_position) const;
+	// Rutter's drainage, D = Ds exp(b (C - S)) for C > 0, Ds 0.0014 mm/min, b 3.7 per mm (Rutter et al. 1975).
+	static float canopy_drainage(float p_held_mm, float p_storage_mm);
+	// The rain readers' map (weather_rain_map): precipitation (mm/h), canopy wetness, canopy drip (mm/h).
+	Ref<Texture2D> get_rain_texture() const { return rain_texture; }
 
 	WeatherMap3D();
 	~WeatherMap3D();

@@ -3774,6 +3774,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_porosity = rt_unorm8(get_float("wetness_porosity", 0.5f));
 		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
+		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
@@ -7519,6 +7520,30 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_W] = has_weather ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_H] = has_weather ? rect.w : 0.0f;
+			// Its precipitation phase (weather_precip_phase): the rain share at a height, for the raindrop rings.
+			{
+				static const StringName precip_phase_name = "weather_precip_phase";
+				const Variant phase_var = ms->global_shader_parameter_get_internal(precip_phase_name);
+				const Vector4 phase = phase_var.get_type() == Variant::VECTOR4 ? Vector4(phase_var) : Vector4();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_TEMPERATURE] = phase.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_LAPSE] = phase.y;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_HUMIDITY] = phase.z;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_GROUND] = phase.w;
+				// Its rain map (weather_rain_map, same rect as the state map): the canopy's held water in green.
+				static const StringName rain_map_name = "weather_rain_map";
+				const Variant rain_var = ms->global_shader_parameter_get_internal(rain_map_name);
+				RID rain_tex;
+				if (rain_var.get_type() == Variant::RID) {
+					rain_tex = rain_var;
+				} else if (rain_var.get_type() == Variant::OBJECT) {
+					Object *t = rain_var;
+					if (t) {
+						rain_tex = t->call(SNAME("get_rid"));
+					}
+				}
+				RID rain_rd = rain_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(rain_tex) : RID();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RAIN_MAP] = (has_weather && rain_rd.is_valid()) ? float(bindless_block->add_texture(rain_rd)) : 0.0f;
+			}
 			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
 			static const StringName contact_map_name = "weather_contact_map";
 			static const StringName contact_rect_name = "weather_contact_rect";

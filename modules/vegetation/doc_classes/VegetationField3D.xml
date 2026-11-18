@@ -195,6 +195,13 @@
 				Returns the walkers a year at [param position] from [member paths], 0 off every path.
 			</description>
 		</method>
+		<method name="get_species_range" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="species" type="int" />
+			<description>
+				The range the biome's species [param species] is drawn to: its [member PlantSpecies.visibility_range], or for a small species ([member PlantSpecies.detail_size] above 0, with [member detail_reach] on) the distance where that size is still [member detail_pixels] tall, when that is further, up to [member detail_max_range].
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="density_mask" type="Texture2D" setter="set_density_mask" getter="get_density_mask">
@@ -223,6 +230,18 @@
 		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
+		</member>
+		<member name="detail_max_range" type="float" setter="set_detail_max_range" getter="get_detail_max_range" default="40.0">
+			The furthest a small species is drawn by [member detail_reach], in metres.
+		</member>
+		<member name="detail_pixels" type="float" setter="set_detail_pixels" getter="get_detail_pixels" default="3.0">
+			How many pixels tall a small item still is where [member detail_reach] stops drawing it.
+		</member>
+		<member name="detail_reach" type="bool" setter="set_detail_reach" getter="get_detail_reach" default="true">
+			Small species ([member PlantSpecies.detail_size] above 0: fallen leaves, twigs, mosses, small rosettes, seedlings) are drawn as real geometry out to where they are still [member detail_pixels] tall at the camera's field of view and the viewport's height (the rule [RockField3D]'s ground detail uses), instead of their hand-set [member PlantSpecies.visibility_range], when that is further. Every species with a range is cut into cells of half its range so the range is measured near each plant, and the path tracer instances the small species' shapes (see [method RenderingServer.multimesh_set_rt_instanced]). Read when the field is placed or starts streaming.
+		</member>
+		<member name="detail_reference_height" type="int" setter="set_detail_reference_height" getter="get_detail_reference_height" default="0">
+			A viewport height in pixels for [member detail_reach] in place of the viewport's own (0).
 		</member>
 		<member name="far_match_view" type="bool" setter="set_far_match_view" getter="is_far_match_view" default="true">
 			If [code]true[/code], the far colour that replaces plants past their [member PlantSpecies.visibility_range] is matched to the plants on screen: a few frames after the maps are built (and again when the camera has moved a fifth of the range), the field reads back the rendered image along arcs at covered and bare ground spots near the camera (where plants are drawn) and just past the range (where the far colour is), and scales the far colour where it stands for plants (the global [code]vegetation_far_shade[/code]) until the covered-to-bare ratio matches, within 3%. This carries the plants' own darkening of the ground (their shadowed depths and self-shadow) into the far colour, so the ground does not brighten into a lighter band where the plants end. While the viewport is path traced the match waits, keeping the raster frames' shade. See [method get_far_match_stats].

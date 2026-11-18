@@ -819,6 +819,45 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 	}
 }
 
+// What shows of one plant of the small ground presets (m), for the pixel reach (vegetation_detail.h;
+// docs/ideas/ground-detail-vegetation.md): a fallen leaf's or a twig's length, a moss cushion's or a
+// rosette's width, a seedling's height; 0 for the rest, which keep their hand-set range.
+static float _preset_detail_size(PlantGenerator::Preset p_preset) {
+	using P = PlantGenerator;
+	switch (p_preset) {
+		case P::PRESET_LEAF_LITTER:
+			return 0.1f;
+		case P::PRESET_NEEDLE_LITTER:
+			return 0.05f;
+		case P::PRESET_TWIGS:
+			return 0.12f;
+		case P::PRESET_MOSS:
+		case P::PRESET_RIVER_MOSS:
+		case P::PRESET_SPHAGNUM:
+			return 0.06f;
+		case P::PRESET_FEATHER_MOSS:
+			return 0.08f;
+		case P::PRESET_LIVERWORT:
+		case P::PRESET_STONECROP:
+		case P::PRESET_SUNDEW:
+		case P::PRESET_PURPLE_SAXIFRAGE:
+			return 0.04f;
+		case P::PRESET_SAXIFRAGE:
+		case P::PRESET_MOSS_CAMPION:
+			return 0.05f;
+		case P::PRESET_CLOVER:
+		case P::PRESET_THYME:
+			return 0.06f;
+		case P::PRESET_WOOD_SORREL:
+		case P::PRESET_VIOLET:
+			return 0.07f;
+		case P::PRESET_SEEDLING:
+			return 0.15f;
+		default:
+			return 0.0f;
+	}
+}
+
 void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
 	if (p_species.is_null()) {
 		return;
@@ -827,6 +866,9 @@ void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset
 	PlantSpecies *sp = Object::cast_to<PlantSpecies>(p_species.ptr());
 	if (sp && sp->get_trample_resistance() <= 0.0f) {
 		sp->set_trample_resistance(get_trample_resistance(p_preset));
+	}
+	if (sp && sp->get_detail_size() <= 0.0f) {
+		sp->set_detail_size(_preset_detail_size(p_preset));
 	}
 	const float pollen = get_pollen_amount(p_preset);
 	if (pollen > 0.0f) {
@@ -1748,11 +1790,9 @@ void PlantGenerator::_build_dry_grass() {
 // Leaf litter: fallen leaves of several shapes lying on the ground, edges curled as they dry,
 // in browns, ochres and the odd late yellow; a couple of twigs and dry blades among them.
 void PlantGenerator::_build_leaf_litter() {
-	if (!litter_leaves.is_empty()) {
-		_build_stand_litter();
-	} else {
-		const int leaves = int(_rand(14.0f, 26.0f));
-		for (int i = 0; i < leaves; i++) {
+	// Generic leaves (no stand given): p_count of them, p_lift above the card's ground.
+	auto generic = [&](int p_count, float p_lift) {
+		for (int i = 0; i < p_count; i++) {
 			Leaf l;
 			const float pick = rng.randf();
 			l.shape = pick < 0.4f ? LEAF_OVATE : (pick < 0.7f ? LEAF_LANCEOLATE : LEAF_ROUND);
@@ -1769,7 +1809,7 @@ void PlantGenerator::_build_leaf_litter() {
 			l.segments = 6;
 			const float r = 0.13f * Math::sqrt(rng.randf());
 			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 at(Math::cos(a) * r, 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
+			const Vector3 at(Math::cos(a) * r, p_lift + 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
 			const float k = _rand(0.6f, 1.25f);
 			const float hue = rng.randf();
 			const Color tint = hue < 0.15f ? Color(1.5f, 1.3f, 0.5f) : (hue < 0.35f ? Color(1.3f, 0.8f, 0.5f) : Color(k, k * 0.95f, k * 0.9f));
@@ -1778,6 +1818,11 @@ void PlantGenerator::_build_leaf_litter() {
 			const Vector3 up = rng.randf() < 0.7f ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, up), at), l, 0.15f, 0.85f, tint);
 		}
+	};
+	if (!litter_leaves.is_empty()) {
+		_build_stand_litter();
+	} else {
+		generic(int(_rand(14.0f, 26.0f)), 0.0f);
 	}
 	const int twigs = int(_rand(0.0f, 4.0f));
 	for (int t = 0; t < twigs; t++) {
@@ -1788,6 +1833,34 @@ void PlantGenerator::_build_leaf_litter() {
 			_add_stem(side, _rand(0.03f, 0.06f), 0.0012f, 0.0007f, 0.0f, 2, 0.05f);
 		}
 	}
+	// The near-camera card (litter_deposit > 1; docs/ideas/ground-detail-vegetation.md, item 3): the dead-leaves
+	// model (Matheron 1968), leaves falling in sequence over the ones down, so what shows is the top layer. The
+	// card's own leaves and twigs come first, from the same seed as the far card, so the swap only adds leaves:
+	// more layers on top, each a little higher, and broken twig ends among them.
+	if (litter_deposit > 1.0f) {
+		const float extra = litter_deposit - 1.0f;
+		if (!litter_leaves.is_empty()) {
+			_build_stand_litter(1.3f * extra, 0.005f);
+		} else {
+			generic(int(20.0f * extra), 0.005f);
+		}
+		_add_twig_ends(int(_rand(2.0f, 5.0f) * extra), 0.006f);
+	}
+}
+
+// Broken twig ends a few centimetres long lying in the litter, p_lift above the card's ground.
+void PlantGenerator::_add_twig_ends(int p_count, float p_lift) {
+	for (int t = 0; t < p_count; t++) {
+		const float r = 0.12f * Math::sqrt(rng.randf());
+		const float a = _rand(0.0f, Math::TAU);
+		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.06f, 0.06f)), Vector3(0, 1, 0)), Vector3(Math::cos(a) * r, p_lift + 0.0015f, Math::sin(a) * r));
+		const Transform3D e = _add_stem(b, _rand(0.02f, 0.06f), _rand(0.0012f, 0.0025f), 0.0009f, _rand(-0.2f, 0.2f), 2, 0.05f);
+		if (rng.randf() < 0.3f) {
+			// A bud or a short fork at the tip.
+			Transform3D side(organ_frame(e.basis.get_column(2) + e.basis.get_column(0) * 0.8f, Vector3(0, 1, 0)), e.origin);
+			_add_stem(side, _rand(0.008f, 0.02f), 0.0009f, 0.0005f, 0.0f, 2, 0.05f);
+		}
+	}
 }
 
 // The stand's own fallen leaves (docs/ideas/forest-floor.md, step 6): each entry of litter_leaves
@@ -1796,7 +1869,7 @@ void PlantGenerator::_build_leaf_litter() {
 // ("color", the autumn colour) and the share of this year's leaves still fresh ("fresh"). Fresh
 // leaves keep that colour; older ones fade to a dull tan brown and curl. A card
 // carries about 1.3 layers of leaves over its disc, so big leaves come few and small ones many.
-void PlantGenerator::_build_stand_litter() {
+void PlantGenerator::_build_stand_litter(float p_layers, float p_lift) {
 	float total = 0.0f;
 	for (int i = 0; i < litter_leaves.size(); i++) {
 		total += float(Dictionary(litter_leaves[i]).get("share", 1.0f));
@@ -1805,9 +1878,10 @@ void PlantGenerator::_build_stand_litter() {
 		return;
 	}
 	const float disc = 0.13f;
-	float area_left = 1.3f * Math::PI * disc * disc;
+	float area_left = p_layers * Math::PI * disc * disc;
+	const int guard_max = int(60.0f * MAX(p_layers, 1.3f) / 1.3f);
 	int guard = 0;
-	while (area_left > 0.0f && guard++ < 60) {
+	while (area_left > 0.0f && guard++ < guard_max) {
 		float pick = rng.randf() * total;
 		Dictionary f = litter_leaves[0];
 		for (int i = 0; i < litter_leaves.size(); i++) {
@@ -1832,7 +1906,7 @@ void PlantGenerator::_build_stand_litter() {
 		Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
 		const float r = disc * Math::sqrt(rng.randf());
 		const float a = _rand(0.0f, Math::TAU);
-		const Vector3 at(Math::cos(a) * r, 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
+		const Vector3 at(Math::cos(a) * r, p_lift + 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
 		const Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
 		// About a third lie underside up: paler and duller (the lower epidermis, hairier and without
 		// the upper's wax). Shown by colour, the face still up, so a lying leaf is never drawn from
@@ -2394,6 +2468,20 @@ void PlantGenerator::_build_needle_litter() {
 		Transform3D cb(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.1f, 0.1f)), Vector3(0, 1, 0)), Vector3(_rand(-radius, radius) * 0.7f, len * 0.16f, _rand(-radius, radius) * 0.7f));
 		const Transform3D mid = _add_stem(cb, len * 0.6f, len * 0.12f, len * 0.16f, 0.0f, 3, 0.0f, SURFACE_PETAL);
 		_add_stem(mid, len * 0.4f, len * 0.16f, len * 0.03f, 0.0f, 3, 0.0f, SURFACE_PETAL);
+	}
+	// The near-camera card (litter_deposit > 1): more needles fallen over these, and twig ends.
+	if (litter_deposit > 1.0f) {
+		const int more = int(_rand(70.0f, 120.0f) * (litter_deposit - 1.0f));
+		for (int i = 0; i < more; i++) {
+			n.length = _rand(0.012f, 0.045f);
+			n.bend = _rand(-0.3f, 0.3f);
+			const float r = radius * 1.1f * Math::sqrt(rng.randf());
+			const float a = _rand(0.0f, Math::TAU);
+			const Vector3 at(Math::cos(a) * r, 0.003f + 0.004f * rng.randf(), Math::sin(a) * r);
+			const float k = _rand(0.7f, 1.3f);
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.15f, 0.15f)), Vector3(0, 1, 0)), at), n, 0.0f, 0.9f, Color(k, k * 0.9f, k * 0.8f));
+		}
+		_add_twig_ends(int(_rand(1.0f, 3.0f) * (litter_deposit - 1.0f)), 0.004f);
 	}
 }
 
@@ -5178,6 +5266,7 @@ String PlantGenerator::shader_common_code() {
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
+	code += BaseMaterial3D::get_rain_functions_code(true);
 	code += VegetationFire::SHADER_CODE;
 	code += R"(
 global uniform sampler2D weather_state_map;
@@ -5441,8 +5530,26 @@ void fragment() {
 	float mud_c = grass_mud_apply(grass_ground_mud(fire_w.xz), fire_w, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), albedo);
 	rough = mix(rough, 0.85, mud_c);
 	back *= 1.0 - mud_c;
-	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
-	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
+	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy. They stay wet while the canopy's
+	// water (WeatherMap3D, Rutter's interception store) is held on them, after the ground has begun to dry, and the water
+	// stands on them as beads (rain_surface_beads(); upward faces hold them, undersides shed them).
+	{
+		float leaf_wet = max(weather_wetness_at(v_world), weather_canopy_wetness_at(v_world));
+		weather_wetness_apply(leaf_wet, n_world.y, metallic, 0.15, albedo, rough);
+#if defined(RT)
+		float bead_fp = 0.0;
+#else
+		vec3 bead_fw = fwidth(v_world);
+		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
+#endif
+		vec4 bead = rain_surface_beads(v_world, n_world, leaf_wet * smoothstep(-0.2, 0.6, n_world.y), bead_fp);
+		if (bead.w > 0.0) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
+			rough = mix(rough, 0.05, bead.w);
+			specular = mix(specular, 0.5, bead.w);
+			albedo *= 1.0 - 0.5 * bead.w;
+		}
+	}
 	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);
@@ -7014,6 +7121,20 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			meshes.push_back(v[i]);
 		}
 		sp->set_meshes(meshes);
+		// Near the camera the litter lies leaf on leaf (docs/ideas/ground-detail-vegetation.md, item 3): the same
+		// cards from the same seeds with more layers fallen on top and broken twig ends, swapped in within a few
+		// metres, so the swap only adds leaves.
+		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_NEEDLE_LITTER) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
+			gen->set_litter_deposit(2.5f);
+			const TypedArray<ArrayMesh> nv = gen->generate_variants(MAX(p_variants, 1));
+			gen->set_litter_deposit(1.0f);
+			TypedArray<Mesh> near;
+			for (int i = 0; i < nv.size(); i++) {
+				near.push_back(nv[i]);
+			}
+			sp->set_near_meshes(near);
+			sp->set_near_range(7.0f);
+		}
 		sp->set_spacing(f.spacing);
 		sp->set_footprint(f.footprint);
 		// Bracken and bramble shade the sward out under their stands (a GrassField3D reads it
@@ -7272,8 +7393,11 @@ void PlantGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_wear", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_leaf_wear", "get_leaf_wear");
 	ClassDB::bind_method(D_METHOD("set_litter_leaves", "leaves"), &PlantGenerator::set_litter_leaves);
+	ClassDB::bind_method(D_METHOD("set_litter_deposit", "deposit"), &PlantGenerator::set_litter_deposit);
+	ClassDB::bind_method(D_METHOD("get_litter_deposit"), &PlantGenerator::get_litter_deposit);
 	ClassDB::bind_method(D_METHOD("get_litter_leaves"), &PlantGenerator::get_litter_leaves);
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "litter_leaves"), "set_litter_leaves", "get_litter_leaves");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "litter_deposit", PROPERTY_HINT_RANGE, "1,4,0.1"), "set_litter_deposit", "get_litter_deposit");
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &PlantGenerator::set_season);
 	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");

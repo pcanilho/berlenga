@@ -41,6 +41,7 @@
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
+#include "modules/weather/weather_runoff_3d.h"
 #endif
 
 #include "core/config/engine.h"
@@ -107,6 +108,19 @@ uniform float ripple_strength = 0.06;
 uniform float ripple_speed_strength = 0.12;
 uniform float foam_detail_scale = 1.5;
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
+// Crisp white water, as the open sea's (docs/ideas/water.md "Crisp foam on the open sea"): torn into holes and
+// strands at three scales with bubble grain (Plateau borders, Weaire and Hutzler 1999), its edge a narrow step of
+// the amount against a ragged threshold (Sea of Thieves, Atlas) and once more at the pixel's own scale. 0: the
+// older soft value-noise lace.
+uniform float foam_crisp : hint_range(0.0, 1.0) = 1.0;
+// The foam as a skin about this share of 3 cm thick: its gradient tilts the normal, so rims catch the sun on one
+// side (Crest's foam 3D lighting); and its bubbles' domes tilt it by foam_grain_tilt.
+uniform float foam_relief : hint_range(0.0, 2.0) = 0.5;
+uniform float foam_grain_tilt : hint_range(0.0, 2.0) = 0.15;
+// Capillary ripples down to about a centimetre (three more octaves under the ripples), each faded out where it is
+// finer than the pixel and its slope put into the surface's roughness instead (Bruneton, Neyret and Holzschuch
+// 2010), so the near water is sharp and the far water glitters without shimmering. 0: the three coarse octaves.
+uniform float ripple_detail : hint_range(0.0, 2.0) = 1.0;
 // The surface fades out over this much water depth (m) at the waterline.
 uniform float edge_softness : hint_range(0.0, 0.5, 0.005) = 0.06;
 // A living waterline: the edge laps in and out by up to this much water depth
@@ -234,6 +248,121 @@ vec2 river_wind_slope(vec2 xz, vec2 flow) {
 #endif
 }
 
+// Capillary octaves under ripple_slope (wavelengths of about 5, 2.3 and 1 cm at ripple_scale 1), each faded by the
+// pixel's footprint (m); r_hidden: the mean square slope faded out, for the roughness.
+const float RIPPLE_DETAIL_FREQ[3] = float[3](19.0, 41.0, 88.0);
+const float RIPPLE_DETAIL_AMP[3] = float[3](0.16, 0.11, 0.07);
+vec2 ripple_detail_slope(vec2 p, float footprint, out float r_hidden) {
+	vec2 s = vec2(0.0);
+	r_hidden = 0.0;
+	for (int i = 0; i < 3; i++) {
+		float f = RIPPLE_DETAIL_FREQ[i];
+		// A noise cell is 1/f m: full while it spans four pixels or more, gone under one.
+		float shown = 1.0 - smoothstep(0.25, 1.0, footprint * f * ripple_scale);
+		float a = RIPPLE_DETAIL_AMP[i];
+		if (shown > 0.0) {
+			s += r_noise_grad(p * f + vec2(3.1 * float(i), -7.7 * float(i))) * a * shown;
+		}
+		r_hidden += 0.5 * a * a * (1.0 - shown); // (value-noise gradients: mean square about half the peak)
+	}
+	return s;
+}
+
+// The white water's structure (the open sea's foam_structure, PhysXWaterSurface3D; kept in step with it): holes
+// torn at three scales, strands along their borders, rafts, bubble grain, the crisp outline. p in world metres,
+// drawn out along p_streak (the current) by 1 + p_stretch.
+float rf_fbm(vec2 p) {
+	return 0.5 * r_noise(p) + 0.3 * r_noise(p * 2.3 + 7.1) + 0.2 * r_noise(p * 5.1 - 3.3);
+}
+
+vec4 rf_holes(vec2 p, float open, float scale, float bias, float soft, float jit) {
+	p += 0.22 * (vec2(rf_fbm(p * 2.3 + 1.3), rf_fbm(p * 2.3 - 4.1)) - 0.5);
+	float lobe = rf_fbm(p * 3.7 + 7.3) - 0.5;
+	float tear = rf_fbm(p * 9.1 - 2.6) - 0.5;
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	float d1 = 8.0;
+	float d2 = 8.0;
+	float keep = 1.0;
+	float inside = 0.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 g = vec2(float(x), float(y));
+			vec2 o = vec2(r_hash(i + g), r_hash(i + g + vec2(17.3, 5.1)));
+			vec2 r = g + 0.15 + 0.7 * o - f;
+			float d = length(r);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+			} else if (d < d2) {
+				d2 = d;
+			}
+			float rad = min(open * max(r_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.65);
+			if (rad > 0.0) {
+				float de = d + jit + rad * (0.6 * lobe + 0.25 * tear);
+				keep = min(keep, smoothstep(rad - soft, rad + soft, de));
+				inside = max(inside, (rad - de) / rad);
+			}
+		}
+	}
+	return vec4(keep, d1, d2, inside);
+}
+
+float rf_structure(vec2 p, float amount, float footprint, vec2 p_streak, float p_stretch) {
+	vec2 q0 = p * foam_detail_scale;
+	vec2 q = vec2(dot(q0, p_streak) / (1.0 + p_stretch), dot(q0, vec2(-p_streak.y, p_streak.x)));
+	vec2 warp = vec2(r_noise(q * 0.9 + 3.7), r_noise(q * 0.9 - 8.1)) - 0.5;
+	float a = clamp(amount, 0.0, 1.0);
+	float open = 1.0 - pow(a, 0.6);
+	float age_warp = 1.0 + 1.2 * open;
+	float rag = rf_fbm(q * 9.0) - 0.5;
+	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
+	float soft2 = 0.015 + footprint * foam_detail_scale * 2.8;
+	float soft3 = 0.02 + footprint * foam_detail_scale * 9.2;
+	vec4 h1 = rf_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag);
+	vec4 h2 = rf_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag);
+	vec4 h3 = rf_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag);
+	float cover = h1.x * h2.x * mix(1.0, h3.x, 0.75);
+	float brk = smoothstep(0.4, 0.62, rf_fbm(q * 2.7 + 1.7));
+	float w = (0.04 + 0.07 * a) * brk;
+	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, h1.z - h1.y + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, h2.z - h2.y + 0.25 * rag));
+	cover = max(cover, strands * smoothstep(0.15, 0.45, a));
+	float raft = smoothstep(0.62, 0.68, rf_fbm(q * 6.3 + 3.1)) * smoothstep(0.2, 0.5, a) * smoothstep(0.35, 0.5, max(h1.w, h2.w));
+	cover = max(cover, raft * (1.0 - clamp(footprint * foam_detail_scale * 20.0 - 0.2, 0.0, 1.0)));
+	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, rf_fbm(q * 5.3 - 4.1)));
+	float coarse = clamp(footprint * foam_detail_scale * 1.2 - 0.25, 0.0, 1.0);
+	cover = mix(cover, clamp(1.0 - 1.4 * open * open, 0.05, 1.0), coarse);
+	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
+	float cluster = 1.0 - clamp((footprint - 0.04) / 0.12, 0.0, 1.0);
+	vec2 pw = p + 0.08 * warp;
+	float clumps = rf_fbm(pw * 16.0 + 4.7);
+	float gaps = smoothstep(0.3, 0.12, rf_fbm(pw * 31.0 - 2.9));
+	float domes = smoothstep(0.8, 0.95, rf_fbm(pw * 38.0 + 9.3));
+	float bubbles = mix(0.84, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
+	bubbles *= mix(0.925, 0.7 + 0.45 * rf_fbm(pw * 3.5 + 2.3), cluster);
+	float density = smoothstep(0.02, 0.35, a);
+	float rough = 0.6 * rf_fbm(q * 3.1 + 5.3) + 0.4 * rf_fbm(q * 11.0 - 2.1);
+	float t_edge = 0.32 + 0.5 * (rough - 0.5);
+	float w_edge = clamp(0.02 + footprint * foam_detail_scale * 2.0, 0.02, 0.3);
+	float outline = max(smoothstep(t_edge - w_edge, t_edge + w_edge, density) * mix(0.55, 1.0, smoothstep(0.35, 0.7, a)), 0.8 * density);
+	density = mix(density, outline, foam_crisp);
+	bubbles = mix(1.0, bubbles, 1.0 - 0.55 * foam_crisp);
+	return clamp(cover * density * bubbles, 0.0, 1.0);
+}
+
+// The bubbles' domes (the clumps' smooth height), for the light to catch the foam's grain.
+vec2 rf_bubble_slope(vec2 p, float footprint) {
+	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
+	if (grain <= 0.0) {
+		return vec2(0.0);
+	}
+	const float e = 0.01;
+	float h0 = rf_fbm(p * 16.0 + 4.7);
+	float hx = rf_fbm((p + vec2(e, 0.0)) * 16.0 + 4.7);
+	float hz = rf_fbm((p + vec2(0.0, e)) * 16.0 + 4.7);
+	return vec2(hx - h0, hz - h0) / e * 0.03 * grain;
+}
+
 // The two phases' offsets and the first one's weight.
 float flow_phases(vec2 p, vec2 flow, out vec2 o_a, out vec2 o_b) {
 	float t = water_time / max(flow_period, 0.05) + r_noise(p * 0.05);
@@ -313,6 +442,22 @@ void fragment() {
 	// close to independent).
 	vec2 slope = (ripple_slope(p - o_a * ripple_scale) * w + ripple_slope(p - o_b * ripple_scale + vec2(13.1, 7.7)) * (1.0 - w))
 			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
+	// The pixel's footprint on the water (m); the path tracer has no derivatives and draws every octave.
+#if defined(RT)
+	float footprint = 0.0;
+#else
+	vec2 fw_xz = fwidth(v_world.xz);
+	float footprint = max(fw_xz.x, fw_xz.y);
+#endif
+	float ripple_hidden = 0.0;
+	if (ripple_detail > 0.0) {
+		float h_a;
+		float h_b;
+		vec2 d_a = ripple_detail_slope(p - o_a * ripple_scale, footprint, h_a);
+		vec2 d_b = ripple_detail_slope(p - o_b * ripple_scale + vec2(13.1, 7.7), footprint, h_b);
+		slope += ripple_detail * (d_a * w + d_b * (1.0 - w)) / sqrt(w * w + (1.0 - w) * (1.0 - w));
+		ripple_hidden = ripple_detail * ripple_detail * (h_a * w + h_b * (1.0 - w));
+	}
 	float speed = length(flow);
 	float depth = v_info.r * 4.0 - 1.0;
 	// The waterline laps: carried by the current (the same two phases as the
@@ -326,7 +471,9 @@ void fragment() {
 	float relief = 0.5 * r_noise(rq) + 0.3 * r_noise(rq * 3.1 + 17.0) + 0.2 * r_noise(rq * 8.3 - 5.0);
 	depth += edge_relief * (relief - 0.5) * 2.0;
 	// Calm at the waterline: ripples die out over the last 15 cm.
-	slope *= (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
+	float ripple_amp = (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
+	slope *= ripple_amp;
+	ripple_hidden *= ripple_amp * ripple_amp;
 	slope += river_wind_slope(v_world.xz, flow) * smoothstep(0.0, 0.15, depth);
 	vec3 n_mesh = normalize(v_normal);
 	if (n_mesh.y < 0.0) {
@@ -340,6 +487,23 @@ void fragment() {
 			float e = exp(-x / v_wave.w) * min(x * v_wave.y / PI, 1.0);
 			float dh = v_wave.x * e * (v_wave.y * cos(v_wave.y * x) - sin(v_wave.y * x) / v_wave.w);
 			slope += flow / speed * dh * smoothstep(0.0, 0.2, depth);
+		}
+	}
+	// Raindrop rings (rain_ripples(), docs/ideas/rain.md), carried by the current: each ring rides the water it
+	// fell on, so the rings are read in the two flow phases the ripples use and blended the same way.
+	float river_roughness = pathtraced_roughness;
+	if (rain_rings) {
+		float rr_rate = weather_rainfall_at(vec3(v_world.x, weather_precip_phase.w, v_world.z));
+		if (rr_rate > 0.0) {
+#if defined(RT)
+			float rr_fp = 0.0;
+#else
+			vec2 rr_fw = fwidth(v_world.xz);
+			float rr_fp = max(max(rr_fw.x, rr_fw.y), 1e-5);
+#endif
+			vec3 rr = rain_ripples(v_world.xz - o_a, TIME, rr_rate, rr_fp) * w + rain_ripples(v_world.xz - o_b + vec2(13.1, 7.7), TIME, rr_rate, rr_fp) * (1.0 - w);
+			slope += rr.xy * smoothstep(0.0, 0.05, depth);
+			river_roughness = rain_ripple_roughness(river_roughness, rr.z);
 		}
 	}
 	vec3 world_normal = normalize(n_mesh - vec3(slope.x, 0.0, slope.y));
@@ -356,6 +520,52 @@ void fragment() {
 	// the ribbon as solid blocks with straight ends.
 	float foam = clamp(min(max(max(v_info.g, live_foam), edge_band), 0.85) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
 	foam = foam * foam * (3.0 - 2.0 * foam);
+	if (foam_crisp > 0.0) {
+		// The white water's amount drawn as foam (rf_structure), each phase riding the current (the flow mapping
+		// draws it out along the current by itself). Not rotated to the local current: world coordinates turned by
+		// an angle that varies over the water shear by that angle times their distance from the origin, combing
+		// the pattern into hairlines wherever the current turns.
+		// The amount the structure tears is the white water as the soft lace drew it (where and how much), so the
+		// crisp foam covers what the soft foam did, not every trace of live foam.
+		float amount = foam;
+		const vec2 sd = vec2(1.0, 0.0);
+		const float stretch = 0.0;
+		float f_a = rf_structure(v_world.xz - o_a, amount, footprint, sd, stretch);
+		float f_b = rf_structure(v_world.xz - o_b + vec2(5.3, 2.1), amount, footprint, sd, stretch);
+		float crisp = f_a * w + f_b * (1.0 - w);
+		float foam_soft = crisp;
+#if !defined(RT)
+		// Crisp at every distance: the edge stepped once more at the pixel's own scale (about three pixels wide),
+		// up only as far as the foam beside it reaches, keeping 0.8 of the soft value (the open sea's step).
+		float fwf = max(fwidth(crisp), 1e-3);
+		float stepped = clamp((crisp - 0.3) / (3.0 * fwf) + 0.5, 0.0, 1.0) * min(crisp + 2.0 * fwf, 1.0);
+		crisp = max(stepped, 0.8 * crisp);
+#endif
+		// The milky haze thin white water leaves between the patches stays (a third of the soft foam).
+		crisp = max(crisp, 0.35 * foam);
+		foam = mix(foam, crisp, foam_crisp);
+		if (foam > 0.01) {
+			// Foam damps the ripples under it (the film's elasticity, as slicks do), its bubbles' domes catch the
+			// light, and its rims stand up as a thin skin.
+			world_normal = normalize(mix(world_normal, n_mesh, clamp(foam, 0.0, 1.0)));
+			vec2 bs = rf_bubble_slope(v_world.xz - o_a, footprint) * w + rf_bubble_slope(v_world.xz - o_b + vec2(5.3, 2.1), footprint) * (1.0 - w);
+			world_normal = normalize(world_normal - vec3(bs.x, 0.0, bs.y) * foam * foam_grain_tilt);
+#if !defined(RT)
+			if (foam_relief > 0.0) {
+				vec2 rdx = dFdx(v_world.xz);
+				vec2 rdy = dFdy(v_world.xz);
+				float fdx = dFdx(foam_soft);
+				float fdy = dFdy(foam_soft);
+				float rdet = rdx.x * rdy.y - rdx.y * rdy.x;
+				if (abs(rdet) > 1e-12) {
+					vec2 fg = vec2(rdy.y * fdx - rdx.y * fdy, rdx.x * fdy - rdy.x * fdx) / rdet;
+					fg = clamp(fg * 0.03 * foam_relief, vec2(-1.2), vec2(1.2));
+					world_normal = normalize(world_normal - vec3(fg.x, 0.0, fg.y));
+				}
+			}
+#endif
+		}
+	}
 	// The ribbon's own sides (where water spread over flat ground reaches them) and its fade into the water at the
 	// mouth, broken by the bank's relief, so neither shows as a ruler-straight edge.
 	float bank_fade = smoothstep(0.0, 0.7, v_info.b * 1.6 - 0.45 + (relief - 0.5) * 0.9);
@@ -363,7 +573,7 @@ void fragment() {
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	ROUGHNESS = mix(river_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
@@ -418,7 +628,9 @@ void fragment() {
 	vec3 sun_body;
 	vec4 sun_glint;
 	float sun_a2;
-	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
+	// The capillary ripples finer than the pixel, as roughness (GGX alpha squared plus their slope variance).
+	float rough_eff = pow(pow(river_roughness, 4.0) + ripple_hidden, 0.25);
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), rough_eff, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
 	if (!raster_reflections && screen_reflections) {
 		refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
 	}
@@ -468,7 +680,7 @@ static String _river_wind_src() {
 
 // The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -582,6 +794,9 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_default_width"), &PhysXRiver3D::get_default_width);
 	ClassDB::bind_method(D_METHOD("set_discharge", "discharge"), &PhysXRiver3D::set_discharge);
 	ClassDB::bind_method(D_METHOD("get_discharge"), &PhysXRiver3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
+	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
+	ClassDB::bind_method(D_METHOD("get_rain_discharge"), &PhysXRiver3D::get_rain_discharge);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXRiver3D::set_roughness);
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXRiver3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_max_slope", "slope"), &PhysXRiver3D::set_max_slope);
@@ -701,6 +916,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_response"), "set_rain_response", "get_rain_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
@@ -895,7 +1111,7 @@ void PhysXRiver3D::_unregister_outlet() {
 
 float PhysXRiver3D::get_discharge_at(float p_s) const {
 	// A lake outlet runs on what the lake passes over its sill (a trickle with no head, so the ribbon stays).
-	float q = outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge;
+	float q = (outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge) + rain_discharge;
 	for (const Tributary &t : tributaries) {
 		if (p_s >= t.s) {
 			q += t.discharge;
@@ -1552,6 +1768,7 @@ void PhysXRiver3D::_notification(int p_what) {
 						[this](int o) { clear_sphere(o); },
 						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
 			}
+			_rain_response_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();
@@ -1566,6 +1783,39 @@ void PhysXRiver3D::_notification(int p_what) {
 				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
 			}
 		} break;
+	}
+}
+
+// Storm flow: every 10 s, the runoff's peak discharge within two of its cells of the river's upstream end. The
+// river is rebuilt when that moves by more than a tenth of its flow (depth and speed follow by Manning, so a
+// river in spate is deeper and faster), at most every 10 s.
+void PhysXRiver3D::_rain_response_update(double p_delta) {
+	rain_check -= p_delta;
+	if (rain_check > 0.0 || Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	rain_check = 10.0;
+	float q = 0.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	const WeatherRunoff3D *ro = WeatherRunoff3D::get_active();
+	const Ref<Curve3D> c = get_curve();
+	if (rain_response && ro != nullptr && c.is_valid() && c->get_point_count() > 0) {
+		const Vector3 at = get_global_transform().xform(c->get_point_position(0));
+		const float reach = 2.0f * ro->get_extent() / float(MAX(ro->get_resolution(), 1));
+		q = ro->get_max_discharge_in(Rect2(at.x - reach, at.z - reach, 2.0f * reach, 2.0f * reach));
+	}
+#endif
+	if (Math::abs(q - rain_discharge) > 0.1f * MAX(discharge + rain_discharge, 0.05f) || (q == 0.0f && rain_discharge > 0.0f)) {
+		rain_discharge = q;
+		_queue_build();
+	}
+}
+
+void PhysXRiver3D::set_rain_response(bool p_enable) {
+	rain_response = p_enable;
+	if (!p_enable && rain_discharge > 0.0f) {
+		rain_discharge = 0.0f;
+		_queue_build();
 	}
 }
 

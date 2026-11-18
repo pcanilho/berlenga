@@ -380,6 +380,10 @@ public:
 	Vector3 get_piece_linear_velocity(int p_index) const;
 	Vector3 get_piece_center(int p_index) const;
 	float get_piece_mass(int p_index) const;
+	// Where a piece's chunks sat in the intact object (this node's local space, unscaled), and their volume (m3,
+	// scaled): what an effect that marked the intact object (a burning patch) needs to find its pieces again.
+	Vector3 get_piece_rest_center(int p_index) const;
+	float get_piece_volume(int p_index) const;
 
 	PackedStringArray get_configuration_warnings() const override;
 

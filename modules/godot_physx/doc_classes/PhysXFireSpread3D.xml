@@ -8,12 +8,24 @@
 		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map. Plants read [code]fire_state_map[/code] over the same rect (red: share of the fuel burnt, green: glow, blue: the peak flame length over 8 m, alpha: the peak crown scorch height over 24 m, from Van Wagner 1973): [GrassField3D] blades burn down to charred stubble, [PlantGenerator] plants char under the flame and scorch brown above it, and [TreeGenerator] bark chars to the flame length and leaves brown up to the scorch height.
 		With [member spotting], burning fuel throws up glowing firebrands that the plume lofts and the wind carries; where one lands on unburnt fuel of any [PhysXFireSpread3D] it may start a spot fire ahead of the front.
 		Water from a [PhysXParticleFluid3D] lying on the ground (a bucket, a hose, a burst tank) soaks the fuel under it: burning cells go out and the front stops at the wet ground ([method get_doused_cells]).
-		With [member fire_whirls], strong flanks in a cross wind spin up whirls of flame that lift firebrands higher.
+		With [member fire_whirls], strong flanks in a cross wind spin up whirls of flame that lift firebrands higher. With [member blowing_ash], a strong wind lifts the ash off the burnt ground as a drifting grey dust.
 		Start a fire with [method ignite], or set [member heat_source] so that hot gas from another [PhysXFlow3D] (a campfire, a burning wreck) sets the ground alight.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_ash_blown" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of ash the wind has lifted off the burnt ground so far ([member blowing_ash]).
+			</description>
+		</method>
+		<method name="get_lee_whirls_spawned" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many of the fire whirls (see [method get_whirls_spawned]) formed on a lee slope and ran across it, spreading the fire sideways.
+			</description>
+		</method>
 		<method name="get_lightning_ignition_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -196,6 +208,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="blowing_ash" type="bool" setter="set_blowing_ash" getter="is_blowing_ash" default="true">
+			Wind over cold burnt ground lifts its ash as a low grey dust that drifts downwind, from about 4 m/s near the ground, in puffs as the gusts pass, until the ash is gone (a few minutes in a strong wind). Wet ground (rain, water) holds it. The burnt fine fuel leaves about 6% of its mass as ash, more under a burnt crown. See [method get_ash_blown].
+		</member>
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.25">
 			Size of the fire grid's cells in metres. Smaller cells give a finer front and char edge, at more CPU time.
 		</member>
@@ -209,7 +224,7 @@
 			When disabled, the fire stops where it is.
 		</member>
 		<member name="fire_whirls" type="bool" setter="set_fire_whirls" getter="is_fire_whirls" default="true">
-			Strong fire on a flank that runs along the wind can spin up a fire whirl: a column of flame, some three flame lengths tall, that turns at about twice the fire's own updraft speed, wanders downwind and lofts firebrands higher. Whirls form most often when the wind is close to that updraft speed (Kuwana et al. 2008), last 10 to 30 seconds and die off the burning fuel. See [method get_whirl_count].
+			Strong fire on a flank that runs along the wind can spin up a fire whirl: a column of flame, some three flame lengths tall, that turns at about twice the fire's own updraft speed, wanders downwind and lofts firebrands higher. Whirls form most often when the wind is close to that updraft speed (Kuwana et al. 2008), last 10 to 30 seconds and die off the burning fuel. See [method get_whirl_count]. On a lee slope (steeper than about 20 degrees, falling away within 40 degrees of downwind, in a wind over 5.5 m/s) the ridge's eddy makes whirls too, whatever the fire's updraft; these run across the slope at about a fifth of the wind and light the fuel they pass, so the fire spreads sideways along the ridge (vorticity-driven lateral spread, Sharples et al. 2012).
 		</member>
 		<member name="flame_strength" type="float" setter="set_flame_strength" getter="get_flame_strength" default="1.0">
 			Scales the fuel and heat the burning ground feeds into Flow.

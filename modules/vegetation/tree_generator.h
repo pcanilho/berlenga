@@ -498,6 +498,9 @@ private:
 	float cut_height = 0.0f;
 	int cut_cycle = 12;
 	int cut_since = -1;
+	// Stand building: the years since the cut that FORM_COPPICE variants spread over (a coupe's
+	// age band); x < 0: the forms' own ranges.
+	Vector2i coppice_ages = Vector2i(-1, -1);
 	HashSet<int> sprout_roots; // First nodes of shoots grown since the last cut.
 	LocalVector<int> cut_heads; // Stubs and knuckles the head is made of.
 	int last_cut_year = -1000;
