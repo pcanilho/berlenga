@@ -449,6 +449,7 @@ private:
 	int sea_nz = 0;
 	Vector2 sea_origin;
 	real_t sea_cell = 4.0;
+	Vector2 sea_brink_dir; // the dune-building wind (one-wind seas: transverse, barchan); zero: no brink sharpening
 	LocalVector<float> sea_sand; // m of sand
 	LocalVector<float> sea_cover; // 0..1 loose sand at the surface, per node of the result
 	double last_sand_sea_msec = 0.0;
@@ -457,6 +458,7 @@ private:
 	static void _sand_sea_shear(void *p_sea, uint32_t p_part);
 	void _build_sand_sea();
 	float _sea_sample(real_t p_x, real_t p_z) const;
+	real_t _sea_cubic(real_t p_gx, real_t p_gz) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
