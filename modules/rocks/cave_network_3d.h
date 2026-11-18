@@ -205,6 +205,7 @@ private:
 	void _scatter_blocks(Cave &r_cave, uint32_t p_seed) const;
 	real_t _air(const FieldSource &p_src, const Vector3 &p_p) const;
 	real_t _stream_wet(const FieldSource &p_src, const Vector3 &p_p) const;
+	real_t _wall_foot(const FieldSource &p_src, const Vector3 &p_p) const;
 	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr) const;
 	void _gather(const AABB &p_box, FieldSource &r_src) const;
 	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const;
