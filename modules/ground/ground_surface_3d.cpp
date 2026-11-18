@@ -3711,6 +3711,54 @@ void GroundSurface3D::_notification(int p_what) {
 // ---------------------------------------------------------------------------------------------------------
 // Soft soil (docs/ideas/sand.md, stage 1)
 
+// Ruts steer the wheels (docs/ideas/mud.md, round 9). A tyre whose contact sits across uneven ruts rests on a tilted
+// patch: the ground's reaction tips with it and pushes the tyre down the tilt by the load times its slope, as a road's
+// camber or a rut's wall does (rut wandering: Bridgestone and others on tyres tracking in worn ruts; the same
+// resolution of the normal force as on any slope). Only the deformation counts (dent less rim), not the terrain's own
+// cross slope, which the vehicle's road plane already carries. Returns (the deformation's slope across the patch
+// along p_lateral, rising towards +p_lateral; the wall's height beside the tyre on its -p_lateral side and on its
+// +p_lateral side over the patch's middle, m): a wheel moving sideways into a wall shoves it as a bulldozed face that
+// high.
+Vector3 GroundSurface3D::get_rut_guidance(Vector3 p_contact, Vector3 p_lateral, float p_half_width) const {
+	if (!field.valid || p_half_width <= 0.0f) {
+		return Vector3();
+	}
+	Vector3 lat = Vector3(p_lateral.x, 0.0f, p_lateral.z);
+	if (lat.length_squared() < 1e-6f) {
+		return Vector3();
+	}
+	lat.normalize();
+	auto relief = [&](float p_s) {
+		const Vector3 q = p_contact + lat * p_s;
+		return get_rim_at(q) - get_dent_at(q);
+	};
+	// The patch's cross slope by least squares over seven points across the tread.
+	float sum_s2 = 0.0f;
+	float sum_sh = 0.0f;
+	float mean = 0.0f;
+	float hs[7];
+	for (int k = 0; k < 7; k++) {
+		hs[k] = relief(p_half_width * (float(k) / 3.0f - 1.0f));
+		mean += hs[k] / 7.0f;
+	}
+	for (int k = 0; k < 7; k++) {
+		const float sk = p_half_width * (float(k) / 3.0f - 1.0f);
+		sum_s2 += sk * sk;
+		sum_sh += sk * (hs[k] - mean);
+	}
+	const float slope = CLAMP(sum_sh / MAX(sum_s2, 1e-6f), -1.0f, 1.0f);
+	// The walls: the highest ground within 15 cm outside each edge, above the floor under the tread.
+	const float floor_h = MIN(MIN(hs[2], hs[3]), hs[4]);
+	float wall[2] = { 0.0f, 0.0f };
+	for (int side = 0; side < 2; side++) {
+		const float sg = side == 0 ? -1.0f : 1.0f;
+		for (int k = 0; k < 3; k++) {
+			wall[side] = MAX(wall[side], relief(sg * (p_half_width + 0.03f + 0.06f * k)) - floor_h);
+		}
+	}
+	return Vector3(slope, wall[0], wall[1]);
+}
+
 GroundSoil GroundSurface3D::get_soil(Vector3 p_position) const {
 	GroundSoil soil;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
@@ -5323,6 +5371,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_puddle_ice", "enabled"), &GroundSurface3D::set_puddle_ice);
 	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);
 	ClassDB::bind_method(D_METHOD("get_ice_at", "position"), &GroundSurface3D::get_ice_at);
+	ClassDB::bind_method(D_METHOD("get_rut_guidance", "contact", "lateral", "half_width"), &GroundSurface3D::get_rut_guidance);
 	ClassDB::bind_method(D_METHOD("set_frozen_ground", "enabled"), &GroundSurface3D::set_frozen_ground);
 	ClassDB::bind_method(D_METHOD("is_frozen_ground"), &GroundSurface3D::is_frozen_ground);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &GroundSurface3D::get_frost_at);

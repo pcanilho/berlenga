@@ -120,6 +120,15 @@
 				The frozen ground at [param position] (see [member frozen_ground]): the thawed layer on top in metres, the frost's depth in metres, and how weakened the ground is by a thaw (0 to 1).
 			</description>
 		</method>
+		<method name="get_rut_guidance" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="contact" type="Vector3" />
+			<param index="1" name="lateral" type="Vector3" />
+			<param index="2" name="half_width" type="float" />
+			<description>
+				How ruts steer a tyre whose contact is at [param contact], [param lateral] its sideways direction and [param half_width] half its tread: x is the slope of the ruts across the tread (rising towards [param lateral]; the ground's reaction pushes the tyre down it by the load times the slope), y and z how high the ground stands beside the tyre on its -[param lateral] and +[param lateral] side, in metres (the wall a wheel moving sideways must shove). The terrain's own slope is left out. [PhysXVehicle3D] uses it.
+			</description>
+		</method>
 		<method name="get_ice_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />

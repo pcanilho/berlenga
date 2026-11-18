@@ -847,6 +847,7 @@ public:
 	// terrain floor), so gas rests on the ruts and berms.
 	float get_height(Vector3 p_position) const { return get_surface_height_at(p_position); }
 	float get_dent_at(Vector3 p_position) const;
+	Vector3 get_rut_guidance(Vector3 p_contact, Vector3 p_lateral, float p_half_width) const;
 	float get_rim_at(Vector3 p_position) const;
 	float get_fresh_at(Vector3 p_position) const;
 	// The rules at a place: n, kc, kphi, rim share, repose angle (degrees), slump rate, max dent,

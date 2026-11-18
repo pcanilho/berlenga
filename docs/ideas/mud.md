@@ -800,6 +800,14 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   turning out of it needs the lateral force to climb the wall (the wall's slope and the soil's shear), so the
   vehicle follows old ruts and lurches when it climbs out, MudRunner's rut tracking. Build: the wall slope under
   each tyre's edges from the field, a lateral force on PhysXVehicle3D's wheels.
+  *Built, ground side (18 Nov):* `get_rut_guidance(contact, lateral, half_width)`: the deformation's cross slope
+  under the tread (least squares over 7 points, dent less rim only, so the terrain's own camber the road plane
+  already carries is not counted twice) and the wall height beside each edge (the highest relief 3 to 15 cm
+  outside it over the tread's floor). A tyre resting across a rut's wall is pushed down the tilt by load x slope
+  (rut wandering; the normal force resolved on a slope, as on a road's camber); one moving sideways shoves the
+  wall as a bulldozed face that high. Checks in `--test=frost`: centred no push, walls 7.6 cm over a 6 cm rut,
+  12 cm off-centre a slope of 0.36 back in. The vehicle's call waits for the world-links grip change in
+  physx_vehicle_3d.cpp (the split: it owns the firm-ground branch, the mud thread the soft force block).
 - **Mud holds boots.** Feet in sticky, saturated mud are held by suction (the pore pressure under a lifting sole,
   as in breakout force of objects from seabed mud): a GroundLegMud3D or character foot slows to lift, with a sound
   hook, and loses a boot past a limit.

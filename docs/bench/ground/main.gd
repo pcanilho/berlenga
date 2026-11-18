@@ -51,7 +51,8 @@ extends Node3D
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
 #   --frost=hours[,break] --view=ruts with --water: then a frost of that many hours at -5 C freezes the water (mud
 #                  round 7); ",break": a walker's boots across the left rut break the ice
-#   --test=frost        frozen ground: a night's frost (Stefan) holds feet off, keeps the ruts, stands water; the thaw
+#   --test=frost        (and the ruts' guidance of a tyre: pushed back towards a rut's floor, walls as deep as the rut)
+#                       frozen ground: a night's frost (Stefan) holds feet off, keeps the ruts, stands water; the thaw
 #                         leaves a soaked layer that prints deeper than before
 #   --view=ice          a frozen puddle with a wheel's track broken through it (mud round 7)
 #   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws;
@@ -189,6 +190,7 @@ func _ready() -> void:
 		await _run_mud_tests()
 	if frost_test:
 		await _run_frost_tests()
+		await _run_rut_guidance_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -1470,6 +1472,30 @@ func _run_frost_tests() -> void:
 	var sink1: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
 	_check("a wheel sinks deeper in the thaw's soaked layer than before the frost", fr.x > 0.03 and fr.y > fr.x and sink1 > 1.2 * sink0, "%.1f mm (%.1f mm before the frost), %.1f cm thawed" % [sink1 * 1000.0, sink0 * 1000.0, fr.x * 100.0])
 	wm.queue_free()
+	near_on = true
+
+
+# Ruts steer the wheels (mud round 9): a tyre 25 cm wide over a 30 cm rut 6 cm deep running along z.
+func _run_rut_guidance_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.5, 0.0)
+	surface.mud_layer = false
+	for k in 12:
+		var z := -2.5 + 0.45 * k
+		var g := surface.get_surface_height_at(Vector3(0, 0, z))
+		surface.press_box(Vector3(0, 0, z), Vector2(0.3, 0.5), 0.0, g - 0.06, 0.0)
+	for i in 40:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var lat := Vector3(1, 0, 0)
+	var centred := surface.get_rut_guidance(Vector3(0, 0, 0), lat, 0.125)
+	var right := surface.get_rut_guidance(Vector3(0.12, 0, 0), lat, 0.125)
+	var left := surface.get_rut_guidance(Vector3(-0.12, 0, 0), lat, 0.125)
+	var flat := surface.get_rut_guidance(Vector3(2.0, 0, 0), lat, 0.125)
+	print("  rut guidance: centred %s, 12 cm right %s, 12 cm left %s, off the rut %s" % [centred, right, left, flat])
+	_check("centred in a rut, no push; walls as high as the rut is deep", absf(centred.x) < 0.05 and centred.y > 0.04 and centred.z > 0.04, "slope %.2f, walls %.1f and %.1f cm" % [centred.x, centred.y * 100.0, centred.z * 100.0])
+	_check("half out of it, the tilt pushes it back in", right.x > 0.1 and left.x < -0.1, "slope %.2f right, %.2f left" % [right.x, left.x])
+	_check("on unmarked ground, nothing", absf(flat.x) < 0.01 and flat.y < 0.005 and flat.z < 0.005, "%s" % flat)
 	near_on = true
 
 
