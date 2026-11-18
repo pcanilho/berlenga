@@ -3122,6 +3122,9 @@ void CaveNetwork3D::_update_stream_nodes() {
 			// ending along the ribbon's straight sides as a slab of the given depth.
 			river->set("snap_to_ground", true);
 			river->set("ground_probe_height", 0.3);
+			// Past the banks a ray starting inside the rock goes on down through it to a passage below; a stream
+			// a metre or so deep finds its bed within 3 m, and none past the banks reads as dry.
+			river->set("ground_probe_depth", 3.0);
 			river->set("carve", false);
 			river->set("raster_reflections", false); // underground: nothing to reflect but the walls (as the pools)
 			river->set("contact_wetness", false);
