@@ -39,6 +39,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   ![A beach dry and after rain: darker sand, puddles and a sheen](media/weather-wet.jpg)
 
   *Wet surfaces: the sand darkens, puddles form and catch the sky.*
+
 - **Raindrop rings** (`rain_rings` water uniform): rings on sea, lakes, pools, rivers and puddles; heavy rain dulls reflections.
 - **Runoff** (`WeatherRunoff3D`, `PhysXRiver3D.rain_response`): rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.
 
