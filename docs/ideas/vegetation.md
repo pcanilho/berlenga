@@ -982,5 +982,7 @@ Built (`VegetationVoxelLod::make_shell`, `GrassField3D.make_voxel_shell`, `hedge
   foliage trick, so the brick lights as one soft mass.
 - Hawthorn segment: full 279k triangles; 10 cm 4.5k; 20 cm 0.9k; 40 cm 0.2k; about 50 ms per level.
   Far views: the mean colour of each level is within a few sRGB values of the full hedge. Levels
-  swap by visibility range: full to 30 m, 10 cm to 70 m, 20 cm to 150 m, 40 cm beyond, 3 m fades.
+  swap by visibility range: full to 45 m, 10 cm to 90 m, 20 cm to 180 m, 40 cm beyond, 3 m fades
+  (a voxel about two pixels wide at 1080p). A visibility range is measured to the instance's AABB
+  centre, so segments go in 8 m cells, one MultiMesh per cell and level.
 - Not done: per-pixel normal dither from the distribution (step 3); greedy face merging.
