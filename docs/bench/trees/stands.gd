@@ -36,7 +36,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("d35400"), Color("c0392b"), Color("a04000"), Color("b7950b"), Color("4d6b5a"), Color("17332a"), Color("a6acaf"),
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
-		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row",
+		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
 		"woodland", "NA woodland"]
 
 var gen: TreeGenerator
@@ -186,6 +186,8 @@ func _stand_checks() -> void:
 			_check(f.get_plant_count() > 0 and open_count == f.get_plant_count(), "hedgerow: shrubs and open-grown standards only (%d)" % open_count)
 		elif i == TreeGenerator.STAND_WOOD_PASTURE:
 			_check(cut.pollard > 0 and regen.sapling == 0 and regen.log > 0, "wood pasture: %d lapsed pollards, no saplings (grazed), %d logs" % [cut.pollard, regen.log])
+		elif i == TreeGenerator.STAND_STONE_PINE:
+			_check(open_count > 0 and stand_count == 0 and regen.sapling > 0 and regen.log > 0, "stone pine parkland: %d open-grown umbrellas, %d saplings, %d logs" % [open_count, regen.sapling, regen.log])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:

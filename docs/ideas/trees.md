@@ -1846,8 +1846,29 @@ triangles. Stand-grown: 21.6 m, narrow, crown base 15.8 m. Cones: three cohorts 
 tip (conelets 1-2 cm, green second-year cones 3.5-5 cm, third-year 8-12 cm turning chestnut
 from February, opening from April), on the sunlit top. Plated bark in red-brown. Raster vs PT
 at 100% crop: the same limbs and needle tufts, PT's crown a little darker and fuller. Deadwood
-classes and logs come from the shared plumbing. Not yet: a stand to place it (vegetation's
-coastal pinewood or parkland), juvenile needles on saplings, longer bark plates.
+classes and logs come from the shared plumbing.
+
+Docs review fixes (18 Nov): the crown was pale and lacy, the limbs a fan of thin straight
+branches, the trunk slender, the bark plates cartoonish, the cones dots.
+- Crown: four buds a whorl, 220 needles of 14 cm an internode kept three years, darker green
+  (0.07, 0.16, 0.05) and a little self-shadowing, so the top is one dark flat mass.
+- Limbs: more branch noise (13) and less upward bend, so the limbs wander; pipe exponent 2.05
+  and a root flare give a stout bole (about 0.9 m across at 60 years).
+- Bark: its own kind, `BARK_PINEA`: long vertical plates (6 x 2 cells, warped like the plated
+  kind), grey-brown faces and orange-red fissure floors carried in the material's headroom
+  (3.0), so the plate faces stay grey; lichen cut to 0.08. Fixing it found that the bark
+  headroom was passed linear to an sRGB albedo: smooth bark (beech, hornbeam) drew about 1.5
+  times too bright; now encoded.
+- Cones: three cohorts at the shoot tips, set back behind the needle tufts and drooping; the
+  third-year cones 9-13 cm, green to chestnut by day of year, open from April.
+- Limb count: still more limbs than the real tree's handful. Thinning the weaker scaffolds in
+  `_shed` destabilised the form (the leader took over or the crown collapsed); left for a
+  growth rule that splits the leader into a few limbs.
+Mature open-grown: 15.5 m tall, crown 13.7 m across, crown base 12.5 m; 6.9M triangles (5.3M
+needles, thinned by the LODs). Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
+about 11 m apart with saplings, snags and logs; not part of `make_woodland`. Its scrub comes
+from vegetation's `make_scrub` (lentisk, kermes oak, gum rockrose, dwarf fan palm). Not yet:
+juvenile needles on saplings.
 
 ## 6. What the games at Paulo's bar do
 
