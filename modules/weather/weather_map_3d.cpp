@@ -1851,15 +1851,19 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.shape_scale = cloud_shape_scale;
 	st.drift = cloud_drift;
 	if (cloud_shear > 0.0f) {
-		// The wind grows through the layer by about the wind aloft over 4 km (a typical tropospheric shear,
-		// 2-5 m/s per km) and veers 20 degrees with height (Ekman turning). Tissue rising at an updraft w of
-		// about 3 m/s is carried s z^2 / (2 w) downwind of the base by height z, so at one thickness H the
-		// lean is s H^2 / (2 w): kept under 0.6 H (sheared towers lean, they do not lie down).
-		const float z0 = MAX(roughness_length, 1e-5f);
-		const float aloft = Math::log(1000.0f / z0) / Math::log(10.0f / z0);
-		const float s = cur_wind_speed * aloft / 4000.0f;
-		const float lean = MIN(s * cloud_thickness * cloud_thickness / 6.0f, 0.6f * cloud_thickness) * cloud_shear;
-		st.shear = cur_wind_direction.rotated(Math::deg_to_rad(-20.0f)) * lean;
+		// The lean comes from the wind aloft (get_wind_aloft: log law and Ekman veer through the boundary
+		// layer, wind_shear_aloft above it): the shear vector across the layer, s = (u_top - u_base) / H.
+		// Tissue rising at an updraft w of about 3 m/s is carried s z^2 / (2 w) downwind of the base by
+		// height z, so at one thickness the lean is s H^2 / 6: kept under 0.6 H (sheared towers lean, they
+		// do not lie down).
+		const Vector3 at = is_inside_tree() ? get_global_position() : Vector3();
+		const float h = MAX(cloud_thickness, 1.0f);
+		const Vector2 shear = (get_wind_aloft(at, cloud_base_height + h) - get_wind_aloft(at, cloud_base_height)) / h;
+		const float s = shear.length();
+		if (s > 1e-7f) {
+			const float lean = MIN(s * h * h / 6.0f, 0.6f * h) * cloud_shear;
+			st.shear = shear / s * lean;
+		}
 	}
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
