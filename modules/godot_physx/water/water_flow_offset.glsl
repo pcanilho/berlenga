@@ -23,9 +23,19 @@
 //   d'(x) = d(xu) + f(xu) (p(xu, t) - 0.5) P + f(x) dt - f(x) (p(x, t + dt) - 0.5) P,
 //   xu = x - f(x) dt.
 //
+// Where the flow shears hard (an eddy's edge), carrying the coordinates for a whole period stretches the
+// pattern into parallel combed arcs. Neyret 2003 regenerates a layer early where its local deformation grows;
+// here each phase's correction relaxes back toward plain flow mapping (d = 0, which cannot comb) at a rate set by
+// how far the correction's own gradient |grad d| (dimensionless strain) has passed DEFORM_START, so a copy is
+// carried round an eddy only as far as it stays undistorted.
+//
 // A second dispatch in copy mode (res.z == 1) copies dst back to src, as the shore foam does.
 
 layout(local_size_x = 8, local_size_y = 8) in;
+
+#define DEFORM_START 0.25 // strain where the relaxation begins
+#define DEFORM_FULL 0.75 // strain where it runs at its full rate
+#define RELAX_RATE 8.0 // 1/s at full strain: back to plain flow mapping in about an eighth of a second
 
 layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 clock; // x flow period P (s), y material clock at the last step, z clock now, w dt (s)
@@ -112,6 +122,15 @@ void main() {
 	if (pb_now < pb_was) {
 		db = vec2(0.0);
 	}
+	// Strain of each phase's correction (central differences, m per m), relaxed where it combs.
+	ivec2 lo = max(c - 1, ivec2(0));
+	ivec2 hi = min(c + 1, ivec2(n - 1));
+	vec4 ddx = (imageLoad(src_tex, ivec2(hi.x, c.y)) - imageLoad(src_tex, ivec2(lo.x, c.y))) / (float(max(hi.x - lo.x, 1)) * cell);
+	vec4 ddz = (imageLoad(src_tex, ivec2(c.x, hi.y)) - imageLoad(src_tex, ivec2(c.x, lo.y))) / (float(max(hi.y - lo.y, 1)) * cell);
+	float strain_a = max(length(vec2(ddx.x, ddz.x)), length(vec2(ddx.y, ddz.y)));
+	float strain_b = max(length(vec2(ddx.z, ddz.z)), length(vec2(ddx.w, ddz.w)));
+	da *= exp(-RELAX_RATE * dt * smoothstep(DEFORM_START, DEFORM_FULL, strain_a));
+	db *= exp(-RELAX_RATE * dt * smoothstep(DEFORM_START, DEFORM_FULL, strain_b));
 	// Bounded: a copy lives one period, so it cannot have strayed further than the fastest water
 	// carries it in that time.
 	float most = 3.0 * period;
