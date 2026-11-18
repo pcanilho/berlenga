@@ -1,0 +1,1 @@
+- Rocks: cave walls cast shadows from both sides, so the sun no longer lights cave passages through the rock in raster (fix).
