@@ -32,6 +32,16 @@
 				Adds [param volume] m³ of standing water spread evenly over a disc of [param radius] at [param position], or takes it where [param volume] is negative (thrown spray landing, and water a tyre throws up). Applied by the next water step on the GPU, the disc's area counted in the field's own texels, so the volume is exact. A take that finds less water than it asks for is owed (see [method get_water_owed]) and paid back by the next water added. Added water carries [param mud] kg/m³ of clay (see [member muddy_water]); a take carries off the clay of the water it takes.
 			</description>
 		</method>
+		<method name="add_puddle">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="mud" type="float" default="0.0" />
+			<description>
+				Makes a puddle at [param position]: a hollow of about [param radius] with an irregular, rounded rim (the same shape each time at the same place), dug [param depth] m below the lowest point of its rim, so on a slope its water still stands level; once the field holds it (half a second), it is filled to that rim with water carrying [param mud] kg/m³ of clay (30 to 60 reads as a muddy clay puddle; it settles clear over some minutes). Needs [member standing_water]. For scenes and world generators placing puddles where ruts have not made them.
+			</description>
+		</method>
 		<method name="bed_load" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="water_speed" type="float" />
@@ -197,6 +207,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How much material is piled on the ground at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_regrown_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the grass and plants have grown back over a rut at [param position], 0 (bare, as pressed) to 1 (green again; see [member ruts_regrowth_time]). The GPU field's, as last read back.
 			</description>
 		</method>
 		<method name="get_ripple_at" qualifiers="const">
@@ -662,13 +679,16 @@
 			How far inside the field's edge the terrain starts to be lowered, in metres; at least the terrain's vertex spacing, so no lowered triangle reaches past the patch.
 		</member>
 		<member name="keep_ruts" type="bool" setter="set_keep_ruts" getter="is_keeping_ruts" default="true">
-			If [code]true[/code], ruts are kept across the world: each 64-texel tile with prints, its dent, rim, tint and standing water, is written to [member ruts_path] as the field moves off it and read back when the field returns, in this session or the next, so the ground stays as it was left. One small zstd file per tile, per field (the main and near fields keep their own); a tile flattened again loses its file. Not used in the editor. Give each surface its own [member ruts_path], and one per save slot.
+			If [code]true[/code], ruts are kept across the world: each 64-texel tile with prints, its dent, rim, tint, standing water and the clay in that water, is written to [member ruts_path] as the field moves off it and read back when the field returns, in this session or the next, so the ground stays as it was left. With [member desiccation_cracks] the ground's crack state (how far each patch of clay has dried, its wetting cycles, the pool that laid it) is kept the same way, in blocks of 32 by 32 lattice cells, so a dried puddle comes back cracked. One small zstd file per tile, per field (the main and near fields keep their own), and per crack block; a tile flattened again loses its file. Not used in the editor. Give each surface its own [member ruts_path], and one per save slot.
 		</member>
 		<member name="ruts_path" type="String" setter="set_ruts_path" getter="get_ruts_path" default="&quot;user://ground_ruts&quot;">
 			The folder the kept ruts go to (see [member keep_ruts]).
 		</member>
 		<member name="ruts_away_rain" type="float" setter="set_ruts_away_rain" getter="get_ruts_away_rain" default="0.1">
 			The mean rain while the player is away, mm/h (0.1: a temperate 900 mm a year): kept ruts read back after time away are softened by it at [member rain_smoothing], and their water goes as far as evaporation beats it (see [member keep_ruts]).
+		</member>
+		<member name="ruts_regrowth_time" type="float" setter="set_ruts_regrowth_time" getter="get_ruts_regrowth_time" default="2.6e+06">
+			Seconds for the grass and plants to grow back over a kept rut while the field is away from it (see [member keep_ruts]): the bare share closes at this e-fold (a month by default; meadows recover from wheel ruts over one to three months of growing season). The rut stays a hollow, green again; plants lying flat on a light print stand up four times sooner. Pressing it again bares it.
 		</member>
 		<member name="ruts_time_scale" type="float" setter="set_ruts_time_scale" getter="get_ruts_time_scale" default="1.0">
 			World seconds per real second while away from kept ruts (see [member keep_ruts]): a tile read back is aged by the time since it was written times this, its turned tint and mud film dried ([member drying_time]), its relief softened and its water evaporated, as if the field had stayed over it. 0 keeps tiles exactly as left. A tile the field left more than ten world minutes ago comes back from disk, aged, rather than from the cache.

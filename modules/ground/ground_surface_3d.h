@@ -326,7 +326,13 @@ private:
 	String ruts_path = "user://ground_ruts";
 	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
 	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
+	float ruts_regrowth_time = 2.6e6f; // s: the sward grows back over a kept rut at this e-fold (a month; mud round 6)
 	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
+	// Crack state kept with the ruts (mud round 5): the lattice cells it moves off and onto.
+	GroundCellStore crack_store;
+	void _cracks_move(Vector2i p_origin, int p_n);
+	void _cracks_age(float *r_cell, double p_seconds) const;
+	void _cracks_save();
 	GroundRutStore rut_main;
 	GroundRutStore rut_near;
 	LocalVector<Vector2i> rut_main_pending; // world tiles in the field waiting to be read in from disk
@@ -386,6 +392,15 @@ private:
 	};
 	LocalVector<StirDisc> stir_discs; // stir_water()'s, applied by the next water step
 	LocalVector<WaterDisc> water_discs; // add_water()'s, applied by the next water step
+	struct PendingPuddle {
+		Vector3 position;
+		float radius = 0.0f;
+		float level = 0.0f; // the water's surface, m (world y)
+		float mud = 0.0f;
+		double wait = 0.0; // s until the dug hollow is in the field's read back
+	};
+	LocalVector<PendingPuddle> pending_puddles; // add_puddle()'s, filled once dug
+	void _puddles_update(double p_delta);
 	double water_added = 0.0; // m3, the discs applied so far (taken < 0)
 	// What takes could not find (the GPU's ledger, read back), and how much of it later water added has paid.
 	uint32_t water_owed_seen[2] = { 0, 0 };
@@ -598,11 +613,13 @@ public:
 	// Adds p_volume m3 of standing water spread over a disc (taken where negative, never below dry): spray landing
 	// and water thrown up (mud stage 4c). Applied by the next water step on the GPU.
 	void add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud = 0.0f);
+	void add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud = 0.0f);
 	// Stirs p_mass kg of the bed's clay into the standing water over a disc (feet, clods landing), where the bed is
 	// cohesive; muddy water (round 3). Applied by the next water step on the GPU.
 	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);
 	// The clay the standing water carries at a place, kg/m3, as last read back.
 	float get_water_mud_at(Vector3 p_position) const;
+	float get_regrown_at(Vector3 p_position) const;
 	// Lays a film of clay p_depth m thick over a disc (a tyre or a boot leaving mud on firm ground; mud round 3):
 	// dark and glossy as wet as p_wet, a pale film once it dries, and it stays until a wash takes it.
 	// p_print: the film's print (ground_deform.glsl mud_print_mask()): (0) a plain disc, (1, yaw) a tyre's lugs on its
@@ -620,6 +637,8 @@ public:
 	float get_ruts_time_scale() const { return ruts_time_scale; }
 	void set_ruts_away_rain(float p_rate) { ruts_away_rain = MAX(p_rate, 0.0f); }
 	float get_ruts_away_rain() const { return ruts_away_rain; }
+	void set_ruts_regrowth_time(float p_seconds) { ruts_regrowth_time = MAX(p_seconds, 1.0f); }
+	float get_ruts_regrowth_time() const { return ruts_regrowth_time; }
 	void save_ruts();
 	void clear_saved_ruts();
 	int get_saved_rut_tile_count();

@@ -172,7 +172,7 @@ private:
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0 };
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
 	real_t river_min_area = 2.0e5;
-	int max_stones_per_cell = 12000;
+	int max_stones_per_cell = 20000;
 	bool collision_enabled = true;
 	real_t collision_min_size = 0.35; // m, b axis
 	real_t collision_radius = 80.0;
@@ -240,6 +240,7 @@ private:
 		Vector2 origin;
 		LocalVector<Vector4> obstacles; // x, z, footprint radius, slope
 		LocalVector<Vector2> uphill;
+		LocalVector<float> damp_share; // 0 on dry talus (it drains: no damp ring), 1 elsewhere
 		Vector<uint8_t> data;
 		uint64_t start = 0;
 		uint64_t end = 0;
@@ -248,6 +249,7 @@ private:
 	WorkerThreadPool::TaskID contact_task = WorkerThreadPool::INVALID_TASK_ID;
 	static void _contact_job(void *p_job);
 	void _finish_contact(bool p_wait);
+	void _sync_scree_blocks() const;
 	void _update_contact(bool p_force);
 	void _clear_contact();
 	real_t rockfall_rate = 4.0; // falls per game hour in rockfall_radius

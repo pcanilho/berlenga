@@ -1041,6 +1041,37 @@ at 0.7 after 10; it dries at 6.5e-5 kg/m2/s, about 50 min; a soaked sheet
 dropped on a ball stays on it where the dry one slides off; in a tall grass
 fire the dry sheet lights at 2.3 s, the soaked one at 18.7 s.
 
+Follow-up (18 Nov, after docs declined the first pair: sheets read as
+boards). Three causes, all in the cloth: the wind's gusts were one vector
+for the whole cloth, so a sheet tilted as a plane; there are now eddies
+across it, two scales of smooth noise carried along by the mean wind
+(Taylor's frozen turbulence) at 0.6 of wind_turbulence times the speed,
+fed to the solver as per-particle air when no Flow gas drives it. Cloth
+fell through thin colliders (a rope, a rail) because only overlaps were
+tested; particles are now also swept along their step's path and stopped
+where it meets a surface. That exposed explicit quadratic drag blowing up
+when a sheet is stopped short; drag is now implicit in the normal speed.
+And laundry hangs from pegs set closer than it is wide: move_pins() holds
+pinned vertices at new places, so it falls in swags and folds. Pegged
+sheets in a 2.2 m/s gusty breeze: dry ones billow out, soaked ones hang
+about 20% longer and flutter less. On a 30 degree slope a soaked sheet
+slides 0.18 m in 5 s against a dry one's 0.42 m.
+
+Worn clothing (18 Nov): PhysXSkinnedCloth3D shares the model (ClothWetness:
+rain from the map, roof ray, Penman drying). A garment on a moving figure
+faces every way, so its catch is an upright cylinder's (rain through its
+width at the drops' slant spread over pi times that width of fabric) on 85%
+of it plus all that falls on the shoulders' 15%. Wet: the added weight
+divides the push of extra_acceleration (wind), the damping and collider
+friction rise, and a slight drive toward the skinned pose stands in for the
+film holding it to the body (its effect grows with substeps: position
+corrections per substep against a gravity step of dt squared, so it stays
+small, 0.002 per frame at soaked). The render copy's shader darkens it by
+Lekner and Dorf. Tests: 30 mm/h with 3 m/s wind soaks a skirt in 106 s (5
+mm/h: about 11 min), dries about 2% a minute; under a 3 m/s2 sideways push
+a soaked hem leans 1.1 cm against a dry one's 3.6, and with the hips
+swaying 12 cm at 1.5 Hz it swings 3.2 cm against 4.4.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

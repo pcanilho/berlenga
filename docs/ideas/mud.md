@@ -662,9 +662,53 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   vertex shader lays blades flat by it (crushed under 2 cm, gone where the ground was turned or flooded); the
   trample field (add_trample) takes vehicle and boot passes for the bent-over band beside a rut, recovering over
   days. Grass is the vegetation system's: built there, fed from here.
+  *Built (18 Nov):* GrassField3D's blade and tiller shaders read the ground's deformation map themselves
+  (`grass_ground_opened()`, the same globals material.cpp samples, near field blended in), so nothing extra is
+  published: a print or film a few millimetres deep, or any fresh tint, lays each blade flat its own way; past a
+  centimetre or so of dent or rim, or under standing water, the blades are torn out (a dither by the blade's random,
+  so the edge thins rather than cuts); the ones left stand on the dented ground (base lowered by the dent, raised on
+  a rim). It lasts as long as the print does: the ground's own ageing and kept ruts carry it, so no trample field
+  is needed. The VegetationField3D plants (flowers, clover, herbs) still stand in ruts: their materials are
+  StandardMaterial3D; a next step. Bench: docs/bench/grass `--ruts` (two 8 cm tyre ruts and a light 6 mm pass,
+  close view).
 - **Everything kept with the ruts.** Crack state and the water's clay live on the ground lattice, not the field
   tiles, so a kept tile comes back with its puddle clear and its cracks gone. Build: a second small file per tile
   for the lattice cells under it (crack state, cycles, pool depth, clay kg/m2), aged the same way.
+  *Built (18 Nov):* the clay is the field's (per texel, GPU), so it went into the tile itself: the GPU tile cache
+  holds a third uint per ground texel (clay kg/m2; `GroundDeformGPU::cache_uints`), so a tile that leaves and comes
+  back in the same session keeps its muddy water too (it used to come back clear), and the kept file is version 3
+  (versions 1 and 2 still read, with clear water). Away, the clay settles as the water step has it, exp(-0.1 mm/s
+  t / depth), and goes with the water. The crack state is the lattice's: `GroundCellStore` keeps it per block of
+  32 x 32 cells (one `.cel` zstd file each, with each cell's write time), written as the lattice moves off cells or
+  the node leaves the tree, read back as it comes onto them. Away, a soaked cell stays soaked while its pool lasts
+  (the kept water's own budget: evaporation less ruts_away_rain), then its layer dries at the evaporation rate.
+  Checks in --test=ruts: clay back in its pool on return and next session, dried cracks back with the same plates.
+
+
+### Round 6 (picked 18 Nov: all three, in order)
+
+- **Plants flattened in ruts.** VegetationField3D's flowers, clover and herbs keep standing in a rut the grass has
+  left. Their materials are StandardMaterial3D on MultiMeshes, so the blade shader's trick does not reach them. Build:
+  on the CPU, when a kept or live tile's dent passes a centimetre under a placement (the field's read back), drop
+  it from its MultiMesh (torn) or lay it over (a per-instance lean, as `paths` trampling already shortens plants).
+  *Built (18 Nov):* simpler than that: the plants' own shader (PlantGenerator's, which already reads the trample
+  map) calls the grass's `grass_ground_opened()` (GrassField3D::get_ground_opened_shader_code(), shared): a light
+  print lays the plant over its own way through the trample lean, a rut or standing water collapses it (dithered
+  per plant), and the rest stand on the dented ground. No CPU work, and PT matches raster.
+- **Ruts grow back over.** Grass torn out of a rut regrows from the edges over weeks (meadow recovery after wheel
+  traffic: weeks to a season, faster in wet warm months), and a lightly pressed sward stands up again in days. Build:
+  the ground's fresh tint already dries; a second slow channel (regrowth 0..1 per texel, aged with the kept ruts)
+  that the blade shader reads to bring blades back, densest at the rut's shoulders first.
+  *Built (18 Nov):* the regrowth share is per texel on the GPU field (the water cell's spare `s.z`), moved with the
+  field, kept in the tile cache and the kept files (the clay uint's high half), read back (`get_regrown_at`). It
+  grows only while a kept tile is away (`_ruts_age`: the bare share closes at `ruts_regrowth_time`, a month by
+  default) and is zeroed wherever a stamp presses or digs again. The map carries it as A just over 1 (1 + 0.02 x
+  share: a roughness factor too small to see, and A > 1 never happens otherwise), and the grass, the plants and the
+  ground's exposure (material.cpp) read it: torn blades return, flattened ones stand up four times sooner, the
+  ground shows its cover again; the hollow stays. Bench: docs/bench/grass `--ruts=aged[:scale]`.
+- **Puddles placed by the world.** add_puddle() exists for scenes; the ground can call it itself where the terrain
+  data map's wetness index is high in a hollow, after rain, so a generated world has puddles where water would
+  gather without scene code.
 
 
 ### Look (any stage)

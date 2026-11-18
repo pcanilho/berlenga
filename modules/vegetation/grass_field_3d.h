@@ -494,6 +494,9 @@ public:
 	void set_ground_tint_enabled(bool p_enabled);
 	bool is_ground_tint_enabled() const { return ground_tint_enabled; }
 	static String get_ground_shader_code();
+	// grass_ground_opened(xz): what the ground's ruts, digs and puddles do to plants there (mud round 5): x lays them
+	// flat, y takes them away, z the ground's drop (m). Shared with PlantGenerator's plant shader.
+	static String get_ground_opened_shader_code();
 
 	void set_trample_enabled(bool p_enabled);
 	bool is_trample_enabled() const { return trample_enabled; }

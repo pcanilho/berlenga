@@ -100,7 +100,7 @@ layout(set = 0, binding = 8, std430) restrict writeonly buffer Collision {
 	float collision_h[];
 };
 layout(set = 0, binding = 9, std430) restrict buffer Cache {
-	uint cache[]; // per slot TILE x TILE packHalf2x16(dent, rim)
+	uint cache[]; // per slot TILE x TILE x cache_stride(): packHalf2x16(dent, rim), then (fresh, water depth), (clay kg/m2, 0)
 };
 layout(set = 0, binding = 10, std430) restrict readonly buffer TileOps {
 	ivec4 tile_ops[]; // store: (tile x, tile z, slot, 0); shift: per new tile (source kind, index, 0, 0)
@@ -110,7 +110,9 @@ layout(set = 0, binding = 11, std430) restrict writeonly buffer Packed {
 };
 // Standing water (ground only): per texel the outflows to -x, +x, -z, +z (m/s: m3/s over the texel's area) and
 // (depth m, bed load along x m2/s, bed cut by the runoff m, bed load along z m2/s). The virtual pipe model (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007).
-// Then the clay it carries (mud round 3): (kg/m2 over the texel, its concentration kg/m3 as the substep began, 0, 0).
+// Then the clay it carries (mud round 3): (kg/m2 over the texel, its concentration kg/m3 as the substep began, the share
+// of the sward grown back over the texel's rut since it was last pressed (mud round 6: set only by the kept ruts'
+// ageing, 0..1), 0).
 struct WaterCell {
 	vec4 flux;
 	vec4 w;
@@ -120,7 +122,7 @@ layout(set = 0, binding = 12, std430) restrict buffer Water {
 	WaterCell water[];
 };
 layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
-	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face()); then the shifted clay
+	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face()); then the shifted clay; then the shifted regrowth
 };
 layout(set = 0, binding = 14, std430) restrict buffer Ledger {
 	uint ledger[4]; // add_water's discs, mm3 (cumulative): [0] takes could not find, [1] added, [2] taken
@@ -148,6 +150,10 @@ bool is_ground() {
 // uints per texel in the cache and the read back: (dent, rim), then (fresh, 0) for the ground.
 int stride() {
 	return is_ground() ? 2 : 1;
+}
+// uints per texel in the tile cache (GroundDeformGPU::cache_uints): the ground's third keeps its water's clay (mud round 5).
+int cache_stride() {
+	return is_ground() ? 3 : 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -387,6 +393,7 @@ void run_amount_stamp(Stamp s) {
 			st.x = min(st.x + a - take, c.max_dent);
 			if (ground) {
 				st.w = 1.0;
+				water[i].s.z = 0.0; // dug again: what had grown back over it is gone (mud round 6)
 			}
 		} else {
 			float fill = min(st.x, a);
@@ -617,6 +624,9 @@ void run_stamp(Stamp s) {
 		if (ground && st.w < 4.0) { // freshly turned, under a tracked-mud film that stays on top
 			st.w = 1.0;
 		}
+		if (ground) {
+			water[i].s.z = 0.0; // pressed again: what had grown back over it is gone (mud round 6)
+		}
 		state[i] = st;
 		moved += delta * area;
 		pushed += ((delta - take) * c.rim_share + take * mix(c.rim_share, 1.0, bow)) * area;
@@ -678,6 +688,9 @@ void run_stamp(Stamp s) {
 			st.z = max(st.z, settle);
 			if (ground && st.w < 4.0) { // freshly turned, under a tracked-mud film that stays on top
 				st.w = 1.0;
+			}
+			if (ground) {
+				water[i].s.z = 0.0; // pressed again: what had grown back over it is gone (mud round 6)
 			}
 			state[i] = st;
 		}
@@ -1438,10 +1451,11 @@ void main() {
 		int x = o.x * TILE + k % TILE;
 		int z = o.y * TILE + k / TILE;
 		vec4 st = state[z * n + x];
-		int sw = stride();
+		int sw = cache_stride();
 		cache[(o.z * TILE * TILE + k) * sw] = packHalf2x16(st.xy);
-		if (sw == 2) {
-			cache[(o.z * TILE * TILE + k) * 2 + 1] = packHalf2x16(vec2(st.w, water[z * n + x].w.x));
+		if (is_ground()) {
+			cache[(o.z * TILE * TILE + k) * sw + 1] = packHalf2x16(vec2(st.w, water[z * n + x].w.x));
+			cache[(o.z * TILE * TILE + k) * sw + 2] = packHalf2x16(water[z * n + x].s.xz);
 		}
 		return;
 	}
@@ -1458,7 +1472,7 @@ void main() {
 	} else if (push.mode == MODE_WATER_COPY) {
 		water[i].flux = vec4(0.0);
 		water[i].w = vec4(water_tmp[i], 0.0, 0.0, 0.0);
-		water[i].s = vec4(water_tmp[3 * n * n + i], 0.0, 0.0, 0.0);
+		water[i].s = vec4(water_tmp[3 * n * n + i], 0.0, water_tmp[4 * n * n + i], 0.0);
 	} else if (push.mode == MODE_WATER_ERODE) {
 		water_erode(x, z);
 	} else if (push.mode == MODE_WATER_SED) {
@@ -1536,6 +1550,10 @@ void main() {
 			float cm = wd > 0.002 ? water[i].s.x / wd : 0.0;
 			if (cm > 0.5) {
 				tint.y = -min(cm / 400.0, 1.0);
+			} else if (st.w < 0.05 && water[i].s.z > 0.0) {
+				// The sward grown back over an old rut (mud round 6), for the grass and the ground's look: A just
+				// over 1 (1.02 at most, a roughness factor too small to see), never reached otherwise.
+				tint.y = 1.0 + 0.02 * clamp(water[i].s.z, 0.0, 1.0);
 			}
 			imageStore(out_tex, ivec2(x, z), vec4(st.x - st.y - relief, wd, tint));
 		} else {
@@ -1551,27 +1569,33 @@ void main() {
 		int lz = z % TILE;
 		vec4 v = vec4(0.0);
 		float wd = 0.0;
-		float ws = 0.0; // the clay in it (a tile coming back from the cache comes back clear: it settled)
+		float ws = 0.0; // the clay in it (kept in the cache with the water since mud round 5)
+		float rg = 0.0; // the sward grown back over it (mud round 6)
 		if (o.x == 1) {
 			int ox = (o.y % nt) * TILE + lx;
 			int oz = (o.y / nt) * TILE + lz;
 			v = state[oz * n + ox];
 			wd = is_ground() ? water[oz * n + ox].w.x : 0.0;
 			ws = is_ground() ? water[oz * n + ox].s.x : 0.0;
+			rg = is_ground() ? water[oz * n + ox].s.z : 0.0;
 		} else if (o.x == 2) {
-			int sw = stride();
+			int sw = cache_stride();
 			int ci = (o.y * TILE * TILE + lz * TILE + lx) * sw;
 			v.xy = unpackHalf2x16(cache[ci]);
-			if (sw == 2) {
+			if (is_ground()) {
 				vec2 fw = unpackHalf2x16(cache[ci + 1]);
 				v.w = fw.x;
 				wd = fw.y;
+				vec2 cr = unpackHalf2x16(cache[ci + 2]);
+				ws = wd > 1e-4 ? cr.x : 0.0;
+				rg = cr.y;
 			}
 		}
 		state_out[i] = v;
 		if (is_ground()) {
 			water_tmp[i] = wd;
 			water_tmp[3 * n * n + i] = ws;
+			water_tmp[4 * n * n + i] = rg;
 		}
 	} else if (push.mode == MODE_PACK) {
 		vec4 st = state[i];
@@ -1580,7 +1604,7 @@ void main() {
 		if (sw == 2) {
 			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
 			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, water[i].w.z));
-			packed[n * n * 3 + i] = packHalf2x16(vec2(water[i].w.x > 1e-5 ? water[i].s.x / water[i].w.x : 0.0, 0.0));
+			packed[n * n * 3 + i] = packHalf2x16(vec2(water[i].w.x > 1e-5 ? water[i].s.x / water[i].w.x : 0.0, water[i].s.z));
 			if (i == 0) {
 				packed[n * n * 4] = ledger[0];
 				packed[n * n * 4 + 1] = ledger[1];

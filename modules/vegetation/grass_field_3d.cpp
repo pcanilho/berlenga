@@ -352,6 +352,44 @@ void GrassField3D::_ensure_resources() {
 	}
 }
 
+String GrassField3D::get_ground_opened_shader_code() {
+	return R"(
+global uniform sampler2D ground_deform_map;
+global uniform vec4 ground_deform_rect;
+global uniform sampler2D ground_deform_near_map;
+global uniform vec4 ground_deform_near_rect;
+// What a rut, dig or puddle does to the sward at p_xz: x lays it flat (a print, a tyre's light pass, a mud film), y takes
+// it away (a rut or dig past a centimetre or so, standing water), 0 to 1 each; z how far
+// the ground went down there (m, negative on a rim), so the blades left stand on it.
+vec3 grass_ground_opened(vec2 p_xz) {
+	if (ground_deform_rect.z <= 0.0) {
+		return vec3(0.0);
+	}
+	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec3(0.0);
+	}
+	vec4 d = textureLod(ground_deform_map, uv, 0.0);
+	if (ground_deform_near_rect.z > 0.0) {
+		vec2 e = min(p_xz - ground_deform_near_rect.xy, ground_deform_near_rect.xy + ground_deform_near_rect.z - p_xz);
+		float nw = smoothstep(0.0, 1.0, min(e.x, e.y));
+		if (nw > 0.0) {
+			d = mix(d, textureLod(ground_deform_near_map, (p_xz - ground_deform_near_rect.xy) / ground_deform_near_rect.z, 0.0), nw);
+		}
+	}
+	// Any fresh print or film lays the sward over (the ground's fresh tint, B); a light pass leaves it there, flattened,
+	// as on a meadow a tyre has crossed once. Pressed in past a centimetre or so, or under water, it is torn out.
+	// Grown back over since (mud round 6: GroundSurface3D's kept ruts age; A just over 1): torn blades return, flattened
+	// ones stand up four times sooner.
+	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
+	float flat_ = max(smoothstep(0.002, 0.008, abs(d.r)) * (1.0 - min(4.0 * regrown, 1.0)), smoothstep(0.03, 0.15, abs(1.0 - d.b)));
+	float relief = smoothstep(0.01, 0.04, abs(d.r)) * (1.0 - regrown);
+	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
+	return vec3(flat_, max(relief, water), d.r);
+}
+)";
+}
+
 void GrassField3D::_build_material() {
 	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
@@ -363,6 +401,8 @@ void GrassField3D::_build_material() {
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += WeatherMap3D::get_wind_shader_code();
 	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
+	// The ground's ruts, digs and puddles (GroundSurface3D; material.cpp ground_deform_exposed()), mud round 5.
+	code += get_ground_opened_shader_code();
 	code += R"(
 // weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
 // zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
@@ -589,6 +629,15 @@ void vertex() {
 			}
 		}
 	}
+	// Ruts and puddles (mud round 5): pressed blades lie flat, each its own way; where the soil is opened they are gone.
+	vec3 go = grass_ground_opened(base_w.xz);
+	{
+		if (go.x + go.y > 0.0) {
+			float ga = fract(rnd * 41.3) * 6.2832;
+			off = mix(off, vec2(cos(ga), sin(ga)) * 1.45, go.x);
+			h *= 1.0 - go.y * step(fract(rnd * 23.9), 0.97 * go.y + 0.02);
+		}
+	}
 	float ang = min(length(off), 1.4);
 	vec2 dir = length(off) > 1e-4 ? normalize(off) : vec2(0.0, 1.0);
 	// Straw lies along its record's +z, a little up or down through the swath, bowed a little.
@@ -749,6 +798,7 @@ void vertex() {
 	// Lying straw shows its upper side, lit from the sky, not a strip turned edge-on to a low view.
 	n = straw ? normalize(n + vec3(0.0, 2.0, 0.0)) : n;
 	// Not yet emerged (a plot sown, below 10): nothing shows.
+	p -= to_local * vec3(0.0, go.z, 0.0);
 	VERTEX = hide || stage < 10.0 ? vec3(0.0) : p;
 	NORMAL = n;
 	v_t = t;
@@ -892,6 +942,15 @@ void vertex() {
 			}
 		}
 	}
+	// Ruts and puddles (mud round 5): pressed blades lie flat, each its own way; where the soil is opened they are gone.
+	vec3 go = grass_ground_opened(base_w.xz);
+	{
+		if (go.x + go.y > 0.0) {
+			float ga = fract(rnd * 41.3) * 6.2832;
+			off = mix(off, vec2(cos(ga), sin(ga)) * 1.45, go.x);
+			h *= 1.0 - go.y * step(fract(rnd * 23.9), 0.97 * go.y + 0.02);
+		}
+	}
 
 	// Blades dead to the crown in winter or a drought (dormant) lose their turgor and lodge: they lie
 	// over, each its own way, a little shorter, in the mat rather than standing up as straw spikes.
@@ -944,6 +1003,7 @@ void vertex() {
 		float order = floor(INSTANCE_CUSTOM.w) / 256.0;
 		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
 	}
+	p -= to_local * vec3(0.0, go.z, 0.0);
 	VERTEX = p;
 	NORMAL = normalize(n + across * side * 0.9);
 

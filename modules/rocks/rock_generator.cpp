@@ -2530,6 +2530,9 @@ uniform float rock_roughness = 0.8;
 uniform float porosity = 0.3;
 uniform float grain_bump = 0.2;
 uniform float lichen_cover = 0.5;
+// Limestone and other lime-rich rock take their own lichens (white-grey and dark crusts that etch it, orange
+// Caloplaca); siliceous rock (granite, sandstone, basalt, slate) the yellow-green map lichen and grey foliose ones.
+uniform bool calcareous = false;
 uniform float moss_cover = 0.4;
 uniform vec3 moss_color = vec3(0.035, 0.06, 0.012);
 // The side away from the noon sun (north in the northern hemisphere): moss holds on the shaded, damp faces, the
@@ -2644,6 +2647,42 @@ vec2 rk_grain(vec3 p) {
 		}
 	}
 	return vec2(id, f2 - f1);
+}
+
+// Lichen colonies (docs/ideas/rocks.md, "Lichen on rock"): each cell may hold one thallus grown out from its point
+// as a rosette, its radius (in cells) from its age. The colony holding p is the one with the smallest distance over
+// radius (a multiplicatively weighted Voronoi diagram, so a big old thallus overgrows a young one); returns that ratio,
+// the next colony's, and the holder's id. Where two meet, the ratios match: the line between them.
+// Colonisation is patchy (spores land and survive in some stretches of a face more than others): each colony's
+// size is scaled by a patch field read at its own point (p_cell metres a cell, p_bias raising it), so colonies near a
+// patch's edge are small and whole, never cut.
+vec3 rk_lichen_cells(vec3 p, float p_grow, float p_share, float p_cell, float p_bias) {
+	vec3 i = floor(p);
+	float b1 = 9.0, b2 = 9.0, id = 0.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 c = i + vec3(float(x), float(y), float(z));
+				if (rk_hash3(c + 5.3) > p_share) {
+					continue;
+				}
+				vec3 f = c + vec3(rk_hash3(c), rk_hash3(c + 19.19), rk_hash3(c + 47.47));
+				float patch_c = smoothstep(0.3, 0.6, rk_noise3(f * p_cell * 1.4 + 3.0) + p_bias);
+				if (patch_c < 0.05) {
+					continue;
+				}
+				float r = length(f - p) / max(p_grow * patch_c * (0.35 + 0.9 * rk_hash3(c + 71.1)), 1e-3);
+				if (r < b1) {
+					b2 = b1;
+					b1 = r;
+					id = rk_hash3(c + 91.3);
+				} else if (r < b2) {
+					b2 = r;
+				}
+			}
+		}
+	}
+	return vec3(b1, b2, id);
 }
 
 uint rk_hash_u(uint x) {
@@ -2866,12 +2905,83 @@ void fragment() {
 	vec3 wh = vec3(wn.x, 0.0, wn.z);
 	float shade_side = aspect_strength * dot(wh, normalize(vec3(pole_direction.x, 0.0, pole_direction.z) + vec3(1e-5, 0.0, 0.0)));
 	float open_face = (1.0 - fresh) * smoothstep(0.4, 0.9, cavity) * (1.0 - film_in) * smoothstep(-0.3, 0.5, wn.y) * clamp(0.75 - 0.45 * shade_side, 0.2, 1.2);
-	float lic_n = rk_fbm3(mp * 11.0 + 3.0);
-	float lic = open_face * smoothstep(0.7 - 0.2 * lichen_cover, 0.73 - 0.2 * lichen_cover, lic_n) * step(0.01, lichen_cover);
-	float kind = rk_noise3(mp * 1.3 + 7.0);
-	vec3 lic_col = kind < 0.55 ? vec3(0.24, 0.26, 0.19) : (kind < 0.8 ? vec3(0.28, 0.30, 0.07) : (kind < 0.92 ? vec3(0.45, 0.17, 0.03) : vec3(0.03, 0.03, 0.025)));
-	col = mix(col, lic_col * (0.8 + 0.4 * rk_noise3(mp * 60.0)), lic);
-	rough = mix(rough, 0.9, lic);
+	// Lichen thalli (docs/ideas/rocks.md, "Lichen on rock"): rosettes grown out from points, a few millimetres to a
+	// decimetre across by age (map lichen gains well under a millimetre a year; Armstrong 2011, Bradwell 2009), lobed
+	// at the margin, meeting their neighbours in black lines (the prothallus: the "map"), the crust cracked into areolae
+	// with black fruiting discs (apothecia). Species by substrate and exposure (Fletcher 1973; Purvis et al. 1992): on
+	// siliceous rock yellow-green Rhizocarpon, grey Lecanora and foliose Parmelia, black Lecidea, orange Xanthoria on
+	// tops where birds perch; on limestone white-grey Aspicilia and dark Verrucaria crusts, orange Caloplaca. Colonised
+	// patchily; fresh breaks bare. Below a pixel the detail fades to its average.
+	float lic = 0.0;
+	float px = footprint; // metres per pixel (no screen derivatives: the path tracer's hit shaders have none)
+	// Not on stones under a stream or in the swash (a water film): lichens need to dry between wettings.
+	if (lichen_cover > 0.01 && open_face > 0.01 && film_in < 0.3) {
+		const float cell_m = 0.09;
+		vec3 lc = rk_lichen_cells(mp / cell_m, 0.7 + 0.6 * lichen_cover, 0.85, cell_m, 0.5 * (lichen_cover - 0.5));
+		// Lobed margins: lobes of about a centimetre, finer crenulation on them.
+		float rim = 0.3 * (rk_noise3(mp * 90.0 + lc.z * 37.0) - 0.5) + 0.1 * (rk_noise3(mp * 380.0 + 5.0) - 0.5);
+		float r_eff = lc.x + rim;
+		float soft = clamp(px / (cell_m * 0.35), 0.03, 0.5);
+		float inside = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, r_eff)) * smoothstep(0.02, 0.3, open_face);
+		if (inside > 0.0) {
+			float top = smoothstep(0.65, 0.95, wn.y);
+			float k = fract(lc.z * 7.31);
+			vec3 sp_col;
+			float prothallus; // how black the margin and the meeting lines are
+			float foliose = 0.0;
+			float fruit = 0.02; // apothecia colour
+			if (calcareous) {
+				if (k < 0.04 + 0.12 * top) {
+					sp_col = vec3(0.62, 0.21, 0.02); // Caloplaca
+					prothallus = 0.0;
+					fruit = 0.35;
+				} else if (k < 0.66) {
+					sp_col = vec3(0.56, 0.56, 0.5); // Aspicilia calcarea
+					prothallus = 0.5;
+				} else if (k < 0.86) {
+					sp_col = vec3(0.04, 0.037, 0.032); // Verrucaria nigrescens
+					prothallus = 0.2;
+				} else {
+					sp_col = vec3(0.36, 0.37, 0.33); // Lecanora
+					prothallus = 0.3;
+					fruit = 0.2;
+				}
+			} else {
+				if (k < 0.02 + 0.1 * top) {
+					sp_col = vec3(0.6, 0.22, 0.02); // Xanthoria (where birds perch: a few tops)
+					prothallus = 0.0;
+					foliose = 1.0;
+					fruit = 0.3;
+				} else if (k < 0.5) {
+					sp_col = vec3(0.34, 0.38, 0.08); // Rhizocarpon geographicum
+					prothallus = 1.0;
+				} else if (k < 0.82) {
+					sp_col = vec3(0.34, 0.37, 0.3); // Parmelia, Lecanora
+					prothallus = 0.3;
+					foliose = step(0.66, k);
+					fruit = 0.15;
+				} else {
+					sp_col = vec3(0.022, 0.021, 0.02); // Lecidea
+					prothallus = 0.6;
+				}
+			}
+			sp_col *= 0.85 + 0.3 * rk_noise3(mp * 40.0 + lc.z * 13.0);
+			// Areolae and apothecia, a few millimetres; faded to their share past a pixel.
+			float fine = 1.0 - smoothstep(0.0006, 0.0025, px);
+			vec2 ar = rk_grain(mp / 0.0028);
+			float crack = (1.0 - foliose) * (1.0 - smoothstep(0.04, 0.12, ar.y));
+			float disc = step(0.82, ar.x) * smoothstep(0.18, 0.3, ar.y) * smoothstep(0.3, 0.7, 1.0 - lc.x);
+			vec3 thallus = mix(sp_col, sp_col * 0.25, mix(0.15, crack, fine) * (1.0 - foliose));
+			thallus = mix(thallus, vec3(fruit) * (sp_col + 0.1), mix(0.05, disc, fine));
+			// The prothallus: a black rim and the lines where colonies meet, a millimetre or two wide.
+			float edge_w = max(0.06, px / (cell_m * 0.5));
+			float line = max(smoothstep(1.0 - 1.2 * edge_w, 1.0 - 0.3 * edge_w, r_eff), (1.0 - smoothstep(0.0, edge_w, lc.y - lc.x)) * step(lc.y, 1.1));
+			thallus = mix(thallus, vec3(0.015), prothallus * line);
+			lic = inside;
+			col = mix(col, thallus, inside);
+			rough = mix(rough, mix(0.92, 0.8, foliose), inside);
+		}
+	}
 
 	// Moss: where the stone stays damp and shaded (Bates 2000; Glime, Bryophyte Ecology): the faces turned from the
 	// sun, cracks and the joints between blocks, and the foot where it meets the soil. Open, sunlit tops dry out
@@ -3064,6 +3174,7 @@ Ref<ShaderMaterial> RockGenerator::get_material(RockType p_type) {
 	m->set_shader_parameter("grain_bump", 0.1f + 0.2f * l.grain);
 	m->set_shader_parameter("crystal_map", key == ROCK_GRANITE);
 	m->set_shader_parameter("lamina_map", key == ROCK_SANDSTONE);
+	m->set_shader_parameter("calcareous", key == ROCK_LIMESTONE);
 	material_cache.insert(key, m);
 	return m;
 }

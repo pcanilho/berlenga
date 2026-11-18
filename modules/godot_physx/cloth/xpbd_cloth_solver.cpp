@@ -427,11 +427,15 @@ void XPBDClothSolver::_apply_aero(float p_dt, const Vector3 &p_wind) {
 		const Vector3 tangential = rel - n * vn;
 		// Drag pushes along the normal in proportion to how square-on the flow is;
 		// lift nudges along the in-plane flow so slack cloth ripples.
-		const Vector3 force = n * (settings.drag * area * vn * Math::abs(vn)) + tangential * (settings.lift * area * Math::abs(vn));
-		const Vector3 impulse = force * (p_dt / 3.0f);
-		velocities[a] += impulse * inv_mass[a];
-		velocities[b] += impulse * inv_mass[b];
-		velocities[c] += impulse * inv_mass[c];
+		// Implicit in the normal speed (k / (1 + k) of it): explicit quadratic drag over a whole frame overshoots and
+		// blows up once the cloth moves fast against the air (a sheet dropped, or stopped short by a rail).
+		const float per = area * Math::abs(vn) * (p_dt / 3.0f);
+		const int tv[3] = { a, b, c };
+		for (int k = 0; k < 3; k++) {
+			const float kd = settings.drag * per * inv_mass[tv[k]];
+			const float damp = 1.0f / (1.0f + kd);
+			velocities[tv[k]] += n * (vn * kd * damp) + tangential * (settings.lift * per * inv_mass[tv[k]] * damp);
+		}
 	}
 }
 

@@ -39,10 +39,15 @@
 
 // Ruts kept across the world (mud round 3, docs/ideas/mud.md): the field's tiles written to disk as they leave it
 // and read back when it comes over them again, so a print made anywhere is there when the player returns, in this
-// session or the next. One zstd file per world tile, in the cache's own layout (TILE x TILE texels of two uints:
-// half dent | half rim, half fresh tint | half water depth), named by the field's texel so fields of other sizes
-// never read each other's.
+// session or the next. One zstd file per world tile, in the cache's own layout (TILE x TILE texels of STRIDE uints:
+// half dent | half rim, half fresh tint | half water depth, half the water's clay kg/m2 | half the sward regrown over
+// it 0..1), named by the field's
+// texel so fields of other sizes never read each other's.
 class GroundRutStore {
+public:
+	static constexpr int STRIDE = 3;
+
+private:
 	String dir;
 	String prefix;
 	bool scanned = false;
@@ -70,4 +75,43 @@ public:
 	static bool pack(const GroundDeformField &p_field, int p_tx, int p_tz, LocalVector<uint32_t> &r_data);
 	// Writes a packed tile into the field at its tile (p_tx, p_tz); marks it active.
 	static void unpack(GroundDeformField &r_field, int p_tx, int p_tz, const LocalVector<uint32_t> &p_data);
+};
+
+// The ground lattice's own state kept with the ruts (mud round 5): a cell's values (desiccation cracks: drying state,
+// cycles, the pool that laid its clay) written as the lattice moves off it and read back when it returns, so a dried
+// puddle comes back cracked. Blocks of B x B cells, held in memory and written to one zstd file each (named by the
+// lattice spacing) on flush; each cell carries the seconds after its block's base time it was written, for ageing.
+class GroundCellStore {
+public:
+	static constexpr int B = 32;
+	static constexpr int F = 4; // floats per cell: three values, then seconds after the block's base
+
+private:
+	struct Block {
+		LocalVector<float> v;
+		double base = 0.0;
+		bool dirty = false;
+	};
+	String dir;
+	String prefix;
+	bool scanned = false;
+	HashSet<Vector2i> on_disk;
+	HashMap<Vector2i, Block> blocks;
+
+	String _path(Vector2i p_block) const;
+	void _scan();
+	Block *_block(Vector2i p_block, bool p_create);
+	void _write(Vector2i p_block, const Block &p_b);
+
+public:
+	void configure(const String &p_dir, const String &p_kind, float p_spacing);
+	bool is_on() const { return !dir.is_empty(); }
+	// Keeps the cell's values (at most F - 1); all zero they are written only over a kept cell.
+	void put(Vector2i p_cell, const float *p_values, int p_count);
+	// The cell's kept values; false if none. r_age: seconds since they were written.
+	bool get(Vector2i p_cell, float *r_values, int p_count, double *r_age);
+	// Writes the changed blocks; p_drop also lets go of them all in memory.
+	void flush(bool p_drop);
+	// Deletes every block file of this kind, and what is held.
+	void clear();
 };

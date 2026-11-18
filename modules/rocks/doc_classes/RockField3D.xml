@@ -352,7 +352,7 @@
 		<member name="live_rockfall_rate" type="float" setter="set_live_rockfall_rate" getter="get_live_rockfall_rate" default="4.0">
 			Falls per game hour (in the [WeatherMap3D] time scale) within [member live_rockfall_radius], before the weather's trigger factor.
 		</member>
-		<member name="max_stones_per_cell" type="int" setter="set_max_stones_per_cell" getter="get_max_stones_per_cell" default="12000">
+		<member name="max_stones_per_cell" type="int" setter="set_max_stones_per_cell" getter="get_max_stones_per_cell" default="20000">
 			Caps the stones of one cell of one layer.
 		</member>
 		<member name="mineral_glints" type="bool" setter="set_mineral_glints" getter="is_mineral_glints" default="true">

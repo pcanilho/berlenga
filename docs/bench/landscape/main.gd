@@ -332,6 +332,16 @@ func _ready() -> void:
 		if no_till_tex != null:
 			RenderingServer.global_shader_parameter_set("terrain_geology_map", no_till_tex.get_rid())
 		await get_tree().process_frame
+	if prints != null and prints.has_method("is_ripples_ready"):
+		# Wind ripples grow on the sand round the camera: wait for them, then about 2 s for the sand mask.
+		var rw := 0
+		while rw < 600 and not prints.is_ripples_ready():
+			await get_tree().process_frame
+			rw += 1
+		var t_ready := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - t_ready < 2000:
+			await get_tree().process_frame
+		_log("ripples ready after %d more frames" % rw)
 	if env.pathtracing_enabled:
 		var w := 0
 		var can_ask := RenderingServer.has_method("is_pathtracing_ready")

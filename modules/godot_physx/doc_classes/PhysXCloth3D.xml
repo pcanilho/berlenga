@@ -65,6 +65,14 @@
 				Returns [code]true[/code] when strain tearing is on for this cloth: [member tear_factor] is above 1 and the project setting [code]physics/physx_3d/cloth/tearing[/code] is enabled.
 			</description>
 		</method>
+		<method name="move_pins">
+			<return type="void" />
+			<param index="0" name="vertices" type="PackedInt32Array" />
+			<param index="1" name="positions" type="PackedVector3Array" />
+			<description>
+				Holds the given vertices pinned at new places in the node's local space, for example pegs on a line set closer together than the cloth is wide, so that it hangs in swags between them. Lasts until the pins are next resolved (a change to [member pin_mode] or [member pinned_vertices], or [method reset]). CPU solver only.
+			</description>
+		</method>
 		<method name="release_pins">
 			<return type="int" />
 			<param index="0" name="vertices" type="PackedInt32Array" />

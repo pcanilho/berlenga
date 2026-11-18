@@ -7,6 +7,7 @@ extends Node3D
 #   --presets=a,b      species (default 31,32: gorse, broom; 33-35 gum rockrose, kermes oak, lentisk; 36 dwarf fan palm)
 #   --forms=a,b        TreeGenerator.ShrubForm values (default all: young, mature, old, thicket, cushion)
 #   --day=N            day of year (default 100)
+#   --variants=N       N variants of each form side by side (default 1)
 #   --pt --spp=N       path traced
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
@@ -39,8 +40,16 @@ func run(args: Dictionary) -> void:
 		var x := 0.0
 		for f in forms:
 			var t0 := Time.get_ticks_msec()
-			var sp: PlantSpecies = TreeGenerator.make_shrub_species(p, f, 1, season)
-			var m: Mesh = sp.meshes[0]
+			var nv := int(args.get("variants", "1"))
+			var sp: PlantSpecies = TreeGenerator.make_shrub_species(p, f, nv, season)
+			for vi in sp.meshes.size():
+				x = await _place(sp, vi, x, z, args, t0)
+		width = maxf(width, x)
+		z -= 3.5
+	await _after_place(args, width, z)
+
+func _place(sp: PlantSpecies, vi: int, x: float, z: float, args: Dictionary, t0: int) -> float:
+			var m: Mesh = sp.meshes[vi]
 			if args.has("near"):
 				# The near mesh the field swaps in within near_range (built on demand).
 				var src: Object = sp.near_mesh_source
@@ -55,7 +64,7 @@ func run(args: Dictionary) -> void:
 				if nm != null:
 					m = nm
 				else:
-					print("no near mesh for ", p)
+					print("no near mesh for ", sp.get_name())
 			var bb := m.get_aabb()
 			var tris := 0
 			for s in m.get_surface_count():
@@ -66,8 +75,9 @@ func run(args: Dictionary) -> void:
 			mi.position = Vector3(x - bb.position.x, 0, z)
 			add_child(mi)
 			x += bb.size.x + float(args.get("gap", "0.8"))
-		width = maxf(width, x)
-		z -= 3.5
+			return x
+
+func _after_place(args: Dictionary, width: float, z: float) -> void:
 	_world(args)
 	if args.has("lod_threshold"):
 		# 0 draws every mesh at LOD 0: the reference for a LOD comparison.

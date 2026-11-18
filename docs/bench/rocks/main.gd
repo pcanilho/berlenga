@@ -7,7 +7,7 @@ extends Node3D
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
-#   --clouds              the weather sky (clouds, atmosphere) instead of the plain gradient
+#   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
@@ -16,6 +16,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
@@ -31,7 +32,7 @@ extends Node3D
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
-#                         --no-rivulets for a before frame
+#                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -131,6 +132,10 @@ func _environment() -> void:
 		var ws := WeatherSkyMaterial.new()
 		ws.cloud_reprojection = false
 		ws.set_shader_parameter("atmo_far_water", 1.0)
+		# --clouds=C: the cover (0..1); a still gets three times the march's steps, as it has no frames to average.
+		if args["clouds"] != "1": # (a bare --clouds keeps the sky's own cover)
+			ws.set_shader_parameter("cloud_cover", float(args["clouds"]))
+		ws.set_shader_parameter("cloud_steps", 192)
 		sky = ws
 	var sk := Sky.new()
 	sk.sky_material = sky
@@ -262,6 +267,9 @@ func _one_rock() -> void:
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
 	if args.has("no-rivulets") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rain_rivulets", false)
+	if args.has("film") and m.surface_get_material(0) is ShaderMaterial:
+		# --film=f: the water film a stream bed gives its stones (INSTANCE_CUSTOM.y), contact band off.
+		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rock_instance", Vector4(-1.0e4, float(args["film"]), 0.0, 0.5))
 	var fam := FAMILIES.find(tf[1]) if tf.size() > 1 else 0
 	if args.has("stand") and fam in [RockGenerator.FAMILY_FIN, RockGenerator.FAMILY_HOODOO, RockGenerator.FAMILY_SEA_STACK, RockGenerator.FAMILY_GOBLIN, RockGenerator.FAMILY_CAVE_MOUTH]:
 		# --stand: on end as the field stands it (a fin's z up, a column's x up), seen side on from 6 b-axes away.
@@ -301,7 +309,7 @@ func _world() -> void:
 	gen.meander_age = 0.0
 	gen.outwash_age = 0.0
 	gen.size = Vector2(WORLD, WORLD)
-	gen.cell_size = 8.0
+	gen.cell_size = float(args.get("cell", "8.0")) # --cell=4 for close shore shots (finer cliff facets)
 	gen.seed = int(args.get("seed", "5"))
 	gen.uplift = 3.0
 	gen.base_uplift = 0.1
@@ -945,26 +953,27 @@ func _caves(cam: Camera3D) -> void:
 				add_child(lamp_st)
 				# Overhead and a little behind the camera, as a helmet lamp: no wall close enough to burn out.
 				lamp_st.global_position = eye_s - dir * 0.2 + Vector3(0, 0.15, 0)
-				# A second lamp downstream, low over the water (another caver's, out of shot): its light grazes the
-				# surface toward the lens, so the water shows as a glinting sheet, as it does to a caver.
-				var lamp_g := OmniLight3D.new()
-				lamp_g.omni_range = 10.0
-				lamp_g.light_energy = float(args.get("graze-energy", "1.5"))
-				lamp_g.shadow_enabled = true
-				add_child(lamp_g)
-				# Kept on this segment's own water, short of its end: past it the stream may drop down a cascade, and a
-				# lamp down in the plunge would light the whole passage through the fall's water.
-				var ahead := minf(float(args.get("graze-dist", "5.0")), float(args.get("dist", "2.5")) + 0.5 * (sb - sa).length() - 0.4)
-				var g_at := eye_s + dir * maxf(ahead, 1.5)
-				var bed_eye := eye_s.y - float(args.get("eye-height", "0.4"))
-				var g_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(g_at.x, bed_eye + 0.8, g_at.z), Vector3(g_at.x, bed_eye - 0.6, g_at.z)))
-				g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.2
-				for k in 8:
-					if net.get_rock_distance(g_at) < -0.15:
-						break
-					g_at = g_at.lerp(Vector3(mid.x, g_at.y, mid.z), 0.3)
-				lamp_g.global_position = g_at
-				print("  stream view: grazing lamp %.1f m ahead, %.2f m over the eye's bed" % [ahead, g_at.y - bed_eye])
+				if args.has("graze"):
+					# --graze: a second lamp downstream, low over the water (another caver's, out of shot): its light grazes the
+					# surface toward the lens, so the water shows as a glinting sheet, as it does to a caver.
+					var lamp_g := OmniLight3D.new()
+					lamp_g.omni_range = 10.0
+					lamp_g.light_energy = float(args.get("graze-energy", "1.5"))
+					lamp_g.shadow_enabled = true
+					add_child(lamp_g)
+					# Kept on this segment's own water, short of its end: past it the stream may drop down a cascade, and a
+					# lamp down in the plunge would light the whole passage through the fall's water.
+					var ahead := minf(float(args.get("graze-dist", "5.0")), float(args.get("dist", "2.5")) + 0.5 * (sb - sa).length() - 0.4)
+					var g_at := eye_s + dir * maxf(ahead, 1.5)
+					var bed_eye := eye_s.y - float(args.get("eye-height", "0.4"))
+					var g_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(g_at.x, bed_eye + 0.8, g_at.z), Vector3(g_at.x, bed_eye - 0.6, g_at.z)))
+					g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.2
+					for k in 8:
+						if net.get_rock_distance(g_at) < -0.15:
+							break
+						g_at = g_at.lerp(Vector3(mid.x, g_at.y, mid.z), 0.3)
+					lamp_g.global_position = g_at
+					print("  stream view: grazing lamp %.1f m ahead, %.2f m over the eye's bed" % [ahead, g_at.y - bed_eye])
 				var n_stream := 0
 				for sgx in st_segs:
 					n_stream += 1 if sgx["stream"] else 0

@@ -2097,6 +2097,16 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Hedge shrubs from above (18 Nov; docs on vegetation's fields frame: hawthorn and field maple
+crowns and the hedge face read as one dark green carpet, and the grown-out hedge trees were
+identical round lollipops). Foliage clumping: shrub canopies hold leaves in clumps with gaps
+between (clumping index 0.6-0.8; Chen and Black 1992; He et al. 2012), so a 3D noise a fifth of
+the crown radius across empties the twigs in its low quarter, giving lobed edges with sky
+between and the stems seen in the gaps. The leaves' shading normals lean out from their clump
+and the crown hull (bent foliage normals, as game foliage does; Sousa, GDC 2013), so each lump
+has a lit top and a shaded underside. Each grown-out variant (SHRUB_MATURE) takes its own habit:
+one to three stems, spread, leader strength, branch angle, crookedness, bending and age.
+
 Cork round 10 (18 Nov; docs: the isotropic cross breaks curled into S, F and C hooks like
 glyphs; ridge edges soft and drapey, melted plastic). Cross breaks are zero lines of one octave
 stretched across the stem, so they run nearly straight, with a slow tilt per block so they never

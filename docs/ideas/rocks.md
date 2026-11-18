@@ -820,6 +820,18 @@ replaced it as the opening.
 generator, so the blend matches the ground with no wiring. The blend band is thin by design (`ground_blend_height`
 0.25 m times sqrt(scale): a full foot ~10 cm up a 1 m stone, dust to ~45 cm); scene's seat3 tries 0.45.
 
+## Scree as real stones (18 Nov, with terrain)
+
+Talus is clast-supported: the stones touch, some 60 to 70% of the ground under them, gravel between (Statham 1976;
+Sass and Krautblatter 2007). The scree layer now tries four times the blocks a 65% cover needs (a power law of b axes
+cut at 0.9 m, mean b squared about 3.4 dmin^2) and lays them largest first where each touches but does not pass
+through those already down (footprint 0.45 b, nestled to 0.8 of the sum), then a 10 to 15 cm cobble tail in the gaps
+(about 6% more; RockField3D `ground_detail` draws the 1 to 15 cm chips on the GPU, so the field keeps to the coarse
+end). Each sunk a fifth to a third. Talus drains, so the ground contact map draws no damp ring there and the banked
+fines at half strength (both read as dirty smudges on dry grey talus). Inside the scree radius the ground's own
+parallax blocks go: the field sets TerrainMaterial3D.scree_blocks_distance to the layer's radius whenever its ground
+material has it. `max_stones_per_cell` 20000 (a 32 m scree cell holds about 13000).
+
 ## Stone and ground contact (Paulo, 17 Nov: "stone and ground side")
 
 The ground blend paints only the stone, and on grey scree the stone and ground colours are close, so it hardly
@@ -1045,6 +1057,18 @@ Four options put to Paulo after the tafoni, wet rock and cave stream round. Noth
   cushions are. Fresh faces (Blast breaks, rockfall scars, the `break_stone` cut) start bare.
 - Compare: Quixel scans bake lichen into the albedo; KCD2 and Crysis show it as colour at range. Here the gain is
   that age, exposure and spray drive it, and it never covers a fresh break.
+- Built (18 Nov): the rock shader's lichen is thalli, not noise patches. Each 9 cm cell may hold one colony at a
+  random point, its radius from its age (lichen_cover) and from a patch field read at its own point (so colonies at
+  a patch's edge are small and whole); the colony holding a point is the one with the least distance over radius (a
+  weighted Voronoi diagram), so neighbours meet in lines, drawn black where the species has a prothallus (the map in
+  map lichen). Lobed margins (1 cm lobes, finer crenulation), areolae (3 mm cracks) and black or coloured apothecia
+  near the eye, faded to their share past a pixel. Species per colony by substrate (material `calcareous`, on for
+  limestone) and exposure: siliceous rock takes yellow-green Rhizocarpon, grey Lecanora and foliose Parmelia, black
+  Lecidea, orange Xanthoria on a few tops; limestone white-grey Aspicilia, dark Verrucaria, orange Caloplaca, grey
+  Lecanora. No screen derivatives (the path tracer's hit shaders have none): the pixel footprint comes from the
+  view distance, as the crystals' does. Placement as before: open,
+  lit, old faces, never fresh breaks or under a water film. Not yet: crust and foliose relief, coastal zonation
+  of the lichens above the splash zone.
 
 ### Stream sinks and springs
 - Karst hydrology (Ford and Williams 2007, "Karst Hydrogeology and Geomorphology", ch. 5 to 7): a surface stream
