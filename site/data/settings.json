@@ -1704,7 +1704,7 @@
     "foam_relief"
    ],
    "note": "",
-   "what": "sharp patch edges, torn lobed holes and bubble relief, up close and at range.",
+   "what": "sharp patch edges, torn lobed holes and bubble relief, up close and at range; distant foam keeps its lace in raster instead of turning to flat white sheets.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -3750,7 +3750,7 @@
     "physics/physx_3d/streaming/statics_per_step"
    ],
    "note": "",
-   "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched.",
+   "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

@@ -993,8 +993,11 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	float clumps = foam_fbm(pw * 16.0 + 4.7);
 	float gaps = smoothstep(0.3, 0.12, foam_fbm(pw * 31.0 - 2.9));
 	float domes = smoothstep(0.8, 0.95, foam_fbm(pw * 38.0 + 9.3));
-	float bubbles = mix(1.0, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
-	bubbles *= mix(1.0, 0.7 + 0.45 * foam_fbm(pw * 3.5 + 2.3), cluster);
+	// Past a pixel each fades to its own mean (foam_fbm averages 0.5: clumps 0.62 + 0.45 * 0.5, gaps and domes rare),
+	// not to 1: fading to 1 drew far foam about a fifth brighter than the same foam near, or under the path tracer
+	// (no derivatives, full detail, the same mean), so distant patches read as flat white sheets.
+	float bubbles = mix(0.84, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
+	bubbles *= mix(0.925, 0.7 + 0.45 * foam_fbm(pw * 3.5 + 2.3), cluster);
 	// Thin foam is translucent, thick foam opaque.
 	float density = smoothstep(0.02, 0.35, a);
 	if (foam_crisp > 0.0) {
@@ -1770,6 +1773,13 @@ void fragment() {
 			// two-pixel blocks), so the rim is antialiased rather than stair-stepped where no temporal filter runs.
 			float fwf = max(fwidth(foam), 1e-3);
 			float stepped = clamp((foam - 0.3) / (3.0 * fwf) + 0.5, 0.0, 1.0);
+#if !defined(RT)
+			// Stepped up only as far as the foam reaches beside the pixel: a patch whose lace is finer than a pixel
+			// holds its mean cover (the holes' share of open water), not a solid white sheet; a blurred edge, where
+			// the foam changes fast, still steps up to the patch's full cover. (The path tracer has full detail,
+			// already crisp: its foam is left as it was.)
+			stepped *= min(foam + 2.0 * fwf, 1.0);
+#endif
 			foam = mix(foam, max(stepped, 0.8 * foam), foam_crisp);
 		}
 		if (foam > 0.01) {

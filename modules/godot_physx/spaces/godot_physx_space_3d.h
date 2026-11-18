@@ -94,7 +94,7 @@ class GodotPhysXSpace3D {
 	int partial_flushes = 0; // query-driven partial flushes since the last step
 	bool pending_bounds_dirty = false; // a waiting static moved or changed shape
 	void _refresh_pending_bounds();
-	void _add_statics(physx::PxRigidActor *const *p_actors, uint32_t p_count);
+	void _add_statics(physx::PxRigidActor *const *p_actors, uint32_t p_count, bool p_whole_batch);
 	void _flush_removals();
 	void _flush_pending_step();
 	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
@@ -136,6 +136,11 @@ public:
 	void flush_pending_actors(const physx::PxBounds3 &p_bounds);
 	int get_pending_static_count() const { return pending_statics.size(); }
 	static void defer_material_release(physx::PxMaterial *p_material);
+	// Bodies share one PxMaterial per (friction, bounce): every new material is an event each scene processes at its
+	// next simulate (a streamed region of 5,000 bodies made 5,000 of them, several ms growing with the world, and
+	// PhysX handles stop at 65,535). Released (deferred, as above) when the last body lets go.
+	static physx::PxMaterial *acquire_material(physx::PxPhysics *p_physics, real_t p_friction, real_t p_bounce);
+	static void release_material(physx::PxMaterial *p_material);
 	static void flush_material_releases();
 	// The same for an actor about to be released whose shapes hold the last references to their materials (a PhysX
 	// vehicle's chassis / wheel materials): each is kept alive (one reference each) until the next step.

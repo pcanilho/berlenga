@@ -35,6 +35,7 @@
 #include "../objects/godot_physx_area_3d.h"
 #include "../objects/godot_physx_body_3d.h"
 #include "../objects/godot_physx_cloth_3d.h"
+#include "../objects/godot_physx_material.h"
 #include "../objects/godot_physx_particle_fluid_3d.h"
 #include "../objects/godot_physx_soft_body_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
@@ -314,14 +315,16 @@ void GodotPhysXSpace3D::_flush_removals() {
 	pending_removals.clear();
 }
 
-void GodotPhysXSpace3D::_add_statics(PxRigidActor *const *p_actors, uint32_t p_count) {
+void GodotPhysXSpace3D::_add_statics(PxRigidActor *const *p_actors, uint32_t p_count, bool p_whole_batch) {
 	if (p_count == 0) {
 		return;
 	}
-	// Below this a plain batched add is as cheap as building the structure.
+	// Below this a plain batched add is as cheap as building the structure. Only a whole batch gets one: pieces of a
+	// region added over several steps as separate structures leave the query tree split into merged parts, and
+	// raycasts over it ran up to twice as slow until it was rebuilt.
 	constexpr uint32_t PRUNING_STRUCTURE_MIN = 64;
 	bool added = false;
-	if (p_count >= PRUNING_STRUCTURE_MIN) {
+	if (p_whole_batch && p_count >= PRUNING_STRUCTURE_MIN) {
 		if (PxPruningStructure *ps = px_physics->createPruningStructure(p_actors, p_count)) {
 			added = px_scene->addActors(*ps);
 			ps->release();
@@ -342,7 +345,7 @@ void GodotPhysXSpace3D::flush_pending_actors() {
 	for (uint32_t i = 0; i < pending_statics.size(); i++) {
 		actors[i] = pending_statics[i].actor;
 	}
-	_add_statics(actors.ptr(), actors.size());
+	_add_statics(actors.ptr(), actors.size(), true);
 	pending_statics.clear();
 	pending_bounds_dirty = false;
 }
@@ -380,7 +383,7 @@ void GodotPhysXSpace3D::flush_pending_actors(const PxBounds3 &p_bounds) {
 		}
 	}
 	pending_statics.resize(keep);
-	_add_statics(reached.ptr(), reached.size());
+	_add_statics(reached.ptr(), reached.size(), false);
 }
 
 // Before a step: removals, then the waiting statics. A few go in whole; a streamed region goes in over several
@@ -442,7 +445,7 @@ void GodotPhysXSpace3D::_flush_pending_step() {
 		}
 	}
 	pending_statics.resize(keep);
-	_add_statics(now.ptr(), now.size());
+	_add_statics(now.ptr(), now.size(), keep == 0);
 }
 
 static LocalVector<PxMaterial *> pending_material_releases;
@@ -454,6 +457,60 @@ void GodotPhysXSpace3D::defer_material_release(PxMaterial *p_material) {
 	}
 	MutexLock lock(pending_material_mutex);
 	pending_material_releases.push_back(p_material);
+}
+
+struct SharedMaterial {
+	PxMaterial *material = nullptr;
+	uint32_t refs = 0;
+};
+static HashMap<uint64_t, SharedMaterial> shared_materials;
+static HashMap<PxMaterial *, uint64_t> shared_material_keys;
+
+static uint64_t _material_key(real_t p_friction, real_t p_bounce) {
+	const float f = (float)p_friction;
+	const float b = (float)CLAMP(p_bounce, (real_t)0.0, (real_t)1.0);
+	uint32_t fb, bb;
+	memcpy(&fb, &f, 4);
+	memcpy(&bb, &b, 4);
+	return (uint64_t(fb) << 32) | bb;
+}
+
+PxMaterial *GodotPhysXSpace3D::acquire_material(PxPhysics *p_physics, real_t p_friction, real_t p_bounce) {
+	ERR_FAIL_NULL_V(p_physics, nullptr);
+	MutexLock lock(pending_material_mutex);
+	const uint64_t key = _material_key(p_friction, p_bounce);
+	if (SharedMaterial *sm = shared_materials.getptr(key)) {
+		sm->refs++;
+		return sm->material;
+	}
+	PxMaterial *m = p_physics->createMaterial((PxReal)Math::abs(p_friction), (PxReal)Math::abs(p_friction), (PxReal)CLAMP(p_bounce, (real_t)0.0, (real_t)1.0));
+	ERR_FAIL_NULL_V(m, nullptr);
+	godot_physx_apply_material(m, p_friction, p_bounce);
+	SharedMaterial sm;
+	sm.material = m;
+	sm.refs = 1;
+	shared_materials.insert(key, sm);
+	shared_material_keys.insert(m, key);
+	return m;
+}
+
+void GodotPhysXSpace3D::release_material(PxMaterial *p_material) {
+	if (!p_material) {
+		return;
+	}
+	{
+		MutexLock lock(pending_material_mutex);
+		const uint64_t *key = shared_material_keys.getptr(p_material);
+		if (key) {
+			SharedMaterial *sm = shared_materials.getptr(*key);
+			if (sm && --sm->refs > 0) {
+				return;
+			}
+			shared_materials.erase(*key);
+			shared_material_keys.erase(p_material);
+		}
+	}
+	defer_material_release(p_material);
 }
 
 void GodotPhysXSpace3D::flush_material_releases() {
