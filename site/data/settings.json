@@ -1734,6 +1734,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Cave pools",
+   "settings": [
+    "seabed_probe_height"
+   ],
+   "note": "",
+   "what": "pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Underground reflections",
    "settings": [
     "screen_reflections"
