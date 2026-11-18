@@ -653,10 +653,54 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			}
 		} break;
 		case LAYER_SCREE: {
-			// The talus cover: stones a power law (exponent 2.5) in size from the smallest kept, coarser where the
-			// apron thins at its toe (fall sorting: the big blocks run furthest).
+			// The talus cover (docs/ideas/rocks.md, "Scree"): clast-supported, the stones touching, some 60 to 70% of
+			// the ground under them with gravel between (Statham 1976; Sass and Krautblatter 2007). Blocks a power law
+			// (exponent 2.5) in size from the smallest kept, coarser where the apron thins at its toe (fall sorting:
+			// the big blocks run furthest); laid largest first by sequential deposition (Visscher and Bolsterli 1972),
+			// each where it touches but does not pass through those already down; then a tail of cobbles (5 to 15 cm)
+			// in the gaps. A fifth to a third of each stone sunk in the fines.
 			const real_t sub = 2.0;
 			const float dmin = MAX(float(min_size), 0.15f);
+			// The tail starts at 10 cm: ground_detail draws the 1 to 15 cm pebbles and chips between the stones on the GPU,
+			// so the field keeps to the coarse end and the two do not double up.
+			const float tail_min = MAX(float(min_size), 0.1f);
+			struct Disc {
+				float x, z, r;
+			};
+			HashMap<int64_t, LocalVector<Disc>> laid;
+			const float grid = 0.5f;
+			auto gkey = [&](int64_t p_x, int64_t p_z) { return (p_x << 32) ^ (p_z & 0xffffffff); };
+			auto fits = [&](float p_x, float p_z, float p_r) {
+				const int64_t gx = int64_t(Math::floor(p_x / grid)), gz = int64_t(Math::floor(p_z / grid));
+				const int64_t span = 1 + int64_t(Math::ceil(2.0f * 0.9f / grid));
+				for (int64_t i = -span; i <= span; i++) {
+					for (int64_t k = -span; k <= span; k++) {
+						const LocalVector<Disc> *cellv = laid.getptr(gkey(gx + i, gz + k));
+						if (!cellv) {
+							continue;
+						}
+						for (const Disc &o : *cellv) {
+							const float dx = o.x - p_x, dz = o.z - p_z, m = 0.8f * (o.r + p_r);
+							if (dx * dx + dz * dz < m * m) {
+								return false;
+							}
+						}
+					}
+				}
+				return true;
+			};
+			auto lay = [&](float p_x, float p_z, float p_r) {
+				laid[gkey(int64_t(Math::floor(p_x / grid)), int64_t(Math::floor(p_z / grid)))].push_back({ p_x, p_z, p_r });
+			};
+			struct Try {
+				Vector3 xz;
+				float size;
+				float t;
+			};
+			struct TrySizeGreater {
+				bool operator()(const Try &p_a, const Try &p_b) const { return p_a.size > p_b.size; }
+			};
+			LocalVector<Try> tries;
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
@@ -665,24 +709,16 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					if (t < 0.05f) {
 						continue;
 					}
-					const float want = 0.3f * t * float(sub * sub) * float(density) / (float(Math::PI) * 1.25f * dmin * dmin);
+					// Blocks to cover 65% of full talus (the mean b axis squared of the power law cut at 0.9 m is about
+					// 3.4 dmin^2; the footprint about 1.4 b by b), tried four times over: the spacing test turns many
+					// away as the cover jams.
+					const float want = 4.0f * 0.65f * t * float(sub * sub) * float(density) / (0.785f * 1.4f * 3.4f * dmin * dmin);
 					int count = int(want);
 					if (rng.randf() < want - count) {
 						count++;
 					}
-					const RockGenerator::RockType type = rock_type;
 					for (int k = 0; k < count; k++) {
-						Pending pd;
-						pd.xz = Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub);
-						pd.size = MIN(dmin * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.5f), 0.9f) * (1.0f + 1.2f * (1.0f - t));
-						pd.key = _library_key(type, RockGenerator::FAMILY_SCREE, 0);
-						pd.yaw = rng.randf() * Math::TAU;
-						pd.tilt = Math::deg_to_rad(20.0f) * rng.randf();
-						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						pd.sink = 0.15f + 0.15f * rng.randf();
-						pd.follow = 0.8f;
-						pd.film = 0.0f;
-						pending.push_back(pd);
+						tries.push_back({ Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub), MIN(dmin * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.5f), 0.9f) * (1.0f + 1.2f * (1.0f - t)), t });
 					}
 					// The toe: the largest blocks roll furthest and stop on the thin apron below the cone, car- to
 					// house-sized (2 to 6 m), a few per hundred metres of toe (fall sorting; Kirkby and Statham 1975).
@@ -699,8 +735,41 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.follow = 0.5f;
 						pd.film = 0.0f;
 						pending.push_back(pd);
+						lay(pd.xz.x, pd.xz.z, 0.45f * pd.size);
+					}
+					// The cobble tail in the gaps: some 6% more cover in stones of 10 to 15 cm, tried twice over.
+					if (tail_min < dmin) {
+						const float tm = 0.5f * (tail_min + dmin);
+						const float want_t = 2.0f * 0.06f * t * float(sub * sub) * float(density) / (0.785f * 1.4f * tm * tm);
+						const int nt = int(want_t) + (rng.randf() < want_t - int(want_t) ? 1 : 0);
+						for (int k = 0; k < nt; k++) {
+							tries.push_back({ Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub), Math::lerp(tail_min, dmin, rng.randf() * rng.randf()), t });
+						}
 					}
 				}
+			}
+			// Largest first: each settles among those already down.
+			tries.sort_custom<TrySizeGreater>();
+			const RockGenerator::RockType type = rock_type;
+			const uint32_t key = _library_key(type, RockGenerator::FAMILY_SCREE, 0);
+			for (const Try &tr : tries) {
+				// The footprint's mean radius (axes about 1.35, 0.7 and 1 times b over 2), nestled a little.
+				const float r = 0.45f * tr.size;
+				if (!fits(tr.xz.x, tr.xz.z, r)) {
+					continue;
+				}
+				lay(tr.xz.x, tr.xz.z, r);
+				Pending pd;
+				pd.xz = tr.xz;
+				pd.size = tr.size;
+				pd.key = key;
+				pd.yaw = rng.randf() * Math::TAU;
+				pd.tilt = Math::deg_to_rad(20.0f) * rng.randf();
+				pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
+				pd.sink = 0.2f + 0.13f * rng.randf();
+				pd.follow = 0.8f;
+				pd.film = 0.0f;
+				pending.push_back(pd);
 			}
 		} break;
 		case LAYER_RIVER: {
@@ -3549,6 +3618,7 @@ Ref<ShaderMaterial> RockField3D::_ground_source() const {
 // texture (the texture's detail averages out over the band), as linear albedo. Without a ground material, the
 // terrain material's own defaults.
 void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
+	_sync_scree_blocks();
 	static const char *names[5] = { "rock", "scree", "soil", "alluvium", "sand" };
 	static const Color defaults[5] = { Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46) };
 	p_material->set_shader_parameter("ground_blend", ground_blend);
@@ -3637,8 +3707,23 @@ void RockField3D::set_ground_blend_height(real_t p_height) {
 	}
 }
 
+// Inside the scree layer's radius the real stones lie on the talus, so the ground's own parallax scree blocks go
+// (TerrainMaterial3D.scree_blocks_distance), leaving its gravel bed under them.
+void RockField3D::_sync_scree_blocks() const {
+	const Ref<ShaderMaterial> g = _ground_source();
+	if (g.is_null()) {
+		return;
+	}
+	bool has = false;
+	g->get("scree_blocks_distance", &has);
+	if (has) {
+		g->set("scree_blocks_distance", layer_enabled[LAYER_SCREE] ? layer_radius[LAYER_SCREE] : 0.0);
+	}
+}
+
 void RockField3D::set_ground_material(const Ref<ShaderMaterial> &p_material) {
 	ground_material = p_material;
+	_sync_scree_blocks();
 	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
 		_apply_ground(kv.value);
 	}
@@ -3654,6 +3739,7 @@ void RockField3D::set_moss_cover(real_t p_cover) {
 void RockField3D::set_layer_enabled(int p_layer, bool p_enabled) {
 	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
 	layer_enabled[p_layer] = p_enabled;
+	_sync_scree_blocks();
 	rebuild();
 }
 
@@ -3676,6 +3762,7 @@ real_t RockField3D::get_layer_density(int p_layer) const {
 void RockField3D::set_layer_radius(int p_layer, real_t p_radius) {
 	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
 	layer_radius[p_layer] = MAX(p_radius, real_t(0.0));
+	_sync_scree_blocks();
 }
 
 real_t RockField3D::get_layer_radius(int p_layer) const {
@@ -3733,6 +3820,7 @@ void RockField3D::_update_contact(bool p_force) {
 	const PackedVector4Array obs = get_obstacles(Rect2(origin, Vector2(CONTACT_SIZE, CONTACT_SIZE)).grow(4.0), 0.1);
 	job->obstacles.resize(obs.size());
 	job->uphill.resize(obs.size());
+	job->damp_share.resize(obs.size());
 	for (int i = 0; i < obs.size(); i++) {
 		const Vector4 o = obs[i];
 		// Uphill from the ground's gradient round the foot.
@@ -3745,6 +3833,9 @@ void RockField3D::_update_contact(bool p_force) {
 			up = slope > 1e-4 ? up / slope : Vector2();
 		}
 		job->obstacles[i] = Vector4(o.x, o.z, o.w, slope);
+		// Scree drains: stones on talus keep no damp ring (it read as a dirty smudge on dry grey talus), only a
+		// faint one; the banked fines stay.
+		job->damp_share[i] = gen ? 1.0f - 0.85f * float(Math::smoothstep(real_t(0.25), real_t(0.5), real_t(gen->get_talus(Vector3(o.x, 0, o.z))))) : 1.0f;
 		job->uphill[i] = up;
 	}
 	contact_job = job;
@@ -3790,8 +3881,8 @@ void RockField3D::_contact_job(void *p_job) {
 				const real_t sf = CLAMP(1.0 - out / span, 0.0, 1.0);
 				const real_t fines = sf * sf * (3.0 - 2.0 * sf) * Math::lerp(real_t(0.45), real_t(1.0), u * uphill_w);
 				uint8_t *px = w + (z * R + x) * 2;
-				px[0] = MAX(px[0], uint8_t(CLAMP(damp * size_w * 255.0, 0.0, 255.0)));
-				px[1] = MAX(px[1], uint8_t(CLAMP(fines * size_w * 255.0, 0.0, 255.0)));
+				px[0] = MAX(px[0], uint8_t(CLAMP(damp * size_w * job->damp_share[i] * 255.0, 0.0, 255.0)));
+				px[1] = MAX(px[1], uint8_t(CLAMP(fines * size_w * (0.5f + 0.5f * job->damp_share[i]) * 255.0, 0.0, 255.0)));
 			}
 		}
 	}
