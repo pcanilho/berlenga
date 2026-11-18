@@ -32,6 +32,7 @@
 #include "tree_generator.h"
 
 #include "plant_generator.h"
+#include "vegetation_fire.h"
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -717,7 +718,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_YEARS] = 60;
 			p[PARAM_INTERNODE_LENGTH] = 0.35f;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
-			p[PARAM_WHORL_BUDS] = 4;
+			p[PARAM_WHORL_BUDS] = 5;
 			p[PARAM_APICAL_DOMINANCE] = 0.78f;
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.32f;
 			p[PARAM_MATURITY] = 35;
@@ -725,13 +726,13 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIRECTION_NOISE] = 13;
 			p[PARAM_GRAVITROPISM] = 0.03f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
-			p[PARAM_APICAL_CONTROL] = 0.95f;
+			p[PARAM_APICAL_CONTROL] = 0.85f; // Side shoots well under the forked stems (_fork_rule).
 			p[PARAM_PHOTOTROPISM] = 0.12f;
 			p[PARAM_SHED_RATIO] = 0.13f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f;
 			p[PARAM_NEEDLES] = 1;
-			p[PARAM_LEAF_SIZE] = 0.14f; // Needles in pairs, 10-18 cm.
-			p[PARAM_LEAVES_PER_INTERNODE] = 220;
+			p[PARAM_LEAF_SIZE] = 0.17f; // Needles in pairs, 10-18 cm: the long end, so the tufts close up into one cushion.
+			p[PARAM_LEAVES_PER_INTERNODE] = 260;
 			p[PARAM_LEAF_YEARS] = 3;
 			p[PARAM_CROWN_CONE] = 0.0f; // No cone: a dome, then an umbrella.
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
@@ -933,6 +934,10 @@ int TreeGenerator::_add_node(int p_parent, const Vector3 &p_start, const Vector3
 	nodes.push_back(n);
 	if (p_parent >= 0) {
 		Node &par = nodes[p_parent];
+		if (p_main || p_order == par.order) {
+			nodes[idx].stem_level = par.stem_level;
+			nodes[idx].stem_born = par.stem_born;
+		}
 		if (p_main) {
 			par.main = idx;
 		} else {
@@ -1201,8 +1206,62 @@ namespace {
 float moss_noise(const Vector3 &p_p, uint32_t p_salt);
 } // namespace
 
+// Decurrent crowns (trees.md 5z): Pinus pinea's leader gives up at a few metres and a handful
+// of equal limbs take the crown, each dividing again higher up (Mutke et al. 2005; Gymnosperm
+// Database).
+TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
+	ForkRule r;
+	if (preset == PRESET_STONE_PINE && forest_shade <= 0.0f) {
+		r.fork_height = 5.0f;
+		r.stems = 3;
+		r.fork_every = 7;
+		r.levels = 3;
+		r.angle = 32.0f;
+		r.gravitropism = 0.12f;
+	}
+	return r;
+}
+
 void TreeGenerator::_grow_year(int p_year) {
 	_build_shadow_grid(p_year);
+	{
+		// The leader split (trees.md 5z): the terminal bud of a stem due to fork dies and a few
+		// buds of the stem's own rank open around it.
+		const ForkRule fr = _fork_rule();
+		if (fr.fork_height > 0.0f && cut_height <= 0.0f && krummholz <= 0.0f) {
+			LocalVector<Bud> forks;
+			for (Bud &b : buds) {
+				if (!b.alive || !b.terminal || b.node <= 0) {
+					continue;
+				}
+				const Node &n = nodes[b.node];
+				if (n.order != 0 || n.removed || n.dead || n.stem_level >= fr.levels || n.layered) {
+					continue;
+				}
+				const bool due = n.stem_level == 0 ? n.end().y - nodes[0].start.y >= fr.fork_height : p_year - n.stem_born >= fr.fork_every;
+				if (!due) {
+					continue;
+				}
+				b.alive = false;
+				const Vector3 axis = b.dir;
+				const float roll0 = _rand(0.0f, Math::TAU);
+				Vector3 ref = Math::abs(axis.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+				const Vector3 side0 = axis.cross(ref).normalized();
+				for (int k = 0; k < fr.stems; k++) {
+					const Vector3 side = side0.rotated(axis, roll0 + Math::TAU * (k + _rand(-0.15f, 0.15f)) / fr.stems);
+					const float ang = Math::deg_to_rad(fr.angle * _rand(0.8f, 1.2f));
+					Bud f;
+					f.node = b.node;
+					f.dir = axis.rotated(side.cross(axis).normalized(), ang).normalized();
+					f.fork = true;
+					forks.push_back(f);
+				}
+			}
+			for (const Bud &f : forks) {
+				buds.push_back(f);
+			}
+		}
+	}
 	const float a = params[PARAM_SHADOW_STRENGTH];
 	const int node_count = int(nodes.size());
 
@@ -1340,7 +1399,7 @@ void TreeGenerator::_grow_year(int p_year) {
 		// the leader, which keeps conifers excurrent.
 		{
 			const Node &on = nodes[buds[bi].node];
-			int ord = (buds[bi].terminal || buds[bi].sprout || buds[bi].node == 0) ? on.order : on.order + 1;
+			int ord = (buds[bi].terminal || buds[bi].sprout || buds[bi].fork || buds[bi].node == 0) ? on.order : on.order + 1;
 			if (buds[bi].layer || (buds[bi].terminal && on.layered)) {
 				ord = 0; // A layered stem grows as a stem of its own (section 5s).
 			}
@@ -1403,7 +1462,7 @@ void TreeGenerator::_grow_year(int p_year) {
 		// shoots stay short inside the crown instead of reaching out at full length.
 		const Node &from = nodes[bud.node];
 		const bool from_root = bud.node == 0;
-		const int order = (bud.terminal || bud.sprout || from_root) ? from.order : from.order + 1;
+		const int order = (bud.terminal || bud.sprout || bud.fork || from_root) ? from.order : from.order + 1;
 		// Lateral extension (Wilson 2000; Kantola and Makela 2004): in excurrent conifers the
 		// branches lengthen far more slowly than the leader, which sets the narrow cone. Scaling the
 		// vigor for it starved the crown of buds and leaves (vigor comes from collected light) and
@@ -1431,7 +1490,8 @@ void TreeGenerator::_grow_year(int p_year) {
 			// dense with needles.
 			len *= Math::lerp(1.0f, 0.55f, krummholz);
 		}
-		const float grav = (order == 0 || layered) ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
+		const bool forked = bud.fork || (order == 0 && from.stem_level > 0);
+		const float grav = forked ? _fork_rule().gravitropism : ((order == 0 || layered) ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM]);
 		Vector3 pos = from_root ? from.start : from.end();
 		Vector3 dir = bud.dir;
 		int parent = bud.node;
@@ -1506,6 +1566,10 @@ void TreeGenerator::_grow_year(int p_year) {
 				dir = (hd + Vector3(0.0f, MIN(dome_slope, 0.0f) - 0.06f, 0.0f)).normalized();
 			}
 			const int idx = _add_node(parent, pos, dir, len, order, p_year, main);
+			if (k == 0 && bud.fork) {
+				nodes[idx].stem_level = from.stem_level + 1;
+				nodes[idx].stem_born = p_year;
+			}
 			nodes[idx].pole = pole;
 			nodes[idx].layered = layered;
 			if (k == 0 && bud.sprout) {
@@ -1628,7 +1692,7 @@ void TreeGenerator::_shed(int p_year) {
 			continue;
 		}
 		const bool under_scrub = (scrub > 0.0f && nodes[n.parent].order == 0 && n.start.y - nodes[0].start.y < scrub) ||
-				(lift > 0.0f && nodes[n.parent].order == 0 && n.start.y - nodes[0].start.y < lift);
+				(lift > 0.0f && nodes[n.parent].order == 0 && n.stem_level <= nodes[n.parent].stem_level && n.start.y - nodes[0].start.y < lift);
 		const float light = (n.light_main + n.light_lateral) / float(MAX(1, n.count));
 		if (light >= ratio && !under_scrub) {
 			continue;
@@ -3367,7 +3431,7 @@ bool bark_cracks(uint32_t p_a, uint32_t p_b, float p_merge, float p_scar, uint32
 	return bark_hash(int(MIN(p_a, p_b)), int(MAX(p_a, p_b)), p_salt + 77u) >= p_merge;
 }
 
-BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt, float p_merge = 0.0f, float p_scar = 0.0f, uint32_t p_msalt = 0) {
+BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt, float p_merge = 0.0f, float p_scar = 0.0f, uint32_t p_msalt = 0, float p_vmerge = -1.0f, float p_ax = 1.0f) {
 	const float x = p_x * p_cu, y = p_y * p_cv;
 	const int ix = int(Math::floor(x)), iy = int(Math::floor(y));
 	Vector2 sites[25];
@@ -3377,12 +3441,12 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 		for (int i = -2; i <= 2; i++) {
 			const int cx = ((ix + i) % p_cu + p_cu) % p_cu, cy = ((iy + j) % p_cv + p_cv) % p_cv;
 			const float jx = bark_hash(cx, cy, p_salt), jy = bark_hash(cx, cy, p_salt + 7u);
-			sites[n] = Vector2(ix + i + jx, iy + j + jy);
+			sites[n] = Vector2((ix + i + jx) * p_ax, iy + j + jy); // p_ax > 1 stretches the cells along y.
 			ids[n] = uint32_t(cy * p_cu + cx);
 			n++;
 		}
 	}
-	const Vector2 p(x, y);
+	const Vector2 p(x * p_ax, y);
 	int a = 0;
 	for (int k = 1; k < n; k++) {
 		if (p.distance_squared_to(sites[k]) < p.distance_squared_to(sites[a])) {
@@ -3404,8 +3468,16 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 			continue;
 		}
 		const Vector2 mid = (sites[a] + sites[k]) * 0.5f;
-		const float e = (mid - p).dot(d / len);
-		if (e < c.edge && bark_cracks(ids[a], ids[k], p_merge, p_scar, p_msalt)) {
+		float e = (mid - p).dot(d / len);
+		if (p_ax != 1.0f) {
+			// Stretched cells: the fissures between side-by-side plates open wide, the breaks
+			// across a plate stay narrow.
+			e *= Math::lerp(1.6f, 0.3f, Math::abs(d.x) / len);
+		}
+		// p_vmerge >= 0: walls to a cell above or below split with their own share, so
+		// plates run along the stem for one, two or three cells, offset from their neighbours.
+		const float merge = (p_vmerge >= 0.0f && Math::abs(d.y) > Math::abs(d.x)) ? p_vmerge : p_merge;
+		if (e < c.edge && bark_cracks(ids[a], ids[k], merge, p_scar, p_msalt)) {
 			c.edge = e;
 			c.across = ids[k];
 		}
@@ -3447,7 +3519,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 5, 4, 0.03f, 0.003f, 0.001f, 0.6f, 0.0f }, // Flaking: shallow edges, colour mosaic.
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
-		{ 6, 2, 0.15f, 0.035f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
+		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3474,9 +3546,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : 1.0f);
 				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4, 4, 2, salt + 21u);
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4, 4, 2, salt + 27u);
-				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.2f : (p_kind == BARK_SCALY ? 0.1f : 0.0f));
+				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : 0.0f));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : -1.0f, p_kind == BARK_PINEA ? 1.8f : 1.0f);
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
@@ -3515,8 +3587,11 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// the plates"): weathered grey-brown plate tops, the fresh orange-red inner
 					// layers in the fissures. The bark colour is the plate tops'; the fissures' factor
 					// (linear) turns it orange-red, inside the headroom (_bark_headroom).
-					const Color top(1.0f, 1.0f, 1.0f), fissure(2.8f, 1.35f, 0.62f);
+					const Color top(1.0f, 1.0f, 1.0f), fissure(1.75f, 0.72f, 0.42f);
 					a = fissure.lerp(top, Math::smoothstep(0.3f, 0.6f, open)) * shade;
+					// Where the outer layers of a plate have flaked off, the warmer layer under them.
+					const float flaked = Math::smoothstep(0.08f, 0.2f, bark_fbm(u, v, 6, 3, 3, salt + 61u));
+					a = a * Color(1.0f, 1.0f, 1.0f).lerp(Color(1.45f, 0.9f, 0.7f), 0.4f * flaked * Math::smoothstep(0.6f, 0.9f, open));
 					// Blackish plate rims, between the orange floor and the grey top.
 					a = a * Math::lerp(0.55f, 1.0f, MAX(1.0f - Math::smoothstep(0.15f, 0.35f, open), Math::smoothstep(0.55f, 0.85f, open)));
 				}
@@ -15208,6 +15283,22 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0 - fib_n, 0.0, 1.0), 0.5, 1.0);
 		}
 	}
+	{
+		// Fire (vegetation_fire.h): bark charred up to about the flame length that passed, with a
+		// ragged top (the flame wraps the stem unevenly). Char takes the plates first, the
+		// furrows keep a little of the bark's brown.
+		vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 fire_s = fire_state_at(fire_w.xz);
+		if (fire_s.x > 0.0) {
+			float fire_edge = texture(lichen_map, base_uv * vec2(1.3, 0.4) + vec2(0.57, 0.21)).r;
+			float reach = fire_s.z * (0.7 + 0.6 * fire_edge);
+			float charred = fire_s.x * (1.0 - smoothstep(0.8, 1.0, (fire_w.y - MODEL_MATRIX[3].y) / max(reach, 0.02)));
+			float plates = texture(texture_roughness, base_uv).b;
+			ALBEDO = mix(ALBEDO, mix(ALBEDO * 0.25, vec3(0.03, 0.026, 0.023), smoothstep(0.3, 0.6, plates)), charred);
+			ROUGHNESS = mix(ROUGHNESS, 0.9, charred);
+			bark_bare *= 1.0 - charred;
+		}
+	}
 )";
 	// The wood under lost bark is smoother than the bark: its normal map fades there. Inserted
 	// first, after the normal map is read (later in the shader than the roughness).
@@ -15225,7 +15316,7 @@ uniform float lichen_leafy_share = 0.5;
 uniform float lichen_orange_share = 0.0;
 uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 )";
-	code = code.insert(vx, uniforms + "\n");
+	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
 	sh.instantiate();
 	sh->set_code(code);
@@ -15347,6 +15438,27 @@ vec3 plant_wind(vec3 wp, float h) {
 	}
 	const String albedo_line = "ALBEDO = albedo.rgb * albedo_tex.rgb;";
 	const int al = code.find(albedo_line);
+	if (al >= 0) {
+		// Fire (vegetation_fire.h): leaves under the flame charred, up to the scorch height killed brown.
+		code = code.insert(al + albedo_line.length(), R"(
+	vec3 fire_leaf_back = vec3(1.0);
+	{
+		vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 fire_s = fire_state_at(fire_w.xz);
+		if (fire_s.x > 0.0) {
+			float fire_rough = 0.0;
+			vec3 fire_before = ALBEDO;
+			fire_foliage_apply(fire_s, fire_w.y - MODEL_MATRIX[3].y, fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13))), ALBEDO, fire_rough);
+			// Light through a dead leaf takes its colour too (seen from below, a crown is mostly backlit).
+			fire_leaf_back = clamp(ALBEDO / max(fire_before, vec3(1e-3)), 0.0, 1.5);
+		}
+	})");
+		const String back_line = "	BACKLIGHT = (backlight.rgb + backlight_tex);\n";
+		const int bl = code.find(back_line);
+		if (bl >= 0) {
+			code = code.insert(bl + back_line.length(), "	BACKLIGHT *= fire_leaf_back;\n");
+		}
+	}
 	if (al >= 0 && leaf_underside > 0.0f) {
 		code = code.insert(al + albedo_line.length(), R"(
 	if (!FRONT_FACING) {
@@ -15354,7 +15466,7 @@ vec3 plant_wind(vec3 wp, float h) {
 		ALBEDO = mix(ALBEDO, vec3(leaf_lum) * vec3(0.93, 1.04, 0.9) * 1.2, leaf_underside);
 	})");
 	}
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + "\n");
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because

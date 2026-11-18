@@ -99,17 +99,16 @@ vec3 water_raster_body_light() {
 	return raster_sky_irradiance * raster_sky_energy / PI;
 }
 
-// What one light adds to the open water, from light(): the body's share (as a level diffuse surface) and
-// the glitter's GGX lobe, both under the light's attenuation, so the water takes shadows like the ground.
+// What one light adds to the open water, from light(): the body's share (as a level diffuse surface, the sun
+// only: p_body is the colour the sun lights) and the glitter's GGX lobe, for the sun and for omni and spot lights
+// (lamps, torches) alike, all under the light's attenuation, so the water takes shadows like the ground. A
+// negative p_glint.w (raster_reflections off) is the glitter's weight for lamps only.
 vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p_directional, mat4 p_inv_view, vec3 p_body, vec4 p_glint, float p_a2) {
-	if (!p_directional) {
-		return vec3(0.0);
-	}
 	vec3 l = normalize(mat3(p_inv_view) * p_light);
-	vec3 add = p_body * p_irradiance * max(l.y, 0.0);
+	vec3 add = p_directional ? p_body * p_irradiance * max(l.y, 0.0) : vec3(0.0);
 	vec3 n_w = p_glint.xyz;
 	float a2 = p_a2;
-	float weight = p_glint.w;
+	float weight = p_glint.w < 0.0 ? (p_directional ? 0.0 : -p_glint.w) : p_glint.w;
 	float nl = dot(n_w, l);
 	if (weight > 0.0 && nl > 0.0) {
 		vec3 v = normalize(mat3(p_inv_view) * p_view);
@@ -134,12 +133,20 @@ vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_wo
 	r_sun_body = vec3(0.0);
 	r_sun_glint = vec4(0.0, 1.0, 0.0, 0.0);
 	r_sun_a2 = 1.0;
-	if (!raster_reflections) {
-		return vec4(p_albedo, p_alpha);
-	}
 	vec3 v = normalize(p_camera - p_world);
 	vec3 n_w = dot(p_normal, v) < 0.0 ? p_normal - 2.0 * dot(p_normal, v) * v : p_normal;
 	n_w = normalize(n_w);
+	if (!raster_reflections) {
+		// No mirrored sky or sun, but lamps (omni and spot lights) still glint on it: water lit only by a cave
+		// lamp or a street lamp read as bare floor.
+		float a2_off = p_roughness * p_roughness;
+		a2_off *= a2_off;
+		vec3 dndx_off = dFdx(n_w);
+		vec3 dndy_off = dFdy(n_w);
+		r_sun_a2 = clamp(a2_off + min(0.5 * (dot(dndx_off, dndx_off) + dot(dndy_off, dndy_off)), 0.18), 1e-6, 0.999);
+		r_sun_glint = vec4(n_w, -p_surface / max(p_alpha, 1e-4)); // negative: lamps only
+		return vec4(p_albedo, p_alpha);
+	}
 	float nv = clamp(dot(n_w, v), 1e-3, 1.0);
 	// The mean Fresnel and mirrored sky over the slopes the pixel holds but its normal no longer shows
 	// (Bruneton, Neyret and Holzschuch 2010): three Gauss-Hermite slopes along the view's tilt, each weighted by

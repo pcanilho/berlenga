@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "grass_field_3d.h"
+#include "vegetation_fire.h"
 #include "vegetation_light.h"
 
 #include "vegetation_field_3d.h"
@@ -460,6 +461,7 @@ uniform float crop_lai = 3.0;
 )";
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
+		code += VegetationFire::SHADER_CODE;
 		code += R"(
 float crop_ramp(float x, float a, float b) {
 	return clamp((x - a) / (b - a), 0.0, 1.0);
@@ -540,6 +542,9 @@ void vertex() {
 	float lag = (fract(rnd * 5.17) - 0.5) * 0.3;
 	float h = cut > 0.0 ? min(H, cut * (0.8 + 0.4 * fract(rnd * 3.7))) : H * crop_growth.x;
 	h = straw ? H : h;
+	// Fire (vegetation_fire.h): a crop burns to stubble a hand high, its leaves and ears gone.
+	float fire_gone = smoothstep(0.0, 0.85, fire_state_at(base_w.xz).x);
+	h = mix(h, min(h, 0.06 + 0.06 * fract(rnd * 29.3)), fire_gone);
 
 	// Wind: the tiller sways as a cantilever with the ear's mass on top, 1 to 2 Hz (Berry et al.
 	// 2003, wheat stems); the same oscillator and honami as the grass. Stubble barely moves.
@@ -711,7 +716,7 @@ void vertex() {
 		float order = floor(INSTANCE_CUSTOM.w) / 256.0;
 		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
 	}
-	hide = hide || (straw && part != 0);
+	hide = hide || (straw && part != 0) || (fire_gone > 0.6 && part != 0);
 	// Lying straw shows its upper side, lit from the sky, not a strip turned edge-on to a low view.
 	n = straw ? normalize(n + vec3(0.0, 2.0, 0.0)) : n;
 	// Not yet emerged (a plot sown, below 10): nothing shows.
@@ -790,6 +795,16 @@ void fragment() {
 	spec *= mix(1.0, 0.6, far_t);
 	// Wet (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
+	// Fire: charred stubble with ash flecks, its top glowing in the burning band. Read at this point (the path
+	// tracer reruns vertex() for a merged MultiMesh with the field's transform).
+	vec4 fire_f = fire_state_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+	if (fire_f.x > 0.0) {
+		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_rnd * 41.0)) * smoothstep(0.6, 1.0, fire_f.x));
+		c = mix(c, ch, smoothstep(0.0, 0.5, fire_f.x));
+		rough = mix(rough, 0.95, smoothstep(0.0, 0.5, fire_f.x));
+		back *= 1.0 - smoothstep(0.0, 0.5, fire_f.x);
+		EMISSION = fire_glow_color(fire_f.y) * 4.0 * smoothstep(0.4, 1.0, v_hf);
+	}
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
 	ROUGHNESS = rough * mix(1.0, 0.4, v_wet);
 	SPECULAR = spec;
@@ -812,6 +827,7 @@ uniform float color_variation;
 )";
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
+		code += VegetationFire::SHADER_CODE;
 		code += R"(
 
 void vertex() {
@@ -854,6 +870,16 @@ void vertex() {
 		float la = fract(rnd * 53.7) * 6.2832;
 		off = off * 0.4 + vec2(cos(la), sin(la)) * (0.9 + 0.4 * fract(rnd * 17.3));
 		h *= 0.8;
+	}
+	// Fire (vegetation_fire.h): the front burns a blade from the top down as its fuel goes, to
+	// stubble 3-6 cm tall, thinner and upright (a grass fire's burnt ground).
+	vec4 fire_s = fire_state_at(base_w.xz);
+	if (fire_s.x > 0.0) {
+		float gone = smoothstep(0.0, 0.85, fire_s.x);
+		float stub = clamp((0.03 + 0.03 * fract(rnd * 29.3)) / max(h, 0.01), 0.0, 1.0);
+		h *= mix(1.0, stub, gone);
+		w *= mix(1.0, 0.6, gone);
+		off *= 1.0 - 0.8 * gone;
 	}
 	// Length-preserving bend (Jahrmann and Wimmer 2017): the tip turns by the bend angle.
 	float ang = min(length(off), 1.45);
@@ -940,8 +966,20 @@ void fragment() {
 	// Trodden flat: bruised and soiled, and its waxy face no longer catches the sky at a grazing
 	// angle (lying blades read frosted white on a worn path's edge, docs 17 Nov).
 	c *= mix(1.0, 0.72, v_trod);
+	// Read here at the blade's own point, not passed from vertex(): the path tracer reruns vertex() for a merged
+	// MultiMesh with the field's transform, not the blade's.
+	vec4 fire_f = fire_state_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+	float v_burn = fire_f.x;
+	float v_glow = fire_f.y;
+	if (v_burn > 0.0) {
+		// Charred stubble, with flecks of white ash where blades burnt out.
+		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_dry * 41.0)) * smoothstep(0.6, 1.0, v_burn));
+		c = mix(c, ch, smoothstep(0.0, 0.5, v_burn));
+	}
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
-	ROUGHNESS = mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet);
+	ROUGHNESS = mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet), 0.95, smoothstep(0.0, 0.5, v_burn));
+	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
+	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
 	BACKLIGHT = ALBEDO * 0.7;
 	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
