@@ -102,6 +102,9 @@
 		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Beach sand.
 		</member>
+		<member name="scree_blocks_distance" type="float" setter="set_scree_blocks_distance" getter="get_scree_blocks_distance" default="0.0">
+			Metres from the camera inside which the scree draws no stones of its own (parallax blocks, their normal and tone), only their bed of gravel and fines, because real stones lie there (RockField3D's scree layer out to its radius). The shader's stones fade in over the last fifth. 0: shader stones everywhere.
+		</member>
 		<member name="scree_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Loose rock below cliffs.
 		</member>

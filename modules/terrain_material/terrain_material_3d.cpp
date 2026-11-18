@@ -172,6 +172,7 @@ uniform float tm_beach_height = 2.5;
 uniform float tm_rock_cos = 0.766;
 uniform float tm_cliff_cos = 0.643;
 uniform float tm_rock_detail_scale = 1.0;
+uniform float tm_scree_blocks_distance = 0.0;
 uniform float tm_alluvium_area = 5.5;
 uniform float tm_blend_depth = 0.2;
 uniform int tm_detail_octaves = 4;
@@ -561,7 +562,8 @@ vec4 tm_rd_block(vec3 q, float h, vec3 c) {
 const float TM_RD_STONE_H = 0.3;
 // Height (m) and shade (mean 1 over any area, so the detail never darkens the ground) at p. dx and dy are the axes of
 // the pixel's footprint on the ground: the filter widths are anisotropic, long along a face seen edge-on.
-vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
+// blocks: 0..1, the scree's stones (0 where real stones lie, only the gravel and fines bed left).
+vec2 tm_rd_height(vec3 p, float face, float scree, float blocks, vec3 dx, vec3 dy) {
 	float hgt = 0.0, shade = 1.0;
 	float wmax = max(length(dx), length(dy)) / tm_rock_detail_scale;
 	if (face > 0.0) {
@@ -624,18 +626,18 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 	if (scree > 0.0) {
 		vec3 wv;
 		float se;
-		float stone = tm_rd_stone(p, tm_rd_clamp(wmax, 0.18), 0.05, wv, se);
+		float stone = blocks * tm_rd_stone(p, tm_rd_clamp(wmax, 0.18), 0.05, wv, se);
 		float ks = tm_rd_clamp(wmax, 0.45);
 		hgt += scree * ks * stone * TM_RD_STONE_H * tm_rock_detail_scale;
 		// Each stone its own tone (fresher and older, lichened faces), mean 1; no darkened rim, which drew the
 		// stones' outlines as grooves (paving). The bed between them is shaded by the stones themselves (parallax
 		// shadows up close, the normal further off).
-		float st_shade = mix(1.0, 0.8 + 0.4 * wv.z, step(0.0, se));
+		float st_shade = mix(1.0, mix(1.0, 0.8 + 0.4 * wv.z, step(0.0, se)), blocks);
 		// Between the stones, a matrix of gravel and fines (talus is poorly sorted: Fuller-like grading, each size
 		// filling the gaps of the next, so the clasts stand in a finer bed). Gravel: grit patches a few
 		// centimetres across in the bed; fines: grain roughness under a centimetre. Each fades by frequency
 		// clamping as the pixel grows, and the gap share comes from the stones' own profile.
-		float gap = 1.0 - smoothstep(0.0, 0.03, se);
+		float gap = mix(1.0, 1.0 - smoothstep(0.0, 0.03, se), blocks);
 		float kg = tm_rd_clamp(wmax, 0.045);
 		float gs = 1.0;
 		if (kg > 0.0 && gap > 0.0) {
@@ -662,7 +664,7 @@ vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 	return vec2(hgt, shade);
 }
 // The perturbed normal (surface gradient of the height field) and the shade; past the clamps only the mean is left.
-vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, vec3 dy, out float shade) {
+vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, float blocks, vec3 dx, vec3 dy, out float shade) {
 	shade = 1.0;
 	float wmax = max(length(dx), length(dy)) / tm_rock_detail_scale;
 	if (face + scree <= 1e-3 || wmax > 0.6) {
@@ -672,10 +674,10 @@ vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, v
 	// Within the pixel: a step wider than it reached across a stone's foot from the bed (or onto the bed from a
 	// side) and flipped the normal from pixel to pixel, a saw-tooth fringe along the stones' bases.
 	float e = max(0.0015, 0.5 * wmax * tm_rock_detail_scale);
-	vec2 h0 = tm_rd_height(p, face, scree, dx, dy);
-	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, dx, dy).x;
-	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, dx, dy).x;
-	float hz = tm_rd_height(p + vec3(0.0, 0.0, e), face, scree, dx, dy).x;
+	vec2 h0 = tm_rd_height(p, face, scree, blocks, dx, dy);
+	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, blocks, dx, dy).x;
+	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, blocks, dx, dy).x;
+	float hz = tm_rd_height(p + vec3(0.0, 0.0, e), face, scree, blocks, dx, dy).x;
 	vec3 grad = vec3(hx - h0.x, hy - h0.x, hz - h0.x) / e;
 	vec3 sg = grad - n * dot(n, grad);
 	// Once a pixel spans more than a few centimetres no detail tilts the normal past about 35 degrees: block edges
@@ -1037,6 +1039,9 @@ void fragment() {
 		// generator's own detail.
 		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.55, 0.72, wn.y));
 		float rd_scree = clamp(w[1], 0.0, 1.0) * (1.0 - smoothstep(0.02, 0.25, tm_sand_all));
+		// Inside scree_blocks_distance real stones (RockField3D's scree) lie on the talus: the shader keeps only their
+		// bed of gravel and fines there, and its parallax blocks take over past it, over the last fifth.
+		float rd_blocks = tm_scree_blocks_distance > 0.0 ? smoothstep(0.8 * tm_scree_blocks_distance, tm_scree_blocks_distance, length(wp - CAMERA_POSITION_WORLD)) : 1.0;
 		vec3 rd_p = wp;
 		// Scree stones in parallax: full while a pixel spans under 3 cm, gone by 8 cm, where the stones themselves
 		// have faded to their mean; past a few metres the steps grow with the pixel, so the far blocks keep their sides
@@ -1044,7 +1049,7 @@ void fragment() {
 		// The footprint's long axis, not the cone's width: at a grazing angle the parallax of stones a pixel cannot
 		// resolve along the view stretched into hard black hatching across far slopes.
 		float rd_fp = max(length(rd_dx), length(rd_dy));
-		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * (1.0 - smoothstep(0.03, 0.08, rd_fp / tm_rock_detail_scale));
+		float rd_h = TM_RD_STONE_H * tm_rock_detail_scale * rd_scree * rd_blocks * (1.0 - smoothstep(0.03, 0.08, rd_fp / tm_rock_detail_scale));
 		if (rd_h > 0.002) {
 			// No per-pixel jitter of the steps: the bisection finds the stones' sides without it, and jitter drew a
 			// dither over the stones and their shadows wherever no temporal filter averages it out.
@@ -1058,16 +1063,20 @@ void fragment() {
 				SUN_SHADOW *= tm_rd_pom_shadow(rd_p, rd_depth, wn, rd_l, rd_h, rd_cone, rd_j);
 			}
 		}
-		sn = tm_rock_detail(rd_p, wn, sn, rd_face, rd_scree, rd_dx, rd_dy, rd_shade);
+		sn = tm_rock_detail(rd_p, wn, sn, rd_face, rd_scree, rd_blocks, rd_dx, rd_dy, rd_shade);
 		albedo *= rd_shade;
 		if (rd_scree > 1e-3) {
-			albedo *= mix(vec3(1.0), tm_rd_stone_color(rd_p, max(length(rd_dx), length(rd_dy)) / tm_rock_detail_scale), rd_scree);
+			albedo *= mix(vec3(1.0), tm_rd_stone_color(rd_p, max(length(rd_dx), length(rd_dy)) / tm_rock_detail_scale), rd_scree * rd_blocks);
 		}
 	}
 )";
 	}
 	if (far_blend_enabled) {
 		c += "\tvec3 tm_bare = albedo;\n\tfloat tm_far_t = 0.0;\n\tfloat tm_far_cover = 0.0;\n";
+	}
+	if (ground_deform_enabled) {
+		// The soil under the cover, for where the ground is broken open (below).
+		c += "\tvec3 tm_soil = albedo;\n\tfloat tm_exposed = 0.0;\n";
 	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
@@ -1136,6 +1145,14 @@ void fragment() {
 )";
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.
+		// Ruts, digs, puddles and tracked mud open the meadow's cover: the soil layer's own colour shows there,
+		// its edge broken by noise, before the turned ground's tint (darker, wet) goes over it.
+		c += R"(	tm_exposed = ground_deform_exposed(wp);
+	if (tm_exposed > 0.0) {
+		tm_exposed = clamp(tm_exposed * (0.75 + 0.5 * tm_vn(wp * 6.0 + 11.0)), 0.0, 1.0);
+		albedo = mix(albedo, tm_soil, tm_exposed);
+	}
+)";
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
@@ -1146,6 +1163,22 @@ void fragment() {
 	if (far_blend_enabled) {
 		// Past far_start the cover map hides the sheen by its cover share, as the sward does near.
 		c += "\tspecular = mix(specular, mix(0.5, 0.1, tm_far_cover), tm_far_t);\n";
+	}
+	if (ground_deform_enabled) {
+		// The opened soil keeps its sheen (the sward hid it); standing water in ruts (mud stage 2) and the clay it
+		// carries (round 3), as BaseMaterial3D draws them (material.cpp ground_water_look()).
+		c += R"(	specular = mix(specular, 0.5, tm_exposed);
+	{
+		float gwd = ground_deform_water(wp);
+		if (gwd > 0.0) {
+			vec4 gwl = ground_water_look(gwd, ground_wet_at(wp, wn).x, ground_deform_water_mud(wp));
+			albedo *= gwl.x;
+			rough = mix(rough, gwl.z, max(gwl.y, 0.85 * gwl.w));
+			specular = mix(specular, 0.25, max(gwl.y, gwl.w));
+			sn = normalize(mix(sn, wn, max(gwl.y, 0.6 * gwl.w)));
+		}
+	}
+)";
 	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
@@ -1222,6 +1255,7 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_rock_cos", Math::cos(Math::deg_to_rad(rock_slope)));
 	set_shader_parameter("tm_cliff_cos", Math::cos(Math::deg_to_rad(cliff_slope)));
 	set_shader_parameter("tm_rock_detail_scale", rock_detail_scale);
+	set_shader_parameter("tm_scree_blocks_distance", scree_blocks_distance);
 	set_shader_parameter("tm_alluvium_area", alluvium_area);
 	set_shader_parameter("tm_blend_depth", blend_depth);
 	set_shader_parameter("tm_detail_octaves", detail_octaves);
@@ -1318,6 +1352,7 @@ MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
 MAT_SETTER_CODE(bool, rock_detail_enabled)
 MAT_SETTER(float, rock_detail_scale, CLAMP(p_value, 0.1f, 10.0f))
+MAT_SETTER(float, scree_blocks_distance, MAX(p_value, 0.0f))
 MAT_SETTER_CODE(bool, wetness_enabled)
 MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
@@ -1373,6 +1408,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, grass_tint_enabled, is_grass_tint_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, rock_detail_enabled, is_rock_detail_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, rock_detail_scale, get_rock_detail_scale, PROPERTY_HINT_RANGE, "0.1,10,0.01")
+	BIND_PROP(Variant::FLOAT, scree_blocks_distance, get_scree_blocks_distance, PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m")
 	BIND_PROP(Variant::BOOL, wetness_enabled, is_wetness_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")

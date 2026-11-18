@@ -7,6 +7,8 @@ extends Node3D
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
+#   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
+#   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
 #                         densest place of that layer (default scree)
@@ -374,6 +376,10 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
+		# Real scree stones out to the layer's radius: the ground shader keeps only their bed there (--shader-scree
+		# for the old parallax blocks under them, a before frame).
+		if not args.has("shader-scree"):
+			tm.scree_blocks_distance = rocks.get_layer_radius(RockField3D.LAYER_SCREE)
 		# On by default; --no-ground-blend for an A/B.
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.ground_contact = not args.has("no-ground-contact")
@@ -1312,6 +1318,13 @@ func _densest(layer: int) -> Vector3:
 			for xx in range(-800, 800, 8):
 				var p := Vector3(xx, 0, zz)
 				var t := gen.get_talus(p) - absf(gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0))) * 0.02
+				if args.has("talus-slope"):
+					# --talus-slope: a mid-slope patch of a real talus apron instead, 25 to 38 degrees and well above
+					# the beaches (the fullest talus can be a flat at the cliff foot by the sea).
+					var gx := (gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0))) / 8.0
+					var gz := (gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))) / 8.0
+					var sl := rad_to_deg(atan(sqrt(gx * gx + gz * gz)))
+					t = gen.get_talus(p) if sl > 25.0 and sl < 38.0 and gen.get_height(p) > gen.sea_level + 30.0 else -1.0
 				if t > bt:
 					bt = t
 					bp = p

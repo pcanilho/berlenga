@@ -2094,7 +2094,7 @@ to the noise's zero lines (|n| / |grad n|; Taubin 1994), not a threshold on the 
 hairlines where the noise was steep: main fissures 3-5 cm across and 4.5-9.5 cm deep with
 rounded shoulders, a second family splitting half the ridges, cross fissures every 15-25 cm
 cutting them into blocks across their width; the whole fissure darkens (red-brown walls, dark
-floor); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
+floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
 Maritime pine round 4 (18 Nov): the crown read as a see-through fan of bare limbs with tufts at the tips. Shedding 0.02 and six years of needles keep shoots inside the crown, a lighter self-shadow (0.03) lets them live, and a pipe exponent of 1.85 gives a stout bole under the heavy crown.

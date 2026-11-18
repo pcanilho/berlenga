@@ -38,6 +38,7 @@ extends Node3D
 #                         frame mid-throw, the clods in the air
 #   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
 #   --test=ruts         kept ruts (mud round 3): a print back after the field drives 600 m off and in a new node
+#   --meadow            --view=ruts: the patch drawn with a TerrainMaterial3D under a full sward (its grass globals set by hand)
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -313,6 +314,8 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.near_field = near_on
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
 	surface.keep_ruts = ruts_on
+	if OS.get_cmdline_user_args().has("--meadow"):
+		_meadow(surface)
 	surface.ruts_path = "user://bench_ruts"
 	# Everything ships on; each check turns on what it is about (--defaults keeps the shipped settings).
 	if not OS.get_cmdline_user_args().has("--defaults"):
@@ -327,6 +330,27 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 			surface.set(pkv[0], str_to_var(pkv[1]))
 	add_child(surface)
 	await get_tree().physics_frame
+
+
+# --meadow: the patch drawn with a TerrainMaterial3D under a full sward's turf (the grass cover globals set by
+# hand, as a GrassField3D publishes them), so ruts, puddles and mud show what they do to a meadow's cover.
+func _meadow(p_surface: GroundSurface3D) -> void:
+	var tm := TerrainMaterial3D.new()
+	tm.grass_tint_enabled = true
+	tm.ground_deform_enabled = true
+	tm.sea_level = -100.0
+	var soil := TerrainMaterialLayer.new()
+	soil.color = Color(0.36, 0.27, 0.19)
+	soil.roughness = 0.9
+	tm.soil_layer = soil
+	tm.set_shader_parameter("ground_deform_patch", true)
+	p_surface.material = tm
+	RenderingServer.global_shader_parameter_set("grass_ground_color", Color(0.16, 0.28, 0.07, 1.0))
+	RenderingServer.global_shader_parameter_set("grass_ground_params", Vector4(0.0, 0.0, 0.0, 0.0))
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 0, 0, 1))
+	RenderingServer.global_shader_parameter_set("grass_ground_map", ImageTexture.create_from_image(img))
+	RenderingServer.global_shader_parameter_set("grass_ground_rect", Vector4(-200, -200, 400, 400))
 
 
 func _apply(kind_name: String) -> void:
@@ -2581,7 +2605,8 @@ func _build_ruts() -> void:
 	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
 	_apply(kind)
 	var mat := _ground_material(kind)
-	surface.material = mat
+	if not OS.get_cmdline_user_args().has("--meadow"):
+		surface.material = mat
 	_add_terrain(96.0, 192, mat)
 	var env := Environment.new()
 	var sky := Sky.new()

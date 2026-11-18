@@ -2126,10 +2126,11 @@
    "name": "Hedgerows and margins",
    "settings": [
     "GrassField3D.hedges",
+    "hedge_voxel_lods",
     "PlantGenerator.make_margin()"
    ],
    "note": "",
-   "what": "field edges carry hedgerows of mixed native shrubs with a gateway per field, and headland and verge strips of field weeds.",
+   "what": "field edges carry hedgerows of mixed native shrubs with a gateway per field, and headland and verge strips of field weeds; far hedges switch to voxel levels.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
