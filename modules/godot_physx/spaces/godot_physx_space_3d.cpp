@@ -280,35 +280,169 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 }
 
 void GodotPhysXSpace3D::queue_static_actor(PxRigidActor *p_actor) {
-	pending_statics.push_back(p_actor);
+	PendingStatic ps;
+	ps.actor = p_actor;
+	ps.bounds = p_actor->getWorldBounds();
+	pending_statics.push_back(ps);
 }
 
 bool GodotPhysXSpace3D::cancel_static_actor(PxRigidActor *p_actor) {
-	const int64_t i = pending_statics.find(p_actor);
-	if (i < 0) {
-		return false;
+	for (uint32_t i = 0; i < pending_statics.size(); i++) {
+		if (pending_statics[i].actor == p_actor) {
+			pending_statics.remove_at(i); // keeps arrival order: the oldest go in first
+			return true;
+		}
 	}
-	pending_statics.remove_at_unordered(i);
-	return true;
+	return false;
 }
 
-void GodotPhysXSpace3D::flush_pending_actors() {
-	if (pending_statics.is_empty() || !px_scene) {
+void GodotPhysXSpace3D::queue_static_removal(PxRigidActor *p_actor) {
+	p_actor->userData = nullptr; // its body is gone; flushed before any query or step can see it
+	pending_removals.push_back(p_actor);
+}
+
+void GodotPhysXSpace3D::_flush_removals() {
+	if (pending_removals.is_empty()) {
+		return;
+	}
+	if (px_scene) {
+		px_scene->removeActors(reinterpret_cast<PxActor *const *>(pending_removals.ptr()), pending_removals.size());
+	}
+	for (PxRigidActor *a : pending_removals) {
+		a->release();
+	}
+	pending_removals.clear();
+}
+
+void GodotPhysXSpace3D::_add_statics(PxRigidActor *const *p_actors, uint32_t p_count) {
+	if (p_count == 0) {
 		return;
 	}
 	// Below this a plain batched add is as cheap as building the structure.
 	constexpr uint32_t PRUNING_STRUCTURE_MIN = 64;
 	bool added = false;
-	if (pending_statics.size() >= PRUNING_STRUCTURE_MIN) {
-		if (PxPruningStructure *ps = px_physics->createPruningStructure(pending_statics.ptr(), pending_statics.size())) {
+	if (p_count >= PRUNING_STRUCTURE_MIN) {
+		if (PxPruningStructure *ps = px_physics->createPruningStructure(p_actors, p_count)) {
 			added = px_scene->addActors(*ps);
 			ps->release();
 		}
 	}
 	if (!added) {
-		px_scene->addActors(reinterpret_cast<PxActor *const *>(pending_statics.ptr()), pending_statics.size());
+		px_scene->addActors(reinterpret_cast<PxActor *const *>(p_actors), p_count);
 	}
+}
+
+void GodotPhysXSpace3D::flush_pending_actors() {
+	_flush_removals();
+	if (pending_statics.is_empty() || !px_scene) {
+		return;
+	}
+	LocalVector<PxRigidActor *> actors;
+	actors.resize(pending_statics.size());
+	for (uint32_t i = 0; i < pending_statics.size(); i++) {
+		actors[i] = pending_statics[i].actor;
+	}
+	_add_statics(actors.ptr(), actors.size());
 	pending_statics.clear();
+	pending_bounds_dirty = false;
+}
+
+void GodotPhysXSpace3D::_refresh_pending_bounds() {
+	if (!pending_bounds_dirty) {
+		return;
+	}
+	for (PendingStatic &ps : pending_statics) {
+		ps.bounds = ps.actor->getWorldBounds();
+	}
+	pending_bounds_dirty = false;
+}
+
+void GodotPhysXSpace3D::flush_pending_actors(const PxBounds3 &p_bounds) {
+	_flush_removals();
+	if (pending_statics.is_empty() || !px_scene) {
+		return;
+	}
+	// A few queries a step each add what they reach; past that (a raycast sweep, cloth testing every vertex) one
+	// full add is cheaper than scanning the waiting list again and again.
+	constexpr int PARTIAL_FLUSHES_MAX = 32;
+	if (++partial_flushes > PARTIAL_FLUSHES_MAX || !p_bounds.isValid() || p_bounds.isEmpty()) {
+		flush_pending_actors();
+		return;
+	}
+	_refresh_pending_bounds();
+	LocalVector<PxRigidActor *> reached;
+	uint32_t keep = 0;
+	for (uint32_t i = 0; i < pending_statics.size(); i++) {
+		if (pending_statics[i].bounds.intersects(p_bounds)) {
+			reached.push_back(pending_statics[i].actor);
+		} else {
+			pending_statics[keep++] = pending_statics[i];
+		}
+	}
+	pending_statics.resize(keep);
+	_add_statics(reached.ptr(), reached.size());
+}
+
+// Before a step: removals, then the waiting statics. A few go in whole; a streamed region goes in over several
+// steps (statics_per_step a step, oldest first), except that any static a moving body may reach before then goes in
+// now, so nothing falls through ground that is still waiting.
+void GodotPhysXSpace3D::_flush_pending_step() {
+	partial_flushes = 0;
+	_flush_removals();
+	const int budget = GodotPhysXProjectSettings::statics_per_step;
+	if (pending_statics.is_empty() || !px_scene) {
+		return;
+	}
+	if (budget <= 0 || (int)pending_statics.size() <= budget) {
+		flush_pending_actors();
+		return;
+	}
+	// Where the moving actors (bodies, vehicles, anything dynamic and awake or kinematic, including ones added since
+	// the last step) can get to in the next few steps: their bounds grown by half a second of travel.
+	constexpr uint32_t GUARDS_MAX = 512; // past this, a scan per static costs more than the hitch it spreads
+	LocalVector<PxBounds3> guards;
+	const PxU32 nb_dynamic = px_scene->getNbActors(PxActorTypeFlag::eRIGID_DYNAMIC);
+	if (nb_dynamic > 0) {
+		LocalVector<PxActor *> dynamics;
+		dynamics.resize(nb_dynamic);
+		px_scene->getActors(PxActorTypeFlag::eRIGID_DYNAMIC, dynamics.ptr(), nb_dynamic);
+		for (PxActor *a : dynamics) {
+			PxRigidDynamic *dyn = a->is<PxRigidDynamic>();
+			if (!dyn || dyn->getName() == GodotPhysXArea3D::ACTOR_NAME) {
+				continue; // areas sense bodies; they do not stand on statics
+			}
+			const bool kinematic = dyn->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC;
+			if (!kinematic && dyn->isSleeping()) {
+				continue;
+			}
+			PxBounds3 b = dyn->getWorldBounds();
+			b.fattenFast((kinematic ? 0.0f : dyn->getLinearVelocity().magnitude()) * 0.5f + 1.0f);
+			guards.push_back(b);
+			if (guards.size() > GUARDS_MAX) {
+				break;
+			}
+		}
+	}
+	if (guards.size() > GUARDS_MAX) {
+		flush_pending_actors();
+		return;
+	}
+	_refresh_pending_bounds();
+	LocalVector<PxRigidActor *> now;
+	uint32_t keep = 0;
+	for (uint32_t i = 0; i < pending_statics.size(); i++) {
+		bool reached = (int)now.size() < budget; // the oldest, up to the budget
+		for (uint32_t g = 0; !reached && g < guards.size(); g++) {
+			reached = pending_statics[i].bounds.intersects(guards[g]);
+		}
+		if (reached) {
+			now.push_back(pending_statics[i].actor);
+		} else {
+			pending_statics[keep++] = pending_statics[i];
+		}
+	}
+	pending_statics.resize(keep);
+	_add_statics(now.ptr(), now.size());
 }
 
 static LocalVector<PxMaterial *> pending_material_releases;
@@ -358,6 +492,11 @@ GodotPhysXSpace3D::~GodotPhysXSpace3D() {
 	if (direct_state) {
 		memdelete(direct_state);
 	}
+	_flush_removals();
+	for (const PendingStatic &ps : pending_statics) {
+		ps.actor->release(); // never reached the scene
+	}
+	pending_statics.clear();
 	if (default_material) {
 		default_material->release();
 	}
@@ -420,7 +559,7 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 		return;
 	}
 	last_step = p_step;
-	flush_pending_actors();
+	_flush_pending_step();
 
 	for (GodotPhysXBody3D *body : contact_reporters) {
 		body->clear_contacts();
@@ -930,8 +1069,19 @@ RoundContact round_mesh_contact(const PxGeometry &p_geom, const PxTransform &p_p
 
 bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const PhysicsServer3D::MotionParameters &p_params, PhysicsServer3D::MotionResult *r_result) {
 	ERR_FAIL_NULL_V(px_scene, false);
-	flush_pending_actors();
 	ERR_FAIL_NULL_V(p_body, false);
+	if (!pending_statics.is_empty() || !pending_removals.is_empty()) {
+		// The statics this motion can reach: the body's bounds swept along it, plus the margin.
+		PxBounds3 reach = PxBounds3::empty();
+		if (const PxRigidActor *a = p_body->get_px_actor()) {
+			const PxBounds3 b = a->getWorldBounds();
+			reach = b;
+			reach.include(b.minimum + to_px(p_params.motion));
+			reach.include(b.maximum + to_px(p_params.motion));
+			reach.fattenFast((PxReal)p_params.margin + 0.1f);
+		}
+		flush_pending_actors(reach);
+	}
 
 	if (r_result) {
 		*r_result = PhysicsServer3D::MotionResult();

@@ -100,7 +100,8 @@ func _stream():
 		var t0 := Time.get_ticks_usec()
 		add_child(root)
 		var add_ms := (Time.get_ticks_usec() - t0) / 1000.0
-		var first := await _physics_ms(1)
+		# The hitch: the worst of the first frames (a region's statics may enter over a few steps).
+		var first := await _physics_ms(10)
 		var rays_now := _ray_ms(center)
 		await get_tree().process_frame
 		var steady := await _physics_ms(120)
@@ -108,7 +109,7 @@ func _stream():
 		await _physics_ms(180)
 		var settled := await _physics_ms(60)
 		loaded.append(root)
-		print("stream region=%d statics=%d add_ms=%.1f first_frame_ms=%.2f frames_mean_ms=%.3f frames_max_ms=%.2f settled_mean_ms=%.3f rays_first_ms=%.1f rays_settled_ms=%.1f" % [r, (r + 1) * per_region, add_ms, first[0], steady[0], steady[1], settled[0], rays_now, rays_later])
+		print("stream region=%d statics=%d add_ms=%.1f first_frames_max_ms=%.2f first_frames_sum_ms=%.2f frames_mean_ms=%.3f frames_max_ms=%.2f settled_mean_ms=%.3f rays_first_ms=%.1f rays_settled_ms=%.1f" % [r, (r + 1) * per_region, add_ms, first[1], first[0] * 10.0, steady[0], steady[1], settled[0], rays_now, rays_later])
 	for root in loaded:
 		var t0 := Time.get_ticks_usec()
 		root.queue_free()

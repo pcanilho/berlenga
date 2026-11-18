@@ -95,6 +95,12 @@ void GodotPhysXBody3D::_destroy_actor() {
 		space->body_actor_gone(this); // the areas it overlaps take their pairs back (an exit unless it re-enters)
 	}
 	if (px_actor->getScene()) {
+		if (space && joints.is_empty() && px_actor->is<PxRigidStatic>() && px_actor->getScene() == space->get_px_scene()) {
+			space->queue_static_removal(px_actor); // leaves with the space's next batch, then released
+			px_actor = nullptr;
+			px_shapes.clear();
+			return;
+		}
 		px_actor->getScene()->removeActor(*px_actor);
 	} else if (space) {
 		space->cancel_static_actor(px_actor); // never reached the scene
@@ -195,6 +201,9 @@ bool GodotPhysXBody3D::_edit_shape_in_place(uint32_t p_idx) {
 void GodotPhysXBody3D::_shapes_edited() {
 	if (!px_actor || !space) {
 		return;
+	}
+	if (!px_actor->getScene()) {
+		space->pending_static_changed();
 	}
 	const bool non_kinematic_dynamic = _is_dynamic() && mode != PhysicsServer3D::BODY_MODE_KINEMATIC;
 	bool has_separation_ray = false;
@@ -717,6 +726,9 @@ void GodotPhysXBody3D::set_state(PhysicsServer3D::BodyState p_state, const Varia
 					}
 				} else {
 					px_actor->setGlobalPose(pose);
+					if (!px_actor->getScene() && space) {
+						space->pending_static_changed(); // still waiting to enter: its bounds moved
+					}
 				}
 			}
 		} break;
