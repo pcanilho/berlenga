@@ -386,6 +386,10 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		}
 		w += weather->wind_at(center);
 	}
+	// A fire's indraft near the ground (WorldContracts' fire): a sheet beside a fire leans into it.
+	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+		w += fire->wind_at(get_global_transform().xform(get_aabb().get_center()));
+	}
 	return w;
 }
 
@@ -458,6 +462,18 @@ void PhysXCloth3D::_step(double p_delta) {
 	}
 	const Vector3 gravity = gravity_vec.normalized() * gravity_mag;
 
+	// Under water (docs/ideas/physx.md, "River current drags flags and sheets"): as worn clothing, soaked fabric keeps
+	// about 30% of its weight and the current drags it at Morison's 0.5 rho Cd |u| per its soaked areal mass.
+	if (wet.water_surface > -1.0e8f) {
+		const float areal = MAX(density, 1.0e-3f) * (1.0f + water_capacity);
+		solver.settings.water_height = wet.water_surface;
+		solver.settings.water_flow = wet.water_flow;
+		solver.settings.water_drag = MIN(0.5f * 1000.0f * 1.2f * (wet.water_flow.length() + 0.1f) / MAX(areal, 0.05f), 200.0f);
+		solver.settings.water_gravity = 0.3f;
+	} else {
+		solver.settings.water_height = -1.0e9f;
+		solver.settings.water_drag = 0.0f;
+	}
 	_eddy_air(wind_now);
 	if (collision_enabled) {
 		pre_step_positions = solver.get_positions();

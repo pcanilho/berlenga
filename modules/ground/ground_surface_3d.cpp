@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "ground_surface_3d.h"
+#include "ground_clods_3d.h"
 
 #include "core/config/engine.h"
 #include "core/io/dir_access.h"
@@ -41,7 +42,7 @@
 #include "core/templates/hashfuncs.h"
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
-#include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
@@ -49,6 +50,21 @@
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
 #include "servers/rendering/rendering_server.h"
+
+// The weather, through its contract (docs/ideas/world-contracts.md): null when nothing provides it, so the ground
+// keeps its own settings then.
+static const WorldWeather *_weather() {
+	const WorldWeather *w = WorldContracts::weather();
+	return (w != nullptr && w->has_provider()) ? w : nullptr;
+}
+
+static WeatherSeason::Climate _weather_climate(const WorldWeather *p_weather) {
+	WeatherSeason::Climate c;
+	if (p_weather != nullptr) {
+		p_weather->season_climate(c);
+	}
+	return c;
+}
 
 GroundSurface3D *GroundSurface3D::active = nullptr;
 
@@ -190,6 +206,14 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		// Nearly incompressible: what a wheel pushes down squeezes up beside it.
 		mud.rim_share = 0.97f;
 		mud.max_dent = MAX(c.max_dent, p_mud);
+		// The layer on a slope (round 10): an infinite slope of Bingham fluid H deep shears at its base under
+		// rho g H sin(theta); past the yield stress the whole layer flows (Johnson 1970; Coussot 1997, the
+		// mudflow's stopping depth h = tau_y / (rho g sin theta)). Soaked by rain its solid share falls and
+		// its yield stress with it (a hundredfold from stiff to slurry), so mud that held a bank all summer
+		// slides off it in a storm, down to the firm base, and piles in the ruts and hollows below.
+		// As the layer thins it holds steeper ground: it stops at h = tau_y / (rho g tan theta), so the shader
+		// takes the length tau_y / (rho g) and the depth left.
+		c.slide_length = mw > 0.5f ? tau_y / (rho * 9.81f) : 1e3f;
 		// Pressure-sinkage: stiff mud as lean clay at 32% (Wong table 2.2: n 0.5, kc 13.19, kphi 692.15); slurry
 		// fitted so a boot (21 kPa) sinks about 15 cm (n 0.5, kphi 54) and a loaded tyre goes to the base.
 		mud.n = 0.5f;
@@ -453,7 +477,7 @@ void GroundSurface3D::_update_cells() {
 	}
 	gpu_cells_dirty = true;
 	near_cells_dirty = true;
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	Node *hs = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
 	const TerrainGenerator3D *gen = rock_from_geology ? Object::cast_to<TerrainGenerator3D>(hs) : nullptr;
 	Node *snow = snow_cover.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(snow_cover);
@@ -483,8 +507,8 @@ void GroundSurface3D::_update_cells() {
 			if (gen && gen->get_rock_exposure(p) > 0.5f) {
 				rock = true;
 			}
-			const float m = moisture >= 0.0f ? moisture : (wm ? wm->get_wetness_at(p) : 0.0f);
-			const float closure = wm ? wm->get_canopy_closure_at(p) : litter_cover;
+			const float m = moisture >= 0.0f ? moisture : (wm ? wm->surface_wetness_at(p) : 0.0f);
+			const float closure = wm ? wm->canopy_closure_at(p) : litter_cover;
 			CellInput &in = cell_inputs[i];
 			in.sand = sand;
 			in.moisture = m;
@@ -795,6 +819,20 @@ void GroundSurface3D::set_mud_layer(bool p_enabled) {
 	_update_cells();
 }
 
+void GroundSurface3D::set_mud_slides(bool p_enabled) {
+	mud_slides = p_enabled;
+	_update_cells();
+}
+
+float GroundSurface3D::get_mud_slide_angle_at(Vector3 p_position) const {
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	if (!mud_slides || c.mud <= 0.0f || c.slide_length >= 1e2f) {
+		return 90.0f;
+	}
+	const float left = MAX(c.max_dent - get_dent_at(p_position) + get_rim_at(p_position), 0.005f);
+	return Math::rad_to_deg(Math::atan(c.slide_length / left));
+}
+
 void GroundSurface3D::set_standing_water(bool p_enabled) {
 	standing_water = p_enabled;
 	if (!p_enabled) {
@@ -865,17 +903,17 @@ float GroundSurface3D::_water_table_depth(int p_i) const {
 
 // Evaporation from open water (m/s): Penman's (1948) wind function, as WeatherMap3D's surface film; none in rain.
 float GroundSurface3D::_evaporation() const {
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	if (!wm) {
 		return 2e-8f; // a mild day's, about 2 mm a day
 	}
 	const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
-	if (wm->get_rain_at(at) > 0.1f) {
+	if (wm->precipitation_at(at) > 0.1f) {
 		return 0.0f;
 	}
-	const float t = wm->get_air_temperature();
+	const float t = wm->air_temperature_at(_weather_point());
 	const float es = 6.112f * Math::exp(17.62f * t / (243.12f + t));
-	const float deficit = MAX(es * (1.0f - CLAMP(wm->get_air_humidity(), 0.0f, 1.0f)), 0.0f);
+	const float deficit = MAX(es * (1.0f - CLAMP(wm->air_humidity_at(_weather_point()), 0.0f, 1.0f)), 0.0f);
 	const float u2 = _wind_10m().length() * 0.75f; // 10 m to 2 m on the log law over short grass
 	return 0.26f * (1.0f + 0.54f * u2) * deficit / 24.0f / 3.6e6f;
 }
@@ -973,8 +1011,8 @@ void GroundSurface3D::_ice_update(double p_delta) {
 		ice_state.clear();
 		return;
 	}
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	const float t = wm ? wm->get_air_temperature() : 10.0f;
+	const WorldWeather *wm = _weather();
+	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
 	if ((int)ice_state.size() != n * n * ICE_FLOATS) {
 		if (t >= 0.0f) {
 			return; // nothing frozen, nothing to freeze
@@ -1060,10 +1098,10 @@ void GroundSurface3D::set_frozen_ground(bool p_enabled) {
 // (a cell the snow covers) insulates: no change under it. New cells start from the climate's frost index for the
 // day (WeatherSeason's soil_frost: freezing degree days, thawed back by positive ones, none under snow).
 void GroundSurface3D::_frost_seed(int p_from) {
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	float depth = 0.0f;
 	if (wm) {
-		const WeatherSeason::State st = WeatherSeason::compute(wm->get_season_climate(), _ground_at(center.x, center.y), wm->get_day_of_year());
+		const WeatherSeason::State st = WeatherSeason::compute(_weather_climate(wm), _ground_at(center.x, center.y), wm->day_of_year());
 		const float theta = 0.1f + 0.3f * CLAMP(moisture >= 0.0f ? moisture : 0.3f, 0.0f, 1.0f);
 		depth = st.snow_cover > 0.5f ? 0.0f : MIN(Math::sqrt(2.0f * 2.0f * st.soil_frost * 86400.0f / (334e6f * theta)), 1.0f);
 	}
@@ -1093,8 +1131,8 @@ void GroundSurface3D::_frost_update(double p_delta) {
 		}
 	}
 	_frost_seed(0);
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	const float t = wm ? wm->get_air_temperature() : 10.0f;
+	const WorldWeather *wm = _weather();
+	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
 	const float dt = float(p_delta) * runoff_time_scale;
 	for (int i = 0; i < n * n; i++) {
 		const CellInput &in = cell_inputs[i];
@@ -1271,8 +1309,8 @@ void GroundSurface3D::_plant_mud_update(double p_delta) {
 		plant_mud_state.clear();
 		return;
 	}
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	const float rain = wm ? wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) : 0.0f; // mm/h
+	const WorldWeather *wm = _weather();
+	const float rain = wm ? wm->precipitation_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) : 0.0f; // mm/h
 	if (rain <= 0.0f) {
 		return;
 	}
@@ -1664,6 +1702,13 @@ void GroundSurface3D::_ensure_children() {
 	if (mesh_dirty) {
 		_build_mesh();
 	}
+	if (clods && !clods_node) {
+		clods_node = memnew(GroundClods3D);
+		add_child(clods_node, false, INTERNAL_MODE_FRONT);
+	} else if (!clods && clods_node) {
+		clods_node->queue_free();
+		clods_node = nullptr;
+	}
 }
 
 void GroundSurface3D::_follow(Vector3 p_center) {
@@ -1959,11 +2004,11 @@ Vector2 GroundSurface3D::_wind_10m() const {
 	if (wind_override != Vector2()) {
 		return wind_override;
 	}
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	if (!wm) {
 		return Vector2();
 	}
-	const Vector3 w = wm->get_wind_at(Vector3(center.x, _ground_at(center.x, center.y), center.y), 10.0f);
+	const Vector3 w = wm->wind_at(Vector3(center.x, _ground_at(center.x, center.y), center.y), 10.0f);
 	return Vector2(w.x, w.z);
 }
 
@@ -1996,6 +2041,7 @@ PackedFloat32Array GroundSurface3D::get_ripple_heights() const {
 void GroundSurface3D::_ripple_grow_task(void *p_self) {
 	GroundSurface3D *self = (GroundSurface3D *)p_self;
 	GroundRipples::grow(self->ripple_grown, self->ripples.n, self->ripples, self->ripple_grow_wind, 500, 7);
+	self->ripple_grown_k = GroundRipples::dominant_k(self->ripple_grown, self->ripples.n, self->ripples.cell);
 }
 
 void GroundSurface3D::_shift_lattice(LocalVector<float> &r_values, Vector2i p_old_origin, Vector2i p_new_origin, int p_n, int p_stride) {
@@ -2114,7 +2160,7 @@ float GroundSurface3D::_pore_step(float p_s, float p_depth, float p_contact, flo
 	return s;
 }
 
-void GroundSurface3D::_far_update(double p_delta, const LocalVector<Node *> &p_sources, const WeatherMap3D *p_weather) {
+void GroundSurface3D::_far_update(double p_delta, const LocalVector<Node *> &p_sources, const WorldWeather *p_weather) {
 	const int n = ground_n;
 	const int fn = n;
 	const float fs = ground_spacing * FAR_STEP;
@@ -2195,7 +2241,7 @@ void GroundSurface3D::_far_update(double p_delta, const LocalVector<Node *> &p_s
 			float depth = 0.0f;
 			float speed = 0.0f;
 			ground_water_at(p_sources, p, far_ground[i], depth, speed);
-			const float contact = p_weather ? p_weather->get_contact_wetness_at(p) : 0.0f;
+			const float contact = p_weather ? p_weather->contact_wetness_at(p) : 0.0f;
 			far_pore[i] = _pore_step(far_pore[i], depth, contact, dt, far_table[i]);
 		}
 	}
@@ -2223,7 +2269,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 		return;
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	LocalVector<Node *> sources;
 	if (is_inside_tree()) {
 		for (int k = 0; k < water_sources.size(); k++) {
@@ -2253,7 +2299,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 			ground_water_at(sources, p, gh, depth, speed);
 			g_depth[gz * gn + gx] = depth;
 			g_speed[gz * gn + gx] = speed;
-			g_contact[gz * gn + gx] = wm ? wm->get_contact_wetness_at(p) : 0.0f;
+			g_contact[gz * gn + gx] = wm ? wm->contact_wetness_at(p) : 0.0f;
 		}
 	}
 	const float dt = float(p_delta);
@@ -2590,9 +2636,9 @@ void GroundSurface3D::_runoff_update(double p_delta) {
 	}
 	const int n = ground_n;
 	const bool wet = water_coupling && (int)pore.size() == n * n && (int)water_depth.size() == n * n;
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	const Vector2 mid = field.rect().get_center();
-	const float rain = wm ? MAX(wm->get_rain_at(Vector3(mid.x, _ground_at(mid.x, mid.y), mid.y)), 0.0f) / 3.6e6f : 0.0f; // m/s
+	const float rain = wm ? MAX(wm->precipitation_at(Vector3(mid.x, _ground_at(mid.x, mid.y), mid.y)), 0.0f) / 3.6e6f : 0.0f; // m/s
 	auto lattice = [&](float p_x, float p_z) {
 		const int x = CLAMP(int(Math::round(p_x / ground_spacing)) - ground_origin.x, 0, n - 1);
 		const int z = CLAMP(int(Math::round(p_z / ground_spacing)) - ground_origin.y, 0, n - 1);
@@ -3427,6 +3473,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			const bool first = !ripples.tmpl_ready;
 			ripples.tmpl = ripple_grown;
 			ripples.tmpl_wind = ripple_grow_wind;
+			ripples.tmpl_k = ripple_grown_k;
 			ripples.tmpl_ready = true;
 			if (first) {
 				ripples.valid = false; // the whole window from it
@@ -3577,6 +3624,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[8] = tile && sand ? 1.0f : 0.0f;
 		meta[9] = (float)n;
 		meta[10] = (float)sn;
+		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
+		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
 			ripple_image->set_data(w, hgt, false, Image::FORMAT_RGBAF, data);
 			ripple_texture->update(ripple_image);
@@ -3655,12 +3704,12 @@ void GroundSurface3D::_age(double p_delta) {
 	}
 	const float dt = float(p_delta);
 	const float dt_h = dt / 3600.0f;
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
 	const float wind = _wind_10m().length();
 	float rain = 0.0f;
 	if (wm) {
-		rain = wm->get_rain_at(at);
+		rain = wm->precipitation_at(at);
 	}
 	// Sand moves above about 5 m/s at 10 m (Bagnold's threshold for fine dry sand).
 	const float drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f;
@@ -4038,7 +4087,7 @@ Dictionary GroundSurface3D::get_wheel_soil(Vector3 p_position, float p_load, flo
 	return d;
 }
 
-float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity) {
+float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity, int p_tread) {
 	if (!field.valid || p_sinkage <= 0.0f || p_size.x <= 0.0f || p_size.y <= 0.0f) {
 		return 0.0f;
 	}
@@ -4050,12 +4099,19 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	const float radius = 0.5f * MAX(p_size.x, p_size.y);
 	const float bottom = _ground_at(p_position.x, p_position.z) - p_sinkage;
 	_ice_break(p_position, radius, 0.06f);
+	// The tread's lugs or chains in the rut floor (round 10).
+	field.press_tread = p_tread >= 0 ? MIN(p_tread, 3) + 1 : 0;
+	near_fld.press_tread = field.press_tread;
+	float moved = 0.0f;
 	if (_gpu_on()) {
 		// The bodies' path: only the GPU field takes it (the CPU copy follows at the read back).
 		gpu_sink.stamp(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
-		return 0.0f;
+	} else {
+		moved = field.press(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
 	}
-	return field.press(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
+	field.press_tread = 0;
+	near_fld.press_tread = 0;
+	return moved;
 }
 
 void GroundSurface3D::_plough_bodies() {
@@ -4209,7 +4265,7 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
 		return;
 	}
-	const uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u);
+	const uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u) | ((uint32_t)CLAMP(surface->field.press_tread, 0, 7) << 5u);
 	const float v[12] = {
 		p_position.x, p_position.y, p_position.z, p_radius,
 		p_half.x, p_half.y, p_yaw, p_bottom,
@@ -4693,13 +4749,13 @@ void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRut
 // 5 C (growing degree days, as WeatherSeason's forcing; the reference 10 K above it, a late spring day), held back
 // by drought: the day's precipitation against its Thornthwaite evapotranspiration (no growth under a tenth of it, full
 // over seven tenths), so a Mediterranean summer stalls it as a winter does. The days of the climatological year
-// (WeatherMap3D's climate at the field's height); without a WeatherMap3D, every day at the reference rate.
+// (the weather contract's climate at the field's height); without a weather, every day at the reference rate.
 double GroundSurface3D::_growing_seconds(double p_seconds) const {
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const WorldWeather *wm = _weather();
 	if (!wm || p_seconds <= 0.0) {
 		return p_seconds;
 	}
-	const WeatherSeason::Climate c = wm->get_season_climate();
+	const WeatherSeason::Climate c = _weather_climate(wm);
 	const float h = _ground_at(center.x, center.y);
 	double heat = 0.0;
 	double a = 0.0;
@@ -4722,7 +4778,7 @@ double GroundSurface3D::_growing_seconds(double p_seconds) const {
 		}
 		sum += year * double(whole / 365);
 	}
-	const int today = wm->get_day_of_year();
+	const int today = wm->day_of_year();
 	for (int k = 0; k < whole % 365; k++) {
 		sum += rate((today - 1 - k + 365 * 2) % 365 + 1);
 	}
@@ -4880,11 +4936,41 @@ float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_dep
 		// Thrown clay (no tyre or sole print): it spatters the plants it lands among too, in full by a film of
 		// 0.3 mm.
 		_plant_mud_add(p_position, p_radius, CLAMP(p_depth / 0.0003f, 0.0f, 1.0f));
+		// And GroundClods3D stands the bigger landings up as lumps.
+		const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+		if (frame > clod_frame + 2) {
+			clod_drops.clear();
+		}
+		clod_frame = frame;
+		if (clods_node && clod_drops.size() < 1024) {
+			ClodDrop d;
+			d.position = p_position;
+			d.radius = p_radius;
+			d.volume = float(Math::PI) * p_radius * p_radius * p_depth;
+			d.color = get_mud_color_at(p_position);
+			if (d.color.r + d.color.g + d.color.b <= 0.01f) {
+				d.color = mud_color; // no painted mud there
+			}
+			d.wet = p_wet;
+			clod_drops.push_back(d);
+		}
 	}
 	field.amount_fresh = before;
 	field.amount_print = Vector4();
 	near_fld.amount_print = Vector4();
 	return v;
+}
+
+void GroundSurface3D::take_clod_drops(LocalVector<ClodDrop> &r_drops) {
+	r_drops = clod_drops;
+	clod_drops.clear();
+}
+
+void GroundSurface3D::set_clods(bool p_enabled) {
+	clods = p_enabled;
+	if (is_inside_tree()) {
+		_ensure_children();
+	}
 }
 
 void GroundSurface3D::add_spray(const Spray &p_spray) {
@@ -4967,15 +5053,16 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 	if (!ground_valid || int(cells.size()) != n * n) {
 		return out;
 	}
-	out.resize(n * n * 48);
+	out.resize(n * n * 64);
 	float *w = reinterpret_cast<float *>(out.ptrw());
 	const bool inputs = int(cell_inputs.size()) == n * n;
 	bool seep = false;
+	bool sliding = false;
 	const bool runoff_gpu = _runoff_on_gpu();
 	bool runoff_any = false;
 	for (int i = 0; i < n * n; i++) {
 		const Cell &c = cells[i];
-		float *o = w + i * 12;
+		float *o = w + i * 16;
 		o[0] = c.rim_share;
 		o[1] = c.tan_repose;
 		o[2] = c.rate;
@@ -4991,9 +5078,25 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 		// Runoff channels on the GPU: the seepage face's outflow, m/s; -1 under the sea or a lake (the runoff ends).
 		o[11] = runoff_gpu ? ((int)water_depth.size() == n * n && water_depth[i] > 0.002f ? -1.0f : _runoff_seep(i)) : 0.0f;
 		runoff_any = runoff_any || o[11] > 0.0f;
+		// Mud slides (round 10): the steepest slope the layer holds.
+		o[12] = mud_slides ? c.slide_length : 1e3f;
+		if (mud_slides && c.deformable && c.slide_length < 1e2f && c.mud > 0.0f && !sliding) {
+			// The ground's steepest fall to a lattice neighbour against what the full layer holds.
+			const int x = i % n;
+			const int z = i / n;
+			float fall = 0.0f;
+			if (x > 0 && x < n - 1 && z > 0 && z < n - 1) {
+				fall = MAX(MAX(Math::abs(ground[i + 1] - ground[i - 1]), Math::abs(ground[i + n] - ground[i - n])) / (2.0f * ground_spacing), 0.0f);
+			}
+			sliding = fall > c.slide_length / c.mud;
+		}
+		o[13] = 0.0f;
+		o[14] = 0.0f;
+		o[15] = 0.0f;
 		seep = seep || (c.deformable && o[9] < c.max_dent);
 	}
 	const_cast<GroundSurface3D *>(this)->water_seep = seep;
+	const_cast<GroundSurface3D *>(this)->mud_sliding = sliding;
 	const_cast<GroundSurface3D *>(this)->runoff_seep_any = runoff_any;
 	return out;
 }
@@ -5023,11 +5126,11 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	float drift = 0.0f;
 	float soften = 0.0f;
 	if (p_age > 0.0) {
-		const WeatherMap3D *wm = WeatherMap3D::get_active();
+		const WorldWeather *wm = _weather();
 		drift = sand_drift_rate * MAX(_wind_10m().length() - 5.0f, 0.0f) / 5.0f;
 		if (wm) {
 			const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
-			soften = rain_smoothing * wm->get_rain_at(at);
+			soften = rain_smoothing * wm->precipitation_at(at);
 		}
 	}
 	const float dry = p_age > 0.0 ? Math::exp(-float(p_age) / drying_time) : 1.0f;
@@ -5036,8 +5139,8 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	// Standing water: the rain, a pipe-model substep, damping, evaporation (rates sped up by runoff_time_scale);
 	// then the seepage length, the conductivity compaction keeps, on, the thinnest film kept once its source stops.
 	if ((standing_water || _runoff_on_gpu()) && p_delta > 0.0) {
-		const WeatherMap3D *wm = WeatherMap3D::get_active();
-		const float rain = wm ? MAX(wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)), 0.0f) / 3.6e6f : 0.0f;
+		const WorldWeather *wm = _weather();
+		const float rain = wm ? MAX(wm->precipitation_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)), 0.0f) / 3.6e6f : 0.0f;
 		const int passes = _water_passes(p_field, p_delta);
 		const float sub = MIN(float(p_delta) / passes, 0.5f * p_field.texel() / Math::sqrt(9.81f * 0.2f));
 		// A long step moves the water only as far as the substeps reach, but its sources and sinks get the
@@ -5172,6 +5275,11 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 		if (cell_bytes.size() > 0) {
 			flags |= GroundDeformGPU::STEP_COVER;
 			r_cells_dirty = false;
+			if (mud_sliding) {
+				// A soaked layer on a slope it no longer holds (round 10): the field slumps for a minute after the
+				// cells change (rain renews it as it soaks them), so the slide runs its course and stops.
+				r_host.slump_until = MAX(r_host.slump_until, r_host.time + 60.0);
+			}
 		}
 	}
 	if (r_host.reset) {
@@ -5202,8 +5310,8 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	// Standing water runs while there is some, rain falls, or ground water can seep into a print.
 	int water_passes = 0;
 	if ((standing_water || _runoff_on_gpu()) && p_delta > 0.0) {
-		const WeatherMap3D *wm = WeatherMap3D::get_active();
-		const bool rain = wm && wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) > 0.0f;
+		const WorldWeather *wm = _weather();
+		const bool rain = wm && wm->precipitation_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) > 0.0f;
 		const bool runoff = _runoff_on_gpu() && (rain || runoff_seep_any || water_seen > 0.0f);
 		if (runoff || (standing_water && (rain || water_seen > 0.0f || water_seep || !water_discs.is_empty()))) {
 			flags |= GroundDeformGPU::STEP_WATER;
@@ -5232,8 +5340,10 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	d.slots = MAX(max_cached_tiles, 1);
 	d.coll_w = 0;
 	d.stride = 2;
-	d.slump_passes = p_passes;
-	d.cover_vec4s = 3;
+	// A slide carries mud metres down a slope, further than slumping spreads in a pass: four passes a step while one
+	// runs (round 10).
+	d.slump_passes = p_passes * (mud_sliding && r_host.time <= r_host.slump_until ? 4 : 1);
+	d.cover_vec4s = 4;
 	d.water_passes = water_passes;
 	d.morph_passes = _morph_passes();
 	r_host.gpu->step(d, flags, _gpu_params(p_field, p_edge_margin, p_delta, p_age, slow), ground_bytes, cell_bytes, r_host.stamps, r_host.stores, r_host.shift, p_field.origin, Vector2(), r_host.uploads);
@@ -5598,6 +5708,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_override"), &GroundSurface3D::get_wind_override);
 	ClassDB::bind_method(D_METHOD("set_mud_layer", "enabled"), &GroundSurface3D::set_mud_layer);
 	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
+	ClassDB::bind_method(D_METHOD("set_mud_slides", "enabled"), &GroundSurface3D::set_mud_slides);
+	ClassDB::bind_method(D_METHOD("is_mud_slides"), &GroundSurface3D::is_mud_slides);
+	ClassDB::bind_method(D_METHOD("get_mud_slide_angle_at", "position"), &GroundSurface3D::get_mud_slide_angle_at);
 	ClassDB::bind_method(D_METHOD("set_mud_map", "map"), &GroundSurface3D::set_mud_map);
 	ClassDB::bind_method(D_METHOD("set_standing_water", "enabled"), &GroundSurface3D::set_standing_water);
 	ClassDB::bind_method(D_METHOD("is_standing_water"), &GroundSurface3D::is_standing_water);
@@ -5648,6 +5761,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
 	ClassDB::bind_method(D_METHOD("get_regrown_at", "position"), &GroundSurface3D::get_regrown_at);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &GroundSurface3D::track_mud, DEFVAL(1.0f), DEFVAL(Vector4()));
+	ClassDB::bind_method(D_METHOD("set_clods", "enabled"), &GroundSurface3D::set_clods);
+	ClassDB::bind_method(D_METHOD("is_clods"), &GroundSurface3D::is_clods);
+	ClassDB::bind_method(D_METHOD("get_clods_node"), &GroundSurface3D::get_clods_node);
 	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
 	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
 	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);
@@ -5730,7 +5846,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rain_smoothing"), &GroundSurface3D::get_rain_smoothing);
 
 	ClassDB::bind_method(D_METHOD("get_wheel_soil", "position", "load", "radius", "width", "inflation", "slip", "slip_angle"), &GroundSurface3D::get_wheel_soil, DEFVAL(200.0f), DEFVAL(0.0f), DEFVAL(0.0f));
-	ClassDB::bind_method(D_METHOD("press_wheel", "position", "size", "yaw", "sinkage", "velocity"), &GroundSurface3D::press_wheel, DEFVAL(Vector2()));
+	ClassDB::bind_method(D_METHOD("press_wheel", "position", "size", "yaw", "sinkage", "velocity", "tread"), &GroundSurface3D::press_wheel, DEFVAL(Vector2()), DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("get_footing_at", "position", "mass", "area"), &GroundSurface3D::get_footing_at, DEFVAL(75.0f), DEFVAL(0.035f));
 	ClassDB::bind_method(D_METHOD("dig", "position", "radius", "depth"), &GroundSurface3D::dig);
 	ClassDB::bind_method(D_METHOD("deposit", "position", "radius", "depth"), &GroundSurface3D::deposit);
@@ -5782,6 +5898,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "near_resolution", PROPERTY_HINT_RANGE, "128,2048,64"), "set_near_resolution", "get_near_resolution");
 	ADD_GROUP("Mud", "mud_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_map", "get_mud_map");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "mud_map_rect"), "set_mud_map_rect", "get_mud_map_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_max_depth", PROPERTY_HINT_RANGE, "0,3,0.05,suffix:m"), "set_mud_max_depth", "get_mud_max_depth");
@@ -5819,6 +5936,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater"), "set_ruts_time_scale", "get_ruts_time_scale");

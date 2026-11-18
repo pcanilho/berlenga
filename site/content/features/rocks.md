@@ -28,6 +28,11 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
 - **Rock fields** (`RockField3D`: `rockfall_`, `scree_`, `glacial_`, `river_`, `shore_`, `cliff_` layers; `layer_enabled`): rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.
 - **Ground detail** (`RockField3D`: `ground_detail`, `ground_detail_pixels`): pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach or scree around them, each drawn only while it stays a few pixels tall; the path tracer traces every one.
+
+  ![A shingle shore at low eye height, ground detail off and on, raster](media/rocks-ground-detail.jpg)
+
+  *Shingle shore: before, scattered pebbles on bare sand; after, a band of gravel and small pebbles runs along the shore below the cobbles.*
+
 - **Breakable stones** (`RockField3D.break_stone`): stones split into pieces along rough rock breaks, and layered rock into slabs.
 
   ![A granite block about 3 m away, whole and broken where it lay, raster](media/rocks-break.jpg)
@@ -40,8 +45,4 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 - **Tors and coasts** (`layer_enabled`: `LAYER_TOR`, `LAYER_COAST`): tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.
 - **Landforms** (`layer_enabled`: `LAYER_LANDFORM`): hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.
 - **Caves** (`CaveNetwork3D.build_meshes()` or `follow_target`, `speleothems`, `scallops`, `cave_streams`, `add_sea_cave()`; `terrain3d`): cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.
-
-  ![Looking out of a sea cave onto a beach and the sea, raster](media/rocks-sea-cave.jpg)
-
-  *Sea caves: a passage cut along a joint, with jointed walls, opens onto the beach.*
 

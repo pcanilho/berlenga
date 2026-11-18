@@ -47,7 +47,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   ![Deep open sea under overcast sky with three wave layers, raster](media/ocean-swell.jpg)
 
-  *Ocean swell: three wave layers run long swell under the chop with no repeating pattern.*
+  *Ocean swell: three wave layers run long swell under the chop.*
 
 - **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
 
@@ -192,6 +192,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   - A train of smooth standing waves below a weak hydraulic jump, and cross-waves where fast water narrows (`standing_waves`).
   - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
+  - River surface (`foam_crisp`, `ripple_detail`, `caustics_strength`): crisp foam that drains into lace, capillary ripples, and sun caustics on the bed from the river's own ripples.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
     ![A river parting round a rock, raster vs path traced](media/river-rocks.jpg)

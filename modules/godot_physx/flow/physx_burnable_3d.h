@@ -97,7 +97,12 @@ private:
 
 	PhysXFireSpread3D *fire = nullptr;
 	PhysXFlow3D *flow = nullptr;
-	ObjectID emitters[5]; // one per burning face: four sides and the top
+	static constexpr int FACE_EMITTERS = 5;
+	static constexpr int PIECE_EMITTERS = 8;
+	// One per burning face (four sides and the top), then, once a destructible target has broken, one per burning
+	// piece (the biggest).
+	ObjectID emitters[FACE_EMITTERS + PIECE_EMITTERS];
+	PhysXFlowEmitter3D *_emitter(int p_slot);
 
 	struct Ember {
 		Vector3 p;
@@ -145,6 +150,8 @@ private:
 	void _sample_heat(float p_delta);
 	void _burn(float p_delta);
 	void _update_emitter();
+	bool _update_piece_emitters();
+	LocalVector<Vector3> piece_flames; // world, the flames on a broken target's pieces this step: sparks and brands rise from them
 	void _update_embers(float p_delta);
 	void _update_look();
 	float _surface_area() const;

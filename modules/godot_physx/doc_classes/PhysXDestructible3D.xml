@@ -28,7 +28,7 @@
 			<return type="Vector3" />
 			<param index="0" name="index" type="int" />
 			<description>
-				Returns the world position of the piece's centroid (its first chunk's), from its live body. [code]Vector3(0, 0, 0)[/code] for an out-of-range index or a dead body.
+				Returns the world position of the middle of the piece's chunks, from its live body and the node's scale. [code]Vector3(0, 0, 0)[/code] for an out-of-range index or a dead body.
 			</description>
 		</method>
 		<method name="get_piece_chunks" qualifiers="const">
@@ -56,6 +56,20 @@
 			<param index="0" name="index" type="int" />
 			<description>
 				Returns the mass of the piece's live body. [code]0.0[/code] for an out-of-range index or a dead body.
+			</description>
+		</method>
+		<method name="get_piece_rest_center" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Where the piece's chunks sat in the intact object, in this node's local space: for effects that marked a part of the intact object (a burning patch) and follow it onto the pieces.
+			</description>
+		</method>
+		<method name="get_piece_volume" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The volume of the piece's chunks, in cubic metres, with the node's scale.
 			</description>
 		</method>
 		<method name="get_render_materials" qualifiers="const">

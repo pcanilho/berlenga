@@ -40,6 +40,7 @@
 #include "core/version.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/texture.h"
+#include "servers/rendering/rain_ripples_glsl.gen.h"
 #include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -613,6 +614,10 @@ void BaseMaterial3D::init_shaders() {
 		// Its contact wetness (wet where water has been): a fine square round the camera.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its rain readers' map and the precipitation's phase (get_rain_functions_code()).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
@@ -805,6 +810,45 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	return code;
 }
 
+// Rain (docs/ideas/rain.md): the raindrop rings every water surface draws (rain_ripples(), the same file the path
+// tracer includes) and, with p_from_weather, the weather's rain at a point. Any shader may add this once.
+String BaseMaterial3D::get_rain_functions_code(bool p_from_weather) {
+	String code = RAIN_RIPPLES_GLSL;
+	if (p_from_weather) {
+		code += R"(
+global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness, canopy drip mm/h
+global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
+global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
+
+vec4 weather_rain_sample(vec3 p_world_pos) {
+	if (weather_rain_rect.z <= 0.0) {
+		return vec4(0.0);
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_rain_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_rain_rect.xy) / weather_rain_rect.zw, half_texel, 1.0 - half_texel);
+	return textureLod(weather_rain_map, uv, 0.0);
+}
+
+// The air's temperature at a height, and the rain (mm/h, liquid) there: WeatherMap3D.get_rainfall_at().
+float weather_air_temperature_at(vec3 p_world_pos) {
+	return weather_precip_phase.x - weather_precip_phase.y * (p_world_pos.y - weather_precip_phase.w);
+}
+float weather_rainfall_at(vec3 p_world_pos) {
+	float r = weather_rain_sample(p_world_pos).r;
+	return r > 0.0 ? r * rain_liquid_share(weather_air_temperature_at(p_world_pos), weather_precip_phase.z) : 0.0;
+}
+// Leaves' wetness from the canopy's held water (0..1), and the drip off them (mm/h): Rutter's interception.
+float weather_canopy_wetness_at(vec3 p_world_pos) {
+	return weather_rain_sample(p_world_pos).g;
+}
+float weather_canopy_drip_at(vec3 p_world_pos) {
+	return weather_rain_sample(p_world_pos).b;
+}
+)";
+	}
+	return code;
+}
+
 String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
 	String code;
 	// Read by snow_glint_apply_specular() under the path tracer, with or without a snowpack.
@@ -861,6 +905,38 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	// A crown shows its load: half its capacity whitens the upward needles.
 	cover = mix(cover, min(crown_load * 2.0, 1.0), crown);
 	return vec4(cover, s.g, clamp(s.b, 0.0, 1.0), 1.0);
+}
+
+// The snowpack's depth (m) and density (kg/m3) at a world position, (0, 0) where no pack answers: the near square
+// over the world tier, as snow_cover_at() reads them. For what the pack's weight does (plants pressed under it).
+vec2 snow_pack_at(vec3 p_world_pos) {
+	vec4 s = vec4(0.0);
+	if (snow_world_rect.z > 0.0) {
+		vec2 wuv = (p_world_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
+		if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
+			vec2 wh = 0.5 / vec2(textureSize(snow_world_map, 0));
+			s = textureLod(snow_world_map, clamp(wuv, wh, 1.0 - wh), 0.0);
+		}
+	}
+	if (snow_map_rect.z > 0.0) {
+		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+		vec2 ne = min(nuv, 1.0 - nuv);
+		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
+		if (nw > 0.0) {
+			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
+		}
+	}
+	return vec2(max(s.r, 0.0), max(s.a, 0.0) * 1000.0);
+}
+
+// How far a pack's weight presses a plant over, 0 to 1 (docs/ideas/world-links.md, snow on plants): the load
+// rho g d against the stems' stiffness. Settled snow lays herbs and grasses flat (the snow press of alpine
+// swards, Koerner 2003, "Alpine Plant Life", ch. 3) from about 0.3 kPa; stiffer dwarf shrubs bow under more
+// (p_stiffness over the grass's, bending going as its square). A dusting presses nothing.
+float snow_press(vec2 p_pack, float p_stiffness) {
+	float load = p_pack.y * 9.81 * p_pack.x; // Pa
+	return smoothstep(0.0, 1.0, load / (300.0 * max(p_stiffness * p_stiffness, 0.05))) * smoothstep(0.02, 0.06, p_pack.x);
 }
 )";
 	}
@@ -1362,6 +1438,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.hair_cards = hair_cards;
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
+		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
@@ -1966,6 +2043,10 @@ uniform vec3 uv2_offset;
 
 	if (features[FEATURE_GROUND_DEFORM]) {
 		code += _ground_deform_code(false, ground_deform_patch);
+	}
+	// The rain's functions (raindrop rings on the patch's standing water, beads on a wet canopy), once.
+	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy)) {
+		code += get_rain_functions_code(true);
 	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
@@ -2863,9 +2944,16 @@ void fragment() {)";
 			float gdk = 1.0 - smoothstep(0.5 * gde, 1.5 * gde, ground_fp);
 			if (gdk > 0.0) {
 				float gh0 = ground_deform_relief(gdp);
-				float ghm = 0.25 * (ground_deform_relief(gdp + vec2(gde, 0.0)) + ground_deform_relief(gdp - vec2(gde, 0.0)) +
-										   ground_deform_relief(gdp + vec2(0.0, gde)) + ground_deform_relief(gdp - vec2(0.0, gde)));
-				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk;
+				float gh1 = ground_deform_relief(gdp + vec2(gde, 0.0));
+				float gh2 = ground_deform_relief(gdp - vec2(gde, 0.0));
+				float gh3 = ground_deform_relief(gdp + vec2(0.0, gde));
+				float gh4 = ground_deform_relief(gdp - vec2(0.0, gde));
+				float ghm = 0.25 * (gh1 + gh2 + gh3 + gh4);
+				// Only millimetre relief: where the heights round it span centimetres (a tread's lugs, a rut's wall)
+				// the geometry is there for the shadow map and the path tracer to shade for real, and this term made
+				// it read far darker in raster than traced.
+				float gspan = max(max(max(gh1, gh2), max(gh3, gh4)), gh0) - min(min(min(gh1, gh2), min(gh3, gh4)), gh0);
+				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan));
 				ALBEDO *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
 			}
 		}
@@ -2911,7 +2999,11 @@ void fragment() {)";
 	// Wetness: Enabled
 	float wet = wetness_amount;
 )";
-		if (wetness_from_weather) {
+		if (wetness_from_weather && wetness_canopy) {
+			// A canopy stays wet while it holds the water it intercepted (Rutter's store, WeatherMap3D), after the
+			// ground has begun to dry.
+			code += "\twet *= max(weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz), weather_canopy_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));\n";
+		} else if (wetness_from_weather) {
 			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
 		}
 		if (features[FEATURE_GROUND_DEFORM]) {
@@ -2919,6 +3011,25 @@ void fragment() {)";
 		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
 )";
+		if (wetness_from_weather && wetness_canopy) {
+			// Water beaded on a waxy leaf (rain_surface_beads(), docs/ideas/rain.md step 5): upward faces hold the
+			// drops, undersides shed them. The path tracer draws the same beads at full detail (scene_raytracing_raygen.glsl;
+			// a ShaderMaterial made from this code puts the footprint under #if defined(RT), as TreeGenerator's flutter).
+			code += R"(	{
+		vec3 bead_wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 bead_n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 bead_fw = fwidth(bead_wp);
+		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
+		vec4 bead = rain_surface_beads(bead_wp, bead_n, wet * smoothstep(-0.2, 0.6, bead_n.y), bead_fp);
+		if (bead.w > 0.0) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
+			ROUGHNESS = mix(ROUGHNESS, 0.05, bead.w);
+			SPECULAR = mix(SPECULAR, 0.5, bead.w);
+			ALBEDO *= 1.0 - 0.5 * bead.w;
+		}
+	}
+)";
+		}
 	}
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
@@ -2953,6 +3064,14 @@ void fragment() {)";
 			// Running water's ripples, swept downstream (ground_water_flow()).
 			vec3 gwn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 			vec2 gfs = ground_water_flow((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, gwn, gwd, TIME, ground_fp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
+			// Raindrop rings on the water (rain_ripples(); none under ice); the impacts finer than the pixel roughen it.
+			{
+				vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+				float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
+				vec3 grr = grs > 0.0 ? rain_ripples(gwp.xz, TIME, weather_rainfall_at(gwp), ground_fp) : vec3(0.0);
+				gfs += grr.xy * grs;
+				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, grr.z), grs);
+			}
 			if (gfs != vec2(0.0)) {
 				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gfs.x, 0.0, gfs.y, 0.0)).xyz);
 			}
@@ -4266,6 +4385,18 @@ bool BaseMaterial3D::is_wetness_from_weather() const {
 	return wetness_from_weather;
 }
 
+void BaseMaterial3D::set_wetness_canopy(bool p_enable) {
+	if (wetness_canopy == p_enable) {
+		return;
+	}
+	wetness_canopy = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_wetness_canopy() const {
+	return wetness_canopy;
+}
+
 void BaseMaterial3D::set_snow_amount(float p_amount) {
 	snow_amount = CLAMP(p_amount, 0.0f, 1.0f);
 	_material_set_param(shader_names->snow_amount, snow_amount);
@@ -4384,22 +4515,55 @@ float ground_ripple(vec2 p_xz) {
 // Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
 // sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
 // path tracer reads the same map (scene_raytracing_raygen.glsl).
-// The far ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each
-// point reads it through a slow world-space warp of about a metre (crests bend and shift as real trains do round
-// defects) and a height that wanders between 55 and 100% over a few metres; both fade to none at the real
-// ripples' window so the two meet crest to crest. Shared with the path tracer (scene_raytracing_raygen.glsl).
-float ground_ripple_vn(vec2 p_p) {
+// The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
+// it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
+// few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
+// real ripple fields), with a height that wanders between 30 and 100%. p_k is the grown field's dominant wave
+// vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
+// through the same lines (GroundRipples::vary), so the two meet crest to crest.
+float ground_ripple_hash(ivec2 p_c, uint p_s) {
+	uint h = (uint(p_c.x) * 0x8da6b343u) ^ (uint(p_c.y) * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
+	h = (h ^ (h >> 16u)) * 0x7feb352du;
+	h = (h ^ (h >> 15u)) * 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
+float ground_ripple_vn(vec2 p_p, uint p_s) {
 	vec2 i = floor(p_p);
 	vec2 f = p_p - i;
 	vec2 u = f * f * (3.0 - 2.0 * f);
-	vec4 h = fract(sin(vec4(dot(i, vec2(127.1, 311.7)), dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)), dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7)), dot(i + vec2(1.0), vec2(127.1, 311.7)))) * 43758.5453);
-	return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+	ivec2 c = ivec2(i);
+	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
-vec3 ground_ripple_vary(vec2 p_xz, float p_out) {
-	vec2 q = p_xz;
-	vec2 warp = 1.2 * (vec2(ground_ripple_vn(q / 5.0), ground_ripple_vn(q / 5.0 + 17.3)) - 0.5);
-	float amp = mix(0.55, 1.0, ground_ripple_vn(q / 2.5 + 41.0));
-	return vec3(warp * p_out, mix(1.0, amp, p_out));
+vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
+	vec2 p = p_xz;
+	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
+	o += 1.2 * (vec2(ground_ripple_vn(p / 7.0, 3u), ground_ripple_vn(p / 7.0, 4u)) - 0.5);
+	o += 0.16 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
+	float amp = mix(0.3, 1.0, smoothstep(0.15, 0.85, 0.6 * ground_ripple_vn(p / 9.0, 7u) + 0.4 * ground_ripple_vn(p / 2.2, 8u)));
+	float kk = dot(p_k, p_k);
+	if (kk > 0.0) {
+		vec2 kn = p_k / sqrt(kk);
+		vec2 t = vec2(-kn.y, kn.x);
+		ivec2 c0 = ivec2(floor(p / 2.5));
+		float ph = 0.0;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				ivec2 c = c0 + ivec2(dx, dz);
+				if (ground_ripple_hash(c, 9u) >= 0.55) {
+					continue;
+				}
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.5;
+				float hl = 0.2 + 0.4 * ground_ripple_hash(c, 12u);
+				vec2 da = p - (m - t * hl);
+				vec2 db = p - (m + t * hl);
+				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
+				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(1.2, 2.4, length(p - m)));
+			}
+		}
+		o += p_k * (ph / kk);
+	}
+	return vec3(o, amp);
 }
 vec2 ground_ripple_far_slope(vec2 p_xz) {
 	if (ground_ripple_rect.z <= 0.0) {
@@ -4408,6 +4572,7 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 	ivec2 ts = textureSize(ground_ripple_map, 0);
 	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
 	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
+	vec4 m3 = texelFetch(ground_ripple_map, ivec2(3, ts.y - 1), 0);
 	if (m2.x < 0.5) {
 		return vec2(0.0);
 	}
@@ -4431,7 +4596,7 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 		return vec2(0.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
-	vec3 vr = ground_ripple_vary(p_xz, 1.0 - live);
+	vec3 vr = ground_ripple_vary(p_xz, m3.xy);
 	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
 	return w * vr.z * texture(ground_ripple_far, tuv).rg;
 }
@@ -5596,6 +5761,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wetness_amount"), &BaseMaterial3D::get_wetness_amount);
 	ClassDB::bind_method(D_METHOD("set_wetness_from_weather", "enable"), &BaseMaterial3D::set_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
+	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
 	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
@@ -5920,6 +6087,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_porosity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_porosity", "get_wetness_porosity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
 
 	ADD_GROUP("Snow", "snow_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);

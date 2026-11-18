@@ -1155,6 +1155,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Treads and chains",
+   "settings": [
+    "PhysXVehicleWheel3D.tread"
+   ],
+   "note": "",
+   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Belly drag",
    "settings": [
     "PhysXVehicle3D.belly_drag"
@@ -1243,6 +1254,17 @@
    ],
    "note": "",
    "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Mud slides",
+   "settings": [
+    "GroundSurface3D.mud_slides"
+   ],
+   "note": "",
+   "what": "soaked mud runs off slopes it can no longer hold and fills the ruts below.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1996,6 +2018,9 @@
     "source_lake",
     "level_from_flows",
     "carve",
+    "foam_crisp",
+    "ripple_detail",
+    "caustics_strength",
     "obstacle_collision_mask",
     "live_flow",
     "mouth_target",
@@ -2324,7 +2349,7 @@
     "GrassField3D.trample_recovery"
    ],
    "note": "",
-   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles.",
+   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2741,7 +2766,7 @@
     "cut_since"
    ],
    "note": "",
-   "what": "trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.",
+   "what": "trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Coppice with standards is cut in straight-edged coupes in turn (`coupe_rotation`, `coupe_ages`), so neighbouring coupes stand at different ages, with rides along some edges (`ride_width`). Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -2764,7 +2789,7 @@
     "SHRUB_HEDGE"
    ],
    "note": "",
-   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit.",
+   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit. Laid hedges (`SHRUB_LAID_HEDGE`, `FORM_LAID_HEDGE`): stems cut and laid over at 28 to 40 degrees between stakes every 45 cm, held by twisted hazel binders.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3138,7 +3163,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3211,6 +3236,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Lake ice",
+   "settings": [
+    "SnowCover3D.lake_ice_enabled"
+   ],
+   "note": "",
+   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow on materials",
    "settings": [
     "snow_enabled"
@@ -3264,6 +3300,17 @@
    ],
    "note": "",
    "what": "falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Falling snow"
+  },
+  {
+   "name": "Sleet",
+   "settings": [
+    "SnowFall3D.sleet_enabled"
+   ],
+   "note": "",
+   "what": "near 0 C falling snow clumps into large wet flakes; above it the flakes melt as they fall, smaller, faster and greyer.",
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
@@ -3412,6 +3459,28 @@
    "topic": ""
   },
   {
+   "name": "Falling rain",
+   "settings": [
+    "RainFall3D"
+   ],
+   "note": "",
+   "what": "drops sized and falling like real rain, slanting in the wind, with splashes, haze, and drips from leaves and eaves after it stops.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Rain or snow by height",
+   "settings": [
+    "WeatherMap3D.get_rain_share_at()"
+   ],
+   "note": "",
+   "what": "rain turns to sleet and then snow as the air cools with height.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Lightning and thunder",
    "settings": [
     "WeatherLightning3D"
@@ -3476,7 +3545,30 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up.",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Raindrop rings",
+   "settings": [
+    "rain_rings"
+   ],
+   "note": "",
+   "what": "rings on sea, lakes, pools, rivers and puddles; heavy rain dulls reflections.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Runoff",
+   "settings": [
+    "WeatherRunoff3D",
+    "PhysXRiver3D.rain_response"
+   ],
+   "note": "",
+   "what": "rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3726,7 +3818,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Strong wind lifts ash off cold burnt ground as low grey dust (`blowing_ash`). The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3746,10 +3838,11 @@
    "name": "Burning objects",
    "settings": [
     "PhysXBurnable3D",
-    "embers"
+    "embers",
+    "collapse_share"
    ],
    "note": "",
-   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.",
+   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water, break apart as their timber chars through (EN 1995-1-2) with the pieces keeping their char, or carrying their flames and embers as they fall and smouldering where they land, and throw embers that ride their plume and the wind and start spot fires downwind.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3784,7 +3877,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash. Fire chars the stem feet, and a charred tree can snap there in a later storm.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3797,6 +3890,17 @@
    ],
    "note": "",
    "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Heat shimmer",
+   "settings": [
+    "PhysXFlow3D.heat_shimmer"
+   ],
+   "note": "",
+   "what": "hot air above fires bends the view behind it, following the simulated temperature, in raster and path tracing.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3846,7 +3950,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading; river current drags worn clothing and loose flags and sheets under water, where soaked fabric sinks slowly and streams downstream.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

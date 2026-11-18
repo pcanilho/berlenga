@@ -32,6 +32,7 @@
 #pragma once
 
 #include "modules/world/world_contracts.h"
+#include "water_current_bend.h"
 #include "core/io/image.h"
 #include "core/math/math_funcs.h"
 #include "core/templates/hash_map.h"
@@ -60,6 +61,7 @@ class ContactTrample {
 	bool active = false;
 	bool published = false;
 	HashMap<ObjectID, Vector3> last;
+	WaterCurrentBend current;
 	Ref<Image> image;
 	Ref<ImageTexture> texture;
 
@@ -195,6 +197,9 @@ public:
 			_press(pos, ext.x, vel);
 		}
 		last = seen;
+		// The current in any water over the ground lays the plants downstream (WaterCurrentBend).
+		current.update(origin, res, size / res, p_delta, p_ground);
+		active = current.apply(bend, res) || active;
 		if (active) {
 			_upload();
 		}

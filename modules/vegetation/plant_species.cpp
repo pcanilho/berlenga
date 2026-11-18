@@ -65,6 +65,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_COAST_EXPOSURE] = Vector2(0.0f, 1.0f);
 	ranges[RULE_BEACH] = Vector2(0.0f, 1.0f);
 	ranges[RULE_FIELD_EDGE] = Vector2(-100000.0f, 100000.0f);
+	ranges[RULE_SAND_MOBILITY] = Vector2(-1.0f, 1.0f);
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -239,6 +240,73 @@ static float patch_value_noise(float p_x, float p_z, int p_seed) {
 	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fz);
 }
 
+// Coupes: a Voronoi diagram over a jittered grid of patch_scale cells (straight edges, as coupes
+// are laid out along banks and rides), the distance to the cell's edge as the distance to the
+// nearest bisector (Quilez, Voronoi edges, 2012).
+Vector3 PlantSpecies::get_coupe_at(const Vector3 &p_pos, Vector2 *r_out) const {
+	if (coupe_rotation <= 0 || patch_scale <= 0.0f) {
+		if (r_out) {
+			*r_out = Vector2();
+		}
+		return Vector3(-1.0f, 1e6f, 0.0f);
+	}
+	const Vector2 p(p_pos.x / patch_scale, p_pos.z / patch_scale);
+	const int ix = int(Math::floor(p.x)), iz = int(Math::floor(p.y));
+	auto site = [&](int p_x, int p_z) {
+		return Vector2(float(p_x) + 0.15f + 0.7f * patch_hash(p_x, p_z, patch_seed + 31), float(p_z) + 0.15f + 0.7f * patch_hash(p_x, p_z, patch_seed + 37));
+	};
+	Vector2i best;
+	Vector2 a;
+	float bd = 1e30f;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			const Vector2 s = site(ix + dx, iz + dz);
+			const float d = p.distance_squared_to(s);
+			if (d < bd) {
+				bd = d;
+				best = Vector2i(ix + dx, iz + dz);
+				a = s;
+			}
+		}
+	}
+	float edge = 1e30f;
+	Vector2 out;
+	bool ride = false;
+	for (int dz = -2; dz <= 2; dz++) {
+		for (int dx = -2; dx <= 2; dx++) {
+			const Vector2i c(best.x + dx, best.y + dz);
+			if (c == best) {
+				continue;
+			}
+			const Vector2 b = site(c.x, c.y);
+			const Vector2 n = (b - a).normalized();
+			const float d = (0.5f * (a + b) - p).dot(n);
+			if (d < edge) {
+				edge = d;
+				out = n;
+				// A ride along about half the boundaries, the same either side of it.
+				const Vector2i lo = best.x < c.x || (best.x == c.x && best.y < c.y) ? best : c;
+				const Vector2i hi = lo == best ? c : best;
+				ride = patch_hash(lo.x * 7919 + hi.x, lo.y * 104729 + hi.y, patch_seed + 41) < 0.5f;
+			}
+		}
+	}
+	edge *= patch_scale;
+	if (ride) {
+		edge -= 0.5f * ride_width;
+	}
+	if (r_out) {
+		*r_out = out;
+	}
+	// The cutting order: the year steps by about 5 along x and 8 along z (mod the rotation), so
+	// a coupe and its neighbours differ by four years or more, fresh stools next to tall poles
+	// (docs, 18 Nov: a random age per coupe often put like beside like and the edges barely
+	// read), with a year's jitter.
+	const int step = best.x * 5 + best.y * 8 + int(patch_hash(best.x, best.y, patch_seed + 43) * 2.0f);
+	const float age = float(((step % coupe_rotation) + coupe_rotation) % coupe_rotation);
+	return Vector3(age, edge, ride && edge < 0.0f ? 1.0f : 0.0f);
+}
+
 // The patch noise is a smooth field: its value over the threshold divided by its gradient is the
 // distance to the edge to first order (the edge is where it crosses the threshold).
 float PlantSpecies::get_patch_depth(const Vector3 &p_pos, Vector2 *r_out) const {
@@ -247,6 +315,21 @@ float PlantSpecies::get_patch_depth(const Vector3 &p_pos, Vector2 *r_out) const 
 			*r_out = Vector2();
 		}
 		return 1e6f;
+	}
+	if (coupe_rotation > 0) {
+		Vector2 out;
+		const Vector3 c = get_coupe_at(p_pos, &out);
+		const bool in = int(c.x) >= coupe_ages.x && int(c.x) <= coupe_ages.y;
+		// Inside a coupe of its ages: the way out is to the nearest edge. Outside: approximate
+		// (the distance to this coupe's edge; a neighbour of the right age may be nearer).
+		float d = in ? c.y : -MAX(c.y, 0.0f);
+		if (patch_invert) {
+			d = -d;
+		}
+		if (r_out) {
+			*r_out = d >= 0.0f ? out : -out;
+		}
+		return d;
 	}
 	const auto noise = [&](float p_x, float p_z) {
 		const float x = p_x / patch_scale;
@@ -273,6 +356,12 @@ float PlantSpecies::get_patch_depth(const Vector3 &p_pos, Vector2 *r_out) const 
 float PlantSpecies::get_patch_weight(const Vector3 &p_pos) const {
 	if (patch_scale <= 0.0f) {
 		return 1.0f;
+	}
+	if (coupe_rotation > 0) {
+		const Vector3 c = get_coupe_at(p_pos);
+		const bool in = int(c.x) >= coupe_ages.x && int(c.x) <= coupe_ages.y;
+		const float w = in ? Math::smoothstep(0.0f, 0.6f, c.y) : 0.0f;
+		return patch_invert ? 1.0f - w : w;
 	}
 	if (patch_ring > 0.0f) {
 		// Fairy rings: the mycelium spreads outward and dies behind, fruiting along its advancing
@@ -306,6 +395,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sward_shade"), &PlantSpecies::get_sward_shade);
 	ClassDB::bind_method(D_METHOD("set_trample_resistance", "passes"), &PlantSpecies::set_trample_resistance);
 	ClassDB::bind_method(D_METHOD("get_trample_resistance"), &PlantSpecies::get_trample_resistance);
+	ClassDB::bind_method(D_METHOD("set_detail_size", "size"), &PlantSpecies::set_detail_size);
+	ClassDB::bind_method(D_METHOD("get_detail_size"), &PlantSpecies::get_detail_size);
 	ClassDB::bind_method(D_METHOD("trample_cover", "passes"), &PlantSpecies::trample_cover);
 	ClassDB::bind_method(D_METHOD("trample_scale", "passes"), &PlantSpecies::trample_scale);
 	ClassDB::bind_method(D_METHOD("get_patch_depth", "position"), &PlantSpecies::get_patch_depth_at);
@@ -361,6 +452,13 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_patch_invert", "invert"), &PlantSpecies::set_patch_invert);
 	ClassDB::bind_method(D_METHOD("is_patch_invert"), &PlantSpecies::is_patch_invert);
 	ClassDB::bind_method(D_METHOD("set_patch_ring", "width"), &PlantSpecies::set_patch_ring);
+	ClassDB::bind_method(D_METHOD("set_coupe_rotation", "years"), &PlantSpecies::set_coupe_rotation);
+	ClassDB::bind_method(D_METHOD("get_coupe_rotation"), &PlantSpecies::get_coupe_rotation);
+	ClassDB::bind_method(D_METHOD("set_coupe_ages", "ages"), &PlantSpecies::set_coupe_ages);
+	ClassDB::bind_method(D_METHOD("get_coupe_ages"), &PlantSpecies::get_coupe_ages);
+	ClassDB::bind_method(D_METHOD("set_ride_width", "width"), &PlantSpecies::set_ride_width);
+	ClassDB::bind_method(D_METHOD("get_ride_width"), &PlantSpecies::get_ride_width);
+	ClassDB::bind_method(D_METHOD("get_coupe_at", "global_position"), &PlantSpecies::get_coupe_at_bind);
 	ClassDB::bind_method(D_METHOD("get_patch_ring"), &PlantSpecies::get_patch_ring);
 	ClassDB::bind_method(D_METHOD("get_patch_weight", "global_position"), &PlantSpecies::get_patch_weight);
 	ClassDB::bind_method(D_METHOD("set_near_meshes", "meshes"), &PlantSpecies::set_near_meshes);
@@ -388,6 +486,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "footprint", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m"), "set_footprint", "get_footprint");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sward_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sward_shade", "get_sward_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_resistance", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:passes/yr"), "set_trample_resistance", "get_trample_resistance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_size", PROPERTY_HINT_RANGE, "0,1,0.005,or_greater,suffix:m"), "set_detail_size", "get_detail_size");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "litter_color"), "set_litter_color", "get_litter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_foot", PROPERTY_HINT_RANGE, "0,8,0.1"), "set_rock_foot", "get_rock_foot");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stone_gap", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_stone_gap", "get_stone_gap");
@@ -437,6 +536,11 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "patch_seed"), "set_patch_seed", "get_patch_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "patch_invert"), "set_patch_invert", "is_patch_invert");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_ring", PROPERTY_HINT_RANGE, "0,5,0.05,suffix:m"), "set_patch_ring", "get_patch_ring");
+	ADD_GROUP("Coupes", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "coupe_rotation", PROPERTY_HINT_RANGE, "0,40,1,suffix:years"), "set_coupe_rotation", "get_coupe_rotation");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2I, "coupe_ages"), "set_coupe_ages", "get_coupe_ages");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ride_width", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:m"), "set_ride_width", "get_ride_width");
+	ADD_GROUP("Patches", "patch_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "is_mask_invert");
 
@@ -489,6 +593,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "beach_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_BEACH);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "field_edge_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_FIELD_EDGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "field_edge_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_FIELD_EDGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sand_mobility_range"), "set_rule_range", "get_rule_range", RULE_SAND_MOBILITY);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sand_mobility_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SAND_MOBILITY);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -514,6 +620,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_COAST_EXPOSURE);
 	BIND_ENUM_CONSTANT(RULE_BEACH);
 	BIND_ENUM_CONSTANT(RULE_FIELD_EDGE);
+	BIND_ENUM_CONSTANT(RULE_SAND_MOBILITY);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

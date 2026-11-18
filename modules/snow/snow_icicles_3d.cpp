@@ -35,7 +35,7 @@
 #include "core/templates/hashfuncs.h"
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
-#include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
@@ -263,16 +263,16 @@ void SnowIcicles3D::advance(float p_hours) {
 		return;
 	}
 	const SnowCover3D *cover = SnowCover3D::get_active();
-	const WeatherMap3D *weather = WeatherMap3D::get_active();
+	const WorldWeather *weather = WorldContracts::weather()->has_provider() ? WorldContracts::weather() : nullptr;
 	// The middle of the edge stands for all of it.
 	Vector3 mid;
 	for (const Vector3 &p : edge) {
 		mid += p / float(edge.size());
 	}
 	const Vector3 at = get_global_transform().xform(mid);
-	const float celsius = cover ? cover->get_air_temperature_at(at) : (weather ? weather->get_air_temperature() : 0.0f);
-	const float wind = weather ? weather->get_wind_at(at).length() : 0.0f;
-	const float humidity = weather ? weather->get_air_humidity() : 0.8f;
+	const float celsius = cover ? cover->get_air_temperature_at(at) : (weather ? weather->air_temperature_at(at) : 0.0f);
+	const float wind = weather ? weather->wind_at(at).length() : 0.0f;
+	const float humidity = weather ? weather->air_humidity_at(at) : 0.8f;
 	float supply = 0.0f; // kg per metre of edge per hour
 	if (cover) {
 		// Melt water leaving the pack above (mm/h = kg/(m2 h)) over the catchment, plus the roof's heat melting

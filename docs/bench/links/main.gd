@@ -5,6 +5,13 @@ extends Node3D
 #
 #   godot --path docs/bench/links --headless -- --test
 #   godot --path docs/bench/links -- --frost=out.png [--frost-off]   grass, a fern, a rock and TerrainMaterial3D ground
+#   godot --path docs/bench/links -- --snowpress=out.png [--snow-off]   grass, a crop strip and ferns under a settled
+#             snowpack (pressed flat and buried), or the same day with no snow
+#   godot --path docs/bench/links -- --current=out.png [--current-off]   grass and rushes in a shallow stream running
+#             left to right, laid over by its current, or the same stream still
+#   godot --path docs/bench/links -- --shimmer=out.png [--shimmer-off] [--pt] [--clear] [--frames=N]   a fire in front
+#             of a striped wall, its heat shimmer on or off (--clear: the gas drawn invisible, only the bending);
+#             --clip=dir saves every frame after the warm-up; --turbulence=x overrides heat_shimmer_turbulence
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -23,6 +30,15 @@ extends Node3D
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
 # Stub producers for the water contract: a sea at 0 m everywhere, and a pool at -5 m over x < 0.
+# A stream 30 cm deep over x < 0, running +z at 0.4 m/s.
+class StreamStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.3 if p.x < 0.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0, 0, 0.4) if p.x < 0.0 else Vector3.ZERO
+
+
 class SeaStub extends WorldWater:
 	func _height_at(_p: Vector3) -> float:
 		return 0.0
@@ -67,6 +83,18 @@ func _ready() -> void:
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
 			get_tree().quit()
 			return
+		if a.begins_with("--snowpress="):
+			await _snow_press_view(a.substr(12), OS.get_cmdline_user_args().has("--snow-off"))
+			get_tree().quit()
+			return
+		if a.begins_with("--current="):
+			await _current_view(a.substr(10), OS.get_cmdline_user_args().has("--current-off"))
+			get_tree().quit()
+			return
+		if a.begins_with("--shimmer="):
+			await _shimmer_view(a.substr(10))
+			get_tree().quit()
+			return
 	if not ClassDB.class_exists("WeatherMap3D"):
 		push_error("This build has no weather module.")
 		get_tree().quit(1)
@@ -81,7 +109,9 @@ func _ready() -> void:
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
+	await _snow_fire_tests()
 	await _contract_tests()
+	await _shimmer_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -303,6 +333,15 @@ func _contact_tests() -> void:
 		await get_tree().process_frame
 	var t: Vector2 = g.get_trample_at(Vector3(1.5, 0, 0))
 	_check("contact: a world_contact body flattens grass", t.length() > 0.1, "bend %.2f" % t.length())
+	# A stream's current lays the sward downstream where it runs, nothing on the dry bank.
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(StreamStub.new())
+	for i in 5:
+		await get_tree().process_frame
+	var wet: Vector2 = g.get_trample_at(Vector3(-4, 0, 3))
+	var dry: Vector2 = g.get_trample_at(Vector3(4, 0, 3))
+	_check("current: a stream lays grass downstream, not on the bank", wet.y > 0.5 and absf(wet.x) < 0.05 and dry.length() < 0.01, "bend (%.2f, %.2f) in the stream, %.2f on the bank" % [wet.x, wet.y, dry.length()])
+	WorldContracts.clear_overrides()
 	g.queue_free()
 	await get_tree().process_frame
 	# No grass: a VegetationField3D keeps the field the other plants read.
@@ -317,6 +356,49 @@ func _contact_tests() -> void:
 		_check("contact: plants bend under bodies where there is no grass", tv.length() > 0.1, "bend %.2f" % tv.length())
 		v.queue_free()
 	body.queue_free()
+
+
+# Fire on lying snow: the fire contract's heat melts the pack under it, whatever the air.
+func _snow_fire_tests() -> void:
+	if not ClassDB.class_exists("SnowCover3D"):
+		_skip("snow: fire melts the pack", "no SnowCover3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "FireGround"
+	add_child(ground_node)
+	var m := _new_map()
+	m.temperature = -4.0
+	m.humidity = 0.9
+	m.rain_rate = 3.0
+	m.cloud_cover = 1.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(1.0)
+	var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+	snow.extent = 64.0
+	snow.resolution = 64
+	snow.update_rate = 0.0001
+	add_child(snow)
+	snow.height_source = snow.get_path_to(ground_node)
+	snow.follow_target = snow.get_path_to(ground_node)
+	snow.refresh_heights()
+	snow.advance(10.0 * 3600.0)
+	m.rain_rate = 0.0
+	m.snap_to_settings()
+	m.advance(1.0)
+	var before: float = snow.get_depth_at(Vector3(10, 0, 0))
+	WorldContracts.set_fire(FireStub.new())
+	snow.advance(120.0)
+	var burning: float = snow.get_depth_at(Vector3(10, 0, 0))
+	var beside: float = snow.get_depth_at(Vector3(-10, 0, 0))
+	_check("snow: a fire melts the pack under it, not beside it, at -4 C", before > 0.05 and burning < 0.6 * beside and beside > 0.9 * before, "%.3f m before, %.3f m under the fire, %.3f m beside it" % [before, burning, beside])
+	WorldContracts.clear_overrides()
+	snow.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
 
 
 func _contract_tests() -> void:
@@ -498,3 +580,302 @@ func _frost_view(path: String, off: bool) -> void:
 		await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(path)
 	print("saved ", path)
+
+
+# A fire in front of a striped wall (heat shimmer). p_clear: the gas draws nothing (no smoke, no glow), so the
+# frame differs from the empty scene only by the bending.
+func _shimmer_scene(p_clear: bool, p_pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.5, 0.6, 0.75)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.6, 0.65)
+	env.environment.ambient_light_energy = 0.5
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if p_pt:
+		env.environment.pathtracing_samples_per_pixel = 4 if not p_clear else 32
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 30, 0)
+	root.add_child(sun)
+	var wall := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(8, 4)
+	wall.mesh = qm
+	wall.position = Vector3(0, 2, -5)
+	var sm := ShaderMaterial.new()
+	sm.shader = Shader.new()
+	sm.shader.code = """shader_type spatial;
+void fragment() {
+	vec2 q = UV * vec2(48.0, 24.0);
+	float s = step(0.5, fract(q.x)) * 0.7 + step(0.5, fract(q.y * 0.5)) * 0.2;
+	ALBEDO = mix(vec3(0.08), vec3(0.85, 0.8, 0.7), s);
+}"""
+	wall.material_override = sm
+	root.add_child(wall)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(12, 12)
+	ground.mesh = pm
+	root.add_child(ground)
+	var flow = ClassDB.instantiate("PhysXFlow3D")
+	flow.cell_size = 0.03
+	flow.combustion = true
+	flow.cooling_rate = 3.0
+	flow.vorticity = 4.0
+	flow.buoyancy = 4.0
+	flow.temperature_range = 1.0
+	flow.emission_strength = 0.0 if p_clear else 8.0
+	flow.smoke_density = 0.0 if p_clear else 0.7
+	if p_clear:
+		flow.embers = false
+		flow.fire_light = false
+	root.add_child(flow)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.position = Vector3(0, 0.05, 0)
+	em.shape = 1
+	em.size = Vector3(0.4, 0.06, 0.4)
+	em.fuel = 1.0
+	em.temperature = 1.0
+	em.smoke = 0.0 if p_clear else 0.02
+	em.divergence = 0.3
+	em.velocity = Vector3(0, 1.0, 0)
+	flow.add_child(em)
+	em.flow = em.get_path_to(flow)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 0.9, 3.0)
+	cam.rotation_degrees = Vector3(-4, 0, 0)
+	cam.fov = 40.0
+	root.add_child(cam)
+	cam.make_current()
+	root.set_meta("flow", flow)
+	return root
+
+
+func _shimmer_view(path: String) -> void:
+	var args := OS.get_cmdline_user_args()
+	var frames := 90
+	var clip := ""
+	for a in args:
+		if a.begins_with("--frames="):
+			frames = int(a.substr(9))
+		elif a.begins_with("--clip="):
+			clip = a.substr(7)
+	if not ClassDB.class_exists("PhysXFlow3D"):
+		push_error("This build has no Flow.")
+		return
+	get_viewport().size = Vector2i(640, 360) if args.has("--pt") else Vector2i(1280, 720)
+	var root := _shimmer_scene(args.has("--clear"), args.has("--pt"))
+	(root.get_child(0) as WorldEnvironment).environment.pathtracing_enabled = false
+	root.get_meta("flow").heat_shimmer = not args.has("--shimmer-off")
+	for a in args:
+		if a.begins_with("--turbulence="):
+			root.get_meta("flow").heat_shimmer_turbulence = float(a.substr(13))
+	var pt := args.has("--pt")
+	for i in frames:
+		await RenderingServer.frame_post_draw
+	if pt:
+		# The path tracer accumulates one frozen instant (the gas and its shimmer stop), as a raster frame shows one.
+		Engine.time_scale = 0.0
+		var env: Environment = root.get_child(0).environment
+		env.pathtracing_enabled = true
+		for i in 30:
+			await RenderingServer.frame_post_draw
+	if clip != "":
+		DirAccess.make_dir_recursive_absolute(clip)
+		for i in 48:
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("%s/%03d.png" % [clip, i])
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+# The bending alone (the gas drawn invisible): with heat_shimmer on the frame moves above the fire and nowhere
+# else; off, it matches the empty scene.
+func _shimmer_tests() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D") or DisplayServer.get_name() == "headless":
+		_skip("shimmer", "needs Flow and a rendering device")
+		return
+	var root := _shimmer_scene(true, false)
+	var flow = root.get_meta("flow")
+	for i in 60:
+		await RenderingServer.frame_post_draw
+	var on := get_viewport().get_texture().get_image()
+	flow.heat_shimmer = false
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	var off := get_viewport().get_texture().get_image()
+	var w := on.get_width()
+	var h := on.get_height()
+	var above := 0.0
+	var side := 0.0
+	var n_above := 0
+	var n_side := 0
+	for y in range(int(h * 0.15), int(h * 0.75), 2):
+		for x in range(0, w, 2):
+			var d := absf(on.get_pixel(x, y).get_luminance() - off.get_pixel(x, y).get_luminance())
+			if absf(x - w * 0.5) < w * 0.06:
+				above += d
+				n_above += 1
+			elif absf(x - w * 0.5) > w * 0.3:
+				side += d
+				n_side += 1
+	above /= max(n_above, 1)
+	side /= max(n_side, 1)
+	_check("shimmer: the hot air bends the wall above the fire, nothing beside it", above > 0.004 and side < 0.0005, "mean change %.4f above the fire, %.5f beside it" % [above, side])
+	root.queue_free()
+	await get_tree().process_frame
+
+
+# Snow on plants: a day of snowfall at -4 C, settled for a day, over grass, wheat and ferns.
+func _snow_press_view(path: String, off: bool) -> void:
+	get_viewport().size = Vector2i(1280, 720)
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "Ground"
+	add_child(ground_node)
+	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
+	sun.rotation_degrees = Vector3(-30, 140, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var m := _new_map()
+	m.temperature = -4.0
+	m.humidity = 0.9
+	m.set_physics_process_internal(false)
+	m.snap_to_settings()
+	m.advance(1.0)
+	if not off:
+		var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+		snow.name = "SnowCover3D"
+		snow.extent = 64.0
+		snow.resolution = 128
+		snow.height_source = NodePath("../Ground")
+		snow.sun_light = NodePath("../Sun")
+		snow.follow_target = NodePath("../Ground")
+		snow.update_rate = 0.0001
+		add_child(snow)
+		snow.refresh_heights()
+		m.rain_rate = 3.0
+		m.cloud_cover = 1.0
+		m.snap_to_settings()
+		m.advance(1.0)
+		snow.advance(20.0 * 3600.0)
+		m.rain_rate = 0.0
+		m.cloud_cover = 0.0
+		m.snap_to_settings()
+		m.advance(1.0)
+		snow.advance(24.0 * 3600.0)
+		print("snow depth %.2f m" % snow.get_depth_at(Vector3.ZERO))
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.55, 0.65, 0.8)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.55, 0.6, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	add_child(env)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(60, 60)
+	ground.mesh = pm
+	ground.material_override = TerrainMaterial3D.new()
+	add_child(ground)
+	var grass := GrassField3D.new()
+	grass.radius = 14.0
+	add_child(grass)
+	var gen := PlantGenerator.new()
+	gen.preset = 0
+	gen.apply_preset_colors()
+	var mesh := gen.generate()
+	for k in 5:
+		var fern := MeshInstance3D.new()
+		fern.mesh = mesh
+		fern.position = Vector3(-2.0 + k * 1.1, 0, 1.5 + 0.4 * (k % 2))
+		add_child(fern)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.4, 5.5)
+	cam.rotation_degrees = Vector3(-14, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+# A stream 25 cm deep over z > 0 (towards the camera), running +x at 0.5 m/s, or still.
+class ViewStreamStub extends WorldWater:
+	var speed := 0.5
+
+	func _height_at(p: Vector3) -> float:
+		return 0.25 if p.z > 0.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(speed, 0, 0) if p.z > 0.0 else Vector3.ZERO
+
+
+func _current_view(path: String, still: bool) -> void:
+	get_viewport().size = Vector2i(1280, 720)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-40, 150, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.55, 0.65, 0.8)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.55, 0.6, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	add_child(env)
+	WorldContracts.clear_overrides()
+	var stub := ViewStreamStub.new()
+	stub.speed = 0.0 if still else 0.5
+	WorldContracts.add_water_stub(stub)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(60, 60)
+	ground.mesh = pm
+	ground.material_override = TerrainMaterial3D.new()
+	add_child(ground)
+	var water := MeshInstance3D.new()
+	var wm := PlaneMesh.new()
+	wm.size = Vector2(30, 8)
+	water.mesh = wm
+	water.position = Vector3(0, 0.25, 4.0)
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.18, 0.3, 0.32, 0.3)
+	mat.roughness = 0.05
+	mat.metallic_specular = 0.6
+	water.material_override = mat
+	add_child(water)
+	var grass := GrassField3D.new()
+	grass.radius = 14.0
+	add_child(grass)
+	var gen := PlantGenerator.new()
+	gen.preset = PlantGenerator.PRESET_RUSH
+	gen.apply_preset_colors()
+	var mesh := gen.generate()
+	for k in 7:
+		var rush := MeshInstance3D.new()
+		rush.mesh = mesh
+		rush.position = Vector3(-3.0 + k * 1.0, 0, 1.2 + 0.5 * (k % 2))
+		add_child(rush)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.3, 5.5)
+	cam.rotation_degrees = Vector3(-16, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+	WorldContracts.clear_overrides()

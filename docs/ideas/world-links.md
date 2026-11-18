@@ -24,7 +24,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `fire_state_map`, `WorldFire` | fire | burnt share and glow per cell; `heat_at` (W/m2), `burnt_at` |
 | `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
 | Contact groups | each system | `world_contact` (every physics body and wheel) read by all, plus the old `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` |
-| Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `describe_body()`: see world-contracts.md |
+| Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `get_ground()`, `get_fire()`, `describe_body()`: see world-contracts.md |
 
 ## Pairs
 
@@ -65,9 +65,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Wind → drifts, cornices | linked | wind | |
 | Rain → wet snow, crust | linked | cells | |
 | Canopy → interception | linked | shelter | |
-| Snow → plants (burial, pressing) | missing | snow cover | planned (contact 5) |
-| Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
-| Vehicles → snow ruts | missing | contact | planned (contact 3) |
+| Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
+| Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | SnowCover3D melts H dt / L_f under the fire, whatever the air |
+| Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
 ### Vegetation (grass, shrubs, crops) and trees
@@ -86,8 +86,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
-| Lying snow → plants | missing | snow cover | planned (contact 5) |
-| Flowing water → reeds, grass | missing | river flow | planned (contact 6) |
+| Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
+| Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
@@ -96,7 +96,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Pair | Status | Source | Note |
 | --- | --- | --- | --- |
 | Wind → waves | linked (18 Nov) | wind | `follow_weather` on (wind work) |
-| Rain → ripples | rain work | | |
+| Rain → ripples | linked | weather contract | live water's rain rings (`rain_from_weather`) |
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
@@ -104,9 +104,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
-| Rain, melt → river level | missing | runoff | rain work |
-| Cold → lake ice | missing | air | snow work (Stefan's law) |
-| Fire → steam on water | missing | WorldFire, WorldWater | water/PhysX thread (both contracts ready) |
+| Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
+| Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
+| Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
 
 ### Fire, gas and lightning
 
@@ -119,8 +119,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → cloth | linked | cloth burn | |
 | Fire → firebrands → spot fires | linked | wind | |
 | Fire → drying | linked (18 Nov) | WorldFire | the weather boils the surface film off under a fire |
-| Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
-| Fire → heat shimmer | missing | Flow temperature | link 10 |
+| Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | as above (snow) |
+| Fire → heat shimmer | linked (18 Nov) | Flow temperature, weather air | `PhysXFlow3D.heat_shimmer`: raster screen pass and bent PT camera rays (heat-shimmer.md) |
+| Fire indraft → grass, plants, cloth, hair, leaves, ash, smoke, dust | linked (18 Nov) | WorldFire `wind_at` (fire_wind_map in shaders) | PhysX e141399d (grass, cloth); plants, hair, LeafFall3D, firebrands, other Flows and rock dust add it to their wind, fading over the first few metres for airborne things |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies
@@ -157,12 +158,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
   much colder than water lies over it (sea smoke).
 - Fire on the ground: the fire grid's heat dries the surface film, melts snow (energy balance), steams where it
   meets water; fuel moisture starts from the surface film.
-- Heat shimmer: hot air's refractive index falls about 1e-6 per kelvin (Gladstone-Dale, n - 1 = 2.9e-4 at 15 C
-  scaling with density), so light bends along the temperature gradient. Raster engines fake it as a screen-space
-  offset over a hot region (UE's refraction/distortion pass, Frostbite's heat haze); the physical version bends each
-  ray through the gas's temperature field (as background-oriented schlieren measures it). For the fork: Flow already
-  carries temperature; under path tracing march the ray through the Flow grid and bend it by the gradient of n,
-  and in raster offset the scene colour by the same gradient integrated along the view ray. Waiting on Paulo's pick
-  (card, 18 Nov).
+- Heat shimmer: built 18 Nov, see heat-shimmer.md (Gladstone-Dale index, ray deflection integrated through Flow's
+  temperature plus sub-grid plume turbulence).
 - One contact group: every system reads `world_contact` as well as its own group; vehicles, characters and PhysX
   bodies join it.

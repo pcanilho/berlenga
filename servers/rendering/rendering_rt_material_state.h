@@ -71,7 +71,8 @@ struct RTBaseMaterialState {
 	uint32_t ground_deform_patch : 1; // BaseMaterial3D Ground Deform on GroundSurface3D's patch: turned-ground tint.
 	uint32_t ground_deform_terrain : 1; // BaseMaterial3D Ground Deform off the patch: the ground's pore water only.
 	uint32_t mud : 1; // BaseMaterial3D Mud: a vehicle's body mud from its instance uniforms (docs/ideas/mud.md, stage 3b).
-	uint32_t unused : 26;
+	uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: a leaf's intercepted water and beads (docs/ideas/rain.md).
+	uint32_t unused : 25;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

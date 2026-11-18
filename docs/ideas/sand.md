@@ -623,6 +623,29 @@ within reach of a flattening dig are laid again. A lobe past the near field's ed
 leaving dashes; the shore bench uses a 12 m near field, since the run-up climbs about 3 m and the default field's
 sharp middle ends 3 m out.
 
+### Ripple variation: forks, turning crests, patchy height (18 Nov 2026)
+
+The seabed under the surf showed the wind ripples as even stripes: every place read the same 4 m grown tile with one
+crest direction, and the near window none of the far variation. Research:
+- Werner and Kocurek (1999, Geology, "Bedform spacing from defect dynamics") and later field counts (Frontiers in
+  Earth Science 2020, ripple defect density): what makes a real ripple field read as natural is its defects, crest
+  terminations and Y-junctions (a crest forks in two), whose density falls as the field matures; spacing and
+  direction drift with them.
+- Roos and Blondeaux (2001, JFM) and the "Sand ripples under sea waves" series: wave ripples under the sea form
+  long crests with bifurcations and brick patterns, not a perfect grating.
+- Pattern-formation theory (Cross and Hohenberg 1993): a defect in a stripe pattern is a phase singularity, the
+  phase winding by 2 pi round it; a pair of opposite sign inserts a crest segment between them (fork and rejoin).
+- Engines break repetition with hex-tiling / stochastic texturing (Mikkelsen 2022, JCGT 11(3); Heitz and Neyret
+  2018). For a directional pattern its blends between rotated tiles cross crests (ghost gratings), so it is not used:
+  a phase-coherent warp plus explicit dislocations keeps every crest continuous.
+Built: GroundRipples::vary() and ground_ripple_vary() (material.cpp, raygen): a three-octave world warp (4 m at 24 m,
+1.2 m at 7 m, 16 cm at 1.7 m: crests turn by up to about 15 degrees and change spacing over tens of metres, bend over
+a few), dislocation pairs in about half the 2.5 m cells, along the crests, 40 to 120 cm apart, shifting the tile by
+exactly one wavelength of its dominant wave vector (found by a DFT of the grown tile, 3 to 40 cm band, sent in the
+ripple map's last row), and a height between 30 and 100% over 2 to 9 m. Integer hashes, so the CPU fill of the real
+ripples' window and both renderers agree to the bit and meet crest to crest. Next if wanted: true wave ripples
+(symmetric, shore-parallel) where the bed is under the sea.
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.
@@ -669,3 +692,10 @@ Asked: a fast slide through a sharp turn should throw sand, and dry sand should 
   0.75 u10. Flow now takes the shapes of bodies whose shapes live on their own PhysX actor (vehicles) from their
   CollisionShape3D children, so the dust curls round the car. Raster and path-traced frames match in shape (the
   path tracer's dust is browner and grainy without a denoiser). Defaults (17 Nov, after frames): `dust_heaviness` 0.3, `expansion` 3, `turbulence` 4: the plume billows to about car height. Raster dust is greyer than the path tracer's.
+
+Docs round 3 on the rills (18 Nov: glyph-like channels with square hooks and cross bars, no moving water, no fans).
+The hooks came from the bed's fixed roughness, value noise whose blobs have edges along the grid's axes: the
+seepage followed them and cut them in. It is now gradient noise (Perlin 2002), each octave turned by its own
+angle, and the rills curve and braid at shallow angles. Tried and dropped on the way: a diffusive bank flux in
+the solver (it worked against the fixed relief and went unstable) and B-spline drawing of the relief (no visible
+change: the shapes were several texels wide, not texel facets).

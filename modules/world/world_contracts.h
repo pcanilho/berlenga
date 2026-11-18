@@ -43,6 +43,7 @@
 #include "core/math/vector3.h"
 #include "core/variant/dictionary.h"
 #include "core/templates/local_vector.h"
+#include "world_season.h"
 
 class Node;
 class Node3D;
@@ -70,6 +71,16 @@ public:
 	virtual float contract_canopy_wetness_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual float contract_canopy_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h
 	virtual float contract_ground_water_input_at(const Vector3 &p_position) const { return 0.0f; } // mm/h reaching the ground
+	// The calendar and climate (world_season.h): the day of the year (1..365), the climate for the place (false:
+	// none), and the season's state at a point's height on a day (p_day < 1: today), the live departure included.
+	virtual int contract_day_of_year() const { return 135; }
+	virtual bool contract_season_climate(WeatherSeason::Climate &r_climate) const { return false; }
+	virtual Dictionary contract_season_at(const Vector3 &p_position, int p_day) const;
+	virtual float contract_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
+	virtual float contract_water_temperature() const { return 15.0f; } // C, open water (lakes lag the air)
+	virtual float contract_surface_temperature_at(const Vector3 &p_position) const { return contract_air_temperature_at(p_position); } // C, exposed ground
+	virtual float contract_ground_height_at(const Vector3 &p_position) const { return 0.0f; } // m, the terrain the weather sees
+	virtual double contract_time_scale() const { return 1.0; } // the weather's time per real second
 	virtual ~WorldWeatherProvider() {}
 };
 
@@ -102,13 +113,20 @@ protected:
 	GDVIRTUAL1RC(float, _canopy_wetness_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_drip_at, Vector3)
 	GDVIRTUAL1RC(float, _ground_water_input_at, Vector3)
+	GDVIRTUAL0RC(int, _day_of_year)
+	GDVIRTUAL2RC(Dictionary, _season_at, Vector3, int)
+	GDVIRTUAL1RC(float, _cloud_cover_at, Vector3)
+	GDVIRTUAL0RC(float, _water_temperature)
+	GDVIRTUAL1RC(float, _surface_temperature_at, Vector3)
+	GDVIRTUAL1RC(float, _ground_height_at, Vector3)
+	GDVIRTUAL0RC(double, _time_scale)
 
 public:
 	// Defaults with no provider: still, mild, dry, open sky.
 	static constexpr float DEFAULT_AIR_TEMPERATURE = 15.0f;
 	static constexpr float DEFAULT_AIR_HUMIDITY = 0.7f;
 
-	bool has_provider() const { return provider != nullptr; }
+	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
 	float air_temperature_at(const Vector3 &p_position) const;
 	float air_humidity_at(const Vector3 &p_position) const;
 	float dew_point_at(const Vector3 &p_position) const;
@@ -130,6 +148,15 @@ public:
 	float canopy_wetness_at(const Vector3 &p_position) const;
 	float canopy_drip_at(const Vector3 &p_position) const;
 	float ground_water_input_at(const Vector3 &p_position) const;
+	int day_of_year() const;
+	// C++ only: the climate (false with no provider or none set); its math is in world_season.h.
+	bool season_climate(WeatherSeason::Climate &r_climate) const;
+	Dictionary season_at(const Vector3 &p_position, int p_day = -1) const;
+	float cloud_cover_at(const Vector3 &p_position) const;
+	float water_temperature() const;
+	float surface_temperature_at(const Vector3 &p_position) const;
+	float ground_height_at(const Vector3 &p_position) const;
+	double time_scale() const;
 };
 
 // Water: open water of every kind (sea, rivers, pools, live water, standing water on the ground). Several
@@ -166,7 +193,7 @@ protected:
 	GDVIRTUAL3(_impulse, Vector3, float, float)
 
 public:
-	bool has_provider() const { return !providers.is_empty(); }
+	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
 	// The water surface for the point, -INF where there is none: of the producers with water there, the surface
 	// nearest above the point, else the nearest below it.
 	float height_at(const Vector3 &p_position) const;
@@ -184,6 +211,8 @@ class WorldFireProvider {
 public:
 	virtual float contract_fire_heat_at(const Vector3 &p_position) const = 0; // W/m2 of ground, now
 	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
+	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
+	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
 	virtual ~WorldFireProvider() {}
 };
 
@@ -198,13 +227,21 @@ protected:
 
 	GDVIRTUAL1RC(float, _heat_at, Vector3)
 	GDVIRTUAL1RC(float, _burnt_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
+	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
 
 public:
-	bool has_provider() const { return !providers.is_empty(); }
+	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
 	// The fire's heat release over the ground at the point (W/m2), the most of any fire there; 0 with none.
 	float heat_at(const Vector3 &p_position) const;
 	// How burnt the ground is there, 0..1.
 	float burnt_at(const Vector3 &p_position) const;
+	// The wind the fires draw in near the ground at the point (their indraft, m/s, horizontal), summed over the fires;
+	// it adds to the weather's wind. Zero with none.
+	Vector3 wind_at(const Vector3 &p_position) const;
+	// How deep a stem standing at the point has charred at its foot (m, bark and wood): the flames' and smouldering
+	// logs' time there at a charring rate of 0.8 mm a minute. The most of any fire; 0 where none burnt.
+	float stem_char_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
@@ -261,7 +298,7 @@ protected:
 	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
 
 public:
-	bool has_provider() const { return provider != nullptr; }
+	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
 	// The ground's surface (m); with no ground, the first static physics surface under the point, else -INF.
 	float height_at(const Vector3 &p_position) const;
 	WorldGroundSoil soil_at(const Vector3 &p_position) const;
@@ -277,6 +314,50 @@ public:
 	float sand_at(const Vector3 &p_position) const;
 	float ripple_at(const Vector3 &p_position) const;
 	float blown_sand_at(const Vector3 &p_position) const;
+};
+
+// Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
+class WorldSnowProvider {
+public:
+	virtual float contract_snow_depth_at(const Vector3 &p_position) const = 0; // m
+	virtual float contract_snow_density_at(const Vector3 &p_position) const = 0; // kg/m3 (100 new powder .. 550 old wet)
+	virtual float contract_snow_wetness_at(const Vector3 &p_position) const { return 0.0f; } // liquid over what the pack holds, 0..1
+	virtual float contract_snow_surface_at(const Vector3 &p_position) const { return -Math::INF; } // m, the snow top with prints; -INF bare
+	virtual float contract_snow_crust_at(const Vector3 &p_position) const { return 0.0f; } // kPa a crust bears, 0 none
+	virtual Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m of lake ice, white share)
+	virtual ~WorldSnowProvider() {}
+};
+
+class WorldSnow : public RefCounted {
+	GDCLASS(WorldSnow, RefCounted);
+
+	friend class WorldContracts;
+	WorldSnowProvider *provider = nullptr; // the built-in contract's; a script stub overrides the virtuals
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _depth_at, Vector3)
+	GDVIRTUAL1RC(float, _density_at, Vector3)
+	GDVIRTUAL1RC(float, _wetness_at, Vector3)
+	GDVIRTUAL1RC(float, _surface_at, Vector3)
+	GDVIRTUAL1RC(float, _crust_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _lake_ice_at, Vector3)
+
+public:
+	bool has_provider() const { return provider != nullptr; }
+	// Snow on the ground at the point (m); 0 with no snow system.
+	float depth_at(const Vector3 &p_position) const;
+	// Its bulk density (kg/m3): about 100 for new powder, 250 to 350 settled, 400 to 550 old or wet; 0 bare.
+	float density_at(const Vector3 &p_position) const;
+	// Liquid water in the pack over what it can hold, 0 (dry) to 1 (slush).
+	float wetness_at(const Vector3 &p_position) const;
+	// The snow surface (m), prints included near the camera; -INF where there is none.
+	float surface_at(const Vector3 &p_position) const;
+	// The load a crust in the pack bears before a foot breaks through (kPa), 0 with none.
+	float crust_at(const Vector3 &p_position) const;
+	// Lake ice: (thickness m, share of it that is white snow ice). Ice of 5 cm and more bears a walker.
+	Vector2 lake_ice_at(const Vector3 &p_position) const;
 };
 
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.
@@ -305,6 +386,9 @@ class WorldContracts : public Object {
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
 	Ref<WorldFire> fire_override;
+	Ref<WorldSnow> builtin_snow;
+	Ref<WorldSnow> snow_override;
+	WorldSnowProvider *snow_provider = nullptr;
 	LocalVector<WorldWaterProvider *> water_stubs;
 	void _clear_water_stubs();
 
@@ -321,6 +405,7 @@ public:
 	static WorldWater *water();
 	static WorldGround *ground();
 	static WorldFire *fire();
+	static WorldSnow *snow();
 
 	// Producers register on entering the tree and unregister on leaving; the last to register is current.
 	static void register_weather(WorldWeatherProvider *p_provider);
@@ -331,6 +416,8 @@ public:
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);
 	static void unregister_fire(WorldFireProvider *p_provider);
+	static void register_snow(WorldSnowProvider *p_provider);
+	static void unregister_snow(WorldSnowProvider *p_provider);
 
 	// Tests set stubs (a script extending the contract class) and clear them.
 	void set_weather(const Ref<WorldWeather> &p_stub);
@@ -341,6 +428,8 @@ public:
 	Ref<WorldWater> get_water() const;
 	void set_fire(const Ref<WorldFire> &p_stub);
 	Ref<WorldFire> get_fire() const;
+	void set_snow(const Ref<WorldSnow> &p_stub);
+	Ref<WorldSnow> get_snow() const;
 	// A script stub (extending WorldWater) as one more water producer beside the real ones: a pool or sea for a
 	// bench without one. clear_overrides() removes it.
 	void add_water_stub(const Ref<WorldWater> &p_stub);

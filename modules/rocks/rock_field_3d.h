@@ -354,6 +354,7 @@ private:
 	TerrainGenerator3D *_get_generator() const;
 	Vector3 _target_position() const;
 	real_t _cell_size(Layer p_layer) const;
+	int _variant_count(uint32_t p_key) const;
 	uint32_t _library_key(RockGenerator::RockType p_type, RockGenerator::Family p_family, int p_bin) const;
 	Library *_ensure_library(uint32_t p_key);
 	void _ensure_libraries(const LocalVector<uint32_t> &p_keys);

@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "physx_ash.h"
 #include "physx_firebrands.h"
 #include "physx_steam.h"
 
@@ -79,6 +80,50 @@ private:
 	int quenched_by_water = 0;
 	LocalVector<uint8_t> steamed; // water has already taken this cell's heat
 	PhysXSteam steam;
+	// Fire whirls (docs/ideas/physx.md, "Fire whirls").
+	struct Whirl {
+		Vector3 pos;
+		float radius = 1.0f; // m, the core
+		float spin = 5.0f; // m/s, tangential, signed
+		float rise = 5.0f; // m/s, the core's updraft
+		float age = 0.0f;
+		float life = 15.0f;
+		// Born in a lee slope's eddy: it runs across the slope (drift) and lights the fuel it passes over.
+		bool lee = false;
+		Vector3 drift;
+	};
+	LocalVector<Whirl> whirls;
+	int lee_whirls_spawned = 0;
+	LocalVector<PhysXFlowEmitter3D *> whirl_emitters;
+	int whirls_spawned = 0;
+	bool fire_whirls = true;
+	// Ash blown off the burnt ground (docs/ideas/physx.md, "Wind lifts ash after a fire").
+	// The fire's own wind (docs/ideas/physx.md, "Fire makes its own wind"): the plume's indraft near the ground, as
+	// sinks along the burning front.
+	bool fire_wind = true;
+	struct Sink {
+		Vector3 pos;
+		float q = 0.0f; // m3/s drawn in
+		float d0 = 1.0f; // m, the flame zone's half depth, inside which the indraft does not grow
+	};
+	LocalVector<Sink> sinks;
+	LocalVector<Vector2> pull; // per 2 m tile, grid frame: the indraft of fires ahead of a front there (not its own)
+	int pull_tile = 1;
+	int pull_tx = 0;
+	Ref<Image> wind_image;
+	Ref<ImageTexture> wind_texture;
+	void _update_indraft();
+	Vector3 _indraft_at(const Vector3 &p_position, float p_skip) const;
+	bool blowing_ash = true;
+	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell
+	LocalVector<float> char_time; // s of flame (and a third of smouldering logs' time) each cell has stood
+	LocalVector<PhysXAsh::Source> ash_sources; // this sample's blowing patches
+	PhysXAsh ash;
+	float _ash_made(uint32_t p_i) const;
+	void _blow_ash(float p_delta);
+	uint32_t whirl_seed = 0x2545f491u;
+	float _whirl_rand();
+	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, const LocalVector<Vector3> &p_lee, LocalVector<PhysXFirebrands::Plume> &r_plumes);
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -218,6 +263,8 @@ public:
 	// The fire contract (WorldFire).
 	float contract_fire_heat_at(const Vector3 &p_position) const override { return get_intensity_at(p_position) * 1000.0f; }
 	float contract_fire_burnt_at(const Vector3 &p_position) const override { return get_char_at(p_position); }
+	float contract_fire_stem_char_at(const Vector3 &p_position) const override { return get_stem_char_at(p_position); }
+	Vector3 contract_fire_wind_at(const Vector3 &p_position) const override { return fire_wind ? _indraft_at(p_position, 0.0f) : Vector3(); }
 	float get_flame_length_at(const Vector3 &p_position) const; // peak, m
 	float get_scorch_height_at(const Vector3 &p_position) const; // peak crown scorch height, m
 	float get_burnt_area() const { return total_burnt; }
@@ -295,6 +342,18 @@ public:
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
 	int get_doused_cells() const { return quenched_by_water; }
 	float get_steam_mass() const { return steam.get_total_kg(); }
+	int get_whirl_count() const { return whirls.size(); }
+	int get_whirls_spawned() const { return whirls_spawned; }
+	int get_lee_whirls_spawned() const { return lee_whirls_spawned; }
+	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
+	bool is_fire_whirls() const { return fire_whirls; }
+	float get_stem_char_at(const Vector3 &p_position) const;
+	void set_fire_wind(bool p_v);
+	bool is_fire_wind() const { return fire_wind; }
+	Vector3 get_fire_wind_at(const Vector3 &p_position) const { return _indraft_at(p_position, 0.0f); }
+	void set_blowing_ash(bool p_v);
+	bool is_blowing_ash() const { return blowing_ash; }
+	float get_ash_blown() const { return ash.get_total_kg(); }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }

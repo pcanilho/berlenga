@@ -32,6 +32,7 @@
 #include "vegetation_field_3d.h"
 
 #include "grass_field_3d.h"
+#include "vegetation_detail.h"
 #include "vegetation_light.h"
 
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
@@ -307,6 +308,99 @@ void VegetationField3D::_read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &
 	r_setup.sand_rect = p_gen->get_world_rect();
 }
 
+// How much the desert sand moves (docs/ideas/vegetation.md, "Arid ground"): crests and upper flanks every windy
+// day, the plinths less, the interdune corridors under thin sand not at all (Tsoar 2005). From the sand sea's depth
+// on its own grid: its place between the local low and high over about half a crest spacing (crests come some 25
+// cells apart), and 0 under thin sand. Slip faces are raised at placement from the ground's slope.
+void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup) {
+	r_setup.mobility.clear();
+	r_setup.mobility_nx = 0;
+	r_setup.mobility_ny = 0;
+	if (!p_gen || !p_gen->get_sand_sea_rect().has_area()) {
+		return;
+	}
+	const Rect2 rect = p_gen->get_sand_sea_rect();
+	const float cell = MAX(float(p_gen->get_sand_sea_scale()), 1.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 2048);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 2048);
+	LocalVector<float> depth;
+	depth.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const float d = float(p_gen->get_sand_sea_height(Vector3(rect.position.x + rect.size.x * x / (nx - 1), 0.0f, rect.position.y + rect.size.y * z / (ny - 1))));
+			depth[z * nx + x] = d;
+			any = any || d > 0.05f;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	// Local low and high: separable sliding windows.
+	const int r = 12;
+	LocalVector<float> lo_x, hi_x, lo, hi;
+	lo_x.resize(nx * ny);
+	hi_x.resize(nx * ny);
+	lo.resize(nx * ny);
+	hi.resize(nx * ny);
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float a = 1e9f, b = -1e9f;
+			for (int k = MAX(x - r, 0); k <= MIN(x + r, nx - 1); k++) {
+				a = MIN(a, depth[z * nx + k]);
+				b = MAX(b, depth[z * nx + k]);
+			}
+			lo_x[z * nx + x] = a;
+			hi_x[z * nx + x] = b;
+		}
+	}
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float a = 1e9f, b = -1e9f;
+			for (int k = MAX(z - r, 0); k <= MIN(z + r, ny - 1); k++) {
+				a = MIN(a, lo_x[k * nx + x]);
+				b = MAX(b, hi_x[k * nx + x]);
+			}
+			lo[z * nx + x] = a;
+			hi[z * nx + x] = b;
+		}
+	}
+	r_setup.mobility.resize(nx * ny);
+	for (int i = 0; i < nx * ny; i++) {
+		const float d = depth[i];
+		if (d < 0.05f) {
+			r_setup.mobility[i] = -1.0f;
+			continue;
+		}
+		const float place = (d - lo[i]) / (hi[i] - lo[i] + 0.3f);
+		const float m = Math::smoothstep(0.3f, 0.85f, place) * Math::smoothstep(0.2f, 0.6f, d);
+		r_setup.mobility[i] = m;
+	}
+	r_setup.mobility_nx = nx;
+	r_setup.mobility_ny = ny;
+	r_setup.mobility_rect = rect;
+}
+
+float VegetationField3D::PlaceSetup::mobility_at(const Vector2 &p_xz) const {
+	if (mobility.is_empty()) {
+		return -1.0f;
+	}
+	const float gx = (p_xz.x - mobility_rect.position.x) / mobility_rect.size.x * (mobility_nx - 1);
+	const float gz = (p_xz.y - mobility_rect.position.y) / mobility_rect.size.y * (mobility_ny - 1);
+	if (gx < 0.0f || gz < 0.0f || gx > mobility_nx - 1 || gz > mobility_ny - 1) {
+		return -1.0f;
+	}
+	const int ix = MIN(int(gx), mobility_nx - 2), iz = MIN(int(gz), mobility_ny - 2);
+	const float fx = gx - ix, fz = gz - iz;
+	const float *r0 = &mobility[iz * mobility_nx + ix];
+	const float *r1 = r0 + mobility_nx;
+	// The edge of the sand: nearest, so -1 does not blend into the sand's values.
+	if (MIN(MIN(r0[0], r0[1]), MIN(r1[0], r1[1])) < 0.0f) {
+		return (fx < 0.5f ? (fz < 0.5f ? r0[0] : r1[0]) : (fz < 0.5f ? r0[1] : r1[1]));
+	}
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
 float VegetationField3D::PlaceSetup::sand_at(const Vector2 &p_xz) const {
 	if (sand.is_empty() || !sand_rect.has_area()) {
 		return 0.0f;
@@ -321,6 +415,27 @@ float VegetationField3D::PlaceSetup::sand_at(const Vector2 &p_xz) const {
 	const float *r0 = &sand[iz * sand_nx + ix];
 	const float *r1 = r0 + sand_nx;
 	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
+// Small items as real geometry out to where they are still detail_pixels tall (vegetation_detail.h, the rule the
+// rock field's ground detail uses), so a fallen leaf or a twig is drawn as far as it can be seen, and no further.
+float VegetationField3D::_species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const {
+	if (p_species.is_null()) {
+		return 0.0f;
+	}
+	const float hand = p_species->get_visibility_range();
+	if (!detail_reach || hand <= 0.0f || p_species->get_detail_size() <= 0.0f) {
+		return hand;
+	}
+	const float reach = float(VegetationDetail::reach(p_species->get_detail_size(), detail_pixels, p_pixel_angle));
+	return MAX(hand, MIN(reach, detail_max_range));
+}
+
+float VegetationField3D::get_species_range(int p_species) const {
+	if (biome.is_null() || p_species < 0 || p_species >= biome->get_species().size()) {
+		return 0.0f;
+	}
+	return _species_range(biome->get_species()[p_species], VegetationDetail::pixel_angle(this, detail_reference_height));
 }
 
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
@@ -355,6 +470,17 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.coast = gen && gen->has_sea_result() ? gen : nullptr;
 		r_setup.sea_y = gen ? float(gen->get_sea_level() + gen->get_height_offset()) : 0.0f;
 		_read_sand(gen, r_setup);
+		bool mobility_rule = false;
+		if (biome.is_valid()) {
+			const TypedArray<PlantSpecies> list = biome->get_species();
+			for (int i = 0; i < list.size(); i++) {
+				const Ref<PlantSpecies> sp = list[i];
+				mobility_rule = mobility_rule || (sp.is_valid() && sp->uses_sand_mobility());
+			}
+		}
+		if (mobility_rule) {
+			_read_sand_mobility(gen, r_setup);
+		}
 	}
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
@@ -379,12 +505,14 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	const TypedArray<PlantSpecies> species_list = biome->get_species();
 	const int count = species_list.size();
 	r_setup.species.resize(count);
+	const real_t pixel = VegetationDetail::pixel_angle(this, detail_reference_height);
 	for (int s = 0; s < count; s++) {
 		PlaceSpecies &ps = r_setup.species[s];
 		ps.sp = species_list[s];
 		if (ps.sp.is_null()) {
 			continue;
 		}
+		ps.range = _species_range(ps.sp, pixel);
 		const TypedArray<Mesh> meshes = ps.sp->get_meshes();
 		for (int i = 0; i < meshes.size(); i++) {
 			ps.meshes.push_back(meshes[i]);
@@ -879,12 +1007,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
-		const bool sand_plant = sp->uses_dune() || coast_rule;
+		const bool mobility_rule = sp->uses_sand_mobility();
+		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
 		const float canopy_r = sp->get_canopy_radius();
-		const float range = sp->get_visibility_range();
+		const float range = ps.range;
 		const bool is_log = ps.deadwood_reach > 0.0f;
 		// The most a point can keep: the density, raised at rock feet (rock_foot).
 		const float max_keep = sp->get_density() * (p_setup.obstacles.is_empty() ? 1.0f : sp->rock_foot_weight(0.0f));
@@ -971,6 +1100,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector3 dp(xz.x, 0.0f, xz.y);
 						const float dune = p_setup.dunes->get_dune_height(dp) >= DUNE_SAND_MIN ? float(p_setup.dunes->get_dune_stability(dp)) : -1.0f;
 						suit *= sp->rule_weight(PlantSpecies::RULE_DUNE, dune);
+					}
+					if (mobility_rule && suit > 0.0f) {
+						// Desert sand seas: slip faces past 20 to 30 degrees avalanche and stay bare.
+						float m = p_setup.mobility_at(xz);
+						if (m >= 0.0f) {
+							m = MAX(m, Math::smoothstep(20.0f, 30.0f, float(Math::rad_to_deg(map->get_slope_at(p3)))));
+						}
+						suit *= sp->rule_weight(PlantSpecies::RULE_SAND_MOBILITY, m);
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sand.is_empty()) {
 						// Loose sand (beach, dune, sand sea): no soil to root in or to hold litter.
@@ -1573,10 +1710,15 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		return;
 	}
 	const TileOut::Species &so = p_tile.species[p_species];
-	const float range = ps.sp->get_visibility_range();
+	const float range = ps.range;
 	const float near_range = ps.sp->get_near_range();
-	// Cells for the near swap: a quarter of the swap distance, at least 4 m.
+	// Cells for the near swap: a quarter of the swap distance, at least 4 m. A species with a range is cut too where
+	// tiles are big against it, into cells of its range (at least 16 m: cells are draw calls), and every cell is kept
+	// a half diagonal past the range, so a tile next to the camera is not cut at once.
 	const float near_cell = MAX(near_range * 0.25f, 4.0f);
+	const float range_cell = range > 0.0f ? MAX(range, 16.0f) : 0.0f;
+	// Small items (PlantSpecies.detail_size): the path tracer instances their shared shapes (vegetation_detail.h).
+	const bool detail = ps.sp->get_detail_size() > 0.0f;
 	const int tx = p_tile.tile.x;
 	const int tz = p_tile.tile.y;
 	const int s = p_species;
@@ -1599,7 +1741,14 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		// species with a near mesh is cut into small cells: the swap then happens a few
 		// plants at a time instead of a whole tile at once.
 		const float ts = p_setup.tile_size;
-		const int cells = near_mesh.is_valid() || near_source ? CLAMP(int(Math::ceil(ts / near_cell)), 1, 16) : 1;
+		float cell_size = ts;
+		if (near_mesh.is_valid() || near_source) {
+			cell_size = near_cell;
+		}
+		if (range_cell > 0.0f) {
+			cell_size = MIN(cell_size, range_cell);
+		}
+		const int cells = CLAMP(int(Math::ceil(ts / cell_size)), 1, 16);
 		const Vector2 tile_origin = Vector2(tx * ts, tz * ts);
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
@@ -1628,6 +1777,9 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					bc.push_back(so.customs[v][i]);
 				}
 				_fill_cell(mm, draw_mesh, bx, bc);
+				if (detail) {
+					VegetationDetail::trace_instanced(mm);
+				}
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 				mmi->set_name(cells > 1 ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : "", s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 				mmi->set_multimesh(mm);
@@ -1651,7 +1803,8 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					// Ground cover too small to see far away. The plant shader thins the instances
 					// by rank and shrinks them out before the range (docs/ideas/plant-generator.md,
 					// "Far distance"), so the tile is cut only once every plant in it is gone.
-					mmi->set_visibility_range_end(range * 1.05f);
+					// Godot measures to the cell's centre: a plant can be up to its half diagonal nearer.
+					mmi->set_visibility_range_end(range * 1.05f + 0.75f * ts / cells);
 				}
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
@@ -3324,7 +3477,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			if (ps.sp.is_null()) {
 				continue;
 			}
-			const float range = ps.sp->get_visibility_range();
+			const float range = ps.range;
 			const bool wanted = range <= 0.0f || d <= range * 1.05f + ts * 0.5f;
 			const bool keep = range <= 0.0f || d <= range * 1.05f + ts * 1.5f;
 			if (kv.value->committed[s] && !keep) {
@@ -3356,7 +3509,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			if (t->committed[s]) {
 				continue;
 			}
-			const float range = stream_setup.species[s].sp.is_valid() ? stream_setup.species[s].sp->get_visibility_range() : 0.0f;
+			const float range = stream_setup.species[s].range;
 			if (stream_setup.species[s].sp.is_null() || (range > 0.0f && p.d > range * 1.05f + ts * 0.5f)) {
 				continue;
 			}
@@ -3782,6 +3935,15 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_volume"), &VegetationField3D::is_far_volume);
 	ClassDB::bind_method(D_METHOD("set_far_volume_range", "range"), &VegetationField3D::set_far_volume_range);
 	ClassDB::bind_method(D_METHOD("get_far_volume_range"), &VegetationField3D::get_far_volume_range);
+	ClassDB::bind_method(D_METHOD("set_detail_reach", "enabled"), &VegetationField3D::set_detail_reach);
+	ClassDB::bind_method(D_METHOD("get_detail_reach"), &VegetationField3D::get_detail_reach);
+	ClassDB::bind_method(D_METHOD("set_detail_pixels", "pixels"), &VegetationField3D::set_detail_pixels);
+	ClassDB::bind_method(D_METHOD("get_detail_pixels"), &VegetationField3D::get_detail_pixels);
+	ClassDB::bind_method(D_METHOD("set_detail_reference_height", "height"), &VegetationField3D::set_detail_reference_height);
+	ClassDB::bind_method(D_METHOD("get_detail_reference_height"), &VegetationField3D::get_detail_reference_height);
+	ClassDB::bind_method(D_METHOD("set_detail_max_range", "range"), &VegetationField3D::set_detail_max_range);
+	ClassDB::bind_method(D_METHOD("get_detail_max_range"), &VegetationField3D::get_detail_max_range);
+	ClassDB::bind_method(D_METHOD("get_species_range", "species"), &VegetationField3D::get_species_range);
 	ClassDB::bind_method(D_METHOD("set_far_volume_cell", "cell"), &VegetationField3D::set_far_volume_cell);
 	ClassDB::bind_method(D_METHOD("get_far_volume_cell"), &VegetationField3D::get_far_volume_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_cell"), &VegetationField3D::get_cover_cell);
@@ -3825,6 +3987,10 @@ void VegetationField3D::_bind_methods() {
 	ADD_GROUP("Far volume", "far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_reach"), "set_detail_reach", "get_detail_reach");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_pixels", PROPERTY_HINT_RANGE, "0.25,16,0.25,suffix:px"), "set_detail_pixels", "get_detail_pixels");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_reference_height", PROPERTY_HINT_RANGE, "0,4320,1,suffix:px"), "set_detail_reference_height", "get_detail_reference_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_max_range", PROPERTY_HINT_RANGE, "0,200,0.5,or_greater,suffix:m"), "set_detail_max_range", "get_detail_max_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_cell", PROPERTY_HINT_RANGE, "0.05,4,0.01,suffix:m"), "set_far_volume_cell", "get_far_volume_cell");
 	ADD_GROUP("Streaming", "stream");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");

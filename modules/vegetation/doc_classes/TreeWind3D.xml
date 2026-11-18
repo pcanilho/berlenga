@@ -80,6 +80,12 @@
 				Fallen parts that hit hard enough to become Blast destructibles ([PhysXDestructible3D]) so far.
 			</description>
 		</method>
+		<method name="get_storm_snap_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Thrown trees so far that broke at a fire-charred stem foot ([method WorldFire.stem_char_at]) instead of tipping out on their root plate. They fall without a plate and leave no pit; [signal storm_damage] reports them with [code]uprooted[/code] false.
+			</description>
+		</method>
 		<method name="get_storm_load">
 			<return type="Dictionary" />
 			<param index="0" name="mesh" type="Mesh" />

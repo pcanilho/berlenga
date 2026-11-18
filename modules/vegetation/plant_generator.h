@@ -159,6 +159,11 @@ public:
 		PRESET_CORNFLOWER,
 		PRESET_MAYWEED,
 		PRESET_COW_PARSLEY,
+		PRESET_PINCUSHION_MOSS,
+		PRESET_GROUND_IVY,
+		PRESET_DRINN,
+		PRESET_DESERT_ANNUALS,
+		PRESET_SOIL_CRUST,
 		PRESET_MAX,
 	};
 
@@ -270,7 +275,8 @@ private:
 	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
 	void _add_cup_flower(const Transform3D &p_top, float p_radius);
 
-	void _build_stand_litter();
+	void _build_stand_litter(float p_layers = 1.3f, float p_lift = 0.0f);
+	void _add_twig_ends(int p_count, float p_lift);
 	void _build_dandelion();
 	void _build_plantain();
 	void _build_clover();
@@ -286,6 +292,10 @@ private:
 	void _build_timothy();
 	void _build_dry_grass();
 	void _build_leaf_litter();
+	void _build_ground_ivy();
+	void _build_drinn();
+	void _build_desert_annuals();
+	void _build_soil_crust();
 	void _build_moss();
 	void _build_bilberry();
 	void _build_bracken();
@@ -417,6 +427,7 @@ private:
 	int texture_size = 256;
 	float leaf_wear = 0.5f;
 	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
+	float litter_deposit = 1.0f; // Litter: layers of leaves or needles over the card's own (> 1: the near-camera card, leaf on leaf).
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	// Flowering through the year (docs/ideas/vegetation-seasons.md, step 2): the season's degree days
 	// (forcing, base 5 C, from 1 January) and day; -1 without a season. Each flowering stem draws
@@ -490,6 +501,8 @@ public:
 	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
 	void set_litter_leaves(const Array &p_leaves) { litter_leaves = p_leaves; }
 	Array get_litter_leaves() const { return litter_leaves; }
+	void set_litter_deposit(float p_deposit) { litter_deposit = CLAMP(p_deposit, 1.0f, 4.0f); }
+	float get_litter_deposit() const { return litter_deposit; }
 	void set_season(const Dictionary &p_season);
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
@@ -560,6 +573,13 @@ public:
 		DUNES_MAX,
 	};
 	static TypedArray<Resource> make_dunes(DuneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Desert sand seas (docs/ideas/vegetation.md, "Arid ground"), placed by PlantSpecies.RULE_SAND_MOBILITY.
+	enum DesertStand {
+		DESERT_FLANKS, // Dune flanks and plinths: drinn tussocks.
+		DESERT_INTERDUNE, // Interdune corridors: sparse drinn, the rain-flush annuals, soil crust.
+		DESERT_MAX,
+	};
+	static TypedArray<Resource> make_desert(DesertStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -619,6 +639,7 @@ VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
 VARIANT_ENUM_CAST(PlantGenerator::BankStand);
 VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
+VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);

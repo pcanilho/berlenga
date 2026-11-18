@@ -1885,6 +1885,10 @@ void PhysXHair3D::_step(double p_delta) {
 		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
 			s.wind += weather->wind_at(get_global_transform().origin);
 		}
+		// A fire's indraft near the ground (WorldContracts' fire): hair beside a fire streams into it.
+		if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+			s.wind += fire->wind_at(get_global_transform().origin);
+		}
 	}
 	s.gust = gust;
 	s.turbulence = turbulence;

@@ -31,6 +31,8 @@
 
 #include "physx_water_mist_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
@@ -160,24 +162,20 @@ float PhysXWaterMist3D::extinction_per_density(float p_radius_um) {
 }
 
 Vector3 PhysXWaterMist3D::_ambient_wind() const {
-#ifdef MODULE_WEATHER_ENABLED
 	if (follow_weather) {
-		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
-			return weather->get_wind_at(get_global_position() + Vector3(0.0f, 2.0f, 0.0f), 2.0f);
+		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
+			return weather->wind_at(get_global_position() + Vector3(0.0f, 2.0f, 0.0f), 2.0f);
 		}
 	}
-#endif
 	return wind;
 }
 
 float PhysXWaterMist3D::_humidity() const {
-#ifdef MODULE_WEATHER_ENABLED
 	if (follow_weather) {
-		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
-			return weather->get_air_humidity();
+		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
+			return weather->air_humidity_at(get_global_position());
 		}
 	}
-#endif
 	return humidity;
 }
 

@@ -294,7 +294,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	d.coll_w = p_dims[4];
 	d.stride = p_dims[5];
 	d.slump_passes = p_dims[6];
-	d.cover_vec4s = CLAMP(p_dims[7], 2, 3);
+	d.cover_vec4s = CLAMP(p_dims[7], 2, 4);
 	d.water_passes = MAX(p_dims[8], 0);
 	d.morph_passes = CLAMP(p_dims[9], 1, 32);
 	_rt_ensure(d);

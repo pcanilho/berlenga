@@ -1098,7 +1098,8 @@ inline real_t cave_stream_u(const Vector3 &p_line, uint32_t p_seed, real_t p_hal
 // Distance to the open cave (negative inside): every passage as its section swept along it, the ends run on by half
 // a width so bends close, joined with a smooth minimum; chambers as ellipsoids with a flat breakdown floor; the
 // walls roughened by noise at 2.2 m and 0.7 m (dissolution hollows and spalls).
-real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
+real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t p_cell) const {
+	const real_t cell = p_cell > 0.0 ? p_cell : mesh_cell;
 	real_t d = 1e9;
 	for (const Segment *sg : p_src.segments) {
 		Vector3 t = sg->b - sg->a;
@@ -1161,6 +1162,15 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 	if (roughness > 0.0 && d < 2.5) {
 		const uint32_t ns = uint32_t(seed) * 2654435761u + 3u;
 		d += roughness * (0.35 * (cave_fbm(p_p / 2.2f, ns, 3) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.7f, ns + 7u, 2) - 0.5f));
+		// Finer relief where the grid can hold it (a wavelength of at least 2.5 cells): knobs, solution pockets and
+		// spall scars a decimetre or two across, then a few centimetres, so a near wall has real relief to catch a
+		// lamp, not a smooth skin with a painted texture (the coarse grid keeps only the two octaves above).
+		if (cell < 0.2 && d < 0.6) {
+			d += roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
+			if (cell < 0.07) {
+				d += roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
+			}
+		}
 		if (scallops > 0.0) {
 			// Scallops: hollows 1.2 m across (the big ones of slow phreatic flow; small fast-flow scallops are below
 			// the mesh cell), deepest in the middle of each cell, ridges where two cells meet.
@@ -1255,8 +1265,8 @@ real_t CaveNetwork3D::_stream_wet(const FieldSource &p_src, const Vector3 &p_p) 
 
 // The rock: positive in it, below ground and outside the cave, min(f_H, f_K) with the heightfield as a distance,
 // f_H = (h - y) / sqrt(1 + slope^2) as Paris et al. take it.
-real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground) const {
-	const real_t cave = _air(p_src, p_p); // positive outside the cave, in the rock
+real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground, real_t p_cell) const {
+	const real_t cave = _air(p_src, p_p, p_cell); // positive outside the cave, in the rock
 	if (r_ground) {
 		*r_ground = false;
 	}
@@ -1346,13 +1356,17 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 // it crosses joining the four cells round that edge. Each chunk owns the edges that start inside it and samples one
 // cell past its sides, so neighbours share their border vertices exactly. Normals from the field's gradient; quads
 // facing the open side. The ground's own surface (a patch's) is a second surface, drawn with the ground material.
-void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
+void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell) const {
 	const TerrainGenerator3D *gen = mesh_gen;
-	const int N = MAX(1, int(Math::round(chunk_size / mesh_cell)));
+	r_chunk.cell = p_cell;
+	const int N = MAX(1, int(Math::round(chunk_size / p_cell)));
 	const real_t c = chunk_size / real_t(N); // whole cells per chunk, so neighbours share their border samples
 	const Vector3 O = Vector3(p_key) * chunk_size;
 	FieldSource src;
-	_gather(AABB(O - Vector3(2 * c, 2 * c, 2 * c), Vector3(chunk_size + 4 * c, chunk_size + 4 * c, chunk_size + 4 * c)), src);
+	// A refined chunk reaches one coarse cell (and one of its own) past its sides, over its coarse neighbours' seams.
+	const int P = p_cell < mesh_cell - 1e-4 ? 2 + int(Math::ceil(mesh_cell / c)) : 1;
+	const real_t reach = (P + 1) * c;
+	_gather(AABB(O - Vector3(reach, reach, reach), Vector3(chunk_size + 2 * reach, chunk_size + 2 * reach, chunk_size + 2 * reach)), src);
 	r_chunk.key = p_key;
 	r_chunk.triangles = 0;
 	r_chunk.pools.clear();
@@ -1370,43 +1384,126 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	if (speleothems > 0.0 && gen) {
 		_drips(src, gen, AABB(O, Vector3(chunk_size, chunk_size, chunk_size)).grow(2.0), drips);
 	}
-	const int S = N + 3; // samples from -1 to N + 1
-	auto sidx = [S](int x, int y, int z) { return ((z + 1) * S + (y + 1)) * S + (x + 1); };
+	const int S = N + 2 * P + 1; // samples from -P to N + P
+	auto sidx = [S, P](int x, int y, int z) { return ((z + P) * S + (y + P)) * S + (x + P); };
+	auto sample = [&](int x, int y, int z, bool *r_gr) {
+		const Vector3 q = O + Vector3(x, y, z) * c;
+		float v = float(gen ? _rock(src, gen, q, r_gr, c) : _air(src, q, c));
+		if (!drips.is_empty()) {
+			v = float(_flowstone(drips, q, v));
+		}
+		return v;
+	};
 	LocalVector<float> f;
 	LocalVector<uint8_t> ground;
 	f.resize(S * S * S);
 	ground.resize(S * S * S);
-	bool any_pos = false, any_neg = false;
-	for (int z = -1; z <= N + 1; z++) {
-		for (int y = -1; y <= N + 1; y++) {
-			for (int x = -1; x <= N + 1; x++) {
-				bool gr = false;
-				float v = float(gen ? _rock(src, gen, O + Vector3(x, y, z) * c, &gr) : _air(src, O + Vector3(x, y, z) * c));
-				if (!drips.is_empty()) {
-					v = float(_flowstone(drips, O + Vector3(x, y, z) * c, v));
+	if (c >= 0.2) {
+		for (int z = -P; z <= N + P; z++) {
+			for (int y = -P; y <= N + P; y++) {
+				for (int x = -P; x <= N + P; x++) {
+					bool gr = false;
+					f[sidx(x, y, z)] = sample(x, y, z, &gr);
+					ground[sidx(x, y, z)] = gr ? 1 : 0;
 				}
-				f[sidx(x, y, z)] = v;
-				ground[sidx(x, y, z)] = gr ? 1 : 0;
-				any_pos = any_pos || v > 0.0f;
-				any_neg = any_neg || v <= 0.0f;
 			}
 		}
+	} else {
+		// A fine grid is sampled sparsely (as in adaptive surface extraction, Kobbelt et al. 2001): a lattice every
+		// B samples first; a block whose eight corners are all on one side and further from the surface than the
+		// field can turn in it is filled by interpolation (no surface crosses it), the rest are sampled in full. Full
+		// blocks go first, so the samples on a shared face are always real ones.
+		const int B = 4;
+		const int L = (S - 1 + B - 1) / B + 1; // lattice points per axis (the last may lie past the samples)
+		auto lidx = [L](int i, int j, int k) { return (k * L + j) * L + i; };
+		LocalVector<float> lf;
+		LocalVector<uint8_t> lg;
+		lf.resize(L * L * L);
+		lg.resize(L * L * L);
+		for (int k = 0; k < L; k++) {
+			for (int j = 0; j < L; j++) {
+				for (int i = 0; i < L; i++) {
+					bool gr = false;
+					lf[lidx(i, j, k)] = sample(-P + i * B, -P + j * B, -P + k * B, &gr);
+					lg[lidx(i, j, k)] = gr ? 1 : 0;
+				}
+			}
+		}
+		LocalVector<uint8_t> done;
+		done.resize(S * S * S);
+		memset(done.ptr(), 0, done.size());
+		const float margin = float(2.0 * B * c * Math::sqrt(3.0) + 0.15); // the field's slope stays under 2
+		LocalVector<uint8_t> full;
+		full.resize((L - 1) * (L - 1) * (L - 1));
+		for (int pass = 0; pass < 2; pass++) {
+			for (int k = 0; k < L - 1; k++) {
+				for (int j = 0; j < L - 1; j++) {
+					for (int i = 0; i < L - 1; i++) {
+						const int bi = (k * (L - 1) + j) * (L - 1) + i;
+						float cv[8];
+						int pos = 0, gsum = 0;
+						float mn = 1e9f;
+						for (int q = 0; q < 8; q++) {
+							const int li = lidx(i + ((q >> 0) & 1), j + ((q >> 1) & 1), k + ((q >> 2) & 1));
+							cv[q] = lf[li];
+							gsum += lg[li];
+							pos += cv[q] > 0.0f ? 1 : 0;
+							mn = MIN(mn, Math::abs(cv[q]));
+						}
+						if (pass == 0) {
+							full[bi] = (pos != 0 && pos != 8) || mn < margin ? 1 : 0;
+						}
+						if (int(full[bi]) != 1 - pass) {
+							continue;
+						}
+						const int x0 = -P + i * B, y0 = -P + j * B, z0 = -P + k * B;
+						for (int z = z0; z <= MIN(z0 + B, N + P); z++) {
+							for (int y = y0; y <= MIN(y0 + B, N + P); y++) {
+								for (int x = x0; x <= MIN(x0 + B, N + P); x++) {
+									const int si = sidx(x, y, z);
+									if (done[si]) {
+										continue;
+									}
+									done[si] = 1;
+									if (pass == 0) {
+										bool gr = false;
+										f[si] = sample(x, y, z, &gr);
+										ground[si] = gr ? 1 : 0;
+									} else {
+										const float tx = float(x - x0) / B, ty = float(y - y0) / B, tz = float(z - z0) / B;
+										const float a = Math::lerp(Math::lerp(cv[0], cv[1], tx), Math::lerp(cv[2], cv[3], tx), ty);
+										const float b = Math::lerp(Math::lerp(cv[4], cv[5], tx), Math::lerp(cv[6], cv[7], tx), ty);
+										f[si] = Math::lerp(a, b, tz);
+										ground[si] = gsum >= 4 ? 1 : 0;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	bool any_pos = false, any_neg = false;
+	for (uint32_t i = 0; i < f.size(); i++) {
+		any_pos = any_pos || f[i] > 0.0f;
+		any_neg = any_neg || f[i] <= 0.0f;
 	}
 	if (!any_pos || !any_neg) {
 		return;
 	}
-	// Cells from -1 to N, one vertex where the sign changes.
-	const int C = N + 2;
-	auto cidx = [C](int x, int y, int z) { return ((z + 1) * C + (y + 1)) * C + (x + 1); };
+	// Cells from -P to N + P - 1, one vertex where the sign changes.
+	const int C = N + 2 * P;
+	auto cidx = [C, P](int x, int y, int z) { return ((z + P) * C + (y + P)) * C + (x + P); };
 	LocalVector<int> cell_vertex;
 	cell_vertex.resize(C * C * C);
 	LocalVector<Vector3> verts;
 	LocalVector<uint8_t> vert_ground;
 	static const int corner[8][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 } };
 	static const int edges[12][2] = { { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 }, { 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
-	for (int z = -1; z <= N; z++) {
-		for (int y = -1; y <= N; y++) {
-			for (int x = -1; x <= N; x++) {
+	for (int z = -P; z <= N + P - 1; z++) {
+		for (int y = -P; y <= N + P - 1; y++) {
+			for (int x = -P; x <= N + P - 1; x++) {
 				float v[8];
 				int pos = 0, gr = 0;
 				for (int k = 0; k < 8; k++) {
@@ -1438,11 +1535,13 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 			}
 		}
 	}
-	// Quads on the edges this chunk owns (start sample in 0..N-1 on all three axes).
+	// Quads on the edges this chunk owns (start sample in 0..N-1 on all three axes; a refined chunk also the P - 1
+	// past each side, its overlap).
 	LocalVector<int> tris[2]; // 0 walls, 1 ground
-	for (int z = 0; z < N; z++) {
-		for (int y = 0; y < N; y++) {
-			for (int x = 0; x < N; x++) {
+	const int e0 = 1 - P, e1 = N + P - 1;
+	for (int z = e0; z < e1; z++) {
+		for (int y = e0; y < e1; y++) {
+			for (int x = e0; x < e1; x++) {
 				const float a = f[sidx(x, y, z)];
 				for (int axis = 0; axis < 3; axis++) {
 					const int bx = x + (axis == 0), by = y + (axis == 1), bz = z + (axis == 2);
@@ -1652,7 +1751,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 				const Vector3 p = verts[vi];
 				const real_t e = 0.5 * c;
 				auto F = [&](const Vector3 &q) {
-					const real_t r = gen ? _rock(src, gen, q) : _air(src, q);
+					const real_t r = gen ? _rock(src, gen, q, nullptr, c) : _air(src, q, c);
 					return drips.is_empty() ? r : _flowstone(drips, q, r);
 				};
 				Vector3 g(F(p + Vector3(e, 0, 0)) - F(p - Vector3(e, 0, 0)), F(p + Vector3(0, e, 0)) - F(p - Vector3(0, e, 0)), F(p + Vector3(0, 0, e)) - F(p - Vector3(0, 0, e)));
@@ -2282,6 +2381,7 @@ void CaveNetwork3D::_rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p
 struct CaveMeshJob {
 	const CaveNetwork3D *net;
 	LocalVector<Vector3i> keys;
+	LocalVector<real_t> cells; // each key's grid (mesh_cell when empty)
 	LocalVector<CaveNetwork3D::Chunk> made;
 	LocalVector<CaveNetwork3D::Chunk *> out;
 	HashSet<Vector3i> pinned;
@@ -2289,7 +2389,7 @@ struct CaveMeshJob {
 
 void CaveNetwork3D::_mesh_job(void *p_data, uint32_t p_index) {
 	CaveMeshJob *job = static_cast<CaveMeshJob *>(p_data);
-	job->net->_mesh_chunk(job->keys[p_index], *job->out[p_index]);
+	job->net->_mesh_chunk(job->keys[p_index], *job->out[p_index], p_index < job->cells.size() ? job->cells[p_index] : job->net->mesh_cell);
 }
 
 Ref<Material> CaveNetwork3D::_wall_material() {
@@ -2860,6 +2960,10 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	MeshInstance3D *mi = memnew(MeshInstance3D);
 	mi->set_name(vformat("Chunk %d %d %d", p_chunk.key.x, p_chunk.key.y, p_chunk.key.z));
 	mi->set_mesh(p_chunk.mesh);
+	// The walls face into the passage, so from the sun (outside) every one is a back face, which the shadow pass culls:
+	// the rock cast no shadow and the sun lit the passage through it in raster (the path tracer's shadow rays hit both
+	// sides, so there it was dark). Both sides cast.
+	mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
 	for (int sfc = 0; sfc < p_chunk.mesh->get_surface_count(); sfc++) {
 		const bool is_ground = p_chunk.mesh->surface_get_name(sfc) == "ground";
 		mi->set_surface_override_material(sfc, is_ground && ground_material.is_valid() ? ground_material : p_wall);
@@ -3585,6 +3689,7 @@ int CaveNetwork3D::build_meshes(const AABB &p_area) {
 	for (const Vector3i &k : want) {
 		if (!chunks.has(k)) {
 			job.keys.push_back(k);
+			job.cells.push_back(mesh_cell);
 		}
 	}
 	job.made.resize(job.keys.size());
@@ -3607,6 +3712,61 @@ int CaveNetwork3D::build_meshes(const AABB &p_area) {
 	_open_holes();
 	last_mesh_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	return count;
+}
+
+// The grid a chunk wants with the camera at p_focus: near_mesh_cell when its box comes within near_mesh_radius
+// (+ p_slack, so a refined chunk is not coarsened again the moment the focus steps past the radius).
+real_t CaveNetwork3D::_cell_for(const Vector3i &p_key, const Vector3 &p_focus, real_t p_slack) const {
+	if (near_mesh_cell <= 0.0 || near_mesh_cell >= mesh_cell - 1e-4) {
+		return mesh_cell;
+	}
+	const Vector3 lo = Vector3(p_key) * chunk_size, hi = lo + Vector3(chunk_size, chunk_size, chunk_size);
+	const Vector3 q(CLAMP(p_focus.x, lo.x, hi.x), CLAMP(p_focus.y, lo.y, hi.y), CLAMP(p_focus.z, lo.z, hi.z));
+	return q.distance_to(p_focus) <= near_mesh_radius + p_slack ? near_mesh_cell : mesh_cell;
+}
+
+// Remeshes the meshed chunks round p_center on the near grid (waits for them); returns how many.
+int CaveNetwork3D::refine_meshes(const Vector3 &p_center) {
+	_stream_finish(true);
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	CaveMeshJob job;
+	job.net = this;
+	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
+		const real_t want = _cell_for(kv.key, p_center);
+		if (kv.value.node && kv.value.cell != want) {
+			job.keys.push_back(kv.key);
+			job.cells.push_back(want);
+		}
+	}
+	if (job.keys.is_empty()) {
+		return 0;
+	}
+	mesh_gen = _get_generator();
+	job.made.resize(job.keys.size());
+	for (uint32_t i = 0; i < job.made.size(); i++) {
+		job.out.push_back(&job.made[i]);
+	}
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&_mesh_job, &job, int(job.keys.size()), -1, true, "CaveNetwork3D refine");
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	const Ref<Material> wm = _wall_material();
+	for (Chunk &ch : job.made) {
+		_replace_chunk(ch, wm);
+	}
+	last_mesh_usec = OS::get_singleton()->get_ticks_usec() - t0;
+	return int(job.keys.size());
+}
+
+// Puts a freshly meshed chunk in, in place of the one it remeshes (keeping that one's pinning).
+void CaveNetwork3D::_replace_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
+	if (Chunk *old = chunks.getptr(p_chunk.key)) {
+		p_chunk.pinned = p_chunk.pinned || old->pinned;
+		if (old->node) {
+			old->node->queue_free();
+		}
+		chunks.erase(p_chunk.key);
+	}
+	_add_chunk(p_chunk, p_wall);
+	chunks.insert(p_chunk.key, p_chunk);
 }
 
 void CaveNetwork3D::set_follow_target(const NodePath &p_path) {
@@ -3656,10 +3816,21 @@ void CaveNetwork3D::_stream_update() {
 	HashSet<Vector3i> want, pinned;
 	_wanted(AABB(p - Vector3(r, r, r), Vector3(2.0 * r, 2.0 * r, 2.0 * r)), want, pinned, true);
 	LocalVector<Vector3i> keys;
+	LocalVector<real_t> cells;
 	for (const Vector3i &k : want) {
-		if (!chunks.has(k) && (pinned.has(k) || centre(k).distance_to(p) <= r + half)) {
-			keys.push_back(k);
+		if (!(pinned.has(k) || centre(k).distance_to(p) <= r + half)) {
+			continue;
 		}
+		const real_t cw = _cell_for(k, p);
+		const Chunk *have = chunks.getptr(k);
+		if (have) {
+			// Meshed already: remeshed only to refine it near the target, or to coarsen it again well past the radius.
+			const bool keep = have->cell == cw || !have->node || (have->cell == near_mesh_cell && _cell_for(k, p, 4.0) == near_mesh_cell);
+			if (keep) {
+				continue;
+			}
+		}
+		keys.push_back(k);
 	}
 	_open_holes();
 	if (keys.is_empty()) {
@@ -3676,10 +3847,14 @@ void CaveNetwork3D::_stream_update() {
 	sorter.compare.p = p;
 	sorter.compare.cs = chunk_size;
 	sorter.sort(keys.ptr(), keys.size());
+	for (const Vector3i &k : keys) {
+		cells.push_back(_cell_for(k, p));
+	}
 	mesh_gen = _get_generator();
 	stream_job = memnew(CaveMeshJob);
 	stream_job->net = this;
 	stream_job->keys = keys;
+	stream_job->cells = cells;
 	stream_job->pinned = pinned;
 	stream_job->made.resize(keys.size());
 	for (uint32_t i = 0; i < keys.size(); i++) {
@@ -3697,12 +3872,12 @@ void CaveNetwork3D::_stream_finish(bool p_keep) {
 	if (p_keep && is_inside_tree()) {
 		const Ref<Material> wm = _wall_material();
 		for (Chunk &ch : stream_job->made) {
-			if (chunks.has(ch.key)) {
+			const Chunk *have = chunks.getptr(ch.key);
+			if (have && have->cell == ch.cell) {
 				continue;
 			}
 			ch.pinned = stream_job->pinned.has(ch.key);
-			_add_chunk(ch, wm);
-			chunks.insert(ch.key, ch);
+			_replace_chunk(ch, wm);
 		}
 	}
 	memdelete(stream_job);
@@ -3821,6 +3996,11 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rock_distance", "position"), &CaveNetwork3D::get_rock_distance);
 	ClassDB::bind_method(D_METHOD("set_mesh_cell", "metres"), &CaveNetwork3D::set_mesh_cell);
 	ClassDB::bind_method(D_METHOD("get_mesh_cell"), &CaveNetwork3D::get_mesh_cell);
+	ClassDB::bind_method(D_METHOD("set_near_mesh_cell", "metres"), &CaveNetwork3D::set_near_mesh_cell);
+	ClassDB::bind_method(D_METHOD("get_near_mesh_cell"), &CaveNetwork3D::get_near_mesh_cell);
+	ClassDB::bind_method(D_METHOD("set_near_mesh_radius", "metres"), &CaveNetwork3D::set_near_mesh_radius);
+	ClassDB::bind_method(D_METHOD("get_near_mesh_radius"), &CaveNetwork3D::get_near_mesh_radius);
+	ClassDB::bind_method(D_METHOD("refine_meshes", "center"), &CaveNetwork3D::refine_meshes);
 	ClassDB::bind_method(D_METHOD("set_patch_radius", "metres"), &CaveNetwork3D::set_patch_radius);
 	ClassDB::bind_method(D_METHOD("get_patch_radius"), &CaveNetwork3D::get_patch_radius);
 	ClassDB::bind_method(D_METHOD("set_roughness", "value"), &CaveNetwork3D::set_roughness);
@@ -3870,6 +4050,8 @@ void CaveNetwork3D::_bind_methods() {
 
 	ADD_GROUP("Meshes", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_cell", PROPERTY_HINT_RANGE, "0.05,4,0.01,suffix:m"), "set_mesh_cell", "get_mesh_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_mesh_cell", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_near_mesh_cell", "get_near_mesh_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_mesh_radius", PROPERTY_HINT_RANGE, "0,64,0.5,suffix:m"), "set_near_mesh_radius", "get_near_mesh_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_radius", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_patch_radius", "get_patch_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scallops", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_scallops", "get_scallops");

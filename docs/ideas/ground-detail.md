@@ -282,3 +282,46 @@ Cost (lavapipe, trail bench, `--settled`, about 5,000 clumps lying): main thread
 update at 6 Hz (about 0.25 ms a frame); 48 bytes per clump. Bench: docs/bench/snow
 `--view=trail --settled --clumps-close [--no-clumps]`. Follow-ups: the scan on a worker; cornice debris
 (`SnowCover3D.cornice_failed`) as large blocks.
+
+## Mud clods (18 Nov)
+
+`GroundClods3D` (modules/ground), made by every `GroundSurface3D` (`clods`, on by default). Two sources:
+
+- Thrown clay that lands (`track_mud` with no print, from MudSpray's MPM grains): the surface keeps a per-frame drop
+  list (`take_clod_drops`, dropped after two physics frames when nobody takes it); a landing holding a lump's
+  volume stands up as one to three clods instead of lying only as the film the field draws.
+- Lumps torn out of a rim where a tyre or a boot heaves sticky soil: the print field's rim is scanned round the camera
+  at 6 Hz as snow clumps do; the share torn out (`break_share` 0.2) follows the soil's stickiness (above 0.3, as
+  MudSpray's "mud"): plastic clay holds together, sand crumbles and slurry flows.
+
+Sizes log-normal, median 2.5 cm, sigma 0.55, 0.8 to 9 cm (soil aggregates, Gardner 1956). Eight angular shapes (an
+icosphere with two or three fracture planes: clay breaks along planes, Dexter 1988), each clod stretched its own way
+and in a shade of its own of the clay's colour (`get_mud_color_at`, the surface's `mud_color` where the map holds
+none), sent as the instance colour (linear). Crushed by a later print, slaked by water standing over it (Emerson
+1967). One rt_instanced MultiMesh per shape.
+
+Cost (lavapipe, ground trail bench on sticky soil, about 2,500 clods lying): main thread 1.4 ms mean, 3 to 5 ms worst
+per update at 6 Hz (about 0.25 ms a frame); 64 bytes per clod. The ground bench needs the PhysX build; the cloud
+check ran its trail view with moisture 0.4 soil (`--ground=clay` locally) and `--prop=clods:false` for the A/B.
+Follow-ups: the scan on a worker (shared with snow clumps); clods kept with kept ruts (a GroundCellStore file);
+drying (lighter, crumbling) and rain slaking them over hours.
+
+## Lumps: shared scan and drawing (18 Nov)
+
+Snow clumps and mud clods share `GroundLumpScan` (modules/ground/ground_lump_scan.h: the print field's rim and dent
+in a window round the camera, read from the field's texels directly; which cells grew a rim, which changed at all,
+so the crush check samples only lumps under a changed cell) and `GroundLumpDraw` (one MultiMesh per shape with
+room by doubling and `visible_instance_count`, so a lump more or less re-uploads a buffer instead of reallocating
+the MultiMesh and its ray tracing entries). Main thread per update at 6 Hz (lavapipe, same benches, images
+identical): clumps 1.5 to 0.9 ms mean, clods 1.4 to 0.8 ms mean and 7.7 to 1.6 ms worst.
+
+## Lumps kept while away (18 Nov)
+
+A lump that leaves the deformed area round the camera (4 m past its edge) is parked in `GroundLumpStore`
+(modules/ground/ground_lump_store.h: lumps per 16 m tile, position, basis, size, colour, shape) instead of dropped,
+and taken back when its tile is near again, after a check that the ground under it still has the relief it lay on.
+Clods also go to disk beside the kept ruts (`lumps_clods_x_z.lmp`, zstd) when `GroundSurface3D` keeps ruts, so they
+outlive the area streaming out like the ruts do. The scan skips cells outside the field's rect and gives cells newly
+inside it a few looks to settle, so a returning field is not read as fresh rims. Snow bench `--away` (field taken
+300 m away and back): 4,172 lying, 4,172 kept while away, 4,129 lying again where they were (the rest crushed by
+the relief check), no new ones broken off. Cost unchanged: clumps 0.78 ms mean, clods 0.88 ms mean per update.

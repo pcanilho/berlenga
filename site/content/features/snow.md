@@ -7,7 +7,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 ## Snowpack
 
-- **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.
+- **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.
 
   ![Snow on a mountain, raster and path traced](media/snow-mountain.jpg)
 
@@ -44,6 +44,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
   ![Footprints in snow without a crust, then through a broken crust, raster and path traced](media/snow-crust.jpg)
 
   *Melt-freeze crust: boots break it into tipped plates instead of soft prints.*
+
+- **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.
 
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
@@ -90,6 +92,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
   ![Snow falling and blowing round a shelter](media/snowfall.gif)
 
   *Falling snow in wind.*
+
+- **Sleet** (`SnowFall3D.sleet_enabled`): near 0 C falling snow clumps into large wet flakes; above it the flakes melt as they fall, smaller, faster and greyer.
 
 - **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 

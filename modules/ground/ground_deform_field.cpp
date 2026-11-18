@@ -519,6 +519,61 @@ float GroundDeformField::sole_relief(float p_lx, float p_lz, Vector2 p_half) {
 	return MAX(0.012f * shank, 0.007f * groove);
 }
 
+// ground_deform.glsl runoff_hash(), runoff_noise().
+static float _runoff_hash(int p_x, int p_y) {
+	uint32_t h = ((uint32_t)p_x * 73856093u) ^ ((uint32_t)p_y * 19349663u) ^ 0x5bd1e995u;
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h & 0xffffu) / 65535.0f;
+}
+static float _runoff_noise(float p_x, float p_y, int p_salt) {
+	const float fx0 = Math::floor(p_x);
+	const float fy0 = Math::floor(p_y);
+	const int cx = (int)fx0 + p_salt * 7919;
+	const int cy = (int)fy0 + p_salt * 104729;
+	float fx = p_x - fx0;
+	float fy = p_y - fy0;
+	fx = fx * fx * (3.0f - 2.0f * fx);
+	fy = fy * fy * (3.0f - 2.0f * fy);
+	const float a = Math::lerp(_runoff_hash(cx, cy), _runoff_hash(cx + 1, cy), fx);
+	const float b = Math::lerp(_runoff_hash(cx, cy + 1), _runoff_hash(cx + 1, cy + 1), fx);
+	return Math::lerp(a, b, fy) - 0.5f;
+}
+static float _fract(float p_v) {
+	return p_v - Math::floor(p_v);
+}
+
+float GroundDeformField::tread_relief(int p_code, float p_wx, float p_wz, float p_lx, float p_lz, Vector2 p_half, float p_cy, float p_sy, float p_slip) {
+	// ground_deform.glsl tread_relief().
+	if (p_code <= 0) {
+		return 0.0f;
+	}
+	const float a = p_sy * p_wx + p_cy * p_wz + 0.03f * _runoff_noise(p_wx / 0.9f, p_wz / 0.9f, 5) + 0.008f * _runoff_noise(p_wx / 0.25f, p_wz / 0.25f, 6);
+	const float x = p_lx / MAX(p_half.x, 1e-3f);
+	const float keep = (1.0f - smooth01(0.6f, 3.0f, p_slip)) * (1.0f - smooth01(0.85f, 1.0f, Math::abs(x)));
+	float r = 0.0f;
+	if (p_code == 1) {
+		const float d = Math::abs(_fract(2.0f * x + 0.5f) - 0.5f);
+		r = Math::abs(x) < 0.75f ? 0.004f * (1.0f - smooth01(0.04f, 0.08f, d)) : 0.0f;
+	} else if (p_code == 3) {
+		const float g = _fract((a + 0.35f * Math::abs(p_lx)) / 0.13f + (x < 0.0f ? 0.0f : 0.5f));
+		const float bar = smooth01(0.0f, 0.05f, g) * (1.0f - smooth01(0.4f, 0.45f, g));
+		r = 0.018f * (1.0f - bar);
+	} else {
+		const float g = _fract((a + 0.6f * Math::abs(p_lx)) / 0.09f);
+		const float bar = smooth01(0.0f, 0.06f, g) * (1.0f - smooth01(0.44f, 0.5f, g));
+		r = (p_code == 4 ? 0.005f : 0.01f) * (1.0f - bar);
+		if (p_code == 4) {
+			const float link = Math::abs(_fract(a / 0.22f) - 0.5f) * 0.22f;
+			r = Math::lerp(r, -0.015f, 1.0f - smooth01(0.008f, 0.016f, link));
+		}
+	}
+	return r * keep;
+}
+
 float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
 	if (!valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
 		return 0.0f;
@@ -602,12 +657,15 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		return p_round ? p_bottom + p_radius - Math::sqrt(MAX(r2 - d2, 0.0f)) : p_bottom;
 	};
 	auto relief = [&](float wx, float wz) {
-		if (!sole) {
+		if (!p_box || (!sole && press_tread <= 0)) {
 			return 0.0f;
 		}
 		const float dx = wx - p_position.x;
 		const float dz = wz - p_position.z;
-		return sole_relief(cy * dx - sy * dz, sy * dx + cy * dz, p_half);
+		if (sole) {
+			return sole_relief(cy * dx - sy * dz, sy * dx + cy * dz, p_half);
+		}
+		return tread_relief(press_tread, wx, wz, cy * dx - sy * dz, sy * dx + cy * dz, p_half, cy, sy, speed);
 	};
 	// Contact: the underside reaches the current surface somewhere in the footprint.
 	bool touching = false;

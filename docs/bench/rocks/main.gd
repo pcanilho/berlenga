@@ -40,7 +40,7 @@ extends Node3D
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
-#   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
+#   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees); --fov=deg vertical (27: a 50 mm lens)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
@@ -651,8 +651,8 @@ func _caves(cam: Camera3D) -> void:
 		if id == 0 and args.has("cave-mesh"):
 			var land_m: Landscape3D = get_node("Landscape")
 			net.ground_material = land_m.material
-			if args.has("cell"):
-				net.mesh_cell = float(args["cell"])
+			if args.has("cave-cell"):
+				net.mesh_cell = float(args["cave-cell"]) # --cave-cell=m: the cave mesh's grid (0.3 by default)
 			var mr := float(args.get("mesh-radius", "50"))
 			var pos: Vector3 = e["position"]
 			net.rimstone_water = not args.has("no-pool-water")
@@ -972,8 +972,13 @@ func _caves(cam: Camera3D) -> void:
 						break
 					eye_s = eye_s.lerp(mid, 0.25)
 				cam.position = eye_s
+				if not args.has("no-refine"):
+					# The chunks round the lens on the near grid (--no-refine: all on the coarse one).
+					var t_ref := Time.get_ticks_msec()
+					var n_ref := net.refine_meshes(eye_s)
+					print("  refined %d chunks round the camera in %d ms (cell %.2f m)" % [n_ref, Time.get_ticks_msec() - t_ref, net.near_mesh_cell])
 				# Down the channel, a little below level; a narrower lens so the walls enter the frame only past a metre.
-				cam.look_at(Vector3(mid.x, eye_s.y, mid.z) + dir * 3.0 - Vector3(0, 0.35, 0))
+				cam.look_at(Vector3(mid.x, eye_s.y, mid.z) + dir * 3.0 - Vector3(0, float(args.get("look-down", "0.35")), 0)) # --look-down=m: aim lower, onto the water
 				cam.fov = 50.0
 				var lamp_st := OmniLight3D.new()
 				lamp_st.omni_range = 14.0
@@ -1021,6 +1026,14 @@ func _caves(cam: Camera3D) -> void:
 						for wm in net.find_children("*", "MeshInstance3D", true, false):
 							var gb: AABB = (wm as MeshInstance3D).global_transform * (wm as MeshInstance3D).get_aabb()
 							print("    water mesh %s aabb %s contains eye %s" % [wm.get_parent().name, gb, gb.has_point(cam.global_position)])
+					if OS.get_environment("ROCK_NEAR_DEBUG") == "1" and rocks:
+						var cp := cam.global_position
+						for ob in rocks.get_obstacles(Rect2(cp.x - 8.0, cp.z - 8.0, 16.0, 16.0), 0.1):
+							print("    field stone at (%.2f, %.2f, %.2f) r %.2f, camera y %.2f" % [ob.x, ob.y, ob.z, ob.w, cp.y])
+						for mmi in rocks.find_children("*", "MultiMeshInstance3D", true, false):
+							var ab: AABB = (mmi as MultiMeshInstance3D).global_transform * (mmi as MultiMeshInstance3D).get_aabb()
+							if ab.grow(1.0).has_point(cp) or ab.intersects(AABB(cp - Vector3(6, 3, 6), Vector3(12, 6, 12))):
+								print("    field group %s aabb %s" % [mmi.name, ab])
 					_screen_reflections(net))
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)
@@ -1989,6 +2002,8 @@ func _render_later() -> void:
 			await RenderingServer.frame_post_draw
 			waited += 1
 		print("rt pending surfaces cleared after %d frames" % waited)
+	if args.has("fov"):
+		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=deg: vertical field of view (27: a 50 mm lens)
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
 	var tf := Time.get_ticks_msec()

@@ -86,6 +86,14 @@
 				Extinction (1/m) at the ground of the background aerosol haze: Koschmieder's 3.912 / visibility for dry air, grown with the relative humidity as (1 - RH)^-0.35 (Hänel 1976), with the humidity capped at 0.98.
 			</description>
 		</method>
+		<method name="canopy_drainage" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="held_mm" type="float" />
+			<param index="1" name="storage_mm" type="float" />
+			<description>
+				Rutter et al. (1975) drainage from a canopy holding [param held_mm] of water against its capacity [param storage_mm], in mm/h.
+			</description>
+		</method>
 		<method name="clear_precipitation_extinction">
 			<return type="void" />
 			<param index="0" name="source" type="Object" />
@@ -262,11 +270,32 @@
 				The share of the sky the canopy closes over [param position] (0..1), from the shelter canopy there (see [method add_canopy] and [member canopy_map]): its attenuation coefficient taken as a leaf area index through Beer's law with an extinction of 0.5 (Monsi and Saeki 1953), about 0.4 for an open orchard and 0.7 for a forest. [code]0[/code] where there is no canopy. Snow interception and the light under the trees can follow it.
 			</description>
 		</method>
+		<method name="get_canopy_drip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water dripping off the leaves at [param position], in mm/h (Rutter's interception model).
+			</description>
+		</method>
 		<method name="get_canopy_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The height (m) of the shelter canopy over [param position], [code]0[/code] where there is none.
+			</description>
+		</method>
+		<method name="get_canopy_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water held on the leaves at [param position], in mm.
+			</description>
+		</method>
+		<method name="get_canopy_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How wet the leaves are at [param position], 0 to 1: the water held over [member canopy_storage]. Leaves stay wet after the ground begins to dry.
 			</description>
 		</method>
 		<method name="get_cloud_cover_at" qualifiers="const">
@@ -334,6 +363,13 @@
 				Day of the year (1 to 365) of the [member sky_clock]'s date, or [member season_day] without one.
 			</description>
 		</method>
+		<method name="get_ground_water_input_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water reaching the ground at [param position], in mm/h: throughfall and drip under a canopy, the rainfall elsewhere. Read by [WeatherRunoff3D].
+			</description>
+		</method>
 		<method name="get_gust_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -375,6 +411,26 @@
 				Rain rate at [param position], in mm/h.
 			</description>
 		</method>
+		<method name="get_rain_share_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the precipitation at [param position] that falls as rain, 0 to 1 (Jennings et al. 2018, from the air temperature at that height and [member humidity]).
+			</description>
+		</method>
+		<method name="get_rain_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The rain map over [method get_map_rect]: red the precipitation (mm/h), green the canopy's wetness, blue its drip (mm/h). Published as the shader global [code]weather_rain_map[/code].
+			</description>
+		</method>
+		<method name="get_rainfall_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rain (liquid) at [param position], in mm/h.
+			</description>
+		</method>
 		<method name="get_season">
 			<return type="Dictionary" />
 			<description>
@@ -413,6 +469,13 @@
 			<return type="Texture2D" />
 			<description>
 				The texture published as [code]weather_shelter_map[/code].
+			</description>
+		</method>
+		<method name="get_snowfall_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Snow at [param position], in mm/h of water.
 			</description>
 		</method>
 		<method name="get_state_texture" qualifiers="const">
@@ -573,6 +636,9 @@
 		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="true">
 			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Past the volumetric fog's reach the [WeatherSkyMaterial] carries the same haze in its air (see [method WeatherSkyMaterial.set_aerosol]), where the clouds' shadow draws the shafts on across the sky. Off, the air is clear unless the [Environment] adds fog.
 		</member>
+		<member name="canopy_free_throughfall" type="float" setter="set_canopy_free_throughfall" getter="get_canopy_free_throughfall" default="0.25">
+			The share of the rain that falls through the canopy without touching a leaf (Rutter's p).
+		</member>
 		<member name="canopy_map" type="Texture2D" setter="set_canopy_map" getter="get_canopy_map">
 			A map of plant canopies over [member canopy_map_rect]: canopy height in red (metres in a float texture, else times [member canopy_map_max_height]) and Cionco's attenuation coefficient over 4 in green. For vegetation systems that place whole forests.
 		</member>
@@ -582,17 +648,23 @@
 		<member name="canopy_map_rect" type="Rect2" setter="set_canopy_map_rect" getter="get_canopy_map_rect" default="Rect2(-256, -256, 512, 512)">
 			The world rect [member canopy_map] covers (x and z of its corner, then its size).
 		</member>
+		<member name="canopy_storage" type="float" setter="set_canopy_storage" getter="get_canopy_storage" default="1.0">
+			The water the leaves hold before they drain, in mm (Rutter's S).
+		</member>
+		<member name="canopy_water_enabled" type="bool" setter="set_canopy_water_enabled" getter="is_canopy_water_enabled" default="true">
+			Track the water the canopy intercepts: wet leaves after rain and their drip.
+		</member>
 		<member name="climate" type="Resource" setter="set_climate" getter="get_climate">
 			The climate of the place for [method get_season]: a [code]ClimateRecipe[/code], or any resource with its property names (temperature_january, temperature_july, lapse_rate_january, lapse_rate_july, reference_height, precipitation, precipitation_seasonality, precipitation_peak_month, rain_snow_threshold, daily_temperature_spread, melt_factor, soil_capacity, latitude). Without one, a temperate default (3 C in January, 22 C in July, 900 mm).
 		</member>
 		<member name="cloud_base_height" type="float" setter="set_cloud_base_height" getter="get_cloud_base_height" default="1500.0">
 			Height of the cloud base, in metres above y = 0.
 		</member>
-		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.4">
-			Cloud cover, 0 (clear) to 1 (overcast). With [member cloud_variation], it is how much of the sky is cloud, in patches.
-		</member>
 		<member name="cloud_churn" type="float" setter="set_cloud_churn" getter="get_cloud_churn" default="1.5">
 			How fast the cloud shapes change (m/s), with [member cloud_evolution]: the shape noise's two reads slide apart at this speed, so each cloud reshapes over a few minutes, and the edges' detail churns at twice it. The share of sky the clouds cover does not change with it.
+		</member>
+		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.4">
+			Cloud cover, 0 (clear) to 1 (overcast). With [member cloud_variation], it is how much of the sky is cloud, in patches.
 		</member>
 		<member name="cloud_density" type="float" setter="set_cloud_density" getter="get_cloud_density" default="1.0">
 			Scale on the clouds' extinction. At [code]1[/code], the measured values: about 0.04 per metre in stratus, up to 0.1 in cumulus (Frostbite, 2016).

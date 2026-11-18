@@ -87,6 +87,10 @@ public:
 		float ratio = 0.0f; // Bending moment over the bone's strength.
 		float root_ratio = 0.0f; // Overturning moment over the anchorage.
 		Vector3 wind; // At the failing part, world space.
+		// A fire's char at the stem's foot (m, bark and wood; WorldFire.stem_char_at), in. Out: the charred foot gives
+		// way before the roots (root_ratio is then the foot's), so it snaps there and falls without its root plate.
+		float base_char = 0.0f;
+		bool base_snap = false;
 	};
 	// Touch on one instance: each bone's extra turn (tree space, axis * angle) and its rate, and
 	// the bones that snapped off.
@@ -124,6 +128,7 @@ private:
 		float *write = nullptr; // buffer.ptrw() for the frame's workers.
 		LocalVector<uint8_t> moving; // Per instance: solved last frame (else at rest).
 		LocalVector<uint8_t> slot; // Per instance: its frame within an update period (staggers the load).
+		LocalVector<float> base_char; // Per instance: char at the stem's foot from a fire (m), refreshed now and then.
 		HashMap<int, Touch> touch;
 		struct Body {
 			RID body;
@@ -159,6 +164,9 @@ private:
 	float storm_min_wind = 12.0f;
 	int storm_breaks = 0;
 	int storm_throws = 0;
+	int storm_snaps = 0; // Of the throws: fire-charred stems that snapped at the foot.
+	float char_timer = 0.0f;
+	bool making_snap = false; // _make_part: a charred stem snapped at its foot (no root plate)
 	// A part a storm broke off or threw, while the wind still pushes it.
 	struct StormPart {
 		ObjectID body;
@@ -177,6 +185,7 @@ private:
 		LocalVector<uint8_t> exclude; // Bones broken off before (not part of it).
 		Transform3D butt; // Its fracture cap, tree space (none for a thrown tree).
 		Vector3 fall; // Downwind, tree space: the way it fell.
+		bool snap = false; // Burnt through at its foot: no root plate.
 		bool swapped = false;
 		// A hard hit that came before its Blast asset was ready: swapped when it is.
 		bool hit = false;
@@ -204,6 +213,7 @@ private:
 		LocalVector<uint8_t> exclude;
 		Transform3D butt;
 		Vector3 fall;
+		bool snap = false;
 		Ref<Resource> asset;
 		Array materials;
 		uint64_t task = 0;
@@ -276,7 +286,7 @@ private:
 	Ref<ArrayMesh> _piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude = nullptr, uint64_t p_key = 0);
 	Ref<ArrayMesh> _kit_mesh(const Rig &p_rig, bool p_plate);
 	RigidBody3D *_make_part(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Transform3D &p_at, const LocalVector<uint8_t> &p_exclude, uint64_t p_key);
-	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, Array &r_materials);
+	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, bool p_snap, Array &r_materials);
 	static void _blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> &p_exclude, LocalVector<int> &r_chunk_of, LocalVector<int> &r_chunk_bone);
 	void _storm_settle(double p_delta);
 	void _blast_request(const StormPart &p_part);
@@ -357,6 +367,7 @@ public:
 	int get_storm_break_count() const { return storm_breaks; }
 	int get_storm_throw_count() const { return storm_throws; }
 	int get_storm_fall_count() const { return storm_falls; }
+	int get_storm_snap_count() const { return storm_snaps; }
 	// For tests: the storm load on a rigged mesh at a placement and the current time.
 	Dictionary get_storm_load(const Ref<Mesh> &p_mesh, const Transform3D &p_placement, int p_seed);
 	int get_collider_count() const;

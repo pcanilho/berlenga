@@ -149,9 +149,9 @@ void VegetationPollen3D::_index() {
 // The share of each pollen preset shedding today; dew or rain on the anthers holds it back.
 void VegetationPollen3D::_refresh_release() {
 	Dictionary s = season;
-	const WeatherMap3D *wm = weather_map.is_empty() ? nullptr : Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
+	const WorldWeather *wm = weather_map.is_empty() || !WorldContracts::weather()->has_provider() ? nullptr : WorldContracts::weather(); // weather_map set: follow the weather contract
 	if (s.is_empty() && wm) {
-		s = const_cast<WeatherMap3D *>(wm)->get_season(); // Not const: it eases the season state.
+		s = wm->season_at(get_global_position());
 	}
 	release.clear();
 	for (const Plant &p : plants) {
@@ -268,7 +268,7 @@ void VegetationPollen3D::_step(float p_delta) {
 		season_timer = 5.0f;
 		_refresh_release();
 	}
-	const WeatherMap3D *wm = weather_map.is_empty() ? nullptr : Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
+	const WorldWeather *wm = weather_map.is_empty() || !WorldContracts::weather()->has_provider() ? nullptr : WorldContracts::weather(); // weather_map set: follow the weather contract
 	// The trample group and world_contact, every body any system should feel (docs/ideas/world-links.md).
 	Vector<Node *> nodes = get_tree()->get_nodes_in_group(trample_group);
 	nodes.append_array(get_tree()->get_nodes_in_group(SNAME("world_contact")));
@@ -304,7 +304,7 @@ void VegetationPollen3D::_step(float p_delta) {
 		}
 		Vector3 wind;
 		if (wm) {
-			wind = wm->get_wind_at(m.last, 1.0f);
+			wind = wm->wind_at(m.last, 1.0f);
 			wind.y = 0.0f;
 		}
 		const float radius = WorldContracts::body_extent(b, 0.4f).x;
@@ -342,7 +342,7 @@ void VegetationPollen3D::_step(float p_delta) {
 					}
 					float dry = 1.0f;
 					if (wm) {
-						dry = 1.0f - Math::smoothstep(0.15f, 0.5f, wm->get_wetness_at(p.position)); // Wet anthers hold it.
+						dry = 1.0f - Math::smoothstep(0.15f, 0.5f, wm->surface_wetness_at(p.position)); // Wet anthers hold it.
 					}
 					const float a = p.pollen * share * charge * dry;
 					p.last = time;

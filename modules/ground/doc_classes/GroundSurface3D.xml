@@ -136,6 +136,12 @@
 				The puddle ice at [param position] (see [member puddle_ice]): its thickness in metres and the share of it broken into plates (0 to 1).
 			</description>
 		</method>
+		<method name="get_clods_node" qualifiers="const">
+			<return type="GroundClods3D" />
+			<description>
+				Returns the internal [GroundClods3D] while [member clods] is on and the node is in the tree, otherwise [code]null[/code].
+			</description>
+		</method>
 		<method name="get_crack_at" qualifiers="const">
 			<return type="Vector4" />
 			<param index="0" name="position" type="Vector3" />
@@ -212,6 +218,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The depth of the soft mud layer at [param position], in metres (0 where the ground is not mud or not wet enough; see [member mud_layer]).
+			</description>
+		</method>
+		<method name="get_mud_slide_angle_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The steepest ground, in degrees, that the mud at [param position] stays on with the depth it has left ([code]90[/code] where there is no mud or it holds anywhere). Steeper ground under it slides ([member mud_slides]).
 			</description>
 		</method>
 		<method name="get_near_moved_volume" qualifiers="const">
@@ -500,8 +513,9 @@
 			<param index="2" name="yaw" type="float" />
 			<param index="3" name="sinkage" type="float" />
 			<param index="4" name="velocity" type="Vector2" default="Vector2(0, 0)" />
+			<param index="5" name="tread" type="int" default="-1" />
 			<description>
-				Presses a wheel's rut: a flat print [param size] wide (x) and long (z), turned by [param yaw], [param sinkage] m deep, the soil thrown along [param velocity]. Returns the volume moved on the CPU field ([code]0[/code] on the GPU, where it is a stamp).
+				Presses a wheel's rut: a flat print [param size] wide (x) and long (z), turned by [param yaw], [param sinkage] m deep, the soil thrown along [param velocity]. [param tread] ([enum PhysXVehicleWheel3D.Tread], or [code]-1[/code] for a plain floor) prints the tyre's lugs or chains in the floor, smeared when it slips. Returns the volume moved on the CPU field ([code]0[/code] on the GPU, where it is a stamp).
 			</description>
 		</method>
 		<method name="refresh_ground">
@@ -571,6 +585,9 @@
 		<member name="character_mass" type="float" setter="set_character_mass" getter="get_character_mass" default="75.0">
 			The mass of a [CharacterBody3D] in [member deform_groups] without a [code]ground_mass[/code] meta, in kg.
 		</member>
+		<member name="clods" type="bool" setter="set_clods" getter="is_clods" default="true">
+			Clods of clay standing on the ground near the camera: thrown clay that lands as a lump, and lumps torn out of a rut's rim in sticky soil. Drawn by an internal [GroundClods3D] (see [method get_clods_node]).
+		</member>
 		<member name="contact_tolerance" type="float" setter="set_contact_tolerance" getter="get_contact_tolerance" default="0.03">
 			How close a body's underside must come to the surface to press it, in metres.
 		</member>
@@ -639,6 +656,9 @@
 		</member>
 		<member name="mud_layer" type="bool" setter="set_mud_layer" getter="is_mud_layer" default="true">
 			Deep mud: where the ground is wet, a soft layer of clay and silt over the firm base, as deep as [member mud_map] and the rules of [member mud_auto_depth] give. It flows as a Bingham fluid (stiff mud holds a rut, slurry closes it), bears and grips as clay, and lets wheels sink to the base.
+		</member>
+		<member name="mud_slides" type="bool" setter="set_mud_slides" getter="is_mud_slides" default="true">
+			Soaked mud slides downhill: where rain has thinned the [member mud_layer] until its own weight down the slope passes its yield stress, the layer flows off the slope (down to the depth that still holds, [method get_mud_slide_angle_at]) and piles in the ruts and hollows below. Volume is kept. Runs on the GPU field.
 		</member>
 		<member name="mud_map" type="Image" setter="set_mud_map" getter="get_mud_map">
 			A painted mud depth over [member mud_map_rect]: the red channel times [member mud_max_depth].

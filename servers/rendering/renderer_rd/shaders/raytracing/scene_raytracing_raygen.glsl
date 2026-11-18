@@ -737,15 +737,27 @@ uint rt_camera_medium(vec3 p_origin) {
 }
 
 // One photon from the sun into cascade p_cascade's square, and its straight twin.
-void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, inout uint rng) {
+// p_sub of p_count: this photon's strip of the pixel (the strips stratify a pixel's photons along x).
+void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
 	CausticsFrame f;
 	if (!rt_caustics_frame(p_center, p_cascade, f)) {
 		return;
 	}
-	vec2 uv = (vec2(p_pixel) + rand2(rng)) / vec2(gl_LaunchSizeEXT.xy);
+	vec2 j = rand2(rng);
+	j.x = (float(p_sub) + j.x) / float(p_count);
+	vec2 uv = (vec2(p_pixel) + j) / vec2(gl_LaunchSizeEXT.xy);
 	vec2 q = f.origin + uv * f.size;
-	vec3 start = q.x * f.r + q.y * f.u + (f.ref_depth + RT_CAUSTICS_SUN_HEIGHT) * f.L;
-	vec3 dir = -f.L;
+	// Each photon from a point on the sun's disc (at least the real sun's, 0.27 degrees across the
+	// radius, when the light is set sharper): the disc blurs the lines by its angle times the depth,
+	// so centimetre capillaries a metre down leave a soft shimmer rather than grain, as in a real
+	// stream, while the longer ripples still focus into lines. The ray passes the square's own point
+	// at the reference depth, so the jitter does not shift the square.
+	LightSample ls;
+	ls.cone_axis = -f.L;
+	ls.cos_theta_max = min(cos(max(lights_get(0u).radius, RT_CAUSTICS_MIN_SUN_RADIUS)), 0.999999);
+	float cone_pdf;
+	vec3 dir = lights_sample_cone(ls, rand2(rng), cone_pdf); // about -f.L, down from the sun
+	vec3 start = q.x * f.r + q.y * f.u + f.ref_depth * f.L - dir * RT_CAUSTICS_SUN_HEIGHT;
 	float width = f.size / float(f.res);
 	PathState ps;
 	// Only photons entering a medium through its front face count.
@@ -802,12 +814,21 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 	}
 
 	uint rng = init_rng(p_pixel, p_frame, 7919u);
-	// Every pixel's photon goes to cascade 0; a quarter of the pixels (turning every frame) also send
-	// one to cascade 1, and another quarter to cascade 2.
-	rt_caustics_photon_cascade(center, 0u, write, p_pixel, rng);
+	// Every pixel's photons go to cascade 0; a quarter of the pixels (turning every frame) also send
+	// to cascade 1, and another quarter to cascade 2. A bright line is a density estimate, so each
+	// cascade gets at least RT_CAUSTICS_MIN_PHOTONS a texel a frame: at 1080p one photon a pixel is
+	// enough, while a small frame (640x360: about one a texel, so the lines dissolved into grain under
+	// rippled water) sends up to RT_CAUSTICS_MAX_PER_PIXEL each.
+	uint n0 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES * RT_CAUSTICS_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
+	for (uint k = 0u; k < n0; k++) {
+		rt_caustics_photon_cascade(center, 0u, write, p_pixel, k, n0, rng);
+	}
 	uint quarter = ((p_pixel.x & 1u) | ((p_pixel.y & 1u) << 1u)) ^ (p_frame & 3u);
 	if (quarter >= 1u && quarter < cascades) {
-		rt_caustics_photon_cascade(center, quarter, write, p_pixel, rng);
+		uint n1 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 4u + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
+		for (uint k = 0u; k < n1; k++) {
+			rt_caustics_photon_cascade(center, quarter, write, p_pixel, k, n1, rng);
+		}
 	}
 }
 
@@ -980,6 +1001,10 @@ void main() {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
+			if (bounce == 0u) {
+				// Heat shimmer: the camera ray bends through the gas's hot air (raytracing_volume_inc.glsl).
+				rt_volume_bend(ray_origin, ray_dir, camera_t_far, ps.rng_state);
+			}
 			ps.hit_t = -1.0; // A miss must not retain the previous segment's hit distance.
 			path_pack(payload, ps);
 			payload_set_cone_width(payload, cone_width);
@@ -2297,22 +2322,55 @@ void vmud_apply(float p_cover, vec2 p_tone, vec3 p_color, float p_wet, inout vec
 	r_specular = mix(r_specular, 0.5, p_cover);
 }
 
-// The far ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each
-// point reads it through a slow world-space warp of about a metre (crests bend and shift as real trains do round
-// defects) and a height that wanders between 55 and 100% over a few metres; both fade to none at the real
-// ripples' window so the two meet crest to crest. As material.cpp ground_ripple_vary().
-float ground_ripple_vn(vec2 p_p) {
+// The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
+// it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
+// few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
+// real ripple fields), with a height that wanders between 30 and 100%. p_k is the grown field's dominant wave
+// vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
+// through the same lines (GroundRipples::vary), so the two meet crest to crest.
+float ground_ripple_hash(ivec2 p_c, uint p_s) {
+	uint h = (uint(p_c.x) * 0x8da6b343u) ^ (uint(p_c.y) * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
+	h = (h ^ (h >> 16u)) * 0x7feb352du;
+	h = (h ^ (h >> 15u)) * 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
+float ground_ripple_vn(vec2 p_p, uint p_s) {
 	vec2 i = floor(p_p);
 	vec2 f = p_p - i;
 	vec2 u = f * f * (3.0 - 2.0 * f);
-	vec4 h = fract(sin(vec4(dot(i, vec2(127.1, 311.7)), dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)), dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7)), dot(i + vec2(1.0), vec2(127.1, 311.7)))) * 43758.5453);
-	return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+	ivec2 c = ivec2(i);
+	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
-vec3 ground_ripple_vary(vec2 p_xz, float p_out) {
-	vec2 q = p_xz;
-	vec2 warp = 1.2 * (vec2(ground_ripple_vn(q / 5.0), ground_ripple_vn(q / 5.0 + 17.3)) - 0.5);
-	float amp = mix(0.55, 1.0, ground_ripple_vn(q / 2.5 + 41.0));
-	return vec3(warp * p_out, mix(1.0, amp, p_out));
+vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
+	vec2 p = p_xz;
+	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
+	o += 1.2 * (vec2(ground_ripple_vn(p / 7.0, 3u), ground_ripple_vn(p / 7.0, 4u)) - 0.5);
+	o += 0.16 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
+	float amp = mix(0.3, 1.0, smoothstep(0.15, 0.85, 0.6 * ground_ripple_vn(p / 9.0, 7u) + 0.4 * ground_ripple_vn(p / 2.2, 8u)));
+	float kk = dot(p_k, p_k);
+	if (kk > 0.0) {
+		vec2 kn = p_k / sqrt(kk);
+		vec2 t = vec2(-kn.y, kn.x);
+		ivec2 c0 = ivec2(floor(p / 2.5));
+		float ph = 0.0;
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				ivec2 c = c0 + ivec2(dx, dz);
+				if (ground_ripple_hash(c, 9u) >= 0.55) {
+					continue;
+				}
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.5;
+				float hl = 0.2 + 0.4 * ground_ripple_hash(c, 12u);
+				vec2 da = p - (m - t * hl);
+				vec2 db = p - (m + t * hl);
+				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
+				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(1.2, 2.4, length(p - m)));
+			}
+		}
+		o += p_k * (ph / kk);
+	}
+	return vec3(o, amp);
 }
 
 // Standing water's depth between texels. The water's level (bed plus depth) is what varies smoothly, so the depth
@@ -2334,6 +2392,8 @@ float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
 // ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
+#include "raytracing_rain_inc.glsl"
+
 vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
@@ -3024,6 +3084,7 @@ void main() {
 			vec4 m0 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(0, ts.y - 1), 0);
 			vec4 m1 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(1, ts.y - 1), 0);
 			vec4 m2 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(2, ts.y - 1), 0);
+			vec4 m3 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(3, ts.y - 1), 0);
 			vec2 p = (h.hit_pos + rt_origin.xyz).xz;
 			int rn = int(m2.y + 0.5);
 			int sn = int(m2.z + 0.5);
@@ -3043,7 +3104,7 @@ void main() {
 				float w = sand * (1.0 - live);
 				if (w > 0.0) {
 					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
-					vec3 vr = ground_ripple_vary(p, 1.0 - live);
+					vec3 vr = ground_ripple_vary(p, m3.xy);
 					vec2 tc = (p + vr.xy) / m0.w;
 					ivec2 c0 = ivec2(floor(tc));
 					vec2 cf = tc - vec2(c0);
@@ -3074,6 +3135,11 @@ void main() {
 				vec3 wpos = h.hit_pos + rt_origin.xyz;
 				vec2 wuv = clamp((wpos.xz - wrect.xy) / wrect.zw, half_texel, 1.0 - half_texel);
 				float weather_wet = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g;
+				// A canopy stays wet while it holds the water it intercepted (the rain map's green), as the raster.
+				uint rnmap = uint(get_rt_param(RT_PARAM_RAIN_MAP));
+				if (rnmap != 0u && rt_material_wetness_canopy(mat)) {
+					weather_wet = max(weather_wet, textureLod(sampler2D(bindless_textures[nonuniformEXT(rnmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g);
+				}
 				// Wet where water has been (contact wetness), easing out over its square's outer tenth.
 				uint cmap = uint(get_rt_param(RT_PARAM_CONTACT_WET_MAP));
 				if (cmap != 0u) {
@@ -3094,6 +3160,15 @@ void main() {
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * wetness.x);
 		m.albedo *= mix(1.0, wet_factor, wet);
 		m.roughness *= mix(1.0, wet_factor, 0.5 * wet);
+		if (rt_material_wetness_canopy(mat) && wetness.w > 0.5) {
+			// Water beaded on a waxy leaf, at full detail (footprint 0), as the raster's rain_surface_beads().
+			vec4 bead = rain_surface_beads(h.hit_pos + rt_origin.xyz, m.normal, wet * smoothstep(-0.2, 0.6, m.normal.y), 0.0);
+			if (bead.w > 0.0) {
+				m.normal = normalize(m.normal - bead.xyz);
+				m.roughness = mix(m.roughness, 0.05, bead.w);
+				m.albedo *= 1.0 - 0.5 * bead.w;
+			}
+		}
 	} else if (g_wet > 0.0) {
 		// A ground material without wetness: sand's porosity (0.6).
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * 0.6);
@@ -3137,6 +3212,26 @@ void main() {
 		m.roughness = mix(m.roughness, gil.z, gil.y);
 		m.specular = mix(m.specular, 0.22, gil.y);
 		vec2 gfs = ground_water_flow(gfp.xz, h.geometry_normal, g_water, scene_data_block.data.time, gffp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
+		// Raindrop rings on the water (material.cpp: rain_ripples() at weather_rainfall_at()); the rain from the
+		// weather state map (red, mm/h) times the rain share at this height.
+		{
+			float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
+			float grate = 0.0;
+			vec4 grect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+					get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+			if (grs > 0.0 && grect.z > 0.0) {
+				uint gwmap = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+				vec2 gws = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(gwmap)], SAMPLER_LINEAR_CLAMP), 0));
+				vec2 ght = 0.5 / max(gws, vec2(1.0));
+				vec2 gwuv = clamp((gfp.xz - grect.xy) / grect.zw, ght, 1.0 - ght);
+				float gprec = textureLod(sampler2D(bindless_textures[nonuniformEXT(gwmap)], SAMPLER_LINEAR_CLAMP), gwuv, 0.0).r;
+				float gair = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
+				grate = max(gprec, 0.0) * rain_liquid_share(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY));
+			}
+			vec3 grr = grate > 0.0 ? rain_ripples(gfp.xz, scene_data_block.data.time, grate, gffp) : vec3(0.0);
+			gfs += grr.xy * grs;
+			m.roughness = mix(m.roughness, rain_ripple_roughness(m.roughness, grr.z), grs);
+		}
 		if (gfs != vec2(0.0)) {
 			m.normal = normalize(m.normal - vec3(gfs.x, 0.0, gfs.y));
 		}

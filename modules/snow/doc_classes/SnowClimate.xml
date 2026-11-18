@@ -82,6 +82,9 @@
 		<member name="density" type="PackedFloat32Array" setter="set_density" getter="get_density" default="PackedFloat32Array()">
 			Baked: the pack's density per cell, kg/m3.
 		</member>
+		<member name="ice" type="PackedFloat32Array" setter="set_ice" getter="get_ice" default="PackedFloat32Array()">
+			The baked lake ice per cell, in metres.
+		</member>
 		<member name="january_temperature" type="float" setter="set_january_temperature" getter="get_january_temperature" default="-1.0">
 			Mean temperature of the coldest month at [member base_height], in C.
 		</member>
@@ -138,6 +141,9 @@
 		</member>
 		<member name="wet_day_precipitation" type="float" setter="set_wet_day_precipitation" getter="get_wet_day_precipitation" default="9.0">
 			Mean water on a wet day, in mm (exponentially distributed).
+		</member>
+		<member name="white_ice" type="PackedFloat32Array" setter="set_white_ice" getter="get_white_ice" default="PackedFloat32Array()">
+			The baked white (snow) ice per cell, in metres.
 		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="5.0">
 			Mean daily wind at 10 m on dry days, in m/s.

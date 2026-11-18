@@ -180,6 +180,8 @@ void SnowClimate::set_result(Rect2 p_rect, int p_resolution, const PackedFloat32
 	albedo = p_albedo;
 	cornice_x = p_cornice_x;
 	cornice_z = p_cornice_z;
+	ice.clear();
+	white_ice.clear();
 	emit_changed();
 }
 
@@ -237,5 +239,7 @@ void SnowClimate::_bind_methods() {
 	BIND_PROP(Variant::PACKED_FLOAT32_ARRAY, albedo, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::PACKED_FLOAT32_ARRAY, cornice_x, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::PACKED_FLOAT32_ARRAY, cornice_z, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::PACKED_FLOAT32_ARRAY, ice, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::PACKED_FLOAT32_ARRAY, white_ice, PROPERTY_HINT_NONE, "")
 #undef BIND_PROP
 }

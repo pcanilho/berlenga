@@ -1305,6 +1305,225 @@ against the legs while the downstream side held out, and it all hung back
 once out of the water. Left: free PhysXCloth3D (flags and sheets dipping in
 a river) does not take the current yet.
 
+### Fire whirls (picked 18 Nov night, fourth of four)
+
+Built. Research: fire whirls form where a fire's updraft meets ambient
+vorticity, most often on the flanks of a front in a cross wind or at a
+lee slope (Forthofer and Goodrick 2011, "Review of vortices in wildland
+fire"). Kuwana et al. (2008) found whirls behind line fires when the wind
+U is near the buoyant velocity scale w* = (g I / (rho cp T))^(1/3), and
+L-shaped fronts favour them (Kuwana et al. 2013). Whirl cores are a
+fraction of the flame length across, spin at a few times w* and stand
+several flame lengths tall. Here: tiles of strong flame (I at least 300
+kW/m) whose front normal runs across the wind (|n . w| under 0.35) are
+flank sites. Each has a birth chance of 1 in 180 a second times a
+log-normal favour exp(-(ln(U/w*)/0.5)^2), at most two whirls, 6 m apart.
+A whirl has a core of 0.3 flame lengths (0.3 to 3 m), spins at 2 w* either
+way round, rises at 2 w*, lives 10 to 30 s, drifts at a third of the wind
+and ages three times as fast off flaming fuel. It draws as four
+overlapping Flow sources in a helix up its core (tangential plus upward
+velocity), so the flame is pulled into one spinning column, and adds a
+firebrand plume (1.5 times its rise) so brands caught in it go higher.
+Test: a 24 m grass fire, 90 s at each wind: none at 1 m/s, 7 at 2.5, 4 at
+4, none at 6 and 9 m/s; the frame shows a flame column about twice the
+height of the front's flames with smoke shed off its top. Left: the
+column's vorticity is set by its sources, not grown by Flow from a sheared
+wind field, and terrain lee slopes are not yet a birth site.
+
+### Next-round options (card, 18 Nov late)
+
+1. Burning pieces keep their flames. After a burning wall breaks, the
+   Flow sources stay where the intact shape stood. Here: the burnable
+   follows the destructible's live pieces (their AABBs and char state) and
+   moves its emitters with them, so a falling plank burns as it falls
+   and smoulders where it lands (as Teardown and BeamNG keep fire on
+   debris).
+2. River current drags flags, sheets and nets. Free PhysXCloth3D does not
+   yet read the water contract. Here: the same Morison drag and reduced
+   weight as worn clothing, per particle under WorldContracts' water, so a
+   sheet dipped in a river streams downstream.
+3. Wind lifts ash after a fire. Burnt grass leaves a light ash layer (a
+   few hundred g/m2) that blows off in winds above about 4 m/s (Wagenbrenner
+   et al. 2013, post-fire ash emission). Here: the char map seeds a heavy
+   dust (negative smoke_buoyancy) in Flow where wind is strong over fresh
+   ash, thinning the ash each gust, so a burnt hillside smokes grey in
+   the wind for hours.
+4. Fire whirls on lee slopes. Whirls also form in the lee of ridges where
+   the wind separates (Forthofer and Goodrick 2011; Sharples et al. 2012
+   on vorticity-driven lateral spread). Here: births also where the
+   terrain wind (WeatherMap3D, terrain wind) turns back behind a ridge,
+   and those whirls run along the slope, spreading the fire sideways.
+
+### Burning pieces keep their flames (picked 18 Nov late, first of four)
+
+Built. Once a burning PhysXDestructible3D has broken, PhysXBurnable3D finds
+the burning patch again among the pieces by where each sat in the intact
+object (PhysXDestructible3D.get_piece_rest_center: the middle of its
+chunks in the node's space) and their size (get_piece_volume): a piece
+whose rest centre lies within the burn radius of the ignition, give or
+take half its size, is alight. The eight biggest carry the flames, a
+Flow source riding just over each (Flow takes moving bodies as solids, so
+the gas would be lost inside one), the heat release shared by volume and
+the flame height by Heskestad as on the faces. Sparks and firebrands rise
+from the same places, so they follow the debris too. Once the fuel is
+spent the pieces smoulder: a faint warm smoke over each until the embers
+die, with the char glow already carried on the pieces by the instance
+shader parameters. This is how Teardown and BeamNG keep fire on debris:
+fire is a property of the burning material and moves with it. Test: the
+3 x 2 m board wall broke at 70 s (fast collapse_share); flames went down
+with the pieces and burnt on the ground pile (heights 0.2 to 0.3 m) at
+125 s. get_piece_center now gives the middle of all a piece's chunks with
+the node's scale (it gave the first chunk's), which also puts rockfall
+dust under the middle of a falling island.
+
+### River current drags flags and sheets (picked 18 Nov late, second of four)
+
+Built for the CPU cloth solver (PhysXCloth3D's default). The XPBD solver
+takes the water's surface and current (ClothWetness reads them from
+WorldContracts' water each step): particles under the surface keep 30% of
+their weight and relax toward the current at Morison's 0.5 rho Cd |u| over
+the soaked areal mass (Cd 1.2), capped at 200/s, as worn clothing does.
+Test: a 1 x 1.5 m sheet hanging from its top edge with its lower 45 cm in
+the water: still water left it hanging; a 0.8 m/s current streamed its
+lower edge 0.94 m downstream, up to the surface, in two seconds, and it
+hung straight again once out. Left: the GPU deformable path (PhysX
+surface) does not take the current.
+
+### Wind lifts ash after a fire (picked 18 Nov late, third of four)
+
+Built. Research: fresh burn scars are among the strongest wind-erosion
+dust sources (Wagenbrenner et al. 2013, 2017, Idaho rangeland fires:
+emission from winds near 5 m/s until rain crusts the ash or plants come
+back); ash loads run 0.1 to 5 kg/m2, the low end in grass (Bodi et al.
+2014). Here: each burnt cell holds the ash its burn made (6% of the fine
+fuel burnt, plus 0.15 kg/m2 under a fully burnt crown), less what has
+blown. Once cold (three burn times, as steam's "hot") and dry (intercepted
+water under 0.02 kg/kg: rain or fluid water holds it), it gives a dust
+flux from the friction velocity u* = 0.075 U (log law to 2 m over 1 cm
+roughness): White's horizontal flux Q = 2.6 rho/g u*^3 (1 - (u*t/u*)^2)
+with u*t = 0.25 m/s (some 3.5 m/s near the ground), and the lifted dust
+F = 2e-3 Q. Gusts are a noise field carried with the wind (Taylor's frozen
+turbulence, +/- 35% of U), so as u*^3 the ash comes off in travelling
+puffs. About-2 m patches feed PhysXAsh, which makes its own PhysXFlow3D
+only while ash blows (no combustion, grey, smoke_buoyancy -0.4 so it hugs
+the ground, slow fade) with eight low box sources pushing into the wind's
+direction; the Flow's own weather wind carries it. The crown ash in the
+char map thins as it blows off. Test: a 16 m tall-grass burn (about 10 kg
+of ash): 0.04 kg blown in 5 minutes at 3 m/s, 1.5 kg at 5, 8.2 at 8 and
+all of it within 3 minutes at 12 m/s; under a 10 m/s WeatherMap3D wind a
+low grey sheet streamed downwind off the scar. Left: grass ash does not
+show in the char map itself (only crown ash is drawn lighter).
+
+### Fire whirls behind ridges (picked 18 Nov late, fourth of four)
+
+Built. Research: wind over a ridge separates and rolls into a horizontal
+eddy in the lee; a fire on the lee slope tilts that vorticity upright into
+whirls that carry the fire across the slope, along the ridge, at rates
+near the head fire's (vorticity-driven lateral spread: Sharples et al.
+2012, Simpson et al. 2013 in coupled LES; the 2003 Canberra fires). The
+operational test (Sharples et al. 2012): slope over about 20 degrees,
+aspect within 40 degrees of the lee direction, wind over about 20 km/h.
+Here: strong flaming tiles (at least 300 kW/m) where the fire's ground
+(its height samples) falls away at more than tan 20 within 40 degrees of
+downwind, in a wind over 5.5 m/s, are lee sites. Each has a 1 in 600
+chance a second of a whirl, with no U/w* condition (the eddy is the
+ridge's). A lee whirl lives 20 to 60 s, drifts along the contour at a
+fifth of the wind (either way, plus a tenth of the wind downslope),
+lights the fuel under its core as it goes, and otherwise draws and lofts
+brands as a flank whirl. All whirls now sit on the ground's height. Test:
+a 30 x 40 m tall-grass patch on a 28 degree slope falling away downwind:
+at 8 m/s five lee whirls in two minutes widened the burn across the slope
+to 22.5 m at one minute against 18.5 m without whirls; none with the
+wind up the slope. (That test found the fire's length-to-width ratio
+uncapped: Anderson's fit gives about 90 at 8 m/s, stalling the flanks;
+it is now capped at 8 as FARSITE does.)
+Left: the lee test reads the fire's own slope, not the terrain wind's
+separation behind a ridge crest upwind; whirls (and so the lateral
+spread) need the fire's Flow, as flank whirls do.
+
+### Next-round options (card, 18 Nov late night)
+
+1. Fire makes its own wind. A fire's plume draws air in at its base
+   (indraft of a few m/s at a strong front: Clements et al. 2007, FireFlux),
+   which tilts flames toward the fire, slows the backing front and pulls
+   smoke, ash, grass and loose cloth inward. Here: the fire's Flow
+   velocity near the ground, sampled at the front, feeds the spread's
+   effective wind (WRF-SFIRE's two-way coupling, with Flow as the
+   atmosphere), and is offered on the wind contract so grass, cloth and
+   particles near a fire lean into it.
+2. Burnt trees fall later. A ground fire chars a trunk's base (cambium
+   killed, wood charred from the outside: Dickinson and Johnson 2001);
+   days on, or in the next strong wind, fire-weakened trees fall (hazard
+   trees, a main danger to crews). Here: the char depth at the stem foot
+   from flame length and residence time, the section left (as buildings'
+   EN 1995-1-2 model) against the wind's bending load, and a tree whose
+   base gives way falls as a PhysX body (the storm bench's thrown-tree
+   path).
+3. Burnt grass shows its ash. Complete combustion leaves white-grey
+   mineral ash, incomplete black char (Roy et al. 2010: ash albedo 0.3 to
+   0.5, char 0.03 to 0.05); the mix follows fuel moisture and intensity.
+   Here: the char map draws grass ash by combustion completeness, thinned
+   by blowing ash and darkened by rain, so a burn scar reads grey and
+   black in patches instead of uniform black.
+4. Lee eddies from the terrain wind. Lee whirls now read the fire's own
+   slope. Here: WeatherMap3D's terrain wind marks where flow separates
+   behind a crest (reversed or slack near-ground wind in the lee), so lee
+   whirls form only below a real ridge, and the lateral spread follows the
+   ridge line.
+
+### Fire makes its own wind (picked 18 Nov late night, first of four)
+
+Built. Research: a fire's plume entrains air at its base; FireFlux
+(Clements et al. 2007) measured an indraft of a few m/s at a grass head
+fire, opposing the ambient wind ahead of it, and coupled models
+(WRF-SFIRE, Coen's CAWFE, Clark et al. 1996) show it drawing fronts
+together where they meet (junction fires: Viegas et al. 2012, Raposo et
+al. 2018). Here: each 2 m stretch of burning front over 50 kW/m is a sink
+drawing in, per metre and side, q = (pi/2) w* d0 (w* Byram's buoyant
+velocity, d0 half the flame length), so the inflow just outside the
+flames is about w*/2 and falls as 1/d along a front (a line sink) and
+1/d^2 past its ends; the strongest 64 are kept each 0.25 s. It goes out
+three ways: WorldFire.wind_at (a new contract member, summed over fires),
+which PhysXCloth3D adds to its wind; shader globals fire_wind_map and
+fire_wind_rect (2 m texels over the fire), which grass adds to its wind
+(VegetationFire::WIND_CODE); and the spread, which takes only the pull of
+fire more than 5 m away lying ahead of a front (a fire's pull on its own
+front is in Rothermel's empirical fits already). Test: two 20 m fire lines
+8 m apart in calm tall grass closed the gap in 65 s against 136 s without
+it; a lone fire in a 3 m/s wind burnt exactly the same area either way;
+the indraft 2 m outside a calm front was 0.3 to 0.6 m/s. Left: the Flow
+gas itself does not take this wind (it has its own buoyant flow), and the
+grass map covers the fire's own area only.
+
+### Burnt trees fall later (picked 18 Nov late night, second of four)
+
+Built. Research: fire kills and chars a trunk's base from outside, deepest
+on the lee side where flames wrap round it (catfaces: Gill 1974,
+Gutsell and Johnson 1996); burnt-through and hollowed bases are how
+fire-killed trees fail, often months later in wind (hazard trees:
+Dickinson and Johnson 2001, Hood et al. 2008). Charring in wood moves
+inward at about 0.65 to 0.8 mm a minute of fire (EN 1995-1-2, the
+notional rate), and the section left carries the bending load (the
+reduced cross-section method). Here: PhysXFireSpread3D keeps, per cell,
+the time heat stood at it (grass and litter by their heat over 50 kW/m2,
+a flaming log fully, a smouldering one a third), so a log burning
+against a trunk for an hour chars it about 5 cm and a grass front alone
+barely marks bark. WorldFire.stem_char_at (a new contract member, the
+most of any fire) gives it to TreeWind3D, which reads it for each tree
+once a second while a fire provider exists. In the storm test the char
+past the bark (a tenth of the radius, 5 mm to 3 cm), taken as half its
+depth round the stem, leaves (1 - c/r)^3 of the foot's strength (times a
+per-tree defect, 65 to 115%); if the wind's base moment beats that
+before it beats the roots, the tree snaps at its foot: it falls as the
+thrown-tree body without its root plate (no plate mass or hull, no pit),
+hinged on its lee side at the foot, and its scorched low limbs (side
+capsules below a third of its height) no longer prop it (crown scorch
+height, Van Wagner 1973). Test: on the storm bench a spruce with 12 cm
+of char (`--char=0.12`, a WorldFire stub) snaps at about 2.8 s in a
+26 m/s storm and lies down on its upper whorls; without char nothing is
+thrown at 26 m/s. Left: no stump is drawn (the whole tree falls), and
+char does not yet weaken limbs or the standing tree's sway.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

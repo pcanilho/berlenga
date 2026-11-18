@@ -228,16 +228,29 @@
 				Returns the ground height the snowpack uses at [param position].
 			</description>
 		</method>
-		<method name="get_map_rect" qualifiers="const">
-			<return type="Rect2" />
+		<method name="get_ice_thickness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
 			<description>
-				Returns the world XZ rectangle the map covers.
+				Returns the lake ice at [param position] in metres (0 on land and open water).
+			</description>
+		</method>
+		<method name="get_lake_ice" qualifiers="const">
+			<return type="SnowLakeIce3D" />
+			<description>
+				Returns the [SnowLakeIce3D] this cover made to draw its ice, or [code]null[/code].
 			</description>
 		</method>
 		<method name="get_main_thread_msec" qualifiers="const">
 			<return type="float" />
 			<description>
 				Returns the main thread's share of the last update, in milliseconds: gathering the weather the cells read, starting the update and swapping its results in. With [member background_updates] off, the whole update.
+			</description>
+		</method>
+		<method name="get_map_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				Returns the world XZ rectangle the map covers.
 			</description>
 		</method>
 		<method name="get_new_snow_at" qualifiers="const">
@@ -300,11 +313,25 @@
 				Returns how long the last update's work took, in milliseconds: the weather gathered on the main thread plus the cells, slides, drift and cornices on whichever thread ran them.
 			</description>
 		</method>
+		<method name="get_water_level_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the water surface at [param position] from the [TerrainDataMap3D] at [member climate_map] (where it is deeper than 5 cm), or [code]-INF[/code] on land.
+			</description>
+		</method>
 		<method name="get_wetness_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the liquid water in the snowpack at [param position] over what it can hold, 0 (dry) to 1 (saturated).
+			</description>
+		</method>
+		<method name="get_white_ice_thickness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns how much of the lake ice at [param position] is white snow ice (flooded snow), in metres. The rest is clear ice.
 			</description>
 		</method>
 		<method name="get_world_depth_at" qualifiers="const">
@@ -348,17 +375,28 @@
 				Returns the snow water equivalent (mm) a slope of [param slope_degrees] holds before it slides (SnowSlide, Bernhardt and Schulz 2010): [param min_mm] at 75 degrees and steeper, growing by a factor of e every 1 / [param decay] degrees flatter.
 			</description>
 		</method>
+		<method name="is_updating" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while an update runs in the background. The getters keep answering from the last finished update meanwhile.
+			</description>
+		</method>
+		<method name="lake_ice_growth" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="ice" type="float" />
+			<param index="1" name="air_celsius" type="float" />
+			<param index="2" name="snow_depth" type="float" />
+			<param index="3" name="snow_density" type="float" />
+			<param index="4" name="hours" type="float" />
+			<description>
+				Returns lake ice after [param hours] at [param air_celsius] (below 0 °C) from [param ice] metres, under [param snow_depth] metres of snow of [param snow_density] kg/m³: Stefan's law with the heat path through the snow and the air (Leppäranta 1993; Ashton 1989), integrated exactly.
+			</description>
+		</method>
 		<method name="new_snow_density" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="celsius" type="float" />
 			<description>
 				Returns the density of new snow falling at [param celsius] (Hedstrom and Pomeroy 1998): 67.92 + 51.25 exp(T / 2.59) kg/m³.
-			</description>
-		</method>
-		<method name="is_updating" qualifiers="const">
-			<return type="bool" />
-			<description>
-				Returns [code]true[/code] while an update runs in the background. The getters keep answering from the last finished update meanwhile.
 			</description>
 		</method>
 		<method name="refresh_heights">
@@ -372,6 +410,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the ground height at [param position] straight from [member height_source] (or a ray down on [member ground_collision_mask]), finer than the cells. NaN where nothing answers.
+			</description>
+		</method>
+		<method name="snow_conductivity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<description>
+				Returns the thermal conductivity of snow of [param density] kg/m³ in W/(m K) (Sturm et al. 1997).
 			</description>
 		</method>
 		<method name="snowfall_fraction" qualifiers="static">
@@ -449,6 +494,9 @@
 			Relative humidity (0 to 1) used when no [code]WeatherMap3D[/code] is in the scene.
 		</member>
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.85">
+		</member>
+		<member name="lake_ice_enabled" type="bool" setter="set_lake_ice_enabled" getter="is_lake_ice_enabled" default="true">
+			Lakes and rivers freeze: ice grows in frost under the insulating snow, holds snow from 2 cm, floods into white snow ice under a heavy load and thaws once the snow is gone; from 5 cm it bears a walker. Drawn by a [SnowLakeIce3D] the cover adds. Off, snow and rain landing on water melt into it.
 		</member>
 		<member name="lapse_rate" type="float" setter="set_lapse_rate" getter="get_lapse_rate" default="6.5">
 			How fast the air cools with height above the weather map's ground height, in °C per km (6.5, the standard atmosphere). Sets where rain turns to snow on a mountain and where snow stays.

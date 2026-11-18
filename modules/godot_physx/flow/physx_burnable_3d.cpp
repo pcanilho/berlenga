@@ -461,8 +461,107 @@ void PhysXBurnable3D::_burn(float p_delta) {
 // Flow emitters of hot fuel gas just outside each burning face (four sides and the top), over the part of the face
 // the burning patch covers, so the flames rise along the faces and lick over the top, as a wall fire's flame
 // attaches to the wall it burns. The heat is shared by the faces' burning areas.
+PhysXFlowEmitter3D *PhysXBurnable3D::_emitter(int p_slot) {
+	PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(emitters[p_slot]));
+	if (!e) {
+		e = memnew(PhysXFlowEmitter3D);
+		e->set_name(String(get_name()) + "Flame" + itos(p_slot));
+		flow->add_child(e);
+		e->set_flow_path(e->get_path_to(flow));
+		e->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
+		emitters[p_slot] = e->get_instance_id();
+	}
+	return e;
+}
+
+// A broken destructible: the burning patch (the part of the intact object within burn_radius of the ignition)
+// is found again among its pieces by where they sat, and the flames ride on them, the heat shared by their volume.
+// Pieces that come to rest keep smouldering, a thin smoke over the glowing char, until the embers die.
+bool PhysXBurnable3D::_update_piece_emitters() {
+#ifdef GODOT_PHYSX_BLAST
+	PhysXDestructible3D *d = Object::cast_to<PhysXDestructible3D>(ObjectDB::get_instance(destructible_id));
+	if (!d || !d->is_fractured()) {
+		return false;
+	}
+	piece_flames.clear();
+	const bool flaming = state == STATE_FLAMING && hrr > 0.0f;
+	const bool glowing = state == STATE_SMOULDERING && smoulder > 0.02f;
+	struct Lit {
+		int index;
+		float volume;
+	};
+	LocalVector<Lit> lit;
+	float total = 0.0f;
+	if (flaming || glowing) {
+		for (int i = 0; i < d->get_piece_count(); i++) {
+			const float vol = d->get_piece_volume(i);
+			const float half = 0.5f * Math::pow(MAX(vol, 1.0e-6f), 1.0f / 3.0f);
+			if (vol <= 0.0f || d->get_piece_rest_center(i).distance_to(origin_local) > burn_radius + half) {
+				continue;
+			}
+			lit.push_back({ i, vol });
+		}
+	}
+	// The biggest burning pieces carry the flames.
+	struct ByVolume {
+		bool operator()(const Lit &a, const Lit &b) const { return a.volume > b.volume; }
+	};
+	lit.sort_custom<ByVolume>();
+	if (lit.size() > PIECE_EMITTERS) {
+		lit.resize(PIECE_EMITTERS);
+	}
+	for (const Lit &l : lit) {
+		total += l.volume;
+	}
+	for (int f = 0; f < FACE_EMITTERS; f++) {
+		if (PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(emitters[f]))) {
+			e->set_enabled(false);
+		}
+	}
+	for (int k = 0; k < PIECE_EMITTERS; k++) {
+		const int slot = FACE_EMITTERS + k;
+		if (k >= (int)lit.size() || total <= 0.0f) {
+			if (PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(emitters[slot]))) {
+				e->set_enabled(false);
+			}
+			continue;
+		}
+		PhysXFlowEmitter3D *e = _emitter(slot);
+		const float size = Math::pow(lit[k].volume, 1.0f / 3.0f);
+		const float r = CLAMP(0.5f * size, 0.12f, 0.6f);
+		// Over the piece, clear of its body (Flow takes moving bodies as solids).
+		const Vector3 at = d->get_piece_center(lit[k].index) + Vector3(0, 0.5f * size + 0.5f * r, 0);
+		e->set_enabled(true);
+		e->set_radius(r);
+		e->set_global_position(at);
+		e->set_burn(0.0f);
+		e->set_couple_rate(2.0f);
+		if (flaming) {
+			const float share = hrr * lit[k].volume / total;
+			const float flame = CLAMP(0.235f * Math::pow(share / 1000.0f, 0.4f) - 1.02f * 2.0f * r, 0.15f, 4.0f); // Heskestad
+			e->set_temperature(1.0f);
+			e->set_fuel(flame_strength * CLAMP(share / 100000.0f, 0.2f, 1.0f));
+			e->set_smoke(0.0f);
+			e->set_velocity(Vector3(0, CLAMP(flame * 0.8f, 0.4f, 2.0f), 0));
+			piece_flames.push_back(at);
+		} else {
+			e->set_temperature(0.35f * smoulder);
+			e->set_fuel(0.0f);
+			e->set_smoke(0.4f * smoulder);
+			e->set_velocity(Vector3(0, 0.3f, 0));
+		}
+	}
+	return true;
+#else
+	return false;
+#endif
+}
+
 void PhysXBurnable3D::_update_emitter() {
 	if (!flow) {
+		return;
+	}
+	if (_update_piece_emitters()) {
 		return;
 	}
 	const bool flaming = state == STATE_FLAMING && hrr > 0.0f;
@@ -510,18 +609,13 @@ void PhysXBurnable3D::_update_emitter() {
 		total += faces[f].area;
 	}
 	const Transform3D xf = _target_xform();
-	for (int f = 0; f < 5; f++) {
+	for (int f = 0; f < FACE_EMITTERS; f++) {
 		PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(emitters[f]));
 		if (!e) {
 			if (!flaming || faces[f].area <= 0.0f) {
 				continue;
 			}
-			e = memnew(PhysXFlowEmitter3D);
-			e->set_name(String(get_name()) + "Flame" + itos(f));
-			flow->add_child(e);
-			e->set_flow_path(e->get_path_to(flow));
-			e->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
-			emitters[f] = e->get_instance_id();
+			e = _emitter(f);
 		}
 		if (!flaming || faces[f].area <= 0.0f || total <= 0.0f) {
 			e->set_enabled(false);
@@ -555,7 +649,14 @@ void PhysXBurnable3D::_update_embers(float p_delta) {
 	if (embers && state == STATE_FLAMING) {
 		ember_carry += ember_rate * hrr / 1.0e6f * p_delta;
 		if (hrr > 0.0f) {
-			const AABB wb = xf.xform(bounds);
+			AABB wb = xf.xform(bounds);
+			if (!piece_flames.is_empty()) {
+				wb = AABB(piece_flames[0], Vector3());
+				for (const Vector3 &p : piece_flames) {
+					wb.expand_to(p);
+				}
+				wb = wb.grow(0.1f);
+			}
 			const float width = MAX(MAX(wb.size.x, wb.size.z), 0.2f);
 			float t_air = 20.0f;
 			Vector3 wind;
@@ -575,9 +676,15 @@ void PhysXBurnable3D::_update_embers(float p_delta) {
 			plume.push_back(pl);
 			brands.set_plumes(plume, width);
 			LocalVector<PhysXFirebrands::Release> pts;
-			for (int q = 0; q < 3; q++) {
-				const Vector3 r(0.2f + 0.3f * q, 0.9f, 0.8f - 0.3f * q);
-				pts.push_back({ xf.xform(bounds.position + bounds.size * r), 1.0f });
+			if (!piece_flames.is_empty()) {
+				for (const Vector3 &p : piece_flames) {
+					pts.push_back({ p, 1.0f });
+				}
+			} else {
+				for (int q = 0; q < 3; q++) {
+					const Vector3 r(0.2f + 0.3f * q, 0.9f, 0.8f - 0.3f * q);
+					pts.push_back({ xf.xform(bounds.position + bounds.size * r), 1.0f });
+				}
 			}
 			brands.release(10.0f * hrr / WOOD_HEAT * p_delta, pts, flow);
 		}
@@ -591,6 +698,10 @@ void PhysXBurnable3D::_update_embers(float p_delta) {
 		const Vector3 r = Vector3(_rand() - 0.5f, _rand() * 0.5f + 0.5f, _rand() - 0.5f);
 		Vector3 lp = origin_local.lerp(bounds.get_center(), 0.5f) + bounds.size * r * Vector3(0.8f, 0.5f, 0.8f);
 		e.p = xf.xform(lp);
+		if (!piece_flames.is_empty()) {
+			const uint32_t k = MIN(uint32_t(_rand() * piece_flames.size()), piece_flames.size() - 1);
+			e.p = piece_flames[k] + Vector3(_rand() - 0.5f, _rand() * 0.5f, _rand() - 0.5f) * 0.3f;
+		}
 		e.v = Vector3((_rand() - 0.5f) * 1.5f, 2.0f + _rand() * 3.0f, (_rand() - 0.5f) * 1.5f);
 		e.life = 3.0f + _rand() * 9.0f;
 		ember_list.push_back(e);

@@ -35,6 +35,7 @@
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
 #include "vegetation_paths.h"
+#include "water_current_bend.h"
 
 #include "core/io/image.h"
 #include "core/math/geometry_2d.h"
@@ -228,6 +229,7 @@ private:
 	Ref<Image> trample_image;
 	Ref<ImageTexture> trample_texture;
 	HashMap<ObjectID, Vector3> trample_last;
+	WaterCurrentBend water_current; // the current in water over the sward
 
 	Crop crop = CROP_NONE;
 	float crop_stage = 75.0f; // BBCH (Zadoks) decimal code: 10 first leaf, 30 stem elongation, 51 heading, 75 milk, 87 hard dough, 99 harvested (stubble).

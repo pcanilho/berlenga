@@ -864,8 +864,49 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   leading row. The wheels unload as the belly takes the weight, as before. Check in `--test=frost`: along ruts 35 cm
   deep with a ridge 25 cm proud between them the belly carries a third of the car's weight on average and it gets
   3.0 m in 4 s, against 15.7 m along 12 cm ruts with no belly contact.
-- **Tyre chains and tread types.** Next.
-- **Mud slides downhill.** After that.
+- **Tyre chains and tread types.** Research: lugs and grousers shear soil below the tread face, raising thrust in
+  soft soil (Wong 2008, sec. 2.6); forestry chains add about a fifth to a wheel's pull on soft ground (Forest
+  Research FCTN013; Sever et al. 2018, CROJFE 39); open voids self-clean, closed road treads pack (the clogging of
+  stage 3); on ice chains about treble a tyre's grip and on snow about double, but ride on steel on dry tarmac (CRREL
+  tyre and chain tests). *Built (18 Nov):* `PhysXVehicleWheel3D.tread` (road, all terrain default, mud, chains),
+  read live. On soft soil it scales the shear limit (0.85, 1, 1.12, 1.2), the clog fill rate (1.4, 1, 0.6, 0.5),
+  the shedding speed (1.3, 1, 0.7, 0.75) and the void depth (9, 20, 25, 20 mm); chains keep half the grip a clogged
+  tread loses. Firm ground (world-links' branch) gets `PhysXVehicleWheel3D.tread_firm_grip(tread, ice, snow)`. Check
+  in `--test=clog`: 4 s at half throttle in stiff sticky clay, road tyres 0.29 m and 39% packed, mud tyres 0.78 m
+  and 16%, chains 0.80 m and 13%.
+  The ruts they cut: `press_wheel()` takes the tread and prints it in the rut floor (`tread_relief()`, GPU and
+  CPU): road tyres' grooves stand as faint ribs, all terrain chevron lugs every 9 cm, mud tyres' staggered open lugs
+  every 13 cm with deep voids, chains a ladder of cross links every 22 cm pressed 1.5 cm in over fainter lugs. The
+  pattern is fixed on the ground along the heading (the frames of a rolling tyre agree), warped by noise at 0.9 m
+  and 25 cm so a long rut does not repeat, faded at the shoulders and smeared out past 0.6 to 3 m/s of slip. Checks
+  in `--test=treads`: rolled presses give floor relief of 0.2 mm rms plain, 4 all terrain, 7.8 mud, chains cut 16 mm
+  below the mean; a driven car on mud tyres 4.4 mm rms against 0.5 on road tyres.
+- **Mud slides downhill.** Research: a mud layer is a Bingham fluid; on a slope it stands while its weight down its
+  free surface stays under the yield stress, rho g h tan(surface) <= tau_y, and a mudflow stops at
+  h = tau_y / (rho g sin theta) (Johnson 1970; Coussot 1997). Rain lowers the solid share and the yield stress falls
+  a hundredfold from stiff mud to slurry (O'Brien and Julien 1988, the fits we use), so a bank that held all summer
+  runs in a storm; shallow-landslide work (infinite slope, Iverson 2000) gives the same trigger for soil. *Built
+  (18 Nov):* `mud_slides` (on). Each lattice cell carries the mud's slide length tau_y / (rho g) (a fourth vec4 per
+  cell on the GPU); the field's slumping lets the undisturbed ground's own step stand only where the layer holds it
+  (slide length over the depth left, deepest dent less what is gone plus rim); steeper, the layer's surface relaxes
+  to that slope, so the whole layer runs as one mass, thins from the top and piles at the foot, volume kept, until its
+  surface is as gentle as it holds. Settled texels take part while a cell slides; the GPU field slumps for a minute
+  after the cells change (rain renews it) at four passes a step. `get_mud_slide_angle_at()`. GPU field only.
+  Check in `--test=slides`: 40 cm of mud on a 15 degree bank, stiff it holds; soaked for a minute the upper bank
+  loses half its mud and its surface eases to 9.6 degrees (it holds 9.4 there), the 20 cm rut at the foot is filled
+  and heaped 24 cm, volume kept.
+
+#### Round 11 candidates (card 18 Nov)
+
+- **Gullies in ruts.** Wheel ruts on slopes concentrate runoff and are the classic start of gully erosion on
+  forest and farm tracks (Croke and Mockler 2001; Foltz 1996, rutted logging roads lose several times the
+  sediment of unrutted ones). The runoff channels (RillGrow on the field, Exner bed) already cut where water runs;
+  the gap is routing rain caught by a rut along it instead of standing, and a deposition fan where it slows.
+- **Winch.** MudRunner's core recovery tool: a cable to an anchor (tree, rock, another vehicle) pulling at the
+  frame; PhysX distance joint with a motor-driven rest length, sag from the cable's weight as a catenary drawn
+  between, and the pull fighting the soil's resistance we already compute.
+- **Body mud dries and flakes.** Caked mud dries lighter and cracks (the desiccation crack model we use on the
+  ground, at body scale), then sheds in flakes on bumps; the clods of the ground-detail thread can carry them.
 
 ### Look (any stage)
 

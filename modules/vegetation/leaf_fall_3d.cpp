@@ -44,6 +44,7 @@
 #include "servers/rendering/rendering_server.h"
 
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 namespace {
 
@@ -160,13 +161,9 @@ Vector3 LeafFall3D::_camera_position() const {
 }
 
 float LeafFall3D::_ground_at(const Vector3 &p_p) const {
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	if (wm) {
-		const float g = wm->get_terrain_ground_at(p_p);
-		if (Math::is_finite(g)) {
-			return g;
-		}
-		return wm->get_ground_height();
+	const WorldWeather *wm = WorldContracts::weather();
+	if (wm->has_provider()) {
+		return wm->ground_height_at(p_p);
 	}
 	return get_global_position().y;
 }
@@ -226,15 +223,17 @@ void LeafFall3D::drop_leaf(const Vector3 &p_position, int p_kind) {
 	_spawn(p_position, Vector3(), p_kind, false);
 }
 
-void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WeatherMap3D *p_weather) {
+void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_weather) {
 	const Kind &k = kinds[p_leaf.kind];
 	const float sc = p_leaf.scale;
 	const float ground = _ground_at(p_leaf.p);
 	if (p_leaf.lying >= 0.0f) {
 		p_leaf.lying += p_delta;
 		// Loose dry leaves lift when the wind 10 cm over the ground passes the threshold (gusts do it).
-		if (p_weather) {
-			const Vector3 a = p_weather->get_wind_at(p_leaf.p, 0.1f);
+		const WorldFire *fire = WorldContracts::fire();
+		if (p_weather || fire->has_provider()) {
+			// The fires' indraft near the ground draws leaves in towards the flames.
+			const Vector3 a = (p_weather ? p_weather->wind_at(p_leaf.p, 0.1f) : Vector3()) + (fire->has_provider() ? fire->wind_at(p_leaf.p) : Vector3());
 			const float u = Vector2(a.x, a.z).length();
 			if (u > lift_speed && rng.randf() < (u / lift_speed - 1.0f) * 4.0f * p_delta) {
 				p_leaf.lying = -1.0f;
@@ -247,7 +246,11 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WeatherMap3D *p_w
 		return;
 	}
 	p_leaf.age += p_delta;
-	const Vector3 air = p_weather ? p_weather->get_wind_at(p_leaf.p) : Vector3();
+	Vector3 air = p_weather ? p_weather->wind_at(p_leaf.p) : Vector3();
+	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+		// The indraft is a near-ground inflow: it fades over the first few metres, where the plume takes over.
+		air += fire->wind_at(p_leaf.p) * (1.0f - Math::smoothstep(2.0f, 6.0f, p_leaf.p.y - ground));
+	}
 	PlateState s{ p_leaf.p, p_leaf.v, p_leaf.b, p_leaf.w };
 	const int n = plate_substeps(p_delta, (p_leaf.v - air).length(), k.length * sc, k.area * sc * sc, k.mass * sc * sc, air_density);
 	const float dt = p_delta / n;
@@ -275,12 +278,9 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WeatherMap3D *p_w
 
 void LeafFall3D::_step(float p_delta) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
-	const WeatherMap3D *wm = weather_map.is_empty() ? nullptr : Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
-	if (wm == nullptr) {
-		wm = WeatherMap3D::get_active();
-	}
+	const WorldWeather *wm = WorldContracts::weather()->has_provider() ? WorldContracts::weather() : nullptr;
 	const Vector3 cam = _camera_position();
-	const float time_scale = wm ? wm->get_time_scale() : 1.0f;
+	const float time_scale = wm ? wm->time_scale() : 1.0f;
 	if (auto_crowns) {
 		auto_timer -= p_delta;
 		if (auto_timer <= 0.0f) {
@@ -301,7 +301,7 @@ void LeafFall3D::_step(float p_delta) {
 		if (c.center.distance_to(cam) > range + c.radii.length()) {
 			continue;
 		}
-		const Vector3 a = wm ? wm->get_wind_at(c.center) : Vector3();
+		const Vector3 a = wm ? wm->wind_at(c.center) : Vector3();
 		const float u = a.length();
 		const float gust = 1.0f + wind_shed * Math::pow(MAX(u - 3.0f, 0.0f) / 7.0f, 3.0f);
 		shed_accum[i] += c.leaves * (c.shed_daily >= 0.0f ? c.shed_daily : shed_rate) / 86400.0f * time_scale * gust * p_delta;
@@ -312,13 +312,13 @@ void LeafFall3D::_step(float p_delta) {
 				d = Vector3(rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f);
 			} while (d.length_squared() > 1.0f);
 			const Vector3 p = c.center + d * c.radii;
-			_spawn(p, wm ? wm->get_wind_at(p) * 0.5f : Vector3(), c.kind, false);
+			_spawn(p, wm ? wm->wind_at(p) * 0.5f : Vector3(), c.kind, false);
 		}
 	}
 	// Loose litter round the camera taken up by the wind.
 	if (litter_density > 0.0f && wm && !kinds.is_empty()) {
 		const float ga = _ground_at(cam);
-		const Vector3 a = wm->get_wind_at(Vector3(cam.x, ga, cam.z), 0.1f);
+		const Vector3 a = wm->wind_at(Vector3(cam.x, ga, cam.z), 0.1f);
 		const float u = Vector2(a.x, a.z).length();
 		if (u > lift_speed) {
 			const float area = float(Math::PI) * range * range * 0.25f;
@@ -416,14 +416,14 @@ void LeafFall3D::_upload() {
 // Crowns from the scene's vegetation (VegetationField3D.get_crowns_near) and their shedding from the trees'
 // phenology (TreeGenerator.get_leaf_season): each day a crown sheds the rise in its species' fallen_fraction
 // from today to tomorrow, so the leaf fall follows the same autumn the crowns show.
-void LeafFall3D::_refresh_auto_crowns(const WeatherMap3D *p_weather, const Vector3 &p_camera) {
+void LeafFall3D::_refresh_auto_crowns(const WorldWeather *p_weather, const Vector3 &p_camera) {
 	// Seasons for today and tomorrow.
 	if (p_weather) {
-		const int day = p_weather->get_day_of_year();
+		const int day = p_weather->day_of_year();
 		if (day != auto_day) {
 			auto_day = day;
-			auto_season = p_weather->get_season_on_day(day);
-			auto_season_next = p_weather->get_season_on_day(day % 365 + 1);
+			auto_season = p_weather->season_at(Vector3(p_camera.x, _ground_at(p_camera), p_camera.z), day);
+			auto_season_next = p_weather->season_at(Vector3(p_camera.x, _ground_at(p_camera), p_camera.z), day % 365 + 1);
 			preset_shed.clear();
 		}
 	} else if (auto_day != 0) {
@@ -519,8 +519,7 @@ float LeafFall3D::get_preset_shed_daily(int p_preset) const {
 }
 
 void LeafFall3D::refresh_crowns_near(const Vector3 &p_position) {
-	const WeatherMap3D *wm = weather_map.is_empty() ? nullptr : Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
-	_refresh_auto_crowns(wm ? wm : WeatherMap3D::get_active(), p_position);
+	_refresh_auto_crowns(WorldContracts::weather()->has_provider() ? WorldContracts::weather() : nullptr, p_position);
 	auto_timer = 2.0f;
 }
 

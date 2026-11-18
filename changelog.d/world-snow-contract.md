@@ -1,0 +1,1 @@
+- World: a snow contract (`WorldContracts.get_snow()`, `WorldSnow`): snow depth, density, wetness, surface height, crust strength and lake ice at a point, produced by the snow cover, with a stub for tests.

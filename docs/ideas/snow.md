@@ -1137,3 +1137,60 @@ snow floods 32.9 cm of ice to 84.2 cm; twelve days at 12 C clear the ice.
 
 **Next.** Draw the ice (dark clear ice to grey with thickness, snow on top) with collision beyond the
 surface's near field, and keep it through the climate bake.
+
+## Follow-up 16: lake ice drawn and walkable; white ice; fire (built 18 Nov 2026)
+
+**Drawing.** `SnowLakeIce3D` (added by `SnowCover3D` while `lake_ice_enabled`) draws the ice of the near square
+and the world tier as one smooth sheet at the water level plus its freeboard, `(1 - 917/1000) h` (floating
+ice stands out of the water by 8% of its thickness). The sheet runs one cell past the ice under the shore, so
+its edge is where the terrain meets it, not the cells' steps. Its look follows the field:
+- Clear (congelation) ice is dark: the deep water shows through, albedo about 0.1 (Bolsenga 1969), and
+  smooth (a mirror for the low sun).
+- White (snow) ice from flooded snow scatters off its bubbles: albedo about 0.46, rougher. The cover now
+  keeps the white share (`get_white_ice_thickness_at`); the thaw takes it first, from the top.
+- Thermal cracks: a jittered Voronoi wall pattern, bent by noise, with only some walls cracked (a hash of
+  the plate pair), plates about 9 m with a few splitting at 2.5 m in ice over 10 cm. Pale (frozen bubbles),
+  fading by 90 m, widened with distance so they do not alias. Hashed with pcg2d, so it never repeats.
+- Snow on it is the cover's, through the shared snow functions, as on any material.
+- Collision: a trimesh of the cells that bear a walker (5 cm) within `collision_radius` (160 m) of the camera,
+  rebuilt only when that set changes. Near the camera `SnowSurface3D` lays its deep snow on the ice top.
+
+**Thaw.** Bare lake ice decays by degree-days at about 0.5 cm per C day (Bilello 1980; Ashton 1983), which
+holds the sun and warm water too; snow's melt factor alone gave a fifth of that.
+
+**Climate bake.** The bake keeps the ice and its white share (`SnowClimate.ice`, `white_ice`), so the world
+starts the season with its lakes frozen.
+
+**Fire.** `WorldContracts.fire().heat_at()` (W/m2 over the ground) melts the pack whatever the air: 0.334 MJ a
+kilogram, 92.8 W/m2 per mm of water an hour. Read for every cell on the main thread each update, and only
+while a fire is burning.
+
+**Results** (`--test=water`, `--test=fire`): flooding leaves 51 cm of the 84 cm white; the sheet covers the
+lake with 8242 walkable cells and a ray stops on its top to the centimetre; ten days at 7.7 C take 9.4 cm,
+all of it white ice; a month later the lake is open and nothing is drawn. 928 W/m2 for 2 h at -8 C melts
+the energy's 20 mm, the snow beside it untouched. `--view=lake` shows the lake from its shore.
+
+**Snow contract.** `WorldContracts.snow()` (`WorldSnow`, modules/world) is what other systems read: `depth_at`
+(m), `density_at` (kg/m3), `wetness_at` (0..1), `surface_at` (m, prints near the camera from `SnowSurface3D`),
+`crust_at` (kPa) and `lake_ice_at` (m, white share). `SnowCover3D` produces it; tests stub it with
+`WorldContracts.set_snow()`.
+
+## Follow-up 17: sleet (built 18 Nov 2026)
+
+Rain and snow share one split (`WeatherMap3D::rain_fraction`): rain draws its share (the rain thread's
+`RainFall3D`, with pellets), `SnowFall3D` draws the snow's. Near and above 0 C the falling snow changes as
+it does in the field:
+- **Aggregates.** Above -5 C the crystals' quasi-liquid surface makes them stick; aggregates peak just
+  below 0 C at 2 to 3 times the size of cold flakes (Hobbs, Chang and Locatelli 1974). `aggregate_factor`:
+  1 at -5 C and colder, 2.5 at 0 C, smooth between. The same water falls as fewer, larger flakes.
+- **Melting.** In air above 0 C the melted share of a falling flake follows the same ramp as the split
+  (`melted_share`): what has gone all the way is rain, the rest is partly melted. A melting flake collapses
+  toward its drop (size from the flake to the melted diameter with the share squared) and keeps the slow fall
+  of snow until most of it has melted, then speeds up to the drop's (Mitra et al. 1990; drop speed
+  9.65 - 10.3 exp(-0.6 D), Atlas et al. 1973). `wet_fall_speed`.
+- **Look.** Melt water fills the flake: it scatters less, so it shows greyer and clearer.
+- `sleet_enabled` (on by default); `get_melted_share`, `get_aggregate`.
+
+**Results** (`--test=sleet`): x1.00 at -10 C, x2.46 at -0.5 C; melted share 0 at -1 C, 0.27 at 1 C, 0.86
+at 3 C; a 2 mm flake falls at 1.00 m/s dry, 0.98 half melted, 6.55 melted. `--view=snowfall --air=C` shows
+dry snow at -6 C, big aggregates at -1 C and wet sleet streaks at 1.5 C.

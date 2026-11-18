@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowLakeIce3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Draws the lake ice of the active [SnowCover3D], with collision where it bears a walker.
+	</brief_description>
+	<description>
+		A sheet at the water level raised by the ice's freeboard, over the near square and the world tier, running one cell under the shore so the terrain makes its edge. Clear ice is dark (the water shows through, albedo about 0.1; Bolsenga 1969), white snow ice from flooded snow scatters (about 0.46). Sparse thermal cracks run through the clear ice. The cover's snow lies on it through the shared snow functions.
+		[SnowCover3D] adds one as an internal child while [member SnowCover3D.lake_ice_enabled] is on (the default).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="freeboard" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="ice" type="float" />
+			<description>
+				Returns how far [param ice] metres of floating ice stand out of the water: (1 - 917/1000) of its thickness, at least 4 mm.
+			</description>
+		</method>
+		<method name="get_quad_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of cells drawn.
+			</description>
+		</method>
+		<method name="get_walkable_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of cells in the collision.
+			</description>
+		</method>
+		<method name="rebuild">
+			<return type="void" />
+			<description>
+				Rebuilds the sheet and its collision now. It rebuilds by itself every [member rebuild_interval] when the cover has updated.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
+			Gives the ice that bears a walker (5 cm and thicker) collision.
+		</member>
+		<member name="collision_radius" type="float" setter="set_collision_radius" getter="get_collision_radius" default="160.0">
+			How far from the camera (or the cover's follow target) the ice has collision, in metres.
+		</member>
+		<member name="crack_strength" type="float" setter="set_crack_strength" getter="get_crack_strength" default="1.0">
+			How strongly the thermal cracks show, 0 to 1.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			Overrides the ice material. Its vertex colour carries the thickness (red, the square root of metres over 1.5) and the white share (green).
+		</member>
+		<member name="rebuild_interval" type="float" setter="set_rebuild_interval" getter="get_rebuild_interval" default="2.0">
+			Seconds between rebuilds while the cover updates.
+		</member>
+	</members>
+</class>

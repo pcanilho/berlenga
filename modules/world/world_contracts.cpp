@@ -75,6 +75,55 @@ float WorldWeather::canopy_water_at(const Vector3 &p_position) const WW_CALL(_ca
 float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_canopy_wetness_at, contract_canopy_wetness_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
+float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
+float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
+float WorldWeather::surface_temperature_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_surface_temperature_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_surface_temperature_at(p_position) : air_temperature_at(p_position);
+}
+Dictionary WorldWeather::season_at(const Vector3 &p_position, int p_day) const {
+	Dictionary r;
+	if (GDVIRTUAL_CALL(_season_at, p_position, p_day, r)) {
+		return r;
+	}
+	if (provider) {
+		return provider->contract_season_at(p_position, p_day);
+	}
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(WeatherSeason::Climate(), p_position.y, p_day >= 1 ? MIN(p_day, 365) : day_of_year()));
+}
+int WorldWeather::day_of_year() const {
+	int r = 135;
+	if (GDVIRTUAL_CALL(_day_of_year, r)) {
+		return CLAMP(r, 1, 365);
+	}
+	return provider ? CLAMP(provider->contract_day_of_year(), 1, 365) : 135;
+}
+bool WorldWeather::season_climate(WeatherSeason::Climate &r_climate) const {
+	return provider != nullptr && provider->contract_season_climate(r_climate);
+}
+float WorldWeather::water_temperature() const {
+	float r = DEFAULT_AIR_TEMPERATURE;
+	if (GDVIRTUAL_CALL(_water_temperature, r)) {
+		return r;
+	}
+	return provider ? provider->contract_water_temperature() : DEFAULT_AIR_TEMPERATURE;
+}
+double WorldWeather::time_scale() const {
+	double r = 1.0;
+	if (GDVIRTUAL_CALL(_time_scale, r)) {
+		return r;
+	}
+	return provider ? provider->contract_time_scale() : 1.0;
+}
+
+Dictionary WorldWeatherProvider::contract_season_at(const Vector3 &p_position, int p_day) const {
+	WeatherSeason::Climate c;
+	contract_season_climate(c);
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(c, p_position.y, p_day >= 1 ? MIN(p_day, 365) : contract_day_of_year()));
+}
 
 Vector3 WorldWeather::mean_wind_at(const Vector3 &p_position) const WW_CALL(_mean_wind_at, contract_mean_wind_at(p_position), Vector3(), p_position)
 Vector3 WorldWeather::wind_aloft_at(const Vector3 &p_position, float p_altitude) const WW_CALL(_wind_aloft_at, contract_wind_aloft_at(p_position, p_altitude), Vector3(), p_position, p_altitude)
@@ -120,6 +169,13 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);
 	ClassDB::bind_method(D_METHOD("ground_water_input_at", "position"), &WorldWeather::ground_water_input_at);
+	ClassDB::bind_method(D_METHOD("day_of_year"), &WorldWeather::day_of_year);
+	ClassDB::bind_method(D_METHOD("season_at", "position", "day"), &WorldWeather::season_at, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("cloud_cover_at", "position"), &WorldWeather::cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("water_temperature"), &WorldWeather::water_temperature);
+	ClassDB::bind_method(D_METHOD("surface_temperature_at", "position"), &WorldWeather::surface_temperature_at);
+	ClassDB::bind_method(D_METHOD("ground_height_at", "position"), &WorldWeather::ground_height_at);
+	ClassDB::bind_method(D_METHOD("time_scale"), &WorldWeather::time_scale);
 
 	GDVIRTUAL_BIND(_air_temperature_at, "position");
 	GDVIRTUAL_BIND(_air_humidity_at, "position");
@@ -141,6 +197,13 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_canopy_wetness_at, "position");
 	GDVIRTUAL_BIND(_canopy_drip_at, "position");
 	GDVIRTUAL_BIND(_ground_water_input_at, "position");
+	GDVIRTUAL_BIND(_day_of_year);
+	GDVIRTUAL_BIND(_season_at, "position", "day");
+	GDVIRTUAL_BIND(_cloud_cover_at, "position");
+	GDVIRTUAL_BIND(_water_temperature);
+	GDVIRTUAL_BIND(_surface_temperature_at, "position");
+	GDVIRTUAL_BIND(_ground_height_at, "position");
+	GDVIRTUAL_BIND(_time_scale);
 }
 
 // Water.
@@ -251,6 +314,72 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
 }
 
+// Snow.
+
+float WorldSnow::depth_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_depth_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_depth_at(p_position) : 0.0f;
+}
+
+float WorldSnow::density_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_density_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_density_at(p_position) : 0.0f;
+}
+
+float WorldSnow::wetness_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_wetness_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_wetness_at(p_position) : 0.0f;
+}
+
+float WorldSnow::surface_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_surface_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_surface_at(p_position) : -Math::INF;
+}
+
+float WorldSnow::crust_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_crust_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_crust_at(p_position) : 0.0f;
+}
+
+Vector2 WorldSnow::lake_ice_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_lake_ice_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_lake_ice_at(p_position) : Vector2();
+}
+
+void WorldSnow::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_provider"), &WorldSnow::has_provider);
+	ClassDB::bind_method(D_METHOD("depth_at", "position"), &WorldSnow::depth_at);
+	ClassDB::bind_method(D_METHOD("density_at", "position"), &WorldSnow::density_at);
+	ClassDB::bind_method(D_METHOD("wetness_at", "position"), &WorldSnow::wetness_at);
+	ClassDB::bind_method(D_METHOD("surface_at", "position"), &WorldSnow::surface_at);
+	ClassDB::bind_method(D_METHOD("crust_at", "position"), &WorldSnow::crust_at);
+	ClassDB::bind_method(D_METHOD("lake_ice_at", "position"), &WorldSnow::lake_ice_at);
+	GDVIRTUAL_BIND(_depth_at, "position");
+	GDVIRTUAL_BIND(_density_at, "position");
+	GDVIRTUAL_BIND(_wetness_at, "position");
+	GDVIRTUAL_BIND(_surface_at, "position");
+	GDVIRTUAL_BIND(_crust_at, "position");
+	GDVIRTUAL_BIND(_lake_ice_at, "position");
+}
+
 // Fire.
 
 float WorldFire::heat_at(const Vector3 &p_position) const {
@@ -275,12 +404,38 @@ float WorldFire::burnt_at(const Vector3 &p_position) const {
 	return r;
 }
 
+Vector3 WorldFire::wind_at(const Vector3 &p_position) const {
+	Vector3 r;
+	if (GDVIRTUAL_CALL(_wind_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r += f->contract_fire_wind_at(p_position);
+	}
+	return r;
+}
+
+float WorldFire::stem_char_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_stem_char_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_stem_char_at(p_position));
+	}
+	return r;
+}
+
 void WorldFire::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
 	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
 	ClassDB::bind_method(D_METHOD("burnt_at", "position"), &WorldFire::burnt_at);
 	GDVIRTUAL_BIND(_heat_at, "position");
 	GDVIRTUAL_BIND(_burnt_at, "position");
+	ClassDB::bind_method(D_METHOD("wind_at", "position"), &WorldFire::wind_at);
+	GDVIRTUAL_BIND(_wind_at, "position");
+	ClassDB::bind_method(D_METHOD("stem_char_at", "position"), &WorldFire::stem_char_at);
+	GDVIRTUAL_BIND(_stem_char_at, "position");
 }
 
 // A script stub standing in as one water producer among the real ones.
@@ -565,6 +720,48 @@ Ref<WorldFire> WorldContracts::get_fire() const {
 	return fire_override.is_valid() ? fire_override : builtin_fire;
 }
 
+WorldSnow *WorldContracts::snow() {
+	static Ref<WorldSnow> fallback;
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	return singleton->snow_override.is_valid() ? singleton->snow_override.ptr() : singleton->builtin_snow.ptr();
+}
+
+void WorldContracts::register_snow(WorldSnowProvider *p_provider) {
+	if (singleton && p_provider) {
+		singleton->snow_provider = p_provider;
+		singleton->builtin_snow->provider = p_provider;
+		if (singleton->snow_override.is_valid()) {
+			singleton->snow_override->provider = p_provider;
+		}
+	}
+}
+
+void WorldContracts::unregister_snow(WorldSnowProvider *p_provider) {
+	if (singleton && singleton->snow_provider == p_provider) {
+		singleton->snow_provider = nullptr;
+		singleton->builtin_snow->provider = nullptr;
+		if (singleton->snow_override.is_valid()) {
+			singleton->snow_override->provider = nullptr;
+		}
+	}
+}
+
+void WorldContracts::set_snow(const Ref<WorldSnow> &p_stub) {
+	snow_override = p_stub;
+	if (snow_override.is_valid()) {
+		snow_override->provider = snow_provider; // a partial stub falls back to the real snow
+	}
+}
+
+Ref<WorldSnow> WorldContracts::get_snow() const {
+	return snow_override.is_valid() ? snow_override : builtin_snow;
+}
+
 void WorldContracts::set_weather(const Ref<WorldWeather> &p_stub) {
 	weather_override = p_stub;
 	if (weather_override.is_valid()) {
@@ -581,6 +778,7 @@ void WorldContracts::clear_overrides() {
 	ground_override.unref();
 	water_override.unref();
 	fire_override.unref();
+	snow_override.unref();
 	_clear_water_stubs();
 }
 
@@ -705,6 +903,8 @@ void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
 	ClassDB::bind_method(D_METHOD("set_fire", "stub"), &WorldContracts::set_fire);
 	ClassDB::bind_method(D_METHOD("get_fire"), &WorldContracts::get_fire);
+	ClassDB::bind_method(D_METHOD("set_snow", "stub"), &WorldContracts::set_snow);
+	ClassDB::bind_method(D_METHOD("get_snow"), &WorldContracts::get_snow);
 	ClassDB::bind_method(D_METHOD("clear_overrides"), &WorldContracts::clear_overrides);
 	ClassDB::bind_method(D_METHOD("describe_body", "node"), &WorldContracts::describe_body_bind);
 }
@@ -715,6 +915,7 @@ WorldContracts::WorldContracts() {
 	builtin_water.instantiate();
 	builtin_ground.instantiate();
 	builtin_fire.instantiate();
+	builtin_snow.instantiate();
 }
 
 WorldContracts::~WorldContracts() {

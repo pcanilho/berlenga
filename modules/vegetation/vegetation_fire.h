@@ -82,4 +82,23 @@ float fire_foliage_apply(vec4 fs, float h, float n, inout vec3 fire_albedo, inou
 }
 )";
 
+// The fires' indraft near the ground (WorldFire.wind_at; PhysXFireSpread3D publishes fire_wind_map over fire_wind_rect,
+// RG: world x and z in m/s; rect width 0: no fire), for plants to lean into.
+static constexpr const char *WIND_CODE = R"(
+global uniform sampler2D fire_wind_map : filter_linear;
+global uniform vec4 fire_wind_rect;
+
+vec3 fire_wind_at(vec2 xz) {
+	if (fire_wind_rect.z <= 0.0) {
+		return vec3(0.0);
+	}
+	vec2 uv = (xz - fire_wind_rect.xy) / fire_wind_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec3(0.0);
+	}
+	vec2 w = textureLod(fire_wind_map, uv, 0.0).rg;
+	return vec3(w.x, 0.0, w.y);
+}
+)";
+
 } // namespace VegetationFire

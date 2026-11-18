@@ -212,6 +212,16 @@
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
 			</description>
 		</method>
+		<method name="make_desert" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.DesertStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				The plants of a desert sand sea ([member TerrainGenerator3D.sand_sea_rect]) as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_SAND_MOBILITY]: nothing on the moving crests and slip faces, drinn on the flanks and plinths, and on the stable interdune sand soil crust and the annuals, green after rain when [param season] has a soil moisture.
+			</description>
+		</method>
 		<method name="make_woody_shrub" qualifiers="static">
 			<return type="PlantSpecies" />
 			<param index="0" name="tree_preset" type="int" />
@@ -236,6 +246,9 @@
 		</member>
 		<member name="leaf_wear" type="float" setter="set_leaf_wear" getter="get_leaf_wear" default="0.5">
 			How worn the leaves are, from [code]0.0[/code] (every leaf whole and green) to [code]1.0[/code]: uneven halves, round insect bites out of the margin with dried rims, dead tips on grass-like blades, and older, lower leaves yellowing and browning. Each leaf draws its wear from its own hash, so changing it does not change the plant's shape. The browning travels in the vertex colour's alpha.
+		</member>
+		<member name="litter_deposit" type="float" setter="set_litter_deposit" getter="get_litter_deposit" default="1.0">
+			Leaf and needle litter: how many times the card's own layers of leaves or needles lie on it. Above 1, more layers fall on top of the card's own (the same card from the same seed, so swapping one for the other only adds leaves), each a little higher, with broken twig ends among them: the dead-leaves model, where the top layer is what shows. [method make_floor] uses 2.5 for the litter's near meshes ([member PlantSpecies.near_meshes]) within 7 m of the camera.
 		</member>
 		<member name="litter_leaves" type="Array" setter="set_litter_leaves" getter="get_litter_leaves" default="[]">
 			For [constant PRESET_LEAF_LITTER]: the stand's fallen leaves ([method stand_litter_leaves]). Each card then carries about two layers of those leaves over its disc, picked by share and shaped by kind: simple, lobed with rounded lobes, palmate, pinnate (mostly loose leaflets, now and then a whole leaf) or digitate. Fresh leaves keep their fallen colour; older ones fade to a dull tan brown and curl. Empty: generic broadleaf litter.
@@ -531,7 +544,34 @@
 		<constant name="PRESET_SAGE_ROCKROSE" value="82" enum="Preset">
 			Sage-leaved rockrose ([i]Cistus salviifolius[/i]): a low, sprawling shrub of wrinkled grey-green leaves and white, crumpled-silk flowers with yellow stamens on long stalks, April and May; woody capsules after. In the summer drought the leaves fold, grey and partly fall.
 		</constant>
-		<constant name="PRESET_MAX" value="83" enum="Preset">
+		<constant name="PRESET_CORN_POPPY" value="83" enum="Preset">
+			Corn poppy (Papaver rhoeas): an arable weed of field margins with scarlet flowers.
+		</constant>
+		<constant name="PRESET_CORNFLOWER" value="84" enum="Preset">
+			Cornflower (Centaurea cyanus): an arable weed of field margins with blue flower heads.
+		</constant>
+		<constant name="PRESET_MAYWEED" value="85" enum="Preset">
+			Scentless mayweed (Tripleurospermum inodorum): an arable weed with white daisy heads and finely cut leaves.
+		</constant>
+		<constant name="PRESET_COW_PARSLEY" value="86" enum="Preset">
+			Cow parsley (Anthriscus sylvestris): the verge umbellifer with lacy white umbels in spring.
+		</constant>
+		<constant name="PRESET_PINCUSHION_MOSS" value="87" enum="Preset">
+			Pincushion moss (Leucobryum glaucum): tight, pale glaucous domed cushions 4 to 20 cm across on acid oak, beech and pine floors.
+		</constant>
+		<constant name="PRESET_GROUND_IVY" value="88" enum="Preset">
+			Ground ivy (Glechoma hederacea): creeping runners with pairs of kidney-shaped leaves on long stalks, a mat a few centimetres deep; short shoots with blue-violet flowers in spring.
+		</constant>
+		<constant name="PRESET_DRINN" value="89" enum="Preset">
+			Drinn (Stipagrostis pungens): the desert dune grass, dense tussocks of rigid rolled grey-green leaves, half dead straw, with open panicles of silvery plumed awns.
+		</constant>
+		<constant name="PRESET_DESERT_ANNUALS" value="90" enum="Preset">
+			The rain-flush annuals of desert interdunes: small grasses and rosette herbs, green after rain (the season's soil moisture), dry straw otherwise.
+		</constant>
+		<constant name="PRESET_SOIL_CRUST" value="91" enum="Preset">
+			Biological soil crust: a dark, knobbly, pinnacled skin of cyanobacteria, lichens and mosses on stable desert sand, flecked grey, green and orange.
+		</constant>
+		<constant name="PRESET_MAX" value="92" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -611,6 +651,15 @@
 		</constant>
 		<constant name="DUNES_MAX" value="3" enum="DuneStand">
 			Number of dune stand types.
+		</constant>
+		<constant name="DESERT_FLANKS" value="0" enum="DesertStand">
+			Desert dune flanks and plinths: drinn tussocks, thinning towards the crests.
+		</constant>
+		<constant name="DESERT_INTERDUNE" value="1" enum="DesertStand">
+			Desert interdune corridors: sparse drinn, biological soil crust on the stable sand, the rain-flush annuals.
+		</constant>
+		<constant name="DESERT_MAX" value="2" enum="DesertStand">
+			Number of desert stands.
 		</constant>
 		<constant name="ALPINE_FELLFIELD" value="0" enum="AlpineStand">
 			Fellfield on exposed ridges blown free of snow: moss campion cushions, purple saxifrage and mountain avens mats far apart on gravel, curved sedge in the lee.

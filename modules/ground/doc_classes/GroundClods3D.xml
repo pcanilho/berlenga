@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GroundClods3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Clods of clay standing on the ground near the camera.
+	</brief_description>
+	<description>
+		Lumps of clay as real geometry, from two sources on a [GroundSurface3D]. Clay thrown by tyres and boots that lands (a [method GroundSurface3D.track_mud] with no print) stands up as one to three clods when it holds a lump's volume. Where a print's rim grows in sticky soil, a share of the heaved soil ([member break_share]) is torn out as clods thrown a little away from the print: plastic clay holds together, while sand crumbles and slurry flows (the soil's stickiness). Sizes are log-normal (soil aggregates, Gardner 1956). Each clod is one of eight shared angular shapes, stretched its own way and in a shade of its own clay's colour. A later print that presses it in or heaps over it crushes it, and water standing over it slakes it (Emerson 1967). The path tracer instances them ([method RenderingServer.multimesh_set_rt_instanced]), so it sees every clod.
+		[GroundSurface3D] makes one as an internal child while its [member GroundSurface3D.clods] is on (the default).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes every clod.
+			</description>
+		</method>
+		<method name="get_clod_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of clods lying now.
+			</description>
+		</method>
+		<method name="get_landed_total" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of clods stood up from thrown clay that landed, since the node entered the tree.
+			</description>
+		</method>
+		<method name="get_parked_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of clods kept while the camera is away from where they lie (in memory; on disk ones are not counted), given back when the print field comes over them again.
+			</description>
+		</method>
+		<method name="get_spawned_total" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of clods made since the node entered the tree, torn out and landed.
+			</description>
+		</method>
+		<method name="get_update_msec_mean" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the mean main-thread time of an update so far, in milliseconds.
+			</description>
+		</method>
+		<method name="get_update_msec_worst" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the longest main-thread time of an update so far, in milliseconds.
+			</description>
+		</method>
+		<method name="get_update_runs" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of updates so far.
+			</description>
+		</method>
+		<method name="update_now">
+			<return type="void" />
+			<description>
+				Takes the landings, scans the print field, checks the clods and draws them now, instead of waiting for the next update (six a second). For tests and tools.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="break_share" type="float" setter="set_break_share" getter="get_break_share" default="0.2">
+			Of the soil heaved into a rim, the share torn out as clods in fully sticky soil.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			If [code]false[/code], no clods are made and those lying are removed.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			The clods' material. By default it takes each clod's clay colour from its instance colour.
+		</member>
+		<member name="max_clods" type="int" setter="set_max_clods" getter="get_max_clods" default="30000">
+			The most clods lying at once; past it the oldest are replaced.
+		</member>
+		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="12.0">
+			Distance round the camera, in metres, within which new rims are torn into clods.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed for the clods' sizes, shapes and places.
+		</member>
+		<member name="surface" type="NodePath" setter="set_surface" getter="get_surface" default="NodePath(&quot;&quot;)">
+			The [GroundSurface3D] watched. If empty, the parent.
+		</member>
+	</members>
+</class>

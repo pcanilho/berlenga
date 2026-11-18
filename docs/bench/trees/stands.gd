@@ -5,6 +5,7 @@ extends Node3D
 #
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
 #   --test            place every stand, print the counts and PASS/FAIL, quit
+#   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
 #   --map=path.png    the placement maps of every stand in one image
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
@@ -74,6 +75,9 @@ func run(args: Dictionary) -> void:
 		await _wind_check()
 		await _wind_lod_check(int(args.get("frames", "40")))
 		await _near_leaves_check()
+		get_tree().quit(1 if fails > 0 else 0)
+	elif args.has("stand-test"):
+		_stand_checks(int(args["stand-test"]))
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("near-leaves"):
 		await _near_leaves_check()
@@ -152,10 +156,12 @@ func _habitat_checks() -> void:
 	gen.apply_habitat(sp)
 	_check(sp.rule_weight(PlantSpecies.RULE_TEMPERATURE, 18.0) == 1.0 and sp.rule_weight(PlantSpecies.RULE_TEMPERATURE, 3.0) == 0.0, "white oak in the warm south (full at 18 C, none at 3 C)")
 
-func _stand_checks() -> void:
+func _stand_checks(only := -1) -> void:
 	print("stand              species                     placed  per_ha")
 	var area_ha := SIZE * SIZE / 10000.0
 	for i in TreeGenerator.STAND_MAX + 2:
+		if only >= 0 and i != only:
+			continue
 		var t := Time.get_ticks_msec()
 		var biome := _biome(i)
 		var f := _field(biome)
@@ -195,6 +201,33 @@ func _stand_checks() -> void:
 			_check(open_count > 0 and stand_count == 0, "coppice with standards: %d open-grown standards" % open_count)
 			_check(cut.coppice > 0 and cut["young coppice"] > 0 and cut.coppice + cut["young coppice"] > 4 * open_count, "coppice with standards: %d grown and %d young coppice stools under %d standards" % [cut.coppice, cut["young coppice"], open_count])
 			_check(regen.sapling > 0 and regen.log > 0 and regen.snag + regen.log < open_count, "coppice with standards: %d saplings, %d snags, %d logs" % [regen.sapling, regen.snag, regen.log])
+			# Coupes (trees.md, "Coppice with standards"): every age band placed, each stool in a coupe
+			# of its band's age, nothing woody on a ride.
+			var bands := 0
+			var wrong := 0
+			var on_ride := 0
+			var ride_points := 0
+			for s in sps.size():
+				var sp: PlantSpecies = sps[s]
+				if sp.coupe_rotation <= 0:
+					continue
+				var pl: PackedVector3Array = f.get_placements(s)
+				if sp.has_meta("coupe_ages") and pl.size() > 0:
+					bands += 1
+				for p in pl:
+					var c: Vector3 = sp.get_coupe_at(f.to_global(p))
+					if c.z > 0.5:
+						on_ride += 1
+					if int(c.x) < sp.coupe_ages.x or int(c.x) > sp.coupe_ages.y:
+						wrong += 1
+			for k in 400:
+				var q := Vector3(randf_range(-SIZE * 0.5, SIZE * 0.5), 0.0, randf_range(-SIZE * 0.5, SIZE * 0.5))
+				for s in sps.size():
+					if sps[s].coupe_rotation > 0:
+						if sps[s].get_coupe_at(q).z > 0.5:
+							ride_points += 1
+						break
+			_check(bands == 4 and wrong == 0 and on_ride == 0 and ride_points > 0, "coppice with standards: %d coupe age bands placed, %d plants in a coupe of the wrong age, %d on rides (rides cover %d of 400 points)" % [bands, wrong, on_ride, ride_points])
 		else:
 			_check(stand_count > 0, "%s: stand-grown trees form the canopy (%d stand-grown, %d gap and shrub)" % [STAND_NAMES[i], stand_count, open_count])
 			_check(regen.sapling > 0 and regen.snag > 0 and regen.log > 0 and regen.snag + regen.log < stand_count and regen["fallen branch"] > 0 and regen.sticks > regen["fallen branch"], "%s: %d saplings, %d snags, %d logs, %d fallen branches, %d sticks" % [STAND_NAMES[i], regen.sapling, regen.snag, regen.log, regen["fallen branch"], regen.sticks])
@@ -596,6 +629,47 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		eye.y = valley.get_height(eye) + 1.7
 		cam.position = eye
 		cam.look_at(eye + look)
+	if args.has("edge"):
+		# --edge: from 1.7 m in a coupe cut 0-1 years ago, across its edge into one of 8+ years
+		# (PlantSpecies.get_coupe_at of the stand's first coupe species).
+		var csp: PlantSpecies = null
+		for sp in biome.species:
+			if sp.get_coupe_rotation() > 0 and String(sp.resource_name).begins_with("Hazel"):
+				csp = sp
+				break
+		var found := false
+		if csp != null:
+			for r in range(0, 60, 4):
+				for a in 32:
+					var p := Vector3(r * cos(a * PI / 16), 0, r * sin(a * PI / 16))
+					var c: Vector3 = csp.get_coupe_at(p)
+					if c.x > 1 or c.z > 0.5 or c.y < 3.0 or c.y > 8.0:
+						continue
+					for k in 16:
+						var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
+						var e := p - d * 8.0
+						var q: Vector3 = csp.get_coupe_at(p + d * (c.y + 6.0))
+						var ce: Vector3 = csp.get_coupe_at(e)
+						if q.x >= 8 and q.z < 0.5 and ce.x <= 1 and ce.z < 0.5 and not found:
+							found = true
+							e.y = valley.get_height(e) + 1.7
+							cam.position = e
+							var tgt := p + d * (c.y + 6.0)
+							tgt.y = valley.get_height(tgt) + 2.5
+							cam.look_at(tgt)
+							cam.fov = 55.0
+							cam.far = 120.0
+							print("edge view from ", e, " to ", tgt, " ages ", c.x, " -> ", q.x)
+		if not found:
+			print("no coupe edge found")
+	var cv := OS.get_environment("CAM").split(",")
+	if cv.size() >= 6:
+		# CAM="x,y,z,lx,ly,lz[,fov]" overrides the view (eye height over the ground at x, z).
+		cam.position = Vector3(float(cv[0]), float(cv[1]), float(cv[2]))
+		cam.position.y += valley.get_height(cam.position)
+		cam.look_at(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
+		if cv.size() >= 7:
+			cam.fov = float(cv[6])
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "/tmp/plot.png")

@@ -81,7 +81,7 @@ public:
 		int coll_w = 0;
 		int stride = 1; // uints per texel in the cache and the read back: 1 (dent, rim), 2 (and fresh)
 		int slump_passes = 1; // slumping passes per step (a finer field needs more to move as far in a second)
-		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 3 ground (the third: water inputs)
+		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 4 ground (the third: water inputs; the fourth: mud slides)
 		int water_passes = 0; // pipe-model substeps this step (STEP_WATER)
 		int morph_passes = 1; // bed substeps a pipe-model substep (STEP_RUNOFF)
 	};

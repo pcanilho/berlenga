@@ -34,6 +34,7 @@
 #include "snow_cover_3d.h"
 
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -135,6 +136,10 @@ static const char *SNOW_FALL_SHADER = R"(
 uniform float lambda = 2.5; // per mm of melted diameter
 uniform float dm_min = 1.5; // mm, melted diameter
 uniform float size_scale = 1.0;
+// Sleet (docs/ideas/snow.md, follow-up 17): near 0 C flakes stick into large aggregates, and in air above
+// freezing they melt as they fall: smaller, faster, greyer.
+uniform float aggregate = 1.0; // size factor of the aggregates
+uniform float melt = 0.0; // melted share of a flake's mass, 0..1
 
 // Magono and Nakamura (1965): dry flake density 0.02 / D^2 g/cm3 (D in cm), so the flake of a
 // melted diameter Dm mm is Dm^3 / 2 mm across (and never denser than ice water).
@@ -156,11 +161,14 @@ void start() {
 }
 
 void process() {
-	float d = snow_flake_size(CUSTOM.x);
+	// A melting flake collapses toward its drop (Mitra et al. 1990): its size follows the melted share.
+	float d = mix(snow_flake_size(CUSTOM.x) * aggregate, CUSTOM.x, melt * melt);
 	vec3 p = TRANSFORM[3].xyz;
 	float g = snow_ground(p.xz);
 	vec3 w = snow_air(p, max(p.y - g, 0.2));
-	float vt = 0.8 * pow(d, 0.16);
+	// It keeps the flake's slow fall until most of it has melted, then speeds up to the drop's (Mitra et al.
+	// 1990; drop speed Atlas et al. 1973).
+	float vt = mix(0.8 * pow(d, 0.16), max(9.65 - 10.3 * exp(-0.6 * CUSTOM.x), 0.5), smoothstep(0.5, 1.0, melt));
 	float om = 6.2831853 * 1.3 * CUSTOM.z;
 	float ph = CUSTOM.y + TIME * om;
 	float amp = 0.01 + 0.003 * d;
@@ -189,7 +197,9 @@ void process() {
 	float near = smoothstep(0.4, 1.2, distance(p, eye));
 	float a = step(CUSTOM.w, ratio) * fade * near;
 	TRANSFORM = snow_streak(p, v, d * 0.001 * size_scale, a);
-	COLOR = vec4(1.0, 1.0, 1.0, a);
+	// Melt water fills the flake: less scattering, greyer and clearer.
+	float tone = 1.0 - 0.3 * melt;
+	COLOR = vec4(tone, tone, tone, a * (1.0 - 0.35 * melt));
 }
 )";
 
@@ -305,6 +315,27 @@ float SnowFall3D::snowfall_extinction(float p_rate_mm_h) {
 
 float SnowFall3D::fall_speed(float p_size_mm) {
 	return 0.8f * Math::pow(MAX(p_size_mm, 0.01f), 0.16f);
+}
+
+float SnowFall3D::aggregate_factor(float p_celsius) {
+	// Aggregation takes off above -5 C, where the crystals' quasi-liquid surface makes them stick, and peaks
+	// just below 0 C, flakes there 2 to 3 times the size of cold ones (Hobbs, Chang and Locatelli 1974).
+	const float t = CLAMP((p_celsius + 5.0f) / 5.0f, 0.0f, 1.0f);
+	return 1.0f + 1.5f * t * t * (3.0f - 2.0f * t);
+}
+
+float SnowFall3D::melted_share(float p_celsius, float p_humidity) {
+	// The same ramp as the rain-or-snow split: the share fully melted to rain is how far the rest has gone.
+	return p_celsius <= 0.0f ? 0.0f : WeatherMap3D::rain_fraction(p_celsius, p_humidity);
+}
+
+float SnowFall3D::wet_fall_speed(float p_melted_diameter_mm, float p_melted_share) {
+	const float dm = MAX(p_melted_diameter_mm, 0.05f);
+	const float size = MAX(dm, 0.5f * dm * dm * dm);
+	const float m = CLAMP(p_melted_share, 0.0f, 1.0f);
+	const float d = Math::lerp(size, dm, m * m);
+	const float k = CLAMP((m - 0.5f) / 0.5f, 0.0f, 1.0f);
+	return Math::lerp(fall_speed(d), MAX(9.65f - 10.3f * Math::exp(-0.6f * dm), 0.5f), k * k * (3.0f - 2.0f * k));
 }
 
 float SnowFall3D::blowing_threshold(float p_celsius) {
@@ -521,12 +552,14 @@ void SnowFall3D::_update(double p_delta) {
 		_update_ground(center);
 	}
 	SnowCover3D *cover = _cover();
-	const WeatherMap3D *weather = WeatherMap3D::get_active();
+	const WorldWeather *weather = WorldContracts::weather()->has_provider() ? WorldContracts::weather() : nullptr;
 
 	// Falling.
 	cur_rate = snowfall_rate_override >= 0.0f ? snowfall_rate_override : (cover ? cover->get_snowfall_rate_at(center) : 0.0f);
 	const float volume = fall_extent.x * fall_extent.y * fall_extent.z;
-	const float wanted = flake_number_density(cur_rate, min_flake_size) * density_scale * volume;
+	// Aggregates near 0 C carry the same water in fewer, larger flakes.
+	const float agg_now = sleet_enabled ? aggregate_factor(MIN(cover ? cover->get_air_temperature_at(center) : (weather ? weather->air_temperature_at(center) : -5.0f), 0.0f)) : 1.0f;
+	const float wanted = flake_number_density(cur_rate, min_flake_size) * density_scale * volume / agg_now;
 	cur_ratio = falling_enabled ? CLAMP(wanted / MAX(max_flakes, 1), 0.0f, 1.0f) : 0.0f;
 	fall->set_global_transform(Transform3D(Basis(), center));
 	fall_process->set_shader_parameter("box_center", center);
@@ -537,6 +570,14 @@ void SnowFall3D::_update(double p_delta) {
 	fall_process->set_shader_parameter("lambda", flake_size_slope(MAX(cur_rate, 0.01f)));
 	fall_process->set_shader_parameter("dm_min", snow_melted_diameter(min_flake_size));
 	fall_process->set_shader_parameter("size_scale", flake_size_scale);
+	{
+		const float t_air = cover ? cover->get_air_temperature_at(center) : (weather ? weather->air_temperature_at(center) : -5.0f);
+		const float rh = weather ? weather->air_humidity_at(center) : 0.85f;
+		cur_melt = sleet_enabled ? melted_share(t_air, rh) : 0.0f;
+		cur_aggregate = sleet_enabled ? aggregate_factor(MIN(t_air, 0.0f)) : 1.0f;
+		fall_process->set_shader_parameter("aggregate", cur_aggregate);
+		fall_process->set_shader_parameter("melt", cur_melt);
+	}
 	fall_process->set_shader_parameter("streak_time", streak_time);
 	blow_process->set_shader_parameter("streak_time", streak_time);
 	if (shelter) {
@@ -546,9 +587,9 @@ void SnowFall3D::_update(double p_delta) {
 	// Blowing: the wind at 10 m over the ground under the camera against the threshold of dry snow.
 	const float ground_y = ground_valid && cover ? cover->get_ground_height_at(center) : center.y - 2.0f;
 	const Vector3 base(center.x, ground_y, center.z);
-	const float temp = cover ? cover->get_air_temperature_at(base) : (weather ? weather->get_air_temperature() : -5.0f);
+	const float temp = cover ? cover->get_air_temperature_at(base) : (weather ? weather->air_temperature_at(base) : -5.0f);
 	cur_threshold = threshold_wind_override >= 0.0f ? threshold_wind_override : blowing_threshold(temp);
-	cur_wind10 = weather ? weather->get_wind_at(base, 10.0f).length() : 0.0f;
+	cur_wind10 = weather ? weather->wind_at(base, 10.0f).length() : 0.0f;
 	cur_blow = blowing_enabled && temp < 0.0f ? CLAMP(saltation_flux_ratio(cur_wind10, cur_threshold) * blowing_strength, 0.0f, 1.0f) : 0.0f;
 	blow->set_global_transform(Transform3D(Basis(), base));
 	blow_process->set_shader_parameter("box_center", base);
@@ -756,6 +797,14 @@ void SnowFall3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_speed_10m"), &SnowFall3D::get_wind_speed_10m);
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("flake_number_density", "rate", "min_size"), &SnowFall3D::flake_number_density);
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("flake_size_slope", "rate"), &SnowFall3D::flake_size_slope);
+	ClassDB::bind_static_method("SnowFall3D", D_METHOD("aggregate_factor", "celsius"), &SnowFall3D::aggregate_factor);
+	ClassDB::bind_static_method("SnowFall3D", D_METHOD("melted_share", "celsius", "humidity"), &SnowFall3D::melted_share);
+	ClassDB::bind_static_method("SnowFall3D", D_METHOD("wet_fall_speed", "melted_diameter", "melted_share"), &SnowFall3D::wet_fall_speed);
+	ClassDB::bind_method(D_METHOD("get_melted_share"), &SnowFall3D::get_melted_share);
+	ClassDB::bind_method(D_METHOD("get_aggregate"), &SnowFall3D::get_aggregate);
+	ClassDB::bind_method(D_METHOD("set_sleet_enabled", "enabled"), &SnowFall3D::set_sleet_enabled);
+	ClassDB::bind_method(D_METHOD("is_sleet_enabled"), &SnowFall3D::is_sleet_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sleet_enabled"), "set_sleet_enabled", "is_sleet_enabled");
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("fall_speed", "size"), &SnowFall3D::fall_speed);
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("snowfall_extinction", "rate"), &SnowFall3D::snowfall_extinction);
 	ClassDB::bind_method(D_METHOD("get_extinction"), &SnowFall3D::get_extinction);
