@@ -360,13 +360,21 @@ private:
 	}
 };
 
-
 // Desert dune fields: Paris, Galin, Peytavie, Guérin and Gain's (CGF 2019) desertscape simulation, which grows
 // transverse dunes from a thick sand cover, barchans from a thin one, and linear and star dunes from bimodal and wider
 // wind regimes. A random cell lifts a slab (a quarter of a cell; unless the wind's shadow behind a crest, 5 to 15 degrees, holds it);
 // the slab hops downwind, faster up slopes facing the wind, and settles at each landing with a chance (60% on sand,
 // 40% on bare ground, certain in the shadow), up to three bounces; sand past the repose (33 degrees) slides off at the
 // lift and the landing. The grid wraps (a sand sea).
+// That alone grows ridges with the same slope on both sides (Werner 1995 notes the steep stoss). Three additions
+// make the real cross-section, a long gentle stoss (10-15 degrees) and a slip face at the repose:
+// - The wind's shear over the dune from linearised flow (Jackson and Hunt 1975, in the form of Kroy, Sauermann and
+//   Herrmann 2002): tau = 1 + A (H[h'] + B h'), H the Hilbert transform along the wind, on a surface smoothed over a
+//   few cells (the saturation length: the flux lags the shear, so ripples shorter than that see none of it). The lift
+//   scales with it and the settling goes against it, as in Pelletier's (2009) shear-driven slab model: the stoss
+//   erodes, the sand drops past the crest.
+// - Grainfall: a hop that crosses a brink drops its grains in the first cell of the shadow, on top of the lee.
+// - Slides move only the excess over the repose, so a slip face stands at the repose instead of a slab below it.
 // Lengths are in cells and heights in the same unit, so the dunes scale with the cell: angles hold, a coarser cell gives
 // bigger dunes of the same shapes.
 // Parallel by bands of rows (the sublattice decomposition of parallel kinetic Monte Carlo): each step cuts the grid
@@ -388,6 +396,11 @@ public:
 		double repose_tan = 0.6; // about 33 degrees
 		double deposit_sand = 0.6;
 		double deposit_bare = 0.4;
+		double shear_a = 3.0; // the shear's response to the terrain (Kroy 2002's A)
+		double shear_b = 0.5; // its upwind shift (B)
+		int shear_reach = 32; // cells each way the Hilbert transform sums
+		int shear_smooth = 4; // 1-2-1 passes over the slope first (the saturation length)
+		int shear_every = 4; // steps between updates
 	};
 	Params p;
 	struct Wind {
@@ -401,6 +414,7 @@ public:
 	int w = 0, h = 0;
 	std::vector<float> base; // in cells of height
 	std::vector<float> sand; // in cells of height (the start on input)
+	std::vector<float> shear; // the wind's shear over the flat: 1 (from begin_shear and shear_rows)
 
 	double height(int i) const { return double(base[i]) + double(sand[i]); }
 
@@ -434,10 +448,70 @@ public:
 		}
 	}
 
+	// The shear for step p_step, before its bands run: true when it is due, then shear_rows over all rows (in any
+	// split, on any threads) finishes it.
+	bool begin_shear(int p_step) {
+		const int n = w * h;
+		if (int(shear.size()) != n) {
+			shear.assign(n, 1.0f);
+		} else if (p_step % std::max(p.shear_every, 1) != 0) {
+			return false;
+		}
+		if (p.shear_a <= 0.0) {
+			return false;
+		}
+		const Wind &wd = _wind(p_step);
+		const double wl = std::sqrt(wd.x * wd.x + wd.z * wd.z);
+		if (wl <= 0.0) {
+			return false;
+		}
+		shear_ux = wd.x / wl;
+		shear_uz = wd.z / wl;
+		// The slope along the wind, smoothed.
+		slope_along.resize(n);
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				slope_along[z * w + x] = float(0.5 * (_height_at(x + shear_ux, z + shear_uz) - _height_at(x - shear_ux, z - shear_uz)));
+			}
+		}
+		std::vector<float> tmp(n);
+		for (int pass = 0; pass < p.shear_smooth; pass++) {
+			for (int z = 0; z < h; z++) {
+				const int zm = _wrap(z - 1, h) * w, z0 = z * w, zp = _wrap(z + 1, h) * w;
+				for (int x = 0; x < w; x++) {
+					const int xm = _wrap(x - 1, w), xp = _wrap(x + 1, w);
+					const float *g = slope_along.data();
+					tmp[z0 + x] = (g[zm + xm] + 2.0f * g[zm + x] + g[zm + xp] + 2.0f * (g[z0 + xm] + 2.0f * g[z0 + x] + g[z0 + xp]) + g[zp + xm] + 2.0f * g[zp + x] + g[zp + xp]) * (1.0f / 16.0f);
+				}
+			}
+			slope_along.swap(tmp);
+		}
+		return true;
+	}
+
+	void shear_rows(int p_z0, int p_z1) {
+		const float *g = slope_along.data();
+		for (int z = p_z0; z < p_z1; z++) {
+			for (int x = 0; x < w; x++) {
+				double hs = 0.0;
+				for (int k = 1; k <= p.shear_reach; k++) {
+					const int ax = _wrap(int(std::lround(x - shear_ux * k)), w), az = _wrap(int(std::lround(z - shear_uz * k)), h);
+					const int bx = _wrap(int(std::lround(x + shear_ux * k)), w), bz = _wrap(int(std::lround(z + shear_uz * k)), h);
+					hs += (g[az * w + ax] - g[bz * w + bx]) / k;
+				}
+				const double s = g[z * w + x];
+				shear[z * w + x] = float(std::clamp(1.0 + p.shear_a * (hs * (1.0 / 3.14159265358979) + p.shear_b * s), 0.0, 3.0));
+			}
+		}
+	}
+
 	// Serial: p_steps steps.
 	void run(int p_steps) {
 		const int k = band_count();
 		for (int step = 0; step < p_steps; step++) {
+			if (begin_shear(step)) {
+				shear_rows(0, h);
+			}
 			if (k == 0) {
 				run_band(step, 0);
 				continue;
@@ -451,6 +525,11 @@ public:
 	}
 
 private:
+	double shear_ux = 1.0, shear_uz = 0.0;
+	std::vector<float> slope_along;
+
+	double _shear(int p_i) const { return shear.empty() ? 1.0 : double(shear[p_i]); }
+
 	struct Rng {
 		uint64_t key, counter;
 		std::vector<int> queue; // the slides' work list, one per band
@@ -553,6 +632,9 @@ private:
 		static const double len[8] = { 1.0, 1.41421356, 1.0, 1.41421356, 1.0, 1.41421356, 1.0, 1.41421356 };
 		Area inner{ p_a.z0 + 1, p_a.z1 - 1, p_a.limited };
 		queue.clear();
+		if (queue.capacity() < 4096) {
+			queue.reserve(4096 * 8);
+		}
 		queue.push_back(p_i);
 		size_t head = 0;
 		while (head < queue.size() && head < 4096) {
@@ -566,13 +648,14 @@ private:
 			}
 			const double hc = height(c);
 			int nb[8];
-			double sl[8], sum = 0.0;
+			double sl[8], len_of[8], sum = 0.0;
 			int m = 0;
 			for (int k = 0; k < 8; k++) {
 				const int j = _wrap(z + dz[k], h) * w + _wrap(x + dx[k], w);
 				const double st = hc - height(j);
 				if (st > 0.0 && st / len[k] > p.repose_tan) {
 					nb[m] = j;
+					len_of[m] = len[k];
 					sl[m] = st / len[k];
 					sum += sl[m];
 					m++;
@@ -581,12 +664,23 @@ private:
 			if (m == 0) {
 				continue;
 			}
-			const float a = std::min(sand[c], float(p.slab));
+			// Just the excess over the steepest neighbour (at most a slab), so the slope comes to rest at the repose
+			// instead of up to a slab below it; a cell held to a slab goes back on the list.
+			double need = 0.0;
+			for (int k = 0; k < m; k++) {
+				const double share = sl[k] / sum;
+				need = std::max(need, (sl[k] - p.repose_tan) * len_of[k] / (1.0 + share));
+			}
+			const bool capped = need > p.slab;
+			const float a = std::min(sand[c], float(std::min(p.slab, need)));
 			for (int k = 0; k < m; k++) {
 				sand[nb[k]] += float(a * sl[k] / sum);
 				queue.push_back(nb[k]);
 			}
 			sand[c] -= a;
+			if (capped) {
+				queue.push_back(c);
+			}
 		}
 	}
 
@@ -603,22 +697,39 @@ private:
 			_stabilize(r, p_a, s0);
 			return;
 		}
-		const float a = std::min(sand[s0], float(p.slab));
+		const float a = std::min(sand[s0], float(p.slab * _shear(s0)));
+		if (a <= 0.0f) {
+			return;
+		}
 		sand[s0] -= a;
 		// A random start inside the cell, so hops shorter than a cell or off the grid axes still land evenly.
 		double px = sx + r.uniform(), pz = sz + r.uniform();
 		int dx = sx, dz = sz, d = s0;
+		double top = height(s0);
 		for (int bounce = 0; bounce < p.bounces; bounce++) {
 			_wind_at(dx, dz, p_w, wx, wz);
-			px += wx;
-			pz += wz;
-			px -= std::floor(px / w) * w;
-			pz -= std::floor(pz / h) * h;
-			dx = std::min(int(px), w - 1);
-			dz = std::min(int(pz), h - 1);
-			d = dz * w + dx;
 			const double u = r.uniform();
-			if (u < _shadow(dx, dz, wx, wz) || u < (sand[d] > 0.0f ? p.deposit_sand : p.deposit_bare)) {
+			// The hop a cell at a time: past a brink the grains drop out of the flow in the first cell under the 15
+			// degree line from the path flown so far (top: the highest of the path's heights carried along that line).
+			const double hl = std::sqrt(wx * wx + wz * wz);
+			const int ns = std::max(1, int(std::ceil(hl)));
+			const double drop = p.shadow_max_tan * hl / ns;
+			bool fell = false;
+			for (int k = 0; k < ns && !fell; k++) {
+				px += wx / ns;
+				pz += wz / ns;
+				px -= std::floor(px / w) * w;
+				pz -= std::floor(pz / h) * h;
+				dx = std::min(int(px), w - 1);
+				dz = std::min(int(pz), h - 1);
+				const double hh = height(dz * w + dx);
+				top -= drop;
+				fell = k < ns - 1 && top > hh;
+				top = std::max(top, hh);
+			}
+			d = dz * w + dx;
+			// Settling goes against the shear: the sand stays where the wind slows past the crest.
+			if (fell || u < _shadow(dx, dz, wx, wz) || u < (sand[d] > 0.0f ? p.deposit_sand : p.deposit_bare) / std::max(_shear(d), 0.5)) {
 				break;
 			}
 		}
