@@ -139,8 +139,11 @@ void fragment() {
 	float crack = max(big, 0.5 * fine) * smoothstep(0.02, 0.06, h) * (1.0 - smoothstep(25.0, 90.0, dist));
 	// A crack is a fracture plane full of tiny bubbles: it scatters like snow ice, so it reads in the
 	// diffuse albedo (which path tracing keeps at any sample count), not only as a roughness change.
-	col = mix(col, vec3(0.6, 0.64, 0.68), crack * crack_strength * (1.0 - white) * 0.8);
-	rough = mix(rough, 0.2, crack * crack_strength);
+	// Far away a pixel-wide line stands for a hairline much thinner than the pixel, so its contrast falls with
+	// distance (about its true coverage) and it does not break into bright dashes at grazing angles.
+	float crack_far = 1.0 - 0.7 * smoothstep(12.0, 45.0, dist);
+	col = mix(col, vec3(0.6, 0.64, 0.68), crack * crack_strength * (1.0 - white) * 0.8 * crack_far);
+	rough = mix(rough, 0.2, crack * crack_strength * crack_far);
 	float metallic = 0.0;
 	float specular = 0.335; // ice, F0 0.018
 	vec4 snow_s = snow_cover_at(v_world);
