@@ -1255,7 +1255,7 @@
     "add_puddle()"
    ],
    "note": "",
-   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, and puddles form in hollows and wet flats and stay as dry hollows in dry weather, as real geometry in raster and path tracing; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes.",
+   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing; puddles form in hollows and wet flats and stay as dry hollows in dry weather; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
