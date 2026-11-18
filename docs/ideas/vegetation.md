@@ -986,3 +986,20 @@ Built (`VegetationVoxelLod::make_shell`, `GrassField3D.make_voxel_shell`, `hedge
   (a voxel about two pixels wide at 1080p). A visibility range is measured to the instance's AABB
   centre, so segments go in 8 m cells, one MultiMesh per cell and level.
 - Not done: per-pixel normal dither from the distribution (step 3); greedy face merging.
+
+Docs declined the first fields frame (18 Nov). Fixes:
+
+- Far hedges read as a bead necklace of identical round bushes. Each segment now sits up to 0.18 m
+  off the line, either way round, 12 to 24% longer than its 2 m step so neighbours grow together,
+  with a height that wanders over tens of metres (0.7 to 1.4) and its own width; three variants.
+  Hedgerow standards (field maple, hawthorn grown on as trees: Rackham 1986) every 35 to 80 m, with
+  their own voxel levels (15, 30, 60 cm at 70, 140, 280 m).
+- Stubble read as snow: its far look is shaded like a ripe stand (0.55 of its straw, pushed from
+  its grey) and the combine's passes alternate light and dark (harvest stripes).
+- A far barley field had a dark band: the live far match was one scale for all fields, the median
+  of mixed crops. Each field with six or more pairs of its own now gets its own scale (row 3 of
+  crop_ground_plots) over the global one.
+- The wheat's far half was a smooth blur against the tillers' speckle: the relief canopy now adds
+  the ears' grain at the pixel's narrow width, band-limited octaves (14, 7, 3.5 per metre) kept
+  under their Nyquist limit (Lagae et al. 2010), never coarser (coarser octaves made blotches).
+- Tramline lanes show their soil, part shaded, not black lines.

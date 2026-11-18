@@ -1215,7 +1215,7 @@ int GrassField3D::get_hedge_segment_count() const {
 	for (const Node3D *h : hedge_nodes) {
 		for (int i = 0; i < h->get_child_count(); i++) {
 			const MultiMeshInstance3D *mmi = Object::cast_to<MultiMeshInstance3D>(h->get_child(i));
-			if (mmi && mmi->get_multimesh().is_valid() && String(mmi->get_name()).ends_with("lod0")) {
+			if (mmi && mmi->get_multimesh().is_valid() && String(mmi->get_name()).begins_with("Hedge") && String(mmi->get_name()).ends_with("lod0")) {
 				n += mmi->get_multimesh()->get_instance_count();
 			}
 		}
@@ -1273,9 +1273,14 @@ void GrassField3D::_build_hedges() {
 	};
 	const Mix mix[] = { { TreeGenerator::PRESET_HAWTHORN, 0.55f }, { TreeGenerator::PRESET_BLACKTHORN, 0.15f }, { TreeGenerator::PRESET_HAZEL, 0.12f }, { TreeGenerator::PRESET_FIELD_MAPLE, 0.1f }, { TreeGenerator::PRESET_DOG_ROSE, 0.08f } };
 	const int kinds = int(std_size(mix));
-	const int VARIANTS = 2;
+	const int VARIANTS = 3;
 	Ref<PlantSpecies> species[5];
 	LocalVector<Transform3D> xf[5][VARIANTS];
+	// Hedgerow standards: trees let grow up out of the hedge every few tens of metres (field
+	// maple and hawthorn grown on; Rackham 1986: most hedges hold some), so a hedge is not one
+	// even line of bushes from afar.
+	const TreeGenerator::Preset std_presets[2] = { TreeGenerator::PRESET_FIELD_MAPLE, TreeGenerator::PRESET_HAWTHORN };
+	LocalVector<Transform3D> std_xf[2][VARIANTS];
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 	const Transform3D to_local = get_global_transform().affine_inverse();
 	const float base_y = get_global_position().y;
@@ -1319,6 +1324,7 @@ void GrassField3D::_build_hedges() {
 			const int count = int(Math::floor((s1 - s0) / seg));
 			const float start = s0 + 0.5f * ((s1 - s0) - count * seg);
 			const float gate = len * 0.25f;
+			float next_std = 10.0f + 30.0f * float(hash_murmur3_one_32(uint32_t(i), uint32_t(fi) * 7919u + 17u) & 0xFF) / 255.0f;
 			float run_from = -1e9f, run_to = -1e9f;
 			auto close_run = [&]() {
 				if (run_to > run_from) {
@@ -1366,15 +1372,35 @@ void GrassField3D::_build_hedges() {
 				}
 				const uint32_t hv = hash_murmur3_one_32(uint32_t(k), run);
 				const int variant = int(hv % VARIANTS);
-				// Segment meshes are centred on their origin, 2 m along local +X.
-				Vector3 at(mid.x, base_y, mid.y);
+				auto h01 = [&](uint32_t p_salt) { return float(hash_murmur3_one_32(p_salt, hv) & 0xFFFF) / 65535.0f; };
+				// Segment meshes are centred on their origin, 2 m along local +X. Each sits a little
+				// off the line, and is a little longer than its step so neighbours grow into each
+				// other (no row of separate round bushes from afar).
+				const float side = (h01(1) - 0.5f) * 0.35f;
+				const Vector2 mid_j = mid + out * side;
+				Vector3 at(mid_j.x, base_y, mid_j.y);
 				if (map) {
-					const Vector3 pm(mid.x, 0.0f, mid.y);
+					const Vector3 pm(mid_j.x, 0.0f, mid_j.y);
 					at.y = map->get_height_at(pm) - 0.05f;
 				}
-				// The segment runs along its local +X: turn that onto the edge.
-				const float yaw = Math::atan2(-dir.y, dir.x);
-				xf[kind][variant].push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), at));
+				// The segment runs along its local +X: turn that onto the edge, either way round.
+				const float yaw = Math::atan2(-dir.y, dir.x) + (h01(2) < 0.5f ? 0.0f : float(Math::PI));
+				// A hedge's height wanders along it over tens of metres (cut one year, grown out
+				// another, gappy where a shrub died), plus each shrub's own.
+				const float along = s + float(i) * 37.0f + float(fi) * 101.0f;
+				const float tall = CLAMP(1.0f + 0.2f * Math::sin(along * 0.083f + float(fi)) + 0.1f * Math::sin(along * 0.29f + 1.3f) + 0.16f * (h01(3) - 0.5f), 0.7f, 1.4f);
+				const float wide = 0.9f + 0.25f * h01(4) + 0.15f * (tall - 1.0f);
+				const float lng = 1.12f + 0.12f * h01(5);
+				const Basis bs = Basis(Vector3(0, 1, 0), yaw) * Basis::from_scale(Vector3(lng, tall, wide));
+				xf[kind][variant].push_back(to_local * Transform3D(bs, at));
+				// A standard every 35 to 80 m along the line.
+				if (s >= next_std) {
+					const int sk = h01(6) < 0.6f ? 0 : 1;
+					const float sc = sk == 0 ? 0.45f + 0.2f * h01(7) : 0.7f + 0.2f * h01(7);
+					const Basis sb = Basis(Vector3(0, 1, 0), h01(8) * float(Math::TAU)) * Basis::from_scale(Vector3(sc, sc, sc));
+					std_xf[sk][int(hash_murmur3_one_32(9, hv) % VARIANTS)].push_back(to_local * Transform3D(sb, at));
+					next_std = s + 35.0f + 45.0f * h01(10);
+				}
 				if (run_from < -1e8f) {
 					run_from = s;
 				}
@@ -1390,6 +1416,57 @@ void GrassField3D::_build_hedges() {
 	holder->set_name("Hedges");
 	add_child(holder, false, INTERNAL_MODE_BACK);
 	hedge_nodes.push_back(holder);
+	// The real mesh near, voxel shells further out (docs/ideas/vegetation.md, "Far hedges as voxel
+	// bricks"), each level a MultiMesh per 8 m cell: a visibility range is measured to the
+	// instance's AABB centre, so one MultiMesh for a whole field would switch all its hedges
+	// together.
+	auto add_levels = [&](const Ref<Mesh> &p_full, const LocalVector<Transform3D> &p_xf, const String &p_key, const float *p_voxels, const float *p_ranges, const String &p_name) {
+		for (int lod = 0; lod < 4; lod++) {
+			Ref<Mesh> lm = p_full;
+			if (lod > 0) {
+				const String key = vformat("%s_%d_%d", p_key, lod, hedge_day);
+				if (!hedge_shell_cache.has(key)) {
+					hedge_shell_cache[key] = VegetationVoxelLod::make_shell(p_full, p_voxels[lod], 7 + lod * 13 + uint32_t(p_key.hash() & 0xFF));
+				}
+				lm = hedge_shell_cache[key];
+			}
+			if (lm.is_null() || lm->get_surface_count() == 0) {
+				continue;
+			}
+			if (!hedge_voxel_lods && lod > 0) {
+				continue;
+			}
+			HashMap<Vector2i, LocalVector<Transform3D>> cells;
+			for (const Transform3D &t : p_xf) {
+				const Vector2i c(int(Math::floor(t.origin.x / 8.0f)), int(Math::floor(t.origin.z / 8.0f)));
+				cells[hedge_voxel_lods ? c : Vector2i()].push_back(t);
+			}
+			for (const KeyValue<Vector2i, LocalVector<Transform3D>> &cell : cells) {
+				Ref<MultiMesh> mm;
+				mm.instantiate();
+				mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+				mm->set_mesh(lm);
+				mm->set_instance_count(cell.value.size());
+				for (uint32_t t = 0; t < cell.value.size(); t++) {
+					mm->set_instance_transform(t, cell.value[t]);
+				}
+				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+				mmi->set_name(vformat("%s_%d_%d_lod%d", p_name, cell.key.x, cell.key.y, lod));
+				mmi->set_multimesh(mm);
+				if (hedge_voxel_lods) {
+					mmi->set_visibility_range_begin(p_ranges[lod]);
+					mmi->set_visibility_range_end(p_ranges[lod + 1]);
+					mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
+					mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
+				}
+				holder->add_child(mmi);
+			}
+		}
+	};
+	// Segments: 10 cm voxels from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a voxel is about
+	// two pixels across at 1080p and a 75 degree view (plus the cell's reach).
+	const float seg_ranges[5] = { 0.0f, 45.0f, 90.0f, 180.0f, 0.0f };
+	const float seg_voxels[4] = { 0.0f, 0.1f, 0.2f, 0.4f };
 	for (int k = 0; k < kinds; k++) {
 		bool any = false;
 		for (int v = 0; v < VARIANTS; v++) {
@@ -1407,56 +1484,30 @@ void GrassField3D::_build_hedges() {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
 			}
-			// The real segment near, voxel shells further out (docs/ideas/vegetation.md, "Far hedges
-			// as voxel bricks"): 10 cm voxels from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a
-			// voxel is about two pixels across at 1080p and a 75 degree view (plus the cell's reach).
-			const Ref<Mesh> full = meshes[v % meshes.size()];
-			const float ranges[5] = { 0.0f, 45.0f, 90.0f, 180.0f, 0.0f };
-			const float voxels[4] = { 0.0f, 0.1f, 0.2f, 0.4f };
-			for (int lod = 0; lod < 4; lod++) {
-				Ref<Mesh> lm = full;
-				if (lod > 0) {
-					const String key = vformat("%s_%d_%d_%d", String::num_int64(int64_t(mix[k].preset)), v, lod, hedge_day);
-					if (!hedge_shell_cache.has(key)) {
-						hedge_shell_cache[key] = VegetationVoxelLod::make_shell(full, voxels[lod], 7 + v * 13 + lod);
-					}
-					lm = hedge_shell_cache[key];
-				}
-				if (lm.is_null() || lm->get_surface_count() == 0) {
-					continue;
-				}
-				// A visibility range is measured to the instance's AABB centre, so the segments go
-				// in 8 m cells: one MultiMesh per cell and level, each switching on its own
-				// distance (a whole field's hedges in one MultiMesh switch together).
-				HashMap<Vector2i, LocalVector<Transform3D>> cells;
-				for (const Transform3D &t : xf[k][v]) {
-					const Vector2i c(int(Math::floor(t.origin.x / 8.0f)), int(Math::floor(t.origin.z / 8.0f)));
-					cells[hedge_voxel_lods ? c : Vector2i()].push_back(t);
-				}
-				for (const KeyValue<Vector2i, LocalVector<Transform3D>> &cell : cells) {
-					Ref<MultiMesh> mm;
-					mm.instantiate();
-					mm->set_transform_format(MultiMesh::TRANSFORM_3D);
-					mm->set_mesh(lm);
-					mm->set_instance_count(cell.value.size());
-					for (uint32_t t = 0; t < cell.value.size(); t++) {
-						mm->set_instance_transform(t, cell.value[t]);
-					}
-					MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
-					mmi->set_name(vformat("Hedge%d_%d_%d_%d_lod%d", k, v, cell.key.x, cell.key.y, lod));
-					mmi->set_multimesh(mm);
-					if (hedge_voxel_lods) {
-						mmi->set_visibility_range_begin(ranges[lod]);
-						mmi->set_visibility_range_end(ranges[lod + 1]);
-						mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
-						mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
-					} else if (lod > 0) {
-						memdelete(mmi);
-						continue;
-					}
-					holder->add_child(mmi);
-				}
+			add_levels(meshes[v % meshes.size()], xf[k][v], vformat("hedge_%d_%d", int(mix[k].preset), v), seg_voxels, seg_ranges, vformat("Hedge%d_%d", k, v));
+		}
+	}
+	// Standards: crowns of 5 to 10 m, coarser voxels and further ranges.
+	const float std_ranges[5] = { 0.0f, 70.0f, 140.0f, 280.0f, 0.0f };
+	const float std_voxels[4] = { 0.0f, 0.15f, 0.3f, 0.6f };
+	for (int k = 0; k < 2; k++) {
+		bool any = false;
+		for (int v = 0; v < VARIANTS; v++) {
+			any = any || !std_xf[k][v].is_empty();
+		}
+		if (!any) {
+			continue;
+		}
+		const Ref<PlantSpecies> sp = TreeGenerator::make_shrub_species(std_presets[k], TreeGenerator::SHRUB_MATURE, VARIANTS, season);
+		if (sp.is_null()) {
+			continue;
+		}
+		const TypedArray<Mesh> meshes = sp->get_meshes();
+		for (int v = 0; v < VARIANTS; v++) {
+			if (std_xf[k][v].is_empty() || meshes.is_empty()) {
+				continue;
 			}
+			add_levels(meshes[v % meshes.size()], std_xf[k][v], vformat("standard_%d_%d", int(std_presets[k]), v), std_voxels, std_ranges, vformat("Standard%d_%d", k, v));
 		}
 	}
 }
@@ -1477,7 +1528,12 @@ Color GrassField3D::crop_canopy_look(Crop p_crop, float p_stage) {
 		return Color(0, 0, 0, 0);
 	}
 	if (s >= 99.0f) {
-		return Color(cs.straw.r * 0.85f, cs.straw.g * 0.85f, cs.straw.b * 0.85f, 0.45f);
+		// Stubble from afar: the cut stems and the fallen straw shade each other and the soil
+		// between them as a ripe stand does (0.55, pushed from its grey), a dull gold, not the
+		// pale straw of one stem (the first fields frame read as snow).
+		const float g = (cs.straw.r + cs.straw.g + cs.straw.b) / 3.0f;
+		const Color st = Color(g, g, g).lerp(cs.straw, 1.3f) * 0.55f;
+		return Color(MAX(st.r, 0.0f), MAX(st.g, 0.0f), MAX(st.b, 0.0f), 0.6f);
 	}
 	auto ramp = [](float p_x, float p_a, float p_b) { return CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f); };
 	const float cover = s < 30.0f ? Math::lerp(0.08f, 0.45f, ramp(s, 10.0f, 30.0f)) : Math::lerp(0.45f, 0.97f, ramp(s, 30.0f, 39.0f)); // Closed by flag leaf (39).
@@ -1625,7 +1681,7 @@ void GrassField3D::_crop_ground_step() {
 	}
 	if (crop_plots_dirty) {
 		crop_plots_dirty = false;
-		Ref<Image> img = Image::create_empty(256, 3, false, Image::FORMAT_RGBAF);
+		Ref<Image> img = Image::create_empty(256, 4, false, Image::FORMAT_RGBAF);
 		int slot = 1;
 		for (const GrassField3D *g : crop_nodes) {
 			for (const CropPlot &pl : g->plots) {
@@ -1641,10 +1697,11 @@ void GrassField3D::_crop_ground_step() {
 				float half = 0.0f;
 				const bool swath = _crop_swath(pl, pitch, half);
 				img->set_pixel(slot, 2, Color(pitch, half, swath ? 1.0f : 0.0f, crop_canopy_height(g->crop, pl.current)));
+				img->set_pixel(slot, 3, crop_slot_view.has(slot) ? crop_slot_view[slot] : Color(1, 1, 1, 1));
 				slot++;
 			}
 		}
-		if (crop_plots_texture.is_valid() && crop_plots_texture->get_size() == Vector2(256, 3)) {
+		if (crop_plots_texture.is_valid() && crop_plots_texture->get_size() == Vector2(256, 4)) {
 			crop_plots_texture->update(img);
 		} else {
 			crop_plots_texture = ImageTexture::create_from_image(img);
@@ -3008,6 +3065,20 @@ void GrassField3D::_far_view_step(Camera3D *p_cam) {
 	}
 	const float a0 = Math::atan2(f2.y, f2.x);
 	far_view_px.clear();
+	far_view_pair_slot.clear();
+	// The field slot (crop_ground_plots' texel) a point is in, 0 for none.
+	auto slot_of = [&](const Vector2 &p_xz) -> int {
+		int slot = 1;
+		for (const GrassField3D *g : crop_nodes) {
+			for (const CropPlot &pl : g->plots) {
+				if (Geometry2D::is_point_in_polygon(p_xz, pl.polygon)) {
+					return slot;
+				}
+				slot++;
+			}
+		}
+		return 0;
+	};
 	const int dirs = 24;
 	for (int i = 0; i < dirs; i++) {
 		const float a = a0 + (float(i) / float(dirs - 1) - 0.5f) * 1.6f;
@@ -3045,6 +3116,7 @@ void GrassField3D::_far_view_step(Camera3D *p_cam) {
 			if (ok && px[0].distance_to(px[1]) > 6.0f) {
 				far_view_px.push_back(px[0]);
 				far_view_px.push_back(px[1]);
+				far_view_pair_slot.push_back(crop_view ? slot_of(c + d * (r_out + 0.06f * radius * float(k))) : 0);
 			}
 		}
 	}
@@ -3131,6 +3203,8 @@ void GrassField3D::_far_view_on_data(const PackedByteArray &p_data, int p_width,
 	// azimuth cancels); a single box of blades varies too much with clumps and gaps to use alone.
 	Color sum_in(0, 0, 0, 0), sum_out(0, 0, 0, 0);
 	LocalVector<float> lum_ratios;
+	HashMap<int, Color> slot_in, slot_out;
+	HashMap<int, int> slot_n;
 	const bool debug = OS::get_singleton()->get_environment("GRASS_VIEW_DEBUG") != ""; // Print each pair.
 	for (int i = 0; i + 1 < far_view_px.size(); i += 2) {
 		const Color in = box(far_view_px[i]);
@@ -3148,6 +3222,20 @@ void GrassField3D::_far_view_on_data(const PackedByteArray &p_data, int p_width,
 		sum_in += in;
 		sum_out += out;
 		lum_ratios.push_back(lin / lout);
+		const int slot = i / 2 < int(far_view_pair_slot.size()) ? far_view_pair_slot[i / 2] : 0;
+		if (slot > 0) {
+			slot_in[slot] = (slot_in.has(slot) ? slot_in[slot] : Color(0, 0, 0, 0)) + in;
+			slot_out[slot] = (slot_out.has(slot) ? slot_out[slot] : Color(0, 0, 0, 0)) + out;
+			slot_n[slot] = (slot_n.has(slot) ? slot_n[slot] : 0) + 1;
+		}
+	}
+	// Each field with enough pairs of its own gets its own ratio.
+	far_view_slot_ratio.clear();
+	for (const KeyValue<int, int> &e : slot_n) {
+		if (e.value >= 6) {
+			const Color a = slot_in[e.key], b = slot_out[e.key];
+			far_view_slot_ratio[e.key] = Color(a.r / MAX(b.r, 1e-5f), a.g / MAX(b.g, 1e-5f), a.b / MAX(b.b, 1e-5f), 1.0f);
+		}
 	}
 	int pairs = lum_ratios.size();
 	Color med(1, 1, 1, 1);
@@ -3163,7 +3251,7 @@ void GrassField3D::_far_view_on_data(const PackedByteArray &p_data, int p_width,
 		}
 		lum_ratios.sort();
 		const float spread = (lum_ratios[(pairs * 3) / 4] - lum_ratios[pairs / 4]) / MAX(lum_ratios[pairs / 2], 1e-4f);
-		if (spread > 0.8f) {
+		if (spread > 0.8f && far_view_slot_ratio.size() < 2) {
 			pairs = 0; // The pairs disagree too much to trust (a mixed view): look again later.
 		}
 	}
@@ -3193,7 +3281,20 @@ void GrassField3D::_far_view_apply(const Color &p_ratio, int p_pairs) {
 		crop_view_scale.g = CLAMP(crop_view_scale.g * CLAMP(p_ratio.g, 0.5f, 2.0f), 0.3f, 3.0f);
 		crop_view_scale.b = CLAMP(crop_view_scale.b * CLAMP(p_ratio.b, 0.5f, 2.0f), 0.3f, 3.0f);
 		RenderingServer::get_singleton()->global_shader_parameter_set("crop_ground_view", Vector4(crop_view_scale.r, crop_view_scale.g, crop_view_scale.b, 1.0f));
-	} else if (!close) {
+	}
+	if (fade_owner != this && !far_view_slot_ratio.is_empty()) {
+		// Each measured field: its own ratio over the global step just taken.
+		for (const KeyValue<int, Color> &e : far_view_slot_ratio) {
+			Color sv = crop_slot_view.has(e.key) ? crop_slot_view[e.key] : Color(1, 1, 1, 1);
+			for (int ch = 0; ch < 3; ch++) {
+				const float rel = e.value[ch] / MAX(p_ratio[ch], 1e-4f);
+				sv[ch] = CLAMP(sv[ch] * CLAMP(rel, 0.5f, 2.0f), 0.4f, 2.5f);
+			}
+			crop_slot_view[e.key] = sv;
+		}
+		crop_plots_dirty = true; // _crop_ground_step() writes them into the plots' row 3.
+	}
+	if (!close && fade_owner == this) {
 		// The frame is tone mapped, so the step is not exact: take it, then look again.
 		far_view_scale.r = CLAMP(far_view_scale.r * CLAMP(p_ratio.r, 0.8f, 1.25f), 0.5f, 1.5f);
 		far_view_scale.g = CLAMP(far_view_scale.g * CLAMP(p_ratio.g, 0.8f, 1.25f), 0.5f, 1.5f);
@@ -3787,7 +3888,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	// A closed, ripe stand is even from afar (the ears' layer hides the stems): its patches and
 	// clumps are faint; an open young crop shows its uneven growth more.
 	float even = clamp((look.a - 0.6) / 0.35, 0.0, 1.0);
-	vec3 canopy = look.rgb * (1.0 + (0.44 * patchy - 0.22) * mix(1.0, 0.4, even)) * (0.8 + 0.4 * speck) * (1.0 + (0.4 * clump - 0.2) * mix(1.0, 0.5, even));
+	vec3 canopy = look.rgb * (1.0 + (0.44 * patchy - 0.22) * mix(1.0, 0.25, even)) * (0.8 + 0.4 * speck) * (1.0 + (0.4 * clump - 0.2) * mix(1.0, 0.5, even));
 	// Down-sun the lit faces of ears and leaves, into the sun their shaded sides (the tillers' bake).
 	vec2 to_far = xz - crop_ground_fade.xy;
 	float to_far_len = length(to_far);
@@ -3811,7 +3912,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	vec3 far = mix(shaded, canopy, cover * mix(rows, 1.0, max(look.a * look.a, 1.0 - mu * mu)));
 	// Tramlines in a standing crop are lanes between walls of it: soil in their shade, darker
 	// than the canopy round them, not pale stripes over it.
-	far = mix(far, mix(canopy * 0.45, soil * 0.3, 0.5), wheel * look.a * mu);
+	far = mix(far, mix(canopy * 0.55, soil * 0.75, 0.6), wheel * look.a * mu);
 	vec4 sw = texelFetch(crop_ground_plots, ivec2(int(crop_ground_field_slot(world_pos)), 2), 0);
 	// Past the tillers' band the stand as a relief: the view ray marched back from the ground
 	// through a height field of the canopy (parallax occlusion mapping, Tatarchuk 2006; relief
@@ -3829,7 +3930,11 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 		if (dv > 0.004) {
 			vec2 nrow = vec2(-d.y, d.x);
 			float s_max = min(H / dv, min(30.0, vl * 0.9));
-			float ear_f = 1.0 - smoothstep(0.03, 0.12, length(fwidth(xz)));
+			float px_m = length(fwidth(xz)); // The pixel's footprint (m), outside any branch.
+			// Across the view the footprint is the distance times the pixel's angle; along it the
+			// slant stretches it. The grain follows the narrow side, or a far field turns blotchy.
+			float px_lat = vl * length(fwidth(v)) * 0.7;
+			float ear_f = 1.0 - smoothstep(0.03, 0.12, px_m);
 			float closed = clamp((look.a - 0.3) / 0.65, 0.0, 1.0);
 			const int STEPS = 24;
 			float hit_s = -1.0;
@@ -3845,16 +3950,29 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 				prev_s = st;
 				prev_d = dd;
 			}
-			vec3 relief = shaded * 0.45; // Down a lane to the ground in its walls' shade.
+			vec3 relief = soil * mix(0.85, 0.6, look.a); // Down a lane to its soil, part in its walls' shade.
 			if (hit_s >= 0.0) {
 				vec2 q = xz - v.xz * hit_s;
 				float depth = clamp(hit_s * dv / H, 0.0, 1.0);
-				float ears = mix(0.5, grass_noise(q * 14.0 + 9.1), ear_f);
+				// The ears' grain at the pixel's own scale: octaves of noise from the ears' size
+				// (14 per metre) down, each kept only below its Nyquist limit and only while no finer
+				// one is resolved (band-limited procedural noise; Lagae et al. 2010), down to 3.5 per metre and no coarser, so a far field
+				// keeps the near stalks' speckle contrast instead of fading to a smooth blur (the
+				// first fields frame's seam where the tillers end).
+				float grain = 0.0;
+				float fq = 14.0;
+				float finer = 0.0;
+				for (int k = 0; k < 3; k++) {
+					float a = 1.0 - smoothstep(0.35, 0.7, px_lat * fq);
+					grain += a * (1.0 - finer) * (grass_noise(q * fq + float(k) * 3.7 + 9.1) - 0.5);
+					finer = max(finer, a);
+					fq *= 0.5;
+				}
 				// Lit at the top, in the stand's own shade lower down (its light falls about as
 				// exp(-LAI) to the base).
-				relief = canopy * (0.8 + 0.4 * ears) * mix(0.28, 1.3, depth * depth);
+				relief = canopy * max(1.0 + 1.3 * grain, 0.3) * mix(0.28, 1.3, depth * depth);
 			}
-			far = mix(far, relief * crop_ground_view.rgb, gone);
+			far = mix(far, relief * crop_ground_view.rgb * texelFetch(crop_ground_plots, ivec2(int(crop_ground_field_slot(world_pos)), 3), 0).rgb, gone);
 		}
 	}
 	// Stubble: the combine's swaths of straw down each pass, paler and fuller than the stubble.
@@ -3864,8 +3982,12 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 		float sway = 0.25 * sin(vm * 0.05 + floor(um / sw.x) * 1.7) + 0.1 * sin(vm * 0.21 + floor(um / sw.x) * 0.3);
 		float across = abs(mod(um - sway, sw.x) - 0.5 * sw.x) / sw.y;
 		float heap = clamp(1.0 - across * across, 0.0, 1.0) * (0.75 + 0.5 * speck);
-		vec3 straw = look.rgb / 0.85 * 0.8 * (0.8 + 0.4 * patchy);
+		vec3 straw = look.rgb * 1.3 * (0.8 + 0.4 * patchy);
 		far = mix(far, straw, smoothstep(0.0, 1.0, heap) * 0.5);
+		// Harvest stripes: the combine goes up one pass and back down the next, laying the stubble
+		// and the chaff over each way, so alternate passes catch the light differently.
+		float pass_side = smoothstep(0.35, 0.65, abs(fract(um / (2.0 * sw.x)) * 2.0 - 1.0));
+		far *= mix(0.86, 1.1, pass_side);
 		near = mix(near, straw * 0.55, smoothstep(0.0, 0.5, heap) * (1.0 - dropped));
 	}
 	return mix(near, far, gone);
@@ -4261,6 +4383,7 @@ void GrassField3D::_notification(int p_what) {
 				_crop_fields_changed_notify();
 				if (crop_nodes.is_empty()) {
 					hedge_shell_cache.clear();
+					crop_slot_view.clear();
 					// The last crop node: no fields' ground left, and the shared textures go with the
 					// tree (not at exit, after the rendering server).
 					RenderingServer *rs = RenderingServer::get_singleton();
