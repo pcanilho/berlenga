@@ -1057,6 +1057,21 @@ sheets in a 2.2 m/s gusty breeze: dry ones billow out, soaked ones hang
 about 20% longer and flutter less. On a 30 degree slope a soaked sheet
 slides 0.18 m in 5 s against a dry one's 0.42 m.
 
+Worn clothing (18 Nov): PhysXSkinnedCloth3D shares the model (ClothWetness:
+rain from the map, roof ray, Penman drying). A garment on a moving figure
+faces every way, so its catch is an upright cylinder's (rain through its
+width at the drops' slant spread over pi times that width of fabric) on 85%
+of it plus all that falls on the shoulders' 15%. Wet: the added weight
+divides the push of extra_acceleration (wind), the damping and collider
+friction rise, and a slight drive toward the skinned pose stands in for the
+film holding it to the body (its effect grows with substeps: position
+corrections per substep against a gravity step of dt squared, so it stays
+small, 0.002 per frame at soaked). The render copy's shader darkens it by
+Lekner and Dorf. Tests: 30 mm/h with 3 m/s wind soaks a skirt in 106 s (5
+mm/h: about 11 min), dries about 2% a minute; under a 3 m/s2 sideways push
+a soaked hem leans 1.1 cm against a dry one's 3.6, and with the hips
+swaying 12 cm at 1.5 Hz it swings 3.2 cm against 4.4.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

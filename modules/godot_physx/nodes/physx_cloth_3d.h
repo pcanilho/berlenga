@@ -35,6 +35,7 @@
 #include "scene/3d/visual_instance_3d.h"
 
 #ifdef GODOT_PHYSX_FLOW
+#include "../cloth/cloth_wetness.h"
 #include "../flow/physx_cloth_burn.h"
 #endif
 #include "scene/resources/mesh.h"
@@ -109,13 +110,10 @@ private:
 
 	// Wet from the weather (docs/ideas/physx.md, "Rain soaks cloth"): rain soaks the fabric up to water_capacity times
 	// its own weight; wet, it is heavier, limper, darker and clings to what it touches, then dries in the air.
-	float wetness = 0.0f; // 0 dry, 1 soaked
+	ClothWetness wet;
 	bool weather_wetting = true;
 	float water_capacity = 1.0f; // kg of water a kg of fabric holds soaked (cotton about 1, wool more, polyester less)
 	float wet_applied = 0.0f; // the wetness the solver's masses and stiffness last took
-	float rain_catch = 1.0f; // rain caught per m2 of fabric over rain per m2 of ground, from its facing and the wind
-	float rain_shelter = 1.0f; // 0 under a roof
-	float rain_timer = 0.0f;
 	void _update_wetness(double p_delta, const Vector3 &p_wind);
 
 	PinMode pin_mode = PIN_TOP_EDGE;
@@ -242,13 +240,13 @@ public:
 	void move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions);
 	int tear(const Vector3 &p_from, const Vector3 &p_to);
 	void set_wetness(float p_v);
-	float get_wetness() const { return wetness; }
+	float get_wetness() const { return wet.wetness; }
 	void set_weather_wetting(bool p_v) { weather_wetting = p_v; }
 	bool is_weather_wetting() const { return weather_wetting; }
 	void set_water_capacity(float p_v);
 	float get_water_capacity() const { return water_capacity; }
 	// Water held, kg/m2.
-	float get_water_load() const { return wetness * density * water_capacity; }
+	float get_water_load() const { return wet.wetness * density * water_capacity; }
 
 	void set_burnable(bool p_v);
 	bool is_burnable() const { return burnable; }
