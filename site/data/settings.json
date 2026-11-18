@@ -3745,6 +3745,17 @@
    "topic": ""
   },
   {
+   "name": "Streaming without stalls",
+   "settings": [
+    "physics/physx_3d/streaming/statics_per_step"
+   ],
+   "note": "",
+   "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fibre shading",
    "settings": [
     "rendering/pathtracing/hair"
