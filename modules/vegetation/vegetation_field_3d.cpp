@@ -276,6 +276,53 @@ float VegetationLight::exposure(const TerrainDataMap3D *p_map, float p_sun_mean,
 }
 
 // Everything placement needs, read on the main thread so tiles can be placed on workers.
+// The geology's loose sand (TerrainGenerator3D::get_geology_image(), R below 0) on its grid over
+// the generator's world rect.
+void VegetationField3D::_read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup) {
+	r_setup.sand.clear();
+	r_setup.sand_nx = 0;
+	r_setup.sand_ny = 0;
+	if (!p_gen) {
+		return;
+	}
+	const Ref<Image> img = p_gen->get_geology_image();
+	if (img.is_null() || img->get_width() < 2 || img->get_height() < 2 || img->get_format() != Image::FORMAT_RGBAF) {
+		return;
+	}
+	const int w = img->get_width(), h = img->get_height();
+	const float *src = reinterpret_cast<const float *>(img->get_data().ptr());
+	bool any = false;
+	r_setup.sand.resize(w * h);
+	for (int i = 0; i < w * h; i++) {
+		const float s = MAX(-src[i * 4], 0.0f);
+		r_setup.sand[i] = s;
+		any = any || s > 0.0f;
+	}
+	if (!any) {
+		r_setup.sand.clear();
+		return;
+	}
+	r_setup.sand_nx = w;
+	r_setup.sand_ny = h;
+	r_setup.sand_rect = p_gen->get_world_rect();
+}
+
+float VegetationField3D::PlaceSetup::sand_at(const Vector2 &p_xz) const {
+	if (sand.is_empty() || !sand_rect.has_area()) {
+		return 0.0f;
+	}
+	const float gx = (p_xz.x - sand_rect.position.x) / sand_rect.size.x * (sand_nx - 1);
+	const float gz = (p_xz.y - sand_rect.position.y) / sand_rect.size.y * (sand_ny - 1);
+	if (gx < 0.0f || gz < 0.0f || gx > sand_nx - 1 || gz > sand_ny - 1) {
+		return 0.0f;
+	}
+	const int ix = MIN(int(gx), sand_nx - 2), iz = MIN(int(gz), sand_ny - 2);
+	const float fx = gx - ix, fz = gz - iz;
+	const float *r0 = &sand[iz * sand_nx + ix];
+	const float *r1 = r0 + sand_nx;
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	r_setup = PlaceSetup();
 	ERR_FAIL_COND_V_MSG(biome.is_null(), false, "VegetationField3D: no biome.");
@@ -307,6 +354,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.dunes = gen && gen->get_dune_rect().has_area() ? gen : nullptr;
 		r_setup.coast = gen && gen->has_sea_result() ? gen : nullptr;
 		r_setup.sea_y = gen ? float(gen->get_sea_level() + gen->get_height_offset()) : 0.0f;
+		_read_sand(gen, r_setup);
 	}
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
@@ -830,6 +878,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
+		const bool sand_plant = sp->uses_dune() || coast_rule;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
@@ -921,6 +970,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector3 dp(xz.x, 0.0f, xz.y);
 						const float dune = p_setup.dunes->get_dune_height(dp) >= DUNE_SAND_MIN ? float(p_setup.dunes->get_dune_stability(dp)) : -1.0f;
 						suit *= sp->rule_weight(PlantSpecies::RULE_DUNE, dune);
+					}
+					if (!sand_plant && suit > 0.0f && !p_setup.sand.is_empty()) {
+						// Loose sand (beach, dune, sand sea): no soil to root in or to hold litter.
+						suit *= 1.0f - CLAMP((p_setup.sand_at(xz) - 0.05f) / 0.25f, 0.0f, 1.0f);
 					}
 					if (coast_rule && suit > 0.0f) {
 						// The tidal frame (salt marsh and shingle): height over the generator's sea, the
