@@ -230,8 +230,10 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_w
 	if (p_leaf.lying >= 0.0f) {
 		p_leaf.lying += p_delta;
 		// Loose dry leaves lift when the wind 10 cm over the ground passes the threshold (gusts do it).
-		if (p_weather) {
-			const Vector3 a = p_weather->wind_at(p_leaf.p, 0.1f);
+		const WorldFire *fire = WorldContracts::fire();
+		if (p_weather || fire->has_provider()) {
+			// The fires' indraft near the ground draws leaves in towards the flames.
+			const Vector3 a = (p_weather ? p_weather->wind_at(p_leaf.p, 0.1f) : Vector3()) + (fire->has_provider() ? fire->wind_at(p_leaf.p) : Vector3());
 			const float u = Vector2(a.x, a.z).length();
 			if (u > lift_speed && rng.randf() < (u / lift_speed - 1.0f) * 4.0f * p_delta) {
 				p_leaf.lying = -1.0f;
@@ -244,7 +246,11 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_w
 		return;
 	}
 	p_leaf.age += p_delta;
-	const Vector3 air = p_weather ? p_weather->wind_at(p_leaf.p) : Vector3();
+	Vector3 air = p_weather ? p_weather->wind_at(p_leaf.p) : Vector3();
+	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+		// The indraft is a near-ground inflow: it fades over the first few metres, where the plume takes over.
+		air += fire->wind_at(p_leaf.p) * (1.0f - Math::smoothstep(2.0f, 6.0f, p_leaf.p.y - ground));
+	}
 	PlateState s{ p_leaf.p, p_leaf.v, p_leaf.b, p_leaf.w };
 	const int n = plate_substeps(p_delta, (p_leaf.v - air).length(), k.length * sc, k.area * sc * sc, k.mass * sc * sc, air_density);
 	const float dt = p_delta / n;

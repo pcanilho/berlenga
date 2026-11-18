@@ -186,6 +186,11 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 		{
 			air = p_wind * (Math::log(MAX(z, z0 * 1.5f) / z0) / ref);
 		}
+		// Ash and embers near the ground drift in with the fires' indraft (WorldFire.wind_at), fading over the first
+		// few metres where the plume below takes them.
+		if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+			air += fire->wind_at(b.p) * (1.0f - Math::smoothstep(2.0f, 6.0f, z));
+		}
 		// The plume: Flow's gas in the flames, the convection column above them (Flow's own grid holds only the
 		// flame zone, and the fire's Flow already carries the wind, so only its updraft is taken).
 		float lift = _plume_lift(b.p, air);

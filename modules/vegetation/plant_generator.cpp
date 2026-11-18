@@ -5391,6 +5391,7 @@ String PlantGenerator::shader_common_code() {
 	code += BaseMaterial3D::get_snow_shader_code();
 	code += BaseMaterial3D::get_rain_functions_code(true);
 	code += VegetationFire::SHADER_CODE;
+	code += VegetationFire::WIND_CODE;
 	code += R"(
 global uniform sampler2D weather_state_map;
 
@@ -5408,7 +5409,7 @@ float weather_wetness_at(vec3 p_world_pos) {
 
 global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
 
-vec3 plant_wind(vec3 wp, float h) {
+vec3 plant_air_wind(vec3 wp, float h) {
 	if (weather_map_rect.z > 0.0) {
 		return weather_wind(wp, h);
 	}
@@ -5421,6 +5422,10 @@ vec3 plant_wind(vec3 wp, float h) {
 	float phase = dot(wp.xz, d) * 0.12 - TIME * s * 0.12;
 	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
 	return vec3(w.x, 0.0, w.y) * g;
+}
+
+vec3 plant_wind(vec3 wp, float h) {
+	return plant_air_wind(wp, h) + fire_wind_at(wp.xz); // the fires' indraft on top (WorldFire.wind_at)
 }
 )";
 	return code;

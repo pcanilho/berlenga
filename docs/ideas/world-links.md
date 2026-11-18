@@ -121,6 +121,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → drying | linked (18 Nov) | WorldFire | the weather boils the surface film off under a fire |
 | Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | as above (snow) |
 | Fire → heat shimmer | linked (18 Nov) | Flow temperature, weather air | `PhysXFlow3D.heat_shimmer`: raster screen pass and bent PT camera rays (heat-shimmer.md) |
+| Fire indraft → grass, plants, cloth, hair, leaves, ash, smoke, dust | linked (18 Nov) | WorldFire `wind_at` (fire_wind_map in shaders) | PhysX e141399d (grass, cloth); plants, hair, LeafFall3D, firebrands, other Flows and rock dust add it to their wind, fading over the first few metres for airborne things |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies
