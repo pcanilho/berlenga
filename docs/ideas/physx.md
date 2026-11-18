@@ -1305,6 +1305,31 @@ against the legs while the downstream side held out, and it all hung back
 once out of the water. Left: free PhysXCloth3D (flags and sheets dipping in
 a river) does not take the current yet.
 
+### Fire whirls (picked 18 Nov night, fourth of four)
+
+Built. Research: fire whirls form where a fire's updraft meets ambient
+vorticity, most often on the flanks of a front in a cross wind or at a
+lee slope (Forthofer and Goodrick 2011, "Review of vortices in wildland
+fire"). Kuwana et al. (2008) found whirls behind line fires when the wind
+U is near the buoyant velocity scale w* = (g I / (rho cp T))^(1/3), and
+L-shaped fronts favour them (Kuwana et al. 2013). Whirl cores are a
+fraction of the flame length across, spin at a few times w* and stand
+several flame lengths tall. Here: tiles of strong flame (I at least 300
+kW/m) whose front normal runs across the wind (|n . w| under 0.35) are
+flank sites. Each has a birth chance of 1 in 180 a second times a
+log-normal favour exp(-(ln(U/w*)/0.5)^2), at most two whirls, 6 m apart.
+A whirl has a core of 0.3 flame lengths (0.3 to 3 m), spins at 2 w* either
+way round, rises at 2 w*, lives 10 to 30 s, drifts at a third of the wind
+and ages three times as fast off flaming fuel. It draws as four
+overlapping Flow sources in a helix up its core (tangential plus upward
+velocity), so the flame is pulled into one spinning column, and adds a
+firebrand plume (1.5 times its rise) so brands caught in it go higher.
+Test: a 24 m grass fire, 90 s at each wind: none at 1 m/s, 7 at 2.5, 4 at
+4, none at 6 and 9 m/s; the frame shows a flame column about twice the
+height of the front's flames with smoke shed off its top. Left: the
+column's vorticity is set by its sources, not grown by Flow from a sheared
+wind field, and terrain lee slopes are not yet a birth site.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
