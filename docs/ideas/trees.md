@@ -1903,6 +1903,11 @@ limbs until near the crown and the long, low wing limbs go. With the stems doing
 structure, side shoots get apical control 0.95 again and needles are kept four years: the
 cushion runs to the edge. Stone pine: 15.9 m, crown 13.1 m across, base 9.8 m; 6.9M triangles.
 Cork oak: 3 m, four stems, ten years, two levels, 45 degrees, lift 0.22.
+
+Round 3 (18 Nov, docs: the split still read as a fan, children need to taper and thin): side
+shoots off a forked stem get a share of their vigor (`side`: stone pine 0.5, cork oak 0.7),
+so the stems stay thick and dominant and their side shoots thin; stone pine 15.7 m, crown 13.3
+m across, base 12.8 m, 6.1M triangles.
  Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
 about 11 m apart with saplings, snags and logs; not part of `make_woodland`. Its scrub comes
 from vegetation's `make_scrub` (lentisk, kermes oak, gum rockrose, dwarf fan palm). Not yet:
@@ -1947,7 +1952,17 @@ trees are cleaned), leaves 7 cm, toothed (six shallow teeth a side), grey felted
 widely warped, cracks 0.3 cell wide and 7 cm deep, rounded lumpy tops, warm red-brown fissure
 floors under grey-buff ridges (headroom 1.3). Furrow lines (the oak's pattern) were tried
 first: too smooth, a few pits. Open-grown 17.7 m, crown 20.6 m across, base 9.2 m; 16.5M
-triangles (an open oak is 24M). Not yet: stripping, acorns, the montado stand.
+triangles (an open oak is 24M).
+
+Stripping (18 Nov): `cork_stripped_years` (-1 picks one of eight stages of the cycle by seed;
+30 or more, unworked; trees under 25 and dead wood never). The bole is stripped from 4 cm over
+the soil to twice the girth, at most a metre over the fork, so the limb bases are bared too; the
+cut wavers a hand's breadth. It reuses the peel machinery (5f) with the stepped edge (5o): the
+stripped vertices sink past the deepest fissure of the displaced bark (smooth stem) and lose
+3-5 cm on plain tubes, less as the new cork grows back 4 mm a year. The bark shader draws the
+stripped stem instead of wood: bright orange (fresh), red-brown (weeks), brown-black (a year),
+then cork brown with fine cracks as it thickens (`bark_stripped_age`). Not yet: the painted
+year digit, acorns, the montado stand.
 
 ## 6. What the games at Paulo's bar do
 

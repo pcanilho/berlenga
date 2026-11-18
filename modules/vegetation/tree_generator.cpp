@@ -1244,6 +1244,7 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.angle = 32.0f;
 		r.gravitropism = 0.12f;
 		r.lift = 0.55f;
+		r.side = 0.5f;
 	} else if (preset == PRESET_CORK_OAK && forest_shade <= 0.0f) {
 		// A bole of 2-4 m, then three or four thick limbs (Natividade 1950).
 		r.fork_height = 3.0f;
@@ -1253,6 +1254,7 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.angle = 45.0f;
 		r.gravitropism = 0.06f;
 		r.lift = 0.22f; // Pruned up to the cork harvest height in the montado.
+		r.side = 0.7f;
 	}
 	return r;
 }
@@ -1426,6 +1428,7 @@ void TreeGenerator::_grow_year(int p_year) {
 			}
 		}
 	}
+	const float fork_side = _fork_rule().side;
 	for (int bi = 0; bi < bud_count; bi++) {
 		if (!buds[bi].alive) {
 			continue;
@@ -1439,6 +1442,10 @@ void TreeGenerator::_grow_year(int p_year) {
 				ord = 0; // A layered stem grows as a stem of its own (section 5s).
 			}
 			buds[bi].vigor *= Math::pow(params[PARAM_APICAL_CONTROL], float(ord));
+			if (!buds[bi].terminal && !buds[bi].fork && on.order == 0 && on.stem_level > 0) {
+				// Side shoots off a forked stem stay thin under it (trees.md 5z, docs 18 Nov).
+				buds[bi].vigor *= fork_side;
+			}
 			// A cut stem's root system feeds a few poles: they shoot up 1-3 m a year (coppice
 			// regrowth; Rackham 2006).
 			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= 4) {
@@ -7785,6 +7792,22 @@ float TreeGenerator::_bare_at(const Vector3 &p_pos, const Vector3 &p_normal, con
 	return CLAMP(0.5f + 3.0f * (t - (1.0f - a)), 0.0f, 1.0f);
 }
 
+// Cork harvest (trees.md 5aa): years since the cork was last stripped from the bole and the
+// limb bases, or -1 where it never was: other species, dead wood, trees under 25 (the first
+// stripping waits for a girth of 70 cm), and cork_stripped_years 30 or more. -1 picks a stage
+// of the nine-year cycle by seed, so a stand shows trees stripped in different summers; just
+// stripped stays rare.
+float TreeGenerator::_cork_strip_age() const {
+	if (preset != PRESET_CORK_OAK || decay_class > 0 || fallen || fallen_branch || params[PARAM_YEARS] < 25.0f || cork_stripped_years >= 30.0f) {
+		return -1.0f;
+	}
+	if (cork_stripped_years >= 0.0f) {
+		return cork_stripped_years;
+	}
+	static const float STAGES[8] = { 0.02f, 0.25f, 1.0f, 2.5f, 3.5f, 5.0f, 6.5f, 8.0f };
+	return STAGES[(uint32_t(seed) * 2654435761u >> 13) % 8];
+}
+
 // The bark surface's vertex alpha, written last: 0.5 + 0.5 x lichen weight on bark, 0.5 - 0.5 x
 // bare on lost bark (the bark shader decodes both; trees.md 2h and 5f). Bare vertices sink by the
 // bark's thickness, so the wood lies below the bark's edge. The sinking is per vertex and
@@ -7797,7 +7820,7 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 	const float amount = _bare_amount();
 	const float ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
 	const float moss_k = _moss_amount();
-	const float floor_k = amount > 0.0f ? _bark_set(_bark_kind(preset)).relief_floor : 0.0f;
+	const float floor_k = (amount > 0.0f || _cork_strip_age() >= 0.0f) ? _bark_set(_bark_kind(preset)).relief_floor : 0.0f;
 	LocalVector<float> radius;
 	radius.resize(nv);
 	for (int v = 0; v < nv; v++) {
@@ -7826,7 +7849,17 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 	// A log's peel edge is cut as a step (trees.md 5o): bark the thickness it is, standing over
 	// the wood, never a slope across the 2.5 cm grid that read as a decal's edge. Vertices sink
 	// fully or not at all, and the triangles the edge crosses are split along it below.
-	const bool step_edge = (fallen || fallen_branch) && amount > 0.0f;
+	// A cork harvest is cut as a step too: the cork stands centimetres proud of the stripped
+	// stem (trees.md 5aa).
+	const float strip_age = _cork_strip_age();
+	float strip_h = 0.0f;
+	if (strip_age >= 0.0f) {
+		// Stripped up to about twice the girth (Portuguese rules allow 2-3 times), and onto the
+		// bases of the main limbs, no higher than a metre over the fork.
+		const float girth = float(Math::TAU) * MAX(nodes[0].radius, 0.05f);
+		strip_h = CLAMP(2.0f * girth, 1.2f, _fork_rule().fork_height + 1.0f);
+	}
+	const bool step_edge = ((fallen || fallen_branch) && amount > 0.0f) || strip_age >= 0.0f;
 	LocalVector<Vector3> orig;
 	LocalVector<float> bare_v, depth_v;
 	if (step_edge) {
@@ -7873,6 +7906,17 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 				}
 			}
 		}
+		bool stripped = false;
+		if (strip_age >= 0.0f && !skip[v] && radius[v] >= 0.06f) {
+			// The cut runs round the stem with an axe, wavering a hand's breadth; the strippers
+			// leave a few centimetres at the foot.
+			const float h = vw[v].y - ground;
+			const float edge = strip_h + 0.12f * (moss_noise(vw[v] * 2.5f, 0x636f726bu) - 0.5f);
+			if (h < edge && h > 0.04f) {
+				bare = 1.0f;
+				stripped = true;
+			}
+		}
 		if (bare > 0.0f) {
 			const float r = radius[v];
 			// Thin bark on smooth tubes (beech, birch, young stems): a few millimetres. A deeper
@@ -7882,6 +7926,17 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 			if (v < int(r_bark.relief_off.size()) && r_bark.relief_off[v].y > 0.0f) {
 				// Displaced bark: the wood lies at the furrow floor (what was bark above it is gone).
 				depth = MAX(0.0f, r_bark.relief_off[v].x - 0.9f * floor_k * r_bark.relief_off[v].y) + 0.002f;
+			}
+			if (stripped) {
+				// Virgin cork 3-5 cm thick over the stripped stem, which is smooth; the new cork
+				// grows back 3-5 mm a year (Pereira 2007).
+				const float regrown = MIN(0.004f * strip_age, 0.03f);
+				if (v < int(r_bark.relief_off.size()) && r_bark.relief_off[v].y > 0.0f) {
+					// Displaced bark: down past the deepest fissure, so the stem is smooth.
+					depth = MAX(0.0f, r_bark.relief_off[v].x - floor_k * r_bark.relief_off[v].y) + MAX(0.004f, 0.012f - regrown);
+				} else {
+					depth = MIN(0.3f * r, MAX(0.006f, 0.04f - regrown));
+				}
 			}
 			if (step_edge && !skip[v]) {
 				bare_v[v] = bare;
@@ -14718,7 +14773,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bool bark_custom = false;
 		if (s == 0) {
 			_peel_bark(b);
-			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty();
+			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || _cork_strip_age() >= 0.0f;
 		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
@@ -15319,6 +15374,22 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			}
 			wood *= 1.0 - 0.65 * gallery;
 			wood = mix(wood, vec3(0.03, 0.025, 0.02), 0.85 * zone);
+			if (bark_stripped_age >= 0.0) {
+				// A cork oak's stripped stem (trees.md 5aa): the phellogen bright orange when
+				// fresh, deep red-brown in weeks, brown-black within the year; then the new cork,
+				// browner and smoother than virgin cork, finely and regularly cracked as it thickens.
+				float t = bark_stripped_age;
+				vec3 c = mix(vec3(0.69, 0.17, 0.02), vec3(0.17, 0.025, 0.008), smoothstep(0.0, 0.12, t));
+				c = mix(c, vec3(0.033, 0.013, 0.008), smoothstep(0.12, 1.0, t));
+				c = mix(c, vec3(0.15, 0.09, 0.055), smoothstep(1.0, 7.0, t)); // Linear: sRGB orange, red-brown, near black, cork brown.
+				float tone = texture(lichen_map, base_uv * vec2(1.7, 0.6) + vec2(0.21, 0.4)).g;
+				float crk = texture(lichen_map, base_uv * vec2(7.0, 2.2) + vec2(0.57, 0.12)).r;
+				float lines = 1.0 - smoothstep(0.015, 0.05, abs(crk - 0.5));
+				c *= mix(0.85, 1.12, tone);
+				c *= 1.0 - 0.55 * smoothstep(0.5, 5.0, t) * lines;
+				wood = c;
+				bark_wood_n = vec3(0.5, 0.5, 1.0);
+			}
 			float rim = smoothstep(0.25, 0.47, bare_field) * (1.0 - bark_bare);
 			ALBEDO *= 1.0 - 0.45 * rim;
 			ALBEDO = mix(ALBEDO, wood, bark_bare);
@@ -15368,6 +15439,7 @@ uniform vec3 lichen_orange_color : source_color = vec3(0.74, 0.58, 0.28);
 uniform float lichen_leafy_share = 0.5;
 uniform float lichen_orange_share = 0.0;
 uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
+uniform float bark_stripped_age = -1.0;
 )";
 	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
@@ -15403,6 +15475,7 @@ uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 	const Color wood = (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
 																													 : Color(0.47f, 0.45f, 0.41f);
 	m->set_shader_parameter("bark_wood_color", wood);
+	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
 	m->set_shader_parameter("lichen_orange_share", la.orange);
 	// Leafy lichens of acid bark are grey-green (Parmelia, Hypogymnia); of nutrient-rich bark
 	// yellower (Flavoparmelia, Physcia with Xanthoria about).
@@ -16001,6 +16074,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	moss_cover = p_from.moss_cover;
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
+	cork_stripped_years = p_from.cork_stripped_years;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
@@ -17414,6 +17488,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &TreeGenerator::set_lichen_cover);
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
+	ClassDB::bind_method(D_METHOD("set_cork_stripped_years", "years"), &TreeGenerator::set_cork_stripped_years);
+	ClassDB::bind_method(D_METHOD("get_cork_stripped_years"), &TreeGenerator::get_cork_stripped_years);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_root_stone", "radius"), &TreeGenerator::set_root_stone);
 	ClassDB::bind_method(D_METHOD("get_root_stone"), &TreeGenerator::get_root_stone);
@@ -17533,6 +17609,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "storm_kit"), "set_storm_kit", "get_storm_kit");
