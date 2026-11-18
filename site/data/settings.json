@@ -1622,10 +1622,11 @@
   {
    "name": "Clear water",
    "settings": [
-    "clear_water"
+    "clear_water",
+    "shore_depth_fade"
    ],
    "note": "",
-   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.",
+   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth; rivers fade softly into the bank at the waterline.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
