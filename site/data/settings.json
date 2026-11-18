@@ -1816,10 +1816,12 @@
   {
    "name": "Shore waves",
    "settings": [
-    "shore_waves"
+    "shore_waves",
+    "open_sea_beyond",
+    "terrain_source"
    ],
    "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only.",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast.",
    "page": "water",
    "title": "Water",
    "topic": "Shore"
