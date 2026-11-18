@@ -12,8 +12,10 @@ extends Node3D
 #                    400 tillers per m2 in rows 12.5 cm apart (--grass-density sets the tillers)
 #   --stage=N        the crop's growth stage, BBCH (default 75: milky ripe; 99 harvested stubble)
 #   --crop-close     the crop seen from 1.1 m, 2.5 m off its ears
-#   --fields         three fields (GrassField3D.fields) seen from 18 m up: ripe with tramlines every 12 m
-#                    and a 6 m headland, one at stem elongation drilled across, one harvested stubble
+#   --fields         three fields (GrassField3D.fields) seen from 16 m up: ripe with tramlines every 24 m
+#                    and an 8 m headland, one at stem elongation drilled across, one harvested stubble
+#                    with the combine's straw swaths; meadow round them, kept out of the fields
+#   --fields=stubble the same, from 1.7 m at the stubble's edge, over its swaths
 #   --frames=N       frames before the capture (default 20; path traced, more until no surface waits for its first capture)
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
@@ -68,8 +70,10 @@ extends Node3D
 #                    colour there instead (radius 10 m): prints both mean colours and their ratio
 #                    (GRASS_VIEW_MATCH=0: without the live-view far match; GRASS_DIAG=viewtime: per-frame times)
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
+#   CROP_FAR_ONLY=1  with --crop: no tillers, the fields' far canopy everywhere (match its mean against
+#                    the tillers' over the same ground, for crop_canopy_look())
 
-const SIZE := 96.0
+var SIZE := 96.0
 var test := false
 var raster := false
 var spp := 16
@@ -94,6 +98,7 @@ var crop_name := "" # --crop=wheat|barley|oats|rye
 var crop_stage := 75.0
 var crop_close := false
 var crop_fields := false
+var stubble_view := false # --fields=stubble: from 1.7 m at the stubble field's edge, over its swaths.
 var close := false
 var forest := false
 var litter_wind := Vector2()
@@ -176,10 +181,15 @@ func _ready() -> void:
 			crop_name = a.substr(7)
 			layers = false
 		elif a.begins_with("--stage="): crop_stage = float(a.substr(8))
-		elif a == "--crop-close": crop_close = true
-		elif a == "--fields":
+		elif a == "--crop-close":
+			crop_close = true
+			farmland = true # Crop to the horizon: no pond, no bench hills.
+			SIZE = 640.0
+		elif a == "--fields" or a == "--fields=stubble":
+			stubble_view = a == "--fields=stubble"
 			crop_fields = true
 			farmland = true
+			SIZE = 640.0 # Fields and the meadow round them to the horizon.
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
 		elif a == "--swamp": swamp = true
@@ -307,17 +317,27 @@ func _ready() -> void:
 		grass.density = grass_density if grass_density > 0.0 else 400.0
 		grass.drill_angle = deg_to_rad(20.0)
 		grass.radius = 24.0
-		grass.tile_size = 1.5 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
+		grass.tile_size = 1.25 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
 		if crop_fields:
-			grass.radius = 40.0
-			grass.density = grass_density if grass_density > 0.0 else 250.0 # Seen from 16 m up.
+			grass.radius = 50.0
+			grass.density = grass_density if grass_density > 0.0 else 450.0 # Closed stands, as drilled (450 to 600 tillers per m2).
+			# Three fields with grass margins between them: ripe wheat, wheat at stem elongation drilled
+			# across it, harvested stubble behind.
 			grass.fields = [
-				{"polygon": PackedVector2Array([Vector2(-42, -3), Vector2(-2, -1), Vector2(-3, -26), Vector2(-44, -25)]), "drill_angle": deg_to_rad(92.0), "stage": crop_stage, "tramline_spacing": 12.0, "headland": 6.0},
-				{"polygon": PackedVector2Array([Vector2(1, -1), Vector2(40, -4), Vector2(43, -26), Vector2(0, -27)]), "drill_angle": deg_to_rad(5.0), "stage": 37.0, "tramline_spacing": 12.0, "headland": 6.0},
-				{"polygon": PackedVector2Array([Vector2(-44, -29), Vector2(44, -30), Vector2(44, -46), Vector2(-44, -46)]), "drill_angle": deg_to_rad(-30.0), "stage": 99.0, "headland": 0.0},
+				{"polygon": PackedVector2Array([Vector2(-62, -2), Vector2(-4, 0), Vector2(-5, -58), Vector2(-66, -55)]), "drill_angle": deg_to_rad(92.0), "stage": crop_stage, "tramline_spacing": 24.0, "headland": 8.0},
+				{"polygon": PackedVector2Array([Vector2(4, 0), Vector2(60, -4), Vector2(64, -60), Vector2(3, -58)]), "drill_angle": deg_to_rad(5.0), "stage": 37.0, "tramline_spacing": 24.0, "headland": 8.0},
+				{"polygon": PackedVector2Array([Vector2(-70, -64), Vector2(70, -66), Vector2(72, -112), Vector2(-74, -110)]), "drill_angle": deg_to_rad(-30.0), "stage": 99.0, "tramline_spacing": 24.0, "headland": 0.0},
 			]
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
+	if crop_fields:
+		# The meadow round the fields (it keeps out of them by itself).
+		var meadow := GrassField3D.new()
+		meadow.name = "Meadow"
+		meadow.fallback_wind = wind
+		meadow.radius = 50.0
+		add_child(meadow)
+		meadow.data_map = meadow.get_path_to(dm)
 	if season_map:
 		grass.season_source = grass.get_path_to(season_map)
 	if layers:
@@ -513,6 +533,11 @@ void fragment() {
 	var sky := Sky.new()
 	var psm := ProceduralSkyMaterial.new()
 	sky.sky_material = psm
+	if farmland:
+		# The sky's ground half as the land round the farm, not a dark void below the map's edge.
+		psm.ground_horizon_color = psm.sky_horizon_color
+		psm.ground_bottom_color = Color(0.17, 0.22, 0.12)
+		psm.ground_curve = 0.3
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
@@ -593,10 +618,15 @@ void fragment() {
 	add_child(cam)
 	cam.look_at(Vector3(0, -0.5 - 0.6 * (eye_h - 1.7), -8))
 	if crop_fields:
-		cam.position = Vector3(0, height(0, 12) + 16.0, 12)
-		cam.look_at(Vector3(0, height(0, -22), -22))
+		cam.position = Vector3(0, height(0, 14) + 16.0, 14)
+		cam.look_at(Vector3(0, height(0, -30), -30))
+	if stubble_view:
+		cam.position = Vector3(-6, height(-6, -71) + 1.7, -71)
+		cam.look_at(Vector3(-10, height(-10, -80), -80))
 	if crop_close:
-		cam.position = Vector3(6, height(6, 20) + 1.1, 20)
+		# Oats and rye stand taller: the eye above their heads.
+		var eye := 1.1 if crop_name in ["wheat", "barley"] else (1.3 if crop_name == "oats" else 1.6)
+		cam.position = Vector3(6, height(6, 20) + eye, 20)
 		cam.look_at(Vector3(5.2, height(5.2, 17.6) + 0.75, 17.6))
 	if (trample or close) and not test:
 		# Closer, looking down on the trails.
@@ -1690,12 +1720,14 @@ func _field_checks() -> void:
 			var de := 1e9
 			for e in poly.size():
 				de = minf(de, q.distance_to(Geometry2D.get_closest_point_to_segment(q, poly[e], poly[(e + 1) % poly.size()])))
-			if de >= 6.0 + 0.1:
+			var hl: float = f0["headland"]
+			var sp: float = f0["tramline_spacing"]
+			if de >= hl + 0.1:
 				body += 1
-				var w := fposmod(q.dot(nrm), 12.0) - 6.0
+				var w := fposmod(q.dot(nrm), sp) - sp * 0.5
 				if absf(absf(w) - 0.9) < 0.1:
 					in_track += 1
-			elif de < 5.5 and de > 0.3:
+			elif de < hl - 0.5 and de > 0.3:
 				head += 1
 				var r := fposmod(de / rs, 1.0)
 				if absf(r - 0.5) > 0.4:
@@ -1707,6 +1739,29 @@ func _field_checks() -> void:
 	if head == 0 or head_off > head / 4:
 		fails += 1
 		print("GRASS_FAIL fields: headland rows not parallel to the edge")
+	# The meadow keeps out of the fields.
+	var meadow := get_node("Meadow") as GrassField3D
+	for i in 600:
+		meadow.update_at(cam.global_position)
+	var m_total := 0
+	var m_in := 0
+	for ch in meadow.get_children(true):
+		if not (ch is MultiMeshInstance3D and ch.multimesh):
+			continue
+		var mm: MultiMesh = ch.multimesh
+		for i in range(0, mm.instance_count, 5):
+			var o: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
+			if mm.get_instance_custom_data(i).r <= 0.0:
+				continue # GPU fill: rejected candidates are zero records.
+			m_total += 1
+			for f in grass.fields:
+				if Geometry2D.is_point_in_polygon(Vector2(o.x, o.z), f["polygon"]):
+					m_in += 1
+					break
+	print("GRASS_FIELDS meadow blades=%d in_fields=%d" % [m_total, m_in])
+	if m_total == 0 or m_in > 0:
+		fails += 1
+		print("GRASS_FAIL fields: meadow grass inside the fields")
 
 func _checks() -> void:
 	_season_checks()
@@ -1943,6 +1998,16 @@ func _region_mean() -> Color:
 
 func _process(dt: float) -> void:
 	n += 1
+	if crop_name != "" and OS.get_environment("CROP_FAR_ONLY") == "1":
+		# Calibration: the fields' far canopy everywhere, no tillers, to match against them.
+		grass.visible = false
+		RenderingServer.global_shader_parameter_set("crop_ground_fade", Vector4(1e6, 1e6, 0, 0))
+	if crop_fields and n == 4 and not test:
+		# Every crop and meadow tile in range at once, as a player arriving would see them after a
+		# few seconds (the fields' radius holds thousands of small tiles).
+		for i in 800:
+			grass.update_at(cam.global_position)
+			(get_node("Meadow") as GrassField3D).update_at(cam.global_position)
 	if n == 2:
 		dm.bake()
 		if rocks > 0 and not forest:

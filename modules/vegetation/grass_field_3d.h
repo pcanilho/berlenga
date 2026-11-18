@@ -37,6 +37,7 @@
 #include "vegetation_paths.h"
 
 #include "core/io/image.h"
+#include "core/math/geometry_2d.h"
 #include "core/templates/hash_map.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
@@ -63,6 +64,32 @@ public:
 		CROP_BARLEY,
 		CROP_OATS,
 		CROP_RYE,
+	};
+	// Every crop node's fields, for the meadow grass and plants to keep out of (a copy, safe to read
+	// on worker threads).
+	struct CropFieldMask {
+		struct Item {
+			Rect2 bounds;
+			PackedVector2Array polygon;
+		};
+		LocalVector<Item> items;
+		bool is_empty() const { return items.is_empty(); }
+		bool any_in(const Rect2 &p_rect) const {
+			for (const Item &it : items) {
+				if (it.bounds.intersects(p_rect)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		bool contains(const Vector2 &p_q) const {
+			for (const Item &it : items) {
+				if (it.bounds.has_point(p_q) && Geometry2D::is_point_in_polygon(p_q, it.polygon)) {
+					return true;
+				}
+			}
+			return false;
+		}
 	};
 
 private:
@@ -176,6 +203,7 @@ private:
 		float headland = 12.0f;
 		float current = 75.0f; // The stage now.
 	};
+	static bool _crop_swath(const CropPlot &p_pl, float &r_pitch, float &r_half);
 	Array fields;
 	LocalVector<CropPlot> plots;
 	int crop_day = -1; // The season's day the plot stages were set for.
@@ -186,6 +214,8 @@ private:
 	static Ref<ImageTexture> crop_ground_texture;
 	static Ref<ImageTexture> crop_plots_texture;
 	void _crop_ground_step();
+	void _crop_fields_changed_notify();
+	CropFieldMask crop_mask; // The other nodes' fields, as this meadow last built against.
 	struct CropShape {
 		float height; // Stem to the ear's base, ripe (m).
 		float ear_length;
@@ -418,6 +448,8 @@ public:
 	float get_field_stage(int p_index) const;
 	static float crop_calendar_stage(int p_sown_day, int p_harvest_day, int p_day);
 	static Color crop_canopy_look(Crop p_crop, float p_stage);
+	static CropFieldMask get_crop_field_mask();
+	void _on_crop_fields_changed();
 	void set_drill_angle(float p_angle);
 	float get_drill_angle() const { return drill_angle; }
 
