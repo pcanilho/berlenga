@@ -88,8 +88,12 @@ private:
 		float rise = 5.0f; // m/s, the core's updraft
 		float age = 0.0f;
 		float life = 15.0f;
+		// Born in a lee slope's eddy: it runs across the slope (drift) and lights the fuel it passes over.
+		bool lee = false;
+		Vector3 drift;
 	};
 	LocalVector<Whirl> whirls;
+	int lee_whirls_spawned = 0;
 	LocalVector<PhysXFlowEmitter3D *> whirl_emitters;
 	int whirls_spawned = 0;
 	bool fire_whirls = true;
@@ -102,7 +106,7 @@ private:
 	void _blow_ash(float p_delta);
 	uint32_t whirl_seed = 0x2545f491u;
 	float _whirl_rand();
-	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes);
+	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, const LocalVector<Vector3> &p_lee, LocalVector<PhysXFirebrands::Plume> &r_plumes);
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -321,6 +325,7 @@ public:
 	float get_steam_mass() const { return steam.get_total_kg(); }
 	int get_whirl_count() const { return whirls.size(); }
 	int get_whirls_spawned() const { return whirls_spawned; }
+	int get_lee_whirls_spawned() const { return lee_whirls_spawned; }
 	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
 	bool is_fire_whirls() const { return fire_whirls; }
 	void set_blowing_ash(bool p_v);

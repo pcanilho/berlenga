@@ -1180,7 +1180,7 @@ float PhysXFireSpread3D::_whirl_rand() {
 // L-shaped fronts). A whirl's core is some third of the flame length across, it spins at about twice w*, its core
 // rises at about twice w*, and it lives tens of seconds while it stands over flaming fuel. Drawn in the fire's Flow
 // by four emitters around the core, tangential and rising; brands caught in it rise on its updraft.
-void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes) {
+void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, const LocalVector<Vector3> &p_lee, LocalVector<PhysXFirebrands::Plume> &r_plumes) {
 	const float u = p_wind.length();
 	const float t_air = _air_temperature() + 273.15f;
 	// Births: each eligible flank tile has about a 1-in-180 chance a second near U / w* = 1 (one whirl every 20 s or so
@@ -1207,14 +1207,54 @@ void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, con
 		whirls.push_back(w);
 		whirls_spawned++;
 	}
+	// Lee slopes (docs/ideas/physx.md, "Fire whirls behind ridges"; Sharples et al. 2012, Simpson et al. 2013): wind
+	// over a ridge separates and rolls into a horizontal eddy in its lee; fire on that slope tilts it upright into
+	// whirls that run across the slope, along the ridge, lighting fuel as they go (vorticity-driven lateral spread).
+	// The operational test: a lee slope steeper than about 20 degrees facing within 40 degrees of downwind, in a
+	// wind over about 20 km/h. Births: about 1 in 600 a second for each strong tile there, with no U/w* condition
+	// (the eddy is the ridge's, not the fire's), so a burning lee slope throws one every minute or so.
+	for (uint32_t k = 0; k < p_lee.size() && whirls.size() < 2; k += 2) {
+		const Vector3 at = p_lee[k];
+		const Vector3 contour = p_lee[k + 1];
+		bool near = false;
+		for (const Whirl &w : whirls) {
+			near = near || w.pos.distance_to(at) < 6.0f;
+		}
+		if (near || _whirl_rand() > p_delta / 600.0f) {
+			continue;
+		}
+		int cx, cz;
+		const float q = _world_cell(at, cx, cz) ? heat[cz * nx + cx] * cell_size / 1000.0f : 300.0f; // kW/m, rough
+		const float ws = Math::pow(9.8f * MAX(q, 300.0f) * 1000.0f / (1.2f * 1005.0f * t_air), 1.0f / 3.0f);
+		Whirl w;
+		w.pos = at;
+		const float flame = 0.0775f * Math::pow(MAX(q, 300.0f), 0.46f);
+		w.radius = CLAMP(0.3f * flame, 0.3f, 3.0f);
+		w.spin = 2.0f * ws * (_whirl_rand() < 0.5f ? -1.0f : 1.0f);
+		w.rise = 2.0f * ws;
+		w.life = 20.0f + 40.0f * _whirl_rand();
+		w.lee = true;
+		// Across the slope at a fifth of the wind (lateral spread runs near the head fire's rate), either way.
+		w.drift = contour * (0.2f * u * (_whirl_rand() < 0.5f ? -1.0f : 1.0f)) + p_wind * 0.1f;
+		whirls.push_back(w);
+		whirls_spawned++;
+		lee_whirls_spawned++;
+	}
 	const Vector3 up = get_global_transform().basis.get_column(1).normalized();
 	for (int64_t k = int64_t(whirls.size()) - 1; k >= 0; k--) {
 		Whirl &w = whirls[k];
 		w.age += p_delta;
 		// Drifts downwind at about a third of the wind, wandering.
-		w.pos += (p_wind * 0.3f + Vector3(_whirl_rand() - 0.5f, 0.0f, _whirl_rand() - 0.5f) * 0.6f) * p_delta;
+		w.pos += ((w.lee ? w.drift : p_wind * 0.3f) + Vector3(_whirl_rand() - 0.5f, 0.0f, _whirl_rand() - 0.5f) * 0.6f) * p_delta;
 		int x, z;
-		const bool over = _world_cell(w.pos, x, z) && t_ignite[z * nx + x] >= 0.0f && heat[z * nx + x] > 0.0f;
+		const bool inside = _world_cell(w.pos, x, z);
+		if (inside) {
+			w.pos.y = height[z * nx + x];
+		}
+		if (w.lee && inside && t_ignite[z * nx + x] < 0.0f) {
+			ignite(w.pos, 0.5f * w.radius); // the whirl carries the fire along the slope
+		}
+		const bool over = inside && t_ignite[z * nx + x] >= 0.0f && (heat[z * nx + x] > 0.0f || w.lee);
 		if (!over) {
 			w.age += 2.0f * p_delta; // off the flaming fuel it starves
 		}
@@ -1428,7 +1468,32 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 			}
 		}
 	}
-	_update_whirls(float(get_physics_process_delta_time()), p_wind, flank, flank_q, plumes);
+	// Lee-slope sites: strong flaming tiles on ground steeper than 20 degrees falling away within 40 degrees of
+	// downwind, in a wind over 5.5 m/s. Stored as pairs: the place, then the contour direction (across the slope).
+	LocalVector<Vector3> lee;
+	if (fire_whirls && p_wind.length() > 5.5f) {
+		const Vector3 wd = Vector3(p_wind.x, 0.0f, p_wind.z).normalized();
+		for (uint32_t k = 0; k < order.size() && k < 32; k++) {
+			const Tile &t = tiles[order[k]];
+			const Vector3 c = t.centre / t.weight;
+			int cx, cz;
+			if (!_world_cell(c, cx, cz) || cx < 1 || cz < 1 || cx >= nx - 1 || cz >= nz - 1 || t.heat / 1000.0f / tile_w < 300.0f) {
+				continue;
+			}
+			const Vector3 a = _cell_world(cx - 1, cz), b = _cell_world(cx + 1, cz), d = _cell_world(cx, cz - 1), e = _cell_world(cx, cz + 1);
+			const Vector2 grad((b.y - a.y) / MAX(b.x - a.x, 1.0e-4f), (e.y - d.y) / MAX(e.z - d.z, 1.0e-4f));
+			if (grad.length() < 0.364f) { // tan 20
+				continue;
+			}
+			const Vector3 down = Vector3(-grad.x, 0.0f, -grad.y).normalized();
+			if (down.dot(wd) < 0.766f) { // cos 40
+				continue;
+			}
+			lee.push_back(c);
+			lee.push_back(Vector3(0.0f, 1.0f, 0.0f).cross(down).normalized());
+		}
+	}
+	_update_whirls(float(get_physics_process_delta_time()), p_wind, flank, flank_q, lee, plumes);
 	// The convection columns over the strongest stretches of front, for the firebrands.
 	if (spotting) {
 		const float t_air = _air_temperature();
@@ -1857,6 +1922,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_steam_mass"), &PhysXFireSpread3D::get_steam_mass);
 	ClassDB::bind_method(D_METHOD("get_whirl_count"), &PhysXFireSpread3D::get_whirl_count);
 	ClassDB::bind_method(D_METHOD("get_whirls_spawned"), &PhysXFireSpread3D::get_whirls_spawned);
+	ClassDB::bind_method(D_METHOD("get_lee_whirls_spawned"), &PhysXFireSpread3D::get_lee_whirls_spawned);
 	ClassDB::bind_method(D_METHOD("set_blowing_ash", "enabled"), &PhysXFireSpread3D::set_blowing_ash);
 	ClassDB::bind_method(D_METHOD("is_blowing_ash"), &PhysXFireSpread3D::is_blowing_ash);
 	ClassDB::bind_method(D_METHOD("get_ash_blown"), &PhysXFireSpread3D::get_ash_blown);

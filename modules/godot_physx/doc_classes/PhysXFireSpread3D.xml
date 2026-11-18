@@ -20,6 +20,12 @@
 				Kilograms of ash the wind has lifted off the burnt ground so far ([member blowing_ash]).
 			</description>
 		</method>
+		<method name="get_lee_whirls_spawned" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many of the fire whirls (see [method get_whirls_spawned]) formed on a lee slope and ran across it, spreading the fire sideways.
+			</description>
+		</method>
 		<method name="get_lightning_ignition_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -218,7 +224,7 @@
 			When disabled, the fire stops where it is.
 		</member>
 		<member name="fire_whirls" type="bool" setter="set_fire_whirls" getter="is_fire_whirls" default="true">
-			Strong fire on a flank that runs along the wind can spin up a fire whirl: a column of flame, some three flame lengths tall, that turns at about twice the fire's own updraft speed, wanders downwind and lofts firebrands higher. Whirls form most often when the wind is close to that updraft speed (Kuwana et al. 2008), last 10 to 30 seconds and die off the burning fuel. See [method get_whirl_count].
+			Strong fire on a flank that runs along the wind can spin up a fire whirl: a column of flame, some three flame lengths tall, that turns at about twice the fire's own updraft speed, wanders downwind and lofts firebrands higher. Whirls form most often when the wind is close to that updraft speed (Kuwana et al. 2008), last 10 to 30 seconds and die off the burning fuel. See [method get_whirl_count]. On a lee slope (steeper than about 20 degrees, falling away within 40 degrees of downwind, in a wind over 5.5 m/s) the ridge's eddy makes whirls too, whatever the fire's updraft; these run across the slope at about a fifth of the wind and light the fuel they pass, so the fire spreads sideways along the ridge (vorticity-driven lateral spread, Sharples et al. 2012).
 		</member>
 		<member name="flame_strength" type="float" setter="set_flame_strength" getter="get_flame_strength" default="1.0">
 			Scales the fuel and heat the burning ground feeds into Flow.

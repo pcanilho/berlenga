@@ -1414,6 +1414,30 @@ all of it within 3 minutes at 12 m/s; under a 10 m/s WeatherMap3D wind a
 low grey sheet streamed downwind off the scar. Left: grass ash does not
 show in the char map itself (only crown ash is drawn lighter).
 
+### Fire whirls behind ridges (picked 18 Nov late, fourth of four)
+
+Built. Research: wind over a ridge separates and rolls into a horizontal
+eddy in the lee; a fire on the lee slope tilts that vorticity upright into
+whirls that carry the fire across the slope, along the ridge, at rates
+near the head fire's (vorticity-driven lateral spread: Sharples et al.
+2012, Simpson et al. 2013 in coupled LES; the 2003 Canberra fires). The
+operational test (Sharples et al. 2012): slope over about 20 degrees,
+aspect within 40 degrees of the lee direction, wind over about 20 km/h.
+Here: strong flaming tiles (at least 300 kW/m) where the fire's ground
+(its height samples) falls away at more than tan 20 within 40 degrees of
+downwind, in a wind over 5.5 m/s, are lee sites. Each has a 1 in 600
+chance a second of a whirl, with no U/w* condition (the eddy is the
+ridge's). A lee whirl lives 20 to 60 s, drifts along the contour at a
+fifth of the wind (either way, plus a tenth of the wind downslope),
+lights the fuel under its core as it goes, and otherwise draws and lofts
+brands as a flank whirl. All whirls now sit on the ground's height. Test:
+a 30 x 40 m tall-grass patch on a 28 degree slope falling away downwind:
+at 8 m/s two lee whirls in two minutes widened the burn across the slope
+from 4.5 m to 21 m; none with whirls off or with the wind up the slope.
+Left: the lee test reads the fire's own slope, not the terrain wind's
+separation behind a ridge crest upwind; whirls (and so the lateral
+spread) need the fire's Flow, as flank whirls do.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
