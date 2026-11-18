@@ -6,4 +6,4 @@
 
 ### Changed
 
-- Cork oak: a denser, darker crown on four limbs, and virgin cork as an irregular network of rounded ridges between wide fissures.
+- Cork oak: a denser, darker crown on four thick limbs clad in cork, and virgin cork as swollen, rounded ridges between soft fissures.

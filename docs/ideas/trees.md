@@ -2039,6 +2039,16 @@ Docs review (18 Nov): holm oak and carob passed. Fixes for the rest:
   valleys (crack 0.35 of a cell) and rounded shoulders (square root of the profile), pale grey
   ridges over warm fissures.
 
+Round 3 (18 Nov): the leader splits once into four limbs (a second split at ten years gave
+sixteen, the broom of thin pale limbs the docs saw), their side branches held to 0.35 of their
+vigor, the fork stems at 55 degrees; no dead branches kept (the twig bundle on the bole). Cork
+colour darker grey-buff (0.36, 0.34, 0.31), so the limbs read as cork. The cork relief is a
+blurred pillow per cell (three box passes, about a centimetre): a pillow shaped from the
+distance to straight cell walls has sharp creases along its medial axis, the faceted pyramids
+read as scales. Long wandering fissures from stretched noise cut across the network; cells 3 by 2
+to a tile, side walls merge 45%, vertical 75%; fissures 2 cm deep, paler and warmer. The near
+tube keeps 5 cm rings (longer rings made diamonds) and samples a further blurred height.
+
 Not yet: olive and carob fruit, cultivated olives (grafted, pruned open vase), resin-tapping
 scars on maritime pines, Mediterranean stands (montado, maritime pine plantation).
 
