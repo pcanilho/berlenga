@@ -3458,6 +3458,17 @@
    "topic": ""
   },
   {
+   "name": "Dew and frost",
+   "settings": [
+    "dew_and_frost"
+   ],
+   "note": "",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Contact wetness",
    "settings": [
     "contact_wetness_enabled"

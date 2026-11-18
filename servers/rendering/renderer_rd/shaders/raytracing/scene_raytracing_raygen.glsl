@@ -2297,6 +2297,24 @@ void vmud_apply(float p_cover, vec2 p_tone, vec3 p_color, float p_wet, inout vec
 	r_specular = mix(r_specular, 0.5, p_cover);
 }
 
+// The far ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each
+// point reads it through a slow world-space warp of about a metre (crests bend and shift as real trains do round
+// defects) and a height that wanders between 55 and 100% over a few metres; both fade to none at the real
+// ripples' window so the two meet crest to crest. As material.cpp ground_ripple_vary().
+float ground_ripple_vn(vec2 p_p) {
+	vec2 i = floor(p_p);
+	vec2 f = p_p - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec4 h = fract(sin(vec4(dot(i, vec2(127.1, 311.7)), dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)), dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7)), dot(i + vec2(1.0), vec2(127.1, 311.7)))) * 43758.5453);
+	return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+}
+vec3 ground_ripple_vary(vec2 p_xz, float p_out) {
+	vec2 q = p_xz;
+	vec2 warp = 1.2 * (vec2(ground_ripple_vn(q / 5.0), ground_ripple_vn(q / 5.0 + 17.3)) - 0.5);
+	float amp = mix(0.55, 1.0, ground_ripple_vn(q / 2.5 + 41.0));
+	return vec3(warp * p_out, mix(1.0, amp, p_out));
+}
+
 // Standing water's depth between texels. The water's level (bed plus depth) is what varies smoothly, so the depth
 // is taken as the level less the bed, interpolated, with dry texels given their wet neighbours' mean level (a
 // level-set extension, as heightfield water renderers do at the wet/dry front): the waterline then runs across the
@@ -3022,7 +3040,8 @@ void main() {
 				float w = sand * (1.0 - live);
 				if (w > 0.0) {
 					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
-					vec2 tc = p / m0.w;
+					vec3 vr = ground_ripple_vary(p, 1.0 - live);
+					vec2 tc = (p + vr.xy) / m0.w;
 					ivec2 c0 = ivec2(floor(tc));
 					vec2 cf = tc - vec2(c0);
 					ivec2 a = ((c0 % rn) + rn) % rn;
@@ -3031,7 +3050,7 @@ void main() {
 										  texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, a.y), 0).ba, cf.x),
 							mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, b.y), 0).ba,
 									texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, b.y), 0).ba, cf.x),
-							cf.y) * w;
+							cf.y) * w * vr.z;
 					m.normal = normalize(m.normal - vec3(sl.x, 0.0, sl.y));
 				}
 			}

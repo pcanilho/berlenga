@@ -4384,6 +4384,23 @@ float ground_ripple(vec2 p_xz) {
 // Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
 // sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
 // path tracer reads the same map (scene_raytracing_raygen.glsl).
+// The far ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each
+// point reads it through a slow world-space warp of about a metre (crests bend and shift as real trains do round
+// defects) and a height that wanders between 55 and 100% over a few metres; both fade to none at the real
+// ripples' window so the two meet crest to crest. Shared with the path tracer (scene_raytracing_raygen.glsl).
+float ground_ripple_vn(vec2 p_p) {
+	vec2 i = floor(p_p);
+	vec2 f = p_p - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec4 h = fract(sin(vec4(dot(i, vec2(127.1, 311.7)), dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)), dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7)), dot(i + vec2(1.0), vec2(127.1, 311.7)))) * 43758.5453);
+	return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+}
+vec3 ground_ripple_vary(vec2 p_xz, float p_out) {
+	vec2 q = p_xz;
+	vec2 warp = 1.2 * (vec2(ground_ripple_vn(q / 5.0), ground_ripple_vn(q / 5.0 + 17.3)) - 0.5);
+	float amp = mix(0.55, 1.0, ground_ripple_vn(q / 2.5 + 41.0));
+	return vec3(warp * p_out, mix(1.0, amp, p_out));
+}
 vec2 ground_ripple_far_slope(vec2 p_xz) {
 	if (ground_ripple_rect.z <= 0.0) {
 		return vec2(0.0);
@@ -4414,8 +4431,9 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 		return vec2(0.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
-	vec2 tuv = (p_xz / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
-	return w * texture(ground_ripple_far, tuv).rg;
+	vec3 vr = ground_ripple_vary(p_xz, 1.0 - live);
+	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
+	return w * vr.z * texture(ground_ripple_far, tuv).rg;
 }
 // The ground's pore water at p_world (sand stage 4): (wetness, standing film) for Lagarde 2013's wet surfaces,
 // and the share of loose dry sand that shows its grains (sand glints); the path tracer reads the same map

@@ -37,6 +37,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 
   *Wet surfaces: the sand darkens, puddles form and catch the sky.*
 
+- **Dew and frost** (`dew_and_frost`): clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.
 - **Contact wetness** (`contact_wetness_enabled`): ground that running water crossed stays dark after it drains, then dries with the weather.
 - **Rain on rock** (rock material `rain_rivulets`): rivulets run down rock faces while it rains, and the rock dries in patches after.
 - **Air temperature** (`air_follows_climate`, `air_daily_cycle`): follows the season and the time of day.
