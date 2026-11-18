@@ -270,7 +270,8 @@ private:
 	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
 	void _add_cup_flower(const Transform3D &p_top, float p_radius);
 
-	void _build_stand_litter();
+	void _build_stand_litter(float p_layers = 1.3f, float p_lift = 0.0f);
+	void _add_twig_ends(int p_count, float p_lift);
 	void _build_dandelion();
 	void _build_plantain();
 	void _build_clover();
@@ -417,6 +418,7 @@ private:
 	int texture_size = 256;
 	float leaf_wear = 0.5f;
 	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
+	float litter_deposit = 1.0f; // Litter: layers of leaves or needles over the card's own (> 1: the near-camera card, leaf on leaf).
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	// Flowering through the year (docs/ideas/vegetation-seasons.md, step 2): the season's degree days
 	// (forcing, base 5 C, from 1 January) and day; -1 without a season. Each flowering stem draws
@@ -490,6 +492,8 @@ public:
 	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
 	void set_litter_leaves(const Array &p_leaves) { litter_leaves = p_leaves; }
 	Array get_litter_leaves() const { return litter_leaves; }
+	void set_litter_deposit(float p_deposit) { litter_deposit = CLAMP(p_deposit, 1.0f, 4.0f); }
+	float get_litter_deposit() const { return litter_deposit; }
 	void set_season(const Dictionary &p_season);
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);

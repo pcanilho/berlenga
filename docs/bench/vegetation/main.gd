@@ -302,6 +302,7 @@ func _floor_view() -> void:
 	cam.position = at + Vector3(0, 1.7, 0)
 	cam.look_at(Vector3(at.x, height(at.x, at.z + 20.0), at.z + 20.0))
 	cam.current = true
+	var close := OS.get_environment("VEG_FLOOR_CLOSE") != "" # Looking down 3 m ahead: the near litter.
 	var ground := VegetationField3D.new()
 	ground.far_volume = false
 	ground.name = "Floor"
@@ -311,6 +312,12 @@ func _floor_view() -> void:
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
 	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false))
+	if OS.get_environment("VEG_FLOOR_NEAR") == "0":
+		# The litter without its leaf-on-leaf near cards (PlantGenerator.litter_deposit).
+		for sp in floor_set:
+			if sp.near_range == 7.0 and sp.near_meshes.size() > 0:
+				sp.near_meshes = []
+				sp.near_range = 0.0
 	gb.species = floor_set
 	ground.biome = gb
 	ground.tile_size = 16.0
@@ -354,6 +361,10 @@ func _floor_view() -> void:
 	for v in ms:
 		total += v
 	get_viewport().disable_3d = false
+	if close:
+		cam.look_at(Vector3(cam.position.x, height(cam.position.x, cam.position.z + 3.0), cam.position.z + 3.0))
+		for i in 30:
+			await get_tree().process_frame
 	var nodes := 0
 	for ch in ground.get_children(true):
 		if ch is MultiMeshInstance3D:

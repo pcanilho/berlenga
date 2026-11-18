@@ -237,6 +237,9 @@
 		<member name="leaf_wear" type="float" setter="set_leaf_wear" getter="get_leaf_wear" default="0.5">
 			How worn the leaves are, from [code]0.0[/code] (every leaf whole and green) to [code]1.0[/code]: uneven halves, round insect bites out of the margin with dried rims, dead tips on grass-like blades, and older, lower leaves yellowing and browning. Each leaf draws its wear from its own hash, so changing it does not change the plant's shape. The browning travels in the vertex colour's alpha.
 		</member>
+		<member name="litter_deposit" type="float" setter="set_litter_deposit" getter="get_litter_deposit" default="1.0">
+			Leaf and needle litter: how many times the card's own layers of leaves or needles lie on it. Above 1, more layers fall on top of the card's own (the same card from the same seed, so swapping one for the other only adds leaves), each a little higher, with broken twig ends among them: the dead-leaves model, where the top layer is what shows. [method make_floor] uses 2.5 for the litter's near meshes ([member PlantSpecies.near_meshes]) within 7 m of the camera.
+		</member>
 		<member name="litter_leaves" type="Array" setter="set_litter_leaves" getter="get_litter_leaves" default="[]">
 			For [constant PRESET_LEAF_LITTER]: the stand's fallen leaves ([method stand_litter_leaves]). Each card then carries about two layers of those leaves over its disc, picked by share and shaped by kind: simple, lobed with rounded lobes, palmate, pinnate (mostly loose leaflets, now and then a whole leaf) or digitate. Fresh leaves keep their fallen colour; older ones fade to a dull tan brown and curl. Empty: generic broadleaf litter.
 			For [constant PRESET_SEEDLING]: each seedling is one of those trees, picked by share, with true leaves in its form at about two thirds of the adult size and its seed leaves above ground or not (none for oaks, strap-shaped for maples and ash, a broad fan pair for beech). Empty: a generic seedling.
