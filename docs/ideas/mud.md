@@ -854,6 +854,19 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   50 mm. `--view=needle [--thaw] --pair` shoots it.
 
 
+#### Round 10 (Paulo picked all three, in order, 18 Nov)
+
+- **Centre ridge.** Research: mobility models count "hang-up" (high-centring) failures where the soil between the
+  ruts, plus the berms the wheels shoved up, reaches the belly once the rut is deeper than the ground clearance (Rula
+  and Nuttall 1971, NRMM; Wong 2008 on ground clearance); MudRunner's signature stuck. *Built (18 Nov):* the belly
+  (stage 3a) bore only below the undisturbed surface, so berms and ridges above it held nothing; it now bears on
+  the undisturbed surface plus the rim above it (rim less dent, where positive), and ploughs that height with its
+  leading row. The wheels unload as the belly takes the weight, as before. Check in `--test=frost`: along ruts 35 cm
+  deep with a ridge 25 cm proud between them the belly carries a third of the car's weight on average and it gets
+  3.0 m in 4 s, against 15.7 m along 12 cm ruts with no belly contact.
+- **Tyre chains and tread types.** Next.
+- **Mud slides downhill.** After that.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

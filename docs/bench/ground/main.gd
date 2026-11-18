@@ -1603,6 +1603,41 @@ func _run_rut_guidance_tests() -> void:
 			car.queue_free()
 		print("  a car driven straight: %.1f cm sideways on unmarked soil, %.1f cm with its wheels 15 cm inside old ruts" % [drift[0] * 100.0, drift[1] * 100.0])
 		_check("old ruts pull the wheels into them", drift[1] - drift[0] > 0.05 and absf(drift[0]) < 0.05, "%.1f cm, %.1f cm unmarked" % [drift[1] * 100.0, drift[0] * 100.0])
+		# The centre ridge (mud round 10): deep old ruts with the soil between them standing 25 cm proud. The wheels drop
+		# into the ruts, the belly lands on the ridge and takes the car's weight off them: it hangs up where it drives
+		# on along shallow ruts.
+		var hang := {}
+		for deep in [false, true]:
+			await _soil_scene("soil")
+			surface.moisture = 0.3
+			surface.mud_layer = false
+			for side in [-1.0, 1.0]:
+				for k in 30:
+					var q := Vector3(side * 0.8, 0, -1.0 + 0.45 * k)
+					var g := surface.get_surface_height_at(q)
+					surface.press_box(q, Vector2(0.3, 0.5), 0.0, g - (0.35 if deep else 0.12), 0.0)
+			if deep:
+				for k in 40:
+					surface.deposit(Vector3(0, 0, 0.5 + 0.3 * k), 0.4, 0.25)
+			for i in 40:
+				await get_tree().physics_frame
+			surface.sync_deformation()
+			var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+			surface.follow_target = surface.get_path_to(car)
+			for i in 30:
+				await get_tree().physics_frame
+			var start := car.global_position
+			car.throttle = 0.5
+			var held := 0.0
+			for i in 240:
+				await get_tree().physics_frame
+				held += car.get_belly_support() / 240.0
+			car.throttle = 0.0
+			hang[deep] = [(car.global_position - start).length(), held]
+			car.queue_free()
+		print("  ruts: %.1f m along shallow ones; %.1f m along deep ones over a ridge, the belly holding %.0f N of %.0f on average" % [hang[false][0], hang[true][0], hang[true][1], 1500.0 * 9.81])
+		_check("a ridge between deep ruts lifts the car onto its belly and it hangs up", hang[true][1] > 0.3 * 1500.0 * 9.81 and hang[true][0] < 0.3 * hang[false][0] and hang[false][1] == 0.0,
+				"%.1f m, belly %.0f N; %.1f m in shallow ruts" % [hang[true][0], hang[true][1], hang[false][0]])
 	near_on = true
 
 
