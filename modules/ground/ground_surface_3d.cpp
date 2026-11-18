@@ -2075,17 +2075,21 @@ static bool _swash_trace() {
 	return on;
 }
 
-// A ridge of fine sand from p_from to p_to (world xz): small deposits a centimetre apart, a few millimetres high and
+// A ridge of fine sand from p_from to p_to (world xz), p_to itself left to the next stretch so the joins are not
+// laid twice (a doubled point is a bead on the line): small deposits a centimetre apart, a few millimetres high and
 // about two near-field texels wide (real ones are a few mm high and about a centimetre wide, Komar 1998; two texels
 // is the narrowest the field draws). The sea brings the sand: the swash's own load. p_erase takes it off again
 // (a later swash running over the line spreads it and washes its fines away).
 void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to, bool p_erase) {
 	const float len = p_from.distance_to(p_to);
+	if (len < 1e-4f) {
+		return;
+	}
 	const int steps = MAX(1, int(Math::ceil(len / 0.01f)));
 	// The lip is the swash's finest load, mica, heavy minerals and bits of debris: darker than the sand round it
 	// (the fresh tint, which fades over drying_time).
-	field.amount_fresh = p_erase ? -1.0f : 1.0f;
-	for (int k = 0; k <= steps; k++) {
+	field.amount_fresh = p_erase ? -1.0f : 0.5f;
+	for (int k = 0; k < steps; k++) {
 		const Vector2 q = p_from.lerp(p_to, float(k) / steps);
 		if (!_near_inside(q.x, q.y)) {
 			if (_swash_trace()) {
@@ -2169,6 +2173,40 @@ void GroundSurface3D::_swash_update(double p_delta) {
 		ground_water_at(sources, Vector3(q.x, gh, q.y), gh, d, v);
 		return d > 0.001f;
 	};
+	// The reach a mark is laid at: this wave's reach on the transects within a metre either side, averaged with
+	// tent weights. The sea's film is solved on cells of tens of centimetres, so its edge's wiggles finer than a
+	// metre or two are the grid's, not the swash's; real lines run along the shore for tens of metres.
+	auto smoothed_reach = [&](int p_u) -> float {
+		float sum = 0.0f;
+		float wsum = 0.0f;
+		for (int v = MAX(p_u - 10, 0); v <= MIN(p_u + 10, nt - 1); v++) {
+			const SwashTransect &sv = swash_tr[v];
+			float r;
+			if (swash_time - sv.mark_time < 3.0) {
+				r = sv.mark_reach;
+			} else if (sv.rising && sv.peak > -1e8f) {
+				r = sv.peak;
+			} else {
+				continue;
+			}
+			const float w = 11.0f - float(Math::abs(v - p_u));
+			sum += w * r;
+			wsum += w;
+		}
+		return wsum > 0.0f ? sum / wsum : swash_tr[p_u].peak;
+	};
+	// The swash's tongues: its leading edge thins and breaks into lobes, convex landward and meeting in cusps that
+	// point seaward, so each line is a chain of gentle scallops (Reineck and Singh 1980; Komar 1998), 0.8 to 1.3 m
+	// long and 3 to 6 cm deep, new for every wave.
+	auto mark_at = [&](int p_u, float p_reach) -> Vector2 {
+		const uint32_t hw = hash_murmur3_one_32(swash_wave);
+		const float lw = 0.8f + 0.5f * float(hw & 0xffff) / 65535.0f;
+		const float amp = 0.03f + 0.03f * float((hw >> 16) & 0xff) / 255.0f;
+		const float phase = float(hw >> 24) / 255.0f;
+		const float s_along = (-half + 0.1f * p_u) + swash_mid.dot(along);
+		const float lobe = Math::pow(Math::sin(float(Math::PI) * Math::fposmod(s_along / lw + phase, 1.0f)), 0.8f);
+		return swash_mid + along * (-half + 0.1f * p_u) - down * (p_reach + amp * lobe);
+	};
 	for (int t = 0; t < nt; t++) {
 		SwashTransect &tr = swash_tr[t];
 		const Vector2 o = swash_mid + along * (-half + 0.1f * t);
@@ -2213,38 +2251,35 @@ void GroundSurface3D::_swash_update(double p_delta) {
 				swash_wave++;
 			}
 			swash_last_mark = swash_time;
-			// The swash's tongues: its leading edge thins and breaks into lobes, convex landward and meeting in
-			// cusps that point seaward, so each line is a chain of scallops (Reineck and Singh 1980; Komar 1998).
-			// The film is followed only past 1 mm and smoothly along the beach, so the lobes are drawn here: half
-			// a metre to 1.2 m long and up to 4 to 10 cm beyond the followed reach, new for every wave.
-			const uint32_t hw = hash_murmur3_one_32(swash_wave);
-			const float lw = 0.5f + 0.7f * float(hw & 0xffff) / 65535.0f;
-			const float amp = 0.04f + 0.06f * float((hw >> 16) & 0xff) / 255.0f;
-			const float phase = float(hw >> 24) / 255.0f;
-			const float s_along = (-half + 0.1f * t) + swash_mid.dot(along);
-			const float lobe = Math::pow(Math::sin(float(Math::PI) * Math::fposmod(s_along / lw + phase, 1.0f)), 0.6f);
-			tr.mark_pos = tr.peak_pos - down * (amp * lobe);
-			Vector2 ends[2];
+			tr.mark_reach = tr.peak; // its own reach first, then smoothed with the others'
+			tr.mark_reach = smoothed_reach(t);
+			tr.mark_pos = mark_at(t, tr.mark_reach);
+			if (_swash_trace()) {
+				print_line(vformat("swash mark t%d at (%.2f, %.2f) reach %.2f time %.1f", t, tr.mark_pos.x, tr.mark_pos.y, tr.mark_reach, swash_time));
+			}
+			// Lines never cross: an older line this swash reached past is flattened under it.
+			for (int m = int(tr.laid.size()) - 1; m >= 0; m--) {
+				if ((tr.laid[m].at - tr.mark_pos).dot(down) > -0.03f) {
+					_swash_lay(tr.laid[m].from, tr.laid[m].at, true);
+					_swash_lay(tr.laid[m].at, tr.laid[m].to, true);
+					tr.laid.remove_at(m);
+				}
+			}
+			// The line joins this mark to each neighbour's mark of the same wave (within 20 cm; further apart, the
+			// two are the ends of separate tongues); the second of the two to mark lays the stretch between them, once.
+			tr.mark_wave = swash_wave;
+			Vector2 ends[2] = { tr.mark_pos, tr.mark_pos };
 			for (int side = 0; side < 2; side++) {
 				const int u = side == 0 ? t - 1 : t + 1;
-				Vector2 to = tr.mark_pos + along * (side == 0 ? -0.05f : 0.05f);
-				if (u >= 0 && u < nt) {
-					const SwashTransect &nb = swash_tr[u];
-					// Joined only to a mark of the same wave nearby (within 20 cm up or down the beach): a
-					// neighbour's older or higher mark is another wave's line, not this one's.
-					if (swash_time - nb.mark_time < 3.0 && nb.mark_pos.distance_to(tr.mark_pos) < 0.25f) {
-						to = 0.5f * (tr.mark_pos + nb.mark_pos);
-					} else if (nb.rising && nb.peak_pos.distance_to(tr.mark_pos) < 0.2f) {
-						to = 0.5f * (tr.mark_pos + nb.peak_pos);
-					}
+				if (u >= 0 && u < nt && swash_tr[u].mark_wave == swash_wave && swash_time - swash_tr[u].mark_time < 3.0 && swash_tr[u].mark_pos.distance_to(tr.mark_pos) < 0.2f) {
+					ends[side] = swash_tr[u].mark_pos;
 				}
-				ends[side] = to;
-			}
-			if (_swash_trace()) {
-				print_line(vformat("swash mark t%d at (%.2f, %.2f) reach %.2f time %.1f", t, tr.mark_pos.x, tr.mark_pos.y, tr.peak, swash_time));
 			}
 			_swash_lay(ends[0], tr.mark_pos);
 			_swash_lay(tr.mark_pos, ends[1]);
+			if (ends[0] == tr.mark_pos && ends[1] == tr.mark_pos) {
+				_swash_lay(tr.mark_pos, tr.mark_pos + along * 0.01f);
+			}
 			if (tr.laid.size() >= 12) {
 				tr.laid.remove_at(0);
 			}

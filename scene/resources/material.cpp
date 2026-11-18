@@ -2774,6 +2774,22 @@ void fragment() {)";
 	{
 		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		ALBEDO *= gd_tint.x;
+		// The field's millimetre relief (a swash mark's lip, a print's rim) is finer than the shadow map can shade:
+		// raster only, as SSAO is, its curvature lightens what stands up and darkens the foot of it, the depth
+		// buffer's unsharp mask (Luft, Colditz and Deussen 2006) on the field's own heights a texel and a half
+		// round. The path tracer shadows it for real.
+		{
+			vec2 gdp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+			float gde = 1.5 * max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(gdp)), 1e-3);
+			float gdk = 1.0 - smoothstep(0.5 * gde, 1.5 * gde, ground_fp);
+			if (gdk > 0.0) {
+				float gh0 = ground_deform_relief(gdp);
+				float ghm = 0.25 * (ground_deform_relief(gdp + vec2(gde, 0.0)) + ground_deform_relief(gdp - vec2(gde, 0.0)) +
+										   ground_deform_relief(gdp + vec2(0.0, gde)) + ground_deform_relief(gdp - vec2(0.0, gde)));
+				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk;
+				ALBEDO *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
+			}
+		}
 		// The sheen of freshly pressed ground is the sole's smear on the floor: the walls it tears keep their
 		// roughness. On a print's curved wall the sheen made a mirror-sharp spot of sun.
 		float gd_up = smoothstep(0.5, 0.85, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
@@ -4224,6 +4240,11 @@ vec4 ground_deform_sample(vec2 p_xz) {
 		d = mix(d, textureLod(ground_deform_near_map, (p_xz - ground_deform_near_rect.xy) / ground_deform_near_rect.z, 0.0), nw);
 	}
 	return d;
+}
+// The deformation's own relief at p_xz (m, up): what is laid less what is pressed, with standing water's level.
+float ground_deform_relief(vec2 p_xz) {
+	vec4 d = ground_deform_sample(p_xz);
+	return max(d.g, 0.0) - d.r;
 }
 // The deformed ground (R: the net depression, dent less rim) and, on top, its standing water (G, mud stage 2).
 float ground_deform_surface(vec2 p_xz) {

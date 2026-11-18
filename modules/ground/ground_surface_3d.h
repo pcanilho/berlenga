@@ -412,6 +412,8 @@ private:
 		Vector2 peak_pos;
 		double mark_time = -1e9;
 		Vector2 mark_pos;
+		float mark_reach = 0.0f; // the smoothed reach the mark was laid at
+		uint32_t mark_wave = 0; // the wave it was laid by
 		// The marks still on the sand along this transect (its stretch of each line: from, mark, to), newest last.
 		struct Laid {
 			Vector2 from, at, to;

@@ -583,6 +583,14 @@ in seaward-pointing cusps (Reineck and Singh 1980). Each wave now draws its own 
 later waves leave their marks below the earlier ones and the beach keeps a ladder of lines. The lip is the swash's
 finest load (mica, heavy minerals, bits of debris), so it is laid with the fresh tint and reads darker than the sand
 round it until it dries (`drying_time`); deposits carry that tint only when asked (`GroundDeformField::amount_fresh`).
+Docs round 2 (raster lips too faint) and 3 (lines crossing, beads): the shadow map cannot shade millimetre
+relief, so the raster patch takes the curvature of the field's own heights a texel and a half round (the depth
+buffer's unsharp mask, Luft, Colditz and Deussen 2006; raster only, as SSAO): crests lighten, feet darken; the path
+tracer shadows them for real. The reach a mark is laid at is averaged over a metre either side (the sea's film is
+solved on cells of tens of centimetres: its edge's finer wiggles are the grid's), so lines run along the shore with
+gentle 0.8 to 1.3 m scallops; a new line flattens any older one on its transect it reached past, so lines never
+cross; and each stretch between two marks is laid once, by the second to mark (a doubled join was a bead). Bench:
+`--prints=0`, `--sea=name:value` (`shore_wave_curl:0` for path-traced shore frames until the lips have a PT look).
 `--view=shore` prints the count; `SWASH_DUMP=file.f32` writes the ground's change over x -3..3, z -1..3.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)

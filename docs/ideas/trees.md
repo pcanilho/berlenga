@@ -1893,13 +1893,61 @@ As built (18 Nov): `ForkRule` per preset (`_fork_rule`). When a stem's tip passe
 bud dies and `stems` buds of the stem's own order open around it, `angle` off its axis; they
 grow as stems (no apical control penalty) with their own weak upward bend (`gravitropism`), up
 to `levels` forks. Nodes carry `stem_level` and `stem_born` along their axis. The crown lift
-spares the forked stems. Stone pine: 5 m, three stems, every seven years, three levels, 32
-degrees, bend 0.12, with apical control 0.85 so side shoots stay under the stems. Cork oak and
-holm oak will use the same rule.
+spares the forked stems. Cork oak and holm oak use the same rule.
+
+Round 2 (18 Nov, docs: above the fork 20-25 thin limbs rose in a fan, each division as thick as
+the last; the outer wings were pom-pom tufts on long bare limbs): two fork levels, the second
+twelve years after the first, and the crown lift moved into the rule (`lift`, a share of the
+height, open-grown only) and raised for the stone pine to 0.55, so the stems stay clear of side
+limbs until near the crown and the long, low wing limbs go. With the stems doing the
+structure, side shoots get apical control 0.95 again and needles are kept four years: the
+cushion runs to the edge. Stone pine: 15.9 m, crown 13.1 m across, base 9.8 m; 6.9M triangles.
+Cork oak: 3 m, four stems, ten years, two levels, 45 degrees, lift 0.22.
  Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
 about 11 m apart with saplings, snags and logs; not part of `make_woodland`. Its scrub comes
 from vegetation's `make_scrub` (lentisk, kermes oak, gum rockrose, dwarf fan palm). Not yet:
 juvenile needles on saplings.
+
+### 5aa. Cork oak (18 Nov; Mediterranean trees, second)
+
+Research (Natividade, *Subericultura*, 1950; Pereira, *Cork: Biology, Production and Uses*,
+2007; Gymnosperm/Trees and Shrubs Online, Quercus suber; APCOR and Amorim on harvesting):
+- Evergreen oak, 10-20 m (to 25), a short bole of 2-4 m dividing into a few thick, sinuous,
+  spreading limbs; open-grown crowns broad, rounded and irregular, often wider than tall. In the
+  montado the crown is pruned up and opened, so the limbs read clearly under it.
+- Leaves 3-7 cm, ovate to oblong, shallowly toothed, dark glossy green above, grey felted
+  below, kept 1-2 years. Acorns ripen in their first autumn, 2-4.5 cm, in a scaly cup.
+- Bark: virgin cork, the tree's own, grey to buff, very thick (to 20-30 cm on old unworked
+  trees), deeply and irregularly fissured into spongy ridges, soft and dull.
+- Worked trees: first stripping at about 25 years (a girth of 70 cm at breast height), then
+  every 9 years or more (Portuguese law). The cork comes off the bole and the bases of the main
+  limbs up to a set height (at most 2-3 times the girth), cut along a near-horizontal ring and
+  a few vertical lines. The stripped stem is the phellogen: bright orange to cinnamon red
+  fresh, darkening in weeks to deep red-brown, then brown-black over the first year as new
+  cork forms. Reproduction cork then thickens 3-5 mm a year: smooth and finely, regularly
+  cracked, browner than virgin cork, with a step at the line where it meets the unworked
+  bark above. The last digit of the year is painted in white on the trunk.
+
+How the generator gets there:
+- `PRESET_CORK_OAK`: broadleaf evergreen (two leaf years), decurrent: the leader split (5z) at
+  about 3 m into three or four limbs, low apical control, wide angles; a heavy, low crown.
+- `BARK_CORK`: deep, wide, irregular spongy ridges, pale grey-buff, the deepest relief of any
+  kind.
+- Stripping, `cork_stripped_years` (0 = never worked, otherwise years since the last harvest):
+  the peel machinery of 5f with its stepped edge (5o), on the bole and limb bases below the
+  harvest height, the step the cork's thickness; the bare surface in the bark shader drawn as
+  phellogen and reproduction cork by age instead of wood. The painted digit is a decal on the
+  bole facing the track; later.
+- A montado stand (open-grown, grazed, 40-80 trees a hectare) after the tree passes docs.
+
+As built, first pass (18 Nov): `PRESET_CORK_OAK` (38) with the leader split above, two leaf
+years on the last three years of shoots, shed ratio 0.1 and almost no dead wood kept (worked
+trees are cleaned), leaves 7 cm, toothed (six shallow teeth a side), grey felted below
+(underside 0.6). `BARK_CORK`: Voronoi blocks (4 x 3 a tile, a third of the walls never split),
+widely warped, cracks 0.3 cell wide and 7 cm deep, rounded lumpy tops, warm red-brown fissure
+floors under grey-buff ridges (headroom 1.3). Furrow lines (the oak's pattern) were tried
+first: too smooth, a few pits. Open-grown 17.7 m, crown 20.6 m across, base 9.2 m; 16.5M
+triangles (an open oak is 24M). Not yet: stripping, acorns, the montado stand.
 
 ## 6. What the games at Paulo's bar do
 

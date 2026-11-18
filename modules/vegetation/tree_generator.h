@@ -93,6 +93,7 @@ public:
 		PRESET_LENTISK, // Pistacia lentiscus.
 		PRESET_DWARF_FAN_PALM, // Chamaerops humilis (trees.md 5w).
 		PRESET_STONE_PINE, // Pinus pinea (trees.md 5y).
+		PRESET_CORK_OAK, // Quercus suber (trees.md 5aa).
 		PRESET_MAX,
 	};
 
@@ -240,6 +241,7 @@ private:
 		int levels = 2;
 		float angle = 35.0f; // Degrees off the parent stem.
 		float gravitropism = 0.1f; // The forked stems' upward bend (the trunk's is far stronger).
+		float lift = 0.0f; // Open-grown too, the stems are clear of limbs up to this share of the height (5y).
 	};
 	ForkRule _fork_rule() const;
 
@@ -750,6 +752,7 @@ private:
 		BARK_PAPERY,
 		BARK_LENTICELLED, // Hazel: glossy, pale lenticels, thin peeling skin.
 		BARK_PINEA, // Stone pine: long flat grey-brown plates, orange-red fissures.
+		BARK_CORK, // Cork oak: thick, deep, spongy grey-buff ridges.
 		BARK_MAX,
 	};
 	struct BarkSet {
