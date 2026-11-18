@@ -449,6 +449,7 @@ void WeatherMap3D::_allocate() {
 	gust_texture.unref();
 	globals_added = false;
 	origin_valid = false;
+	_rain_allocate();
 }
 
 float WeatherMap3D::_cloud_noise(Vector2 p_xz) const {
@@ -704,6 +705,7 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 			cell_frost.write[z * n + x] = inside ? frost[sz * n + sx] : frost_mean;
 		}
 	}
+	_rain_shift(d);
 	origin_cell = p_new_origin;
 }
 
@@ -766,6 +768,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+	_rain_update(p_weather_dt);
 }
 
 float WeatherMap3D::rain_fraction(float p_celsius, float p_humidity) {
@@ -1103,7 +1106,8 @@ void WeatherMap3D::_upload() {
 			w[i * 4 + 1] = Math::make_half_float(cell_wind[i * 2 + 1]);
 			w[i * 4 + 2] = Math::make_half_float(cell_cover[i]);
 			w[i * 4 + 3] = Math::make_half_float(cell_type[i]);
-			const float wet = cell_puddle[i] > 0.0f ? 1.0f : MIN(cell_film[i] / storage, 1.0f);
+			// Ground the world's runoff (WeatherRunoff3D) is flowing over is wet too, where the rain did not fall.
+			const float wet = cell_puddle[i] > 0.0f ? 1.0f : MAX(MIN(cell_film[i] / storage, 1.0f), _runoff_wetness(i));
 			s[i * 4 + 0] = Math::make_half_float(cell_rain[i]);
 			s[i * 4 + 1] = Math::make_half_float(wet);
 			s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
@@ -1134,6 +1138,7 @@ void WeatherMap3D::_upload() {
 		gust_texture->update(gust_image);
 	}
 	_publish_globals();
+	_rain_upload();
 }
 
 void WeatherMap3D::_set_global(const StringName &p_name, const Variant &p_value, int p_type) {
@@ -2737,6 +2742,8 @@ void WeatherMap3D::_bind_methods() {
 
 	BIND_CONSTANT(GUSTS_PER_AXIS);
 	BIND_CONSTANT(GUST_COUNT);
+
+	_bind_rain_methods();
 }
 
 WeatherMap3D::WeatherMap3D() {

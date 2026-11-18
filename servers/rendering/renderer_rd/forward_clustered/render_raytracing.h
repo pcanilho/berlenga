@@ -268,7 +268,8 @@ struct alignas(16) RT_MaterialData {
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;
-		uint32_t unused : 8;
+		uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: the canopy's water (RT_PARAM_RAIN_MAP) and beads.
+		uint32_t unused : 7;
 	} subsurface_texture;
 	// BaseMaterial3D Hair (RT_MAT_FLAG_HAIR), see rt_material_set_hair() and GLSL rt_material_hair().
 	struct {

@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WeatherRunoff3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Rain running off the land over kilometres: where it flows, how much, and how deep.
+	</brief_description>
+	<description>
+		A grid round its position over the terrain's heights: depressions filled (Priority-Flood, Barnes et al. 2014), each cell draining to its steepest neighbour (D8), the share of [method WeatherMap3D.get_ground_water_input_at] that runs off by the SCS curve number, routed as linear reservoirs at TR-55 overland and Leopold and Maddock channel speeds. [PhysXRiver3D] and lakes read its discharge to rise in rain, and [WeatherMap3D] wets the ground the runoff flows over. See docs/ideas/rain.md.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Steps the runoff [param seconds] on, with the weather's water input.
+			</description>
+		</method>
+		<method name="bake">
+			<return type="int" enum="Error" />
+			<description>
+				Samples the heights and builds the drainage network.
+			</description>
+		</method>
+		<method name="channel_velocity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="discharge" type="float" />
+			<description>
+				Leopold and Maddock (1953) mean channel speed (m/s) for [param discharge] m³/s.
+			</description>
+		</method>
+		<method name="get_bake_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long the last bake took.
+			</description>
+		</method>
+		<method name="get_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The water held over the cell at [param position], in mm.
+			</description>
+		</method>
+		<method name="get_discharge_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The flow (m³/s) leaving the cell at [param position].
+			</description>
+		</method>
+		<method name="get_map_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The grid's rect in world x and z.
+			</description>
+		</method>
+		<method name="get_max_discharge_in" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The largest flow (m³/s) leaving any cell in [param rect].
+			</description>
+		</method>
+		<method name="get_total_storage" qualifiers="const">
+			<return type="float" />
+			<description>
+				The water (m³) held on the grid.
+			</description>
+		</method>
+		<method name="get_upstream_area_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The area (m²) draining through the cell at [param position].
+			</description>
+		</method>
+		<method name="is_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the network is built.
+			</description>
+		</method>
+		<method name="scs_runoff" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="rain_mm" type="float" />
+			<param index="1" name="curve_number" type="float" />
+			<description>
+				The SCS curve number runoff (mm) from [param rain_mm] of rain.
+			</description>
+		</method>
+		<method name="shallow_flow_velocity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="slope" type="float" />
+			<description>
+				TR-55 shallow concentrated flow speed (m/s, unpaved) on a [param slope] (rise over run).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="antecedent_time" type="float" setter="set_antecedent_time" getter="get_antecedent_time" default="48.0">
+			The hours over which past rain counts toward the curve number's storm depth.
+		</member>
+		<member name="bake_on_ready" type="bool" setter="set_bake_on_ready" getter="is_bake_on_ready" default="true">
+			Bake when the node enters the tree.
+		</member>
+		<member name="channel_area" type="float" setter="set_channel_area" getter="get_channel_area" default="0.5">
+			The upstream area (km²) from which a cell flows as a channel.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			Physics layers cast against for heights when there is no [member height_source].
+		</member>
+		<member name="curve_number" type="float" setter="set_curve_number" getter="get_curve_number" default="75.0">
+			The SCS curve number of the land (about 75 for mixed soils and cover).
+		</member>
+		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
+			The grid's width (m).
+		</member>
+		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
+			A node with [code]get_height_at(position)[/code] (a terrain); downward rays when empty.
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="256">
+			Cells across the grid.
+		</member>
+		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="1.0">
+			Steps per second of weather time.
+		</member>
+	</members>
+</class>

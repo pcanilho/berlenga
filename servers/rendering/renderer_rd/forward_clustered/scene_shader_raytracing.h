@@ -239,6 +239,13 @@ public:
 	static constexpr int RT_PARAM_GROUND_NEAR_Z = 72;
 	static constexpr int RT_PARAM_GROUND_NEAR_SIZE = 73;
 	static constexpr int RT_PARAM_VEHICLE_MUD_SPLATS = 74;
+	// WeatherMap3D's precipitation phase (weather_precip_phase): air temperature at the reference ground (C), its
+	// lapse (K/m), relative humidity, the reference ground height (m). The raindrop rings' rain share.
+	static constexpr int RT_PARAM_PRECIP_TEMPERATURE = 75;
+	static constexpr int RT_PARAM_PRECIP_LAPSE = 76;
+	static constexpr int RT_PARAM_PRECIP_HUMIDITY = 77;
+	static constexpr int RT_PARAM_PRECIP_GROUND = 78;
+	static constexpr int RT_PARAM_RAIN_MAP = 79;
 	static constexpr int RT_PARAM_HAZE_SIGMA = 80; // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
 	static constexpr int RT_PARAM_HAZE_ALBEDO = 81;
 	static constexpr int RT_PARAM_HAZE_HEIGHT = 82; // scale height (m)

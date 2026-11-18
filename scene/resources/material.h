@@ -414,6 +414,7 @@ private:
 		uint64_t hair_direction : 2;
 		uint64_t hair_cards : 1;
 		uint64_t wetness_from_weather : 1;
+		uint64_t wetness_canopy : 1;
 		uint64_t snow_from_weather : 1;
 		uint64_t ground_deform_patch : 1;
 
@@ -475,6 +476,7 @@ private:
 		mk.hair_direction = hair_direction;
 		mk.hair_cards = hair_cards;
 		mk.wetness_from_weather = wetness_from_weather;
+		mk.wetness_canopy = wetness_canopy;
 		mk.snow_from_weather = snow_from_weather;
 		mk.ground_deform_patch = ground_deform_patch;
 
@@ -639,6 +641,7 @@ private:
 	float wetness_porosity = 0.5f;
 	float wetness_amount = 1.0f;
 	bool wetness_from_weather = true;
+	bool wetness_canopy = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
 	bool snow_from_weather = true;
@@ -736,6 +739,7 @@ public:
 	// weather_map_rect themselves; get_wetness_functions_code(true) includes it.
 	static String get_frost_sampling_code();
 	static String get_snow_functions_code(bool p_from_weather);
+	static String get_rain_functions_code(bool p_from_weather);
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();
 	// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b): the functions, and the instance uniforms PhysXVehicle3D writes.
@@ -886,6 +890,9 @@ public:
 
 	void set_wetness_from_weather(bool p_enable);
 	bool is_wetness_from_weather() const;
+
+	void set_wetness_canopy(bool p_enable);
+	bool is_wetness_canopy() const;
 
 	void set_snow_amount(float p_amount);
 	float get_snow_amount() const;
