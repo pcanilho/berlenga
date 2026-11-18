@@ -4439,6 +4439,11 @@ void GrassField3D::_trample_step(double p_delta) {
 		}
 	}
 	trample_last = seen;
+	// The current in any water over the sward lays it downstream (WaterCurrentBend, Luhar and Nepf 2011).
+	if ((int)trample.size() == trample_resolution * trample_resolution) {
+		water_current.update(trample_origin, trample_resolution, trample_size / trample_resolution, p_delta, [&](const Vector3 &p) { return map ? map->get_height_at(p) : ground_y; });
+		trample_active = water_current.apply(trample, trample_resolution) || trample_active;
+	}
 	if (trample_active) {
 		_trample_upload();
 	}
