@@ -161,6 +161,9 @@ public:
 		PRESET_COW_PARSLEY,
 		PRESET_PINCUSHION_MOSS,
 		PRESET_GROUND_IVY,
+		PRESET_DRINN,
+		PRESET_DESERT_ANNUALS,
+		PRESET_SOIL_CRUST,
 		PRESET_MAX,
 	};
 
@@ -290,6 +293,9 @@ private:
 	void _build_dry_grass();
 	void _build_leaf_litter();
 	void _build_ground_ivy();
+	void _build_drinn();
+	void _build_desert_annuals();
+	void _build_soil_crust();
 	void _build_moss();
 	void _build_bilberry();
 	void _build_bracken();
@@ -567,6 +573,13 @@ public:
 		DUNES_MAX,
 	};
 	static TypedArray<Resource> make_dunes(DuneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Desert sand seas (docs/ideas/vegetation.md, "Arid ground"), placed by PlantSpecies.RULE_SAND_MOBILITY.
+	enum DesertStand {
+		DESERT_FLANKS, // Dune flanks and plinths: drinn tussocks.
+		DESERT_INTERDUNE, // Interdune corridors: sparse drinn, the rain-flush annuals, soil crust.
+		DESERT_MAX,
+	};
+	static TypedArray<Resource> make_desert(DesertStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -626,6 +639,7 @@ VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
 VARIANT_ENUM_CAST(PlantGenerator::BankStand);
 VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
+VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);

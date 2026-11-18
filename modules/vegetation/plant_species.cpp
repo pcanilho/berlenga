@@ -65,6 +65,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_COAST_EXPOSURE] = Vector2(0.0f, 1.0f);
 	ranges[RULE_BEACH] = Vector2(0.0f, 1.0f);
 	ranges[RULE_FIELD_EDGE] = Vector2(-100000.0f, 100000.0f);
+	ranges[RULE_SAND_MOBILITY] = Vector2(-1.0f, 1.0f);
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -587,6 +588,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "beach_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_BEACH);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "field_edge_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_FIELD_EDGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "field_edge_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_FIELD_EDGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sand_mobility_range"), "set_rule_range", "get_rule_range", RULE_SAND_MOBILITY);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sand_mobility_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SAND_MOBILITY);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -612,6 +615,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_COAST_EXPOSURE);
 	BIND_ENUM_CONSTANT(RULE_BEACH);
 	BIND_ENUM_CONSTANT(RULE_FIELD_EDGE);
+	BIND_ENUM_CONSTANT(RULE_SAND_MOBILITY);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

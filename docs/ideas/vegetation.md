@@ -615,6 +615,44 @@ juvenile-lobed on the ground and entire on flowering shoots; ivy and old man's b
 (the trees thread owns the stems, this thread the leaves). Placed on rock faces and tree trunks
 by their surface normal and shade.
 
+## Arid ground: plants and crust on the desert sand seas (Paulo's pick 17 Nov; built 18 Nov)
+
+The terrain generator's sand seas (`TerrainGenerator3D.sand_sea_rect`, Werner slab dunes) are bare. Desert dune
+vegetation sorts by how much the sand moves, much as coastal dunes do by marram cover, but with no plant building
+the dune: crests and slip faces move every windy day and stay bare; the lower flanks and plinths move less and hold
+perennial tussock grasses and shrubs; the interdune corridors (thin sand over gravel or silt) are stable and carry
+shrubs, the rain-flush annuals and a biological soil crust (Tsoar 2005 on dune mobility and vegetation; Danin 1996,
+"Plants of Desert Dunes"; Kidron and others on crusts of Negev and Saharan interdunes; Belnap and Lange 2003,
+"Biological Soil Crusts").
+
+Plants (North African and Middle Eastern ergs, the best studied):
+- Drinn (Stipagrostis pungens): the dune grass, rigid grey-green rolled leaves in dense tussocks 0.5 to 1 m that
+  trap sand into hummocks; tolerates burial; on flanks and mobile plinths, never on the crest itself.
+- Shrubs on the lower flanks and interdunes: Calligonum comosum (leafless jointed green twigs, a broom-like bush 1 to
+  2 m with red-bristled fruit), white broom Retama raetam (silvery leafless rush-like stems, white flowers in
+  spring). Sand gathers round them into nebkhas (low mounds); the terrain does not build those yet.
+- Saltbush (Atriplex halimus, A. canescens): grey mealy rounded shrubs on silty, saline interdune floors.
+- Ephemerals ("acheb"): annual grasses and herbs that cover the interdunes for a few weeks after rain, then dry to
+  straw; placed only when the season's soil water says it rained.
+- Biological soil crust on stable interdune sand: a dark brown-black knobbly skin of cyanobacteria, lichens and
+  mosses a few millimetres to 1 cm thick, rough and pinnacled in cool deserts, flat and smooth in hot ones; broken by
+  feet and tyres into pale fresh sand that takes decades to heal.
+
+Placement: `PlantSpecies.RULE_SAND_MOBILITY`, 0 stable to 1 moving, -1 outside the sand seas. From the sand sea's
+depth on a 4 m grid: the depth's place between its local low and high over about one crest spacing, raised on slopes
+steeper than 20 to 30 degrees (slip faces) and 0 under 0.3 m of sand (interdune ground). Sets by `make_desert()`:
+mobile flanks (drinn), plinths and interdunes (drinn, Calligonum, Retama), interdune flats (saltbush, crust patches,
+ephemerals). Crust as a flat dark knobbly preset placed like the forest floor's small items; the ground module may
+later break it under wheels, as it does the sand.
+
+Built: `PlantSpecies.RULE_SAND_MOBILITY` (read once a populate from the generator's sand sea), presets
+PRESET_DRINN, PRESET_DESERT_ANNUALS and PRESET_SOIL_CRUST, and `PlantGenerator.make_desert(DESERT_FLANKS |
+DESERT_INTERDUNE)`. The crust skin fades to the sand's colour at its rim, so no disc edge shows. Checked in
+docs/bench/vegetation `--desert`: no plant on a crest or slip face, the flanks' drinn on the flanks, crust only on
+stable sand, annuals between the dunes. Cost, 120 m streamed round a walker on lavapipe at 640x360, on against off:
++9.5 MB memory, +1 MB video, +134k primitives, +604 draw calls, walking worst 0.44 ms (0.03 off), raster frame
+504 ms against 162 ms. Path traced cost goes on the PC queue.
+
 ## Salt marsh and shingle plants (built 17 Nov)
 
 Where the land meets a sheltered sea the ground is mud and the plants sort by how often the tide

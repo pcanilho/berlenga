@@ -434,6 +434,9 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_MARRAM:
 			r_phenology = { 950.0f, 1450.0f, -1.0f, true }; // July and August; bleached panicles all winter.
 			return true;
+		case PRESET_DRINN:
+			r_phenology = { 250.0f, 900.0f, -1.0f, true }; // Late winter and spring in the Sahara; plumes stand on.
+			return true;
 		case PRESET_LYME_GRASS:
 			r_phenology = { 750.0f, 1350.0f, -1.0f, true }; // June to August; straw spikes stand.
 			return true;
@@ -657,6 +660,7 @@ float PlantGenerator::get_pollen_amount(Preset p_preset) {
 		case PRESET_LYME_GRASS:
 		case PRESET_DRY_GRASS:
 		case PRESET_CORD_GRASS:
+		case PRESET_DRINN:
 			return 0.6f;
 		case PRESET_DOCK:
 		case PRESET_PLANTAIN:
@@ -747,7 +751,12 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_THRIFT:
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
+		case PRESET_DRINN:
 			return 150.0f;
+		case PRESET_SOIL_CRUST:
+			return 2.0f; // A few passes break it, and it takes decades to heal (Belnap and Lange 2003).
+		case PRESET_DESERT_ANNUALS:
+			return 100.0f;
 		case PRESET_DOCK:
 		case PRESET_STONECROP:
 		case PRESET_COTTONGRASS:
@@ -857,7 +866,10 @@ static float _preset_detail_size(PlantGenerator::Preset p_preset) {
 		case P::PRESET_WOOD_SORREL:
 		case P::PRESET_VIOLET:
 		case P::PRESET_GROUND_IVY:
+		case P::PRESET_DESERT_ANNUALS:
 			return 0.07f;
+		case P::PRESET_SOIL_CRUST:
+			return 0.1f;
 		case P::PRESET_SEEDLING:
 			return 0.15f;
 		default:
@@ -4661,8 +4673,10 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			break;
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
+		case PRESET_DRINN:
+		case PRESET_DESERT_ANNUALS:
 			l.shape = LEAF_LINEAR;
-			t.aspect = preset == PRESET_MARRAM ? 0.03f : 0.05f;
+			t.aspect = preset == PRESET_LYME_GRASS ? 0.05f : 0.03f;
 			t.venation = VENATION_PARALLEL;
 			t.parallel_veins = preset == PRESET_MARRAM ? 5 : 9; // Marram's rolled leaf shows its ribs.
 			t.vein = leaf_color.lerp(Color(0.8f, 0.78f, 0.62f), 0.3f);
@@ -6220,6 +6234,25 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.55f, 0.08f, 0.06f); // The tentacles.
 			centre_color = Color(0.85f, 0.82f, 0.78f); // The dew drops.
 			break;
+		case PRESET_DRINN:
+			leaf_color = Color(0.36f, 0.38f, 0.27f); // Grey-green and dusty; much of the tussock dead straw.
+			stem_color = Color(0.55f, 0.5f, 0.36f);
+			centre_color = Color(0.82f, 0.78f, 0.66f); // Silvery plumed awns.
+			break;
+		case PRESET_DESERT_ANNUALS:
+			leaf_color = Color(0.2f, 0.34f, 0.1f); // Fresh after rain; the season dries them to straw.
+			stem_color = Color(0.3f, 0.36f, 0.16f);
+			centre_color = Color(0.6f, 0.55f, 0.4f);
+			petal_color = Color(0.85f, 0.75f, 0.3f);
+			break;
+		case PRESET_SOIL_CRUST:
+			// Cyanobacterial and lichen crust: dark brown-black (scytonemin), lichen specks grey, green and orange.
+			leaf_color = Color(0.09f, 0.075f, 0.06f);
+			centre_color = Color(0.5f, 0.47f, 0.4f); // The palest of its lichens; each fleck's tint darkens it.
+			// The skin's rim: a little darker than the sand it binds; its vertex colours darken the middle to the
+			// cyanobacteria's brown (light crust some 0.75 of it, mature dark crust 0.5), so its edge fades into the sand.
+			stem_color = Color(0.6f, 0.48f, 0.34f);
+			break;
 		case PRESET_MARRAM:
 			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.
 			stem_color = Color(0.4f, 0.42f, 0.28f);
@@ -6594,6 +6627,15 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_GROUND_IVY:
 			_build_ground_ivy();
 			break;
+		case PRESET_DRINN:
+			_build_drinn();
+			break;
+		case PRESET_DESERT_ANNUALS:
+			_build_desert_annuals();
+			break;
+		case PRESET_SOIL_CRUST:
+			_build_soil_crust();
+			break;
 		case PRESET_BELL_HEATHER:
 			_build_bell_heather();
 			break;
@@ -6788,7 +6830,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -7647,10 +7689,14 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_COW_PARSLEY);
 	BIND_ENUM_CONSTANT(PRESET_PINCUSHION_MOSS);
 	BIND_ENUM_CONSTANT(PRESET_GROUND_IVY);
+	BIND_ENUM_CONSTANT(PRESET_DRINN);
+	BIND_ENUM_CONSTANT(PRESET_DESERT_ANNUALS);
+	BIND_ENUM_CONSTANT(PRESET_SOIL_CRUST);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -7694,6 +7740,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(DUNES_MOBILE);
 	BIND_ENUM_CONSTANT(DUNES_FIXED);
 	BIND_ENUM_CONSTANT(DUNES_MAX);
+	BIND_ENUM_CONSTANT(DESERT_FLANKS);
+	BIND_ENUM_CONSTANT(DESERT_INTERDUNE);
+	BIND_ENUM_CONSTANT(DESERT_MAX);
 	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
 	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
 	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);

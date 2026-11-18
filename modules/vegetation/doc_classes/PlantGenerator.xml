@@ -212,6 +212,16 @@
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
 			</description>
 		</method>
+		<method name="make_desert" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.DesertStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				The plants of a desert sand sea ([member TerrainGenerator3D.sand_sea_rect]) as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_SAND_MOBILITY]: nothing on the moving crests and slip faces, drinn on the flanks and plinths, and on the stable interdune sand soil crust and the annuals, green after rain when [param season] has a soil moisture.
+			</description>
+		</method>
 		<method name="make_woody_shrub" qualifiers="static">
 			<return type="PlantSpecies" />
 			<param index="0" name="tree_preset" type="int" />
@@ -552,7 +562,16 @@
 		<constant name="PRESET_GROUND_IVY" value="88" enum="Preset">
 			Ground ivy (Glechoma hederacea): creeping runners with pairs of kidney-shaped leaves on long stalks, a mat a few centimetres deep; short shoots with blue-violet flowers in spring.
 		</constant>
-		<constant name="PRESET_MAX" value="89" enum="Preset">
+		<constant name="PRESET_DRINN" value="89" enum="Preset">
+			Drinn (Stipagrostis pungens): the desert dune grass, dense tussocks of rigid rolled grey-green leaves, half dead straw, with open panicles of silvery plumed awns.
+		</constant>
+		<constant name="PRESET_DESERT_ANNUALS" value="90" enum="Preset">
+			The rain-flush annuals of desert interdunes: small grasses and rosette herbs, green after rain (the season's soil moisture), dry straw otherwise.
+		</constant>
+		<constant name="PRESET_SOIL_CRUST" value="91" enum="Preset">
+			Biological soil crust: a dark, knobbly, pinnacled skin of cyanobacteria, lichens and mosses on stable desert sand, flecked grey, green and orange.
+		</constant>
+		<constant name="PRESET_MAX" value="92" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -632,6 +651,15 @@
 		</constant>
 		<constant name="DUNES_MAX" value="3" enum="DuneStand">
 			Number of dune stand types.
+		</constant>
+		<constant name="DESERT_FLANKS" value="0" enum="DesertStand">
+			Desert dune flanks and plinths: drinn tussocks, thinning towards the crests.
+		</constant>
+		<constant name="DESERT_INTERDUNE" value="1" enum="DesertStand">
+			Desert interdune corridors: sparse drinn, biological soil crust on the stable sand, the rain-flush annuals.
+		</constant>
+		<constant name="DESERT_MAX" value="2" enum="DesertStand">
+			Number of desert stands.
 		</constant>
 		<constant name="ALPINE_FELLFIELD" value="0" enum="AlpineStand">
 			Fellfield on exposed ridges blown free of snow: moss campion cushions, purple saxifrage and mountain avens mats far apart on gravel, curved sedge in the lee.

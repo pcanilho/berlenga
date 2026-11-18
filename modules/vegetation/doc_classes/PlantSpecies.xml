@@ -165,6 +165,12 @@
 		<member name="far_color" type="Color" setter="set_far_color" getter="get_far_color" default="Color(0, 0, 0, 0)">
 			The plant seen from far above (rgb) and how much of the ground it hides (alpha, 0 to 1). Beyond its [member visibility_range] the plants are thinned away, and [VegetationField3D] bakes this colour into the ground's [code]vegetation_far_map[/code] where they grew, so a stand of them stays a patch of their colour to the horizon (see [method VegetationField3D.get_floor_shader_code]). Alpha 0 leaves the ground as it is.
 		</member>
+		<member name="field_edge_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member field_edge_range], in metres.
+		</member>
+		<member name="field_edge_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
+			Metres from the nearest crop field's edge where the species grows (see [constant RULE_FIELD_EDGE]).
+		</member>
 		<member name="floating" type="bool" setter="set_floating" getter="is_floating" default="false">
 			If [code]true[/code], plants sit level on the water surface ([method TerrainDataMap3D.get_water_depth_at] above the ground), as water lilies do. Pair it with a [member water_depth_range] that starts above zero.
 		</member>
@@ -300,6 +306,12 @@
 		<member name="litter_color" type="Color" setter="set_litter_color" getter="get_litter_color" default="Color(0, 0, 0, 0)">
 			The species' own litter on the ground under its stands, linear colour in rgb and how much of the ground it covers in alpha: bracken's mat of dead fronds and bramble's leaves (set by [method PlantGenerator.make_floor]). A [GrassField3D] with [member GrassField3D.undergrowth_field] lays it on the ground where the stands shade the sward out, so the ground there is litter instead of bare soil ([method VegetationField3D.get_sward_litter_at]).
 		</member>
+		<member name="sand_mobility_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member sand_mobility_range].
+		</member>
+		<member name="sand_mobility_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
+			Where on the desert sand seas the species grows (see [constant RULE_SAND_MOBILITY]): 0 the stable interdune ground under thin sand, 1 the moving crests and slip faces, -1 off the sand seas. Narrowing it from the default [code](-1, 1)[/code] makes the species a sand-sea plant, which grows on their loose sand where other plants do not.
+		</member>
 		<member name="stone_top_damp" type="float" setter="set_stone_top_damp" getter="get_stone_top_damp" default="0.0">
 			For a [member stone_top] species: whether it keeps to damp or to dry stone tops. Each top is damp (1) or dry (0), the whole stone alike: damp where [code]1.0 * a + 0.5 * low + 0.7 * shelter + 0.6 * shade[/code] reaches 0.45 (give or take 0.05 per stone), measured at its cap: a how far the cap tilts to the north (-Z), low 1 for a top 5 cm or less over the ground falling to 0 at 0.8 m, shelter how steeply taller stone tops within 2 m rise over it (as a tangent, full at 45 degrees; stones to the south count fully, those to the north half), shade the canopy's shade. Its suitability is multiplied by [code]lerp(1, damp, stone_top_damp)[/code] when positive and [code]lerp(1, 1 - damp, -stone_top_damp)[/code] when negative, so green cushions keep to the low, shaded, north-tilted tops and dry ones to the high, sunlit ones. [method PlantGenerator.make_stones] pairs a green moss (positive) with a smaller, sparser, yellow-olive one (-1).
 		</member>
@@ -431,7 +443,13 @@
 		<constant name="RULE_BEACH" value="22" enum="Rule">
 			Beach mask, [code]1[/code] on the beach face fading over the backshore, [code]0[/code] inland ([method TerrainGenerator3D.get_beach_at]). Needs a geology source with a sea.
 		</constant>
-		<constant name="RULE_MAX" value="23" enum="Rule">
+		<constant name="RULE_FIELD_EDGE" value="23" enum="Rule">
+			Metres from the nearest crop field's edge ([member GrassField3D.fields]), negative inside the field. A species using it may grow in the fields; without fields it is not placed.
+		</constant>
+		<constant name="RULE_SAND_MOBILITY" value="24" enum="Rule">
+			Desert sand seas: 0 stable interdune ground under thin sand to 1 a moving crest or slip face, -1 off the sand seas ([member TerrainGenerator3D.sand_sea_rect]). From the sand sea's depth against its local low and high over about a crest spacing, raised on slopes over 20 degrees.
+		</constant>
+		<constant name="RULE_MAX" value="25" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">
