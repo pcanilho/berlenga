@@ -94,7 +94,7 @@ private:
 
 	PhysXFireSpread3D *fire = nullptr;
 	PhysXFlow3D *flow = nullptr;
-	PhysXFlowEmitter3D *emitter = nullptr;
+	ObjectID emitters[5]; // one per burning face: four sides and the top
 
 	struct Ember {
 		Vector3 p;

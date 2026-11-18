@@ -1,0 +1,6 @@
+config_version=5
+[application]
+config/name="PhysX open-world bench"
+run/main_scene="res://main.tscn"
+[physics]
+3d/physics_engine="PhysX"

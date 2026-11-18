@@ -779,6 +779,119 @@ faded by the pixel footprint so they do not alias at a distance. Embers stay
 few without Flow's updraft (headless runs). Raster and path tracer both keep
 the char and cracks.
 
+Look rework (18 Nov, after docs review: the char read as a printed crackle
+over whole faces, the front as a cream rim, the flames sat beside the
+object). How burning wood looks, from fire investigation (Babrauskas 2005,
+"Charring rate of wood as a tool for fire investigations", Fire Safety J.
+40) and the timber fire design code (EN 1995-1-2, about 0.65 mm/min
+charring): behind the front the char deepens with time and splits into
+alligator blocks, smooth and fine-checked when fresh, larger and deeper
+behind; at the front a thin glowing line; ahead of it the pyrolysis zone,
+browned and darkened wood; then unburnt wood. A flame on a wall attaches
+to it and climbs (the wall fire plume). Built that way: the shader's
+distance behind the front stands for the char depth, cracks open with it
+and vary over the surface with a low noise, crack glow only near the
+flame and in smouldering patches, the front is a thin broken orange line,
+and a band of scorched brown leads it. The single Flow emitter inside the
+box (masked by the body as a solid) became one emitter just outside each
+burning face (sides and top) over the part the patch covers, pushed up.
+
+### Open-world physics checks (picked 17 Nov, fourth of four)
+
+What the module does now: one PxScene per space with the default scene
+query trees (static and dynamic both eDYNAMIC_AABB_TREE, rebuilt in the
+background over about 100 steps) and the default CPU broad phase (PABP in
+PhysX 5.10), or the GPU broad phase when CUDA is up. Each body goes in with
+its own addActor the moment it enters the space. Blast pieces already have
+piece_lifetime and kill_y; nothing else pools or culls bodies.
+
+How it is done elsewhere:
+- PhysX's guide (scene queries, "Pruning structures"; "Origin shift"):
+  for streamed content, build a PxPruningStructure for a batch of static
+  actors (at load or off the main thread) and add it with
+  addActors(pruningStructure): the batch's query tree merges into the
+  scene's in one step instead of each actor dirtying it. addActors with an
+  array is cheaper than single adds for the broad phase too. Static
+  aggregates (PxAggregateType::eSTATIC) put a region's statics into the
+  broad phase as one box. shiftOrigin moves every object by a vector, cost
+  O(n), meant to be called rarely as the player travels.
+- Unreal 5: physics state for a streamed level is created over several
+  frames (async physics state creation, a time budget per frame); Chaos
+  runs in doubles with Large World Coordinates, so it dropped origin
+  rebasing. Destruction debris: lifetime and "remove on sleep", with users
+  reporting it does not stop frame drops, so pooling is the game's job.
+- Unity (PhysX 4): no origin shift; projects run a floating origin script.
+
+Checks, in order (cloud CPU first; GPU numbers go on the PC queue):
+1. Bench (docs/bench/physx_openworld): regions of 500 m with a few
+   thousand static bodies each (boxes, convexes, trimeshes); stream one in
+   during a frame, measure that frame, the next steps, and raycast cost
+   before and after the query tree settles. The same with debris: a few
+   thousand dynamics settling, sleeping, then far away.
+2. Batched adds: bodies entering a space during a frame wait in a list and
+   go in with one addActors before the step; a batch of many statics goes
+   in through a PxPruningStructure. Keep it only if the bench shows the
+   spike drops; no behaviour change either way (same actors, same step).
+3. Sleep and distance: bodies beyond a distance from the active camera stop
+   simulating (eDISABLE_SIMULATION) and resume when back in range, as an
+   opt-in setting first, since game logic may rely on far bodies.
+4. Precision: PhysX runs in floats, so at 10 km a step's position step is
+   about 1 mm. Measure jitter of resting bodies at 1, 10 and 50 km. If it
+   shows, add an origin shift through PxScene::shiftOrigin that follows the
+   renderer's relative origin.
+
+Status (18 Nov): bench in docs/bench/physx_openworld (run headless with
+--fixed-fps 60, so each frame is one step). Cloud CPU numbers:
+- Streaming: a region of 5,000 statics costs one hitch frame, about 15 to
+  20 ms creating the nodes and shapes plus 6 to 12 ms for the first step,
+  growing with the statics already loaded (merging into the query tree and
+  broad phase). After it, steps are about 0.15 ms with 20,000 statics:
+  statics cost nothing while nothing touches them. 20,000 raycasts take
+  about 12 ms either way. Unloading 3,000 takes about 18 ms (one removal
+  each). The Performance monitor TIME_PHYSICS_PROCESS is a once-a-second
+  average, so it smeared the hitch over a second in the first runs.
+- Batched adds built (statics wait for the next step or query and go in
+  with one addActors, through a PxPruningStructure from 64): the hitch
+  frame drops about 12% (21 to 31 ms against 24 to 36 ms). Kept: same
+  actors, same step, queries in the same frame still see them.
+- Debris: 2,000 boxes settle and all sleep within 3 s; asleep, the step is
+  about 0.2 ms. Sleep already does what distance culling would, so culling
+  by distance is only worth it for bodies that never settle (it stays a
+  later opt-in).
+- Precision: resting boxes at 1, 10 and 50 km neither drift nor jitter.
+  Moving ones are bounded by float spacing: about 1 mm at 10 km and 4 mm at
+  50 km, so an origin shift is only needed for fine motion past 10 km.
+Next, if the hitch matters on the PC: create a streamed region's bodies
+over several frames (Unreal's time-budgeted physics state creation), and
+batch removals the same way. GPU broad phase numbers go on the PC queue.
+
+### Next-round options (card posted 18 Nov)
+
+Logs and deadwood burn. Trees mark deadwood meshes (PlantSpecies meta
+"deadwood", mesh meta "tree_deadwood_axis"); a PhysXFireSpread3D could
+attach a burnable to each such mesh in its area itself, so fallen trunks
+and stumps catch from the ground fire with no setup. A log is a cylinder,
+not a box: char by distance along and around the axis, flames along its
+top line. Large logs smoulder for hours in the wild (heavy fuels, the
+1000-hour time lag class); here, a long smoulder with glowing cracks.
+
+Cloth burns and tears. Melek and Keyser (2003, "Interactive simulation of
+burning objects"; 2007, "Driving object deformations from internal
+physical processes") burn a surface by spreading a front over its mesh,
+charring ahead of it and removing material behind; thin fabric burns
+through, leaving a hole with a glowing, curling edge. Here: a front over
+the cloth's particles (heat from the fire's flux, as burnables take it),
+char in the cloth shader by the particle's burn state, and burnt-through
+triangles removed through the cloth tearing already built, so the cloth
+falls apart under its own weight and the hot gas pushes it.
+
+Smoother streaming. Unreal registers a streamed level's components over
+several frames within a budget (s.LevelStreamingComponentsRegistration
+Granularity and the streaming time limit). Here: bodies entering a space
+already wait in a batch; creating their PhysX shapes and actors could also
+be split over frames within a time budget, with queries flushing the rest
+first so nothing is missed, and removals batched with removeActors.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

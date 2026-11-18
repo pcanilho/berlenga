@@ -34,18 +34,18 @@ extends Node3D
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
 		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
-		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm", "stone pine", "cork oak"]
+		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm", "stone pine", "cork oak", "holm oak", "wild olive", "maritime pine", "carob"]
 const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35, 36] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
 const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5,
-		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0, 9.0, 10.0]
+		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0, 9.0, 10.0, 7.0, 6.0, 6.0, 9.0]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
 		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6),
 		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
 		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6), Vector2(1.0, 2.6), Vector2(1.0, 2.6),
-		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5), Vector2(10, 25), Vector2(8, 22)]
+		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5), Vector2(10, 25), Vector2(8, 22), Vector2(6, 22), Vector2(3, 12), Vector2(15, 35), Vector2(5, 15)]
 
 var junction_side := 1 # --junction-side=-1: the junction view from the limb's other side.
 var test := false
