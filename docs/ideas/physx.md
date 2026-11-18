@@ -954,6 +954,46 @@ costs 0.6 to 1.9 ms at 5,000 to 20,000 statics and grows with the world, so
 it is left out. The game side (creating the nodes, 15 to 20 ms a region) is
 now the larger part: stream nodes in over frames.
 
+### Embers start new fires downwind (picked 18 Nov, second of three)
+
+Spotting is how wildfires jump roads and breaks: burning bark, twig and
+grass flakes rise in the plume, the wind carries them, and a glowing one
+landing in dry fuel starts a new fire ahead of the front. The physics:
+- Lofting: the convection column over a line of fire rises at about
+  1.7 (g I / (rho c_p T))^(1/3) (Byram 1959; Lee and Emmons 1961), about
+  5 m/s for 1,000 kW/m, holding with height while the source looks like a
+  line, then slowing as z^(-1/3) in still air and z^(-1/2) bent over by the
+  wind (Briggs 1975); it widens by about 0.2 z (Morton, Taylor and Turner
+  1956) and leans downwind by U/w per metre of rise. Albini (1979, 1983)
+  builds his spotting distance models on the same column.
+- Flight: quadratic drag to a terminal velocity of 2 to 6 m/s for bark and
+  twig flakes of 2 to 10 mm (Tohidi, Kaye and Bridges 2015), falling as
+  the brand loses mass; glowing life grows with size (Tarifa et al. 1965).
+- Generation: burning trees and shrubs throw hundreds of hot brands per kg
+  burnt, most needles and leaves too small to light fuel (Caton-Kerr et al.
+  2021); wood and bark throw the long lived ones.
+- Ignition: glowing brands light dry grass and litter, damp beds not at
+  all (Manzello et al. 2006, 2008). BehavePlus uses Schroeder's (1969)
+  probability of ignition from the heat to ignite the fuel, Q_ig, from its
+  moisture and the air temperature.
+How engines do it: Far Cry 2 and Breath of the Wild drift embers that light
+grass by rule; WRF-SFIRE and FARSITE add spotting as Albini's distance with
+a probability. Here the brands fly, so the distance comes from the plume
+and the wind.
+
+Status (18 Nov): built. PhysXFirebrands (shared, so burnables can use it
+next) holds up to 400 brands. A PhysXFireSpread3D throws them from its
+flaming cells (2, 3 and 5 per kg for short grass, tall grass and litter,
+10 for burning logs, times spotting_scale), lofted by Flow's gas in the
+flames and the column above its 128 strongest front tiles, carried by the
+weather map's wind at their height (or the wind on a log profile), landed
+by a ray along their path or the fire grid's ground. On unburnt fuel of any
+fire grid below its moisture of extinction a brand lights a spot fire with
+Schroeder's probability times sqrt of what is left of it. Drawn as short
+glowing streaks along their flight. Test (tall grass upwind, short grass
+downwind past a 5 m gap, wind 8 m/s): brands land 15 to 40 m downwind and
+light 12 spot fires in 10 s at 4% moisture, 3 at 10%, none above 12%.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

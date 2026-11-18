@@ -32,6 +32,7 @@
 #pragma once
 
 #include "core/templates/local_vector.h"
+#include "physx_firebrands.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -120,6 +121,12 @@ private:
 	LocalVector<float> heavy_left;
 	LocalVector<float> heavy_t;
 	bool heavy_any = false;
+	// Spotting: brands thrown up by what burns this step, then flown and landed.
+	bool spotting = true;
+	float spotting_scale = 1.0f;
+	PhysXFirebrands firebrands;
+	LocalVector<PhysXFirebrands::Release> brand_points;
+	float brand_count = 0.0f; // brands to throw this step
 	static LocalVector<PhysXFireSpread3D *> fires;
 	float _heavy_flaming_time(uint32_t p_i) const { return 18900.0f * heavy_d[p_i]; } // Anderson 1969, 384/sigma min
 	bool _heavy_flaming(uint32_t p_i) const { return heavy_t[p_i] >= 0.0f && heavy_left[p_i] > HEAVY_SMOULDER && !quenched[p_i]; }
@@ -154,6 +161,8 @@ private:
 	bool _world_cell(const Vector3 &p_world, int &r_x, int &r_z) const;
 	void _grow_band(int p_x0, int p_z0, int p_x1, int p_z1);
 	void _redistance();
+
+	friend class PhysXFirebrands;
 
 protected:
 	void _notification(int p_what);
@@ -224,6 +233,13 @@ public:
 	float get_char_darkness() const { return char_darkness; }
 	void set_glow_energy(float p_v);
 	float get_glow_energy() const { return glow_energy; }
+
+	void set_spotting(bool p_v);
+	bool is_spotting() const { return spotting; }
+	void set_spotting_scale(float p_v) { spotting_scale = MAX(p_v, 0.0f); }
+	float get_spotting_scale() const { return spotting_scale; }
+	int get_firebrand_count() const { return firebrands.get_count(); }
+	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
 
 	PhysXFlow3D *get_flow() const { return flow; }
 };
