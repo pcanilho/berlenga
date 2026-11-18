@@ -454,9 +454,14 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   piles up, lumps, and a step at the edge. Wet clay is darker and glossier (roughness 0.18). Drip runs sag down the
   panel the clod hit, a few narrow runs of different lengths that thin to their ends (none from roof or floor hits).
   Bench: `--pair` saves the raster and path traced frames from one run, so both show the same clods.
-
-#### Research (4c: splashes in standing water)
-
+- **Second review.** The runs read as syrup and the clay as plastic. Drips are now short and fat, since wet clay is
+  viscous: in lanes about 3 cm wide across the panel, about half of them with a run hanging from the rim above it, 2
+  to 6 cm long whatever the splat's size, wandering a little, lumpy and ending in a bead. The cake has aggregate (grit
+  of a few mm and the odd pebble lump in its relief, fading with the footprint), a mottled tone over a few cm with a
+  grit speckle, and a thick middle that stays wet (darker, glossier) after its thin edges dry; grit breaks up the wet
+  sheen. Overlapping splats and runs join as an "or" of their shares of a full cake (a + b - ab), so no seam or ridge
+  shows where they meet (a plain or smooth maximum leaves one). The relief's step follows the footprint (0.8 to 3 mm).
+  #### Research (4c: splashes in standing water)
 - **How others do it.** Saber keeps water as two swapped RGBA textures that the GPU spreads (height, foam,
   "water-mud" carried to neighbours), with decorative CPU particles on top. The standard real-time recipe is a height
   field for the bulk and particles where it breaks: Chentanez and Muller 2010 ("Real-time simulation of large bodies
@@ -472,7 +477,25 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Dependency.** Sand owns the water passes and WaterCell for rills this week: build after they land, through
   the field's own source term, not a second solver.
 
-#### Research (4d: streaked spatter and local clay colour)
+#### Plan (4c)
+
+- **Bow wave.** A tyre is an obstacle in the pipe model (as moving obstacles in virtual-pipe water, e.g. Mei, Decaudin
+  and Hu 2007 and later game water such as From Dust): water cannot stand inside it, so where its disc dips below a
+  column's water that water's head rises by the thickness it takes up, and the pipes drive the water out from under
+  it. As it rolls on its front keeps raising the head ahead, which runs off as a bow wave, and the water closes in
+  behind; the flux is limited by the depth, so volume is kept by construction. (A first try added the rate the
+  submerged volume grows as a source, after Chentanez and Muller 2010; on a height field without the body's own volume
+  it fed on its own hump and gained water.) Vehicles report wheels in water through GroundSurface3D.add_wader().
+- **Sheets.** Past a Froude number of 1 at a wheel (speed over sqrt(g depth)), the tread and sidewalls throw sheets: a
+  GroundSurface3D spray with a water share, which a grains node throws as PhysX MPM water (its clear-water child, foam
+  and spray on, tinted by the mud the field carries), taken from the field there and returned to it where it lands, as
+  the clods are.
+- **Body.** Muddy water lifts the arches' spray level and washes stuck clods (2a already washes them in standing
+  water).
+- Checks: a wheel driven through a puddle raises water ahead and lowers it behind, total volume kept to 1%; past
+  Froude 1 water is thrown and lands back, volume kept; raster vs PT frame of a 4x4 through a rut puddle.
+
+#### Research and build (4d: streaked spatter and local clay colour)
 
 - **How others do it.** Forza Motorsport (2023) builds each car's dirt live, thrown by its own tyres and the track,
   so it gathers where the flow carries it; MSFS 2024 blends dirt and grime layers by level and region; BeamNG's dirt
@@ -483,6 +506,13 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   runs downward that freeze as the mud dries. Clay colour: the vehicle averages the ground's albedo (GroundSurface3D
   tint and material colour) at its wheels' contacts over the last metres driven and writes it into `mud_color`, so
   red laterite gives red mud and grey clay grey.
+
+- **Built.** Spatter is drawn out along its flight: the splat noise is sampled with the direction out from the nearest
+  wheel squeezed out of it (features nearly twice as long along it), plus a faint vertical grain where it ran. Clay
+  colour: `GroundSurface3D.mud_color` (sRGB, a mid brown) or `mud_color_map` over `mud_map_rect`, read by
+  `get_mud_color_at()`; a vehicle's treads pick it up where they turn in mud, blended over about 5 m of travel, into
+  the body's `mud_color` (`PhysXVehicle3D.get_body_mud_color()`). Check: `--test=clog` drives through red laterite and
+  the body's clay comes out red.
 
 #### Research (4e: mud on boots and legs)
 

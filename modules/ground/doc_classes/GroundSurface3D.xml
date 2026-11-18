@@ -11,6 +11,17 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_wader">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="axle" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="half_width" type="float" />
+			<param index="4" name="velocity" type="Vector3" />
+			<description>
+				Tells the standing water a tyre centred on [param axle] is moving through it this physics frame at [param velocity] ([param id] names the tyre: a later call with the same id moves it): the water cannot stand inside it, so it is pushed out ahead of it and closes in behind, volume kept, running off as a bow wave and a wake. [PhysXVehicle3D] calls it for its wheels in water. Up to four tyres over the field count.
+			</description>
+		</method>
 		<method name="bed_load" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="water_speed" type="float" />
@@ -131,6 +142,13 @@
 			<return type="Vector2" />
 			<description>
 				The volume pressed down (x) and piled into rims (y) over the live field, in m³. Their difference is what was compacted.
+			</description>
+		</method>
+		<method name="get_mud_color_at" qualifiers="const">
+			<return type="Color" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The clay's colour at [param position]: [member mud_color_map] where it covers [member mud_map_rect], else [member mud_color].
 			</description>
 		</method>
 		<method name="get_mud_depth_at" qualifiers="const">
@@ -482,6 +500,12 @@
 		</member>
 		<member name="mud_map_rect" type="Rect2" setter="set_mud_map_rect" getter="get_mud_map_rect" default="Rect2(0, 0, 0, 0)">
 			The world rectangle (x, z, width, depth) [member mud_map] covers.
+		</member>
+		<member name="mud_color" type="Color" setter="set_mud_color" getter="get_mud_color" default="Color(0.45, 0.36, 0.27, 1)">
+			The clay's colour. A [PhysXVehicle3D] that drives through the mud carries it on its tyres and body, so red laterite gives red mud and grey clay grey.
+		</member>
+		<member name="mud_color_map" type="Image" setter="set_mud_color_map" getter="get_mud_color_map">
+			The clay's colour over [member mud_map_rect] (RGB), where it varies; outside it, [member mud_color].
 		</member>
 		<member name="mud_max_depth" type="float" setter="set_mud_max_depth" getter="get_mud_max_depth" default="1.2">
 			The mud depth where [member mud_map] is white, in metres.

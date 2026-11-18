@@ -149,6 +149,10 @@ private:
 	float mud_auto_depth = 0.5f;
 	float mud_wet_start = 0.35f;
 	float mud_wet_full = 0.55f;
+	// The clay's colour (sRGB; mud stage 4d), or where mud_color_map covers mud_map_rect its RGB: a vehicle that drives
+	// through it carries this colour on its body (red laterite gives red mud, grey clay grey).
+	Color mud_color = Color(0.45f, 0.36f, 0.27f);
+	Ref<Image> mud_color_map;
 	NodePath data_map;
 	float _mud_depth_at(const Vector3 &p_position, float p_moisture, bool p_sand_or_rock, const Node *p_data_map) const;
 
@@ -334,6 +338,15 @@ private:
 	LocalVector<float> water_speed; // m/s of water over the cell, 0 dry
 	LocalVector<float> cell_water; // the saturation and speed the cell was last built with (2 per cell)
 	LocalVector<float> water_depth; // m of water over the cell (the last water update's)
+	struct Wader {
+		int64_t id = 0;
+		Vector3 axle;
+		float radius = 0.0f;
+		float half_width = 0.0f;
+		Vector3 velocity;
+		uint64_t frame = 0;
+	};
+	mutable LocalVector<Wader> waders; // add_wader()'s, this physics frame's and the last
 	LocalVector<float> water_table; // m from the surface down to the water table a sea or lake left (runoff_channels)
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
@@ -520,6 +533,10 @@ public:
 	float get_dust_emission() const { return dust_emission; }
 	Array take_sprays();
 	void add_spray(const Spray &p_spray);
+	// A tyre moving through standing water this physics frame (mud stage 4c): the GPU water passes push the water
+	// ahead of it (a bow wave) and draw it in behind. p_id: the tyre's (a later call with the same replaces it);
+	// p_axle: the wheel's centre; p_velocity: the wheel's.
+	void add_wader(int64_t p_id, const Vector3 &p_axle, float p_radius, float p_half_width, const Vector3 &p_velocity);
 	// Rigid bodies in deform_groups moving through soft ground feel its resistance (on).
 	void set_ploughing(bool p_enabled) { ploughing = p_enabled; }
 	bool is_ploughing() const { return ploughing; }
@@ -587,6 +604,11 @@ public:
 	float get_mud_wet_full() const { return mud_wet_full; }
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
+	void set_mud_color(const Color &p_color);
+	Color get_mud_color() const { return mud_color; }
+	void set_mud_color_map(const Ref<Image> &p_map);
+	Ref<Image> get_mud_color_map() const { return mud_color_map; }
+	Color get_mud_color_at(Vector3 p_position) const;
 	float get_mud_depth_at(Vector3 p_position) const;
 	void set_near_field(bool p_enabled);
 	bool is_near_field() const { return near_field; }

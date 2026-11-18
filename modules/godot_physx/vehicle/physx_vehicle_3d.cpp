@@ -430,6 +430,9 @@ struct PhysXVehicle3D::Impl {
 	float mud_shed_seen[4] = {};
 	float mud_line = 0.0f;
 	float mud_wet = 0.0f;
+	// The clay's colour on the body, linear (mud stage 4d): the ground's mud colour at the wheels, averaged over the last
+	// few metres driven through it; a mid brown until the vehicle has been in any.
+	Vector3 mud_rgb = Vector3(0.17f, 0.11f, 0.065f);
 	bool mud_written = false;
 	bool mud_meshes_ready = false;
 	LocalVector<ObjectID> mud_meshes;
@@ -733,6 +736,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			_cache_chassis();
 			if (get_physics_process_delta_time() > 0.0) {
 				_body_mud_step((float)get_physics_process_delta_time());
+				_wade_step();
 			}
 		} break;
 	}
@@ -1099,6 +1103,26 @@ void PhysXVehicle3D::_body_mud_meshes() {
 	impl->mud_meshes_ready = true;
 }
 
+// Wheels in standing water (mud stage 4c): each tells the ground it is wading, and the water passes push the water
+// ahead of it.
+void PhysXVehicle3D::_wade_step() {
+#ifdef MODULE_GROUND_ENABLED
+	GroundSurface3D *ground = GroundSurface3D::get_active();
+	if (!ground || !impl->built) {
+		return;
+	}
+	const Vehicle4W &v = impl->vehicle;
+	for (uint32_t i = 0; i < 4; i++) {
+		const Vector3 c = wheels[impl->wheel_order[i]]->get_global_position();
+		if (ground->get_standing_water_at(c) <= 0.005f) {
+			continue;
+		}
+		const Vector3 vel = get_linear_velocity();
+		ground->add_wader(int64_t(get_instance_id()) * 4 + i, c, v.wheelParams[i].radius, v.wheelParams[i].halfWidth, vel);
+	}
+#endif
+}
+
 void PhysXVehicle3D::_body_mud_step(float p_delta) {
 	if (!body_mud) {
 		return;
@@ -1142,6 +1166,12 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 			// Ploughing through sticky slurry splashes the arch too, more as the tread turns faster.
 			const float tread = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * v.wheelParams[i].radius;
 			spray += 0.05f * sw.soil.stickiness * MIN(tread / 5.0f, 1.0f) * MIN(sw.sinkage / (0.3f * v.wheelParams[i].radius), 1.0f) * p_delta;
+		}
+		if (ground && sw.soft && sw.mud > 0.0f) {
+			// The tread picks up the clay it turns in: blend its colour in over about 5 m of travel.
+			const float moved = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * v.wheelParams[i].radius * p_delta;
+			const Color clay = ground->get_mud_color_at(wheels[impl->wheel_order[i]]->get_global_position()).srgb_to_linear();
+			impl->mud_rgb = impl->mud_rgb.lerp(Vector3(clay.r, clay.g, clay.b), MIN(moved / 5.0f, 1.0f));
 		}
 		if (ground) {
 			const Vector3 c = wheels[impl->wheel_order[i]]->get_global_position();
@@ -1210,8 +1240,7 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		spray[i] = impl->mud_spray[i];
 	}
 	const Vector4 body(bottom, impl->mud_line, impl->mud_wet, 0.0f);
-	// Clay, linear: a mid brown (sRGB about 0.45, 0.36, 0.27).
-	const Vector4 color(0.17f, 0.11f, 0.065f, 1.0f);
+	const Vector4 color(impl->mud_rgb.x, impl->mud_rgb.y, impl->mud_rgb.z, 1.0f);
 	const Vector4 splat(float(MAX(impl->mud_row, 0)), impl->mud_row >= 0 ? float(impl->splat_count) : 0.0f, 0.0f, 0.0f);
 	static const StringName names[12] = { "mud_frame0", "mud_frame1", "mud_frame2", "mud_wheel0", "mud_wheel1", "mud_wheel2",
 		"mud_wheel3", "mud_fill", "mud_spray", "mud_body", "mud_color", "mud_splat" };
@@ -1258,6 +1287,10 @@ real_t PhysXVehicle3D::get_wheel_mud_spray(int p_wheel) const {
 
 real_t PhysXVehicle3D::get_body_mud_line() const {
 	return impl->mud_line;
+}
+
+Color PhysXVehicle3D::get_body_mud_color() const {
+	return Color(impl->mud_rgb.x, impl->mud_rgb.y, impl->mud_rgb.z).linear_to_srgb();
 }
 
 real_t PhysXVehicle3D::get_body_mud_wetness() const {
@@ -1628,6 +1661,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_spray", "wheel"), &PhysXVehicle3D::get_wheel_mud_spray);
 	ClassDB::bind_method(D_METHOD("get_body_mud_line"), &PhysXVehicle3D::get_body_mud_line);
 	ClassDB::bind_method(D_METHOD("get_body_mud_wetness"), &PhysXVehicle3D::get_body_mud_wetness);
+	ClassDB::bind_method(D_METHOD("get_body_mud_color"), &PhysXVehicle3D::get_body_mud_color);
 	ClassDB::bind_method(D_METHOD("add_mud_splat", "position", "velocity", "volume"), &PhysXVehicle3D::add_mud_splat);
 	ClassDB::bind_method(D_METHOD("get_mud_splat_count"), &PhysXVehicle3D::get_mud_splat_count);
 	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);

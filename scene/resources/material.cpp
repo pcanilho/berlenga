@@ -1058,6 +1058,14 @@ float vmud_level(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fi
 	lvl = max(lvl, vmud_wheel(p_p, p_w3, p_fill.w, p_spray.w));
 	return lvl;
 }
+// Levels joined as an "or" of their shares of a full cake (1.25): a + b - a b / 1.25. Overlapping splats and runs
+// merge into one cake with no seam or ridge where they meet (a plain or smooth maximum leaves one), and a cake already
+// full stays full.
+float vmud_join(float a, float b) {
+	a = clamp(a, 0.0, 1.25);
+	b = clamp(b, 0.0, 1.25);
+	return a + b - a * b / 1.25;
+}
 // The level thresholds the splat field: a low level keeps only the splats' peaks, a full one covers all. The cake lies
 // where the field f = splat + 1.2 level passes 1.075; its edge is a ramp p_w wide in f, at least 0.15 and wider where a
 // footprint holds more of the field (a filtered step), so outlines stay smooth at any distance and in both renderers.
@@ -1069,10 +1077,15 @@ float vmud_cover(float p_level, float p_splat) {
 }
 // The cake's relief (m): thicker where it lies deep (a splat's middle, below the mud line), lumpy, and with a lip a few
 // mm wide just inside its edge where a splash's crown piles up; its edge a step.
-float vmud_height(float p_f, float p_w, float p_level, float p_splat) {
+float vmud_height(float p_f, float p_w, float p_level, float p_splat, vec3 p_p, float p_fw) {
 	float c = vmud_cover_f(p_f, p_w);
 	float lip = 1.0 - smoothstep(0.05, 0.35, p_f - 1.075);
-	return c * (0.0015 + 0.0024 * clamp(p_level, 0.0, 1.25) + 0.002 * p_splat + 0.0015 * lip);
+	// Aggregate: grit of a few mm and the odd lump of a pebble or a root, fading over a footprint too wide to hold them.
+	float grit = (vmud_noise(p_p * 260.0 + 11.0) - 0.5) * (1.0 - smoothstep(0.0015, 0.005, p_fw));
+	// (two value noises on different, turned lattices: one alone thresholded this high leaves grid-aligned crosses)
+	float ln = 0.5 * (vmud_noise(p_p * 70.0 + 29.0) + vmud_noise(vec3(0.8 * p_p.x + 0.6 * p_p.z, p_p.y, 0.8 * p_p.z - 0.6 * p_p.x) * 93.0 + 5.0));
+	float lump = smoothstep(0.62, 0.78, ln) * (1.0 - smoothstep(0.004, 0.015, p_fw));
+	return c * (0.002 + 0.0016 * clamp(p_level, 0.0, 1.25) + 0.002 * p_splat + 0.0015 * lip + 0.0005 * grit + 0.0012 * lump);
 }
 // A clod that stuck to the body (mud stage 4b; p_a: where, in the vehicle's frame, and its radius; p_b: its flight
 // direction and amount): a splat spread along the flight, a short tail ahead of the hit and a shorter rim behind it.
@@ -1082,24 +1095,72 @@ float vmud_splat_one(vec3 p_p, vec4 p_a, vec4 p_b) {
 	float e = length(d - along * p_b.xyz) / p_a.w + max(along, 0.0) / (2.5 * p_a.w) + max(-along, 0.0) / (0.7 * p_a.w);
 	// A ragged rim (the splash's fingers) and a halo of droplets thrown past it, thresholded by the splat field. The
 	// core is a dome, deepest in the middle.
-	e *= 0.75 + 0.5 * vmud_noise(p_p * 22.0 + 7.0);
+	float rag = 0.75 + 0.5 * vmud_noise(p_p * 22.0 + 7.0);
+	e *= rag;
 	float core = 1.25 * (1.0 - smoothstep(0.3, 1.0, e));
 	float halo = 0.5 * (1.0 - smoothstep(1.0, 2.2, e));
 	float lvl = p_b.w * max(core, halo);
-	// Drip runs: wet clay sags down the panel from the splat's lower half in a few narrow runs of different lengths,
-	// each thinning to its end, on the panel the clod hit only. None from a clod that hit a roof or a floor.
+	// Drip runs: wet clay is thick, so it sags only a little way down the panel the clod hit, in a few short fat runs,
+	// lumpy along their length, each ending in a bead. None from a clod that hit a roof or a floor.
 	vec3 tn = cross(vec3(0.0, 1.0, 0.0), p_b.xyz);
 	float tl = length(tn);
 	if (d.y < 0.0 && tl > 0.3 && abs(dot(d, cross(tn, vec3(0.0, 1.0, 0.0)))) < 0.5 * p_a.w * tl) {
-		float t = dot(d, tn) / tl;
 		float seed = dot(p_a.xyz, vec3(13.1, 7.7, 5.3));
-		float col = vmud_noise(vec3(t * 60.0, seed, 0.5));
-		float run = p_a.w * (0.8 + 2.4 * vmud_noise(vec3(t * 60.0, seed, 3.5)));
-		float down = -d.y / run;
-		float drip = smoothstep(0.6 + 0.12 * down, 0.66 + 0.12 * down, col) * (1.0 - smoothstep(0.85, 1.0, down)) * (1.0 - smoothstep(0.5, 0.8, abs(t) / p_a.w));
-		lvl = max(lvl, 1.1 * p_b.w * drip);
+		// The runs wander a little as they sag.
+		float t = dot(d, tn) / tl + 0.006 * (vmud_noise(vec3(d.y * 35.0, seed, 7.5)) - 0.5);
+		// Runs in lanes about 3 cm wide across the panel, about half of them with a run: each its own length and
+		// width, so every splat drips a little whatever its seed.
+		float u = t * 30.0;
+		float lane = floor(u);
+		float fu = fract(u) - 0.5;
+		float has = step(0.45, vmud_hash(vec3(lane, seed, 1.0)));
+		// From the splat's lower rim, 2 to 6 cm past it whatever the splat's size: clay is too stiff to run far.
+		float run = 0.015 + 0.035 * vmud_hash(vec3(lane, seed, 5.0)) + 0.08 * p_a.w;
+		// Measured from the ragged rim above it in its own column (where the dome thins out, e about 0.7 across the
+		// splat's round), found in two steps since the rim's raggedness moves it; a lane past the splat's side has no
+		// rim above it and no run.
+		float rr = 0.7 * p_a.w / (0.75 + 0.5 * vmud_noise((p_p - vec3(0.0, d.y + 0.7 * p_a.w, 0.0)) * 22.0 + 7.0));
+		float rim = sqrt(max(rr * rr - t * t, 0.0));
+		rr = 0.68 * p_a.w / (0.75 + 0.5 * vmud_noise((p_p - vec3(0.0, d.y + rim, 0.0)) * 22.0 + 7.0));
+		has *= step(abs(t), 0.9 * rr);
+		rim = sqrt(max(rr * rr - t * t, 0.0));
+		// A third of a run's length inside it, so the run grows out of the rim's thin edge with no gap.
+		float down = max(-d.y - rim + 0.3 * run, 0.0) / run;
+		float bead = exp(-pow((down - 1.15) / 0.1, 2.0));
+		float lumpy = 0.14 * (vmud_noise(vec3(u * 2.0, d.y * 70.0, seed)) - 0.5);
+		// Half its lane's width (0.2 to 0.33 of it), thinning as it runs, swelling at the bead.
+		float half_w = (0.2 + 0.13 * vmud_hash(vec3(lane, seed, 9.0))) * (1.0 - 0.45 * down) + 0.14 * bead + lumpy;
+		// Nothing inside the splat itself (it would show as ridges where the run meets the dome).
+		float drip = has * (1.0 - smoothstep(half_w - 0.05, half_w, abs(fu))) * smoothstep(0.0, 0.3, down) * (1.0 - smoothstep(1.25, 1.31, down)) * (1.0 - smoothstep(0.35, 0.6, abs(t) / p_a.w));
+		// Only past the cake's thick part (its halo of droplets aside): inside it a run would show its lane's edges
+		// in the relief.
+		lvl = vmud_join(lvl, (1.0 + 0.15 * bead) * p_b.w * drip * (1.0 - smoothstep(0.2, 0.6, p_b.w * core)));
 	}
 	return lvl;
+}
+// Spatter is drawn out along its flight (mud stage 4d): the direction out from the nearest wheel, the way its spray
+// left the tread, with a faint vertical grain where it ran (stuck clods carry their own drip runs).
+vec3 vmud_flow(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3) {
+	vec3 flow = vec3(0.0, -1.0, 0.0);
+	float best = 1e9;
+	vec4 w[4] = vec4[](p_w0, p_w1, p_w2, p_w3);
+	for (int k = 0; k < 4; k++) {
+		if (w[k].w > 0.0) {
+			vec3 d = p_p - w[k].xyz;
+			float l = length(d);
+			if (l < best && l > 1e-4) {
+				best = l;
+				flow = d / l;
+			}
+		}
+	}
+	return flow;
+}
+// The splat field sampled with the flight squeezed out of it (features nearly twice as long along it) and the
+// vertical grain.
+float vmud_streaked(vec3 p_p, vec3 p_flow, float p_fw) {
+	vec3 q = p_p - p_flow * (0.45 * dot(p_p, p_flow));
+	return vmud_splat(q, p_fw) + 0.15 * (vmud_noise(vec3(p_p.x * 45.0, p_p.y * 5.0, p_p.z * 45.0) + 3.0) - 0.5);
 }
 )";
 	code += R"(// The clods stuck to this vehicle (mud stage 4b): its row of PhysXVehicle3D's splat texture, two texels a clod.
@@ -1108,7 +1169,7 @@ float vmud_splats_level(vec3 p_p, vec4 p_splat) {
 	int row = int(p_splat.x);
 	int n = int(p_splat.y);
 	for (int k = 0; k < n; k++) {
-		lvl = max(lvl, vmud_splat_one(p_p, texelFetch(vehicle_mud_splats, ivec2(2 * k, row), 0), texelFetch(vehicle_mud_splats, ivec2(2 * k + 1, row), 0)));
+		lvl = vmud_join(lvl, vmud_splat_one(p_p, texelFetch(vehicle_mud_splats, ivec2(2 * k, row), 0), texelFetch(vehicle_mud_splats, ivec2(2 * k + 1, row), 0)));
 	}
 	return lvl;
 }
@@ -1124,22 +1185,25 @@ float vmud_all(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill
 // The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows; p_splat: its row of stuck clods
 // and their count, see vmud_splats_level()): (cover, relief gradient in world space (x, y, z) per m). The cover's edge
 // is filtered over the footprint p_fw; the gradient fades out over a footprint too wide to hold the lumps.
-vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat) {
+vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat, out vec2 r_tone) {
+	r_tone = vec2(1.0, 0.0);
 	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
 	float lvl = vmud_all(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat);
 	if (lvl <= 0.0) {
 		return vec4(0.0);
 	}
 	float fw = max(p_fw, 1e-4);
-	const float e = 0.003;
-	float s = vmud_splat(p, fw);
+	// The differences' step follows the footprint, fine enough near to hold the grit.
+	float e = clamp(1.5 * fw, 0.0008, 0.003);
+	vec3 flow = vmud_flow(p, p_w0, p_w1, p_w2, p_w3);
+	float s = vmud_streaked(p, flow, fw);
 	float f = s + 1.2 * lvl;
 	vec3 px = p + vec3(e, 0.0, 0.0);
 	vec3 py = p + vec3(0.0, e, 0.0);
 	vec3 pz = p + vec3(0.0, 0.0, e);
 	vec3 ls = vec3(vmud_all(px, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat), vmud_all(py, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat),
 			vmud_all(pz, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat));
-	vec3 ss = vec3(vmud_splat(px, fw), vmud_splat(py, fw), vmud_splat(pz, fw));
+	vec3 ss = vec3(vmud_streaked(px, flow, fw), vmud_streaked(py, flow, fw), vmud_streaked(pz, flow, fw));
 	vec3 fs = ss + 1.2 * ls;
 	// The edge's ramp: as wide as the field changes over one and a half footprints, and no softer: clay is there or
 	// not, so where the field rises slowly its edge stays crisp rather than fading over centimetres.
@@ -1148,19 +1212,30 @@ vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_fram
 	if (c <= 0.0) {
 		return vec4(0.0);
 	}
-	float h0 = vmud_height(f, w, lvl, s);
-	vec3 g = vec3(vmud_height(fs.x, w, ls.x, ss.x), vmud_height(fs.y, w, ls.y, ss.y), vmud_height(fs.z, w, ls.z, ss.z)) - h0;
+	float h0 = vmud_height(f, w, lvl, s, p, fw);
+	vec3 g = vec3(vmud_height(fs.x, w, ls.x, ss.x, px, fw), vmud_height(fs.y, w, ls.y, ss.y, py, fw), vmud_height(fs.z, w, ls.z, ss.z, pz, fw)) - h0;
 	g *= (1.0 - smoothstep(0.004, 0.02, fw)) / e;
 	// Back to world space: the frame's rows are a rotation.
 	vec3 gw = g.x * p_frame0.xyz + g.y * p_frame1.xyz + g.z * p_frame2.xyz;
+	// The tone: clay mottled over a few cm (more or less silt and organic matter) with a speckle of grit, and the
+	// thick middle of a cake still wet (darker, glossier) after its thin edges have dried.
+	float mottle = vmud_noise(p * 9.0 + 53.0);
+	float speck = (vmud_noise(p * 260.0 + 11.0) - 0.5) * (1.0 - smoothstep(0.0015, 0.006, fw));
+	r_tone = vec2(0.78 + 0.45 * mottle + 0.35 * speck, smoothstep(0.85, 1.2, lvl));
 	return vec4(c, gw);
 }
 // Wet clay dark and glossy, drying to a pale matte crust (the crack crust's tone).
-void vmud_apply(float p_cover, vec3 p_color, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
+void vmud_apply(float p_cover, vec2 p_tone, vec3 p_color, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
+	// The thick middle stays wet longer: it dries last.
+	float wet = clamp(p_wet + 0.6 * p_tone.y * (1.0 - p_wet) + 0.25 * p_tone.y, 0.0, 1.0);
 	vec3 dry = p_color * 1.6;
 	dry = mix(dry, vec3(dot(dry, vec3(0.299, 0.587, 0.114))), 0.2);
-	r_albedo = mix(r_albedo, mix(dry, p_color * 0.5, p_wet), p_cover);
-	r_roughness = mix(r_roughness, mix(0.95, 0.18, p_wet), p_cover);
+	vec3 clay = mix(dry, p_color * 0.5, wet) * p_tone.x * mix(1.0, 0.62, p_tone.y * wet);
+	// Patches richer in iron oxide read warmer, siltier ones greyer.
+	clay *= mix(vec3(0.93, 0.97, 1.06), vec3(1.07, 0.99, 0.9), clamp((p_tone.x - 0.75) / 0.5, 0.0, 1.0));
+	r_albedo = mix(r_albedo, clay, p_cover);
+	// Wet clay glistens, but not as plastic: grit breaks its film up.
+	r_roughness = mix(r_roughness, clamp(mix(0.95, 0.36, wet) + 0.35 * abs(1.0 - p_tone.x), 0.2, 1.0), p_cover);
 	r_metallic = mix(r_metallic, 0.0, p_cover);
 	r_specular = mix(r_specular, 0.5, p_cover);
 }
@@ -2886,10 +2961,11 @@ void fragment() {)";
 	{
 		float vmud_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 		float vmud_fp = PROJECTION_MATRIX[3][3] != 0.0 ? vmud_pix : length(VERTEX) * vmud_pix;
-		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body, mud_splat);
+		vec2 vmud_tone;
+		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body, mud_splat, vmud_tone);
 		if (vmud.x > 0.0) {
 			float vmud_specular = SPECULAR;
-			vmud_apply(vmud.x, mud_color.rgb, mud_body.z, ALBEDO, ROUGHNESS, METALLIC, vmud_specular);
+			vmud_apply(vmud.x, vmud_tone, mud_color.rgb, mud_body.z, ALBEDO, ROUGHNESS, METALLIC, vmud_specular);
 			SPECULAR = vmud_specular;
 			vec3 vmud_g = (VIEW_MATRIX * vec4(vmud.yzw, 0.0)).xyz;
 			NORMAL = normalize(NORMAL - (vmud_g - dot(vmud_g, NORMAL) * NORMAL));
