@@ -369,6 +369,11 @@ uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_
 // (pathtraced_absorption, pathtraced_scattering) as the underwater pass does, instead of blending a tint
 // over it. Off: the older tint (water_color, shallow_color).
 uniform bool clear_water = true;
+// Screen-space reflections (raster, raster_reflections off: a cave, an interior, no sky to mirror): the mirror ray
+// marched through the screen's depth (McGuire and Mara 2014; Sousa 2011's linear march with a binary refinement),
+// so still water shows the walls, formations and lamps around it. Where the ray leaves the screen or meets
+// nothing, the dark of the surroundings (no sky). Off: the surface carries only its lamp glints.
+uniform bool screen_reflections = true;
 // Caustics on what clear water shows (raster): the light-space caustics map (water_caustics_map.glsl), the
 // sun's irradiance at caustics_ref_depth under the waves over a flat surface's, scales the sun's share of the
 // bed's light. Set from PhysXWaterSurface3D (caustics_enabled); the path tracer finds its own.
@@ -399,6 +404,7 @@ varying vec3 wr_crest;
 #if !defined(RT) && !defined(UNDERWATER_FOG) && !defined(UNDERWATER_SURFACE) && !defined(BREAKER_LIP)
 uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
+
 #endif
 
 // Flow (PhysXWaterSurface3D::current): the current in m/s past the simulated
@@ -2014,6 +2020,11 @@ void fragment() {
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
 		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), water_roughness, open_unlit, sun_body, sun_glint, sun_a2);
+#if !defined(BREAKER_LIP)
+		if (!raster_reflections && screen_reflections) {
+			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, smoothstep(0.0, soft, shore) * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+		}
+#endif
 	}
 	wr_sun_body = sun_body;
 	v_wave_through = 1.0;

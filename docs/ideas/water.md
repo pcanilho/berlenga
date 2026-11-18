@@ -3436,3 +3436,26 @@ right boulder's outline sat on the water behind it.
   there deeper in the rock's outline; and the filtered colour read pulled the rock's edge into a dotted outline. The
   fallback keeps the refracted path's length, reads the colour at the texel it tested, and the test covers all four
   texels the filtered read blends (textureGather).
+
+## Water underground in raster: screen-space reflections (18 Nov, rocks' cave frames)
+
+Underground (`raster_reflections` off) the water has no sky to mirror, so in raster a still rimstone pool or a cave
+stream read as bare floor: the bed through clear water and nothing on top. The rivers also dropped clear water
+when `raster_reflections` was off, leaving a flat tint. In a lit cave, what shows still water is its mirror of the
+walls, the formations and the lamps.
+
+Technique: screen-space reflection (Sousa, "Secrets of CryEngine 3 graphics technology", SIGGRAPH 2011: a linear
+march in view space with a binary refinement; McGuire and Mara, "Efficient GPU screen-space ray tracing", JCGT
+2014, for the depth test with a thickness). Unreal's Single Layer Water and HDRP's water both use SSR with a probe
+or sky fallback. Here the fallback is the dark around: the water is underground, and no sky is baked.
+
+- `water_screen_reflect()` (water_raster_reflections.h): the mirror ray from the surface point, 24 steps growing
+  with the square of their index (fine near the water, where contact matters) and jittered per pixel. A hit is a
+  pass behind the screen's depth by less than a thickness that grows with the step. Five halvings refine it. The
+  colour is read there, faded at the screen's edge and at the march's end, and weighted by the exact Fresnel (air
+  into water). A miss gives the dark around.
+- Used by PhysXWaterSurface3D and PhysXRiver3D when `raster_reflections` is off and the material's
+  `screen_reflections` is on (the default). The water itself is not in the depth buffer (it is transparent), so the
+  march cannot meet the surface it starts from.
+- PhysXRiver3D now keeps clear water with `raster_reflections` off.
+- Cost: up to 29 depth reads per water pixel, only on sky-less water.
