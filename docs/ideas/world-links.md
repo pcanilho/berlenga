@@ -65,9 +65,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Wind → drifts, cornices | linked | wind | |
 | Rain → wet snow, crust | linked | cells | |
 | Canopy → interception | linked | shelter | |
-| Snow → plants (burial, pressing) | missing | snow cover | planned (contact 5) |
+| Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
 | Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
-| Vehicles → snow ruts | missing | contact | planned (contact 3) |
+| Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
 ### Vegetation (grass, shrubs, crops) and trees
@@ -86,7 +86,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
-| Lying snow → plants | missing | snow cover | planned (contact 5) |
+| Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
 | Flowing water → reeds, grass | missing | river flow | planned (contact 6) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
@@ -96,7 +96,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Pair | Status | Source | Note |
 | --- | --- | --- | --- |
 | Wind → waves | linked (18 Nov) | wind | `follow_weather` on (wind work) |
-| Rain → ripples | rain work | | |
+| Rain → ripples | linked | weather contract | live water's rain rings (`rain_from_weather`) |
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
@@ -105,7 +105,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | missing | runoff | rain work |
-| Cold → lake ice | missing | air | snow work (Stefan's law) |
+| Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
 
 ### Fire, gas and lightning

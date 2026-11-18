@@ -5,6 +5,8 @@ extends Node3D
 #
 #   godot --path docs/bench/links --headless -- --test
 #   godot --path docs/bench/links -- --frost=out.png [--frost-off]   grass, a fern, a rock and TerrainMaterial3D ground
+#   godot --path docs/bench/links -- --snowpress=out.png [--snow-off]   grass, a crop strip and ferns under a settled
+#             snowpack (pressed flat and buried), or the same day with no snow
 #   godot --path docs/bench/links -- --shimmer=out.png [--shimmer-off] [--pt] [--clear] [--frames=N]   a fire in front
 #             of a striped wall, its heat shimmer on or off (--clear: the gas drawn invisible, only the bending);
 #             --clip=dir saves every frame after the warm-up; --turbulence=x overrides heat_shimmer_turbulence
@@ -68,6 +70,10 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--frost="):
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
+			get_tree().quit()
+			return
+		if a.begins_with("--snowpress="):
+			await _snow_press_view(a.substr(12), OS.get_cmdline_user_args().has("--snow-off"))
 			get_tree().quit()
 			return
 		if a.begins_with("--shimmer="):
@@ -655,3 +661,81 @@ func _shimmer_tests() -> void:
 	_check("shimmer: the hot air bends the wall above the fire, nothing beside it", above > 0.004 and side < 0.0005, "mean change %.4f above the fire, %.5f beside it" % [above, side])
 	root.queue_free()
 	await get_tree().process_frame
+
+
+# Snow on plants: a day of snowfall at -4 C, settled for a day, over grass, wheat and ferns.
+func _snow_press_view(path: String, off: bool) -> void:
+	get_viewport().size = Vector2i(1280, 720)
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "Ground"
+	add_child(ground_node)
+	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
+	sun.rotation_degrees = Vector3(-30, 140, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var m := _new_map()
+	m.temperature = -4.0
+	m.humidity = 0.9
+	m.set_physics_process_internal(false)
+	m.snap_to_settings()
+	m.advance(1.0)
+	if not off:
+		var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+		snow.name = "SnowCover3D"
+		snow.extent = 64.0
+		snow.resolution = 128
+		snow.height_source = NodePath("../Ground")
+		snow.sun_light = NodePath("../Sun")
+		snow.follow_target = NodePath("../Ground")
+		snow.update_rate = 0.0001
+		add_child(snow)
+		snow.refresh_heights()
+		m.rain_rate = 3.0
+		m.cloud_cover = 1.0
+		m.snap_to_settings()
+		m.advance(1.0)
+		snow.advance(20.0 * 3600.0)
+		m.rain_rate = 0.0
+		m.cloud_cover = 0.0
+		m.snap_to_settings()
+		m.advance(1.0)
+		snow.advance(24.0 * 3600.0)
+		print("snow depth %.2f m" % snow.get_depth_at(Vector3.ZERO))
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.55, 0.65, 0.8)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.55, 0.6, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	add_child(env)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(60, 60)
+	ground.mesh = pm
+	ground.material_override = TerrainMaterial3D.new()
+	add_child(ground)
+	var grass := GrassField3D.new()
+	grass.radius = 14.0
+	add_child(grass)
+	var gen := PlantGenerator.new()
+	gen.preset = 0
+	gen.apply_preset_colors()
+	var mesh := gen.generate()
+	for k in 5:
+		var fern := MeshInstance3D.new()
+		fern.mesh = mesh
+		fern.position = Vector3(-2.0 + k * 1.1, 0, 1.5 + 0.4 * (k % 2))
+		add_child(fern)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.4, 5.5)
+	cam.rotation_degrees = Vector3(-14, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)

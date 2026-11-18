@@ -734,6 +734,20 @@ public:
 		const Vector2 m = get_wind_aloft(p_position, p_altitude);
 		return Vector3(m.x, 0.0f, m.y);
 	}
+	int contract_day_of_year() const override { return get_day_of_year(); }
+	bool contract_season_climate(WeatherSeason::Climate &r_climate) const override {
+		r_climate = _season_climate();
+		return true;
+	}
+	Dictionary contract_season_at(const Vector3 &p_position, int p_day) const override;
+	float contract_cloud_cover_at(const Vector3 &p_position) const override { return get_cloud_cover_at(p_position); }
+	float contract_water_temperature() const override { return get_water_temperature(); }
+	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
+	float contract_ground_height_at(const Vector3 &p_position) const override {
+		const float g = get_terrain_ground_at(p_position);
+		return Math::is_finite(g) ? g : ground_height;
+	}
+	double contract_time_scale() const override { return time_scale; }
 
 	void set_sky_clock(const NodePath &p_path);
 	NodePath get_sky_clock() const { return sky_clock; }

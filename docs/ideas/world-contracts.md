@@ -44,6 +44,14 @@ contract returns with no provider.
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
 | `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
+| `day_of_year()` | 1..365 | 135 | The clock's date, else the map's season day |
+| `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |
+| `season_climate(climate)` (C++) | `WeatherSeason::Climate` | false | The place's climate, for consumers that integrate over days (ground regrowth, frost seed); the math is `modules/world/world_season.h` |
+| `cloud_cover_at(pos)` | 0..1 | 0 | |
+| `surface_temperature_at(pos)` | C | the air | Exposed ground under a clear night sky runs below the air (`dew_and_frost`) |
+| `water_temperature()` | C | 15 | Open water, lagging the air by about a month |
+| `ground_height_at(pos)` | m | 0 | The terrain the weather sees under the point (its wind terrain), else the map's ground height |
+| `time_scale()` | | 1 | The weather's time per real second |
 
 Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather_state_map`, `weather_map_rect`,
 `weather_contact_map`, `weather_shelter_map`, `weather_frost_map` (R frost mm, G surface cooling K),
@@ -178,8 +186,12 @@ generator (3), PhysX → ground (3), snow → ground deform (3), and about 15 si
 1. `modules/world` with the registry, the weather and contact contracts, and stubs. Producers register. Done 18 Nov
    (weather, water, contacts).
 2. Weather consumers move to `WorldContracts::weather()`, module by module. Done 18 Nov: PhysX (fire, firebrands,
-   burnables, cloth, hair, wetness, vehicles, waterfalls, cave mist, rock dust) and rockfall. Left: ground, snow,
-   vegetation, which also read richer WeatherMap3D state (season, snapshots, shader code).
+   burnables, cloth, hair, wetness, vehicles, waterfalls, cave mist, rock dust), rockfall, ground (all reads; no
+   longer depends on the weather module), snow (point reads: air with its own lapse rate from the ground under the
+   point, snowfall, canopy, icicles, falling and blowing snow), vegetation (grass season, mist, pollen, leaf fall).
+   Kept on the producer as its richer API: snow's whole-map snapshot and its writes into the weather (precipitation
+   extinction, melt water), the cornice's cell sampling, the tree wind solver's gust parts and waves, the wind
+   shader code (static), the placement skew. A `set_weather(stub)` script stub counts as a provider.
 3. The contact reader replaces the copies of the body-size code: done 18 Nov for grass, the plants' trample field,
    pollen and water (`WorldContracts::body_extent`); the ground keeps its own reader (mass, wheels) until mud and
    sand move it onto `describe_body`.

@@ -34,6 +34,7 @@
 #include "snow_cover_3d.h"
 
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -521,7 +522,7 @@ void SnowFall3D::_update(double p_delta) {
 		_update_ground(center);
 	}
 	SnowCover3D *cover = _cover();
-	const WeatherMap3D *weather = WeatherMap3D::get_active();
+	const WorldWeather *weather = WorldContracts::weather()->has_provider() ? WorldContracts::weather() : nullptr;
 
 	// Falling.
 	cur_rate = snowfall_rate_override >= 0.0f ? snowfall_rate_override : (cover ? cover->get_snowfall_rate_at(center) : 0.0f);
@@ -546,9 +547,9 @@ void SnowFall3D::_update(double p_delta) {
 	// Blowing: the wind at 10 m over the ground under the camera against the threshold of dry snow.
 	const float ground_y = ground_valid && cover ? cover->get_ground_height_at(center) : center.y - 2.0f;
 	const Vector3 base(center.x, ground_y, center.z);
-	const float temp = cover ? cover->get_air_temperature_at(base) : (weather ? weather->get_air_temperature() : -5.0f);
+	const float temp = cover ? cover->get_air_temperature_at(base) : (weather ? weather->air_temperature_at(base) : -5.0f);
 	cur_threshold = threshold_wind_override >= 0.0f ? threshold_wind_override : blowing_threshold(temp);
-	cur_wind10 = weather ? weather->get_wind_at(base, 10.0f).length() : 0.0f;
+	cur_wind10 = weather ? weather->wind_at(base, 10.0f).length() : 0.0f;
 	cur_blow = blowing_enabled && temp < 0.0f ? CLAMP(saltation_flux_ratio(cur_wind10, cur_threshold) * blowing_strength, 0.0f, 1.0f) : 0.0f;
 	blow->set_global_transform(Transform3D(Basis(), base));
 	blow_process->set_shader_parameter("box_center", base);
