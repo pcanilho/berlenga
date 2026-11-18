@@ -159,6 +159,8 @@ public:
 		PRESET_CORNFLOWER,
 		PRESET_MAYWEED,
 		PRESET_COW_PARSLEY,
+		PRESET_PINCUSHION_MOSS,
+		PRESET_GROUND_IVY,
 		PRESET_MAX,
 	};
 
@@ -287,6 +289,7 @@ private:
 	void _build_timothy();
 	void _build_dry_grass();
 	void _build_leaf_litter();
+	void _build_ground_ivy();
 	void _build_moss();
 	void _build_bilberry();
 	void _build_bracken();

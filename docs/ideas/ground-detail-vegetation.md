@@ -74,3 +74,13 @@ cloud runs out of memory on this floor with the reach off as well as on, so the 
 leaves. Cost, `--floor` with `VEG_FLOOR_CLOSE=1` at 960x540, `VEG_FLOOR_NEAR=0` then on: walking mean 0.09 / 0.12 ms,
 p95 0.32 / 0.39 ms, worst 1.45 / 3.40 ms; memory +96 / +145 MB, video +117 / +125 MB; 1.96M / 2.10M primitives;
 2929 / 3613 draw calls (the near swap's 4 m cells, both passes).
+
+## Built (18 Nov): item 4
+
+`PRESET_PINCUSHION_MOSS` (Leucobryum glaucum: tight pale glaucous domes 4 to 20 cm, crowded colonies on acid
+beech, oak and pine floors) and `PRESET_GROUND_IVY` (Glechoma hederacea: creeping runners with pairs of
+kidney-shaped leaves on arching stalks, flowering shoots in spring) in `make_floor()`'s beech, oak, montane,
+pine heath (pincushion) and oak, riparian, hedgerow (ground ivy) sets. Grass tufts under 5 cm are left out: the
+woodland grasses are taller, and short turf is GrassField3D's. Cost on the oak floor (`--floor`,
+`VEG_FLOOR_CLOSE=1`, against item 3's run): plants 184k / 188k, memory +145 / +147 MB, 2.10M / 2.24M primitives,
+3613 / 4087 draw calls, walking mean 0.12 / 0.13 ms.
