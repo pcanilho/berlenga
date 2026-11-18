@@ -290,7 +290,16 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	float d_s = cs.z / cs.w;
 	vec4 c = proj * view * vec4(p_s + t * len_r, 1.0);
 	if (c.w > 0.0) {
-		vec2 q_full = clamp(c.xy / c.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+		// An offset that would leave the screen reaches at most half way from the pixel to the edge, rather than
+		// being clamped per axis: a clamp read the screen's last row or column for every pixel whose offset passed
+		// it, stretching it into streaks along the frame's edge (a glancing view down into the shallows). Half the
+		// room keeps neighbouring pixels on neighbouring texels (the offset shrinks smoothly to the edge).
+		vec2 off = c.xy / c.w * 0.5 + 0.5 - uv;
+		vec2 m = 0.5 / vec2(textureSize(p_screen, 0));
+		vec2 room = max(mix(vec2(1.0) - m - uv, uv - m, vec2(lessThan(off, vec2(0.0)))), vec2(0.0));
+		vec2 k2 = mix(vec2(1.0), clamp(0.5 * room / abs(off), 0.0, 1.0), vec2(greaterThan(abs(off), vec2(1e-7))));
+		float k = min(k2.x, k2.y);
+		vec2 q_full = uv + off * k;
 		for (int i = 0; i < 3; i++) {
 			vec2 q = mix(uv, q_full, exp2(-float(i)));
 			float d1 = texture(p_depth, q).r;
@@ -300,7 +309,7 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 			if (max(max(d4.x, d4.y), max(d4.z, d4.w)) <= d_s) {
 				uv_r = q;
 				len = 1e4;
-				if (i > 0) {
+				if (i > 0 || k < 1.0) {
 					// A shortened offset (something in front hid the full one): its point is not on the refracted
 					// ray, so its distance is not the path's; the path is the refracted one to the bed. The colour
 					// is read at the texel the depth test passed (a filtered read pulled in the rock's edge).
