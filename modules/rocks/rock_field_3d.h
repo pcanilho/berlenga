@@ -223,7 +223,7 @@ private:
 	void _detail_finish(bool p_wait, real_t p_budget_msec);
 	void _detail_cancel();
 	Color _stone_custom(const TerrainGenerator3D *p_gen, const Stone &p_stone, const Vector3 &p_axes, RandomPCG &r_rng) const;
-	MultiMeshInstance3D *_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin);
+	MultiMeshInstance3D *_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin, bool p_detail = false);
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
 	real_t river_min_area = 2.0e5;
 	int max_stones_per_cell = 20000;
@@ -392,7 +392,7 @@ private:
 	// p_libs and p_seeds: the ground detail's snapshot (DetailJob) when placing off the main thread.
 	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs = nullptr, const LocalVector<DetailSeed> *p_seeds = nullptr);
 	void _rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const;
-	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, RockGenerator::Family p_family = RockGenerator::FAMILY_ROCKFALL);
+	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, RockGenerator::Family p_family = RockGenerator::FAMILY_ROCKFALL, bool p_detail = false);
 	void _build_cell(const Vector3i &p_key);
 	void _free_cell(Cell &r_cell);
 	void _update_streaming(bool p_all);

@@ -2549,7 +2549,8 @@ uniform float ground_blend_height = 0.45;
 // Contact and blend bands on stones under 50 cm (half b axis under 0.25 m): off, they are sized for a 50 cm stone,
 // which covers a pebble whole; on (with RockField3D.ground_detail, docs/ideas/ground-detail.md), they shrink in
 // proportion to the stone, meeting the old size at 50 cm, so pebbles and the detail grains keep a dusted foot.
-uniform bool small_linear = false;
+uniform bool small_linear = false; // ground detail grains: a foot in proportion, the field's dust coat over it
+uniform float small_coat = 0.65;
 // Forms set into a terrain cliff (cave mouths): the rock keeps its own mottling, beds and marks but takes the
 // cliff's colour (ground_rock, the landscape's rock layer), so the block reads as part of the wall around it.
 uniform bool cliff_match = false;
@@ -2867,7 +2868,10 @@ void fragment() {
 		// band above the ground the stone takes the ground's surface, the hollows first and the proud parts last
 		// (height blend on the cavity map, Mishkinis 2013), its edge broken by noise, more on faces turned up (soil
 		// and sand settle there), and the shading normal eased to the ground's so the seam lights alike.
-		if (ground_blend && above < ground_blend_height * 2.5 * bk) {
+		// A grain's foot is in proportion to it, but it carries the dust coat a field stone's band lays on a small stone
+		// (the band of a 25 cm stone), so grains and pebbles share one tone.
+		float bk_coat = small_linear ? 0.5 : bk;
+		if (ground_blend && above < ground_blend_height * 2.5 * max(bk, bk_coat)) {
 			float band = ground_blend_height * bk;
 			// Debris banks up on the uphill side (sediment trapped against the stone).
 			float sl = length(v_slope);
@@ -2876,6 +2880,12 @@ void fragment() {
 			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
 			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.
 			float gb = max(1.0 - smoothstep(0.45, 0.7, edge), 0.4 * (1.0 - smoothstep(0.7, 1.8, edge)) * smoothstep(0.3, 0.6, rk_fbm3(mp * 7.0 + 5.0)));
+			float gb_col = gb;
+			if (small_linear) {
+				float edge_coat = above / (ground_blend_height * bk_coat) + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
+				float coat = max(1.0 - smoothstep(0.45, 0.7, edge_coat), 0.4 * (1.0 - smoothstep(0.7, 1.8, edge_coat)));
+				gb_col = max(gb, small_coat * coat);
+			}
 			vec3 gcol = ground_soil;
 			if (terrain_geology_rect.z > 0.0) {
 				vec4 g = terrain_geology(v_world);
@@ -2893,8 +2903,8 @@ void fragment() {
 			// A damp foot: soil wicks water up the lowest part, darker and a little glossier.
 			float damp = 1.0 - smoothstep(0.0, 0.45, edge);
 			gcol *= mix(1.0, 0.55, damp);
-			col = mix(col, gcol, gb);
-			rough = mix(rough, mix(0.95, 0.7, damp), gb);
+			col = mix(col, gcol, gb_col);
+			rough = mix(rough, mix(0.95, 0.7, damp), gb_col);
 			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;

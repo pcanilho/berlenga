@@ -1840,9 +1840,16 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 								float d50 = 0.002f * Math::exp(tanb / 0.045f);
 								d50 = MIN(MAX(d50, 0.5f * Math::smoothstep(0.2f, 0.7f, rock)), 1.2f);
 								const float band = Math::smoothstep(-0.6f, 0.0f, e) * (1.0f - Math::smoothstep(1.6f, 2.5f, e));
-								const float sig = 0.35f * float(Math::SQRT2);
+								// The tail below the shore layer's sizes is wider than its sigma 0.35: a shingle beach is poorly
+								// sorted at its fine end (mixed sand and gravel beaches, Kirk 1980; Jennings and Shulmeister
+								// 2002), which also grades the grains in with the pebbles instead of a cut where the beach slope
+								// changes.
+								const float sig = 0.6f * float(Math::SQRT2);
 								const float share = 0.5f * (std::erfc(Math::log(sd1 / d50) / sig) - std::erfc(Math::log(sd2 / d50) / sig));
-								dc.shore = MIN(0.5f * band * share / (0.94f * d50 * d50), cap_shore);
+								// A grading curve is by weight, and a surface's cover by a size class follows its weight share
+								// (not its count share: counting from the median grain put gravel all over fine sand). Packed
+								// as a shingle surface, stones touching.
+								dc.shore = MIN(0.85f * band * share / (0.785f * sd1 * sd2), cap_shore);
 								dc.d50 = d50;
 								dc.e = e;
 							}
@@ -1900,7 +1907,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							// The shore's log-normal, kept to this class (a log-uniform pick when the class is far in its tail).
 							float d = 0.0f;
 							for (int tries = 0; tries < 12; tries++) {
-								const float t = d50 * Math::exp(rng.randfn(0.0f, 0.35f));
+								const float t = d50 * Math::exp(rng.randfn(0.0f, 0.6f));
 								if (t >= sd1 && t < sd2) {
 									d = t;
 									break;
@@ -2047,10 +2054,10 @@ static float rock_surface_age(RockGenerator::Family p_family) {
 	}
 }
 
-Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockGenerator::Family p_family) {
+Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockGenerator::Family p_family, bool p_detail) {
 	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH;
 	const float age = rock_surface_age(p_family);
-	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000;
+	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
 	}
@@ -2059,7 +2066,9 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	m->set_shader_parameter("lichen_cover", lichen_cover);
 	m->set_shader_parameter("surface_age", age);
 	m->set_shader_parameter("moss_cover", moss_cover);
-	m->set_shader_parameter("small_linear", ground_detail);
+	// Ground detail grains: a foot band in proportion to the grain (the field's stones keep theirs), and the ground's
+	// dust coat the field's small stones carry, so a grain matches the pebbles round it.
+	m->set_shader_parameter("small_linear", p_detail);
 	_apply_ground(m);
 	if (TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
 		m->set_shader_parameter("sea_level", float(gen->get_sea_level())); // the shore zones of sea stones
@@ -2134,10 +2143,10 @@ Color RockField3D::_stone_custom(const TerrainGenerator3D *p_gen, const Stone &p
 	return Color(p_stone.ground, p_stone.film + (at_sea ? 2.0f : 0.0f), p_stone.scale, float(rq + 64 * (qx + 256 * qz)));
 }
 
-MultiMeshInstance3D *RockField3D::_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin) {
+MultiMeshInstance3D *RockField3D::_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin, bool p_detail) {
 	MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 	mmi->set_multimesh(p_multimesh);
-	mmi->set_material_override(_material(key_type(p_library), key_family(p_library)));
+	mmi->set_material_override(_material(key_type(p_library), RockGenerator::Family(key_family(p_library)), p_detail));
 	mmi->set_visibility_range_end(p_visibility);
 	mmi->set_visibility_range_end_margin(p_margin);
 	add_child(mmi, false, INTERNAL_MODE_BACK);
@@ -2295,7 +2304,7 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 			grp.shapes[k] = nullptr;
 		}
 		cell.groups.push_back(grp);
-		cell.instances.push_back(_add_group_instance(mm, dg.library, vis, cs * 0.5));
+		cell.instances.push_back(_add_group_instance(mm, dg.library, vis, cs * 0.5, true));
 	}
 	cells.insert(r_job.key, cell);
 }
@@ -4584,9 +4593,6 @@ void RockField3D::set_ground_detail(bool p_enabled) {
 		return;
 	}
 	ground_detail = p_enabled;
-	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
-		kv.value->set_shader_parameter("small_linear", ground_detail);
-	}
 	if (!ground_detail) {
 		// Drop the detail cells now; the rest of the field stays as it is.
 		_detail_cancel();
