@@ -2338,6 +2338,8 @@ float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
 // Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
 // scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
 // ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
+#include "raytracing_rain_inc.glsl"
+
 vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
@@ -3078,6 +3080,11 @@ void main() {
 				vec3 wpos = h.hit_pos + rt_origin.xyz;
 				vec2 wuv = clamp((wpos.xz - wrect.xy) / wrect.zw, half_texel, 1.0 - half_texel);
 				float weather_wet = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g;
+				// A canopy stays wet while it holds the water it intercepted (the rain map's green), as the raster.
+				uint rnmap = uint(get_rt_param(RT_PARAM_RAIN_MAP));
+				if (rnmap != 0u && rt_material_wetness_canopy(mat)) {
+					weather_wet = max(weather_wet, textureLod(sampler2D(bindless_textures[nonuniformEXT(rnmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g);
+				}
 				// Wet where water has been (contact wetness), easing out over its square's outer tenth.
 				uint cmap = uint(get_rt_param(RT_PARAM_CONTACT_WET_MAP));
 				if (cmap != 0u) {
@@ -3098,6 +3105,15 @@ void main() {
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * wetness.x);
 		m.albedo *= mix(1.0, wet_factor, wet);
 		m.roughness *= mix(1.0, wet_factor, 0.5 * wet);
+		if (rt_material_wetness_canopy(mat) && wetness.w > 0.5) {
+			// Water beaded on a waxy leaf, at full detail (footprint 0), as the raster's rain_surface_beads().
+			vec4 bead = rain_surface_beads(h.hit_pos + rt_origin.xyz, m.normal, wet * smoothstep(-0.2, 0.6, m.normal.y), 0.0);
+			if (bead.w > 0.0) {
+				m.normal = normalize(m.normal - bead.xyz);
+				m.roughness = mix(m.roughness, 0.05, bead.w);
+				m.albedo *= 1.0 - 0.5 * bead.w;
+			}
+		}
 	} else if (g_wet > 0.0) {
 		// A ground material without wetness: sand's porosity (0.6).
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * 0.6);
@@ -3141,6 +3157,26 @@ void main() {
 		m.roughness = mix(m.roughness, gil.z, gil.y);
 		m.specular = mix(m.specular, 0.22, gil.y);
 		vec2 gfs = ground_water_flow(gfp.xz, h.geometry_normal, g_water, scene_data_block.data.time, gffp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
+		// Raindrop rings on the water (material.cpp: rain_ripples() at weather_rainfall_at()); the rain from the
+		// weather state map (red, mm/h) times the rain share at this height.
+		{
+			float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
+			float grate = 0.0;
+			vec4 grect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+					get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+			if (grs > 0.0 && grect.z > 0.0) {
+				uint gwmap = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+				vec2 gws = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(gwmap)], SAMPLER_LINEAR_CLAMP), 0));
+				vec2 ght = 0.5 / max(gws, vec2(1.0));
+				vec2 gwuv = clamp((gfp.xz - grect.xy) / grect.zw, ght, 1.0 - ght);
+				float gprec = textureLod(sampler2D(bindless_textures[nonuniformEXT(gwmap)], SAMPLER_LINEAR_CLAMP), gwuv, 0.0).r;
+				float gair = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
+				grate = max(gprec, 0.0) * rain_liquid_share(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY));
+			}
+			vec3 grr = grate > 0.0 ? rain_ripples(gfp.xz, scene_data_block.data.time, grate, gffp) : vec3(0.0);
+			gfs += grr.xy * grs;
+			m.roughness = mix(m.roughness, rain_ripple_roughness(m.roughness, grr.z), grs);
+		}
 		if (gfs != vec2(0.0)) {
 			m.normal = normalize(m.normal - vec3(gfs.x, 0.0, gfs.y));
 		}

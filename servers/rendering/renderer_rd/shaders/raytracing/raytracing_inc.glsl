@@ -133,6 +133,12 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_GROUND_NEAR_Z 72
 #define RT_PARAM_GROUND_NEAR_SIZE 73
 #define RT_PARAM_VEHICLE_MUD_SPLATS 74 // PhysXVehicle3D stuck clods (mud stage 4b), bindless index, 0 = none
+// WeatherMap3D's precipitation phase (weather_precip_phase): the rain share at a height for the raindrop rings
+#define RT_PARAM_PRECIP_TEMPERATURE 75 // air temperature at the reference ground height (C)
+#define RT_PARAM_PRECIP_LAPSE 76 // its fall with height (K/m)
+#define RT_PARAM_PRECIP_HUMIDITY 77 // relative humidity, 0..1
+#define RT_PARAM_PRECIP_GROUND 78 // the reference ground height (m, world)
+#define RT_PARAM_RAIN_MAP 79 // WeatherMap3D's rain map (weather_rain_map, rect = RT_PARAM_WETNESS_RECT_*): G canopy wetness; 0 = none
 #define RT_PARAM_HAZE_SIGMA 80 // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
 #define RT_PARAM_HAZE_ALBEDO 81
 #define RT_PARAM_HAZE_HEIGHT 82 // scale height (m)

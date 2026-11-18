@@ -41,6 +41,7 @@
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
+#include "modules/weather/weather_runoff_3d.h"
 #endif
 
 #include "core/config/engine.h"
@@ -342,6 +343,23 @@ void fragment() {
 			slope += flow / speed * dh * smoothstep(0.0, 0.2, depth);
 		}
 	}
+	// Raindrop rings (rain_ripples(), docs/ideas/rain.md), carried by the current: each ring rides the water it
+	// fell on, so the rings are read in the two flow phases the ripples use and blended the same way.
+	float river_roughness = pathtraced_roughness;
+	if (rain_rings) {
+		float rr_rate = weather_rainfall_at(vec3(v_world.x, weather_precip_phase.w, v_world.z));
+		if (rr_rate > 0.0) {
+#if defined(RT)
+			float rr_fp = 0.0;
+#else
+			vec2 rr_fw = fwidth(v_world.xz);
+			float rr_fp = max(max(rr_fw.x, rr_fw.y), 1e-5);
+#endif
+			vec3 rr = rain_ripples(v_world.xz - o_a, TIME, rr_rate, rr_fp) * w + rain_ripples(v_world.xz - o_b + vec2(13.1, 7.7), TIME, rr_rate, rr_fp) * (1.0 - w);
+			slope += rr.xy * smoothstep(0.0, 0.05, depth);
+			river_roughness = rain_ripple_roughness(river_roughness, rr.z);
+		}
+	}
 	vec3 world_normal = normalize(n_mesh - vec3(slope.x, 0.0, slope.y));
 
 	// White water, broken into lace that rides the current.
@@ -363,7 +381,7 @@ void fragment() {
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	ROUGHNESS = mix(river_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
@@ -418,7 +436,7 @@ void fragment() {
 	vec3 sun_body;
 	vec4 sun_glint;
 	float sun_a2;
-	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), river_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
 	if (!raster_reflections && screen_reflections) {
 		refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
 	}
@@ -468,7 +486,7 @@ static String _river_wind_src() {
 
 // The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -582,6 +600,9 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_default_width"), &PhysXRiver3D::get_default_width);
 	ClassDB::bind_method(D_METHOD("set_discharge", "discharge"), &PhysXRiver3D::set_discharge);
 	ClassDB::bind_method(D_METHOD("get_discharge"), &PhysXRiver3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
+	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
+	ClassDB::bind_method(D_METHOD("get_rain_discharge"), &PhysXRiver3D::get_rain_discharge);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXRiver3D::set_roughness);
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXRiver3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_max_slope", "slope"), &PhysXRiver3D::set_max_slope);
@@ -701,6 +722,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_response"), "set_rain_response", "get_rain_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
@@ -895,7 +917,7 @@ void PhysXRiver3D::_unregister_outlet() {
 
 float PhysXRiver3D::get_discharge_at(float p_s) const {
 	// A lake outlet runs on what the lake passes over its sill (a trickle with no head, so the ribbon stays).
-	float q = outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge;
+	float q = (outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge) + rain_discharge;
 	for (const Tributary &t : tributaries) {
 		if (p_s >= t.s) {
 			q += t.discharge;
@@ -1552,6 +1574,7 @@ void PhysXRiver3D::_notification(int p_what) {
 						[this](int o) { clear_sphere(o); },
 						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
 			}
+			_rain_response_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();
@@ -1566,6 +1589,39 @@ void PhysXRiver3D::_notification(int p_what) {
 				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
 			}
 		} break;
+	}
+}
+
+// Storm flow: every 10 s, the runoff's peak discharge within two of its cells of the river's upstream end. The
+// river is rebuilt when that moves by more than a tenth of its flow (depth and speed follow by Manning, so a
+// river in spate is deeper and faster), at most every 10 s.
+void PhysXRiver3D::_rain_response_update(double p_delta) {
+	rain_check -= p_delta;
+	if (rain_check > 0.0 || Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	rain_check = 10.0;
+	float q = 0.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	const WeatherRunoff3D *ro = WeatherRunoff3D::get_active();
+	const Ref<Curve3D> c = get_curve();
+	if (rain_response && ro != nullptr && c.is_valid() && c->get_point_count() > 0) {
+		const Vector3 at = get_global_transform().xform(c->get_point_position(0));
+		const float reach = 2.0f * ro->get_extent() / float(MAX(ro->get_resolution(), 1));
+		q = ro->get_max_discharge_in(Rect2(at.x - reach, at.z - reach, 2.0f * reach, 2.0f * reach));
+	}
+#endif
+	if (Math::abs(q - rain_discharge) > 0.1f * MAX(discharge + rain_discharge, 0.05f) || (q == 0.0f && rain_discharge > 0.0f)) {
+		rain_discharge = q;
+		_queue_build();
+	}
+}
+
+void PhysXRiver3D::set_rain_response(bool p_enable) {
+	rain_response = p_enable;
+	if (!p_enable && rain_discharge > 0.0f) {
+		rain_discharge = 0.0f;
+		_queue_build();
 	}
 }
 
