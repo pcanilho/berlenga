@@ -329,7 +329,9 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 	float cover = p_state.cover;
 	float t = p_state.type;
 	if (p_state.variation > 0.0f) {
-		cover = CLAMP(cover + (cover_noise(p_xz, p_state.drift, p_state.cover_scale, p_state.evolve) - 0.5f) * 2.0f * p_state.variation, 0.0f, 1.0f);
+		// The patches vary with the cover, not by a fixed amount: a 0.1 sky with 0.35 of variation had
+		// stretches at 0.45 that filled half a clear sky.
+		cover = CLAMP(cover + (cover_noise(p_xz, p_state.drift, p_state.cover_scale, p_state.evolve) - 0.5f) * 2.0f * p_state.variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
 	}
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
@@ -401,8 +403,10 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float profile = smoothstep(0.0f, Math::lerp(0.2f, 0.05f, cu), h) * (1.0f - smoothstep(1.0f - Math::lerp(0.15f, 0.6f, cu), 1.0f, h));
 	const float n = shape_at(p_state, p_pos);
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
-	// further up the profile, which domes the tops.
-	const float shape = MAX(n * profile - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f);
+	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
+	// small clouds of a fair sky are thin and light, where the remap alone made every one as dense as
+	// an overcast deck.
+	const float shape = MAX(n * profile - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * ct.x;
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre.
 	return shape * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
 }
@@ -547,7 +551,7 @@ vec2 wc_cover_type(vec2 xz) {
 	float cover = cloud_cover;
 	float t = cloud_type;
 	if (cloud_variation > 0.0) {
-		cover = clamp(cover + (wc_cover_noise(xz) - 0.5) * 2.0 * cloud_variation, 0.0, 1.0);
+		cover = clamp(cover + (wc_cover_noise(xz) - 0.5) * 2.0 * cloud_variation * min(1.0, 2.5 * cover), 0.0, 1.0);
 	}
 	for (int i = 0; i < 8; i++) {
 		if (i >= cloud_storm_count) {
@@ -586,7 +590,8 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 		float e = 0.45 * mix(d, 1.0 - d, clamp(h * 4.0, 0.0, 1.0));
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);
 	}
-	return shape * mix(0.04, 0.1, ct.y) * cloud_density;
+	// Times the cover after the erosion (Schneider 2015; wc_extinction on the CPU).
+	return shape * ct.x * mix(0.04, 0.1, ct.y) * cloud_density;
 }
 )";
 

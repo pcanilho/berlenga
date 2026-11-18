@@ -1,0 +1,1 @@
+- Weather: a fair sky's clouds are fewer, thinner and lighter: density scales with the cover (Schneider 2015) and the patchiness scales with it, so a 0.1 sky no longer fills half the view with dense lumps.
