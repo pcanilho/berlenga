@@ -581,6 +581,7 @@ uniform float crop_lai = 3.0;
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
 		code += VegetationFire::SHADER_CODE;
+		code += VegetationFire::ASH_CODE;
 		code += R"(
 float crop_ramp(float x, float a, float b) {
 	return clamp((x - a) / (b - a), 0.0, 1.0);
@@ -944,9 +945,12 @@ void fragment() {
 	float wet_factor = mix(1.0, 0.2, 0.25);
 	// Fire: charred stubble with ash flecks, its top glowing in the burning band. Read at this point (the path
 	// tracer reruns vertex() for a merged MultiMesh with the field's transform).
-	vec4 fire_f = fire_state_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+	vec2 fire_xz = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+	vec4 fire_f = fire_state_at(fire_xz);
 	if (fire_f.x > 0.0) {
-		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_rnd * 41.0)) * smoothstep(0.6, 1.0, fire_f.x));
+		// Ash flecks as many as the ground's ash share (grass_ash: a dry burn's white ash, a damp one's char).
+		float fleck = step(1.0 - mix(0.02, 0.5, fire_ash_at(fire_xz)), fract(v_rnd * 41.0)) * smoothstep(0.6, 1.0, fire_f.x);
+		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), fleck);
 		c = mix(c, ch, smoothstep(0.0, 0.5, fire_f.x));
 		rough = mix(rough, 0.95, smoothstep(0.0, 0.5, fire_f.x));
 		back *= 1.0 - smoothstep(0.0, 0.5, fire_f.x);
@@ -988,6 +992,7 @@ uniform float color_variation;
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
 		code += VegetationFire::SHADER_CODE;
+		code += VegetationFire::ASH_CODE;
 		code += R"(
 
 void vertex() {
@@ -1171,12 +1176,15 @@ void fragment() {
 	c *= mix(1.0, 0.72, v_trod);
 	// Read here at the blade's own point, not passed from vertex(): the path tracer reruns vertex() for a merged
 	// MultiMesh with the field's transform, not the blade's.
-	vec4 fire_f = fire_state_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+	vec2 fire_xz = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+	vec4 fire_f = fire_state_at(fire_xz);
 	float v_burn = fire_f.x;
 	float v_glow = fire_f.y;
 	if (v_burn > 0.0) {
-		// Charred stubble, with flecks of white ash where blades burnt out.
-		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_dry * 41.0)) * smoothstep(0.6, 1.0, v_burn));
+		// Charred stubble, with flecks of white ash where blades burnt out, as many as the ground's ash share
+		// (grass_ash: a dry burn's white ash, a damp one's char).
+		float fleck = step(1.0 - mix(0.02, 0.5, fire_ash_at(fire_xz)), fract(v_dry * 41.0)) * smoothstep(0.6, 1.0, v_burn);
+		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), fleck);
 		c = mix(c, ch, smoothstep(0.0, 0.5, v_burn));
 	}
 	// Mud thrown or splashed onto it (mud round 7): the blade's height as a 30 cm sward's.

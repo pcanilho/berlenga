@@ -65,6 +65,7 @@ public:
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
 	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
 	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
+	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
@@ -107,6 +108,7 @@ protected:
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
 	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
+	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
@@ -142,6 +144,7 @@ public:
 	float frost_at(const Vector3 &p_position) const;
 	Vector3 mean_wind_at(const Vector3 &p_position) const;
 	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
+	float terrain_lee_at(const Vector3 &p_position) const;
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
 	float canopy_water_at(const Vector3 &p_position) const;

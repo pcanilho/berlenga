@@ -101,6 +101,7 @@ void PhysXFireSpread3D::_allocate() {
 	steamed.resize(n);
 	ash_blown.resize(n);
 	char_time.resize(n);
+	burn_moisture.resize(n);
 	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
@@ -183,6 +184,7 @@ void PhysXFireSpread3D::_allocate() {
 			steamed[i] = 0;
 			ash_blown[i] = 0.0f;
 			char_time[i] = 0.0f;
+			burn_moisture[i] = 0.0f;
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -538,6 +540,7 @@ void PhysXFireSpread3D::_step(float p_delta) {
 				phi[i] = phi_next[i];
 				if (phi[i] <= 0.0f && t_ignite[i] < 0.0f && load[i] > 1.0e-4f) {
 					t_ignite[i] = time + p_delta - remaining;
+					burn_moisture[i] = _moisture(i);
 				}
 			}
 		}
@@ -1340,11 +1343,12 @@ void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, con
 	// over a ridge separates and rolls into a horizontal eddy in its lee; fire on that slope tilts it upright into
 	// whirls that run across the slope, along the ridge, lighting fuel as they go (vorticity-driven lateral spread).
 	// The operational test: a lee slope steeper than about 20 degrees facing within 40 degrees of downwind, in a
-	// wind over about 20 km/h. Births: about 1 in 600 a second for each strong tile there, with no U/w* condition
+	// wind over about 20 km/h (or, under the weather's terrain wind, flow separated behind a crest; see the sites). Births: about 1 in 600 a second for each strong tile there, with no U/w* condition
 	// (the eddy is the ridge's, not the fire's), so a burning lee slope throws one every minute or so.
 	for (uint32_t k = 0; k < p_lee.size() && whirls.size() < 2; k += 2) {
 		const Vector3 at = p_lee[k];
-		const Vector3 contour = p_lee[k + 1];
+		const float ridge_u = p_lee[k + 1].length();
+		const Vector3 contour = p_lee[k + 1] / MAX(ridge_u, 1.0e-4f);
 		bool near = false;
 		for (const Whirl &w : whirls) {
 			near = near || w.pos.distance_to(at) < 6.0f;
@@ -1364,7 +1368,7 @@ void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, con
 		w.life = 20.0f + 40.0f * _whirl_rand();
 		w.lee = true;
 		// Across the slope at a fifth of the wind (lateral spread runs near the head fire's rate), either way.
-		w.drift = contour * (0.2f * u * (_whirl_rand() < 0.5f ? -1.0f : 1.0f)) + p_wind * 0.1f;
+		w.drift = contour * (0.2f * ridge_u * (_whirl_rand() < 0.5f ? -1.0f : 1.0f)) + p_wind * 0.1f;
 		whirls.push_back(w);
 		whirls_spawned++;
 		lee_whirls_spawned++;
@@ -1598,10 +1602,24 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 		}
 	}
 	// Lee-slope sites: strong flaming tiles on ground steeper than 20 degrees falling away within 40 degrees of
-	// downwind, in a wind over 5.5 m/s. Stored as pairs: the place, then the contour direction (across the slope).
+	// downwind, in a wind over 5.5 m/s. Stored as pairs: the place, then the contour direction (across the slope) at
+	// the length of the ridge's wind.
+	// Where the weather's terrain wind covers the ground (WorldWeather.terrain_lee_at), the site is where the flow
+	// has separated behind a crest instead: Sx, the steepest rise of the ground upwind, over about 17 degrees
+	// (separation behind ridges steeper than about 0.3: Wood 1995; Sharples et al. 2012 from the same lee test), on
+	// any slope falling away downwind; and the wind is the ridge's (the free wind at 10 m), not the slack lee's.
 	LocalVector<Vector3> lee;
-	if (fire_whirls && p_wind.length() > 5.5f) {
-		const Vector3 wd = Vector3(p_wind.x, 0.0f, p_wind.z).normalized();
+	const WorldWeather *ww = WorldContracts::weather();
+	const bool terrain = ww->has_provider();
+	Vector3 ridge_wind = p_wind;
+	if (fire_whirls && terrain) {
+		const Vector3 a = ww->wind_aloft_at(get_global_position(), 10.0f);
+		if (a.length() > ridge_wind.length()) {
+			ridge_wind = a;
+		}
+	}
+	if (fire_whirls && ridge_wind.length() > 5.5f) {
+		const Vector3 wd = Vector3(ridge_wind.x, 0.0f, ridge_wind.z).normalized();
 		for (uint32_t k = 0; k < order.size() && k < 32; k++) {
 			const Tile &t = tiles[order[k]];
 			const Vector3 c = t.centre / t.weight;
@@ -1611,15 +1629,17 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 			}
 			const Vector3 a = _cell_world(cx - 1, cz), b = _cell_world(cx + 1, cz), d = _cell_world(cx, cz - 1), e = _cell_world(cx, cz + 1);
 			const Vector2 grad((b.y - a.y) / MAX(b.x - a.x, 1.0e-4f), (e.y - d.y) / MAX(e.z - d.z, 1.0e-4f));
-			if (grad.length() < 0.364f) { // tan 20
+			const float sx = terrain ? ww->terrain_lee_at(c) : NAN;
+			const bool separated = !Math::is_nan(sx);
+			if (separated ? (sx < 0.3f || grad.length() < 0.176f) : grad.length() < 0.364f) { // Sx 17 and tan 10; else tan 20
 				continue;
 			}
 			const Vector3 down = Vector3(-grad.x, 0.0f, -grad.y).normalized();
-			if (down.dot(wd) < 0.766f) { // cos 40
+			if (down.dot(wd) < (separated ? 0.5f : 0.766f)) { // cos 60 in a separated lee; else cos 40
 				continue;
 			}
 			lee.push_back(c);
-			lee.push_back(Vector3(0.0f, 1.0f, 0.0f).cross(down).normalized());
+			lee.push_back(Vector3(0.0f, 1.0f, 0.0f).cross(down).normalized() * ridge_wind.length()); // its length: the ridge's wind
 		}
 	}
 	_update_whirls(float(get_physics_process_delta_time()), p_wind, flank, flank_q, lee, plumes);
@@ -1731,16 +1751,35 @@ void PhysXFireSpread3D::_update_maps() {
 			// Under a burnt crown the needles and twigs it dropped lie as white-grey ash over the char, patchily
 			// (mineral ash's albedo is about 0.3-0.5; Roy et al. 2010).
 			float ash = 0.0f;
+			if (burnt > 0.0f && grass_ash) {
+				// The fine fuel's own ash: how completely it burnt (combustion completeness) falls with the moisture it
+				// had as it caught, from about 0.95 cured to 0.7 at 30% (Shea et al. 1996, Hoffa et al. 1999: late
+				// against early dry-season savanna burns); a complete burn leaves white-grey mineral ash, an incomplete
+				// one black char (Smith and Hudak 2005, Roy et al. 2010), in patches at the scale of tussocks and the
+				// gaps between them, deeper where the bed was heavier.
+				const float cc = CLAMP(1.02f - 1.1f * burn_moisture[i], 0.45f, 1.0f);
+				const Vector3 wp = _cell_world(x, z);
+				const float tufts = 0.6f * _fuel_noise(wp.x / 0.35f, wp.z / 0.35f, 9u) + 0.4f * _fuel_noise(wp.x / 1.4f, wp.z / 1.4f, 10u);
+				const float bed = Math::sqrt(MIN(load[i] / 0.4f, 1.0f));
+				ash = CLAMP((cc - 0.72f) / 0.25f + 1.4f * (tufts - 0.5f), 0.0f, 1.0f) * bed * (0.45f + 0.4f * jitter) * MIN(burnt * 1.2f, 1.0f);
+			}
 			if (!crown_char.is_empty() && crown_char[i] > 0.0f) {
 				// Drifts and bare patches at the scale of the fallen needle mats, a finer speckle on top.
 				const Vector3 wp = _cell_world(x, z);
 				const float mats = 0.65f * _fuel_noise(wp.x / 0.7f, wp.z / 0.7f, 7u) + 0.35f * _fuel_noise(wp.x / 2.2f, wp.z / 2.2f, 8u);
-				ash = CLAMP(crown_char[i] * 1.6f - 0.6f + 0.9f * (mats - 0.5f), 0.0f, 1.0f) * (0.3f + 0.55f * jitter) * MIN(burnt * 1.5f, 1.0f);
+				ash = MAX(ash, CLAMP(crown_char[i] * 1.6f - 0.6f + 0.9f * (mats - 0.5f), 0.0f, 1.0f) * (0.3f + 0.55f * jitter) * MIN(burnt * 1.5f, 1.0f));
+			}
+			if (ash > 0.0f) {
 				// Thinner where the wind has blown it off, the char showing through.
 				const float made = _ash_made(i);
 				ash *= made > 0.0f ? CLAMP(1.0f - ash_blown[i] / made, 0.0f, 1.0f) : 1.0f;
 			}
-			char_image->set_pixel(x, z, Color(Math::lerp(0.035f, 0.36f, ash), Math::lerp(0.03f, 0.35f, ash), Math::lerp(0.027f, 0.33f, ash), a));
+			// Rain darkens it: wet ash is a fraction as bright as dry (water fills its pores, as wet soil darkens:
+			// Lobell and Asner 2002) and settles into a grey crust (Woods and Balfour 2008); the char a little too.
+			const float rained = CLAMP(rain_water[i] / 0.3f, 0.0f, 1.0f);
+			const float dim = 1.0f - 0.25f * rained;
+			ash *= 1.0f - 0.55f * rained;
+			char_image->set_pixel(x, z, Color(Math::lerp(0.035f, 0.36f, ash) * dim, Math::lerp(0.03f, 0.35f, ash) * dim, Math::lerp(0.027f, 0.33f, ash) * dim, a));
 			// Glow: the flaming band (heat release falls as exp(-age)), then embers that die within a few burn times,
 			// unevenly.
 			const float age = t_ignite[i] < 0.0f ? 0.0f : (time - t_ignite[i]) / m.burn_time;
@@ -2065,6 +2104,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stem_char_at", "position"), &PhysXFireSpread3D::get_stem_char_at);
 	ClassDB::bind_method(D_METHOD("set_blowing_ash", "enabled"), &PhysXFireSpread3D::set_blowing_ash);
 	ClassDB::bind_method(D_METHOD("is_blowing_ash"), &PhysXFireSpread3D::is_blowing_ash);
+	ClassDB::bind_method(D_METHOD("set_grass_ash", "enabled"), &PhysXFireSpread3D::set_grass_ash);
+	ClassDB::bind_method(D_METHOD("is_grass_ash"), &PhysXFireSpread3D::is_grass_ash);
 	ClassDB::bind_method(D_METHOD("get_ash_blown"), &PhysXFireSpread3D::get_ash_blown);
 	ClassDB::bind_method(D_METHOD("set_fire_whirls", "enabled"), &PhysXFireSpread3D::set_fire_whirls);
 	ClassDB::bind_method(D_METHOD("is_fire_whirls"), &PhysXFireSpread3D::is_fire_whirls);
@@ -2159,6 +2200,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foliar_moisture", PROPERTY_HINT_RANGE, "0.3,3,0.01"), "set_foliar_moisture", "get_foliar_moisture");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_whirls"), "set_fire_whirls", "is_fire_whirls");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "blowing_ash"), "set_blowing_ash", "is_blowing_ash");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "grass_ash"), "set_grass_ash", "is_grass_ash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_wind"), "set_fire_wind", "is_fire_wind");
 	ADD_GROUP("Flames", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");

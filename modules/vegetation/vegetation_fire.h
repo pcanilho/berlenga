@@ -82,6 +82,24 @@ float fire_foliage_apply(vec4 fs, float h, float n, inout vec3 fire_albedo, inou
 }
 )";
 
+// The burnt ground's ash (PhysXFireSpread3D.grass_ash; fire_char_map over fire_char_rect, RGB from black char at
+// 0.03 to white-grey ash at 0.35): 0..1, for stubble to carry the same ash flecks as the ground under it.
+static constexpr const char *ASH_CODE = R"(
+global uniform sampler2D fire_char_map : filter_linear;
+
+float fire_ash_at(vec2 xz) {
+	if (fire_char_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (xz - fire_char_rect.xy) / fire_char_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 0.0;
+	}
+	vec3 c = textureLod(fire_char_map, uv, 0.0).rgb;
+	return clamp((c.g - 0.03) / 0.32, 0.0, 1.0);
+}
+)";
+
 // The fires' indraft near the ground (WorldFire.wind_at; PhysXFireSpread3D publishes fire_wind_map over fire_wind_rect,
 // RG: world x and z in m/s; rect width 0: no fire), for plants to lean into.
 static constexpr const char *WIND_CODE = R"(

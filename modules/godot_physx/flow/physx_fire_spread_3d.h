@@ -115,8 +115,10 @@ private:
 	void _update_indraft();
 	Vector3 _indraft_at(const Vector3 &p_position, float p_skip) const;
 	bool blowing_ash = true;
+	bool grass_ash = true;
 	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell
 	LocalVector<float> char_time; // s of flame (and a third of smouldering logs' time) each cell has stood
+	LocalVector<float> burn_moisture; // fuel moisture (fraction) each cell had as it caught, for how completely it burnt
 	LocalVector<PhysXAsh::Source> ash_sources; // this sample's blowing patches
 	PhysXAsh ash;
 	float _ash_made(uint32_t p_i) const;
@@ -353,6 +355,8 @@ public:
 	Vector3 get_fire_wind_at(const Vector3 &p_position) const { return _indraft_at(p_position, 0.0f); }
 	void set_blowing_ash(bool p_v);
 	bool is_blowing_ash() const { return blowing_ash; }
+	void set_grass_ash(bool p_v) { grass_ash = p_v; }
+	bool is_grass_ash() const { return grass_ash; }
 	float get_ash_blown() const { return ash.get_total_kg(); }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }

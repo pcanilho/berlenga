@@ -1524,6 +1524,48 @@ of char (`--char=0.12`, a WorldFire stub) snaps at about 2.8 s in a
 thrown at 26 m/s. Left: no stump is drawn (the whole tree falls), and
 char does not yet weaken limbs or the standing tree's sway.
 
+### Burnt grass shows its ash (picked 18 Nov late night, third of four)
+
+Built. Research: how completely fine fuel burns (combustion completeness)
+falls with its moisture: about 0.95 for cured late-season grass against
+0.7 early in the dry season (Shea et al. 1996; Hoffa et al. 1999 in
+savanna). A complete burn leaves white-grey mineral ash (albedo 0.3 to
+0.5), an incomplete one black char (0.03 to 0.05), and the share of white
+ash on a burn scar tracks the fuel consumed (Smith and Hudak 2005; Roy
+et al. 2010). Wet ash darkens as wet soil does (water filling its pores:
+Lobell and Asner 2002) and crusts (Woods and Balfour 2008). Here:
+PhysXFireSpread3D keeps the fuel moisture each cell had as it caught;
+completeness is 1.02 - 1.1 M (0.45 to 1); the char map lays white-grey ash
+over the char from 0.72 completeness up, in patches at tussock scale
+(noise at 0.35 and 1.4 m), deeper where the bed was heavier, thinned by
+the ash the wind has blown off (blowing_ash) and dimmed by the rain the
+cell holds. Crown ash is kept and takes the larger of the two. Grass
+stubble reads the same map (VegetationFire::ASH_CODE, global
+fire_char_map) for its share of white ash flecks (2 to 50%). Setting
+grass_ash, on by default. Test: a 9 m tall-grass burn at 4% moisture
+reads grey with black patches; at 13% mostly black with grey patches; at
+22% the grass does not carry fire.
+
+### Ridge whirls follow the terrain wind (picked 18 Nov late night, fourth of four)
+
+Built. Research: vorticity-driven lateral spread needs flow separated in
+a ridge's lee (Sharples et al. 2012; Simpson et al. 2013 with WRF-Fire);
+separation behind a ridge sets in for lee slopes over about 0.3 (Wood
+1995), and Winstral's Sx (steepest upwind rise within 100 m, Winstral et
+al. 2002) is the terrain wind's measure of that shelter. The 5.5 m/s
+threshold is the ambient (ridge-top) wind, not the slack air in the lee.
+Here: WorldWeather gains terrain_lee_at (Sx in radians, NaN where no
+terrain wind covers the point), which WeatherMap3D provides. A burning
+lee tile is a site where Sx is over 0.3 rad on ground falling away within
+60 degrees of downwind at over 10 degrees; with no terrain wind the old
+local test (20 degrees, 40 degrees) stays. The wind for the threshold and
+the whirls' cross-slope drift is the larger of the fire's wind and the
+free wind at 10 m (WorldWeather.wind_aloft_at). Test: a 20 degree
+windward face to a crest and a 28 degree lee slope under an 8 m/s
+WeatherMap3D: the lee's own wind is 1.5 to 3 m/s (the old test saw no
+whirls there); the new one spawned 6 lee whirls in 150 s and the burn
+covered 659 m2 against 581 m2 without whirls.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
