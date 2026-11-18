@@ -1160,7 +1160,7 @@
     "PhysXVehicleWheel3D.tread"
    ],
    "note": "",
-   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay.",
+   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1254,6 +1254,17 @@
    ],
    "note": "",
    "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Mud slides",
+   "settings": [
+    "GroundSurface3D.mud_slides"
+   ],
+   "note": "",
+   "what": "soaked mud runs off slopes it can no longer hold and fills the ruts below.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
