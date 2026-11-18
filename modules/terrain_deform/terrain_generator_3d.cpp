@@ -3428,9 +3428,29 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 	const int z0 = MIN(int(gz), sea_nz - 2);
 	const real_t fx = gx - x0, fz = gz - z0;
 	const float *g = sea_sand.ptr();
-	const real_t a = Math::lerp(real_t(g[z0 * sea_nx + x0]), real_t(g[z0 * sea_nx + x0 + 1]), fx);
-	const real_t b = Math::lerp(real_t(g[(z0 + 1) * sea_nx + x0]), real_t(g[(z0 + 1) * sea_nx + x0 + 1]), fx);
-	return float(Math::lerp(a, b, fz));
+	// Catmull-Rom over the 4x4 cells round the point: bilinear drew each cell as flat facets (a dune's crest a
+	// polyline of 4 m straight ridges); the cubic keeps the cells' values, so the brink stays at its height, and
+	// runs smooth between them. Clamped at 0 against the small overshoot beside a slip face's foot.
+	auto w4 = [](real_t t, real_t *w) {
+		const real_t t2 = t * t, t3 = t2 * t;
+		w[0] = 0.5 * (-t3 + 2.0 * t2 - t);
+		w[1] = 0.5 * (3.0 * t3 - 5.0 * t2 + 2.0);
+		w[2] = 0.5 * (-3.0 * t3 + 4.0 * t2 + t);
+		w[3] = 0.5 * (t3 - t2);
+	};
+	real_t wx[4], wz[4];
+	w4(fx, wx);
+	w4(fz, wz);
+	real_t v = 0.0;
+	for (int j = 0; j < 4; j++) {
+		const int zz = CLAMP(z0 - 1 + j, 0, sea_nz - 1) * sea_nx;
+		real_t row = 0.0;
+		for (int i = 0; i < 4; i++) {
+			row += wx[i] * real_t(g[zz + CLAMP(x0 - 1 + i, 0, sea_nx - 1)]);
+		}
+		v += wz[j] * row;
+	}
+	return float(MAX(v, real_t(0.0)));
 }
 
 void TerrainGenerator3D::_build_sand_sea() {
