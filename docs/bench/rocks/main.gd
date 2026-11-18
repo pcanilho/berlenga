@@ -7,6 +7,7 @@ extends Node3D
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
+#   --clouds              the weather sky (clouds, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
@@ -122,7 +123,15 @@ func check(ok: bool, what: String) -> void:
 
 
 func _environment() -> void:
-	var sky := ProceduralSkyMaterial.new()
+	var sky: Material = ProceduralSkyMaterial.new()
+	if args.has("clouds"):
+		# --clouds: the engine's weather sky (clouds, physically based atmosphere) instead of the plain gradient, so
+		# water has a sky worth reflecting. Clouds drawn whole each frame (no reprojection), so a still needs no
+		# settling frames.
+		var ws := WeatherSkyMaterial.new()
+		ws.cloud_reprojection = false
+		ws.set_shader_parameter("atmo_far_water", 1.0)
+		sky = ws
 	var sk := Sky.new()
 	sk.sky_material = sky
 	var env := Environment.new()
@@ -136,6 +145,7 @@ func _environment() -> void:
 		env.ambient_light_energy = 0.0
 		env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_sky_shader_enabled = args.has("clouds")
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3

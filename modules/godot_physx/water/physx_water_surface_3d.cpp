@@ -400,6 +400,10 @@ uniform float crest_glow : hint_range(0.0, 4.0) = 1.0;
 // the chop's high crests (1.5 to 2.5 sigma up), where they are thin enough to pass light, not over whole faces.
 uniform float crest_sigma = 0.5;
 varying float v_crest;
+// The shore swell's own crest at the vertex, as a share of its half height (0 off the shore waves, and under their
+// white water): a breaker's face steepens and thins as it rises, and passes the low sun's light through its top
+// (the green, lit face under the lip) as the chop's crests do.
+varying float v_shore_crest;
 varying vec3 wr_crest;
 #if !defined(RT) && !defined(UNDERWATER_FOG) && !defined(UNDERWATER_SURFACE) && !defined(BREAKER_LIP)
 uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
@@ -986,8 +990,10 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	cover = max(cover, raft * (1.0 - clamp(footprint * foam_detail_scale * 20.0 - 0.2, 0.0, 1.0)));
 	// Thin scum of loose bubbles left in the holes.
 	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, foam_fbm(q * 5.3 - 4.1)));
-	// Past where the holes are under a pixel, their mean cover.
-	float coarse = clamp(footprint * foam_detail_scale * 4.0 - 0.1, 0.0, 1.0);
+	// Past where the holes are under a pixel, their mean cover: the largest holes (about a metre and a half) stay
+	// a few pixels across out to a few hundred metres, so only there (fading from a quarter of a cell a pixel; it
+	// began at a fortieth, which smoothed the surf's bores 30 m away into even white bands).
+	float coarse = clamp(footprint * foam_detail_scale * 1.2 - 0.25, 0.0, 1.0);
 	cover = mix(cover, clamp(1.0 - 1.4 * open * open, 0.05, 1.0), coarse);
 	// Bubble clumps (about 7 cm cells, each its own brightness) and their walls (finer), to a few cm a pixel;
 	// clusters of clumps (about 25 cm) carry on further out.
@@ -1653,6 +1659,15 @@ void vertex() {
 	// The chop's own crest height (the two shortest cascades, from their own mean, as roller_crest()): a crest thin
 	// enough to pass light is a wave of the chop, wherever the long swell under it puts it.
 	v_crest = ocean_tex(ocean_height_tex, world_pos.xz).r + (wave_cascade_count > 1 ? cascade_tex(cascade_height_1, cascade_domain_1, world_pos.xz).r : 0.0);
+	v_shore_crest = 0.0;
+	if (shore_waves_enabled) {
+		vec2 s_slope;
+		float s_white;
+		float s_eta = shore_wave(world_pos.xz, s_slope, s_white).y;
+		vec4 s_a = texture(shore_wave_tex_a, clamp((world_pos.xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0)));
+		float s_h = max(s_a.y, s_a.w);
+		v_shore_crest = s_h > 0.05 ? clamp(s_eta / (0.5 * s_h), 0.0, 1.5) * (1.0 - smoothstep(0.2, 0.6, s_white)) : 0.0;
+	}
 	if (roller_strength > 0.0 && foam_crest_threshold > -50.0 && wave_cascade_count > 1) {
 		vec2 rg;
 		float rb;
@@ -2118,6 +2133,7 @@ void fragment() {
 		// (Atlas's height term, made relative to the chop's own rms height so it holds from a calm to a gale).
 		vec3 albedo = max(pathtraced_scattering, vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
 		float above = smoothstep(1.5, 2.5, v_crest / max(crest_sigma, 0.02));
+		above = max(above, smoothstep(0.35, 1.0, v_shore_crest));
 		wr_crest = crest_glow * 2.0 * albedo * above * (1.0 - foam) * water_a * inv_a0 * smoothstep(0.0, soft, shore) * (1.0 - v_lip);
 	}
 	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
