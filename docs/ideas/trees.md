@@ -2039,6 +2039,11 @@ Docs review (18 Nov): holm oak and carob passed. Fixes for the rest:
   valleys (crack 0.35 of a cell) and rounded shoulders (square root of the profile), pale grey
   ridges over warm fissures.
 
+Maritime pine round 3 (18 Nov): no excurrent crown cone (it kept the top a sparse spire over a
+wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the height; apical
+control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in
+the top 60%.
+
 Round 3 (18 Nov): the leader splits once into four limbs (a second split at ten years gave
 sixteen, the broom of thin pale limbs the docs saw), their side branches held to 0.35 of their
 vigor, the fork stems at 55 degrees; no dead branches kept (the twig bundle on the bole). Cork
