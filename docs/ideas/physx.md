@@ -1249,6 +1249,171 @@ Safety J. 43; McGrattan et al., FDS technical reference (water spray).
    far. Here: Flow's vorticity seeded where the front meets a wind
    shear or a lee slope; brands caught in it rise further.
 
+### Water on fire makes steam (picked 18 Nov night, first of four)
+
+Built. Water landing on burning or still-glowing fuel takes the hot bed's
+heat once, as FDS's spray sink does: 2.6 MJ per kg to heat it to 100 C and
+boil it. A grass cell gives its fuel and char at about 600 C (1.5 kJ/kg K)
+and a second of its flames' output, never more than the water on it can
+boil; a burning prop gives its char layer (about 1 cm at 500 C, 1.2 MJ/m2)
+and a second of its heat release. That becomes puffs (a place, kg/s,
+falling over 3 to 4 s) in PhysXSteam, which makes a PhysXFlow3D of its own
+only while something steams and frees it 12 s after: steam is white where
+the fire's smoke is grey, so it cannot share the fire's gas. Combustion off,
+no glow (vapour near 100 C), a buoyant gas (smoke_buoyancy, as water vapour
+is lighter than air), a thin box source on the wet ground pushing up and
+outwards (boiling water swells some 1,700 times), and the cloud fading by
+the air's humidity (smoke_fade 1.2/s in dry air to 0.25/s near
+saturation). Fire at a shore (WorldContracts' water): a cell the front
+reaches under the surface goes out in a puff, and flames beside the water
+send a tenth of their heat into it as a thin steady steam. Test: a 2.6 m
+square of water on a burning patch put out 100 cells and made 2.7 kg of
+steam that rose as a white billow over a metre in two seconds.
+
+### Burning buildings break apart (picked 18 Nov night, second of four)
+
+Built. A PhysXBurnable3D whose target is a PhysXDestructible3D weakens its
+Blast bonds as it chars. The section lost follows EN 1995-1-2's reduced
+cross-section: a notional char depth of 0.8 mm a minute (softwood members,
+corner rounding included) plus a zero-strength layer growing to 7 mm over
+the first 20 minutes, from both faces of the box's thinnest side. Bonds in
+the burning patch take damage in step with it, reaching their health at
+collapse_share (0.4: a member loaded near half its capacity fails when
+about 40% of its section is gone), with no shatter speed, so pieces break
+off gently and the support graph (anchor Grounded) drops what is cut
+loose. The destructible gained a material remap and instance shader
+parameters applied to every piece, live and future, so the burnable's
+char look (in the destructible's own space) stays on falling pieces. Test:
+a 3 x 2 m wall of 4 cm boards (24 Voronoi chunks) burning at up to 1.8 MW
+broke at 7 minutes and was all pieces by 8, as the section model says.
+Left: flames stay at the intact shape's place after it breaks (the Flow
+emitters do not follow pieces yet).
+
+### River current drags clothing (picked 18 Nov night, third of four)
+
+Built for worn clothing (PhysXSkinnedCloth3D). ClothWetness keeps the
+water's surface under the garment and its current at the wet band's mid
+depth (WorldContracts' water: height_at, flow_at). The cloth solver takes
+both: particles under the surface keep 30% of their weight (woven fibre is
+denser than water: cotton 1.54, polyester 1.38, wool 1.31 g/cm3, so soaked
+fabric sinks slowly) and are dragged toward the current at Morison's
+0.5 rho Cd |u| over the fabric's soaked areal mass (Cd about 1.2 for a
+sheet across the flow, |u| the current plus 0.1 m/s for its own sway),
+capped at 200/s. Test: a 60 cm skirt standing in water to 35 cm below the
+waist, then in a 0.8 m/s current: the upstream panel pressed 16 cm in
+against the legs while the downstream side held out, and it all hung back
+once out of the water. Left: free PhysXCloth3D (flags and sheets dipping in
+a river) does not take the current yet.
+
+### Fire whirls (picked 18 Nov night, fourth of four)
+
+Built. Research: fire whirls form where a fire's updraft meets ambient
+vorticity, most often on the flanks of a front in a cross wind or at a
+lee slope (Forthofer and Goodrick 2011, "Review of vortices in wildland
+fire"). Kuwana et al. (2008) found whirls behind line fires when the wind
+U is near the buoyant velocity scale w* = (g I / (rho cp T))^(1/3), and
+L-shaped fronts favour them (Kuwana et al. 2013). Whirl cores are a
+fraction of the flame length across, spin at a few times w* and stand
+several flame lengths tall. Here: tiles of strong flame (I at least 300
+kW/m) whose front normal runs across the wind (|n . w| under 0.35) are
+flank sites. Each has a birth chance of 1 in 180 a second times a
+log-normal favour exp(-(ln(U/w*)/0.5)^2), at most two whirls, 6 m apart.
+A whirl has a core of 0.3 flame lengths (0.3 to 3 m), spins at 2 w* either
+way round, rises at 2 w*, lives 10 to 30 s, drifts at a third of the wind
+and ages three times as fast off flaming fuel. It draws as four
+overlapping Flow sources in a helix up its core (tangential plus upward
+velocity), so the flame is pulled into one spinning column, and adds a
+firebrand plume (1.5 times its rise) so brands caught in it go higher.
+Test: a 24 m grass fire, 90 s at each wind: none at 1 m/s, 7 at 2.5, 4 at
+4, none at 6 and 9 m/s; the frame shows a flame column about twice the
+height of the front's flames with smoke shed off its top. Left: the
+column's vorticity is set by its sources, not grown by Flow from a sheared
+wind field, and terrain lee slopes are not yet a birth site.
+
+### Next-round options (card, 18 Nov late)
+
+1. Burning pieces keep their flames. After a burning wall breaks, the
+   Flow sources stay where the intact shape stood. Here: the burnable
+   follows the destructible's live pieces (their AABBs and char state) and
+   moves its emitters with them, so a falling plank burns as it falls
+   and smoulders where it lands (as Teardown and BeamNG keep fire on
+   debris).
+2. River current drags flags, sheets and nets. Free PhysXCloth3D does not
+   yet read the water contract. Here: the same Morison drag and reduced
+   weight as worn clothing, per particle under WorldContracts' water, so a
+   sheet dipped in a river streams downstream.
+3. Wind lifts ash after a fire. Burnt grass leaves a light ash layer (a
+   few hundred g/m2) that blows off in winds above about 4 m/s (Wagenbrenner
+   et al. 2013, post-fire ash emission). Here: the char map seeds a heavy
+   dust (negative smoke_buoyancy) in Flow where wind is strong over fresh
+   ash, thinning the ash each gust, so a burnt hillside smokes grey in
+   the wind for hours.
+4. Fire whirls on lee slopes. Whirls also form in the lee of ridges where
+   the wind separates (Forthofer and Goodrick 2011; Sharples et al. 2012
+   on vorticity-driven lateral spread). Here: births also where the
+   terrain wind (WeatherMap3D, terrain wind) turns back behind a ridge,
+   and those whirls run along the slope, spreading the fire sideways.
+
+### Burning pieces keep their flames (picked 18 Nov late, first of four)
+
+Built. Once a burning PhysXDestructible3D has broken, PhysXBurnable3D finds
+the burning patch again among the pieces by where each sat in the intact
+object (PhysXDestructible3D.get_piece_rest_center: the middle of its
+chunks in the node's space) and their size (get_piece_volume): a piece
+whose rest centre lies within the burn radius of the ignition, give or
+take half its size, is alight. The eight biggest carry the flames, a
+Flow source riding just over each (Flow takes moving bodies as solids, so
+the gas would be lost inside one), the heat release shared by volume and
+the flame height by Heskestad as on the faces. Sparks and firebrands rise
+from the same places, so they follow the debris too. Once the fuel is
+spent the pieces smoulder: a faint warm smoke over each until the embers
+die, with the char glow already carried on the pieces by the instance
+shader parameters. This is how Teardown and BeamNG keep fire on debris:
+fire is a property of the burning material and moves with it. Test: the
+3 x 2 m board wall broke at 70 s (fast collapse_share); flames went down
+with the pieces and burnt on the ground pile (heights 0.2 to 0.3 m) at
+125 s. get_piece_center now gives the middle of all a piece's chunks with
+the node's scale (it gave the first chunk's), which also puts rockfall
+dust under the middle of a falling island.
+
+### River current drags flags and sheets (picked 18 Nov late, second of four)
+
+Built for the CPU cloth solver (PhysXCloth3D's default). The XPBD solver
+takes the water's surface and current (ClothWetness reads them from
+WorldContracts' water each step): particles under the surface keep 30% of
+their weight and relax toward the current at Morison's 0.5 rho Cd |u| over
+the soaked areal mass (Cd 1.2), capped at 200/s, as worn clothing does.
+Test: a 1 x 1.5 m sheet hanging from its top edge with its lower 45 cm in
+the water: still water left it hanging; a 0.8 m/s current streamed its
+lower edge 0.94 m downstream, up to the surface, in two seconds, and it
+hung straight again once out. Left: the GPU deformable path (PhysX
+surface) does not take the current.
+
+### Wind lifts ash after a fire (picked 18 Nov late, third of four)
+
+Built. Research: fresh burn scars are among the strongest wind-erosion
+dust sources (Wagenbrenner et al. 2013, 2017, Idaho rangeland fires:
+emission from winds near 5 m/s until rain crusts the ash or plants come
+back); ash loads run 0.1 to 5 kg/m2, the low end in grass (Bodi et al.
+2014). Here: each burnt cell holds the ash its burn made (6% of the fine
+fuel burnt, plus 0.15 kg/m2 under a fully burnt crown), less what has
+blown. Once cold (three burn times, as steam's "hot") and dry (intercepted
+water under 0.02 kg/kg: rain or fluid water holds it), it gives a dust
+flux from the friction velocity u* = 0.075 U (log law to 2 m over 1 cm
+roughness): White's horizontal flux Q = 2.6 rho/g u*^3 (1 - (u*t/u*)^2)
+with u*t = 0.25 m/s (some 3.5 m/s near the ground), and the lifted dust
+F = 2e-3 Q. Gusts are a noise field carried with the wind (Taylor's frozen
+turbulence, +/- 35% of U), so as u*^3 the ash comes off in travelling
+puffs. About-2 m patches feed PhysXAsh, which makes its own PhysXFlow3D
+only while ash blows (no combustion, grey, smoke_buoyancy -0.4 so it hugs
+the ground, slow fade) with eight low box sources pushing into the wind's
+direction; the Flow's own weather wind carries it. The crown ash in the
+char map thins as it blows off. Test: a 16 m tall-grass burn (about 10 kg
+of ash): 0.04 kg blown in 5 minutes at 3 m/s, 1.5 kg at 5, 8.2 at 8 and
+all of it within 3 minutes at 12 m/s; under a 10 m/s WeatherMap3D wind a
+low grey sheet streamed downwind off the scar. Left: grass ash does not
+show in the char map itself (only crown ash is drawn lighter).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

@@ -354,6 +354,10 @@ bool PhysXFlow3D::prepare_traced() {
 		v.emission_scale = traced_emission;
 		v.emission_proxy_light = traced_proxy_light;
 		v.temperature_range = traced_temperature_range;
+		v.shimmer_kelvin = traced_shimmer_kelvin;
+		v.shimmer_air_kelvin = traced_air_kelvin;
+		v.shimmer_turbulence = traced_shimmer_turbulence;
+		v.shimmer_time = traced_shimmer_time;
 		for (int i = 0; i < 8; i++) {
 			v.heat_ramp[i] = traced_heat[i];
 		}
@@ -418,8 +422,18 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 	if (receive != 0 && !lights.is_empty()) {
 		_fill_scatter_shadows(lights, p_lights, p_shadow_atlas, receive);
 	}
+	FlowShimmerRD::Params shimmer;
+	{
+		MutexLock lock(scatter_mutex);
+		shimmer.kelvin = traced_shimmer_kelvin;
+		shimmer.air_kelvin = traced_air_kelvin;
+		shimmer.turbulence = traced_shimmer_turbulence;
+		shimmer.time = traced_shimmer_time;
+		shimmer.temperature_range = traced_temperature_range;
+	}
+	const bool shimmer_on = shimmer.kelvin > 0.0f;
 	FlowBackend::ScatterSource source;
-	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering && !cast_shadows) ? nullptr : &source, p_first_view);
+	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering && !cast_shadows && !shimmer_on) ? nullptr : &source, p_first_view);
 	stat_render_calls++;
 	stat_render_outputs += out != 0 ? 1 : 0;
 	if (out != 0 && out != p_color.get_id()) {
@@ -477,6 +491,15 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 			// The opaque pass reads it from the next frame on (Forward+ only).
 			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow);
 		}
+	}
+	if (out != 0 && source.valid && shimmer_on) {
+		// Last, over the gas and its light: what lies behind the hot air (the gas included) is seen along the
+		// bent rays. Before the Flow frame ends: its volume and table are this frame's.
+		shimmer.inv_view_projection = p_inv_view_projection;
+		shimmer.camera_position = p_camera;
+		FlowShimmerRD &pass = p_effect->get_shimmer();
+		p_effect->copy_texture(p_rd, p_color, pass.get_source_copy(p_rd, p_size), p_size);
+		pass.run(p_rd, source, shimmer, p_depth, p_color, p_size);
 	}
 	if (p_last_view) {
 		FlowBackend::grid_render_rd_finish(grid);
@@ -1138,6 +1161,20 @@ void PhysXFlow3D::_step(double p_delta) {
 	AABB emitter_bounds;
 	_gather_emitters(emitters, emitter_bounds);
 	draw_center = emitters.is_empty() ? get_global_position() : emitter_bounds.get_center();
+	{
+		// Heat shimmer only where an emitter brings heat (or fuel to burn): dust and mist skip the pass.
+		bool hot = false;
+		for (const FlowBackend::Emitter &e : emitters) {
+			hot = hot || e.temperature > 0.0f || (combustion && e.fuel > 0.0f);
+		}
+		const WorldWeather *wm = WorldContracts::weather();
+		const float air_c = wm != nullptr ? wm->air_temperature_at(draw_center) : 15.0f;
+		MutexLock lock(scatter_mutex);
+		traced_shimmer_kelvin = (heat_shimmer && hot) ? heat_shimmer_kelvin : 0.0f;
+		traced_air_kelvin = air_c + 273.15f;
+		traced_shimmer_turbulence = heat_shimmer_turbulence;
+		traced_shimmer_time = (float)Math::fmod(sim_time, 3600.0);
+	}
 	// Solids near where the gas comes from -- and where it has spread to,
 	// when it's read back.
 	AABB region = emitters.is_empty() ? AABB() : emitter_bounds.grow(collision_range);
@@ -1662,6 +1699,12 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_ambient_scattering"), &PhysXFlow3D::is_ambient_scattering);
 	ClassDB::bind_method(D_METHOD("set_sun_scattering", "enabled"), &PhysXFlow3D::set_sun_scattering);
 	ClassDB::bind_method(D_METHOD("is_sun_scattering"), &PhysXFlow3D::is_sun_scattering);
+	ClassDB::bind_method(D_METHOD("set_heat_shimmer", "enabled"), &PhysXFlow3D::set_heat_shimmer);
+	ClassDB::bind_method(D_METHOD("is_heat_shimmer"), &PhysXFlow3D::is_heat_shimmer);
+	ClassDB::bind_method(D_METHOD("set_heat_shimmer_kelvin", "kelvin"), &PhysXFlow3D::set_heat_shimmer_kelvin);
+	ClassDB::bind_method(D_METHOD("get_heat_shimmer_kelvin"), &PhysXFlow3D::get_heat_shimmer_kelvin);
+	ClassDB::bind_method(D_METHOD("set_heat_shimmer_turbulence", "turbulence"), &PhysXFlow3D::set_heat_shimmer_turbulence);
+	ClassDB::bind_method(D_METHOD("get_heat_shimmer_turbulence"), &PhysXFlow3D::get_heat_shimmer_turbulence);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enabled"), &PhysXFlow3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_cast_shadows"), &PhysXFlow3D::is_cast_shadows);
 	ClassDB::bind_method(D_METHOD("set_scattering_temporal", "enabled"), &PhysXFlow3D::set_scattering_temporal);
@@ -1751,6 +1794,10 @@ void PhysXFlow3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(SCATTERING_RESOLUTION_QUARTER);
 	BIND_BITFIELD_FLAG(SCATTERING_SHADOW_OMNI);
 	BIND_BITFIELD_FLAG(SCATTERING_SHADOW_SPOT);
+	ADD_GROUP("Heat Shimmer", "heat_shimmer");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "heat_shimmer"), "set_heat_shimmer", "is_heat_shimmer");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "heat_shimmer_kelvin", PROPERTY_HINT_RANGE, "0,3000,1,or_greater,suffix:K"), "set_heat_shimmer_kelvin", "get_heat_shimmer_kelvin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "heat_shimmer_turbulence", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater"), "set_heat_shimmer_turbulence", "get_heat_shimmer_turbulence");
 	ADD_GROUP("Queries", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cpu_readback"), "set_cpu_readback", "is_cpu_readback");
 }

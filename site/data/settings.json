@@ -1155,6 +1155,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Treads and chains",
+   "settings": [
+    "PhysXVehicleWheel3D.tread"
+   ],
+   "note": "",
+   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Belly drag",
    "settings": [
     "PhysXVehicle3D.belly_drag"
@@ -3412,6 +3423,28 @@
    "topic": ""
   },
   {
+   "name": "Falling rain",
+   "settings": [
+    "RainFall3D"
+   ],
+   "note": "",
+   "what": "drops sized and falling like real rain, slanting in the wind, with splashes, haze, and drips from leaves and eaves after it stops.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Rain or snow by height",
+   "settings": [
+    "WeatherMap3D.get_rain_share_at()"
+   ],
+   "note": "",
+   "what": "rain turns to sleet and then snow as the air cools with height.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Lightning and thunder",
    "settings": [
     "WeatherLightning3D"
@@ -3476,7 +3509,30 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up.",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Raindrop rings",
+   "settings": [
+    "rain_rings"
+   ],
+   "note": "",
+   "what": "rings on sea, lakes, pools, rivers and puddles; heavy rain dulls reflections.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Runoff",
+   "settings": [
+    "WeatherRunoff3D",
+    "PhysXRiver3D.rain_response"
+   ],
+   "note": "",
+   "what": "rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3726,7 +3782,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3746,10 +3802,11 @@
    "name": "Burning objects",
    "settings": [
     "PhysXBurnable3D",
-    "embers"
+    "embers",
+    "collapse_share"
    ],
    "note": "",
-   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.",
+   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water, break apart as their timber chars through (EN 1995-1-2) with the pieces keeping their char, and throw embers that ride their plume and the wind and start spot fires downwind.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3784,7 +3841,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and loft firebrands higher (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3797,6 +3854,17 @@
    ],
    "note": "",
    "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Heat shimmer",
+   "settings": [
+    "PhysXFlow3D.heat_shimmer"
+   ],
+   "note": "",
+   "what": "hot air above fires bends the view behind it, following the simulated temperature, in raster and path tracing.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3846,7 +3914,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading; river current drags it under water, and soaked fabric sinks slowly.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

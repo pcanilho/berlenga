@@ -53,6 +53,8 @@ public:
 	float wade_wet = 0.0f; // 0..1, the band's water
 	float wade_share = 0.0f; // the band's share of the fabric's height
 	float wade_line = -1.0e6f; // world y of the band's top this step (for the shader)
+	float water_surface = -1.0e9f; // world y of the water under the fabric this step (very low: none)
+	Vector3 water_flow; // its current there, m/s
 
 	static constexpr float DROP_SPEED = 6.5f; // m/s
 

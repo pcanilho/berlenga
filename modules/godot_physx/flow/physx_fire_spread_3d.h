@@ -31,13 +31,16 @@
 
 #pragma once
 
-#include "modules/world/world_contracts.h"
+#include "physx_ash.h"
 #include "physx_firebrands.h"
+#include "physx_steam.h"
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
+
+#include "modules/world/world_contracts.h"
 
 class Decal;
 class PhysXFlow3D;
@@ -75,6 +78,31 @@ private:
 	LocalVector<uint8_t> quenched; // put out while burning (rain)
 	HashMap<uint32_t, float> water_cells; // fluid water on the ground this sample, kg per cell
 	int quenched_by_water = 0;
+	LocalVector<uint8_t> steamed; // water has already taken this cell's heat
+	PhysXSteam steam;
+	// Fire whirls (docs/ideas/physx.md, "Fire whirls").
+	struct Whirl {
+		Vector3 pos;
+		float radius = 1.0f; // m, the core
+		float spin = 5.0f; // m/s, tangential, signed
+		float rise = 5.0f; // m/s, the core's updraft
+		float age = 0.0f;
+		float life = 15.0f;
+	};
+	LocalVector<Whirl> whirls;
+	LocalVector<PhysXFlowEmitter3D *> whirl_emitters;
+	int whirls_spawned = 0;
+	bool fire_whirls = true;
+	// Ash blown off the burnt ground (docs/ideas/physx.md, "Wind lifts ash after a fire").
+	bool blowing_ash = true;
+	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell
+	LocalVector<PhysXAsh::Source> ash_sources; // this sample's blowing patches
+	PhysXAsh ash;
+	float _ash_made(uint32_t p_i) const;
+	void _blow_ash(float p_delta);
+	uint32_t whirl_seed = 0x2545f491u;
+	float _whirl_rand();
+	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes);
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -249,6 +277,7 @@ public:
 	Ref<Image> get_fuel_map() const { return fuel_map; }
 	bool _update_moisture(float p_delta);
 	void _apply_fluid_water(float p_delta, bool p_weather_dried);
+	void _water_edge(float p_delta);
 	float _moisture(uint32_t p_i) const { return base_moisture * wet[p_i] + rain_water[p_i]; }
 	float _air_temperature() const;
 	void set_fuel_patchiness(float p_v);
@@ -289,6 +318,14 @@ public:
 	int get_firebrand_count() const { return firebrands.get_count(); }
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
 	int get_doused_cells() const { return quenched_by_water; }
+	float get_steam_mass() const { return steam.get_total_kg(); }
+	int get_whirl_count() const { return whirls.size(); }
+	int get_whirls_spawned() const { return whirls_spawned; }
+	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
+	bool is_fire_whirls() const { return fire_whirls; }
+	void set_blowing_ash(bool p_v);
+	bool is_blowing_ash() const { return blowing_ash; }
+	float get_ash_blown() const { return ash.get_total_kg(); }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }

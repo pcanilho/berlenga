@@ -11,6 +11,10 @@ extends Node3D
 #   --stream-cost    a 1 km map of trees over the oak wood's floor (PlantGenerator.make_floor),
 #                    streamed 200 m around a point running across it at 6 m/s: prints the
 #                    main thread's slowest frame and map publish each second
+#   --floor[=off]    the oak wood's floor (make_floor) under crowns, from standing height, with the small
+#                    species' pixel reach on (off: their hand-set ranges): walks VEG_FLOOR_WALK m (30) and
+#                    prints the main thread's streaming time a frame, memory, primitives, draw calls and
+#                    the frame time; with --out also saves the view (path traced unless --raster)
 
 const SIZE := 256.0
 var size := SIZE
@@ -26,6 +30,7 @@ var stone_view := "" # --stones=scree|river|shore|stream: plants between stones 
 var stone_plants := true # --stones-off: the same stones, no plants.
 var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 without (--far-volume=off).
 var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on a ground drawing the far colour, waiting for the far shade match; 2 = match off (=off), 3 = shade forced to 0.3 (=dark).
+var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
@@ -75,6 +80,9 @@ func _ready() -> void:
 			far_volume_view = 2 if a == "--far-volume=off" else 1
 		elif a == "--stones-off":
 			stone_plants = false
+		elif a.begins_with("--floor"):
+			floor_view = 2 if a == "--floor=off" else 1
+			size = 128.0
 		elif a.begins_with("--mushrooms"):
 			mushroom_view = 2 if a == "--mushrooms=off" else 1
 			deadwood_view = true
@@ -233,6 +241,9 @@ func _physics_process(_d: float) -> void:
 	if deadwood_view:
 		await _deadwood_view()
 		return
+	if floor_view > 0:
+		await _floor_view()
+		return
 	if stone_view != "":
 		_stones_view()
 		_render_later()
@@ -255,6 +266,117 @@ func _physics_process(_d: float) -> void:
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
+	else:
+		_render_later()
+
+# --floor[=off]: the cost of the small species' pixel reach (VegetationField3D.detail_reach) on a streamed oak
+# wood floor under simple crowns, seen from standing height.
+func _floor_view() -> void:
+	field.queue_free()
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.0
+	cone.bottom_radius = 1.3
+	cone.height = 5.0
+	var tree := PlantSpecies.new()
+	tree.meshes = [_mesh(cone, 2.5, Color(0.12, 0.3, 0.12))]
+	tree.spacing = 6.0
+	tree.footprint = 2.0
+	tree.density = 0.7
+	tree.canopy_radius = 3.0
+	tree.canopy_opacity = 0.9
+	tree.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(6, 1000000))
+	tree.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
+	var wood := VegetationField3D.new()
+	wood.far_volume = false
+	wood.populate_on_ready = false
+	var wb := Biome.new()
+	wb.species = [tree]
+	wood.biome = wb
+	add_child(wood)
+	wood.data_map = wood.get_path_to(dm)
+	wood.populate()
+	var at := Vector3(30, 0, -30)
+	at.y = height(at.x, at.z)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = at + Vector3(0, 1.7, 0)
+	cam.look_at(Vector3(at.x, height(at.x, at.z + 20.0), at.z + 20.0))
+	cam.current = true
+	var ground := VegetationField3D.new()
+	ground.far_volume = false
+	ground.name = "Floor"
+	ground.populate_on_ready = false
+	ground.detail_reach = floor_view == 1
+	ground.detail_reference_height = 1080 # The reach of a 1080p screen, not of the bench's small window.
+	var gb := Biome.new()
+	var floor_set: Array[PlantSpecies] = []
+	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false))
+	gb.species = floor_set
+	ground.biome = gb
+	ground.tile_size = 16.0
+	ground.stream_radius = 60.0
+	add_child(ground)
+	ground.stream_target = ground.get_path_to(cam)
+	ground.data_map = ground.get_path_to(dm)
+	ground.canopy_field = ground.get_path_to(wood)
+	var ranges := []
+	for i in gb.species.size():
+		var sp: PlantSpecies = gb.species[i]
+		if sp.detail_size > 0.0:
+			ranges.append("%d %.0f->%.0f m" % [sp.get_meta("plant_preset", -1), sp.visibility_range, ground.get_species_range(i)])
+	print("VEG_FLOOR reach %s: %s" % ["on" if floor_view == 1 else "off", ", ".join(ranges)])
+	var mem0 := OS.get_static_memory_usage()
+	var vid0 := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED)
+	ground.streaming = true
+	# Streaming is main-thread work, not drawing: the software renderer would take seconds a frame.
+	get_viewport().disable_3d = true
+	var warm := 0
+	while warm < 1200 and (warm < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		warm += 1
+	# Walking: the main thread's streaming time a frame, at a fixed 0.1 m a frame (6 m/s at 60 fps).
+	var walk := float(OS.get_environment("VEG_FLOOR_WALK")) if OS.get_environment("VEG_FLOOR_WALK") != "" else 30.0
+	var ms: Array[float] = []
+	var walked := 0.0
+	ground.get_stream_stats()
+	while walked < walk:
+		cam.position += Vector3(0, 0, 0.1)
+		cam.position.y = height(cam.position.x, cam.position.z) + 1.7
+		walked += 0.1
+		await get_tree().process_frame
+		ms.append(float(ground.get_stream_stats().frame_max_msec))
+	var settle := 0
+	while settle < 1200 and not ground.is_stream_idle():
+		await get_tree().process_frame
+		settle += 1
+	ms.sort()
+	var total := 0.0
+	for v in ms:
+		total += v
+	get_viewport().disable_3d = false
+	var nodes := 0
+	for ch in ground.get_children(true):
+		if ch is MultiMeshInstance3D:
+			nodes += 1
+	# Frame time: the mean of 12 frames once the view has settled (and the path tracer has built every surface).
+	for i in 6:
+		await RenderingServer.frame_post_draw
+	var waited := 0
+	while not raster and waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+		await RenderingServer.frame_post_draw
+		waited += 1
+	var t0 := Time.get_ticks_usec()
+	for i in 12:
+		await RenderingServer.frame_post_draw
+	var frame_ms := (Time.get_ticks_usec() - t0) / 12000.0
+	print("VEG_FLOOR walk %.0f m in %d frames: streaming mean %.2f ms, p95 %.2f ms, worst %.2f ms" % [walk, ms.size(), total / maxi(ms.size(), 1), ms[int(ms.size() * 0.95)], ms[-1]])
+	print("VEG_FLOOR plants %d, cells %d, memory +%.1f MB, video +%.1f MB, primitives %d, draw calls %d, objects %d, %s frame %.1f ms" % [
+		ground.get_plant_count(), nodes, (OS.get_static_memory_usage() - mem0) / 1048576.0,
+		(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) - vid0) / 1048576.0,
+		Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+		Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME), "raster" if raster else "path traced", frame_ms])
+	if out.is_empty():
+		get_tree().quit(0)
 	else:
 		_render_later()
 

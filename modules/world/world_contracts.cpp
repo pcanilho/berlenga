@@ -35,6 +35,10 @@
 
 #include <type_traits>
 #include "scene/3d/node_3d.h"
+#include "servers/physics_3d/physics_server_3d.h"
+#include "scene/resources/3d/world_3d.h"
+#include "scene/main/window.h"
+#include "scene/main/scene_tree.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/character_body_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
@@ -309,6 +313,111 @@ void WorldContracts::_clear_water_stubs() {
 
 // Registry.
 
+// Ground.
+
+#define WG_CALL(m_virtual, m_provider, m_default, ...) \
+	{ \
+		std::remove_cv_t<decltype(m_default)> r = m_default; \
+		if (GDVIRTUAL_CALL(m_virtual, __VA_ARGS__, r)) { \
+			return r; \
+		} \
+		return provider ? provider->m_provider : m_default; \
+	}
+
+float WorldGround::height_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_height_at, p_position, r)) {
+		return r;
+	}
+	if (provider) {
+		return provider->contract_ground_height_at(p_position);
+	}
+	// No ground: the first static physics surface under the point (a floor, a road, a terrain's collider).
+	SceneTree *tree = SceneTree::get_singleton();
+	Window *root = tree ? tree->get_root() : nullptr;
+	Ref<World3D> world = root ? root->get_world_3d() : Ref<World3D>();
+	PhysicsDirectSpaceState3D *space = world.is_valid() ? world->get_direct_space_state() : nullptr;
+	if (space) {
+		PhysicsDirectSpaceState3D::RayParameters ray;
+		ray.from = p_position + Vector3(0.0f, 1000.0f, 0.0f);
+		ray.to = p_position - Vector3(0.0f, 1000.0f, 0.0f);
+		ray.collide_with_areas = false;
+		PhysicsDirectSpaceState3D::RayResult hit;
+		if (space->intersect_ray(ray, hit)) {
+			return hit.position.y;
+		}
+	}
+	return -Math::INF;
+}
+
+WorldGroundSoil WorldGround::soil_at(const Vector3 &p_position) const {
+	Dictionary d;
+	if (GDVIRTUAL_CALL(_soil_at, p_position, d)) {
+		WorldGroundSoil s;
+		s.soft = d.get("soft", false);
+		s.cohesion = d.get("cohesion", 0.0f);
+		s.friction_angle = d.get("friction_angle", 35.0f);
+		s.stickiness = d.get("stickiness", 0.0f);
+		return s;
+	}
+	return provider ? provider->contract_ground_soil_at(p_position) : WorldGroundSoil();
+}
+
+Dictionary WorldGround::_soil_at_bind(const Vector3 &p_position) const {
+	const WorldGroundSoil s = soil_at(p_position);
+	Dictionary d;
+	d["soft"] = s.soft;
+	d["cohesion"] = s.cohesion;
+	d["friction_angle"] = s.friction_angle;
+	d["stickiness"] = s.stickiness;
+	return d;
+}
+
+float WorldGround::standing_water_at(const Vector3 &p_position) const WG_CALL(_standing_water_at, contract_ground_standing_water_at(p_position), 0.0f, p_position)
+Vector2 WorldGround::ice_at(const Vector3 &p_position) const WG_CALL(_ice_at, contract_ground_ice_at(p_position), Vector2(), p_position)
+Vector3 WorldGround::frost_at(const Vector3 &p_position) const WG_CALL(_frost_at, contract_ground_frost_at(p_position), Vector3(), p_position)
+float WorldGround::dent_at(const Vector3 &p_position) const WG_CALL(_dent_at, contract_ground_dent_at(p_position), 0.0f, p_position)
+float WorldGround::rim_at(const Vector3 &p_position) const WG_CALL(_rim_at, contract_ground_rim_at(p_position), 0.0f, p_position)
+Vector2 WorldGround::runoff_at(const Vector3 &p_position) const WG_CALL(_runoff_at, contract_ground_runoff_at(p_position), Vector2(), p_position)
+float WorldGround::mud_depth_at(const Vector3 &p_position) const WG_CALL(_mud_depth_at, contract_ground_mud_depth_at(p_position), 0.0f, p_position)
+float WorldGround::sand_at(const Vector3 &p_position) const WG_CALL(_sand_at, contract_ground_sand_at(p_position), 0.0f, p_position)
+float WorldGround::ripple_at(const Vector3 &p_position) const WG_CALL(_ripple_at, contract_ground_ripple_at(p_position), 0.0f, p_position)
+float WorldGround::blown_sand_at(const Vector3 &p_position) const WG_CALL(_blown_sand_at, contract_ground_blown_sand_at(p_position), 0.0f, p_position)
+Vector2 WorldGround::needle_ice_at(const Vector3 &p_position) const WG_CALL(_needle_ice_at, contract_ground_needle_ice_at(p_position), Vector2(), p_position)
+Vector3 WorldGround::rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const WG_CALL(_rut_guidance_at, contract_ground_rut_guidance_at(p_contact, p_lateral, p_half_width), Vector3(), p_contact, p_lateral, p_half_width)
+
+void WorldGround::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
+	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);
+	ClassDB::bind_method(D_METHOD("soil_at", "position"), &WorldGround::_soil_at_bind);
+	ClassDB::bind_method(D_METHOD("standing_water_at", "position"), &WorldGround::standing_water_at);
+	ClassDB::bind_method(D_METHOD("ice_at", "position"), &WorldGround::ice_at);
+	ClassDB::bind_method(D_METHOD("frost_at", "position"), &WorldGround::frost_at);
+	ClassDB::bind_method(D_METHOD("dent_at", "position"), &WorldGround::dent_at);
+	ClassDB::bind_method(D_METHOD("rim_at", "position"), &WorldGround::rim_at);
+	ClassDB::bind_method(D_METHOD("runoff_at", "position"), &WorldGround::runoff_at);
+	ClassDB::bind_method(D_METHOD("mud_depth_at", "position"), &WorldGround::mud_depth_at);
+	ClassDB::bind_method(D_METHOD("sand_at", "position"), &WorldGround::sand_at);
+	ClassDB::bind_method(D_METHOD("ripple_at", "position"), &WorldGround::ripple_at);
+	ClassDB::bind_method(D_METHOD("blown_sand_at", "position"), &WorldGround::blown_sand_at);
+	ClassDB::bind_method(D_METHOD("needle_ice_at", "position"), &WorldGround::needle_ice_at);
+	ClassDB::bind_method(D_METHOD("rut_guidance_at", "contact", "lateral", "half_width"), &WorldGround::rut_guidance_at);
+	GDVIRTUAL_BIND(_height_at, "position");
+	GDVIRTUAL_BIND(_soil_at, "position");
+	GDVIRTUAL_BIND(_standing_water_at, "position");
+	GDVIRTUAL_BIND(_ice_at, "position");
+	GDVIRTUAL_BIND(_frost_at, "position");
+	GDVIRTUAL_BIND(_dent_at, "position");
+	GDVIRTUAL_BIND(_rim_at, "position");
+	GDVIRTUAL_BIND(_runoff_at, "position");
+	GDVIRTUAL_BIND(_mud_depth_at, "position");
+	GDVIRTUAL_BIND(_sand_at, "position");
+	GDVIRTUAL_BIND(_ripple_at, "position");
+	GDVIRTUAL_BIND(_blown_sand_at, "position");
+	GDVIRTUAL_BIND(_needle_ice_at, "position");
+	GDVIRTUAL_BIND(_rut_guidance_at, "contact", "lateral", "half_width");
+}
+
 WorldContracts *WorldContracts::singleton = nullptr;
 
 WorldWeather *WorldContracts::weather() {
@@ -323,6 +432,47 @@ WorldWeather *WorldContracts::weather() {
 		return singleton->weather_override.ptr();
 	}
 	return singleton->builtin_weather.ptr();
+}
+
+WorldGround *WorldContracts::ground() {
+	static Ref<WorldGround> fallback; // before the singleton exists or after it goes
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	if (singleton->ground_override.is_valid()) {
+		return singleton->ground_override.ptr();
+	}
+	return singleton->builtin_ground.ptr();
+}
+
+void WorldContracts::register_ground(WorldGroundProvider *p_provider) {
+	if (singleton) {
+		singleton->ground_provider = p_provider;
+		singleton->builtin_ground->provider = p_provider;
+		if (singleton->ground_override.is_valid()) {
+			singleton->ground_override->provider = p_provider; // a partial stub falls back to the real one
+		}
+	}
+}
+
+void WorldContracts::unregister_ground(WorldGroundProvider *p_provider) {
+	if (singleton && singleton->ground_provider == p_provider) {
+		register_ground(nullptr);
+	}
+}
+
+void WorldContracts::set_ground(const Ref<WorldGround> &p_stub) {
+	ground_override = p_stub;
+	if (ground_override.is_valid()) {
+		ground_override->provider = ground_provider;
+	}
+}
+
+Ref<WorldGround> WorldContracts::get_ground() const {
+	return ground_override.is_valid() ? ground_override : builtin_ground;
 }
 
 void WorldContracts::register_weather(WorldWeatherProvider *p_provider) {
@@ -428,6 +578,7 @@ Ref<WorldWeather> WorldContracts::get_weather() const {
 
 void WorldContracts::clear_overrides() {
 	weather_override.unref();
+	ground_override.unref();
 	water_override.unref();
 	fire_override.unref();
 	_clear_water_stubs();
@@ -547,6 +698,8 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);
+	ClassDB::bind_method(D_METHOD("set_ground", "stub"), &WorldContracts::set_ground);
+	ClassDB::bind_method(D_METHOD("get_ground"), &WorldContracts::get_ground);
 	ClassDB::bind_method(D_METHOD("set_water", "stub"), &WorldContracts::set_water);
 	ClassDB::bind_method(D_METHOD("get_water"), &WorldContracts::get_water);
 	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
@@ -560,6 +713,7 @@ WorldContracts::WorldContracts() {
 	singleton = this;
 	builtin_weather.instantiate();
 	builtin_water.instantiate();
+	builtin_ground.instantiate();
 	builtin_fire.instantiate();
 }
 

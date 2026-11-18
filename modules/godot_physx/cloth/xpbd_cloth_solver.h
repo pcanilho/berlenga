@@ -71,6 +71,12 @@ public:
 		// Strain tearing, as PhysX 2's tearable cloth (tearFactor): after each step, a structural edge
 		// stretched past tear_factor times its rest length breaks by splitting a vertex. 0 = off.
 		float tear_factor = 0.0f;
+		// Under water (world y below water_height): particles keep water_gravity of their weight (soaked fibre is
+		// denser than water) and are drawn toward the current water_flow at water_drag (1/s).
+		float water_height = -1.0e9f;
+		Vector3 water_flow;
+		float water_drag = 0.0f;
+		float water_gravity = 0.3f;
 	};
 
 	// Most vertex splits made per step: the rest of the overloaded edges wait a step, so a rip runs

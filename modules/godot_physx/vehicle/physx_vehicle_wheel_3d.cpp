@@ -201,6 +201,49 @@ void PhysXVehicleWheel3D::set_tire_slide_grip(real_t p_v) {
 void PhysXVehicleWheel3D::set_tire_pressure(real_t p_v) {
 	tire_pressure = MAX(p_v, (real_t)10.0); // Read live by the soft-soil step: no rebuild.
 }
+PhysXVehicleWheel3D::TreadSoil PhysXVehicleWheel3D::tread_soil(Tread p_tread) {
+	// Lugs and chain links shear the soil below the tread's face as well as at it (Wong 2008, sec. 2.6: grousers);
+	// forestry chains add about a fifth to a wheel's pull on soft ground (Forest Research FCTN013; Sever et al.
+	// 2018, CROJFE 39). Open voids throw clay out sooner and fill slower; a closed road tread packs and holds it.
+	TreadSoil t;
+	switch (p_tread) {
+		case TREAD_ROAD:
+			t.grip = 0.85f;
+			t.fill = 1.4f;
+			t.shed = 1.3f;
+			t.depth = 0.009f;
+			break;
+		case TREAD_ALL_TERRAIN:
+			break;
+		case TREAD_MUD:
+			t.grip = 1.12f;
+			t.fill = 0.6f;
+			t.shed = 0.7f;
+			t.depth = 0.025f;
+			break;
+		case TREAD_CHAINS:
+			t.grip = 1.2f;
+			t.fill = 0.5f; // the links flex and crack the clay out
+			t.shed = 0.75f;
+			t.depth = 0.02f;
+			t.clog_bite = 0.5f;
+			break;
+	}
+	return t;
+}
+
+float PhysXVehicleWheel3D::tread_firm_grip(Tread p_tread, float p_ice, float p_snow) {
+	// Dry: rubber on the road; chains ride on steel. Ice: chains about treble a tyre's 0.1; snow: about double
+	// (CRREL tyre and chain tests, Shoop et al.).
+	static const float dry[4] = { 1.0f, 0.97f, 0.9f, 0.6f };
+	static const float ice[4] = { 1.0f, 1.0f, 1.0f, 3.0f };
+	static const float snow[4] = { 0.9f, 1.0f, 1.3f, 2.0f };
+	const int i = CLAMP((int)p_tread, 0, 3);
+	const float a = CLAMP(p_ice, 0.0f, 1.0f);
+	const float b = CLAMP(p_snow, 0.0f, 1.0f) * (1.0f - a);
+	return dry[i] * (1.0f - a - b) + ice[i] * a + snow[i] * b;
+}
+
 void PhysXVehicleWheel3D::set_use_as_steering(bool p_v) {
 	use_as_steering = p_v;
 	_rebuild_parent_if_live();
@@ -266,6 +309,14 @@ void PhysXVehicleWheel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_tire_pressure", "value"), &PhysXVehicleWheel3D::set_tire_pressure);
 	ClassDB::bind_method(D_METHOD("get_tire_pressure"), &PhysXVehicleWheel3D::get_tire_pressure);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_pressure", PROPERTY_HINT_RANGE, "10,1000,1,or_greater,suffix:kPa"), "set_tire_pressure", "get_tire_pressure");
+	ClassDB::bind_method(D_METHOD("set_tread", "tread"), &PhysXVehicleWheel3D::set_tread);
+	ClassDB::bind_method(D_METHOD("get_tread"), &PhysXVehicleWheel3D::get_tread);
+	ClassDB::bind_static_method("PhysXVehicleWheel3D", D_METHOD("tread_firm_grip", "tread", "ice", "snow"), &PhysXVehicleWheel3D::tread_firm_grip);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "tread", PROPERTY_HINT_ENUM, "Road,All Terrain,Mud,Chains"), "set_tread", "get_tread");
+	BIND_ENUM_CONSTANT(TREAD_ROAD);
+	BIND_ENUM_CONSTANT(TREAD_ALL_TERRAIN);
+	BIND_ENUM_CONSTANT(TREAD_MUD);
+	BIND_ENUM_CONSTANT(TREAD_CHAINS);
 
 	ClassDB::bind_method(D_METHOD("set_use_as_steering", "value"), &PhysXVehicleWheel3D::set_use_as_steering);
 	ClassDB::bind_method(D_METHOD("is_used_as_steering"), &PhysXVehicleWheel3D::is_used_as_steering);

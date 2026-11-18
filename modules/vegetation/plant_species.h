@@ -85,6 +85,7 @@ private:
 	float footprint = 0.5f;
 	float sward_shade = 0.0f; // How much of the grass a stand of it shades out under it (bracken, bramble).
 	float trample_resistance = 0.0f; // Passes a year on a worn path that halve its cover (Cole 1995); 0: not trampled.
+	float detail_size = 0.0f; // m; > 0: a small item whose range the field takes from its pixel reach (vegetation_detail.h).
 public:
 	// Ground litter colours for undergrowth (linear): dead bracken fronds, sRGB about (150, 100, 60);
 	// bramble's leaf litter over soil, sRGB about (115, 92, 64), not covering all of it.
@@ -122,6 +123,14 @@ private:
 	float margin_lean = 0.0f;
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
 	float patch_ring = 0.0f; // > 0: grow only along the patches' edges, in a band this wide (m): fairy rings.
+	// Coupes (coppice with standards): with coupe_rotation > 0 the patches are straight-edged
+	// compartments about patch_scale across (a Voronoi cell each), each cut in its own year of a
+	// coupe_rotation-year cycle, and the species grows only in coupes whose years since the cut lie
+	// in coupe_ages (inclusive). About half the coupe boundaries are rides ride_width wide, kept
+	// clear. Rackham 2006; Peterken 1993; Buckley 1992.
+	int coupe_rotation = 0;
+	Vector2i coupe_ages;
+	float ride_width = 0.0f;
 	float visibility_range = 0.0f; // 0: always drawn.
 	// Near detail: heavier meshes (same variant order as meshes) drawn within near_range,
 	// meshes beyond it, with a dithered crossfade over the last tenth.
@@ -167,6 +176,16 @@ public:
 	bool is_patch_invert() const { return patch_invert; }
 	void set_patch_ring(float p_width) { patch_ring = CLAMP(p_width, 0.0f, 5.0f); emit_changed(); }
 	float get_patch_ring() const { return patch_ring; }
+	void set_coupe_rotation(int p_years) { coupe_rotation = MAX(p_years, 0); emit_changed(); }
+	int get_coupe_rotation() const { return coupe_rotation; }
+	void set_coupe_ages(const Vector2i &p_ages) { coupe_ages = p_ages; emit_changed(); }
+	Vector2i get_coupe_ages() const { return coupe_ages; }
+	void set_ride_width(float p_width) { ride_width = MAX(p_width, 0.0f); emit_changed(); }
+	float get_ride_width() const { return ride_width; }
+	// The coupe at a point: x years since its cut (-1 without coupes), y the distance to its edge
+	// in metres (to the ride's edge where the edge is a ride; negative on the ride), z 1 on a ride.
+	Vector3 get_coupe_at(const Vector3 &p_pos, Vector2 *r_out = nullptr) const;
+	Vector3 get_coupe_at_bind(const Vector3 &p_pos) const { return get_coupe_at(p_pos); }
 	float get_patch_weight(const Vector3 &p_pos) const;
 	// How far inside its patch a point is, in metres (negative outside), and the way out of it on
 	// the ground (unit xz) when asked. 1e6 for species without patches.
@@ -242,6 +261,8 @@ public:
 	float get_sward_shade() const { return sward_shade; }
 	void set_trample_resistance(float p_passes) { trample_resistance = MAX(p_passes, 0.0f); }
 	float get_trample_resistance() const { return trample_resistance; }
+	void set_detail_size(float p_size) { detail_size = MAX(p_size, 0.0f); }
+	float get_detail_size() const { return detail_size; }
 	// Trampling (Cole 1995): cover falls along a log-logistic curve of the passes (slope 2), halved
 	// at trample_resistance passes a year and near bare at ten times that; the plants left are shorter and flatter, halfway to their
 	// trodden height (0.45) at the same passes.

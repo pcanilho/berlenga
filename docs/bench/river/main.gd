@@ -9,6 +9,7 @@ extends Node3D
 #   --view=jump      side-on below the step: the fast water and the hydraulic jump that ends it
 #   --view=train     low, looking upstream at the jump: the stationary wave train below it (standing_waves)
 #   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
+#   --view=creek     low, upstream of the middle boulder (with --live): its pillow, the seam and eddies behind it
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N       frames rendered before --out is saved (default 12)
@@ -197,12 +198,19 @@ func _ready() -> void:
 	rock_mat.roughness = 0.8
 	rock_mat.wetness_enabled = true
 	# Rocks in the channel above the step, standing out of the water, on their own physics layer (2)
-	# so a carving river, which measures the uncarved terrain, still finds them.
+	# so a carving river, which measures the uncarved terrain, still finds them: generated subrounded granite
+	# boulders (RockGenerator) where the build has the rocks module, boxes otherwise.
+	var rock_i := 0
 	for r in [[-14.0, 0.8, Vector3(1.0, 2.0, 1.4), 0.5], [-24.0, -0.9, Vector3(1.2, 2.0, 1.0), -0.4], [-31.0, 0.3, Vector3(0.8, 2.0, 0.9), 1.1]]:
 		var rz: float = r[0]
 		var rx: float = _valley_x(rz) + r[1]
 		var size: Vector3 = r[2]
-		_slab(size, Vector3(rx, _ground(rx, rz) - (1.2 if carve else 0.0) + 0.6, rz), Vector3(0.2, r[3], 0.1), rock_mat, 3)
+		var at := Vector3(rx, _ground(rx, rz) - (1.2 if carve else 0.0) + 0.6, rz)
+		if ClassDB.class_exists("RockGenerator"):
+			_boulder(size, at, r[3], rock_i)
+		else:
+			_slab(size, at, Vector3(0.2, r[3], 0.1), rock_mat, 3)
+		rock_i += 1
 
 	if not ClassDB.class_exists("PhysXRiver3D"):
 		push_error("This build has no PhysXRiver3D.")
@@ -373,8 +381,8 @@ func _ready() -> void:
 		for f in river.call("get_waterfalls"):
 			print("fall lip=%s impact=%s height=%.2f q=%.2f lip_speed=%.2f impact_speed=%.2f breakup=%.2f throw=%.2f" % [f.lip, f.impact, f.height, f.discharge, f.lip_speed, f.impact_speed, f.breakup_length, f.throw])
 
-	# Floating boxes, dropped upstream.
-	for i in 3:
+	# Floating boxes, dropped upstream (not in the creek view, a close shot of the water).
+	for i in (0 if view == "creek" else 3):
 		var body := RigidBody3D.new()
 		body.mass = 30.0
 		var cs := CollisionShape3D.new()
@@ -423,6 +431,10 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(_valley_x(12.0) + 3.0, -2.5, 13.0), Vector3(_valley_x(0.0), -3.0, 0.0))
 		"rocks":
 			cam.look_at_from_position(Vector3(_valley_x(-22.0) + 0.5, 16.0, -20.0), Vector3(_valley_x(-22.0), -1.0, -21.99))
+		"creek":
+			# Low, from upstream and the side, on the middle boulder: the current parting round it, its pillow,
+			# the seam behind it and the eddies in its lee.
+			cam.look_at_from_position(Vector3(_valley_x(-29.0) + 2.0, 1.6, -29.5), Vector3(_valley_x(-24.0) - 0.6, -0.8, -23.0))
 		"top":
 			cam.look_at_from_position(Vector3(_valley_x(2.0), 14.0, 2.0), Vector3(_valley_x(2.0), -2.0, 2.01))
 		_:
@@ -544,6 +556,37 @@ func _print_joins() -> void:
 			var f: Vector3 = lake.call("sample_flow", Vector3(_valley_x(34.0) + dx, -2.35, zq))
 			line += " %+.2f,%+.2f%s" % [f.x, f.z, "" if lake.call("is_wet", Vector3(_valley_x(34.0) + dx, -2.35, zq)) else "d"]
 		print(line)
+
+
+# A generated boulder about p_size (its longest horizontal side), its collision its own convex hull, on physics
+# layers 1 and 2 as the slabs.
+func _boulder(p_size: Vector3, p_pos: Vector3, p_yaw: float, p_seed: int) -> void:
+	var g = ClassDB.instantiate("RockGenerator")
+	g.set("rock_type", 0) # granite
+	g.set("family", 2) # glacial: subrounded boulders
+	g.set("seed", 11 + p_seed)
+	var mesh: ArrayMesh = g.call("generate")
+	var b := maxf(p_size.x, p_size.z) * 1.1
+	var s := b * 0.5
+	# Stood 1.6 times taller than its own shape, so it stands out of the water as the slabs did. The scale is
+	# baked into the collision hull's points (physics bodies take no non-uniform scale).
+	var scale := Vector3(s, s * 1.6, s)
+	var hull := PackedVector3Array()
+	for v in mesh.get_faces():
+		hull.append(v * scale)
+	var shape := ConvexPolygonShape3D.new()
+	shape.points = hull
+	var body := StaticBody3D.new()
+	body.collision_layer = 3
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	body.add_child(cs)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.scale = scale
+	body.add_child(mi)
+	body.transform = Transform3D(Basis(Vector3.UP, p_yaw), p_pos + Vector3(0, -0.5 - float(mesh.get_meta("rock_bottom", -0.5)) * s * 1.6, 0))
+	add_child(body)
 
 
 func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_layers := 1) -> void:

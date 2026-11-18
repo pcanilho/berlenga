@@ -153,6 +153,9 @@
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
 		</member>
+		<member name="detail_size" type="float" setter="set_detail_size" getter="get_detail_size" default="0.0">
+			The size in metres of what shows of one plant or item (a fallen leaf, a twig, a cushion of moss, a seedling's height). When above 0, [VegetationField3D] draws the species out to where that size is still [member VegetationField3D.detail_pixels] tall on screen (never less than [member visibility_range], never more than [member VegetationField3D.detail_max_range]), instead of the hand-set range. The preset sets ([method PlantGenerator.make_floor] and the others) set it for their small presets: litter, twigs, mosses, small rosettes and seedlings.
+		</member>
 		<member name="dune_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member dune_range].
 		</member>

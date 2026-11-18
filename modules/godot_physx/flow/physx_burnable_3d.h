@@ -32,6 +32,7 @@
 #pragma once
 
 #include "physx_firebrands.h"
+#include "physx_steam.h"
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
@@ -96,7 +97,12 @@ private:
 
 	PhysXFireSpread3D *fire = nullptr;
 	PhysXFlow3D *flow = nullptr;
-	ObjectID emitters[5]; // one per burning face: four sides and the top
+	static constexpr int FACE_EMITTERS = 5;
+	static constexpr int PIECE_EMITTERS = 8;
+	// One per burning face (four sides and the top), then, once a destructible target has broken, one per burning
+	// piece (the biggest).
+	ObjectID emitters[FACE_EMITTERS + PIECE_EMITTERS];
+	PhysXFlowEmitter3D *_emitter(int p_slot);
 
 	struct Ember {
 		Vector3 p;
@@ -130,9 +136,22 @@ private:
 	float _rand();
 	Transform3D _target_xform() const;
 	void _wet_from_fluids(const Transform3D &p_xf);
+	PhysXSteam steam;
+	// A PhysXDestructible3D target (Blast): drawn by raw instances, restyled through it, and weakened as it chars.
+	ObjectID destructible_id;
+	float weakened = 0.0f; // share of the section lost already taken off its bonds
+	float char_time = 0.0f; // s of flaming
+	float collapse_share = 0.4f; // share of the section burnt away at which it gives way
+	bool destructible_look = false;
+	Vector4 applied_origin = Vector4(0, 0, 0, -1);
+	Vector4 applied_state = Vector4(-1, -1, -1, -1);
+	void _weaken(float p_delta);
+	bool steamed = false; // water has taken the hot surface's heat
 	void _sample_heat(float p_delta);
 	void _burn(float p_delta);
 	void _update_emitter();
+	bool _update_piece_emitters();
+	LocalVector<Vector3> piece_flames; // world, the flames on a broken target's pieces this step: sparks and brands rise from them
 	void _update_embers(float p_delta);
 	void _update_look();
 	float _surface_area() const;
@@ -175,6 +194,8 @@ public:
 	void set_heat_release(float p_v) { heat_release = MAX(p_v, 1.0f); }
 	float get_heat_release_rate() const { return heat_release; }
 	void set_flame_spread(float p_v) { flame_spread = MAX(p_v, 0.0f); }
+	void set_collapse_share(float p_v) { collapse_share = CLAMP(p_v, 0.05f, 1.0f); }
+	float get_collapse_share() const { return collapse_share; }
 	float get_flame_spread() const { return flame_spread; }
 	void set_ignition_temperature(float p_v) { ignition_temperature = MAX(p_v, 30.0f); }
 	float get_ignition_temperature() const { return ignition_temperature; }

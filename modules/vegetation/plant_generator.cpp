@@ -819,6 +819,45 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 	}
 }
 
+// What shows of one plant of the small ground presets (m), for the pixel reach (vegetation_detail.h;
+// docs/ideas/ground-detail-vegetation.md): a fallen leaf's or a twig's length, a moss cushion's or a
+// rosette's width, a seedling's height; 0 for the rest, which keep their hand-set range.
+static float _preset_detail_size(PlantGenerator::Preset p_preset) {
+	using P = PlantGenerator;
+	switch (p_preset) {
+		case P::PRESET_LEAF_LITTER:
+			return 0.1f;
+		case P::PRESET_NEEDLE_LITTER:
+			return 0.05f;
+		case P::PRESET_TWIGS:
+			return 0.12f;
+		case P::PRESET_MOSS:
+		case P::PRESET_RIVER_MOSS:
+		case P::PRESET_SPHAGNUM:
+			return 0.06f;
+		case P::PRESET_FEATHER_MOSS:
+			return 0.08f;
+		case P::PRESET_LIVERWORT:
+		case P::PRESET_STONECROP:
+		case P::PRESET_SUNDEW:
+		case P::PRESET_PURPLE_SAXIFRAGE:
+			return 0.04f;
+		case P::PRESET_SAXIFRAGE:
+		case P::PRESET_MOSS_CAMPION:
+			return 0.05f;
+		case P::PRESET_CLOVER:
+		case P::PRESET_THYME:
+			return 0.06f;
+		case P::PRESET_WOOD_SORREL:
+		case P::PRESET_VIOLET:
+			return 0.07f;
+		case P::PRESET_SEEDLING:
+			return 0.15f;
+		default:
+			return 0.0f;
+	}
+}
+
 void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
 	if (p_species.is_null()) {
 		return;
@@ -827,6 +866,9 @@ void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset
 	PlantSpecies *sp = Object::cast_to<PlantSpecies>(p_species.ptr());
 	if (sp && sp->get_trample_resistance() <= 0.0f) {
 		sp->set_trample_resistance(get_trample_resistance(p_preset));
+	}
+	if (sp && sp->get_detail_size() <= 0.0f) {
+		sp->set_detail_size(_preset_detail_size(p_preset));
 	}
 	const float pollen = get_pollen_amount(p_preset);
 	if (pollen > 0.0f) {
@@ -5178,6 +5220,7 @@ String PlantGenerator::shader_common_code() {
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
+	code += BaseMaterial3D::get_rain_functions_code(true);
 	code += VegetationFire::SHADER_CODE;
 	code += R"(
 global uniform sampler2D weather_state_map;
@@ -5432,8 +5475,26 @@ void fragment() {
 	float mud_c = grass_mud_apply(grass_ground_mud(fire_w.xz), fire_w, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), albedo);
 	rough = mix(rough, 0.85, mud_c);
 	back *= 1.0 - mud_c;
-	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
-	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
+	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy. They stay wet while the canopy's
+	// water (WeatherMap3D, Rutter's interception store) is held on them, after the ground has begun to dry, and the water
+	// stands on them as beads (rain_surface_beads(); upward faces hold them, undersides shed them).
+	{
+		float leaf_wet = max(weather_wetness_at(v_world), weather_canopy_wetness_at(v_world));
+		weather_wetness_apply(leaf_wet, n_world.y, metallic, 0.15, albedo, rough);
+#if defined(RT)
+		float bead_fp = 0.0;
+#else
+		vec3 bead_fw = fwidth(v_world);
+		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
+#endif
+		vec4 bead = rain_surface_beads(v_world, n_world, leaf_wet * smoothstep(-0.2, 0.6, n_world.y), bead_fp);
+		if (bead.w > 0.0) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
+			rough = mix(rough, 0.05, bead.w);
+			specular = mix(specular, 0.5, bead.w);
+			albedo *= 1.0 - 0.5 * bead.w;
+		}
+	}
 	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);

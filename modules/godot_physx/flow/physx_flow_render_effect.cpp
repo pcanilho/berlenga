@@ -251,6 +251,7 @@ PhysXFlowRenderEffect::~PhysXFlowRenderEffect() {
 				}
 			}
 			scatter.free(rd);
+			shimmer.free(rd);
 		}
 	});
 }

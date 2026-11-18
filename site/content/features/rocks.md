@@ -28,6 +28,11 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
 - **Rock fields** (`RockField3D`: `rockfall_`, `scree_`, `glacial_`, `river_`, `shore_`, `cliff_` layers; `layer_enabled`): rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.
 - **Ground detail** (`RockField3D`: `ground_detail`, `ground_detail_pixels`): pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach or scree around them, each drawn only while it stays a few pixels tall; the path tracer traces every one.
+
+  ![A shingle shore at low eye height, ground detail off and on, raster](media/rocks-ground-detail.jpg)
+
+  *Shingle shore: before, scattered pebbles on bare sand; after, a band of gravel and small pebbles runs along the shore below the cobbles.*
+
 - **Breakable stones** (`RockField3D.break_stone`): stones split into pieces along rough rock breaks, and layered rock into slabs.
 
   ![A granite block about 3 m away, whole and broken where it lay, raster](media/rocks-break.jpg)

@@ -40,6 +40,7 @@
 #include "core/version.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/texture.h"
+#include "servers/rendering/rain_ripples_glsl.gen.h"
 #include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -613,6 +614,10 @@ void BaseMaterial3D::init_shaders() {
 		// Its contact wetness (wet where water has been): a fine square round the camera.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its rain readers' map and the precipitation's phase (get_rain_functions_code()).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
@@ -802,6 +807,45 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	return cover;
 }
 )";
+	return code;
+}
+
+// Rain (docs/ideas/rain.md): the raindrop rings every water surface draws (rain_ripples(), the same file the path
+// tracer includes) and, with p_from_weather, the weather's rain at a point. Any shader may add this once.
+String BaseMaterial3D::get_rain_functions_code(bool p_from_weather) {
+	String code = RAIN_RIPPLES_GLSL;
+	if (p_from_weather) {
+		code += R"(
+global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness, canopy drip mm/h
+global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
+global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
+
+vec4 weather_rain_sample(vec3 p_world_pos) {
+	if (weather_rain_rect.z <= 0.0) {
+		return vec4(0.0);
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_rain_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_rain_rect.xy) / weather_rain_rect.zw, half_texel, 1.0 - half_texel);
+	return textureLod(weather_rain_map, uv, 0.0);
+}
+
+// The air's temperature at a height, and the rain (mm/h, liquid) there: WeatherMap3D.get_rainfall_at().
+float weather_air_temperature_at(vec3 p_world_pos) {
+	return weather_precip_phase.x - weather_precip_phase.y * (p_world_pos.y - weather_precip_phase.w);
+}
+float weather_rainfall_at(vec3 p_world_pos) {
+	float r = weather_rain_sample(p_world_pos).r;
+	return r > 0.0 ? r * rain_liquid_share(weather_air_temperature_at(p_world_pos), weather_precip_phase.z) : 0.0;
+}
+// Leaves' wetness from the canopy's held water (0..1), and the drip off them (mm/h): Rutter's interception.
+float weather_canopy_wetness_at(vec3 p_world_pos) {
+	return weather_rain_sample(p_world_pos).g;
+}
+float weather_canopy_drip_at(vec3 p_world_pos) {
+	return weather_rain_sample(p_world_pos).b;
+}
+)";
+	}
 	return code;
 }
 
@@ -1362,6 +1406,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.hair_cards = hair_cards;
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
+		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
@@ -1966,6 +2011,10 @@ uniform vec3 uv2_offset;
 
 	if (features[FEATURE_GROUND_DEFORM]) {
 		code += _ground_deform_code(false, ground_deform_patch);
+	}
+	// The rain's functions (raindrop rings on the patch's standing water, beads on a wet canopy), once.
+	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy)) {
+		code += get_rain_functions_code(true);
 	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
@@ -2911,7 +2960,11 @@ void fragment() {)";
 	// Wetness: Enabled
 	float wet = wetness_amount;
 )";
-		if (wetness_from_weather) {
+		if (wetness_from_weather && wetness_canopy) {
+			// A canopy stays wet while it holds the water it intercepted (Rutter's store, WeatherMap3D), after the
+			// ground has begun to dry.
+			code += "\twet *= max(weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz), weather_canopy_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));\n";
+		} else if (wetness_from_weather) {
 			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
 		}
 		if (features[FEATURE_GROUND_DEFORM]) {
@@ -2919,6 +2972,25 @@ void fragment() {)";
 		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
 )";
+		if (wetness_from_weather && wetness_canopy) {
+			// Water beaded on a waxy leaf (rain_surface_beads(), docs/ideas/rain.md step 5): upward faces hold the
+			// drops, undersides shed them. The path tracer draws the same beads at full detail (scene_raytracing_raygen.glsl;
+			// a ShaderMaterial made from this code puts the footprint under #if defined(RT), as TreeGenerator's flutter).
+			code += R"(	{
+		vec3 bead_wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 bead_n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 bead_fw = fwidth(bead_wp);
+		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
+		vec4 bead = rain_surface_beads(bead_wp, bead_n, wet * smoothstep(-0.2, 0.6, bead_n.y), bead_fp);
+		if (bead.w > 0.0) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
+			ROUGHNESS = mix(ROUGHNESS, 0.05, bead.w);
+			SPECULAR = mix(SPECULAR, 0.5, bead.w);
+			ALBEDO *= 1.0 - 0.5 * bead.w;
+		}
+	}
+)";
+		}
 	}
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
@@ -2953,6 +3025,14 @@ void fragment() {)";
 			// Running water's ripples, swept downstream (ground_water_flow()).
 			vec3 gwn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 			vec2 gfs = ground_water_flow((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, gwn, gwd, TIME, ground_fp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
+			// Raindrop rings on the water (rain_ripples(); none under ice); the impacts finer than the pixel roughen it.
+			{
+				vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+				float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
+				vec3 grr = grs > 0.0 ? rain_ripples(gwp.xz, TIME, weather_rainfall_at(gwp), ground_fp) : vec3(0.0);
+				gfs += grr.xy * grs;
+				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, grr.z), grs);
+			}
 			if (gfs != vec2(0.0)) {
 				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gfs.x, 0.0, gfs.y, 0.0)).xyz);
 			}
@@ -4266,6 +4346,18 @@ bool BaseMaterial3D::is_wetness_from_weather() const {
 	return wetness_from_weather;
 }
 
+void BaseMaterial3D::set_wetness_canopy(bool p_enable) {
+	if (wetness_canopy == p_enable) {
+		return;
+	}
+	wetness_canopy = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_wetness_canopy() const {
+	return wetness_canopy;
+}
+
 void BaseMaterial3D::set_snow_amount(float p_amount) {
 	snow_amount = CLAMP(p_amount, 0.0f, 1.0f);
 	_material_set_param(shader_names->snow_amount, snow_amount);
@@ -4881,52 +4973,55 @@ vec4 ground_ice_look(vec2 p_xz, float p_h, float p_depth, float p_broken, float 
 	float white = cover * clamp(milk + 0.5 * rim, 0.0, 0.9);
 	return vec4(white, cover, mix(0.12, 0.45, white / max(cover, 1e-3)), 0.0);
 }
-// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
-// needles p_h tall (m) lift the top soil as a cap that tears into clods 3 to 5 cm across as it rises (Outcalt 1971;
-// Lawler 1988), with thin dark cracks between them; a few clods tip and show the white needles on their raised side.
-// After the thaw the cap lies as loose crumbs (p_loose) a few millimetres across, each tilted, rough and a little
-// uneven in colour. Returns (the share that is needle ice showing, the soil's albedo factor, the crumbs' weight for a
-// rough matte surface, 0); r_slope the clods' and crumbs' tilt.
-// The clods' lattice at p_xz (in cells 4 cm across), warped by a smooth noise about a metre across so their size and
-// shape wander and the network shows no repeat.
+// The crust's tear field at p_xz (in units of 5 cm), warped by noise at two scales so the tears wander and nothing
+// repeats.
 vec2 ground_needle_q(vec2 p_xz) {
 	vec2 w = vec2(ground_flow_noise(p_xz / 0.9 + vec2(13.0, 71.0)).x, ground_flow_noise(p_xz / 0.9 + vec2(97.0, 29.0)).x);
-	return p_xz / 0.04 + 1.5 * w;
+	vec2 w2 = vec2(ground_flow_noise(p_xz / 0.17 + vec2(3.0, 41.0)).x, ground_flow_noise(p_xz / 0.17 + vec2(59.0, 7.0)).x);
+	// A finer jitter a centimetre or so across: torn soil breaks jagged, not in smooth curves.
+	vec2 w3 = vec2(ground_flow_noise(p_xz / 0.012 + vec2(11.0, 83.0)).x, ground_flow_noise(p_xz / 0.012 + vec2(37.0, 19.0)).x);
+	return p_xz / 0.05 + 1.6 * w + 0.5 * w2 + 0.12 * w3;
 }
+// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
+// needles p_h tall (m) stand upright under a crust of soil they lifted (Outcalt 1971; Lawler 1988). The crust stays
+// whole over most of the ground, a lumpy skin; in patches it tears open along meandering lines (where it lifted most
+// unevenly), and in the tears, lens-shaped and up to about a third of the needles' height wide, the needles show
+// side-on: bright upright columns about a millimetre apart, with the crust's dark underside over them. After the
+// thaw the crust lies as loose crumbs (p_loose) a few millimetres across. Returns (the share that is needle ice
+// showing, the soil's albedo factor, the crumbs' weight for a rough matte surface, 0); r_slope the crust's lumps and
+// the crumbs' tilt.
 vec4 ground_needle_look(vec2 p_xz, float p_h, float p_loose, float p_fp, out vec2 r_slope) {
 	r_slope = vec2(0.0);
 	float lift = smoothstep(0.002, 0.015, p_h);
-	float s = 0.04;
-	vec4 c = ground_ice_cells(ground_needle_q(p_xz));
-	float e = c.x * s;
-	// Patches a metre or two across where the cap tore wider and more clods tipped, and quieter ones.
-	float macro = clamp(0.5 + 0.8 * ground_flow_noise(p_xz / 1.6 + vec2(5.0, 3.0)).x, 0.0, 1.0);
-	// The cap tears along its joints: thin dark cracks (the shadowed gap under the cap).
-	float gw = (0.0003 + 0.03 * p_h) * mix(0.6, 1.5, macro);
-	float crack = lift * (1.0 - smoothstep(gw, gw + p_fp, e));
-	// A few clods tip over as they rise and show the needles on their raised side: a white band along that edge (the
-	// side away from the clod's middle along its tilt).
-	float share = (0.04 + 0.06 * lift) * mix(0.3, 1.7, macro);
-	float tip = lift * step(c.y, share);
-	vec2 tilt = vec2(c.y - 0.5, c.z - 0.5);
-	float band = 0.002 + 0.15 * p_h;
+	// The tears: where a warped noise crosses zero (meandering, branching lines, no cells to repeat), its distance
+	// from the line its value over its slope; open only in patches about half a metre across.
+	vec2 q = ground_needle_q(p_xz);
+	vec3 n = ground_flow_noise(q * 0.7);
+	float e = abs(n.x) / max(length(n.yz) * 0.7 / 0.05, 1.0);
+	float tear = lift * smoothstep(0.05, 0.45, ground_flow_noise(p_xz / 0.45 + vec2(31.0, 11.0)).x);
+	// The opening swells and pinches along its line.
+	float along = clamp(0.5 + 0.9 * ground_flow_noise(p_xz / 0.03 + vec2(7.0, 3.0)).x, 0.0, 1.0);
+	float gw = tear * p_h * (0.05 + 0.35 * along);
 	float far_ = smoothstep(0.003, 0.02, p_fp);
-	float white = 0.0;
-	if (tip > 0.0 && e < band + p_fp && far_ < 1.0) {
-		// The way out from the clod's middle: the gradient of the distance to its site.
-		float d = 0.002;
-		vec2 out_ = vec2(ground_ice_cells(ground_needle_q(p_xz + vec2(d, 0.0))).w - c.w, ground_ice_cells(ground_needle_q(p_xz + vec2(0.0, d))).w - c.w);
-		float side = smoothstep(0.0, 0.5, dot(normalize(out_ + 1e-6), normalize(tilt + 1e-6)));
-		white = tip * side * (1.0 - smoothstep(band, band + p_fp, e)) * (1.0 - crack);
-	}
-	// Past a few millimetres a pixel both average out to their share of the area.
-	crack = mix(crack, lift * clamp(3.7 * gw / s, 0.0, 0.3), far_);
-	white = mix(white, lift * share * clamp(0.5 * band / s, 0.0, 0.3), far_);
-	r_slope = lift * (1.0 - crack) * (0.15 + 0.5 * tip) * tilt;
+	float gap = gw > 1e-5 ? 1.0 - smoothstep(gw, gw + p_fp, e) : 0.0;
+	// In the tear the needles stand side-on: columns about a millimetre apart (each its own brightness), averaging
+	// out past a millimetre or two a pixel; the outer fifth of the opening is the crust's dark underside.
+	vec4 col = ground_ice_cells(p_xz / 0.0012 + vec2(17.0, 5.0));
+	float cols = mix(0.35 + 0.65 * smoothstep(0.25, 0.05, col.x) * (0.6 + 0.4 * col.y), 0.6, smoothstep(0.0008, 0.003, p_fp));
+	float under = 1.0 - smoothstep(0.6, 0.85, e / max(gw, 1e-5));
+	float white = gap * cols * under;
+	// Past a few millimetres a pixel it averages out to its share of the area.
+	white = mix(white, tear * clamp(0.3 * p_h / 0.05, 0.0, 0.25) * 0.6, far_);
+	float shadow = gap * (1.0 - under);
+	// The crust's lumps a few centimetres across; beside a tear its edges curl up away from the opening.
+	vec3 lump = ground_flow_noise(p_xz / 0.035 + vec2(23.0, 2.0));
+	vec2 away = sign(n.x) * normalize(n.yz + 1e-6);
+	float edge = tear * (1.0 - gap) * (1.0 - smoothstep(gw, gw + 0.01, e));
+	r_slope = lift * (1.0 - gap) * 0.1 * lump.yz - 0.3 * edge * away;
 	vec4 k = ground_ice_cells(p_xz / 0.006);
 	float fine = 1.0 - smoothstep(0.002, 0.008, p_fp);
 	r_slope += p_loose * fine * 0.5 * vec2(k.y - 0.5, k.z - 0.5);
-	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.6 * crack);
+	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.7 * clamp(shadow, 0.0, 1.0));
 	return vec4(white, shade, p_loose, 0.0);
 }
 // Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
@@ -5593,6 +5688,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wetness_amount"), &BaseMaterial3D::get_wetness_amount);
 	ClassDB::bind_method(D_METHOD("set_wetness_from_weather", "enable"), &BaseMaterial3D::set_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
+	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
 	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
@@ -5917,6 +6014,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_porosity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_porosity", "get_wetness_porosity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
 
 	ADD_GROUP("Snow", "snow_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);
