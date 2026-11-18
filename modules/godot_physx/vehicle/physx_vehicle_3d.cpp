@@ -90,6 +90,9 @@ struct PhysXVehicleSoilWheel {
 	float shed = 0.0f;
 	float grip = 1.0f; // the share of the clean shear limit it keeps
 	float base_moi = -1.0f;
+	// Ruts steer the wheels (docs/ideas/mud.md, round 9): the deformation's cross slope under the tread along the
+	// tyre's lateral direction, and the rut wall's height beside each sidewall (GroundSurface3D::get_rut_guidance()).
+	Vector3 guide;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSoil soil;
 #endif
@@ -271,6 +274,7 @@ public:
 			const float ahead = (v_lng >= 0.0f ? 1.0f : -1.0f) * (0.5f * probe.contact_length + 0.05f);
 			const Vector3 front = at + Vector3(lng.x, lng.y, lng.z) * ahead;
 			sw.already = MAX(ground->get_dent_at(front) - ground->get_rim_at(front), 0.0f);
+			sw.guide = ground->get_rut_guidance(at, Vector3(lat.x, lat.y, lat.z), wp.halfWidth);
 			// A rut already there ahead (another wheel's, an earlier pass) takes the wheel down into it.
 			const float rut = MIN(ground->get_dent_at(front) - ground->get_rim_at(front), sw.soil.max_sinkage);
 			// The load's sinkage settles over a tenth of a second (the soil yields as the load comes). Slip
@@ -415,11 +419,14 @@ public:
 				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
 				f.forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
 				f.torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
+			}
 			// Side bulldozing: a wheel sliding sideways through loose soil shoves a wedge of it with its sidewall
 			// (Ishigami et al. 2007, Hegedus' bulldozing on the side face): Bekker's bulldozing on a face one
 			// contact length long and the sinkage deep, against the side slip, eased in over 0.3 m/s.
 			const float v_lat = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL];
-			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, sw.sinkage, 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
+			// Into a rut's wall the sidewall shoves the wall's whole height, not only what the tyre sank.
+			const float wall = v_lat > 0.0f ? sw.guide.z : sw.guide.y;
+			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, MAX(sw.sinkage, wall), 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
 			if (side != 0.0f) {
 				const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
 				const PxVec3 dF = lat * -side;
@@ -428,6 +435,16 @@ public:
 				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm.cross(dF);
 			}
 			sw.side_bulldozing = Math::abs(side);
+			// Resting across a rut's tilted floor or wall, the ground's reaction tips with it: load x slope down the
+			// tilt (rut wandering, as a road's camber), so the wheel slides back into the rut and climbing out of one
+			// needs the tyre's own side force to beat it.
+			const float wander = -load * CLAMP(sw.guide.x, -0.6f, 0.6f);
+			if (wander != 0.0f) {
+				const PxVec3 lat_w = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
+				const PxVec3 dW = lat_w * wander;
+				const PxVec3 arm_w = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+				f.forces[PxVehicleTireDirectionModes::eLATERAL] += dW;
+				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm_w.cross(dW);
 			}
 			sw.resistance = Math::abs(r);
 			sw.traction = ws.traction * sw.grip;
