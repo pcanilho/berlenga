@@ -35,6 +35,7 @@
 #include "core/templates/local_vector.h"
 #include "modules/ground/ground_lump_draw.h"
 #include "modules/ground/ground_lump_scan.h"
+#include "modules/ground/ground_lump_store.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -67,14 +68,7 @@ private:
 	float update_rate = 6.0f; // Hz
 	int seed = 0;
 
-	struct Clump {
-		Vector3 position; // on the snow, world
-		Basis basis; // rotation and a stretch of its own (unit size)
-		float size = 0.0f; // m, across
-		float buried = 0.0f; // m of new snow over it since it fell
-		float relief = 0.0f; // the print field's rim less dent under it when it landed (a later print that presses it in crushes it)
-		uint8_t shape = 0;
-	};
+	using Clump = GroundLump;
 	LocalVector<Clump> clumps;
 	uint32_t next_slot = 0; // ring buffer past max_clumps
 
@@ -87,6 +81,8 @@ private:
 
 	Ref<ArrayMesh> shapes[SHAPES];
 	GroundLumpDraw lump_draw;
+	GroundLumpStore store; // clumps kept in memory while the camera is away (as the print field keeps its tiles)
+	LocalVector<GroundLump> back;
 	Ref<Material> material;
 	bool draw_dirty = false;
 	int spawned_total = 0;
@@ -101,6 +97,7 @@ private:
 	void _scan(SnowSurface3D *p_surface, SnowCover3D *p_cover);
 	void _spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const Vector3 &p_at, const Vector2 &p_out, float p_size);
 	void _crush(SnowSurface3D *p_surface);
+	void _restore(SnowSurface3D *p_surface);
 	void _age(SnowSurface3D *p_surface, SnowCover3D *p_cover);
 	void _draw();
 
@@ -132,6 +129,7 @@ public:
 	void clear();
 	int get_clump_count() const { return int(clumps.size()); }
 	int get_spawned_total() const { return spawned_total; }
+	int get_parked_count() const { return store.get_parked_count(); }
 	// Main-thread cost of the updates so far (scan, crush, age, draw).
 	double get_update_msec_mean() const { return update_runs ? update_msec_total / update_runs : 0.0; }
 	double get_update_msec_worst() const { return update_msec_worst; }

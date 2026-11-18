@@ -50,6 +50,7 @@ constexpr float MAX_SIZE = 0.1f;
 constexpr float SINK = 0.15f; // of its size, sat into the snow it fell on
 constexpr float DEGREE_DAY = 0.004f; // m water a day per degree above 0 (snow, Hock 2003: 3-6 mm/d/C)
 constexpr float CLUMP_DENSITY = 400.0f; // kg/m3, sintered lumps
+constexpr float PARK_MARGIN = 4.0f; // m past the print field before a clump is kept away
 
 float _hash01(uint32_t p_h) {
 	p_h ^= p_h >> 16;
@@ -283,11 +284,10 @@ void SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const 
 
 void SnowClumps3D::_age(SnowSurface3D *p_surface, SnowCover3D *p_cover) {
 	const float hours = p_cover ? p_cover->get_last_step_hours() : 0.0f;
-	const Rect2 field = p_surface->get_deform_rect().grow(p_surface->get_deform_extent() * 0.5f);
 	for (uint32_t i = 0; i < clumps.size();) {
 		Clump &c = clumps[i];
-		bool gone = !field.has_point(Vector2(c.position.x, c.position.z));
-		if (!gone && p_cover && hours > 0.0f) {
+		bool gone = false;
+		if (p_cover && hours > 0.0f) {
 			// A thaw takes it from the outside in (degree days on the lump's surface, both sides).
 			const float t = p_cover->get_air_temperature_at(c.position);
 			if (t > 0.0f) {
@@ -310,8 +310,17 @@ void SnowClumps3D::_age(SnowSurface3D *p_surface, SnowCover3D *p_cover) {
 
 // A later print that presses a clump into the snow crushes it, and one that heaps over it hides it.
 void SnowClumps3D::_crush(SnowSurface3D *p_surface) {
+	// Past the field (and a margin, so it does not come and go): kept in the store while the camera is away.
+	const Rect2 keep = p_surface->get_deform_rect().grow(PARK_MARGIN);
 	for (uint32_t i = 0; i < clumps.size();) {
 		const Clump &c = clumps[i];
+		if (!keep.has_point(Vector2(c.position.x, c.position.z))) {
+			store.park(c);
+			clumps[i] = clumps[clumps.size() - 1];
+			clumps.resize(clumps.size() - 1);
+			draw_dirty = true;
+			continue;
+		}
 		// Only where the print field moved since the last look (new snow buries it in _age()).
 		const float h = scan.changed_at(c.position) ? scan.relief_at(c.position) : c.relief;
 		if (h < c.relief - 0.5f * c.size || h > c.relief + 0.6f * c.size) {
@@ -323,6 +332,27 @@ void SnowClumps3D::_crush(SnowSurface3D *p_surface) {
 		}
 	}
 	next_slot = clumps.is_empty() ? 0 : next_slot % clumps.size();
+}
+
+// The clumps kept while the camera was away, back where the field is again: as they lay if the print under them is
+// as it was (the field's cached tiles), gone if it changed or was let go; waited for while the field there is empty.
+void SnowClumps3D::_restore(SnowSurface3D *p_surface) {
+	back.clear();
+	store.take(p_surface->get_deform_rect(), back);
+	for (GroundLump &l : back) {
+		const float h = scan.relief_at(l.position);
+		if (h == 0.0f && Math::abs(l.relief) > 0.002f && l.tries < 30) {
+			l.tries++;
+			store.park(l);
+			continue;
+		}
+		if (Math::abs(h - l.relief) > 0.5f * l.size || int(clumps.size()) >= max_clumps) {
+			continue;
+		}
+		l.tries = 0;
+		clumps.push_back(l);
+		draw_dirty = true;
+	}
 }
 
 void SnowClumps3D::_draw() {
@@ -377,6 +407,7 @@ void SnowClumps3D::update_now() {
 	if (!clumps.is_empty()) {
 		_crush(surface);
 	}
+	_restore(surface);
 	if (cover && cover->get_update_count() != seen_cover_update) {
 		seen_cover_update = cover->get_update_count();
 		_age(surface, cover);
@@ -392,6 +423,7 @@ void SnowClumps3D::update_now() {
 
 void SnowClumps3D::clear() {
 	clumps.clear();
+	store.clear(false);
 	next_slot = 0;
 	scan.clear();
 	draw_dirty = true;
@@ -448,6 +480,7 @@ void SnowClumps3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SnowClumps3D::clear);
 	ClassDB::bind_method(D_METHOD("get_clump_count"), &SnowClumps3D::get_clump_count);
 	ClassDB::bind_method(D_METHOD("get_spawned_total"), &SnowClumps3D::get_spawned_total);
+	ClassDB::bind_method(D_METHOD("get_parked_count"), &SnowClumps3D::get_parked_count);
 	ClassDB::bind_method(D_METHOD("get_update_msec_mean"), &SnowClumps3D::get_update_msec_mean);
 	ClassDB::bind_method(D_METHOD("get_update_msec_worst"), &SnowClumps3D::get_update_msec_worst);
 	ClassDB::bind_method(D_METHOD("get_update_runs"), &SnowClumps3D::get_update_runs);

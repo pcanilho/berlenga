@@ -49,6 +49,7 @@ constexpr float MIN_SIZE = 0.008f; // m: smaller is the film and crumbs the grou
 constexpr float MAX_SIZE = 0.09f;
 constexpr float SINK = 0.12f; // of its size, pressed into the ground it fell on
 constexpr float STICKY = 0.3f; // soil this sticky holds together as clods (MudSpray's "mud")
+constexpr float PARK_MARGIN = 4.0f; // m past the print field before a clod is kept away
 
 float _hash01(uint32_t p_h) {
 	p_h ^= p_h >> 16;
@@ -318,10 +319,16 @@ void GroundClods3D::_remove(uint32_t p_index) {
 // A later print that presses a clod in or heaps over it crushes or hides it; water standing over it slakes it
 // (dry clay aggregates fall apart when wetted, Emerson 1967); far behind the camera it is let go.
 void GroundClods3D::_check(GroundSurface3D *p_surface, bool p_water) {
-	const Rect2 keep = p_surface->get_deform_rect().grow(p_surface->get_deform_extent() * 0.5f);
+	// Past the field (and a margin, so it does not come and go): kept in the store while the camera is away.
+	const Rect2 keep = p_surface->get_deform_rect().grow(PARK_MARGIN);
 	for (uint32_t i = 0; i < clods.size();) {
 		const Clod &c = clods[i];
-		bool gone = !keep.has_point(Vector2(c.position.x, c.position.z));
+		if (!keep.has_point(Vector2(c.position.x, c.position.z))) {
+			store.park(c);
+			_remove(i);
+			continue;
+		}
+		bool gone = false;
 		if (!gone && scan.changed_at(c.position)) {
 			// Only where the field moved since the last look: a print pressed it in or heaped over it.
 			const float h = scan.relief_at(c.position);
@@ -337,6 +344,27 @@ void GroundClods3D::_check(GroundSurface3D *p_surface, bool p_water) {
 		}
 	}
 	next_slot = clods.is_empty() ? 0 : next_slot % clods.size();
+}
+
+// The clods kept while the camera was away, back where the field is again: as they lay if the print under them is
+// as it was (the kept ruts), gone if it changed or was not kept; waited for while the field there is still empty.
+void GroundClods3D::_restore(GroundSurface3D *p_surface) {
+	back.clear();
+	store.take(p_surface->get_deform_rect(), back);
+	for (GroundLump &l : back) {
+		const float h = scan.relief_at(l.position);
+		if (h == 0.0f && Math::abs(l.relief) > 0.002f && l.tries < 30) {
+			l.tries++;
+			store.park(l);
+			continue;
+		}
+		if (Math::abs(h - l.relief) > 0.5f * l.size || int(clods.size()) >= max_clods) {
+			continue;
+		}
+		l.tries = 0;
+		clods.push_back(l);
+		draw_dirty = true;
+	}
 }
 
 void GroundClods3D::_draw() {
@@ -407,6 +435,9 @@ void GroundClods3D::update_now() {
 		}
 		_check(surface, water);
 	}
+	store.configure(surface->is_keeping_ruts() ? surface->get_ruts_path() : String(), "clods");
+	_restore(surface);
+	store.flush();
 	if (draw_dirty) {
 		_draw();
 	}
@@ -418,6 +449,7 @@ void GroundClods3D::update_now() {
 
 void GroundClods3D::clear() {
 	clods.clear();
+	store.clear(false);
 	next_slot = 0;
 	scan.clear();
 	draw_dirty = true;
@@ -474,6 +506,7 @@ void GroundClods3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &GroundClods3D::clear);
 	ClassDB::bind_method(D_METHOD("get_clod_count"), &GroundClods3D::get_clod_count);
 	ClassDB::bind_method(D_METHOD("get_spawned_total"), &GroundClods3D::get_spawned_total);
+	ClassDB::bind_method(D_METHOD("get_parked_count"), &GroundClods3D::get_parked_count);
 	ClassDB::bind_method(D_METHOD("get_landed_total"), &GroundClods3D::get_landed_total);
 	ClassDB::bind_method(D_METHOD("get_update_msec_mean"), &GroundClods3D::get_update_msec_mean);
 	ClassDB::bind_method(D_METHOD("get_update_msec_worst"), &GroundClods3D::get_update_msec_worst);
