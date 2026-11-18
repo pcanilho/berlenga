@@ -534,7 +534,25 @@
 		<constant name="PRESET_SAGE_ROCKROSE" value="82" enum="Preset">
 			Sage-leaved rockrose ([i]Cistus salviifolius[/i]): a low, sprawling shrub of wrinkled grey-green leaves and white, crumpled-silk flowers with yellow stamens on long stalks, April and May; woody capsules after. In the summer drought the leaves fold, grey and partly fall.
 		</constant>
-		<constant name="PRESET_MAX" value="83" enum="Preset">
+		<constant name="PRESET_CORN_POPPY" value="83" enum="Preset">
+			Corn poppy (Papaver rhoeas): an arable weed of field margins with scarlet flowers.
+		</constant>
+		<constant name="PRESET_CORNFLOWER" value="84" enum="Preset">
+			Cornflower (Centaurea cyanus): an arable weed of field margins with blue flower heads.
+		</constant>
+		<constant name="PRESET_MAYWEED" value="85" enum="Preset">
+			Scentless mayweed (Tripleurospermum inodorum): an arable weed with white daisy heads and finely cut leaves.
+		</constant>
+		<constant name="PRESET_COW_PARSLEY" value="86" enum="Preset">
+			Cow parsley (Anthriscus sylvestris): the verge umbellifer with lacy white umbels in spring.
+		</constant>
+		<constant name="PRESET_PINCUSHION_MOSS" value="87" enum="Preset">
+			Pincushion moss (Leucobryum glaucum): tight, pale glaucous domed cushions 4 to 20 cm across on acid oak, beech and pine floors.
+		</constant>
+		<constant name="PRESET_GROUND_IVY" value="88" enum="Preset">
+			Ground ivy (Glechoma hederacea): creeping runners with pairs of kidney-shaped leaves on long stalks, a mat a few centimetres deep; short shoots with blue-violet flowers in spring.
+		</constant>
+		<constant name="PRESET_MAX" value="89" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
