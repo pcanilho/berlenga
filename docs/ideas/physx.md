@@ -1330,6 +1330,30 @@ height of the front's flames with smoke shed off its top. Left: the
 column's vorticity is set by its sources, not grown by Flow from a sheared
 wind field, and terrain lee slopes are not yet a birth site.
 
+### Next-round options (card, 18 Nov late)
+
+1. Burning pieces keep their flames. After a burning wall breaks, the
+   Flow sources stay where the intact shape stood. Here: the burnable
+   follows the destructible's live pieces (their AABBs and char state) and
+   moves its emitters with them, so a falling plank burns as it falls
+   and smoulders where it lands (as Teardown and BeamNG keep fire on
+   debris).
+2. River current drags flags, sheets and nets. Free PhysXCloth3D does not
+   yet read the water contract. Here: the same Morison drag and reduced
+   weight as worn clothing, per particle under WorldContracts' water, so a
+   sheet dipped in a river streams downstream.
+3. Wind lifts ash after a fire. Burnt grass leaves a light ash layer (a
+   few hundred g/m2) that blows off in winds above about 4 m/s (Wagenbrenner
+   et al. 2013, post-fire ash emission). Here: the char map seeds a heavy
+   dust (negative smoke_buoyancy) in Flow where wind is strong over fresh
+   ash, thinning the ash each gust, so a burnt hillside smokes grey in
+   the wind for hours.
+4. Fire whirls on lee slopes. Whirls also form in the lee of ridges where
+   the wind separates (Forthofer and Goodrick 2011; Sharples et al. 2012
+   on vorticity-driven lateral spread). Here: births also where the
+   terrain wind (WeatherMap3D, terrain wind) turns back behind a ridge,
+   and those whirls run along the slope, spreading the fire sideways.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
