@@ -3423,6 +3423,28 @@
    "topic": ""
   },
   {
+   "name": "Falling rain",
+   "settings": [
+    "RainFall3D"
+   ],
+   "note": "",
+   "what": "drops sized and falling like real rain, slanting in the wind, with splashes, haze, and drips from leaves and eaves after it stops.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Rain or snow by height",
+   "settings": [
+    "WeatherMap3D.get_rain_share_at()"
+   ],
+   "note": "",
+   "what": "rain turns to sleet and then snow as the air cools with height.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Lightning and thunder",
    "settings": [
     "WeatherLightning3D"
@@ -3487,7 +3509,30 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up.",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Raindrop rings",
+   "settings": [
+    "rain_rings"
+   ],
+   "note": "",
+   "what": "rings on sea, lakes, pools, rivers and puddles; heavy rain dulls reflections.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Runoff",
+   "settings": [
+    "WeatherRunoff3D",
+    "PhysXRiver3D.rain_response"
+   ],
+   "note": "",
+   "what": "rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
