@@ -7,6 +7,7 @@
 		Burns the ground under it over a [member size] area, as wildfire models do (the WRF-SFIRE surface model): a fire front moves at Rothermel's rate of spread for the [member fuel_type], faster downwind and uphill, slowed by [member fuel_moisture] and stopped when the fuel is too wet. A fire in the wind grows into an ellipse whose length-to-width ratio follows the wind speed (Anderson 1983), as fire spread tools such as FARSITE draw it.
 		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map. Plants read [code]fire_state_map[/code] over the same rect (red: share of the fuel burnt, green: glow, blue: the peak flame length over 8 m, alpha: the peak crown scorch height over 24 m, from Van Wagner 1973): [GrassField3D] blades burn down to charred stubble, [PlantGenerator] plants char under the flame and scorch brown above it, and [TreeGenerator] bark chars to the flame length and leaves brown up to the scorch height.
 		With [member spotting], burning fuel throws up glowing firebrands that the plume lofts and the wind carries; where one lands on unburnt fuel of any [PhysXFireSpread3D] it may start a spot fire ahead of the front.
+		Water from a [PhysXParticleFluid3D] lying on the ground (a bucket, a hose, a burst tank) soaks the fuel under it: burning cells go out and the front stops at the wet ground ([method get_doused_cells]).
 		Start a fire with [method ignite], or set [member heat_source] so that hot gas from another [PhysXFlow3D] (a campfire, a burning wreck) sets the ground alight.
 	</description>
 	<tutorials>
@@ -92,6 +93,12 @@
 			<return type="int" />
 			<description>
 				Firebrands in the air now.
+			</description>
+		</method>
+		<method name="get_doused_cells" qualifiers="const">
+			<return type="int" />
+			<description>
+				Burning cells put out so far by water from a [PhysXParticleFluid3D] (a bucket, a hose, a burst tank). Liquid water lying on the ground soaks the fine fuel under it; a burning cell whose fuel goes over the moisture of extinction goes out, and wet cells ahead of the front stop it.
 			</description>
 		</method>
 		<method name="get_flow" qualifiers="const">

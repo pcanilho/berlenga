@@ -119,6 +119,14 @@
 				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
 			</description>
 		</method>
+		<method name="get_crowns_near" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				The placed crowns reaching within [param radius] of [param position] (horizontal distance), one [Dictionary] each: [code]position[/code] (the stem's foot, world), [code]preset[/code] (the species' [code]preset[/code] meta, or -1), [code]height[/code], [code]crown_base[/code] and [code]crown_radius[/code] in metres, scaled by the instance. Height and crown base come from the species' first mesh's [code]crown[/code] meta (height, crown base, crown radius, unscaled) when it has one, else the crown's top and a third of it.
+			</description>
+		</method>
 		<method name="get_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />

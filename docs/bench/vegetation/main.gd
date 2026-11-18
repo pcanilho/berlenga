@@ -557,6 +557,13 @@ func _checks() -> void:
 	_check("shade: core of a crown", under_t >= 0.89, under_t)
 	_check("shade: bushes only under crowns", sunny == 0 and field.get_placements(1).size() > 20 and field.get_placements(1).size() < bushes_open, [sunny, field.get_placements(1).size(), bushes_open])
 	_check("shade: trees unchanged", field.get_placements(0) == first, field.get_placements(0).size())
+	# Crowns near a point (falling leaves): the tree at t0 is listed with its crown.
+	var near_c: Array = field.get_crowns_near(t0, 1.0)
+	var found := false
+	for d in near_c:
+		if Vector2(d.position.x, d.position.z).distance_to(Vector2(t0.x, t0.z)) < 0.01 and d.crown_radius > 0.0 and d.height > 0.0 and d.crown_base < d.height:
+			found = true
+	_check("crowns near: the tree over a point, with its crown", found and field.get_crowns_near(t0 + Vector3(500, 0, 500), 1.0).is_empty(), [near_c.size()])
 	# Light: each ranged plant carries the light it grew in (VegetationLight), which tints it.
 	bush_sp.visibility_range = 30.0
 	field.populate()

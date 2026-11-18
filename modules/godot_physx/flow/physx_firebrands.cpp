@@ -30,6 +30,7 @@
 
 #include "physx_firebrands.h"
 
+#include "physx_burnable_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
 
@@ -109,8 +110,16 @@ void PhysXFirebrands::release(float p_count, const LocalVector<Release> &p_point
 	if (total <= 0.0f) {
 		return;
 	}
-	while (carry >= 1.0f && (int)brands.size() < MAX_BRANDS) {
-		carry -= 1.0f;
+	// Near what can fly at once each new one stands for more (a crown fire throws thousands), back to one as they land.
+	const float fill = float(brands.size()) / MAX_BRANDS;
+	if (fill > 0.8f) {
+		stand_for = MIN(stand_for * 1.03f, 1000.0f);
+	} else if (fill < 0.5f) {
+		stand_for = MAX(stand_for * 0.97f, 1.0f);
+	}
+	const float per = Math::floor(stand_for);
+	while (carry >= per && (int)brands.size() < MAX_BRANDS) {
+		carry -= per;
 		float pick = _rand() * total;
 		uint32_t k = 0;
 		while (k + 1 < p_points.size() && pick > p_points[k].weight) {
@@ -129,9 +138,10 @@ void PhysXFirebrands::release(float p_count, const LocalVector<Release> &p_point
 		const float d = 0.002f + 0.008f * _rand() * _rand();
 		b.vt = 2.0f + 400.0f * d + _rand();
 		b.life = 6.0f + 4500.0f * d * (0.7f + 0.6f * _rand());
+		b.n = per;
 		brands.push_back(b);
 	}
-	carry = MIN(carry, 4.0f);
+	carry = MIN(carry, MAX(4.0f, 4.0f * per));
 }
 
 int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p_wind, float p_delta, float p_glow_energy) {
@@ -188,7 +198,7 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 		bool gone = b.age >= b.life || b.p.y < from.y - 500.0f;
 		bool hit = false;
 		Vector3 at;
-		if (!gone && space && b.v.y < 0.0f) {
+		if (!gone && space && (b.v.y < 0.0f || b.p.y - from.y < 0.5f * (b.p - from).length())) { // falling, or flying flat into a wall
 			PhysicsDirectSpaceState3D::RayParameters rp;
 			rp.from = from;
 			rp.to = b.p;
@@ -196,6 +206,14 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 			if (space->intersect_ray(rp, rr)) {
 				hit = true;
 				at = rr.position;
+				// Onto something that burns: the brand rests there and heats it (a woodpile, a fence, a deck).
+				if (PhysXBurnable3D *pb = PhysXBurnable3D::find_by_collider(rr.collider)) {
+					pb->add_brand(rr.position, rr.normal, b.n * Math::sqrt(MAX(1.0f - b.age / b.life, 0.0f)));
+					landed++;
+					brands[i] = brands[brands.size() - 1];
+					brands.resize(brands.size() - 1);
+					continue;
+				}
 			}
 		}
 		if (!gone && !hit && under && b.p.y <= ground) {
@@ -211,7 +229,8 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 			if (target && target->get_char_at(at) < 0.05f && target->get_intensity_at(at) <= 0.0f) {
 				const float m = target->get_moisture_at(at);
 				if (m < target->get_moisture_of_extinction()) {
-					const float p = ignition_probability(m, target->_air_temperature()) * Math::sqrt(left) * 0.7f;
+					const float p1 = ignition_probability(m, target->_air_temperature()) * Math::sqrt(left) * 0.7f;
+					const float p = 1.0f - Math::pow(1.0f - p1, b.n); // any of the brands it stands for
 					if (_rand() < p) {
 						target->ignite(at, 0.2f);
 						started++;
@@ -306,6 +325,7 @@ void fragment() {
 void PhysXFirebrands::clear() {
 	brands.clear();
 	carry = 0.0f;
+	stand_for = 1.0f;
 	if (mmi) {
 		mmi->set_visible(false);
 	}

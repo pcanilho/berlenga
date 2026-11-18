@@ -1370,7 +1370,7 @@
     "GroundSurface3D.swash_marks"
    ],
    "note": "",
-   "what": "each wave leaves a scalloped line of dark fine sand at its highest reach, and higher waves smooth older lines.",
+   "what": "each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3677,7 +3677,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3700,7 +3700,7 @@
     "embers"
    ],
    "note": "",
-   "what": "wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that start new fires.",
+   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3724,6 +3724,18 @@
    ],
    "note": "",
    "what": "burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Crown fire",
+   "settings": [
+    "PhysXFireSpread3D.crown_fire",
+    "foliar_moisture"
+   ],
+   "note": "",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
