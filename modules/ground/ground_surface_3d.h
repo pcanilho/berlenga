@@ -283,6 +283,7 @@ private:
 		const GroundSurface3D *surface = nullptr;
 		GroundDeformField::Column column(float p_x, float p_z) const override;
 		float sinkage(const GroundDeformField::Body &p_body) const override;
+		bool skips(const Node3D *p_node) const override { return p_node->has_meta(SNAME("ground_self_pressing")); }
 	};
 
 	// The ground lattice over the field, one sample every ground_spacing, and its cells.

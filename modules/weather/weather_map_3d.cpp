@@ -244,8 +244,9 @@ void WeatherMap3D::_ease_base(double p_dt) {
 	cur_cloud_cover = Math::lerp(cur_cloud_cover, cloud_cover, a);
 	cur_cloud_type = Math::lerp(cur_cloud_type, cloud_type, a);
 	cur_rain_rate = Math::lerp(cur_rain_rate, rain_rate, a);
-	cur_temperature = Math::lerp(cur_temperature, temperature, a);
+	cur_temperature = Math::lerp(cur_temperature, _target_temperature(), a);
 	cur_humidity = Math::lerp(cur_humidity, humidity, a);
+	_update_air();
 }
 
 void WeatherMap3D::snap_to_settings() {
@@ -276,8 +277,126 @@ void WeatherMap3D::_set_base_to_settings() {
 	cur_cloud_cover = cloud_cover;
 	cur_cloud_type = cloud_type;
 	cur_rain_rate = rain_rate;
-	cur_temperature = temperature;
+	cur_temperature = _target_temperature();
 	cur_humidity = humidity;
+	_update_air();
+}
+
+// The air through the year and the day (docs/ideas/world-links.md, link 1).
+// The day's mean: with a climate, its mean for the date at the ground height (WeatherSeason) plus the anomaly the
+// game sets; else the temperature setting.
+float WeatherMap3D::_target_temperature() const {
+	if (air_follows_climate && climate.is_valid()) {
+		return WeatherSeason::day_temperature(_season_climate(), ground_height, float(get_day_of_year())) + season_anomaly;
+	}
+	return temperature;
+}
+
+// Parton and Logan (1981), "A model for diurnal variation in soil and air temperature": from the minimum c hours
+// after sunrise a sine to the peak, T = Tmin + (Tmax - Tmin) sin(pi m / (Y + 2a)), then from sunset an
+// exponential fall, here scaled to land on the minimum again (their form leaves a step at dawn). Their fit
+// for air at 1.5 m: a = 1.86 h, b = 2.2, c = -0.17 h. Polar day and night: a sine peaking at 14 h.
+float WeatherMap3D::diurnal_shape(float p_solar_hour, float p_day_length) {
+	const float a = 1.86f, b = 2.2f, c = -0.17f;
+	const float y = p_day_length;
+	if (y >= 23.5f || y <= 0.5f) {
+		return 0.5f + 0.5f * Math::cos(float(Math::TAU) * (p_solar_hour - 14.0f) / 24.0f);
+	}
+	const float rise = 12.0f - 0.5f * y;
+	const float lit = y - c; // hours from the minimum to sunset
+	const float m = Math::fposmod(p_solar_hour - (rise + c), 24.0f);
+	const float at_set = Math::sin(float(Math::PI) * lit / (y + 2.0f * a));
+	if (m <= lit) {
+		return Math::sin(float(Math::PI) * m / (y + 2.0f * a));
+	}
+	const float night = 24.0f - lit;
+	const float e = Math::exp(-b);
+	return at_set * (Math::exp(-b * (m - lit) / night) - e) / (1.0f - e);
+}
+
+void WeatherMap3D::_update_air() {
+	cur_air_temperature = cur_temperature;
+	cur_air_humidity = cur_humidity;
+	cur_sun_sine = 0.0f;
+	sun_known = false;
+	const Node *clock = (is_inside_tree() && has_node(sky_clock)) ? get_node(sky_clock) : nullptr;
+	// The sun: the weather's light (as the cloud shadows use), else the clock's.
+	const DirectionalLight3D *sun = (is_inside_tree() && !sun_light.is_empty()) ? Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light)) : nullptr;
+	if (sun && sun->is_visible_in_tree()) {
+		cur_sun_sine = MAX(float(sun->get_global_basis().get_column(2).normalized().y), 0.0f);
+		sun_known = true;
+	} else if (clock) {
+		cur_sun_sine = MAX(Math::sin(Math::deg_to_rad(float(const_cast<Node *>(clock)->call(SNAME("get_sun_altitude"))))), 0.0f);
+		sun_known = true;
+	}
+	if (!air_daily_cycle || clock == nullptr) {
+		return;
+	}
+	// Local solar time from the clock (the equation of time, under 17 minutes, left out).
+	const float hour = float(clock->get(SNAME("time_of_day"))) - float(clock->get(SNAME("utc_offset"))) + float(clock->get(SNAME("longitude"))) / 15.0f;
+	const float y = WeatherSeason::photoperiod(float(clock->get(SNAME("latitude"))), get_day_of_year());
+	if (Math::abs(y - diurnal_cache_day_length) > 0.01f) {
+		// The cycle's own daily mean, so that the mean stays the day's.
+		float sum = 0.0f;
+		for (int i = 0; i < 96; i++) {
+			sum += diurnal_shape((i + 0.5f) * 0.25f, y);
+		}
+		diurnal_cache_mean = sum / 96.0f;
+		diurnal_cache_day_length = y;
+	}
+	// Clouds narrow the range: overcast days have about half the clear-sky range, wet ones less again (Dai,
+	// Trenberth and Karl 1999).
+	const float range = daily_temperature_range * (1.0f - 0.5f * CLAMP(cur_cloud_cover, 0.0f, 1.0f)) * (1.0f - 0.3f * Math::smoothstep(0.0f, 2.0f, cur_rain_rate));
+	cur_air_temperature = cur_temperature + range * (diurnal_shape(Math::fposmod(hour, 24.0f), y) - diurnal_cache_mean);
+	// The vapour stays through the day (the dew point holds; Monteith and Unsworth): the humidity rises as the
+	// air cools at night and falls in the afternoon.
+	cur_air_humidity = CLAMP(cur_humidity * saturation_vapour_pressure(cur_temperature) / saturation_vapour_pressure(cur_air_temperature), 0.0f, 1.0f);
+}
+
+// Net radiation on a wet surface (W/m2), FAO-56 (Allen et al. 1998): the shortwave the surface keeps (albedo
+// 0.1 when wet) under the cloud shadow (a shadowed spot keeps the diffuse quarter) or, without a shadow bake,
+// the cover (Kasten and Czeplak 1980), and under the canopy's closure; less the net longwave loss (eq. 39,
+// the cloud factor from the same sky), which a canopy overhead mostly returns.
+float WeatherMap3D::_net_radiation(const CellPass &p_pass, Vector3 p_position, float p_cover) const {
+	const float cover = CLAMP(p_cover, 0.0f, 1.0f);
+	const float clear_share = 1.0f - 0.75f * Math::pow(cover, 3.4f);
+	float rs = 0.0f;
+	if (p_pass.shortwave_clear > 0.0f) {
+		const float through = p_pass.use_shadow
+				? 0.25f + 0.75f * _sample_shadow(shadow_values, shadow_res, shadow_size, shadow_axis_u, shadow_axis_v, p_pass.shadow_corner, p_position)
+				: clear_share;
+		rs = p_pass.shortwave_clear * through;
+	}
+	float canopy = 0.0f;
+	if (shelter_enabled) {
+		float cell[4];
+		shelter.sample(Vector2(p_position.x, p_position.z), cell);
+		if (cell[0] > 0.0f) {
+			canopy = CLAMP(1.0f - Math::exp(-0.5f * MAX(cell[1], 0.0f)), 0.0f, 1.0f);
+		}
+	}
+	const float tk = p_pass.air_temperature + 273.16f;
+	const float ea = saturation_vapour_pressure(p_pass.air_temperature) * 0.1f * CLAMP(p_pass.air_humidity, 0.0f, 1.0f); // kPa
+	const float lw = 5.670e-8f * tk * tk * tk * tk * (0.34f - 0.14f * Math::sqrt(ea)) * (1.35f * clear_share - 0.35f);
+	return ((1.0f - 0.1f) * rs - lw) * (1.0f - canopy);
+}
+
+float WeatherMap3D::get_air_dew_point() const {
+	// Magnus inverted (Alduchov and Eskridge 1996).
+	const float g = Math::log(MAX(cur_air_humidity, 0.01f)) + 17.62f * cur_air_temperature / (243.12f + cur_air_temperature);
+	return 243.12f * g / (17.62f - g);
+}
+
+// Penman (1948): E = (D Rn + g Ea) / (D + g), D the slope of the saturation curve and g the psychrometric
+// constant (kPa/K), Rn the net radiation as evaporation (1 mm/h of water takes 681 W/m2, latent heat 2.45
+// MJ/kg) and Ea the air's drying power, the wind function above. Rn below zero (a clear night) gives no
+// drying from it; what it deposits is dew.
+float WeatherMap3D::penman_evaporation(float p_net_radiation, float p_wind_2m, float p_celsius, float p_humidity) {
+	const float es = saturation_vapour_pressure(p_celsius) * 0.1f; // kPa
+	const float delta = 4098.0f * es / ((p_celsius + 237.3f) * (p_celsius + 237.3f));
+	const float gamma = 0.0665f;
+	const float ea = evaporation_rate(p_wind_2m, p_celsius, p_humidity);
+	return (delta * MAX(p_net_radiation, 0.0f) / 681.0f + gamma * ea) / (delta + gamma);
 }
 
 Vector3 WeatherMap3D::_follow_position() const {
@@ -357,7 +476,18 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.film = cell_film.ptrw();
 	c.puddle = cell_puddle.ptrw();
 	// Snow does not wet surfaces as it falls: only the rain share reaches the film.
-	c.rain_fraction = rain_fraction(cur_temperature, cur_humidity);
+	c.rain_fraction = rain_fraction(cur_air_temperature, cur_air_humidity);
+	c.air_temperature = cur_air_temperature;
+	c.air_humidity = cur_air_humidity;
+	// The sun on the wet surfaces: FAO-56's clear-sky shortwave, Rso = 0.75 Ra, here on level ground with the
+	// sun's elevation (Allen et al. 1998, eq. 37).
+	// Without a sun light or a clock nothing says how much sun there is: the drying stays the air's alone.
+	c.sun = sun_drying && sun_known;
+	c.shortwave_clear = 0.75f * 1361.0f * cur_sun_sine;
+	c.use_shadow = sun_drying && cur_sun_sine > 0.0f && shadow_res >= 2 && shadow_values.size() == shadow_res * shadow_res;
+	if (c.use_shadow) {
+		c.shadow_corner = _shadow_corner_now();
+	}
 	_gather_water_sources();
 	c.inflow = cell_inflow.ptr();
 	// Rows in parallel: each cell depends only on the weather and its own history.
@@ -512,8 +642,8 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// drain, then evaporation takes the puddles and then the film (Penman; near-saturated air while
 		// it rains).
 		if (c.dt_h > 0.0f) {
-			const float rh = r > 0.1f ? MAX(cur_humidity, 0.97f) : cur_humidity;
-			const float evap = evaporation_rate(w.length() * c.to_2m, cur_temperature, rh) * c.dt_h;
+			const float rh = r > 0.1f ? MAX(c.air_humidity, 0.97f) : c.air_humidity;
+			const float evap = (c.sun ? penman_evaporation(_net_radiation(c, Vector3(p.x, ground_height, p.y), cover), w.length() * c.to_2m, c.air_temperature, rh) : evaporation_rate(w.length() * c.to_2m, c.air_temperature, rh)) * c.dt_h;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
 			const float in = c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction;
 			float f = c.film[i] + in * c.dt_h;
@@ -818,7 +948,7 @@ void WeatherMap3D::_notification(int p_what) {
 			const double wdt = dt * time_scale;
 			_advance(wdt, dt);
 			// The live air's departure from the climate, averaged over about a month of weather time.
-			if (climate.is_valid() && wdt > 0.0) {
+			if (climate.is_valid() && wdt > 0.0 && !air_follows_climate) {
 				const WeatherSeason::Climate c = _season_climate();
 				const float clim = WeatherSeason::day_temperature(c, ground_height, float(get_day_of_year()));
 				season_anomaly += (cur_temperature - clim - season_anomaly) * float(1.0 - Math::exp(-wdt / (30.0 * 86400.0)));
@@ -1167,6 +1297,24 @@ void WeatherMap3D::set_temperature(float p_celsius) {
 	temperature = CLAMP(p_celsius, -60.0f, 60.0f);
 }
 
+void WeatherMap3D::set_air_follows_climate(bool p_enabled) {
+	air_follows_climate = p_enabled;
+}
+
+void WeatherMap3D::set_air_daily_cycle(bool p_enabled) {
+	air_daily_cycle = p_enabled;
+	_update_air();
+}
+
+void WeatherMap3D::set_daily_temperature_range(float p_kelvin) {
+	daily_temperature_range = CLAMP(p_kelvin, 0.0f, 40.0f);
+	_update_air();
+}
+
+void WeatherMap3D::set_sun_drying(bool p_enabled) {
+	sun_drying = p_enabled;
+}
+
 void WeatherMap3D::set_humidity(float p_humidity) {
 	humidity = CLAMP(p_humidity, 0.0f, 1.0f);
 }
@@ -1252,10 +1400,28 @@ float WeatherMap3D::get_contact_drying_time() const {
 		return 0.0f;
 	}
 	auto saturation = [](float p_c) { return 6.112f * Math::exp(17.62f * p_c / (243.12f + p_c)); };
-	const float deficit = saturation(cur_temperature) * (1.0f - CLAMP(cur_humidity, 0.0f, 0.98f));
+	const float deficit = saturation(cur_air_temperature) * (1.0f - CLAMP(cur_air_humidity, 0.0f, 0.98f));
 	const float ref_deficit = saturation(20.0f) * 0.5f;
 	const float wind = (1.0f + 0.54f * cur_wind_speed) / (1.0f + 0.54f * 2.0f);
-	return contact_wetness_dry_time * ref_deficit / MAX(deficit * wind, 1e-3f);
+	float t = contact_wetness_dry_time * ref_deficit / MAX(deficit * wind, 1e-3f);
+	if (sun_drying && cur_sun_sine > 0.0f) {
+		// The sun speeds it by Penman's combination over the same air without it (link 2), at the follow point.
+		CellPass c;
+		c.sun = true;
+		c.shortwave_clear = 0.75f * 1361.0f * cur_sun_sine;
+		c.use_shadow = shadow_res >= 2 && shadow_values.size() == shadow_res * shadow_res;
+		if (c.use_shadow) {
+			c.shadow_corner = _shadow_corner_now();
+		}
+		c.air_temperature = cur_air_temperature;
+		c.air_humidity = cur_air_humidity;
+		const Vector3 at = _follow_position();
+		const float u2 = cur_wind_speed * 0.75f;
+		const float lit = penman_evaporation(_net_radiation(c, at, get_cloud_cover_at(at)), u2, cur_air_temperature, MIN(cur_air_humidity, 0.98f));
+		const float shade = penman_evaporation(0.0f, u2, cur_air_temperature, MIN(cur_air_humidity, 0.98f));
+		t *= shade / MAX(lit, 1e-6f);
+	}
+	return t;
 }
 
 void WeatherMap3D::_update_contact(double p_weather_dt) {
@@ -1821,6 +1987,19 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_temperature"), &WeatherMap3D::get_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_temperature"), &WeatherMap3D::get_air_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_humidity"), &WeatherMap3D::get_air_humidity);
+	ClassDB::bind_method(D_METHOD("get_air_mean_temperature"), &WeatherMap3D::get_air_mean_temperature);
+	ClassDB::bind_method(D_METHOD("get_air_dew_point"), &WeatherMap3D::get_air_dew_point);
+	ClassDB::bind_method(D_METHOD("get_sun_sine"), &WeatherMap3D::get_sun_sine);
+	ClassDB::bind_method(D_METHOD("set_air_follows_climate", "enabled"), &WeatherMap3D::set_air_follows_climate);
+	ClassDB::bind_method(D_METHOD("get_air_follows_climate"), &WeatherMap3D::get_air_follows_climate);
+	ClassDB::bind_method(D_METHOD("set_air_daily_cycle", "enabled"), &WeatherMap3D::set_air_daily_cycle);
+	ClassDB::bind_method(D_METHOD("get_air_daily_cycle"), &WeatherMap3D::get_air_daily_cycle);
+	ClassDB::bind_method(D_METHOD("set_daily_temperature_range", "kelvin"), &WeatherMap3D::set_daily_temperature_range);
+	ClassDB::bind_method(D_METHOD("get_daily_temperature_range"), &WeatherMap3D::get_daily_temperature_range);
+	ClassDB::bind_method(D_METHOD("set_sun_drying", "enabled"), &WeatherMap3D::set_sun_drying);
+	ClassDB::bind_method(D_METHOD("get_sun_drying"), &WeatherMap3D::get_sun_drying);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("diurnal_shape", "solar_hour", "day_length"), &WeatherMap3D::diurnal_shape);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("penman_evaporation", "net_radiation", "wind_2m", "celsius", "humidity"), &WeatherMap3D::penman_evaporation);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("rain_fraction", "celsius", "humidity"), &WeatherMap3D::rain_fraction);
 	ClassDB::bind_method(D_METHOD("get_canopy_height_at", "position"), &WeatherMap3D::get_canopy_height_at);
 	ClassDB::bind_method(D_METHOD("get_canopy_closure_at", "position"), &WeatherMap3D::get_canopy_closure_at);
@@ -2008,6 +2187,10 @@ void WeatherMap3D::_bind_methods() {
 	ADD_GROUP("Air and Surfaces", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "temperature", PROPERTY_HINT_RANGE, "-60,60,0.1,suffix:C"), "set_temperature", "get_temperature");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "humidity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_humidity", "get_humidity");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "air_follows_climate"), "set_air_follows_climate", "get_air_follows_climate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "air_daily_cycle"), "set_air_daily_cycle", "get_air_daily_cycle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "daily_temperature_range", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:K"), "set_daily_temperature_range", "get_daily_temperature_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_drying"), "set_sun_drying", "get_sun_drying");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");

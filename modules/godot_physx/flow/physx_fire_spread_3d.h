@@ -77,6 +77,10 @@ private:
 	LocalVector<float> wet; // moisture over fuel_moisture, per cell (patches, fuel_map green)
 	Vector3 wind; // world wind when no weather map gives one
 	bool use_weather_wind = true;
+	bool lightning_ignition = true; // storm lightning (WeatherLightning3D) can light the fuel it strikes
+	uint64_t lightning_seen = 0;
+	int lightning_ignitions = 0;
+	void _ignite_from_lightning();
 	float spread_scale = 1.0f; // speeds the front up or down (a game's pace)
 	NodePath heat_source; // a PhysXFlow3D whose hot gas ignites the ground under it
 	float ignition_temperature = 0.35f; // in the heat source's temperature units
@@ -217,6 +221,12 @@ public:
 	Vector3 get_wind() const { return wind; }
 	void set_use_weather_wind(bool p_v) { use_weather_wind = p_v; }
 	bool is_using_weather_wind() const { return use_weather_wind; }
+	void set_lightning_ignition(bool p_v) { lightning_ignition = p_v; }
+	bool is_lightning_ignition() const { return lightning_ignition; }
+	int get_lightning_ignition_count() const { return lightning_ignitions; }
+	// Chance that a ground strike with p_continuing seconds of continuing current lights fuel at p_moisture of
+	// p_extinction (both fractions of dry weight).
+	static float lightning_ignition_chance(float p_continuing, float p_moisture, float p_extinction);
 	void set_spread_scale(float p_v) { spread_scale = MAX(p_v, 0.0f); }
 	float get_spread_scale() const { return spread_scale; }
 	void set_heat_source(const NodePath &p_path) { heat_source = p_path; }

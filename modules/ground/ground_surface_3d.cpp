@@ -5411,6 +5411,7 @@ GroundSurface3D::GroundSurface3D() {
 	deform_groups.push_back("ground_deform");
 	deform_groups.push_back("snow_deform");
 	deform_groups.push_back("grass_trample");
+	deform_groups.push_back("world_contact"); // every body any system should feel (docs/ideas/world-links.md)
 }
 
 GroundSurface3D::~GroundSurface3D() {

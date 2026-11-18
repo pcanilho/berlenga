@@ -1410,6 +1410,7 @@ SnowSurface3D::SnowSurface3D() {
 	gpu_sink.surface = this;
 	deform_groups.push_back("snow_deform");
 	deform_groups.push_back("grass_trample");
+	deform_groups.push_back("world_contact"); // every body any system should feel (docs/ideas/world-links.md)
 	shader.instantiate();
 	shader->set_code(SNOW_SURFACE_SHADER);
 	material.instantiate();

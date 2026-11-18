@@ -36,6 +36,7 @@
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
+#include "core/templates/hashfuncs.h"
 #include "core/templates/sort_array.h"
 #include "scene/3d/decal.h"
 #include "scene/resources/3d/world_3d.h"
@@ -44,6 +45,7 @@
 
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_lightning_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #endif
 
@@ -294,6 +296,50 @@ void PhysXFireSpread3D::_redistance() {
 			}
 		}
 	}
+}
+
+// Lightning fires (docs/ideas/world-links.md, link 4). Fuels are lit by the long continuing current that follows
+// some return strokes, not by the strokes themselves (Fuquay et al. 1972: continuing currents over about 40 ms;
+// about a third of ground flashes carry one), and only fuel dry enough takes: the chance falls with the fuel's
+// moisture towards its moisture of extinction (Latham and Schlieter 1989's ignition trials; Anderson 2002's
+// lightning-fire ignition model). A strike on a tree lights the litter at its foot as the current runs down
+// the trunk into it.
+float PhysXFireSpread3D::lightning_ignition_chance(float p_continuing, float p_moisture, float p_extinction) {
+	if (p_continuing < 0.04f || p_extinction <= 0.0f) {
+		return 0.0f;
+	}
+	const float dry = CLAMP(1.0f - p_moisture / p_extinction, 0.0f, 1.0f);
+	return Math::smoothstep(0.04f, 0.2f, p_continuing) * dry * dry;
+}
+
+void PhysXFireSpread3D::_ignite_from_lightning() {
+#ifdef MODULE_WEATHER_ENABLED
+	if (!lightning_ignition) {
+		lightning_seen = WeatherLightning3D::get_last_ground_strike_serial();
+		return;
+	}
+	LocalVector<WeatherLightning3D::GroundStrike> strikes;
+	WeatherLightning3D::get_ground_strikes_after(lightning_seen, strikes);
+	lightning_seen = WeatherLightning3D::get_last_ground_strike_serial();
+	const FuelModel &m = _model(fuel_type);
+	for (const WeatherLightning3D::GroundStrike &s : strikes) {
+		int x, z;
+		if (!_world_cell(s.position, x, z)) {
+			continue;
+		}
+		const uint32_t i = z * nx + x;
+		if (load.is_empty() || load[i] <= 1.0e-4f || fuel_left[i] <= 0.0f) {
+			continue;
+		}
+		const float p = lightning_ignition_chance(s.continuing_current, _moisture(i), m.moisture_extinction);
+		// A draw from the strike's serial, so a replay lights the same fires.
+		const uint32_t h = hash_murmur3_one_64(s.serial ^ (uint64_t(get_instance_id()) << 1));
+		if (float(h & 0xffffff) / float(0x1000000) < p) {
+			ignite(s.position, cell_size);
+			lightning_ignitions++;
+		}
+	}
+#endif
 }
 
 void PhysXFireSpread3D::ignite(const Vector3 &p_position, float p_radius) {
@@ -1077,6 +1123,9 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (!fires.has(this)) {
 				fires.push_back(this);
 			}
+#ifdef MODULE_WEATHER_ENABLED
+			lightning_seen = WeatherLightning3D::get_last_ground_strike_serial(); // strikes from before it entered do not count
+#endif
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			fires.erase(this);
@@ -1111,6 +1160,7 @@ void PhysXFireSpread3D::_notification(int p_what) {
 				sample_timer = 0.25f;
 				_ignite_from_heat_source();
 				_update_moisture(0.25f);
+				_ignite_from_lightning();
 			}
 			_step(dt);
 			_update_emitters(_wind());
@@ -1175,6 +1225,10 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXFireSpread3D::set_wind);
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXFireSpread3D::get_wind);
 	ClassDB::bind_method(D_METHOD("set_use_weather_wind", "enabled"), &PhysXFireSpread3D::set_use_weather_wind);
+	ClassDB::bind_method(D_METHOD("set_lightning_ignition", "enabled"), &PhysXFireSpread3D::set_lightning_ignition);
+	ClassDB::bind_method(D_METHOD("is_lightning_ignition"), &PhysXFireSpread3D::is_lightning_ignition);
+	ClassDB::bind_method(D_METHOD("get_lightning_ignition_count"), &PhysXFireSpread3D::get_lightning_ignition_count);
+	ClassDB::bind_static_method("PhysXFireSpread3D", D_METHOD("lightning_ignition_chance", "continuing", "moisture", "extinction"), &PhysXFireSpread3D::lightning_ignition_chance);
 	ClassDB::bind_method(D_METHOD("is_using_weather_wind"), &PhysXFireSpread3D::is_using_weather_wind);
 	ClassDB::bind_method(D_METHOD("set_spread_scale", "scale"), &PhysXFireSpread3D::set_spread_scale);
 	ClassDB::bind_method(D_METHOD("get_spread_scale"), &PhysXFireSpread3D::get_spread_scale);
@@ -1208,6 +1262,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_GROUP("Spread", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_weather_wind"), "set_use_weather_wind", "is_using_weather_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lightning_ignition"), "set_lightning_ignition", "is_lightning_ignition");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spread_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_spread_scale", "get_spread_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "heat_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_heat_source", "get_heat_source");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_ignition_temperature", "get_ignition_temperature");

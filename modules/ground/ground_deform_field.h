@@ -99,6 +99,8 @@ public:
 		virtual Column column(float p_x, float p_z) const = 0;
 		// Bekker sinkage of p_body at its position, m.
 		virtual float sinkage(const Body &p_body) const = 0;
+		// A body this owner deforms its own way (a car's wheels on the ground, through its soil model).
+		virtual bool skips(const Node3D *p_node) const { return false; }
 		virtual ~Columns() {}
 	};
 

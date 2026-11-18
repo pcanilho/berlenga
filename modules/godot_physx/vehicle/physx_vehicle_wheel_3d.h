@@ -61,6 +61,7 @@ class PhysXVehicleWheel3D : public Node3D {
 protected:
 	static void _bind_methods();
 	void _notification(int p_what);
+	void _join_world_contact();
 
 public:
 	void set_radius(real_t p_v);

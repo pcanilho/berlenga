@@ -56,6 +56,9 @@
 #include "modules/ground/ground_surface_3d.h"
 #include "modules/ground/ground_terramechanics.h"
 #endif
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
 
 
 // Soft soil (docs/ideas/sand.md, stage 1): the wheels of a vehicle on a GroundSurface3D's soft material sink, print
@@ -153,6 +156,38 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 	p_v.wheelParams[p_i].moi = p_sw.base_moi + f * full_kg * r * r;
 }
 
+// Grip of firm ground for its state (docs/ideas/world-links.md, link 3), as a share of the surface's dry friction:
+// - wet: a water film takes a tyre's peak friction on asphalt from about 0.9-1.0 to 0.5-0.8, falling with speed
+//   as the film has less time to squeeze out (Pacejka 2012, ch. 4; Leu and Henry 1978's speed gradient);
+// - aquaplaning: water deeper than the tread can drain lifts the tyre near Horne's speed, v = 6.36 sqrt(p) km/h
+//   for an inflation pressure p in kPa (Horne and Dreher 1963), so a car on 220 kPa floats from about 94 km/h;
+// - ice: about 0.1-0.2 on cold ice and nearer 0.05-0.1 on ice at its melting point under a water film (Hayhoe
+//   and Shapley 1989's winter runway measurements): puddle ice from the ground (unless broken into plates), and
+//   a glaze where a wet surface's film freezes in the air below zero (black ice).
+static constexpr float TYRE_PRESSURE_KPA = 220.0f;
+
+static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice) {
+	float film = 0.0f;
+	float depth = MAX(p_standing_water, 0.0f); // m
+	float air = 10.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		film = wm->get_wetness_at(p_at);
+		depth = MAX(depth, wm->get_puddle_at(p_at) * 0.001f);
+		air = wm->get_air_temperature();
+	}
+#endif
+	const float kmh = Math::abs(p_speed) * 3.6f;
+	const float wet = MAX(CLAMP(film, 0.0f, 1.0f), Math::smoothstep(0.0f, 0.0005f, depth));
+	float grip = Math::lerp(1.0f, 0.75f - 0.15f * Math::smoothstep(0.0f, 120.0f, kmh), wet);
+	const float horne = 6.36f * Math::sqrt(TYRE_PRESSURE_KPA);
+	grip *= 1.0f - 0.9f * Math::smoothstep(0.001f, 0.006f, depth) * Math::smoothstep(0.7f * horne, horne, kmh);
+	const float glaze = wet * Math::smoothstep(0.0f, 2.0f, -air);
+	const float sheet = CLAMP(p_ice.x / 0.002f, 0.0f, 1.0f) * (1.0f - CLAMP(p_ice.y, 0.0f, 1.0f));
+	const float ice_grip = Math::lerp(0.08f, 0.15f, Math::smoothstep(-0.5f, -5.0f, air));
+	return Math::lerp(grip, MIN(ice_grip, grip), MAX(glaze, sheet));
+}
+
 class PhysXVehicleSoilRoad : public PxVehicleComponent {
 public:
 	Vehicle4W *vehicle = nullptr;
@@ -186,6 +221,12 @@ public:
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, 0.0f);
 				}
 				sw.grip = 1.0f;
+				if (road.hitState) {
+					// No ground surface (a street, a road mesh): the weather's wet, flooded and frozen state still holds.
+					const PxTransform hp = v.rigidBodyState.pose * v.wheelLocalPoses[i].localPose;
+					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2());
+					road.friction *= sw.grip;
+				}
 				sw.soft = false;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
@@ -204,7 +245,8 @@ public:
 				if (clogging) {
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
 				}
-				sw.grip = 1.0f;
+				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at));
+				road.friction *= sw.grip;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
 				sw.slip = 0.0f;

@@ -34,6 +34,7 @@
 #include "physx_tank_3d.h"
 #include "physx_vehicle_3d.h"
 
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 
 PhysXVehicleWheel3D::PhysXVehicleWheel3D() {
@@ -56,10 +57,14 @@ void PhysXVehicleWheel3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			// Deferred: its sibling wheels, which share the weight, may not have entered yet.
+			callable_mp(this, &PhysXVehicleWheel3D::_join_world_contact).call_deferred();
 			if (PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(get_parent())) {
 				vehicle = v;
 				v->wheels.push_back(this);
 				v->_rebuild_if_live();
+				// Its own soil model ruts the ground (docs/ideas/sand.md); the generic body press stays off it.
+				set_meta(SNAME("ground_self_pressing"), true);
 			} else if (PhysXMotorcycle3D *m = Object::cast_to<PhysXMotorcycle3D>(get_parent())) {
 				motorcycle = m;
 				m->wheels.push_back(this);
@@ -98,13 +103,49 @@ void PhysXVehicleWheel3D::_rebuild_parent_if_live() {
 	}
 }
 
+// Every wheel is a body the world feels (docs/ideas/world-links.md, contact 1): grass flattens under it, branches
+// give way, snow ruts. The systems read its size from these metas, as they do for any body.
+void PhysXVehicleWheel3D::_join_world_contact() {
+	add_to_group(SNAME("world_contact"));
+	const float r = float(radius);
+	const float w = float(half_width);
+	set_meta(SNAME("trample_radius"), MAX(w, 0.05f) + 0.05f);
+	set_meta(SNAME("touch_radius"), r);
+	set_meta(SNAME("snow_radius"), MAX(w, 0.05f));
+	set_meta(SNAME("deform_wheel_radius"), r);
+	set_meta(SNAME("deform_wheel_width"), 2.0f * w);
+	// Its share of the vehicle's weight.
+	Node *parent = get_parent();
+	real_t mass = 0.0;
+	if (PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(parent)) {
+		mass = v->get_mass();
+	} else if (PhysXMotorcycle3D *m = Object::cast_to<PhysXMotorcycle3D>(parent)) {
+		mass = m->get_mass();
+	} else if (PhysXTank3D *t = Object::cast_to<PhysXTank3D>(parent)) {
+		mass = t->get_mass();
+	}
+	if (mass > 0.0 && parent) {
+		int count = 0;
+		for (int i = 0; i < parent->get_child_count(); i++) {
+			count += Object::cast_to<PhysXVehicleWheel3D>(parent->get_child(i)) ? 1 : 0;
+		}
+		set_meta(SNAME("ground_mass"), float(mass) / MAX(count, 1));
+	}
+}
+
 void PhysXVehicleWheel3D::set_radius(real_t p_v) {
 	radius = p_v;
+	if (is_inside_tree()) {
+		_join_world_contact();
+	}
 	update_gizmos();
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_half_width(real_t p_v) {
 	half_width = p_v;
+	if (is_inside_tree()) {
+		_join_world_contact();
+	}
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_wheel_mass(real_t p_v) {
