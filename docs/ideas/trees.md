@@ -1864,8 +1864,39 @@ branches, the trunk slender, the bark plates cartoonish, the cones dots.
 - Limb count: still more limbs than the real tree's handful. Thinning the weaker scaffolds in
   `_shed` destabilised the form (the leader took over or the crown collapsed); left for a
   growth rule that splits the leader into a few limbs.
-Mature open-grown: 15.5 m tall, crown 13.7 m across, crown base 12.5 m; 6.9M triangles (5.3M
-needles, thinned by the LODs). Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
+Docs round 2 (18 Nov): the plates were pale slabs in a grid of orange steps lined up across the
+trunk (bricks), the grid showed at range, and the crown edge was still lacy.
+- Bark: the plate cells are stretched along the stem (`bark_voronoi` p_ax 1.8, 5 x 3 cells a
+  tile); walls to the cell above or below stay shut half the time (p_vmerge 0.5), so plates run
+  one to three cells long and end at different heights from their neighbours; side walls open
+  wide and deep, the few cross breaks stay narrow. Fissure floors darker red-brown, plate depth
+  4.5 mm, and some plate faces warmer where the outer layers flaked. Noise zero lines (as on
+  the furrowed kind) were tried first: straight stripes that repeat with the tile.
+- Crown: five buds a whorl again and needles at the long end (17 cm, 260 an internode): the
+  tufts close up into one cushion.
+- Limbs: the leader split (5z) replaces the fan.
+Mature open-grown: 15.9 m tall, crown 15.6 m across, crown base 11.1 m; 4.3M triangles (3.0M
+needles, thinned by the LODs).
+
+### 5z. Leader split (decurrent crowns)
+
+Docs held the stone pine's site shot on its limbs: a fan of many equal limbs from one point
+reads as an acacia. The real tree's leader gives up at a few metres and a handful of thick
+limbs take the crown, each dividing again higher up (Gymnosperm Database, Pinus pinea; Mutke et
+al. 2005 on crown architecture; the same decurrent habit in Quercus suber and Q. ilex, Natividade
+1950). Lowering apical dominance alone does not do it: in the Borchert-Honda allocation every
+whorl lateral gets an equal share, which is the fan; and thinning the weaker scaffolds in
+`_shed` destabilised the form (the leader took over or the crown collapsed).
+
+As built (18 Nov): `ForkRule` per preset (`_fork_rule`). When a stem's tip passes
+`fork_height` (the trunk) or `fork_every` years after its own fork (the limbs), its terminal
+bud dies and `stems` buds of the stem's own order open around it, `angle` off its axis; they
+grow as stems (no apical control penalty) with their own weak upward bend (`gravitropism`), up
+to `levels` forks. Nodes carry `stem_level` and `stem_born` along their axis. The crown lift
+spares the forked stems. Stone pine: 5 m, three stems, every seven years, three levels, 32
+degrees, bend 0.12, with apical control 0.85 so side shoots stay under the stems. Cork oak and
+holm oak will use the same rule.
+ Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
 about 11 m apart with saplings, snags and logs; not part of `make_woodland`. Its scrub comes
 from vegetation's `make_scrub` (lentisk, kermes oak, gum rockrose, dwarf fan palm). Not yet:
 juvenile needles on saplings.

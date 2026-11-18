@@ -212,6 +212,8 @@ private:
 		bool leafy = false;
 		bool pole = false; // A resprout's axis after a cut (section 5l): vigorous and straight.
 		bool layered = false; // A krummholz stem from a limb rooted in the ground (section 5s): grows as a stem.
+		int stem_level = 0; // Forks since the trunk on this stem (decurrent leader split, trees.md 5z).
+		int stem_born = 0; // Year this stem forked off (0 for the trunk).
 		Vector3 end() const { return start + dir * length; }
 	};
 
@@ -225,7 +227,21 @@ private:
 		float vigor = 0.0f;
 		bool sprout = false; // A cut stem's resprout (section 5l): keeps its node's order.
 		bool layer = false; // A stem rising where a krummholz limb rooted (section 5s).
+		bool fork = false; // One of the stems a leader splits into (trees.md 5z): keeps its node's order.
 	};
+
+	// The leader split of decurrent crowns (trees.md 5z): the leader stops at fork_height and a
+	// few stems of equal rank take over; each of them forks again every fork_every years, up to
+	// fork_levels times. fork_height 0: no split.
+	struct ForkRule {
+		float fork_height = 0.0f;
+		int stems = 3;
+		int fork_every = 8;
+		int levels = 2;
+		float angle = 35.0f; // Degrees off the parent stem.
+		float gravitropism = 0.1f; // The forked stems' upward bend (the trunk's is far stronger).
+	};
+	ForkRule _fork_rule() const;
 
 	struct Builder {
 		PackedVector3Array verts;

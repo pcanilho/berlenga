@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Stone pine: darker, denser flat crown, stouter bole, long grey-brown bark plates with orange-red fissures (`BARK_PINEA`), and full-size cones set behind the needle tufts.
+- Stone pine: the leader splits at about 5 m into three limbs that divide again, under a darker, denser cushion crown; stouter bole, long offset grey-brown bark plates with red-brown fissures (`BARK_PINEA`), and full-size cones set behind the needle tufts.
 
 ### Fixed
 
