@@ -450,6 +450,7 @@ int XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &p
 	const float vel_retain = MAX(1.0f - settings.damping * p_dt, 0.0f);
 
 	_apply_aero(p_dt, p_wind);
+	const float water_blend = 1.0f - Math::exp(-MAX(settings.water_drag, 0.0f) * sdt);
 
 	for (int s = 0; s < substeps; s++) {
 		// Integrate.
@@ -462,7 +463,12 @@ int XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &p
 				}
 				continue;
 			}
-			velocities[i] += p_gravity * sdt;
+			if (positions[i].y < settings.water_height) {
+				velocities[i] += p_gravity * (settings.water_gravity * sdt);
+				velocities[i] += (settings.water_flow - velocities[i]) * water_blend;
+			} else {
+				velocities[i] += p_gravity * sdt;
+			}
 			positions[i] += velocities[i] * sdt;
 		}
 
