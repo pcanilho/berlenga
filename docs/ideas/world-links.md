@@ -24,7 +24,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `fire_state_map`, `WorldFire` | fire | burnt share and glow per cell; `heat_at` (W/m2), `burnt_at` |
 | `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
 | Contact groups | each system | `world_contact` (every physics body and wheel) read by all, plus the old `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` |
-| Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `describe_body()`: see world-contracts.md |
+| Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `get_ground()`, `get_fire()`, `describe_body()`: see world-contracts.md |
 
 ## Pairs
 
@@ -106,7 +106,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | missing | runoff | rain work |
 | Cold → lake ice | missing | air | snow work (Stefan's law) |
-| Fire → steam on water | missing | WorldFire, WorldWater | water/PhysX thread (both contracts ready) |
+| Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
 
 ### Fire, gas and lightning
 
@@ -120,7 +120,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → firebrands → spot fires | linked | wind | |
 | Fire → drying | linked (18 Nov) | WorldFire | the weather boils the surface film off under a fire |
 | Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
-| Fire → heat shimmer | missing | Flow temperature | link 10 |
+| Fire → heat shimmer | linked (18 Nov) | Flow temperature, weather air | `PhysXFlow3D.heat_shimmer`: raster screen pass and bent PT camera rays (heat-shimmer.md) |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies
@@ -157,12 +157,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
   much colder than water lies over it (sea smoke).
 - Fire on the ground: the fire grid's heat dries the surface film, melts snow (energy balance), steams where it
   meets water; fuel moisture starts from the surface film.
-- Heat shimmer: hot air's refractive index falls about 1e-6 per kelvin (Gladstone-Dale, n - 1 = 2.9e-4 at 15 C
-  scaling with density), so light bends along the temperature gradient. Raster engines fake it as a screen-space
-  offset over a hot region (UE's refraction/distortion pass, Frostbite's heat haze); the physical version bends each
-  ray through the gas's temperature field (as background-oriented schlieren measures it). For the fork: Flow already
-  carries temperature; under path tracing march the ray through the Flow grid and bend it by the gradient of n,
-  and in raster offset the scene colour by the same gradient integrated along the view ray. Waiting on Paulo's pick
-  (card, 18 Nov).
+- Heat shimmer: built 18 Nov, see heat-shimmer.md (Gladstone-Dale index, ray deflection integrated through Flow's
+  temperature plus sub-grid plume turbulence).
 - One contact group: every system reads `world_contact` as well as its own group; vehicles, characters and PhysX
   bodies join it.

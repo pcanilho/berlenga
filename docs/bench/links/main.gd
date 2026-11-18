@@ -5,6 +5,9 @@ extends Node3D
 #
 #   godot --path docs/bench/links --headless -- --test
 #   godot --path docs/bench/links -- --frost=out.png [--frost-off]   grass, a fern, a rock and TerrainMaterial3D ground
+#   godot --path docs/bench/links -- --shimmer=out.png [--shimmer-off] [--pt] [--clear] [--frames=N]   a fire in front
+#             of a striped wall, its heat shimmer on or off (--clear: the gas drawn invisible, only the bending);
+#             --clip=dir saves every frame after the warm-up
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -67,6 +70,10 @@ func _ready() -> void:
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
 			get_tree().quit()
 			return
+		if a.begins_with("--shimmer="):
+			await _shimmer_view(a.substr(10))
+			get_tree().quit()
+			return
 	if not ClassDB.class_exists("WeatherMap3D"):
 		push_error("This build has no weather module.")
 		get_tree().quit(1)
@@ -82,6 +89,7 @@ func _ready() -> void:
 	_fire_tests()
 	await _contact_tests()
 	await _contract_tests()
+	await _shimmer_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -498,3 +506,141 @@ func _frost_view(path: String, off: bool) -> void:
 		await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(path)
 	print("saved ", path)
+
+
+# A fire in front of a striped wall (heat shimmer). p_clear: the gas draws nothing (no smoke, no glow), so the
+# frame differs from the empty scene only by the bending.
+func _shimmer_scene(p_clear: bool, p_pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.5, 0.6, 0.75)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.6, 0.65)
+	env.environment.ambient_light_energy = 0.5
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if p_pt:
+		env.environment.pathtracing_enabled = true
+		env.environment.pathtracing_samples_per_pixel = 4
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 30, 0)
+	root.add_child(sun)
+	var wall := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(8, 4)
+	wall.mesh = qm
+	wall.position = Vector3(0, 2, -5)
+	var sm := ShaderMaterial.new()
+	sm.shader = Shader.new()
+	sm.shader.code = """shader_type spatial;
+void fragment() {
+	vec2 q = UV * vec2(48.0, 24.0);
+	float s = step(0.5, fract(q.x)) * 0.7 + step(0.5, fract(q.y * 0.5)) * 0.2;
+	ALBEDO = mix(vec3(0.08), vec3(0.85, 0.8, 0.7), s);
+}"""
+	wall.material_override = sm
+	root.add_child(wall)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(12, 12)
+	ground.mesh = pm
+	root.add_child(ground)
+	var flow = ClassDB.instantiate("PhysXFlow3D")
+	flow.cell_size = 0.03
+	flow.combustion = true
+	flow.cooling_rate = 3.0
+	flow.vorticity = 4.0
+	flow.buoyancy = 4.0
+	flow.temperature_range = 1.0
+	flow.emission_strength = 0.0 if p_clear else 8.0
+	flow.smoke_density = 0.0 if p_clear else 0.7
+	if p_clear:
+		flow.embers = false
+		flow.fire_light = false
+	root.add_child(flow)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.position = Vector3(0, 0.05, 0)
+	em.shape = 1
+	em.size = Vector3(0.4, 0.06, 0.4)
+	em.fuel = 1.0
+	em.temperature = 1.0
+	em.smoke = 0.0 if p_clear else 0.02
+	em.divergence = 0.3
+	em.velocity = Vector3(0, 1.0, 0)
+	flow.add_child(em)
+	em.flow = em.get_path_to(flow)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 0.9, 3.0)
+	cam.rotation_degrees = Vector3(-4, 0, 0)
+	cam.fov = 40.0
+	root.add_child(cam)
+	cam.make_current()
+	root.set_meta("flow", flow)
+	return root
+
+
+func _shimmer_view(path: String) -> void:
+	var args := OS.get_cmdline_user_args()
+	var frames := 90
+	var clip := ""
+	for a in args:
+		if a.begins_with("--frames="):
+			frames = int(a.substr(9))
+		elif a.begins_with("--clip="):
+			clip = a.substr(7)
+	if not ClassDB.class_exists("PhysXFlow3D"):
+		push_error("This build has no Flow.")
+		return
+	get_viewport().size = Vector2i(640, 360) if args.has("--pt") else Vector2i(1280, 720)
+	var root := _shimmer_scene(args.has("--clear"), args.has("--pt"))
+	root.get_meta("flow").heat_shimmer = not args.has("--shimmer-off")
+	for i in frames:
+		await RenderingServer.frame_post_draw
+	if clip != "":
+		DirAccess.make_dir_recursive_absolute(clip)
+		for i in 48:
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("%s/%03d.png" % [clip, i])
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+# The bending alone (the gas drawn invisible): with heat_shimmer on the frame moves above the fire and nowhere
+# else; off, it matches the empty scene.
+func _shimmer_tests() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D") or DisplayServer.get_name() == "headless":
+		_skip("shimmer", "needs Flow and a rendering device")
+		return
+	var root := _shimmer_scene(true, false)
+	var flow = root.get_meta("flow")
+	for i in 60:
+		await RenderingServer.frame_post_draw
+	var on := get_viewport().get_texture().get_image()
+	flow.heat_shimmer = false
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	var off := get_viewport().get_texture().get_image()
+	var w := on.get_width()
+	var h := on.get_height()
+	var above := 0.0
+	var side := 0.0
+	var n_above := 0
+	var n_side := 0
+	for y in range(int(h * 0.15), int(h * 0.75), 2):
+		for x in range(0, w, 2):
+			var d := absf(on.get_pixel(x, y).get_luminance() - off.get_pixel(x, y).get_luminance())
+			if absf(x - w * 0.5) < w * 0.06:
+				above += d
+				n_above += 1
+			elif absf(x - w * 0.5) > w * 0.3:
+				side += d
+				n_side += 1
+	above /= max(n_above, 1)
+	side /= max(n_side, 1)
+	_check("shimmer: the hot air bends the wall above the fire, nothing beside it", above > 0.004 and side < 0.0005, "mean change %.4f above the fire, %.5f beside it" % [above, side])
+	root.queue_free()
+	await get_tree().process_frame

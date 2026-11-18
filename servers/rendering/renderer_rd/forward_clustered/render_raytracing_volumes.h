@@ -60,6 +60,13 @@ struct RTSparseVolume {
 	float temperature_range = 1.0;
 	bool emission_proxy_light = false; // a light stands in for the glow's lighting (PhysXFlow3D.fire_light): the glow then shows only to camera and mirror rays
 	Color heat_ramp[8];
+	// Heat shimmer (rt_volume_bend): camera rays bend through the hot air. Kelvin above the air at a temperature
+	// of temperature_range (0: off), the air's kelvin, rms sub-grid temperature fluctuation as a share of the
+	// excess, and the simulation's time (seconds) moving that turbulence.
+	float shimmer_kelvin = 0.0;
+	float shimmer_air_kelvin = 288.15;
+	float shimmer_turbulence = 0.0;
+	float shimmer_time = 0.0;
 };
 
 // A dense grid of density in a box, for media simulated on small grids of their own (waterfall mist,

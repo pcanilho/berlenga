@@ -980,6 +980,10 @@ void main() {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
+			if (bounce == 0u) {
+				// Heat shimmer: the camera ray bends through the gas's hot air (raytracing_volume_inc.glsl).
+				rt_volume_bend(ray_origin, ray_dir, camera_t_far, ps.rng_state);
+			}
 			ps.hit_t = -1.0; // A miss must not retain the previous segment's hit distance.
 			path_pack(payload, ps);
 			payload_set_cone_width(payload, cone_width);
