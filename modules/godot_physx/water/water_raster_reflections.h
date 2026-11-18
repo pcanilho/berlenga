@@ -380,6 +380,76 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	return seen + max(p_sc, vec3(0.0)) * (sun + sky);
 }
 
+// The mirror ray from view-space point p_vtx (normal p_n) marched over the screen's depth (screen_reflections):
+// steps growing with the square of their index (fine near the water, where contact matters), jittered per
+// pixel, a hit where the ray passes behind the depth by less than a thickness growing with distance, then five
+// halvings between the last two steps. Its Fresnel share (exact, air into water) blended over p_refl as
+// water_raster_reflect() does (written for blend_mix); a miss or the screen's edge fades to the dark around.
+vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, vec3 p_n, vec3 p_vtx, vec2 p_uv, float p_surface, float p_jitter, mat4 proj, mat4 inv_proj) {
+	vec3 v = normalize(p_vtx);
+	vec3 n = dot(p_n, v) > 0.0 ? normalize(p_n - 2.0 * dot(p_n, v) * v) : p_n;
+	vec3 r = reflect(v, n);
+	float nv = clamp(-dot(n, v), 1e-3, 1.0);
+	float st = sqrt(max(1.0 - nv * nv, 0.0)) / 1.33;
+	float ct = sqrt(max(1.0 - st * st, 0.0));
+	float rs = (nv - 1.33 * ct) / (nv + 1.33 * ct);
+	float rp = (1.33 * nv - ct) / (1.33 * nv + ct);
+	float f = 0.5 * (rs * rs + rp * rp) * p_surface;
+	if (f <= 0.0) {
+		return p_refl;
+	}
+	const int N = 24;
+	const float MAX_D = 24.0;
+	float t_prev = 0.0;
+	float t_hit = -1.0;
+	for (int i = 0; i < N; i++) {
+		float u = (float(i) + p_jitter) / float(N);
+		float t = 0.03 + MAX_D * u * u;
+		vec3 q = p_vtx + r * t;
+		if (q.z > -0.05) {
+			break;
+		}
+		vec4 c = proj * vec4(q, 1.0);
+		vec2 uv = c.xy / c.w * 0.5 + 0.5;
+		if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+			break;
+		}
+		vec4 b = inv_proj * vec4(uv * 2.0 - 1.0, textureLod(p_depth, uv, 0.0).r, 1.0);
+		float dz = b.z / b.w - q.z; // > 0: the scene there is nearer the eye than the ray
+		if (dz > 0.0 && dz < 0.15 + 0.12 * (t - t_prev) / max(-r.z, 0.1) + 0.05 * t) {
+			t_hit = t;
+			break;
+		}
+		t_prev = t;
+	}
+	if (t_hit < 0.0) {
+		vec3 dark = p_refl.rgb * p_refl.a * (1.0 - f);
+		float a_d = 1.0 - (1.0 - p_refl.a) * (1.0 - f);
+		return vec4(dark / max(a_d, 1e-4), a_d);
+	}
+	float lo = t_prev;
+	float hi = t_hit;
+	for (int k = 0; k < 5; k++) {
+		float m = 0.5 * (lo + hi);
+		vec4 c = proj * vec4(p_vtx + r * m, 1.0);
+		vec2 uv = c.xy / c.w * 0.5 + 0.5;
+		vec4 b = inv_proj * vec4(uv * 2.0 - 1.0, textureLod(p_depth, uv, 0.0).r, 1.0);
+		if (b.z / b.w > (p_vtx + r * m).z) {
+			hi = m;
+		} else {
+			lo = m;
+		}
+	}
+	vec4 c = proj * vec4(p_vtx + r * hi, 1.0);
+	vec2 huv = c.xy / c.w * 0.5 + 0.5;
+	vec2 e = min(huv, 1.0 - huv);
+	float fade = smoothstep(0.0, 0.06, min(e.x, e.y)) * (1.0 - smoothstep(0.7 * MAX_D, MAX_D, hi));
+	vec3 seen = textureLod(p_screen, huv, 0.0).rgb * fade;
+	float a_new = 1.0 - (1.0 - p_refl.a) * (1.0 - f);
+	return vec4((p_refl.rgb * p_refl.a * (1.0 - f) + seen * f) / max(a_new, 1e-4), a_new);
+}
+
+
 vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
 		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
 		mat4 view, mat4 inv_proj, mat4 inv_view) {

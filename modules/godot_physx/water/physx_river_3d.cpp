@@ -138,6 +138,8 @@ uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disa
 // through the surface along the refracted ray and passed through the path tracer's medium, as on the sea
 // (PhysXWaterSurface3D). Off: the older tint (water_color, shallow_color).
 uniform bool clear_water = true;
+// Screen-space reflections with raster_reflections off (a cave stream: no sky to mirror), as PhysXWaterSurface3D's.
+uniform bool screen_reflections = true;
 #if !defined(RT)
 uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -335,7 +337,8 @@ void fragment() {
 	vec3 unlit_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
 	vec3 base_rgb = unlit_rgb * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
-	if (clear_water && raster_reflections) {
+	// Also with raster_reflections off (underground, no sky): the bed shows through all the same, lit by the scene.
+	if (clear_water) {
 		// The bed through the water, refracted, in place of the tint and its blend; its sun is inside it.
 		vec3 sun_dir;
 		vec3 sun_irr;
@@ -355,6 +358,9 @@ void fragment() {
 	vec4 sun_glint;
 	float sun_a2;
 	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
+	if (!raster_reflections && screen_reflections) {
+		refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+	}
 	wr_sun_body = sun_body;
 	wr_sun_glint = sun_glint;
 	wr_sun_a2 = sun_a2;
