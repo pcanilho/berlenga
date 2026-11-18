@@ -65,9 +65,11 @@ private:
 		float vt = 4.0f; // terminal velocity when fresh, m/s
 		float age = 0.0f;
 		float life = 20.0f; // s of glowing combustion
+		float n = 1.0f; // real brands this one stands for (more than one once MAX_BRANDS are aloft)
 	};
 	LocalVector<Brand> brands;
 	float carry = 0.0f;
+	float stand_for = 1.0f; // real brands each new one stands for
 	uint32_t seed = 0x9e3779b9u;
 	MultiMeshInstance3D *mmi = nullptr;
 	Ref<MultiMesh> mm;

@@ -12,6 +12,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_brand">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="normal" type="Vector3" />
+			<param index="2" name="glow" type="float" />
+			<description>
+				Rests glowing firebrands on it at [param position], on a surface facing [param normal]; [param glow] is how many brands, each weighed by how much of it is left (0 to 1). Brands on a top face stay where they land; those that hit a wall gather at its foot. A pile heats the wood under it (up to about 50 kW/m² for twenty brands in a strong wind) and can set it alight. [PhysXFireSpread3D] and burning [PhysXBurnable3D] brands call this when they land.
+			</description>
+		</method>
 		<method name="extinguish">
 			<return type="void" />
 			<description>
@@ -22,6 +31,12 @@
 			<return type="float" />
 			<description>
 				How much of the surface is charred, from 0 to 1.
+			</description>
+		</method>
+		<method name="get_brand_pile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Glowing firebrands resting on it, weighed by how much of each is left.
 			</description>
 		</method>
 		<method name="get_ember_count" qualifiers="const">

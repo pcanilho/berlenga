@@ -1151,6 +1151,22 @@ downwind in 90 s, which burnt 420 m2.
    water spray: droplets absorb 2.6 MJ/kg). Here: MPM water and spray
    landing on the fire grid wet its cells (quenching burning ones) and
    cool burnables, so buckets, hoses and a burst pipe stop a fire.
+
+   Status of 1 (18 Nov): built. A brand whose flight ray hits a
+   PhysXBurnable3D's collider rests on it: where it lands on a face that
+   faces up, at the foot of the wall for one that strikes a wall (the
+   re-entrant corner); within 25 cm brands share one pile. A pile's glow
+   (brands weighed by the square root of what is left of each, fading over
+   20 s) heats the wood under it at 50 kW/m2 for 20 brands in a 6 m/s wind
+   (Hakes et al. 2019 measured 40 to 80 under piles), less in still air;
+   the burnable's ignition dose takes it like any other flux. Brands are
+   now cast against walls while flying flat as well as falling. Near
+   MAX_BRANDS aloft each new brand stands for several (a crown fire throws
+   thousands), so landings, piles and spot fire chances count them all.
+   Test (7 m/s, 32 C, 20%): a 3 x 4 x 2.4 m wooden shed 10 m downwind of a
+   burning stand of 24 conifers gathered about 40 brands and caught at
+   about 35 s; downwind of a grass fire alone it held a dozen and did not
+   catch; with spotting off, none.
 3. Burnt crowns shed their needles. After a crown fire the fine fuel is
    gone: bare black branches, needles fallen as a grey ash layer, and
    burning twigs falling while it torches. Here: the tree shaders cut

@@ -207,7 +207,22 @@ void PhysXBurnable3D::_sample_heat(float p_delta) {
 		}
 		q += qr;
 	}
+	{
+		Vector3 bh;
+		const float qb = _brand_flux(bh);
+		if (qb > q) {
+			hot = bh;
+		}
+		q = MAX(q, qb);
+	}
 	heat_in = q;
+	// The piles burn out (Tarifa et al. 1965: tens of seconds for brands of a few millimetres).
+	for (int64_t k = int64_t(brand_spots.size()) - 1; k >= 0; k--) {
+		brand_spots[k].glow *= Math::exp(-p_delta / 20.0f);
+		if (brand_spots[k].glow < 0.05f) {
+			brand_spots.remove_at_unordered(k);
+		}
+	}
 	if (state != STATE_UNBURNT) {
 		return;
 	}
@@ -221,6 +236,84 @@ void PhysXBurnable3D::_sample_heat(float p_delta) {
 	if (dose >= 0.25f * Math::PI * WOOD_KRHOC * dt * dt) {
 		ignite(hot);
 	}
+}
+
+PhysXBurnable3D *PhysXBurnable3D::find_by_collider(Object *p_collider) {
+	Node *c = Object::cast_to<Node>(p_collider);
+	if (!c) {
+		return nullptr;
+	}
+	for (PhysXBurnable3D *b : burnables) {
+		Node *t = b->_target();
+		if (t && (t == c || t->is_ancestor_of(c) || c->is_ancestor_of(t))) {
+			return b;
+		}
+	}
+	return nullptr;
+}
+
+// Brands settle where they land on faces that face up; those that strike a wall drop down it and gather at its foot,
+// where it meets the ground (the re-entrant corner where ember attack lights most buildings: Manzello et al. 2008,
+// Suzuki and Manzello 2017). Within 25 cm they make one pile.
+void PhysXBurnable3D::add_brand(const Vector3 &p_position, const Vector3 &p_normal, float p_glow) {
+	if (state == STATE_BURNT_OUT || p_glow <= 0.0f) {
+		return;
+	}
+	const Transform3D xf = _target_xform();
+	Vector3 l = xf.affine_inverse().xform(p_position);
+	if (xf.basis.xform_inv(p_normal).normalized().y < 0.5f) {
+		l.y = bounds.position.y + 0.05f;
+	}
+	for (BrandSpot &sp : brand_spots) {
+		if (sp.local.distance_to(l) < 0.25f) {
+			sp.glow += p_glow;
+			return;
+		}
+	}
+	if (brand_spots.size() >= 16) {
+		uint32_t weakest = 0;
+		for (uint32_t k = 1; k < brand_spots.size(); k++) {
+			if (brand_spots[k].glow < brand_spots[weakest].glow) {
+				weakest = k;
+			}
+		}
+		brand_spots.remove_at_unordered(weakest);
+	}
+	brand_spots.push_back({ l, p_glow });
+}
+
+int PhysXBurnable3D::get_brand_pile_count() const {
+	float n = 0.0f;
+	for (const BrandSpot &sp : brand_spots) {
+		n += sp.glow;
+	}
+	return int(n + 0.5f);
+}
+
+// Heat under a pile of glowing brands: Hakes et al. (2019) and Manzello's ember storms measured 40 to 80 kW/m2 under
+// piles of a few dozen in wind, a few kW/m2 under one or two; the wind fans them (glowing combustion rises with the
+// flow of air), still air lets them die back. Here 50 kW/m2 at 20 brands and a 6 m/s wind, as a share of that.
+float PhysXBurnable3D::_brand_flux(Vector3 &r_hot) const {
+	float best = 0.0f;
+	if (brand_spots.is_empty()) {
+		return 0.0f;
+	}
+	const Transform3D xf = _target_xform();
+	float u = 2.0f;
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		u = Vector2(wm->get_wind_at(xf.origin).x, wm->get_wind_at(xf.origin).z).length();
+	}
+#endif
+	const float fan = 0.4f + 0.6f * MIN(u / 6.0f, 1.0f);
+	for (const BrandSpot &sp : brand_spots) {
+		const float q = 50.0f * MIN(sp.glow / 20.0f, 1.0f) * fan;
+		if (q > best) {
+			best = q;
+			r_hot = xf.xform(sp.local);
+		}
+	}
+	return best;
 }
 
 void PhysXBurnable3D::ignite(const Vector3 &p_position) {
@@ -737,6 +830,8 @@ void PhysXBurnable3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_char_amount"), &PhysXBurnable3D::get_char_amount);
 	ClassDB::bind_method(D_METHOD("get_ember_count"), &PhysXBurnable3D::get_ember_count);
 	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXBurnable3D::get_firebrand_count);
+	ClassDB::bind_method(D_METHOD("add_brand", "position", "normal", "glow"), &PhysXBurnable3D::add_brand);
+	ClassDB::bind_method(D_METHOD("get_brand_pile_count"), &PhysXBurnable3D::get_brand_pile_count);
 	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXBurnable3D::get_spot_fire_count);
 
 	ClassDB::bind_method(D_METHOD("set_target", "path"), &PhysXBurnable3D::set_target);
