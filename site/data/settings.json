@@ -1223,6 +1223,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Ruts that stay",
+   "settings": [
+    "GroundSurface3D.keep_ruts"
+   ],
+   "note": "",
+   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on legs",
    "settings": [
     "GroundLegMud3D"
