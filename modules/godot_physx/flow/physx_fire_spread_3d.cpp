@@ -219,6 +219,13 @@ Vector3 PhysXFireSpread3D::_cell_world(int p_x, int p_z) const {
 	return w;
 }
 
+// A steady 0..1 hash of two integers.
+static float _hash01(uint32_t p_a, uint32_t p_b) {
+	uint32_t h = p_a * 73856093u ^ p_b * 19349663u;
+	h = (h ^ (h >> 13)) * 0x5bd1e995u;
+	return float((h ^ (h >> 15)) & 0xffffu) / 65535.0f;
+}
+
 bool PhysXFireSpread3D::_world_cell(const Vector3 &p_world, int &r_x, int &r_z) const {
 	const Vector3 local = get_global_transform().affine_inverse().xform(p_world);
 	r_x = (int)Math::floor((local.x + size.x * 0.5f) / cell_size);
@@ -767,6 +774,12 @@ void PhysXFireSpread3D::_update_trees(float p_delta, const Vector3 &p_wind, cons
 				brand_points.push_back({ t.pos + up * t.base + off, w });
 				brand_count += w;
 			}
+			// Burning twigs dropping out of the crown as it burns (about 1.5 a kilogram of crown fuel), from all
+			// through it.
+			const float wt = kg * 1.5f * spotting_scale;
+			const Vector3 off((_hash01(k, uint32_t(time * 60.0f)) - 0.5f) * t.radius, (0.2f + 0.6f * _hash01(k + 7919u, uint32_t(time * 60.0f))) * depth, (_hash01(k + 104729u, uint32_t(time * 60.0f)) - 0.5f) * t.radius);
+			brand_points.push_back({ t.pos + up * t.base + off, wt, 0.015f });
+			brand_count += wt;
 		}
 		if (spotting && t.hrr > 0.0f) {
 			PhysXFirebrands::Plume pl;
@@ -1235,7 +1248,10 @@ void PhysXFireSpread3D::_update_maps() {
 			// Charred fuel and scorched ground: near-black, a little warm (char's albedo is about 0.03-0.05). The
 			// front's edge is scorched at once, the rest darkens as the fuel burns down.
 			const float a = char_darkness * cover * MIN(0.35f + burnt * (1.2f + 0.4f * jitter), 1.0f);
-			char_image->set_pixel(x, z, Color(0.035f, 0.03f, 0.027f, a));
+			// Under a burnt crown the needles and twigs it dropped lie as white-grey ash over the char, patchily
+			// (mineral ash's albedo is about 0.3-0.5; Roy et al. 2010).
+			const float ash = crown_char.is_empty() ? 0.0f : CLAMP(crown_char[i] * 1.5f - 0.5f, 0.0f, 1.0f) * (0.35f + 0.5f * jitter) * MIN(burnt * 1.5f, 1.0f);
+			char_image->set_pixel(x, z, Color(Math::lerp(0.035f, 0.36f, ash), Math::lerp(0.03f, 0.35f, ash), Math::lerp(0.027f, 0.33f, ash), a));
 			// Glow: the flaming band (heat release falls as exp(-age)), then embers that die within a few burn times,
 			// unevenly.
 			const float age = t_ignite[i] < 0.0f ? 0.0f : (time - t_ignite[i]) / m.burn_time;
