@@ -67,6 +67,11 @@ private:
 	Ref<Image> fuel_map; // optional, red: fuel load multiplier, green: extra moisture (fraction of dry weight, x 0.5)
 	float fuel_patchiness = 0.5f; // patchy fuel and moisture, so the scar is ragged
 	NodePath vegetation_field; // optional VegetationField3D: worn paths and leaf litter change the fuel
+	LocalVector<float> rain_water; // kg of intercepted rain per kg of fuel, per cell
+	LocalVector<uint8_t> quenched; // put out while burning (rain)
+	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
+	bool use_weather_moisture = true;
+	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
 	LocalVector<float> rate; // spread multiplier per cell (bed structure, patchiness)
 	LocalVector<float> wet; // moisture over fuel_moisture, per cell (patches, fuel_map green)
 	Vector3 wind; // world wind when no weather map gives one
@@ -161,12 +166,23 @@ public:
 	float get_cell_size() const { return cell_size; }
 	void set_fuel_type(FuelType p_type);
 	FuelType get_fuel_type() const { return fuel_type; }
-	void set_fuel_moisture(float p_v) { fuel_moisture = CLAMP(p_v, 0.0f, 2.0f); }
+	void set_fuel_moisture(float p_v) {
+		fuel_moisture = CLAMP(p_v, 0.0f, 2.0f);
+		base_moisture = fuel_moisture;
+	}
+	float get_moisture_at(const Vector3 &p_position) const;
+	void set_use_weather_moisture(bool p_v) { use_weather_moisture = p_v; }
+	bool is_using_weather_moisture() const { return use_weather_moisture; }
+	void set_moisture_timelag(float p_v) { moisture_timelag = MAX(p_v, 1.0f); }
+	float get_moisture_timelag() const { return moisture_timelag; }
 	float get_fuel_moisture() const { return fuel_moisture; }
 	void set_fuel_load_scale(float p_v);
 	float get_fuel_load_scale() const { return fuel_load_scale; }
 	void set_fuel_map(const Ref<Image> &p_map);
 	Ref<Image> get_fuel_map() const { return fuel_map; }
+	void _update_moisture(float p_delta);
+	float _moisture(uint32_t p_i) const { return base_moisture * wet[p_i] + rain_water[p_i]; }
+	float _air_temperature() const;
 	void set_fuel_patchiness(float p_v);
 	float get_fuel_patchiness() const { return fuel_patchiness; }
 	void set_vegetation_field(const NodePath &p_path);

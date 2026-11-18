@@ -56,6 +56,13 @@
 				Heat given off by the ground at [param position], in kW per square metre.
 			</description>
 		</method>
+		<method name="get_moisture_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Dead fuel moisture at [param position], as a fraction of dry weight: [member fuel_moisture] as the weather has moved it, its patchiness, and the rain the fuel holds.
+			</description>
+		</method>
 		<method name="get_scorch_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -115,11 +122,17 @@
 		<member name="max_emitters" type="int" setter="set_max_emitters" getter="get_max_emitters" default="32">
 			Flame emitters at most: the flaming front is merged into tiles of about half a metre, and the strongest get one each, spread along the whole front.
 		</member>
+		<member name="moisture_timelag" type="float" setter="set_moisture_timelag" getter="get_moisture_timelag" default="3600.0">
+			Seconds the fuel takes to move most of the way (63%) to the moisture the air holds it at, with [member use_weather_moisture]: an hour for grass and fine litter. Shorten it for a game's pace.
+		</member>
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(20, 20)">
 			The area that can burn, in metres along the node's X and Z, centred on it.
 		</member>
 		<member name="spread_scale" type="float" setter="set_spread_scale" getter="get_spread_scale" default="1.0">
 			Speeds the fire up or slows it down, for a game's pace.
+		</member>
+		<member name="use_weather_moisture" type="bool" setter="set_use_weather_moisture" getter="is_using_weather_moisture" default="true">
+			When enabled and a [WeatherMap3D] is active, the fuel moisture starts at [member fuel_moisture] and follows the weather: towards the equilibrium moisture of the air's temperature and humidity (Van Wagner and Pech 1985, as WRF-SFIRE takes it) over [member moisture_timelag], and wetted at once by rain the fuel intercepts. Burning ground that rain wets past the fuel's moisture of extinction goes out.
 		</member>
 		<member name="use_weather_wind" type="bool" setter="set_use_weather_wind" getter="is_using_weather_wind" default="true">
 			When enabled, the wind comes from the active [WeatherMap3D] where there is one; [member wind] is used otherwise.

@@ -93,6 +93,9 @@ void PhysXFireSpread3D::_allocate() {
 	fuel_left.resize(n);
 	heat.resize(n);
 	wet.resize(n);
+	rain_water.resize(n);
+	quenched.resize(n);
+	base_moisture = fuel_moisture;
 	rate.resize(n);
 	peak_flame.resize(n);
 	peak_scorch.resize(n);
@@ -143,6 +146,8 @@ void PhysXFireSpread3D::_allocate() {
 			}
 			load[i] = l;
 			rate[i] = rate_mul;
+			rain_water[i] = 0.0f;
+			quenched[i] = 0;
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -323,7 +328,7 @@ float PhysXFireSpread3D::_spread_rate(int p_x, int p_z, const Vector2 &p_normal,
 		return 0.0f;
 	}
 	const FuelModel &m = _model(fuel_type);
-	const float r = MIN(fuel_moisture * wet[i] / m.moisture_extinction, 1.0f);
+	const float r = MIN(_moisture(i) / m.moisture_extinction, 1.0f);
 	const float eta_m = MAX(1.0f - 2.59f * r + 5.11f * r * r - 3.52f * r * r * r, 0.0f);
 	if (eta_m <= 0.0f) {
 		return 0.0f;
@@ -457,11 +462,83 @@ void PhysXFireSpread3D::_step(float p_delta) {
 				continue;
 			}
 			total_burnt += cell_area;
+			if (quenched[i]) {
+				continue; // put out: what is left stays, unburnt
+			}
 			const float left = fuel_left[i] <= 0.0f ? 0.0f : Math::exp(-(time - t_ignite[i]) / m.burn_time);
 			heat[i] = MAX(fuel_left[i] - left, 0.0f) * load[i] * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
 			fuel_left[i] = left < 0.002f ? 0.0f : left;
 		}
 	}
+}
+
+float PhysXFireSpread3D::_air_temperature() const {
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		return wm->get_air_temperature();
+	}
+#endif
+	return 20.0f;
+}
+
+// Fuel moisture from the weather (docs/ideas/physx.md, "Weather wets the fire"): the fine dead fuel moves towards
+// its equilibrium moisture for the air's temperature and humidity with its time lag (Van Wagner and Pech 1985, the
+// Canadian FFMC's drying and wetting EMC; WRF-SFIRE's fuel moisture model), and rain wets it at once by what the
+// fuel bed intercepts. A burning cell whose fuel gets wetter than the moisture of extinction goes out.
+void PhysXFireSpread3D::_update_moisture(float p_delta) {
+	if (!use_weather_moisture || phi.is_empty()) {
+		return;
+	}
+#ifdef MODULE_WEATHER_ENABLED
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (!wm) {
+		return;
+	}
+	const float t = wm->get_air_temperature();
+	const float hum = CLAMP(wm->get_air_humidity() * 100.0f, 0.0f, 100.0f);
+	const float k = 0.18f * (21.1f - t) * (1.0f - Math::exp(-0.115f * hum));
+	const float ed = (0.942f * Math::pow(hum, 0.679f) + 11.0f * Math::exp((hum - 100.0f) / 10.0f) + k) * 0.01f;
+	const float ew = (0.618f * Math::pow(hum, 0.753f) + 10.0f * Math::exp((hum - 100.0f) / 10.0f) + k) * 0.01f;
+	const float a = 1.0f - Math::exp(-p_delta / moisture_timelag);
+	if (base_moisture > ed) {
+		base_moisture += (ed - base_moisture) * a;
+	} else if (base_moisture < ew) {
+		base_moisture += (ew - base_moisture) * a;
+	}
+	// Rain on 4 m blocks: a fine fuel bed holds about a third of the rain on it (interception; grass and litter
+	// hold 0.2-0.5 mm before it drips through), up to about 2.5 times its dry weight (WRF-SFIRE's saturation);
+	// standing water on the fuel dries several times faster than the fuel itself.
+	const FuelModel &m = _model(fuel_type);
+	const int block = MAX(1, (int)Math::round(4.0f / cell_size));
+	const float dry = Math::exp(-p_delta * 4.0f / moisture_timelag);
+	for (int bz = 0; bz < nz; bz += block) {
+		for (int bx = 0; bx < nx; bx += block) {
+			const int cx = MIN(bx + block / 2, nx - 1), cz = MIN(bz + block / 2, nz - 1);
+			const float rain = MAX(wm->get_rain_at(_cell_world(cx, cz)), 0.0f); // mm/h = kg/m2/h
+			for (int z = bz; z < MIN(bz + block, nz); z++) {
+				for (int x = bx; x < MIN(bx + block, nx); x++) {
+					const uint32_t i = z * nx + x;
+					float w = rain_water[i] * dry;
+					if (rain > 0.0f && load[i] > 1.0e-4f) {
+						w = MIN(w + rain / 3600.0f * p_delta * 0.33f / load[i], 2.5f);
+					}
+					rain_water[i] = w;
+					if (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
+						quenched[i] = 1;
+					}
+				}
+			}
+		}
+	}
+#endif
+}
+
+float PhysXFireSpread3D::get_moisture_at(const Vector3 &p_position) const {
+	int x, z;
+	if (!_world_cell(p_position, x, z) || wet.is_empty()) {
+		return base_moisture;
+	}
+	return _moisture(z * nx + x);
 }
 
 // Hot gas from a heat source (a campfire's Flow, its cpu_readback on) lights the ground under it.
@@ -534,7 +611,7 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 	}
 	// What the plants over each flaming cell see (fire_state_map): the flame length of its tile's front (Byram) and the
 	// height the plume kills foliage to, where it cools to about 60 C (Van Wagner 1973, as BehavePlus: I in kW/m, U the
-	// wind in m/s, the air at 20 C until a weather map gives it), kept at their peak.
+	// wind in m/s, the air at 20 C unless a weather map gives it), kept at their peak.
 	if (band_x1 >= band_x0) {
 		const float u = p_wind.length();
 		for (int z = band_z0; z <= band_z1; z++) {
@@ -549,7 +626,7 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 					continue;
 				}
 				const float flame = 0.0775f * Math::pow(intensity, 0.46f);
-				const float scorch = 4.483f * Math::pow(intensity, 7.0f / 6.0f) / (Math::sqrt(0.107f * intensity + u * u * u) * (60.0f - 20.0f));
+				const float scorch = 4.483f * Math::pow(intensity, 7.0f / 6.0f) / (Math::sqrt(0.107f * intensity + u * u * u) * MAX(60.0f - _air_temperature(), 10.0f));
 				peak_flame[i] = MAX(peak_flame[i], MIN(flame, 8.0f));
 				peak_scorch[i] = MAX(peak_scorch[i], MIN(MAX(scorch, flame), 24.0f));
 			}
@@ -668,7 +745,8 @@ void PhysXFireSpread3D::_update_maps() {
 			// Glow: the flaming band (heat release falls as exp(-age)), then embers that die within a few burn times,
 			// unevenly.
 			const float age = t_ignite[i] < 0.0f ? 0.0f : (time - t_ignite[i]) / m.burn_time;
-			const float g = cover * CLAMP(Math::exp(-age * (1.2f + 1.6f * jitter)), 0.0f, 1.0f);
+			// Put out by rain: no flame, a few wet embers.
+			const float g = cover * CLAMP(Math::exp(-age * (1.2f + 1.6f * jitter)), 0.0f, 1.0f) * (quenched[i] ? 0.05f : 1.0f);
 			// A blackbody near 1,000 K (linear sRGB, as Flow's heat ramp), yellower while flaming.
 			glow_image->set_pixel(x, z, Color(1.0f * g, 0.32f * g * g, 0.06f * g * g * g, 1.0f));
 			state_image->set_pixel(x, z, Color(cover * MAX(burnt, 0.3f), g, peak_flame[i] / 8.0f, peak_scorch[i] / 24.0f));
@@ -884,6 +962,7 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (sample_timer <= 0.0f) {
 				sample_timer = 0.25f;
 				_ignite_from_heat_source();
+				_update_moisture(0.25f);
 			}
 			_step(dt);
 			_update_emitters(_wind());
@@ -917,6 +996,11 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fuel_type"), &PhysXFireSpread3D::get_fuel_type);
 	ClassDB::bind_method(D_METHOD("set_fuel_moisture", "moisture"), &PhysXFireSpread3D::set_fuel_moisture);
 	ClassDB::bind_method(D_METHOD("get_fuel_moisture"), &PhysXFireSpread3D::get_fuel_moisture);
+	ClassDB::bind_method(D_METHOD("get_moisture_at", "position"), &PhysXFireSpread3D::get_moisture_at);
+	ClassDB::bind_method(D_METHOD("set_use_weather_moisture", "enable"), &PhysXFireSpread3D::set_use_weather_moisture);
+	ClassDB::bind_method(D_METHOD("is_using_weather_moisture"), &PhysXFireSpread3D::is_using_weather_moisture);
+	ClassDB::bind_method(D_METHOD("set_moisture_timelag", "seconds"), &PhysXFireSpread3D::set_moisture_timelag);
+	ClassDB::bind_method(D_METHOD("get_moisture_timelag"), &PhysXFireSpread3D::get_moisture_timelag);
 	ClassDB::bind_method(D_METHOD("set_fuel_load_scale", "scale"), &PhysXFireSpread3D::set_fuel_load_scale);
 	ClassDB::bind_method(D_METHOD("get_fuel_load_scale"), &PhysXFireSpread3D::get_fuel_load_scale);
 	ClassDB::bind_method(D_METHOD("set_fuel_map", "map"), &PhysXFireSpread3D::set_fuel_map);
@@ -952,6 +1036,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_GROUP("Fuel", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "fuel_type", PROPERTY_HINT_ENUM, "Short Grass,Tall Grass,Litter"), "set_fuel_type", "get_fuel_type");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fuel_moisture", PROPERTY_HINT_RANGE, "0,0.5,0.005"), "set_fuel_moisture", "get_fuel_moisture");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_weather_moisture"), "set_use_weather_moisture", "is_using_weather_moisture");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moisture_timelag", PROPERTY_HINT_RANGE, "1,36000,1,or_greater,suffix:s"), "set_moisture_timelag", "get_moisture_timelag");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fuel_load_scale", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_fuel_load_scale", "get_fuel_load_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fuel_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_fuel_map", "get_fuel_map");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fuel_patchiness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_fuel_patchiness", "get_fuel_patchiness");

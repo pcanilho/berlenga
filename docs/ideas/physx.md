@@ -682,6 +682,42 @@ Status (18 Nov): built. Found while building it:
   the level set's coverage). A patchy bed burns about a third less area
   in the same time than an even one, as discontinuous fuel does.
 
+### Weather wets the fire (picked 17 Nov, second of four)
+
+How fire models do it: FARSITE, FlamMap and WRF-SFIRE do not hold dead fuel
+moisture fixed; each fuel size class relaxes towards an equilibrium
+moisture content (EMC) set by air temperature and humidity with its time
+lag (1 h for fine fuel), and rain wets it. WRF-SFIRE (Mandel et al. 2014,
+Kochanski et al.) uses the Canadian equilibrium curves of Van Wagner and
+Pech (1985), a drying EMC above a wetting one with no change between them:
+Ed = 0.942 H^0.679 + 11 e^((H-100)/10) + 0.18 (21.1 - T)(1 - e^(-0.115 H))
+Ew = 0.618 H^0.753 + 10 e^((H-100)/10) + 0.18 (21.1 - T)(1 - e^(-0.115 H))
+(%, H relative humidity %, T air C), and a rain term up to a saturation of
+about 2.5 times the dry weight. Nelson's model (2000) is the physical
+alternative, heavier than a game needs.
+
+Technique: the fire node's moisture follows the active WeatherMap3D.
+1. Base moisture: starts at `fuel_moisture`, moves to Ed or Ew from the
+   map's air temperature and humidity with `moisture_timelag` (1 h; games
+   can shorten it). Per-cell patchiness still multiplies it.
+2. Rain: WeatherMap3D.get_rain_at on 4 m blocks; a fine fuel bed holds
+   about a third of the rain on it (interception, 0.2-0.5 mm), as water
+   per kg of fuel (mm/h is kg/m2/h over the load), drying several times
+   faster than the fuel. Wet fuel slows the front through Rothermel's
+   moisture damping and stops it at the moisture of extinction.
+3. Burning cells wetter than the extinction moisture go out: no more
+   heat or flame, a few dull embers; what was left stays unburnt.
+4. Crown scorch takes the map's air temperature (Van Wagner's 60 C
+   lethal temperature less the air's).
+Cost: a few dozen weather samples a quarter second, one pass over the
+grid.
+
+Status (18 Nov): built. Checks (short grass, 2 m/s wind, 60 s time lag):
+dry air (30 C, 20%) keeps it burning, about 70 m2 in 30 s; humid air (15 C,
+90%) wets the fuel past its 12% extinction and the fire dies at about 11
+m2; 4 mm/h of rain from 10 s raises the fuel from 7% to 12% in 20 s, and the
+front stalls and goes out.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
