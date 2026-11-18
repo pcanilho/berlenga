@@ -1155,6 +1155,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Treads and chains",
+   "settings": [
+    "PhysXVehicleWheel3D.tread"
+   ],
+   "note": "",
+   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Belly drag",
    "settings": [
     "PhysXVehicle3D.belly_drag"
