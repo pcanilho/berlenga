@@ -655,6 +655,18 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   spread over it. The share mask sets the film; the near field's 1.56 cm texels resolve the tyre lugs, the sole's
   grooves only soften.
 
+### Round 5: proposed (18 Nov, card posted)
+
+- **Grass flattened and torn in ruts.** The soil now shows through a meadow where ruts open it, but GrassField3D's
+  blades still stand there. Build: GroundSurface3D publishes its exposure (ground_deform_exposed()) and the blade
+  vertex shader lays blades flat by it (crushed under 2 cm, gone where the ground was turned or flooded); the
+  trample field (add_trample) takes vehicle and boot passes for the bent-over band beside a rut, recovering over
+  days. Grass is the vegetation system's: built there, fed from here.
+- **Everything kept with the ruts.** Crack state and the water's clay live on the ground lattice, not the field
+  tiles, so a kept tile comes back with its puddle clear and its cracks gone. Build: a second small file per tile
+  for the lattice cells under it (crack state, cycles, pool depth, clay kg/m2), aged the same way.
+
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
