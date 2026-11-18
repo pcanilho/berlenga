@@ -9,6 +9,7 @@ extends Node3D
 #   --view=pond       a pool in 10 mm/h rain under a wet tree and a shed: rings, streaks, splashes, drips,
 #                     beaded leaves (--close: down on the water and leaves for a 100% crop)
 #   --rate=R          rain rate mm/h (default 10)
+#   --drops=N         most falling drops drawn (default RainFall3D's 200000; fewer for a quick path traced still)
 #   --raster          raster only (default path traced)
 #   --out=path.png    save the frame and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -23,6 +24,7 @@ var out := ""
 var spp := 16
 var bounces := 3
 var rate := 10.0
+var drops := 0
 var fails := 0
 var weather: WeatherMap3D
 
@@ -37,6 +39,7 @@ func _ready() -> void:
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--rate="): rate = float(a.substr(7))
+		elif a.begins_with("--drops="): drops = int(a.substr(8))
 	if test:
 		await _run_tests()
 		print("RAIN CHECKS: ", "PASS" if fails == 0 else "%d FAILED" % fails)
@@ -237,6 +240,8 @@ func _build_pond() -> void:
 	add_child(probe)
 	var fall := RainFall3D.new()
 	fall.follow_target = NodePath("../Probe")
+	if drops > 0:
+		fall.max_drops = drops
 	add_child(fall)
 	var cam := Camera3D.new()
 	add_child(cam)
