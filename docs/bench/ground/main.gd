@@ -490,9 +490,12 @@ func _run_tests() -> void:
 	surface.clear_deformation()
 	surface.moisture = 0.4
 	surface.press(o, 0.15, -0.12, 0.0, true)
+	var damp_before := _max_slope(o, 0.3)
 	surface.settle(3.0)
 	var damp_wall := _max_slope(o, 0.3)
-	_check("damp sand keeps steep walls", damp_wall > 60.0, "steepest wall %.0f degrees after 3 s" % damp_wall)
+	# Against its own walls before settling: the CPU field (headless) presses on a coarser texel, so its walls start
+	# near 52 degrees rather than the GPU's 70.
+	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > damp_before - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s" % [damp_before, damp_wall])
 	# Mud creeps back slowly.
 	surface.clear_deformation()
 	surface.ground_type = GroundSurface3D.GROUND_SOIL
