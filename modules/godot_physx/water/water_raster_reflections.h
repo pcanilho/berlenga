@@ -264,7 +264,7 @@ float water_jitter(vec2 p_frag, float p_time) {
 // that came from the sun (the rest from the sky), for caustics.
 vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
 		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
-		mat4 view, mat4 inv_proj, mat4 inv_view, out vec3 r_seen, out vec3 r_bed, out float r_sun_share) {
+		mat4 view, mat4 inv_proj, mat4 inv_view, bool p_march, out vec3 r_seen, out vec3 r_bed, out float r_sun_share) {
 	vec3 t = refract(v, n, 1.0 / 1.33);
 	if (dot(t, t) < 1e-6) {
 		t = v;
@@ -300,7 +300,49 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 		vec2 k2 = mix(vec2(1.0), clamp(0.5 * room / abs(off), 0.0, 1.0), vec2(greaterThan(abs(off), vec2(1e-7))));
 		float k = min(k2.x, k2.y);
 		vec2 q_full = uv + off * k;
-		for (int i = 0; i < 3; i++) {
+		if (p_march) {
+			// Marched along the refracted ray over the screen's depth (screen-space refraction, as screen-space
+			// reflections march the mirror ray): the first sample where the scene stands in front of the ray is what
+			// the ray meets (a stone's side under the water); one hidden by something out of the water or nearer
+			// the eye gives the straight-through pixel. The halved offsets
+			// below read the same stone at three places where shallow water runs between stones standing out of
+			// it, stacking copies of every stone in rows above it.
+			const int MS = 10;
+			vec3 vs = (view * vec4(p_s, 1.0)).xyz;
+			vec3 vt = (view * vec4(t, 0.0)).xyz * (len_r * k);
+			vec2 q_last = uv;
+			float len_last = len0 < 1e4 ? z0 / max(-t.y, 0.05) : len0;
+			bool hidden = false;
+			for (int i = 1; i <= MS; i++) {
+				float f = float(i) / float(MS);
+				vec3 pv = vs + vt * f;
+				vec4 cp = proj * vec4(pv, 1.0);
+				if (cp.w <= 0.0) {
+					break;
+				}
+				vec2 q = cp.xy / cp.w * 0.5 + 0.5;
+				float d1 = textureLod(p_depth, q, 0.0).r;
+				vec4 b = inv_proj * vec4(q * 2.0 - 1.0, d1, 1.0);
+				vec3 w = (inv_view * vec4(b.xyz / b.w, 1.0)).xyz;
+				// Only what lies under the water and beyond the surface here can be met: a stone's top standing out
+				// of the water, or anything nearer the eye, stands in front of the ray and hides what it meets.
+				if (d1 > d_s || w.y > p_s.y) {
+					hidden = true;
+					break;
+				}
+				float dz = b.z / b.w - pv.z; // > 0: the scene there is nearer the eye than the ray
+				q_last = q;
+				len_last = d1 > 0.0 ? distance(w, p_s) : len_r * k * f;
+				if (dz > 0.0) {
+					break;
+				}
+			}
+			// Hidden: what the ray meets is behind the stone on the screen, so the straight-through pixel stands in
+			// (the last clear sample, kept, stretched the bed's last row before the stone up over the whole band).
+			uv_r = hidden ? uv : q_last;
+			len = hidden ? (len0 < 1e4 ? z0 / max(-t.y, 0.05) : len0) : len_last;
+		}
+		for (int i = 0; i < (p_march ? 0 : 3); i++) {
 			vec2 q = mix(uv, q_full, exp2(-float(i)));
 			float d1 = texture(p_depth, q).r;
 			// Reverse Z: behind the surface is a smaller depth than the surface's own. All four texels the
@@ -457,7 +499,7 @@ vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v
 	vec3 bed;
 	float share;
 	return water_clear_through_ex(p_screen, p_depth, p_s, v, n, uv, z_bed, p_ab, p_sc, p_g, p_sun_dir, p_sun_irr, p_sky,
-			p_jitter, proj, view, inv_proj, inv_view, seen, bed, share);
+			p_jitter, proj, view, inv_proj, inv_view, true, seen, bed, share);
 }
 #endif
 )";

@@ -1622,10 +1622,11 @@
   {
    "name": "Clear water",
    "settings": [
-    "clear_water"
+    "clear_water",
+    "shore_depth_fade"
    ],
    "note": "",
-   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.",
+   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth; rivers fade softly into the bank at the waterline.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -3523,7 +3524,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

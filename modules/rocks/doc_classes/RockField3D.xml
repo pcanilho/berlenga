@@ -56,10 +56,29 @@
 				Triangles in the loaded close-up shapes.
 			</description>
 		</method>
+		<method name="get_ground_detail_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="layer" type="int" default="-1" />
+			<description>
+				Ground detail stones built in [param layer] (one of the LAYER_DETAIL constants), or in all three with -1.
+			</description>
+		</method>
+		<method name="get_ground_detail_pending" qualifiers="const">
+			<return type="int" />
+			<description>
+				Ground detail cells being placed on worker threads (see [member ground_detail_threads]).
+			</description>
+		</method>
 		<method name="get_last_build_msec" qualifiers="const">
 			<return type="float" />
 			<description>
 				Milliseconds the last build step took.
+			</description>
+		</method>
+		<method name="get_last_detail_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				The main thread's share of the ground detail in the last streaming update, in milliseconds: snapshots for the workers and adding their finished cells.
 			</description>
 		</method>
 		<method name="get_last_library_msec" qualifiers="const">
@@ -298,6 +317,33 @@
 		<member name="detail" type="float" setter="set_detail" getter="get_detail" default="1.0">
 			Scales the grid resolution of every shape. Lower builds faster and coarser.
 		</member>
+		<member name="detail_fine_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many ground detail fine gravel are placed.
+		</member>
+		<member name="detail_fine_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Ground detail fine gravel, while [member ground_detail] is on.
+		</member>
+		<member name="detail_fine_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="5.0">
+			How far from the camera the ground detail fine gravel reach. Set from the camera while [member ground_detail] is on (see [member ground_detail_pixels]).
+		</member>
+		<member name="detail_gravel_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many ground detail gravel are placed.
+		</member>
+		<member name="detail_gravel_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Ground detail gravel, while [member ground_detail] is on.
+		</member>
+		<member name="detail_gravel_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="10.0">
+			How far from the camera the ground detail gravel reach. Set from the camera while [member ground_detail] is on (see [member ground_detail_pixels]).
+		</member>
+		<member name="detail_pebble_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
+			Scales how many ground detail pebbles are placed.
+		</member>
+		<member name="detail_pebble_enabled" type="bool" setter="set_layer_enabled" getter="is_layer_enabled" default="true">
+			Ground detail pebbles, while [member ground_detail] is on.
+		</member>
+		<member name="detail_pebble_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="20.0">
+			How far from the camera the ground detail pebbles reach. Set from the camera while [member ground_detail] is on (see [member ground_detail_pixels]).
+		</member>
 		<member name="erratic_rock_type" type="int" setter="set_erratic_rock_type" getter="get_erratic_rock_type" enum="RockGenerator.RockType" default="0">
 			Rock type of glacial erratics, carried from elsewhere.
 		</member>
@@ -324,6 +370,24 @@
 		</member>
 		<member name="ground_contact" type="bool" setter="set_ground_contact" getter="is_ground_contact_enabled" default="true">
 			The ground side of a stone's contact. Soil beside a stone stays damper (stones act as a mulch), so it is darker and smoother, and the fines washed downhill bank up against the stone's uphill side. The field draws both into a map round the follow target on a worker thread, and [TerrainMaterial3D] darkens and tints the ground by it. The map is redrawn when the target moves 8 m or the field is rebuilt. With [member ground_blend], which paints the stone's own foot, the stone reads as sitting in the ground.
+		</member>
+		<member name="ground_detail" type="bool" setter="set_ground_detail" getter="is_ground_detail" default="true">
+			The stones under [member min_size] near the camera as real instanced geometry instead of the ground material's normal map, so they have silhouettes, contact shadows and parallax under raster and the path tracer alike. Three size classes (1 to 2 cm, 2 to 4 cm, 4 cm to [member min_size]) continue the shore's and the talus's own size laws, so they keep the big stones' sorting and rock; each class is drawn round the camera out to where its stones are still [member ground_detail_pixels] tall, and every stone shares one of the field's shapes, so the path tracer only adds an instance for each (see [method RenderingServer.multimesh_set_rt_instanced]). Cells are placed on worker threads while streaming (see [member ground_detail_threads]). Turn it off in tests that do not need it.
+		</member>
+		<member name="ground_detail_threads" type="bool" setter="set_ground_detail_threads" getter="is_ground_detail_threads" default="true">
+			While streaming, place the ground detail cells on worker threads: the main thread only snapshots what a cell rests on and adds the finished cell, one buffer upload a shape. A finer size class waits until the coarser ones round it are down. When disabled, each cell is placed on the main thread as it is wanted.
+		</member>
+		<member name="ground_detail_max_per_cell" type="int" setter="set_ground_detail_max_per_cell" getter="get_ground_detail_max_per_cell" default="40000">
+			The most stones one ground detail cell (2, 4 or 8 m square) holds.
+		</member>
+		<member name="ground_detail_max_radius" type="float" setter="set_ground_detail_max_radius" getter="get_ground_detail_max_radius" default="40.0">
+			The farthest any ground detail class reaches from the camera.
+		</member>
+		<member name="ground_detail_pixels" type="float" setter="set_ground_detail_pixels" getter="get_ground_detail_pixels" default="3.0">
+			How tall, in pixels, a ground detail class's mean stone is at the edge of its reach.
+		</member>
+		<member name="ground_detail_reference_height" type="int" setter="set_ground_detail_reference_height" getter="get_ground_detail_reference_height" default="0">
+			The image height the ground detail's reach is worked out for; 0 uses the viewport's own.
 		</member>
 		<member name="ground_material" type="ShaderMaterial" setter="set_ground_material" getter="get_ground_material">
 			Overrides the material the ground blend takes its colours from: each layer's colour times the mean of its albedo texture. When unset, the field uses the [TerrainMaterial3D] of the [Landscape3D] that draws its generator (else any landscape's), so the blend matches the ground with no wiring; with no landscape either, the terrain material's default colours.
@@ -480,7 +544,16 @@
 		<constant name="LAYER_LANDFORM" value="8" enum="Layer">
 			Bedrock landforms: limestone pavement on flat bare limestone, hoodoo rows on steep bare soft rock, and rows of sandstone fins (some holed by arches) on gentle bare sandstone, clusters of goblins on flat bare sandstone, pothole slabs with grinder stones in steep bedrock stream beds and, with [member cave_mouths], cave mouths at limestone cliff feet.
 		</constant>
-		<constant name="LAYER_MAX" value="9" enum="Layer">
+		<constant name="LAYER_DETAIL_PEBBLE" value="9" enum="Layer">
+			Ground detail: pebbles from 4 cm to [member min_size] (on talus, to the scree layer's own smallest), placed only while [member ground_detail] is on.
+		</constant>
+		<constant name="LAYER_DETAIL_GRAVEL" value="10" enum="Layer">
+			Ground detail: gravel of 2 to 4 cm, placed only while [member ground_detail] is on.
+		</constant>
+		<constant name="LAYER_DETAIL_FINE" value="11" enum="Layer">
+			Ground detail: fine gravel of 1 to 2 cm, placed only while [member ground_detail] is on.
+		</constant>
+		<constant name="LAYER_MAX" value="12" enum="Layer">
 			Number of layers.
 		</constant>
 	</constants>

@@ -140,6 +140,10 @@ uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disa
 uniform bool clear_water = true;
 // Screen-space reflections with raster_reflections off (a cave stream: no sky to mirror), as PhysXWaterSurface3D's.
 uniform bool screen_reflections = true;
+// Raster: the water thins out over this much of its own depth (m) against what the screen shows behind it -- the
+// bank, a stone standing out of it -- so the shoreline is soft and follows the ground, not the ribbon's
+// waterline interpolated between its vertices (depth fade, as UE's Water and Crest do it).
+uniform float shore_depth_fade : hint_range(0.0, 0.3, 0.005) = 0.05;
 #if !defined(RT)
 uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -318,8 +322,11 @@ void fragment() {
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
 	IOR = 1.33;
-	ABSORPTION = pathtraced_absorption;
-	SCATTERING = pathtraced_scattering;
+	// Clear over the last few cm to the waterline: there the water is a film, but a ray let through it at a grazing
+	// angle can run on under the bank's ground through metres of the medium, tinting a dotted line along the shore.
+	float film = smoothstep(0.0, 0.12, depth);
+	ABSORPTION = pathtraced_absorption * film;
+	SCATTERING = pathtraced_scattering * film;
 	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 	// Gone past the waterline and the banks' fade, as in raster.
 	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
@@ -349,6 +356,14 @@ void fragment() {
 		base_a = 1.0;
 	}
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
+	{
+		float zd = texture(clear_depth, SCREEN_UV).r;
+		if (zd > 0.0 && shore_depth_fade > 0.0) {
+			vec4 b = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, zd, 1.0);
+			float th = v_world.y - (INV_VIEW_MATRIX * vec4(b.xyz / b.w, 1.0)).y;
+			edge *= smoothstep(0.0, shore_depth_fade, th);
+		}
+	}
 	float a0 = mix(base_a, foam_color.a, foam) * edge;
 	// The reflection term is linear in the colour, so the water's part and the
 	// foam's part split exactly: what was one unshaded colour is now emission
@@ -526,6 +541,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snap_to_ground"), &PhysXRiver3D::get_snap_to_ground);
 	ClassDB::bind_method(D_METHOD("set_ground_probe_height", "height"), &PhysXRiver3D::set_ground_probe_height);
 	ClassDB::bind_method(D_METHOD("get_ground_probe_height"), &PhysXRiver3D::get_ground_probe_height);
+	ClassDB::bind_method(D_METHOD("set_ground_probe_depth", "depth"), &PhysXRiver3D::set_ground_probe_depth);
+	ClassDB::bind_method(D_METHOD("get_ground_probe_depth"), &PhysXRiver3D::get_ground_probe_depth);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &PhysXRiver3D::set_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_ground_collision_mask"), &PhysXRiver3D::get_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_obstacle_collision_mask", "mask"), &PhysXRiver3D::set_obstacle_collision_mask);
@@ -620,6 +637,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "default_width", PROPERTY_HINT_RANGE, "0.1,100,0.05,or_greater,suffix:m"), "set_default_width", "get_default_width");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snap_to_ground"), "set_snap_to_ground", "get_snap_to_ground");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_probe_height", PROPERTY_HINT_RANGE, "0,200,0.05,or_greater,suffix:m"), "set_ground_probe_height", "get_ground_probe_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_probe_depth", PROPERTY_HINT_RANGE, "0.1,200,0.05,or_greater,suffix:m"), "set_ground_probe_depth", "get_ground_probe_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
@@ -688,6 +706,7 @@ RIVER_SETTER(roughness, float, roughness, CLAMP(p_value, 0.005f, 0.5f))
 RIVER_SETTER(max_slope, float, max_slope, MAX(p_value, 0.001f))
 RIVER_SETTER(gradually_varied_flow, bool, gradually_varied_flow, p_value)
 RIVER_SETTER(ground_probe_height, float, ground_probe_height, MAX(p_value, 0.0f))
+RIVER_SETTER(ground_probe_depth, float, ground_probe_depth, MAX(p_value, 0.1f))
 RIVER_SETTER(bend_superelevation, bool, bend_superelevation, p_value)
 RIVER_SETTER(standing_waves, bool, standing_waves, p_value)
 RIVER_SETTER(snap_to_ground, bool, snap_to_ground, p_value)
@@ -1475,7 +1494,7 @@ bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 
 		return false;
 	}
 	const real_t PROBE_ABOVE = ground_probe_height;
-	constexpr real_t PROBE_BELOW = 200.0;
+	const real_t PROBE_BELOW = ground_probe_depth;
 	constexpr int MAX_SKIPS = 8;
 	const Transform3D xf = get_global_transform();
 	PhysicsDirectSpaceState3D::RayParameters ray;

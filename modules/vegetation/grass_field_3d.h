@@ -164,13 +164,13 @@ private:
 	bool _blade_in_hole(const TerrainDataMap3D *p_map, float p_x, float p_z, float p_ground_y) const;
 	NodePath undergrowth_field; // A VegetationField3D whose bracken and bramble stands shade the sward out (PlantSpecies.sward_shade).
 	Ref<PlantSpecies> rules;
-	float density = 120.0f; // Blades per square metre, near the camera.
-	Vector2 blade_height = Vector2(0.25f, 0.6f);
-	float blade_width = 0.04f;
+	float density = 220.0f; // Blades per square metre, near the camera (fine verge blades: denser).
+	Vector2 blade_height = Vector2(0.2f, 0.5f);
+	float blade_width = 0.018f; // Cocksfoot and false oat-grass leaves are 5 to 10 mm: wider read as cards.
 	float clump_size = 1.2f;
 	float lean = 0.35f;
 	Color base_color = Color(0.1f, 0.2f, 0.05f);
-	Color tip_color = Color(0.45f, 0.6f, 0.22f);
+	Color tip_color = Color(0.36f, 0.44f, 0.2f); // Summer grey-green, not spring lime.
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
 	// The year (docs/ideas/vegetation-seasons.md): a WeatherMap3D whose season browns the sward in

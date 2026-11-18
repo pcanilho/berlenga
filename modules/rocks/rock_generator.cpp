@@ -2545,6 +2545,10 @@ uniform float contact_height = 0.08;
 // grown with the stone's size), the ground's layer from the generator's geology, coloured as the landscape's layers.
 uniform bool ground_blend = false;
 uniform float ground_blend_height = 0.45;
+// Contact and blend bands on stones under 50 cm (half b axis under 0.25 m): off, they are sized for a 50 cm stone,
+// which covers a pebble whole; on (with RockField3D.ground_detail, docs/ideas/ground-detail.md), they shrink in
+// proportion to the stone, meeting the old size at 50 cm, so pebbles and the detail grains keep a dusted foot.
+uniform bool small_linear = false;
 // Forms set into a terrain cliff (cave mouths): the rock keeps its own mottling, beds and marks but takes the
 // cliff's colour (ground_rock, the landscape's rock layer), so the block reads as part of the wall around it.
 uniform bool cliff_match = false;
@@ -2854,17 +2858,19 @@ void fragment() {
 	if (v_custom.z > 0.0) {
 		// The ground under this point: the plane through the stone's foot along the slope there.
 		float above = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
-		contact = 1.0 - smoothstep(0.0, contact_height * max(v_scale, 0.25), above);
+		float sc = small_linear ? max(v_scale, 0.002) : max(v_scale, 0.25);
+		float bk = small_linear && v_scale < 0.25 ? 2.0 * sc : sqrt(sc); // continuous at 0.25 (0.5 both ways)
+		contact = 1.0 - smoothstep(0.0, contact_height * sc, above);
 		col = mix(col, contact_color, 0.6 * contact);
 		// Ground blending (CryEngine's terrain layer blend, UE runtime virtual texture blending, Far Cry 5): over a
 		// band above the ground the stone takes the ground's surface, the hollows first and the proud parts last
 		// (height blend on the cavity map, Mishkinis 2013), its edge broken by noise, more on faces turned up (soil
 		// and sand settle there), and the shading normal eased to the ground's so the seam lights alike.
-		if (ground_blend && above < ground_blend_height * 2.5 * sqrt(max(v_scale, 0.25))) {
-			float band = ground_blend_height * sqrt(max(v_scale, 0.25));
+		if (ground_blend && above < ground_blend_height * 2.5 * bk) {
+			float band = ground_blend_height * bk;
 			// Debris banks up on the uphill side (sediment trapped against the stone).
 			float sl = length(v_slope);
-			float up = sl > 1e-3 ? dot(v_slope / sl, v_world.xz - v_origin.xz) / max(v_scale, 0.25) : 0.0;
+			float up = sl > 1e-3 ? dot(v_slope / sl, v_world.xz - v_origin.xz) / sc : 0.0;
 			band *= 1.0 + 1.2 * clamp(up, 0.0, 1.0) * clamp(sl * 2.0, 0.0, 1.0);
 			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
 			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.

@@ -1339,8 +1339,9 @@ void GrassField3D::_build_hedges() {
 	// Hedgerow standards: trees let grow up out of the hedge every few tens of metres (field
 	// maple and hawthorn grown on; Rackham 1986: most hedges hold some), so a hedge is not one
 	// even line of bushes from afar.
-	const TreeGenerator::Preset std_presets[2] = { TreeGenerator::PRESET_FIELD_MAPLE, TreeGenerator::PRESET_HAWTHORN };
-	LocalVector<Transform3D> std_xf[2][VARIANTS];
+	// Oak is the commonest hedgerow tree of lowland England, and the tallest here.
+	const TreeGenerator::Preset std_presets[3] = { TreeGenerator::PRESET_FIELD_MAPLE, TreeGenerator::PRESET_HAWTHORN, TreeGenerator::PRESET_OAK };
+	LocalVector<Transform3D> std_xf[3][VARIANTS];
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 	const Transform3D to_local = get_global_transform().affine_inverse();
 	const float base_y = get_global_position().y;
@@ -1454,10 +1455,20 @@ void GrassField3D::_build_hedges() {
 				const Basis bs = Basis(Vector3(0, 1, 0), yaw) * Basis::from_scale(Vector3(lng, tall, wide));
 				xf[kind][variant].push_back(to_local * Transform3D(bs, at));
 				// A standard every 35 to 80 m along the line.
-				if (s >= next_std) {
-					const int sk = h01(6) < 0.6f ? 0 : 1;
-					const float sc = sk == 0 ? 0.45f + 0.2f * h01(7) : 0.7f + 0.2f * h01(7);
-					const Basis sb = Basis(Vector3(0, 1, 0), h01(8) * float(Math::TAU)) * Basis::from_scale(Vector3(sc, sc, sc));
+				// Not at a field's corner: the gateways and turning space are there, and a corner
+				// tree would shade two fields.
+				if (s >= next_std && s > 15.0f && s < len - 15.0f) {
+					const float pick = h01(6);
+					const int sk = pick < 0.35f ? 0 : (pick < 0.6f ? 1 : 2);
+					const float sc = sk == 0 ? 0.45f + 0.2f * h01(7) : (sk == 1 ? 0.7f + 0.2f * h01(7) : 0.55f + 0.2f * h01(7)); // Oak: 10 to 14 m of a 19 m open-grown crown.
+					// Each its own: a crown wider one way than the other, taller or squatter, and a
+					// lean of up to 8 degrees, most often away from the field (light from the open side).
+					const float sx = sc * (0.85f + 0.3f * h01(11));
+					const float sy = sc * (0.85f + 0.35f * h01(12));
+					const float sz = sc * (0.85f + 0.3f * h01(13));
+					const float lean = Math::deg_to_rad(8.0f) * h01(14);
+					const Vector3 lean_axis = Vector3(dir.x, 0.0f, dir.y).rotated(Vector3(0, 1, 0), (h01(15) - 0.5f) * 1.2f);
+					const Basis sb = Basis(lean_axis.normalized(), lean) * Basis(Vector3(0, 1, 0), h01(8) * float(Math::TAU)) * Basis::from_scale(Vector3(sx, sy, sz));
 					std_xf[sk][int(hash_murmur3_one_32(9, hv) % VARIANTS)].push_back(to_local * Transform3D(sb, at));
 					next_std = s + 35.0f + 45.0f * h01(10);
 				}
@@ -1480,8 +1491,8 @@ void GrassField3D::_build_hedges() {
 	// bricks"), each level a MultiMesh per 8 m cell: a visibility range is measured to the
 	// instance's AABB centre, so one MultiMesh for a whole field would switch all its hedges
 	// together.
-	auto add_levels = [&](const Ref<Mesh> &p_full, const LocalVector<Transform3D> &p_xf, const String &p_key, const float *p_voxels, const float *p_ranges, const String &p_name) {
-		for (int lod = 0; lod < 4; lod++) {
+	auto add_levels = [&](const Ref<Mesh> &p_full, const LocalVector<Transform3D> &p_xf, const String &p_key, const float *p_voxels, const float *p_ranges, const String &p_name, int p_levels) {
+		for (int lod = 0; lod < p_levels; lod++) {
 			Ref<Mesh> lm = p_full;
 			if (lod > 0) {
 				const String key = vformat("%s_%d_%d", p_key, lod, hedge_day);
@@ -1517,16 +1528,17 @@ void GrassField3D::_build_hedges() {
 					mmi->set_visibility_range_begin(p_ranges[lod]);
 					mmi->set_visibility_range_end(p_ranges[lod + 1]);
 					mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
-					mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
+					mmi->set_visibility_range_end_margin(lod < p_levels - 1 ? 3.0f : 0.0f);
 				}
 				holder->add_child(mmi);
 			}
 		}
 	};
-	// Segments: 10 cm voxels from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a voxel is about
-	// two pixels across at 1080p and a 75 degree view (plus the cell's reach).
-	const float seg_ranges[5] = { 0.0f, 45.0f, 90.0f, 180.0f, 0.0f };
-	const float seg_voxels[4] = { 0.0f, 0.1f, 0.2f, 0.4f };
+	// Segments: 5 cm voxels from 20 m, 10 cm from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a
+	// voxel is about two pixels across at 1080p and a 75 degree view (plus the cell's reach). A
+	// flailed segment is over a million triangles; past 20 m its leaves are under a pixel.
+	const float seg_ranges[6] = { 0.0f, 20.0f, 45.0f, 90.0f, 180.0f, 0.0f };
+	const float seg_voxels[5] = { 0.0f, 0.05f, 0.1f, 0.2f, 0.4f };
 	for (int k = 0; k < kinds; k++) {
 		bool any = false;
 		for (int v = 0; v < VARIANTS; v++) {
@@ -1544,13 +1556,13 @@ void GrassField3D::_build_hedges() {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
 			}
-			add_levels(meshes[v % meshes.size()], xf[k][v], vformat("hedge_%d_%d", int(mix[k].preset), v), seg_voxels, seg_ranges, vformat("Hedge%d_%d", k, v));
+			add_levels(meshes[v % meshes.size()], xf[k][v], vformat("hedge_%d_%d", int(mix[k].preset), v), seg_voxels, seg_ranges, vformat("Hedge%d_%d", k, v), 5);
 		}
 	}
 	// Standards: crowns of 5 to 10 m, coarser voxels and further ranges.
 	const float std_ranges[5] = { 0.0f, 70.0f, 140.0f, 280.0f, 0.0f };
 	const float std_voxels[4] = { 0.0f, 0.15f, 0.3f, 0.6f };
-	for (int k = 0; k < 2; k++) {
+	for (int k = 0; k < 3; k++) {
 		bool any = false;
 		for (int v = 0; v < VARIANTS; v++) {
 			any = any || !std_xf[k][v].is_empty();
@@ -1558,7 +1570,17 @@ void GrassField3D::_build_hedges() {
 		if (!any) {
 			continue;
 		}
-		const Ref<PlantSpecies> sp = TreeGenerator::make_shrub_species(std_presets[k], TreeGenerator::SHRUB_MATURE, VARIANTS, season);
+		Ref<PlantSpecies> sp;
+		if (std_presets[k] == TreeGenerator::PRESET_OAK) {
+			// A tree preset: an open-grown tree (a full crown, low branches) from its generator.
+			Ref<TreeGenerator> tg;
+			tg.instantiate();
+			tg->set_preset(std_presets[k]);
+			tg->set_season(season);
+			sp = tg->make_species(false, 2); // Two: a tree is heavy, and few stand in view.
+		} else {
+			sp = TreeGenerator::make_shrub_species(std_presets[k], TreeGenerator::SHRUB_MATURE, VARIANTS, season);
+		}
 		if (sp.is_null()) {
 			continue;
 		}
@@ -1567,7 +1589,7 @@ void GrassField3D::_build_hedges() {
 			if (std_xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
 			}
-			add_levels(meshes[v % meshes.size()], std_xf[k][v], vformat("standard_%d_%d", int(std_presets[k]), v), std_voxels, std_ranges, vformat("Standard%d_%d", k, v));
+			add_levels(meshes[v % meshes.size()], std_xf[k][v], vformat("standard_%d_%d", int(std_presets[k]), v), std_voxels, std_ranges, vformat("Standard%d_%d", k, v), 4);
 		}
 	}
 }
@@ -3972,7 +3994,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	vec3 far = mix(shaded, canopy, cover * mix(rows, 1.0, max(look.a * look.a, 1.0 - mu * mu)));
 	// Tramlines in a standing crop are lanes between walls of it: soil in their shade, darker
 	// than the canopy round them, not pale stripes over it.
-	far = mix(far, mix(canopy * 0.55, soil * 0.75, 0.6), wheel * look.a * mu);
+	far = mix(far, mix(canopy * 0.55, soil * 0.75, 0.6), wheel * look.a * mu * (1.0 - smoothstep(0.1, 0.4, length(fwidth(xz)))));
 	vec4 sw = texelFetch(crop_ground_plots, ivec2(int(crop_ground_field_slot(world_pos)), 2), 0);
 	// Past the tillers' band the stand as a relief: the view ray marched back from the ground
 	// through a height field of the canopy (parallax occlusion mapping, Tatarchuk 2006; relief
@@ -4010,7 +4032,11 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 				prev_s = st;
 				prev_d = dd;
 			}
-			vec3 relief = soil * mix(0.85, 0.6, look.a); // Down a lane to its soil, part in its walls' shade.
+			// Down a lane to its soil, part in its walls' shade, while a wheel track (half a metre)
+			// spans a few pixels; past that the pixel holds the lane's walls and tops as well, and
+			// its mean is near the canopy's own (a far tramline is a faint line, not a black one).
+			float lane_res = 1.0 - smoothstep(0.08, 0.3, px_lat);
+			vec3 relief = mix(canopy * 0.8, soil * mix(0.85, 0.6, look.a), lane_res);
 			if (hit_s >= 0.0) {
 				vec2 q = xz - v.xz * hit_s;
 				float depth = clamp(hit_s * dv / H, 0.0, 1.0);
@@ -4030,7 +4056,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 				}
 				// Lit at the top, in the stand's own shade lower down (its light falls about as
 				// exp(-LAI) to the base).
-				relief = canopy * max(1.0 + 1.3 * grain, 0.3) * mix(0.28, 1.3, depth * depth);
+				relief = canopy * max(1.0 + 1.3 * grain, 0.3) * mix(mix(0.28, 0.7, 1.0 - lane_res), 1.3, depth * depth); // Deep hits (a lane's walls) lifted to the pixel's mean where the lane is unresolved.
 			}
 			far = mix(far, relief * crop_ground_view.rgb * texelFetch(crop_ground_plots, ivec2(int(crop_ground_field_slot(world_pos)), 3), 0).rgb, gone);
 		}

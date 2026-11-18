@@ -4115,7 +4115,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
 			const int k = y * N + x;
 			// Fibres run along the stem: noise stretched along v.
-			const float fibre = bark_fbm(u, v, 48 * F, 6 * F, 3, salt + 3u);
+			// Cork's grain runs across, in its yearly layers (vertical streaks read as driftwood).
+			const float fibre = p_kind == BARK_CORK ? bark_fbm(u, v, 6 * F, 48 * F, 3, salt + 3u) : bark_fbm(u, v, 48 * F, 6 * F, 3, salt + 3u);
 			float height = L.grain * (fibre + 0.5f * bark_fbm(u, v, 16 * F, 16 * F, 4, salt + 9u));
 			Color a(1, 1, 1);
 			float r = 0.88f + 0.08f * fibre;
@@ -4126,7 +4127,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 27u);
 				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, (p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 0.5f : (p_kind == BARK_CORK ? 0.75f : -1.0f), (p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 1.8f : 1.0f);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), (p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 1.8f : 1.0f);
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
@@ -4172,35 +4173,58 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float wn = bark_fbm(u, v, 4, 6, 2, salt + 33u) + 0.25f; // 0..0.5
 					const float w1 = 0.034f + 0.04f * wn; // Nominal: the first-order distance runs about twice the true one at this noise.
 					const float dep = 0.045f + 0.05f * wn;
-					const float d1 = zero_dist(u, v, 8, 1, salt + 51u);
-					// The second family splits about half the ridges; the cross cracks are zero lines
-					// of a noise as fine across as along, so they wander at every angle and length
-					// (round 9, docs 18 Nov: zero lines of a noise stretched round the stem gave
-					// rows of short square-ended notches, stamped glyphs). Where a family fades out it
-					// narrows and shallows to a point instead of stopping square.
-					const float m2 = Math::smoothstep(-0.06f, 0.1f, bark_fbm(u, v, 3, 4, 2, salt + 63u));
-					const float d2 = zero_dist(u, v, 6, 1, salt + 55u) / 0.8f + (1.0f - m2) * 3.0f * w1;
-					const float m3 = Math::smoothstep(-0.08f, 0.12f, bark_fbm(u, v, 3, 3, 2, salt + 67u));
-					// Round 10 (docs: the isotropic zero lines curled into S, F and C hooks, carved
-					// glyphs): one octave stretched across the stem, nearly straight lines whose
-					// slant drifts with the warp, made jagged at their edges by fine noise. A slow tilt per block
-					// (trees.md, cork r10) keeps them from lining up into rows like brick courses.
-					const float vs = v + 0.06f * bark_fbm(u, v, 5, 2, 2, salt + 73u);
-					const float d3 = zero_dist(u, vs, 2, 5, salt + 59u, 1) / 0.75f + (1.0f - m3) * 3.0f * w1 + 0.3f * w1 * bark_fbm(u, v, 48, 48, 2, salt + 69u);
-					const float dm = MIN(d1, MIN(d2, d3));
+					// Round 11 (docs, 18 Nov: single knife slashes meeting the fissures in T marks;
+					// long, smooth, stringy ridges like driftwood. Matched against photographs of
+					// virgin cork, e.g. Wikimedia Commons "Domaine du Rayol - Quercus suber (bark 1)"):
+					// the fissures are a network that branches and rejoins round thick blocks a hand
+					// to a span tall, not long ridges with cuts across, and the block faces are
+					// stacked horizontal layers of cork that crumble at the edges, not fibres. Two
+					// families of zero lines, each only three or four times longer than wide, cross
+					// and merge into closed blocks; no separate cross breaks.
+					// Long wavy fissures (one octave, four times longer than wide, so they do not
+					// curl into worms) and a cellular network between them: cells about 12 cm wide and
+					// 30 cm tall, run together up the stem in ones to threes, a share of their walls
+					// never cracked, so the blocks branch and rejoin round irregular polygons (the
+					// stretched cells' side walls open wide, their end walls narrow).
+					const float d1 = zero_dist(u, v, 7, 2, salt + 51u, 1);
+					const float cu_ = u + 0.03f * bark_fbm(u, v, 6, 6, 2, salt + 91u);
+					const float cv_ = v + 0.05f * bark_fbm(u, v, 6, 6, 2, salt + 92u);
+					// No merged walls inside the Voronoi (skipping a wall leaves a step in the edge
+					// distance, read as flat facets): each wall instead cracks to its own depth, a few
+					// not at all. Measured in the across-stem cell size, so the end walls between cells
+					// above and below come out narrower than the side walls.
+					const BarkCell cc = bark_voronoi(cu_ - Math::floor(cu_), cv_ - Math::floor(cv_), 10, 4, salt + 93u);
+					const uint32_t ea = MIN(cc.id, cc.across), eb = MAX(cc.id, cc.across);
+					const float wall_h = bark_hash(int(ea), int(eb), salt + 97u);
+					const float d2 = cc.edge * tile / 10.0f + (1.0f - Math::smoothstep(0.15f, 0.5f, wall_h)) * 3.0f * w1 + 0.25f * w1 * bark_fbm(u, v, 48, 48, 2, salt + 69u);
+					const float dm = MIN(d1, d2);
 					// One profile from the fissure's floor to the block's crown, steep at the floor
 					// and rounding over the top (round 8's separate cut and swelling met in a step, a
 					// terraced, machined edge).
 					// Round 10 (docs: soft, folded edges like melted plastic): the walls rise steeply
 					// to a rim at about 40% of the span, crumbled by fine noise, and the crown rounds
 					// gently from there.
-					const float x = CLAMP(dm / (2.6f * w1), 0.0f, 1.0f);
+					// Round 11: steep walls a few centimetres each side of the fissure, then a broad
+					// lumpy block top (any slope over the whole block peaked into facets).
+					const float x = CLAMP(dm / (1.6f * w1), 0.0f, 1.0f);
 					const float xj = x + 0.1f * bark_fbm(u, v, 60, 40, 2, salt + 71u);
-					const float depth = dep * (1.0f - Math::smoothstep(0.04f, 0.42f, xj)) + 0.03f * (1.0f - x) * (1.0f - x);
+					const float depth = dep * (1.0f - Math::smoothstep(0.04f, 0.5f, xj)) ;
 					cork_open = CLAMP(dm / (1.3f * w1), 0.0f, 1.0f);
 					// Lumpy, crumbly crowns, at the scale of a thumb.
 					const float lumps = bark_fbm(u, v, 30, 20, 3, salt + 57u);
-					plate = 1.0f - depth / L.depth + 0.06f * lumps;
+					// Layers: each year's cork is a thin sheet, so a block's face is a stack of
+					// horizontal laminae, 1-2 cm, whose edges crumble out of the walls and catch the
+					// light as short ledges (the photograph's look; vertical fibres read as
+					// driftwood). Short, wavy grooves across the stem, deepest on the walls.
+					const float lam_n = bark_fbm(u + 0.02f * bark_fbm(u, v, 20, 20, 2, salt + 85u), v, 10, 80, 2, salt + 87u);
+					const float lam_len = Math::smoothstep(-0.05f, 0.15f, bark_fbm(u, v, 40, 24, 2, salt + 89u));
+					const float lam = (1.0f - Math::smoothstep(0.0f, 0.09f, Math::abs(lam_n))) * lam_len;
+					// Each layer's lower edge stands out a little over the one below: a short, wavy
+					// ledge (a sawtooth across the stem, about 1.5 cm a layer, broken into lengths).
+					const float layer = v * 80.0f + 1.5f * bark_fbm(u, v, 12, 6, 2, salt + 99u);
+					const float ledge = (layer - Math::floor(layer)) * Math::smoothstep(-0.1f, 0.2f, bark_fbm(u, v, 30, 16, 2, salt + 101u));
+					const float wall = 1.0f - 0.5f * Math::smoothstep(0.35f, 0.9f, x);
+					plate = 1.0f - depth / L.depth + 0.06f * lumps - (0.2f * lam + 0.1f * ledge) * wall;
 					open = cork_open;
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
@@ -4215,8 +4239,19 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// Maritime pine (Alia et al. 1996; Gymnosperm Database: "very thick, deeply
 					// fissured"): thick plates, steep walls straight down from their rims, the tops
 					// built of a few flaking layers (docs, 18 Nov: thin flat plates read as piping).
-					const float layers = Math::floor((bark_fbm(u, v, 10, 5, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
-					plate = Math::smoothstep(0.0f, 0.3f, open) * (0.8f + 0.2f * layers);
+					// Round 7 (docs, 18 Nov: smooth slabs with thin wavy lines like contour lines on a
+					// map, the edges of the plate's quantized layers; furrows zig-zagging across the
+					// plates, the cells' end walls). The plate face is now rough and lumpy without any
+					// stepped level (each step's edge drew a line), and end walls crack less often
+					// (vmerge below), so plates run longer between the furrows.
+					// The face is rough and layered: lumps a few centimetres across, sharpened into
+					// crumbly ridges (|noise| folded, as ridged multifractal noise does; Musgrave 1994)
+					// standing over a fine grit, with no stepped levels (each step's edge drew a line,
+					// and Voronoi flakes drew a net of cracks over the plate).
+					const float r1 = bark_fbm(u, v, 16, 9, 3, salt + 57u);
+					const float r2 = 0.5f - Math::abs(bark_fbm(u, v, 34, 20, 2, salt + 59u));
+					const float grit = bark_fbm(u, v, 70, 50, 2, salt + 111u);
+					plate = Math::smoothstep(0.0f, 0.3f, open) * (0.66f + 0.28f * r1 + 0.16f * r2 + 0.08f * grit);
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
@@ -15547,9 +15582,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		return true;
 	};
 	const int leaf_v_start = int(leaves.verts.size());
+	// A pine's shoots that hang below its lowest limb's foot are in the crown's deep shade and
+	// die back (pines self-prune hard; docs, 18 Nov: a ragged tuft under the maritime pine's crown
+	// drew the eye).
+	const float hang_floor = preset == PRESET_MARITIME_PINE && bole_height > 1.0f ? bole_height - 0.15f : -1e9f;
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
-		if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
+		if ((!n.leafy && !spurs[i]) || n.removed || n.dead || n.end().y < hang_floor) {
 			continue;
 		}
 		// Thin by twigs and by leaves on the kept twigs in equal parts: dropping whole twigs alone

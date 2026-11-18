@@ -2097,6 +2097,24 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Cork round 11 (18 Nov; docs: every cross break a knife slash meeting a fissure in a T; ridges
+smooth, long and stringy, driftwood). Matched against photographs of virgin cork (Wikimedia
+Commons, "Domaine du Rayol - Quercus suber (bark 1)", public domain): deep, irregular fissures
+that branch and rejoin round thick blocks a hand to a span tall, whose faces are stacks of
+horizontal cork layers crumbling at the edges. Now: long wavy fissures (one octave, 7 x 2 cycles
+a 1.2 m tile, so they do not curl) plus a Voronoi network between them (10 x 4 cells, about
+12 x 30 cm), each wall cracked to its own depth and some not at all (skipping walls inside the
+Voronoi left steps in the edge distance, read as facets). Steep walls a few centimetres each
+side, then a lumpy flat-ish top. On the walls short wavy grooves and a 1.5 cm sawtooth across
+the stem give the layers; the fine grain runs across, not along.
+
+Maritime pine round 7 (18 Nov; docs: smooth slabs with thin wavy lines like map contours;
+furrows zig-zagging like lightning; a ragged tuft under the crown). The plates' quantized layer
+levels drew the contours, so the face is now continuous: lumps a few cm across with folded
+(ridged) noise for crumbly crests and a fine grit. Voronoi flakes were tried and drew a net of
+cracks. End walls crack less (vmerge 0.65), so fewer zig-zags. Shoots hanging below the lowest
+limb's foot die back (pines self-prune), which removes the tuft.
+
 Hedge face round 2 (18 Nov; docs: the flailed face showed single oversized flakes over a wire
 cage of twigs, hard-edged boxes; grown-out crowns all broccoli domes from above). A clipped hedge
 packs its leaves into a shell a hand deep, so its leaf area density cap is four times a free

@@ -155,13 +155,13 @@
 		<member name="base_color" type="Color" setter="set_base_color" getter="get_base_color" default="Color(0.1, 0.2, 0.05, 1)">
 			Blade colour at the root.
 		</member>
-		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.25, 0.6)">
+		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.2, 0.5)">
 			Minimum and maximum blade height, in metres. Each clump picks a height in this range.
 		</member>
 		<member name="blade_segments" type="int" setter="set_blade_segments" getter="get_blade_segments" default="4">
 			Segments along each blade. 4 bends smoothly; 1 (a single triangle) suits a short, dense undercoat at a quarter of the vertices.
 		</member>
-		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.04">
+		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.018">
 			Blade width at the root, in metres.
 		</member>
 		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
@@ -182,7 +182,7 @@
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			Path to a [TerrainDataMap3D] giving the ground height and the maps [member rules] read.
 		</member>
-		<member name="density" type="float" setter="set_density" getter="get_density" default="120.0">
+		<member name="density" type="float" setter="set_density" getter="get_density" default="220.0">
 			Blades per square metre near the camera.
 		</member>
 		<member name="drill_angle" type="float" setter="set_drill_angle" getter="get_drill_angle" default="0.0">
@@ -239,7 +239,7 @@
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="8.0">
 			Edge of a tile, in metres.
 		</member>
-		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.45, 0.6, 0.22, 1)">
+		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.36, 0.44, 0.2, 1)">
 			Blade colour at the tip.
 		</member>
 		<member name="trample_enabled" type="bool" setter="set_trample_enabled" getter="is_trample_enabled" default="true">

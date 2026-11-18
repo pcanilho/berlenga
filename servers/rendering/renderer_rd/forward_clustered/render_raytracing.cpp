@@ -314,6 +314,7 @@ static bool _rt_multimesh_source(RID p_multimesh, RTInstanceSource &r_source) {
 	r_source.custom_offset = mesh_storage->multimesh_uses_custom_data(p_multimesh) ? mesh_storage->multimesh_get_custom_data_offset(p_multimesh) : UINT32_MAX;
 	r_source.last_change = mesh_storage->multimesh_get_last_change(p_multimesh);
 	r_source.trail_steps = mesh_storage->multimesh_bones_per_instance(p_multimesh); // Instance bones read like trail records.
+	r_source.instanced = mesh_storage->multimesh_rt_instanced(p_multimesh);
 	return r_source.count > 0;
 }
 
@@ -385,9 +386,10 @@ static uint64_t _rt_merged_triangle_count(const RTInstanceSource &p_source, void
 		return 0;
 	}
 	const uint64_t triangles = uint64_t(p_source.count) * (indexed ? index_count / 3 : vertex_count / 3);
-	// MultiMeshes above the cap use the expanded TLAS fallback; particles and captured surfaces have none.
+	// MultiMeshes above the cap, or asked to (multimesh_set_rt_instanced), use the expanded TLAS entries; particles and
+	// captured surfaces have none.
 	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
-	if (!p_source.particles && !p_captured && triangles > MM_MERGED_BLAS_MAX_TRIANGLES) {
+	if (!p_source.particles && !p_captured && (p_source.instanced || triangles > MM_MERGED_BLAS_MAX_TRIANGLES)) {
 		return 0;
 	}
 	return triangles;

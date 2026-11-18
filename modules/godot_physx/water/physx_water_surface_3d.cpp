@@ -1999,7 +1999,7 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, seen, bed_p, sun_share);
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share);
 		if (caustics_on && sun_share > 0.0) {
 			// The bed point back up its refracted sun ray to the surface, then down it to the map's reference
 			// depth: where the map holds that ray's light (a bed at the reference depth reads its own point).
