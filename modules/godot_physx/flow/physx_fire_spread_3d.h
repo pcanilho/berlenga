@@ -31,8 +31,10 @@
 
 #pragma once
 
-#include "core/templates/local_vector.h"
 #include "physx_firebrands.h"
+
+#include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -70,6 +72,8 @@ private:
 	NodePath vegetation_field; // optional VegetationField3D: worn paths and leaf litter change the fuel
 	LocalVector<float> rain_water; // kg of intercepted rain per kg of fuel, per cell
 	LocalVector<uint8_t> quenched; // put out while burning (rain)
+	HashMap<uint32_t, float> water_cells; // fluid water on the ground this sample, kg per cell
+	int quenched_by_water = 0;
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -77,6 +81,10 @@ private:
 	LocalVector<float> wet; // moisture over fuel_moisture, per cell (patches, fuel_map green)
 	Vector3 wind; // world wind when no weather map gives one
 	bool use_weather_wind = true;
+	bool lightning_ignition = true; // storm lightning (WeatherLightning3D) can light the fuel it strikes
+	uint64_t lightning_seen = 0;
+	int lightning_ignitions = 0;
+	void _ignite_from_lightning();
 	float spread_scale = 1.0f; // speeds the front up or down (a game's pace)
 	NodePath heat_source; // a PhysXFlow3D whose hot gas ignites the ground under it
 	float ignition_temperature = 0.35f; // in the heat source's temperature units
@@ -235,7 +243,8 @@ public:
 	float get_fuel_load_scale() const { return fuel_load_scale; }
 	void set_fuel_map(const Ref<Image> &p_map);
 	Ref<Image> get_fuel_map() const { return fuel_map; }
-	void _update_moisture(float p_delta);
+	bool _update_moisture(float p_delta);
+	void _apply_fluid_water(float p_delta, bool p_weather_dried);
 	float _moisture(uint32_t p_i) const { return base_moisture * wet[p_i] + rain_water[p_i]; }
 	float _air_temperature() const;
 	void set_fuel_patchiness(float p_v);
@@ -246,6 +255,12 @@ public:
 	Vector3 get_wind() const { return wind; }
 	void set_use_weather_wind(bool p_v) { use_weather_wind = p_v; }
 	bool is_using_weather_wind() const { return use_weather_wind; }
+	void set_lightning_ignition(bool p_v) { lightning_ignition = p_v; }
+	bool is_lightning_ignition() const { return lightning_ignition; }
+	int get_lightning_ignition_count() const { return lightning_ignitions; }
+	// Chance that a ground strike with p_continuing seconds of continuing current lights fuel at p_moisture of
+	// p_extinction (both fractions of dry weight).
+	static float lightning_ignition_chance(float p_continuing, float p_moisture, float p_extinction);
 	void set_spread_scale(float p_v) { spread_scale = MAX(p_v, 0.0f); }
 	float get_spread_scale() const { return spread_scale; }
 	void set_heat_source(const NodePath &p_path) { heat_source = p_path; }
@@ -269,6 +284,7 @@ public:
 	float get_spotting_scale() const { return spotting_scale; }
 	int get_firebrand_count() const { return firebrands.get_count(); }
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
+	int get_doused_cells() const { return quenched_by_water; }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }

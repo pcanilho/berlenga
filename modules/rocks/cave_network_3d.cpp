@@ -2402,7 +2402,7 @@ float chips(vec3 p, float p_size, out vec3 r_id) {
 }
 float relief(vec3 p, vec3 p_n, float p_joint, float p_near, float p_wall, float p_bed) {
 	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0) + 0.08 * vn(p * 48.0);
-	h += p_near * (0.2 * vn(p * 26.0 + 2.0) + 0.04 * vn(p * 90.0 + 9.0));
+	h += p_near * (0.2 * vn(p * 26.0 + 2.0) + 0.04 * vn(p * 90.0 + 9.0) + 0.03 * vn(p * 240.0 + 4.0));
 	if (p_near > 0.01) {
 		// Close up, solution pits and vugs a few millimetres across, sharp-edged, in the micrite.
 		vec3 pid;
@@ -2461,6 +2461,18 @@ void fragment() {
 	float on_floor = smoothstep(0.0, 0.6, COLOR.b);
 	float drape = floor_w * (1.0 - on_floor) * smoothstep(0.35, 0.65, fbm(w_pos * 2.1 + 51.0));
 	col = mix(col, fill, fill_w * on_floor);
+	// Close up the fill is grit, not a tint: sand grains and granules of a few millimetres, each its own tone (pale
+	// calcite, grey limestone, a few dark chert), shaded as bumps below (the relief's clasts), so a near bank reads
+	// as sediment rather than a haze.
+	float grit_w = fill_w * on_floor * (1.0 - smoothstep(1.5, 4.5, length(VERTEX))) * (1.0 - clamp(COLOR.g, 0.0, 1.0));
+	if (grit_w > 0.01) {
+		vec3 gid;
+		float gr = clasts(w_pos, 0.006, gid);
+		float gk = h3(gid + 9.0);
+		vec3 grain_col = fill * mix(0.6, 1.4, h3(gid)) * (gk > 0.93 ? 0.35 : 1.0);
+		col = mix(col, grain_col, smoothstep(0.05, 0.3, gr) * grit_w * 0.85);
+		col *= 1.0 - 0.25 * grit_w * (1.0 - smoothstep(0.0, 0.15, gr)); // the shadowed gaps between grains
+	}
 	drape = max(drape, (floor_w - fill_w) * on_floor * smoothstep(0.35, 0.65, fbm(w_pos * 2.1 + 51.0)));
 	col = mix(col, col * 0.75 + sediment_color * 0.12, 0.6 * drape);
 	// The bank where the fill meets the wall (the field's smooth fillet, normals between steep and level): spalls
@@ -2524,16 +2536,19 @@ void fragment() {
 	SPECULAR = mix(0.4, 0.08, under);
 	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it and
 	// under puddles.
-	float e = 0.005;
 	float near = 1.0 - smoothstep(3.0, 8.0, length(VERTEX));
+	// The gradient's step follows the finest relief drawn: a couple of millimetres close up (grit, the micrite's
+	// grain), half a centimetre beyond.
+	float e = mix(0.005, 0.0015, max(grit_w, 1.0 - smoothstep(0.8, 2.5, length(VERTEX))));
 	float sc_w = wall * scallops_amount;
-	float h0 = relief(w_pos, w_nrm, joint_w, near, sc_w, bed_floor);
-	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), w_nrm, joint_w, near, sc_w, bed_floor) - h0, relief(w_pos + vec3(0, e, 0), w_nrm, joint_w, near, sc_w, bed_floor) - h0, relief(w_pos + vec3(0, 0, e), w_nrm, joint_w, near, sc_w, bed_floor) - h0) / e;
+	float bed_b = max(bed_floor, 0.42 * grit_w); // the near fill's grit as bumps too
+	float h0 = relief(w_pos, w_nrm, joint_w, near, sc_w, bed_b);
+	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), w_nrm, joint_w, near, sc_w, bed_b) - h0, relief(w_pos + vec3(0, e, 0), w_nrm, joint_w, near, sc_w, bed_b) - h0, relief(w_pos + vec3(0, 0, e), w_nrm, joint_w, near, sc_w, bed_b) - h0) / e;
 	vec3 n = normalize(w_nrm);
 	g -= n * dot(g, n);
 	// Sand and mud are smoother than the rock; flowstone and puddles smoother still.
 	float amount = mix(mix(0.05, 0.1, near), 0.025, floor_w) * (1.0 - 0.7 * streak) * (1.0 - 0.8 * puddle);
-	amount = mix(amount, 0.06, smoothstep(0.1, 0.45, bed_floor)); // the clasts stand proud of the sand
+	amount = mix(amount, 0.06, smoothstep(0.1, 0.45, bed_b)); // the clasts stand proud of the sand
 	// The tilt is bounded (about 25 degrees): where several octaves' slopes add up, an unbounded bump turns the
 	// normal past the light and leaves black blots, or a groove's lit side a white wire.
 	vec3 tilt = amount * g;

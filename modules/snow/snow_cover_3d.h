@@ -241,6 +241,7 @@ class SnowCover3D : public Node3D {
 		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
+		Vector<float> ice;
 	} pub;
 	bool background_updates = true;
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
@@ -248,6 +249,12 @@ class SnowCover3D : public Node3D {
 	double world_dt = 0.0;
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
+	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
+	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
+	Vector<float> cell_water;
+	Vector<float> cell_ice;
+	bool lake_ice_enabled = true;
+	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
 	Ref<Image> upload_snow;
@@ -386,6 +393,20 @@ public:
 	float get_runoff_at(Vector3 p_position) const; // mm/h
 	float get_ground_height_at(Vector3 p_position) const;
 	float get_new_snow_at(Vector3 p_position) const; // m laid by the last update
+	// Water (follow-up 15): the water surface at a point from the terrain data map at climate_map (-INF over
+	// dry land), and the lake ice on it (m). Snow falling on open water melts into it; on ice thick enough
+	// it lies at the water surface.
+	float get_water_level_at(Vector3 p_position) const;
+	float get_ice_thickness_at(Vector3 p_position) const;
+	void set_lake_ice_enabled(bool p_enabled);
+	bool is_lake_ice_enabled() const { return lake_ice_enabled; }
+	// Lake ice after p_hours at p_air_celsius from p_ice m with p_snow_depth m of snow of p_snow_density
+	// kg/m3 on it: Stefan's law with the snow and the air's boundary layer insulating it (Leppaeranta 1993),
+	// growing below freezing; it does not melt here (the update melts it in a thaw once the snow is gone).
+	static float lake_ice_growth(float p_ice, float p_air_celsius, float p_snow_depth, float p_snow_density, float p_hours);
+	static float snow_conductivity(float p_density); // W/(m K), Sturm et al. 1997
+	static constexpr float ICE_WALK = 0.05f; // m of ice that bears a person (the deep snow and its collision lie on it)
+	static constexpr float ICE_HOLD = 0.02f; // m of ice that keeps snow on it (thinner, snow sinks into slush and melts)
 	// The top crust (docs/ideas/snow.md, follow-up 3d): its thickness, the snow over it, its melt-freeze
 	// cycles and the pressure it bears before breaking (0 while it is wet).
 	float get_crust_thickness_at(Vector3 p_position) const; // m

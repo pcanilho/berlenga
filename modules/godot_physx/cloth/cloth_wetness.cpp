@@ -35,9 +35,7 @@
 #include "servers/physics_3d/physics_server_3d.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 void ClothWetness::rain_directions(const Vector3 &p_wind, Vector3 r_dirs[4], float &r_mean_dy) {
 	const float sigma = 0.3f * Vector2(p_wind.x, p_wind.z).length() + 0.5f;
@@ -62,15 +60,14 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 	float air_t = 15.0f;
 	float humidity = 0.7f;
 	float rain = 0.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-		air_t = wm->get_air_temperature();
-		humidity = wm->get_air_humidity();
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		air_t = wm->air_temperature_at(p_world_box.get_center());
+		humidity = wm->air_humidity_at(p_world_box.get_center());
 		if (p_weather && p_node && p_node->is_inside_tree()) {
 			const Vector3 at = p_world_box.get_center();
-			rain = MAX(wm->get_rain_at(at), 0.0f);
-			rain *= 1.0f - CLAMP(wm->get_canopy_closure_at(at), 0.0f, 1.0f);
-			rain *= WeatherMap3D::rain_fraction(air_t, humidity); // snow does not soak in at once
+			rain = MAX(wm->precipitation_at(at), 0.0f);
+			rain *= 1.0f - CLAMP(wm->canopy_closure_at(at), 0.0f, 1.0f);
+			rain *= wm->rain_share_at(at); // snow does not soak in at once
 			rain_timer -= p_dt;
 			if (rain > 0.0f && rain_timer <= 0.0f) {
 				rain_timer = 0.5f;
@@ -91,7 +88,6 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 			rain *= rain_shelter * rain_catch;
 		}
 	}
-#endif
 	water += rain / 3600.0f * p_dt; // mm/h of rain = kg/m2/h
 	const float es = 6.108f * Math::exp(17.27f * air_t / (air_t + 237.3f)); // hPa, saturation (Tetens)
 	const float deficit = MAX(es * (1.0f - CLAMP(humidity, 0.0f, 1.0f)), 0.0f);
@@ -100,4 +96,30 @@ void ClothWetness::step(Node3D *p_node, const AABB &p_world_box, const Vector3 &
 	evap *= CLAMP(wetness / 0.2f, 0.1f, 1.0f);
 	water = CLAMP(water - evap * p_dt, 0.0f, capacity);
 	wetness = water / capacity;
+
+	// Wading: fabric under the water's surface soaks in seconds (a woven fabric's wicking takes up its fill in a few
+	// seconds once immersed, Kissa 1996), and the water climbs a few centimetres above the line by capillarity. The
+	// soaked band then dries as the rest does.
+	const float lowest = p_world_box.position.y;
+	const float tall = MAX(p_world_box.size.y, 0.01f);
+	float surface = -float(Math::INF);
+	if (p_node && p_node->is_inside_tree()) {
+		if (WorldWater *ww = WorldContracts::water()) {
+			if (ww->has_provider()) {
+				surface = ww->height_at(Vector3(p_world_box.get_center().x, lowest, p_world_box.get_center().z));
+			}
+		}
+	}
+	if (surface > lowest) {
+		wade_depth = MIN(MAX(wade_depth, surface - lowest + 0.03f), tall);
+		wade_wet += (1.0f - wade_wet) * (1.0f - Math::exp(-p_dt / 2.0f));
+	} else if (wade_wet > 0.0f) {
+		wade_wet = MAX(wade_wet - evap * p_dt / capacity, 0.0f);
+		if (wade_wet <= 0.01f) {
+			wade_wet = 0.0f;
+			wade_depth = 0.0f;
+		}
+	}
+	wade_share = CLAMP(wade_depth / tall, 0.0f, 1.0f);
+	wade_line = wade_wet > 0.0f ? lowest + wade_depth : -1.0e6f;
 }

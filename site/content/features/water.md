@@ -137,6 +137,10 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Shore waves: swell breaks into foam on the beach.*
 
+  ![Surf breaking in sections onto a sandy beach, raster](media/shore-surf.jpg)
+
+  *Surf: breakers open into torn lace foam over sand ripples in the shallows.*
+
   ![Waves run up a sloping beach and draw back](media/shore-runup.gif)
 
   *Run-up: the wash climbs the sand and drains back.*

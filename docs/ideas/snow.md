@@ -1101,3 +1101,39 @@ and nothing on the main thread waits.
 
 **Limits.** A setter changed while an update is in flight may apply to it or to the next one. Holding a
 weather snapshot makes the map copy each of its arrays once on its next update (32 KB each at 128 x 128).
+
+## Follow-up 15: snow on open water and lake ice (built 18 Nov 2026)
+
+Snow, rain and water read one world. Research first:
+- **Rain or snow.** One split formula for the whole engine: `WeatherMap3D::rain_fraction(celsius,
+  humidity)`, the humidity-shifted wet-bulb ramp the weather map already used. Snow's
+  `snowfall_fraction` is now `1 - rain_fraction`, so the two can never disagree about the same air.
+- **Live air.** Snow reads `get_air_temperature()` and `get_air_humidity()` (the weather's air, after
+  fronts and the day cycle) instead of the recipe's base values, in the cover, the falling snow and the
+  icicles.
+- **Snow on open water.** The cover finds water through the `TerrainDataMap3D` at `climate_map` (its
+  water surfaces and rivers: `get_water_depth_at` over 5 cm). On an open-water cell, snow and rain melt
+  into the water as they land and leave as runoff; nothing lies there. Falling snow ends at the water
+  surface, not the lake bed (`get_water_level_at`).
+- **Lake ice: Stefan's law with insulation** (Leppäranta 1993, Ashton 1989). Ice grows from the
+  freezing-degree time with the heat path through the snow on top and the air above:
+  `h' = sqrt(a^2 + 2 k_i (-T) t / (rho_i L)) - k_i R0`, `a = k_i R0 + h`,
+  `R0 = d_s / k_s + 1/H`, `H = 20 W/m^2K`, integrated exactly over each update. Snow conductivity from its
+  density (Sturm et al. 1997: `k = 0.138 - 1.01 rho + 3.233 rho^2`, rho in g/cm^3), so new powder
+  insulates far more than old pack.
+- **Snow ice.** When the load of snow pushes the ice under the waterline (negative freeboard
+  `((1000 - 917) h - SWE) / 1000`), the flooded layer of snow freezes into ice (Leppäranta 1983,
+  Saloranta 2000).
+- **Holding.** Under 2 cm the ice is treated as open water; from 2 cm it holds snow; from 5 cm the
+  surface (`SnowSurface3D`) lifts the ground to the water level, so the walker stands on the lake.
+- **Thaw.** Above freezing, once the snow is gone, ice melts by the degree-hour factor (`TF t / 917`).
+- **World tier.** Ice is seeded from the world cells and fed back up, like the pack.
+- `lake_ice_enabled` (on by default); `get_ice_thickness_at`, `get_water_level_at`.
+
+**Results** (`docs/bench/snow --test=water`): bare-ice growth matches the closed form; 20 cm of new snow
+cuts growth below a quarter; a winter on a test lake grows 32.8 cm, as the relation gives for its
+-14.3 C air at the lake's height; open water takes snow with no pack; ice over 2 cm holds a pack; heavy
+snow floods 32.9 cm of ice to 84.2 cm; twelve days at 12 C clear the ice.
+
+**Next.** Draw the ice (dark clear ice to grey with thickness, snow on top) with collision beyond the
+surface's near field, and keep it through the climate bake.

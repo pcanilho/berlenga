@@ -267,6 +267,9 @@ void RigidBody3D::_body_state_changed(PhysicsDirectBodyState3D *p_state) {
 }
 
 void RigidBody3D::_notification(int p_what) {
+	if (p_what == NOTIFICATION_ENTER_TREE) {
+		_join_world_contact();
+	}
 #ifdef TOOLS_ENABLED
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {

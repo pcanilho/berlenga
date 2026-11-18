@@ -31,10 +31,13 @@
 
 #include "vegetation_pollen_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "plant_generator.h"
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
 
+#include "core/templates/hash_set.h"
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/main/scene_tree.h"
@@ -266,13 +269,17 @@ void VegetationPollen3D::_step(float p_delta) {
 		_refresh_release();
 	}
 	const WeatherMap3D *wm = weather_map.is_empty() ? nullptr : Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
-	const Vector<Node *> nodes = get_tree()->get_nodes_in_group(trample_group);
+	// The trample group and world_contact, every body any system should feel (docs/ideas/world-links.md).
+	Vector<Node *> nodes = get_tree()->get_nodes_in_group(trample_group);
+	nodes.append_array(get_tree()->get_nodes_in_group(SNAME("world_contact")));
 	LocalVector<Mover> next;
+	HashSet<ObjectID> listed;
 	for (Node *n : nodes) {
 		Node3D *b = Object::cast_to<Node3D>(n);
-		if (!b) {
+		if (!b || listed.has(b->get_instance_id())) {
 			continue;
 		}
+		listed.insert(b->get_instance_id());
 		Mover m;
 		m.id = b->get_instance_id();
 		m.last = b->get_global_position();
@@ -300,7 +307,7 @@ void VegetationPollen3D::_step(float p_delta) {
 			wind = wm->get_wind_at(m.last, 1.0f);
 			wind.y = 0.0f;
 		}
-		const float radius = b->has_meta("trample_radius") ? float(b->get_meta("trample_radius")) : 0.4f;
+		const float radius = WorldContracts::body_extent(b, 0.4f).x;
 		const Vector2i k0 = pollen_key(m.last - Vector3(radius + 0.6f, 0, radius + 0.6f));
 		const Vector2i k1 = pollen_key(m.last + Vector3(radius + 0.6f, 0, radius + 0.6f));
 		// Every plant the body brushes this step sheds into one puff in front of it: the pool stays

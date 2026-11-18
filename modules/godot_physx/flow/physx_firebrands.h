@@ -50,6 +50,7 @@ public:
 	struct Release {
 		Vector3 position;
 		float weight = 1.0f; // share of the brands from here
+		float twig = 0.0f; // m, > 0: burning twigs of about this thickness dropping out of a crown (not thrown up)
 	};
 	// A stretch of the burning front and the convection column over it.
 	struct Plume {
@@ -65,9 +66,11 @@ private:
 		float vt = 4.0f; // terminal velocity when fresh, m/s
 		float age = 0.0f;
 		float life = 20.0f; // s of glowing combustion
+		float n = 1.0f; // real brands this one stands for (more than one once MAX_BRANDS are aloft)
 	};
 	LocalVector<Brand> brands;
 	float carry = 0.0f;
+	float stand_for = 1.0f; // real brands each new one stands for
 	uint32_t seed = 0x9e3779b9u;
 	MultiMeshInstance3D *mmi = nullptr;
 	Ref<MultiMesh> mm;

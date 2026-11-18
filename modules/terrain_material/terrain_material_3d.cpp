@@ -253,11 +253,50 @@ float tm_vn(vec3 p) {
 
 // A tangent-space normal from a projection plane as a world-space perturbation (whiteout-style: added to the
 // geometric normal along the plane's two axes).
-vec3 tm_perturb(vec3 nt, ivec2 axes) {
+vec3 tm_perturb(vec2 nt, ivec2 axes) {
 	vec3 d = vec3(0.0);
 	d[axes.x] = nt.x;
 	d[axes.y] = nt.y;
 	return d;
+}
+// Layer textures without visible tiling: hex-tiling (Mikkelsen 2022, "Practical Real-Time Hex-Tiling", after Heitz and
+// Neyret 2018). The plane is cut into a triangle grid; each vertex owns a copy of the texture at its own random offset
+// and rotation, and a pixel blends the three copies of its triangle by barycentric weights sharpened so mostly one
+// copy shows. Gradients are rotated with the coordinates, so the mips stay right across the seams, and normal maps
+// rotate their xy back into the layer's axes.
+vec2 tm_hex_hash(ivec2 v) {
+	uint h = uint(v.x) * 0x8DA6B343u ^ uint(v.y) * 0xD8163841u;
+	h ^= h >> 13u;
+	h *= 0x5BD1E995u;
+	h ^= h >> 15u;
+	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
+}
+vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
+	vec2 st = uv * 1.7320508; // triangles some two thirds of a texture tile on a side: smaller cut features apart
+	vec2 sk = vec2(st.x - 0.57735027 * st.y, 1.15470054 * st.y);
+	ivec2 b = ivec2(floor(sk));
+	vec3 tmp = vec3(fract(sk), 0.0);
+	tmp.z = 1.0 - tmp.x - tmp.y;
+	float sg = step(0.0, -tmp.z);
+	float s2 = 2.0 * sg - 1.0;
+	vec3 w = vec3(-tmp.z * s2, sg - tmp.y * s2, sg - tmp.x * s2);
+	int si = int(sg);
+	ivec2 v[3] = ivec2[3](b + ivec2(si, si), b + ivec2(si, 1 - si), b + ivec2(1 - si, si));
+	w = w * w * w * w;
+	w /= max(w.x + w.y + w.z, 1e-6);
+	vec4 acc = vec4(0.0);
+	for (int k = 0; k < 3; k++) {
+		vec2 hh = tm_hex_hash(v[k]);
+		float a = hh.x * 6.2831853;
+		mat2 r = mat2(vec2(cos(a), sin(a)), vec2(-sin(a), cos(a)));
+		vec4 c = textureGrad(t, r * uv + hh * 17.0, r * dx, r * dy);
+		if (nmap) {
+			vec2 nt = transpose(r) * (c.xy * 2.0 - 1.0);
+			c.xy = nt * 0.5 + 0.5;
+		}
+		acc += c * w[k];
+	}
+	return acc;
 }
 )";
 	// Per layer: albedo, roughness, normal perturbation and height at this point.
@@ -268,24 +307,77 @@ vec3 tm_perturb(vec3 nt, ivec2 axes) {
 		const bool has_n = l.is_valid() && l->get_normal_texture().is_valid();
 		const bool has_r = l.is_valid() && l->get_roughness_texture().is_valid();
 		const bool has_h = l.is_valid() && l->get_height_texture().is_valid();
-		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
+		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
 		c += vformat("\tTmProj pr = tm_projection(p, n, tm_%s_scale, cliff);\n", n);
+		if (has_a || has_n || has_r || has_h) {
+			// The pixel's footprint in each projection's texture coordinates, for the hex-tiled samples' mips.
+			c += vformat("\tvec2 dx0 = vec2(dpx[pr.axes0.x], dpx[pr.axes0.y]) * tm_%s_scale, dy0 = vec2(dpy[pr.axes0.x], dpy[pr.axes0.y]) * tm_%s_scale;\n", n, n);
+			c += vformat("\tvec2 dx1 = vec2(dpx[pr.axes1.x], dpx[pr.axes1.y]) * tm_%s_scale, dy1 = vec2(dpy[pr.axes1.x], dpy[pr.axes1.y]) * tm_%s_scale;\n", n, n);
+		}
 		c += vformat("\talbedo = tm_%s_color.rgb;\n\trough = tm_%s_roughness;\n\tdn = vec3(0.0);\n\th = 0.5;\n", n, n);
 		if (has_a) {
-			c += vformat("\talbedo *= texture(tm_%s_albedo_tex, pr.uv0).rgb * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_albedo_tex, pr.uv1).rgb * pr.w1 : vec3(0.0));\n", n, n);
+			c += vformat("\talbedo *= tm_hex(tm_%s_albedo_tex, pr.uv0, dx0, dy0, false).rgb * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_albedo_tex, pr.uv1, dx1, dy1, false).rgb * pr.w1 : vec3(0.0));\n", n, n);
 		}
 		if (has_r) {
-			c += vformat("\trough *= texture(tm_%s_roughness_tex, pr.uv0).g * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_roughness_tex, pr.uv1).g * pr.w1 : 0.0);\n", n, n);
+			c += vformat("\trough *= tm_hex(tm_%s_roughness_tex, pr.uv0, dx0, dy0, false).g * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_roughness_tex, pr.uv1, dx1, dy1, false).g * pr.w1 : 0.0);\n", n, n);
 		}
 		if (has_n) {
-			c += vformat("\tvec3 n0 = texture(tm_%s_normal_tex, pr.uv0).xyz * 2.0 - 1.0;\n", n);
+			c += vformat("\tvec3 n0 = tm_hex(tm_%s_normal_tex, pr.uv0, dx0, dy0, true).xyz * 2.0 - 1.0;\n", n);
 			c += vformat("\tdn = tm_perturb(n0.xy * tm_%s_normal, pr.axes0) * pr.w0;\n", n);
-			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = texture(tm_%s_normal_tex, pr.uv1).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
+			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = tm_hex(tm_%s_normal_tex, pr.uv1, dx1, dy1, true).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
 		}
 		if (has_h) {
-			c += vformat("\th = texture(tm_%s_height_tex, pr.uv0).r * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_height_tex, pr.uv1).r * pr.w1 : 0.0);\n", n, n);
+			c += vformat("\th = tm_hex(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", n, n);
 		}
 		c += "}\n";
+	}
+	// Sand with no normal texture of its own: the surface's grain-scale relief (sorted grains, impact pits, a few
+	// millimetres to some centimetres) as a bump from value noise with analytic derivatives (Quilez), three octaves,
+	// each faded out as the pixel footprint nears its wavelength so it never shimmers. A light speckle of darker and
+	// paler grains goes with it. Without it an untextured sand layer is one flat colour and the dunes' own shading
+	// reads as smeared bands.
+	{
+		const Ref<TerrainMaterialLayer> &l = layers[LAYER_SAND];
+		const bool grain = !(l.is_valid() && l->get_normal_texture().is_valid());
+		c += R"(
+vec3 tm_grain_n(vec2 x) {
+	vec2 i = floor(x);
+	vec2 f = x - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec2 du = 6.0 * f * (1.0 - f);
+	ivec2 q = ivec2(i);
+	float h[4];
+	for (int k = 0; k < 4; k++) {
+		uint hh = (uint(q.x + (k & 1)) * 0x8DA6B343u) ^ (uint(q.y + (k >> 1)) * 0xD8163841u);
+		hh ^= hh >> 13u;
+		hh *= 0x5BD1E995u;
+		hh ^= hh >> 15u;
+		h[k] = float(hh & 0xFFFFu) / 65535.0;
+	}
+	float e = h[0] - h[1] - h[2] + h[3];
+	return vec3(h[0] + (h[1] - h[0]) * u.x + (h[2] - h[0]) * u.y + e * u.x * u.y, du * (vec2(h[1] - h[0], h[2] - h[0]) + e * u.yx));
+}
+)";
+		if (grain) {
+			c += R"(vec3 tm_sand_grain(vec3 p, float fp, inout vec3 albedo) {
+	vec3 dn = vec3(0.0);
+	const float L[3] = float[3](0.035, 0.014, 0.006);
+	const float S[3] = float[3](0.10, 0.09, 0.07);
+	for (int k = 0; k < 3; k++) {
+		float f = 1.0 - smoothstep(0.25 * L[k], 0.6 * L[k], fp);
+		if (f <= 0.0) {
+			break;
+		}
+		vec3 v = tm_grain_n(p.xz / L[k] + vec2(17.0 * float(k), 5.0 * float(k)));
+		dn -= vec3(v.y, 0.0, v.z) * S[k] * f;
+		albedo *= 1.0 + (k == 2 ? 0.12 : 0.04) * (v.x - 0.5) * f;
+	}
+	return dn;
+}
+)";
+		} else {
+			c += "vec3 tm_sand_grain(vec3 p, float fp, inout vec3 albedo) {\n\treturn vec3(0.0);\n}\n";
+		}
 	}
 	// Landscape3D's cliff relief: the shading normal per pixel from the same relief the vertices were pushed by
 	// (Landscape3D::_cliff_offset, ported bit for bit), so ledges light cleanly whatever the triangles do. The mesh
@@ -553,9 +645,11 @@ float tm_rd_stone(vec3 p, float kc, float side, out vec3 wv, out float se) {
 vec4 tm_rd_block(vec3 q, float h, vec3 c) {
 	vec3 bh = vec3(h, fract(h * 7.13), fract(h * 13.7));
 	float tilt = (tm_rd_noise(q * 0.6 + bh * 40.0) - 0.5) * 0.12;
-	vec3 bg = (vec3(bh.y, bh.z, fract(h * 29.3)) - 0.5) * vec3(0.25, 0.15, 0.25);
+	// Offsets and facets kept small (5 cm, some 4 degrees): across a shut joint the two blocks meet over a quarter
+	// metre, and larger steps drew a crease along every border, a net of polygon outlines over a face seen close.
+	vec3 bg = (vec3(bh.y, bh.z, fract(h * 29.3)) - 0.5) * vec3(0.14, 0.08, 0.14);
 	float facet = dot(-c * vec3(2.6, 1.3, 3.4), bg);
-	return vec4((bh.x - 0.5) * 0.10 + tilt + facet, h, 0.0, 0.0);
+	return vec4((bh.x - 0.5) * 0.05 + tilt + facet, h, 0.0, 0.0);
 }
 // Stones stand up to 0.3 m out of the bed: talus blocks are roughly as tall as they are wide (0.2 m read as flat
 // slabs lying in the bed).
@@ -588,9 +682,17 @@ vec2 tm_rd_height(vec3 p, float face, float scree, float blocks, vec3 dx, vec3 d
 		// and neighbouring blocks read as one larger mass instead of a paving of polygons.
 		float pair = fract(sin(dot(vec2(min(bw4.z, bw4.w), max(bw4.z, bw4.w)), vec2(127.1, 311.7))) * 43758.5453);
 		float bed = smoothstep(0.55, 0.85, abs(bn.y));
-		float open = smoothstep(0.0, 0.25, mix(0.55, 0.9, bed) - pair);
-		// Crack width wanders along the crack, 1 to 7 cm on open ones.
-		float cw = mix(0.004, mix(0.01, 0.07, tm_rd_noise(q * 0.9 + 11.0)), open);
+		// Joints come in sets (Priest 1993): bedding planes and steep cross joints. A border between two Worley
+		// cells at neither attitude is an oblique cut no set makes; drawn open, those closed the cracks into rings
+		// of polygons (a honeycomb over a sea cliff seen close). They stay shut, and every crack fades out along
+		// its length where a noise says so, so the open ones end against each other instead of closing loops.
+		float vert = 1.0 - smoothstep(0.1, 0.25, abs(bn.y));
+		float set_k = max(smoothstep(0.8, 0.92, abs(bn.y)), vert);
+		float persist = smoothstep(0.45, 0.6, tm_rd_noise(q * 0.45 + 31.0));
+		float open = smoothstep(0.0, 0.25, mix(0.55, 0.9, bed) - pair) * set_k * persist;
+		// Crack width wanders along the crack, 1 to 7 cm on open ones; a shut joint draws nothing (its hairline
+		// outlined every cell).
+		float cw = mix(0.0, mix(0.01, 0.07, tm_rd_noise(q * 0.9 + 11.0)), open);
 		// The crack's share of the pixel: a box filter of the pixel's width over the crack's edge.
 		float pw = wmax + 0.01;
 		// Exact overlap of the pixel [d - pw/2, d + pw/2] with the crack [-cw/2, cw/2], so a crack narrower than a
@@ -604,7 +706,7 @@ vec2 tm_rd_height(vec3 p, float face, float scree, float blocks, vec3 dx, vec3 d
 		// Block steps and crack relief are edges a pixel cannot hold: gone before one spans a crack's width.
 		float kc = tm_rd_clamp(wmax, 0.2);
 		// Per-block relief and tone for the nearest block and its neighbour across the border. Each block is its own
-		// fracture face: a plane at its own tilt (up to some 7 degrees off the slope) through the block's point, so
+		// fracture face: a plane at its own tilt (up to some 4 degrees off the slope) through the block's point, so
 		// neighbours catch the light differently, as the facets of a broken wall do.
 		vec4 b1 = tm_rd_block(q, bw4.z, bc);
 		vec4 b2 = tm_rd_block(q, bw4.w, bc2);
@@ -819,6 +921,9 @@ void fragment() {
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	bool cliff = wn.y < tm_cliff_cos;
+	// The pixel's world footprint, taken here in uniform control flow for the layers' texture gradients.
+	vec3 tm_dpx = dFdx(wp);
+	vec3 tm_dpy = dFdy(wp);
 	// Layer weights. Geology from the generator: bare rock, scree on it, the rest soil, alluvium where much water
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
 	float w[5];
@@ -877,9 +982,11 @@ void fragment() {
 	// Sand before steep faces shed it: no scree stones stand in the parallax on beaches, seabed or dunes, even where
 	// a talus apron reaches under them (the stones would take the sand's colour and read as cracked sand plates).
 	float tm_sand_all = sand;
-	// Sand the generator laid (beaches, dunes) holds up to the cliff slope: dune faces stand at the angle of repose
-	// (34 degrees, 45 under marram), past the rock slope.
-	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y), beach_sand) : steep;
+	// Sand the generator laid (beaches, dunes) holds past the rock slope: dune faces stand at the angle of repose
+	// (34 degrees, 45 under marram).
+	// Past 47 degrees no sand holds at all: a wide band (to 56) left sand half-mixed over the steeper folds of sea
+	// cliffs behind beaches, pale sand-coloured curtains running up the rock.
+	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, wn.y), beach_sand) : steep;
 	sand *= 1.0 - sand_steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;
@@ -904,7 +1011,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_rock(wp, wn, cliff, a, r, d, h);
+		tm_rock(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[0] = a;
 		rgh[0] = r;
 		dns[0] = d;
@@ -915,7 +1022,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_scree(wp, wn, cliff, a, r, d, h);
+		tm_scree(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		// Patches of fresher and older, lichened blocks: a tone that varies by about a fifth over 10 to 30 m (mean
 		// kept), so a talus slope is not one flat colour at a distance (world coordinates, unrotated, as above).
 		{
@@ -933,7 +1040,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_soil(wp, wn, cliff, a, r, d, h);
+		tm_soil(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -944,7 +1051,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_alluvium(wp, wn, cliff, a, r, d, h);
+		tm_alluvium(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -955,7 +1062,8 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_sand(wp, wn, cliff, a, r, d, h);
+		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		d += tm_sand_grain(wp, tm_fp0, a);
 		alb[4] = a;
 		rgh[4] = r;
 		dns[4] = d;
@@ -1196,6 +1304,8 @@ void fragment() {
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
 		c += "\tweather_wetness_apply(tm_wetness * weather_wetness_at(wp), wn.y, metallic, porosity, albedo, rough);\n";
+		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
+		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the

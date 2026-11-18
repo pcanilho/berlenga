@@ -120,23 +120,141 @@
 				Stops the water delivered by [param owner] (see [method set_surface_water_source]); the precipitation reaches the ground there again. Sources whose owner is freed are dropped on their own.
 			</description>
 		</method>
+		<method name="get_air_dew_point" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dew point of the air now (C), from [method get_air_temperature] and [method get_air_humidity] (Magnus).
+			</description>
+		</method>
 		<method name="get_air_humidity" qualifiers="const">
 			<return type="float" />
 			<description>
-				The relative humidity the cells use now (0..1): [member humidity] eased over [member transition_time].
+				The relative humidity of the air now (0..1): [member humidity] eased over [member transition_time] is the humidity at the day's mean temperature; with [member air_daily_cycle] the vapour holds through the day, so it rises as the air cools at night and falls in the afternoon.
+			</description>
+		</method>
+		<method name="get_air_humidity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The live air's relative humidity at [param position] (0..1): the dew point falls 1.8 K/km above the map's [member ground_height] while the air cools 6.5 K/km.
+			</description>
+		</method>
+		<method name="get_air_mean_temperature" qualifiers="const">
+			<return type="float" />
+			<description>
+				The day's mean air temperature now (C): with a [member climate] and [member air_follows_climate], the climate's mean for the date at [member ground_height] plus [member season_anomaly]; else [member temperature]; eased over [member transition_time].
 			</description>
 		</method>
 		<method name="get_air_temperature" qualifiers="const">
 			<return type="float" />
 			<description>
-				The air temperature the cells use now (C): [member temperature] eased over [member transition_time].
+				The air temperature now (C), as everything that melts, freezes, dries, burns or fogs reads it: the day's mean ([method get_air_mean_temperature]) through the day's cycle when [member air_daily_cycle] is on and a [member sky_clock] is set.
 			</description>
 		</method>
 		<method name="get_air_temperature_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The air temperature (degrees Celsius) at [param position]: [member temperature] less [member lapse_rate] above [member ground_height].
+				The live air at [param position] (C): [method get_air_temperature] less 6.5 K per km above the map's [member ground_height] (the standard lapse rate).
+			</description>
+		</method>
+		<method name="get_frost_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Hoarfrost on exposed surfaces at [param position], in mm of water: deposited on clear calm nights below 0 C at the surface (see [member dew_and_frost]), melted by the morning sun or mild air. Shaders read it from the global [code]weather_frost_map[/code] (R, mm; G, the surface's temperature less the air's, K) over [code]weather_map_rect[/code].
+			</description>
+		</method>
+		<method name="get_season_on_day" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="day" type="int" />
+			<description>
+				The season state (as [method get_season]) on another day of the year [param day] (1-365) at the ground, for rates such as the day-to-day leaf fall.
+			</description>
+		</method>
+		<method name="get_sun_sine" qualifiers="const">
+			<return type="float" />
+			<description>
+				The sine of the sun's elevation (0 below the horizon): from [member sun_light], else the [member sky_clock].
+			</description>
+		</method>
+		<method name="diurnal_shape" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="solar_hour" type="float" />
+			<param index="1" name="day_length" type="float" />
+			<description>
+				The day's temperature cycle of Parton and Logan (1981), 0 at the minimum just after sunrise and 1 at the afternoon peak, for the local solar hour and the day length in hours.
+			</description>
+		</method>
+		<method name="get_surface_temperature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				An exposed surface's temperature at [param position] (C): the air's plus the radiative cooling of a clear night or the sun's warming, from the cell's net radiation over the exchange with the air (4 sigma T^3 + 5 + 4 u W/m2/K). Needs a sun light or a sky clock; otherwise the air's.
+			</description>
+		</method>
+		<method name="get_terrain_divert_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The terrain's turn of the wind at [param position] (rad, positive clockwise seen from above): toward the contours, as MicroMet's diverting angle. 0 outside the terrain square.
+			</description>
+		</method>
+		<method name="get_terrain_ground_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The sampled ground height at [param position] (m), or NaN outside the terrain square.
+			</description>
+		</method>
+		<method name="get_terrain_lee_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Winstral's Sx at [param position] (rad): the steepest rise of the upwind ground within [member terrain_lee_reach]. Positive in a lee, negative on ground exposed to the wind.
+			</description>
+		</method>
+		<method name="get_terrain_speed_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The terrain's speed factor W at [param position] at 10 m: above 1 on crests and windward slopes, below 1 in hollows and lees, 1 on flat ground and outside the terrain square.
+			</description>
+		</method>
+		<method name="get_terrain_wind_derive_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				The time the last terrain wind derivation took (ms), for benches.
+			</description>
+		</method>
+		<method name="get_terrain_wind_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The terrain square's area in world space (x, z, width, depth).
+			</description>
+		</method>
+		<method name="get_wind_aloft" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="altitude" type="float" />
+			<description>
+				The mean wind at [param altitude] (m above the ground) over [param position] (x, z, m/s), for clouds: the log law up to [member boundary_layer_height], turning with height (Ekman veer, 20 degrees over the sea to 30 over land, to the right in the northern hemisphere), then growing by [member wind_shear_aloft] per km.
+			</description>
+		</method>
+		<method name="is_terrain_wind_ready" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] once the terrain square has its heights and its wind field.
+			</description>
+		</method>
+		<method name="penman_evaporation" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="net_radiation" type="float" />
+			<param index="1" name="wind_2m" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="humidity" type="float" />
+			<description>
+				Evaporation from a wet surface (mm/h): Penman's (1948) combination of the net radiation (W/m2; below zero adds nothing) and the air's drying power (his wind function, at the wind at 2 m).
 			</description>
 		</method>
 		<method name="get_canopy_closure_at" qualifiers="const">
@@ -261,8 +379,9 @@
 		<method name="get_mean_wind_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="terrain" type="bool" default="true" />
 			<description>
-				The mean wind at 10 m at [param position] (x, z, m/s), without gusts.
+				The mean wind at 10 m at [param position] (x, z, m/s), without gusts. With [param terrain] (default), the terrain's speed-up, turning and lee calm are applied (see [member terrain_wind_enabled]); [code]false[/code] gives the flat-ground wind, for systems that apply their own terrain terms.
 			</description>
 		</method>
 		<method name="get_precipitation_extinction_at" qualifiers="const">
@@ -419,6 +538,12 @@
 				Bakes the shelter square now. It also bakes by itself when canopies or boxes change, when the camera has moved an eighth of [member shelter_extent], and when the wind has turned by about 3 degrees. Call it after moving nodes in the [code]weather_shelter[/code] group.
 			</description>
 		</method>
+		<method name="rebake_terrain_wind">
+			<return type="void" />
+			<description>
+				Samples the terrain's heights again and rebuilds the terrain wind (after the ground changed).
+			</description>
+		</method>
 		<method name="remove_canopy">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -484,6 +609,24 @@
 		</method>
 	</methods>
 	<members>
+		<member name="air_daily_cycle" type="bool" setter="set_air_daily_cycle" getter="get_air_daily_cycle" default="true">
+			With a [member sky_clock], the air follows the day: coolest just after sunrise, warmest in the afternoon, falling through the night (Parton and Logan 1981), over [member daily_temperature_range] narrowed by clouds and rain, around the day's mean. The humidity follows at a held dew point, so clear nights near saturation bring mist.
+		</member>
+		<member name="air_follows_climate" type="bool" setter="set_air_follows_climate" getter="get_air_follows_climate" default="true">
+			With a [member climate], the day's mean air temperature is the climate's for the date at [member ground_height] plus [member season_anomaly], which then sets how warm or cold the weather runs; [member temperature] is used only without a climate or with this off.
+		</member>
+		<member name="boundary_layer_height" type="float" setter="set_boundary_layer_height" getter="get_boundary_layer_height" default="1000.0">
+			Depth of the atmospheric boundary layer (m): the log law and the Ekman veer of [method get_wind_aloft] reach up to it.
+		</member>
+		<member name="daily_temperature_range" type="float" setter="set_daily_temperature_range" getter="get_daily_temperature_range" default="10.0">
+			The range between the day's coldest and warmest air on a clear calm day (K). An overcast sky halves it and rain narrows it further (Dai, Trenberth and Karl 1999).
+		</member>
+		<member name="dew_and_frost" type="bool" setter="set_dew_and_frost" getter="get_dew_and_frost" default="true">
+			On clear calm nights exposed surfaces lose more by radiation to the sky than the air's drying brings back, and the vapour condenses on them (Monteith 1957): dew joins the surface water film, and below 0 C at the surface it deposits as hoarfrost ([method get_frost_at]). Clouds and canopies return the longwave, so clouded and sheltered spots stay dry. Needs a sun light or a sky clock.
+		</member>
+		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
+			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.
+		</member>
 		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="true">
 			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Past the volumetric fog's reach the [WeatherSkyMaterial] carries the same haze in its air (see [method WeatherSkyMaterial.set_aerosol]), where the clouds' shadow draws the shafts on across the sky. Off, the air is clear unless the [Environment] adds fog.
 		</member>
@@ -541,6 +684,9 @@
 		<member name="cloud_shape_scale" type="float" setter="set_cloud_shape_scale" getter="get_cloud_shape_scale" default="3000.0">
 			Size of one tile of the 3D shape noise, in metres. Single clouds are about a quarter of it across.
 		</member>
+		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="1.0">
+			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright.
+		</member>
 		<member name="cloud_thickness" type="float" setter="set_cloud_thickness" getter="get_cloud_thickness" default="1500.0">
 			Depth of the cloud layer for cumulus ([member cloud_type] 0.7), in metres. Stratus is a quarter of it; cumulonimbus (type above 0.8, as storms make) towers up to five times it.
 		</member>
@@ -592,9 +738,6 @@
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.7">
 			Relative humidity of the air, 0 to 1. Drier air dries surfaces faster. While it rains, the air is taken as at least 97%.
 		</member>
-		<member name="lapse_rate" type="float" setter="set_lapse_rate" getter="get_lapse_rate" default="6.5">
-			The air's cooling with height, in K/km (6.5 is the standard atmosphere). Splits rain and snow by height.
-		</member>
 		<member name="painted_map" type="Texture2D" setter="set_painted_map" getter="get_painted_map">
 			An authored weather map over [member painted_map_rect], in the Nubis channels: R cloud cover (replaces [member cloud_cover]), G a scale on [member rain_rate], B cloud type.
 		</member>
@@ -620,7 +763,7 @@
 			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
 		</member>
 		<member name="season_anomaly" type="float" setter="set_season_anomaly" getter="get_season_anomaly" default="0.0">
-			How much warmer (K) this year runs than the [member climate]: the live air temperature's departure from the climate's mean for the day, averaged over about a month of weather time while the map runs. Set it for a warm or cold year.
+			How much warmer (K) this year runs than the [member climate]: with [member air_follows_climate] on, the air's offset from the climate's mean for the day; with it off, the live air temperature's departure from that mean, averaged over about a month of weather time while the map runs. Set it for a warm or cold spell or year.
 		</member>
 		<member name="season_day" type="int" setter="set_season_day" getter="get_season_day" default="135">
 			Day of the year for [method get_season] when there is no [member sky_clock] (135 is 15 May).
@@ -646,6 +789,39 @@
 		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="15.0">
 			Air temperature, in degrees Celsius, for evaporation.
 		</member>
+		<member name="terrain_collision_mask" type="int" setter="set_terrain_collision_mask" getter="get_terrain_collision_mask" default="1">
+			Physics layers that the terrain rays hit when no height source is found (see [member terrain_source]).
+		</member>
+		<member name="terrain_curvature_length" type="float" setter="set_terrain_curvature_length" getter="get_terrain_curvature_length" default="40.0">
+			MicroMet's curvature length scale eta (m): about half the wavelength of the terrain's features. The terrain's effect on the wind fades as exp(-h / (2 eta)) above the ground (the inner layer of flow over hills).
+		</member>
+		<member name="terrain_curvature_weight" type="float" setter="set_terrain_curvature_weight" getter="get_terrain_curvature_weight" default="0.5">
+			MicroMet's curvature weight gc: how much crests speed the wind up and hollows slow it.
+		</member>
+		<member name="terrain_floor" type="float" setter="set_terrain_floor" getter="get_terrain_floor" default="-1000000000.0">
+			Heights below this are treated as this height (m), so a seabed does not steer the wind over the sea. Set from a height source's [code]sea_level[/code] when it has one.
+		</member>
+		<member name="terrain_lee_reach" type="float" setter="set_terrain_lee_reach" getter="get_terrain_lee_reach" default="100.0">
+			How far upwind (m) the lee shelter Sx looks for rising ground (Winstral, Marks and Gurney 2002, about 100 m).
+		</member>
+		<member name="terrain_lee_strength" type="float" setter="set_terrain_lee_strength" getter="get_terrain_lee_strength" default="0.4">
+			How much the wind slows in a deep lee: the speed factor is reduced by up to this share as Sx goes from 5 to 25 degrees.
+		</member>
+		<member name="terrain_slope_weight" type="float" setter="set_terrain_slope_weight" getter="get_terrain_slope_weight" default="0.5">
+			MicroMet's slope weight gs: how much the wind speeds up climbing a slope and slows going down one.
+		</member>
+		<member name="terrain_source" type="NodePath" setter="set_terrain_source" getter="get_terrain_source" default="NodePath(&quot;&quot;)">
+			A node with [code]get_height(position)[/code] (or a Terrain3D) that gives the ground's height for the terrain wind. Empty: the first TerrainDeformer3D, Landscape3D, TerrainGenerator3D or Terrain3D in the scene, else rays on [member terrain_collision_mask].
+		</member>
+		<member name="terrain_wind_enabled" type="bool" setter="set_terrain_wind_enabled" getter="is_terrain_wind_enabled" default="true">
+			If [code]true[/code], the wind follows the terrain round the camera (MicroMet, Liston and Elder 2006): faster over crests and up windward slopes, calmer in lees (Winstral's Sx), turned along the contours, and rising up slopes, fading with height above the ground. Applied in [method get_wind_at], [method get_wind_parts], [method get_mean_wind_at] and the shader's [code]weather_wind()[/code].
+		</member>
+		<member name="terrain_wind_extent" type="float" setter="set_terrain_wind_extent" getter="get_terrain_wind_extent" default="2048.0">
+			Width of the terrain wind square (m), centred on the camera. It moves when the camera has moved an eighth of it.
+		</member>
+		<member name="terrain_wind_resolution" type="int" setter="set_terrain_wind_resolution" getter="get_terrain_wind_resolution" default="256">
+			Cells along each side of the terrain wind square.
+		</member>
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
 			Weather seconds per real second: storms, transitions, wetting and drying run this much faster than the clock (60 makes a game hour a real minute). Gusts always run in real time.
 		</member>
@@ -660,6 +836,9 @@
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			The way the wind blows toward, as x and z.
+		</member>
+		<member name="wind_shear_aloft" type="float" setter="set_wind_shear_aloft" getter="get_wind_shear_aloft" default="1.5">
+			How fast the wind grows above [member boundary_layer_height] (m/s per km), the thermal-wind shear the clouds lean with.
 		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="5.0">
 			Mean wind speed at 10 m above the ground, in m/s.

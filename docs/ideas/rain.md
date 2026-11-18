@@ -21,8 +21,8 @@ ground's wetness docs/ideas/material-wetness.md.
 
 | Getter | Unit | Model |
 | --- | --- | --- |
-| `get_air_temperature_at` | deg C | base temperature less `lapse_rate` (6.5 K/km, ICAO standard atmosphere) above the map's ground height |
-| `get_rain_share_at` | 0..1 | Jennings et al. 2018 logistic in temperature and humidity (`rain_fraction()`) |
+| `get_air_temperature_at`, `get_air_humidity_at` | deg C, 0..1 | the live air less 6.5 K/km (ICAO standard atmosphere) above the map's ground height (world links) |
+| `get_rain_share_at` | 0..1 | Jennings et al. 2018 logistic in the air's temperature and humidity at that height (`rain_fraction()`) |
 | `get_rainfall_at`, `get_snowfall_at` | mm/h | the cell's rate times the share, times one less the share |
 | `get_canopy_water_at`, `get_canopy_wetness_at`, `get_canopy_drip_at` | mm, 0..1, mm/h | Rutter interception (below) |
 | `get_ground_water_input_at` | mm/h | throughfall plus drip under canopy, rainfall elsewhere |

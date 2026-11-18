@@ -33,6 +33,7 @@
 
 #include "core/config/engine.h"
 #include "core/io/dir_access.h"
+#include "core/math/geometry_2d.h"
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -510,6 +511,20 @@ void GroundSurface3D::_update_cells() {
 				cell_water[i * 2 + 1] = water_speed[i];
 			}
 			c.deformable = !in.fixed && in.frozen < 0.95f;
+			if (!in.fixed && (int)frost_state.size() == n * n * FROST_FLOATS) {
+				// Needle ice and the crumbs its thaw leaves (round 9): the needles bear almost nothing, the crumbs
+				// little (a bulk density well below the soil's), so either prints deep and easily.
+				const float *fr = &frost_state[i * FROST_FLOATS];
+				const float soft = MAX(Math::smoothstep(0.0f, 0.01f, fr[3]), fr[4]);
+				if (soft > 0.0f) {
+					const float k = 1.0f - 0.6f * soft;
+					c.kc *= k;
+					c.kphi *= k;
+					c.wheel_kc *= k;
+					c.wheel_kphi *= k;
+					c.cohesion *= 1.0f - 0.6f * soft;
+				}
+			}
 			if (in.frozen > 0.0f) {
 				// Frozen soil: ice-bonded, far stiffer and stronger (frozen silt's cohesion is hundreds of kPa), no
 				// slumping; the ruts already in it stay as they are.
@@ -780,6 +795,11 @@ void GroundSurface3D::set_standing_water(bool p_enabled) {
 	}
 }
 
+float GroundSurface3D::contract_water_height_at(const Vector3 &p_position) const {
+	const float water = get_standing_water_at(p_position);
+	return water > 0.002f ? get_surface_height_at(p_position) + water : -Math::INF;
+}
+
 float GroundSurface3D::get_standing_water_at(Vector3 p_position) const {
 	if (is_near_active() && _near_inside(p_position.x, p_position.z) && int(near_fld.water.size()) == near_fld.resolution * near_fld.resolution) {
 		return near_fld.sample(near_fld.water, p_position.x, p_position.z);
@@ -1032,6 +1052,9 @@ void GroundSurface3D::_frost_seed(int p_from) {
 			f[0] = 0.0f;
 			f[1] = depth;
 			f[2] = 0.0f;
+			f[3] = 0.0f;
+			f[4] = 0.0f;
+			f[5] = 0.0f;
 		}
 	}
 }
@@ -1058,18 +1081,41 @@ void GroundSurface3D::_frost_update(double p_delta) {
 		float &a = f[0];
 		float &b = f[1];
 		float &w = f[2];
+		float &nd = f[3];
+		float &loose = f[4];
 		if (in.fixed) {
 			continue; // rock, or snow over it
 		}
 		const float l = 334e6f * (0.1f + 0.3f * CLAMP(in.moisture, 0.0f, 1.0f));
+		// Needle ice (round 9): on wet, bare, fine soil whose frost front sits at the surface, a frosty night grows
+		// ice needles instead of driving the front down; the latent heat of the water drawn up to it holds the front
+		// there (Outcalt 1971; Lawler 1988). Stefan through the needle mat (about half ice, k 1 W/(m K)): about 2 cm
+		// in a night at -3 C. Too cold (below about -8 C) the front runs down as concrete frost instead.
+		const float needle = needle_ice && a <= 0.0f && b < 0.01f && in.sand < 0.5f && in.litter < 0.005f ? Math::smoothstep(0.25f, 0.4f, in.moisture) * Math::smoothstep(0.0f, 1.5f, -t) * (1.0f - Math::smoothstep(6.0f, 10.0f, -t)) : 0.0f;
 		if (t < 0.0f) {
 			if (a > 0.0f) {
 				// The wet top refreezes first, under a crust as thin as it is.
 				a = MAX(a - 2.0f * -t / (l * 0.03f) * dt, 0.0f);
 			} else {
-				b = MIN(b + 2.0f * -t / (l * (b + 0.02f)) * dt, 1.0f);
+				// The soil's own patchiness (its water, its silt) over a metre or two: no field of equal needles.
+				const float cx = (ground_origin.x + i % n) * ground_spacing;
+				const float cz = (ground_origin.y + i / n) * ground_spacing;
+				const float patch = 0.5f + 1.0f * (0.65f * _value_noise(cx / 1.7f, cz / 1.7f) + 0.35f * _value_noise(cx / 0.6f + 17.0f, cz / 0.6f + 5.0f));
+				nd = MIN(nd + needle * patch * -t / (167e6f * (nd + 0.02f)) * dt, 0.08f);
+				b = MIN(b + (1.0f - needle) * 2.0f * -t / (l * (b + 0.02f)) * dt, 1.0f);
 			}
-		} else if (b > 0.0f) {
+		} else if (nd > 0.0f) {
+			// A thaw melts the needles from the top and the soil cap they lifted collapses into loose, fluffy crumbs
+			// that print easily and wash away (Lawler 1986's needle ice erosion of river banks).
+			loose = MAX(loose, MIN(nd / 0.02f, 1.0f));
+			nd = MAX(nd - 1.2f * t / (167e6f * 0.02f) * dt, 0.0f);
+		}
+		if (loose > 0.0f && nd <= 0.0f) {
+			// It settles back over about a week (and a print compacts it at once).
+			loose *= Math::exp(-dt / (7.0f * 86400.0f));
+			loose = loose < 0.01f ? 0.0f : loose;
+		}
+		if (t >= 0.0f && b > 0.0f) {
 			a += 1.2f * t / (l * (a + 0.02f)) * dt;
 			if (a >= b) {
 				a = 0.0f;
@@ -1084,6 +1130,28 @@ void GroundSurface3D::_frost_update(double p_delta) {
 			w = w < 0.01f ? 0.0f : w;
 		}
 	}
+	// The needles lift the ground: laid on the field (and taken off as they melt) in steps of 2 mm, at most 8192
+	// cells a step, taking turns round the lattice (a whole field grows together). Each cell's share is a bilinear
+	// tent a lattice step wide, so a field of equal needles rises flat. A foot or wheel on them presses the soft mat
+	// (the cells' weak needles let it sink deeper) and the press's own print takes the crushed cap.
+	if (!field.valid) {
+		return;
+	}
+	const int nn = n * n;
+	int writes = 0;
+	field.amount_tent = true;
+	for (int k = 0; k < nn && writes < 8192; k++) {
+		const int i = (needle_cursor + k) % nn;
+		float *f = &frost_state[i * FROST_FLOATS];
+		if (Math::abs(f[3] - f[5]) >= 0.002f || (f[3] <= 0.0f && f[5] > 0.0f)) {
+			const Vector3 at((ground_origin.x + i % n) * ground_spacing, ground[i], (ground_origin.y + i / n) * ground_spacing);
+			_amount(at, ground_spacing, -(f[3] - f[5]), ground_spacing);
+			f[5] = f[3];
+			writes++;
+			needle_cursor = (i + 1) % nn;
+		}
+	}
+	field.amount_tent = false;
 }
 
 // How far the frozen ground holds as a crust at lattice cell p_i, 0..1: a frozen layer from 2 cm thick (a boot
@@ -1106,6 +1174,33 @@ Vector3 GroundSurface3D::get_frost_at(Vector3 p_position) const {
 	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
 	const float *f = &frost_state[(z * n + x) * FROST_FLOATS];
 	return Vector3(MAX(f[0], 0.0f), MAX(f[1], 0.0f), f[2]);
+}
+
+void GroundSurface3D::set_needle_ice(bool p_enabled) {
+	needle_ice = p_enabled;
+	cells_accum = 2.0;
+}
+
+// The needle ice's height (m) and the loose soil a thaw left (0..1) at a place.
+Vector2 GroundSurface3D::get_needle_ice_at(Vector3 p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)frost_state.size() != n * n * FROST_FLOATS) {
+		return Vector2();
+	}
+	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+	const float *f = &frost_state[(z * n + x) * FROST_FLOATS];
+	return Vector2(f[3], f[4]);
+}
+
+float GroundSurface3D::_needle_loose_at(float p_x, float p_z) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)frost_state.size() != n * n * FROST_FLOATS) {
+		return 0.0f;
+	}
+	const int x = int(Math::round(p_x / ground_spacing)) - ground_origin.x;
+	const int z = int(Math::round(p_z / ground_spacing)) - ground_origin.y;
+	return x >= 0 && z >= 0 && x < n && z < n ? frost_state[(z * n + x) * FROST_FLOATS + 4] : 0.0f;
 }
 
 void GroundSurface3D::set_plant_mud(bool p_enabled) {
@@ -2233,11 +2328,19 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			cracks = crack_state[i * CRACK_FLOATS] > 0.0f && crack_state[i * CRACK_FLOATS] < 1.999f;
 		}
 	}
-	// Then, with puddle ice, its block (thickness m, broken share; texel 3's tag 5.5).
+	// Then, with puddle ice or needle ice, the ice block (puddle ice's thickness m, its broken share; needle ice's
+	// height m, the loose crumbs its thaw left; texel 3's tag 5.5).
 	bool ice = false;
-	if (on && puddle_ice && (int)ice_state.size() == n * n * ICE_FLOATS && n >= 4) {
+	const bool pice = on && puddle_ice && (int)ice_state.size() == n * n * ICE_FLOATS && n >= 4;
+	const bool nice = on && needle_ice && (int)frost_state.size() == n * n * FROST_FLOATS && n >= 4;
+	if (pice) {
 		for (int i = 0; i < n * n && !ice; i++) {
 			ice = ice_state[i * ICE_FLOATS] > 0.0f;
+		}
+	}
+	if (nice) {
+		for (int i = 0; i < n * n && !ice; i++) {
+			ice = frost_state[i * FROST_FLOATS + 3] > 0.0f || frost_state[i * FROST_FLOATS + 4] > 0.0f;
 		}
 	}
 	// Then, with mud on plants, its block (share, the clay's linear colour; texel 4's tag 6.5).
@@ -2290,8 +2393,14 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 		if (ice) {
 			float *id = d + (1 + (far ? 1 : 0) + (cracks ? 1 : 0)) * n * n * 4;
 			for (int i = 0; i < n * n; i++) {
-				id[i * 4 + 0] = ice_state[i * ICE_FLOATS];
-				id[i * 4 + 1] = ice_state[i * ICE_FLOATS + 1];
+				if (pice) {
+					id[i * 4 + 0] = ice_state[i * ICE_FLOATS];
+					id[i * 4 + 1] = ice_state[i * ICE_FLOATS + 1];
+				}
+				if (nice) {
+					id[i * 4 + 2] = frost_state[i * FROST_FLOATS + 3];
+					id[i * 4 + 3] = frost_state[i * FROST_FLOATS + 4];
+				}
 			}
 			r[15] = 5.5f;
 		}
@@ -2584,7 +2693,8 @@ void GroundSurface3D::_runoff_update(double p_delta) {
 		const float wx = (origin.x + x + 0.5f) * c;
 		const float wz = (origin.y + z + 0.5f) * c;
 		const Cell &cell = _cell_at(wx, wz);
-		const float loose = cell.deformable ? CLAMP(cell.sand, 0.0f, 1.0f) : 0.0f;
+		// Loose: sand, or the crumbs a needle ice thaw left (round 9).
+		const float loose = cell.deformable ? CLAMP(MAX(cell.sand, _needle_loose_at(wx, wz)), 0.0f, 1.0f) : 0.0f;
 		const float cap = bed_load_shear(1000.0f * 9.81f * depth * MIN(slope, 1.0f)) * c;
 		float sand_out = sand_in;
 		if (sand_in < cap * loose) {
@@ -2651,7 +2761,7 @@ void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to, boo
 	// (Komar 1998). That is the line's material, not its moisture, so it stays dark as the beach dries (3: a laid
 	// band, 2 plus its share, GroundDeformField::amount_fresh), and the path tracer shows it as the raster does: as
 	// a fading fresh tint the old lines were left to the raster's micro-occlusion and faded under PT.
-	field.amount_fresh = p_erase ? -1.0f : 3.0f;
+	field.amount_fresh = p_erase ? -2.0f : 3.0f;
 	for (int k = 0; k < steps; k++) {
 		const Vector2 q = p_from.lerp(p_to, float(k) / steps);
 		if (!_near_inside(q.x, q.y)) {
@@ -2668,7 +2778,7 @@ void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to, boo
 			continue;
 		}
 		if (p_erase) {
-			dig(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.018f, 0.004f); // wider: the ridge's slumped shoulders too
+			dig(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.12f, 0.006f); // wide (lines keep 15 cm apart): the ridge as saturated sand slumped it before the swash came, no ghost
 		} else {
 			deposit(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.004f);
 		}
@@ -2742,6 +2852,15 @@ void GroundSurface3D::_swash_update(double p_delta) {
 		ground_water_at(sources, Vector3(q.x, gh, q.y), gh, d, v);
 		return d > 0.001f;
 	};
+	// Over a line: the film that wets it, or any running water fast enough to move sand (bed_load()), which smears it
+	// on the coarse cells the flow's slumping works on; a line left half smeared reads as stepped ghosts.
+	auto washes = [&](const Vector2 &q) -> bool {
+		const float gh = _ground_at(q.x, q.y);
+		float d = 0.0f;
+		float v = 0.0f;
+		ground_water_at(sources, Vector3(q.x, gh, q.y), gh, d, v);
+		return d > 0.001f || (d > 0.0f && bed_load(v) > 0.0f);
+	};
 	// Each transect's reach now: from the landward end down, the first wet point at 10 cm steps, then halved to
 	// 6 mm (m landward of the transect's middle; -1e9 where it is all dry).
 	LocalVector<float> reach;
@@ -2772,6 +2891,38 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			count++;
 		}
 	}
+	// Flattening a stretch digs 12 cm round it, which takes any line kept that close with it (gaps cut into an older
+	// line where a flattened one ran beside it): the kept stretches that near are laid again after each pass. The dig
+	// takes the whole ridge inside its disc, so laying it again restores it rather than doubling it.
+	LocalVector<Vector2> erased;
+	auto erase = [&](const Vector2 &p_a, const Vector2 &p_b) {
+		_swash_lay(p_a, p_b, true);
+		erased.push_back(p_a);
+		erased.push_back(p_b);
+	};
+	auto repair = [&]() {
+		if (erased.is_empty()) {
+			return;
+		}
+		for (SwashLine &kl : swash_lines) {
+			for (int t = 0; t + 1 < nt; t++) {
+				if (!kl.valid[t]) {
+					continue;
+				}
+				bool near = false;
+				for (uint32_t e = 0; e + 1 < erased.size() && !near; e += 2) {
+					for (int k = 0; k < 3 && !near; k++) {
+						const Vector2 q = kl.pts[t].lerp(kl.pts[t + 1], 0.5f * k);
+						near = Geometry2D::get_closest_point_to_segment(q, erased[e], erased[e + 1]).distance_to(q) < 0.13f;
+					}
+				}
+				if (near) {
+					_swash_lay(kl.pts[t], kl.pts[t + 1]);
+				}
+			}
+		}
+		erased.clear();
+	};
 	// What a swash leaves of a line it partly covered: a stretch under a metre is washed out with the rest (short
 	// hooked scraps read as scribbles, not as a line).
 	auto drop_scraps = [&](SwashLine &r_ln) {
@@ -2784,32 +2935,86 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			}
 			if (run > 0 && run < 10) {
 				for (int u = t - run; u < t; u++) {
-					_swash_lay(r_ln.pts[u], r_ln.pts[u + 1], true);
+					erase(r_ln.pts[u], r_ln.pts[u + 1]);
 					r_ln.valid[u] = 0;
 				}
 			}
 			run = 0;
 		}
 	};
-	// A swash running over an older line flattens it: the ridge is only a few mm of loose fines.
-	for (int l = int(swash_lines.size()) - 1; l >= 0; l--) {
-		SwashLine &ln = swash_lines[l];
-		bool any = false;
-		for (int t = 0; t + 1 < nt; t++) {
-			if (!ln.valid[t]) {
-				continue;
-			}
-			if (wet(ln.pts[t]) || wet(ln.pts[t + 1])) {
-				_swash_lay(ln.pts[t], ln.pts[t + 1], true);
-				ln.valid[t] = 0;
-			} else {
-				any = true;
+	// The line a wave lays, as each transect's distance landward of the middle: the reach averaged over two and a half
+	// metres either side with tent weights (the sea's film is solved on cells of tens of centimetres, so its edge's
+	// wiggles finer than a metre or two are the grid's, not the swash's) and its tongues: the leading edge thins and
+	// breaks into lobes, convex landward and meeting in cusps that point seaward, so each line is a chain of gentle
+	// scallops (Reineck and Singh 1980; Komar 1998), 0.8 to 1.5 m long and 18 to 30 cm deep, new for every wave.
+	auto line_reach = [&](uint32_t p_wave, LocalVector<float> &r_d, LocalVector<bool> &r_ok) {
+		const uint32_t hw = hash_murmur3_one_32(p_wave);
+		const float lw = 0.8f + 0.7f * float(hw & 0xffff) / 65535.0f;
+		const float amp = 0.18f + 0.12f * float((hw >> 16) & 0xff) / 255.0f;
+		const float phase = float(hw >> 24) / 255.0f;
+		r_d.resize(nt);
+		r_ok.resize(nt);
+		// The wave's mean reach over the stretch: a swash's limit wanders along the shore by tens of centimetres over
+		// metres (Komar 1998), not the metre the sea's coarse film drifts by, so the line keeps within 25 cm of it.
+		float rmean = 0.0f;
+		int rcount = 0;
+		for (int t = 0; t < nt; t++) {
+			if (swash_max[t] > -1e8f) {
+				rmean += swash_max[t];
+				rcount++;
 			}
 		}
-		drop_scraps(ln);
-		if (!any) {
-			swash_lines.remove_at(l);
+		rmean = rcount > 0 ? rmean / rcount : 0.0f;
+		for (int t = 0; t < nt; t++) {
+			float rs = 0.0f;
+			float ws = 0.0f;
+			for (int v = MAX(t - 25, 0); v <= MIN(t + 25, nt - 1); v++) {
+				if (swash_max[v] > -1e8f) {
+					const float w = 26.0f - float(Math::abs(v - t));
+					rs += w * swash_max[v];
+					ws += w;
+				}
+			}
+			r_ok[t] = ws > 150.0f;
+			const float r = rmean + CLAMP((ws > 0.0f ? rs / ws : rmean) - rmean, -0.25f, 0.25f);
+			const float s_along = (-half + 0.1f * t) + swash_mid.dot(along);
+			// Each lobe a parabolic arc, its ends meeting the next at a cusp of about 40 degrees: rounded arcs (a sine
+			// raised to a power under 1 met at right angles and read as a stencil).
+			const float u = Math::fposmod(s_along / lw + phase, 1.0f);
+			r_d[t] = r + amp * 4.0f * u * (1.0f - u);
 		}
+	};
+	// A swash running over an older line flattens it: the ridge is only a few mm of loose fines. Only inside the
+	// line this wave will lay: the sea's coarse film sends tongues past it, and a line washed out where no newer
+	// line is laid in its place reads as gaps.
+	if (swash_wave_on && (int)swash_max.size() == nt) {
+		LocalVector<float> gd;
+		LocalVector<bool> gok;
+		line_reach(swash_wave + 1, gd, gok);
+		auto inside = [&](const Vector2 &q, int t) -> bool {
+			return gok[t] && -(q - swash_mid).dot(down) < gd[t];
+		};
+		for (int l = int(swash_lines.size()) - 1; l >= 0; l--) {
+			SwashLine &ln = swash_lines[l];
+			bool any = false;
+			for (int t = 0; t + 1 < nt; t++) {
+				if (!ln.valid[t]) {
+					continue;
+				}
+				const bool in = inside(ln.pts[t], t) || inside(ln.pts[t + 1], t + 1);
+				if (in && (washes(ln.pts[t]) || washes(ln.pts[t + 1]) || washes(0.5f * (ln.pts[t] + ln.pts[t + 1])))) {
+					erase(ln.pts[t], ln.pts[t + 1]);
+					ln.valid[t] = 0;
+				} else {
+					any = true;
+				}
+			}
+			drop_scraps(ln);
+			if (!any) {
+				swash_lines.remove_at(l);
+			}
+		}
+		repair();
 	}
 	if (count < nt / 3) {
 		swash_wave_on = false;
@@ -2846,42 +3051,41 @@ void GroundSurface3D::_swash_update(double p_delta) {
 		return;
 	}
 	swash_wave++;
-	// The line: the reach averaged over a metre and a half either side with tent weights (the sea's film is solved on cells
-	// of tens of centimetres, so its edge's wiggles finer than a metre or two are the grid's, not the swash's) and
-	// its tongues: the leading edge thins and breaks into lobes, convex landward and meeting in cusps that point
-	// seaward, so each line is a chain of gentle scallops (Reineck and Singh 1980; Komar 1998), 0.8 to 1.5 m long
-	// and 18 to 30 cm deep, new for every wave.
-	const uint32_t hw = hash_murmur3_one_32(swash_wave);
-	const float lw = 0.8f + 0.7f * float(hw & 0xffff) / 65535.0f;
-	const float amp = 0.18f + 0.12f * float((hw >> 16) & 0xff) / 255.0f;
-	const float phase = float(hw >> 24) / 255.0f;
 	SwashLine ln;
 	ln.pts.resize(nt);
 	ln.valid.resize(nt);
 	LocalVector<bool> ok;
-	ok.resize(nt);
+	LocalVector<float> ld;
+	line_reach(swash_wave, ld, ok);
 	for (int t = 0; t < nt; t++) {
-		float rs = 0.0f;
-		float ws = 0.0f;
-		for (int v = MAX(t - 15, 0); v <= MIN(t + 15, nt - 1); v++) {
-			if (swash_max[v] > -1e8f) {
-				const float w = 16.0f - float(Math::abs(v - t));
-				rs += w * swash_max[v];
-				ws += w;
-			}
-		}
-		ok[t] = ws > 60.0f;
-		const float r = ws > 0.0f ? rs / ws : 0.0f;
-		const float s_along = (-half + 0.1f * t) + swash_mid.dot(along);
-		const float lobe = Math::pow(Math::sin(float(Math::PI) * Math::fposmod(s_along / lw + phase, 1.0f)), 0.6f);
-		ln.pts[t] = swash_mid + along * (-half + 0.1f * t) - down * (r + amp * lobe);
+		ln.pts[t] = swash_mid + along * (-half + 0.1f * t) - down * ld[t];
+		// A lobe past the near field's edge is not drawn there: the line ends at the edge, not in dashes.
+		ok[t] = ok[t] && _near_inside(ln.pts[t].x, ln.pts[t].y);
 	}
 	// valid[t]: the stretch from point t to t + 1 is laid (per stretch, so flattening one never orphans its neighbour).
 	for (int t = 0; t < nt; t++) {
 		ln.valid[t] = (t + 1 < nt && ok[t] && ok[t + 1]) ? 1 : 0;
 	}
-	// Lines never cross: older lines this one reaches past, or comes within 10 cm of (the same reach twice draws
-	// one ridge, not a pair), are flattened under it, stretch by stretch.
+	// A run under a metre is not laid at all (a lone scrap reads as a mark of something else).
+	{
+		int run = 0;
+		for (int t = 0; t <= nt; t++) {
+			if (t < nt && ln.valid[t]) {
+				run++;
+				continue;
+			}
+			if (run > 0 && run < 10) {
+				for (int u = t - run; u < t; u++) {
+					ln.valid[u] = 0;
+					ok[u] = false;
+				}
+			}
+			run = 0;
+		}
+	}
+	// Lines never cross: older lines this one reaches past, or comes within 15 cm of (the same reach twice draws
+	// one ridge, not a pair; between two transects a line 10 cm off could still touch), are flattened under it,
+	// stretch by stretch.
 	for (int l = int(swash_lines.size()) - 1; l >= 0; l--) {
 		SwashLine &old = swash_lines[l];
 		bool any = false;
@@ -2889,9 +3093,9 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			if (!old.valid[t]) {
 				continue;
 			}
-			const bool past = (ok[t] && (old.pts[t] - ln.pts[t]).dot(down) > -0.1f) || (ok[t + 1] && (old.pts[t + 1] - ln.pts[t + 1]).dot(down) > -0.1f);
+			const bool past = (ok[t] && (old.pts[t] - ln.pts[t]).dot(down) > -0.15f) || (ok[t + 1] && (old.pts[t + 1] - ln.pts[t + 1]).dot(down) > -0.15f);
 			if (past) {
-				_swash_lay(old.pts[t], old.pts[t + 1], true);
+				erase(old.pts[t], old.pts[t + 1]);
 				old.valid[t] = 0;
 			} else {
 				any = true;
@@ -2902,6 +3106,7 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			swash_lines.remove_at(l);
 		}
 	}
+	repair();
 	for (int t = 0; t + 1 < nt; t++) {
 		if (ln.valid[t]) {
 			_swash_lay(ln.pts[t], ln.pts[t + 1]);
@@ -3559,6 +3764,7 @@ void GroundSurface3D::_notification(int p_what) {
 			if (!active) {
 				active = this;
 			}
+			WorldContracts::register_water(this);
 			_ensure_children();
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
@@ -3570,6 +3776,7 @@ void GroundSurface3D::_notification(int p_what) {
 			_publish();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
 			set_physics_process_internal(false);
 			if (_ruts_on()) {
 				save_ruts();
@@ -3989,15 +4196,17 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 }
 
 void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell) {
-	// On the near field a grid's cell is a tent one cell wide (GroundDeformField::amount_cover()).
-	const bool tent = is_near && p_cell > 0.0f;
+	// On the near field a grid's cell is a tent one cell wide (GroundDeformField::amount_cover()); on either with
+	// amount_tent a tent p_radius wide.
+	const bool main_tent = surface->field.amount_tent;
+	const bool tent = (is_near && p_cell > 0.0f) || main_tent;
 	if (next && surface->is_near_active()) {
 		// The depth was scaled for the main field's texels (amount_scale): the near field's own scale instead, the
 		// same volume.
-		const float main_scale = surface->field.amount_scale(p_position, p_radius);
+		const float main_scale = surface->field.amount_scale(p_position, p_radius, main_tent);
 		const float depth = main_scale > 0.0f ? p_depth / main_scale : p_depth;
 		if (p_cell > 0.0f) {
-			const float to_cell = (float)Math::PI * p_radius * p_radius / (p_cell * p_cell);
+			const float to_cell = (main_tent ? 1.0f : (float)Math::PI) * p_radius * p_radius / (p_cell * p_cell);
 			next->amount(p_columns, p_position, p_cell, depth * to_cell * surface->near_fld.amount_scale(p_position, p_cell, true), p_cell);
 		} else {
 			next->amount(p_columns, p_position, p_radius, depth * surface->near_fld.amount_scale(p_position, p_radius), 0.0f);
@@ -4031,7 +4240,7 @@ float GroundSurface3D::_amount(Vector3 p_position, float p_radius, float p_depth
 	const Cell &c = _cell_at(p_position.x, p_position.z);
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 	if (_gpu_on()) {
-		gpu_sink.amount(cols, p_position, p_radius, p_depth * field.amount_scale(p_position, p_radius), p_cell);
+		gpu_sink.amount(cols, p_position, p_radius, p_depth * field.amount_scale(p_position, p_radius, field.amount_tent), p_cell);
 		// The GPU applies it; what it moves is the disc's, short only where the dent bottoms out.
 		return c.deformable ? (float)Math::PI * p_radius * p_radius * Math::abs(p_depth) : 0.0f;
 	}
@@ -5372,6 +5581,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);
 	ClassDB::bind_method(D_METHOD("get_ice_at", "position"), &GroundSurface3D::get_ice_at);
 	ClassDB::bind_method(D_METHOD("get_rut_guidance", "contact", "lateral", "half_width"), &GroundSurface3D::get_rut_guidance);
+	ClassDB::bind_method(D_METHOD("set_needle_ice", "enabled"), &GroundSurface3D::set_needle_ice);
+	ClassDB::bind_method(D_METHOD("is_needle_ice"), &GroundSurface3D::is_needle_ice);
+	ClassDB::bind_method(D_METHOD("get_needle_ice_at", "position"), &GroundSurface3D::get_needle_ice_at);
 	ClassDB::bind_method(D_METHOD("set_frozen_ground", "enabled"), &GroundSurface3D::set_frozen_ground);
 	ClassDB::bind_method(D_METHOD("is_frozen_ground"), &GroundSurface3D::is_frozen_ground);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &GroundSurface3D::get_frost_at);
@@ -5590,6 +5802,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "puddle_ice"), "set_puddle_ice", "is_puddle_ice");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plant_mud"), "set_plant_mud", "is_plant_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frozen_ground"), "set_frozen_ground", "is_frozen_ground");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needle_ice"), "set_needle_ice", "is_needle_ice");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
@@ -5615,6 +5828,7 @@ GroundSurface3D::GroundSurface3D() {
 	deform_groups.push_back("ground_deform");
 	deform_groups.push_back("snow_deform");
 	deform_groups.push_back("grass_trample");
+	deform_groups.push_back("world_contact"); // every body any system should feel (docs/ideas/world-links.md)
 }
 
 GroundSurface3D::~GroundSurface3D() {

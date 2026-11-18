@@ -3014,7 +3014,9 @@ void fragment() {
 	// sun, cracks and the joints between blocks, and the foot where it meets the soil. Open, sunlit tops dry out
 	// between rains and carry lichen instead; overhangs get no rain.
 	float moss_term = 0.9 * shade_side + 0.45 * (1.0 - cavity) + 0.8 * contact * (1.0 - smoothstep(0.4, 0.85, wn.y)) + 0.25 * max(wn.y, 0.0) - 0.4 * max(-wn.y - 0.3, 0.0);
-	float moss_place = smoothstep(0.2, 0.7, moss_term) * (1.0 - fresh);
+	// Not on stones that keep moving (talus, shingle) nor within the sea's salt spray.
+	float moss_place = smoothstep(0.2, 0.7, moss_term) * (1.0 - fresh) * smoothstep(0.15, 0.6, surface_age);
+	moss_place *= 1.0 - step(-1e4, sea_level) * (1.0 - smoothstep(tide_range * 3.0, tide_range * 6.0, v_world.y - sea_level));
 	float moss = moss_cover * moss_place * smoothstep(0.42, 0.58, rk_fbm3(mp * 2.2 + 17.0) + 0.25 * moss_cover - 0.12);
 	col = mix(col, moss_color * (0.7 + 0.6 * rk_fbm3(mp * 25.0)), moss);
 	rough = mix(rough, 0.95, moss);
@@ -3108,6 +3110,7 @@ void fragment() {
 	rough = mix(rough_dry, rough, 0.35);
 	col *= 1.0 - 0.4 * rivulet;
 	rough = mix(rough, 0.07, rivulet);
+	weather_frost_apply(weather_frost_at(v_world), wn.y, col, rough);
 
 	vec4 snow_s = snow_cover_at(v_world);
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);

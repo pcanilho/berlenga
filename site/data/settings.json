@@ -1370,7 +1370,7 @@
     "GroundSurface3D.swash_marks"
    ],
    "note": "",
-   "what": "each wave leaves a scalloped line of dark fine sand at its highest reach, and higher waves smooth older lines.",
+   "what": "each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2448,6 +2448,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Falling leaves",
+   "settings": [
+    "LeafFall3D"
+   ],
+   "note": "",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts lift them off the ground.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Wetland plants",
    "settings": [
     "PlantSpecies.floating",
@@ -3125,7 +3136,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3353,6 +3364,17 @@
    "topic": ""
   },
   {
+   "name": "Wind over terrain",
+   "settings": [
+    "terrain_wind_enabled"
+   ],
+   "note": "",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wind near the ground",
    "settings": [
     "add_canopy",
@@ -3393,7 +3415,7 @@
     "WeatherLightning3D"
    ],
    "note": "",
-   "what": "strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
+   "what": "strikes from storm cells at a rate set by cloud-top height, hitting tall things first and starting fires in dry fuel (`PhysXFireSpread3D.lightning_ignition`), lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3452,7 +3474,18 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Dew and frost",
+   "settings": [
+    "dew_and_frost"
+   ],
+   "note": "",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3480,13 +3513,27 @@
    "topic": ""
   },
   {
+   "name": "Air temperature",
+   "settings": [
+    "air_follows_climate",
+    "air_daily_cycle"
+   ],
+   "note": "",
+   "what": "follows the season and the time of day.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Followers",
    "settings": [
     "follow_weather",
-    "weather_wind"
+    "cats_paws",
+    "weather_wind",
+    "wind_drag"
    ],
    "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).",
+   "what": "water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3559,7 +3606,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes and fray into wisps; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes and fray into wisps, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
@@ -3677,7 +3724,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3700,7 +3747,7 @@
     "embers"
    ],
    "note": "",
-   "what": "wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that start new fires.",
+   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3724,6 +3771,18 @@
    ],
    "note": "",
    "what": "burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Crown fire",
+   "settings": [
+    "PhysXFireSpread3D.crown_fire",
+    "foliar_moisture"
+   ],
+   "note": "",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; a torched tree drops burning twigs and stands as bare black branches over grey ash.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3785,7 +3844,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less and clings to the body.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3822,6 +3881,17 @@
    ],
    "note": "",
    "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "World contact",
+   "settings": [
+    "physics/3d/world_contact/auto_join"
+   ],
+   "note": "",
+   "what": "every moving body bends plants, presses prints into ground and snow, and leaves ripples in water.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

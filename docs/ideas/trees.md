@@ -2097,6 +2097,16 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Bark tile repetition (18 Nov; Paulo: the cork "is obviously repeating"). The bark set is one
+tileable map (1.2 m for cork), relief and colour alike, so its copies showed up and down the bole.
+Two world-space layers now break it, both in the geometry and vertex colour so the path tracer
+sees the same: a macro variation at about a metre (relief depth 0.65-1.35x, tone +-12%, slightly
+warmer or greyer; the macro-variation layer of terrain texturing) and a slow slide of the tile
+round the stem (up to a third of a tile over a couple of metres, one value a ring so the seam stays
+closed, a gentle spiral grain), so the copy a tile above or beside never lines up. The swept
+crotch evaluates the slide at the bole's ring centre and the stem's axis, so its UV blend still
+meets the stem. All relief barks get both.
+
 Maritime pine round 8 (18 Nov; docs: plates large smooth slabs with a fine grain; furrows narrow
 slits with a sharp lip). Furrows are wide V valleys, about a third of the surface (crack width
 0.36 cells, a V profile open^0.7, depth 8.5 cm), red-brown only in the bottom fifth. Plates break
@@ -2838,3 +2848,6 @@ read as sticks; games run TAA or DLSS, which integrate that coverage.
   distributions of important trees and shrubs in North America*, USGS Professional Paper 1650,
   1999. Eyre (ed.), *Forest Cover Types of the United States and Canada*, SAF, 1980. Braun,
   *Deciduous Forests of Eastern North America*, 1950.
+
+### Repetition audit (18 Nov)
+Paulo's rule: any repeated geometry carries good-quality noise so the repeat does not read. Bark relief and colour already had the macro variation and tile slide (ac6e8bde). Audit: moss shells and lichen UV2 follow the bark UVs, so they slide with it, and lichen cover is a world-space mask. The plain (non-relief) bark tubes, used by the far LODs, roots and thin stems, had the tile slide but not the macro colour, so near and far LODs differed in colour; they now take the same world-space tint (resin runs keep their flat colour). Hedge segments already vary per segment (three variants, flipped end for end, length/height/width scale, sideways offset, species runs), so no change there.

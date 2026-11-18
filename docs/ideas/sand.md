@@ -611,6 +611,17 @@ The PT frame of that round lost the lines: the lip's darker tint was the fresh t
 so by the frame only the raster's micro-occlusion drew them. The lip's dark grains are its material (heavy minerals
 and mica, Komar 1998), not its moisture: it is now laid as a band of another sand (`amount_fresh` from 2: 2 plus its
 share, kept, albedo down to 0.6, no sheen), which both renderers draw.
+Docs round 6 (lines crossing, ghosts, square cusps, scraps): each lobe is now a parabolic arc meeting the next at
+a cusp of about 40 degrees (a sine to a power under 1 met at right angles and read as a stencil); a line keeps
+within 25 cm of its wave's mean reach (the sea's film drifted a metre along the stretch and drew diagonals); an
+older line within 15 cm of a new one is flattened; runs under a metre are not laid. A line being washed out
+(`amount_fresh` -2) takes its rim and levels the hollow beside it over 12 cm: saturated sand had slumped it wider
+than it was laid, and a control run with `swash_marks` off showed the leftover shapes were the lines'. Lines also
+wash out under any water fast enough to move sand (`bed_load()`), not only a film over 1 mm. A wave washes out older lines
+only inside the line it will lay (the film's tongues past it cut gaps where nothing newer was laid), and kept lines
+within reach of a flattening dig are laid again. A lobe past the near field's edge ends the line there instead of
+leaving dashes; the shore bench uses a 12 m near field, since the run-up climbs about 3 m and the default field's
+sharp middle ends 3 m out.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
 

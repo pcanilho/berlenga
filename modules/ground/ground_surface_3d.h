@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "ground_deform_field.h"
 #include "ground_deform_gpu.h"
 #include "ground_height_query.h"
@@ -55,7 +56,7 @@ class WeatherMap3D;
 // crowns drop litter; bare rock does not print. The field is drawn as a patch with the ground's own
 // material, and the terrain, drawn with the same material (BaseMaterial3D ground_deform_enabled, or
 // get_ground_deform_shader_code() in a shader), is lowered under it, so both renderers trace the prints.
-class GroundSurface3D : public Node3D {
+class GroundSurface3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(GroundSurface3D, Node3D);
 
 public:
@@ -156,9 +157,13 @@ private:
 	void _ice_update(double p_delta);
 	void _ice_break(const Vector3 &p_position, float p_radius, float p_bearing);
 	// Frozen ground (round 8): per lattice cell (the thawed layer on top, m; the frost's depth, m; the thaw's
-	// weakening, 0..1).
-	static constexpr int FROST_FLOATS = 3;
+	// weakening, 0..1; round 9's needle ice: its height, m; the loose soil it leaves, 0..1; the height laid on the
+	// field, m).
+	static constexpr int FROST_FLOATS = 6;
 	bool frozen_ground = true;
+	bool needle_ice = true;
+	int needle_cursor = 0;
+	float _needle_loose_at(float p_x, float p_z) const;
 	LocalVector<float> frost_state;
 	void _frost_update(double p_delta);
 	void _frost_seed(int p_from);
@@ -291,6 +296,7 @@ private:
 		const GroundSurface3D *surface = nullptr;
 		GroundDeformField::Column column(float p_x, float p_z) const override;
 		float sinkage(const GroundDeformField::Body &p_body) const override;
+		bool skips(const Node3D *p_node) const override { return p_node->has_meta(SNAME("ground_self_pressing")); }
 	};
 
 	// The ground lattice over the field, one sample every ground_spacing, and its cells.
@@ -737,6 +743,8 @@ public:
 	void set_standing_water(bool p_enabled);
 	bool is_standing_water() const { return standing_water; }
 	float get_standing_water_at(Vector3 p_position) const;
+	// The water contract (WorldWater): standing water on the ground, -INF where there is none.
+	float contract_water_height_at(const Vector3 &p_position) const override;
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
 	void set_puddle_ice(bool p_enabled);
@@ -745,6 +753,9 @@ public:
 	void set_frozen_ground(bool p_enabled);
 	bool is_frozen_ground() const { return frozen_ground; }
 	Vector3 get_frost_at(Vector3 p_position) const;
+	void set_needle_ice(bool p_enabled);
+	bool is_needle_ice() const { return needle_ice; }
+	Vector2 get_needle_ice_at(Vector3 p_position) const;
 	void set_plant_mud(bool p_enabled);
 	bool is_plant_mud() const { return plant_mud; }
 	float get_plant_mud_at(Vector3 p_position) const;

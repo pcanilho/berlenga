@@ -15,6 +15,13 @@ extends Node3D
 #                       wind near the ground: a forest's profile against Cionco's, the lee of a wall against
 #                       distance, gust patches (spread and size), the shader code against get_wind_at(), and
 #                       the shelter bake's cost
+#   --test=terrain    wind over terrain (docs/ideas/wind.md): a 60 m hill and a 40 m ridge, speed-up on the crest,
+#                     slowing in the lee (Sx), turning on the flanks, the updraught on the windward slope, the
+#                     fade with height, the shader code against get_wind_at(), the bake's cost, and particles
+#                     (CPUParticles3D) catching the wind
+#   --test=leaves     falling leaves (LeafFall3D, docs/ideas/wind.md): a broad leaf flutters down at about 1 m/s and
+#                     drifts sideways, a needle drops near straight, leaves carried by the wind settle, and the wind
+#                     lifts them again past the litter threshold
 #   --view=map        an 8 km map with broken cloud, light rain and a storm drifting through, after an hour;
 #                     saved with --map-out
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
@@ -62,6 +69,8 @@ var rain_hours := 1.0
 var dry_hours := 0.0
 var test := false
 var only_shelter := false
+var only_terrain := false
+var only_leaves := false
 var only_lightning := false
 var only_haze := false
 var haze := ""
@@ -102,6 +111,8 @@ func _ready() -> void:
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
+		elif a == "--test=terrain": test = true; only_terrain = true
+		elif a == "--test=leaves": test = true; only_leaves = true
 		elif a == "--test=lightning": test = true; only_lightning = true
 		elif a == "--test=haze": test = true; only_haze = true
 		elif a.begins_with("--haze="): haze = a.substr(7)
@@ -124,6 +135,10 @@ func _ready() -> void:
 	if test:
 		if only_shelter:
 			await _shelter_tests()
+		elif only_terrain:
+			await _terrain_tests()
+		elif only_leaves:
+			await _leaf_tests()
 		elif only_lightning:
 			await _lightning_tests()
 		elif only_haze:
@@ -1297,3 +1312,210 @@ func _process(_delta: float) -> void:
 	if out != "" and n >= frames:
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
+
+
+func _terrain_tests() -> void:
+	var hill: Node3D = load("res://hill.gd").new()
+	hill.name = "Hill"
+	add_child(hill)
+	var m := _new_map()
+	m.gust_intensity = 0.0
+	m.gust_patch_strength = 0.0
+	m.terrain_source = m.get_path_to(hill)
+	await get_tree().physics_frame
+	m.rebake_terrain_wind()
+	var tally := [0, 0]
+	var check := func(cond: bool, what: String) -> void:
+		print(("PASS " if cond else "FAIL ") + what)
+		tally[0 if cond else 1] += 1
+	check.call(m.is_terrain_wind_ready(), "terrain wind baked from the hill node (derive %.1f ms, 256 x 256, 8 m cells)" % m.get_terrain_wind_derive_time())
+	var flat: Vector3 = m.get_wind_at(Vector3(-700, 0, 600), 10.0)
+	var crest: Vector3 = m.get_wind_at(Vector3(0, 60, 0), 10.0)
+	var lee: Vector3 = m.get_wind_at(Vector3(990, 0, 0), 10.0)
+	var windward: Vector3 = m.get_wind_at(Vector3(-120, 0, 0), 10.0)
+	var flank: Vector3 = m.get_wind_at(Vector3(-80, 0, 120), 10.0)
+	var high: Vector3 = m.get_wind_at(Vector3(0, 60, 0), 300.0)
+	var high_flat: Vector3 = m.get_wind_at(Vector3(-700, 0, 600), 300.0)
+	print("  10 m wind: flat %.2f, hill crest %.2f, windward slope %.2f (w %.2f), lee of the ridge %.2f (Sx %.1f deg), flank turned %.1f deg" % [
+			Vector2(flat.x, flat.z).length(), Vector2(crest.x, crest.z).length(), Vector2(windward.x, windward.z).length(), windward.y,
+			Vector2(lee.x, lee.z).length(), rad_to_deg(m.get_terrain_lee_at(Vector3(990, 0, 0))), rad_to_deg(Vector2(flank.x, flank.z).angle())])
+	check.call(absf(Vector2(flat.x, flat.z).length() - 8.0) < 0.05, "flat ground keeps the open wind at 10 m")
+	check.call(Vector2(crest.x, crest.z).length() > 8.0 * 1.08, "the crest speeds the wind up (MicroMet curvature)")
+	check.call(Vector2(lee.x, lee.z).length() < 8.0 * 0.85, "the ridge's lee slows it (Sx)")
+	check.call(windward.y > 0.3, "the air climbs the windward slope")
+	check.call(m.get_wind_at(Vector3(120, 0, 0), 10.0).y < -0.3, "and sinks down the lee slope")
+	check.call(absf(Vector2(flank.x, flank.z).angle()) > deg_to_rad(2.0), "the wind turns along the contours on the flank")
+	check.call(absf(Vector2(high.x, high.z).length() / Vector2(high_flat.x, high_flat.z).length() - 1.0) < 0.05, "300 m up, the hill no longer shows")
+	var g: float = m.get_terrain_ground_at(Vector3(0, 0, 0))
+	check.call(absf(g - 60.0) < 1.0, "the ground under the crest is the hill's top (%.1f m)" % g)
+	var a: Vector3 = m.get_wind_at(Vector3(0, 70, 0))
+	check.call(a.distance_to(crest) < 0.01, "no height given: measured from the terrain (10 m over the crest)")
+	var mean_t: Vector2 = m.get_mean_wind_at(Vector3(0, 0, 0))
+	var mean_f: Vector2 = m.get_mean_wind_at(Vector3(0, 0, 0), false)
+	check.call(mean_t.length() > mean_f.length() * 1.05 and absf(mean_f.length() - 8.0) < 0.05, "get_mean_wind_at has the terrain; with terrain = false, the flat wind")
+
+	# The wind aloft for the clouds: log law to the boundary layer, veering to the right (north), then sheared.
+	var w10: Vector2 = m.get_mean_wind_at(Vector3(-700, 0, 600), false)
+	var w1k: Vector2 = m.get_wind_aloft(Vector3(-700, 0, 600), 1000.0)
+	var w3k: Vector2 = m.get_wind_aloft(Vector3(-700, 0, 600), 3000.0)
+	var veer := rad_to_deg(w10.angle_to(w1k))
+	print("  aloft: 10 m %.1f m/s, 1 km %.1f m/s veered %.1f deg, 3 km %.1f m/s" % [w10.length(), w1k.length(), veer, w3k.length()])
+	check.call(veer > 20.0 and veer < 35.0 and w1k.length() > w10.length() * 1.5, "the wind aloft veers clockwise through the boundary layer and grows on the log law")
+	check.call(absf(w3k.length() - w1k.length() - 3.0) < 0.05, "above it, the thermal-wind shear (1.5 m/s per km)")
+
+	# The shader code against get_wind_at() over the hill and the ridge, at 5 m above the ground.
+	var vp := SubViewport.new()
+	vp.size = Vector2i(32, 32)
+	vp.use_hdr_2d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(vp)
+	var rect := ColorRect.new()
+	rect.size = Vector2(32, 32)
+	var sm := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = "shader_type canvas_item;\n" + m.get_wind_shader_code() + """
+void fragment() {
+	vec3 wp = vec3(mix(-300.0, 1100.0, UV.x), 0.0, mix(-300.0, 300.0, UV.y));
+	wp.y = weather_terrain(wp.xz).w + 5.0;
+	COLOR = vec4(weather_wind(wp, weather_height_above_ground(wp)) * 0.05 + 0.5, 1.0);
+}
+"""
+	sm.shader = sh
+	rect.material = sm
+	vp.add_child(rect)
+	get_tree().paused = true
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	var img := vp.get_texture().get_image()
+	var worst := 0.0
+	var mean_err := 0.0
+	var cnt := 0
+	for y in range(2, 32, 6):
+		for x in range(2, 32, 6):
+			var u := (x + 0.5) / 32.0
+			var v := (y + 0.5) / 32.0
+			var wp := Vector3(lerp(-300.0, 1100.0, u), 0.0, lerp(-300.0, 300.0, v))
+			wp.y = m.get_terrain_ground_at(wp) + 5.0
+			var cpu: Vector3 = m.get_wind_at(wp)
+			var c := img.get_pixel(x, y)
+			var e := ((Vector3(c.r, c.g, c.b) - Vector3(0.5, 0.5, 0.5)) / 0.05).distance_to(cpu)
+			worst = max(worst, e)
+			mean_err += e
+			cnt += 1
+	get_tree().paused = false
+	vp.queue_free()
+	check.call(worst < 0.25, "shader code against get_wind_at() at %d points over the hill and ridge: mean difference %.3f m/s, worst %.3f m/s" % [cnt, mean_err / cnt, worst])
+
+	# Particles: one slow puff from a CPUParticles3D on flat ground catches the wind across gravity.
+	var p := CPUParticles3D.new()
+	p.amount = 1
+	p.lifetime = 30.0
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 0.0
+	p.initial_velocity_min = 0.0
+	p.initial_velocity_max = 0.0
+	p.gravity = Vector3(0, -0.5, 0)
+	p.position = Vector3(-700, 20, 600)
+	p.local_coords = true
+	p.mesh = QuadMesh.new() # CPUParticles3D only runs with a mesh
+	add_child(p)
+	p.emitting = true
+	for i in 240:
+		await get_tree().physics_frame
+	# The particle positions are not exposed; read where the whole system has gone from its AABB instead.
+	var aabb: AABB = p.capture_aabb()
+	var drift := aabb.get_center().x
+	var w20: Vector3 = m.get_wind_at(Vector3(-700, 20, 600))
+	# From rest with drag k: x = U (t - (1 - exp(-k t)) / k).
+	check.call(absf(drift - w20.x * (4.0 - (1.0 - exp(-4.0)))) < 2.0, "a particle drifts downwind as linear drag predicts (%.1f m in 4 s, the 20 m wind %.1f m/s, wind_drag 1/s)" % [drift, w20.x])
+	p.queue_free()
+	var p2 := CPUParticles3D.new()
+	p2.wind_drag = 0.0
+	check.call(p2.wind_drag == 0.0 and ParticleProcessMaterial.new().wind_drag == 1.0, "wind_drag 1/s by default, 0 switches it off")
+	p2.free()
+	print("terrain: %d passed, %d failed" % [tally[0], tally[1]])
+	m.queue_free()
+	hill.queue_free()
+	await get_tree().physics_frame
+
+
+func _leaf_tests() -> void:
+	if not ClassDB.class_exists("LeafFall3D"):
+		print("FAIL no LeafFall3D in this build")
+		return
+	var tally := [0, 0]
+	var check := func(cond: bool, what: String) -> void:
+		print(("PASS " if cond else "FAIL ") + what)
+		tally[0 if cond else 1] += 1
+	# A beech leaf: 8 cm chord, 30 cm2, 0.25 g dry. A pine needle pair: 8 cm long, 1 mm wide, 0.03 g.
+	var broad: PackedVector4Array = ClassDB.class_call_static("LeafFall3D", "simulate_plate", 0.08, 0.003, 0.00025, 1.0, Vector3.ZERO, 15.0, 10.0)
+	var needle: PackedVector4Array = ClassDB.class_call_static("LeafFall3D", "simulate_plate", 0.08, 0.00008, 0.00003, 0.0, Vector3.ZERO, 15.0, 10.0)
+	var lat_b := 0.0
+	var lat_n := 0.0
+	var swings := 0
+	var prev_x := 0.0
+	var prev_dx := 0.0
+	for i in broad.size():
+		lat_b = maxf(lat_b, Vector2(broad[i].x, broad[i].z).length())
+		if i > 0:
+			var dx := broad[i].x - prev_x
+			if dx * prev_dx < 0.0:
+				swings += 1
+			prev_dx = dx
+		prev_x = broad[i].x
+	for v in needle:
+		lat_n = maxf(lat_n, Vector2(v.x, v.z).length())
+	var t_b := 10.0
+	var vy_b := -broad[broad.size() - 1].y / t_b
+	var vy_n := -needle[needle.size() - 1].y / 10.0
+	# Falling broadside it would reach sqrt(2 m g / (rho S C_D)), C_D 2.4: fluttering, it falls slower than that.
+	var broadside := sqrt(2.0 * 0.00025 * 9.81 / (1.2 * 0.003 * 2.4))
+	print("  broad leaf, still air, 10 s: fell %.1f m (%.2f m/s, broadside terminal %.2f), widest sideways %.2f m, %d swings; needle: %.2f m/s, sideways %.3f m" % [-broad[broad.size() - 1].y, vy_b, broadside, lat_b, swings, vy_n, lat_n])
+	check.call(vy_b > 0.5 * broadside and vy_b < 1.05 * broadside, "a broad leaf flutters down a little slower than it would fall flat")
+	check.call(lat_b > 0.08 and swings >= 4, "and swings from side to side as it falls")
+	check.call(lat_n < lat_b * 0.3, "a needle drops near straight")
+	var windy: PackedVector4Array = ClassDB.class_call_static("LeafFall3D", "simulate_plate", 0.08, 0.003, 0.00025, 1.0, Vector3(5, 0, 0), 15.0, 6.0)
+	var dx := windy[windy.size() - 1].x
+	check.call(dx > 5.0 * 6.0 * 0.7, "in a 5 m/s wind it travels with the air (%.1f m in 6 s)" % dx)
+
+	var m := _new_map()
+	m.wind_speed = 3.0
+	m.gust_intensity = 0.0
+	m.gust_patch_strength = 0.0
+	await get_tree().physics_frame
+	var lf: Node3D = ClassDB.instantiate("LeafFall3D")
+	add_child(lf)
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.08, 0.05)
+	quad.orientation = PlaneMesh.FACE_Y
+	lf.add_kind(quad, 0.08, 0.003, 0.00025, 1.0)
+	lf.lift_speed = 4.0
+	for i in 200:
+		lf.drop_leaf(Vector3(randf_range(-5, 5), 8.0 + randf() * 4.0, randf_range(-5, 5)), 0)
+	for i in 60 * 30:
+		await get_tree().physics_frame
+	var lying := 0
+	var st: PackedVector4Array = lf.get_leaf_states()
+	var mean_x := 0.0
+	for v in st:
+		if v.w > 0.5:
+			lying += 1
+		mean_x += v.x
+	mean_x /= maxf(st.size(), 1)
+	print("  200 leaves from 8 to 12 m in a 3 m/s wind: %d on the ground after 30 s, moved %.1f m downwind on average, step %.2f ms" % [lying, mean_x, lf.get_step_time()])
+	check.call(lying >= 190, "the leaves settle on the ground")
+	check.call(mean_x > 5.0, "carried downwind on the way")
+	var lifted0: int = lf.get_lifted_count()
+	m.wind_speed = 25.0
+	m.snap_to_settings()
+	for i in 60 * 5:
+		await get_tree().physics_frame
+	var lifted: int = lf.get_lifted_count() - lifted0
+	check.call(lifted > 20, "a gale lifts lying leaves again (%d lifts in 5 s)" % lifted)
+	print("leaves: %d passed, %d failed" % [tally[0], tally[1]])
+	lf.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame

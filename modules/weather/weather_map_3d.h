@@ -31,10 +31,12 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "weather_clouds.h"
 #include "weather_contact_wetness.h"
 #include "weather_season.h"
 #include "weather_shelter.h"
+#include "weather_terrain_wind.h"
 
 #include "core/io/image.h"
 #include "core/object/object_id.h"
@@ -51,7 +53,7 @@ class Environment;
 class FogMaterial;
 class FogVolume;
 
-class WeatherMap3D : public Node3D {
+class WeatherMap3D : public Node3D, public WorldWeatherProvider {
 	GDCLASS(WeatherMap3D, Node3D);
 
 public:
@@ -98,6 +100,12 @@ private:
 	float cloud_scale = 6000.0f; // m, size of the cloud cover noise
 	float rain_rate = 0.0f; // mm/h
 	float temperature = 15.0f; // C
+	// The air through the day and the year (docs/ideas/world-links.md, link 1).
+	bool air_follows_climate = true; // with a climate: the day's mean from it plus season_anomaly
+	bool air_daily_cycle = true; // with a SkyClock: cooler nights, warmer afternoons (Parton and Logan 1981)
+	float daily_temperature_range = 10.0f; // K, clear calm day; clouds and rain narrow it
+	bool sun_drying = true; // the sun's net radiation in the evaporation (Penman 1948's combination)
+	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
 	int season_day = 135; // day of the year without a SkyClock (15 May)
@@ -124,6 +132,7 @@ private:
 	bool cloud_evolution = true;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
+	float cloud_shear = 1.0f; // scale on the wind shear's lean of the cloud tops (0: upright)
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -138,6 +147,13 @@ private:
 	float cur_rain_rate = 0.0f;
 	float cur_temperature = 15.0f;
 	float cur_humidity = 0.7f;
+	// The air now: the eased mean above plus the day's cycle; its humidity at the mean's dew point.
+	float cur_air_temperature = 15.0f;
+	float cur_air_humidity = 0.7f;
+	float cur_sun_sine = 0.0f; // sine of the sun's elevation (0 below the horizon or without a sun)
+	bool sun_known = false; // a sun light or a sky clock says where the sun is
+	float diurnal_cache_day_length = -1.0f;
+	float diurnal_cache_mean = 0.5f;
 	bool eased_once = false;
 	// Followers (the sea's lag) watch these: cells refreshed, the base snapped, and weather time skipped
 	// by advance().
@@ -155,6 +171,8 @@ private:
 	Vector<float> cell_rain; // mm/h
 	Vector<float> cell_film; // mm
 	Vector<float> cell_puddle; // mm
+	Vector<float> cell_frost; // mm of water as hoarfrost on exposed surfaces
+	Vector<float> cell_cooling; // K, the exposed surface's temperature less the air's (radiative cooling, sun warming)
 	// Water reaching the ground where another node takes the precipitation (a snowpack's runoff), mm/h;
 	// negative where none does, so the cell's own rain reaches the ground.
 	Vector<float> cell_inflow;
@@ -184,6 +202,17 @@ private:
 		const float *inflow = nullptr;
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
+		float *frost = nullptr;
+		float *cooling = nullptr;
+		bool dew = false;
+		// The sun on wet surfaces (sun_drying): clear-sky shortwave on level ground (W/m2), the cloud shadow
+		// when one is baked, the air the evaporation sees.
+		bool sun = false;
+		float shortwave_clear = 0.0f;
+		bool use_shadow = false;
+		Vector2 shadow_corner;
+		float air_temperature = 15.0f;
+		float air_humidity = 0.7f;
 	};
 	CellPass cell_pass;
 
@@ -195,6 +224,8 @@ private:
 
 	Ref<Image> wind_image;
 	Ref<Image> state_image;
+	Ref<Image> frost_image;
+	Ref<ImageTexture> frost_texture;
 	Ref<Image> gust_image;
 	Ref<ImageTexture> wind_texture;
 	Ref<ImageTexture> state_texture;
@@ -251,6 +282,18 @@ private:
 
 	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
 	WeatherShelter shelter;
+	// Wind over terrain (docs/ideas/wind.md): ground heights from terrain_source (a node with
+	// get_height(position) or Terrain3D's get_data()), else the first TerrainDeformer3D, Landscape3D,
+	// TerrainGenerator3D or Terrain3D in the scene, else rays on terrain_collision_mask.
+	WeatherTerrainWind terrain_wind;
+	float boundary_layer_height = 1000.0f; // m
+	float wind_shear_aloft = 1.5f; // m/s per km above the boundary layer
+	bool terrain_wind_enabled = true;
+	NodePath terrain_source;
+	uint32_t terrain_collision_mask = 1;
+	ObjectID terrain_height_object; // what answers get_height for the square being sampled
+	bool terrain_height_by_data = false; // Terrain3D: get_data().get_height()
+	RID terrain_global_rid;
 	bool shelter_enabled = true;
 	Ref<Texture2D> canopy_map;
 	float gust_patch_size = 6.0f; // m
@@ -323,6 +366,9 @@ private:
 	void _update_row(uint32_t p_row, CellPass *p_pass);
 	void _gather_water_sources();
 	void _set_base_to_settings();
+	float _target_temperature() const;
+	float _net_radiation(const CellPass &p_pass, Vector3 p_position, float p_cover) const;
+	void _update_air();
 	void _snap();
 	void _fill_gust_image();
 	void _upload();
@@ -348,12 +394,16 @@ private:
 	Vector3 _gust_at(Vector3 p_position, Vector2 p_mean) const;
 	float _patch_at(Vector2 p_xz, float p_height) const;
 	void _bake_shelter();
+	void _update_terrain_wind();
+	void _find_terrain_source();
+	float _terrain_height(Vector2 p_xz) const;
+	// Height above the ground: p_height when >= 0, else from the terrain under the point (or ground_height).
+	float _height_above_ground(Vector3 p_position, float p_height, const float p_terrain[4]) const;
 
 	WeatherSeason::Climate _season_climate() const;
 
 	// Rain (weather_rain.cpp, docs/ideas/rain.md): the precipitation's phase with height, and the water the
 	// canopy holds (Rutter et al. 1971, 1975), with its own map for rain readers.
-	float lapse_rate = 6.5f; // K/km, the air's fall in temperature with height
 	bool canopy_water_enabled = true;
 	float canopy_storage = 1.0f; // mm, S: what a full canopy holds before it drips freely
 	float canopy_free_throughfall = 0.25f; // p: the share of rain passing through the gaps
@@ -412,9 +462,36 @@ public:
 	float get_rain_rate() const { return rain_rate; }
 	void set_temperature(float p_celsius);
 	float get_temperature() const { return temperature; }
-	// The eased state the cells use (the settings are its targets).
-	float get_air_temperature() const { return cur_temperature; }
-	float get_air_humidity() const { return cur_humidity; }
+	// The air now, as everything that melts, freezes, dries, burns or fogs reads it: the eased state (the
+	// settings, or the climate's day, are its targets) through the day's cycle.
+	float get_air_temperature() const { return cur_air_temperature; }
+	float get_air_humidity() const { return cur_air_humidity; }
+	float get_air_mean_temperature() const { return cur_temperature; } // the day's mean, without the cycle
+	float get_air_dew_point() const;
+	// The live air at a point: the air above (or below) the map's ground height by the standard lapse rate,
+	// 6.5 K/km (ICAO), with the dew point falling 1.8 K/km (the vapour mixing up unchanged).
+	float get_air_temperature_at(Vector3 p_position) const;
+	float get_air_humidity_at(Vector3 p_position) const;
+	float get_sun_sine() const { return cur_sun_sine; }
+	void set_air_follows_climate(bool p_enabled);
+	bool get_air_follows_climate() const { return air_follows_climate; }
+	void set_air_daily_cycle(bool p_enabled);
+	bool get_air_daily_cycle() const { return air_daily_cycle; }
+	void set_daily_temperature_range(float p_kelvin);
+	float get_daily_temperature_range() const { return daily_temperature_range; }
+	void set_sun_drying(bool p_enabled);
+	bool get_sun_drying() const { return sun_drying; }
+	void set_dew_and_frost(bool p_enabled);
+	bool get_dew_and_frost() const { return dew_and_frost; }
+	// Hoarfrost on exposed surfaces (mm of water) and their temperature (C): the air's plus the radiative
+	// cooling of a clear night or the sun's warming (from the cells' net radiation).
+	float get_frost_at(Vector3 p_position) const;
+	float get_surface_temperature_at(Vector3 p_position) const;
+	// Parton and Logan's (1981) day: 0 at the minimum just after sunrise, 1 at the afternoon peak.
+	static float diurnal_shape(float p_solar_hour, float p_day_length);
+	// Evaporation from a wet surface (mm/h), Penman's (1948) combination of the sun's net radiation (W/m2)
+	// and the air's drying power.
+	static float penman_evaporation(float p_net_radiation, float p_wind_2m, float p_celsius, float p_humidity);
 	// Share of precipitation that falls as rain at an air temperature and relative humidity (0..1), the
 	// complement of the snowfall fraction of Jennings et al. (2018).
 	static float rain_fraction(float p_celsius, float p_humidity);
@@ -476,6 +553,8 @@ public:
 	float get_cloud_lifetime() const { return cloud_lifetime; }
 	void set_cloud_churn(float p_speed);
 	float get_cloud_churn() const { return cloud_churn; }
+	void set_cloud_shear(float p_scale);
+	float get_cloud_shear() const { return cloud_shear; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
@@ -486,6 +565,41 @@ public:
 	int get_cloud_shadow_resolution() const { return cloud_shadow_resolution; }
 	void set_cloud_shadow_interval(float p_seconds);
 	float get_cloud_shadow_interval() const { return cloud_shadow_interval; }
+
+	void set_terrain_wind_enabled(bool p_enabled);
+	bool is_terrain_wind_enabled() const { return terrain_wind_enabled; }
+	void set_terrain_source(const NodePath &p_path);
+	NodePath get_terrain_source() const { return terrain_source; }
+	void set_terrain_collision_mask(uint32_t p_mask);
+	uint32_t get_terrain_collision_mask() const { return terrain_collision_mask; }
+	void set_terrain_wind_extent(float p_extent);
+	float get_terrain_wind_extent() const { return terrain_wind.extent; }
+	void set_terrain_wind_resolution(int p_resolution);
+	int get_terrain_wind_resolution() const { return terrain_wind.resolution; }
+	void set_terrain_curvature_length(float p_length);
+	float get_terrain_curvature_length() const { return terrain_wind.curvature_length; }
+	void set_terrain_slope_weight(float p_weight);
+	float get_terrain_slope_weight() const { return terrain_wind.slope_weight; }
+	void set_terrain_curvature_weight(float p_weight);
+	float get_terrain_curvature_weight() const { return terrain_wind.curvature_weight; }
+	void set_terrain_lee_reach(float p_reach);
+	float get_terrain_lee_reach() const { return terrain_wind.lee_reach; }
+	void set_terrain_lee_strength(float p_strength);
+	float get_terrain_lee_strength() const { return terrain_wind.lee_strength; }
+	void set_terrain_floor(float p_floor);
+	float get_terrain_floor() const { return terrain_wind.floor; }
+	// Rebuild the terrain wind now (after the terrain changed), sampling every height at once.
+	void rebake_terrain_wind();
+	bool is_terrain_wind_ready() const { return terrain_wind.valid; }
+	float get_terrain_wind_derive_time() const { return terrain_wind.derive_ms; }
+	Rect2 get_terrain_wind_rect() const { return terrain_wind.valid ? terrain_wind.rect() : Rect2(); }
+	// The terrain's MicroMet speed weighting at a point (1: flat), its diverting angle (rad), the ground
+	// height it sampled (NaN outside the square) and Sx, the steepest rise upwind within lee_reach (rad;
+	// positive in a ridge's lee, Winstral et al. 2002).
+	float get_terrain_speed_factor_at(Vector3 p_position) const;
+	float get_terrain_divert_at(Vector3 p_position) const;
+	float get_terrain_ground_at(Vector3 p_position) const;
+	float get_terrain_lee_at(Vector3 p_position) const;
 
 	void set_shelter_enabled(bool p_enabled);
 	bool get_shelter_enabled() const { return shelter_enabled; }
@@ -557,7 +671,17 @@ public:
 	// p_height_above_ground < 0 takes it from ground_height.
 	Vector3 get_wind_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
 	// Mean wind at 10 m, no gusts (x, z).
-	Vector2 get_mean_wind_at(Vector3 p_position) const;
+	// The mean wind aloft (x, z), for clouds and anything above the surface layer: the log law up to the top
+	// of the boundary layer (boundary_layer_height), veering with height through the Ekman spiral (to the right
+	// in the northern hemisphere, by about 20 degrees over the sea and 30 over land, Holton 2004), then the
+	// free-air wind growing by wind_shear_aloft per km (the thermal wind). p_altitude: m above the ground.
+	Vector2 get_wind_aloft(Vector3 p_position, float p_altitude) const;
+	void set_boundary_layer_height(float p_height) { boundary_layer_height = MAX(p_height, 50.0f); }
+	float get_boundary_layer_height() const { return boundary_layer_height; }
+	void set_wind_shear_aloft(float p_shear) { wind_shear_aloft = p_shear; }
+	float get_wind_shear_aloft() const { return wind_shear_aloft; }
+	// p_terrain: the terrain's speed-up, lee and turning at 10 m above the ground (false: as over flat ground).
+	Vector2 get_mean_wind_at(Vector3 p_position, bool p_terrain = true) const;
 	// The parts of get_wind_at() for solvers that filter the turbulence themselves (TreeWind3D):
 	// the mean air velocity (log law, shelter, gust patches), the along-wind direction of the gust
 	// frame and the gust standard deviation there (m/s, shelter included).
@@ -602,6 +726,28 @@ public:
 	};
 	Snapshot get_snapshot() const;
 
+	// The weather contract (docs/ideas/world-contracts.md).
+	float contract_air_temperature_at(const Vector3 &p_position) const override { return get_air_temperature_at(p_position); }
+	float contract_air_humidity_at(const Vector3 &p_position) const override { return get_air_humidity_at(p_position); }
+	Vector3 contract_wind_at(const Vector3 &p_position, float p_height_above_ground) const override { return get_wind_at(p_position, p_height_above_ground); }
+	float contract_precipitation_at(const Vector3 &p_position) const override { return get_rain_at(p_position); }
+	float contract_rain_share_at(const Vector3 &p_position) const override { return rain_fraction(get_air_temperature_at(p_position), get_air_humidity_at(p_position)); }
+	float contract_surface_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
+	float contract_puddle_at(const Vector3 &p_position) const override { return get_puddle_at(p_position); }
+	float contract_contact_wetness_at(const Vector3 &p_position) const override { return get_contact_wetness_at(p_position); }
+	void contract_add_contact_wetness(const Vector3 &p_position, float p_radius, float p_amount) override { add_contact_wetness(p_position, p_radius, p_amount); }
+	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
+	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
+	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
+	Vector3 contract_mean_wind_at(const Vector3 &p_position) const override {
+		const Vector2 m = get_mean_wind_at(p_position);
+		return Vector3(m.x, 0.0f, m.y);
+	}
+	Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const override {
+		const Vector2 m = get_wind_aloft(p_position, p_altitude);
+		return Vector3(m.x, 0.0f, m.y);
+	}
+
 	void set_sky_clock(const NodePath &p_path);
 	NodePath get_sky_clock() const { return sky_clock; }
 	void set_season_day(int p_day);
@@ -614,6 +760,8 @@ public:
 	WeatherSeason::Climate get_season_climate() const { return _season_climate(); } // for C++ users (the ground's regrowth)
 	Dictionary get_season();
 	Dictionary get_season_at_height(float p_height) const;
+	// The season on another day of the year (1-365) at the ground, for rates such as leaf fall.
+	Dictionary get_season_on_day(int p_day) const;
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
 	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }
@@ -629,13 +777,10 @@ public:
 	Ref<Texture2D> get_cloud_shadow_texture() const { return shadow_texture; }
 	Rect2 get_map_rect() const;
 
-	// Rain (weather_rain.cpp). The air at a height (the eased air temperature, less lapse_rate per km above
-	// ground_height), the share of the precipitation that falls as rain there (rain_fraction()), and the
+	// Rain (weather_rain.cpp). The share of the precipitation that falls as rain at a height (rain_fraction() of
+	// get_air_temperature_at() and get_air_humidity_at()), and the
 	// precipitation split by it: rain (mm/h) and snow (mm/h of water). One split for every reader: rain, snow,
 	// wet cloth and hair, and the water bodies' rings.
-	void set_lapse_rate(float p_kelvin_per_km) { lapse_rate = CLAMP(p_kelvin_per_km, -20.0f, 20.0f); }
-	float get_lapse_rate() const { return lapse_rate; }
-	float get_air_temperature_at(Vector3 p_position) const;
 	float get_rain_share_at(Vector3 p_position) const;
 	float get_rainfall_at(Vector3 p_position) const;
 	float get_snowfall_at(Vector3 p_position) const;

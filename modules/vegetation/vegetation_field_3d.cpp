@@ -1269,7 +1269,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						scale *= Math::lerp(1.0f, sp->get_margin_scale(), margin);
 					}
 					if (canopy_r > 0.0f) {
-						const Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
+						Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
+						crown.species = s;
+						crown.scale = scale;
+						crown.y = map->get_height_at(p3);
 						local_crowns.push_back(crown);
 						local_crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(local_crowns.size() - 1);
 						if (out) {
@@ -3073,6 +3076,56 @@ vec3 forest_floor(vec3 world_pos, vec3 albedo) {
 )";
 }
 
+Array VegetationField3D::get_crowns_near(const Vector3 &p_position, float p_radius) const {
+	Array out;
+	RWLockRead guard(crown_lock);
+	const Vector2 c(p_position.x, p_position.z);
+	const float reach = p_radius + max_crown_radius;
+	const int x0 = int(Math::floor((c.x - reach) / CROWN_CELL)), x1 = int(Math::floor((c.x + reach) / CROWN_CELL));
+	const int z0 = int(Math::floor((c.y - reach) / CROWN_CELL)), z1 = int(Math::floor((c.y + reach) / CROWN_CELL));
+	const TypedArray<PlantSpecies> list = biome.is_valid() ? biome->get_species() : TypedArray<PlantSpecies>();
+	for (int gz = z0; gz <= z1; gz++) {
+		for (int gx = x0; gx <= x1; gx++) {
+			const LocalVector<int> *cell = crown_grid.getptr(Vector2i(gx, gz));
+			if (!cell) {
+				continue;
+			}
+			for (int idx : *cell) {
+				const Crown &cr = crowns[idx];
+				if (cr.xz.distance_to(c) > p_radius + cr.radius) {
+					continue;
+				}
+				Dictionary d;
+				d["position"] = Vector3(cr.xz.x, cr.y, cr.xz.y);
+				float height = cr.top;
+				float base = cr.base > 0.0f ? cr.base : cr.top * 0.35f;
+				Variant preset = -1;
+				if (cr.species >= 0 && cr.species < list.size()) {
+					const Ref<PlantSpecies> sp = list[cr.species];
+					if (sp.is_valid()) {
+						if (sp->has_meta("preset")) {
+							preset = sp->get_meta("preset");
+						}
+						const TypedArray<Mesh> meshes = sp->get_meshes();
+						const Ref<Mesh> m = meshes.is_empty() ? Ref<Mesh>() : Ref<Mesh>(meshes[0]);
+						if (m.is_valid() && m->has_meta("crown")) {
+							const Vector3 cm = m->get_meta("crown");
+							height = cm.x * cr.scale;
+							base = cm.y * cr.scale;
+						}
+					}
+				}
+				d["preset"] = preset;
+				d["height"] = height;
+				d["crown_base"] = base;
+				d["crown_radius"] = cr.radius;
+				out.push_back(d);
+			}
+		}
+	}
+	return out;
+}
+
 float VegetationField3D::get_shade_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock); // Another field may read this one's crowns from its workers.
 	return _shade_at(Vector2(p_global_position.x, p_global_position.z));
@@ -3566,14 +3619,20 @@ void VegetationField3D::_notification(int p_what) {
 					queue_populate();
 				}
 			}
-			if (streaming) {
-				set_process_internal(true);
+			// Always: the contact trample field steps here (and streaming, when on).
+			set_process_internal(true);
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			if (contact_trample_owner == this) {
+				contact_trample.release();
+				contact_trample_owner = nullptr;
 			}
 		} break;
 		case NOTIFICATION_PREDELETE: {
 			_clear_generated();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			_contact_trample_step(get_process_delta_time());
 			// A few times a second: has path tracing been switched on or off?
 			impostor_check -= get_process_delta_time();
 			if (impostor_check <= 0.0) {
@@ -3594,6 +3653,42 @@ void VegetationField3D::_notification(int p_what) {
 			}
 		} break;
 	}
+}
+
+VegetationField3D *VegetationField3D::contact_trample_owner = nullptr;
+
+// One VegetationField3D keeps the ground cover's trample field when no GrassField3D does (grass keeps its own, with
+// its wear and recovery tuned to the sward): bodies then lay herbs, ferns and heath down on bare ground too.
+void VegetationField3D::_contact_trample_step(double p_delta) {
+	bool grass = false;
+	for (Node *n : get_tree()->get_nodes_in_group(SNAME("grass_trample_field"))) {
+		if (GrassField3D *g = Object::cast_to<GrassField3D>(n)) {
+			grass = grass || g->is_trample_enabled();
+		}
+	}
+	if (grass) {
+		if (contact_trample_owner == this) {
+			contact_trample.release();
+			contact_trample_owner = nullptr;
+		}
+		return;
+	}
+	if (contact_trample_owner == nullptr) {
+		contact_trample_owner = this;
+	}
+	if (contact_trample_owner != this) {
+		return;
+	}
+	Viewport *vp = get_viewport();
+	Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	const Vector3 center = cam ? cam->get_global_position() : get_global_position();
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	if (map && !map->is_baked()) {
+		map = nullptr;
+	}
+	const float base = get_global_position().y;
+	// Plants up to about 1.5 m (the vegetation's band; taller shrubs are rigged and bend through TreeWind3D).
+	contact_trample.step(get_tree(), center, p_delta, 1.5f, [&](const Vector3 &p) { return map ? map->get_height_at(p) : base; });
 }
 
 void VegetationField3D::set_biome(const Ref<Biome> &p_biome) {
@@ -3620,6 +3715,7 @@ void VegetationField3D::set_populate_on_ready(bool p_enable) {
 
 void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_crop_fields_changed"), &VegetationField3D::_on_crop_fields_changed);
+	ClassDB::bind_method(D_METHOD("get_contact_trample_at", "position"), &VegetationField3D::get_contact_trample_at);
 	ClassDB::bind_method(D_METHOD("set_biome", "biome"), &VegetationField3D::set_biome);
 	ClassDB::bind_method(D_METHOD("get_biome"), &VegetationField3D::get_biome);
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);
@@ -3662,6 +3758,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sward_shade_at", "global_position"), &VegetationField3D::get_sward_shade_at);
 	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_near_radius"), &VegetationField3D::get_near_radius);
+	ClassDB::bind_method(D_METHOD("get_crowns_near", "position", "radius"), &VegetationField3D::get_crowns_near);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
 	ClassDB::bind_method(D_METHOD("get_light_at", "global_position"), &VegetationField3D::get_light_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);

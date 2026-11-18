@@ -839,11 +839,13 @@ void TreeWind3D::_gather_contacts(double p_delta) {
 	if (!is_inside_tree() || !touch_enabled) {
 		return;
 	}
-	const Vector<Node *> nodes = get_tree()->get_nodes_in_group(touch_group);
+	// The touch group and world_contact, every body any system should feel (docs/ideas/world-links.md).
+	Vector<Node *> nodes = get_tree()->get_nodes_in_group(touch_group);
+	nodes.append_array(get_tree()->get_nodes_in_group(SNAME("world_contact")));
 	HashMap<ObjectID, Vector3> seen;
 	for (Node *n : nodes) {
 		Node3D *n3 = Object::cast_to<Node3D>(n);
-		if (!n3 || !n3->is_inside_tree()) {
+		if (!n3 || !n3->is_inside_tree() || seen.has(n3->get_instance_id())) {
 			continue;
 		}
 		Contact c;

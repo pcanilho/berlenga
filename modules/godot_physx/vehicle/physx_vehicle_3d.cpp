@@ -56,6 +56,7 @@
 #include "modules/ground/ground_surface_3d.h"
 #include "modules/ground/ground_terramechanics.h"
 #endif
+#include "modules/world/world_contracts.h"
 
 
 // Soft soil (docs/ideas/sand.md, stage 1): the wheels of a vehicle on a GroundSurface3D's soft material sink, print
@@ -89,6 +90,9 @@ struct PhysXVehicleSoilWheel {
 	float shed = 0.0f;
 	float grip = 1.0f; // the share of the clean shear limit it keeps
 	float base_moi = -1.0f;
+	// Ruts steer the wheels (docs/ideas/mud.md, round 9): the deformation's cross slope under the tread along the
+	// tyre's lateral direction, and the rut wall's height beside each sidewall (GroundSurface3D::get_rut_guidance()).
+	Vector3 guide;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSoil soil;
 #endif
@@ -153,6 +157,36 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 	p_v.wheelParams[p_i].moi = p_sw.base_moi + f * full_kg * r * r;
 }
 
+// Grip of firm ground for its state (docs/ideas/world-links.md, link 3), as a share of the surface's dry friction:
+// - wet: a water film takes a tyre's peak friction on asphalt from about 0.9-1.0 to 0.5-0.8, falling with speed
+//   as the film has less time to squeeze out (Pacejka 2012, ch. 4; Leu and Henry 1978's speed gradient);
+// - aquaplaning: water deeper than the tread can drain lifts the tyre near Horne's speed, v = 6.36 sqrt(p) km/h
+//   for an inflation pressure p in kPa (Horne and Dreher 1963), so a car on 220 kPa floats from about 94 km/h;
+// - ice: about 0.1-0.2 on cold ice and nearer 0.05-0.1 on ice at its melting point under a water film (Hayhoe
+//   and Shapley 1989's winter runway measurements): puddle ice from the ground (unless broken into plates), and
+//   a glaze where a wet surface's film freezes in the air below zero (black ice).
+static constexpr float TYRE_PRESSURE_KPA = 220.0f;
+
+static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice) {
+	float film = 0.0f;
+	float depth = MAX(p_standing_water, 0.0f); // m
+	float air = 10.0f;
+	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+		film = wm->surface_wetness_at(p_at);
+		depth = MAX(depth, wm->puddle_at(p_at) * 0.001f);
+		air = wm->air_temperature_at(p_at);
+	}
+	const float kmh = Math::abs(p_speed) * 3.6f;
+	const float wet = MAX(CLAMP(film, 0.0f, 1.0f), Math::smoothstep(0.0f, 0.0005f, depth));
+	float grip = Math::lerp(1.0f, 0.75f - 0.15f * Math::smoothstep(0.0f, 120.0f, kmh), wet);
+	const float horne = 6.36f * Math::sqrt(TYRE_PRESSURE_KPA);
+	grip *= 1.0f - 0.9f * Math::smoothstep(0.001f, 0.006f, depth) * Math::smoothstep(0.7f * horne, horne, kmh);
+	const float glaze = wet * Math::smoothstep(0.0f, 2.0f, -air);
+	const float sheet = CLAMP(p_ice.x / 0.002f, 0.0f, 1.0f) * (1.0f - CLAMP(p_ice.y, 0.0f, 1.0f));
+	const float ice_grip = Math::lerp(0.08f, 0.15f, Math::smoothstep(-0.5f, -5.0f, air));
+	return Math::lerp(grip, MIN(ice_grip, grip), MAX(glaze, sheet));
+}
+
 class PhysXVehicleSoilRoad : public PxVehicleComponent {
 public:
 	Vehicle4W *vehicle = nullptr;
@@ -186,6 +220,12 @@ public:
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, 0.0f);
 				}
 				sw.grip = 1.0f;
+				if (road.hitState) {
+					// No ground surface (a street, a road mesh): the weather's wet, flooded and frozen state still holds.
+					const PxTransform hp = v.rigidBodyState.pose * v.wheelLocalPoses[i].localPose;
+					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2());
+					road.friction *= sw.grip;
+				}
 				sw.soft = false;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
@@ -204,7 +244,8 @@ public:
 				if (clogging) {
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
 				}
-				sw.grip = 1.0f;
+				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at));
+				road.friction *= sw.grip;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
 				sw.slip = 0.0f;
@@ -233,6 +274,7 @@ public:
 			const float ahead = (v_lng >= 0.0f ? 1.0f : -1.0f) * (0.5f * probe.contact_length + 0.05f);
 			const Vector3 front = at + Vector3(lng.x, lng.y, lng.z) * ahead;
 			sw.already = MAX(ground->get_dent_at(front) - ground->get_rim_at(front), 0.0f);
+			sw.guide = ground->get_rut_guidance(at, Vector3(lat.x, lat.y, lat.z), wp.halfWidth);
 			// A rut already there ahead (another wheel's, an earlier pass) takes the wheel down into it.
 			const float rut = MIN(ground->get_dent_at(front) - ground->get_rim_at(front), sw.soil.max_sinkage);
 			// The load's sinkage settles over a tenth of a second (the soil yields as the load comes). Slip
@@ -377,11 +419,14 @@ public:
 				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
 				f.forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
 				f.torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
+			}
 			// Side bulldozing: a wheel sliding sideways through loose soil shoves a wedge of it with its sidewall
 			// (Ishigami et al. 2007, Hegedus' bulldozing on the side face): Bekker's bulldozing on a face one
 			// contact length long and the sinkage deep, against the side slip, eased in over 0.3 m/s.
 			const float v_lat = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL];
-			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, sw.sinkage, 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
+			// Into a rut's wall the sidewall shoves the wall's whole height, not only what the tyre sank.
+			const float wall = v_lat > 0.0f ? sw.guide.z : sw.guide.y;
+			const float side = GroundTerramechanics::bulldozing_resistance(sw.soil, ws.contact_length, MAX(sw.sinkage, wall), 0.0f) * CLAMP(v_lat / 0.3f, -1.0f, 1.0f);
 			if (side != 0.0f) {
 				const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
 				const PxVec3 dF = lat * -side;
@@ -390,6 +435,16 @@ public:
 				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm.cross(dF);
 			}
 			sw.side_bulldozing = Math::abs(side);
+			// Resting across a rut's tilted floor or wall, the ground's reaction tips with it: load x slope down the
+			// tilt (rut wandering, as a road's camber), so the wheel slides back into the rut and climbing out of one
+			// needs the tyre's own side force to beat it.
+			const float wander = -load * CLAMP(sw.guide.x, -0.6f, 0.6f);
+			if (wander != 0.0f) {
+				const PxVec3 lat_w = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
+				const PxVec3 dW = lat_w * wander;
+				const PxVec3 arm_w = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+				f.forces[PxVehicleTireDirectionModes::eLATERAL] += dW;
+				f.torques[PxVehicleTireDirectionModes::eLATERAL] += arm_w.cross(dW);
 			}
 			sw.resistance = Math::abs(r);
 			sw.traction = ws.traction * sw.grip;

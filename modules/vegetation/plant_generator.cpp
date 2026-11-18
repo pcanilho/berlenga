@@ -5191,6 +5191,9 @@ float weather_wetness_at(vec3 p_world_pos) {
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 	return textureLod(weather_state_map, uv, 0.0).g;
 }
+)";
+	code += BaseMaterial3D::get_frost_sampling_code();
+	code += R"(
 
 global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
 
@@ -5244,6 +5247,7 @@ uniform sampler2D backlight_tex : hint_default_black, filter_linear_mipmap_aniso
 varying vec3 v_world;
 varying vec3 v_geo_n;
 varying float v_light;
+varying vec3 v_tone; // The plant's own tone (no two plants of a species alike).
 uniform float light_response = 1.0;
 
 
@@ -5273,6 +5277,19 @@ void vertex() {
 	// Ruts, digs and puddles (mud round 6): a light print lays the plant down, a rut or standing water takes it.
 	vec3 go = grass_ground_opened(root.xz);
 	float plant_rnd = fract(sin(dot(root.xz, vec2(12.9898, 78.233))) * 43758.5453);
+	// Each plant's own tone, so repeated variants do not read as copies: its leaves a little
+	// lighter or darker (up to 8%) and yellower or bluer (up to 5%), as plants of one species
+	// differ by genotype, age and the soil under them. Mean 1, so far colours hold.
+	{
+		// From the instance's rank and scale (per plant, and kept by the path tracer's merged
+		// copies, where MODEL_MATRIX is the field's).
+		vec2 hk = vec2(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.z);
+		float h1 = fract(sin(dot(hk, vec2(39.3468, 11.1353))) * 24634.6345);
+		float h2 = fract(sin(dot(hk, vec2(73.1567, 52.2353))) * 31758.2347);
+		float lv = 1.0 + 0.16 * (h1 - 0.5);
+		float yl = 0.1 * (h2 - 0.5);
+		v_tone = lv * vec3(1.0 + yl, 1.0 + 0.3 * yl, 1.0 - yl);
+	}
 	if (w > 0.0) {
 		float resp = (grass_wind.z > 0.0 ? grass_wind.z : 0.12) / max(stiffness, 0.05);
 		vec3 wind = to_local * plant_wind(root, max(height * 0.66, 0.05));
@@ -5396,6 +5413,7 @@ void fragment() {
 		albedo = mix(albedo, mix(yellow, brown, smoothstep(0.35, 0.85, dead)), smoothstep(0.0, 0.5, dead));
 		back *= 1.0 - 0.7 * dead;
 	}
+	albedo *= v_tone;
 	// Living tissue acclimates to its light (sun and shade leaves); litter and dead tissue do not.
 	albedo = mix(albedo, vegetation_light_tint(albedo, v_light), light_response * (1.0 - dead));
 	float rough = roughness;
@@ -5435,6 +5453,7 @@ void fragment() {
 			albedo *= 1.0 - 0.5 * bead.w;
 		}
 	}
+	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);

@@ -90,6 +90,7 @@ private:
 	// the next render.
 	RID particle_instance;
 
+	static LocalVector<PhysXParticleFluid3D *> water_fluids;
 	SolverBackend solver = SOLVER_AUTO;
 	MPMFluidSolver *mpm = nullptr;
 
@@ -355,6 +356,12 @@ public:
 	double get_mpm_step_msec() const;
 
 	PackedVector3Array get_particle_positions() const;
+	// Water landing on fires (PhysXFireSpread3D, PhysXBurnable3D): the liquid fluids in the world (not granular ones),
+	// their particles' world positions without waiting on the GPU (MPM: the last read-back, a frame or two behind),
+	// and each particle's water, kg.
+	static const LocalVector<PhysXParticleFluid3D *> &get_water_fluids() { return water_fluids; }
+	void gather_world_positions(LocalVector<Vector3> &r_positions) const;
+	float get_particle_water_mass() const;
 
 	// 0..1 fraction of the world-space box currently filled with fluid.
 	float get_submersion(const AABB &p_world_aabb) const;

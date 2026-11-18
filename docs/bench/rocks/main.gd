@@ -980,8 +980,10 @@ func _caves(cam: Camera3D) -> void:
 					# --graze: a second lamp downstream, low over the water (another caver's, out of shot): its light grazes the
 					# surface toward the lens, so the water shows as a glinting sheet, as it does to a caver.
 					var lamp_g := OmniLight3D.new()
-					lamp_g.omni_range = 10.0
-					lamp_g.light_energy = float(args.get("graze-energy", "1.5"))
+					# Low, dim and short-reaching: its light falls mainly on the water round it, the walls stay dark.
+					lamp_g.omni_range = 4.0
+					lamp_g.omni_attenuation = 2.0
+					lamp_g.light_energy = float(args.get("graze-energy", "0.8"))
 					lamp_g.shadow_enabled = true
 					add_child(lamp_g)
 					# Kept on this segment's own water, short of its end: past it the stream may drop down a cascade, and a
@@ -990,7 +992,7 @@ func _caves(cam: Camera3D) -> void:
 					var g_at := eye_s + dir * maxf(ahead, 1.5)
 					var bed_eye := eye_s.y - float(args.get("eye-height", "0.4"))
 					var g_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(g_at.x, bed_eye + 0.8, g_at.z), Vector3(g_at.x, bed_eye - 0.6, g_at.z)))
-					g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.2
+					g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.12
 					for k in 8:
 						if net.get_rock_distance(g_at) < -0.15:
 							break

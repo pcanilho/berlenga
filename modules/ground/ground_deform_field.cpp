@@ -376,7 +376,7 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 	if (!valid || p_radius <= 0.0f || p_depth == 0.0f) {
 		return 0.0f;
 	}
-	p_depth *= amount_scale(p_position, p_radius);
+	p_depth *= amount_scale(p_position, p_radius, amount_tent);
 	if (stamp_sink) {
 		stamp_sink->amount(p_columns, p_position, p_radius, p_depth, p_cell);
 		return 0.0f;
@@ -393,7 +393,7 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 		for (int x = x0; x <= x1; x++) {
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
-			const float cover = amount_cover(wx - p_position.x, wz - p_position.z, p_radius, t, false);
+			const float cover = amount_cover(wx - p_position.x, wz - p_position.z, p_radius, t, amount_tent);
 			if (cover == 0.0f) {
 				continue;
 			}
@@ -408,6 +408,9 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				const float take = MIN(rim[i], a);
 				rim[i] -= take;
 				volume += take * t * t;
+				if (amount_fresh < -1.5f) {
+					dent[i] -= MIN(dent[i], a); // a swash line (-2): the hollow beside it levelled too, as ground_deform.glsl
+				}
 				if (track_fresh) {
 					if (fresh[i] >= 4.0f) {
 						const Vector2 sq = mud_band_share_wet(fresh[i]);
@@ -847,6 +850,16 @@ bool GroundDeformField::read_body(Node3D *p_node, float p_character_mass, float 
 		}
 	};
 	meta("ground_radius", "snow_radius", b.radius);
+	// A wheel with no collision shape of its own (PhysX vehicles' raycast wheels): a track as wide as the tyre.
+	if (p_node->has_meta("deform_wheel_radius")) {
+		b.center = p_node->get_global_position();
+		b.wheel = true;
+		b.round = false;
+		b.box = false;
+		b.half_height = p_node->get_meta("deform_wheel_radius");
+		b.width = p_node->has_meta("deform_wheel_width") ? float(p_node->get_meta("deform_wheel_width")) : b.half_height * 0.6f;
+		b.radius = b.width * 0.5f;
+	}
 	// Load: rigid bodies by mass, characters by character_mass, the rest only push to their underside.
 	if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(p_node)) {
 		b.mass = rb->get_mass();
@@ -871,7 +884,7 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 		const Vector<Node *> nodes = p_tree->get_nodes_in_group(StringName(group));
 		for (Node *node : nodes) {
 			Node3D *n3 = Object::cast_to<Node3D>(node);
-			if (!n3 || !n3->is_visible_in_tree() || done.has(n3->get_instance_id())) {
+			if (!n3 || !n3->is_visible_in_tree() || done.has(n3->get_instance_id()) || p_columns.skips(n3)) {
 				continue;
 			}
 			done.insert(n3->get_instance_id());

@@ -1136,6 +1136,119 @@ longer light anything. Test: a 2 x 1.5 x 1.2 m woodpile reaching 2 MW in a
 6 m/s wind (28 C, 25%) started 14 spot fires in dry grass 4 to 44 m
 downwind in 90 s, which burnt 420 m2.
 
+### Next-round options (card, 18 Nov evening)
+
+1. Embers light props and buildings. Most homes lost in wildland-urban
+   interface fires are lit by embers, not the front (Cohen 2000; Manzello
+   et al. 2008 and 2020, NIST ember storms: brands collect in corners,
+   gutters and on decks, smoulder in beds of litter and light them).
+   Here: a brand landing on a PhysXBurnable3D adds its glow to the
+   surface's heat dose where it rests (pile-up in corners and on top
+   faces), so a woodpile, a fence or a cabin catches downwind of a fire.
+2. Water puts fires out. Fire models take water as moisture added to the
+   fuel (WRF-SFIRE's rain term, already used for rain); suppression drops
+   coat the fuel ahead (FARSITE's suppression, Fire Dynamics Simulator's
+   water spray: droplets absorb 2.6 MJ/kg). Here: MPM water and spray
+   landing on the fire grid wet its cells (quenching burning ones) and
+   cool burnables, so buckets, hoses and a burst pipe stop a fire.
+
+   Status of 1 (18 Nov): built. A brand whose flight ray hits a
+   PhysXBurnable3D's collider rests on it: where it lands on a face that
+   faces up, at the foot of the wall for one that strikes a wall (the
+   re-entrant corner); within 25 cm brands share one pile. A pile's glow
+   (brands weighed by the square root of what is left of each, fading over
+   20 s) heats the wood under it at 50 kW/m2 for 20 brands in a 6 m/s wind
+   (Hakes et al. 2019 measured 40 to 80 under piles), less in still air;
+   the burnable's ignition dose takes it like any other flux. Brands are
+   now cast against walls while flying flat as well as falling. Near
+   MAX_BRANDS aloft each new brand stands for several (a crown fire throws
+   thousands), so landings, piles and spot fire chances count them all.
+   Test (7 m/s, 32 C, 20%): a 3 x 4 x 2.4 m wooden shed 10 m downwind of a
+   burning stand of 24 conifers gathered about 40 brands and caught at
+   about 35 s; downwind of a grass fire alone it held a dozen and did not
+   catch; with spotting off, none.
+   Status of 2 (18 Nov): built. PhysXParticleFluid3D keeps a list of the
+   liquid fluids in the world (granular subclasses left out) and hands out
+   its particles' positions without a GPU wait (MPM: the render buffer it
+   already reads back). Every quarter second PhysXFireSpread3D bins the
+   particles lying on its ground (up to 0.4 m above a cell) and soaks each
+   cell's fine fuel by the water on it, up to 2.5 times the fuel's dry
+   weight as rain does; a burning cell over the moisture of extinction goes
+   out (Rothermel 1972), and wet cells ahead of the front do not take it.
+   With no weather map to dry it, the water dries at the fuel's time lag.
+   PhysXBurnable3D counts the particles in its box, 10 cm grown, as a film
+   over its surface (kg/m2 = mm): wet wood takes no ignition dose, a
+   flaming surface damps and goes out at 1.5 mm (the rain rule), and the
+   ember piles on it and the embers in its char drown. Water stands for
+   cooling and wetting together; the FDS-style droplet heat sink (2.6
+   MJ/kg) is left to the moisture rule, which is what the fire models use.
+   Test (3 m/s wind, tall grass, 5%): a band of water 3 x 6 m laid across
+   the path stopped the front, 75 m2 burnt against 120 m2 with none past
+   the band; a 1 m crate burning at 39 kW went out a second after about
+   a 0.6 x 0.6 x 0.3 m block of water fell on it.
+   The same band dropped onto the burning
+   patch behind the head put out 181 burning cells; the head, already past
+   it, ran on.
+3. Burnt crowns shed their needles. After a crown fire the fine fuel is
+   gone: bare black branches, needles fallen as a grey ash layer, and
+   burning twigs falling while it torches. Here: the tree shaders cut
+   leaves by the crown's burnt share (alpha), the fire state map darkens
+   the ground under it, a few PhysX debris twigs fall burning.
+
+   Status of 3 (18 Nov): built. The tree leaf shader (needles too) drops
+   foliage the flame passed through once the crown has burnt (the state
+   map's burnt share over 0.55 to 0.9), leaf by leaf on a per-leaf hash,
+   so a torched pine stands as bare black branches; killed brown foliage
+   above the flame stays (it falls over months, not minutes). Alpha, so
+   the path tracer's any-hit drops them too. Under a burnt crown the char
+   decal lightens patchily to white-grey ash (mineral ash, albedo about
+   0.35). The burning twigs are firebrands rather than rigid bodies: 1.5
+   per kg of crown fuel, 1 to 3 cm thick, dropping from all through the
+   crown from rest at 6 to 12 m/s (too heavy for the column), glowing for
+   a minute or two where they land and able to light what they land on.
+   Debris bodies would cost a PhysX actor each for a few glowing streaks.
+
+### Wading wets clothing (taken on from world-links, 18 Nov)
+
+ClothWetness (PhysXSkinnedCloth3D and PhysXCloth3D) asks the world water
+contract (WorldContracts::water()->height_at, every water producer: sea,
+lakes, rivers, pools, live water, standing water) for the surface under
+the fabric. Fabric below it soaks in a few seconds (a woven fabric's
+wicking takes up its fill within seconds once immersed, Kissa 1996), and
+the water climbs about 3 cm above the line by capillarity. The soaked
+band is held as a depth above the fabric's lowest point and dries as the
+rest does (Penman). Its weight, stiffness and cling count as the band's
+share of the fabric's height; the skinned cloth's shader darkens the
+band up to a wavering tide line in world height. Test: a 60 cm skirt
+waded 20 cm deep soaked to 23 cm in about 5 s (0.38 of its height, the
+weight figure 0.38), with the tide line drawn in raster and path tracing.
+Left: water drag on the submerged fabric (flow_at) and buoyancy.
+Sources: Cohen 2000, "Preventing disaster: home ignitability in the
+wildland-urban interface", J. Forestry 98; Manzello et al. 2008, Fire
+Safety J. 43; McGrattan et al., FDS technical reference (water spray).
+
+### Next-round options (card, 18 Nov night)
+
+1. Water on fire makes steam. Water on burning fuel boils off (2.26
+   MJ/kg) as a white plume that hides the flames for a moment, the
+   look of every hose or bucket on a fire. Here: cells and burnables put
+   out by water emit white, buoyant, fast-cooling vapour into Flow for a
+   few seconds, more for hotter fuel.
+2. Burning buildings and props break apart. Char eats a timber's section
+   (charring rate about 0.65 mm/min, EN 1995-1-2), so beams give way and
+   roofs fall in. Here: a PhysXBurnable3D on a Blast asset loses bond
+   strength with its char depth, so a burning shed or fence breaks and
+   falls in pieces that keep burning.
+3. River current drags and floats clothing. Submerged fabric feels the
+   current (Morison drag on the water's flow_at) and lifts (buoyancy
+   less its weight), so a skirt or coat streams downstream and floats up
+   when wading. Here: the waded band of PhysXSkinnedCloth3D and
+   PhysXCloth3D gets drag and lift from the water contract.
+4. Fire whirls. A fire in a sheared wind spins up vertical vortices
+   (Forthofer and Goodrick 2011) that lift brands high and throw them
+   far. Here: Flow's vorticity seeded where the front meets a wind
+   shear or a lee slope; brands caught in it rise further.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

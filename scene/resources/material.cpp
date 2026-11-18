@@ -618,6 +618,8 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -738,6 +740,21 @@ void BaseMaterial3D::finish_shaders() {
 // (terrain shaders above all), so there is one source and the two never drift apart. The path tracer applies
 // the same lines for BaseMaterial3D in scene_raytracing_raygen.glsl; a ShaderMaterial runs this code in its own
 // hit shader.
+String BaseMaterial3D::get_frost_sampling_code() {
+	return R"(global uniform sampler2D weather_frost_map;
+
+// Hoarfrost on exposed surfaces (WeatherMap3D dew_and_frost), mm of water; 0 with no weather map.
+float weather_frost_at(vec3 p_world_pos) {
+	if (weather_map_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_frost_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
+	return max(textureLod(weather_frost_map, uv, 0.0).r, 0.0);
+}
+)";
+}
+
 String BaseMaterial3D::get_wetness_functions_code(bool p_from_weather) {
 	String code;
 	if (p_from_weather) {
@@ -768,6 +785,7 @@ float weather_wetness_at(vec3 p_world_pos) {
 	return max(textureLod(weather_state_map, uv, 0.0).g, weather_contact_wetness_at(p_world_pos));
 }
 )";
+		code += get_frost_sampling_code();
 	}
 	code += R"(
 // Wet surfaces, Lagarde 2013 ("Water drop 3b"): water in the pores darkens porous surfaces and smooths them.
@@ -777,6 +795,16 @@ void weather_wetness_apply(float p_wet, float p_normal_y, float p_metallic, floa
 	float wet_factor = mix(1.0, 0.2, (1.0 - p_metallic) * p_porosity);
 	r_albedo *= mix(1.0, wet_factor, wet);
 	r_roughness *= mix(1.0, wet_factor, 0.5 * wet);
+}
+
+// Hoarfrost: ice crystals grown from the air on the faces that see the sky (they cool by radiation), white and
+// matte; a few tenths of a millimetre of water frost the surface over (fresh rime's albedo about 0.8, Warren 1982).
+// Returns the cover, for what else it hides.
+float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, inout float r_roughness) {
+	float cover = smoothstep(0.0, 0.3, p_frost) * smoothstep(0.0, 0.8, p_normal_y);
+	r_albedo = mix(r_albedo, vec3(0.78, 0.8, 0.84), 0.65 * cover);
+	r_roughness = mix(r_roughness, 0.8, cover);
+	return cover;
 }
 )";
 	return code;
@@ -2986,7 +3014,7 @@ void fragment() {)";
 			ground_wet.z *= 1.0 - gwl.y;
 			// Ice over it (ground_ice_look()): ice's surface (F0 0.018), white where it holds air or is cracked; no
 			// ripples under it.
-			vec2 gis = ground_ice_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+			vec2 gis = ground_ice_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz).xy;
 			vec2 gisl = vec2(0.0);
 			vec4 gil = gis.x > 0.0 ? ground_ice_look((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, min(gis.x, gwd), gwd, gis.y, ground_fp, gisl) : vec4(0.0);
 			gil *= gwl.y;
@@ -3008,6 +3036,24 @@ void fragment() {)";
 			if (gfs != vec2(0.0)) {
 				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gfs.x, 0.0, gfs.y, 0.0)).xyz);
 			}
+		}
+	}
+)";
+	}
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		// Needle ice (mud round 9, ground_needle_look()): the lifted cap's clods with white needles between them,
+		// then the thaw's loose crumbs, rough and matte. The mesh carries the lift itself.
+		code += R"(	{
+		vec3 gnp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 gns = ground_ice_state(gnp.xz);
+		if (gns.z > 0.0 || gns.w > 0.0) {
+			float gng = max(abs(dot(normalize(VIEW), NORMAL)), 0.15);
+			vec2 gnsl;
+			vec4 gnl = ground_needle_look(gnp.xz, gns.z, clamp(gns.w, 0.0, 1.0), ground_fp / gng, gnsl);
+			ALBEDO = mix(ALBEDO * gnl.y, vec3(0.75, 0.78, 0.81), gnl.x);
+			ROUGHNESS = mix(mix(ROUGHNESS, 1.0, 0.6 * gnl.z), 0.3, gnl.x);
+			SPECULAR = mix(SPECULAR, 0.22, gnl.x);
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gnsl.x, 0.0, gnsl.y, 0.0)).xyz);
 		}
 	}
 )";
@@ -4430,6 +4476,23 @@ float ground_ripple(vec2 p_xz) {
 // Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
 // sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
 // path tracer reads the same map (scene_raytracing_raygen.glsl).
+// The far ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each
+// point reads it through a slow world-space warp of about a metre (crests bend and shift as real trains do round
+// defects) and a height that wanders between 55 and 100% over a few metres; both fade to none at the real
+// ripples' window so the two meet crest to crest. Shared with the path tracer (scene_raytracing_raygen.glsl).
+float ground_ripple_vn(vec2 p_p) {
+	vec2 i = floor(p_p);
+	vec2 f = p_p - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec4 h = fract(sin(vec4(dot(i, vec2(127.1, 311.7)), dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)), dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7)), dot(i + vec2(1.0), vec2(127.1, 311.7)))) * 43758.5453);
+	return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+}
+vec3 ground_ripple_vary(vec2 p_xz, float p_out) {
+	vec2 q = p_xz;
+	vec2 warp = 1.2 * (vec2(ground_ripple_vn(q / 5.0), ground_ripple_vn(q / 5.0 + 17.3)) - 0.5);
+	float amp = mix(0.55, 1.0, ground_ripple_vn(q / 2.5 + 41.0));
+	return vec3(warp * p_out, mix(1.0, amp, p_out));
+}
 vec2 ground_ripple_far_slope(vec2 p_xz) {
 	if (ground_ripple_rect.z <= 0.0) {
 		return vec2(0.0);
@@ -4460,8 +4523,9 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 		return vec2(0.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
-	vec2 tuv = (p_xz / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
-	return w * texture(ground_ripple_far, tuv).rg;
+	vec3 vr = ground_ripple_vary(p_xz, 1.0 - live);
+	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
+	return w * vr.z * texture(ground_ripple_far, tuv).rg;
 }
 // The ground's pore water at p_world (sand stage 4): (wetness, standing film) for Lagarde 2013's wet surfaces,
 // and the share of loose dry sand that shows its grains (sand glints); the path tracer reads the same map
@@ -4715,22 +4779,22 @@ vec4 ground_crack_state(vec2 p_xz) {
 	int far = abs(texelFetch(ground_wet_map, ivec2(1, ts.y - 1), 0).w - 3.5) < 0.01 ? 1 : 0;
 	return ground_wet_block(p_xz, r, 1 + far, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
 }
-// The puddle ice at p_xz (round 7): the wet map's ice block, after the fine, far and crack ones (thickness m, broken
-// share); 0 where none.
-vec2 ground_ice_state(vec2 p_xz) {
+// The ice at p_xz (rounds 7 and 9): the wet map's ice block, after the fine, far and crack ones (puddle ice's
+// thickness m, its broken share; needle ice's height m, the loose crumbs its thaw left); 0 where none.
+vec4 ground_ice_state(vec2 p_xz) {
 	ivec2 ts = textureSize(ground_wet_map, 0);
 	if (ts.x < 4 || ts.y < 2) {
-		return vec2(0.0);
+		return vec4(0.0);
 	}
 	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
 	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(3, ts.y - 1), 0).w - 5.5) > 0.01) {
-		return vec2(0.0);
+		return vec4(0.0);
 	}
 	int at = 1;
 	for (int k = 1; k < 3; k++) {
 		at += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
 	}
-	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts))).xy;
+	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
 }
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {
@@ -4908,6 +4972,54 @@ vec4 ground_ice_look(vec2 p_xz, float p_h, float p_depth, float p_broken, float 
 	float cover = ice * (1.0 - open);
 	float white = cover * clamp(milk + 0.5 * rim, 0.0, 0.9);
 	return vec4(white, cover, mix(0.12, 0.45, white / max(cover, 1e-3)), 0.0);
+}
+// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
+// needles p_h tall (m) lift the top soil as a cap that tears into clods 3 to 5 cm across as it rises (Outcalt 1971;
+// Lawler 1988), with thin dark cracks between them; a few clods tip and show the white needles on their raised side.
+// After the thaw the cap lies as loose crumbs (p_loose) a few millimetres across, each tilted, rough and a little
+// uneven in colour. Returns (the share that is needle ice showing, the soil's albedo factor, the crumbs' weight for a
+// rough matte surface, 0); r_slope the clods' and crumbs' tilt.
+// The clods' lattice at p_xz (in cells 4 cm across), warped by a smooth noise about a metre across so their size and
+// shape wander and the network shows no repeat.
+vec2 ground_needle_q(vec2 p_xz) {
+	vec2 w = vec2(ground_flow_noise(p_xz / 0.9 + vec2(13.0, 71.0)).x, ground_flow_noise(p_xz / 0.9 + vec2(97.0, 29.0)).x);
+	return p_xz / 0.04 + 1.5 * w;
+}
+vec4 ground_needle_look(vec2 p_xz, float p_h, float p_loose, float p_fp, out vec2 r_slope) {
+	r_slope = vec2(0.0);
+	float lift = smoothstep(0.002, 0.015, p_h);
+	float s = 0.04;
+	vec4 c = ground_ice_cells(ground_needle_q(p_xz));
+	float e = c.x * s;
+	// Patches a metre or two across where the cap tore wider and more clods tipped, and quieter ones.
+	float macro = clamp(0.5 + 0.8 * ground_flow_noise(p_xz / 1.6 + vec2(5.0, 3.0)).x, 0.0, 1.0);
+	// The cap tears along its joints: thin dark cracks (the shadowed gap under the cap).
+	float gw = (0.0003 + 0.03 * p_h) * mix(0.6, 1.5, macro);
+	float crack = lift * (1.0 - smoothstep(gw, gw + p_fp, e));
+	// A few clods tip over as they rise and show the needles on their raised side: a white band along that edge (the
+	// side away from the clod's middle along its tilt).
+	float share = (0.04 + 0.06 * lift) * mix(0.3, 1.7, macro);
+	float tip = lift * step(c.y, share);
+	vec2 tilt = vec2(c.y - 0.5, c.z - 0.5);
+	float band = 0.002 + 0.15 * p_h;
+	float far_ = smoothstep(0.003, 0.02, p_fp);
+	float white = 0.0;
+	if (tip > 0.0 && e < band + p_fp && far_ < 1.0) {
+		// The way out from the clod's middle: the gradient of the distance to its site.
+		float d = 0.002;
+		vec2 out_ = vec2(ground_ice_cells(ground_needle_q(p_xz + vec2(d, 0.0))).w - c.w, ground_ice_cells(ground_needle_q(p_xz + vec2(0.0, d))).w - c.w);
+		float side = smoothstep(0.0, 0.5, dot(normalize(out_ + 1e-6), normalize(tilt + 1e-6)));
+		white = tip * side * (1.0 - smoothstep(band, band + p_fp, e)) * (1.0 - crack);
+	}
+	// Past a few millimetres a pixel both average out to their share of the area.
+	crack = mix(crack, lift * clamp(3.7 * gw / s, 0.0, 0.3), far_);
+	white = mix(white, lift * share * clamp(0.5 * band / s, 0.0, 0.3), far_);
+	r_slope = lift * (1.0 - crack) * (0.15 + 0.5 * tip) * tilt;
+	vec4 k = ground_ice_cells(p_xz / 0.006);
+	float fine = 1.0 - smoothstep(0.002, 0.008, p_fp);
+	r_slope += p_loose * fine * 0.5 * vec2(k.y - 0.5, k.z - 0.5);
+	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.6 * crack);
+	return vec4(white, shade, p_loose, 0.0);
 }
 // Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
 // of 0.25 mm counted per cell of the pixel's footprint, as the snow's sparkle is (Zirr and Kaplanyan 2016;

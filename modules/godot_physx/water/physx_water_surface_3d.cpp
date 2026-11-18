@@ -801,10 +801,16 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		// wave (a metre or so across, several long), so even fresh white water opens in places rather than
 		// reading as an even white band from a few tens of metres.
 		// Wandering streaks, only in patches along the crest (an even comb otherwise).
-		vec2 rq = vec2(dot(world_xz, dir) * 0.25, dot(world_xz, vec2(-dir.y, dir.x)) * 0.7);
-		rq.y += 1.6 * flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7));
+		// Warped at two scales so they tear raggedly rather than run as straight parallel bars.
+		vec2 rq = vec2(dot(world_xz, dir) * 0.4, dot(world_xz, vec2(-dir.y, dir.x)) * 0.75);
+		rq += vec2(0.8, 1.6) * (vec2(flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7)), flow_value_noise(world_xz * 0.12 - vec2(float(i) * 3.3, 7.9))) - 0.5) * 2.0;
+		rq.y += 0.5 * (flow_value_noise(world_xz * 0.6 + vec2(4.1, float(i))) - 0.5);
 		float torn = smoothstep(0.35, 0.65, flow_value_noise(world_xz * 0.08 + vec2(float(i) * 9.1, 6.2)));
-		float rip = 1.0 - 0.6 * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
+		// Only past about 15 m from the camera (as foam_at_with's view_dist): nearer, the foam's own holes and
+		// lace are resolved, and streaks cut in its amount meet the crisp edge as hard straight bars.
+		vec2 rel_c = world_xz - grid_center;
+		float rip_far = smoothstep(12.0, 25.0, length(mesh_open ? rel_c - mesh_offset : rel_c));
+		float rip = 1.0 - 0.6 * rip_far * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
 		r_white = max(r_white, brk * vary * spill * max(rip * smoothstep(0.35, 0.95, cos(ps)), trail));
 		// The lip turns white as it falls, and the plunge throws up a splash.
 		r_white = max(r_white, drop_w * lip);
@@ -1780,12 +1786,14 @@ void fragment() {
 			float footprint = max(max(fw.x, fw.y), 1e-5);
 			float k_hi = PI / detail_texel;
 			float shown = clamp(log(PI / (2.0 * footprint) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
+			// Cat's paws: the gusts passing over the water roughen the short waves under them.
+			float paw = water_cats_paw(v_rest_xz);
 			if (shown > 0.0) {
-				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * shown;
+				der += cascade_tex(detail_deriv_tex, detail_domain, v_rest_xz) * (shown * sqrt(paw));
 			}
 			// Beckmann/GGX: alpha^2 adds the slope variance; alpha = roughness^2.
 			float a = pathtraced_roughness * pathtraced_roughness;
-			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * (1.0 - shown)));
+			water_roughness = sqrt(sqrt(a * a + hidden_var + detail_variance * paw * (1.0 - shown)));
 		}
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
 		// Wherever the band rises (the vertices' share, interpolated), not only under foam: an aged lace hole
@@ -2197,9 +2205,44 @@ void light() {
 #endif
 )";
 
-// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+// Cat's paws (docs/ideas/wind.md): the shared wind's gusts roughen the short waves where they pass. The short waves'
+// mean square slope follows the local wind, linearly as Cox and Munk (1954) measured it (0.003 + 0.00512 U10),
+// and nearly vanishes below the capillary onset (about 1 m/s: glassy patches in a lull). Their ratio to the mean
+// wind's scales the detail band's slopes and the roughness it hands over at distance.
+static String _water_wind_src() {
+#ifdef MODULE_WEATHER_ENABLED
+	String c = WeatherMap3D::get_wind_shader_code();
+	c += R"(
+uniform bool cats_paws = true;
+float water_short_slope_var(float u10) {
+	return 0.0005 + (0.0025 + 0.00512 * u10) * smoothstep(0.7, 2.5, u10);
+}
+// Short-wave slope variance against the mean wind's, at a point of the surface (1: no weather, or no gust).
+float water_cats_paw(vec2 xz) {
+	if (!cats_paws || weather_map_rect.z <= 0.0) {
+		return 1.0;
+	}
+	vec2 m10 = textureLod(weather_wind_map, (xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec3 w = weather_wind(vec3(xz.x, 0.0, xz.y), 2.0);
+	float u_local = length(w.xz) / max(weather_open_profile(2.0, z0), 1e-3);
+	return clamp(water_short_slope_var(u_local) / water_short_slope_var(length(m10)), 0.1, 4.0);
+}
+)";
+	return c;
+#else
+	return R"(
+uniform bool cats_paws = true;
+float water_cats_paw(vec2 xz) {
+	return 1.0;
+}
+)";
+#endif
+}
+
+// The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &water_shader_src() {
-	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
+	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -2652,11 +2695,13 @@ void PhysXWaterSurface3D::set_ocean_domain_size(Vector2 p_size) {
 
 void PhysXWaterSurface3D::set_wind_speed(float p_speed) {
 	wind_speed = MAX(p_speed, 0.01f);
+	wind_explicit = true; // a hand-set wind wins over the weather's until follow_weather is set again
 	_reinit_spectrum();
 }
 
 void PhysXWaterSurface3D::set_wind_direction(Vector2 p_dir) {
 	wind_direction = p_dir;
+	wind_explicit = true;
 	_reinit_spectrum();
 }
 
@@ -2850,6 +2895,24 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 		c->solver.configure(s);
 		c->solver.set_foam_settings(false, choppiness, _live_foam_threshold(), foam_persistence, 0.0f, shore_undertow);
 		detail_cascade = c;
+	}
+}
+
+float PhysXWaterSurface3D::contract_water_height_at(const Vector3 &p_position) const {
+	return sample_depth(p_position) > 0.0f ? sample_height(p_position) : -Math::INF;
+}
+
+void PhysXWaterSurface3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	submit_sphere(int(p_owner & 0x7fffffff), p_position, p_radius, p_strength);
+}
+
+void PhysXWaterSurface3D::contract_water_clear(uint64_t p_owner) {
+	clear_sphere(int(p_owner & 0x7fffffff));
+}
+
+void PhysXWaterSurface3D::contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {
+	if (sample_depth(p_position) > 0.0f) {
+		submit_impulse(p_position, p_radius, p_strength);
 	}
 }
 
@@ -4621,7 +4684,8 @@ void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
 // The spectrum is updated in place (set_sea_state), so the waves keep their phases while they grow or turn.
 void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 #ifdef MODULE_WEATHER_ENABLED
-	if (!follow_weather || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
+	// On by default (docs/ideas/wind.md): every water body takes the weather's wind, unless its wind was set by hand.
+	if (!follow_weather || wind_explicit || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
 		return;
 	}
 	const WeatherMap3D *weather = WeatherMap3D::get_active();
@@ -4671,6 +4735,7 @@ void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 
 void PhysXWaterSurface3D::set_follow_weather(bool p_enabled) {
 	follow_weather = p_enabled;
+	wind_explicit = false;
 	weather_sea_valid = false;
 #ifdef MODULE_WEATHER_ENABLED
 	if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
@@ -6381,12 +6446,14 @@ Ref<Texture2D> PhysXWaterSurface3D::get_caustics_texture() const {
 void PhysXWaterSurface3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			WorldContracts::register_water(this);
 			_connect_terrain();
 			_rebuild();
 			set_physics_process_internal(true);
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			WorldContracts::unregister_water(this);
 			_disconnect_terrain();
 			set_physics_process_internal(false);
 			set_process_internal(false);
@@ -6403,6 +6470,15 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update_crest_spray();
 			_update_crest_sheets((float)get_physics_process_delta_time());
 			_wet_ground();
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				body_contacts.update(
+						get_tree(), get_physics_process_delta_time(),
+						[this](const Vector3 &p) { return sample_height(p); },
+						[](const Vector3 &) { return Vector3(); },
+						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
+						[this](int o) { clear_sphere(o); },
+						[this](const Vector3 &p, float r, float s) { submit_impulse(p, r, s); });
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {

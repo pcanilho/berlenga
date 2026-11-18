@@ -977,8 +977,19 @@ void TerrainDataMap3D::set_publish_shader_globals(bool p_enable) {
 	_publish_globals();
 }
 
+float TerrainDataMap3D::contract_water_height_at(const Vector3 &p_position) const {
+	const float depth = get_water_depth_at(p_position);
+	return depth > 0.005f ? get_height_at(p_position) + depth : -Math::INF;
+}
+
 void TerrainDataMap3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			WorldContracts::register_water(this);
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
+		} break;
 		case NOTIFICATION_READY: {
 			if (bake_on_ready && !Engine::get_singleton()->is_editor_hint()) {
 				// Deferred, so terrain deformers and colliders are in place first.

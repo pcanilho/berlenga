@@ -114,10 +114,10 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 	// most a minute: the drainage is stiff above storage.
 	const float s = MAX(canopy_storage, 0.05f);
 	const float p = canopy_free_throughfall;
-	const float share = rain_fraction(cur_temperature, cur_humidity);
+	const float share = rain_fraction(cur_air_temperature, cur_air_humidity);
 	const float z0 = MAX(roughness_length, 1e-5f);
 	const float to_2m = Math::log(2.0f / z0) / Math::log(10.0f / z0);
-	const float deficit = MAX(rain_saturation_vapour_pressure(cur_temperature) * (1.0f - CLAMP(cur_humidity, 0.0f, 1.0f)), 0.0f);
+	const float deficit = MAX(rain_saturation_vapour_pressure(cur_air_temperature) * (1.0f - CLAMP(cur_air_humidity, 0.0f, 1.0f)), 0.0f);
 	const float dt_h = float(MAX(p_weather_dt, 0.0)) / 3600.0f;
 	const int steps = dt_h > 0.0f ? CLAMP(int(Math::ceil(dt_h * 60.0f)), 1, 240) : 0;
 	const float h = steps > 0 ? dt_h / steps : 0.0f;
@@ -186,15 +186,11 @@ void WeatherMap3D::_rain_upload() {
 	}
 	const Rect2 r = get_map_rect();
 	_set_global("weather_rain_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
-	_set_global("weather_precip_phase", Vector4(cur_temperature, lapse_rate * 0.001f, cur_humidity, ground_height), RSE::GLOBAL_VAR_TYPE_VEC4);
-}
-
-float WeatherMap3D::get_air_temperature_at(Vector3 p_position) const {
-	return cur_temperature - lapse_rate * 0.001f * (p_position.y - ground_height);
+	_set_global("weather_precip_phase", Vector4(cur_air_temperature, 0.0065f, cur_air_humidity, ground_height), RSE::GLOBAL_VAR_TYPE_VEC4);
 }
 
 float WeatherMap3D::get_rain_share_at(Vector3 p_position) const {
-	return rain_fraction(get_air_temperature_at(p_position), cur_humidity);
+	return rain_fraction(get_air_temperature_at(p_position), get_air_humidity_at(p_position));
 }
 
 float WeatherMap3D::get_rainfall_at(Vector3 p_position) const {
@@ -231,9 +227,6 @@ float WeatherMap3D::get_ground_water_input_at(Vector3 p_position) const {
 }
 
 void WeatherMap3D::_bind_rain_methods() {
-	ClassDB::bind_method(D_METHOD("set_lapse_rate", "kelvin_per_km"), &WeatherMap3D::set_lapse_rate);
-	ClassDB::bind_method(D_METHOD("get_lapse_rate"), &WeatherMap3D::get_lapse_rate);
-	ClassDB::bind_method(D_METHOD("get_air_temperature_at", "position"), &WeatherMap3D::get_air_temperature_at);
 	ClassDB::bind_method(D_METHOD("get_rain_share_at", "position"), &WeatherMap3D::get_rain_share_at);
 	ClassDB::bind_method(D_METHOD("get_rainfall_at", "position"), &WeatherMap3D::get_rainfall_at);
 	ClassDB::bind_method(D_METHOD("get_snowfall_at", "position"), &WeatherMap3D::get_snowfall_at);
@@ -251,7 +244,6 @@ void WeatherMap3D::_bind_rain_methods() {
 	ClassDB::bind_method(D_METHOD("get_ground_water_input_at", "position"), &WeatherMap3D::get_ground_water_input_at);
 
 	ADD_GROUP("Rain", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lapse_rate", PROPERTY_HINT_RANGE, "-20,20,0.1,suffix:K/km"), "set_lapse_rate", "get_lapse_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "canopy_water_enabled"), "set_canopy_water_enabled", "is_canopy_water_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_storage", PROPERTY_HINT_RANGE, "0.05,10,0.01,suffix:mm"), "set_canopy_storage", "get_canopy_storage");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_free_throughfall", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_free_throughfall", "get_canopy_free_throughfall");

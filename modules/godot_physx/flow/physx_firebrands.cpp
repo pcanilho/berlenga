@@ -30,6 +30,7 @@
 
 #include "physx_firebrands.h"
 
+#include "physx_burnable_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
 
@@ -41,9 +42,7 @@
 #include "scene/resources/shader.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#endif
+#include "modules/world/world_contracts.h"
 
 float PhysXFirebrands::_rand() {
 	seed ^= seed << 13;
@@ -109,8 +108,16 @@ void PhysXFirebrands::release(float p_count, const LocalVector<Release> &p_point
 	if (total <= 0.0f) {
 		return;
 	}
-	while (carry >= 1.0f && (int)brands.size() < MAX_BRANDS) {
-		carry -= 1.0f;
+	// Near what can fly at once each new one stands for more (a crown fire throws thousands), back to one as they land.
+	const float fill = float(brands.size()) / MAX_BRANDS;
+	if (fill > 0.8f) {
+		stand_for = MIN(stand_for * 1.03f, 1000.0f);
+	} else if (fill < 0.5f) {
+		stand_for = MAX(stand_for * 0.97f, 1.0f);
+	}
+	const float per = Math::floor(stand_for);
+	while (carry >= per && (int)brands.size() < MAX_BRANDS) {
+		carry -= per;
 		float pick = _rand() * total;
 		uint32_t k = 0;
 		while (k + 1 < p_points.size() && pick > p_points[k].weight) {
@@ -118,6 +125,19 @@ void PhysXFirebrands::release(float p_count, const LocalVector<Release> &p_point
 			k++;
 		}
 		Brand b;
+		if (p_points[k].twig > 0.0f) {
+			// A burning twig breaking off in the crown: it falls from rest through the needles at its own terminal
+			// velocity, too heavy for the column to hold (cylinders of 1 to 3 cm: 6 to 12 m/s, Tohidi et al. 2015),
+			// and glows on the ground for a minute or two.
+			const float d = p_points[k].twig * (0.6f + 0.8f * _rand());
+			b.p = p_points[k].position + Vector3((_rand() - 0.5f) * 0.6f, (_rand() - 0.5f) * 0.6f, (_rand() - 0.5f) * 0.6f);
+			b.v = Vector3((_rand() - 0.5f) * 0.6f, -0.5f * _rand(), (_rand() - 0.5f) * 0.6f);
+			b.vt = MIN(3.0f + 350.0f * d, 12.0f);
+			b.life = MIN(30.0f + 3000.0f * d * (0.7f + 0.6f * _rand()), 120.0f);
+			b.n = per;
+			brands.push_back(b);
+			continue;
+		}
 		b.p = p_points[k].position + Vector3((_rand() - 0.5f) * 0.3f, _rand() * 0.3f, (_rand() - 0.5f) * 0.3f);
 		// Thrown up into the plume; the gas carries it from there.
 		b.v = Vector3((_rand() - 0.5f) * 1.0f, 1.5f + _rand() * 2.5f, (_rand() - 0.5f) * 1.0f);
@@ -129,9 +149,10 @@ void PhysXFirebrands::release(float p_count, const LocalVector<Release> &p_point
 		const float d = 0.002f + 0.008f * _rand() * _rand();
 		b.vt = 2.0f + 400.0f * d + _rand();
 		b.life = 6.0f + 4500.0f * d * (0.7f + 0.6f * _rand());
+		b.n = per;
 		brands.push_back(b);
 	}
-	carry = MIN(carry, 4.0f);
+	carry = MIN(carry, MAX(4.0f, 4.0f * per));
 }
 
 int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p_wind, float p_delta, float p_glow_energy) {
@@ -159,11 +180,9 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 		const float z = under ? MAX(b.p.y - ground, 0.1f) : 10.0f;
 		// The air: the wind at the brand's height plus the plume's own motion.
 		Vector3 air;
-#ifdef MODULE_WEATHER_ENABLED
-		if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
-			air = wm->get_wind_at(b.p, z);
+		if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
+			air = wm->wind_at(b.p, z);
 		} else
-#endif
 		{
 			air = p_wind * (Math::log(MAX(z, z0 * 1.5f) / z0) / ref);
 		}
@@ -188,7 +207,7 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 		bool gone = b.age >= b.life || b.p.y < from.y - 500.0f;
 		bool hit = false;
 		Vector3 at;
-		if (!gone && space && b.v.y < 0.0f) {
+		if (!gone && space && (b.v.y < 0.0f || b.p.y - from.y < 0.5f * (b.p - from).length())) { // falling, or flying flat into a wall
 			PhysicsDirectSpaceState3D::RayParameters rp;
 			rp.from = from;
 			rp.to = b.p;
@@ -196,6 +215,14 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 			if (space->intersect_ray(rp, rr)) {
 				hit = true;
 				at = rr.position;
+				// Onto something that burns: the brand rests there and heats it (a woodpile, a fence, a deck).
+				if (PhysXBurnable3D *pb = PhysXBurnable3D::find_by_collider(rr.collider)) {
+					pb->add_brand(rr.position, rr.normal, b.n * Math::sqrt(MAX(1.0f - b.age / b.life, 0.0f)));
+					landed++;
+					brands[i] = brands[brands.size() - 1];
+					brands.resize(brands.size() - 1);
+					continue;
+				}
 			}
 		}
 		if (!gone && !hit && under && b.p.y <= ground) {
@@ -211,7 +238,8 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 			if (target && target->get_char_at(at) < 0.05f && target->get_intensity_at(at) <= 0.0f) {
 				const float m = target->get_moisture_at(at);
 				if (m < target->get_moisture_of_extinction()) {
-					const float p = ignition_probability(m, target->_air_temperature()) * Math::sqrt(left) * 0.7f;
+					const float p1 = ignition_probability(m, target->_air_temperature()) * Math::sqrt(left) * 0.7f;
+					const float p = 1.0f - Math::pow(1.0f - p1, b.n); // any of the brands it stands for
 					if (_rand() < p) {
 						target->ignite(at, 0.2f);
 						started++;
@@ -306,6 +334,7 @@ void fragment() {
 void PhysXFirebrands::clear() {
 	brands.clear();
 	carry = 0.0f;
+	stand_for = 1.0f;
 	if (mmi) {
 		mmi->set_visible(false);
 	}

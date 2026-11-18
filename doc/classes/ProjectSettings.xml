@@ -2688,6 +2688,9 @@
 			Time (in seconds) of inactivity before which a 3D physics body will put to sleep. See [constant PhysicsServer3D.SPACE_PARAM_BODY_TIME_TO_SLEEP].
 			[b]Note:[/b] This project setting is only effective when using GodotPhysics3D. It has no effect when using Jolt Physics.
 		</member>
+		<member name="physics/3d/world_contact/auto_join" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], every [CharacterBody3D], [RigidBody3D] and [PhysicalBone3D] joins the [code]world_contact[/code] group as it enters the tree, which the ground, snow, grass and other plants, trees and water read to feel bodies: prints, trampling, bending branches, ripples. A body with the [code]world_contact_exclude[/code] meta stays out.
+		</member>
 		<member name="physics/common/enable_object_picking" type="bool" setter="" getter="" default="true">
 			Enables [member Viewport.physics_object_picking] on the root viewport.
 		</member>
