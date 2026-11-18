@@ -629,6 +629,18 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   editor. Bench `--test=ruts` (back after 600 m and in a new node, a cleared field drops its files, off starts
   flat; also with `--prop=gpu_simulation:false`). Not kept yet: crack state and the water's clay (lattice data).
 
+### Round 4: proposed (18 Nov, card posted)
+
+- **Kept ruts age while away.** A tile read back from disk is stepped forward by the time since it was written (its
+  file time against the clock, scaled by `runoff_time_scale`): the same slump (Sumner's step at the mud's
+  Bingham repose), rain from the weather map's history filling ruts and settling clay, and the tracked film drying,
+  run in a few large stable steps on the CPU before it is seeded. Bounded per tile so a long absence settles to
+  the ground's rest state rather than integrating hours.
+- **Thrown clods leave lumps.** A landed clod over a size threshold deposits a mud depth (relief, with rim) instead
+  of only the tint; mud on mud merges into the layer, on firm ground it dries and cracks as a small cake.
+- **Tread and sole patterns.** The film is laid through the tyre's or sole's pattern mask (the lug bars and boot
+  sole already used for prints), so it reads as a tread mark rather than a smudge; share stays the coverage.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
