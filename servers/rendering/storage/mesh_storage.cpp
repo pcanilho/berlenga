@@ -271,6 +271,14 @@ int RendererMeshStorage::multimesh_get_bones_per_instance(RID p_multimesh) const
 	return _multimesh_get_bones_per_instance(p_multimesh);
 }
 
+void RendererMeshStorage::multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) {
+	_multimesh_set_rt_instanced(p_multimesh, p_instanced);
+}
+
+bool RendererMeshStorage::multimesh_is_rt_instanced(RID p_multimesh) const {
+	return _multimesh_is_rt_instanced(p_multimesh);
+}
+
 Vector<float> RendererMeshStorage::multimesh_get_buffer(RID p_multimesh) const {
 	return _multimesh_get_buffer(p_multimesh);
 }

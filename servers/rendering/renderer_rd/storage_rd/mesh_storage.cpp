@@ -2318,6 +2318,22 @@ int MeshStorage::_multimesh_get_bones_per_instance(RID p_multimesh) const {
 	return multimesh->bones_per_instance;
 }
 
+void MeshStorage::_multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL(multimesh);
+	if (multimesh->rt_instanced == p_instanced) {
+		return;
+	}
+	multimesh->rt_instanced = p_instanced;
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
+}
+
+bool MeshStorage::_multimesh_is_rt_instanced(RID p_multimesh) const {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL_V(multimesh, false);
+	return multimesh->rt_instanced;
+}
+
 void MeshStorage::_multimesh_request_rd_readback(MultiMesh *multimesh, RID p_multimesh) {
 	const uint32_t block_bytes = multimesh->instances * multimesh->stride_cache * sizeof(float);
 	multimesh->rd_readback_ticket++;
