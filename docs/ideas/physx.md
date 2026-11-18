@@ -840,6 +840,31 @@ Checks, in order (cloud CPU first; GPU numbers go on the PC queue):
    shows, add an origin shift through PxScene::shiftOrigin that follows the
    renderer's relative origin.
 
+Status (18 Nov): bench in docs/bench/physx_openworld (run headless with
+--fixed-fps 60, so each frame is one step). Cloud CPU numbers:
+- Streaming: a region of 5,000 statics costs one hitch frame, about 15 to
+  20 ms creating the nodes and shapes plus 6 to 12 ms for the first step,
+  growing with the statics already loaded (merging into the query tree and
+  broad phase). After it, steps are about 0.15 ms with 20,000 statics:
+  statics cost nothing while nothing touches them. 20,000 raycasts take
+  about 12 ms either way. Unloading 3,000 takes about 18 ms (one removal
+  each). The Performance monitor TIME_PHYSICS_PROCESS is a once-a-second
+  average, so it smeared the hitch over a second in the first runs.
+- Batched adds built (statics wait for the next step or query and go in
+  with one addActors, through a PxPruningStructure from 64): the hitch
+  frame drops about 12% (21 to 31 ms against 24 to 36 ms). Kept: same
+  actors, same step, queries in the same frame still see them.
+- Debris: 2,000 boxes settle and all sleep within 3 s; asleep, the step is
+  about 0.2 ms. Sleep already does what distance culling would, so culling
+  by distance is only worth it for bodies that never settle (it stays a
+  later opt-in).
+- Precision: resting boxes at 1, 10 and 50 km neither drift nor jitter.
+  Moving ones are bounded by float spacing: about 1 mm at 10 km and 4 mm at
+  50 km, so an origin shift is only needed for fine motion past 10 km.
+Next, if the hitch matters on the PC: create a streamed region's bodies
+over several frames (Unreal's time-budgeted physics state creation), and
+batch removals the same way. GPU broad phase numbers go on the PC queue.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
