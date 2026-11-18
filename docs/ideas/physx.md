@@ -918,6 +918,24 @@ already wait in a batch; creating their PhysX shapes and actors could also
 be split over frames within a time budget, with queries flushing the rest
 first so nothing is missed, and removals batched with removeActors.
 
+Status (18 Nov, streaming): built. Statics waiting to enter keep their world
+bounds; a step adds statics_per_step of them (1024, oldest first) plus any
+whose bounds touch an awake dynamic or kinematic actor grown by half a second
+of travel (areas skipped; past 512 movers, all at once). Queries add the
+waiting statics their bounds reach (ray segment, point, shape bounds swept
+along the motion, the body swept for test_body_motion); past 32 such queries
+in a step they add everything. A static moved or reshaped while waiting
+refreshes the bounds. Static bodies leaving are removed in one removeActors
+before the next step or query (userData cleared so nothing reports them).
+Cloud bench (5,000 statics a region, 20,000 total), worst of the first ten
+frames: 4 to 6 ms against 6 to 9 ms for the first three regions, about the
+same at 20,000. Most of what is left is not the adds: with nothing added in
+the region's first step the step still costs 1 to 8 ms, growing with the
+statics already in the scene, so it follows the creation of the new actors
+and shapes; a PhysX profile build (zones are compiled out of release) would
+show where. The game side (creating the nodes, 15 to 20 ms a region) is the
+larger part: stream nodes in over frames.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

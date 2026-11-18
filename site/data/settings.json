@@ -1223,6 +1223,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Ruts that stay",
+   "settings": [
+    "GroundSurface3D.keep_ruts"
+   ],
+   "note": "",
+   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on legs",
    "settings": [
     "GroundLegMud3D"
@@ -3651,6 +3662,17 @@
    "topic": ""
   },
   {
+   "name": "Burning logs",
+   "settings": [
+    "PhysXFireSpread3D.vegetation_field"
+   ],
+   "note": "",
+   "what": "fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Fire light and embers",
    "settings": [
     "PhysXFlow3D.fire_light",
@@ -3687,6 +3709,17 @@
    "topic": ""
   },
   {
+   "name": "Burning cloth",
+   "settings": [
+    "PhysXCloth3D.burnable"
+   ],
+   "note": "",
+   "what": "cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Blast materials",
    "settings": [
     "PhysXBlastAsset.materials",
@@ -3707,6 +3740,17 @@
    ],
    "note": "",
    "what": "piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Streaming without stalls",
+   "settings": [
+    "physics/physx_3d/streaming/statics_per_step"
+   ],
+   "note": "",
+   "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

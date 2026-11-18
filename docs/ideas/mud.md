@@ -620,6 +620,26 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   in a session tile cache. Build: write touched tiles (height delta, mud depth, water, crack state; 16-bit,
   zstd) to user:// as they leave the cache and on save, read them back when the field recentres onto them, with
   an LRU budget. Matters most for the open-world game's scale.
+- **Built (ruts kept).** `keep_ruts` (on), `ruts_path` (user://ground_ruts): as the main or near field moves, a
+  leaving tile with prints is written in the cache's own layout (two half pairs a texel: dent and rim, tint and
+  water) as one zstd file named by field texel and world tile; a tile flattened since loses its file. Arriving tiles
+  with a file that the GPU cache does not hold are read the step after the field stands: seeded into the cache and
+  pulled in place (GroundDeformGPUHost::pull_cached), so the startup reset is covered; the CPU path writes them
+  straight in. `save_ruts` on leaving the tree (and for the game's own save), `clear_saved_ruts`. Off in the
+  editor. Bench `--test=ruts` (back after 600 m and in a new node, a cleared field drops its files, off starts
+  flat; also with `--prop=gpu_simulation:false`). Not kept yet: crack state and the water's clay (lattice data).
+
+### Round 4: proposed (18 Nov, card posted)
+
+- **Kept ruts age while away.** A tile read back from disk is stepped forward by the time since it was written (its
+  file time against the clock, scaled by `runoff_time_scale`): the same slump (Sumner's step at the mud's
+  Bingham repose), rain from the weather map's history filling ruts and settling clay, and the tracked film drying,
+  run in a few large stable steps on the CPU before it is seeded. Bounded per tile so a long absence settles to
+  the ground's rest state rather than integrating hours.
+- **Thrown clods leave lumps.** A landed clod over a size threshold deposits a mud depth (relief, with rim) instead
+  of only the tint; mud on mud merges into the layer, on firm ground it dries and cracks as a small cake.
+- **Tread and sole patterns.** The film is laid through the tyre's or sole's pattern mask (the lug bars and boot
+  sole already used for prints), so it reads as a tread mark rather than a smudge; share stays the coverage.
 
 ### Look (any stage)
 

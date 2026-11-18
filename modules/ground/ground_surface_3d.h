@@ -35,6 +35,7 @@
 #include "ground_deform_gpu.h"
 #include "ground_height_query.h"
 #include "ground_ripples.h"
+#include "ground_rut_store.h"
 #include "ground_terramechanics.h"
 
 #include "core/object/worker_thread_pool.h"
@@ -320,6 +321,20 @@ private:
 	void _near_release();
 	int _near_passes() const;
 	bool _near_inside(float p_x, float p_z) const;
+	// Ruts kept across the world (mud round 3): tiles leaving a field go to disk, and come back when it returns.
+	bool keep_ruts = true;
+	String ruts_path = "user://ground_ruts";
+	GroundRutStore rut_main;
+	GroundRutStore rut_near;
+	LocalVector<Vector2i> rut_main_pending; // world tiles in the field waiting to be read in from disk
+	LocalVector<Vector2i> rut_near_pending;
+	bool _ruts_on() const;
+	void _ruts_configure();
+	void _ruts_leave(const GroundDeformField &p_field, GroundRutStore &r_store, Vector2i p_origin, const LocalVector<Vector2i> &p_pending);
+	void _ruts_arrive(const GroundDeformField &p_field, GroundRutStore &r_store, const GroundDeformGPUHost *p_host, Vector2i p_origin, LocalVector<Vector2i> &r_pending);
+	void _ruts_read_cpu(GroundDeformField &r_field, GroundRutStore &r_store, LocalVector<Vector2i> &r_pending);
+	void _ruts_read_gpu(const GroundDeformField &p_field, GroundRutStore &r_store, GroundDeformGPUHost &r_host, LocalVector<Vector2i> &r_pending);
+	void _ruts_save_field(const GroundDeformField &p_field, GroundRutStore &r_store, const LocalVector<Vector2i> &p_pending);
 	void _publish_near();
 	PackedByteArray _gpu_cells() const;
 
@@ -592,6 +607,13 @@ public:
 	Vector2 get_tracked_mud_at(Vector3 p_position) const;
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
 	bool is_tracked_mud() const { return tracked_mud; }
+	void set_keep_ruts(bool p_enabled);
+	bool is_keeping_ruts() const { return keep_ruts; }
+	void set_ruts_path(const String &p_path);
+	String get_ruts_path() const { return ruts_path; }
+	void save_ruts();
+	void clear_saved_ruts();
+	int get_saved_rut_tile_count();
 	void set_muddy_water(bool p_enabled) { muddy_water = p_enabled; }
 	bool is_muddy_water() const { return muddy_water; }
 	// The standing water over a disc, as last read back (m3): what add_water can take there.

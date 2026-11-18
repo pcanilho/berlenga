@@ -217,6 +217,10 @@ public:
 	// slot. Call before shift_to.
 	void seed_tile(Vector2i p_tile, const uint32_t *p_data, int p_stride, int p_max_cached_tiles);
 	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
+	// Reads the cached tiles p_tiles (world tiles inside the field, seeded with seed_tile) into the field where it
+	// stands, the rest kept as they are: a tile brought back from disk (kept ruts) after the field arrived.
+	// Returns false (nothing done) while a move or a reset is waiting.
+	bool pull_cached(const GroundDeformField &p_field, const LocalVector<Vector2i> &p_tiles);
 	// Takes a new texture RID; true when it changed.
 	bool take_texture();
 	// Copies the latest read back into the field's CPU arrays (and fresh, with p_stride 2; then r_owed gets the

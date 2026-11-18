@@ -872,6 +872,9 @@ void fragment() {
 	// Sand under the sea, and on land where the generator made a beach (its geology's soil channel is -1..0 there);
 	// without a generator, on anything below beach_height. A low coastal plain behind the beach keeps its soil.
 	float sand = beach_sand >= 0.0 ? max(beach_sand, 1.0 - smoothstep(-0.2, 0.3, wp.y - tm_sea_level)) : 1.0 - smoothstep(tm_beach_height * 0.6, tm_beach_height, wp.y - tm_sea_level);
+	// Sand before steep faces shed it: no scree stones stand in the parallax on beaches, seabed or dunes, even where
+	// a talus apron reaches under them (the stones would take the sand's colour and read as cracked sand plates).
+	float tm_sand_all = sand;
 	// Sand the generator laid (beaches, dunes) holds up to the cliff slope: dune faces stand at the angle of repose
 	// (34 degrees, 45 under marram), past the rock slope.
 	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y), beach_sand) : steep;
@@ -1033,7 +1036,7 @@ void fragment() {
 		// Joints and beds on bare faces steeper than about 45 degrees (full past 57); gentler rock keeps the
 		// generator's own detail.
 		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.55, 0.72, wn.y));
-		float rd_scree = clamp(w[1], 0.0, 1.0);
+		float rd_scree = clamp(w[1], 0.0, 1.0) * (1.0 - smoothstep(0.02, 0.25, tm_sand_all));
 		vec3 rd_p = wp;
 		// Scree stones in parallax: full while a pixel spans under 3 cm, gone by 8 cm, where the stones themselves
 		// have faded to their mean; past a few metres the steps grow with the pixel, so the far blocks keep their sides
@@ -1055,7 +1058,7 @@ void fragment() {
 				SUN_SHADOW *= tm_rd_pom_shadow(rd_p, rd_depth, wn, rd_l, rd_h, rd_cone, rd_j);
 			}
 		}
-		sn = tm_rock_detail(rd_p, wn, sn, rd_face, clamp(w[1], 0.0, 1.0), rd_dx, rd_dy, rd_shade);
+		sn = tm_rock_detail(rd_p, wn, sn, rd_face, rd_scree, rd_dx, rd_dy, rd_shade);
 		albedo *= rd_shade;
 		if (rd_scree > 1e-3) {
 			albedo *= mix(vec3(1.0), tm_rd_stone_color(rd_p, max(length(rd_dx), length(rd_dy)) / tm_rock_detail_scale), rd_scree);
