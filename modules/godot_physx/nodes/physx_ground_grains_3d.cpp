@@ -359,7 +359,7 @@ void PhysXGroundGrains3D::_land(const Vector3 &p_at, float p_radius, double p_vo
 		return;
 	}
 	if (water) {
-		ground->add_water(p_at, p_radius, (float)p_volume);
+		ground->add_water(p_at, p_radius, (float)p_volume, water_mud);
 	} else {
 		ground->deposit(p_at, p_radius, (float)(p_volume / (Math::PI * p_radius * p_radius)));
 	}
@@ -499,6 +499,32 @@ void PhysXGroundGrains3D::set_as_water() {
 	set_foam_enabled(true);
 }
 
+// Muddy water's look (round 3): clear water's material (PhysXParticleFluid3D), the light through it absorbed and
+// scattered by its clay (Beer-Lambert in the concentration, as the standing water's: a 1 cm e-folding at 3 kg/m3,
+// under a millimetre at 40), and past some tens of kg/m3 it reads as the slurry it is, milky brown with the clay's
+// colour rather than see-through.
+void PhysXGroundGrains3D::_muddy_look() {
+	water_mud_drawn = water_mud;
+	Ref<StandardMaterial3D> m = get_liquid_material();
+	if (m.is_null()) {
+		return;
+	}
+	const float c = water_mud;
+	if (c < 0.5f) {
+		m->set_albedo(Color(1, 1, 1));
+		m->set_transmission(1.0f);
+		m->set_transmission_attenuation_color(Color(0.70f, 0.94f, 0.99f));
+		m->set_transmission_attenuation_distance(1.0f);
+		return;
+	}
+	const float slurry = c / (c + 30.0f);
+	const Color clay = water_mud_color.linear_to_srgb();
+	m->set_albedo(Color(1, 1, 1).lerp(clay, slurry));
+	m->set_transmission(1.0f - 0.8f * slurry);
+	m->set_transmission_attenuation_color(clay);
+	m->set_transmission_attenuation_distance(0.03f / (3.0f + c));
+}
+
 void PhysXGroundGrains3D::_make_mud_child() {
 	if (mud_child) {
 		return;
@@ -610,6 +636,17 @@ void PhysXGroundGrains3D::_take_spray(const Dictionary &d, double dt) {
 		const Vector3 reach = d.has("reach_center") ? (Vector3)d["reach_center"] : (Vector3)d["position"];
 		const float reach_r = MAX(d.has("reach_radius") ? (float)d["reach_radius"] : 0.1f, 0.02f);
 		ground->add_water(reach, reach_r, -(float)wv);
+		// Muddy water (round 3): the clay it carries mixes into what is already in the air.
+		const float mud_c = d.has("water_mud") ? MAX((float)d["water_mud"], 0.0f) : 0.0f;
+		const double air = get_airborne_volume();
+		water_mud = float((double(water_mud) * air + double(mud_c) * wv) / MAX(air + wv, 1e-12));
+		if (mud_c > 0.5f) {
+			const Color clay = ground->get_mud_color_at(reach).srgb_to_linear();
+			water_mud_color = water_mud_color.lerp(clay, 0.2f);
+		}
+		if (Math::abs(water_mud - water_mud_drawn) > 0.15f * MAX(water_mud_drawn, 3.0f)) {
+			_muddy_look();
+		}
 		dug_volume += wv;
 		_emit(d["position"], 0.5f * (float)d["width"], d["velocity"], wv, (float)dt);
 		return;

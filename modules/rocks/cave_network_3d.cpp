@@ -2780,7 +2780,10 @@ Node3D *CaveNetwork3D::_make_pool_water(const RimPool &p_pool, int p_index) cons
 		w->set("grid_resolution", 32);
 		w->set("water_level", 0.0);
 		w->set("depth", MAX(p_pool.depth, real_t(0.02)));
-		w->set("seabed_from_floor", false);
+		// The real floor under each cell, so the water thins out toward its rim (a constant depth up to the rim
+		// drew the sheet as a tinted slab with a hard edge); the rays start just above the water, under the roof.
+		w->set("seabed_from_floor", true);
+		w->set("seabed_probe_height", 0.15);
 		w->set("render_extent", 0.0);
 		w->set("wind_speed", 0.0);
 		w->set("follow_weather", false);
@@ -2847,8 +2850,10 @@ void CaveNetwork3D::_pool_water_update() {
 			Node3D *have = ch.pool_water[k].is_valid() ? Object::cast_to<Node3D>(ObjectDB::get_instance(ch.pool_water[k])) : nullptr;
 			if (want && !have && ch.node) {
 				Node3D *w = _make_pool_water(ch.pools[k], int(k));
+				// Placed before it enters the tree: the water lays out its grid where it is when it enters (placed
+				// after, its grid stayed at the chunk's origin, metres away from its sheet).
+				w->set_transform(ch.node->get_global_transform().affine_inverse() * Transform3D(Basis(), ch.pools[k].center));
 				ch.node->add_child(w);
-				w->set_global_transform(Transform3D(Basis(), ch.pools[k].center));
 				ch.pool_water[k] = w->get_instance_id();
 			} else if (!want && have) {
 				have->queue_free();

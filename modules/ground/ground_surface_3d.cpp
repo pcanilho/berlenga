@@ -547,7 +547,7 @@ void GroundSurface3D::_water_owed_update() {
 	}
 }
 
-void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float p_volume) {
+void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud) {
 	if (p_radius <= 0.0f || p_volume == 0.0f || !Math::is_finite(p_volume)) {
 		return;
 	}
@@ -565,6 +565,9 @@ void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float
 	// Discs close together merge (a spray lands as many drops): the same texel area holds them.
 	for (WaterDisc &d : water_discs) {
 		if (d.radius == p_radius && (d.volume < 0.0) == (p_volume < 0.0f) && Vector2(d.position.x - p_position.x, d.position.z - p_position.z).length() < 0.5f * p_radius) {
+			if (p_volume > 0.0f) {
+				d.mud = float((d.mud * d.volume + double(MAX(p_mud, 0.0f)) * p_volume) / (d.volume + p_volume));
+			}
 			d.volume += p_volume;
 			return;
 		}
@@ -581,7 +584,11 @@ void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float
 			}
 		}
 		if (best >= 0) {
-			water_discs[best].volume += p_volume;
+			WaterDisc &b = water_discs[best];
+			if (p_volume > 0.0f) {
+				b.mud = float((b.mud * b.volume + double(MAX(p_mud, 0.0f)) * p_volume) / (b.volume + p_volume));
+			}
+			b.volume += p_volume;
 		}
 		return;
 	}
@@ -589,7 +596,38 @@ void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float
 	d.position = p_position;
 	d.radius = p_radius;
 	d.volume = p_volume;
+	d.mud = MAX(p_mud, 0.0f);
 	water_discs.push_back(d);
+}
+
+void GroundSurface3D::stir_water(const Vector3 &p_position, float p_radius, float p_mass) {
+	if (!muddy_water || p_radius <= 0.0f || !(p_mass > 0.0f)) {
+		return;
+	}
+	for (StirDisc &d : stir_discs) {
+		if (Vector2(d.position.x - p_position.x, d.position.z - p_position.z).length() < 0.5f * MIN(p_radius, d.radius)) {
+			d.mass += p_mass;
+			return;
+		}
+	}
+	if (stir_discs.size() >= 32) {
+		return;
+	}
+	StirDisc d;
+	d.position = p_position;
+	d.radius = p_radius;
+	d.mass = p_mass;
+	stir_discs.push_back(d);
+}
+
+float GroundSurface3D::get_water_mud_at(Vector3 p_position) const {
+	if (is_near_active() && _near_inside(p_position.x, p_position.z) && int(near_fld.water_mud.size()) == near_fld.resolution * near_fld.resolution) {
+		return near_fld.sample(near_fld.water_mud, p_position.x, p_position.z);
+	}
+	if (field.valid && int(field.water_mud.size()) == field.resolution * field.resolution) {
+		return field.sample(field.water_mud, p_position.x, p_position.z);
+	}
+	return 0.0f;
 }
 
 float GroundSurface3D::get_standing_water_volume(const Vector3 &p_position, float p_radius) const {
@@ -3596,6 +3634,7 @@ Array GroundSurface3D::take_sprays() {
 		d["side_volume_rate"] = s.side_volume_rate;
 		d["stickiness"] = s.stickiness;
 		d["water"] = s.water;
+		d["water_mud"] = s.water_mud;
 		d["volume"] = s.volume;
 		out.push_back(d);
 	}
@@ -3728,9 +3767,30 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 			}
 			const float t = p_field.texel();
 			put(25 + discs, wd.position.x, wd.position.z, wd.radius, float(wd.volume / (double(texels) * t * t) / passes));
+			f[41 * 4 + discs] = wd.mud;
 			discs++;
 		}
-		put(16, float(count), float(discs), 0.0f, 0.0f);
+		// Muddy water (round 3): clay stirred in (stir_water), each disc's mass a pass over its texels; the floc's
+		// settling (0.1 mm/s) and the tread's churn (2 kg/m2: a couple of millimetres of slurry turned over as it
+		// passes) at real time, not runoff_time_scale's: the substeps cover p_delta / (sub passes) of it.
+		int stirs = 0;
+		if (muddy_water) {
+			const float real = float(p_delta) / (sub * passes);
+			for (const StirDisc &sd : stir_discs) {
+				if (stirs >= 8) {
+					break;
+				}
+				const int texels = _disc_texels(p_field, sd.position, sd.radius);
+				if (texels <= 0) {
+					continue;
+				}
+				const float t = p_field.texel();
+				put(45 + stirs, sd.position.x, sd.position.z, sd.radius, sd.mass / (float(texels) * t * t) / passes);
+				stirs++;
+			}
+			put(53, 1.0f, 1e-4f * real, 2.0f * real, 300.0f);
+		}
+		put(16, float(count), float(discs), float(stirs), 0.0f);
 	} else if (_runoff_on_gpu()) {
 		// No water step (a still frame): the bed's relief is still drawn (the blit reads it), nothing moves.
 		put(15, 1.0f, 0.0f, 0.002f, 0.0f);
@@ -3755,6 +3815,9 @@ void GroundSurface3D::_gpu_submit(double p_delta, double p_age, bool p_readback,
 			rest.push_back(water_discs[k]);
 		}
 		water_discs = rest;
+	}
+	if ((standing_water || _runoff_on_gpu()) && p_delta > 0.0) {
+		stir_discs.clear();
 	}
 	if (p_sync) {
 		_gpu_take();
@@ -4235,7 +4298,11 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mud_color_map"), &GroundSurface3D::get_mud_color_map);
 	ClassDB::bind_method(D_METHOD("get_mud_color_at", "position"), &GroundSurface3D::get_mud_color_at);
 	ClassDB::bind_method(D_METHOD("add_wader", "id", "axle", "radius", "half_width", "velocity"), &GroundSurface3D::add_wader);
-	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume"), &GroundSurface3D::add_water);
+	ClassDB::bind_method(D_METHOD("add_water", "position", "radius", "volume", "mud"), &GroundSurface3D::add_water, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("stir_water", "position", "radius", "mass"), &GroundSurface3D::stir_water);
+	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
+	ClassDB::bind_method(D_METHOD("set_muddy_water", "enabled"), &GroundSurface3D::set_muddy_water);
+	ClassDB::bind_method(D_METHOD("is_muddy_water"), &GroundSurface3D::is_muddy_water);
 	ClassDB::bind_method(D_METHOD("get_water_added"), &GroundSurface3D::get_water_added);
 	ClassDB::bind_method(D_METHOD("get_water_owed"), &GroundSurface3D::get_water_owed);
 	ClassDB::bind_method(D_METHOD("get_standing_water_volume", "position", "radius"), &GroundSurface3D::get_standing_water_volume);
@@ -4387,6 +4454,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "swash_marks"), "set_swash_marks", "is_swash_marks");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "runoff_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater"), "set_runoff_time_scale", "get_runoff_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");

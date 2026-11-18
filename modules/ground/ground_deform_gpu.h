@@ -68,7 +68,7 @@ public:
 		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
 		STEP_RUNOFF = 1 << 12, // runoff channels (ground): the water erodes and carries sand in each water substep
 	};
-	static constexpr int PARAMS_BYTES = 672;
+	static constexpr int PARAMS_BYTES = 880;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -104,7 +104,7 @@ public:
 	// The latest collision heights (already divided by the spacing) and the centre they were taken at.
 	bool take_collision(PackedFloat32Array &r_heights, Vector2 &r_center);
 	// The latest packed field (half floats dent, rim per texel, then fresh and the slumping owed with a stride of
-	// 2, then for the ground a block of (water depth, 0) per texel) and the origin it was taken at.
+	// 2, then for the ground blocks of (water depth, bed cut) and (clay kg/m3, 0) per texel) and the origin it was taken at.
 	bool take_field(PackedByteArray &r_packed, Vector2i &r_origin);
 	// The cumulative volume add_water's takes could not find (mm3, wraps at 2^32), as last read back.
 	uint32_t get_water_moved_mm3(int p_k) {
@@ -116,7 +116,7 @@ public:
 		return water_owed_mm3;
 	}
 	// uints per texel in the packed read back.
-	static int packed_uints(int p_stride) { return p_stride == 2 ? 3 : 1; }
+	static int packed_uints(int p_stride) { return p_stride == 2 ? 4 : 1; }
 
 private:
 	RenderingDevice *rd = nullptr;
@@ -135,8 +135,8 @@ private:
 	RID buf_tile_ops;
 	int tile_ops_capacity = 0;
 	RID buf_packed;
-	RID buf_water; // ground: per texel the pipe model's outflows and depth (2 vec4)
-	RID buf_water_tmp; // ground: the shifted depth
+	RID buf_water; // ground: per texel the pipe model's outflows, depth and the clay it carries (3 vec4)
+	RID buf_water_tmp; // ground: the shifted depth and clay
 	RID buf_ledger; // ground: water add_water could not take, mm3 (cumulative, wraps)
 	RID tex_out;
 	RID uset[2]; // state = buf_state[i], out = buf_state[1 - i]

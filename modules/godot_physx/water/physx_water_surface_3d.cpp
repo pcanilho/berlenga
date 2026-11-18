@@ -607,6 +607,29 @@ vec2 wake_one(sampler2D tex, vec4 rect, vec2 world_xz) {
 	return vec2(t.r, t.g + t.b) * smoothstep(0.0, 0.1, edge) * mix(1.0, outside, rect.w);
 }
 
+// The grid's fields (still-water depth, shore foam, swash, ripple height) read with a cubic B-spline instead of the
+// bilinear filter: four bilinear taps (Sigg and Hadwiger 2005, GPU Gems 2 ch. 20). Bilinear is continuous but its
+// slope jumps at every cell border, so a field of 25 cm cells (a 48 m sea on a 192 grid) drew as blurred squares
+// wherever the fields set a threshold, a tint or a normal; the B-spline is smooth in value and slope.
+vec4 grid_bspline(sampler2D p_tex, vec2 p_uv) {
+	vec2 sz = vec2(textureSize(p_tex, 0));
+	vec2 p = p_uv * sz - 0.5;
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 h0 = (i - 0.5 + w1 / g0) / sz;
+	vec2 h1 = (i + 1.5 + w3 / g1) / sz;
+	return g0.y * (g0.x * textureLod(p_tex, vec2(h0.x, h0.y), 0.0) + g1.x * textureLod(p_tex, vec2(h1.x, h0.y), 0.0)) +
+			g1.y * (g0.x * textureLod(p_tex, vec2(h0.x, h1.y), 0.0) + g1.x * textureLod(p_tex, vec2(h1.x, h1.y), 0.0));
+}
+
 // 0 inside the simulated square .. 1 past it -- only with open_sea_beyond (else the edge carries on outward).
 float beyond_w(vec2 world_xz) {
 	vec2 a = abs((world_xz - grid_center) / ripple_domain_size);
@@ -620,7 +643,7 @@ float fade_r(vec2 world_xz, vec2 cuv_r) {
 }
 
 float depth_r(vec2 world_xz, vec2 cuv_r) {
-	return mix(texture(shore_depth_tex, cuv_r).r, 1000.0, beyond_w(world_xz));
+	return mix(grid_bspline(shore_depth_tex, cuv_r).r, 1000.0, beyond_w(world_xz));
 }
 
 // All wakes at world_xz, everywhere (inside the shore ripple grid too).
@@ -822,8 +845,8 @@ vec3 surface_normal_pixel(vec2 world_xz, vec4 der, vec3 disp) {
 	float dxz = disp.b;
 	const float e = 0.2;
 	vec2 du = vec2(e) / ripple_domain_size;
-	float rx = (texture(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - texture(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
-	float rz = (texture(ripple_height_tex, cuv_r + vec2(0.0, du.y)).r - texture(ripple_height_tex, cuv_r - vec2(0.0, du.y)).r) / (2.0 * e);
+	float rx = (grid_bspline(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - grid_bspline(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
+	float rz = (grid_bspline(ripple_height_tex, cuv_r + vec2(0.0, du.y)).r - grid_bspline(ripple_height_tex, cuv_r - vec2(0.0, du.y)).r) / (2.0 * e);
 	// The ripple layer steps at the waterline (dry cells report their wet
 	// neighbours' mean), which the sun picked out as bright streaks along the
 	// shore; over the sand the swash film just follows the ground.
@@ -1212,7 +1235,7 @@ float shore_foam_at(vec2 world_xz) {
 	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
-	float shore = texture(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
+	float shore = grid_bspline(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
 	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
 }
@@ -1286,7 +1309,7 @@ float shore_signal(vec2 world_xz, float time) {
 	float offset = swash_reach * shore_wave_activity * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
 	vec2 q = world_xz * shore_detail_scale;
 	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
-	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
+	float run_up = grid_bspline(swash_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup * shore_wave_activity;
 	// On dry sand the jitter may only pull the edge back, never add water
 	// past what the swash covers -- or it left a permanent fringe of rim
@@ -1974,7 +1997,7 @@ void fragment() {
 	// along a clean line.
 	vec2 wp = v_rest_xz * shore_detail_scale;
 	float wn = 0.6 * foam_value_noise(wp * 1.7) + 0.4 * foam_value_noise(wp * 5.3 + 7.0);
-	float wet = clamp((texture(swash_tex, shore_pattern_uv(v_rest_xz)).g - 0.35 * wn) / 0.65, 0.0, 1.0);
+	float wet = clamp((grid_bspline(swash_tex, shore_pattern_uv(v_rest_xz)).g - 0.35 * wn) / 0.65, 0.0, 1.0);
 	// Only where sand is near the surface: under deeper water the "wet" flag
 	// is meaningless, and blending it there tinted and roughened all deep
 	// water -- which showed as a seam past the simulated square, where the
@@ -2327,6 +2350,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_seabed_from_floor"), &PhysXWaterSurface3D::get_seabed_from_floor);
 	ClassDB::bind_method(D_METHOD("set_seabed_collision_mask", "mask"), &PhysXWaterSurface3D::set_seabed_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &PhysXWaterSurface3D::get_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_seabed_probe_height", "height"), &PhysXWaterSurface3D::set_seabed_probe_height);
+	ClassDB::bind_method(D_METHOD("get_seabed_probe_height"), &PhysXWaterSurface3D::get_seabed_probe_height);
 	ClassDB::bind_method(D_METHOD("set_terrain_source", "path"), &PhysXWaterSurface3D::set_terrain_source);
 	ClassDB::bind_method(D_METHOD("get_terrain_source"), &PhysXWaterSurface3D::get_terrain_source);
 	ClassDB::bind_method(D_METHOD("_on_terrain_holes_changed", "rect"), &PhysXWaterSurface3D::_on_terrain_holes_changed);
@@ -2419,6 +2444,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seabed_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_seabed_collision_mask", "get_seabed_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "seabed_probe_height", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m"), "set_seabed_probe_height", "get_seabed_probe_height");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_source"), "set_terrain_source", "get_terrain_source");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shallow_fade_depth", PROPERTY_HINT_RANGE, "0.01,10,0.01,or_greater,suffix:m"), "set_shallow_fade_depth", "get_shallow_fade_depth");
 
@@ -5891,6 +5917,11 @@ void PhysXWaterSurface3D::set_seabed_collision_mask(uint32_t p_mask) {
 	_rebuild();
 }
 
+void PhysXWaterSurface3D::set_seabed_probe_height(real_t p_height) {
+	seabed_probe_height = MAX(p_height, real_t(0.01));
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_shallow_fade_depth(float p_depth) {
 	shallow_fade_depth = MAX(p_depth, 0.01f);
 	_rebuild();
@@ -6373,12 +6404,12 @@ void PhysXWaterSurface3D::_rebuild() {
 	_configure_solver();
 }
 
-void PhysXWaterSurface3D::_sample_seabed() {
+int PhysXWaterSurface3D::_sample_seabed(bool p_quiet) {
 	// One ray per ripple cell center, straight down from well above the water
 	// onto static bodies only: anything else it hits (a floater, a player) is
 	// excluded and the ray cast again. The seabed can rise above the water --
 	// that's dry beach, depth <= 0.
-	constexpr real_t PROBE_ABOVE = 100.0;
+	const real_t PROBE_ABOVE = seabed_probe_height;
 	constexpr real_t PROBE_BELOW = 1000.0;
 	constexpr int MAX_SKIPS = 8;
 	const int n = grid_resolution;
@@ -6438,9 +6469,10 @@ void PhysXWaterSurface3D::_sample_seabed() {
 			dw[i] = d;
 		}
 	}
-	if (hits == 0) {
+	if (hits == 0 && !p_quiet) {
 		WARN_PRINT("PhysXWaterSurface3D: seabed_from_floor found no static body under the water (check seabed_collision_mask); using the constant depth.");
 	}
+	return hits;
 }
 
 void PhysXWaterSurface3D::_update_cell_fade() {
@@ -6583,9 +6615,15 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		water_material->set_shader_parameter("water_time", (float)Math::fmod(water_time, 3600.0));
 	}
 	if (seabed_pending) {
+		// A floor added with the water (a cave chunk and its pools) can reach the physics space a few ticks
+		// later: no hit at all waits up to 30 ticks before settling on the constant depth.
+		if (_sample_seabed(seabed_tries < 30) == 0 && seabed_tries < 30) {
+			seabed_tries++;
+			return;
+		}
 		seabed_pending = false;
+		seabed_tries = 0;
 		seabed_remeasure_pending = false; // just measured
-		_sample_seabed();
 		_configure_solver();
 		return;
 	}

@@ -116,3 +116,23 @@ dune, so they belong to TerrainGenerator3D. Paulo picked "hand dunes to the terr
 - Bench: landscape `--sand-sea=x0,z0,w,d` with `--sand-sea-kind`, `--sand-sea-depth`, `--sand-sea-wind`,
   `--sand-sea-scale`, `--sand-sea-steps`; `--dune-map` draws it. terrain_gen `--test` checks it.
 - Not yet: nebkha (sand gathered round shrubs), sand seas following a mask instead of a rect, wind from the climate.
+
+## Built: dune cross-section (18 Nov)
+
+Docs wanted crisp brinks and slip faces; the sand sea grew ridges at about 25 degrees on both sides. Werner (1995)
+himself notes the basic slab model's steep stoss. Tried offline (256 cells, one wind, 600 steps; stoss/lee medians):
+
+| Rule | Stoss | Lee |
+|---|---|---|
+| Paris 2019 as built | 24 | 24 |
+| Momiji 2000 hop growing with height | 19-20 | 20-21 |
+| More bounces, lower settling | 24 | 22 |
+| Lift scaled by the stoss slope | 30 | 24 (steeper stoss) |
+| Shear from linearised flow (Kroy, Sauermann and Herrmann 2002; as Pelletier 2009 uses it in a slab model) | 12-16 | 22-24 |
+| + slides that move only the excess over the repose | 15-16 | 30, 90th percentile 31 |
+| + grainfall at the brink | same | slip face at the repose |
+
+Built: the shear tau = 1 + A (H[h'] + B h') along the wind (A 3, B 0.5, Hilbert sum 32 cells each way, slope
+smoothed by four 1-2-1 passes as the saturation length, updated every 4 steps on the worker threads) scales the lift
+and divides the settling chance; slides move only the excess; a hop that crosses under the 15 degree line from its
+path drops there. About 2.2 times the old cost. Bench check: stoss 58% of the sloping sand, lee 90th percentile 34.
