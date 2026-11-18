@@ -329,8 +329,13 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 	float cover = p_state.cover;
 	float t = p_state.type;
 	if (p_state.variation > 0.0f) {
-		cover = CLAMP(cover + (cover_noise(p_xz, p_state.drift, p_state.cover_scale, p_state.evolve) - 0.5f) * 2.0f * p_state.variation, 0.0f, 1.0f);
+		// The patches vary with the cover, not by a fixed amount: a 0.1 sky with 0.35 of variation had
+		// stretches at 0.45 that filled half a clear sky.
+		cover = CLAMP(cover + (cover_noise(p_xz, p_state.drift, p_state.cover_scale, p_state.evolve) - 0.5f) * 2.0f * p_state.variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
 	}
+	// Clusters (wc_cover_type in the shader): the threshold wanders by cloud-sized patches, so neighbouring clouds
+	// come out large and merged or small and few, not a field of puffs all one size. Overcast decks keep theirs.
+	cover = CLAMP(cover * Math::lerp(CLAMP(1.0f + 4.0f * (cover_noise(p_xz + Vector2(5311.0f, 2719.0f), p_state.drift, p_state.shape_scale * 1.3f, p_state.evolve) - 0.5f), 0.15f, 1.9f), 1.0f, smoothstep(0.5f, 0.85f, cover)), 0.0f, 1.0f);
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
 		const float dx = p_xz.x - s[0];
@@ -398,11 +403,15 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 		return 0.0f;
 	}
 	const float cu = smoothstep(0.2f, 0.8f, ct.y);
-	const float profile = smoothstep(0.0f, Math::lerp(0.2f, 0.05f, cu), h) * (1.0f - smoothstep(1.0f - Math::lerp(0.15f, 0.6f, cu), 1.0f, h));
+	// Domed tops through the remap, a flat base after it (wc_extinction in the shader).
+	const float dome = 1.0f - smoothstep(1.0f - Math::lerp(0.15f, 0.6f, cu), 1.0f, h);
+	const float base = smoothstep(0.0f, Math::lerp(0.2f, 0.03f, cu), h);
 	const float n = shape_at(p_state, p_pos);
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
-	// further up the profile, which domes the tops.
-	const float shape = MAX(n * profile - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f);
+	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
+	// small clouds of a fair sky are thin and light, where the remap alone made every one as dense as
+	// an overcast deck.
+	const float shape = MAX(n * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * ct.x;
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre.
 	return shape * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
 }
@@ -505,8 +514,8 @@ float wc_evolving_value_noise(vec2 q, float t, int o) {
 	return clamp(0.5 + (a * (1.0 - w) + b * w) / sqrt((1.0 - w) * (1.0 - w) + w * w), 0.0, 1.0);
 }
 
-float wc_cover_noise(vec2 xz) {
-	vec2 p = (xz - cloud_drift) / max(cloud_cover_scale, 1.0);
+float wc_cover_noise_at(vec2 xz, float p_scale) {
+	vec2 p = (xz - cloud_drift) / max(p_scale, 1.0);
 	float v = 0.0;
 	float amp = 0.5;
 	float norm = 0.0;
@@ -521,6 +530,10 @@ float wc_cover_noise(vec2 xz) {
 		q = wc_rotate(q) * 2.03;
 	}
 	return v / norm;
+}
+
+float wc_cover_noise(vec2 xz) {
+	return wc_cover_noise_at(xz, cloud_cover_scale);
 }
 
 // The shape noise read twice, turned and at two scales with an irrational ratio, evened out again
@@ -547,8 +560,12 @@ vec2 wc_cover_type(vec2 xz) {
 	float cover = cloud_cover;
 	float t = cloud_type;
 	if (cloud_variation > 0.0) {
-		cover = clamp(cover + (wc_cover_noise(xz) - 0.5) * 2.0 * cloud_variation, 0.0, 1.0);
+		cover = clamp(cover + (wc_cover_noise(xz) - 0.5) * 2.0 * cloud_variation * min(1.0, 2.5 * cover), 0.0, 1.0);
 	}
+	// Clusters (cover_type_at() on the CPU): the threshold wanders by cloud-sized patches, so neighbouring
+	// clouds come out large and merged or small and few. One threshold over the whole sky cut the shape noise
+	// into a field of puffs all one size. Overcast decks keep theirs.
+	cover = clamp(cover * mix(clamp(1.0 + 4.0 * (wc_cover_noise_at(xz + vec2(5311.0, 2719.0), cloud_shape_scale * 1.3) - 0.5), 0.15, 1.9), 1.0, smoothstep(0.5, 0.85, cover)), 0.0, 1.0);
 	for (int i = 0; i < 8; i++) {
 		if (i >= cloud_storm_count) {
 			break;
@@ -574,19 +591,29 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 		return 0.0;
 	}
 	float cu = smoothstep(0.2, 0.8, ct.y);
-	float profile = smoothstep(0.0, mix(0.2, 0.05, cu), h) * (1.0 - smoothstep(1.0 - mix(0.15, 0.6, cu), 1.0, h));
+	// The tops dome through the coverage remap (the noise must be higher to reach further up); the base is
+	// applied after it, so cumulus sit on a flat condensation level instead of rounding off underneath as
+	// they did with the whole profile inside the remap (Schneider 2015's height gradient).
+	float dome = 1.0 - smoothstep(1.0 - mix(0.15, 0.6, cu), 1.0, h);
+	float base = smoothstep(0.0, mix(0.2, 0.03, cu), h);
 	float texel = cloud_shape_scale / 128.0;
 	float n = wc_shape(p, p_step);
-	float shape = max(n * profile - (1.0 - ct.x), 0.0) / max(ct.x, 0.001);
+	float shape = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base;
 	if (p_detail && shape > 0.0) {
 		// Erode the edges with the detail noise, wispy below and billowing higher up (Nubis 2017).
 		vec2 sxz = wc_rotate(p.xz - cloud_drift);
 		vec3 qd = vec3(sxz.x, p.y, sxz.y) / cloud_shape_scale * 8.0 - vec3(0.0, cloud_churn.z, 0.0);
+		// Warped by the detail noise itself at a quarter of its frequency (domain warping, the part curl noise
+		// plays in Nubis): the billows tear into wisps and swirls instead of a cauliflower of round cells.
+		float lod_w = max(log2(p_step / texel), 0.0);
+		vec2 warp = vec2(textureLod(cloud_detail, qd * 0.25 + vec3(0.31, 0.17, 0.73), lod_w).r, textureLod(cloud_detail, qd * 0.25 + vec3(0.59, 0.41, 0.11), lod_w).r) - 0.5;
+		qd += vec3(warp.x, 0.25 * (warp.x + warp.y), warp.y) * mix(1.6, 0.8, clamp(h * 2.0, 0.0, 1.0));
 		float d = textureLod(cloud_detail, qd, max(log2(p_step / (texel * 0.25)), 0.0)).r;
 		float e = 0.45 * mix(d, 1.0 - d, clamp(h * 4.0, 0.0, 1.0));
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);
 	}
-	return shape * mix(0.04, 0.1, ct.y) * cloud_density;
+	// Times the cover after the erosion (Schneider 2015; wc_extinction on the CPU).
+	return shape * ct.x * mix(0.04, 0.1, ct.y) * cloud_density;
 }
 )";
 

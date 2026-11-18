@@ -148,6 +148,13 @@ private:
 	void _crack_update(double p_delta);
 	float _crack_layer(int p_i) const; // the drying layer's thickness, m
 	Vector4 _crack_at_cell(int p_i, float *r_damp = nullptr) const; // opening 0..1, plate size m, regularity 0..1, crust 0..1
+	// Puddle ice (docs/ideas/mud.md, round 7): per lattice cell (the ice's thickness, m; the share of it broken into
+	// floating plates, 0..1).
+	static constexpr int ICE_FLOATS = 2;
+	bool puddle_ice = true;
+	LocalVector<float> ice_state;
+	void _ice_update(double p_delta);
+	void _ice_break(const Vector3 &p_position, float p_radius, float p_bearing);
 	Ref<Image> mud_map;
 	Rect2 mud_map_rect;
 	float mud_max_depth = 1.2f;
@@ -327,6 +334,7 @@ private:
 	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
 	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
 	float ruts_regrowth_time = 2.6e6f; // s: the sward grows back over a kept rut at this e-fold (a month; mud round 6)
+	double _growing_seconds(double p_seconds) const;
 	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
 	// Crack state kept with the ruts (mud round 5): the lattice cells it moves off and onto.
 	GroundCellStore crack_store;
@@ -717,6 +725,9 @@ public:
 	float get_standing_water_at(Vector3 p_position) const;
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
+	void set_puddle_ice(bool p_enabled);
+	bool is_puddle_ice() const { return puddle_ice; }
+	Vector2 get_ice_at(Vector3 p_position) const;
 	// The crack state at a point: (opening 0..1, plate size m, regularity 0..1, crust 0..1 or, negative, how damp
 	// the drying layer still is).
 	Vector4 get_crack_at(Vector3 p_position) const;

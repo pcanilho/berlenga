@@ -365,18 +365,19 @@ uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator
 	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 8);
 }
 
-void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
-	LocalVector<uint32_t> missing;
-	for (uint32_t k : p_keys) {
-		if (!libraries.has(k) && missing.find(k) < 0) {
-			missing.push_back(k);
-		}
-	}
-	if (missing.is_empty()) {
-		return;
-	}
-	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+// Shape libraries are built on workers: _ensure_libraries waits for them; while streaming, _ensure_library starts them
+// and lets the cell wait instead (library_pending), so a first coast stack or hoodoo is no main-thread hitch.
+struct RockField3D::LibraryBuild {
+	LocalVector<uint32_t> keys;
 	LocalVector<LibraryJob> jobs;
+	WorkerThreadPool::GroupID group = 0;
+};
+
+RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint32_t> &p_missing) {
+	LibraryBuild *b = memnew(LibraryBuild);
+	b->keys = p_missing;
+	LocalVector<uint32_t> &missing = b->keys;
+	LocalVector<LibraryJob> &jobs = b->jobs;
 	for (uint32_t k : missing) {
 		RockGenerator::get_material(key_type(k)); // made here, read by the workers
 		for (int v = 0; v < variants; v++) {
@@ -391,8 +392,15 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 			jobs.push_back(j);
 		}
 	}
-	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&library_job, jobs.ptr(), int(jobs.size()), -1, true, "RockField3D libraries");
-	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	b->group = WorkerThreadPool::get_singleton()->add_native_group_task(&library_job, jobs.ptr(), int(jobs.size()), -1, true, "RockField3D libraries");
+	return b;
+}
+
+void RockField3D::_finish_libraries(LibraryBuild *p_build) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(p_build->group);
+	LocalVector<uint32_t> &missing = p_build->keys;
+	LocalVector<LibraryJob> &jobs = p_build->jobs;
 	for (uint32_t m = 0; m < missing.size(); m++) {
 		Library lib;
 		for (int v = 0; v < variants; v++) {
@@ -444,9 +452,65 @@ void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
 		libraries.insert(missing[m], lib);
 	}
 	last_library_msec += double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	memdelete(p_build);
+}
+
+void RockField3D::_ensure_libraries(const LocalVector<uint32_t> &p_keys) {
+	LocalVector<uint32_t> missing;
+	for (uint32_t k : p_keys) {
+		if (!libraries.has(k) && missing.find(k) < 0) {
+			missing.push_back(k);
+		}
+	}
+	// Ones a streaming cell started: wait for them rather than build them twice.
+	for (int i = int(missing.size()) - 1; i >= 0; i--) {
+		if (LibraryBuild **b = library_builds.getptr(missing[i])) {
+			LibraryBuild *build = *b;
+			for (uint32_t k : build->keys) {
+				library_builds.erase(k);
+			}
+			_finish_libraries(build);
+			missing.remove_at(i);
+		}
+	}
+	for (int i = int(missing.size()) - 1; i >= 0; i--) {
+		if (libraries.has(missing[i])) {
+			missing.remove_at(i);
+		}
+	}
+	if (missing.is_empty()) {
+		return;
+	}
+	_finish_libraries(_start_libraries(missing));
+}
+
+// Libraries the streaming started that are done; p_wait waits for all of them.
+void RockField3D::_collect_libraries(bool p_wait) {
+	LocalVector<LibraryBuild *> done;
+	for (const KeyValue<uint32_t, LibraryBuild *> &kv : library_builds) {
+		if ((p_wait || WorkerThreadPool::get_singleton()->is_group_task_completed(kv.value->group)) && done.find(kv.value) < 0) {
+			done.push_back(kv.value);
+		}
+	}
+	for (LibraryBuild *b : done) {
+		for (uint32_t k : b->keys) {
+			library_builds.erase(k);
+		}
+		_finish_libraries(b);
+	}
 }
 
 RockField3D::Library *RockField3D::_ensure_library(uint32_t p_key) {
+	if (library_async && !libraries.has(p_key)) {
+		if (!library_builds.has(p_key)) {
+			LocalVector<uint32_t> k;
+			k.push_back(p_key);
+			RockGenerator::get_material(key_type(p_key));
+			library_builds.insert(p_key, _start_libraries(k));
+		}
+		library_pending = true;
+		return nullptr;
+	}
 	if (!libraries.has(p_key)) {
 		LocalVector<uint32_t> k;
 		k.push_back(p_key);
@@ -1840,9 +1904,16 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 								float d50 = 0.002f * Math::exp(tanb / 0.045f);
 								d50 = MIN(MAX(d50, 0.5f * Math::smoothstep(0.2f, 0.7f, rock)), 1.2f);
 								const float band = Math::smoothstep(-0.6f, 0.0f, e) * (1.0f - Math::smoothstep(1.6f, 2.5f, e));
-								const float sig = 0.35f * float(Math::SQRT2);
+								// The tail below the shore layer's sizes is wider than its sigma 0.35: a shingle beach is poorly
+								// sorted at its fine end (mixed sand and gravel beaches, Kirk 1980; Jennings and Shulmeister
+								// 2002), which also grades the grains in with the pebbles instead of a cut where the beach slope
+								// changes.
+								const float sig = 0.6f * float(Math::SQRT2);
 								const float share = 0.5f * (std::erfc(Math::log(sd1 / d50) / sig) - std::erfc(Math::log(sd2 / d50) / sig));
-								dc.shore = MIN(0.5f * band * share / (0.94f * d50 * d50), cap_shore);
+								// A grading curve is by weight, and a surface's cover by a size class follows its weight share
+								// (not its count share: counting from the median grain put gravel all over fine sand). Packed
+								// as a shingle surface, stones touching.
+								dc.shore = MIN(0.85f * band * share / (0.785f * sd1 * sd2), cap_shore);
 								dc.d50 = d50;
 								dc.e = e;
 							}
@@ -1900,7 +1971,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							// The shore's log-normal, kept to this class (a log-uniform pick when the class is far in its tail).
 							float d = 0.0f;
 							for (int tries = 0; tries < 12; tries++) {
-								const float t = d50 * Math::exp(rng.randfn(0.0f, 0.35f));
+								const float t = d50 * Math::exp(rng.randfn(0.0f, 0.6f));
 								if (t >= sd1 && t < sd2) {
 									d = t;
 									break;
@@ -2026,16 +2097,42 @@ void RockField3D::_free_cell(Cell &r_cell) {
 	r_cell.stones = 0;
 }
 
-Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, bool p_cliff) {
-	const int mkey = int(p_type) + (p_cliff ? 1000 : 0);
+// How long a family's faces stand exposed between disturbances, for its lichen (0 just turned over, 1 for centuries).
+static float rock_surface_age(RockGenerator::Family p_family) {
+	switch (p_family) {
+		case RockGenerator::FAMILY_SCREE:
+			return 0.1f; // active talus: rockfall keeps turning the stones
+		case RockGenerator::FAMILY_ROCKFALL:
+		case RockGenerator::FAMILY_PEBBLE:
+			return 0.2f;
+		case RockGenerator::FAMILY_COBBLE:
+		case RockGenerator::FAMILY_POTHOLE:
+			return 0.3f; // scoured by floods
+		case RockGenerator::FAMILY_GOBLIN:
+		case RockGenerator::FAMILY_HOODOO:
+			return 0.4f; // soft rock, its skin keeps flaking
+		case RockGenerator::FAMILY_FIN:
+			return 0.6f;
+		default:
+			return 1.0f;
+	}
+}
+
+Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockGenerator::Family p_family, bool p_detail) {
+	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH;
+	const float age = rock_surface_age(p_family);
+	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
 	}
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("cliff_match", p_cliff);
 	m->set_shader_parameter("lichen_cover", lichen_cover);
+	m->set_shader_parameter("surface_age", age);
 	m->set_shader_parameter("moss_cover", moss_cover);
-	m->set_shader_parameter("small_linear", ground_detail);
+	// Ground detail grains: a foot band in proportion to the grain (the field's stones keep theirs), and the ground's
+	// dust coat the field's small stones carry, so a grain matches the pebbles round it.
+	m->set_shader_parameter("small_linear", p_detail);
 	_apply_ground(m);
 	if (TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
 		m->set_shader_parameter("sea_level", float(gen->get_sea_level())); // the shore zones of sea stones
@@ -2110,10 +2207,10 @@ Color RockField3D::_stone_custom(const TerrainGenerator3D *p_gen, const Stone &p
 	return Color(p_stone.ground, p_stone.film + (at_sea ? 2.0f : 0.0f), p_stone.scale, float(rq + 64 * (qx + 256 * qz)));
 }
 
-MultiMeshInstance3D *RockField3D::_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin) {
+MultiMeshInstance3D *RockField3D::_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin, bool p_detail) {
 	MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 	mmi->set_multimesh(p_multimesh);
-	mmi->set_material_override(_material(key_type(p_library), key_family(p_library) == RockGenerator::FAMILY_CAVE_MOUTH));
+	mmi->set_material_override(_material(key_type(p_library), RockGenerator::Family(key_family(p_library)), p_detail));
 	mmi->set_visibility_range_end(p_visibility);
 	mmi->set_visibility_range_end_margin(p_margin);
 	add_child(mmi, false, INTERNAL_MODE_BACK);
@@ -2271,7 +2368,7 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 			grp.shapes[k] = nullptr;
 		}
 		cell.groups.push_back(grp);
-		cell.instances.push_back(_add_group_instance(mm, dg.library, vis, cs * 0.5));
+		cell.instances.push_back(_add_group_instance(mm, dg.library, vis, cs * 0.5, true));
 	}
 	cells.insert(r_job.key, cell);
 }
@@ -2340,7 +2437,13 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 	const real_t cs = _cell_size(layer);
 	const Rect2 rect(p_key.y * cs, p_key.z * cs, cs, cs);
 	LocalVector<Stone> stones;
+	library_pending = false;
 	_place(layer, rect, rf_hash3(p_key.x, p_key.y, p_key.z, uint32_t(seed) * 2654435761u), stones);
+	if (library_pending) {
+		// A shape library is still building on workers (streaming): the cell is placed again once it is in.
+		library_pending = false;
+		return;
+	}
 	// Nothing lies on ground a cave mouth opened (TerrainGenerator3D holes); the cave's own blocks are landforms.
 	if (layer != LAYER_LANDFORM) {
 		if (const TerrainGenerator3D *hg = _get_generator(); hg && hg->has_holes_in(rect.grow(8.0))) {
@@ -2547,6 +2650,7 @@ void RockField3D::_update_streaming(bool p_all) {
 	for (const Vector3i &k : drop) {
 		cells.erase(k);
 	}
+	_collect_libraries(p_all);
 	// Ground detail cells placed on workers since the last frame.
 	uint64_t detail_usec = OS::get_singleton()->get_ticks_usec();
 	_detail_finish(p_all, MAX(build_budget_msec * 0.5, real_t(1.0)));
@@ -2653,7 +2757,8 @@ void RockField3D::_update_streaming(bool p_all) {
 		_build_cell(w.key);
 		detail_usec += OS::get_singleton()->get_ticks_usec() - tb0;
 	}
-	// Then the coarse layers, nearest first.
+	// Then the coarse layers, nearest first; a cell whose shapes are not built yet waits for them on workers (not
+	// with cave mouths on: those open terrain holes as they are placed).
 	for (const Want &w : want) {
 		if (_is_detail(w.key.x)) {
 			continue;
@@ -2661,7 +2766,9 @@ void RockField3D::_update_streaming(bool p_all) {
 		if (out_of_budget()) {
 			break;
 		}
+		library_async = !p_all && !(cave_mouths && w.key.x == LAYER_LANDFORM);
 		_build_cell(w.key);
+		library_async = false;
 	}
 	last_detail_msec = double(detail_usec) / 1000.0;
 	_remeasure_sea();
@@ -2805,7 +2912,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 			mm->set_use_custom_data(true);
 			mm->set_mesh(lib->close[v]);
 			mmi->set_multimesh(mm);
-			mmi->set_material_override(_material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH));
+			mmi->set_material_override(_material(key_type(lk), RockGenerator::Family(key_family(lk))));
 			mmi->set_meta("rock_close_up", true);
 			add_child(mmi, false, INTERNAL_MODE_BACK);
 			mmi->set_as_top_level(true);
@@ -2906,7 +3013,7 @@ void RockField3D::_update_moss(const HashMap<uint64_t, LocalVector<Transform3D>>
 			job->params.xform = xf;
 			job->params.custom = cd;
 			job->params.moss_cover = float(moss_cover);
-			const Ref<ShaderMaterial> mat = _material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH);
+			const Ref<ShaderMaterial> mat = _material(key_type(lk), RockGenerator::Family(key_family(lk)));
 			if (mat.is_valid()) {
 				const Variant pd = mat->get_shader_parameter("pole_direction");
 				if (pd.get_type() == Variant::VECTOR3) {
@@ -3237,7 +3344,7 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	const Color cd = p_grp.custom[p_k];
 	// Its own copy of the rock material, with the stone's instance data (ground, film, scale, seed), so the copy
 	// shades exactly like the stone it replaces.
-	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library), key_family(p_grp.library) == RockGenerator::FAMILY_CAVE_MOUTH);
+	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library), RockGenerator::Family(key_family(p_grp.library)));
 	if (mat.is_valid()) {
 		mat = mat->duplicate();
 		mat->set_shader_parameter("rock_instance", Vector4(cd.r, cd.g, cd.b, cd.a));
@@ -3765,6 +3872,7 @@ void RockField3D::rebuild() {
 
 void RockField3D::clear() {
 	_detail_cancel();
+	_collect_libraries(true);
 	for (KeyValue<uint64_t, Fracture> &kv : fractures) {
 		if (kv.value.state == 1) {
 			_finish_fracture(kv.key, true);
@@ -4560,9 +4668,6 @@ void RockField3D::set_ground_detail(bool p_enabled) {
 		return;
 	}
 	ground_detail = p_enabled;
-	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
-		kv.value->set_shader_parameter("small_linear", ground_detail);
-	}
 	if (!ground_detail) {
 		// Drop the detail cells now; the rest of the field stays as it is.
 		_detail_cancel();

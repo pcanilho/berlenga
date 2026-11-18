@@ -2530,6 +2530,7 @@ uniform float rock_roughness = 0.8;
 uniform float porosity = 0.3;
 uniform float grain_bump = 0.2;
 uniform float lichen_cover = 0.5;
+uniform float surface_age = 1.0; // how long the face has stood exposed (0 fresh talus, 1 a tor or old boulder)
 // Limestone and other lime-rich rock take their own lichens (white-grey and dark crusts that etch it, orange
 // Caloplaca); siliceous rock (granite, sandstone, basalt, slate) the yellow-green map lichen and grey foliose ones.
 uniform bool calcareous = false;
@@ -2548,7 +2549,8 @@ uniform float ground_blend_height = 0.45;
 // Contact and blend bands on stones under 50 cm (half b axis under 0.25 m): off, they are sized for a 50 cm stone,
 // which covers a pebble whole; on (with RockField3D.ground_detail, docs/ideas/ground-detail.md), they shrink in
 // proportion to the stone, meeting the old size at 50 cm, so pebbles and the detail grains keep a dusted foot.
-uniform bool small_linear = false;
+uniform bool small_linear = false; // ground detail grains: a foot in proportion, the field's dust coat over it
+uniform float small_coat = 0.65;
 // Forms set into a terrain cliff (cave mouths): the rock keeps its own mottling, beds and marks but takes the
 // cliff's colour (ground_rock, the landscape's rock layer), so the block reads as part of the wall around it.
 uniform bool cliff_match = false;
@@ -2866,7 +2868,10 @@ void fragment() {
 		// band above the ground the stone takes the ground's surface, the hollows first and the proud parts last
 		// (height blend on the cavity map, Mishkinis 2013), its edge broken by noise, more on faces turned up (soil
 		// and sand settle there), and the shading normal eased to the ground's so the seam lights alike.
-		if (ground_blend && above < ground_blend_height * 2.5 * bk) {
+		// A grain's foot is in proportion to it, but it carries the dust coat a field stone's band lays on a small stone
+		// (the band of a 25 cm stone), so grains and pebbles share one tone.
+		float bk_coat = small_linear ? 0.5 : bk;
+		if (ground_blend && above < ground_blend_height * 2.5 * max(bk, bk_coat)) {
 			float band = ground_blend_height * bk;
 			// Debris banks up on the uphill side (sediment trapped against the stone).
 			float sl = length(v_slope);
@@ -2875,6 +2880,12 @@ void fragment() {
 			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
 			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.
 			float gb = max(1.0 - smoothstep(0.45, 0.7, edge), 0.4 * (1.0 - smoothstep(0.7, 1.8, edge)) * smoothstep(0.3, 0.6, rk_fbm3(mp * 7.0 + 5.0)));
+			float gb_col = gb;
+			if (small_linear) {
+				float edge_coat = above / (ground_blend_height * bk_coat) + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
+				float coat = max(1.0 - smoothstep(0.45, 0.7, edge_coat), 0.4 * (1.0 - smoothstep(0.7, 1.8, edge_coat)));
+				gb_col = max(gb, small_coat * coat);
+			}
 			vec3 gcol = ground_soil;
 			if (terrain_geology_rect.z > 0.0) {
 				vec4 g = terrain_geology(v_world);
@@ -2892,8 +2903,8 @@ void fragment() {
 			// A damp foot: soil wicks water up the lowest part, darker and a little glossier.
 			float damp = 1.0 - smoothstep(0.0, 0.45, edge);
 			gcol *= mix(1.0, 0.55, damp);
-			col = mix(col, gcol, gb);
-			rough = mix(rough, mix(0.95, 0.7, damp), gb);
+			col = mix(col, gcol, gb_col);
+			rough = mix(rough, mix(0.95, 0.7, damp), gb_col);
 			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;
@@ -2921,14 +2932,20 @@ void fragment() {
 	float lic = 0.0;
 	float px = footprint; // metres per pixel (no screen derivatives: the path tracer's hit shaders have none)
 	// Not on stones under a stream or in the swash (a water film): lichens need to dry between wettings.
-	if (lichen_cover > 0.01 && open_face > 0.01 && film_in < 0.3) {
+	// Cover by the surface's age (surface_age, from the stone's family): talus and rockfall stones keep turning over
+	// and are mostly bare, river and swash stones are scoured; tors, cliffs and old boulders carry the most.
+	float lcov = lichen_cover * surface_age;
+	if (lcov > 0.01 && open_face > 0.01 && film_in < 0.3) {
 		const float cell_m = 0.09;
-		vec3 lc = rk_lichen_cells(mp / cell_m, 0.7 + 0.6 * lichen_cover, 0.85, cell_m, 0.5 * (lichen_cover - 0.5));
-		// Lobed margins: lobes of about a centimetre, finer crenulation on them.
-		float rim = 0.3 * (rk_noise3(mp * 90.0 + lc.z * 37.0) - 0.5) + 0.1 * (rk_noise3(mp * 380.0 + 5.0) - 0.5);
+		vec3 lc = rk_lichen_cells(mp / cell_m, 0.5 + 0.7 * lcov, 0.4 + 0.45 * smoothstep(0.1, 0.6, lcov), cell_m, 0.6 * (lcov - 0.5));
+		// Irregular margins: the rosette's outline wanders at the scale of the colony (lobes that grew faster) and at a
+		// centimetre, finer crenulation on that; the edge is a soft fringe of young lobes, not a cut line.
+		float rim = 0.45 * (rk_fbm3(mp * 22.0 + lc.z * 37.0) - 0.5) + 0.25 * (rk_noise3(mp * 90.0 + lc.z * 11.0) - 0.5) + 0.08 * (rk_noise3(mp * 380.0 + 5.0) - 0.5);
 		float r_eff = lc.x + rim;
-		float soft = clamp(px / (cell_m * 0.35), 0.03, 0.5);
+		float soft = clamp(px / (cell_m * 0.35), 0.15, 0.5);
 		float inside = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, r_eff)) * smoothstep(0.02, 0.3, open_face);
+		// Older centres die back and crumble: the thallus is thinner and broken inside the bigger rosettes.
+		inside *= mix(1.0, 0.45 + 0.55 * smoothstep(0.3, 0.6, rk_noise3(mp * 35.0 + lc.z * 5.0)), smoothstep(0.6, 0.15, lc.x));
 		if (inside > 0.0) {
 			float top = smoothstep(0.65, 0.95, wn.y);
 			float k = fract(lc.z * 7.31);
@@ -2945,7 +2962,7 @@ void fragment() {
 					sp_col = vec3(0.56, 0.56, 0.5); // Aspicilia calcarea
 					prothallus = 0.5;
 				} else if (k < 0.86) {
-					sp_col = vec3(0.04, 0.037, 0.032); // Verrucaria nigrescens
+					sp_col = vec3(0.1, 0.095, 0.085); // Verrucaria nigrescens
 					prothallus = 0.2;
 				} else {
 					sp_col = vec3(0.36, 0.37, 0.33); // Lecanora
@@ -2967,10 +2984,12 @@ void fragment() {
 					foliose = step(0.66, k);
 					fruit = 0.15;
 				} else {
-					sp_col = vec3(0.022, 0.021, 0.02); // Lecidea
+					sp_col = vec3(0.12, 0.115, 0.105); // Lecidea
 					prothallus = 0.6;
 				}
 			}
+			// Weathered thalli are duller than the herbarium's: the colours sit close to the rock's own greys.
+			sp_col = mix(sp_col, vec3(dot(sp_col, vec3(0.3, 0.55, 0.15))), 0.45);
 			sp_col *= 0.85 + 0.3 * rk_noise3(mp * 40.0 + lc.z * 13.0);
 			// Areolae and apothecia, a few millimetres; faded to their share past a pixel.
 			float fine = 1.0 - smoothstep(0.0006, 0.0025, px);
@@ -2982,7 +3001,9 @@ void fragment() {
 			// The prothallus: a black rim and the lines where colonies meet, a millimetre or two wide.
 			float edge_w = max(0.06, px / (cell_m * 0.5));
 			float line = max(smoothstep(1.0 - 1.2 * edge_w, 1.0 - 0.3 * edge_w, r_eff), (1.0 - smoothstep(0.0, edge_w, lc.y - lc.x)) * step(lc.y, 1.1));
-			thallus = mix(thallus, vec3(0.015), prothallus * line);
+			// Only a faint dark margin where the prothallus shows (no inked outlines: at a metre it is a shade, not a line).
+			thallus = mix(thallus, thallus * 0.6, 0.35 * prothallus * line);
+			inside *= 0.85;
 			lic = inside;
 			col = mix(col, thallus, inside);
 			rough = mix(rough, mix(0.92, 0.8, foliose), inside);

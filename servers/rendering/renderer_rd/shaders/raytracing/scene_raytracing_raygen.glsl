@@ -2410,6 +2410,62 @@ vec2 ground_water_flow(vec2 p_xz, vec3 p_n, float p_depth, float p_t, float p_fp
 	}
 	return slope * run;
 }
+// Puddle ice (docs/ideas/mud.md, round 7), the same lines in material.cpp and scene_raytracing_raygen.glsl.
+// The Voronoi cells of p (in cells, Worley 1996): x about the distance to the nearest edge (half of F2 - F1), yz
+// the nearest site's two hashes (0..1).
+vec3 ground_ice_cells(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	vec2 h1 = vec2(0.0);
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 c = vec2(float(x), float(y));
+			vec2 g = ground_flow_grad(i + c);
+			vec2 g2 = ground_flow_grad(i + c + vec2(311.0, 173.0));
+			vec2 o = c + 0.5 + 0.4 * g * (0.5 + 0.5 * g2.x) - f;
+			float d = dot(o, o);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+				h1 = 0.5 + 0.5 * g2;
+			} else if (d < d2) {
+				d2 = d;
+			}
+		}
+	}
+	return vec3(0.5 * (sqrt(d2) - sqrt(d1)), h1);
+}
+// Ice p_h thick (m) over a puddle, p_broken of it broken into plates, seen with a footprint of p_fp (m): (the share
+// that is white, the share that is ice, its roughness, 0); r_slope the tilt of a broken plate. Clear ice shows the
+// dark water under it (black ice); thicker, it holds air in milky patches, and the boundaries between its crystals
+// and its stress cracks show as fine white lines. Broken, it lies in plates (larger the thicker it is), tilted, with
+// open water between them and white fractured edges.
+vec4 ground_ice_look(vec2 p_xz, float p_h, float p_broken, float p_fp, out vec2 r_slope) {
+	r_slope = vec2(0.0);
+	float ice = smoothstep(0.0003, 0.001, p_h);
+	if (ice <= 0.0) {
+		return vec4(0.0);
+	}
+	// Air in patches some 30 cm across.
+	float milk = smoothstep(0.003, 0.04, p_h) * 0.35 * smoothstep(-0.05, 0.3, ground_flow_noise(p_xz / 0.3 + vec2(41.0, 7.0)).x);
+	// Stress cracks: some of the edges of cells 30 cm across, faint.
+	float vw = 0.0006;
+	vec3 vc = ground_ice_cells(p_xz / 0.3);
+	float vein = (1.0 - smoothstep(vw, vw + p_fp, vc.x * 0.3)) * step(0.6, vc.y) * smoothstep(0.004, 0.015, p_h) * 0.3 * (1.0 - smoothstep(0.004, 0.02, p_fp));
+	float s = clamp(0.06 + 2.0 * p_h, 0.06, 0.25);
+	vec3 pc = ground_ice_cells(p_xz / s);
+	float brk = step(pc.y, p_broken) * step(1e-3, p_broken);
+	float pe = pc.x * s;
+	float gap = 0.003 + 0.004 * pc.z;
+	float open = brk * (1.0 - smoothstep(gap, gap + p_fp, pe));
+	float rim = brk * (1.0 - smoothstep(gap + 0.002, gap + 0.004 + p_fp, pe)) * (1.0 - open);
+	r_slope = brk * (1.0 - open) * 0.15 * vec2(pc.z - 0.5, fract(pc.y * 7.31) - 0.5);
+	float cover = ice * (1.0 - open);
+	float white = cover * clamp(milk + vein * (1.0 - brk) + 0.7 * rim, 0.0, 0.85);
+	return vec4(white, cover, mix(0.04, 0.35, white / max(cover, 1e-3)), 0.0);
+}
 
 // Sand grains (the functions of the same names in material.cpp; docs/ideas/sand.md, sand glints).
 uint ground_grain_hash(ivec3 p_q, uint p_level) {
@@ -2785,6 +2841,7 @@ void main() {
 	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
 	float g_mud = 0.0; // the clay it carries, kg/m3 (mud round 3)
 	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
+	vec2 g_ice = vec2(0.0); // puddle ice: thickness m, broken share (mud round 7)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
@@ -2797,7 +2854,10 @@ void main() {
 			bool gfar = abs(frect.w - 3.5) < 0.01;
 			// The crack block (mud stage 2b) follows the far one: texel 2's tag 4.5.
 			bool gcrk = gts.x > 2 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(2, gts.y - 1), 0).w - 4.5) < 0.01;
-			float grows = float((gts.y - 1) / (1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0)));
+			// The puddle ice (mud round 7), the last block: texel 3's tag 5.5 (material.cpp ground_wet_blocks()).
+			bool gice = gts.x > 3 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(3, gts.y - 1), 0).w - 5.5) < 0.01;
+			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0);
+			float grows = float((gts.y - 1) / gblocks);
 			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
 			if (abs(grect.w - 2.5) < 0.01) {
 				vec4 gwn = vec4(0.0);
@@ -2821,6 +2881,13 @@ void main() {
 					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
 						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gfar ? 2 : 1) * grows;
 						g_crack = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+					}
+				}
+				if (gice && rt_material_ground_deform(mat)) {
+					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
+					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1) * grows;
+						g_ice = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0).xy;
 					}
 				}
 				g_grain = clamp(gw.z, 0.0, 1.0);
@@ -2977,7 +3044,15 @@ void main() {
 		} else {
 			gffp = exp2(rt_cone_footprint_log2);
 		}
-		vec2 gfs = ground_water_flow(gfp.xz, h.geometry_normal, g_water, scene_data_block.data.time, gffp) * max(gwl.y, gwl.w);
+		// Ice over it (material.cpp ground_ice_look()).
+		vec2 gisl = vec2(0.0);
+		vec4 gil = g_ice.x > 0.0 ? ground_ice_look(gfp.xz, min(g_ice.x, g_water), g_ice.y, gffp, gisl) : vec4(0.0);
+		gil *= gwl.y;
+		gisl *= gwl.y;
+		m.albedo = mix(m.albedo, vec3(0.8, 0.83, 0.86), gil.x);
+		m.roughness = mix(m.roughness, gil.z, gil.y);
+		m.specular = mix(m.specular, 0.22, gil.y);
+		vec2 gfs = ground_water_flow(gfp.xz, h.geometry_normal, g_water, scene_data_block.data.time, gffp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
 		if (gfs != vec2(0.0)) {
 			m.normal = normalize(m.normal - vec3(gfs.x, 0.0, gfs.y));
 		}

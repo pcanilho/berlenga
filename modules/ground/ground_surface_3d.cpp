@@ -381,6 +381,11 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	sand_dep_rate.clear();
 	wind_order.clear();
 	_cracks_move(p_origin, p_n); // the crack state moves with it, kept cells read back (new ones: never soaked, 0)
+	if (ground_valid && ground_n == p_n && (int)ice_state.size() == p_n * p_n * ICE_FLOATS) {
+		_shift_lattice(ice_state, ground_origin, p_origin, p_n, ICE_FLOATS);
+	} else {
+		ice_state.clear();
+	}
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
@@ -853,6 +858,104 @@ void GroundSurface3D::_crack_update(double p_delta) {
 		const float thick = _crack_at_cell(i).y * 0.25f;
 		st = MAX(st - evap * float(p_delta) / (0.4f * MAX(thick, 0.002f)), 1.0f);
 	}
+}
+
+void GroundSurface3D::set_puddle_ice(bool p_enabled) {
+	puddle_ice = p_enabled;
+	if (!p_enabled) {
+		ice_state.clear();
+	}
+}
+
+// Puddle ice (docs/ideas/mud.md, round 7). Standing water below freezing grows a sheet of ice by Stefan's law, the
+// latent heat of the new ice conducted up through the ice already there: dh/dt = k dT / (rho L h), k 2.2 W/(m K),
+// rho 917 kg/m3, L 334 kJ/kg, with Ashton's (1989) factor of 0.6 for the air's own resistance (and 5 mm added to h
+// so the first film does not grow without bound). A night at -5 C makes some 4 cm. Above freezing it melts by
+// degree days, some 7 mm a day per degree (8.1e-8 m/s/C). It never grows thicker than the water. Plates broken by
+// a wheel or a foot (_ice_break()) freeze back together as the new ice between them grows: the broken share
+// shrinks as the ice it would take to bind them (a few millimetres) forms.
+void GroundSurface3D::_ice_update(double p_delta) {
+	const int n = ground_n;
+	if (!puddle_ice || !standing_water || !ground_valid || n < 2) {
+		ice_state.clear();
+		return;
+	}
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const float t = wm ? wm->get_air_temperature() : 10.0f;
+	if ((int)ice_state.size() != n * n * ICE_FLOATS) {
+		if (t >= 0.0f) {
+			return; // nothing frozen, nothing to freeze
+		}
+		ice_state.resize(n * n * ICE_FLOATS);
+		for (float &v : ice_state) {
+			v = 0.0f;
+		}
+	}
+	const float dt = float(p_delta) * runoff_time_scale;
+	bool any = false;
+	for (int i = 0; i < n * n; i++) {
+		float &h = ice_state[i * ICE_FLOATS + 0];
+		float &b = ice_state[i * ICE_FLOATS + 1];
+		const float wx = (ground_origin.x + i % n) * ground_spacing;
+		const float wz = (ground_origin.y + i / n) * ground_spacing;
+		const float water = get_standing_water_at(Vector3(wx, 0.0f, wz));
+		if (water < 0.0005f) {
+			h = 0.0f; // drained or dried out: the ice goes with it
+			b = 0.0f;
+			continue;
+		}
+		if (t < 0.0f) {
+			const float dh = 0.6f * 7.2e-9f * -t / (h + 0.005f) * dt;
+			h += dh;
+			b = MAX(b - dh / 0.003f, 0.0f);
+		} else {
+			h -= 8.1e-8f * t * dt;
+		}
+		h = CLAMP(h, 0.0f, water);
+		if (h <= 0.0f) {
+			b = 0.0f;
+		}
+		any = any || h > 0.0f;
+	}
+	if (!any && t >= 0.0f) {
+		ice_state.clear();
+	}
+}
+
+// A load on the ice at p_position, over p_radius: ice too thin to bear it breaks into plates. Gold's (1971) bearing
+// law P = A h^2 (A about 1 MN/m2 for short loads): the thickness p_bearing that bears the load, 3 cm for a person,
+// 6 cm for a car's wheel.
+void GroundSurface3D::_ice_break(const Vector3 &p_position, float p_radius, float p_bearing) {
+	const int n = ground_n;
+	if (ice_state.is_empty() || (int)ice_state.size() != n * n * ICE_FLOATS) {
+		return;
+	}
+	const float r = MAX(p_radius, 0.5f * ground_spacing) + ground_spacing;
+	const int x0 = MAX(int(Math::floor((p_position.x - r) / ground_spacing)) - ground_origin.x, 0);
+	const int x1 = MIN(int(Math::ceil((p_position.x + r) / ground_spacing)) - ground_origin.x, n - 1);
+	const int z0 = MAX(int(Math::floor((p_position.z - r) / ground_spacing)) - ground_origin.y, 0);
+	const int z1 = MIN(int(Math::ceil((p_position.z + r) / ground_spacing)) - ground_origin.y, n - 1);
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			float *c = &ice_state[(z * n + x) * ICE_FLOATS];
+			if (c[0] <= 0.0f || c[0] >= p_bearing) {
+				continue;
+			}
+			const float d = Vector2((ground_origin.x + x) * ground_spacing - p_position.x, (ground_origin.y + z) * ground_spacing - p_position.z).length();
+			// Broken under the load; the plates round it crack too, less the farther they are.
+			c[1] = MAX(c[1], 1.0f - Math::smoothstep(p_radius, r, d));
+		}
+	}
+}
+
+Vector2 GroundSurface3D::get_ice_at(Vector3 p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)ice_state.size() != n * n * ICE_FLOATS) {
+		return Vector2();
+	}
+	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+	return Vector2(ice_state[(z * n + x) * ICE_FLOATS], ice_state[(z * n + x) * ICE_FLOATS + 1]);
 }
 
 float GroundSurface3D::_crack_layer(int p_i) const {
@@ -1889,14 +1992,22 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 	// is the fine lattice's rect (tag 2.5) and texel 1 the far one's (tag 3.5). material.cpp ground_wet_at() and
 	// scene_raytracing_raygen.glsl read it.
 	const bool far = on && wet && far_n == n && (int)far_pore.size() == n * n;
-	// Then, with desiccation cracks, their block (opening, plate size, regularity, crust; texel 2's tag 4.5).
+	// Then, with desiccation cracks, their block (opening, plate size, regularity, crust; texel 2's tag 4.5). Every
+	// reader counts the blocks by these tags (material.cpp ground_wet_blocks()).
 	bool cracks = false;
 	if (on && desiccation_cracks && (int)crack_state.size() == n * n * CRACK_FLOATS && n >= 3) {
 		for (int i = 0; i < n * n && !cracks; i++) {
 			cracks = crack_state[i * CRACK_FLOATS] > 0.0f && crack_state[i * CRACK_FLOATS] < 1.999f;
 		}
 	}
-	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0);
+	// Then, with puddle ice, its block (thickness m, broken share; texel 3's tag 5.5).
+	bool ice = false;
+	if (on && puddle_ice && (int)ice_state.size() == n * n * ICE_FLOATS && n >= 4) {
+		for (int i = 0; i < n * n && !ice; i++) {
+			ice = ice_state[i * ICE_FLOATS] > 0.0f;
+		}
+	}
+	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0) + (ice ? 1 : 0);
 	const int w = on ? n : (wet_texture.is_valid() ? wet_texture->get_width() : 1);
 	const int h = on ? blocks * n + 1 : (wet_texture.is_valid() ? wet_texture->get_height() : 2);
 	Vector<uint8_t> data;
@@ -1923,8 +2034,16 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			d[i * 4 + 3] = Math::smoothstep(terrain_margin, terrain_margin + skirt_fade, edge);
 		}
 		float *r = d + blocks * n * n * 4;
+		if (ice) {
+			float *id = d + (blocks - 1) * n * n * 4;
+			for (int i = 0; i < n * n; i++) {
+				id[i * 4 + 0] = ice_state[i * ICE_FLOATS];
+				id[i * 4 + 1] = ice_state[i * ICE_FLOATS + 1];
+			}
+			r[15] = 5.5f;
+		}
 		if (cracks) {
-			float *cd = d + (blocks - 1) * n * n * 4;
+			float *cd = d + (1 + (far ? 1 : 0)) * n * n * 4;
 			for (int i = 0; i < n * n; i++) {
 				float damp = 0.0f;
 				const Vector4 c = _crack_at_cell(i, &damp);
@@ -3242,6 +3361,7 @@ void GroundSurface3D::_notification(int p_what) {
 			if (water_accum >= 0.5) {
 				_water_update(water_accum);
 				_crack_update(water_accum);
+				_ice_update(water_accum);
 				water_accum = 0.0;
 			}
 			wet_publish_accum += delta;
@@ -3393,6 +3513,7 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	const Vector2 half = p_size * 0.5f;
 	const float radius = 0.5f * MAX(p_size.x, p_size.y);
 	const float bottom = _ground_at(p_position.x, p_position.z) - p_sinkage;
+	_ice_break(p_position, radius, 0.06f);
 	if (_gpu_on()) {
 		// The bodies' path: only the GPU field takes it (the CPU copy follows at the read back).
 		gpu_sink.stamp(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
@@ -3601,6 +3722,7 @@ float GroundSurface3D::_amount(Vector3 p_position, float p_radius, float p_depth
 	if (!field.valid || p_depth == 0.0f) {
 		return 0.0f;
 	}
+	_ice_break(p_position, p_radius, 1e9f); // a dig breaks any ice
 	Columns cols;
 	cols.surface = this;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
@@ -4023,6 +4145,48 @@ void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRut
 // water in them goes as evaporation beats that rain, and the clay in that water settles out of it (round 5: the
 // floc's 0.1 mm/s over the water's depth, all of it where the water went). Exact for these exponential decays however
 // long the absence.
+// Regrowth follows the seasons (docs/ideas/mud.md, round 7): of p_seconds (world time, ending today), the seconds of
+// growth at the reference rate ruts_regrowth_time is given for. The sward grows with the day's mean temperature above
+// 5 C (growing degree days, as WeatherSeason's forcing; the reference 10 K above it, a late spring day), held back
+// by drought: the day's precipitation against its Thornthwaite evapotranspiration (no growth under a tenth of it, full
+// over seven tenths), so a Mediterranean summer stalls it as a winter does. The days of the climatological year
+// (WeatherMap3D's climate at the field's height); without a WeatherMap3D, every day at the reference rate.
+double GroundSurface3D::_growing_seconds(double p_seconds) const {
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (!wm || p_seconds <= 0.0) {
+		return p_seconds;
+	}
+	const WeatherSeason::Climate c = wm->get_season_climate();
+	const float h = _ground_at(center.x, center.y);
+	double heat = 0.0;
+	double a = 0.0;
+	WeatherSeason::thornthwaite_coefficients(c, h, heat, a);
+	auto rate = [&](int p_day) {
+		// The climate's day, not the live weather's departure from it (WeatherMap3D's season anomaly: the last
+		// month's, while the time away can be months).
+		const float t = WeatherSeason::day_temperature(c, h, float(p_day));
+		const float pet = WeatherSeason::day_pet(c, heat, a, t, p_day);
+		const float wet = pet > 0.01f ? Math::smoothstep(0.1f, 0.7f, WeatherSeason::day_precipitation(c, float(p_day)) / pet) : 1.0f;
+		return double(MAX(t - WeatherSeason::FORCING_BASE, 0.0f) / 10.0f * wet);
+	};
+	const double days = p_seconds / 86400.0;
+	const int whole = int(Math::floor(days));
+	double sum = 0.0;
+	if (whole >= 365) {
+		double year = 0.0;
+		for (int d = 1; d <= 365; d++) {
+			year += rate(d);
+		}
+		sum += year * double(whole / 365);
+	}
+	const int today = wm->get_day_of_year();
+	for (int k = 0; k < whole % 365; k++) {
+		sum += rate((today - 1 - k + 365 * 2) % 365 + 1);
+	}
+	sum += rate((today - 1 - (whole % 365) + 365 * 2) % 365 + 1) * (days - double(whole));
+	return sum * 86400.0;
+}
+
 void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const {
 	const double secs = MIN(p_seconds * double(ruts_time_scale), 3.0e7); // a year at most
 	if (secs < 60.0) {
@@ -4031,7 +4195,7 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 	const float dry = float(Math::exp(-secs / double(drying_time)));
 	const float keep = float(Math::exp(-double(rain_smoothing * ruts_away_rain) * secs / 3600.0));
 	const float loss = float(double(MAX(_evaporation() - ruts_away_rain / 3.6e6f, 0.0f)) * secs);
-	const float regrow = float(Math::exp(-secs / double(MAX(ruts_regrowth_time, 1.0f))));
+	const float regrow = float(Math::exp(-_growing_seconds(secs) / double(MAX(ruts_regrowth_time, 1.0f))));
 	const int S = GroundRutStore::STRIDE;
 	const int count = int(r_data.size()) / S;
 	for (int k = 0; k < count; k++) {
@@ -4577,6 +4741,7 @@ void GroundSurface3D::sync_deformation() {
 // Pressing and queries
 
 float GroundSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round) {
+	_ice_break(p_position, p_radius, 0.03f);
 	Columns cols;
 	cols.surface = this;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
@@ -4595,6 +4760,7 @@ float GroundSurface3D::press(Vector3 p_position, float p_radius, float p_bottom,
 }
 
 float GroundSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink) {
+	_ice_break(p_position, 0.5f * MAX(p_size.x, p_size.y), 0.03f);
 	Columns cols;
 	cols.surface = this;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
@@ -4889,6 +5055,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_standing_water"), &GroundSurface3D::is_standing_water);
 	ClassDB::bind_method(D_METHOD("get_standing_water_at", "position"), &GroundSurface3D::get_standing_water_at);
 	ClassDB::bind_method(D_METHOD("set_desiccation_cracks", "enabled"), &GroundSurface3D::set_desiccation_cracks);
+	ClassDB::bind_method(D_METHOD("set_puddle_ice", "enabled"), &GroundSurface3D::set_puddle_ice);
+	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);
+	ClassDB::bind_method(D_METHOD("get_ice_at", "position"), &GroundSurface3D::get_ice_at);
 	ClassDB::bind_method(D_METHOD("is_desiccation_cracks"), &GroundSurface3D::is_desiccation_cracks);
 	ClassDB::bind_method(D_METHOD("get_crack_at", "position"), &GroundSurface3D::get_crack_at);
 	ClassDB::bind_method(D_METHOD("get_mud_map"), &GroundSurface3D::get_mud_map);
@@ -5098,6 +5267,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_away_rain", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:mm/h"), "set_ruts_away_rain", "get_ruts_away_rain");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_regrowth_time", PROPERTY_HINT_RANGE, "3600,31536000,1,or_greater,suffix:s"), "set_ruts_regrowth_time", "get_ruts_regrowth_time");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "puddle_ice"), "set_puddle_ice", "is_puddle_ice");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");

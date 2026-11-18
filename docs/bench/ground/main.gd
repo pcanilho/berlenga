@@ -49,6 +49,10 @@ extends Node3D
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
+#   --frost=hours[,break] --view=ruts with --water: then a frost of that many hours at -5 C freezes the water (mud
+#                  round 7); ",break": a walker's boots across the left rut break the ice
+#   --view=ice          a frozen puddle with a wheel's track broken through it (mud round 7)
+#   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
@@ -101,6 +105,9 @@ var muddy_test := false
 var tracked_test := false
 var ruts_test := false
 var pudhelp_test := false
+var ice_test := false
+var frost_arg := 0.0 # --frost=hours: the ruts view's water frozen over that long at -5 C
+var frost_break := false # --frost=hours,break: and boots across the left rut
 var cracks_on := false # _setup turns desiccation_cracks on (the kept-cracks check needs it from the first lattice)
 var ruts_scale := 1.0 # kept ruts' world seconds per real second while away
 var ruts_on := false # kept ruts (written to user://): off on the bench, or one run's prints turn up in the next
@@ -148,6 +155,11 @@ func _ready() -> void:
 		elif a == "--test=tracked": tracked_test = true
 		elif a == "--test=ruts": ruts_test = true
 		elif a == "--test=puddle-helper": pudhelp_test = true
+		elif a == "--test=ice": ice_test = true
+		elif a.begins_with("--frost="):
+			var fv := a.substr(8).split(",")
+			frost_arg = float(fv[0])
+			frost_break = fv.size() > 1 and fv[1] == "break"
 		elif a == "--near=0": near_on = false
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -170,6 +182,11 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if ice_test:
+		await _run_ice_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if pudhelp_test:
 		await _run_puddle_helper_tests()
 		await _run_world_puddle_tests()
@@ -272,6 +289,9 @@ func _ready() -> void:
 		return
 	if view == "legs":
 		await _build_legs()
+		return
+	if view == "ice":
+		await _build_ice()
 		return
 	if view == "tracked":
 		await _build_legs(true)
@@ -1154,6 +1174,34 @@ func _run_ruts_tests() -> void:
 		await get_tree().physics_frame
 	surface.sync_deformation()
 	_check("pressed again, it is bare again", surface.get_regrown_at(a) < 0.05, "%.2f regrown" % surface.get_regrown_at(a))
+	# Regrowth follows the seasons (mud round 7): with a WeatherMap3D, the same weeks away grow it back by the
+	# climate's growing degree days: a winter away (back in mid February after 90 days) leaves it bare, a summer away
+	# (back at the end of June after 35 days) greens it about as fast as the reference rate (the reference is a late
+	# spring day; June is warmer but drier), a Mediterranean August not at all.
+	var wm := WeatherMap3D.new()
+	get_tree().root.add_child(wm)
+	var seasonal := []
+	for leg in [[45, 90.0, false], [180, 35.0, false], [240, 35.0, true]]:
+		wm.season_day = leg[0]
+		wm.climate = load("res://dry_climate.gd").new() if leg[2] else null
+		t_left = Time.get_unix_time_from_system()
+		ruts_scale = leg[1] * 86400.0 / 4.0
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+		for i in 6:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		seasonal.append(surface.get_regrown_at(a))
+		var ref := 1.0 - exp(-(Time.get_unix_time_from_system() - t_left) * ruts_scale / surface.ruts_regrowth_time)
+		print("  day %d after %.0f days away: %.2f regrown (%.2f at the reference rate)" % [leg[0], (Time.get_unix_time_from_system() - t_left) * ruts_scale / 86400.0, seasonal[-1], ref])
+		seasonal.append(ref)
+		surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+		for i in 4:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+	_check("a winter away leaves the rut bare (mud round 7)", seasonal[0] < 0.25 and seasonal[0] < 0.5 * seasonal[1], "%.2f regrown in 90 winter days (%.2f at the reference rate)" % [seasonal[0], seasonal[1]])
+	_check("a summer away greens it at about the reference rate", seasonal[2] > 0.7 * seasonal[3] and seasonal[2] < 1.6 * seasonal[3], "%.2f regrown in 35 summer days (%.2f at the reference rate)" % [seasonal[2], seasonal[3]])
+	_check("a Mediterranean summer's drought stalls it", seasonal[4] < 0.3 * seasonal[5], "%.2f regrown in 35 August days (%.2f at the reference rate)" % [seasonal[4], seasonal[5]])
+	wm.queue_free()
 	ruts_scale = 1.0
 	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
 	for i in 3:
@@ -1240,6 +1288,69 @@ func _run_puddle_helper_tests() -> void:
 		# On the slope the bed's texels step 5 mm each along it: the surface read back there is a step or two out.
 		_check("its water stands level and stays in it", tmax - tmin < (0.004 if kind == "flat" else 0.02) and outside < 0.0005, "%.1f mm, %.2f mm outside" % [(tmax - tmin) * 1000.0, outside * 1000.0])
 		_check("it carries the clay asked for", absf(surface.get_water_mud_at(o) - 40.0) < 8.0, "%.1f kg/m3" % surface.get_water_mud_at(o))
+
+
+# Puddle ice (mud round 7): a puddle freezes over a night at -5 C (Stefan's law), bears a foot but breaks under a
+# wheel, the plates freeze back together, and a thaw melts it.
+func _run_ice_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.35, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	var o := Vector3(0.5, 0, 0.3)
+	surface.add_puddle(o, 1.2, 0.1, 0.0)
+	for i in 240:
+		await get_tree().physics_frame
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 1.0
+	wm.temperature = 10.0
+	add_child(wm)
+	wm.snap_to_settings()
+	for i in 10:
+		await get_tree().physics_frame
+	_check("no ice above freezing", surface.get_ice_at(o).x == 0.0, "%.1f mm" % (surface.get_ice_at(o).x * 1000.0))
+	wm.temperature = -5.0
+	wm.snap_to_settings()
+	# Twelve hours, sped up 5000 times.
+	surface.runoff_time_scale = 5000.0
+	var t0 := Time.get_ticks_msec()
+	var frames := 0
+	while frames < 2000 and surface.get_ice_at(o).x < 0.03:
+		await get_tree().physics_frame
+		frames += 1
+	var water := surface.get_standing_water_at(o)
+	var ice := surface.get_ice_at(o)
+	var hours := frames / 60.0 * 5000.0 / 3600.0
+	print("  frost: %.1f cm of ice on %.1f cm of water after %.1f h at -5 C (%d frames, %d ms)" % [ice.x * 100.0, water * 100.0, hours, frames, Time.get_ticks_msec() - t0])
+	# Stefan with Ashton's 0.6: h = sqrt(2 * 0.6 * 7.2e-9 * 5 t) - 5 mm: 3 cm in some 6 h.
+	_check("the puddle freezes over at Stefan's rate", ice.x >= 0.03 and hours > 3.0 and hours < 12.0, "%.1f cm in %.1f h" % [ice.x * 100.0, hours])
+	_check("dry ground grows no ice", surface.get_ice_at(o + Vector3(0, 0, 2.5)).x == 0.0, "%.1f mm" % (surface.get_ice_at(o + Vector3(0, 0, 2.5)).x * 1000.0))
+	surface.runoff_time_scale = 1.0
+	var g := surface.get_surface_height_at(o)
+	surface.press(o, 0.06, g - 0.005, 0.005, true)
+	_check("3 cm of ice bears a foot (Gold 1971)", surface.get_ice_at(o).y == 0.0, "broken %.2f" % surface.get_ice_at(o).y)
+	surface.press_wheel(o, Vector2(0.25, 0.3), 0.0, 0.02, Vector2())
+	var broken := surface.get_ice_at(o)
+	var beside := surface.get_ice_at(o + Vector3(0.75, 0, 0))
+	_check("a wheel breaks it into plates", broken.y > 0.9 and beside.y < 0.1, "broken %.2f under it, %.2f 0.75 m away" % [broken.y, beside.y])
+	surface.runoff_time_scale = 5000.0
+	for i in 120:
+		await get_tree().physics_frame
+	_check("the plates freeze back together", surface.get_ice_at(o).y < 0.5 * broken.y, "broken %.2f" % surface.get_ice_at(o).y)
+	wm.temperature = 8.0
+	wm.snap_to_settings()
+	frames = 0
+	while frames < 2000 and surface.get_ice_at(o).x > 0.0:
+		await get_tree().physics_frame
+		frames += 1
+	hours = frames / 60.0 * 5000.0 / 3600.0
+	print("  thaw: melted in %.1f h at 8 C, %.1f cm of water left" % [hours, surface.get_standing_water_at(o) * 100.0])
+	_check("a thaw melts it (degree days)", surface.get_ice_at(o).x == 0.0 and hours < 24.0, "%.1f mm left after %.1f h" % [surface.get_ice_at(o).x * 1000.0, hours])
+	surface.runoff_time_scale = 1.0
+	wm.queue_free()
+	near_on = true
 
 
 # Puddles the world places (mud round 6): in hollows, filled where the ground is wet, dry hollows where it is not.
@@ -1740,6 +1851,85 @@ func _build_bodymud() -> void:
 	cam.position = xf * Vector3(c[0], c[1], c[2])
 	cam.look_at(xf * Vector3(c[3], c[4], c[5]))
 	cam.fov = 45.0
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
+
+
+# Mud round 7: a puddle frozen over a night at -5 C, a wheel's track broken through one side of it (--cam=x,y,z,tx,ty,tz
+# in the world).
+func _build_ice() -> void:
+	kind = "soil"
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.35, 0.0)
+	_apply(kind)
+	surface.mud_layer = false
+	surface.standing_water = true
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-25.0, 200.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 10.0
+	add_child(sun)
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	var o := Vector3(0, 0, 0)
+	surface.add_puddle(o, 1.3, 0.08, 15.0)
+	for i in 240:
+		await get_tree().physics_frame
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 1.0
+	wm.temperature = -5.0
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	var frames := 0
+	while frames < 2000 and surface.get_ice_at(o).x < 0.035:
+		await get_tree().physics_frame
+		frames += 1
+	surface.runoff_time_scale = 1.0
+	for k in 12:
+		var q := Vector3(-1.6 + 0.15 * k, 0, 0.35)
+		surface.press_wheel(q, Vector2(0.25, 0.3), 0.0, 0.02, Vector2())
+	for i in 20:
+		await get_tree().physics_frame
+	print("ice: %s at the centre, %s in the track, %.1f cm of water" % [surface.get_ice_at(o), surface.get_ice_at(Vector3(-0.8, 0, 0.35)), surface.get_standing_water_at(o) * 100.0])
+	if OS.get_cmdline_user_args().has("--banks"):
+		var hs := []
+		for k in 16:
+			var a := TAU * k / 16.0
+			var row := ""
+			for j in range(10, 22):
+				var q := Vector3(cos(a), 0, sin(a)) * (0.1 * j)
+				row += " %+5.1f" % ((surface.get_surface_height_at(q) - surface.get_surface_height_at(Vector3(6, 0, 6))) * 100.0)
+			hs.append(row)
+		print("banks (cm, 1.0 to 2.1 m out):\n" + "\n".join(hs))
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.6, 1.0, 2.0, -0.3, 0.0, 0.0])
+	cam.position = Vector3(c[0], c[1], c[2])
+	cam.look_at(Vector3(c[3], c[4], c[5]))
+	cam.fov = 45.0
+	surface.follow_target = surface.get_path_to(cam)
+	surface.sync_deformation()
 	get_window().size = full
 	await _save_view(env)
 	get_tree().quit()
@@ -2897,6 +3087,22 @@ func _build_ruts() -> void:
 			await get_tree().physics_frame
 		surface.settle(36.0, 0.05)
 		print("water: %.1f mm in the left rut" % (surface.get_standing_water_at(Vector3(-1.6, 0, 0.0)) * 1000.0))
+		if frost_arg > 0.0:
+			# A frost (-5 C, sped up 2000 times) on the water, then, with ",break", boots across the left rut.
+			wm.temperature = -5.0
+			wm.humidity = 1.0
+			wm.snap_to_settings()
+			surface.runoff_time_scale = 2000.0
+			for i in int(frost_arg * 3600.0 / 2000.0 * 60.0):
+				await get_tree().physics_frame
+			surface.runoff_time_scale = 1.0
+			if frost_break:
+				for k in 6:
+					var q := Vector3(-2.2 + 0.25 * k, 0, 0.3 * (k % 2))
+					surface.press_box(q, Vector2(0.11, 0.28), 0.0, surface.get_surface_height_at(q) - 0.01, 0.01)
+				for i in 10:
+					await get_tree().physics_frame
+			print("frost: ice %s in the left rut" % surface.get_ice_at(Vector3(-1.6, 0, 0.0)))
 		if dry_arg:
 			surface.desiccation_cracks = true
 			surface.runoff_time_scale = 1e5
