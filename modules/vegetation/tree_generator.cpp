@@ -846,11 +846,12 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
 			p[PARAM_APICAL_CONTROL] = 0.9f; // Strong laterals: a full, dense crown.
 			p[PARAM_PHOTOTROPISM] = 0.08f;
+			p[PARAM_GRAVITY_BENDING] = 0.35f; // Heavy old limbs bow out and down, tips turned up: the crown spreads as a mass, not a fan of rising limbs.
 			p[PARAM_SHED_RATIO] = 0.06f; // Keeps shoots inside the crown: a dense mass, not tufts.
-			p[PARAM_DEAD_BRANCH_KEEP] = 0.03f; // A few dead stubs on the bole, not long dead limbs.
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f; // A long dead limb read as an artefact (docs, 18 Nov).
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.18f; // Pairs, 10-25 cm, stout.
-			p[PARAM_LEAVES_PER_INTERNODE] = 240;
+			p[PARAM_LEAVES_PER_INTERNODE] = 300; // Dense: the needles hide most of the branches.
 			p[PARAM_LEAF_YEARS] = 4;
 			p[PARAM_CROWN_CONE] = 0.0f; // No excurrent cone: it held the top to a sparse spire over a wide lowest whorl (docs, 18 Nov).
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
