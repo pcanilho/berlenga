@@ -163,6 +163,9 @@ private:
 	bool cave_streams = true;
 	bool streams_dirty = true;
 	LocalVector<ObjectID> stream_nodes;
+	LocalVector<ObjectID> clast_nodes; // the streams' bed stones (MultiMeshes)
+	LocalVector<Ref<ArrayMesh>> clast_library;
+	void _scatter_clasts(const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_wid, const LocalVector<float> &p_dep, uint32_t p_seed);
 	void _mark_streams(Cave &r_cave, uint32_t p_seed) const;
 	void _update_stream_nodes();
 	Ref<ShaderMaterial> rim_material;
