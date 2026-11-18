@@ -2350,6 +2350,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_seabed_from_floor"), &PhysXWaterSurface3D::get_seabed_from_floor);
 	ClassDB::bind_method(D_METHOD("set_seabed_collision_mask", "mask"), &PhysXWaterSurface3D::set_seabed_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &PhysXWaterSurface3D::get_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_seabed_probe_height", "height"), &PhysXWaterSurface3D::set_seabed_probe_height);
+	ClassDB::bind_method(D_METHOD("get_seabed_probe_height"), &PhysXWaterSurface3D::get_seabed_probe_height);
 	ClassDB::bind_method(D_METHOD("set_terrain_source", "path"), &PhysXWaterSurface3D::set_terrain_source);
 	ClassDB::bind_method(D_METHOD("get_terrain_source"), &PhysXWaterSurface3D::get_terrain_source);
 	ClassDB::bind_method(D_METHOD("_on_terrain_holes_changed", "rect"), &PhysXWaterSurface3D::_on_terrain_holes_changed);
@@ -2442,6 +2444,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seabed_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_seabed_collision_mask", "get_seabed_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "seabed_probe_height", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m"), "set_seabed_probe_height", "get_seabed_probe_height");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain_source"), "set_terrain_source", "get_terrain_source");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shallow_fade_depth", PROPERTY_HINT_RANGE, "0.01,10,0.01,or_greater,suffix:m"), "set_shallow_fade_depth", "get_shallow_fade_depth");
 
@@ -5914,6 +5917,11 @@ void PhysXWaterSurface3D::set_seabed_collision_mask(uint32_t p_mask) {
 	_rebuild();
 }
 
+void PhysXWaterSurface3D::set_seabed_probe_height(real_t p_height) {
+	seabed_probe_height = MAX(p_height, real_t(0.01));
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_shallow_fade_depth(float p_depth) {
 	shallow_fade_depth = MAX(p_depth, 0.01f);
 	_rebuild();
@@ -6396,12 +6404,12 @@ void PhysXWaterSurface3D::_rebuild() {
 	_configure_solver();
 }
 
-void PhysXWaterSurface3D::_sample_seabed() {
+int PhysXWaterSurface3D::_sample_seabed(bool p_quiet) {
 	// One ray per ripple cell center, straight down from well above the water
 	// onto static bodies only: anything else it hits (a floater, a player) is
 	// excluded and the ray cast again. The seabed can rise above the water --
 	// that's dry beach, depth <= 0.
-	constexpr real_t PROBE_ABOVE = 100.0;
+	const real_t PROBE_ABOVE = seabed_probe_height;
 	constexpr real_t PROBE_BELOW = 1000.0;
 	constexpr int MAX_SKIPS = 8;
 	const int n = grid_resolution;
@@ -6461,9 +6469,10 @@ void PhysXWaterSurface3D::_sample_seabed() {
 			dw[i] = d;
 		}
 	}
-	if (hits == 0) {
+	if (hits == 0 && !p_quiet) {
 		WARN_PRINT("PhysXWaterSurface3D: seabed_from_floor found no static body under the water (check seabed_collision_mask); using the constant depth.");
 	}
+	return hits;
 }
 
 void PhysXWaterSurface3D::_update_cell_fade() {
@@ -6606,9 +6615,15 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		water_material->set_shader_parameter("water_time", (float)Math::fmod(water_time, 3600.0));
 	}
 	if (seabed_pending) {
+		// A floor added with the water (a cave chunk and its pools) can reach the physics space a few ticks
+		// later: no hit at all waits up to 30 ticks before settling on the constant depth.
+		if (_sample_seabed(seabed_tries < 30) == 0 && seabed_tries < 30) {
+			seabed_tries++;
+			return;
+		}
 		seabed_pending = false;
+		seabed_tries = 0;
 		seabed_remeasure_pending = false; // just measured
-		_sample_seabed();
 		_configure_solver();
 		return;
 	}
