@@ -1,0 +1,1 @@
+- Water: shore breakers pass the sun through their rising crests (raster crest glow), and surf foam keeps its large holes out to a few hundred metres. Rocks bench `--clouds` for the weather sky.
