@@ -61,6 +61,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 water3; // runoff channels (sand): on (1), morphological factor, bed roughness m, source landing factor
 	vec4 wade; // tyres wading (mud stage 4c): count (up to 4), unused
 	vec4 wade_m[8]; // per tyre: (axle x, y, z, radius), (heading angle, unused, half width, speed m/s)
+	vec4 water_disc[16]; // water added (+) or taken (-) this step (add_water, wade.y of them): x, z, radius, depth a pass m
 }
 params;
 
@@ -115,6 +116,9 @@ layout(set = 0, binding = 12, std430) restrict buffer Water {
 };
 layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
 	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY
+};
+layout(set = 0, binding = 14, std430) restrict buffer Ledger {
+	uint ledger[4]; // add_water's discs, mm3 (cumulative): [0] takes could not find, [1] added, [2] taken
 };
 
 const float SWE_MIN = 0.01;
@@ -1010,6 +1014,25 @@ void water_depth(int x, int z) {
 	}
 	float d = water[i].w.x + flow * dt;
 	vec2 wp = texel_world(x, z);
+	// Spray landing and water thrown up (GroundSurface3D::add_water): a flat depth over each disc's texels.
+	for (int k = 0; k < int(params.wade.y); k++) {
+		vec4 wd = params.water_disc[k];
+		vec2 o = wp - wd.xy;
+		if (dot(o, o) <= wd.z * wd.z) {
+			float d0 = max(d, 0.0);
+			d = d0 + wd.w;
+			if (wd.w > 0.0) {
+				atomicAdd(ledger[1], uint(wd.w * texel() * texel() * 1e9 + 0.5));
+			} else {
+				atomicAdd(ledger[2], uint(min(-wd.w, d0) * texel() * texel() * 1e9 + 0.5));
+			}
+			if (d < 0.0) {
+				// A take finding less than it asked for: owed, paid back by the next water added.
+				atomicAdd(ledger[0], uint(-d * texel() * texel() * 1e9 + 0.5));
+				d = 0.0;
+			}
+		}
+	}
 	vec4 m2 = ground_cell(wp, 2); // conductivity m/s, water table depth m, moisture deficit
 	float rain = params.water.x;
 	// Runoff channels: a seepage face (GroundSurface3D::_gpu_cells), where the soaked beach's water table meets the
@@ -1359,6 +1382,11 @@ void main() {
 		if (sw == 2) {
 			packed[i * 2 + 1] = packHalf2x16(vec2(st.w, st.z)); // fresh, slumping owed
 			packed[n * n * 2 + i] = packHalf2x16(vec2(water[i].w.x, water[i].w.z));
+			if (i == 0) {
+				packed[n * n * 3] = ledger[0];
+				packed[n * n * 3 + 1] = ledger[1];
+				packed[n * n * 3 + 2] = ledger[2];
+			}
 		}
 	}
 }

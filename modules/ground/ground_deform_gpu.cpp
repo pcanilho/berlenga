@@ -171,7 +171,7 @@ void GroundDeformGPU::_rt_free_buffers() {
 		}
 		uset[i] = RID();
 	}
-	RID *bufs[] = { &buf_state[0], &buf_state[1], &buf_give, &buf_ground, &buf_cover, &buf_stamps, &buf_collision, &buf_cache, &buf_tile_ops, &buf_packed, &buf_water, &buf_water_tmp, &tex_out };
+	RID *bufs[] = { &buf_state[0], &buf_state[1], &buf_give, &buf_ground, &buf_cover, &buf_stamps, &buf_collision, &buf_cache, &buf_tile_ops, &buf_packed, &buf_water, &buf_water_tmp, &buf_ledger, &tex_out };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
@@ -210,6 +210,7 @@ void GroundDeformGPU::_rt_make_sets() {
 		add(11, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_packed);
 		add(12, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_water);
 		add(13, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_water_tmp);
+		add(14, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_ledger);
 		uset[i] = rd->uniform_set_create(uniforms, shader, 0);
 	}
 }
@@ -223,7 +224,9 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		buf_state[0] = _rt_storage(n * n * 16);
 		buf_state[1] = _rt_storage(n * n * 16);
 		buf_give = _rt_storage(n * n * 8);
-		buf_packed = _rt_storage(n * n * 4 * packed_uints(p_dims.stride));
+		// (plus the water ledger's copy after the field: GroundSurface3D::add_water)
+		buf_packed = _rt_storage(n * n * 4 * packed_uints(p_dims.stride) + 16);
+		buf_ledger = _rt_storage(16);
 		// Standing water is the ground's: snow binds a token buffer.
 		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 32 : 16);
 		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 : 16);
@@ -400,7 +403,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	rd->compute_list_end();
 
 	if (p_flags & STEP_SYNC) {
-		const Vector<uint8_t> fdata = rd->buffer_get_data(buf_packed, 0, n * n * 4 * packed_uints(d.stride));
+		const Vector<uint8_t> fdata = rd->buffer_get_data(buf_packed, 0, n * n * 4 * packed_uints(d.stride) + 16);
 		rt_on_field(fdata, p_origin);
 		if (d.coll_w > 0) {
 			const Vector<uint8_t> cdata = rd->buffer_get_data(buf_collision, 0, d.coll_w * d.coll_w * 4);
@@ -417,7 +420,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	}
 	if ((p_flags & STEP_READBACK) && !field_in_flight) {
 		field_in_flight = true;
-		rd->buffer_get_data_async(buf_packed, callable_mp(this, &GroundDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4 * packed_uints(d.stride));
+		rd->buffer_get_data_async(buf_packed, callable_mp(this, &GroundDeformGPU::rt_on_field).bind(p_origin), 0, n * n * 4 * packed_uints(d.stride) + 16);
 	}
 }
 
@@ -436,6 +439,12 @@ void GroundDeformGPU::rt_on_field(const PackedByteArray &p_data, Vector2i p_orig
 	field_in_flight = false;
 	MutexLock lock(mutex);
 	field_packed = p_data;
+	// The water ledger rides after the field (MODE_PACK copies it there).
+	if (field_packed.size() >= 16) {
+		memcpy(&water_owed_mm3, field_packed.ptr() + field_packed.size() - 16, 4);
+		memcpy(water_moved_mm3, field_packed.ptr() + field_packed.size() - 12, 8);
+		field_packed.resize(field_packed.size() - 16);
+	}
 	field_origin = p_origin;
 	field_ready = true;
 }

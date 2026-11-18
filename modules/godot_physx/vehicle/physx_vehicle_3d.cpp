@@ -1112,13 +1112,70 @@ void PhysXVehicle3D::_wade_step() {
 		return;
 	}
 	const Vehicle4W &v = impl->vehicle;
+	const double dt = get_physics_process_delta_time();
+	const Vector3 up = get_global_basis().get_column(1).normalized();
+	const Vector3 vel = get_linear_velocity();
 	for (uint32_t i = 0; i < 4; i++) {
 		const Vector3 c = wheels[impl->wheel_order[i]]->get_global_position();
-		if (ground->get_standing_water_at(c) <= 0.005f) {
+		const float depth = ground->get_standing_water_at(c);
+		if (depth <= 0.005f) {
 			continue;
 		}
-		const Vector3 vel = get_linear_velocity();
-		ground->add_wader(int64_t(get_instance_id()) * 4 + i, c, v.wheelParams[i].radius, v.wheelParams[i].halfWidth, vel);
+		const float r = v.wheelParams[i].radius;
+		const float hw = v.wheelParams[i].halfWidth;
+		ground->add_wader(int64_t(get_instance_id()) * 4 + i, c, r, hw, vel);
+		// Past the water's wave speed (Froude number over 1) the water the tyre sweeps cannot run ahead of it as a
+		// bow wave: it is thrown out as side waves, two sheets out and up from the contact at 20 to 40 degrees
+		// (tyre spray studies: Weir, Strange and Wheeler 1978; Pilkington 1990). The share thrown grows with the
+		// Froude number, a third at 2 and most of it by 4.
+		const Vector3 flat = Vector3(vel.x, 0.0f, vel.z);
+		const float speed = flat.length();
+		const float h = MIN(depth, r);
+		const float fr = speed / Math::sqrt(9.81f * h);
+		if (fr <= 1.0f || speed < 0.5f) {
+			continue;
+		}
+		const float share = 0.8f * (1.0f - 1.0f / fr) * (1.0f - 0.5f / fr);
+		const Vector3 fwd = flat / speed;
+		const Vector3 side = up.cross(fwd).normalized();
+		// A wheel running in another's track (a rear wheel behind its front one) meets the water that one has
+		// already thrown: only the leading wheel of a track throws.
+		bool trailing = false;
+		for (uint32_t j = 0; j < 4 && !trailing; j++) {
+			if (j == i) {
+				continue;
+			}
+			const Vector3 o = wheels[impl->wheel_order[j]]->get_global_position() - c;
+			trailing = o.dot(fwd) > 0.0f && Math::abs(o.dot(side)) < 2.0f * hw;
+		}
+		if (trailing) {
+			continue;
+		}
+		// Taken from the bow wave just ahead of the tread (the tyre has already pushed the water out from under
+		// itself); never more than half the water it sweeps into this step, spread over a disc a few steps
+		// long, so the overlapping discs of the next steps (and a read back a few frames old) still find it there.
+		const Vector3 contact = Vector3(c.x, c.y - r, c.z);
+		const float reach = MAX(hw, 0.05f);
+		const Vector3 ahead = contact + fwd * (0.5f * r);
+		// The disc's water as last read back, of which this step's advance sweeps speed dt over its 2 reach.
+		const double there = ground->get_standing_water_volume(ahead, reach);
+		const double swept = double(2.0f * hw * h * speed * share) * dt;
+		const double held = 0.5 * there * MIN(double(speed) * dt / (2.0 * reach), 1.0);
+		const double water = MIN(swept, held);
+		if (water <= 0.0) {
+			continue;
+		}
+		for (int s = -1; s <= 1; s += 2) {
+			// Out at about the speed, rising at ~30 degrees, carried a little forward by the tread's push.
+			GroundSurface3D::Spray sheet;
+			sheet.position = contact + side * (float(s) * hw) + up * h;
+			sheet.velocity = (side * float(s) * 0.75f + up * 0.45f + fwd * 0.35f) * speed;
+			sheet.width = MAX(hw, 0.04f);
+			sheet.reach_center = ahead;
+			sheet.reach_radius = reach;
+			sheet.water = float(0.5 * water);
+			ground->add_spray(sheet);
+		}
 	}
 #endif
 }
